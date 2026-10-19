@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Birdman native preview — third-party licenses</title>
+<h1>Third-party Rust dependencies</h1>
+<p>This notice covers the union of the six supported native targets.
+Asset and font notices are distributed separately with the application.</p>
+{{#each licenses}}
+<section>
+<h2>{{name}}</h2>
+<ul>{{#each used_by}}<li>{{crate.name}} {{crate.version}}</li>{{/each}}</ul>
+<pre>{{text}}</pre>
+</section>
+{{/each}}
+</html>
