@@ -54,6 +54,7 @@ async function fixture(failInitialization = false, seedCurrentArchive = false, d
     return timeout(handler, delay, ...args);
   });
   let frame: Parameters<RendererAdapter["startLoop"]>[0] = () => { throw new Error("Renderer loop is not initialized"); };
+  let previousDeliveredFrameMilliseconds: number | null = null;
   let screenBinding: ScreenRenderAutoBinding | undefined;
   const acknowledgeScreenScale = (): void => {
     if (screenBinding === undefined) throw new Error("Missing shared Screen policy binding");
@@ -183,6 +184,7 @@ async function fixture(failInitialization = false, seedCurrentArchive = false, d
     let count = 0;
     while (countdown.length > 0 && count < 10) { countdownTick(); count += 1; }
     expect(scene()).toBe("Flight");
+    previousDeliveredFrameMilliseconds = null;
   };
   const countdownTick = (elapsedMilliseconds = 1000, callback = countdown.shift(), framesAvailable = true): void => {
     const nextMilliseconds = nowMilliseconds + elapsedMilliseconds;
@@ -207,7 +209,11 @@ async function fixture(failInitialization = false, seedCurrentArchive = false, d
       sessionEndHandler();
     },
     runtimeDispose, releaseInitialization, initializationPaused: () => initializationPaused,
-    frame: (timestamp: number) => { frame(timestamp, unavailableViewerFrame("not-stereo")); } };
+    frame: (timestamp: number, elapsedMilliseconds = previousDeliveredFrameMilliseconds === null ? 0 : timestamp - previousDeliveredFrameMilliseconds) => {
+      nowMilliseconds += elapsedMilliseconds;
+      previousDeliveredFrameMilliseconds = timestamp;
+      frame(timestamp, unavailableViewerFrame("not-stereo"));
+    } };
 }
 
 function runFlightToResult(trial: Awaited<ReturnType<typeof fixture>>, initialTimestampMilliseconds: number,
@@ -344,7 +350,6 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
       trial.browser.document.dispatchEvent(new trial.browser.Event("visibilitychange"));
     }
     if (interruption === "late-frame") {
-      trial.advanceClock(151);
       trial.frame(151);
     }
     trial.countdownTick(3000, undefined, false);
@@ -352,6 +357,53 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     expect(trial.observeCountdown.mock.results.filter((result) => result.type === "return" && result.value === 3)).toHaveLength(0);
     expect(trial.tick).not.toHaveBeenCalled();
   });
+  it("advances from callback arrivals when the initial RAF timestamp precedes delivery", async () => {
+    const trial = await fixture();
+    await vi.waitFor(() => { expect(trial.scene()).toBe("Title"); });
+    const owner = await trial.sessionOwner();
+    trial.click("game-title-start");
+    trial.click("game-setup-start");
+    trial.launch();
+    const initialFrameTimestamp = performance.now();
+    trial.advanceClock(95);
+    trial.frame(initialFrameTimestamp, 0);
+    trial.frame(initialFrameTimestamp + 166.1, 73.9);
+    expect(trial.tick).toHaveBeenCalledTimes(7);
+    expect(trial.pause).not.toHaveBeenCalled();
+    expect(owner.readGameSessionProjection().phase).toBe("flight_running");
+    trial.click("game-flight-abort");
+    trial.click("game-result-retry");
+    trial.launch();
+    const previousTickCount = trial.tick.mock.calls.length;
+    const retryFrameTimestamp = performance.now();
+    trial.frame(retryFrameTimestamp, 95);
+    expect(trial.tick).toHaveBeenCalledTimes(previousTickCount);
+    trial.frame(retryFrameTimestamp + 166.1, 10);
+    expect(trial.tick).toHaveBeenCalledTimes(previousTickCount + 1);
+    expect(trial.pause).not.toHaveBeenCalled();
+  });
+
+  it.each([149.999, 150, 150.001])("applies the shared delay boundary to callback arrivals (%s ms)", async (gap) => {
+    const trial = await fixture();
+    await vi.waitFor(() => { expect(trial.scene()).toBe("Title"); });
+    const owner = await trial.sessionOwner();
+    trial.click("game-title-start");
+    trial.click("game-setup-start");
+    trial.launch();
+    const initialFrameTimestamp = performance.now();
+    trial.frame(initialFrameTimestamp, 0);
+    trial.frame(initialFrameTimestamp + 10, gap);
+    if (gap > 150) {
+      expect(trial.pause).toHaveBeenCalledExactlyOnceWith(3);
+      expect(trial.tick).not.toHaveBeenCalled();
+      expect(owner.readGameSessionProjection().phase).toBe("flight_paused");
+    } else {
+      expect(trial.pause).not.toHaveBeenCalled();
+      expect(trial.tick).toHaveBeenCalledTimes(Math.floor(gap / 10));
+      expect(owner.readGameSessionProjection().phase).toBe("flight_running");
+    }
+  });
+
   it("projects ProcessingDelay, preserves ticks and requires explicit Resume without catch-up", async () => {
     const trial = await fixture();
     await vi.waitFor(() => { expect(trial.scene()).toBe("Title"); });

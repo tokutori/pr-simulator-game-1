@@ -891,14 +891,14 @@ function scheduleCountdownObservation(owner: TailAppSessionFacade, previousMilli
   }, 1000);
 }
 
-function observePresentationFrame(timestampMilliseconds: number): void {
+function observePresentationFrame(): void {
   const observedAt = performance.now();
   const available = document.visibilityState !== "hidden" && document.hasFocus()
     && (lastPresentationFrameMilliseconds === null
       || observedAt - lastPresentationFrameMilliseconds <= maximum_flight_frame_gap_milliseconds());
   lastPresentationFrameMilliseconds = observedAt;
   if (!available) cancelUnavailableCountdown();
-  flightController?.onFrame(timestampMilliseconds);
+  flightController?.onFrame(observedAt);
 }
 
 function cancelUnavailableCountdown(): void {

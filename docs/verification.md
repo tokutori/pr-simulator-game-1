@@ -397,6 +397,8 @@ npm run measure:web-auto -- http://127.0.0.1:4202/pr-simulator-game-1/ target/we
 
 ### 画面遷移と実download
 
+- 飛行の100 Hz固定更新と150 ms安全停止は、描画コールバック到着時の `performance.now()` を同じ固定更新時計へ渡して判定する。
+  RAFのtimestampは描画の時刻として扱う。ResumeとRetry後は、最初の到着を新しい基点とする。
 - `test:web-ui` は専用BrowserContextから本番ページ・Rust/WASM・Three.jsへ接続する。
 - Setup/Briefing/Countdown/HUD/Pause/Resume/Result、Analysis3図・凡例、Replay・技術情報、 実CSV/JSON出力、同条件Retryを操作する。
 - browser・page・console・HTTP・WebGLのエラーを保持し、非同期body取得とcleanupを有界化する。
