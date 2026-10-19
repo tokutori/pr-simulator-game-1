@@ -1,20 +1,21 @@
-import { DoubleSide, Mesh, MeshBasicMaterial, Raycaster, Vector3 } from "three";
+import { Mesh, Raycaster, Vector3 } from "three";
 import { describe, expect, it } from "vitest";
 import analysisMap from "../../assets/biwa-analysis-map.json";
-import landMask from "../../assets/biwa-land-mask.json";
-import terrainAsset from "../../assets/biwa-terrain.json";
 import { HybridGameSessionBridge, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
 import { TailAppSessionFacade } from "../../web/src/app/session-facade.js";
 import { encodeTailLogicalInput } from "../../web/src/game/tail-session-codec.js";
-import { applyLandMask, terrainGeometry } from "../../web/src/render/engines/three/lake-venue-mesh.js";
+import { venueTerrainMeshes } from "../../web/src/render/engines/three/lake-venue-mesh.js";
 import "./lake-model-fixture.js";
 
 function regionalTerrain(): Mesh {
-  const terrain = applyLandMask({ ...terrainAsset, schemaVersion: 1 }, { ...landMask, schemaVersion: 1 });
-  const regional = terrain.finePatches.find((patch) => patch.id === "terrain-patch-regional-shore");
+  const meshes = venueTerrainMeshes();
+  const regional = meshes.find((mesh) => mesh.name === "lake-biwa-terrain-patch-regional-shore");
+  for (const mesh of meshes) if (mesh !== regional) mesh.geometry.dispose();
+  for (const material of new Set(meshes.map((mesh) => mesh.material))) {
+    if (material !== regional?.material) material.dispose();
+  }
   if (regional === undefined) throw new Error("Missing regional terrain");
-  return new Mesh(terrainGeometry(regional, [], [terrain, ...terrain.finePatches]),
-    new MeshBasicMaterial({ side: DoubleSide }));
+  return regional;
 }
 
 function assertClearSight(mesh: Mesh, position: Vector3, target: Vector3, label: string): void {
