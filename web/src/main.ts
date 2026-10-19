@@ -22,6 +22,7 @@ import type {
 } from "./app/app-state.js";
 import type { SessionCommand } from "./app/game-ui-types.js";
 import type { GameUiPlatformInput } from "./generated/game-ui-input.js";
+import type { GameUiPlatformObservation } from "./app/game-ui-codec.js";
 import { gameUiInputQuery } from "./generated/game-ui-input-query.js";
 import type { GameUiUpdate } from "./generated/game-ui-effects.js";
 import { ScreenPresentationBackend } from "./presentation/screen-backend.js";
@@ -744,7 +745,7 @@ function currentViewModel() {
   return createGameViewModel(model.sharedGameUi);
 }
 
-function sharedGameUiPlatformInput(): GameUiPlatformInput {
+function sharedGameUiPlatformInput(): GameUiPlatformObservation {
   if (model.screenRenderScale === null) throw new Error("Shared Screen rendering observation is unavailable");
   const viewport = currentViewport();
   const presentationMode = model.presentation.type === "ready" ? model.presentation.mode : "screen";
@@ -777,7 +778,7 @@ function sharedGameUiPlatformInput(): GameUiPlatformInput {
       && [5, 6].includes(gameSessionPhaseCode(model.gameSession)) ? model.flightExecution.message : null,
     head_hud_failure: headHudResourceFailure,
     stored_records: Object.freeze(recordListEntries(model.recordList).map((record) => Object.freeze({ id: record.id,
-      saved_at: record.savedAt, personal_best: record.personalBest }))) as GameUiPlatformInput["stored_records"]
+      saved_at: record.savedAt, personal_best: record.personalBest })))
   });
 }
 

@@ -12,7 +12,6 @@ import {
 import { currentRecordFixture } from "./current-session-fixture.js";
 import { gameUiInputQuery } from "../../web/src/generated/game-ui-input-query.js";
 import { encodeGameUiPlatformInput } from "../../web/src/app/game-ui-codec.js";
-import type { GameUiPlatformInput } from "../../web/src/generated/game-ui-input.js";
 import { createSharedGameUiSession, sharedGameUiPlatform } from "./shared-game-ui-fixture.js";
 
 initSync({ module: new Uint8Array(readFileSync(fileURLToPath(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url)))) });
@@ -116,10 +115,10 @@ describe("Current FlightRecord persistence", () => {
       const getAll = vi.spyOn(FakeObjectStore.prototype, "getAll");
       const recent = await repository.recent(gameUiInputQuery.storedRecordLimit);
       expect(recent.map(({ id }) => id)).toEqual([2000, 1999, 1998]);
-      expect(getAll.mock.instances.map((store) => store.name)).not.toContain("recordMetadata");
-      const platform = sharedGameUiPlatform({ stored_records: recent.map(({ id, savedAt, personalBest }) => ({
+      expect(getAll.mock.contexts.map((store) => store.name)).not.toContain("recordMetadata");
+      const platform = { ...sharedGameUiPlatform(), stored_records: recent.map(({ id, savedAt, personalBest }) => ({
         id, saved_at: savedAt, personal_best: personalBest
-      })) as GameUiPlatformInput["stored_records"] });
+      })) };
       const input = encodeGameUiPlatformInput(platform);
       expect(new TextEncoder().encode(input).byteLength).toBeLessThan(gameUiInputQuery.maximumBytes);
       const unbounded = JSON.stringify({ ...platform, stored_records: records.map(({ id, savedAt }) => ({
@@ -172,9 +171,9 @@ describe("Current FlightRecord persistence", () => {
     try {
       expect(owner.session.readSharedUi(platform).scene).toBe("title");
     } finally { owner.session.dispose(); }
-    expect(() => encodeGameUiPlatformInput(sharedGameUiPlatform({
-      stored_records: Array.from({ length: 4 }, (_, index) => ({ id: index + 1, saved_at: "saved", personal_best: false })) as unknown as GameUiPlatformInput["stored_records"]
-    }))).toThrow();
+    expect(() => encodeGameUiPlatformInput({ ...sharedGameUiPlatform(),
+      stored_records: Array.from({ length: 4 }, (_, index) => ({ id: index + 1, saved_at: "saved", personal_best: false }))
+    })).toThrow();
   });
 
   it("rejects invalid preview limits and retains metadata/index errors on the bounded query", async () => {
