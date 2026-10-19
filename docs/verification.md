@@ -8,7 +8,7 @@
 
 | 階層 | 確認する内容 |
 |---|---|
-| 型・静的検査 | 不正状態の排除、依存方向、生成型・validator、資産と出典の整合 |
+| 型・静的検査 | 不正状態の排除、依存方向、生成readonly型・schema、資産と出典の整合 |
 | 単体・数値検査 | 解析解、不変量、独立した基準値、誤差予算、失敗時の保持 |
 | 接続検査 | 本番core・WASM・DOM・ECS・保存I/Oの接続と資源寿命 |
 | CUI描画 | 本番GPU pipelineの実行、画像、画面遷移、計器・操作の到達可能性 |
@@ -53,7 +53,7 @@ python -m unittest discover -s tools/native-release -v
 
 - 依存検査はcoreの `no_std`・I/O分離、crateのDAG、engine型の境界、TypeScriptの型依存を含む循環を検査する。
 - 資産検査はmanifestの存在・hash・重複・登録漏れ、利用条件とViteの取込経路を検査する。
-- 生成schemaはRust DTOからのfreshness、readonly型とtuple、実validatorの不正入力拒否を検査する。
+- 生成契約はRust DTOからのfreshness、compilerによるreadonly型とtuple制約、toolsのschema検査による実WASM出力の構造と不正fixtureの拒否を確認する。
 - 表示テストは必要な操作・相対順・到達可能性・非重複・表示先の意味を検査する。説明文や無関係なsectionの全列挙を仕様として固定しない。
 
 ## 3. 物理・空力・制御の基礎検査
@@ -328,17 +328,18 @@ L(t)-z(t)=\frac{g(t-a)(b-t)}2\le\frac{g\,dt^2}8,
 |---|---|
 | Countdown | elapsed時間、800 msでは3秒/1秒では2秒、3秒で発進1回。重複時刻・不規則差分・overflow・取消後token・stale owner |
 | GameSession | 準備・発進・Pause/Resume・終端・Retryの許可と拒否、停止理由の残存、最後の有効状態、tick/record保持 |
-| input | schema 2生成型/validator、Hold/Set、finite/normalized範囲、1024-byte上限、余剰field拒否、拒否時非commit |
-| snapshot/query | schema 2のcontext/sample/batch/summary/wind、tuple、safe integer、exact stamp、quaternion、終端/scoreの整合 |
+| input | own-field/getter-once/prototype保護、生成型とRust schema 2受理、Hold/Set、finite/normalized範囲、1024-byte上限、余剰field拒否、拒否時非commit |
+| snapshot/query | 実Rust/WASM producerから生成DTOへの接続、named phase/profile/環境/pose、query schema 2のcontext/sample/batch/summary/wind、toolsの構造検査、Rustの時刻・quaternion・終端/score契約 |
 | FlightRecord | 全保存sample・finalization・capacity・終端fraction・元cause、CSV/JSON出力、保存key検証 |
 | PB | 比較方式v2、同条件・来歴差・条件差、未知方式の未順位、元JSON/key保持、Web/Nativeの共有selector |
 | Replay/Attract | Rust clock・seek・補間・最短quaternion、確定record不変、独立demoとplayer記録の分離 |
 | 所有権/I/O | query世代とrecord-source世代、stale結果破棄、独立cleanup全試行、IndexedDB transaction、ファイル非上書き |
 | UI | Setup/Briefing、typed HUD/availability、共通Action、group順・凡例色、全表示先、focus/scroll/拒否後の回復 |
 
-Web入力はown enumerable fieldsをplain wire objectへ一度投影してから検証し、
-prototype・toJSON・getterにより検査値と送信値が変わる経路を検査する。
-schema生成の構造検査と、時刻・原因・request echo・保存元の意味検査を分ける。
+- Web入力: own enumerable fieldsを捕捉したwire値へ投影し、Rustで受理する。prototype・toJSONの混入、getterの再読、getter内dispose後のRust呼出しを回帰試験で検出する。
+- 内部出力: 所有WASM instanceの出力とfacadeが返す生成DTOの一致を確認する。Analysis列のmetadata非重複と、live/prepared/Replayに接続する共有描画poseも検査する。
+- 数値・保存契約: 時刻、stamp、quaternion、終端、score、request echoの整合はRustのproducer/core/formatで検査し、Webはその出力を転送する。
+- 資源寿命: 実非同期のquery・record-source・Countdown世代とcleanupを検査し、表示DTOの静的readonly制約と分ける。
 
 Countdownはcoreだけでなく、実WASM/facade/Web frame列とNative Update/FixedUpdateを通す。
 非表示化・blur・frame停止・VR中断で安全取消し、record未開始と発進tick0を確認する。

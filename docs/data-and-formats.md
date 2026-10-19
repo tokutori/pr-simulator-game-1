@@ -16,6 +16,14 @@
 - JSON schema、物理model、機体、controller、環境、score、比較方式、build来歴は異なる概念であり、独立して保持する。
 - 未知の版へ現行値を補完しない。
 
+### 内部DTO
+
+- session/UI/queryの内部DTOは、同一buildの共有Rustから生成したreadonly TypeScript型を使う。外部保存JSONのschemaと受理契約を区別する。
+- lifecycleとsnapshotは名前付きphaseを返し、操縦profileと環境も共有producerの値を保持する。Webの起動準備状態はplatformが所有する。
+- `FlightRenderPose`はlive snapshotとprepared preview、`ReplayCameraView`の直下に置く。Analysisのsample列は記録queryのDTOを保持し、描画用metadataを各sampleへ重複させない。
+- 描画poseはNED位置、body→NED姿勢、pilot位置、表示時刻、controls、可用性を持つ速度・風を含む。尾翼の描画metadataは登録機体のpivotから導出し、未知機体は型付きの不在理由を返す。
+- 生成schemaはtoolsの実Rust/WASM接続試験で検査する。本番の内部出力は所有WASM instanceのfacadeで生成DTOへ接続する。
+
 ## assetの登録・出典・利用条件
 
 - ゲーム固有の画像、音声、model、shader、binaryは`assets/`へ置き、`assets/manifest.toml`へpath、SHA-256、source、source version、license、license URL、attribution、加工条件を登録する。
