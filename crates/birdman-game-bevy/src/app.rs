@@ -156,7 +156,7 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
     verification.verify_font(&font_bytes)?;
     let mut app = App::new();
     let window_plugin = WindowPlugin {
-        primary_window: Some(primary_window(None, no_vsync)),
+        primary_window: Some(primary_window(no_vsync)),
         ..default()
     };
     #[cfg(feature = "verify-harness")]
@@ -273,10 +273,10 @@ fn is_verification_argument(argument: &str) -> bool {
     argument == "--offscreen" || argument.starts_with("--verify")
 }
 
-fn primary_window(verification_size: Option<(u32, u32)>, no_vsync: bool) -> Window {
+fn primary_window(no_vsync: bool) -> Window {
     Window {
         title: "Birdman native Screen — Bevy".into(),
-        resolution: verification_size.unwrap_or((1280, 720)).into(),
+        resolution: (1280, 720).into(),
         present_mode: if no_vsync {
             PresentMode::AutoNoVsync
         } else {
@@ -506,14 +506,10 @@ mod tests {
         for (no_vsync, expected_mode) in
             [(false, PresentMode::Fifo), (true, PresentMode::AutoNoVsync)]
         {
-            for (size, expected_size) in
-                [(None, (1280.0, 720.0)), (Some((800, 600)), (800.0, 600.0))]
-            {
-                let window = primary_window(size, no_vsync);
-                assert_eq!(window.present_mode, expected_mode);
-                assert_eq!(window.resolution.width(), expected_size.0);
-                assert_eq!(window.resolution.height(), expected_size.1);
-            }
+            let window = primary_window(no_vsync);
+            assert_eq!(window.present_mode, expected_mode);
+            assert_eq!(window.resolution.width(), 1280.0);
+            assert_eq!(window.resolution.height(), 720.0);
         }
     }
 
