@@ -403,6 +403,8 @@ pub(crate) fn observe_auto(world: &mut World) {
     let now_ms = now_ms(world);
     let time = world.resource::<Time<Real>>();
     let time_interrupted = time.delta() > super::MAX_FRAME_DELTA;
+    #[cfg(feature = "verify-harness")]
+    let frame_delta_ms = time.delta().as_secs_f64() * 1000.0;
     let frame = world.resource::<bevy::diagnostic::FrameCount>().0;
     let window = world
         .query_filtered::<&Window, With<PrimaryWindow>>()
@@ -461,6 +463,8 @@ pub(crate) fn observe_auto(world: &mut World) {
                 None
             };
             if let Some(reason) = reason {
+                #[cfg(feature = "verify-harness")]
+                println!("Screen Auto invalidation: frame={frame} epoch={} reason={reason:?} delta_ms={frame_delta_ms} preparation_epoch={}", rendering.controller.epoch(), readout.preparation_epoch);
                 rendering.controller.invalidate(reason, now_ms)?;
             }
             if !rendering.measuring() || interrupted {
@@ -496,15 +500,14 @@ pub(crate) fn observe_auto(world: &mut World) {
                     return Ok(None);
                 }
                 let epoch = rendering.controller.epoch();
-                let request = rendering.controller.observe(
-                    birdman_game_session::screen_render_auto::ScreenGpuSample {
+                let sample = birdman_game_session::screen_render_auto::ScreenGpuSample {
                         epoch,
                         frame,
                         source_ms: now_ms,
                         gpu_work_ms: 20.0,
-                    },
-                    now_ms,
-                )?;
+                    };
+                readout.record_policy_sample(sample);
+                let request = rendering.controller.observe(sample, now_ms)?;
                 if let Some(request) = request {
                     println!(
                         "Shadow draw fixture request: synthetic_gpu_work_ms=20, performance_evidence=false, epoch={epoch}, frame={frame}, source_ms={now_ms}, request={request:?}"
@@ -517,7 +520,11 @@ pub(crate) fn observe_auto(world: &mut World) {
                 None => Ok(None),
             };
             match sample {
-                Ok(Some(sample)) => rendering.controller.observe(sample, now_ms),
+                Ok(Some(sample)) => {
+                    #[cfg(feature = "verify-harness")]
+                    readout.record_policy_sample(sample);
+                    rendering.controller.observe(sample, now_ms)
+                }
                 Ok(None) => rendering.controller.pending(now_ms),
                 Err(_) => rendering
                     .controller

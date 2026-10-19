@@ -2844,10 +2844,11 @@ fn advance_step(
                 }
                 if verification.stage_started.elapsed() > Duration::from_secs(8) {
                     let finding = format!(
-                        "Shadow draw fixture did not acknowledge its resources: {snapshot:?}, frame_delta={frame_delta:?}, preparation={:?}, preparation_epoch={}, source_frame={:?}; remaining shadow captures are unverified",
+                        "Shadow draw fixture did not acknowledge its resources: {snapshot:?}, frame_delta={frame_delta:?}, preparation={:?}, preparation_epoch={}, source_frame={:?}, timing={}; remaining shadow captures are unverified",
                         presentation.timing_readout.preparation,
                         presentation.timing_readout.preparation_epoch,
                         presentation.timing_readout.source_frame,
+                        presentation.timing_readout.verification_summary(),
                     );
                     println!(
                         "Unmet timing check: {finding}; restoring Manual 100% and continuing the core loop"
@@ -2894,10 +2895,11 @@ fn advance_step(
                 let observed = verification.stage_started.elapsed();
                 if observed > Duration::from_secs(8) {
                     let finding = format!(
-                        "Auto verification has no completed fresh GPU measurement: {snapshot:?}, frame_delta={frame_delta:?}, preparation={:?}, preparation_epoch={}, source_frame={:?}",
+                        "Auto verification has no completed fresh GPU measurement: {snapshot:?}, frame_delta={frame_delta:?}, preparation={:?}, preparation_epoch={}, source_frame={:?}, timing={}",
                         presentation.timing_readout.preparation,
                         presentation.timing_readout.preparation_epoch,
                         presentation.timing_readout.source_frame,
+                        presentation.timing_readout.verification_summary(),
                     );
                     println!(
                         "Unmet timing check: {finding}; restoring Manual 100% and continuing the core loop"
