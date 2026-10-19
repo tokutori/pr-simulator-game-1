@@ -151,3 +151,19 @@ impl FlightExecution {
         }
     }
 }
+
+#[cfg(verus_only)]
+#[verus_spec]
+fn verify_running_rejection(reason: PauseReason) {
+    let mut execution = FlightExecution::Running;
+    let clear = execution.clear_pause_reason(reason);
+    proof! {
+        assert(clear == Err(FlightExecutionError::NotPaused));
+        assert(execution.running());
+    }
+    let resume = execution.resume();
+    proof! {
+        assert(resume == Err(FlightExecutionError::NotPaused));
+        assert(execution.running());
+    }
+}

@@ -1,5 +1,12 @@
 # 形式検証契約
 
+## 現在の実行構成
+
+本番coreを直接一回検証し、同じ成果物に対する統合negativeを一回実行する。
+単一関数のensuresを再提示するwrapperは除去し、集合の複数操作、拒否Resume再要求、
+Countdown再観測、Result↔Replay往復、Runningのclear/resume拒否を本番crate内へ移した。
+既存のlifecycle/running/contact clientと、通常Rustの実scenario接続試験は保持する。
+数値callback、Duration、allocator等の未証明境界は変更しない。
 ## 導入範囲と検証時点
 
 [#268](https://github.com/tokutori/pr-simulator-game-1/issues/268)の第一単位として、PauseReasonsの4原因集合とManual除去後のResume判定を検証する。
@@ -20,8 +27,8 @@ renameと旧宣言コメントを含むfixtureのexact inventory拒否、必須�
 
 - `crates/birdman-game-core/src/pause_reasons.rs`がPauseReason、PauseReasonsと実行bodyを所有する。
 - `game_session.rs`は同moduleの公開型を再exportし、pause、can_resume、resumeから実関数を呼ぶ。
-- 正driverと二つの負driverは同じtracked moduleをそれぞれ一度includeする。
-- `tools/verus/check-pause-reasons.ps1`はinclude先と検査前後のsource/toolchain hashを照合する。
+- 本番core全体を直接検証し、複数操作clientは同crateのcfg-only関数として保持する。
+- `tools/verus/check-verus.ps1`は同じverified coreへ統合negativeを接続し、検査前後のsource/toolchain hashを照合する。
 
 公開の4原因、privateなu8表現、contains/is_emptyを維持する。空集合はprivateなmodule-level
 `empty_pause_reasons`の同じbodyから生成する。Resumeの許可は元bitsから導き、独立したboolを保持しない。
@@ -158,7 +165,7 @@ source配置や証明注釈の変更もbuild来歴のfingerprint差として保�
 bitvector queryへ渡す前提は通常の検証で実関数の契約から確認する。
 負driverは原因を除去した後も所属すると意図的に主張し、その指定assertが拒否されることを検査する。
 
-通常unit testは16集合×4原因を列挙する。実GameSessionを使う別回帰は重複pause/clear、失敗Resume後の原因保存、
+純粋な集合unit testはconst生成の通常Rust使用例へ縮約する。実GameSessionを使う16集合の接続回帰は重複pause/clear、失敗Resume後の原因保存、
 外部原因が残る間の拒否、明示Resume、pause中のstate/record不変を確認する。
 非Pause phaseのResume拒否とResultの確定record保持も対象とする。これらはcallerの通常回帰であり、
 GameSession全体の形式証明ではない。
@@ -179,25 +186,21 @@ GameSessionの通常回帰32件、core all-targets Clippy、`wasm32v1-none`のno
 [導入手順](https://github.com/verus-lang/verus/blob/release/0.2026.10.04.426d8b0/INSTALL.md)、
 [専用toolchain](https://github.com/verus-lang/verus/blob/release/0.2026.10.04.426d8b0/rust-toolchain.toml)を基準とする。
 scriptは解凍・実行前にdigestを照合し、compiler/verifier versionを確認する。導入済みの専用Rustは再利用し、未導入の場合だけ追加する。
-全義務を`--no-cheating --num-threads 1`で検証する。全体のpositive検証を維持したうえで、
-`verify_set_operations`、`verify_resume_predicate`、`verify_resume_admission`、`verify_empty_set`を名前別にも実検証する。
-必須名は`--verify-only-module pause_reasons --verify-function <name>`で選択し、各対象のexit 0、正のverified件数、0 errorsを要求する。
-全体positiveの公式JSON `func-details`からcompilerが解決した完全修飾名をexactに確認し、selectorのsubstring fallbackを通じた別名関数の受理を防ぐ。
-JSON stdoutとstderr diagnosticsを分離し、PowerShell標準`ConvertFrom-Json`を使用する。sourceのregex inventory、追加scope anchor、独自parserは導入しない。
-必須関数を別名へ変更して旧宣言をblock comment中へ残した一時fixtureは、全体proofが成功してもexact inventoryで拒否する。
-総件数や名前の文字列存在だけを検証範囲の保証に使用しない。
-同じproduction moduleをincludeし、必須driverを持たない既存の負driverへ名前選択を適用し、指定functionの欠落診断で拒否することも確認する。
-構文・起動失敗や別のassertion失敗は、この欠落検出の成功に含めない。
-正検証はexit 0、verified件数が正、0 errorsを必須とする。負検証は非zero exit、verified件数が正、1 error、
-指定assertのファイル・行と`assertion failed`を必須とし、コンパイル・起動失敗を成功と数えない。
-`proofs/resume_admission_negative.rs`は実関数へDocumentHiddenを渡しても再開できると意図的に主張し、
-指定した`assert(admitted)`だけが拒否されることを同じrunnerで確認する。
+全体を`--no-cheating --num-threads 1`で一度検証する。本番coreのbody/ensuresと、
+同crate内の複数操作clientをcargo-verusのentire-crate成功へ接続する。
+関数別の再起動、includeによる二重検証、改名/欠落fixture、内部symbolの固定一覧は維持しない。
+証明対象の変更は本番契約と複数操作clientの差分としてレビューする。
 
+`proofs/rejections.rs`は同じ検証済みcore/vstdのrmeta/virを読み、公開契約の正常controlと、
+初期Runningの誤認可・確定拒否後のrecord変更・接触append/finalize後のpayload変更を意図的に主張する。
+一回の統合negative実行で、非zero exit、正のverified件数、指定3assertだけの3 errors、
+指定したファイル・行と`assertion failed`を要求する。構文・起動・別assertの失敗を成功に数えない。
+下記に残る個別cutのnamed/inventory/旧negative件数は過去の検査結果であり、現在の起動要件とは区別する。
 Check workflowの独立したWindows jobが次のscriptを実行する。
 Pagesは従来のmain/manual/boolean条件に加え、VerifyとPauseReasons proofの双方の成功を必要とする。
 
 ```powershell
-./tools/verus/check-pause-reasons.ps1
+./tools/verus/check-verus.ps1
 cargo +1.97.0 test -p birdman-game-core --locked pause_reasons
 cargo +1.97.0 test -p birdman-game-core --locked every_pause_set
 cargo +1.97.0 test -p birdman-game-core --locked resume_rejects_nonpaused

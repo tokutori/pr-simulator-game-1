@@ -143,57 +143,126 @@ impl PauseReason {
         }
     }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn all_pause_sets_preserve_other_causes_and_require_external_causes_to_clear() {
-        let causes = [
-            PauseReason::Manual,
-            PauseReason::DocumentHidden,
-            PauseReason::TrackingSuspended,
-            PauseReason::ProcessingDelay,
-        ];
-        for bits in 0..16 {
-            let reasons = PauseReasons(bits);
-            for cause in causes {
-                let inserted = reasons.insert(cause);
-                let removed = reasons.remove(cause);
-                assert_eq!(inserted.insert(cause), inserted);
-                assert_eq!(removed.remove(cause), removed);
-                assert!(inserted.contains(cause));
-                assert!(!removed.contains(cause));
-                assert_eq!(inserted.remove(cause), removed);
-                assert_eq!(removed.insert(cause), inserted);
-                assert_eq!(inserted.0 & !15, 0);
-                assert_eq!(removed.0 & !15, 0);
-                for other in causes {
-                    if other != cause {
-                        assert_eq!(inserted.contains(other), reasons.contains(other));
-                        assert_eq!(removed.contains(other), reasons.contains(other));
-                    }
+    fn empty_pause_reasons_is_const_usable() {
+        const EMPTY: PauseReasons = empty_pause_reasons();
+        assert!(EMPTY.is_empty());
+        assert!(!EMPTY.contains(PauseReason::Manual));
+    }
+}
+
+#[cfg(verus_only)]
+#[verus_spec(
+    requires reasons.0 & 240u8 == 0,
+)]
+fn verify_set_operations(reasons: PauseReasons, selected: PauseReason, other: PauseReason) {
+    let selected_mask = selected.bit();
+    let other_mask = other.bit();
+    let original_bits = reasons.0;
+    let inserted = reasons.insert(selected);
+    let removed = reasons.remove(selected);
+    let inserted_again = inserted.insert(selected);
+    let removed_again = removed.remove(selected);
+    let insert_then_remove = inserted.remove(selected);
+    let remove_then_insert = removed.insert(selected);
+    let selected_after_insert = inserted.contains(selected);
+    let selected_after_remove = removed.contains(selected);
+    let other_before = reasons.contains(other);
+    let other_after_insert = inserted.contains(other);
+    let other_after_remove = removed.contains(other);
+    proof! {
+        assert(selected_mask == 1 || selected_mask == 2
+            || selected_mask == 4 || selected_mask == 8);
+        assert(other_mask == 1 || other_mask == 2
+            || other_mask == 4 || other_mask == 8);
+        assert((original_bits | selected_mask) | selected_mask
+            == (original_bits | selected_mask)) by (bit_vector);
+        assert((original_bits & !selected_mask) & !selected_mask
+            == (original_bits & !selected_mask)) by (bit_vector);
+        assert(((original_bits | selected_mask) & !selected_mask)
+            == (original_bits & !selected_mask)) by (bit_vector);
+        assert(((original_bits & !selected_mask) | selected_mask)
+            == (original_bits | selected_mask)) by (bit_vector);
+        assert(inserted_again.0 == inserted.0);
+        assert(removed_again.0 == removed.0);
+        assert(insert_then_remove.0 == removed.0);
+        assert(remove_then_insert.0 == inserted.0);
+        assert(((original_bits | selected_mask) & selected_mask) != 0) by (bit_vector)
+            requires selected_mask != 0;
+        assert(((original_bits & !selected_mask) & selected_mask) == 0) by (bit_vector);
+        assert(selected_after_insert);
+        assert(!selected_after_remove);
+        assert(((original_bits | selected_mask) & 240u8) == 0) by (bit_vector)
+            requires
+                original_bits & 240u8 == 0,
+                selected_mask == 1 || selected_mask == 2
+                    || selected_mask == 4 || selected_mask == 8;
+        assert(((original_bits & !selected_mask) & 240u8) == 0) by (bit_vector)
+            requires original_bits & 240u8 == 0;
+        assert(inserted.0 & 240u8 == 0);
+        assert(removed.0 & 240u8 == 0);
+        if selected != other {
+            assert(selected_mask != other_mask);
+            assert(selected_mask & other_mask == 0) by (bit_vector)
+                requires
+                    selected_mask != other_mask,
+                    selected_mask == 1 || selected_mask == 2
+                        || selected_mask == 4 || selected_mask == 8,
+                    other_mask == 1 || other_mask == 2
+                        || other_mask == 4 || other_mask == 8;
+            assert(((original_bits | selected_mask) & other_mask)
+                == (original_bits & other_mask)) by (bit_vector)
+                requires selected_mask & other_mask == 0;
+            assert(((original_bits & !selected_mask) & other_mask)
+                == (original_bits & other_mask)) by (bit_vector)
+                requires selected_mask & other_mask == 0;
+            assert(other_after_insert == other_before);
+            assert(other_after_remove == other_before);
+        }
+    }
+}
+
+#[cfg(verus_only)]
+#[verus_spec(
+    requires reasons.0 & 240u8 == 0,
+)]
+fn verify_resume_admission(reasons: PauseReasons) {
+    let original_bits = reasons.0;
+    let allowed = reasons.can_resume_after_manual();
+    let outcome = reasons.request_resume();
+    match outcome {
+        Ok(()) => {
+            proof! {
+                assert(allowed);
+                assert(original_bits & !1u8 == 0);
+            }
+        }
+        Err(remaining) => {
+            let remaining_bits = remaining.0;
+            let manual_after = remaining.contains(PauseReason::Manual);
+            let repeated = remaining.request_resume();
+            proof! {
+                assert(!allowed);
+                assert(remaining_bits == (original_bits & !1u8));
+                assert(remaining_bits != 0);
+                assert((remaining_bits & 1u8) == 0) by (bit_vector)
+                    requires remaining_bits == (original_bits & !1u8);
+                assert(!manual_after);
+                assert((remaining_bits & !1u8) == remaining_bits) by (bit_vector)
+                    requires remaining_bits == (original_bits & !1u8);
+            }
+            match repeated {
+                Ok(()) => {
+                    proof! { assert(false); }
+                }
+                Err(repeated_reasons) => {
+                    proof! { assert(repeated_reasons.0 == remaining_bits); }
                 }
             }
-            let remaining = reasons.remaining_after_manual();
-            assert!(!remaining.contains(PauseReason::Manual));
-            assert_eq!(reasons.can_resume_after_manual(), remaining.is_empty());
-            assert_eq!(
-                reasons.can_resume_after_manual(),
-                !reasons.contains(PauseReason::DocumentHidden)
-                    && !reasons.contains(PauseReason::TrackingSuspended)
-                    && !reasons.contains(PauseReason::ProcessingDelay)
-            );
-        }
-        const EMPTY: PauseReasons = empty_pause_reasons();
-        let empty = empty_pause_reasons();
-        assert_eq!(empty, EMPTY);
-        assert_eq!(empty.0, 0);
-        assert!(empty.is_empty());
-        assert!(empty.can_resume_after_manual());
-        for cause in causes {
-            assert!(!empty.contains(cause));
         }
     }
 }
