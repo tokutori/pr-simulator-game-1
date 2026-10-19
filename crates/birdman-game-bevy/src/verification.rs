@@ -1663,13 +1663,6 @@ pub(crate) struct VerificationPresentation<'w, 's> {
 
 impl VerificationPresentation<'_, '_> {
     fn cloud_mesh(&self) -> Result<(Entity, Option<bevy::asset::AssetId<Mesh>>), String> {
-        for (_, mesh) in self.meshes.iter() {
-            if mesh.count_vertices() == 0
-                || mesh.indices().is_some_and(|indices| indices.is_empty())
-            {
-                return Err("Environment exchange registered an empty Mesh".into());
-            }
-        }
         let (layer, mesh) = self
             .cloud_layers
             .single()
