@@ -1,4 +1,5 @@
 import type { ScreenRenderAutoPolicy } from "../../web/src/render/contracts/screen-render-auto.js";
+type ObservedPolicy = ScreenRenderAutoPolicy & { snapshot_json(): string };
 
 export interface EpochObservation {
   at: number;
@@ -18,7 +19,7 @@ export interface ForwardedGpuObservation {
 export interface RafObservation {
   at: number;
   timestamp: number;
-  phase: number | null;
+  phase: string | null;
   tick: number | null;
   width: number;
   height: number;
@@ -34,7 +35,7 @@ export interface LiveObservation {
   epochs: EpochObservation[];
   forwardedGpu: ForwardedGpuObservation[];
   frames: RafObservation[];
-  phases: { at: number; phase: number; tick: number | null }[];
+  phases: { at: number; phase: string; tick: number | null }[];
   truncated: boolean;
   observerErrors: string[];
   observerMilliseconds: number;
@@ -42,7 +43,7 @@ export interface LiveObservation {
 }
 
 interface BrowserObserver {
-  phase: number | null;
+  phase: string | null;
   tick: number | null;
   snapshotJson: string | null;
   policyJson: string | null;
@@ -75,7 +76,7 @@ declare global {
   const failure = (cause: unknown): void => {
     if (errors.length < 16) errors.push(cause instanceof Error ? cause.message : String(cause));
   };
-  const recordEpoch = (policy: ScreenRenderAutoPolicy, at: number): void => {
+  const recordEpoch = (policy: ObservedPolicy, at: number): void => {
     const epoch = policy.epoch();
     if (epoch === lastEpoch) return;
     lastEpoch = epoch;
@@ -94,7 +95,7 @@ declare global {
         const descriptor = Object.getOwnPropertyDescriptor(prototype, name);
         if (descriptor === undefined || typeof descriptor.value !== "function") throw new Error(`Missing existing policy method: ${name}`);
         const original: (...args: unknown[]) => unknown = descriptor.value as (...args: unknown[]) => unknown;
-        Object.defineProperty(prototype, name, { ...descriptor, value: function (this: ScreenRenderAutoPolicy, ...args: unknown[]): unknown {
+        Object.defineProperty(prototype, name, { ...descriptor, value: function (this: ObservedPolicy, ...args: unknown[]): unknown {
           const epochBefore = name === "observe" ? this.epoch() : 0;
           const returned: unknown = Reflect.apply(original, this, args);
           const started = performance.now();
@@ -116,7 +117,7 @@ declare global {
       }
     },
     measure() {
-      if (capture.kind !== "idle" || observer.snapshotJson === null || observer.phase !== 5) throw new Error("Measurement requires one live Rust FlightRunning snapshot");
+      if (capture.kind !== "idle" || observer.snapshotJson === null || observer.phase !== "flight_running") throw new Error("Measurement requires one live Rust FlightRunning snapshot");
       const startMs = performance.now();
       const beforeCost = observerMilliseconds;
       const beforeCalls = observerCalls;
@@ -150,7 +151,7 @@ declare global {
         interrupt = cause => { finish(cause); };
         const observe = (timestamp: number): void => {
           const at = performance.now();
-          if (observer.phase !== 5) { finish(`Rust phase changed to ${String(observer.phase)}`); return; }
+          if (observer.phase !== "flight_running") { finish(`Rust phase changed to ${String(observer.phase)}`); return; }
           if (at >= observation.endMs) { finish(null); return; }
           const canvas = document.querySelector<HTMLCanvasElement>(".presentation-canvas");
           append(observation.frames, { at, timestamp, phase: observer.phase, tick: observer.tick,
@@ -168,14 +169,14 @@ declare global {
     const returned: unknown = Reflect.apply(parse, JSON, args);
     const started = performance.now();
     try {
-      if (object(returned) && returned.control_layout === "tail_incidence" && typeof returned.phase_code === "number" && object(returned.frame)) {
+      if (object(returned) && returned.control_layout === "tail_incidence" && typeof returned.phase === "string" && object(returned.frame)) {
         observer.snapshotJson = args[0];
-        observer.phase = returned.phase_code;
+        observer.phase = returned.phase;
         const state = returned.frame.state;
         observer.tick = object(state) && typeof state.tick === "number" ? state.tick : null;
         if (capture.kind === "collecting") {
-          append(capture.observation.phases, { at: started, phase: returned.phase_code, tick: observer.tick });
-          if (returned.phase_code !== 5) interrupt?.(`Rust phase changed to ${String(returned.phase_code)}`);
+          append(capture.observation.phases, { at: started, phase: returned.phase, tick: observer.tick });
+          if (returned.phase !== "flight_running") interrupt?.(`Rust phase changed to ${returned.phase}`);
         }
       }
       if (object(returned) && object(returned.selection) && typeof returned.applied === "string" && object(returned.status)) {

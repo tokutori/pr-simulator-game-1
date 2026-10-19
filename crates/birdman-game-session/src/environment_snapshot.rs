@@ -1,129 +1,205 @@
+//! Shared environment metadata from the same registered providers used by flight preparation.
+
 use birdman_game_core::{NedPoint, NedVector, WindField};
 use birdman_game_format::{
     EnvironmentBasisDocument, EnvironmentFormatError, EnvironmentProvenanceDocument,
-    EnvironmentSourceDocument, GroundWindNormalDocument, LocalNedFrameDocument, SkyStateDocument,
-    WaveStateDocument,
+    EnvironmentSourceDocument, GroundWindNormalDocument, LocalNedFrameDocument,
+    SessionPhaseDocument, SkyStateDocument, WaveStateDocument,
 };
 use serde::Serialize;
 
-use crate::environment::bundled_environment;
-use birdman_game_session::record_archive::{ENVIRONMENT_SOURCE_FINGERPRINT, ENVIRONMENT_V6_SHA256};
+use crate::record_archive::{ENVIRONMENT_SOURCE_FINGERPRINT, ENVIRONMENT_V6_SHA256};
+use crate::{
+    HybridSessionPreparation, PresetEnvironment, application::ApplicationSession,
+    bundled_environment, identity_for_selection, preset_environment_for_version,
+};
 
 const MAX_IDENTITY_JSON_BYTES: usize = 4_096;
 
-pub(crate) use birdman_game_session::preset_wind_for_version;
-use birdman_game_session::{
-    HybridSessionPreparation, PresetEnvironment, preset_environment_for_version,
-};
-
+/// Typed failures from environment input, identity resolution and metadata projection.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum EnvironmentSnapshotError {
+pub enum EnvironmentSnapshotError {
+    /// The adapter did not receive JSON text.
     InvalidInputType,
+    /// The identity JSON exceeds the bounded input contract.
     InputTooLarge,
+    /// The identity JSON is malformed or has invalid fields.
     InvalidJson,
+    /// An identity version or registered preset is invalid.
     InvalidIdentity,
+    /// A configured session phase has no retained scenario identity.
     MissingSessionIdentity,
+    /// The shared environment provider failed with its original cause.
     Environment(EnvironmentFormatError),
+    /// The adapter could not encode the projected document.
     EncodingFailed,
 }
 
-pub(crate) use birdman_game_format::EnvironmentIdentity;
+pub use birdman_game_format::EnvironmentIdentity;
 
+/// Owner whose selected environment is being observed.
 #[derive(Clone, Copy, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum EnvironmentSource {
+pub enum EnvironmentSource {
+    /// Current Flight Setup selection.
     Selected,
+    /// Sealed flight configuration.
     Sealed,
+    /// Current finalized flight record.
     Record,
+    /// Opened saved archive.
     Archive,
+    /// Independent demonstration record.
     Attract,
+    /// Explicit immutable registry query.
     Registry,
 }
 
+/// Origin of one environment snapshot.
 #[derive(Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub(crate) enum EnvironmentContext {
-    Session { phase_code: u32 },
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum EnvironmentContext {
+    /// One application session observation.
+    Session {
+        /// Named phase observed with the selected provider identity.
+        phase: SessionPhaseDocument,
+    },
+    /// Explicit immutable registry query.
     Registry,
 }
 
+/// Versioned environment metadata without the full wind-grid samples.
 #[derive(Serialize)]
-pub(crate) struct EnvironmentSnapshot {
-    schema_version: u32,
-    context: EnvironmentContext,
-    projection: EnvironmentProjection,
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct EnvironmentSnapshot {
+    /// Current environment snapshot wire version.
+    pub schema_version: u32,
+    /// Session or registry origin.
+    pub context: EnvironmentContext,
+    /// Explicit availability of the requested registered environment.
+    pub projection: EnvironmentProjection,
 }
 
+/// Registered environment availability without fallback to another identity.
 #[derive(Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub(crate) enum EnvironmentProjection {
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum EnvironmentProjection {
+    /// The current phase has no environment selection.
     NoSelection,
+    /// The requested identity is not registered.
     Unavailable {
+        /// Owner of the requested identity.
         source: EnvironmentSource,
+        /// Original identity retained without aliases.
         identity: EnvironmentIdentity,
     },
+    /// Metadata from the registered provider used by flight preparation.
     Available {
+        /// Owner of the resolved identity.
         source: EnvironmentSource,
+        /// Fully matched registered identity.
         identity: EnvironmentIdentity,
+        /// Bounded descriptive metadata without the full wind grid.
         metadata: Box<EnvironmentMetadata>,
     },
 }
 
+/// Explicitly recorded or unavailable metadata.
 #[derive(Serialize)]
-#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
-enum Defined<T> {
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(
+    tag = "kind",
+    content = "value",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
+pub enum Defined<T> {
+    /// No recorded value is available.
     Unavailable,
+    /// Value supplied by the registered environment.
     Defined(T),
 }
 
+/// Spatial coverage of the shared physical wind provider.
 #[derive(Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-enum WindDomain {
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum WindDomain {
+    /// Spatially uniform wind.
     Uniform,
+    /// Closed bounds of the registered wind grid.
     Grid {
+        /// Minimum north/east/down coordinate in metres.
         minimum_ned_m: [f64; 3],
+        /// Maximum north/east/down coordinate in metres.
         maximum_ned_m: [f64; 3],
     },
 }
 
+/// Asset identity or implementation provenance of an environment definition.
 #[derive(Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-enum ContentHash {
-    AssetBytes { sha256: &'static str },
-    SourceFingerprint { sha256: String },
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ContentHash {
+    /// Exact registered JSON bytes.
+    AssetBytes {
+        /// SHA-256 digest of the immutable asset.
+        sha256: &'static str,
+    },
+    /// Shared provider implementation provenance.
+    SourceFingerprint {
+        /// SHA-256 fingerprint of the provider source.
+        sha256: String,
+    },
 }
 
+/// Representative values, spatial domain and source provenance of one provider.
 #[derive(Serialize)]
-pub(crate) struct EnvironmentMetadata {
-    name: String,
-    content_hash: ContentHash,
-    local_frame: Defined<LocalNedFrameDocument>,
-    wind_domain: WindDomain,
-    representative_position_ned_m: [f64; 3],
-    representative_altitude_m: f64,
-    representative_velocity_ned_mps: [f64; 3],
-    waves: WaveStateDocument,
-    sky: Defined<SkyStateDocument>,
-    sources: Vec<EnvironmentSourceDocument>,
-    ground_wind_normals: Vec<GroundWindNormalDocument>,
-    provenance: EnvironmentProvenanceDocument,
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct EnvironmentMetadata {
+    /// Registered human-readable environment name.
+    pub name: String,
+    /// Exact asset hash or implementation source fingerprint.
+    pub content_hash: ContentHash,
+    /// Recorded geographic origin and water reference.
+    pub local_frame: Defined<LocalNedFrameDocument>,
+    /// Physical wind coverage.
+    pub wind_domain: WindDomain,
+    /// Representative north/east/down position in metres.
+    pub representative_position_ned_m: [f64; 3],
+    /// Representative height above the fixed water plane in metres.
+    pub representative_altitude_m: f64,
+    /// Air velocity at the representative point in NED metres per second.
+    pub representative_velocity_ned_mps: [f64; 3],
+    /// Shared display-only wave conditions.
+    pub waves: WaveStateDocument,
+    /// Recorded sky conditions without renderer fallback values.
+    pub sky: Defined<SkyStateDocument>,
+    /// Registered data sources and notices.
+    pub sources: Vec<EnvironmentSourceDocument>,
+    /// Recorded ground-wind normal observations.
+    pub ground_wind_normals: Vec<GroundWindNormalDocument>,
+    /// Distinction between observed, derived, assumed and game-tuned values.
+    pub provenance: EnvironmentProvenanceDocument,
 }
 
 impl EnvironmentSnapshot {
-    pub(crate) fn encode(
-        context: EnvironmentContext,
-        projection: EnvironmentProjection,
-    ) -> Result<String, EnvironmentSnapshotError> {
-        serde_json::to_string(&Self {
+    fn new(context: EnvironmentContext, projection: EnvironmentProjection) -> Self {
+        Self {
             schema_version: 1,
             context,
             projection,
-        })
-        .map_err(|_| EnvironmentSnapshotError::EncodingFailed)
+        }
     }
 }
 
-pub(crate) fn for_identity_json(json: &[u8]) -> Result<String, EnvironmentSnapshotError> {
+/// Resolves an external, bounded complete identity without mutating a session.
+pub fn for_identity_json(json: &[u8]) -> Result<EnvironmentSnapshot, EnvironmentSnapshotError> {
     if json.len() > MAX_IDENTITY_JSON_BYTES {
         return Err(EnvironmentSnapshotError::InputTooLarge);
     }
@@ -145,10 +221,14 @@ pub(crate) fn for_identity_json(json: &[u8]) -> Result<String, EnvironmentSnapsh
         return Err(EnvironmentSnapshotError::InvalidIdentity);
     }
     let projection = for_identity(EnvironmentSource::Registry, identity)?;
-    EnvironmentSnapshot::encode(EnvironmentContext::Registry, projection)
+    Ok(EnvironmentSnapshot::new(
+        EnvironmentContext::Registry,
+        projection,
+    ))
 }
 
-pub(crate) fn for_identity(
+/// Resolves metadata only when every registered identity component matches.
+pub fn for_identity(
     source: EnvironmentSource,
     identity: EnvironmentIdentity,
 ) -> Result<EnvironmentProjection, EnvironmentSnapshotError> {
@@ -168,6 +248,47 @@ pub(crate) fn for_identity(
         identity,
         metadata: Box::new(metadata),
     })
+}
+
+/// Projects the selected or retained environment from one application session.
+pub fn for_session(
+    session: &ApplicationSession,
+) -> Result<EnvironmentSnapshot, EnvironmentSnapshotError> {
+    use birdman_game_core::SessionPhase;
+    let phase = session.core_session().snapshot().phase();
+    let projection = match phase {
+        SessionPhase::Title => EnvironmentProjection::NoSelection,
+        SessionPhase::FlightSetup => {
+            let selection = HybridSessionPreparation::select_scenario(
+                session.difficulty().weather(),
+                session.seed(),
+            )
+            .map_err(|_| EnvironmentSnapshotError::InvalidIdentity)?;
+            for_identity(
+                EnvironmentSource::Selected,
+                identity_for_selection(selection).into(),
+            )?
+        }
+        _ => {
+            let identity = session
+                .core_session()
+                .configuration_identity()
+                .ok_or(EnvironmentSnapshotError::MissingSessionIdentity)?;
+            let source = match phase {
+                SessionPhase::Replay if session.archive().is_some() => EnvironmentSource::Archive,
+                SessionPhase::Replay => EnvironmentSource::Record,
+                SessionPhase::Attract => EnvironmentSource::Attract,
+                _ => EnvironmentSource::Sealed,
+            };
+            for_identity(source, identity.into())?
+        }
+    };
+    Ok(EnvironmentSnapshot::new(
+        EnvironmentContext::Session {
+            phase: phase.into(),
+        },
+        projection,
+    ))
 }
 
 fn bundled_metadata() -> Result<EnvironmentMetadata, EnvironmentSnapshotError> {
@@ -278,7 +399,7 @@ mod tests {
 
     fn query(identity: EnvironmentIdentity) -> Value {
         let json = serde_json::to_vec(&identity).unwrap();
-        serde_json::from_str(&for_identity_json(&json).unwrap()).unwrap()
+        serde_json::to_value(for_identity_json(&json).unwrap()).unwrap()
     }
 
     #[test]
@@ -315,7 +436,7 @@ mod tests {
         assert_eq!(metadata["content_hash"]["kind"], "asset_bytes");
         assert_eq!(
             metadata["content_hash"]["sha256"],
-            birdman_game_session::record_archive::ENVIRONMENT_V6_SHA256
+            crate::record_archive::ENVIRONMENT_V6_SHA256
         );
         assert_eq!(
             metadata["wind_domain"]["minimum_ned_m"],
@@ -413,8 +534,8 @@ mod tests {
             b"{}".as_slice(),
         ] {
             assert_eq!(
-                for_identity_json(invalid),
-                Err(EnvironmentSnapshotError::InvalidJson)
+                for_identity_json(invalid).err(),
+                Some(EnvironmentSnapshotError::InvalidJson)
             );
         }
         let mut document = serde_json::to_value(identity(6)).unwrap();
@@ -423,31 +544,56 @@ mod tests {
                 .unwrap()
                 .replacen('{', "{\"catalog_version\":2,", 1);
         assert_eq!(
-            for_identity_json(duplicate.as_bytes()),
-            Err(EnvironmentSnapshotError::InvalidJson)
+            for_identity_json(duplicate.as_bytes()).err(),
+            Some(EnvironmentSnapshotError::InvalidJson)
         );
         for invalid in [json!(-1), json!(4_294_967_296_u64), json!(1.25), json!("1")] {
             document["seed_low"] = invalid;
             assert_eq!(
-                for_identity_json(&serde_json::to_vec(&document).unwrap()),
-                Err(EnvironmentSnapshotError::InvalidJson)
+                for_identity_json(&serde_json::to_vec(&document).unwrap()).err(),
+                Some(EnvironmentSnapshotError::InvalidJson)
             );
         }
         document["seed_low"] = json!(0);
         document["extra"] = json!(1);
         assert_eq!(
-            for_identity_json(&serde_json::to_vec(&document).unwrap()),
-            Err(EnvironmentSnapshotError::InvalidJson)
+            for_identity_json(&serde_json::to_vec(&document).unwrap()).err(),
+            Some(EnvironmentSnapshotError::InvalidJson)
         );
         document.as_object_mut().unwrap().remove("extra");
         document["environment_version"] = json!(0);
         assert_eq!(
-            for_identity_json(&serde_json::to_vec(&document).unwrap()),
-            Err(EnvironmentSnapshotError::InvalidIdentity)
+            for_identity_json(&serde_json::to_vec(&document).unwrap()).err(),
+            Some(EnvironmentSnapshotError::InvalidIdentity)
         );
         assert_eq!(
-            for_identity_json(&vec![b' '; 4_097]),
-            Err(EnvironmentSnapshotError::InputTooLarge)
+            for_identity_json(&vec![b' '; 4_097]).err(),
+            Some(EnvironmentSnapshotError::InputTooLarge)
         );
+    }
+
+    #[test]
+    fn shared_session_projection_uses_selected_then_sealed_identity_without_mutation() {
+        use crate::application::{ApplicationSession, BackendReadiness, SessionCommand};
+        let mut session = ApplicationSession::default();
+        let before = session.core_session().snapshot();
+        let snapshot = serde_json::to_value(super::for_session(&session).unwrap()).unwrap();
+        assert_eq!(snapshot["context"]["phase"], "title");
+        assert_eq!(snapshot["projection"]["kind"], "no_selection");
+        assert_eq!(session.core_session().snapshot(), before);
+        for (command, phase, source) in [
+            (SessionCommand::OpenSetup {}, "flight_setup", "selected"),
+            (SessionCommand::Prepare {}, "briefing_ready", "sealed"),
+            (SessionCommand::StartCountdown {}, "countdown", "sealed"),
+        ] {
+            session.execute(command, BackendReadiness::Ready).unwrap();
+            let before = session.core_session().snapshot();
+            let snapshot = serde_json::to_value(super::for_session(&session).unwrap()).unwrap();
+            assert_eq!(snapshot["context"]["phase"], phase);
+            assert_eq!(snapshot["projection"]["kind"], "available");
+            assert_eq!(snapshot["projection"]["source"], source);
+            assert_eq!(snapshot["projection"]["identity"]["environment_version"], 6);
+            assert_eq!(session.core_session().snapshot(), before);
+        }
     }
 }

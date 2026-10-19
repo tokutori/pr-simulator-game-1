@@ -41,6 +41,10 @@ pub fn export_game_ui_schema(name: &str) -> Result<String, String> {
     output.subschema_for::<birdman_game_format::TailSnapshotDocument<'_>>();
     output.subschema_for::<birdman_game_format::TailPreparedLaunchDocument<'_>>();
     output.subschema_for::<birdman_game_format::FlightRecordDifficultyDocument>();
+    output.subschema_for::<birdman_game_format::SessionLifecycleDocument>();
+    output.subschema_for::<birdman_game_format::TailControlProfileDocument>();
+    output.subschema_for::<crate::environment_snapshot::EnvironmentSnapshot>();
+    output.subschema_for::<birdman_game_format::FlightRenderPose>();
     let mut input = schemars::generate::SchemaSettings::draft2020_12()
         .for_deserialize()
         .into_generator();
@@ -76,9 +80,13 @@ pub fn export_game_ui_schema(name: &str) -> Result<String, String> {
         "record-analysis" => ("serialize", "AnalysisDocument"),
         "record-summary" => ("serialize", "SummaryDocument"),
         "record-wind" => ("serialize", "WindDocument"),
+        "lifecycle" => ("serialize", "SessionLifecycleDocument"),
+        "tail-profile" => ("serialize", "TailControlProfileDocument"),
+        "runtime-environment" => ("serialize", "EnvironmentSnapshot"),
+        "flight-render-pose" => ("serialize", "FlightRenderPose"),
         _ => {
             return Err(
-                "schema must be bundle, view, action, input, effects, frame, screen-render-auto, replay-camera, tail-input, tail-snapshot, tail-prepared, record-context, record-sample, record-analysis, record-summary or record-wind"
+                "schema must be bundle, view, action, input, effects, frame, screen-render-auto, replay-camera, tail-input, tail-snapshot, tail-prepared, record-context, record-sample, record-analysis, record-summary, record-wind, lifecycle, tail-profile, runtime-environment or flight-render-pose"
                     .to_owned(),
             );
         }

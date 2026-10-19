@@ -7,13 +7,21 @@ mod environment;
 mod flight_record;
 mod personal_best;
 mod personal_best_metadata;
+mod render_pose;
 mod tail_input;
 mod tail_snapshot;
 
+pub use render_pose::{
+    FlightRenderPose, RenderAttitude, RenderGeometryUnavailable, RenderNedVector,
+    RenderTailControls, RenderTailGeometry, RenderTailGeometryValue, RenderTailIncidence,
+};
+
 pub use tail_input::{TAIL_INPUT_SCHEMA_VERSION, TailControlLayoutDocument, TailInputDocument};
 pub use tail_snapshot::{
-    EnvironmentIdentity, TailFrameDocument, TailPreparedLaunchDocument, TailPreparedLaunchFrame,
-    TailProgressDocument, TailSnapshotDocument, TailStateDocument, TailTelemetryDocument,
+    EnvironmentIdentity, SessionLifecycleDocument, SessionPhaseDocument, TailControlAxesDocument,
+    TailControlProfileDocument, TailFrameDocument, TailPreparedLaunchDocument,
+    TailPreparedLaunchFrame, TailProgressDocument, TailSnapshotDocument, TailStateDocument,
+    TailTelemetryDocument,
 };
 
 pub use environment::{

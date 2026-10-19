@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import shoreline from "../../assets/biwa-shoreline.json";
 import terrain from "../../assets/biwa-terrain.json";
 import { recordedCameraFixture } from "./recorded-camera-fixture.js";
+import { currentFlightPoseFixture } from "../game-check/current-session-fixture.js";
 import "./lake-model-fixture.js";
 import { pilotEyePoseThree, syntheticPilotEyePoint } from "../../web/src/render/camera/pilot-eye-point.js";
 import { IDENTITY_POSE, composePose, multiplyQuaternion, quaternion } from "../../web/src/render/contracts/math.js";
@@ -86,8 +87,9 @@ function pilotCameraForFlight(
     quaternion(Math.cos(roll / 2), Math.sin(roll / 2), 0, 0)
   );
   const flight: FlightRenderPose = {
+    ...currentFlightPoseFixture(),
     datumPositionNed: { north, east, down: -height },
-    attitudeBodyToNed: bodyToNed,
+    attitudeBodyToNed: { ...bodyToNed },
     pilotPositionMeters: 0,
     initialPilotPositionMeters: 0
   };

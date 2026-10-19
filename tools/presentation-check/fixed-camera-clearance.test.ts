@@ -1,9 +1,9 @@
 import { Mesh, Raycaster, Vector3 } from "three";
 import { describe, expect, it } from "vitest";
 import analysisMap from "../../assets/biwa-analysis-map.json";
-import { HybridGameSessionBridge, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
-import { TailAppSessionFacade } from "../../web/src/app/session-facade.js";
-import { encodeTailLogicalInput } from "../../web/src/game/tail-session-codec.js";
+import { physics_hz } from "../../web/pkg/birdman_game_wasm.js";
+import { createAppSession } from "../../web/src/app/session-factory.js";
+import { launchCurrentSession, neutralTailInput } from "../game-check/current-session-fixture.js";
 import { venueTerrainMeshes } from "../../web/src/render/engines/three/lake-venue-mesh.js";
 import "./lake-model-fixture.js";
 
@@ -54,23 +54,16 @@ describe("registered fixed camera terrain clearance", () => {
   }, 20_000);
 
   it("keeps shared fixed views clear at the start, middle, and terminal of a real default flight", () => {
-    const bridge = new HybridGameSessionBridge(0, 21, 22);
-    const session = new TailAppSessionFacade(bridge, physics_hz());
+    const session = createAppSession({ controlModeCode: 0, seedLow: 21, seedHigh: 22 });
     const mesh = regionalTerrain();
     try {
-      bridge.open_setup();
-      bridge.prepare();
-      bridge.mark_briefing_ready();
-      bridge.start_countdown(1);
-      bridge.observe_countdown(bridge.countdown_token(), 1, true);
-      const neutral = encodeTailLogicalInput({ controlLayout: "tail_incidence", noseUp: 0, turnRight: 0,
-        desiredPitchRateRadiansPerSecond: 0, desiredYawRateRadiansPerSecond: 0, pilotPositionCommand: { kind: "hold" } });
-      for (let tick = 0; tick < physics_hz() * 60 && bridge.phase_code() === 5; tick++) bridge.advance_tick_json(neutral);
-      expect(bridge.phase_code()).toBe(7);
+      launchCurrentSession(session);
+      for (let tick = 0; tick < physics_hz() * 60 && session.readSnapshot().phase === "flight_running"; tick++) session.flightPort.advanceTick(neutralTailInput);
+      expect(session.readSnapshot().phase).toBe("result");
       session.executeSharedSessionCommand({ kind: "enter_replay" });
       const dataset = session.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
-      expect(dataset.summary.durationSeconds).toBeGreaterThan(10);
-      for (const time of [0, dataset.summary.durationSeconds / 2, dataset.summary.durationSeconds]) {
+      expect(dataset.summary.summary.duration_seconds).toBeGreaterThan(10);
+      for (const time of [0, dataset.summary.summary.duration_seconds / 2, dataset.summary.summary.duration_seconds]) {
         for (const camera of ["shore", "telephoto"] as const) {
           const pose = session.queryReplayCamera(time, camera, true, dataset);
           const cinematic = pose.replayCamera.cinematic;

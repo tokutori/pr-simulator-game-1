@@ -1,18 +1,10 @@
 import type { ScreenRenderAutoSnapshot } from "../../generated/screen-render-auto.js";
-import { validateScreenRenderAutoSnapshot } from "../../generated/game-ui-validators.js";
 import type { LakeWaterQuality } from "./lake-water.js";
 import type { GameScene } from "./ui.js";
-
-export function parseScreenRenderAutoSnapshot(json: string): ScreenRenderAutoSnapshot {
-  const snapshot: unknown = JSON.parse(json);
-  if (!validateScreenRenderAutoSnapshot(snapshot)) throw new Error("Invalid shared Screen Auto snapshot");
-  return snapshot;
-}
 
 export type ScreenRenderInvalidation = "resize" | "backend_changed" | "context_restored" | "disjoint" | "interrupted" | "quality_changed" | "scene_preparation";
 
 export interface ScreenRenderAutoPolicy {
-  snapshot_json(): string;
   epoch(): number;
   measurement_enabled(): boolean;
   set_scene(scene: GameScene, now: number): void;
@@ -34,6 +26,7 @@ export interface ScreenRenderAutoPolicy {
 
 export interface ScreenRenderAutoBinding {
   readonly policy: ScreenRenderAutoPolicy;
+  readonly snapshot: () => ScreenRenderAutoSnapshot;
   readonly scene: () => GameScene;
   readonly onSnapshot: (snapshot: ScreenRenderAutoSnapshot) => void;
 }

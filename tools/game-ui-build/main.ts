@@ -18,7 +18,7 @@ const exporter = spawnSync("cargo", ["run", "-p", "birdman-game-cli", "--locked"
 });
 if (exporter.error !== undefined) throw exporter.error;
 if (exporter.status !== 0) throw new Error(`Game UI schema exporter exited with status ${String(exporter.status)}`);
-const files = await generateGameUiFiles(parseSchemaBundle(exporter.stdout), root);
+const files = await generateGameUiFiles(parseSchemaBundle(exporter.stdout));
 const stale: string[] = [];
 for (const file of files) {
   const filename = resolve(root, file.path);

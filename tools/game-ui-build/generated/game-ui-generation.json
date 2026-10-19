@@ -1,13 +1,11 @@
 {
   "schemaVersion": 2,
   "generators": {
-    "ajv": "8.20.0",
     "jsonSchemaToTypescript": "16.0.0",
-    "esbuild": "0.28.2",
     "typescript": "5.9.3"
   },
   "sources": {
-    "serialize": "6d153a4d4bef6b8c0a5e625e05c24142fbe867769adfd55cc429c8d964ba38b1",
+    "serialize": "5a5685331c06ddc275a5551c423170b8b07e2e0fe0d6ff5314fea9d5a3232d89",
     "deserialize": "db6c2dc23a372758d450d711b43a2fcac964b3909ce023fbbe0223212570d132"
   }
 }

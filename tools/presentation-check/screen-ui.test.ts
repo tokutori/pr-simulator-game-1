@@ -280,7 +280,7 @@ describe("screen UI DOM patching", () => {
     Reflect.deleteProperty(globalThis, "document");
   });
 
-  it.each([7, 9])("projects shared initial and frame range text without rounding the seek in phase %s", async (phase) => {
+  it.each(["result", "replay"] as const)("projects shared initial and frame range text without rounding the seek in phase %s", async (phase) => {
     const window = new Window();
     Object.assign(globalThis, { window, document: window.document });
     const { ScreenUiAdapter } = await import("../../web/src/presentation/screen-ui.js");
@@ -288,11 +288,11 @@ describe("screen UI DOM patching", () => {
     const root = documentRef.createElement("main");
     documentRef.body.append(root);
     const adapter = new ScreenUiAdapter(root, () => undefined);
-    const seekKind = phase === 7 ? "seek_analysis" : "seek_replay";
-    const id = phase === 7 ? "game-analysis-cursor" : "game-replay-cursor";
+    const seekKind = phase === "result" ? "seek_analysis" : "seek_replay";
+    const id = phase === "result" ? "game-analysis-cursor" : "game-replay-cursor";
     try {
       withSharedGameUiSession(phase, { ticks: 30, actions: [
-        phase === 7 ? { kind: "set_result_tab", tab: "analysis" } : { kind: "set_replay_view", view: "telemetry" },
+        phase === "result" ? { kind: "set_result_tab", tab: "analysis" } : { kind: "set_replay_view", view: "telemetry" },
         { kind: seekKind, time_seconds: 0.25 }
       ] }, (session, platform) => {
         const initial = session.readSharedUi(platform);
@@ -394,10 +394,10 @@ describe("screen UI DOM patching", () => {
   });
 
   it.each([
-    { scene: "Result", phase: 7, width: 1280, height: 720 },
-    { scene: "Result", phase: 7, width: 360, height: 300 },
-    { scene: "Replay", phase: 9, width: 1280, height: 720 },
-    { scene: "Replay", phase: 9, width: 360, height: 300 }
+    { scene: "Result", phase: "result", width: 1280, height: 720 },
+    { scene: "Result", phase: "result", width: 360, height: 300 },
+    { scene: "Replay", phase: "replay", width: 1280, height: 720 },
+    { scene: "Replay", phase: "replay", width: 360, height: 300 }
   ] as const)("projects shared $scene analysis rows and focusable controls at $width x $height", async ({ scene, phase, width, height }) => {
     const window = new Window({ width, height });
     Object.assign(globalThis, { window, document: window.document });
@@ -488,7 +488,7 @@ describe("screen UI DOM patching", () => {
       const EventConstructor = window.Event as unknown as typeof Event;
       for (const [width, height] of [[360, 300], [800, 600], [1280, 720], [360, 300]] as const) {
         window.happyDOM.setViewport({ width, height });
-        const shared = currentSharedGameUiFixture(9, {
+        const shared = currentSharedGameUiFixture("replay", {
           ticks: 20,
           platform: { viewport: { width, height, root_font_size: 16 } },
           actions: [{ kind: "set_replay_view", view: replayView }]
@@ -569,7 +569,7 @@ describe("screen UI DOM patching", () => {
       const adapter = new ScreenUiAdapter(root, action => actions.push(action));
       for (const [width, height] of [[1280, 720], [360, 300], [1280, 720]] as const) {
         window.happyDOM.setViewport({ width, height });
-        const shared = currentSharedGameUiFixture(7, {
+        const shared = currentSharedGameUiFixture("result", {
           ticks: 20,
           platform: { viewport: { width, height, root_font_size: 16 } },
           actions: technicalOpen ? [{ kind: "toggle_technical" }] : []
@@ -612,7 +612,7 @@ describe("screen UI DOM patching", () => {
       const actions: unknown[] = [];
       const adapter = new ScreenUiAdapter(root, action => actions.push(action));
       let returnButton: HTMLButtonElement | null = null;
-      withSharedGameUiSession(10, {}, (session, platform) => {
+      withSharedGameUiSession("attract", {}, (session, platform) => {
         const clock = session.readPlaybackClock();
         for (const [width, height] of [[1280, 720], [360, 300], [1280, 720]] as const) {
           window.happyDOM.setViewport({ width, height });
@@ -678,7 +678,7 @@ describe("screen UI DOM patching", () => {
       for (const informationCode of [0, 2] as const) {
         for (const [width, height] of [[360, 300], [1280, 720], [360, 300], [800, 600]] as const) {
           window.happyDOM.setViewport({ width, height });
-          const shared = currentSharedGameUiFixture(6, {
+          const shared = currentSharedGameUiFixture("flight_paused", {
             informationCode,
             platform: { viewport: { width, height, root_font_size: 16 } },
             ...(overlay === "menu" ? {} : { actions: [{ kind: "set_pause_overlay", overlay }] })
@@ -831,7 +831,7 @@ describe("screen UI DOM patching", () => {
 });
 
 function analysisChart(chart_extent: GameUiPlatformInput["chart_extent"] = null): Extract<UiViewModel["panels"][number]["controls"][number], { kind: "chart" }> {
-  const view = createGameViewModel(currentSharedGameUiFixture(7, { ticks: 20, platform: { chart_extent }, actions: [
+  const view = createGameViewModel(currentSharedGameUiFixture("result", { ticks: 20, platform: { chart_extent }, actions: [
     { kind: "set_result_tab", tab: "analysis" }, { kind: "set_analysis_chart", chart: "altitude" }
   ] }));
   const chart = view.panels.flatMap((panel) => panel.controls).find((control) => control.kind === "chart");

@@ -6,9 +6,14 @@ import type { LakeVisualCondition, LakeWaterQuality } from "./lake-water.js";
 import type { LakeSkyCondition } from "./lake-sky.js";
 import type { HeadHudFrame } from "./head-hud.js";
 import type { ViewerFrame, ViewerGeometryUnavailableReason } from "./viewer-frame.js";
-import type { TailPhysicalFlightControls, TailPresentationGeometryAvailability } from "./flight-controls.js";
+import type { FlightRenderPose } from "../../generated/flight-render-pose.js";
+export type { FlightRenderPose } from "../../generated/flight-render-pose.js";
 
 export type PresentationMode = "screen" | "webxr" | "phone-vr";
+
+export type DisplayAvailability<Value, Reason extends string> =
+  | Readonly<{ kind: "available"; value: Value }>
+  | Readonly<{ kind: "unavailable"; reason: Reason }>;
 
 export interface ViewportSize extends Vec2 {
   readonly pixelRatio: number;
@@ -48,23 +53,6 @@ export type PanelFrame =
   | { readonly kind: "visible"; readonly panel: UiPanel; readonly pose: Pose; readonly cursor: PanelCursor | null }
   | { readonly kind: "unavailable"; readonly reason: PanelUnavailableReason };
 
-interface FlightRenderPoseBase {
-  readonly datumPositionNed: Readonly<{ north: number; east: number; down: number }>;
-  readonly attitudeBodyToNed: Readonly<{ w: number; x: number; y: number; z: number }>;
-  readonly pilotPositionMeters: number;
-  readonly initialPilotPositionMeters: number;
-  /** Simulation clock, used by render-only environmental animation. */
-  readonly simulationTimeSeconds?: number;
-  /** Render-only wing flex proxy; does not affect the simulated aerodynamic model. */
-  readonly airspeedMetersPerSecond?: number | null;
-  /** Instantaneous scenario wind in NED, kept separate from the stable visual wave state. */
-  readonly windVelocityNedMetersPerSecond?: Readonly<{ north: number; east: number }> | null;
-}
-
-export type FlightRenderPose = FlightRenderPoseBase & (
-  | Readonly<{ controls?: never; tailGeometry?: never }>
-  | Readonly<{ controls: TailPhysicalFlightControls; tailGeometry: TailPresentationGeometryAvailability }>
-);
 
 export type FlightCameraMode = "pilot" | "chase" | "orbit" | "platform" | "shore" | "overhead" | "side" | "front" | "telephoto";
 

@@ -22,14 +22,14 @@ describe("shared elapsed Countdown through generated WASM and the application ow
       const metadata = bridge.configuration_metadata();
       const token = session.captureCountdownToken();
       expect(session.observeCountdown(token, 0.8, true)).toEqual({ kind: "waiting", remainingSeconds: 3 });
-      expect(session.readLifecycle().countdownRemainingSeconds).toBe(3);
+      expect(session.readLifecycle().countdown_remaining_seconds).toBe(3);
       expect(session.observeCountdown(token, 0.8, true)).toEqual({ kind: "ignored" });
       expect(observe).toHaveBeenCalledTimes(1);
       expect(session.observeCountdown(session.captureCountdownToken(), 0, true)).toEqual({ kind: "waiting", remainingSeconds: 3 });
       expect(session.observeCountdown(session.captureCountdownToken(), 0.2, true)).toEqual({ kind: "waiting", remainingSeconds: 2 });
       const finalToken = session.captureCountdownToken();
       expect(session.observeCountdown(finalToken, 2, true)).toEqual({ kind: "launched" });
-      expect(session.readLifecycle().phaseCode).toBe(5);
+      expect(session.readLifecycle().phase).toBe("flight_running");
       const initial = bridge.snapshot_json();
       expect(session.observeCountdown(finalToken, 2, true)).toEqual({ kind: "ignored" });
       expect(session.captureCountdownToken()).toBeNull();
@@ -50,7 +50,7 @@ describe("shared elapsed Countdown through generated WASM and the application ow
         expect(bridge.prepared_launch_snapshot_json()).toBe(prepared);
       }
       for (const elapsed of [0.15, 0.65, 0, 0.2, 1.75]) session.observeCountdown(session.captureCountdownToken(), elapsed, true);
-      expect(session.readLifecycle().countdownRemainingSeconds).toBe(1);
+      expect(session.readLifecycle().countdown_remaining_seconds).toBe(1);
       expect(session.observeCountdown(session.captureCountdownToken(), 0.25, true)).toEqual({ kind: "launched" });
     } finally { session.dispose(); }
   });
@@ -70,7 +70,7 @@ describe("shared elapsed Countdown through generated WASM and the application ow
       expect(current.session.observeCountdown(obsolete, 3, true)).toEqual({ kind: "ignored" });
       expect(current.session.observeCountdown(other.session.captureCountdownToken(), 3, true)).toEqual({ kind: "ignored" });
       expect(current.bridge.snapshot_json()).toBe(before);
-      expect(current.session.readLifecycle().countdownRemainingSeconds).toBe(3);
+      expect(current.session.readLifecycle().countdown_remaining_seconds).toBe(3);
     } finally { current.session.dispose(); other.session.dispose(); }
   });
 
@@ -81,7 +81,7 @@ describe("shared elapsed Countdown through generated WASM and the application ow
       expect(session.observeCountdown(session.captureCountdownToken(), 1, true)).toEqual({ kind: "waiting", remainingSeconds: 2 });
       const obsolete = bridge.countdown_token();
       expect(session.observeCountdown(session.captureCountdownToken(), 2, false)).toEqual({ kind: "cancelled" });
-      expect(session.readLifecycle().phaseCode).toBe(3);
+      expect(session.readLifecycle().phase).toBe("briefing_ready");
       expect(bridge.configuration_metadata()).toEqual(metadata);
       expect(bridge.observe_countdown(obsolete, 3, true)).toBe(0);
       session.executeSharedSessionCommand({ kind: "start_countdown" });

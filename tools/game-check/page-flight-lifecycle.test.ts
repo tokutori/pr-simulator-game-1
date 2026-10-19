@@ -5,10 +5,17 @@ import { describe, expect, it, vi } from "vitest";
 import { HybridGameSessionBridge, initSync, maximum_flight_frame_gap_milliseconds, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
 import { installBrowserPageLifecycle } from "../../web/src/app/browser-page-lifecycle.js";
 import { TailFlightController } from "../../web/src/game/tail-flight-controller.js";
-import { parseTailSessionSnapshot } from "../../web/src/game/tail-session-codec.js";
+import { TailAppSessionFacade } from "../../web/src/app/session-facade.js";
+import type { SessionLifecycleDocument } from "../../web/src/generated/session-lifecycle.js";
+import { readContract } from "../game-ui-build/validate.js";
 import { suspendPageFlight } from "../../web/src/game/page-flight-lifecycle.js";
 
 const wasmPath = fileURLToPath(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url));
+
+function pagePort(session: HybridGameSessionBridge) {
+  return { phase: () => readContract<SessionLifecycleDocument>("lifecycle", session.lifecycle_snapshot_json()).phase,
+    cancel_countdown: () => { session.cancel_countdown(); }, pause: (reason: number) => { session.pause(reason); } };
+}
 
 function preparedSession(): HybridGameSessionBridge {
   initSync({ module: new Uint8Array(readFileSync(wasmPath)) });
@@ -26,8 +33,9 @@ describe("browser cache to Rust session boundary", () => {
     const session = preparedSession();
     session.observe_countdown(session.countdown_token(), 1, true);
     const free = vi.spyOn(session, "free");
+    const facade = new TailAppSessionFacade(session, physics_hz());
     const readState = () => {
-      const snapshot = parseTailSessionSnapshot(session.snapshot_json(), physics_hz());
+      const snapshot = facade.readSnapshot();
       if (snapshot.frame.kind !== "flight") throw new Error("Expected a retained current flight state");
       return snapshot.frame.state;
     };
@@ -35,12 +43,12 @@ describe("browser cache to Rust session boundary", () => {
       readDemand: () => ({ controlLayout: "tail_incidence" as const, noseUp: 0, turnRight: 0, pilotPositionCommand: { kind: "hold" as const } }),
       reset() {}, suspend() {}, resume() {}, dispose() {}
     };
-    const controller = new TailFlightController(session, input, { setFlightPose() {} }, {
+    const controller = new TailFlightController(facade.flightPort, input, { setFlightPose() {} }, {
       render() {}, setVisible() {}, fail(message) { throw new Error(message); }
     }, physics_hz(), maximum_flight_frame_gap_milliseconds(), () => []);
     const synchronize = vi.fn();
     installBrowserPageLifecycle(window as unknown as Window, {
-      suspend: () => { suspendPageFlight(session, controller, synchronize); },
+      suspend: () => { suspendPageFlight(pagePort(session), controller, synchronize); },
       restore: () => { session.clear_pause_reason(1); synchronize(); },
       dispose: () => { controller.dispose(); }
     });
@@ -55,10 +63,10 @@ describe("browser cache to Rust session boundary", () => {
       for (let roundTrip = 0; roundTrip < 2; roundTrip += 1) {
         const before = readState();
         event("pagehide", true);
-        expect(session.phase_code()).toBe(6);
+        expect(pagePort(session).phase()).toBe("flight_paused");
         controller.onFrame(40_000 + roundTrip * 50_000);
         event("pageshow", true);
-        expect(session.phase_code()).toBe(6);
+        expect(pagePort(session).phase()).toBe("flight_paused");
         expect(session.can_resume()).toBe(false);
         controller.onFrame(40_010 + roundTrip * 50_000);
         expect(session.can_resume()).toBe(true);
@@ -88,7 +96,7 @@ describe("browser cache to Rust session boundary", () => {
     const token = session.countdown_token();
     const synchronize = vi.fn();
     installBrowserPageLifecycle(window as unknown as Window, {
-      suspend: () => { suspendPageFlight(session, null, synchronize); },
+      suspend: () => { suspendPageFlight(pagePort(session), null, synchronize); },
       restore: synchronize,
       dispose: () => { session.free(); }
     });
@@ -96,7 +104,7 @@ describe("browser cache to Rust session boundary", () => {
       const event = new window.Event("pagehide");
       Object.defineProperty(event, "persisted", { value: true });
       window.dispatchEvent(event);
-      expect(session.phase_code()).toBe(3);
+      expect(pagePort(session).phase()).toBe("briefing_ready");
       expect(synchronize).toHaveBeenCalledOnce();
       expect(session.observe_countdown(token, 1, true)).toBe(0);
     } finally {

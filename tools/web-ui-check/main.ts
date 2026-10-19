@@ -6,9 +6,13 @@ import { resolve } from "node:path";
 import { transform } from "esbuild";
 import { chromium } from "playwright-core";
 import type { Browser } from "playwright-core";
+import type { GameUiView } from "../../web/src/generated/game-ui-view.js";
 
 declare global {
-  interface Window { __uiPauseEvents: readonly { at: number; reason: number }[] }
+  interface Window {
+    __uiPauseEvents: readonly { at: number; reason: number }[];
+    __uiViewJson: string | null;
+  }
 }
 
 const [address, destination] = process.argv.slice(2);
@@ -41,6 +45,40 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
   const click = async (id: string) => { await control(id).scrollIntoViewIfNeeded(); await control(id).click(); };
   const scene = async (name: string) => page.waitForFunction(expected => document.querySelector(".screen-ui-shell")?.getAttribute("data-scene") === expected, name);
   const screenshot = async (name: string) => page.screenshot({ path: resolve(output, `${name}.png`) });
+  const noEmptyLabelPrefix = async () => {
+    const values = await page.locator(".screen-ui-status, .flight-hud output").allTextContents();
+    assert.deepEqual(values.filter(value => /^\s*[:：]/u.test(value)), [], "An empty label must not add a leading colon");
+  };
+  const creditsScroll = async (phase: "title" | "flight_paused", image: string) => {
+    await page.setViewportSize({ width: 360, height: 240 });
+    const shell = page.locator(".screen-ui-shell");
+    const original = await shell.elementHandle();
+    assert.ok(original !== null);
+    try {
+      const before = await shell.evaluate(node => { node.scrollTop = 120; return node.scrollTop; });
+      assert.ok(before > 0, "Credits entry must start from a genuinely scrolled menu");
+      await control("game-credits-open").dispatchEvent("click");
+      await control("game-credits-close").waitFor({ state: "visible" });
+      assert.equal(await shell.getAttribute("data-overlay"), "Credits");
+      assert.equal(await shell.evaluate(node => node.scrollTop), 0);
+      await noEmptyLabelPrefix();
+      await screenshot(image);
+      const retained = await shell.evaluate(async node => {
+        node.scrollTop = 120;
+        const before = node.scrollTop;
+        await new Promise<void>(complete => { requestAnimationFrame(() => { requestAnimationFrame(() => { complete(); }); }); });
+        return { before, after: node.scrollTop };
+      });
+      assert.ok(retained.before > 0, "Credits must contain scrollable content");
+      assert.equal(retained.after, retained.before, "The same Credits scope must preserve scroll across frames");
+      await control("game-credits-close").dispatchEvent("click");
+      await control("game-credits-open").waitFor({ state: "visible" });
+      assert.equal(await shell.evaluate(node => node.scrollTop), 0);
+      assert.equal(await original.evaluate(node => node === document.querySelector(".screen-ui-shell")), true);
+      assert.equal(await page.evaluate(() => window.__liveAuto.phase), phase);
+      return { phase, before, retained };
+    } finally { await original.dispose(); }
+  };
   const download = async (format: "csv" | "json", prefix: string) => {
     const [file] = await Promise.all([page.waitForEvent("download"), click(`game-flight-log-${format}`)]);
     assert.equal(await file.failure(), null);
@@ -88,6 +126,15 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
         if (typeof args[0] === "number" && events.length < 16) events.push({ at: performance.now(), reason: args[0] });
         return returned;
       } });
+      const viewDescriptor = Object.getOwnPropertyDescriptor(prototype, "game_ui_view_json");
+      if (viewDescriptor === undefined || typeof viewDescriptor.value !== "function") throw new Error("Production shared UI projection is unavailable");
+      const readView = viewDescriptor.value as (...args: unknown[]) => unknown;
+      window.__uiViewJson = null;
+      Object.defineProperty(prototype, "game_ui_view_json", { ...viewDescriptor, value(this: unknown, ...args: unknown[]): unknown {
+        const returned: unknown = Reflect.apply(readView, this, args);
+        if (typeof returned === "string") window.__uiViewJson = returned;
+        return returned;
+      } });
     }, moduleUrl);
     report.environment = await page.evaluate(() => {
       const gl = document.querySelector<HTMLCanvasElement>(".presentation-canvas")?.getContext("webgl2");
@@ -98,12 +145,13 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
       return { renderer, userAgent: navigator.userAgent, focused: document.hasFocus(), visibility: document.visibilityState };
     });
     await screenshot("00-title");
+    report.creditsScroll = [await creditsScroll("title", "00-credits")];
+    await page.setViewportSize({ width: 1280, height: 720 });
     await click("game-credits-open");
     await page.getByRole("heading", { name: "クレジット・利用条件", exact: true }).waitFor({ state: "visible" });
     for (const source of ["osm", "jaxa", "copernicus", "jma", "font", "earcut", "ryu", "time"]) {
       assert.ok(await page.locator(`#game-credits-${source}`).count() > 0, `Missing credit: ${source}`);
     }
-    await screenshot("00-credits");
     await click("game-credits-close");
     await page.setViewportSize({ width: 360, height: 640 });
     await click("game-title-start");
@@ -132,6 +180,42 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
       return invalid;
     });
     assert.deepEqual(overflowing, []);
+    await noEmptyLabelPrefix();
+    report.vrChoiceLayout = await page.evaluate(async addresses => {
+      if (window.__uiViewJson === null) throw new Error("The production shared Setup View was not captured");
+      const shared = JSON.parse(window.__uiViewJson) as GameUiView;
+      if (shared.scene !== "FlightSetup") throw new Error("VR text projection requires the current shared Setup View");
+      const viewModule = await import(addresses.view) as typeof import("../../web/src/app/game-view.js");
+      const layoutModule = await import(addresses.layout) as typeof import("../../web/src/presentation/menu-layout.js");
+      const canvasModule = await import(addresses.canvas) as typeof import("../../web/src/presentation/menu-canvas.js");
+      const panel = viewModule.createGameViewModel(shared).panels[0];
+      if (panel === undefined) throw new Error("Missing shared Setup panel");
+      const request = layoutModule.requestMenuLayout(panel, panel.size, { theme: shared.theme, fontMeters: 0.04,
+        font: { family: "system-ui, sans-serif", weight: 600, style: "normal", generation: 0 },
+        locale: "ja", previousLabel: "前頁", nextLabel: "次頁", caption: shared.description });
+      const size = canvasModule.menuCanvasSize(panel.size);
+      const canvas = document.createElement("canvas");
+      canvas.width = size.width; canvas.height = size.height;
+      const context = canvas.getContext("2d");
+      if (context === null) throw new Error("Browser Canvas measurement is unavailable");
+      const measured = canvasModule.measureMenuLayout(canvasModule.browserMenuContext(context), request, size.width, size.height);
+      if (measured.kind !== "ready") throw new Error(measured.reason);
+      const layout = layoutModule.layoutMeasuredMenu(request, measured.measurements);
+      if (layout.kind !== "ready") throw new Error(layout.reason);
+      const choices = layout.document.controls.filter(node => node.control.kind === "button"
+        && node.control.presentation?.kind === "choice" && node.control.presentation.description.length === 0);
+      if (choices.length === 0) throw new Error("Missing empty-description choices");
+      for (const choice of choices) {
+        const label = choice.texts.find(text => text.request.slot.kind === "control" && text.request.slot.role === "label");
+        if (label === undefined || label.request.value.endsWith("\n") || label.lines.some(line => line.value.length === 0)) {
+          throw new Error("An empty choice description added a VR label line");
+        }
+        const expected = label.lines.length * request.lineHeightMeters + request.paddingMeters * 2;
+        if (Math.abs(choice.bounds.height - expected) > 1e-10) throw new Error("An empty choice description added VR height");
+      }
+      return { emptyDescriptions: choices.length, measuredIn: "production VR Menu layout and browser Canvas" };
+    }, { view: new URL("../src/app/game-view.ts", moduleUrl).href,
+      layout: new URL("../src/presentation/menu-layout.ts", moduleUrl).href, canvas: new URL("../src/presentation/menu-canvas.ts", moduleUrl).href });
     report.portraitViewport = { width: 360, height: 640, selectedDescriptions };
     await screenshot("01-setup-portrait");
     await page.setViewportSize({ width: 1280, height: 720 });
@@ -140,6 +224,7 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
     await scene("Briefing");
     const briefingConditions = await page.locator("#game-briefing-conditions").innerText();
     const briefingWeather = await page.locator("#game-weather-conditions").innerText();
+    await noEmptyLabelPrefix();
     assert.doesNotMatch(await page.locator(".screen-ui-shell").innerText(), /N\/E\/D|未定義|incidence|Synthetic|Seed:|Catalog:/);
     assert.equal(await control("game-briefing-technical").getAttribute("aria-expanded"), "false");
     await click("game-briefing-technical");
@@ -155,15 +240,15 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
     checks.push("Setup direct choices and actual weather; Briefing initially closed and expandable provenance");
     await click("game-briefing-start");
     await scene("Flight");
-    await page.waitForFunction(() => window.__liveAuto.phase === 6 || window.__liveAuto.phase === 5 && (window.__liveAuto.tick ?? 0) >= 10);
-    if (await page.evaluate(() => window.__liveAuto.phase) === 6) {
+    await page.waitForFunction(() => window.__liveAuto.phase === "flight_paused" || window.__liveAuto.phase === "flight_running" && (window.__liveAuto.tick ?? 0) >= 10);
+    if (await page.evaluate(() => window.__liveAuto.phase) === "flight_paused") {
       report.startupPause = await page.evaluate(() => ({ tick: window.__liveAuto.tick,
         snapshotJson: window.__liveAuto.snapshotJson, pauseEvents: window.__uiPauseEvents,
         text: document.querySelector(".screen-ui-shell")?.textContent }));
       findings.push("Flight suspended before the initial Running observation; continued once through the public Resume action");
       await click("game-flight-resume");
     }
-    await page.waitForFunction(() => window.__liveAuto.phase === 5 && (window.__liveAuto.tick ?? 0) >= 10);
+    await page.waitForFunction(() => window.__liveAuto.phase === "flight_running" && (window.__liveAuto.tick ?? 0) >= 10);
     const hud = page.locator('.flight-hud[aria-hidden="false"]');
     await hud.waitFor({ state: "visible" });
     const kinds = await hud.locator("[data-kind]").evaluateAll(nodes => [...new Set(nodes.map(node => node.getAttribute("data-kind")))]);
@@ -171,19 +256,18 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
     assert.ok(await hud.locator("output").count() > 0);
     assert.equal(await hud.locator("a, details").count(), 0);
     assert.doesNotMatch(await hud.innerText(), /緯度|経度|実機構成は未確認|incidence|intent|Hold|PILOT TARGET|COPERNICUS/);
+    await noEmptyLabelPrefix();
     report.hudKinds = kinds;
     await click("game-flight-pause");
-    await page.waitForFunction(() => window.__liveAuto.phase === 6);
+    await page.waitForFunction(() => window.__liveAuto.phase === "flight_paused");
     await screenshot("03-paused-hud");
     const pausedTick = await page.evaluate(() => window.__liveAuto.tick);
-    await click("game-credits-open");
-    await page.getByRole("heading", { name: "クレジット・利用条件", exact: true }).waitFor({ state: "visible" });
-    assert.equal(await page.evaluate(() => window.__liveAuto.phase), 6);
+    report.pausedCreditsScroll = await creditsScroll("flight_paused", "03-paused-credits");
+    await page.setViewportSize({ width: 1280, height: 720 });
+    assert.equal(await page.evaluate(() => window.__liveAuto.phase), "flight_paused");
     assert.equal(await page.evaluate(() => window.__liveAuto.tick), pausedTick);
-    await screenshot("03-paused-credits");
-    await click("game-credits-close");
     await click("game-flight-resume");
-    await page.waitForFunction(() => window.__liveAuto.phase === 5);
+    await page.waitForFunction(() => window.__liveAuto.phase === "flight_running");
     await click("game-flight-abort");
     await scene("Result");
     checks.push("Countdown to actual flight ticks; five typed HUD kinds; Pause and Resume; Abort to Result");
@@ -241,6 +325,7 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
     assert.match(String(report.savedRecordLabel), /\d{4}\/\d{2}\/\d{2} \d{2}:\d{2} UTC/);
     await screenshot("06-saved-title");
     checks.push("一時停止中のCreditsはtickを保持し、保存日時は共通UTC形式で表示する");
+    checks.push("空labelの先頭コロンを除き、Credits往復はscrollを初期化し、同scopeと空説明のVR行高を保持する");
     assert.equal(await page.evaluate(() => window.__liveAuto.contextLosses), 0);
     assert.deepEqual(errors, []);
     report.status = findings.length === 0 ? "passed" : "failed";

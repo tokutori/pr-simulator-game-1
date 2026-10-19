@@ -1,16 +1,13 @@
 //! Browser adapter; no clock or browser state enters the simulation core.
 
-use birdman_game_core::{BriefingFailure, ControlMode, FbwAuthority, SessionPhase};
+use birdman_game_core::{BriefingFailure, ControlMode, FbwAuthority};
 use birdman_game_format::{AssistanceLevel, DifficultyPreset, InformationLevel, WeatherClass};
-use birdman_game_session::application::ExternalPauseReason;
+use birdman_game_session::{application::ExternalPauseReason, environment_snapshot};
 use wasm_bindgen::{JsValue, prelude::*};
 
 mod cockpit_geometry;
-mod environment;
-mod environment_snapshot;
 mod hybrid_bridge;
 mod hybrid_record;
-mod hybrid_session;
 mod lake_sky;
 mod lake_water;
 mod screen_render_auto;
@@ -20,9 +17,9 @@ mod venue_terrain;
 mod wing_geometry;
 mod wing_texture;
 
+pub use birdman_game_session::{HybridSessionPreparation, HybridSessionPreparationError};
 pub use cockpit_geometry::CockpitGeometryBridge;
 pub use hybrid_bridge::{HybridGameSessionBridge, TailPersonalBestSelectionBridge};
-pub use hybrid_session::{HybridSessionPreparation, HybridSessionPreparationError};
 pub use lake_sky::{
     LakeCloudsBridge, LakeSkyImageBridge, lake_scene_ambient_color_srgb,
     lake_scene_ambient_irradiance, lake_scene_haze, lake_scene_sunlight_color_srgb,
@@ -69,7 +66,11 @@ pub fn environment_snapshot_for_identity_json(identity_json: &JsValue) -> Result
     let json = identity_json.as_string().ok_or_else(|| {
         environment_snapshot_error(environment_snapshot::EnvironmentSnapshotError::InvalidInputType)
     })?;
-    environment_snapshot::for_identity_json(json.as_bytes()).map_err(environment_snapshot_error)
+    let snapshot = environment_snapshot::for_identity_json(json.as_bytes())
+        .map_err(environment_snapshot_error)?;
+    serde_json::to_string(&snapshot).map_err(|_| {
+        environment_snapshot_error(environment_snapshot::EnvironmentSnapshotError::EncodingFailed)
+    })
 }
 
 fn preset_code(preset: DifficultyPreset) -> u32 {
@@ -179,21 +180,5 @@ fn briefing_failure_from_code(code: u32) -> Result<BriefingFailure, JsValue> {
         2 => Ok(BriefingFailure::ScenarioUnavailable),
         3 => Ok(BriefingFailure::InvalidConfiguration),
         _ => Err(JsValue::from_str("briefing failure code must be in [0, 3]")),
-    }
-}
-
-fn phase_code(phase: SessionPhase) -> u32 {
-    match phase {
-        SessionPhase::Title => 0,
-        SessionPhase::FlightSetup => 1,
-        SessionPhase::BriefingPreparing => 2,
-        SessionPhase::BriefingReady => 3,
-        SessionPhase::Countdown { .. } => 4,
-        SessionPhase::FlightRunning => 5,
-        SessionPhase::FlightPaused { .. } => 6,
-        SessionPhase::Result => 7,
-        SessionPhase::BriefingFailed { .. } => 8,
-        SessionPhase::Replay => 9,
-        SessionPhase::Attract => 10,
     }
 }

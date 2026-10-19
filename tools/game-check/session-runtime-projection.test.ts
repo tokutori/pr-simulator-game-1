@@ -2,13 +2,13 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { HybridGameSessionBridge, initSync } from "../../web/pkg/birdman_game_wasm.js";
 import { createAppSession } from "../../web/src/app/session-factory.js";
-import { projectRuntimePlaybackClock, queryRuntimeRecordPose, readRuntimeSessionProjection } from "../../web/src/app/session-runtime-projection.js";
-import { parseRuntimeEnvironmentSnapshot } from "../../web/src/game/runtime-environment.js";
+import { projectRuntimePlaybackClock, readRuntimeSessionProjection } from "../../web/src/app/session-runtime-projection.js";
+import { projectRuntimeEnvironment } from "../../web/src/game/runtime-environment.js";
 import { venueMapForEnvironment } from "../../web/src/game/biwa-venue-map.js";
 import { projectRuntimeVenue } from "../../web/src/game/runtime-venue.js";
 import type { TailAppSessionFacade } from "../../web/src/app/session-facade.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
-import { encodeTailLogicalInput } from "../../web/src/game/tail-session-codec.js";
+import { encodeTailLogicalInput } from "../../web/src/game/tail-input.js";
 import { selectSharedReplayView, sharedGameUiPlatform } from "./shared-game-ui-fixture.js";
 
 initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url))) });
@@ -37,29 +37,25 @@ function nested(parent: Record<string, unknown>, key: string): Record<string, un
 }
 
 function sessionVenue(session: TailAppSessionFacade) {
-  const phaseCode = session.readLifecycle().phaseCode;
-  const snapshot = phaseCode >= 1 && phaseCode <= 8 ? session.readSnapshot() : undefined;
-  const identity = phaseCode === 9 || phaseCode === 10 ? session.readPlaybackContext().scenario
-    : snapshot?.identity.kind === "prepared" ? snapshot.identity.scenario : undefined;
-  const environment = parseRuntimeEnvironmentSnapshot(session.readEnvironmentJson(), phaseCode, identity);
-  return { environment, venue: projectRuntimeVenue(environment, phaseCode) };
+  const environment = projectRuntimeEnvironment(session.readEnvironment());
+  return { environment, venue: projectRuntimeVenue(environment, session.readLifecycle().phase) };
 }
 
 describe("application runtime session projection", () => {
   it("projects Rust menu, live, paused and terminal phases with the original tail identity", () => {
     const session = prepared();
     try {
-      expect(readRuntimeSessionProjection(session)).toMatchObject({ phaseCode: 3, controlLayout: "tail_incidence", display: { kind: "unavailable" } });
+      expect(readRuntimeSessionProjection(session)).toMatchObject({ phase: "briefing_ready", display: { kind: "unavailable" } });
       launch(session);
-      expect(readRuntimeSessionProjection(session)).toMatchObject({ phaseCode: 5, display: { value: { kind: "tail_flight", phaseCode: 5 } } });
+      expect(readRuntimeSessionProjection(session)).toMatchObject({ phase: "flight_running", display: { value: { phase: "flight_running" } } });
       session.executeSharedSessionCommand({ kind: "pause" });
-      expect(readRuntimeSessionProjection(session)).toMatchObject({ phaseCode: 6, display: { value: { phaseCode: 6 } } });
+      expect(readRuntimeSessionProjection(session)).toMatchObject({ phase: "flight_paused", display: { value: { phase: "flight_paused" } } });
       session.executeSharedSessionCommand({ kind: "abort" });
       const projection = readRuntimeSessionProjection(session);
-      expect(projection).toMatchObject({ phaseCode: 7, display: { value: { kind: "tail_result" } } });
+      expect(projection).toMatchObject({ phase: "result", display: { value: { phase: "result" } } });
       const summary = session.readRecordSummary();
-      if (projection.phaseCode !== 7 || projection.display.kind !== "available") throw new Error("Expected the Rust terminal display");
-      expect(projection.display.value.finalization).toEqual(summary.context.finalization);
+      if (projection.phase !== "result" || projection.display.kind !== "available") throw new Error("Expected the Rust terminal display");
+      expect(projection.display.value.frame.finalization).toEqual(summary.context.finalization.value);
     } finally { session.dispose(); }
   });
 
@@ -69,12 +65,12 @@ describe("application runtime session projection", () => {
       if (phase === "replay") { launch(session); session.executeSharedSessionCommand({ kind: "abort" }); session.executeSharedSessionCommand({ kind: "enter_replay" }); }
       else { session.executeSharedSessionCommand({ kind: "cancel_briefing" }); session.executeSharedSessionCommand({ kind: "return_to_title" }); session.executeSharedSessionCommand({ kind: "enter_attract" }); }
       const projection = readRuntimeSessionProjection(session);
-      expect(projection).toMatchObject({ phaseCode: phase === "replay" ? 9 : 10, display: { value: { kind: "tail_record" } } });
+      expect(projection).toMatchObject({ phase, display: { value: { controls: { layout: "tail_incidence" } } } });
       const dataset = session.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
       const clock = session.setPlaybackPlaying(false);
-      const queried = queryRuntimeRecordPose(session, dataset, clock.timeSeconds);
-      expect(queried.display).toMatchObject({ kind: "tail_record", stamp: { timeSeconds: clock.timeSeconds } });
-      expect(queried.pose.controls?.layout).toBe("tail_incidence");
+      const cursor = session.queryAnalysisCursor(clock.timeSeconds, dataset);
+      expect(cursor.flight_time_s).toBe(clock.timeSeconds);
+      expect(session.queryReplayCamera(clock.timeSeconds, "auto", true, dataset).controls.layout).toBe("tail_incidence");
       expect(projectRuntimePlaybackClock(clock)).toEqual({ timeSeconds: clock.timeSeconds, rateCode: clock.rateCode, playing: false });
     } finally { session.dispose(); }
   });
@@ -93,17 +89,17 @@ describe("application runtime session projection", () => {
       const saved = archived.export_flight_record_json();
       session.openArchive(saved);
       expect(sessionVenue(session).venue).toEqual({ kind: "visible", basis: "recorded_origin" });
-      expect(readRuntimeSessionProjection(session)).toMatchObject({ phaseCode: 9, controlLayout: "tail_incidence", display: { value: { kind: "tail_record" } } });
+      expect(readRuntimeSessionProjection(session)).toMatchObject({ phase: "replay", display: { value: { controls: { layout: "tail_incidence" } } } });
       const dataset = session.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
       const clock = session.readPlaybackClock();
-      const queried = queryRuntimeRecordPose(session, dataset, 0.005);
+      const cursor = session.queryAnalysisCursor(0.005, dataset);
+      const pose = session.queryReplayCamera(0.005, "auto", true, dataset);
       const terminalSample = dataset.samples.at(-1);
       if (terminalSample === undefined) throw new Error("Expected the saved terminal control sample");
-      expect(terminalSample.controls.physicalIncidence.horizontalTailRadians).not.toBe(0);
-      expect(queried.cursor.controls).toEqual(terminalSample.controls);
-      expect(queried.pose.controls).toEqual(terminalSample.controls);
-      expect(queried.pose.controls?.layout).toBe("tail_incidence");
-      expect(queried.display.pilotPositionTargetNormalized).toEqual({ kind: "unavailable", reason: "record_pilot_target_unavailable" });
+      expect(terminalSample.controls.physical_incidence.horizontal_tail_rad).not.toBe(0);
+      expect(cursor.controls).toEqual(terminalSample.controls);
+      expect(pose.controls.physicalIncidence.horizontalTailRadians).toBe(terminalSample.controls.physical_incidence.horizontal_tail_rad);
+      expect(cursor).not.toHaveProperty("pilot_position_target_normalized");
       expect(session.readPlaybackClock()).toEqual(clock);
       expect(session.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" }).samples).toEqual(dataset.samples);
       expect(archived.export_flight_record_json()).toBe(saved);
@@ -149,7 +145,7 @@ describe("registered environment and venue projection", () => {
       expect(sessionVenue(session).environment).toMatchObject({ kind: "available", value: { source: "archive", localFrame: { kind: "unavailable" } } });
       expect(sessionVenue(session).venue).toEqual({ kind: "unavailable", reason: "origin_not_recorded" });
       session.executeSharedSessionCommand({ kind: "leave_replay" });
-      expect(session.readLifecycle().phaseCode).toBe(0);
+      expect(session.readLifecycle().phase).toBe("title");
       expect(sessionVenue(session).venue).toEqual({ kind: "visible", basis: "title_exhibition" });
     } finally { session.dispose(); }
   });
@@ -164,29 +160,6 @@ describe("registered environment and venue projection", () => {
     } finally { session.dispose(); }
   });
 
-  it("restricts no-selection to the unprepared Title and rejects surplus availability fields", () => {
-    const document = { schema_version: 1, context: { kind: "session", phase_code: 0 }, projection: { kind: "no_selection" } };
-    expect(parseRuntimeEnvironmentSnapshot(JSON.stringify(document), 0)).toEqual({ kind: "unavailable", reason: "no_selection" });
-    for (const phase of [1, 3, 7, 9, 10]) {
-      expect(() => parseRuntimeEnvironmentSnapshot(JSON.stringify({ ...document, context: { kind: "session", phase_code: phase } }), phase)).toThrow(RangeError);
-    }
-    expect(() => parseRuntimeEnvironmentSnapshot(JSON.stringify({ ...document, projection: { kind: "no_selection", source: "record" } }), 0)).toThrow(RangeError);
-    const session = prepared();
-    try {
-      const snapshot = session.readSnapshot();
-      if (snapshot.identity.kind !== "prepared") throw new Error("Expected a sealed identity");
-      const expectedIdentity = snapshot.identity.scenario;
-      expect(() => parseRuntimeEnvironmentSnapshot(JSON.stringify(document), 0, expectedIdentity)).toThrow(RangeError);
-      const malformed = jsonObject(session.readEnvironmentJson());
-      for (const phase of [0, -1, 11, 2.5]) {
-        const wrongPhase = { ...malformed, context: { kind: "session", phase_code: phase } };
-        expect(() => parseRuntimeEnvironmentSnapshot(JSON.stringify(wrongPhase), phase)).toThrow(RangeError);
-      }
-      nested(nested(malformed, "projection"), "metadata").local_frame = { kind: "unavailable", value: { latitude_degrees: 0 } };
-      expect(() => parseRuntimeEnvironmentSnapshot(JSON.stringify(malformed), 3)).toThrow(RangeError);
-    } finally { session.dispose(); }
-  });
-
   it("projects the registered venue in Screen/VR and rejects an actual unknown same-ID archive", () => {
     const session = prepared();
     try {
@@ -196,8 +169,7 @@ describe("registered environment and venue projection", () => {
       for (const unknown of [false, true]) {
         if (unknown) { session.executeSharedSessionCommand({ kind: "leave_replay" }); nested(saved, "header").environment_version = 99; }
         session.openArchive(JSON.stringify(saved));
-        const data = session.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
-        const environment = parseRuntimeEnvironmentSnapshot(session.readEnvironmentJson(), 9, data.context.scenario);
+        const environment = projectRuntimeEnvironment(session.readEnvironment());
         expect(environment.kind).toBe(unknown ? "unavailable" : "available");
         if (unknown) expect(environment).toEqual({ kind: "unavailable", reason: "unregistered_environment_identity" });
         else expect(environment).toMatchObject({ kind: "available", value: { sky: { kind: "available", value: {
@@ -205,7 +177,7 @@ describe("registered environment and venue projection", () => {
         } } } });
         const venue = venueMapForEnvironment(environment);
         expect(venue.kind).toBe(unknown ? "unavailable" : "available");
-        expect(projectRuntimeVenue(environment, 9)).toEqual(unknown ? { kind: "unavailable", reason: "environment_unavailable" }
+        expect(projectRuntimeVenue(environment, "replay")).toEqual(unknown ? { kind: "unavailable", reason: "environment_unavailable" }
           : { kind: "visible", basis: "recorded_origin" });
         const platform = sharedGameUiPlatform();
         selectSharedReplayView(session, platform, "analysis");
@@ -225,10 +197,9 @@ describe("registered environment and venue projection", () => {
     const session = prepared();
     try {
       const snapshot = session.readSnapshot();
-      if (snapshot.identity.kind !== "prepared") throw new Error("Expected a sealed scenario");
-      expect(snapshot.identity.scenario.scenarioId).toBe(6);
-      const projection = parseRuntimeEnvironmentSnapshot(session.readEnvironmentJson(), 3, snapshot.identity.scenario);
-      expect(projection).toMatchObject({ kind: "available", value: { identity: snapshot.identity.scenario, localFrame: { kind: "available" } } });
+      expect(snapshot.scenario?.scenario_id).toBe(6);
+      const projection = projectRuntimeEnvironment(session.readEnvironment());
+      expect(projection).toMatchObject({ kind: "available", value: { identity: snapshot.scenario, localFrame: { kind: "defined" } } });
       expect(venueMapForEnvironment(projection)).toMatchObject({ kind: "available", value: { origin: "launch-origin-wgs84-35.294075-136.254448" } });
     } finally { session.dispose(); }
   });
@@ -237,34 +208,15 @@ describe("registered environment and venue projection", () => {
     const session = prepared();
     try {
       launch(session); session.executeSharedSessionCommand({ kind: "abort" }); session.openArchive(session.exportRecordJson());
-      const context = session.readPlaybackContext();
-      const document = jsonObject(session.readEnvironmentJson());
-      const metadata = nested(nested(document, "projection"), "metadata");
+      const document = session.readEnvironment();
+      const metadata = nested(nested(document as unknown as Record<string, unknown>, "projection"), "metadata");
       if (change === "origin") nested(nested(metadata, "local_frame"), "value").longitude_degrees = 137;
       if (change === "datum") nested(nested(metadata, "local_frame"), "value").water_level_datum = "another datum";
       if (change === "missing-origin") metadata.local_frame = { kind: "unavailable" };
-      const environment = parseRuntimeEnvironmentSnapshot(JSON.stringify(document), 9, context.scenario);
-      expect(projectRuntimeVenue(environment, 9)).toEqual({ kind: "unavailable", reason: change === "missing-origin" ? "origin_not_recorded" : "unregistered_origin" });
-      expect(projectRuntimeVenue(environment, 7)).toEqual({ kind: "unavailable", reason: "context_mismatch" });
+      const environment = projectRuntimeEnvironment(document);
+      expect(projectRuntimeVenue(environment, "replay")).toEqual({ kind: "unavailable", reason: change === "missing-origin" ? "origin_not_recorded" : "unregistered_origin" });
+      expect(projectRuntimeVenue(environment, "result")).toEqual({ kind: "unavailable", reason: "context_mismatch" });
     } finally { session.dispose(); }
   });
 
-  it.each(["identity", "phase", "origin", "datum", "unavailable"] as const)("does not reuse a venue for mismatched %s", (change) => {
-    const session = prepared();
-    try {
-      const snapshot = session.readSnapshot();
-      if (snapshot.identity.kind !== "prepared") throw new Error("Expected a sealed scenario");
-      const expectedIdentity = snapshot.identity.scenario;
-      const document = jsonObject(session.readEnvironmentJson());
-      const projection = nested(document, "projection");
-      if (change === "identity") nested(projection, "identity").seed_low = expectedIdentity.seedLow + 1;
-      if (change === "phase") nested(document, "context").phase_code = 9;
-      if (change === "origin") nested(nested(nested(projection, "metadata"), "local_frame"), "value").longitude_degrees = 137;
-      if (change === "datum") nested(nested(nested(projection, "metadata"), "local_frame"), "value").water_level_datum = "different water surface";
-      if (change === "unavailable") { projection.kind = "unavailable"; delete projection.metadata; }
-      const read = () => parseRuntimeEnvironmentSnapshot(JSON.stringify(document), 3, expectedIdentity);
-      if (change === "identity" || change === "phase") expect(read).toThrow(RangeError);
-      else expect(venueMapForEnvironment(read()).kind).toBe("unavailable");
-    } finally { session.dispose(); }
-  });
 });

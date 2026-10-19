@@ -31,12 +31,12 @@ describe("Hikone venue map", () => {
     expect(venueMapForEnvironment({ kind: "unavailable", reason: "unregistered_environment_identity" }))
       .toEqual({ kind: "unavailable", reason: "environment_unavailable" });
     expect(venueMapForEnvironment({ kind: "available", value: { ...environment.value,
-      localFrame: { kind: "unavailable", reason: "origin_not_recorded" } } }))
+      localFrame: { kind: "unavailable" } } }))
       .toEqual({ kind: "unavailable", reason: "origin_not_recorded" });
     const frame = environment.value.localFrame;
-    if (frame.kind !== "available") throw new Error("Missing registered origin");
+    if (frame.kind !== "defined") throw new Error("Missing registered origin");
     expect(venueMapForEnvironment({ kind: "available", value: { ...environment.value,
-      localFrame: { kind: "available", value: { ...frame.value, longitudeDegrees: frame.value.longitudeDegrees + 0.1 } } } }))
+      localFrame: { kind: "defined", value: { ...frame.value, longitude_degrees: frame.value.longitude_degrees + 0.1 } } } }))
       .toEqual({ kind: "unavailable", reason: "unregistered_origin" });
   });
   it("uses the launch platform's full dimensions and northwest orientation", () => {

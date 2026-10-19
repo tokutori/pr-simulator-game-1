@@ -883,6 +883,7 @@ pub(crate) fn project_world(
             .map(|(record, clock)| {
                 birdman_game_session::replay_camera::replay_camera_view(
                     record,
+                    session.game.display_control_identity(),
                     clock.time_seconds(),
                     session.ui.replay_camera,
                     birdman_game_session::game_ui::GameUiPresentationMode::Screen,
@@ -1304,8 +1305,15 @@ mod tests {
                     )
                     .unwrap();
                 let record = session.game.core_session().playback_record().unwrap();
-                replay_camera_view(record, 0.015, rig, GameUiPresentationMode::Screen, false)
-                    .unwrap()
+                replay_camera_view(
+                    record,
+                    session.game.display_control_identity(),
+                    0.015,
+                    rig,
+                    GameUiPresentationMode::Screen,
+                    false,
+                )
+                .unwrap()
             };
             app.update();
             let session = app.world().resource::<NativeSession>();

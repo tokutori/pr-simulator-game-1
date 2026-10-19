@@ -1,13 +1,8 @@
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
-import { dirname, resolve } from "node:path";
 import { readFile } from "node:fs/promises";
-import { Ajv2020, _ } from "ajv/dist/2020.js";
-import standaloneCode from "ajv/dist/standalone/index.js";
-import { build } from "esbuild";
 import { compile } from "json-schema-to-typescript";
 import ts from "typescript";
-import { numericFormats } from "./numeric-formats.js";
 
 export const schemaEntries = [
   { key: "view", name: "GameUiView", filename: "game-ui-view", group: "serialize" },
@@ -20,6 +15,10 @@ export const schemaEntries = [
   { key: "tail_input", name: "TailInputDocument", filename: "tail-input", group: "deserialize" },
   { key: "tail_snapshot", name: "TailSnapshotDocument", filename: "tail-snapshot", group: "serialize" },
   { key: "tail_prepared", name: "TailPreparedLaunchDocument", filename: "tail-prepared", group: "serialize" },
+  { key: "lifecycle", name: "SessionLifecycleDocument", filename: "session-lifecycle", group: "serialize" },
+  { key: "tail_profile", name: "TailControlProfileDocument", filename: "tail-control-profile", group: "serialize" },
+  { key: "runtime_environment", name: "EnvironmentSnapshot", filename: "runtime-environment", group: "serialize" },
+  { key: "flight_render_pose", name: "FlightRenderPose", filename: "flight-render-pose", group: "serialize" },
   { key: "tail_scenario", name: "EnvironmentIdentity", filename: "tail-scenario", group: "serialize" },
   { key: "tail_identity", name: "FlightRecordTailIdentityDocument", filename: "tail-identity", group: "serialize" },
   { key: "tail_incidence", name: "TailIncidenceDocument", filename: "tail-incidence", group: "serialize" },
@@ -58,18 +57,8 @@ export function parseSchemaBundle(text: string): GameUiSchemas {
   return schemas as GameUiSchemas;
 }
 
-export async function generateGameUiFiles(schemas: GameUiSchemas, root: string): Promise<readonly GeneratedFile[]> {
+export async function generateGameUiFiles(schemas: GameUiSchemas): Promise<readonly GeneratedFile[]> {
   const require = createRequire(import.meta.url);
-  const formatsPath = resolve(root, "tools/game-ui-build/numeric-formats.ts");
-  const ajv = new Ajv2020({
-    strict: true,
-    strictNumbers: true,
-    allErrors: true,
-    inlineRefs: false,
-    code: { source: true, esm: true, formats: _`require(${formatsPath}).numericFormats` }
-  });
-  ajv.addKeyword({ keyword: "x-boundary-bytes", schemaType: "number", valid: true });
-  for (const [name, format] of Object.entries(numericFormats)) ajv.addFormat(name, format);
   const files: GeneratedFile[] = [];
   const definitions = schemas.deserialize["$defs"];
   if (!isObject(definitions)) throw new Error("Missing input query definitions");
@@ -88,11 +77,9 @@ export async function generateGameUiFiles(schemas: GameUiSchemas, root: string):
   };
   files.push({ path: "web/src/generated/game-ui-input-query.ts", content:
     `/* ${generatedBanner} */\nexport const gameUiInputQuery = Object.freeze(${JSON.stringify(query, null, 2)} as const);\n` });
-  const validatorRoots: Record<string, string> = {};
   const sourceHashes: Record<string, string> = {};
   for (const group of schemaGroups) {
     const schema = { ...schemas[group], $id: `https://tokutori.github.io/pr-simulator-game-1/game-ui/${group}` };
-    ajv.addSchema(schema);
     const canonical = `${JSON.stringify(schema, null, 2)}\n`;
     sourceHashes[group] = createHash("sha256").update(canonical).digest("hex");
     files.push({ path: `tools/game-ui-build/generated/game-ui-${group}.schema.json`, content: canonical });
@@ -103,7 +90,6 @@ export async function generateGameUiFiles(schemas: GameUiSchemas, root: string):
     if (!isObject(definitions)) throw new Error(`Invalid ${entry.group} schema group`);
     const definition = definitions[entry.name];
     if (!isObject(definition)) throw new Error(`Invalid ${entry.name} schema root`);
-    validatorRoots[`validate${entry.name}`] = `https://tokutori.github.io/pr-simulator-game-1/game-ui/${entry.group}#/$defs/${entry.name}`;
     const schema: Record<string, unknown> = { ...definition, $defs: definitions, $schema: group["$schema"], title: entry.name };
     const declarations = await compile(schema, entry.name, {
       bannerComment: "",
@@ -113,36 +99,7 @@ export async function generateGameUiFiles(schemas: GameUiSchemas, root: string):
     });
     files.push({ path: `web/src/generated/${entry.filename}.ts`, content: `/* ${generatedBanner} */\n${readonlyDeclarations(declarations)}` });
   }
-  const standalone = standaloneCode(ajv, validatorRoots);
-  const bundled = await build({
-    absWorkingDir: root,
-    preserveSymlinks: true,
-    stdin: { contents: standalone, resolveDir: root, sourcefile: "game-ui-validators.ts", loader: "js" },
-    bundle: true,
-    platform: "browser",
-    format: "esm",
-    target: "es2023",
-    write: false,
-    charset: "utf8",
-    legalComments: "eof",
-    banner: { js: `/* ${generatedBanner} */` }
-  });
-  const output = bundled.outputFiles[0];
-  if (output === undefined || bundled.outputFiles.length !== 1) throw new Error("Standalone game UI validator bundling produced unexpected outputs");
-  files.push({ path: "web/src/generated/game-ui-validators.js", content: normalizeText(output.text) });
-  files.push({ path: "web/src/generated/game-ui-validators.d.ts", content: [
-    `/* ${generatedBanner} */`,
-    'import type { ValidateFunction } from "ajv";',
-    ...schemaEntries.map((entry) => `import type { ${entry.name} } from "./${entry.filename}.js";`),
-    ...schemaEntries.map((entry) => `export declare const validate${entry.name}: ValidateFunction<${entry.name}>;`),
-    ""
-  ].join("\n") });
-  const notices = await Promise.all([{ name: "ajv", license: "LICENSE" }, { name: "esbuild", license: "LICENSE.md" }].map(async ({ name, license }) => {
-    const packageDirectory = dirname(require.resolve(`${name}/package.json`));
-    return `${name}\n${await readFile(resolve(packageDirectory, license), "utf8")}`;
-  }));
-  files.push({ path: "assets/game-ui-validators.LICENSE.txt", content: normalizeText(notices.join("\n\n")) });
-  const generators = Object.fromEntries(await Promise.all(Object.entries({ ajv: "ajv", jsonSchemaToTypescript: "json-schema-to-typescript", esbuild: "esbuild", typescript: "typescript" })
+  const generators = Object.fromEntries(await Promise.all(Object.entries({ jsonSchemaToTypescript: "json-schema-to-typescript", typescript: "typescript" })
     .map(async ([key, name]): Promise<readonly [string, string]> => {
       const metadata: unknown = JSON.parse(await readFile(require.resolve(`${name}/package.json`), "utf8"));
       if (!isObject(metadata) || typeof metadata["version"] !== "string") throw new Error(`Missing ${name} generator version`);

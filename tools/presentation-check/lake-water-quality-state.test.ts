@@ -1,15 +1,15 @@
 import { readFileSync } from "node:fs";
 import { Window } from "happy-dom";
 import { describe, expect, it } from "vitest";
-import { canSelectLakeWaterQuality, createInitialAppModel, gameSessionPhaseCode, gameSessionState, updateApp } from "../../web/src/app/app-state.js";
+import { canSelectLakeWaterQuality, createInitialAppModel, gameSessionPhase, updateApp } from "../../web/src/app/app-state.js";
 import type { AppModel, AppTransition } from "../../web/src/app/app-state.js";
 import { createGameViewModel, sharedGameUiAction } from "../../web/src/app/game-view.js";
 import type { TailAppSessionFacade } from "../../web/src/app/session-facade.js";
-import { currentFlightDisplayFixture, currentRecordedDisplayFixture } from "../game-check/current-session-fixture.js";
+import type { SessionPhase } from "../../web/src/app/session-snapshot.js";
 import type { LakeWaterQuality } from "../../web/src/render/contracts/lake-water.js";
 import type { PresentationMode } from "../../web/src/render/contracts/runtime.js";
 import { validateUiViewModel } from "../../web/src/render/contracts/ui.js";
-import { currentSharedGameUiFixture, sharedGameUiPlatform, sharedScreenRenderSnapshot, withSharedGameUiSession } from "../game-check/shared-game-ui-fixture.js";
+import { currentGameSessionProjectionFixture, currentSharedGameUiFixture, sharedGameUiPlatform, sharedScreenRenderSnapshot, withSharedGameUiSession } from "../game-check/shared-game-ui-fixture.js";
 import type { SharedGameUiFixtureOptions } from "../game-check/shared-game-ui-fixture.js";
 import type { GameUiView } from "../../web/src/generated/game-ui-view.js";
 import type { GameUiPlatformInput } from "../../web/src/generated/game-ui-input.js";
@@ -24,8 +24,6 @@ describe("manual lake water quality ownership", () => {
     expect(requested.effects).toEqual([{ type: "apply-lake-water-quality", requestId: initial.nextRequestId, quality: "low" }]);
     expect(Object.isFrozen(requested.model.lakeWaterQuality)).toBe(true);
     expect(requested.model.gameSession).toBe(initial.gameSession);
-    expect(requested.model.difficulty).toBe(initial.difficulty);
-    expect(requested.model.configurationMetadata).toBe(initial.configurationMetadata);
     expect(requested.model.status).toBe(initial.status);
     expect(requested.model.pendingGameRequestId).toBeNull();
     expect(select(requested.model, "medium").model).toBe(requested.model);
@@ -58,15 +56,15 @@ describe("manual lake water quality ownership", () => {
 
   it("permits the same shared controls only in Setup or paused Settings", () => {
     const setup = readyModel();
-    const paused = readyModel(6);
+    const paused = readyModel("flight_paused");
     expect(canSelectLakeWaterQuality(setup)).toBe(true);
     expect(canSelectLakeWaterQuality(paused)).toBe(true);
-    for (const phase of [0, 2, 3, 4, 5, 7, 8, 9, 10]) {
+    for (const phase of ["title", "briefing_preparing", "briefing_ready", "countdown", "flight_running", "result", "briefing_failed", "replay", "attract"] as const) {
       const model = readyModel(phase);
       expect(select(model, "low").model).toBe(model);
     }
     for (const overlay of ["menu", "help"] as const) {
-      const model: AppModel = { ...paused, sharedGameUi: currentSharedGameUiFixture(6,
+      const model: AppModel = { ...paused, sharedGameUi: currentSharedGameUiFixture("flight_paused",
         overlay === "menu" ? {} : { actions: [{ kind: "set_pause_overlay", overlay }] }) };
       expect(select(model, "low").model).toBe(model);
     }
@@ -82,15 +80,14 @@ describe("manual lake water quality ownership", () => {
     const requested = select(initial, "medium").model;
     const selected = completeQuality(requested, "medium", initial.nextRequestId).model;
     const synchronized = updateApp(selected, {
-      type: "game-session-synced", phaseCode: 3, controlModeCode: 0, difficulty: selected.difficulty,
-      configurationMetadata: null, countdownRemainingSeconds: 0, display: { kind: "unavailable", reason: "menu_phase" }, canResume: false, controlLayout: "tail_incidence"
+      type: "game-session-synced", ...currentGameSessionProjectionFixture("briefing_ready")
     }).model;
     expect(synchronized.lakeWaterQuality).toBe(selected.lakeWaterQuality);
     const transition = updateApp({ ...selected, presentation: { type: "ready", mode: "phone-vr" } }, {
       type: "backend-ended", mode: "phone-vr", message: "tracking lost"
     });
     expect(transition.model.lakeWaterQuality).toBe(selected.lakeWaterQuality);
-    const terminal: AppModel = { ...readyModel(7), lakeWaterQuality: selected.lakeWaterQuality };
+    const terminal: AppModel = { ...readyModel("result"), lakeWaterQuality: selected.lakeWaterQuality };
     const retry = updateApp(terminal, { type: "ui-action", action: { type: "activate", controlId: "game-result-retry" } });
     expect(retry.effects.some((effect) => effect.type === "update-shared-game-ui" && effect.action.kind === "session" && effect.action.command.kind === "retry")).toBe(true);
     expect(retry.model.lakeWaterQuality).toBe(selected.lakeWaterQuality);
@@ -106,7 +103,7 @@ describe("manual lake water quality ownership", () => {
   });
 
   it("projects Auto-applied water during Running without changing the retained upper quality or domain state", () => {
-    const initial = readyModel(5);
+    const initial = readyModel("flight_running");
     const snapshot = { ...sharedScreenRenderSnapshot("50", "low"),
       selection: { kind: "auto" as const, manual_scale: "100" as const, manual_shadow: "full" as const, manual_water_quality: "high" as const } };
     const observed = updateApp(initial, { type: "screen-render-observed", snapshot });
@@ -115,13 +112,13 @@ describe("manual lake water quality ownership", () => {
     expect(observed.model.gameSession).toBe(initial.gameSession);
     expect(observed.model.flightRecordSourceRevision).toBe(initial.flightRecordSourceRevision);
     expect(observed.effects).toEqual([]);
-    const paused = { ...observed.model, gameSession: readyModel(6).gameSession, sharedGameUi: readyModel(6).sharedGameUi };
+    const paused = { ...observed.model, gameSession: readyModel("flight_paused").gameSession, sharedGameUi: readyModel("flight_paused").sharedGameUi };
     const requested = select(paused, "low");
     expect(requested.effects).toEqual([{ type: "apply-lake-water-quality", requestId: paused.nextRequestId, quality: "low" }]);
   });
 
   it.each(["screen", "phone-vr", "webxr"] as const)("projects applied and pending quality into %s Setup and Settings", (mode) => {
-    for (const phase of [1, 6]) {
+    for (const phase of ["flight_setup", "flight_paused"] as const) {
       const initial = readyModel(phase, mode);
       const view = createGameViewModel(qualityView(initial));
       validateUiViewModel(view);
@@ -151,7 +148,7 @@ describe("manual lake water quality ownership", () => {
     const actions: unknown[] = [];
     const adapter = new ScreenUiAdapter(root, (action) => actions.push(action));
     try {
-      const initial = readyModel(6);
+      const initial = readyModel("flight_paused");
       const initialView = qualityView(initial);
       adapter.render(createGameViewModel(initialView));
       const shell = root.querySelector<HTMLElement>('.screen-ui-shell[data-scene="Flight"][data-overlay="PauseSettings"]');
@@ -211,21 +208,20 @@ describe("Screen render scale preference", () => {
       expect(updated.effects).toEqual([{ type: "select-screen-render-scale", scale }]);
       expect(updated.model.gameSession).toBe(initial.gameSession);
       expect(updated.model.lakeWaterQuality).toBe(initial.lakeWaterQuality);
-      expect(updated.model.difficulty).toBe(initial.difficulty);
       expect(updated.model.flightRecordSourceRevision).toBe(initial.flightRecordSourceRevision);
       selected = updateApp(updated.model, { type: "screen-render-observed", snapshot: sharedScreenRenderSnapshot(scale) }).model;
     }
-    expect(selectScale(readyModel(6), "50").effects).toEqual([{ type: "select-screen-render-scale", scale: "50" }]);
+    expect(selectScale(readyModel("flight_paused"), "50").effects).toEqual([{ type: "select-screen-render-scale", scale: "50" }]);
   });
 
   it("rejects stale changes outside Screen settings and retains the preference across VR exit", () => {
     const selected = updateApp(readyModel(), { type: "screen-render-observed", snapshot: sharedScreenRenderSnapshot("75") }).model;
-    for (const phase of [0, 2, 3, 4, 5, 7, 8, 9, 10]) {
+    for (const phase of ["title", "briefing_preparing", "briefing_ready", "countdown", "flight_running", "result", "briefing_failed", "replay", "attract"] as const) {
       const model = { ...readyModel(phase), screenRenderScale: selected.screenRenderScale };
       expect(selectScale(model, "50").model).toBe(model);
     }
     for (const mode of ["phone-vr", "webxr"] as const) {
-      const model = { ...readyModel(1, mode), screenRenderScale: selected.screenRenderScale };
+      const model = { ...readyModel("flight_setup", mode), screenRenderScale: selected.screenRenderScale };
       expect(selectScale(model, "50").model).toBe(model);
       const ended = updateApp(model, { type: "backend-ended", mode, message: "session ended" }).model;
       expect(ended.screenRenderScale).toEqual(sharedScreenRenderSnapshot("75"));
@@ -262,7 +258,7 @@ function completeQuality(model: AppModel, quality: LakeWaterQuality, requestId: 
 }
 
 function qualityOptions(model: AppModel): SharedGameUiFixtureOptions {
-  const phase = gameSessionPhaseCode(model.gameSession);
+  const phase = gameSessionPhase(model.gameSession);
   const mode = model.presentation.type === "ready" ? model.presentation.mode : "screen";
   const overlay = model.sharedGameUi?.selections.pause_overlay ?? "menu";
   const quality = model.lakeWaterQuality;
@@ -270,7 +266,7 @@ function qualityOptions(model: AppModel): SharedGameUiFixtureOptions {
     : quality.kind === "failed" ? { kind: "failed" as const, requested: quality.requested, cause: quality.message }
     : quality.cleanup.kind === "failed" ? { kind: "cleanup_failed" as const, cause: quality.cleanup.message }
     : { kind: "idle" as const };
-  return { ...(phase === 6 && overlay !== "menu" ? { actions: [{ kind: "set_pause_overlay", overlay }] } : {}),
+  return { ...(phase === "flight_paused" && overlay !== "menu" ? { actions: [{ kind: "set_pause_overlay", overlay }] } : {}),
     platform: { presentation_mode: mode === "phone-vr" ? "phone_vr" : mode,
       operation_pending: model.pendingGameRequestId !== null,
       ...(model.screenRenderScale === null ? {} : { screen_render_scale: model.screenRenderScale }),
@@ -284,21 +280,21 @@ function qualityView(model: AppModel): GameUiView {
 function withQualitySession<Value>(model: AppModel,
   observe: (session: TailAppSessionFacade, platform: GameUiPlatformInput) => Value): Value {
   const options = qualityOptions(model);
-  return withSharedGameUiSession(gameSessionPhaseCode(model.gameSession), {
+  const phase = gameSessionPhase(model.gameSession);
+  if (phase === "boot") throw new Error("Quality fixture requires a Rust session");
+  return withSharedGameUiSession(phase, {
     ...options, platform: { ...options.platform, operation_pending: false, water_quality_operation: { kind: "idle" } }
   }, (session) => observe(session, sharedGameUiPlatform(options.platform)));
 }
 
-function readyModel(phase = 1, mode: PresentationMode = "screen"): AppModel {
+function readyModel(phase: SessionPhase = "flight_setup", mode: PresentationMode = "screen"): AppModel {
   const initialized = updateApp(createInitialAppModel(), { type: "initialize" });
   const ready = updateApp(initialized.model, {
     type: "presentation-initialized", requestId: 1, activeMode: mode,
     webXrAvailable: true, phoneVrAvailable: true, status: "Ready"
   }).model;
-  const phaseSnapshot = phase === 5 || phase === 6 ? currentFlightDisplayFixture(phase) : phase === 7 ? currentFlightDisplayFixture(7) : phase === 9 || phase === 10 ? currentRecordedDisplayFixture() : null;
-  const session = gameSessionState(phase, 0, phaseSnapshot, true, "tail_incidence", phase === 9 ? "result" : undefined);
-  if (session === null) throw new Error("Invalid quality fixture session");
+  const session = currentGameSessionProjectionFixture(phase);
   return { ...ready, screenRenderScale: sharedScreenRenderSnapshot(), gameSession: session, sharedGameUi: currentSharedGameUiFixture(phase, {
-    ...(phase === 6 ? { actions: [{ kind: "set_pause_overlay", overlay: "settings" }] } : {}),
+    ...(phase === "flight_paused" ? { actions: [{ kind: "set_pause_overlay", overlay: "settings" }] } : {}),
     platform: { presentation_mode: mode === "phone-vr" ? "phone_vr" : mode } }) };
 }

@@ -49,7 +49,7 @@ describe("Phone VR UI Gamepad connection ownership", () => {
       fixture.actions.length = 0;
       fixture.frame();
       expect(fixture.operations).not.toContainEqual({ kind: "start_countdown" });
-      expect(fixture.session.readLifecycle().phaseCode).toBe(3);
+      expect(fixture.session.readLifecycle().phase).toBe("briefing_ready");
       expect(fixture.actions.filter((action) => action.type === "activate" || action.type === "back")).toEqual([]);
       const selected = change === "lower index addition" ? first : replacement;
       if (selected === replacement) moveToStart(fixture, selected);
@@ -60,7 +60,7 @@ describe("Phone VR UI Gamepad connection ownership", () => {
       selected.buttons = [{ pressed: true }, { pressed: false }];
       fixture.frame();
       expect(fixture.operations).toEqual([{ kind: "start_countdown" }]);
-      expect(fixture.session.readLifecycle().phaseCode).toBe(4);
+      expect(fixture.session.readLifecycle().phase).toBe("countdown");
       fixture.frame();
       expect(fixture.operations).toEqual([{ kind: "start_countdown" }]);
     }

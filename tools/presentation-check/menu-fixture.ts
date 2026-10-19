@@ -7,7 +7,7 @@ import { measureMenuLayout, menuCanvasSize } from "../../web/src/presentation/me
 import { HudCanvasFixture } from "./hud-canvas-fixture.js";
 import { currentSharedGameUiFixture } from "../game-check/shared-game-ui-fixture.js";
 
-const fixtureTheme = currentSharedGameUiFixture(0).theme;
+const fixtureTheme = currentSharedGameUiFixture("title").theme;
 
 export function geometryMenuFixture(view: UiViewModel): MenuPresentation {
   const panel = view.panels[0];

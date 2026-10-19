@@ -4,10 +4,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { HybridGameSessionBridge, initSync, maximum_flight_frame_gap_milliseconds, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
 import { BrowserTailPilotInput, DEFAULT_BROWSER_TAIL_INPUT_CONFIGURATION } from "../../web/src/game/browser-tail-input.js";
 import { TailFlightController } from "../../web/src/game/tail-flight-controller.js";
-import type { TailResultSnapshot } from "../../web/src/game/tail-flight-controller.js";
-import type { FlightDisplaySnapshot } from "../../web/src/game/flight-display-snapshot.js";
+import type { TailControllerSnapshot, TailResultSnapshot } from "../../web/src/game/tail-flight-controller.js";
+import { TailAppSessionFacade } from "../../web/src/app/session-facade.js";
 import type { FlightRenderPose } from "../../web/src/render/contracts/runtime.js";
-import { encodeTailLogicalInput, parseTailSessionSnapshot } from "../../web/src/game/tail-session-codec.js";
+import { encodeTailLogicalInput } from "../../web/src/game/tail-input.js";
 
 initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url))) });
 const disposals: (() => void)[] = [];
@@ -32,11 +32,14 @@ function fixture(mode = 0, initialTarget = 0) {
     keyboard: { ...DEFAULT_BROWSER_TAIL_INPUT_CONFIGURATION.keyboard, physicsHz: physics_hz() } });
   const input = { readDemand: vi.fn(browserInput.readDemand.bind(browserInput)), reset: vi.fn(browserInput.reset.bind(browserInput)),
     suspend: vi.fn(browserInput.suspend.bind(browserInput)), resume: vi.fn(browserInput.resume.bind(browserInput)), dispose: vi.fn(browserInput.dispose.bind(browserInput)) };
-  const port = { snapshot_json: vi.fn(() => session.snapshot_json()), control_profile_json: vi.fn(() => session.control_profile_json()),
+  const facade = new TailAppSessionFacade(session, physics_hz());
+  const port = { ...facade.flightPort, snapshot_json: vi.fn(session.snapshot_json.bind(session)), control_profile_json: vi.fn(() => session.control_profile_json()),
     pause: vi.fn((reason: number) => { session.pause(reason); }), clear_pause_reason: vi.fn((reason: number) => { session.clear_pause_reason(reason); }),
-    advance_tick_json: vi.fn((json: string) => session.advance_tick_json(json)), free: vi.fn(() => { session.free(); }) };
+    advance_tick_json: vi.fn(session.advance_tick_json.bind(session)), free: vi.fn(() => { facade.dispose(); }) };
+  vi.spyOn(session, "advance_tick_json").mockImplementation(port.advance_tick_json);
+  vi.spyOn(session, "snapshot_json").mockImplementation(port.snapshot_json);
   const renderer = { setFlightPose: vi.fn<(pose: FlightRenderPose | null) => void>() };
-  const hud = { render: vi.fn<(snapshot: FlightDisplaySnapshot) => void>(), fail: vi.fn<(message: string) => void>(), setVisible: vi.fn<(visible: boolean) => void>() };
+  const hud = { render: vi.fn<(snapshot: TailControllerSnapshot) => void>(), fail: vi.fn<(message: string) => void>(), setVisible: vi.fn<(visible: boolean) => void>() };
   const onTerminal = vi.fn<(snapshot: TailResultSnapshot) => void>();
   const onPauseChanged = vi.fn();
   const controller = new TailFlightController(port, input, renderer, hud, physics_hz(), maximum_flight_frame_gap_milliseconds(), () => [], onTerminal, onPauseChanged);
@@ -66,13 +69,13 @@ describe("two-tail controller through the Rust WASM port", () => {
     trial.key("keydown", "ArrowUp");
     trial.controller.onFrame(gap);
     if (gap > maximum_flight_frame_gap_milliseconds()) {
-      expect(trial.session.phase_code()).toBe(6);
+      expect(trial.port.readSnapshot().phase).toBe("flight_paused");
       expect(trial.port.pause).toHaveBeenCalledExactlyOnceWith(3);
       expect(trial.input.readDemand).not.toHaveBeenCalled();
       expect(trial.port.advance_tick_json).not.toHaveBeenCalled();
       expect(trial.controller.currentSnapshot.frame.state.tick).toBe(0);
     } else {
-      expect(trial.session.phase_code()).toBe(5);
+      expect(trial.port.readSnapshot().phase).toBe("flight_running");
       expect(trial.port.pause).not.toHaveBeenCalled();
       expect(trial.input.readDemand).toHaveBeenCalledTimes(Math.floor(gap / 10));
     }
@@ -86,7 +89,7 @@ describe("two-tail controller through the Rust WASM port", () => {
     trial.key("keydown", "ArrowUp");
     trial.key("keydown", "KeyL");
     trial.controller.onFrame(1_015);
-    expect(trial.controller.currentSnapshot.phaseCode).toBe(6);
+    expect(trial.controller.currentSnapshot.phase).toBe("flight_paused");
     expect(trial.controller.currentSnapshot.frame).toEqual(retained);
     expect(trial.session.can_resume()).toBe(false);
     trial.controller.onFrame(2_015);
@@ -95,7 +98,7 @@ describe("two-tail controller through the Rust WASM port", () => {
     expect(trial.session.can_resume()).toBe(false);
     trial.controller.onFrame(2_025);
     expect(trial.port.clear_pause_reason).toHaveBeenCalledExactlyOnceWith(3);
-    expect(trial.session.phase_code()).toBe(6);
+    expect(trial.port.readSnapshot().phase).toBe("flight_paused");
     expect(trial.session.can_resume()).toBe(true);
     trial.controller.onFrame(2_035);
     expect(trial.input.readDemand).toHaveBeenCalledTimes(1);
@@ -110,7 +113,8 @@ describe("two-tail controller through the Rust WASM port", () => {
     expect(trial.port.advance_tick_json).toHaveBeenCalledTimes(2);
     const resumed: unknown = JSON.parse(trial.port.advance_tick_json.mock.calls[1]?.[0] ?? "{}");
     expect(resumed).toMatchObject({ nose_up: 0, turn_right: 0, pilot_position_command: { kind: "hold" } });
-    trial.controller.synchronizeSnapshot(trial.session.abort());
+    trial.session.abort();
+    trial.controller.synchronizeSnapshot(trial.port.readSnapshot());
     const record: unknown = JSON.parse(trial.session.export_flight_record_json());
     expect(record).toMatchObject({ samples: [{ tick_index: 0 }, { tick_index: 1 }, { tick_index: 2 }], finalization: { terminal_tick: 2 } });
     trial.controller.onFrame(20_000);
@@ -124,12 +128,12 @@ describe("two-tail controller through the Rust WASM port", () => {
     trial.controller.onFrame(1_000);
     trial.session.pause(1);
     trial.controller.onFrame(1_010);
-    expect(trial.session.phase_code()).toBe(6);
+    expect(trial.port.readSnapshot().phase).toBe("flight_paused");
     expect(trial.session.can_resume()).toBe(false);
     expect(trial.port.clear_pause_reason).toHaveBeenCalledExactlyOnceWith(3);
     trial.session.clear_pause_reason(1);
     expect(trial.session.can_resume()).toBe(true);
-    expect(trial.session.phase_code()).toBe(6);
+    expect(trial.port.readSnapshot().phase).toBe("flight_paused");
   });
 
   it.each(["pause", "clear_pause_reason"] as const)("retains the last flight state when processing delay %s fails", (operation) => {
@@ -150,7 +154,7 @@ describe("two-tail controller through the Rust WASM port", () => {
     const trial = fixture();
     trial.controller.onFrame(0);
     trial.input.suspend.mockImplementationOnce(() => {
-      if (operation === "reset") trial.controller.reset(trial.session.snapshot_json());
+      if (operation === "reset") trial.controller.reset(trial.port.readSnapshot());
       else trial.controller.dispose();
     });
     trial.controller.onFrame(1_000);
@@ -161,7 +165,7 @@ describe("two-tail controller through the Rust WASM port", () => {
     trial.controller.onFrame(2_000);
     trial.controller.onFrame(2_010);
     if (operation === "reset") {
-      expect(trial.controller.currentSnapshot.phaseCode).toBe(5);
+      expect(trial.controller.currentSnapshot.phase).toBe("flight_running");
       expect(trial.port.advance_tick_json).toHaveBeenCalledTimes(1);
     } else {
       expect(trial.port.free).toHaveBeenCalledTimes(1);
@@ -184,26 +188,27 @@ describe("two-tail controller through the Rust WASM port", () => {
     expect(JSON.parse(payload)).toEqual({ schema_version: 2, control_layout: "tail_incidence", nose_up: 1, turn_right: 1,
       desired_pitch_rate_rad_s: limits.pitch, desired_yaw_rate_rad_s: limits.yaw, pilot_position_command: { kind: "set", normalized: 0.01 } });
     expect(trial.controller.currentSnapshot.frame.state.tick).toBe(1);
-    expect(trial.controller.currentSnapshot.frame.state.physicalIncidence.horizontalTailRadians).toBeLessThan(0);
+    expect(trial.controller.currentSnapshot.frame.state.physical_incidence.horizontal_tail_rad).toBeLessThan(0);
     expect(trial.renderer.setFlightPose).toHaveBeenLastCalledWith(expect.objectContaining({ controls: { layout: "tail_incidence",
-      physicalIncidence: trial.controller.currentSnapshot.frame.state.physicalIncidence } }));
-    expect(trial.hud.render).toHaveBeenLastCalledWith(trial.controller.currentDisplaySnapshot);
+      physicalIncidence: { horizontalTailRadians: trial.controller.currentSnapshot.frame.state.physical_incidence.horizontal_tail_rad,
+        verticalTailRadians: trial.controller.currentSnapshot.frame.state.physical_incidence.vertical_tail_rad } } }));
+    expect(trial.hud.render).toHaveBeenLastCalledWith(trial.controller.currentSnapshot);
     expect(trial.hud.fail).not.toHaveBeenCalled();
   });
 
   it("initializes from the held target rather than current moving mass position and preserves it on Hold/resume", () => {
     const trial = fixture(0, 0.5);
     const initial = trial.controller.currentSnapshot.frame.state;
-    expect(initial.pilotPositionMeters).not.toBe(initial.pilotPositionTargetMeters);
-    expect(initial.pilotPositionTargetNormalized).toBeCloseTo(0.5, 14);
-    expect(trial.input.reset).toHaveBeenCalledWith(initial.pilotPositionTargetNormalized);
+    expect(initial.pilot_position_m).not.toBe(initial.pilot_position_target_m);
+    expect(initial.pilot_position_target_normalized).toBeCloseTo(0.5, 14);
+    expect(trial.input.reset).toHaveBeenCalledWith(initial.pilot_position_target_normalized);
     trial.controller.onFrame(0);
     trial.controller.onFrame(10);
-    expect(trial.controller.currentSnapshot.frame.state.pilotPositionTargetNormalized).toBe(initial.pilotPositionTargetNormalized);
+    expect(trial.controller.currentSnapshot.frame.state.pilot_position_target_normalized).toBe(initial.pilot_position_target_normalized);
     trial.session.pause(0);
-    trial.controller.synchronizeSnapshot(trial.session.snapshot_json());
+    trial.controller.synchronizeSnapshot(trial.port.readSnapshot());
     trial.controller.resume();
-    expect(trial.controller.currentSnapshot.phaseCode).toBe(6);
+    expect(trial.controller.currentSnapshot.phase).toBe("flight_paused");
     const polls = trial.input.readDemand.mock.calls.length;
     trial.controller.onFrame(100);
     expect(trial.input.readDemand).toHaveBeenCalledTimes(polls);
@@ -211,7 +216,7 @@ describe("two-tail controller through the Rust WASM port", () => {
     trial.controller.resume();
     trial.controller.onFrame(2_000);
     trial.controller.onFrame(2_010);
-    expect(trial.controller.currentSnapshot.frame.state.pilotPositionTargetNormalized).toBe(initial.pilotPositionTargetNormalized);
+    expect(trial.controller.currentSnapshot.frame.state.pilot_position_target_normalized).toBe(initial.pilot_position_target_normalized);
     for (const [json] of trial.port.advance_tick_json.mock.calls) {
       const decoded: unknown = JSON.parse(json);
       expect(decoded).toMatchObject({ pilot_position_command: { kind: "hold" } });
@@ -234,10 +239,10 @@ describe("two-tail controller through the Rust WASM port", () => {
     trial.controller.onFrame(2_000);
     trial.controller.resume();
     const terminal = trial.controller.currentSnapshot;
-    expect(terminal.phaseCode).toBe(7);
+    expect(terminal.phase).toBe("result");
     expect(trial.onTerminal).toHaveBeenCalledTimes(1);
     expect(trial.onTerminal).toHaveBeenCalledWith(terminal);
-    expect(trial.hud.render).toHaveBeenLastCalledWith(expect.objectContaining({ kind: "tail_result" }));
+    expect(trial.hud.render).toHaveBeenLastCalledWith(expect.objectContaining({ phase: "result" }));
     expect(trial.port.advance_tick_json).toHaveBeenCalledTimes(1);
     const saved = trial.session.export_flight_record_json();
     const archive: unknown = JSON.parse(saved);
@@ -245,58 +250,28 @@ describe("two-tail controller through the Rust WASM port", () => {
     trial.session.retry();
     trial.session.start_countdown(1);
     trial.session.observe_countdown(trial.session.countdown_token(), 1, true);
-    trial.controller.reset(trial.session.snapshot_json());
-    expect(trial.controller.currentSnapshot.phaseCode).toBe(5);
-    expect(trial.controller.currentSnapshot.frame.state.pilotPositionTargetNormalized).toBe(0);
+    trial.controller.reset(trial.port.readSnapshot());
+    expect(trial.controller.currentSnapshot.phase).toBe("flight_running");
+    expect(trial.controller.currentSnapshot.frame.state.pilot_position_target_normalized).toBe(0);
   });
 
-  it("rejects stale normalized/schema payloads and seals a failed reset while retaining the committed snapshot", () => {
+  it("seals a rejected menu-phase reset and retains the committed snapshot", () => {
     const trial = fixture(0, 0.5);
     const retained = trial.controller.currentSnapshot;
-    const payload: unknown = JSON.parse(trial.session.snapshot_json());
-    const document = payload as { frame: { state: Record<string, unknown> } };
-    for (const invalid of [-1.01, 1.01, null]) {
-      document.frame.state.pilot_position_target_normalized = invalid;
-      expect(() => { trial.controller.reset(JSON.stringify(document)); }).toThrow(RangeError);
-      trial.controller.resume();
-      trial.controller.onFrame(100);
-      trial.controller.onFrame(110);
-      expect(trial.controller.currentSnapshot).toBe(retained);
-      expect(trial.port.advance_tick_json).not.toHaveBeenCalled();
-    }
-    delete document.frame.state.pilot_position_target_normalized;
-    expect(() => parseTailSessionSnapshot(JSON.stringify(document))).toThrow(RangeError);
-    trial.controller.reset(trial.session.snapshot_json());
-    expect(trial.input.reset).toHaveBeenLastCalledWith(retained.frame.state.pilotPositionTargetNormalized);
+    trial.session.abort();
+    trial.session.retry();
+    expect(() => { trial.controller.reset(trial.port.readSnapshot()); }).toThrow("Tail controller requires a Rust flight or Result snapshot");
+    trial.controller.resume();
+    trial.controller.onFrame(100);
+    trial.controller.onFrame(110);
+    expect(trial.controller.currentSnapshot).toBe(retained);
+    expect(trial.port.advance_tick_json).not.toHaveBeenCalled();
+    trial.session.start_countdown(1);
+    trial.session.observe_countdown(trial.session.countdown_token(), 1, true);
+    trial.controller.reset(trial.port.readSnapshot());
     trial.controller.onFrame(1_000);
     trial.controller.onFrame(1_010);
     expect(trial.port.advance_tick_json).toHaveBeenCalledTimes(1);
-  });
-
-  it("keeps frame/identity failures closed and disposes each resource once", () => {
-    const trial = fixture();
-    const other = new HybridGameSessionBridge(0, 99, 100);
-    try {
-      other.open_setup(); other.prepare(); other.mark_briefing_ready(); other.start_countdown(1); other.observe_countdown(other.countdown_token(), 1, true);
-      const retained = trial.controller.currentSnapshot;
-      trial.port.advance_tick_json.mockImplementationOnce(() => other.snapshot_json());
-      trial.controller.onFrame(0);
-      trial.controller.onFrame(10);
-      expect(trial.controller.currentSnapshot).toBe(retained);
-      expect(trial.hud.fail).toHaveBeenCalledWith("Tail control profile belongs to another sealed session");
-      trial.controller.resume();
-      trial.controller.onFrame(100);
-      trial.controller.onFrame(110);
-      expect(trial.port.advance_tick_json).toHaveBeenCalledTimes(1);
-      trial.controller.dispose();
-      trial.controller.dispose();
-      trial.controller.onFrame(1_000);
-      expect(trial.port.free).toHaveBeenCalledTimes(1);
-      expect(trial.input.dispose).toHaveBeenCalledTimes(1);
-      expect(trial.renderer.setFlightPose).toHaveBeenLastCalledWith(null);
-    } finally {
-      other.free();
-    }
   });
 
   it.each(cleanupSites)("tries every independent cleanup once after a %s failure and retains the original exception", (site) => {
@@ -327,11 +302,11 @@ describe("two-tail controller through the Rust WASM port", () => {
     trial.controller.dispose();
     trial.controller.resume();
     trial.controller.suspend();
-    trial.controller.synchronizeSnapshot("not a snapshot");
+    trial.controller.synchronizeSnapshot(retained);
     trial.controller.renderCurrentSnapshot();
     trial.controller.onFrame(1_000);
     trial.controller.onFrame(2_000);
-    expect(() => { trial.controller.reset("not a snapshot"); }).toThrow("Cannot reset a disposed tail controller");
+    expect(() => { trial.controller.reset(retained); }).toThrow("Cannot reset a disposed tail controller");
     expect(attempts).toEqual(cleanupSites);
     expect(trial.port.snapshot_json).toHaveBeenCalledTimes(queries);
     expect(trial.port.advance_tick_json).toHaveBeenCalledTimes(1);
@@ -445,13 +420,13 @@ describe("two-tail controller through the Rust WASM port", () => {
     if (site === "pose") trial.renderer.setFlightPose.mockImplementationOnce(fail);
     if (site === "hud") trial.hud.render.mockImplementationOnce(fail);
     if (site === "input") trial.input.reset.mockImplementationOnce(fail);
-    expect(() => { trial.controller.reset(trial.session.snapshot_json()); }).toThrow(primary);
+    expect(() => { trial.controller.reset(trial.port.readSnapshot()); }).toThrow(primary);
     trial.controller.resume();
     trial.controller.onFrame(0);
     trial.controller.onFrame(100);
     expect(trial.controller.currentSnapshot).toBe(retained);
     expect(trial.port.advance_tick_json).not.toHaveBeenCalled();
-    trial.controller.reset(trial.session.snapshot_json());
+    trial.controller.reset(trial.port.readSnapshot());
     trial.controller.onFrame(1_000);
     trial.controller.onFrame(1_010);
     expect(trial.port.advance_tick_json).toHaveBeenCalledTimes(1);
@@ -466,7 +441,7 @@ describe("two-tail controller through the Rust WASM port", () => {
     trial.input.suspend.mockImplementationOnce(() => { throw cleanup; });
     let caught: unknown;
     try {
-      trial.controller.synchronizeSnapshot(trial.session.snapshot_json());
+      trial.controller.synchronizeSnapshot(trial.port.readSnapshot());
     } catch (error: unknown) {
       caught = error;
     }
@@ -489,14 +464,14 @@ describe("two-tail controller through the Rust WASM port", () => {
       trial.session.retry();
       trial.session.start_countdown(1);
       trial.session.observe_countdown(trial.session.countdown_token(), 1, true);
-      trial.controller.reset(trial.session.snapshot_json());
+      trial.controller.reset(trial.port.readSnapshot());
       if (throws) throw new Error("Old terminal callback failure after reset");
     });
     trial.controller.onFrame(0);
     trial.controller.onFrame(100);
     expect(trial.onTerminal).toHaveBeenCalledTimes(1);
-    expect(trial.controller.currentSnapshot.phaseCode).toBe(5);
-    expect(trial.hud.render.mock.lastCall?.[0]).toMatchObject({ kind: "tail_flight", stamp: { tick: 0, fraction: 0 } });
+    expect(trial.controller.currentSnapshot.phase).toBe("flight_running");
+    expect(trial.hud.render.mock.lastCall?.[0]).toMatchObject({ phase: "flight_running", frame: { state: { tick: 0, fraction: 0 } } });
     expect(trial.input.suspend).not.toHaveBeenCalled();
     expect(trial.hud.fail).not.toHaveBeenCalled();
     trial.controller.onFrame(2_000);
@@ -530,14 +505,14 @@ describe("two-tail controller through the Rust WASM port", () => {
       trial.session.retry();
       trial.session.start_countdown(1);
       trial.session.observe_countdown(trial.session.countdown_token(), 1, true);
-      trial.controller.reset(trial.session.snapshot_json());
+      trial.controller.reset(trial.port.readSnapshot());
     };
     if (site === "pose") trial.renderer.setFlightPose.mockImplementationOnce(reset);
     else trial.hud.render.mockImplementationOnce(reset);
     trial.controller.onFrame(0);
     trial.controller.onFrame(100);
     expect(trial.onTerminal).toHaveBeenCalledTimes(1);
-    expect(trial.hud.render.mock.lastCall?.[0]).toMatchObject({ kind: "tail_flight", stamp: { tick: 0 } });
+    expect(trial.hud.render.mock.lastCall?.[0]).toMatchObject({ phase: "flight_running", frame: { state: { tick: 0 } } });
     expect(trial.input.suspend).not.toHaveBeenCalled();
     expect(trial.hud.fail).not.toHaveBeenCalled();
     trial.controller.onFrame(2_000);
@@ -552,7 +527,7 @@ describe("two-tail controller through the Rust WASM port", () => {
       trial.session.retry();
       trial.session.start_countdown(1);
       trial.session.observe_countdown(trial.session.countdown_token(), 1, true);
-      trial.controller.reset(trial.session.snapshot_json());
+      trial.controller.reset(trial.port.readSnapshot());
     };
     trial.renderer.setFlightPose.mockImplementationOnce(restart);
     trial.controller.onFrame(0);
