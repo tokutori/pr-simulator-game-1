@@ -19,6 +19,7 @@ schemars = { workspace = true, optional = true }
 image = { version = "=0.25.10", default-features = false }
 earcut = "=0.4.10"
 time = { version = "=0.3.55", default-features = false, features = ["formatting", "parsing"] }
+unicode-width = { version = "=0.2.2", default-features = false }
 
 [dev-dependencies]
 sha2.workspace = true

@@ -6,6 +6,7 @@ use birdman_game_session::{application::ExternalPauseReason, environment_snapsho
 use wasm_bindgen::{JsValue, prelude::*};
 
 mod cockpit_geometry;
+mod head_hud;
 mod hybrid_bridge;
 mod hybrid_record;
 mod lake_sky;
@@ -19,6 +20,7 @@ mod wing_texture;
 
 pub use birdman_game_session::{HybridSessionPreparation, HybridSessionPreparationError};
 pub use cockpit_geometry::CockpitGeometryBridge;
+pub use head_hud::game_ui_head_hud_fit_json;
 pub use hybrid_bridge::{HybridGameSessionBridge, TailPersonalBestSelectionBridge};
 pub use lake_sky::{
     LakeCloudsBridge, LakeSkyImageBridge, lake_scene_ambient_color_srgb,

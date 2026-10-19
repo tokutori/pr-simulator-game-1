@@ -10,6 +10,8 @@ export const schemaEntries = [
   { key: "input", name: "GameUiPlatformInput", filename: "game-ui-input", group: "deserialize" },
   { key: "effects", name: "GameUiUpdate", filename: "game-ui-effects", group: "serialize" },
   { key: "frame", name: "GameUiFrame", filename: "game-ui-frame", group: "serialize" },
+  { key: "head_hud_fit", name: "GameUiHeadHudFit", filename: "head-hud-fit", group: "serialize" },
+  { key: "head_hud_space", name: "GameUiHeadHudSpace", filename: "head-hud-space", group: "deserialize" },
   { key: "screen_render_auto", name: "ScreenRenderAutoSnapshot", filename: "screen-render-auto", group: "serialize" },
   { key: "replay_camera", name: "ReplayCameraView", filename: "replay-camera", group: "serialize" },
   { key: "tail_input", name: "TailInputDocument", filename: "tail-input", group: "deserialize" },
