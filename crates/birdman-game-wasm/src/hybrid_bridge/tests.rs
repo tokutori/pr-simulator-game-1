@@ -719,7 +719,7 @@ fn setup_weather_catalog_matches_registered_metadata_and_actual_wind_provider() 
         assert_eq!(metadata.len(), 18);
         assert_eq!(metadata[3], weather_code);
         assert_eq!(metadata[5], version);
-        assert_eq!(metadata[6], 4);
+        assert_eq!(metadata[6], 5);
         assert_eq!(metadata[8], version);
         assert_eq!(metadata[10], 19);
         let sealed: Value =
