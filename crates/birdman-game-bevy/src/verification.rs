@@ -1636,6 +1636,13 @@ fn within_ancestor_clip(entity: Entity, bounds: Rect, hierarchy: &VerificationUi
     .all(|point| clip_check_recursive(point, entity, &hierarchy.clipping, &hierarchy.parents))
 }
 
+type VerificationCloudLayer = (
+    Entity,
+    Option<&'static Mesh3d>,
+    &'static Visibility,
+    &'static ViewVisibility,
+);
+
 #[derive(SystemParam)]
 pub(crate) struct VerificationPresentation<'w, 's> {
     camera: ResMut<'w, CameraMode>,
@@ -1644,7 +1651,7 @@ pub(crate) struct VerificationPresentation<'w, 's> {
     environment: Res<'w, NativeEnvironment>,
     materials: Res<'w, Assets<WaterMaterial>>,
     meshes: Res<'w, Assets<Mesh>>,
-    cloud_layers: Query<'w, 's, (Entity, Option<&'static Mesh3d>), With<super::clouds::CloudLayer>>,
+    cloud_layers: Query<'w, 's, VerificationCloudLayer, With<super::clouds::CloudLayer>>,
     rendering: Res<'w, NativeScreenRender>,
     timing_readout: Res<'w, timing::TimingReadout>,
     frame: Res<'w, FrameCount>,
@@ -1680,10 +1687,21 @@ pub(crate) struct VerificationPresentation<'w, 's> {
 
 impl VerificationPresentation<'_, '_> {
     fn cloud_mesh(&self) -> Result<(Entity, Option<bevy::asset::AssetId<Mesh>>), String> {
-        let (layer, mesh) = self
+        let (layer, mesh, visibility, view_visibility) = self
             .cloud_layers
             .single()
             .map_err(|cause| format!("Cloud layer is unavailable: {cause}"))?;
+        let expected_visibility = if mesh.is_some() {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+        if *visibility != expected_visibility || view_visibility.get() != mesh.is_some() {
+            return Err(format!(
+                "Cloud mesh/visibility disagree: layer={layer:?}, mesh={}, visibility={visibility:?}, view_visibility={view_visibility:?}",
+                mesh.is_some()
+            ));
+        }
         Ok((layer, mesh.map(|mesh| mesh.0.id())))
     }
 
@@ -2844,10 +2862,12 @@ fn advance_step(
                 }
                 if verification.stage_started.elapsed() > Duration::from_secs(8) {
                     let finding = format!(
-                        "Shadow draw fixture did not acknowledge its resources: {snapshot:?}, frame_delta={frame_delta:?}, preparation={:?}, preparation_epoch={}, source_frame={:?}; remaining shadow captures are unverified",
+                        "Shadow draw fixture did not acknowledge its resources: {snapshot:?}, frame_delta={frame_delta:?}, preparation={:?}, preparation_epoch={}, source_frame={:?}, eligible={}, pending_materials={}; remaining shadow captures are unverified",
                         presentation.timing_readout.preparation,
                         presentation.timing_readout.preparation_epoch,
                         presentation.timing_readout.source_frame,
+                        presentation.timing_readout.eligible,
+                        presentation.timing_readout.pending_materials,
                     );
                     println!(
                         "Unmet timing check: {finding}; restoring Manual 100% and continuing the core loop"
@@ -2894,10 +2914,12 @@ fn advance_step(
                 let observed = verification.stage_started.elapsed();
                 if observed > Duration::from_secs(8) {
                     let finding = format!(
-                        "Auto verification has no completed fresh GPU measurement: {snapshot:?}, frame_delta={frame_delta:?}, preparation={:?}, preparation_epoch={}, source_frame={:?}",
+                        "Auto verification has no completed fresh GPU measurement: {snapshot:?}, frame_delta={frame_delta:?}, preparation={:?}, preparation_epoch={}, source_frame={:?}, eligible={}, pending_materials={}",
                         presentation.timing_readout.preparation,
                         presentation.timing_readout.preparation_epoch,
                         presentation.timing_readout.source_frame,
+                        presentation.timing_readout.eligible,
+                        presentation.timing_readout.pending_materials,
                     );
                     println!(
                         "Unmet timing check: {finding}; restoring Manual 100% and continuing the core loop"
