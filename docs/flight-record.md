@@ -145,6 +145,7 @@ Canonical keyは明示identity、model/controller/scenario/physics/score version
 difficulty、profile gain/slew/optional alpha guard、course、content hash、初期状態をSHA-256へ入力する。
 負zeroはpositive zeroへ正規化し、finite f64をbig-endian IEEE-754で符号化する。
 画質とpresentation backendはkeyへ含めず、保存keyを現在のbuildから再生成しない。
+共有sessionの`record_archive`は確定metadataからdocumentとkeyを生成し、共通build処理でroot-relativeなsource fingerprintを導出する。NativeとWASMは同じproducerを使用する。NativeはJSON保存先の全候補を既存selectorへ渡し、同点ではpath昇順の最初の保存記録を保持する。keyのない記録は未順位のまま閲覧・再出力でき、索引用DBや保存keyの補完は追加しない。
 
 ## Replay
 

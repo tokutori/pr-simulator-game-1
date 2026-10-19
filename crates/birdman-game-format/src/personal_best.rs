@@ -72,10 +72,7 @@ impl TailPersonalBestSelection {
         let Some(key) = existing.header.personal_best_key else {
             return Ok(());
         };
-        if existing.control_identity != self.identity
-            || existing.header.aircraft_model_version != self.aircraft_model_version
-            || existing.header.controller_profile_version != self.controller_profile_version
-        {
+        if !self.matches_configuration(existing) {
             return Ok(());
         }
         match compare_personal_best(
@@ -101,6 +98,14 @@ impl TailPersonalBestSelection {
     /// Returns the distinct two-tail canonical key.
     pub const fn key(&self) -> PersonalBestKey {
         self.key
+    }
+
+    /// Reports matching canonical conditions and explicit model/controller identities.
+    pub fn matches_configuration(&self, record: &TailFlightRecordDocument) -> bool {
+        record.header.personal_best_key == Some(self.key.digest())
+            && record.control_identity == self.identity
+            && record.header.aircraft_model_version == self.aircraft_model_version
+            && record.header.controller_profile_version == self.controller_profile_version
     }
 
     /// Returns the first winning persisted record identifier, if present.
