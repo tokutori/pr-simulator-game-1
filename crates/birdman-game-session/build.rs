@@ -1,4 +1,4 @@
-//! Generates root-relative source fingerprints for Personal Best identity.
+//! Generates shared root-relative source fingerprints for Personal Best identity.
 
 use std::env;
 use std::fs;

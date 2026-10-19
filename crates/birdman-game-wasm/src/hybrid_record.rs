@@ -1,21 +1,11 @@
 use birdman_game_core::{
-    CourseAxis, FlightRecord, FlightRecordPlaybackSample, FlightRecordQueryError, GameSession,
-    GameSessionError,
+    FlightRecord, FlightRecordPlaybackSample, FlightRecordQueryError, GameSession, GameSessionError,
 };
-use birdman_game_format::{
-    AssistanceLevel, FlightRecordFormatError, PersonalBestContentHashes, TailFlightRecordDocument,
-    TailPersonalBestConfiguration, canonical_tail_personal_best_key,
-};
+use birdman_game_format::FlightRecordFormatError;
 use birdman_game_session::{
-    record_query::AnalysisDocument, replay_camera::RecordedPlaybackSample as PlaybackDocument,
+    record_archive::RecordExportError, record_query::AnalysisDocument,
+    replay_camera::RecordedPlaybackSample as PlaybackDocument,
 };
-
-#[derive(Clone, Copy)]
-pub(crate) struct HybridRecordMetadata<'identity> {
-    pub(crate) configuration: TailPersonalBestConfiguration<'identity>,
-    pub(crate) course_axis: CourseAxis,
-    pub(crate) content_hashes: PersonalBestContentHashes,
-}
 
 #[derive(Debug)]
 pub(crate) enum HybridRecordError {
@@ -40,46 +30,14 @@ impl core::fmt::Display for HybridRecordError {
     }
 }
 
-pub(crate) fn export_record_json(
-    session: &GameSession<'_>,
-    metadata: HybridRecordMetadata<'_>,
-) -> Result<String, HybridRecordError> {
-    let record = session
-        .flight_record()
-        .ok_or(HybridRecordError::RecordUnavailable)?;
-    let configuration = metadata.configuration;
-    if session.configuration_identity() != Some(configuration.scenario)
-        || record.header().scenario != configuration.scenario
-        || matches!(
-            configuration.difficulty.assistance(),
-            AssistanceLevel::Manual
-        ) != matches!(
-            configuration.control_mode,
-            birdman_game_core::ControlMode::Manual
-        )
-    {
-        return Err(HybridRecordError::MetadataMismatch);
+impl From<RecordExportError> for HybridRecordError {
+    fn from(error: RecordExportError) -> Self {
+        match error {
+            RecordExportError::RecordUnavailable => Self::RecordUnavailable,
+            RecordExportError::MetadataMismatch => Self::MetadataMismatch,
+            RecordExportError::Format(error) => Self::Format(error),
+        }
     }
-    let document = TailFlightRecordDocument::from_record(
-        record,
-        configuration.difficulty,
-        configuration.identity.clone(),
-    )
-    .map_err(HybridRecordError::Format)?;
-    let key = canonical_tail_personal_best_key(
-        &document,
-        configuration,
-        metadata.course_axis,
-        metadata.content_hashes,
-    )
-    .map_err(HybridRecordError::Format)?;
-    let encoded = document
-        .with_personal_best_key(key)
-        .map_err(HybridRecordError::Format)?
-        .encode_json()
-        .map_err(HybridRecordError::Format)?;
-    String::from_utf8(encoded)
-        .map_err(|_| HybridRecordError::Format(FlightRecordFormatError::EncodingFailed))
 }
 
 pub(crate) fn playback_sample_json(

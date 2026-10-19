@@ -13,6 +13,7 @@ mod launch_venue;
 
 pub mod lake_sky;
 pub mod lake_water;
+pub mod record_archive;
 pub mod record_query;
 pub mod replay_camera;
 pub mod screen_render_auto;

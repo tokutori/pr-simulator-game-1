@@ -1056,11 +1056,13 @@ fn tail_key_ignores_preset_name_and_selected_key_and_selection_uses_identity() {
     let mut selection = crate::TailPersonalBestSelection::try_new(&candidate)
         .unwrap()
         .unwrap();
+    assert!(selection.matches_configuration(&candidate));
     let mut other_identity = candidate.clone();
     other_identity
         .control_identity
         .aircraft_configuration_id
         .push_str("-oracle");
+    assert!(!selection.matches_configuration(&other_identity));
     selection.consider_existing(2, &other_identity).unwrap();
     assert_eq!(selection.selected_existing_id(), None);
     selection.consider_existing(3, &candidate.clone()).unwrap();

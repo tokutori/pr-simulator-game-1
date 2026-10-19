@@ -3,10 +3,10 @@ use bevy::ecs as bevy_ecs;
 use bevy::prelude::Resource;
 use birdman_game_core::SessionSnapshot;
 use birdman_game_format::{
-    AssistanceLevel, FlightRecordFormatError, MAX_FLIGHT_RECORD_JSON_BYTES,
-    TailFlightRecordDocument,
+    FlightRecordFormatError, MAX_FLIGHT_RECORD_JSON_BYTES, TailFlightRecordDocument,
+    TailPersonalBestSelection,
 };
-use birdman_game_session::game_ui::GameUiStoredRecord;
+use birdman_game_session::{game_ui::GameUiStoredRecord, record_archive::RecordExportError};
 use std::{
     error::Error,
     fmt,
@@ -27,6 +27,8 @@ struct StoredFlightLog {
     id: u32,
     path: PathBuf,
     saved_at: String,
+    modified: SystemTime,
+    personal_best: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -38,7 +40,7 @@ pub(crate) enum FlightLogFormat {
 #[derive(Debug)]
 pub(crate) enum FlightLogError {
     RecordUnavailable,
-    MetadataMismatch,
+    Export(RecordExportError),
     Format(FlightRecordFormatError),
     Clock(std::time::SystemTimeError),
     StoredRecordUnavailable(u32),
@@ -61,7 +63,7 @@ impl fmt::Display for FlightLogError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::RecordUnavailable => formatter.write_str("確定した現飛行の記録がない"),
-            Self::MetadataMismatch => formatter.write_str("記録と準備metadataが一致しない"),
+            Self::Export(source) => write!(formatter, "確定記録の準備に失敗した: {source:?}"),
             Self::Format(source) => write!(formatter, "飛行ログの符号化に失敗した: {source:?}"),
             Self::Clock(source) => write!(formatter, "出力名の時刻を取得できない: {source}"),
             Self::StoredRecordUnavailable(id) => {
@@ -122,10 +124,13 @@ impl FlightLogExport {
     pub(crate) fn stored_records(&self) -> Vec<GameUiStoredRecord> {
         self.stored
             .iter()
+            .filter(|record| record.personal_best)
+            .chain(self.stored.iter().filter(|record| !record.personal_best))
+            .take(3)
             .map(|record| GameUiStoredRecord {
                 id: record.id,
                 saved_at: record.saved_at.clone(),
-                personal_best: false,
+                personal_best: record.personal_best,
             })
             .collect()
     }
@@ -177,23 +182,27 @@ impl FlightLogExport {
                 })?;
             paths.push((path, modified));
         }
-        paths.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| right.0.cmp(&left.0)));
+        paths.sort_by(|left, right| left.0.cmp(&right.0));
         let mut stored = Vec::new();
+        let mut selections: Vec<TailPersonalBestSelection> = Vec::new();
         let mut failures = Vec::new();
         let mut next_id = self.next_id;
         let now = SystemTime::now();
         for (path, modified) in paths {
-            if let Err(error) = read_archive(&path).and_then(|json| {
-                TailFlightRecordDocument::decode_json(json.as_bytes())
-                    .map(|_| ())
-                    .map_err(|source| FlightLogError::InvalidArchive {
+            let document = match read_archive(&path).and_then(|json| {
+                TailFlightRecordDocument::decode_json(json.as_bytes()).map_err(|source| {
+                    FlightLogError::InvalidArchive {
                         path: path.clone(),
                         source,
-                    })
+                    }
+                })
             }) {
-                failures.push(error);
-                continue;
-            }
+                Ok(document) => document,
+                Err(error) => {
+                    failures.push(error);
+                    continue;
+                }
+            };
             let id = if let Some(existing) = self.stored.iter().find(|record| record.path == path) {
                 existing.id
             } else {
@@ -204,6 +213,23 @@ impl FlightLogExport {
                 })?;
                 id
             };
+            if let Some(mut selection) =
+                TailPersonalBestSelection::try_new(&document).map_err(FlightLogError::Format)?
+            {
+                if let Some(existing) = selections
+                    .iter_mut()
+                    .find(|existing| existing.matches_configuration(&document))
+                {
+                    existing
+                        .consider_existing(u64::from(id), &document)
+                        .map_err(FlightLogError::Format)?;
+                } else {
+                    selection
+                        .consider_existing(u64::from(id), &document)
+                        .map_err(FlightLogError::Format)?;
+                    selections.push(selection);
+                }
+            }
             let age = now.duration_since(modified).unwrap_or_default().as_secs();
             let saved_at = if age < 60 {
                 "1分未満前".to_owned()
@@ -214,11 +240,25 @@ impl FlightLogExport {
             } else {
                 format!("{}日前", age / 86400)
             };
-            stored.push(StoredFlightLog { id, path, saved_at });
-            if stored.len() == 3 {
-                break;
-            }
+            stored.push(StoredFlightLog {
+                id,
+                path,
+                saved_at,
+                modified,
+                personal_best: false,
+            });
         }
+        for record in &mut stored {
+            record.personal_best = selections
+                .iter()
+                .any(|selection| selection.selected_existing_id() == Some(u64::from(record.id)));
+        }
+        stored.sort_by(|left, right| {
+            right
+                .modified
+                .cmp(&left.modified)
+                .then_with(|| right.path.cmp(&left.path))
+        });
         self.stored = stored;
         self.next_id = next_id;
         Ok(failures)
@@ -256,29 +296,10 @@ impl FlightLogExport {
                 }
             }
         } else {
-            let record = core
-                .flight_record()
-                .ok_or(FlightLogError::RecordUnavailable)?;
-            let prepared = session
+            let document = session
                 .game
-                .prepared()
-                .ok_or(FlightLogError::MetadataMismatch)?;
-            let difficulty = session.game.difficulty();
-            if core.configuration_identity() != Some(record.header().scenario)
-                || matches!(difficulty.assistance(), AssistanceLevel::Manual)
-                    != matches!(
-                        prepared.control_mode,
-                        birdman_game_core::ControlMode::Manual
-                    )
-            {
-                return Err(FlightLogError::MetadataMismatch);
-            }
-            let document = TailFlightRecordDocument::from_record(
-                record,
-                difficulty,
-                prepared.record_identity.clone(),
-            )
-            .map_err(FlightLogError::Format)?;
+                .flight_record_document()
+                .map_err(FlightLogError::Export)?;
             match format {
                 FlightLogFormat::Json => document.encode_json(),
                 FlightLogFormat::Csv => document.encode_csv(),
@@ -484,11 +505,18 @@ pub(crate) mod tests {
         }
         assert!(export.refresh().unwrap().is_empty());
         assert_eq!(export.stored_records().len(), 3);
+        assert_eq!(export.stored.len(), 5);
         assert_eq!(
             export
-                .stored
+                .stored_records()
                 .iter()
-                .map(|record| record.path.clone())
+                .map(|record| export
+                    .stored
+                    .iter()
+                    .find(|stored| stored.id == record.id)
+                    .unwrap()
+                    .path
+                    .clone())
                 .collect::<Vec<_>>(),
             [4, 3, 2].map(|index| directory.0.join(format!("flight-log-{index}.json")))
         );
@@ -509,6 +537,175 @@ pub(crate) mod tests {
         let mut missing = FlightLogExport::new(&directory.0, Some(Path::new("missing"))).unwrap();
         assert!(missing.refresh().unwrap().is_empty());
         assert!(!missing.directory().exists());
+    }
+
+    fn keyed_archive(score: f64, key: u8) -> TailFlightRecordDocument {
+        use birdman_game_format::{FlightRecordDispositionDocument, FlightRecordEndReasonDocument};
+        let mut document = TailFlightRecordDocument::decode_json(record_json().as_bytes()).unwrap();
+        document.finalization.reason = FlightRecordEndReasonDocument::WaterContact;
+        document.finalization.disposition = FlightRecordDispositionDocument::Complete;
+        document.finalization.score_m = Some([score, 0.0, score]);
+        document.header.personal_best_key = Some([key; 32]);
+        document.validate().unwrap();
+        document
+    }
+
+    fn store_archive(
+        directory: &TestDirectory,
+        name: &str,
+        document: &TailFlightRecordDocument,
+    ) -> PathBuf {
+        let path = directory.0.join(format!("flight-log-{name}.json"));
+        fs::write(&path, document.encode_json().unwrap()).unwrap();
+        path
+    }
+
+    #[test]
+    fn personal_best_uses_all_saved_candidates_and_preserves_ties_across_refresh_and_restart() {
+        let directory = TestDirectory::new();
+        let winner = store_archive(&directory, "001", &keyed_archive(200.0, 1));
+        for index in 2..7 {
+            store_archive(&directory, &format!("00{index}"), &keyed_archive(100.0, 1));
+        }
+        store_archive(&directory, "007", &keyed_archive(200.0, 1));
+        let mut export = FlightLogExport::new(&directory.0, Some(&directory.0)).unwrap();
+        for _ in 0..2 {
+            assert!(export.refresh().unwrap().is_empty());
+            assert_eq!(export.stored.len(), 7);
+            let best: Vec<_> = export
+                .stored
+                .iter()
+                .filter(|record| record.personal_best)
+                .collect();
+            assert_eq!(best.len(), 1);
+            assert_eq!(best[0].path, winner);
+            assert_eq!(export.stored_records()[0].id, best[0].id);
+            assert!(export.stored_records()[0].personal_best);
+        }
+        let mut restarted = FlightLogExport::new(&directory.0, Some(&directory.0)).unwrap();
+        restarted.refresh().unwrap();
+        assert_eq!(
+            restarted
+                .stored
+                .iter()
+                .find(|record| record.personal_best)
+                .unwrap()
+                .path,
+            winner
+        );
+        let improved = store_archive(&directory, "008", &keyed_archive(201.0, 1));
+        export.refresh().unwrap();
+        assert_eq!(
+            export
+                .stored
+                .iter()
+                .find(|record| record.personal_best)
+                .unwrap()
+                .path,
+            improved
+        );
+        assert_eq!(
+            fs::read(&winner).unwrap(),
+            keyed_archive(200.0, 1).encode_json().unwrap()
+        );
+    }
+
+    #[test]
+    fn personal_best_separates_conditions_and_keeps_unranked_archives_readable() {
+        let directory = TestDirectory::new();
+        let first = store_archive(&directory, "001", &keyed_archive(200.0, 1));
+        let other_key = store_archive(&directory, "002", &keyed_archive(150.0, 2));
+        let mut other_identity = keyed_archive(300.0, 1);
+        other_identity
+            .control_identity
+            .controller_profile_id
+            .push_str("-other");
+        let other_identity_path = store_archive(&directory, "003", &other_identity);
+        let mut keyless = keyed_archive(400.0, 1);
+        keyless.header.personal_best_key = None;
+        let keyless_path = store_archive(&directory, "004", &keyless);
+        let interrupted = directory.0.join("flight-log-005.json");
+        fs::write(&interrupted, record_json()).unwrap();
+        let mut export = FlightLogExport::new(&directory.0, Some(&directory.0)).unwrap();
+        assert!(export.refresh().unwrap().is_empty());
+        assert_eq!(export.stored.len(), 5);
+        for path in [first, other_key, other_identity_path] {
+            assert!(
+                export
+                    .stored
+                    .iter()
+                    .find(|record| record.path == path)
+                    .unwrap()
+                    .personal_best
+            );
+        }
+        for path in [keyless_path, interrupted] {
+            let record = export
+                .stored
+                .iter()
+                .find(|record| record.path == path)
+                .unwrap();
+            assert!(!record.personal_best);
+            assert_eq!(
+                export.read_stored(record.id).unwrap().1.as_bytes(),
+                fs::read(&path).unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn native_contact_save_uses_the_shared_key_and_keeps_archive_reexport_verbatim() {
+        use birdman_game_core::{
+            SessionPhase, TailFlightTickInput, TailPilotIntent, TailPilotPositionCommand,
+            TailRateTarget,
+        };
+        use birdman_game_session::application::{BackendReadiness, SessionCommand};
+        let directory = TestDirectory::new();
+        let mut session = NativeSession::default();
+        for command in [
+            SessionCommand::OpenSetup {},
+            SessionCommand::Prepare {},
+            SessionCommand::StartCountdown {},
+        ] {
+            session
+                .game
+                .execute(command, BackendReadiness::Ready)
+                .unwrap();
+        }
+        session
+            .game
+            .observe_countdown(
+                session.game.core_session().countdown_token().unwrap(),
+                3.0,
+                true,
+            )
+            .unwrap();
+        while session.game.core_session().snapshot().phase() == SessionPhase::FlightRunning {
+            session
+                .game
+                .advance_tail_flight_tick(TailFlightTickInput::new(
+                    TailPilotIntent::try_new(0.0, 0.0).unwrap(),
+                    TailRateTarget::try_new(0.0, 0.0).unwrap(),
+                    TailPilotPositionCommand::Hold,
+                ))
+                .unwrap();
+        }
+        let expected = session.game.flight_record_document().unwrap();
+        assert!(expected.header.personal_best_key.is_some());
+        let mut export = FlightLogExport::new(&directory.0, Some(&directory.0)).unwrap();
+        let saved = export.save(&session, FlightLogFormat::Json).unwrap();
+        let json = fs::read_to_string(saved).unwrap();
+        assert_eq!(
+            TailFlightRecordDocument::decode_json(json.as_bytes()).unwrap(),
+            expected
+        );
+        export.refresh().unwrap();
+        assert!(export.stored_records()[0].personal_best);
+        let raw = format!("\n{json}\n ");
+        let mut archived = NativeSession::default();
+        archived.game.open_archived_record_json(&raw).unwrap();
+        let reexported = export.save(&archived, FlightLogFormat::Json).unwrap();
+        assert_eq!(fs::read_to_string(reexported).unwrap(), raw);
     }
 
     #[test]

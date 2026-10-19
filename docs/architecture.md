@@ -30,6 +30,7 @@ coreは `#![no_std]` とし、wasm-bindgen、serde、I/O、clock、network、乱
 この性能要件の検証は実装段階でallocation計測により行う。
 
 formatは外部表現をdeserializeして検証し、coreのconstructorから有効なモデルを構築する。
+確定recordのdocument生成とPersonal Bestのsource fingerprintはsessionの`record_archive`が所有し、Web/WASMとNativeは同じ生成処理を呼ぶ。保存候補の比較規則はformatの`TailPersonalBestSelection`へ集約し、filesystemとIndexedDBの列挙・保存は各adapterが担当する。
 core型の内部不変条件を保持するため、数値フィールドを無条件に公開しない。
 filesystemアクセスとエラー表示はCLI、browser APIと表示はWeb/WASM adapterの責務である。
 CLI/WASMはcoreを直接使用してよい。format経由で物理計算を呼ぶ必要はない。

@@ -1,0 +1,196 @@
+//! Canonical finalized record export, shared by native and Web adapters.
+
+use birdman_game_core::{ControlMode, CourseAxis, GameSession};
+use birdman_game_format::{
+    AssistanceLevel, FlightRecordFormatError, PersonalBestContentHashes, TailFlightRecordDocument,
+    TailPersonalBestConfiguration, canonical_tail_personal_best_key,
+};
+
+use crate::application::ApplicationSession;
+
+mod fingerprints {
+    include!(concat!(env!("OUT_DIR"), "/personal_best_fingerprints.rs"));
+}
+
+/// SHA-256 of the existing bundled environment bytes.
+pub const ENVIRONMENT_V6_SHA256: &str = env!("BPG_ENVIRONMENT_V6_SHA256");
+
+/// Returns the same root-relative source identities for every platform build.
+pub const fn personal_best_content_hashes() -> PersonalBestContentHashes {
+    PersonalBestContentHashes {
+        scenario: fingerprints::SCENARIO_SOURCE_FINGERPRINT,
+        aircraft: fingerprints::AIRCRAFT_SOURCE_FINGERPRINT,
+        environment: fingerprints::ENVIRONMENT_SOURCE_FINGERPRINT,
+        physics_build: fingerprints::PHYSICS_BUILD_FINGERPRINT,
+    }
+}
+
+/// Sealed configuration and source identities associated with the retained record.
+#[derive(Clone, Copy)]
+pub struct RecordExportMetadata<'identity> {
+    /// Exact scenario, settings and controller.
+    pub configuration: TailPersonalBestConfiguration<'identity>,
+    /// Sealed distance-scoring direction.
+    pub course_axis: CourseAxis,
+    /// Build-time content identities, independent of presentation backend.
+    pub content_hashes: PersonalBestContentHashes,
+}
+
+/// Classified failures before a canonical document can be exported.
+#[derive(Debug)]
+pub enum RecordExportError {
+    /// No retained finalized record is available.
+    RecordUnavailable,
+    /// Sealed metadata belongs to a different record.
+    MetadataMismatch,
+    /// Existing format validation or encoding failed.
+    Format(FlightRecordFormatError),
+}
+
+/// Produces the existing schema-six document and key without recomputing flight outputs.
+pub fn export_record_document(
+    session: &GameSession<'_>,
+    metadata: RecordExportMetadata<'_>,
+) -> Result<TailFlightRecordDocument, RecordExportError> {
+    let record = session
+        .flight_record()
+        .ok_or(RecordExportError::RecordUnavailable)?;
+    let configuration = metadata.configuration;
+    if session.configuration_identity() != Some(configuration.scenario)
+        || record.header().scenario != configuration.scenario
+        || matches!(
+            configuration.difficulty.assistance(),
+            AssistanceLevel::Manual
+        ) != matches!(configuration.control_mode, ControlMode::Manual)
+    {
+        return Err(RecordExportError::MetadataMismatch);
+    }
+    let document = TailFlightRecordDocument::from_record(
+        record,
+        configuration.difficulty,
+        configuration.identity.clone(),
+    )
+    .map_err(RecordExportError::Format)?;
+    let key = canonical_tail_personal_best_key(
+        &document,
+        configuration,
+        metadata.course_axis,
+        metadata.content_hashes,
+    )
+    .map_err(RecordExportError::Format)?;
+    document
+        .with_personal_best_key(key)
+        .map_err(RecordExportError::Format)
+}
+
+impl ApplicationSession {
+    /// Exports the current live result using its sealed metadata and shared source identities.
+    pub fn flight_record_document(&self) -> Result<TailFlightRecordDocument, RecordExportError> {
+        let prepared = self.prepared().ok_or(RecordExportError::MetadataMismatch)?;
+        let scenario = self
+            .core_session()
+            .configuration_identity()
+            .ok_or(RecordExportError::MetadataMismatch)?;
+        export_record_document(
+            self.core_session(),
+            RecordExportMetadata {
+                configuration: TailPersonalBestConfiguration {
+                    scenario,
+                    difficulty: self.difficulty(),
+                    identity: &prepared.record_identity,
+                    control_mode: prepared.control_mode,
+                    controller_profile: prepared.controller_profile,
+                },
+                course_axis: prepared.course_axis,
+                content_hashes: personal_best_content_hashes(),
+            },
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::application::{BackendReadiness, SessionCommand};
+    use birdman_game_core::{
+        SessionPhase, TailFlightTickInput, TailPilotIntent, TailPilotPositionCommand,
+        TailRateTarget,
+    };
+    use birdman_game_format::{
+        FlightRecordEndReasonDocument, TailPersonalBestSelection, WeatherClass,
+    };
+
+    #[test]
+    fn application_and_explicit_adapter_metadata_export_the_same_canonical_contact_record() {
+        let mut application = ApplicationSession::new(ControlMode::Manual, 3_000, 42);
+        for command in [
+            SessionCommand::OpenSetup {},
+            SessionCommand::SelectWeather {
+                weather: WeatherClass::Calm,
+            },
+            SessionCommand::Prepare {},
+            SessionCommand::StartCountdown {},
+        ] {
+            application
+                .execute(command, BackendReadiness::Ready)
+                .unwrap();
+        }
+        application
+            .observe_countdown(
+                application.core_session().countdown_token().unwrap(),
+                3.0,
+                true,
+            )
+            .unwrap();
+        while application.core_session().snapshot().phase() == SessionPhase::FlightRunning {
+            application
+                .advance_tail_flight_tick(TailFlightTickInput::new(
+                    TailPilotIntent::try_new(0.0, 0.0).unwrap(),
+                    TailRateTarget::try_new(0.0, 0.0).unwrap(),
+                    TailPilotPositionCommand::Hold,
+                ))
+                .unwrap();
+        }
+        let before = application.core_session().snapshot();
+        let document = application.flight_record_document().unwrap();
+        assert_eq!(
+            document.finalization.reason,
+            FlightRecordEndReasonDocument::WaterContact
+        );
+        assert!(document.header.personal_best_key.is_some());
+        assert!(
+            TailPersonalBestSelection::try_new(&document)
+                .unwrap()
+                .is_some()
+        );
+        let prepared = application.prepared().unwrap();
+        let explicit = export_record_document(
+            application.core_session(),
+            RecordExportMetadata {
+                configuration: TailPersonalBestConfiguration {
+                    scenario: application.core_session().configuration_identity().unwrap(),
+                    difficulty: application.difficulty(),
+                    identity: &prepared.record_identity,
+                    control_mode: prepared.control_mode,
+                    controller_profile: prepared.controller_profile,
+                },
+                course_axis: prepared.course_axis,
+                content_hashes: personal_best_content_hashes(),
+            },
+        )
+        .unwrap();
+        assert_eq!(document, explicit);
+        assert_eq!(application.core_session().snapshot(), before);
+        let json = String::from_utf8(document.encode_json().unwrap()).unwrap();
+        let mut viewer = ApplicationSession::default();
+        viewer.open_archived_record_json(&json).unwrap();
+        assert_eq!(viewer.archive().unwrap().original_json(), json);
+        assert_eq!(
+            TailFlightRecordDocument::decode_json(json.as_bytes())
+                .unwrap()
+                .header
+                .personal_best_key,
+            document.header.personal_best_key
+        );
+    }
+}

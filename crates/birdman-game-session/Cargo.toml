@@ -22,5 +22,8 @@ earcut = "=0.4.10"
 [dev-dependencies]
 sha2.workspace = true
 
+[build-dependencies]
+sha2.workspace = true
+
 [lints]
 workspace = true
