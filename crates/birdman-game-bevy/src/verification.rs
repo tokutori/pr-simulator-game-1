@@ -2252,6 +2252,15 @@ fn advance_step(
             require_phase(phase, SessionPhase::FlightSetup)?;
             if verification.readiness.can_capture() {
                 if let Some(case) = verification.water_case {
+                    if !case.auto
+                        && matches!(
+                            presentation.rendering.snapshot().selection,
+                            ScreenRenderSelection::Auto { .. }
+                        )
+                    {
+                        queue_ui_control(commands, "presentation-render-scale-100", None);
+                        return Ok(());
+                    }
                     if quality.pending().is_none() {
                         let rendering = presentation.rendering.snapshot();
                         let applied = quality.applied().shared();
@@ -4686,7 +4695,7 @@ mod tests {
                     .game
                     .core_session()
                     .snapshot();
-                for automatic in [true, false] {
+                for automatic in [false, true] {
                     queue_ui_control(
                         &mut app.world_mut().commands(),
                         "presentation-render-scale-auto",

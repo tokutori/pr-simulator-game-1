@@ -55,6 +55,13 @@ impl Default for NativeScreenRender {
 }
 
 impl NativeScreenRender {
+    #[cfg(test)]
+    pub(crate) fn manual_for_test() -> Self {
+        let mut rendering = Self::default();
+        rendering.controller.select_auto(false, 0.0).unwrap();
+        rendering
+    }
+
     pub(crate) fn applied(&self) -> ScreenRenderScale {
         self.controller.snapshot().applied
     }

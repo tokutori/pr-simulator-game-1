@@ -105,7 +105,7 @@ describe("Screen renderer with the production Rust GPU policy", () => {
       const retained = trial.state().selection;
       trial.scene("Title");
       for (let frame = 0; frame < 140; frame++) {
-        trial.time(frame * 20 + 10);
+        trial.time(frame * 20 + 3100);
         trial.renderer.boundary(true);
         trial.renderer.begin(); trial.renderer.end(true);
       }
