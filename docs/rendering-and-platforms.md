@@ -218,6 +218,7 @@ Nativeは既存DirectionalLightの2048 texel・30〜600 mの3段cascadeから、
 - cloud fraction正・base0の地表cloudは積雲で表さず、記録値とhazeを保持する。
 - 空cloudは`Option<Mesh>::None`として表し、面を持つmeshだけをAssetsへ登録する。
 - 環境往復では同じCloudLayerを保持し、必要なときだけMesh3dとowned資源を交換する。
+- Nativeでは雲なしのlayerをHiddenとし、meshの復帰時にInheritedへ戻す。可視性の変化を通じてmaterialを描画へ再抽出する。
 
 - Nativeの照明は共通のWeb基準色・irradianceを使用する。
 - Directの18,000 lux換算基準と`Exposure = 2^(-EV100)/1.2`、Ambientの`E = πL`を使用し、主cameraと反射cameraへ同じExposureを与える。

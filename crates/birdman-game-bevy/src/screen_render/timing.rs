@@ -182,65 +182,17 @@ struct TimingPacket {
     water_quality: LakeWaterQuality,
     preparation: PipelinePreparation,
     #[cfg(feature = "verify-harness")]
-    gate: PreparationGate,
-}
-
-#[cfg(feature = "verify-harness")]
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-enum PreparationGate {
-    #[default]
-    Unobserved,
-    Inactive {
-        measuring: bool,
-        window_ready: bool,
-        frame_ready: bool,
-    },
-    Materials {
-        pending: usize,
-        first: Option<bevy::render::sync_world::MainEntity>,
-    },
-    CacheUnavailable,
-    Pipelines {
-        selected: usize,
-        first_unready: Option<CachedRenderPipelineId>,
-    },
+    eligible: bool,
+    #[cfg(feature = "verify-harness")]
+    pending_materials: usize,
 }
 
 fn observe_preparation(packet: Res<TimingPacket>, mut main: ResMut<MainWorld>) {
     if let Some(mut readout) = main.get_resource_mut::<TimingReadout>() {
         #[cfg(feature = "verify-harness")]
         {
-            readout.trace_frames += 1;
-            match packet.gate {
-                PreparationGate::Inactive { .. } | PreparationGate::Unobserved => {
-                    readout.inactive_frames += 1;
-                }
-                PreparationGate::Materials { .. } => readout.material_pending_frames += 1,
-                PreparationGate::CacheUnavailable => readout.pipeline_pending_frames += 1,
-                PreparationGate::Pipelines { .. }
-                    if packet.preparation == PipelinePreparation::Ready =>
-                {
-                    readout.ready_frames += 1;
-                }
-                PreparationGate::Pipelines { .. } => readout.pipeline_pending_frames += 1,
-            }
-            if readout.last_gate.as_ref()
-                != Some(&(
-                    packet.epoch,
-                    packet.gate.clone(),
-                    packet.preparation.clone(),
-                ))
-            {
-                println!(
-                    "Screen Auto preparation: frame={} epoch={} active={} state={:?} gate={:?}",
-                    packet.frame, packet.epoch, packet.active, packet.preparation, packet.gate
-                );
-                readout.last_gate = Some((
-                    packet.epoch,
-                    packet.gate.clone(),
-                    packet.preparation.clone(),
-                ));
-            }
+            readout.eligible = packet.eligible;
+            readout.pending_materials = packet.pending_materials;
         }
         readout.preparation_epoch = packet.epoch;
         if readout.preparation != packet.preparation {
@@ -276,12 +228,11 @@ fn extract_packet(
     frame: Extract<Res<FrameCount>>,
     windows: Extract<Query<&Window, With<PrimaryWindow>>>,
 ) {
-    let measuring = **mode != TimingMode::Automatic || rendering.measuring();
-    let window_ready = windows.single().is_ok_and(|window| {
-        window.focused && window.visible && window.resolution.physical_size().min_element() > 0
-    });
-    let frame_ready = time.delta() <= super::super::MAX_FRAME_DELTA;
-    let active = measuring && window_ready && frame_ready;
+    let active = (**mode != TimingMode::Automatic || rendering.measuring())
+        && windows.single().is_ok_and(|window| {
+            window.focused && window.visible && window.resolution.physical_size().min_element() > 0
+        })
+        && time.delta() <= super::super::MAX_FRAME_DELTA;
     commands.insert_resource(TimingPacket {
         active,
         epoch: rendering.controller.epoch(),
@@ -292,11 +243,9 @@ fn extract_packet(
         water_quality: rendering.snapshot().water_quality,
         preparation: PipelinePreparation::Pending,
         #[cfg(feature = "verify-harness")]
-        gate: PreparationGate::Inactive {
-            measuring,
-            window_ready,
-            frame_ready,
-        },
+        eligible: active,
+        #[cfg(feature = "verify-harness")]
+        pending_materials: 0,
     });
 }
 
@@ -395,34 +344,22 @@ fn add_binned_pipelines<B: BinnedPhaseItem>(
 }
 
 fn scene_preparation(world: &World, _packet: &mut TimingPacket) -> PipelinePreparation {
-    let (pending, _first_pending) =
-        world
-            .get_resource::<PendingMeshMaterialQueues>()
-            .map_or((0, None), |queues| {
-                queues.values().fold((0, None), |(count, first), queue| {
-                    (
-                        count + queue.current_frame.len(),
-                        first.or_else(|| {
-                            queue.current_frame.iter().next().map(|(_, entity)| *entity)
-                        }),
-                    )
-                })
-            });
+    let pending = world
+        .get_resource::<PendingMeshMaterialQueues>()
+        .map_or(0, |queues| {
+            queues
+                .values()
+                .map(|queue| queue.current_frame.len())
+                .sum::<usize>()
+        });
+    #[cfg(feature = "verify-harness")]
+    {
+        _packet.pending_materials = pending;
+    }
     if pending > 0 {
-        #[cfg(feature = "verify-harness")]
-        {
-            _packet.gate = PreparationGate::Materials {
-                pending,
-                first: _first_pending,
-            };
-        }
         return PipelinePreparation::Pending;
     }
     let Some(cache) = world.get_resource::<PipelineCache>() else {
-        #[cfg(feature = "verify-harness")]
-        {
-            _packet.gate = PreparationGate::CacheUnavailable;
-        }
         return PipelinePreparation::Pending;
     };
     let mut ids = BTreeSet::new();
@@ -448,31 +385,12 @@ fn scene_preparation(world: &World, _packet: &mut TimingPacket) -> PipelinePrepa
                 .flat_map(|phase| phase.items.values().map(|item| item.pipeline)),
         );
     }
-    #[cfg(feature = "verify-harness")]
-    let selected = ids.len();
-    #[cfg(feature = "verify-harness")]
-    let mut first_unready = None;
-    let preparation = selected_preparation(ids, |id| {
-        let state = cache.get_render_pipeline_state(id);
-        #[cfg(feature = "verify-harness")]
-        if !matches!(state, CachedPipelineState::Ok(_)) && first_unready.is_none() {
-            first_unready = Some(id);
-        }
-        state
-    });
-    #[cfg(feature = "verify-harness")]
-    {
-        _packet.gate = PreparationGate::Pipelines {
-            selected,
-            first_unready,
-        };
-    }
-    preparation
+    selected_preparation(ids, |id| cache.get_render_pipeline_state(id))
 }
 
 fn selected_preparation<'state>(
     ids: impl IntoIterator<Item = CachedRenderPipelineId>,
-    mut state: impl FnMut(CachedRenderPipelineId) -> &'state CachedPipelineState,
+    state: impl Fn(CachedRenderPipelineId) -> &'state CachedPipelineState,
 ) -> PipelinePreparation {
     let mut observed = false;
     let mut pending = false;
@@ -540,43 +458,9 @@ pub(crate) struct TimingReadout {
     pub(crate) preparation_epoch: u32,
     pub(super) preparation_changed: bool,
     #[cfg(feature = "verify-harness")]
-    last_gate: Option<(u32, PreparationGate, PipelinePreparation)>,
+    pub(crate) eligible: bool,
     #[cfg(feature = "verify-harness")]
-    trace_frames: u32,
-    #[cfg(feature = "verify-harness")]
-    inactive_frames: u32,
-    #[cfg(feature = "verify-harness")]
-    material_pending_frames: u32,
-    #[cfg(feature = "verify-harness")]
-    pipeline_pending_frames: u32,
-    #[cfg(feature = "verify-harness")]
-    ready_frames: u32,
-    #[cfg(feature = "verify-harness")]
-    policy_samples: u32,
-    #[cfg(feature = "verify-harness")]
-    last_sample: Option<ScreenGpuSample>,
-}
-
-#[cfg(feature = "verify-harness")]
-impl TimingReadout {
-    pub(super) fn record_policy_sample(&mut self, sample: ScreenGpuSample) {
-        self.policy_samples += 1;
-        self.last_sample = Some(sample);
-    }
-
-    pub(crate) fn verification_summary(&self) -> String {
-        format!(
-            "frames={} inactive={} pending_materials={} pending_pipelines={} ready={} policy_samples={} last_sample={:?} last_gate={:?}",
-            self.trace_frames,
-            self.inactive_frames,
-            self.material_pending_frames,
-            self.pipeline_pending_frames,
-            self.ready_frames,
-            self.policy_samples,
-            self.last_sample,
-            self.last_gate
-        )
-    }
+    pub(crate) pending_materials: usize,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -1248,7 +1132,9 @@ pub(crate) mod tests {
                     water_quality: LakeWaterQuality::High,
                     preparation: PipelinePreparation::Pending,
                     #[cfg(feature = "verify-harness")]
-                    gate: PreparationGate::Unobserved,
+                    eligible: active,
+                    #[cfg(feature = "verify-harness")]
+                    pending_materials: 0,
                 });
                 for _ in 0..2 {
                     let render_app = app.get_sub_app_mut(RenderApp).unwrap();
