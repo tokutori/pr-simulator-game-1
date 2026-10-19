@@ -1,10 +1,11 @@
+#[cfg(feature = "verify-harness")]
+use super::projection::VerificationObserver;
 use super::{
     CameraMode,
     environment::{EnvironmentSun, EnvironmentSurface, EnvironmentTarget, NativeEnvironment},
     native_session::{NativeSession, TailDisplay},
     projection::{
-        VerificationObserver, aircraft_transform, camera_transform, replay_camera_transform,
-        sunlight_transform,
+        aircraft_transform, camera_transform, replay_camera_transform, sunlight_transform,
     },
     terrain_haze::{TerrainHazeExtension, TerrainMaterial},
     water::{NearWaterSurface, WaterMaterial, far_mesh, near_mesh, patch_center},
@@ -844,7 +845,7 @@ pub(crate) fn project_world(
     camera: Res<CameraMode>,
     mut history: ResMut<RenderHistory>,
     fixed: Res<Time<Fixed>>,
-    observer: Option<Res<VerificationObserver>>,
+    #[cfg(feature = "verify-harness")] observer: Option<Res<VerificationObserver>>,
     mut transforms: Query<(&WorldProjection, &mut Transform, Option<&mut Projection>)>,
     mut water: ResMut<Assets<WaterMaterial>>,
 ) {
@@ -928,6 +929,7 @@ pub(crate) fn project_world(
             )
         },
     );
+    #[cfg(feature = "verify-harness")]
     let projected_camera = observer
         .as_ref()
         .filter(|_| running)
@@ -1430,6 +1432,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "verify-harness")]
     #[test]
     fn verification_observer_changes_only_render_camera_and_preserves_the_common_sample() {
         let mut app = projection_app();

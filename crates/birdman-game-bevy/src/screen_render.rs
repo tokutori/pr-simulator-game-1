@@ -70,6 +70,7 @@ impl NativeScreenRender {
         self.controller.snapshot()
     }
 
+    #[cfg(any(test, feature = "verify-harness"))]
     pub(crate) fn initial_observation_epoch(&self, readout: &timing::TimingReadout) -> Option<u32> {
         (readout.preparation == timing::PipelinePreparation::Ready
             && readout.preparation_epoch == self.controller.epoch())
@@ -236,7 +237,10 @@ fn exchange_resources(
 
 fn exchange_scale(world: &mut World, scale: ScreenRenderScale) -> Result<(), ScreenRenderFailure> {
     let current = world.resource::<NativeScreenRender>().target.clone();
+    #[cfg(feature = "verify-harness")]
     let output_target = super::offscreen::output_target(world);
+    #[cfg(not(feature = "verify-harness"))]
+    let output_target = RenderTarget::default();
     let window_extent = world
         .query_filtered::<&Window, With<PrimaryWindow>>()
         .single(world)
@@ -460,15 +464,20 @@ pub(crate) fn observe_auto(world: &mut World) {
             if !rendering.measuring() || interrupted {
                 return Ok(None);
             }
+            #[cfg(feature = "verify-harness")]
             let shadow_fixture = super::verification::shadow_draw_fixture_target(world);
-            if shadow_fixture.is_none() && support == Some(false) {
+            #[cfg(feature = "verify-harness")]
+            let require_timestamp = shadow_fixture.is_none();
+            #[cfg(not(feature = "verify-harness"))]
+            let require_timestamp = true;
+            if require_timestamp && support == Some(false) {
                 rendering.controller.unsupported(
                     "GPU timestamp query inside command encodersを使用できない".into(),
                     now_ms,
                 )?;
                 return Ok(None);
             }
-            if shadow_fixture.is_none() && support.is_none() {
+            if require_timestamp && support.is_none() {
                 return rendering.controller.pending(now_ms);
             }
             match &readout.preparation {
@@ -479,6 +488,7 @@ pub(crate) fn observe_auto(world: &mut World) {
                     return Ok(None);
                 }
             }
+            #[cfg(feature = "verify-harness")]
             if let Some(target) = shadow_fixture {
                 if rendering.snapshot().shadow.size() <= target.size() {
                     return Ok(None);
@@ -1174,6 +1184,7 @@ mod tests {
         target.clone()
     }
 
+    #[cfg(feature = "verify-harness")]
     #[test]
     fn offscreen_scale_changes_compose_into_the_same_output_and_restore_it() {
         let (mut app, _, camera, _) = app();

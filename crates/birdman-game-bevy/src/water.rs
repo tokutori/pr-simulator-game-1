@@ -49,6 +49,7 @@ const NEAR_WIDTH_M: f32 = 6000.0;
 const FAR_HALF_WIDTH_M: f32 = 90_000.0;
 const MIP_PHASE: MipGenerationPhaseId = MipGenerationPhaseId(0x4c414b45);
 
+#[cfg(feature = "verify-harness")]
 #[path = "water/verification.rs"]
 pub(crate) mod verification;
 
@@ -903,6 +904,7 @@ pub(crate) fn commit_quality(world: &mut World, prepared: PreparedWaterQuality) 
         WaterQualitySelection::committed(prepared.quality);
 }
 
+#[cfg(any(test, feature = "verify-harness"))]
 pub(crate) fn apply_quality(world: &mut World) {
     let Some(requested) = world.resource::<WaterQualitySelection>().pending() else {
         return;

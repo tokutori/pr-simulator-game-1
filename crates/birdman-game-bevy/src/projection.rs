@@ -1,9 +1,11 @@
+#[cfg(feature = "verify-harness")]
 use bevy::ecs as bevy_ecs;
 use bevy::prelude::*;
 use birdman_game_core::{FlightState, UnitQuaternion};
 use birdman_game_session::cockpit_geometry::CockpitGeometry;
 use birdman_game_session::{game_ui::GameUiReplayCamera, replay_camera::ReplayCameraView};
 
+#[cfg(feature = "verify-harness")]
 #[derive(Resource)]
 pub(crate) struct VerificationObserver(pub(crate) Transform);
 
