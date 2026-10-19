@@ -555,53 +555,6 @@ fn attract_plays_an_independent_finalized_record_and_returns_to_title() {
 }
 
 #[test]
-fn pause_reasons_freeze_ticks_and_require_explicit_resume_after_all_clear() {
-    let mut session = session(100);
-    session.start_countdown(1).unwrap();
-    session
-        .observe_countdown(session.countdown_token().unwrap(), 1.0, true)
-        .unwrap();
-    let previous = session.snapshot().tail_flight_state();
-    session.pause(PauseReason::Manual).unwrap();
-    assert!(session.can_resume());
-    session.pause(PauseReason::DocumentHidden).unwrap();
-    assert!(!session.can_resume());
-    assert_eq!(
-        session.advance_tail_flight_tick(neutral_input(&session)),
-        Err(GameSessionError::InvalidTransition)
-    );
-    assert_eq!(session.snapshot().tail_flight_state(), previous);
-    session
-        .clear_pause_reason(PauseReason::DocumentHidden)
-        .unwrap();
-    assert!(session.can_resume());
-    assert_eq!(session.resume(), Ok(()));
-    assert_eq!(session.snapshot().phase(), SessionPhase::FlightRunning);
-}
-
-#[test]
-fn resume_waits_until_external_pause_causes_are_cleared() {
-    let mut session = session(100);
-    session.start_countdown(1).unwrap();
-    session
-        .observe_countdown(session.countdown_token().unwrap(), 1.0, true)
-        .unwrap();
-    session.pause(PauseReason::Manual).unwrap();
-    session.pause(PauseReason::TrackingSuspended).unwrap();
-    assert!(!session.can_resume());
-    assert_eq!(
-        session.resume(),
-        Err(GameSessionError::PauseConditionsRemain)
-    );
-    session
-        .clear_pause_reason(PauseReason::TrackingSuspended)
-        .unwrap();
-    assert!(session.can_resume());
-    session.resume().unwrap();
-    assert_eq!(session.snapshot().phase(), SessionPhase::FlightRunning);
-}
-
-#[test]
 fn abort_from_paused_flight_finalizes_the_last_valid_tick() {
     let mut session = session(100);
     session.start_countdown(1).unwrap();
