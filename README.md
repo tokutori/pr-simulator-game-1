@@ -22,13 +22,13 @@ BPG-014〜016で、各表示方式の基盤と自動試験を実装した。
 Web版は起動画面から共通のゲーム進行へ接続する。
 実HMD・スマートフォン・ブラウザー・ビューアーの組合せごとの表示と操作には、未確認の条件が残る。
 
-Windows・macOS・Linuxの各x86_64/arm64への対応は、[#543 / PR #544](https://github.com/tokutori/pr-simulator-game-1/pull/544)で実装している。
+Windows・macOS・Linuxの各`x86_64`/`arm64`への対応は、[#543 / PR #544](https://github.com/tokutori/pr-simulator-game-1/pull/544)で実装している。
 6構成の実ビルドと配布物の確認は進行中である。
 今回の変更に対するGPU描画と実機操作の受入は未完了である。
 
 ### 物理と操縦
 
-Rustの`core`は、次の処理を提供する。
+`birdman-game-core`は、次の処理を提供する。
 
 - 6自由度の剛体運動（6DoF）、パイロットの重心移動、空間風場。
 - 全機体の静的空力特性表（static polar）と、`current-reference hybrid`空力モデル。
@@ -42,8 +42,8 @@ Rustの`core`は、次の処理を提供する。
 
 空力モデルの実装は、次の作業に分かれる。
 
-- BPG-038：借用データによる非線型の全機体static polar、モーメント軸、固定参照点、区分線型（PWL）補間。
-- BPG-039 / [#218](https://github.com/tokutori/pr-simulator-game-1/issues/218)：全機体static polarと局所法線力の差分、検証済み形状、`TailIncidence`、適用範囲の閉境界、RK段階付きの原因情報、排他的なシナリオ生成経路。
+- BPG-038：借用データによる非線型の全機体静的空力特性表、モーメント軸、固定参照点、区分線型（PWL）補間。
+- BPG-039 / [#218](https://github.com/tokutori/pr-simulator-game-1/issues/218)：全機体静的空力特性表と局所法線力の差分、検証済み形状、`TailIncidence`、適用範囲の閉境界、RK段階付きの原因情報、排他的なシナリオ生成経路。
 - [#219](https://github.com/tokutori/pr-simulator-game-1/issues/219)：二系統のアクチュエーター、操舵権限配分、pitch・yaw角速度（q/r）のFBW。
 - [#220](https://github.com/tokutori/pr-simulator-game-1/issues/220)：公開の架空機体モデル、トリム、発進条件。
 - [#221](https://github.com/tokutori/pr-simulator-game-1/issues/221)：架空機体モデルを既定とする、入力・表示・保存・再生のアプリケーション統合。
@@ -54,7 +54,7 @@ Rustの`core`は、次の処理を提供する。
 **モデルに関する注意**
 
 - 現在のモデルは架空機体の合成モデルであり、実機の性能を保証しない。
-- 過去の検証用データにおける飛距離は、現在のhybridモデルの合否基準へ流用しない。
+- 過去の検証用データにおける飛距離は、現在のハイブリッドモデルの合否基準へ流用しない。
 - 現在の架空機体モデルに、実機係数や非公開の`xlsx`は導入しない。
 - 実機モデルの出典調査と精度検証は、BPG-035としてM6の後に実施する。ゲーム機能の開発をその前提にしない。
 
@@ -177,7 +177,7 @@ Web版の開発ページは`http://localhost:5173/pr-simulator-game-1/`で確認
 powershell -File tools/verus/check-pause-reasons.ps1
 ```
 
-実際の`core`を検証する固定Verusでは、ジェネリックな派生`Clone`の仕様が未生成であることを示す警告が2件残る。
+実際の`birdman-game-core`を検証する固定Verusでは、ジェネリックな派生`Clone`の仕様が未生成であることを示す警告が2件残る。
 対象の保持契約は、`Clone`による同値性を仮定しない。
 [保証範囲と未証明の境界](docs/formal-verification.md)を参照する。
 
