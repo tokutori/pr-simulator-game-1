@@ -3,8 +3,10 @@
 ## PRの単位
 
 [GitHub Issues](https://github.com/tokutori/pr-simulator-game-1/issues)を作業計画・依存関係・進捗の正本とする。
-各IssueにはPurpose、Scope、Non-goals、Contracts affected、Implementation、Verification、
-Completion criteria、Dependenciesを記載する。依存先はIssue番号でリンクする。
+Issue本文は「目的・実装方針・完了条件」を基本とし、関連契約や依存先は必要な箇所に記載する。依存先はIssue番号でリンクする。
+PR統合後は、完了したPRと残る完了条件のチェックリストへ更新する。実装済みの項目を着手前の計画として残さない。
+親Issueの本文には最新の対応表と未完了項目を置き、個別の試験件数・SHA・CI履歴はコメントまたは各PRへ記録する。
+共通ルールやエージェントの運用手順は `AGENTS.md` / `CONTRIBUTING.md` で管理し、Issueでは作業固有の条件に絞る。
 既存BPG IDは維持し、新規IDはGitHub上で重複を確認する。
 実行順と段階ごとの完了条件は[GitHub Milestones](https://github.com/tokutori/pr-simulator-game-1/milestones)で管理する。
 計画変更はIssue本文・milestoneへ直接反映し、関連する設計契約を同一作業で更新する。
