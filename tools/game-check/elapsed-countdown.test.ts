@@ -8,9 +8,9 @@ initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_ga
 function preparedCountdown() {
   const bridge = new HybridGameSessionBridge(0, 21, 22);
   const session = new TailAppSessionFacade(bridge, physics_hz());
-  session.executeOperation("open-setup");
-  session.executeOperation("prepare");
-  session.executeOperation("start-flight");
+  session.executeSharedSessionCommand({ kind: "open_setup" });
+  session.executeSharedSessionCommand({ kind: "prepare" });
+  session.executeSharedSessionCommand({ kind: "start_countdown" });
   return { bridge, session };
 }
 
@@ -62,8 +62,8 @@ describe("shared elapsed Countdown through generated WASM and the application ow
       const obsolete = current.session.captureCountdownToken();
       const rawToken = current.bridge.countdown_token();
       current.session.observeCountdown(obsolete, 0.8, true);
-      current.session.executeOperation("cancel-countdown");
-      current.session.executeOperation("start-flight");
+      current.session.executeSharedSessionCommand({ kind: "cancel_countdown" });
+      current.session.executeSharedSessionCommand({ kind: "start_countdown" });
       const before = current.bridge.snapshot_json();
       expect(current.bridge.countdown_token()).not.toBe(rawToken);
       expect(current.bridge.observe_countdown(rawToken, 3, false)).toBe(0);
@@ -84,7 +84,7 @@ describe("shared elapsed Countdown through generated WASM and the application ow
       expect(session.readLifecycle().phaseCode).toBe(3);
       expect(bridge.configuration_metadata()).toEqual(metadata);
       expect(bridge.observe_countdown(obsolete, 3, true)).toBe(0);
-      session.executeOperation("start-flight");
+      session.executeSharedSessionCommand({ kind: "start_countdown" });
       expect(session.observeCountdown(session.captureCountdownToken(), 0.8, true)).toEqual({ kind: "waiting", remainingSeconds: 3 });
     } finally { session.dispose(); }
   });

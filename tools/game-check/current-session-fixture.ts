@@ -9,9 +9,9 @@ export const neutralTailInput = encodeTailLogicalInput({ controlLayout: "tail_in
   desiredPitchRateRadiansPerSecond: 0, desiredYawRateRadiansPerSecond: 0, pilotPositionCommand: { kind: "hold" } });
 
 export function launchCurrentSession(session: AppSessionFacade): void {
-  session.executeOperation("open-setup");
-  session.executeOperation("prepare");
-  session.executeOperation("start-flight");
+  session.executeSharedSessionCommand({ kind: "open_setup" });
+  session.executeSharedSessionCommand({ kind: "prepare" });
+  session.executeSharedSessionCommand({ kind: "start_countdown" });
   session.observeCountdown(session.captureCountdownToken(), 3, true);
 }
 
@@ -20,7 +20,7 @@ export function currentRecordFixture(eligible = true): string {
   try {
     launchCurrentSession(session);
     session.flightPort.advance_tick_json(neutralTailInput);
-    session.executeOperation("abort");
+    session.executeSharedSessionCommand({ kind: "abort" });
     const document = JSON.parse(session.exportRecordJson()) as {
       header: { personal_best_key: number[] | null };
       finalization: { reason: string; disposition: string };

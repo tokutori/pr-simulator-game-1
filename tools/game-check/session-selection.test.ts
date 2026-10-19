@@ -13,11 +13,11 @@ describe("Rust-owned session selection and prepared UI metadata", () => {
     const facade = new TailAppSessionFacade(bridge, physics_hz());
     try {
       expect(facade.readPreparedConfiguration()).toEqual({ kind: "unavailable", reason: "unprepared_phase" });
-      facade.executeOperation("open-setup");
-      facade.executeOperation({ kind: "set-difficulty-option", axis: "information", code: 1 });
-      facade.executeOperation({ kind: "set-difficulty-option", axis: "weather", code: 3 });
+      facade.executeSharedSessionCommand({ kind: "open_setup" });
+      facade.executeSharedSessionCommand({ kind: "select_information", information: "standard" });
+      facade.executeSharedSessionCommand({ kind: "select_weather", weather: "challenging" });
       expect(facade.readDifficulty()).toEqual(decodeSessionDifficulty(bridge));
-      facade.executeOperation("prepare");
+      facade.executeSharedSessionCommand({ kind: "prepare" });
       const prepared = facade.readPreparedConfiguration();
       expect(prepared.kind).toBe("available");
       if (prepared.kind !== "available") throw new Error("Expected sealed Rust configuration");
@@ -26,9 +26,9 @@ describe("Rust-owned session selection and prepared UI metadata", () => {
         catalogVersion: metadata[4], scenarioId: metadata[5], aircraftModelVersion: metadata[7], controllerProfileVersion: metadata[9] });
       const projection = facade.readGameSessionProjection();
       expect(projection).toMatchObject({ phaseCode: 3, difficulty: facade.readDifficulty(), configurationMetadata: prepared.value });
-      facade.executeOperation("cancel-briefing");
-      facade.executeOperation("return-to-title");
-      facade.executeOperation("enter-attract");
+      facade.executeSharedSessionCommand({ kind: "cancel_briefing" });
+      facade.executeSharedSessionCommand({ kind: "return_to_title" });
+      facade.executeSharedSessionCommand({ kind: "enter_attract" });
       expect(facade.readPreparedConfiguration()).toEqual({ kind: "unavailable", reason: "playback_context" });
       expect(() => facade.readGameSessionProjection()).toThrow();
     } finally {

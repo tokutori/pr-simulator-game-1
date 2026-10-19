@@ -4,14 +4,13 @@ import { BrowserFlightLogDownload } from "./app/browser-flight-log-download.js";
 import { createBootViewModel } from "./app/boot-view.js";
 import { createGameViewModel } from "./app/game-view.js";
 import { createFlightFrameViewDraft, createFlightUiHudModel, finalizeFlightFrameView, menuFrameFailureRecovery } from "./app/flight-frame-view.js";
-import { NO_ENVIRONMENT_BRIEFING, parseEnvironmentBriefingSnapshot } from "./game/environment-briefing.js";
 import { FlightControllerUiBindings } from "./app/flight-controller-port.js";
 import { screenUiVisible } from "./app/presentation-visibility.js";
 import { initializeAppSession } from "./app/session-factory.js";
 import { initializeWasmRuntime } from "./game/wasm-flight.js";
 import type { TailAppSessionFacade } from "./app/session-facade.js";
 import { projectRuntimePlaybackClock, readRuntimeSessionProjection } from "./app/session-runtime-projection.js";
-import { analysisCursorData, createInitialAppModel, flightAnalysisData, gameSessionPhaseCode, gameSessionSnapshot, isCurrentFlightLogDownload, isGameFlowActivation, isStaleGameFlowActivation, recordListEntries, recordListNotice, replayPoseData, updateApp } from "./app/app-state.js";
+import { createInitialAppModel, flightAnalysisData, gameSessionPhaseCode, isCurrentFlightLogDownload, isGameFlowActivation, isStaleGameFlowActivation, recordListEntries, recordListNotice, replayPoseData, updateApp } from "./app/app-state.js";
 import type {
   AppEffect,
   AppMessage,
@@ -47,13 +46,9 @@ import { suspendPageFlight } from "./game/page-flight-lifecycle.js";
 import { DEFAULT_LAKE_VISUAL_CONDITION } from "./render/contracts/lake-water.js";
 import { createArchivedPersonalBestSelection } from "./game/archived-personal-best.js";
 import { FlightRecordRepository, IndexedDbFlightRecordPersistence } from "./game/flight-record-store.js";
-import { NO_VENUE_MAP, venueMapForEnvironment } from "./game/biwa-venue-map.js";
-import { analysisCursorMatches } from "./game/flight-analysis-view.js";
 import { parseRuntimeEnvironmentSnapshot, sameEnvironmentIdentity } from "./game/runtime-environment.js";
 import type { RuntimeEnvironmentProjection } from "./game/runtime-environment.js";
 import { projectRuntimeVenue } from "./game/runtime-venue.js";
-import type { FlightDisplaySnapshot } from "./game/flight-display-snapshot.js";
-import { projectRecordedFlightSnapshot } from "./game/flight-display-snapshot.js";
 import { viewExposesAction } from "./render/contracts/ui.js";
 import { FlightHudAdapter } from "./presentation/flight-hud.js";
 import type { MenuScrollScope, UiAction } from "./render/contracts/ui.js";
@@ -175,9 +170,8 @@ function renderModel(): void {
 function currentFrameViewModel(viewer: ViewerFrame): PreparedPresentationView {
   synchronizeSharedGameUi();
   let frameModel = model;
-  const snapshot = currentFlightSnapshot();
   frameRateDisplay.render(runtime?.framesPerSecond ?? null, runtime?.currentMode === "screen");
-  let draft = createFlightFrameViewDraft(frameModel, snapshot, viewer, displayLocale, currentEnvironmentBriefing(), currentVenueMap(), runtime?.framesPerSecond ?? null);
+  let draft = createFlightFrameViewDraft(frameModel, viewer, displayLocale, runtime?.framesPerSecond ?? null);
   let headView: HeadHudView = draft.headHud;
   if (headView.kind === "visible") {
     const dimensions = headHudCanvasSize(headView.layer);
@@ -793,19 +787,6 @@ function synchronizeSharedGameUi(): void {
   for (const effect of transition.effects) runEffect(effect);
 }
 
-function currentEnvironmentBriefing() {
-  const phaseCode = gameSessionPhaseCode(model.gameSession);
-  let environment = NO_ENVIRONMENT_BRIEFING;
-  if ([1, 2, 3, 8].includes(phaseCode) && gameSession !== null) {
-    try {
-      environment = parseEnvironmentBriefingSnapshot(gameSession.readEnvironmentJson(), phaseCode);
-    } catch {
-      environment = NO_ENVIRONMENT_BRIEFING;
-    }
-  }
-  return environment;
-}
-
 function runSharedGameSessionCommand(command: SessionCommand, requestId: number): void {
   const requestedPhaseCode = gameSessionPhaseCode(model.gameSession);
   const session = gameSession;
@@ -1096,7 +1077,7 @@ function suspendPageFlightState(): void {
     const session = gameSession;
     const pagePort = session === null ? null : {
       phase_code: () => session.readLifecycle().phaseCode,
-      cancel_countdown: () => { session.executeOperation("cancel-countdown"); },
+      cancel_countdown: () => { session.executeSharedSessionCommand({ kind: "cancel_countdown" }); },
       pause: (reason: number) => {
         if (reason !== 1) throw new RangeError("Page suspension requires the page-hidden reason");
         session.pauseForReason("page_hidden");
@@ -1154,20 +1135,6 @@ function syncGameSession(): void {
   dispatch({ type: "game-session-synced", ...readRuntimeSessionProjection(session) });
 }
 
-function currentFlightSnapshot(): FlightDisplaySnapshot | null {
-  const phaseCode = gameSessionPhaseCode(model.gameSession);
-  const cursor = analysisCursorData(model.analysisCursor);
-  const analysis = flightAnalysisData(model.analysis);
-  if ((phaseCode === 9 || phaseCode === 10) && cursor !== null && "kind" in cursor && analysis !== null
-      && analysisCursorMatches(analysis, cursor)) return projectRecordedFlightSnapshot(cursor, cursor.context);
-  if (model.flightExecution.kind === "stopped" && (phaseCode === 5 || phaseCode === 6)) return model.flightExecution.snapshot;
-  if (phaseCode === 5 && flightController !== null && model.flightExecution.kind === "ready") {
-    const current = flightController.currentDisplaySnapshot;
-    if (current.kind === "tail_flight" && current.phaseCode === phaseCode) return current;
-  }
-  return gameSessionSnapshot(model.gameSession);
-}
-
 function currentRuntimeEnvironment(): RuntimeEnvironmentProjection {
   const session = gameSession;
   if (session === null) return Object.freeze({ kind: "unavailable", reason: "no_selection" });
@@ -1184,14 +1151,6 @@ function currentRuntimeEnvironment(): RuntimeEnvironmentProjection {
   } catch {
     return Object.freeze({ kind: "unavailable", reason: "invalid_snapshot" });
   }
-}
-
-function currentVenueMap() {
-  const analysis = flightAnalysisData(model.analysis);
-  const environment = currentRuntimeEnvironment();
-  if (analysis !== null && environment.kind === "available"
-      && !sameEnvironmentIdentity(environment.value.identity, analysis.context.scenario)) return NO_VENUE_MAP;
-  return venueMapForEnvironment(environment);
 }
 
 function currentViewport(): ViewportSize {

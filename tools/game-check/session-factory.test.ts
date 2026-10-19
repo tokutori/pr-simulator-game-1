@@ -40,9 +40,9 @@ describe("current application session factory", () => {
       expect(snapshot.frame.state.physicalIncidence).not.toHaveProperty("roll");
       expect(snapshot.identity.scenario.seedLow).toBe(0xffff_ffff);
       const beforeRetry = session.captureQueryToken();
-      session.executeOperation("abort");
+      session.executeSharedSessionCommand({ kind: "abort" });
       const record = session.exportRecordJson();
-      session.executeOperation("retry");
+      session.executeSharedSessionCommand({ kind: "retry" });
       expect(session.acceptQuery(beforeRetry, record).kind).toBe("stale");
       const beforeDispose = session.captureQueryToken();
       session.flightPort.free();

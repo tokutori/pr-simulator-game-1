@@ -14,10 +14,10 @@ const neutralTail = encodeTailLogicalInput({ controlLayout: "tail_incidence", no
 const windRequest = { northMinimumMeters: -10, eastMinimumMeters: -10, altitudeMeters: 10, spacingMeters: 5 };
 
 function launch(facade: AppSessionFacade): void {
-  facade.executeOperation("open-setup");
-  facade.executeOperation("prepare");
+  facade.executeSharedSessionCommand({ kind: "open_setup" });
+  facade.executeSharedSessionCommand({ kind: "prepare" });
   expect(facade.readLifecycle().phaseCode).toBe(3);
-  expect(facade.executeOperation("start-flight").kind).toBe("countdown-started");
+  expect(facade.executeSharedSessionCommand({ kind: "start_countdown" }).kind).toBe("countdown-started");
   expect(facade.observeCountdown(facade.captureCountdownToken(), 1, true)).toEqual({ kind: "waiting", remainingSeconds: 2 });
   expect(facade.observeCountdown(facade.captureCountdownToken(), 1, true)).toEqual({ kind: "waiting", remainingSeconds: 1 });
   expect(facade.observeCountdown(facade.captureCountdownToken(), 1, true)).toEqual({ kind: "launched" });
@@ -34,9 +34,9 @@ describe("layout-discriminated application session facade", () => {
     try {
       launch(facade);
       advance(facade);
-      facade.executeOperation("abort");
+      facade.executeSharedSessionCommand({ kind: "abort" });
       const saved = facade.exportRecordJson();
-      facade.executeOperation("enter-replay");
+      facade.executeSharedSessionCommand({ kind: "enter_replay" });
       const dataset = facade.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
       const query = bridge.playback_camera_view_json.bind(bridge);
       vi.spyOn(bridge, "playback_camera_view_json").mockImplementationOnce((...args) => {
@@ -61,7 +61,7 @@ describe("layout-discriminated application session facade", () => {
       for (const owner of [facade, other]) {
         launch(owner);
         advance(owner);
-        owner.executeOperation("abort");
+        owner.executeSharedSessionCommand({ kind: "abort" });
       }
       const dataset = facade.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
       const current = updateApp(createInitialAppModel(), { type: "game-session-synced", ...facade.readGameSessionProjection() }).model;
@@ -90,16 +90,16 @@ describe("layout-discriminated application session facade", () => {
     try {
       launch(facade);
       advance(facade);
-      facade.executeOperation("abort");
+      facade.executeSharedSessionCommand({ kind: "abort" });
       const saved = facade.exportRecordJson();
       if (operation === "replace") facade.openArchive(saved);
       const observed = facade.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
       const read = vi.spyOn(bridge, "flight_record_sample_at_seconds");
       if (operation === "replace") {
-        facade.executeOperation("leave-replay");
+        facade.executeSharedSessionCommand({ kind: "leave_replay" });
         facade.openArchive(saved);
         expect(facade.readRecordSummary().context).toEqual(observed.context);
-      } else if (operation === "retry") facade.executeOperation("retry");
+      } else if (operation === "retry") facade.executeSharedSessionCommand({ kind: "retry" });
       else facade.dispose();
       expect(facade.isAnalysisDatasetCurrent(observed)).toBe(false);
       expect(() => facade.queryAnalysisCursor(0.005, observed)).toThrow(operation === "dispose" ? "disposed" : "stale");
@@ -114,9 +114,9 @@ describe("layout-discriminated application session facade", () => {
       if (phase === "replay") {
         launch(facade);
         advance(facade);
-        facade.executeOperation("abort");
-        facade.executeOperation("enter-replay");
-      } else facade.executeOperation("enter-attract");
+        facade.executeSharedSessionCommand({ kind: "abort" });
+        facade.executeSharedSessionCommand({ kind: "enter_replay" });
+      } else facade.executeSharedSessionCommand({ kind: "enter_attract" });
       const samples = vi.spyOn(bridge, "flight_analysis_samples_json");
       const summary = vi.spyOn(bridge, "flight_record_summary_json");
       const wind = vi.spyOn(bridge, "flight_wind_grid_json");
@@ -146,8 +146,8 @@ describe("layout-discriminated application session facade", () => {
     try {
       launch(facade);
       advance(facade);
-      facade.executeOperation("abort");
-      facade.executeOperation("enter-replay");
+      facade.executeSharedSessionCommand({ kind: "abort" });
+      facade.executeSharedSessionCommand({ kind: "enter_replay" });
       const observed = facade.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
       const original = bridge.flight_record_sample_at_seconds.bind(bridge);
       vi.spyOn(bridge, "flight_record_sample_at_seconds").mockImplementationOnce((seconds) => {
@@ -167,7 +167,7 @@ describe("layout-discriminated application session facade", () => {
     try {
       launch(facade);
       advance(facade);
-      facade.executeOperation("abort");
+      facade.executeSharedSessionCommand({ kind: "abort" });
       const dataset = facade.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
       expect(dataset.windGrid).toEqual({ kind: "unavailable", reason: "not_requested" });
       expect(dataset.context).toBe(dataset.summary.context);
@@ -176,7 +176,7 @@ describe("layout-discriminated application session facade", () => {
       const sample = facade.queryAnalysisCursor(0.005, dataset);
       expect(sample.context).toBe(dataset.context);
       expect(sample.controls.layout).toBe(dataset.context.controlLayout);
-      facade.executeOperation("enter-replay");
+      facade.executeSharedSessionCommand({ kind: "enter_replay" });
       const clock = facade.readPlaybackClock();
       expect(() => facade.queryAnalysisCursor(0.005, dataset)).toThrow("stale");
       const playback = facade.readAnalysisDataset({ kind: "available", value: windRequest });
@@ -196,10 +196,10 @@ describe("layout-discriminated application session facade", () => {
     try {
       launch(facade);
       advance(facade);
-      facade.executeOperation("abort");
+      facade.executeSharedSessionCommand({ kind: "abort" });
       const context = facade.readRecordSummary().context;
       const observed = facade.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
-      const changeGeneration = (): void => { expect(() => facade.executeOperation("resume")).toThrow(); };
+      const changeGeneration = (): void => { expect(() => facade.executeSharedSessionCommand({ kind: "resume" })).toThrow(); };
       if (query === "dataset") {
         const original = bridge.flight_analysis_samples_json.bind(bridge);
         vi.spyOn(bridge, "flight_analysis_samples_json").mockImplementationOnce(() => {
@@ -227,7 +227,7 @@ describe("layout-discriminated application session facade", () => {
     try {
       launch(facade);
       advance(facade);
-      facade.executeOperation("abort");
+      facade.executeSharedSessionCommand({ kind: "abort" });
       const summary = vi.spyOn(bridge, "flight_record_summary_json");
       const free = vi.spyOn(bridge, "free");
       const original = bridge.flight_analysis_samples_json.bind(bridge);
@@ -250,7 +250,7 @@ describe("layout-discriminated application session facade", () => {
     try {
       launch(facade);
       advance(facade);
-      facade.executeOperation("abort");
+      facade.executeSharedSessionCommand({ kind: "abort" });
       const saved = facade.exportRecordJson();
       facade.openArchive(saved);
       const observed = facade.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
@@ -258,7 +258,7 @@ describe("layout-discriminated application session facade", () => {
       const original = bridge.flight_record_sample_at_seconds.bind(bridge);
       vi.spyOn(bridge, "flight_record_sample_at_seconds").mockImplementationOnce((seconds) => {
         const json = original(seconds);
-        facade.executeOperation("leave-replay");
+        facade.executeSharedSessionCommand({ kind: "leave_replay" });
         facade.openArchive(saved);
         return json;
       });
@@ -273,13 +273,13 @@ describe("layout-discriminated application session facade", () => {
     const liveSnapshot = vi.spyOn(bridge, "snapshot_json");
     try {
       expect(facade.readTitleProjection()).toEqual({ kind: "idle", phaseCode: 0 });
-      facade.executeOperation("open-setup");
-      facade.executeOperation({ kind: "set-difficulty-option", axis: "information", code: 0 });
-      facade.executeOperation({ kind: "set-difficulty-option", axis: "weather", code: 3 });
+      facade.executeSharedSessionCommand({ kind: "open_setup" });
+      facade.executeSharedSessionCommand({ kind: "select_information", information: "full" });
+      facade.executeSharedSessionCommand({ kind: "select_weather", weather: "challenging" });
       const selectedEnvironment = facade.readEnvironmentJson();
-      facade.executeOperation("return-to-title");
+      facade.executeSharedSessionCommand({ kind: "return_to_title" });
       const titleToken = facade.captureQueryToken();
-      facade.executeOperation("enter-attract");
+      facade.executeSharedSessionCommand({ kind: "enter_attract" });
       expect(facade.acceptQuery(titleToken, "title").kind).toBe("stale");
       const title = facade.readTitleProjection();
       if (title.kind !== "attract") throw new Error("Expected a Rust Attract projection");
@@ -303,16 +303,16 @@ describe("layout-discriminated application session facade", () => {
         fraction: title.context.finalization.terminalFraction });
       expect(facade.readPlaybackClock()).toEqual(title.clock);
       expect(liveSnapshot).not.toHaveBeenCalled();
-      facade.executeOperation("leave-attract");
+      facade.executeSharedSessionCommand({ kind: "leave_attract" });
       expect(facade.readTitleProjection()).toEqual({ kind: "idle", phaseCode: 0 });
       expect(facade.acceptQuery(observed, await queued).kind).toBe("stale");
-      facade.executeOperation("open-setup");
+      facade.executeSharedSessionCommand({ kind: "open_setup" });
       expect(bridge.information_level_code()).toBe(0);
       expect(bridge.weather_class_code()).toBe(3);
       expect(bridge.control_mode_code()).toBe(0);
       expect(facade.readEnvironmentJson()).toBe(selectedEnvironment);
-      facade.executeOperation("return-to-title");
-      facade.executeOperation("enter-attract");
+      facade.executeSharedSessionCommand({ kind: "return_to_title" });
+      facade.executeSharedSessionCommand({ kind: "enter_attract" });
       expect(facade.readTitleProjection()).toEqual(title);
       expect(facade.queryRecordSample(0.005)).toEqual(sample);
       expect(facade.acceptQuery(observed, sample).kind).toBe("stale");
@@ -324,7 +324,7 @@ describe("layout-discriminated application session facade", () => {
   it("delegates Attract playback pause, rate, seek, wrap and restart to the Rust clock", () => {
     const facade = new TailAppSessionFacade(new HybridGameSessionBridge(0, 21, 22), physics_hz());
     try {
-      facade.executeOperation("enter-attract");
+      facade.executeSharedSessionCommand({ kind: "enter_attract" });
       const context = facade.readAttractContext();
       const duration = (context.finalization.terminalTick + context.finalization.terminalFraction) / physics_hz();
       const token = facade.captureQueryToken();
@@ -349,20 +349,20 @@ describe("layout-discriminated application session facade", () => {
     const bridge = new HybridGameSessionBridge(0, 21, 22);
     const facade = new TailAppSessionFacade(bridge, physics_hz());
     try {
-      facade.executeOperation("open-setup");
+      facade.executeSharedSessionCommand({ kind: "open_setup" });
       const selected = facade.readSnapshot();
-      expect(() => facade.executeOperation("enter-attract")).toThrow();
+      expect(() => facade.executeSharedSessionCommand({ kind: "enter_attract" })).toThrow();
       expect(facade.readSnapshot()).toEqual(selected);
       expect(() => facade.readTitleProjection()).toThrow();
-      facade.executeOperation("return-to-title");
-      facade.executeOperation("enter-attract");
+      facade.executeSharedSessionCommand({ kind: "return_to_title" });
+      facade.executeSharedSessionCommand({ kind: "enter_attract" });
       const attract = bridge.playback_context_json();
       const mismatched = JSON.parse(attract) as { phase: string };
       mismatched.phase = "replay";
       const context = vi.spyOn(bridge, "playback_context_json").mockReturnValue(JSON.stringify(mismatched));
       expect(() => facade.readPlaybackContext()).toThrow("disagrees with the Rust phase");
       context.mockRestore();
-      facade.executeOperation("leave-attract");
+      facade.executeSharedSessionCommand({ kind: "leave_attract" });
       vi.spyOn(bridge, "playback_context_json").mockReturnValue(attract);
       expect(() => facade.readPlaybackContext()).toThrow("disagrees with the Rust phase");
     } finally {
@@ -395,14 +395,14 @@ describe("layout-discriminated application session facade", () => {
         expect(snapshot.frame.state.tick).toBe(1);
         expect(snapshot.frame.state.physicalIncidence).not.toHaveProperty("rollRadians");
         expect(snapshot.frame.progressMeters.courseParallelMeters).toBeGreaterThan(0);
-      facade.executeOperation("pause");
+      facade.executeSharedSessionCommand({ kind: "pause" });
       expect(facade.readLifecycle()).toMatchObject({ phaseCode: 6, canResume: bridge.can_resume() });
       expect(facade.readLifecycle().canResume).toBe(true);
-      facade.executeOperation("resume");
-      expect(facade.executeOperation("abort").kind).toBe("aborted");
+      facade.executeSharedSessionCommand({ kind: "resume" });
+      expect(facade.executeSharedSessionCommand({ kind: "abort" }).kind).toBe("aborted");
       expect(facade.readLifecycle().phaseCode).toBe(7);
       expect(facade.exportRecordJson()).toContain('"schema_version":6');
-      facade.executeOperation("retry");
+      facade.executeSharedSessionCommand({ kind: "retry" });
       expect(facade.readLifecycle().phaseCode).toBe(3);
     } finally {
       facade.dispose();
@@ -416,7 +416,7 @@ describe("layout-discriminated application session facade", () => {
     try {
       launch(facade);
       advance(facade);
-      const result = facade.executeOperation("abort");
+      const result = facade.executeSharedSessionCommand({ kind: "abort" });
       if (result.kind !== "aborted") throw new Error("Expected terminal operation result");
       expect(facade.readAnalysisSamples()).toHaveLength(2);
       const token = facade.captureQueryToken();
@@ -427,7 +427,7 @@ describe("layout-discriminated application session facade", () => {
       if (display.kind !== "tail_record") throw new Error("Expected saved tail display");
       expect(display.finalization).toEqual(result.terminalSnapshot.frame.finalization);
       expect(display.progressMeters).toMatchObject({ kind: "unavailable" });
-      facade.executeOperation("enter-replay");
+      facade.executeSharedSessionCommand({ kind: "enter_replay" });
       liveSnapshot.mockClear();
       expect(facade.readReplayContext().controlLayout).toBe("tail_incidence");
       const clock = facade.readReplayClock();
@@ -450,7 +450,7 @@ describe("layout-discriminated application session facade", () => {
     try {
       launch(source);
       advance(source);
-      source.executeOperation("abort");
+      source.executeSharedSessionCommand({ kind: "abort" });
       viewer.openArchive(source.exportRecordJson());
       expect(viewer.readLifecycle().phaseCode).toBe(9);
       expect(viewer.readReplayContext().controlLayout).toBe(layout);
@@ -460,7 +460,7 @@ describe("layout-discriminated application session facade", () => {
       expect(viewer.readAnalysisSamples()).toHaveLength(2);
       expect(() => viewer.readSnapshot()).toThrow();
       const archiveToken = viewer.captureQueryToken();
-      viewer.executeOperation("leave-replay");
+      viewer.executeSharedSessionCommand({ kind: "leave_replay" });
       expect(viewer.readLifecycle().phaseCode).toBe(0);
       expect(viewer.acceptQuery(archiveToken, sample).kind).toBe("stale");
     } finally {
@@ -474,20 +474,20 @@ describe("layout-discriminated application session facade", () => {
     try {
       launch(facade);
       advance(facade);
-      facade.executeOperation("abort");
+      facade.executeSharedSessionCommand({ kind: "abort" });
       const original = facade.readSnapshot();
       const archive = facade.exportRecordJson();
       const token = facade.captureQueryToken();
       const queued = Promise.resolve(facade.queryRecordDisplay(0.005));
-      facade.executeOperation("retry");
+      facade.executeSharedSessionCommand({ kind: "retry" });
       expect(facade.readSnapshot().identity).toEqual(original.identity);
       expect(facade.acceptQuery(token, await queued).kind).toBe("stale");
-      facade.executeOperation("cancel-briefing");
-      facade.executeOperation("return-to-title");
+      facade.executeSharedSessionCommand({ kind: "cancel_briefing" });
+      facade.executeSharedSessionCommand({ kind: "return_to_title" });
       facade.openArchive(archive);
       const previousArchiveToken = facade.captureQueryToken();
       const previousContext = facade.readReplayContext();
-      facade.executeOperation("leave-replay");
+      facade.executeSharedSessionCommand({ kind: "leave_replay" });
       facade.openArchive(archive);
       expect(facade.readReplayContext()).toEqual(previousContext);
       expect(facade.acceptQuery(previousArchiveToken, previousContext).kind).toBe("stale");
@@ -503,18 +503,18 @@ describe("layout-discriminated application session facade", () => {
     const free = vi.spyOn(bridge, "free");
     try {
       expect(facade.acceptQuery(other.captureQueryToken(), "foreign").kind).toBe("stale");
-      facade.executeOperation("open-setup");
+      facade.executeSharedSessionCommand({ kind: "open_setup" });
       const selected = facade.captureQueryToken();
-      facade.executeOperation({ kind: "set-difficulty-option", axis: "information", code: 1 });
+      facade.executeSharedSessionCommand({ kind: "select_information", information: "standard" });
       expect(facade.acceptQuery(selected, "selected").kind).toBe("stale");
       const failed = facade.captureQueryToken();
-      expect(() => facade.executeOperation({ kind: "set-difficulty-option", axis: "weather", code: 99 })).toThrow();
+      expect(() => facade.executeSharedSessionCommand({ kind: "resume" })).toThrow();
       expect(facade.acceptQuery(failed, "failed").kind).toBe("stale");
       const disposed = facade.captureQueryToken();
       facade.flightPort.free();
       expect(facade.acceptQuery(disposed, "disposed").kind).toBe("stale");
       expect(() => facade.readLifecycle()).toThrow("disposed");
-      expect(() => facade.executeOperation("prepare")).toThrow("disposed");
+      expect(() => facade.executeSharedSessionCommand({ kind: "prepare" })).toThrow("disposed");
       expect(() => facade.captureQueryToken()).toThrow("disposed");
       expect(() => facade.flightPort.snapshot_json()).toThrow("disposed");
       facade.dispose();
@@ -532,8 +532,8 @@ describe("layout-discriminated application session facade", () => {
     try {
       launch(facade);
       advance(facade);
-      facade.executeOperation("abort");
-      facade.executeOperation("enter-replay");
+      facade.executeSharedSessionCommand({ kind: "abort" });
+      facade.executeSharedSessionCommand({ kind: "enter_replay" });
       const state = facade.readSharedUi(platform).selections;
       for (const action of [{ kind: "seek_analysis", time_seconds: 0.005 }, { kind: "seek_replay", time_seconds: 0.005 },
         { kind: "toggle_replay_playing" }, { kind: "set_replay_rate", code: 2 }]) {
@@ -556,9 +556,9 @@ describe("layout-discriminated application session facade", () => {
     const facade = new TailAppSessionFacade(bridge, physics_hz());
     const platform = sharedGameUiPlatform();
     try {
-      facade.executeOperation("open-setup");
-      facade.executeOperation("prepare");
-      facade.executeOperation("start-flight");
+      facade.executeSharedSessionCommand({ kind: "open_setup" });
+      facade.executeSharedSessionCommand({ kind: "prepare" });
+      facade.executeSharedSessionCommand({ kind: "start_countdown" });
       const full = vi.spyOn(bridge, "game_ui_view_json");
       const frame = vi.spyOn(bridge, "game_ui_frame_json");
       const lifecycle = vi.spyOn(bridge, "phase_code");
@@ -613,14 +613,14 @@ describe("layout-discriminated application session facade", () => {
     try {
       for (const owner of [facade, other]) { launch(owner); advance(owner); }
       advance(other);
-      for (const owner of [facade, other]) owner.executeOperation("abort");
+      for (const owner of [facade, other]) owner.executeSharedSessionCommand({ kind: "abort" });
       const first = facade.exportRecordJson();
       const second = other.exportRecordJson();
       expect(first).not.toBe(second);
       facade.openArchive(first);
       const retained = facade.readSharedUi(platform);
       const dataset = facade.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
-      facade.executeOperation("leave-replay");
+      facade.executeSharedSessionCommand({ kind: "leave_replay" });
       facade.openArchive(second);
       const replaced = facade.readSharedUi(platform);
       expect(replaced.view_revision).toBeGreaterThan(retained.view_revision);
@@ -639,7 +639,7 @@ describe("layout-discriminated application session facade", () => {
     try {
       launch(facade);
       advance(facade);
-      facade.executeOperation("abort");
+      facade.executeSharedSessionCommand({ kind: "abort" });
       const record = facade.exportRecordJson();
       const dataset = facade.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
       facade.updateSharedUi({ kind: "set_result_tab", tab: "analysis" }, platform);
@@ -672,7 +672,7 @@ describe("layout-discriminated application session facade", () => {
     try {
       launch(facade);
       advance(facade);
-      facade.executeOperation("abort");
+      facade.executeSharedSessionCommand({ kind: "abort" });
       facade.updateSharedUi({ kind: "session", command: { kind: "enter_replay" } }, platform);
       facade.executeSharedSessionCommand({ kind: "enter_replay" });
       facade.updateSharedUi({ kind: "set_replay_view", view: "telemetry" }, platform);
@@ -702,8 +702,8 @@ describe("layout-discriminated application session facade", () => {
     const facade = new TailAppSessionFacade(port, physics_hz());
     try {
       launch(facade);
-      vi.spyOn(bridge, "abort").mockReturnValue("[0,0,0]");
-      expect(() => facade.executeOperation("abort")).toThrow();
+      vi.spyOn(bridge, "snapshot_json").mockReturnValue("[0,0,0]");
+      expect(() => facade.executeSharedSessionCommand({ kind: "abort" })).toThrow();
     } finally {
       facade.dispose();
     }

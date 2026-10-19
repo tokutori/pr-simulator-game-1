@@ -15,14 +15,14 @@ initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_ga
 
 function prepared() {
   const session = createAppSession({ controlModeCode: 0, seedLow: 21, seedHigh: 22 });
-  session.executeOperation("open-setup");
-  session.executeOperation({ kind: "set-difficulty-option", axis: "weather", code: 2 });
-  session.executeOperation("prepare");
+  session.executeSharedSessionCommand({ kind: "open_setup" });
+  session.executeSharedSessionCommand({ kind: "select_weather", weather: "typical" });
+  session.executeSharedSessionCommand({ kind: "prepare" });
   return session;
 }
 
 function launch(session: TailAppSessionFacade): void {
-  session.executeOperation("start-flight");
+  session.executeSharedSessionCommand({ kind: "start_countdown" });
   expect(session.observeCountdown(session.captureCountdownToken(), 1, true)).toEqual({ kind: "waiting", remainingSeconds: 2 });
   expect(session.observeCountdown(session.captureCountdownToken(), 1, true)).toEqual({ kind: "waiting", remainingSeconds: 1 });
   expect(session.observeCountdown(session.captureCountdownToken(), 1, true)).toEqual({ kind: "launched" });
@@ -52,9 +52,9 @@ describe("application runtime session projection", () => {
       expect(readRuntimeSessionProjection(session)).toMatchObject({ phaseCode: 3, controlLayout: "tail_incidence", display: { kind: "unavailable" } });
       launch(session);
       expect(readRuntimeSessionProjection(session)).toMatchObject({ phaseCode: 5, display: { value: { kind: "tail_flight", phaseCode: 5 } } });
-      session.executeOperation("pause");
+      session.executeSharedSessionCommand({ kind: "pause" });
       expect(readRuntimeSessionProjection(session)).toMatchObject({ phaseCode: 6, display: { value: { phaseCode: 6 } } });
-      session.executeOperation("abort");
+      session.executeSharedSessionCommand({ kind: "abort" });
       const projection = readRuntimeSessionProjection(session);
       expect(projection).toMatchObject({ phaseCode: 7, display: { value: { kind: "tail_result" } } });
       const summary = session.readRecordSummary();
@@ -66,8 +66,8 @@ describe("application runtime session projection", () => {
   it.each(["replay", "attract"] as const)("uses only named %s queries and its Rust clock", (phase) => {
     const session = prepared();
     try {
-      if (phase === "replay") { launch(session); session.executeOperation("abort"); session.executeOperation("enter-replay"); }
-      else { session.executeOperation("cancel-briefing"); session.executeOperation("return-to-title"); session.executeOperation("enter-attract"); }
+      if (phase === "replay") { launch(session); session.executeSharedSessionCommand({ kind: "abort" }); session.executeSharedSessionCommand({ kind: "enter_replay" }); }
+      else { session.executeSharedSessionCommand({ kind: "cancel_briefing" }); session.executeSharedSessionCommand({ kind: "return_to_title" }); session.executeSharedSessionCommand({ kind: "enter_attract" }); }
       const projection = readRuntimeSessionProjection(session);
       expect(projection).toMatchObject({ phaseCode: phase === "replay" ? 9 : 10, display: { value: { kind: "tail_record" } } });
       const dataset = session.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
@@ -89,7 +89,7 @@ describe("application runtime session projection", () => {
         desiredPitchRateRadiansPerSecond: 0.01, desiredYawRateRadiansPerSecond: -0.01,
         pilotPositionCommand: { kind: "set", normalized: 0.25 } }));
       archived.abort();
-      session.executeOperation("cancel-briefing"); session.executeOperation("return-to-title");
+      session.executeSharedSessionCommand({ kind: "cancel_briefing" }); session.executeSharedSessionCommand({ kind: "return_to_title" });
       const saved = archived.export_flight_record_json();
       session.openArchive(saved);
       expect(sessionVenue(session).venue).toEqual({ kind: "visible", basis: "recorded_origin" });
@@ -107,9 +107,9 @@ describe("application runtime session projection", () => {
       expect(session.readPlaybackClock()).toEqual(clock);
       expect(session.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" }).samples).toEqual(dataset.samples);
       expect(archived.export_flight_record_json()).toBe(saved);
-      session.executeOperation("leave-replay");
+      session.executeSharedSessionCommand({ kind: "leave_replay" });
       expect(sessionVenue(session).venue).toEqual({ kind: "visible", basis: "title_exhibition" });
-      session.executeOperation("enter-attract");
+      session.executeSharedSessionCommand({ kind: "enter_attract" });
       expect(sessionVenue(session).environment).toMatchObject({ kind: "available", value: { source: "attract" } });
       expect(sessionVenue(session).venue).toEqual({ kind: "visible", basis: "shared_launch" });
     } finally { session.dispose(); archived.free(); }
@@ -117,38 +117,38 @@ describe("application runtime session projection", () => {
 });
 
 describe("registered environment and venue projection", () => {
-  it.each([0, 1])("preserves current weather %s venue through flight, Result, Replay and Retry but hides its imported record", (weather) => {
+  it.each(["calm", "mild"] as const)("preserves current weather %s venue through flight, Result, Replay and Retry but hides its imported record", (weather) => {
     const session = createAppSession({ controlModeCode: 0, seedLow: 21, seedHigh: 22 });
     try {
       expect(sessionVenue(session).venue).toEqual({ kind: "visible", basis: "title_exhibition" });
-      session.executeOperation("open-setup");
-      session.executeOperation({ kind: "set-difficulty-option", axis: "weather", code: weather });
+      session.executeSharedSessionCommand({ kind: "open_setup" });
+      session.executeSharedSessionCommand({ kind: "select_weather", weather });
       const selected = sessionVenue(session);
       expect(selected.environment).toMatchObject({ kind: "available", value: { source: "selected", localFrame: { kind: "unavailable" } } });
       expect(selected.venue).toEqual({ kind: "visible", basis: "shared_launch" });
-      session.executeOperation("prepare");
+      session.executeSharedSessionCommand({ kind: "prepare" });
       expect(sessionVenue(session).venue).toEqual({ kind: "visible", basis: "shared_launch" });
-      session.executeOperation("start-flight");
+      session.executeSharedSessionCommand({ kind: "start_countdown" });
       expect(sessionVenue(session).venue).toEqual({ kind: "visible", basis: "shared_launch" });
       session.observeCountdown(session.captureCountdownToken(), 1, true); session.observeCountdown(session.captureCountdownToken(), 1, true); session.observeCountdown(session.captureCountdownToken(), 1, true);
       expect(sessionVenue(session).venue).toEqual({ kind: "visible", basis: "shared_launch" });
-      session.executeOperation("pause");
+      session.executeSharedSessionCommand({ kind: "pause" });
       expect(sessionVenue(session).venue).toEqual({ kind: "visible", basis: "shared_launch" });
-      session.executeOperation("abort");
+      session.executeSharedSessionCommand({ kind: "abort" });
       expect(sessionVenue(session).environment).toMatchObject({ kind: "available", value: { source: "sealed" } });
       expect(sessionVenue(session).venue).toEqual({ kind: "visible", basis: "shared_launch" });
       const saved = session.exportRecordJson();
-      session.executeOperation("enter-replay");
+      session.executeSharedSessionCommand({ kind: "enter_replay" });
       expect(sessionVenue(session).environment).toMatchObject({ kind: "available", value: { source: "record" } });
       expect(sessionVenue(session).venue).toEqual({ kind: "visible", basis: "shared_launch" });
-      session.executeOperation("leave-replay");
-      session.executeOperation("retry");
+      session.executeSharedSessionCommand({ kind: "leave_replay" });
+      session.executeSharedSessionCommand({ kind: "retry" });
       expect(sessionVenue(session).venue).toEqual({ kind: "visible", basis: "shared_launch" });
-      session.executeOperation("cancel-briefing"); session.executeOperation("return-to-title");
+      session.executeSharedSessionCommand({ kind: "cancel_briefing" }); session.executeSharedSessionCommand({ kind: "return_to_title" });
       session.openArchive(saved);
       expect(sessionVenue(session).environment).toMatchObject({ kind: "available", value: { source: "archive", localFrame: { kind: "unavailable" } } });
       expect(sessionVenue(session).venue).toEqual({ kind: "unavailable", reason: "origin_not_recorded" });
-      session.executeOperation("leave-replay");
+      session.executeSharedSessionCommand({ kind: "leave_replay" });
       expect(session.readLifecycle().phaseCode).toBe(0);
       expect(sessionVenue(session).venue).toEqual({ kind: "visible", basis: "title_exhibition" });
     } finally { session.dispose(); }
@@ -157,7 +157,7 @@ describe("registered environment and venue projection", () => {
   it("keeps the independent default Attract venue without inventing a recorded origin", () => {
     const session = createAppSession({ controlModeCode: 0, seedLow: 21, seedHigh: 22 });
     try {
-      session.executeOperation("enter-attract");
+      session.executeSharedSessionCommand({ kind: "enter_attract" });
       const projected = sessionVenue(session);
       expect(projected.environment).toMatchObject({ kind: "available", value: { source: "attract", localFrame: { kind: "unavailable" } } });
       expect(projected.venue).toEqual({ kind: "visible", basis: "shared_launch" });
@@ -191,10 +191,10 @@ describe("registered environment and venue projection", () => {
     const session = prepared();
     try {
       launch(session);
-      session.executeOperation("abort");
+      session.executeSharedSessionCommand({ kind: "abort" });
       const saved = jsonObject(session.exportRecordJson());
       for (const unknown of [false, true]) {
-        if (unknown) { session.executeOperation("leave-replay"); nested(saved, "header").environment_version = 99; }
+        if (unknown) { session.executeSharedSessionCommand({ kind: "leave_replay" }); nested(saved, "header").environment_version = 99; }
         session.openArchive(JSON.stringify(saved));
         const data = session.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
         const environment = parseRuntimeEnvironmentSnapshot(session.readEnvironmentJson(), 9, data.context.scenario);
@@ -236,7 +236,7 @@ describe("registered environment and venue projection", () => {
   it.each(["origin", "datum", "missing-origin"] as const)("requires the imported record's registered %s", (change) => {
     const session = prepared();
     try {
-      launch(session); session.executeOperation("abort"); session.openArchive(session.exportRecordJson());
+      launch(session); session.executeSharedSessionCommand({ kind: "abort" }); session.openArchive(session.exportRecordJson());
       const context = session.readPlaybackContext();
       const document = jsonObject(session.readEnvironmentJson());
       const metadata = nested(nested(document, "projection"), "metadata");

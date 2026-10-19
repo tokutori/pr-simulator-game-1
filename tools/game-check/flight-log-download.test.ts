@@ -67,7 +67,7 @@ const analysisFixture = (() => {
   try {
     launchCurrentSession(session);
     session.flightPort.advance_tick_json(neutralTailInput);
-    session.executeOperation("abort");
+    session.executeSharedSessionCommand({ kind: "abort" });
     return session.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
   } finally { session.dispose(); }
 })();

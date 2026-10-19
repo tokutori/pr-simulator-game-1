@@ -14,7 +14,7 @@ export function recordedCameraFixture(): TailAppSessionFacade {
     desiredPitchRateRadiansPerSecond: 0, desiredYawRateRadiansPerSecond: 0, pilotPositionCommand: { kind: "hold" } });
   for (let tick = 0; tick < 3; tick++) bridge.advance_tick_json(input);
   const session = new TailAppSessionFacade(bridge, physics_hz());
-  session.executeOperation("abort");
-  session.executeOperation("enter-replay");
+  session.executeSharedSessionCommand({ kind: "abort" });
+  session.executeSharedSessionCommand({ kind: "enter_replay" });
   return session;
 }

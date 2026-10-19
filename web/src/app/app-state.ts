@@ -44,30 +44,6 @@ export type AnalysisCursorState = { readonly nextRequestId: number } & (
   | { readonly kind: "failed"; readonly message: string; readonly retained: FlightAnalysisCursorInput | null }
 );
 
-export type NamedGameSessionOperation =
-  | "open-setup"
-  | "set-control-manual"
-  | "set-control-shared"
-  | "set-control-automatic"
-  | "return-to-title"
-  | "prepare"
-  | "cancel-briefing"
-  | "start-flight"
-  | "cancel-countdown"
-  | "pause"
-  | "resume"
-  | "abort"
-  | "retry"
-  | "retry-briefing"
-  | "enter-replay"
-  | "leave-replay"
-  | "enter-attract"
-  | "leave-attract";
-
-export type GameSessionOperation = NamedGameSessionOperation
-  | { readonly kind: "set-information-cue"; readonly cueCode: number; readonly visible: boolean }
-  | { readonly kind: "set-difficulty-option"; readonly axis: "preset" | "information" | "assistance" | "weather"; readonly code: number };
-
 export interface ReplayClockState {
   readonly timeSeconds: number;
   readonly rateCode: 0 | 1 | 2;
