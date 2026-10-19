@@ -183,7 +183,7 @@ Web版の開発ページは`http://localhost:5173/pr-simulator-game-1/`で確認
 ### 形式検証
 
 ```sh
-powershell -File tools/verus/check-pause-reasons.ps1
+powershell -File tools/verus/check-verus.ps1
 ```
 
 実際の`birdman-game-core`を検証する固定Verusでは、ジェネリックな派生`Clone`の仕様が未生成であることを示す警告が2件残る。
