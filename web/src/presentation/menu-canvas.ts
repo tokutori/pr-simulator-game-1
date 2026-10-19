@@ -21,6 +21,7 @@ export interface MenuTextInk {
 }
 
 export interface MenuDrawingContext extends HeadHudDrawingContext {
+  fillGradientRect(left: number, top: number, width: number, height: number, colors: readonly [string, string]): void;
   setTextBaseline(value: "middle" | "alphabetic"): void;
   translate(coordinateX: number, coordinateY: number): void;
   rotate(radians: number): void;
@@ -34,6 +35,13 @@ export function browserMenuContext(context: CanvasRenderingContext2D): MenuDrawi
   context.letterSpacing = "0px";
   context.wordSpacing = "0px";
   return Object.freeze({ ...browserHeadHudContext(context),
+    fillGradientRect: (left: number, top: number, width: number, height: number, colors: readonly [string, string]): void => {
+      const gradient = context.createLinearGradient(left, top, left + width, top);
+      gradient.addColorStop(0, colors[0]);
+      gradient.addColorStop(1, colors[1]);
+      context.fillStyle = gradient;
+      context.fillRect(left, top, width, height);
+    },
     setTextBaseline: (value: "middle" | "alphabetic"): void => { context.textBaseline = value; },
     translate: (coordinateX: number, coordinateY: number): void => { context.translate(coordinateX, coordinateY); },
     rotate: (radians: number): void => { context.rotate(radians); }
@@ -135,7 +143,7 @@ function pageText(viewport: MenuViewport, direction: "previous" | "next"): MenuT
 }
 
 export function menuPaintedTextInk(viewport: MenuViewport): readonly MenuTextInk[] {
-  return Object.freeze([viewport.document.title, viewport.document.caption, ...viewport.document.controls.flatMap((control) => control.texts)]
+  return Object.freeze([viewport.document.title, viewport.document.caption, ...viewport.document.sectionHeadings, ...viewport.document.controls.flatMap((control) => control.texts)]
     .flatMap((text) => paintedText(viewport, text, false))
     .concat(viewport.maximumOffsetMeters > 0 ? [...paintedText(viewport, pageText(viewport, "previous"), true), ...paintedText(viewport, pageText(viewport, "next"), true)] : []));
 }
@@ -178,13 +186,27 @@ export function drawMeasuredMenu(context: MenuDrawingContext, viewport: MenuView
       context.clip();
       text(viewport.document.title, false);
       text(viewport.document.caption, false, theme.muted_text);
+      for (const heading of viewport.document.sectionHeadings) text(heading, false);
       for (const control of viewport.document.controls) {
         const clipped = menuRectInViewport(viewport, control.bounds);
         if (clipped.kind === "outside") continue;
         context.setFillStyle(uiControlBackground(control.control, theme));
         drawRect(clipped.rect);
         if (control.kind === "chart") drawChart(context, control.control, control.plot, viewport, scaleX, scaleY);
-        for (const layout of control.texts) text(layout, false, control.control.enabled || control.control.kind === "status" || control.control.kind === "chart" ? theme.text : theme.muted_text);
+        for (const layout of control.texts) {
+          const legend = layout.request.legend;
+          if (legend !== undefined) {
+            const left = (layout.bounds.x + viewport.contentClip.x - request.fontMeters * 2) * scaleX;
+            const top = (layout.bounds.y + viewport.contentClip.y - viewport.offsetMeters + request.lineHeightMeters * 0.35) * scaleY;
+            const width = request.fontMeters * 1.5 * scaleX;
+            const height = request.lineHeightMeters * 0.3 * scaleY;
+            if (legend.segment_gradient === null) {
+              context.setFillStyle(legend.color);
+              context.fillRect(left, top, width, height);
+            } else context.fillGradientRect(left, top, width, height, legend.segment_gradient);
+          }
+          text(layout, false, control.control.enabled || control.control.kind === "status" || control.control.kind === "chart" ? theme.text : theme.muted_text);
+        }
       }
     } finally { context.restore(); }
     if (viewport.maximumOffsetMeters === 0) return;

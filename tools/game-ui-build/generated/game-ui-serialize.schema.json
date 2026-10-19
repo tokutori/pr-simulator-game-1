@@ -2183,6 +2183,10 @@
               "const": "status",
               "type": "string"
             },
+            "source": {
+              "$ref": "#/$defs/GameUiReadoutSource",
+              "description": "Typed dynamic-value provider; static values require no frame patch."
+            },
             "value": {
               "description": "Shared formatted content.",
               "type": "string"
@@ -2190,6 +2194,7 @@
           },
           "required": [
             "kind",
+            "source",
             "value"
           ],
           "type": "object"
@@ -3269,6 +3274,36 @@
       ],
       "type": "object"
     },
+    "GameUiReadoutSource": {
+      "description": "Shared source for frame-varying readouts, independent of element identity.",
+      "oneOf": [
+        {
+          "const": "static",
+          "description": "Value retained in the structural view.",
+          "type": "string"
+        },
+        {
+          "const": "countdown",
+          "description": "Remaining countdown duration.",
+          "type": "string"
+        },
+        {
+          "const": "playback_time",
+          "description": "Current playback time and record duration.",
+          "type": "string"
+        },
+        {
+          "const": "playback_summary",
+          "description": "Terminal distance and current playback time.",
+          "type": "string"
+        },
+        {
+          "const": "analysis_cursor",
+          "description": "Record sample at the common analysis cursor.",
+          "type": "string"
+        }
+      ]
+    },
     "GameUiReadoutValue": {
       "additionalProperties": false,
       "description": "Text of a retained record readout.",
@@ -3496,11 +3531,6 @@
         {
           "const": "row",
           "description": "Horizontal action row.",
-          "type": "string"
-        },
-        {
-          "const": "normalized",
-          "description": "Shared normalized chart and control positions.",
           "type": "string"
         }
       ]

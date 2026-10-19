@@ -43,7 +43,8 @@ describe("Pure Head Flight HUD layout", () => {
         case "attitude": return { ...node, content: { ...node.content, geometry: adi } };
         case "heading_tape": return { ...node, content: { ...node.content, value: "SHARED HEADING 125.75°", ticks } };
         case "linear_gauge": return { ...node, content: { ...node.content, value: "5.0°", position_ratio: 0.5 } };
-        default: return node;
+        case "text":
+        case "direction": return node;
       }
     });
     const before = JSON.stringify(model);
@@ -133,7 +134,8 @@ describe("Pure Head Flight HUD layout", () => {
     const view = createHeadHudView(model, configuredViewer(), "ja");
     if (view.kind !== "visible") throw new Error("Expected visible Flight HUD");
     expect(view.layer.elements.filter((element) => element.content.kind !== "text").map((element) => element.content.kind)).toEqual(kinds);
-    expect(view.layer.elements.map(({ bounds: _bounds, ...node }) => node)).toEqual(sharedHudNodes(model));
+    expect(view.layer.elements.map((node) => node.id)).toEqual(sharedHudNodes(model).map((node) => node.id));
+    for (const node of view.layer.elements) expect(node.content).toBe(sharedHudNode(model, node.id).content);
     expect(JSON.stringify(model)).toBe(before);
     if (code === 0 || code === 4) expect(view.layer.elements.find((element) => element.id === "hud-pilot-position"))
       .toMatchObject(sharedHudNode(model, "hud-pilot-position"));

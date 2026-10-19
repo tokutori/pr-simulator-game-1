@@ -11,6 +11,7 @@ export class HudCanvasFixture implements HeadHudDrawingContext {
   private readonly states: number[] = [];
   clearRect(...dimensions: [number, number, number, number]): void { this.clears.push(dimensions); }
   fillRect(...dimensions: [number, number, number, number]): void { this.fills.push(dimensions); }
+  fillGradientRect(): void {}
   fillText(value: string): void { this.painted.push(value); }
   measureText(value: string): HeadHudTextMetrics {
     const width = Array.from(value).reduce((sum, character) => sum + this.fontSize * (character.charCodeAt(0) > 255 ? 1 : 0.65), 0);

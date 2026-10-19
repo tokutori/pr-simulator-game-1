@@ -650,20 +650,10 @@ fn project_view(
             ..default()
         },
     ));
-    let normalized = view.layout.shell == GameUiShell::Analysis
-        && view
-            .panels
-            .iter()
-            .flat_map(|panel| &panel.sections)
-            .any(|section| section.layout == GameUiSectionLayout::Normalized);
     world.entity_mut(retained.content).insert(Node {
         width: percent(100),
-        height: if normalized { percent(100) } else { auto() },
-        position_type: if normalized {
-            PositionType::Absolute
-        } else {
-            PositionType::Relative
-        },
+        height: auto(),
+        position_type: PositionType::Relative,
         flex_direction: FlexDirection::Column,
         row_gap: px(view.layout.gap_px),
         flex_shrink: 0.0,
@@ -772,15 +762,11 @@ fn project_view(
                     previous.layout != view.layout || previous.theme != view.theme
                 })
             {
-                let section_layout = if normalized {
-                    GameUiSectionLayout::Normalized
-                } else {
-                    panel
-                        .sections
-                        .iter()
-                        .find(|section| section.id == control.section)
-                        .map_or(GameUiSectionLayout::Column, |section| section.layout)
-                };
+                let section_layout = panel
+                    .sections
+                    .iter()
+                    .find(|section| section.id == control.section)
+                    .map_or(GameUiSectionLayout::Column, |section| section.layout);
                 project_control(
                     world,
                     widget,
@@ -917,13 +903,7 @@ fn project_control(
         row_gap: px(4),
         ..default()
     };
-    if section_layout == GameUiSectionLayout::Normalized {
-        node.position_type = PositionType::Absolute;
-        node.left = percent(control.rect.x * 100.0);
-        node.top = percent(control.rect.y * 100.0);
-        node.width = percent(control.rect.width * 100.0);
-        node.height = percent(control.rect.height * 100.0);
-    } else if section_layout == GameUiSectionLayout::Row {
+    if section_layout == GameUiSectionLayout::Row {
         node.width = auto();
         node.max_width = percent(100);
         node.flex_grow = if matches!(shell, GameUiShell::FlightBar | GameUiShell::PauseSettings) {
@@ -1033,7 +1013,7 @@ fn project_control(
                 },
             ));
         }
-        GameUiControlContent::Status { value } => {
+        GameUiControlContent::Status { value, .. } => {
             label = format!("{}: {value}", control.label);
             if control.id == "game-briefing-technical-content" {
                 world
@@ -2098,7 +2078,7 @@ mod tests {
                 .flat_map(|panel| &panel.controls)
                 .find(|control| control.id == "presentation-water-quality-status")
                 .unwrap();
-            let GameUiControlContent::Status { value } = &status.content else {
+            let GameUiControlContent::Status { value, .. } = &status.content else {
                 panic!("Water quality status must preserve the shared status control");
             };
             assert!(value.contains(&raw_cause));

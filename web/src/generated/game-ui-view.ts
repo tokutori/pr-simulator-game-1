@@ -608,6 +608,10 @@ export interface GameUiControl {
     } | {
         readonly kind: "status";
         /**
+         * Typed dynamic-value provider; static values require no frame patch.
+         */
+        readonly source: "static" | "countdown" | "playback_time" | "playback_summary" | "analysis_cursor";
+        /**
          * Shared formatted content.
          */
         readonly value: string;
@@ -1292,7 +1296,7 @@ export interface GameUiSection {
     /**
      * Shared layout mode.
      */
-    readonly layout: "column" | "choice_grid" | "row" | "normalized";
+    readonly layout: "column" | "choice_grid" | "row";
 }
 /**
  * Readonly observation of the Rust-owned UI selections.

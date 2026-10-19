@@ -16,14 +16,15 @@ const font = Object.freeze({ family: "system-ui, sans-serif", weight: 600, style
 const style = Object.freeze({ theme: currentSharedGameUiFixture(0).theme,
   fontMeters: 0.04, font, locale: "ja", previousLabel: "前頁", nextLabel: "次頁", caption: "Software fixture" });
 const controls: readonly UiControl[] = Object.freeze([
-  { kind: "button", id: "resume", label: "飛行を再開する", enabled: true, rect: normalizedRect(0.04, 0.2, 0.44, 0.08) },
-  { kind: "button", id: "settings", label: "設定", enabled: false, rect: normalizedRect(0.52, 0.2, 0.44, 0.08) },
-  { kind: "status", id: "help", label: "操作方法", value: "Roll A/D · Pitch ↑/↓ · 重心 J/L\n入力と姿勢を確認する。", enabled: false, rect: normalizedRect(0.04, 0.32, 0.92, 0.22) },
-  { kind: "range", id: "time", label: "Flight time (s)", value: 5, displayValue: "5.0", minimum: 0, maximum: 20, step: 0.5, enabled: true, rect: normalizedRect(0.04, 0.62, 0.92, 0.08) },
-  { kind: "toggle", id: "toggle", label: "表示", value: true, enabled: true, rect: normalizedRect(0.04, 0.76, 0.92, 0.08) }
+  { kind: "button", id: "resume", section: "actions", label: "飛行を再開する", enabled: true, rect: normalizedRect(0.04, 0.8, 0.44, 0.08) },
+  { kind: "button", id: "settings", section: "actions", label: "設定", enabled: false, rect: normalizedRect(0.52, 0.1, 0.44, 0.08) },
+  { kind: "status", id: "help", section: "details", label: "操作方法", value: "Roll A/D · Pitch ↑/↓ · 重心 J/L\n入力と姿勢を確認する。", enabled: false, rect: normalizedRect(0.04, 0.32, 0.92, 0.22) },
+  { kind: "range", id: "time", section: "details", label: "Flight time (s)", value: 5, displayValue: "5.0", minimum: 0, maximum: 20, step: 0.5, enabled: true, rect: normalizedRect(0.04, 0.62, 0.92, 0.08) },
+  { kind: "toggle", id: "toggle", section: "details", label: "表示", value: true, enabled: true, rect: normalizedRect(0.04, 0.76, 0.92, 0.08) }
 ]);
 const panel: UiPanel = Object.freeze({ id: "pause", title: "Pause", anchor: "menu", localPose: IDENTITY_POSE,
-  size: Object.freeze({ width: 2.4, height: 1.8 }), controls });
+  size: Object.freeze({ width: 2.4, height: 1.8 }), controls,
+  sections: [{ id: "actions", label: "操作", layout: "row" }, { id: "details", label: "詳細", layout: "column" }] as const });
 
 function measurementFor(request: MenuTextRequest): MenuTextMeasurement {
   const characterWidth = request.fontMeters * 0.55;
@@ -69,14 +70,16 @@ describe("Pure measured Menu document and shared viewport", () => {
     expect(range).toMatchObject({ value: 0.25, displayValue: "0.3", step: 0.01 });
   });
 
-  it("preserves every semantic control and uses source rows in landscape and a single column in portrait", () => {
+  it("preserves declared section order and headings despite contradictory rectangles and reflows rows in portrait", () => {
     const landscape = requestMenuLayout(panel, panel.size, style);
     const portrait = requestMenuLayout(panel, { width: 0.5, height: 1.8 }, style);
     expect(landscape.rows[0]?.controls.map((item) => item.control.id)).toEqual(["resume", "settings"]);
+    expect(landscape.texts.filter((text) => text.slot.kind === "section").map((text) => text.value)).toEqual(["操作", "詳細"]);
     expect(portrait.rows.every((row) => row.controls.length === 1)).toBe(true);
     for (const request of [landscape, portrait]) {
       const document = documentFor(request);
       expect(document.controls.map((entry) => entry.control)).toEqual(controls);
+      expect(document.sectionHeadings.map((heading) => heading.request.value)).toEqual(["操作", "詳細"]);
       expect(document.controls.find((entry) => entry.control.id === "settings")?.control.enabled).toBe(false);
       expect(document.controls.find((entry) => entry.control.id === "time")?.control).toBe(controls[3]);
       const rangeText = request.texts.find((text) => text.slot.kind === "control" && text.slot.controlId === "time" && text.slot.role === "value");
@@ -87,7 +90,7 @@ describe("Pure measured Menu document and shared viewport", () => {
   });
 
   it("retains long wrapped text and extends the document instead of dropping controls or reducing ink size", () => {
-    const long = { ...panel, controls: [...controls, { kind: "status", id: "long", label: "記録", value: "内容を保持する。".repeat(150),
+    const long = { ...panel, controls: [...controls, { kind: "status", id: "long", section: "details", label: "記録", value: "内容を保持する。".repeat(150),
       enabled: false, rect: normalizedRect(0.04, 0.88, 0.92, 0.08) } satisfies UiControl] };
     const document = documentFor(requestMenuLayout(long, { width: 0.5, height: 1.8 }, style));
     expect(document.contentHeightMeters).toBeGreaterThan(document.request.surfaceSize.height * 2);
@@ -181,7 +184,7 @@ describe("Pure measured Menu document and shared viewport", () => {
   });
 
   it("maps a partly clipped range by its full document width instead of the visible rectangle", () => {
-    const extended = { ...panel, controls: [...controls, { kind: "status", id: "tail", label: "Record",
+    const extended = { ...panel, controls: [...controls, { kind: "status", id: "tail", section: "details", label: "Record",
       value: "FlightRecord metadata ".repeat(50), enabled: false, rect: normalizedRect(0.04, 0.9, 0.92, 0.08) } satisfies UiControl] };
     const document = documentFor(requestMenuLayout(extended, { width: 0.5, height: 0.65 }, style));
     const range = document.controls.find((entry) => entry.control.kind === "range");
@@ -199,7 +202,7 @@ describe("Pure measured Menu document and shared viewport", () => {
 
   it("measures every chart label, axis, tick, legend and annotation and keeps Rust query arrays and square scaling", () => {
     const original = chart();
-    const request = requestMenuLayout({ ...panel, controls: [original] }, panel.size, style);
+    const request = requestMenuLayout({ ...panel, controls: [{ ...original, section: "details" }] }, panel.size, style);
     const texts = request.texts.filter((text) => text.slot.kind === "control" && text.slot.controlId === original.id);
     expect(texts.filter((text) => text.slot.role === "x-tick")).toHaveLength(original.presentation.x_ticks.length);
     expect(texts.filter((text) => text.slot.role === "y-tick")).toHaveLength(original.presentation.y_ticks.length);

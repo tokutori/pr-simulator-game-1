@@ -223,19 +223,11 @@ export class ScreenUiAdapter {
   };
 
   private createPanel(panel: UiPanel): VNode {
-    const usesNormalizedLayout = panel.sections?.some((section) => section.layout === "normalized") === true;
     const data: VNodeData = { key: panel.id, dataset: { anchor: panel.anchor }, attrs: { "aria-label": panel.title } };
-    if (usesNormalizedLayout) data.dataset = { ...data.dataset, layout: "normalized" };
     const children: VNode[] = [];
     if (panel.sections !== undefined) {
       for (const section of panel.sections) {
-        const content = h("div.screen-ui-section-controls", panel.controls.filter((control) => control.section === section.id).map((control) => {
-          const node = this.createControl(control);
-          if (section.layout === "normalized") {
-            node.data = { ...node.data, style: Object.assign({}, node.data?.style, normalizedStyle(control.rect)), attrs: { ...node.data?.attrs, ...(control.kind === "status" ? { tabindex: 0 } : {}) } };
-          }
-          return node;
-        }));
+        const content = h("div.screen-ui-section-controls", panel.controls.filter((control) => control.section === section.id).map((control) => this.createControl(control)));
         children.push(h(section.label.length > 0 ? "fieldset.screen-ui-section" : "div.screen-ui-section", {
           key: `${panel.id}-section-${section.id}`, dataset: { sectionId: section.id, layout: section.layout }
         }, section.label.length > 0 ? [h("legend", section.label), content] : [content]));
@@ -512,13 +504,6 @@ function sharedPresentationData(presentation: NonNullable<UiViewModel["sharedPre
       "--game-ui-button-height": `${String(theme.button_min_height_px)}px`,
       "--game-ui-primary-height": `${String(theme.primary_min_height_px)}px`
     }
-  };
-}
-
-function normalizedStyle(rect: UiControl["rect"]): NonNullable<VNodeData["style"]> {
-  return {
-    position: "absolute", left: `${String(rect.x * 100)}%`, top: `${String(rect.y * 100)}%`,
-    width: `${String(rect.width * 100)}%`, height: `${String(rect.height * 100)}%`
   };
 }
 

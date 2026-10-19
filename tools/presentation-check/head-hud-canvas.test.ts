@@ -104,7 +104,8 @@ describe("Head HUD Canvas preflight and painting", () => {
         case "attitude": return { ...node, content: { ...node.content, geometry: { kind: "attitude", horizon: { rotation_degrees: 17, pitch_offset_ratio: 0.21 }, flight_path_y_ratio: 0.73 } } };
         case "heading_tape": return { ...node, content: { ...node.content, value: "SHARED 125.75°", ticks: headingTicks } };
         case "linear_gauge": return { ...node, content: { ...node.content, value: "5.0°", position_ratio: ratio } };
-        default: return node;
+        case "text":
+        case "direction": return node;
       }
     });
     const view = flightView(1280 / 720, model);

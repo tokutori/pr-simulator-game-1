@@ -951,8 +951,6 @@ pub enum GameUiSectionLayout {
     ChoiceGrid,
     /// Horizontal action row.
     Row,
-    /// Shared normalized chart and control positions.
-    Normalized,
 }
 
 /// Shared control, including data and admitted semantic action.
@@ -1010,6 +1008,8 @@ pub enum GameUiControlContent {
     },
     /// Derived readout.
     Status {
+        /// Typed dynamic-value provider; static values require no frame patch.
+        source: GameUiReadoutSource,
         /// Shared formatted content.
         value: String,
     },
@@ -1020,6 +1020,23 @@ pub enum GameUiControlContent {
         /// Fully derived axes, geometry and cursor; adapters render this value.
         plot: Box<GameUiChart>,
     },
+}
+
+/// Shared source for frame-varying readouts, independent of element identity.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum GameUiReadoutSource {
+    /// Value retained in the structural view.
+    Static,
+    /// Remaining countdown duration.
+    Countdown,
+    /// Current playback time and record duration.
+    PlaybackTime,
+    /// Terminal distance and current playback time.
+    PlaybackSummary,
+    /// Record sample at the common analysis cursor.
+    AnalysisCursor,
 }
 
 /// Complete engine-independent recorded chart.

@@ -11,6 +11,7 @@ let nextHudId = 0;
 export class FlightHudAdapter {
   private readonly patch: ReturnType<typeof init>;
   private tree: VNode | Element;
+  private layoutKey = "";
   private readonly clipPrefix = `flight-hud-${String(++nextHudId)}`;
 
   constructor(private readonly root: HTMLElement) {
@@ -37,15 +38,19 @@ export class FlightHudAdapter {
       return;
     }
     const layout = model.layout;
-    this.root.dataset.shared = "true";
-    Object.assign(this.root.style, {
+    const layoutKey = JSON.stringify([layout, model.theme.text, model.theme.panel_background]);
+    if (layoutKey !== this.layoutKey) {
+      this.root.dataset.shared = "true";
+      Object.assign(this.root.style, {
       left: `max(${String(layout.offset_px[0])}px, env(safe-area-inset-left))`,
       top: `max(${String(layout.offset_px[1])}px, env(safe-area-inset-top))`,
       width: `${String(layout.width_px)}px`, maxHeight: `${String(layout.maximum_height_px)}px`,
       padding: `${String(layout.padding_px[1])}px ${String(layout.padding_px[0])}px`,
       fontSize: `${String(layout.font_size_px)}px`, color: model.theme.text,
       background: `color-mix(in srgb, ${model.theme.panel_background} ${String(layout.opacity * 100)}%, transparent)`
-    });
+      });
+      this.layoutKey = layoutKey;
+    }
     this.tree = this.patch(this.tree, h("div.flight-hud-content", {
       attrs: { style: `gap: ${String(layout.gap_px[1])}px ${String(layout.gap_px[0])}px` }
     }, [
