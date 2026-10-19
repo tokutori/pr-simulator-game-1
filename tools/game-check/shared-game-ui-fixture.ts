@@ -64,8 +64,8 @@ export function sharedScreenRenderSnapshot(scale: "100" | "75" | "50" = "100", q
   } finally { bridge.free(); }
 }
 
-export function withSharedGameUiSession<Value>(phaseCode: number, options: SharedGameUiFixtureOptions,
-  observe: (session: TailAppSessionFacade, platform: GameUiPlatformInput) => Value): Value {
+export function createSharedGameUiSession(phaseCode: number, options: SharedGameUiFixtureOptions = {}):
+  Readonly<{ session: TailAppSessionFacade; platform: GameUiPlatformInput }> {
   const bridge = new HybridGameSessionBridge(0, 21, 22);
   let owner: TailAppSessionFacade | null = null;
   try {
@@ -116,11 +116,19 @@ export function withSharedGameUiSession<Value>(phaseCode: number, options: Share
         if (effect.kind === "record") owner.executeSharedRecordAction(effect.action);
       }
     }
-    return observe(owner, platform);
-  } finally {
+    return { session: owner, platform };
+  } catch (cause) {
     if (owner === null) bridge.free();
     else owner.dispose();
+    throw cause;
   }
+}
+
+export function withSharedGameUiSession<Value>(phaseCode: number, options: SharedGameUiFixtureOptions,
+  observe: (session: TailAppSessionFacade, platform: GameUiPlatformInput) => Value): Value {
+  const { session, platform } = createSharedGameUiSession(phaseCode, options);
+  try { return observe(session, platform); }
+  finally { session.dispose(); }
 }
 
 export function selectSharedReplayView(session: TailAppSessionFacade, platform: GameUiPlatformInput,
