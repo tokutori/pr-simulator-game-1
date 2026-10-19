@@ -10,7 +10,7 @@ runtime中のengine交換は初期要件に含めない。composition rootでada
 ## 二つの独立した選択
 
 - Presentation mode: Screen / WebXR / Phone VR
-- Rendering engine: Three.js、将来の別engine
+- Rendering engine: WebはThree.js、native ScreenはBevy
 
 Presentation modeは眼・tracking・表示先・入力方式を決定する。
 engine adapterはGPU resource、描画、engine固有のXR結合を担当する。
@@ -32,13 +32,20 @@ Three.js adapter + WebXR/Phone VR integration
 composition root（adapterの選択・注入）
 ```
 
-renderer契約は `web/src/render/contracts/`、初期adapterは `web/src/render/engines/three/` に置く。
-camera rigは `web/src/render/camera/` で数値poseを生成する。
+Webのrenderer契約は `web/src/render/contracts/`、Three.js adapterは `web/src/render/engines/three/` に置く。
+native ScreenのBevy adapterは `crates/birdman-game-bevy/` に置く。
+Replay/Attractのcamera poseとdirectorは共有Rustの`birdman-game-session`が導出し、
+`web/src/render/camera/`は共有queryの結果をWebの描画契約へ投影する。
+live FlightのPilot/Chaseとtrackingの結合は各描画adapterが担当し、物理状態を変更しない。
 web appと共通rendererからThree.jsのScene、Object3D、Vector3、Quaternion、Camera、Material、Texture、
 WebGLRendererをimport/re-exportしない。型だけのimport、動的import経由の漏出も検査する。
 検査はTypeScriptのASTとプロジェクトのmodule解決設定を使い、import元に対して解決したpathを判定する。
 import/re-export、型query、JSDoc型依存、require、import assignment、reference directiveを同じ境界へ通す。
 相対pathの正規化とWindows区切りを扱い、解決不能な動的specifierは拒否する。
+同じmodule解決結果からWeb内の依存循環を検査し、型だけの依存もDAGへ含める。
+cameraの基礎型は`camera.ts`、flight poseとの複合型は`runtime.ts`へ置く。
+Webの選択値型は`app/session-selection.ts`、session snapshotの複合型は`app/session-snapshot.ts`が所有し、
+facadeとAppModelはそれらを参照する。型の互換re-exportを追加して逆依存を維持しない。
 CLI/core/formatは描画engineに依存しない。
 composition rootだけが具体adapterのfactoryをimportし、返却値は共通interfaceとして扱う。
 

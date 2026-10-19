@@ -4,6 +4,27 @@ import { describe, expect, it } from "vitest";
 import { assertRenderImportBoundary } from "./render-boundary.js";
 
 describe("engine import boundary", () => {
+  it("accepts an acyclic graph with shared type dependencies", () => {
+    expect(() => { assertRenderImportBoundary([
+      { path: "web/src/app/consumer.ts", text: "import type { Selection } from './selection.js'; import type { Snapshot } from './snapshot.js';" },
+      { path: "web/src/app/selection.ts", text: "export interface Selection { readonly code: number; }" },
+      { path: "web/src/app/snapshot.ts", text: "import type { Selection } from './selection.js'; export interface Snapshot { readonly selection: Selection; }" }
+    ]); }).not.toThrow();
+  });
+
+  it.each([
+    "import type { Snapshot } from './snapshot.js';",
+    "export type { Snapshot } from './snapshot.js';",
+    "type Snapshot = import('./snapshot.js').Snapshot;",
+    "const snapshot = import('./snapshot.js');"
+  ])("rejects a cycle including %s", (text) => {
+    expect(() => { assertRenderImportBoundary([
+      { path: "web/src/app/selection.ts", text },
+      { path: "web/src/app/snapshot.ts", text: "import type { Consumer } from './consumer.js'; export interface Snapshot { readonly consumer: Consumer; }" },
+      { path: "web/src/app/consumer.ts", text: "import type { Selection } from './selection.js'; export interface Consumer { readonly selection: Selection; }" }
+    ]); }).toThrow(/dependency cycle: .*selection\.ts -> .*snapshot\.ts -> .*consumer\.ts -> .*selection\.ts/);
+  });
+
   it("allows Three.js imports inside its adapter and a factory import from the composition root", () => {
     expect(() => { assertRenderImportBoundary([
       { path: "web/src/render/engines/three/three-renderer.ts", text: "import * as THREE from 'three';" },

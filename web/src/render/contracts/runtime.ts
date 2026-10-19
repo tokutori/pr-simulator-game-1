@@ -68,6 +68,10 @@ export type FlightRenderPose = FlightRenderPoseBase & (
 
 export type FlightCameraMode = "pilot" | "chase" | "orbit" | "platform" | "shore" | "overhead" | "side" | "front" | "telephoto";
 
+export type RecordedFlightRenderPose = FlightRenderPose & {
+  readonly replayCamera: Readonly<{ mode: FlightCameraMode; cinematic: CinematicCameraView | null }>;
+};
+
 export interface PanelCursor {
   readonly point: Vec2;
   readonly progress: number;

@@ -1,4 +1,5 @@
-import type { AppMessage, FlightControllerIdentity, TailGameSessionProjection } from "./app-state.js";
+import type { AppMessage, FlightControllerIdentity } from "./app-state.js";
+import type { TailGameSessionProjection } from "./session-snapshot.js";
 import type { TailResultSnapshot } from "../game/tail-flight-controller.js";
 import type { TailFlightHudPort, TailSessionPort } from "../game/tail-flight-controller.js";
 import type { FlightDisplaySnapshot } from "../game/flight-display-snapshot.js";

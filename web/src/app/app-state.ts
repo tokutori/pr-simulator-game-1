@@ -1,11 +1,11 @@
-import type { FlightCameraMode, LakeWaterQualityCleanupResult, PresentationMode } from "../render/contracts/runtime.js";
-import type { RecordedFlightRenderPose } from "../render/contracts/camera.js";
+import type { FlightCameraMode, LakeWaterQualityCleanupResult, PresentationMode, RecordedFlightRenderPose } from "../render/contracts/runtime.js";
 import type { LakeWaterQuality } from "../render/contracts/lake-water.js";
 import type { UiAction } from "../render/contracts/ui.js";
 import type { MenuScrollContext, MenuScrollIntent, MenuScrollScope, MenuScrollState } from "../render/contracts/menu-layout.js";
-import type { DisplayAvailability, FlightDisplaySnapshot } from "../game/flight-display-snapshot.js";
+import type { FlightDisplaySnapshot } from "../game/flight-display-snapshot.js";
 import { attractSessionProjection, isPlaybackSessionSnapshot, isRetainedLiveSnapshot, liveSessionProjection, projectionSnapshot, terminalSessionProjection } from "./session-snapshot.js";
-import type { AttractSessionProjection, FlightSnapshotInput, LiveSessionProjection, LiveSessionSnapshot, PlaybackSessionSnapshot, RecordDisplay, SessionControlLayout, TerminalSessionProjection, TerminalSessionSnapshot } from "./session-snapshot.js";
+import type { AttractSessionProjection, FlightSnapshotInput, GameSessionProjection, LiveSessionProjection, LiveSessionSnapshot, PlaybackSessionSnapshot, RecordDisplay, ReplayReturnTarget, SessionControlLayout, TailGameSessionProjection, TerminalSessionProjection } from "./session-snapshot.js";
+import type { ConfigurationMetadataUiState, DifficultyUiState, HudProfileUiState } from "./session-selection.js";
 import type { FlightAnalysisInput, FlightAnalysisCursorInput } from "../game/flight-analysis-view.js";
 import { analysisCursorMatches, validateAnalysisInput } from "../game/flight-analysis-view.js";
 import type { GameUiView } from "../generated/game-ui-view.js";
@@ -70,8 +70,6 @@ export type ReplayClockRequestState = {
   | { readonly kind: "requesting"; readonly requestId: number }
   | { readonly kind: "failed"; readonly message: string }
 );
-
-export type ReplayReturnTarget = "title" | "result";
 
 export type ReplayClockCommand =
   | { readonly kind: "synchronize"; readonly seekTimeSeconds: number | null }
@@ -192,55 +190,6 @@ export type FlightExecutionUiState =
       readonly message: string;
       readonly snapshot: LiveSessionSnapshot;
     };
-
-export interface DifficultyUiState {
-  readonly presetCode: number;
-  readonly informationCode: number;
-  readonly hudProfile: HudProfileUiState;
-  readonly assistanceCode: number;
-  readonly weatherCode: number;
-}
-
-export interface HudProfileUiState {
-  readonly telemetry: boolean;
-  readonly attitude: boolean;
-  readonly wind: boolean;
-  readonly flightPath: boolean;
-  readonly angleOfAttack: boolean;
-  readonly warnings: boolean;
-}
-
-export interface ConfigurationMetadataUiState {
-  readonly presetCode: number;
-  readonly informationCode: number;
-  readonly hudProfile: HudProfileUiState;
-  readonly assistanceCode: number;
-  readonly weatherCode: number;
-  readonly catalogVersion: number;
-  readonly scenarioId: number;
-  readonly scenarioVersion: number;
-  readonly aircraftModelVersion: number;
-  readonly environmentVersion: number;
-  readonly controllerProfileVersion: number;
-  readonly seedLow: number;
-  readonly seedHigh: number;
-}
-
-interface SessionSelectionProjection {
-  readonly controlModeCode: number;
-  readonly difficulty: DifficultyUiState;
-  readonly configurationMetadata: ConfigurationMetadataUiState | null;
-  readonly countdownRemainingSeconds: number;
-}
-export type TailGameSessionProjection = SessionSelectionProjection & Readonly<{ controlLayout: "tail_incidence"; canResume: boolean }> & (
-  | Readonly<{ phaseCode: 0 | 1 | 2 | 3 | 4 | 8; display: DisplayAvailability<never, "menu_phase"> }>
-  | Readonly<{ phaseCode: 5; display: Readonly<{ kind: "available"; value: Extract<LiveSessionSnapshot<5>, { kind: "tail_flight" }> }> }>
-  | Readonly<{ phaseCode: 6; display: Readonly<{ kind: "available"; value: Extract<LiveSessionSnapshot<6>, { kind: "tail_flight" }> }> }>
-  | Readonly<{ phaseCode: 7; display: RecordDisplay<Extract<TerminalSessionSnapshot, { kind: "tail_result" | "tail_record" }>> }>
-  | Readonly<{ phaseCode: 9; returnTarget: ReplayReturnTarget; display: RecordDisplay<Extract<PlaybackSessionSnapshot, { kind: "tail_record" }>> }>
-  | Readonly<{ phaseCode: 10; display: RecordDisplay<Extract<PlaybackSessionSnapshot, { kind: "tail_record" }>> }>
-);
-export type GameSessionProjection = TailGameSessionProjection;
 
 export type AppMessage =
   | { readonly type: "screen-render-observed"; readonly snapshot: GameUiPlatformInput["screen_render_scale"] }
