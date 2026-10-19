@@ -43,11 +43,11 @@ pub(super) fn assistance(level: AssistanceLevel) -> (&'static str, u32, &'static
 
 pub(super) fn weather(weather: WeatherClass) -> (&'static str, u32, &'static str) {
     match weather {
-        WeatherClass::Calm => ("無風（Calm）", 0, "無風の合成シナリオ"),
-        WeatherClass::Mild => ("穏やか（Mild）", 1, "軽い風の合成シナリオ"),
-        WeatherClass::Typical => ("標準（Typical）", 2, "彦根の平年値を基にしたゲーム用気象"),
-        WeatherClass::Challenging => ("難しい（Challenging）", 3, "難しい合成シナリオ"),
-        WeatherClass::NearLimit => ("強風（Near Limit）", 4, "強い風の合成シナリオ"),
+        WeatherClass::Calm => ("無風（Calm）", 0, "風のない穏やかな条件"),
+        WeatherClass::Mild => ("穏やか（Mild）", 1, "弱い風の条件"),
+        WeatherClass::Typical => ("標準（Typical）", 2, "彦根の平年値を参考にした条件"),
+        WeatherClass::Challenging => ("難しい（Challenging）", 3, "操縦が難しくなる風の条件"),
+        WeatherClass::NearLimit => ("強風（Near Limit）", 4, "強い風に注意が必要な条件"),
     }
 }
 
