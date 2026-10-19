@@ -1,8 +1,16 @@
 import { projectTailFlightSnapshot } from "../game/flight-display-snapshot.js";
 import type { DisplayAvailability, FlightDisplaySnapshot } from "../game/flight-display-snapshot.js";
 import type { TailSessionSnapshot } from "../game/tail-session-codec.js";
-import type { ConfigurationMetadataUiState, DifficultyUiState, GameSessionProjection, TailGameSessionProjection } from "./app-state.js";
-import type { SessionLifecycleProjection } from "./session-facade.js";
+import type { ConfigurationMetadataUiState, DifficultyUiState } from "./session-selection.js";
+
+export interface SessionLifecycleProjection {
+  readonly phaseCode: number;
+  readonly controlModeCode: 0 | 1 | 2;
+  readonly countdownRemainingSeconds: number;
+  readonly canResume: boolean;
+}
+
+export type ReplayReturnTarget = "title" | "result";
 
 export type SessionControlLayout = "tail_incidence";
 export type FlightSnapshotInput = FlightDisplaySnapshot;
@@ -21,6 +29,22 @@ export type TerminalSessionProjection =
   Readonly<{ controlLayout: "tail_incidence"; display: RecordDisplay<TerminalSessionSnapshot> }>;
 export type AttractSessionProjection =
   Readonly<{ controlLayout: "tail_incidence"; display: RecordDisplay<PlaybackSessionSnapshot> }>;
+
+interface SessionSelectionProjection {
+  readonly controlModeCode: number;
+  readonly difficulty: DifficultyUiState;
+  readonly configurationMetadata: ConfigurationMetadataUiState | null;
+  readonly countdownRemainingSeconds: number;
+}
+export type TailGameSessionProjection = SessionSelectionProjection & Readonly<{ controlLayout: "tail_incidence"; canResume: boolean }> & (
+  | Readonly<{ phaseCode: 0 | 1 | 2 | 3 | 4 | 8; display: DisplayAvailability<never, "menu_phase"> }>
+  | Readonly<{ phaseCode: 5; display: Readonly<{ kind: "available"; value: Extract<LiveSessionSnapshot<5>, { kind: "tail_flight" }> }> }>
+  | Readonly<{ phaseCode: 6; display: Readonly<{ kind: "available"; value: Extract<LiveSessionSnapshot<6>, { kind: "tail_flight" }> }> }>
+  | Readonly<{ phaseCode: 7; display: RecordDisplay<Extract<TerminalSessionSnapshot, { kind: "tail_result" | "tail_record" }>> }>
+  | Readonly<{ phaseCode: 9; returnTarget: ReplayReturnTarget; display: RecordDisplay<Extract<PlaybackSessionSnapshot, { kind: "tail_record" }>> }>
+  | Readonly<{ phaseCode: 10; display: RecordDisplay<Extract<PlaybackSessionSnapshot, { kind: "tail_record" }>> }>
+);
+export type GameSessionProjection = TailGameSessionProjection;
 
 export function isLiveSessionSnapshot<Phase extends 5 | 6>(snapshot: FlightDisplaySnapshot, phaseCode: Phase): snapshot is LiveSessionSnapshot<Phase> {
   return snapshot.kind === "tail_flight" && snapshot.phaseCode === phaseCode;

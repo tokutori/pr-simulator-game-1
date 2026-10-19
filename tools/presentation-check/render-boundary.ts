@@ -11,6 +11,7 @@ export function assertRenderImportBoundary(
   compilerOptions: ts.CompilerOptions = projectCompilerOptions()
 ): void {
   const files = new Map(sources.map((source) => [normalizedPath(source.path), source.text]));
+  const dependencies = new Map([...files.keys()].map((path) => [path, new Set<string>()]));
   const host: ts.ModuleResolutionHost = {
     fileExists: (path) => files.has(normalizedPath(path)) || ts.sys.fileExists(path),
     readFile: (path) => files.get(normalizedPath(path)) ?? ts.sys.readFile(path),
@@ -33,6 +34,9 @@ export function assertRenderImportBoundary(
       const targets = [module?.resolvedFileName, requestedPath]
         .filter((target): target is string => target !== undefined)
         .map(normalizedPath);
+      for (const target of targets) {
+        if (files.has(target)) dependencies.get(path)?.add(target);
+      }
       const importsThree = specifier === "three" || specifier.startsWith("three/") ||
         module?.packageId?.name === "three" || module?.packageId?.name === "@types/three" ||
         targets.some((target) => /\/node_modules\/(?:@types\/)?three\//.test(target));
@@ -73,6 +77,22 @@ export function assertRenderImportBoundary(
     for (const reference of syntax.referencedFiles) assertSpecifier(resolve(dirname(path), reference.fileName));
     visit(syntax);
   }
+  const completed = new Set<string>();
+  const active = new Set<string>();
+  const stack: string[] = [];
+  function visitDependencies(path: string): void {
+    if (active.has(path)) {
+      throw new Error(`Web module dependency cycle: ${[...stack.slice(stack.indexOf(path)), path].join(" -> ")}`);
+    }
+    if (completed.has(path)) return;
+    active.add(path);
+    stack.push(path);
+    for (const target of dependencies.get(path) ?? []) visitDependencies(target);
+    stack.pop();
+    active.delete(path);
+    completed.add(path);
+  }
+  for (const path of files.keys()) visitDependencies(path);
 }
 
 function normalizedPath(path: string): string {

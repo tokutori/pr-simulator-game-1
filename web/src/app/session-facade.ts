@@ -1,7 +1,7 @@
-import type { DifficultyUiState, ReplayReturnTarget, TailGameSessionProjection } from "./app-state.js";
 import { decodePreparedUiConfiguration, decodeSessionDifficulty } from "./session-selection.js";
-import type { PreparedUiConfiguration, SessionSelectionPort } from "./session-selection.js";
+import type { DifficultyUiState, PreparedUiConfiguration, SessionSelectionPort } from "./session-selection.js";
 import { projectTailGameSession } from "./session-snapshot.js";
+import type { ReplayReturnTarget, SessionLifecycleProjection, TailGameSessionProjection } from "./session-snapshot.js";
 import { readFlightLog } from "../game/flight-log-export.js";
 import type { FlightLogExportPort, FlightLogFormat } from "../game/flight-log-export.js";
 import { projectFlightRenderPose, projectPreparedLaunchRenderPose, projectRecordedFlightSnapshot } from "../game/flight-display-snapshot.js";
@@ -17,8 +17,7 @@ import type { TailSessionPort } from "../game/tail-flight-controller.js";
 import { boundaryInteger } from "../game/tail-boundary-values.js";
 import { parseTailPreparedLaunchSnapshot, parseTailSessionSnapshot } from "../game/tail-session-codec.js";
 import type { TailSessionSnapshot } from "../game/tail-session-codec.js";
-import type { FlightRenderPose } from "../render/contracts/runtime.js";
-import type { RecordedFlightRenderPose } from "../render/contracts/camera.js";
+import type { FlightRenderPose, RecordedFlightRenderPose } from "../render/contracts/runtime.js";
 import { projectReplayCamera } from "../render/camera/replay-camera.js";
 import { encodeGameUiAction, encodeGameUiPlatformInput, parseGameUiFrame, parseGameUiUpdate, parseGameUiView, parseReplayCameraView } from "./game-ui-codec.js";
 import type { GameUiPlatformObservation } from "./game-ui-codec.js";
@@ -93,12 +92,6 @@ export type TailAppSessionPort = SessionResourcePort & TailSessionPort & {
 type CompletedOperation = Readonly<{ kind: "completed" }> | Readonly<{ kind: "countdown-started" }>;
 export type TailAppOperationResult = CompletedOperation
   | Readonly<{ kind: "aborted"; terminalSnapshot: Extract<TailSessionSnapshot, { phaseCode: 7 }> }>;
-export interface SessionLifecycleProjection {
-  readonly phaseCode: number;
-  readonly controlModeCode: 0 | 1 | 2;
-  readonly countdownRemainingSeconds: number;
-  readonly canResume: boolean;
-}
 export type TailTitleProjection = Readonly<{ kind: "idle"; phaseCode: 0 }>
   | Readonly<{ kind: "attract"; phaseCode: 10; context: NamedAttractContext; clock: NamedPlaybackClock }>;
 

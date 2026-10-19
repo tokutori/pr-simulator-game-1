@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, expectTypeOf, it, vi } from "vitest";
 import { initSync } from "../../web/pkg/birdman_game_wasm.js";
 import { createInitialAppModel, gameSessionSnapshot, gameSessionState, updateApp } from "../../web/src/app/app-state.js";
-import type { AppMessage, AppModel, GameSessionUiState, TailGameSessionProjection } from "../../web/src/app/app-state.js";
+import type { AppMessage, AppModel, GameSessionUiState } from "../../web/src/app/app-state.js";
 import { sharedGameUiPlatform, sharedHudNode } from "./shared-game-ui-fixture.js";
 import { FlightControllerUiBindings } from "../../web/src/app/flight-controller-port.js";
 import { createFlightUiHudModel } from "../../web/src/app/flight-frame-view.js";
@@ -10,7 +10,7 @@ import { createGameViewModel } from "../../web/src/app/game-view.js";
 import { createAppSession } from "../../web/src/app/session-factory.js";
 import type { TailAppSessionFacade } from "../../web/src/app/session-facade.js";
 import { isTerminalSessionSnapshot, projectTailGameSession } from "../../web/src/app/session-snapshot.js";
-import type { TerminalSessionSnapshot } from "../../web/src/app/session-snapshot.js";
+import type { TailGameSessionProjection, TerminalSessionSnapshot } from "../../web/src/app/session-snapshot.js";
 import type { FlightDisplaySnapshot } from "../../web/src/game/flight-display-snapshot.js";
 import { encodeTailLogicalInput } from "../../web/src/game/tail-session-codec.js";
 

@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { HybridGameSessionBridge, initSync, physics_hz, ScreenRenderAutoBridge } from "../../web/pkg/birdman_game_wasm.js";
 import { parseScreenRenderAutoSnapshot } from "../../web/src/render/contracts/screen-render-auto.js";
 import { TailAppSessionFacade } from "../../web/src/app/session-facade.js";
-import type { HudProfileUiState } from "../../web/src/app/app-state.js";
+import type { HudProfileUiState } from "../../web/src/app/session-selection.js";
 import type { GameUiAction } from "../../web/src/generated/game-ui-action.js";
 import type { GameUiPlatformInput } from "../../web/src/generated/game-ui-input.js";
 import type { GameUiView } from "../../web/src/generated/game-ui-view.js";

@@ -1,4 +1,5 @@
-import type { ReplayClockState, TailGameSessionProjection } from "./app-state.js";
+import type { ReplayClockState } from "./app-state.js";
+import type { TailGameSessionProjection } from "./session-snapshot.js";
 import type { TailAppSessionFacade } from "./session-facade.js";
 import { analysisInitialPilotPositionMeters } from "../game/flight-analysis-view.js";
 import type { NamedAnalysisDataset } from "../game/flight-analysis-view.js";

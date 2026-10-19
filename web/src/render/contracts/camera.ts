@@ -1,3 +1,5 @@
+import type { Pose } from "./math.js";
+
 export type FixedCameraPointId = "platform" | "shore" | "telephoto";
 
 export interface FixedCameraPoint {
@@ -11,9 +13,3 @@ export interface CinematicCameraView {
   readonly pose: Pose;
   readonly verticalFieldOfViewDegrees: number;
 }
-import type { Pose } from "./math.js";
-import type { FlightCameraMode, FlightRenderPose } from "./runtime.js";
-
-export type RecordedFlightRenderPose = FlightRenderPose & {
-  readonly replayCamera: Readonly<{ mode: FlightCameraMode; cinematic: CinematicCameraView | null }>;
-};

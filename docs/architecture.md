@@ -16,6 +16,7 @@ RP2040、virtual I/O、sensor fault、HIL、firmware timingは対象外である
 CLI  ──→ format ──→ core
 WASM ──→ format ──→ core
 CLI/WASM ─────────→ core
+CLI/WASM/Bevy ────→ session ──→ format / core
 Web ──→ WASM adapter
 Web app / camera / UI ──→ engine-neutral render contracts
 Three.js adapter ──→ engine-neutral render contracts / Three.js
@@ -45,7 +46,7 @@ CLIはコマンド固有の診断JSONを投影し、FlightRecordの保存codec�
 | `crates/birdman-game-session` | application session所有権・command実行、設定と準備・archive metadata、共有UI・描画用モデル |
 | `crates/birdman-game-wasm` | WASM ABI、applicationへの変換、RenderSnapshot・分析query |
 | `crates/birdman-game-cli` | native/WASI実行、CSV出力、profiling入口 |
-| `web/src` | device入力、browser/presentation状態、共通UI、camera pose、画質、WASM呼出し |
+| `web/src` | device入力、browser/presentation状態、共有UI・camera queryの表示投影、画質、WASM呼出し |
 | `web/src/render/contracts` | engine非依存の描画・UI・view・resource識別子の契約 |
 | `web/src/render/engines/three` | Three.js固有のscene graph、camera、shader、GPU/XR結合 |
 | `tools/world-build` | offline地理・気象処理とasset生成 |
@@ -55,6 +56,7 @@ CLIはコマンド固有の診断JSONを投影し、FlightRecordの保存codec�
 moduleは実装時に追加する。空の細分化crateを増設しない。
 Webはstrict TypeScriptとし、外部APIのnull/undefinedを最小境界で検査する。
 Web実行コードとNode.js用build/toolコードは別tsconfigで型検査し、WebからNode.js moduleへのimportをlintで拒否する。
+Web内部の型依存もDAGとし、選択値・snapshotの型を利用側のAppModelやfacadeへ逆依存させない。
 配布assetの入口とVite build graphの検査は `data-sources.md` に従う。
 失敗は判別可能な型で保持し、状態遷移はdiscriminated unionと網羅的分岐で表現する。
 

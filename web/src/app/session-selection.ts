@@ -1,6 +1,38 @@
-import type { ConfigurationMetadataUiState, DifficultyUiState, HudProfileUiState } from "./app-state.js";
 import type { DisplayAvailability } from "../game/flight-display-snapshot.js";
 import { boundaryInteger } from "../game/tail-boundary-values.js";
+
+export interface DifficultyUiState {
+  readonly presetCode: number;
+  readonly informationCode: number;
+  readonly hudProfile: HudProfileUiState;
+  readonly assistanceCode: number;
+  readonly weatherCode: number;
+}
+
+export interface HudProfileUiState {
+  readonly telemetry: boolean;
+  readonly attitude: boolean;
+  readonly wind: boolean;
+  readonly flightPath: boolean;
+  readonly angleOfAttack: boolean;
+  readonly warnings: boolean;
+}
+
+export interface ConfigurationMetadataUiState {
+  readonly presetCode: number;
+  readonly informationCode: number;
+  readonly hudProfile: HudProfileUiState;
+  readonly assistanceCode: number;
+  readonly weatherCode: number;
+  readonly catalogVersion: number;
+  readonly scenarioId: number;
+  readonly scenarioVersion: number;
+  readonly aircraftModelVersion: number;
+  readonly environmentVersion: number;
+  readonly controllerProfileVersion: number;
+  readonly seedLow: number;
+  readonly seedHigh: number;
+}
 
 export interface SessionSelectionPort {
   difficulty_preset_code(): number;

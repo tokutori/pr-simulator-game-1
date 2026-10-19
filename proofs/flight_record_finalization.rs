@@ -21,6 +21,65 @@ verus! {
         assert(session.snapshot() == birdman_game_core::SessionSnapshot::Title);
     }
 
+    fn verify_domain_archived_record_playback(record: FlightRecord) {
+        let mut session = birdman_game_core::GameSession::new();
+        let ghost before = session;
+        let ghost provided = record;
+        let outcome = session.open_archived_replay(record);
+        if outcome.is_ok() {
+            assert(provided.finalization().is_some());
+            assert(session.flight_record() == Some(&provided));
+            assert(session.playback_record() == session.flight_record());
+            assert(session.snapshot() == birdman_game_core::SessionSnapshot::Replay {
+                scenario: provided.header().scenario,
+                source: birdman_game_core::SessionReplaySource::ArchivedRecord,
+            });
+            let returned = session.leave_replay();
+            assert(returned == Ok(()));
+            assert(session.snapshot() == birdman_game_core::SessionSnapshot::Title);
+            assert(session.playback_record().is_none());
+        } else {
+            assert(provided.finalization().is_none());
+            assert(session == before);
+        }
+    }
+
+    fn verify_domain_result_record_transfer<'a>(session: &mut birdman_game_core::GameSession<'a>)
+        requires old(session).projection_valid(),
+    {
+        let ghost before = *session;
+        let outcome = session.take_finalized_result_record();
+        match outcome {
+            Ok(record) => {
+                assert(record.finalization().is_some());
+                assert(before.flight_record() == Some(&record));
+                assert(session.snapshot() == birdman_game_core::SessionSnapshot::Title);
+                assert(session.flight_record().is_none());
+                assert(session.playback_record().is_none());
+            },
+            Err(_) => { assert(*session == before); },
+        }
+    }
+
+    fn verify_domain_demo_record_installation(record: FlightRecord)
+        requires record.finalization().is_none(),
+    {
+        let mut session = birdman_game_core::GameSession::new();
+        let ghost before = session;
+        let ghost provided = record;
+        let outcome = session.install_attract_record(record);
+        assert(session.snapshot() == birdman_game_core::SessionSnapshot::Title);
+        assert(session.flight_record().is_none());
+        assert(session.playback_record().is_none());
+        assert(provided.finalization().is_none());
+        assert(outcome.is_err());
+        assert(session == before);
+        let ghost before_return = session;
+        let returned = session.leave_attract();
+        assert(returned == Err(birdman_game_core::GameSessionError::InvalidTransition));
+        assert(session == before_return);
+    }
+
     fn verify_domain_finalization_commit(
         record: &mut FlightRecord,
         reason: SessionEndReason,
