@@ -201,8 +201,8 @@ describe("Pure measured Menu document and shared viewport", () => {
   });
 
   it("measures every chart label, axis, tick, legend and annotation and keeps Rust query arrays and square scaling", () => {
-    const original = chart();
-    const request = requestMenuLayout({ ...panel, controls: [{ ...original, section: "details" }] }, panel.size, style);
+    const original = { ...chart(), section: "details" };
+    const request = requestMenuLayout({ ...panel, controls: [original] }, panel.size, style);
     const texts = request.texts.filter((text) => text.slot.kind === "control" && text.slot.controlId === original.id);
     expect(texts.filter((text) => text.slot.role === "x-tick")).toHaveLength(original.presentation.x_ticks.length);
     expect(texts.filter((text) => text.slot.role === "y-tick")).toHaveLength(original.presentation.y_ticks.length);

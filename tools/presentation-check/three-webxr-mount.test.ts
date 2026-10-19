@@ -325,7 +325,8 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
       if (evidence.viewer === null || evidence.viewer.source !== "runtime-derived" || evidence.view === null || evidence.view.headHud.kind !== "visible" || draw.headHud === null) throw new Error("Missing same-frame Head evidence");
       const hud = evidence.view.headHud;
       if (information === "flight-path-only") {
-        expect(hud.elements.map((element) => element.id)).toEqual(["head-flight-path"]);
+        expect(hud.elements).toHaveLength(1);
+        expect(hud.elements[0]?.content).toMatchObject({ kind: "attitude", geometry: { kind: "flight_path_only" } });
       }
       const layerProjections: Vector3[] = [];
       for (const [eyeIndex, eye] of evidence.viewer.eyes.entries()) {
@@ -554,6 +555,7 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
   it("clears failed Menu pick and Head before guarded after-frame Screen recovery", async () => {
     view = centeredPanel("menu", composePose(eyePose(flight), head));
     session.run(100, head);
+    bundle.renderer.stopLoop();
     let model = { ...createInitialAppModel(), presentation: { type: "ready", mode: "webxr" } as const } as ReturnType<typeof createInitialAppModel>;
     onUiAction = (action) => { model = updateApp(model, { type: "ui-action", action }).model; };
     actions.length = 0;

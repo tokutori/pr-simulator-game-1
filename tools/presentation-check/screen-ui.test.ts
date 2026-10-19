@@ -771,7 +771,8 @@ describe("screen UI DOM patching", () => {
     expect(svg.querySelector('path[stroke-dasharray="7 6"]')?.getAttribute("d")).toBe("M 171 26 V 112");
     expect(svg.querySelector(".screen-ui-chart-axis")?.textContent).toBe("Time (s)");
     const notice = required(root, "#long-notice");
-    expect(notice.tabIndex).toBe(0);
+    expect(notice.style.position).toBe("");
+    expect(notice.style.maxHeight).toBe("");
     expect(notice.textContent).toBe("通知: 元のfailure原因\n2行目\n3行目\n4行目");
     expect(root.querySelector("svg")).toBe(svg);
     expect(required(root, ".screen-ui-chart").style.overflow).toBe("auto");
