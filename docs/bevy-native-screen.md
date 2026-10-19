@@ -329,6 +329,14 @@ WindowのPresentModeはこのmodeの論理metadataである。画像targetには
 
 ## 検証状態
 
+### #543のdesktop接続と組込font
+
+2026-10-20、Windowsの固定toolchainでNativeの関連CPU 2試験、`cargo check --locked`と全targetのClippy `-D warnings`が成功した。
+組込M PLUS 1pを実Parleyへ登録してCJKの単語境界・混在scriptのlayoutを確認し、既存3 shaderをfilesystem asset rootのない本番readerで読み込んだ。
+依存境界・assetの217試験、局所ESLint、repositoryの16 assetと依存境界、formatも成功した。
+Linux/macOSとarm64の実compiler・配布binaryのCPU smokeは専用workflowで確認する。今回の変更に対する実GPU・window・入力・80 FPSと署名の受入は未実施である。
+以下の過去のGPU結果は、それぞれに記載したsourceとWindows環境の検証として保持する。
+
 Windows 11 / AMD Radeon 860MのVulkanでnativeウィンドウの起動を確認した。
 ユーザーの実機試験でも描画を確認したが、日本語分割モデル欠損のログと表示の問題が報告されている。
 辞書constructorへの修正と、LUTを要求しない`Tonemapping::Reinhard`の明示を適用した。
