@@ -22,6 +22,18 @@ TARGETS = {
     "aarch64-apple-darwin": ("macos-15", "macos", "aarch64", "macho", 0x0100000C),
 }
 
+DOCUMENTATION_FILES = (
+    "docs/architecture.md",
+    "docs/data-and-formats.md",
+    "docs/flight-dynamics.md",
+    "docs/flight-control.md",
+    "docs/gameplay-and-ui.md",
+    "docs/rendering-and-platforms.md",
+    "docs/native-guide.md",
+    "docs/verification.md",
+    "docs/formal-verification.md",
+)
+
 
 def digest(path: Path) -> str:
     with path.open("rb") as stream:
@@ -124,13 +136,21 @@ def generate_licenses(root: Path, cargo_about: Path, source_sha: str, output: Pa
 
 
 def copy_notices(root: Path, licenses: Path, staging: Path) -> None:
-    for relative in ("LICENSE", "docs/bevy-native-screen.md", "docs/data-sources.md",
-                     "docs/native-release.md"):
+    for relative in ("LICENSE", "THIRD_PARTY_DATA.md", *DOCUMENTATION_FILES):
         source = root / relative
         destination = staging / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, destination)
-    shutil.copy2(root / "docs/native-release.md", staging / "README.md")
+    (staging / "README.md").write_text(
+        "# Native Screen 試用版\n\n"
+        "起動方法・動作環境・操作キー・保存先は "
+        "[Nativeガイド](docs/native-guide.md) を参照する。\n\n"
+        "- [ソースコードのライセンス](LICENSE)\n"
+        "- [データ・フォントの利用条件](THIRD_PARTY_DATA.md)\n"
+        "- [同梱ライブラリの利用条件](THIRD-PARTY-LICENSES.html)\n\n"
+        "ビルド来歴は `BUILD-INFO.json` に記録している。"
+        "配布ファイルの照合には、配布ページの `SHA256SUMS` を使用する。\n",
+        encoding="utf-8", newline="\n")
     shutil.copy2(licenses / "THIRD-PARTY-LICENSES.html", staging / "THIRD-PARTY-LICENSES.html")
     registered = {asset["path"]: asset["sha256"] for asset in
                   tomllib.loads((root / "assets/manifest.toml").read_text(encoding="utf-8"))["assets"]}

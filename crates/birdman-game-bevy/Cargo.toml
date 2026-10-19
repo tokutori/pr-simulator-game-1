@@ -7,6 +7,10 @@ license.workspace = true
 repository.workspace = true
 description = "Native Screen adapter for the existing Birdman hybrid game session"
 
+[features]
+default = []
+verify-harness = []
+
 [dependencies]
 birdman-game-core.workspace = true
 birdman-game-session = { path = "../birdman-game-session" }

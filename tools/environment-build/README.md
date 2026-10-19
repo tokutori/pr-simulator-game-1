@@ -43,7 +43,7 @@ recipeの各環境成分はassumedまたはgame_tunedへ限定する。
 Typical recipeはenvironment version 6を生成する。既存catalogの1～5を再利用しない。
 格子のdown上端には水面下10 mの評価余裕を設ける。±2 kmの水平coverageは明示した生成範囲であり、
 現行Typicalの共有Rust統合検査では、明示した39入力列が全てWaterContact・failureなしで終了した。
-任意入力や全Weatherのcoverage保証とは区別する。条件と結果は[Playableモデル契約](../../docs/playable-hybrid-model.md)を参照する。
+任意入力や全Weatherのcoverage保証とは区別する。条件と結果は[Playableモデル契約](../../docs/flight-dynamics.md)を参照する。
 recipe・生成assetに残るruntime接続前のcoverage記述は生成時点の検査境界であり、
 現行検査の結果は上記契約文書に記録する。
 fetch 600 mとsky設定は観測された琵琶湖条件を主張しない。

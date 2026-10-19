@@ -1,3 +1,7 @@
+#[path = "verification/options.rs"]
+mod options;
+pub(crate) use options::Options;
+
 use super::{
     CameraMode, MAX_FRAME_DELTA,
     environment::{EnvironmentSurface, EnvironmentTarget, NativeEnvironment},

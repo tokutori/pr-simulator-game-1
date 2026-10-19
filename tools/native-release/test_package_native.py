@@ -195,7 +195,7 @@ class NativePackagingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root, _, licenses, output = self.fixture(directory)
             output.mkdir()
-            for entry in ("LICENSE", "docs/bevy-native-screen.md", "docs/data-sources.md", "docs/native-release.md",
+            for entry in ("LICENSE", "THIRD_PARTY_DATA.md", *packaging.DOCUMENTATION_FILES,
                           "assets/fonts/MPLUS1p-Regular.ttf", "assets/fonts/MPLUS1p-OFL.txt"):
                 path = root / entry
                 path.parent.mkdir(parents=True, exist_ok=True)
@@ -206,8 +206,14 @@ class NativePackagingTests(unittest.TestCase):
             tracked = ("\0".join(assets + ["assets/manifest.toml", "assets/test-fonts/not-for-distribution.ttf"]) + "\0").encode()
             with patch("package_native.subprocess.check_output", return_value=tracked):
                 packaging.copy_notices(root, licenses, output)
-                for entry in assets + ["LICENSE", "docs/data-sources.md", "THIRD-PARTY-LICENSES.html"]:
-                    self.assertTrue((output / entry).is_file())
+                for entry in assets + ["LICENSE", "THIRD_PARTY_DATA.md", *packaging.DOCUMENTATION_FILES]:
+                    self.assertEqual((output / entry).read_bytes(), (root / entry).read_bytes())
+                self.assertEqual((output / "THIRD-PARTY-LICENSES.html").read_bytes(),
+                                 (licenses / "THIRD-PARTY-LICENSES.html").read_bytes())
+                guide = output / "docs/native-guide.md"
+                self.assertTrue(guide.is_file())
+                self.assertIn("(docs/native-guide.md)", (output / "README.md").read_text(encoding="utf-8"))
+                self.assertNotEqual((output / "README.md").read_bytes(), guide.read_bytes())
                 self.assertFalse((output / "assets/test-fonts").exists())
                 (root / assets[0]).write_text("modified font", encoding="utf-8")
                 with self.assertRaises(ValueError):

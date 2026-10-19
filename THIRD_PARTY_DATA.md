@@ -4,7 +4,7 @@
 第三者のデータ・ソフトウェア・フォントには、それぞれの利用条件を適用する。
 
 配布ファイルと出典・加工方法・ハッシュの正本は[`assets/manifest.toml`](assets/manifest.toml)である。
-データの用途と仕様は[データ出典](docs/data-sources.md)を参照する。
+データの用途と仕様は[データ形式・出典](docs/data-and-formats.md)を参照する。
 
 ## ゲーム内と配布物の表示
 

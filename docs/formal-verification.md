@@ -1,368 +1,200 @@
-# 形式検証契約
+# 形式検証
 
-## 現在の実行構成
+## 目的と適用範囲
 
-本番coreを直接一回検証し、同じ成果物に対する統合negativeを一回実行する。
-単一関数のensuresを再提示するwrapperは除去し、集合の複数操作、拒否Resume再要求、
-Countdown再観測、Result↔Replay往復、Runningのclear/resume拒否を本番crate内へ移した。
-既存のlifecycle/running/contact clientと、通常Rustの実scenario接続試験は保持する。
-数値callback、Duration、allocator等の未証明境界は変更しない。
-## 導入範囲と検証時点
+- Verusで、本番Rustが実行する離散的な認可・状態遷移・所有権・記録保持を検証する。
+- 証明用の別シミュレーターや別の状態機械を正本にしない。
+- 数値関数、実機適合性、allocator、GPU、外部APIを含むシステム全体の証明は完了していない。
 
-[#268](https://github.com/tokutori/pr-simulator-game-1/issues/268)の第一単位として、PauseReasonsの4原因集合とManual除去後のResume判定を検証する。
-対象は実際のcoreが使用する整数・集合操作であり、全GameSessionや飛行modelの正しさへ一般化しない。
-Bevy統合後に独立PRとして導入し、製品toolchain、公開API、物理係数、保存schemaを変更しない。
+- 本書は証明対象・契約・信頼境界を定める。
+- 各revisionの実行結果はCI/PRに記録し、本書へ検証件数や実行日記を蓄積しない。
+- 通常の数値・I/O・描画試験は[検証](verification.md)を参照する。
 
-#268導入時にWindows 11でtracked checkerを実行し、module-level constructorを含む正driverは`37 verified, 0 errors`、
-負driverは指定した`assert(still_present)`で`14 verified, 1 errors`となった。整形後にも同じcheckerを再実行して成功した。
-core 301、format 78、session 14、WASM 65 unit testsと関連integration/doctest、Clippy、
-no_std/WASM build、rustdocが成功した。CIとWeb全検査の結果はPRで別途記録する。
+## 本番コードとの接続
 
-#382の初回cutではWindowsの同checkerで全体`41 verified, 0 errors`、必須4群をそれぞれ`12 / 8 / 3 / 3 verified, 0 errors`で確認した。
-renameと旧宣言コメントを含むfixtureのexact inventory拒否、必須名欠落の診断、指定assert負例2件の各`15 verified, 1 error`も確認した。
-通常RustのPauseReasons 2件、GameSession 30件、共有application 6件の選択回帰、core all-targets Clippy、
-`wasm32v1-none`のno_std build、formatとdiff検査が成功した。GPUやGameSession全体の証明へ一般化しない。
+- `cargo-verus`で実core crate全体を直接検証する。単体契約を同じ事後条件のラッパーから呼び直す方式は用いない。
+- private fieldの仕様はghost-onlyのclosed predicate/viewから実ownerを参照する。ghost sequenceは実Vecのviewであり、別の記録storageを持たない。
+- getterと純粋な分類関数には`dual_spec`を用い、実bodyからspecを生成する。手書きの模倣modelへ置き換えない。
+- 複数操作を跨ぐ保持条件は、同じcrate内の証明専用clientで実際の操作列へ接続する。
 
-## 製品と証明が共有するsource
+- 検証注釈とghost-onlyの参照は`cfg(verus_only)`へ限定する。
+- 通常Cargoで注釈・vstd importを除去し、coreの`no_std`、I/O分離、製品toolchainと依存DAGを維持する。
+- `verus-proof`は固定vstdのallocを有効にする明示的optional featureである。
+- closure仕様に必要な`proc_macro_hygiene`も証明時だけ有効にする。
 
-- `crates/birdman-game-core/src/pause_reasons.rs`がPauseReason、PauseReasonsと実行bodyを所有する。
-- `game_session.rs`は同moduleの公開型を再exportし、pause、can_resume、resumeから実関数を呼ぶ。
-- 本番core全体を直接検証し、複数操作clientは同crateのcfg-only関数として保持する。
-- `tools/verus/check-verus.ps1`は同じverified coreへ統合negativeを接続し、検査前後のsource/toolchain hashを照合する。
+本番bodyへ`assume`・`admit`・`external_body`・`assume_specification`による免除を追加しない。証明対象の追加時は実body、事前条件、公開事後条件、未証明の境界を明示する。
 
-公開の4原因、privateなu8表現、contains/is_emptyを維持する。空集合はprivateなmodule-level
-`empty_pause_reasons`の同じbodyから生成する。Resumeの許可は元bitsから導き、独立したboolを保持しない。
-失敗したResumeではManualだけを除去して外部原因を保存し、clearだけでは飛行を再開しない既存契約を維持する。
+## 対象別の契約
 
-[#382](https://github.com/tokutori/pr-simulator-game-1/issues/382)の初回cutでは、実行関数`PauseReasons::request_resume`が
-`Result<(), PauseReasons>`で認可結果を返す。`GameSession::resume`はOkをRunning、Errの残存理由をPausedへ投影し、
-`can_resume_after_manual`も同じ認可結果から導出する。OkはManual以外の理由が空であることと同値であり、
-ErrはManualだけを除去した非空の理由を保持する。拒否後の再要求でも残存理由と拒否を維持する。
-この認可結果の証明をGameSession全体の証明へ一般化しない。以降のcutでCountdownと実行状態の本番遷移へ接続する。
+### 停止理由と実行状態
 
-### Countdownの本番遷移
+`PauseReasons`はManual、DocumentHidden、TrackingSuspended、ProcessingDelayの4bit集合を所有する。空集合、所属、挿入・削除の冪等性、他原因の保持、4bit閉包を同じ実bodyで検証する。
 
-Countdownのcutは`crates/birdman-game-core/src/countdown.rs`の本番`CountdownState`を直接includeする。
-正の秒数と非wrap token、obsolete tokenの無視、時刻検査と可用性の優先順、取消、待機、時間到達による発進認可を対象とする。
-待機中の公開残秒は正であり、観測後の経過時間が所定時間へ到達した場合に発進を認可する。
-公開Countdownが残秒0で存在することを前提としない。
+- `request_resume`のOkはManual除去後の外的理由が空であることと同値である。
+- ErrはManualだけを除去した非空集合を返す。
+- 拒否後の再要求も残存理由を保持する。
+- clear操作は自動再開しない。
+- 外的理由の実際の発生・解消を検知するbrowser/OS処理はこの証明の対象外である。
 
-待機状態だけを`u64` nanosecondsで保持する。所定時間は最大`u32::MAX`秒なので待機値はその範囲に収まる。
-入力deltaの全受理域、f64からnanosecondsへの丸め、加算overflowは既存の標準`Duration`境界に維持し、
-比較する加算後の候補は`u128`で渡す。入力の`u64`へのcast、deadlineでのclamp、Duration上限を超える通常整数加算は行わない。
-同じ時刻状態をDurationと整数の双方に保持しない。
+- `FlightExecution`と`ActiveFlight<State>`はRunning/Paused、停止理由、不透明な飛行payloadを所有する。
+- pause・clear・resumeがpayloadを変更しないこと、成功・NotPaused・PauseConditionsRemainの分類、Runningでのclear/resume拒否を検証する。
+- 物理payloadの非更新と、その数値の妥当性・精度は別の性質である。
 
-GameSessionの`observe_countdown`は本番の認可結果を使用し、telemetryと`record.begin_tail`が成功した後だけRunningへcommitする。
-認可計算は候補値を返すため、record開始失敗時は直前のCountdownのtoken・elapsed・phaseを保持する。
-標準Durationとf64変換は未証明であり、実GameSessionの接続回帰を維持する。
-phase代入・payload・tick・record保持、発進後の再観測拒否とRetryのcaller接続は後述の実所有境界で検証する。
-数値producerとReplay clockを含むwrapper全体の正しさとは区分する。
+### Countdownと準備
 
-既存runnerでPauseReasonsに加えてCountdownの全体positive、必須4群の名前別検証、exact compiler inventory、
-renameと旧宣言コメントを含むfixture、missing-target診断、指定assert負例を実行する。
-Countdownの負例は期限前の発進とobsolete tokenによる進行を意図的に主張し、指定assertで拒否されることを要求する。
-検証結果は対象headのPRへ記録し、sourceを追加した段階で合格を主張しない。
+本番`CountdownState`の正の秒数、非wrap token、古いtokenの無視、観測時刻・可用性の優先順、取消、待機、期限到達による発進認可を検証する。待機中の公開残秒は正であり、残秒0のCountdown状態を認可の前提にしない。
 
-### FlightExecutionの本番遷移
+- 待機値はu64 nanoseconds、観測後の加算候補はu128で扱う。
+- deadlineは最大u32秒の範囲である。
+- 入力をu64へ縮小したり、deadlineでclampしたりしてoverflowを隠さない。
+- 同じ時刻をDurationと整数の二重状態として保持しない。
+- Duration生成・f64との変換・その丸めは未証明の標準境界である。
 
-`crates/birdman-game-core/src/flight_execution.rs`はRunning/Pausedと停止理由を単独所有する。
-GameSessionのFlight variantは同moduleの`ActiveFlight<TailFlightTickState>`を保持する。
-このprivateな実行型は実payloadとexecutionの組だけを所有し、pause、clear、resumeの本番methodを接続する。
-各methodは任意の不透明な`State`を更新せず、executionだけへ既存操作を委譲する。
-この実bodyについてpayload保持と成功・NotPaused・PauseConditionsRemainの分類を同時に検証する。
-飛行payload内の物理stateとtickは非更新の対象だが、その数値の妥当性や浮動小数点演算の精度は保証しない。
+- GameSessionの準備・Ready・Countdown開始・観測は、認可拒否時のowner保持、同じconfiguration・独立demo・attempt tokenの保持を接続する。
+- 実header validatorは`dual_spec`で参照する。
+- 記録factory成功後だけrecordを交換し、factory失敗では旧ownerを保持する。
 
-本番の可変参照更新をそのままincludeし、pauseによるPaused遷移と理由追加、clear後のPaused維持、
-Manual解除後の再開認可、外的理由が残る場合のPaused維持、Runningでのclear/resume拒否と実行状態保持を検証する。
-実行遷移の必須4群とpayloadの必須3群にexact inventory・名前別検証・rename fixture・missing-target検査を適用する。
-負例は外的理由を残したResumeの成功と、最後の理由をclearした時点の自動再開を意図的に主張する。
-payload負例は実pauseの後にpayloadが変化したと意図的に主張し、指定assertの拒否を要求する。
-GameSessionのconfiguration・record保持、Retryと異常tick終端化の離散的接続は後述の所有境界で検証する。
-数値callback、allocatorによるrecord新規化、全wrapper分岐を一括した保証は#382の残範囲とする。
+- Countdown観測の本番callerは、同じconfigurationから得た初期状態・telemetryを`record.begin_tail`へ渡し、その成功後だけRunningへcommitする。
+- 非Countdownと古いtokenは数値callbackを呼ばない。
+- 発進後の再観測で再発進しない。
+- 初期状態・telemetryの数値関数、allocatorが生成する空record、公開closureの具体bindは未証明の境界である。
 
-### Result / Replay の本番遷移
+### Result・Replay・保存済み記録
 
-`configured_phase.rs` は従来の全 ConfiguredPhase variant と、Result / Replay の実更新を所有する。
-GameSession は Flight state・SessionResult・ReplayClock を具体化した private alias を使用し、
-current-session の `enter_replay` / `leave_replay` は同 module の二つの method を呼ぶ。
-不透明な payload の型 parameter はこの内部 enum に限定し、別の状態機械や transaction framework を設けない。
+- 本番`ConfiguredPhase`でResultだけがReplayへ入り、Replayだけが元のResultへ戻ることを検証する。
+- 成功時は結果payloadを完全保持し、指定clockを格納する。
+- 拒否時はenum全体を保持する。
+- Replayのclock数値計算は対象外である。
 
-本番 enum を正負 driver が直接 include し、Result だけが Replay に入ること、Replay だけが Result に戻ること、
-成功時の結果 payload 完全保持と指定 clock の格納、拒否時の enum 全体保持を検証する。
-必須三群、exact compiler inventory、rename / missing-target 拒否、発進前の Replay 認可と結果改変を誤って主張する負例を既存 runner に追加する。
-外側の record / configuration はこの method へ借用せず、Rust の所有分離と GameSession の通常回帰で保持を確認する。
-この初回cutの範囲はcurrent-sessionの内部phase遷移に限定する。
-GameSessionの外側payloadと保存済み記録の所有権は、後続の本番接続と次節の追加cutで扱う。
-`enter_attract`とclockの浮動小数点演算は直接証明の対象外である。
+実GameSessionの`open_archived_replay`、`take_finalized_result_record`、`install_attract_record`、`leave_attract`、`playback_record`を直接検証する。許可phaseと入力recordの確定状態を認可条件とし、header・sample・finalizationを含む同じrecordの移譲・参照を保証する。
 
-### 保存済み記録の所有権移譲
+- 拒否時はsession全体を保持する。
+- archived Replayの退出はTitleへ戻り、通常のResult/Replay往復と区別する。
+- archiveの閲覧・Result取り出しは独立demoとCountdown tokenを保持し、demoの再登録は既存記録を上書きしない。
+- `enter_attract`のdurationと再生clockの浮動小数点演算は直接証明の対象外である。
 
-追加cutでは、`GameSession`の実bodyで`open_archived_replay`、`take_finalized_result_record`、
-`install_attract_record`、`leave_attract`と`playback_record`を直接検証する。
-入力recordの確定状態と許可phaseを認可条件とし、record全体の同一性によってheader・sample・finalizationの保持を示す。
-成功時は同じrecordをReplay、Titleのdemo保管領域、または戻り値へ移譲し、拒否時はsession全体を保持する。
-archived ReplayとResult取り出しは独立したdemoとcountdown tokenを保持し、demoの再登録は既存recordを上書きしない。
+### Retry
 
-固定vstdが未対応の`mem::replace`二箇所は、Titleの局所値と`mem::swap`を行って同じmatchへ渡す等価な標準操作に変更する。
-payloadを持たないTitle・Attract・Resultの三つのguardは、同じvariantを判定する`!matches!`へ統一する。
-型・認可条件・処理順・数値計算・容量予約は維持し、新しい標準ライブラリの公理は追加しない。
+- 本番`ConfiguredSession`はconfiguration、record、ConfiguredPhaseを所有する。
+- Result認可、factory呼出し、recordとReadyへのcommitを同じowner methodで検証する。
+- configurationやrecordへCopy/Cloneを要求する別の状態機械を設けない。
 
-private ownerを使う三つの本番clientと、既存の公開domain driverへ追加した三つのclientを検査する。
-既存runnerのexact compiler inventoryへ対象method・clientを登録し、未確定recordの受入と閲覧recordの改変を
-意図的に主張する二つの負例を指定assertionで拒否する。
-`enter_attract`のduration・再生時計の数値計算、allocator、公開prepare/retry/advance/abortの既存未証明境界は維持する。
-別の形式モデル、新しいassume、無条件のexternal bodyは追加しない。
+- 成功時はconfiguration全体を保持し、factoryが返した同じrecordへ交換する。
+- header生成・予約を含むfactory失敗はowner全体を保持する。
+- Result以外はfactoryの前提を要求せず、呼出し前に拒否する。
 
-### Retry の本番所有体
+- scenario・seed・初期状態・tick上限の保持は同じconfigurationの構造的保持である。
+- 値の物理妥当性、実reserve、allocator、record新規化の全仕様をfactoryの契約へ仮定していない。
+- 具体factoryとの接続は通常Rust回帰も用いて確認する。
 
-`configured_session.rs` は製品の実 `ConfiguredSession` を単独所有し、configuration・record・既存 ConfiguredPhase を保持する。
-GameSession は従来の具体型を private alias に割り当て、同じ owner method で Result 認可、factory 呼出し、record / Ready の commit を実行する。
-configuration と record に Copy / Clone を要求せず、既存 phase の三つの payload と合わせて不透明な値として扱う。
+### FlightRecordの容量・確定
 
-成功時は configuration 全体を保持し、factory が返した record を格納して Ready に移る。
-Header 生成または予約を含む factory の失敗時は owner 全体を保持し、原因を分類して返す。
-Result 以外では factory の前提条件を要求せず拒否する。正 driver の拒否群は前提条件 false の factory を渡し、認可前の呼出しを検証で拒否する。
-sealed configuration の非更新は scenario・seed・初期状態・tick 上限の保持を含むが、その浮動小数点の妥当性や物理精度を証明しない。
+`FlightRecordStorage`は実header、Vec sample、論理capacity、finalizationを所有する。低水準push/finalizeはprivateであり、公開操作が時刻・有限値・metadataを検査する。
 
-Header 生成と実 `FlightRecord::try_new` は製品の同じ closure に接続する。
-allocation と record の空性・metadata は factory の形式保証として追加仮定せず、実 factory の接続回帰で確認する未証明境界とする。
-Title 等の owner 不在拒否と GameSession wrapper 全体、Countdown 初期化、異常終端化、archived Replay / Attract は本 cut の直接証明範囲に含めない。
-既存 runner に成功・予約失敗・認可拒否の必須三群、exact inventory / rename / missing-target、認可と失敗保持の指定負例を追加する。
+- push成功は既存sample列をprefixとして保持し、1件だけ追加する。他fieldは変更しない。
+- 容量拒否はowner全体を保持する。usizeの32/64bitを固定せず、長さと上限から追加の安全性を検証する。
+- finalizeはAlreadyFinalized、NotStarted、最後のsample検査、metadata commitの順序を持つ。
+- finalize成功は検査出力を一度だけ格納し、header・sample・capacityを保持する。全Errはownerを保持する。
 
-### FlightRecord の離散所有
+- 検査callbackは不変なsample参照だけを受け取り、recordへの可変参照を持たない。
+- 実Vecの論理更新は固定vstdの仕様へ依存する。
+- allocation、`try_reserve_exact`、WASM codegenは別の検証対象である。
 
-`flight_record_storage.rs` は実 header・Vec sample・sample_capacity・finalization の4fieldと、元の FlightRecordError を所有する。
-FlightRecord は従来の3実型を用いた具体 alias であり、storage module、field、低水準 push / finalize は外部へ公開しない。
-公開 domain 操作は従来の時刻・finite・metadata 検査を維持し、compile-fail の使用例で低水準操作の不可視性を確認する。
+- 公開`begin_tail`と`append_tail_report`は実bodyの認可、state/control/telemetry転送、bounded Vecへの追加、拒否時のowner保持を検証する。
+- NoElapsedIntervalでは成功・失敗にかかわらずrecord全体を保持する。
+- 初期controlsとNoElapsed分類は本番の純粋関数から生成するspecを用いる。
 
-実 Vec::push の容量判定、prefix と他 field の保持、成功時の1 sample追加、容量拒否時の全保持を直接検証する。
-finalize は AlreadyFinalized、実 Vec.last による NotStarted、不変 sample の検証、metadata commit の順序を所有する。
-成功は検証出力を一度だけ保持し、sample / header / capacity を変更しない。全 Err は owner 全体を保持する。
-検証 callback は &Sample のみを受け取り、Err 原子性や有効 metadata を仮定する契約は追加しない。
-意味検査は製品の同じ validate_finalization を呼び、その数値仕様自体は本 cut の直接証明範囲に含めない。
+- 公開`finalize`・`finalize_with_failure`、実`finalize_record`・`validate_finalization`は実coreへ直接接続する。
+- Err時のowner保持、成功時のreason/tick/fraction/score/元failure転送を検証する。
+- dispositionと数値の意味的対応を含む全数値仕様の証明には拡張しない。
 
-固定 Verus の既定は usize / isize の32 / 64 bitであり、本 driver と runner に幅固定を置かない。
-len < capacity と usize::MAX から1要素追加の安全性と論理容量上限を検証する。
-Vec の論理更新は bundled vstd の仕様に依存し、実 reserve / allocator・wasm codegen の証明と区別する。
-既存 constructor の checked conversion / checked_add / try_reserve_exact と通常回帰を維持する。
-低水準 push の証明は公開 append の全認可を含めず、確定後追加の拒否は既存 domain 回帰の対象である。
-GameSession の previous / report 選択、元 failure と Result の対応、正常 / 異常終端化の縦断保証、Retry factory の空性・metadata は後続範囲である。
+### Running tickと終端化
 
-検証属性は`cfg(verus_only)`で有効化する。通常Cargoではvstd import、ghost view、検証属性が除去され、
-Rust `1.97.0`、coreのno_std・I/Oなし・通常依存DAGを維持する。vstdを通常依存へ追加しない。
-private fieldはghost-onlyのclosed viewを通して仕様から参照し、maskは実bit関数から生成するdual specを使う。
-空集合には公式の`verus_spec`属性を用い、内部impl marker、shadow実装、trusted wrapperを設けない。
-[公式exec属性](https://verus-lang.github.io/verus/guide/exec_attr.html)、[dual spec](https://verus-lang.github.io/verus/guide/exec_to_spec.html)に従う。
+- 実ConfiguredPhaseのRunning認可だけが飛行stateを返す。
+- 認可拒否では数値callbackを呼ばず、ownerを保持する。
+- 評価・telemetry・scoreのFnOnceはconfigurationとCopy値を受け取り、record・phaseへの可変参照を持たない。
 
-既存WASM build fingerprintはcoreのRust sourceを再帰収集するため、抽出moduleも対象になる。
-source配置や証明注釈の変更もbuild来歴のfingerprint差として保持する。Personal Best比較方式v2は意味versionと保存済み解決条件を使用するため、意味が変わらない証明変更では比較群を分割しない。意味versionの更新責務は`docs/flight-record.md`に従う。
+- 同じprevious/inputを評価へ一回渡し、返却reportのstateをtelemetryへ渡し、同じreportとtelemetryをappendする。
+- 呼出し可能性以外の数値的相関をcallbackの事前条件へ追加しない。
+- 実bodyによる出力転送、sample列のprefix、最大1件の追加を検証する。
+- [FnOnce仕様](https://verus-lang.github.io/verus/guide/reference-signature-fnonce.html)に従う。
 
-## 証明する性質と通常回帰
+| 経路 | 保持・commitの契約 |
+| --- | --- |
+| 評価失敗 | previousと元のTailFlightTickErrorをResultへ保持する |
+| 元failureを伴うscore失敗 | 元reason/failureを保持し、scoreをNoneとする |
+| score単独失敗 | Fatal Result、score None、failure Noneを保持する |
+| telemetry/append失敗 | previousを終端化し、finalize自体のRecord/Score errorを既定の優先順で返す |
+| 正常継続・TimeLimit・WaterContact | 同じreport・record・Resultのstate/stamp/metadataを転送する |
 
-正driverは4bit内の任意の原因集合について、挿入・除去の冪等性、選択原因の所属、異なる原因の保存、
-同一原因の操作列の吸収則、4bit閉包を検証する。Manual除去後はDocumentHidden、TrackingSuspended、ProcessingDelayを保存し、
-いずれかが残ればResume判定はfalseとなる。空集合の生成と判定も同じ実bodyを検証する。
-bitvector queryへ渡す前提は通常の検証で実関数の契約から確認する。
-負driverは原因を除去した後も所属すると意図的に主張し、その指定assertが拒否されることを検査する。
+- Record errorには入口owner保持、previousのFatal Result、append済みRunningがある。
+- append後のfinalize拒否へ一律の全Err不変を要求しない。
+- 内部不整合を注入した回帰と、利用者操作から到達する障害を区別する。
 
-純粋な集合unit testはconst生成の通常Rust使用例へ縮約する。実GameSessionを使う16集合の接続回帰は重複pause/clear、失敗Resume後の原因保存、
-外部原因が残る間の拒否、明示Resume、pause中のstate/record不変を確認する。
-非Pause phaseのResume拒否とResultの確定record保持も対象とする。これらはcallerの通常回帰であり、
-GameSession全体の形式証明ではない。
+- 本番`evaluated_tick_report`は、Advancedと正fraction接触のstate/control、fraction-zero分岐のprevious state・incidence・pilot target保持、新control除去を検証する。
+- 実begin/Advanced appendが最新sampleとRunning stateの対応を確立する。
+- 合成clientは実producerと同じpreviousからNoElapsed append/finalizeを呼び、sampleのinput/telemetry、整数tick、FlightState、held incidenceの保持へ接続する。
 
-FlightExecutionのcutでは固定Verusをreadonlyで再利用し、既存runnerの検証部分で正driverの`24 verified, 0 errors`、
-必須4群の各`1 verified, 0 errors`、exact inventoryとrename/missing検査、指定負例2件の各`20 verified, 1 errors`を確認した。
-既存PauseReasonsとCountdownのsuiteも同時に成功した。ZIP取得・digest照合・展開を含むbootstrap全体はCIで検査する。
-GameSessionの通常回帰32件、core all-targets Clippy、`wasm32v1-none`のno_std build、formatとdiff検査が成功した。
+- この相関は実begin/appendと本番包装から導き、任意の別previousから得たreportへ適用しない。
+- fractionのIEEE比較、数値接触検出、非自明な補間、数値evaluation、外側callbackの具体wiringは未証明である。
+- 初期sampleに独立したpilot target fieldはないため、targetはreportのprevious保持に保証を限定する。
 
-## 固定ツールとCI
+## runnerと固定ツール
 
-- Verus release: `0.2026.10.04.426d8b0`。
-- 公式Windows ZIP: `verus-0.2026.10.04.426d8b0-x86-win.zip`。
-- ZIP SHA256: `b36968a0f333036e7e1770bb73fdd407a35c8fd163124c1d309972574150da61`。
-- 証明専用Rust: `1.98.1`。rustupで追加し、default/overrideと製品`rust-toolchain.toml`を変更しない。
-
-[固定release](https://github.com/verus-lang/verus/releases/tag/release/0.2026.10.04.426d8b0)、
-[導入手順](https://github.com/verus-lang/verus/blob/release/0.2026.10.04.426d8b0/INSTALL.md)、
-[専用toolchain](https://github.com/verus-lang/verus/blob/release/0.2026.10.04.426d8b0/rust-toolchain.toml)を基準とする。
-scriptは解凍・実行前にdigestを照合し、compiler/verifier versionを確認する。導入済みの専用Rustは再利用し、未導入の場合だけ追加する。
-全体を`--no-cheating --num-threads 1`で一度検証する。本番coreのbody/ensuresと、
-同crate内の複数操作clientをcargo-verusのentire-crate成功へ接続する。
-関数別の再起動、includeによる二重検証、改名/欠落fixture、内部symbolの固定一覧は維持しない。
-証明対象の変更は本番契約と複数操作clientの差分としてレビューする。
-
-`proofs/rejections.rs`は同じ検証済みcore/vstdのrmeta/virを読み、公開契約の正常controlと、
-初期Runningの誤認可・確定拒否後のrecord変更・接触append/finalize後のpayload変更を意図的に主張する。
-一回の統合negative実行で、非zero exit、正のverified件数、指定3assertだけの3 errors、
-指定したファイル・行と`assertion failed`を要求する。構文・起動・別assertの失敗を成功に数えない。
-下記に残る個別cutのnamed/inventory/旧negative件数は過去の検査結果であり、現在の起動要件とは区別する。
-Check workflowの独立したWindows jobが次のscriptを実行する。
-Pagesは従来のmain/manual/boolean条件に加え、VerifyとPauseReasons proofの双方の成功を必要とする。
+検査入口は既存の一つのrunnerである。
 
 ```powershell
 ./tools/verus/check-verus.ps1
-cargo +1.97.0 test -p birdman-game-core --locked pause_reasons
-cargo +1.97.0 test -p birdman-game-core --locked every_pause_set
-cargo +1.97.0 test -p birdman-game-core --locked resume_rejects_nonpaused
-cargo +1.97.0 clippy -p birdman-game-core --all-targets --locked -- -D warnings
-cargo +1.97.0 build -p birdman-game-core --target wasm32v1-none --locked
 ```
 
-## 全体への適性監査と優先順
+runnerは本番coreの直接検証と、統合した負例の確認を一回ずつ実行する。PauseReasons、Countdown、FlightExecution、ConfiguredPhase、ConfiguredSession、FlightRecordStorage、GameSessionの本番契約と操作列を同じ直接検証に含める。
 
-| 優先度 | 契約・対象body | 適性と現在の根拠 | 残る境界 |
-|---|---|---|---|
-| P0 | PauseReasonsの4bit集合・Resume predicate | 同一bodyのtracked checkerで正37義務と指定負検証を確認した | 外部原因の発生条件は未証明 |
-| P0 | GameSessionのphase遷移・caller・確定record保持 | Countdown・FlightExecution・Result / Replay、公開owner選択と停止操作、Prepared/Countdown/Retry callerの離散的保持を直接検証する | 数値callback、allocatorによる新規化、Duration・Replay clock、archived Replay / Attractの全経路、wrapper全体は未証明 |
-| P1 | record/finalization・codec・identity・PB分離 | 純粋な整合性判定とschema別分岐は候補となる。保存値とlayoutを仕様として固定する必要がある | 現在の通常回帰は形式証明ではなく、既存archive全体も未証明 |
-| P1 | tick原子性・bounded保護候補探索 | 副作用commit条件・探索回数は離散契約として扱える | 浮動小数点、全RK stageの荷重域、安全な候補の存在は未証明 |
-| P1 | owner世代・stale query・資源解放 | immutableな観測tokenと有限lifecycleは候補となる | browser/Bevyの再入・非同期・OS資源は環境仮定が必要であり未証明 |
-| 別検査 | 数値収束・局所安定性・空力適用域 | 解析解、量別誤差、刻み・domain回帰を個別に評価する | bit集合の証明から数値精度・全飛行安定性を導かない |
-| 別検査 | model fidelity・GPU/実入力・VR・80FPS | 一次資料・実機・実表示・性能計測で評価する | 本形式証明の対象外。試験未実施や目標未達を合格と扱わない |
+| 項目 | 固定値 |
+| --- | --- |
+| Verus | `0.2026.10.04.426d8b0` |
+| Windows archive | `verus-0.2026.10.04.426d8b0-x86-win.zip` |
+| archive SHA-256 | `b36968a0f333036e7e1770bb73fdd407a35c8fd163124c1d309972574150da61` |
+| 証明用Rust | `1.98.1` |
+| 製品Rust | `rust-toolchain.toml`の`1.97.0` |
+| vstd | `0.0.0-2026-10-04-0306`、非default・allocのみ |
 
-この表は適性と実施順の監査であり、未着手対象の導入・完了を宣言するものではない。
-新しい証明ごとに対象の実body、事前条件、公開仕様、環境仮定を定める。
+- [固定release](https://github.com/verus-lang/verus/releases/tag/release/0.2026.10.04.426d8b0)と[導入手順](https://github.com/verus-lang/verus/blob/release/0.2026.10.04.426d8b0/INSTALL.md)を基準とする。
+- 解凍・実行前にdigestを照合し、compiler/verifier versionを確認する。
+- 証明専用toolchainを追加し、製品のdefault/overrideを変更しない。
 
-## 信頼境界
+runnerは以下を要求する。
 
-### 実core crateの限定直接検証
+- `--no-cheating --num-threads 1`で本番crate全体を検証する。
+- positiveはexit 0、正のverified件数、0 errorsを要求する。
+- compiler出力でcrate全体が対象となったことを確認する。内部補助関数名の固定表や関数ごとの別プロセスへ依存しない。
+- 統合negativeは非zero exitと、指定した三つのassertionのファイル・行・診断を要求する。構文・起動・別assertの失敗を成功に数えない。
+- 検査前後のsource/toolchain hashを照合する。negativeは直接検証した同じcore/vstdのrmeta/virと固定builtinを用いる。
 
-固定426d8b0の`cargo-verus`とproof用Rust 1.98.1から、実`birdman-game-core`を直接読み込む。
-`verus-proof`は固定`vstd`の`alloc`だけを有効にする明示的optional featureであり、通常の依存は従来どおりである。
-製品Rust 1.97と`no_std`を維持し、closure仕様に必要な`proc_macro_hygiene`は`cfg(verus_only)`に限定する。
-公開`finalize`/`finalize_with_failure`、実`finalize_record`、実`validate_finalization`を検証する。
-Err時の実owner保持、header・sample列・capacity保持、成功時のreason/tick/fraction/score/元failureの転送を扱う。
-成功metadataの`disposition`対応、数値の合法性、allocatorは未証明である。
+- 保証範囲は本番関数の契約と複数操作のclientを正本とする。
+- 削除や範囲縮小は通常の差分レビューで確認する。
+- CIのVerus jobは同runnerを実行し、通常Rustのbuild・lint・関連回帰・no_std検査は別の保証として維持する。
 
-実`ConfiguredSession`のprivate終端methodは、実recordの確定後に同一state・時刻・reason・score・元failureで
-`SessionResult`を構築する。record拒否はhelper入口のowner全体を保持し、configurationは全経路で保持する。
-score単独失敗はFatal Result確定後にScore Errを返し、元failureがあるscore失敗は元reason/failureとscore Noneを保持する。
-公開record APIの成功commitは既存getterから確認でき、ghost-only closed predicateは実header・sample列・capacityを参照する。
-時刻getterのspecは固定Verusの`dual_spec`で実bodyから生成し、その同値も検証する。
-Running認可と実tickの制御bodyは後述の契約へ接続する。外側GameSessionのowner選択と戻り値も直接検証するが、
-数値callbackの具体bind/body、数値関数が生成する評価結果の妥当性、数値score評価は未証明の境界である。
-これらを仮定して終端化全体を完了扱いにせず、親#382を継続する。
+## 信頼境界と残る検証
 
-### GameSessionの所有境界
+- TCBにはVerus frontend・attribute macro、専用rustc、bundled vstdの標準仕様、SMT solver、配布物の供給経路を含む。
+- archive hashは同一性を検査し、意味論やsolverを独立に証明するものではない。
+- [公式TCB](https://verus-lang.github.io/verus/guide/tcb.html)に従い、仕様の十分性とcallerの適用条件を別に確認する。
 
-実`GameSession`と`SessionLifecycle`を検証し、同じconfiguration・record・physical stateと無関係なownerの保持を接続する。
-到達するscenario、polar、geometry、wind等の既存データ型へ検証属性を付けるが、その数値関数の本体を免除しない。
-公開pause/clear/resumeは実ActiveFlightへ委譲し、拒否分類と外的停止理由の保持を保証する。
-privateな停止エラーの変換は単一のnamed methodへ集約し、dual_specで同じ本番matchを参照する。
-変換用のtrait仕様の複写や外部仕様を追加せず、入力のprivate型を公開しない。
-ResultとReplayの往復は同じconfiguration・record・resultを保持し、ArchivedReplayからの退出だけがTitleへ戻る。
-公開snapshot/recordの投影は`dual_spec`により実bodyへ接続する。Countdownの秒数投影には、実start_countdownが生成する
-有効なCountdown状態を要求し、Duration変換や全ての構築経路の検証済みを意味しない。
+- 固定Verifierでf64比較の標準関係は未解釈である。
+- 実際の`!= 0.0`の分岐とspec値等号を同一視せず、[固定vstdの比較仕様](https://github.com/verus-lang/verus/blob/426d8b0/source/vstd/std_specs/cmp.rs)の範囲を保持する。
+- telemetry validatorの有限閉区間とprivate端点定数は、製品RustでMIN/MAXのbit一致、NaN/±∞/±0、端点近傍、subnormalを検査する。
+- `RangeInclusive::contains`の境界も[固定Rustの実装](https://github.com/rust-lang/rust/blob/1.97.0/library/core/src/ops/range.rs)へ依存する。
 
-公開advanceは数値closureのbindだけを残し、同じGameSession上のprivate methodでowner認可、封印済みtick上限/identity、
-既存Running呼出し、返すsnapshotを扱う。callbackのrequiresは従来の呼出し可能性だけであり、latestとpreviousの相関を追加しない。
-Result.scoreは同じconfigurationとterminalを受け取ったscore callbackの返却値へ接続し、scoreの数式の正しさとは区分する。
-公開数値closureのbody、control modeと物理関数の具体bind、allocator、Duration変換、Replay clockの浮動小数点演算は未証明である。
-既存のowner回帰は同じGameSession境界を通し、callback順序・元エラー優先順・戻りsnapshotを確認する。
+Vector3/Point3のgeneric derived Cloneは固定Verusで等価仕様を生成できない。現在の保持契約は実owner・同じ値の転送へ接続し、Clone equalityを仮定しない。
 
-### 準備・Countdown・Retryのcaller接続
+| 対象 | 現在の位置付け |
+| --- | --- |
+| 認可・離散遷移・本番record保持 | 上記の実bodyと公開callerへ限定して証明する |
+| Duration、Replay clock、allocator、数値callback、wrapper全分岐 | 未証明の境界を保持し、通常回帰を併用する |
+| record codec、PB identity、非同期generation・外部資源寿命 | 証明拡張の候補であり、現状の試験を形式証明済みと扱わない |
+| 浮動小数点収束、局所安定性、空力適用域、保護候補の存在 | 解析解、量別誤差、刻み・domain検査を用いる |
+| model fidelity、実GPU・入力・保存、VR、FPS | 実データ・実行環境・性能計測を必要とする |
 
-実GameSessionのSetup・Briefing・Countdownの認可と遷移を検証し、拒否時のowner全保持、
-同じconfiguration・attract記録・attempt tokenの保持を接続する。実header constructorのvalidatorを
-dual_specで参照し、封印済みidentityとtick上限から生成したheaderを同じrecord factoryへ渡す。
-準備と二種類のRetryはfactory成功後だけrecordを交換し、失敗時は旧ownerを保持する。
-factoryが返した同じrecordへの置換を保証し、allocatorが生成する空recordの全形式保証とは区分する。
-
-公開observe_countdownは従来のDuration変換・初期状態生成・telemetryをbindし、同じowner上のprivate methodが
-既存CountdownState::observeとrecord.begin_tailを呼ぶ。非Countdownはcallbackを呼ばずIgnoredとなる。
-古いtokenの拒否優先順、有効な整数deadline、同じconfigurationからのcallback出力転送、begin成功後だけの
-FlightRunning commitを保証する。Launch後の再観測はownerを保持してIgnoredとなり、再発進しない。
-合成clientは実prepare・ready・start・observe・beginとRetryを呼び、空recordやtick0を事前条件に追加しない。
-Titleからの発進拒否は公開APIを用いるpositiveと指定negativeでも確認する。
-
-Duration/IEEE変換、初期状態とtelemetryの数値関数本体、allocatorとtry_reserve_exactは未証明である。
-公開prepare/retryの具体的なFlightRecord::try_new bindとrecord新規化は通常Rust回帰で確認し、
-private factoryの返却値転送の形式保証からallocatorの正しさを導かない。scenario・seed・初期条件の保持は
-同configurationの構造的保持であり、物理妥当性や数値計算全体の証明ではない。
-
-### Running tickの制御body
-
-GameSessionのprivate owner境界は、既存ConfiguredSessionのprivate methodへ制御を委譲する。
-実ConfiguredPhaseのrunning_stateだけがRunningのstateを返し、拒否時は数値callbackを呼ばずowner全体を保持する。
-この認可getterは同じproduction moduleを用いる既存suiteの必須positiveと指定negativeへ接続する。
-認可getter単体の保証と、実tick bodyのactual core直接検証を区分する。
-
-評価・telemetry・scoreの三つのFnOnceは共有ConfigurationとCopy値だけを受け取り、record・phaseへの可変参照を受け取らない。
-実bodyは同じprevious/inputを評価へ一回渡し、その返却reportのstateをtelemetryへ渡してから、同report/telemetryをappendする。
-callbackのrequiresは呼出し可能性だけを要求し、state保持・有効なrecord・数値結果の相関を仮定しない。
-標準FnOnceのrequires/ensuresと、実record view上のpredicateにより、同じ出力の転送、sample列のprefix、最大1sampleの追加を検証する。
-[公式FnOnce仕様](https://verus-lang.github.io/verus/guide/reference-signature-fnonce.html)の呼出し契約を用いる。
-ghost-onlyのproof_decl/proofは実値を参照し、新しい実行状態・数値model・runtime APIを追加しない。
-
-tick失敗はpreviousと元TailFlightTickErrorをResultへ保持する。元tick failureがある場合のscore失敗も同じfailureを保持する。
-telemetry失敗とappend失敗はpreviousを終端化し、finalize自体のRecord/Scoreエラーを先に返す既存順序を維持する。
-ScoreエラーはFatal Result、score None、failure Noneを保持し、Record拒否は入口owner保持、previousのFatal Result、またはappend済みRunningを区分する。
-正常継続、TimeLimit、WaterContactの実report・record・Resultのstate/stamp/metadataも同じbodyで接続する。
-実finalizationの整数guardから、確定recordの最新sample tickとResult terminal tickの一致を本番postconditionへ伝播する。
-NoElapsedIntervalの必須clientは同じ公開append/finalizeを呼び、sample列の非変更と元の最新tick保持を結合する。
-これはfloat fractionのIEEE意味論、物理state等号、数値producerの本体を保証する契約とは区分する。
-通常Rust回帰は各callbackの呼出し順序、実scenarioの一回評価、telemetryの入力state、エラー優先順、拒否とResult保持を通す。
-finalize拒否の回帰には内部不整合を明示的に注入し、利用者操作から発生した障害とは扱わない。
-
-外側の実callerは既存scenario/telemetry/score関数をbindし、同じconfigurationのtick上限・identityを渡す。
-封印済み上限/identityとownerへの転送は所有境界の契約へ接続する。
-数値callbackの具体bind/body、任意reportと前sampleの等値、wrapper全体は形式証明の対象外である。
-実producerは数値評価後のreport包装を必ず同じ`evaluated_tick_report`へ渡す。この本番bodyでAdvancedのnext/control転送、
-接触途中のsample/control転送、実fraction-zero分岐で同じpreviousのstate/incidence/target保持と新control除去を検証する。
-分岐に使うIEEE比較の数学的意味は標準仕様の境界に残し、実数上のゼロ判定の証明へ拡張しない。
-
-RunningとGameSessionのpostconditionは、既存recordがpreviousと対応し、評価callbackのreportがunelapsed payloadを保持する場合に、
-Resultの最新sampleとterminalの整数tick・FlightState・incidenceが一致することを保証する。これは追加requiresではない。
-合成clientは任意長recordへの実Advanced appendからpreviousとの対応を確立し、同じ本番包装を用いたcallbackを実ownerへ渡す。
-相関を仮定せず、正常継続・接触・score失敗を含むResultのpayload保持へ接続する。NoElapsedでは保存済みinput/telemetryを変更しない。
-任意の別previousに由来するreportや不整合な内部ownerへ、この条件付きpostを無条件適用しない。
-fractionのIEEE等値とspec値等号の区別、数値evaluation、allocatorの未証明境界を維持する。
-0-fractionの本番private producerは同じpreviousのFlightState・incidence・pilot targetを構造的に保持し、
-newly applied controlsを持たない。その実bodyと、同じpreviousによる公開begin/NoElapsed append/finalizeを呼ぶ
-private clientをactual coreで検証する。初期sampleと終端reportのFlightState・incidenceが一致し、
-sampleのinput/telemetryを保持することを結合する。初期sampleには独立したpilot target fieldがないため、
-targetはreportのprevious保持に限定する。
-実Vec上のlatest_matches_tail_stateはtick・整数fraction・FlightState・held incidenceを結合し、begin成功とAdvanced append成功が確立する。
-同じ本番Running bodyは、正常に受理された継続Runningのstateと最新sampleの対応を保証する。
-別のprivate clientは任意長recordへ実Advanced appendを行い、その同stateから既存ContactAtStart producerを呼び、
-NoElapsed append/finalizeまで物理payloadと保存済みinput/telemetryを保持する。相関をrequiresへ追加しない。
-数値接触検出と外側callback wiringは未証明であり、任意の別previousに由来するNoElapsed reportを同じstateとして扱わない。
-初期controlsとNoElapsed分類は既存の純粋関数の`dual_spec`を`open`とし、同じ実bodyから生成した定義を展開する。
-[公式dual_spec仕様](https://verus-lang.github.io/verus/guide/exec_to_spec.html)に従い、数値仮定や模倣modelは追加しない。
-
-公開`begin_tail`/`append_tail_report`は同じ実bodyの認可、実reportからstate/control/telemetryへの転送、
-bounded Vecへの追加、拒否時のowner全保持を検証する。NoElapsedIntervalは結果の成否にかかわらずrecord全体を保持する。
-ghost-onlyのsample sequenceとlogical limitは実Vec/fieldのviewであり、別の記録モデルやruntime APIを追加しない。
-整数tickの隣接・上限は直接の契約である。fractionの実`!= 0.0`比較は、固定vstdの`ne_ensures(..., false)`へ接続する。
-この標準関係は未解釈であり、IEEE比較の数学的意味やspec上の値等号を導かない。
-[固定vstdのne_ensures宣言](https://github.com/verus-lang/verus/blob/426d8b0/source/vstd/std_specs/cmp.rs#L243-L245)と
-[f64のne仕様](https://github.com/verus-lang/verus/blob/426d8b0/source/vstd/std_specs/cmp.rs#L295-L299)に従う。
-
-同じtelemetry validatorではfinite判定を有限閉区間へ等価展開する。固定Verifierはstdの`is_finite`とMIN/MAX定数に
-未対応のため、privateな有限端点2定数を用い、製品Rustでstd MIN/MAXとのbit一致、NaN/±∞/±0/最大値近傍/subnormalを検査する。
-validatorの実bodyを検証し、エラー分類・record保持を接続する。数値比較の意味やtelemetry数式の証明は主張しない。
-接触fraction 0/1は対応する実stateを直接保持する。補間/detectの非自明state・signed zero回帰と、
-実tail producer→record→GameSession Resultの接続回帰を維持する。NoElapsed reportを任意の別previousから生成して
-公開appendへ渡す場合の相関は保証しない。最新sampleとreportの等値を未証明のrequiresへ追加しない。
-
-append成功後のfinalize拒否には一般的な全Err保持を要求しない。WaterContactでは旧Runningと追加sampleが残り得る。
-公開経路は同sampleのtick/fractionを確定へ渡すため、有効producerのfractionが[0,1]なら同guardの拒否例は確認していない。
-既存の拒否回帰は内部不整合を注入する。IEEE数値producerとwrapperの到達不能証明を、この正常継続の契約から導かない。
-
-独立proof clientは同じ検証で生成したcore/vstdの`rmeta`/`vir`とbuiltinを、固定配布物の
-`rust_verify`へ明示して読み込む。実行bodyや実型の複写、外部仕様による実装免除、新たな数値公理は追加しない。
-Vector3/Point3のgeneric derived Cloneは固定Verusが仕様を生成できず、warningが2件発生する。
-今回の保持契約は実ownerと値の同一性に接続し、Clone equalityを仮定しない。
-Cloneの仕様化とGameSession全体の証明完了を、この検査の成功から導かない。
-
-`RangeInclusive::contains`はRust 1.97の実装で両端との比較を行い、NaN・無限大も区間外として拒否するため、
-重複する`is_finite`項だけを除去した。公開finalizeの非有限値・符号付きゼロ・端点・直外値と
-既存の失敗原因順を通常Rust回帰で確認する。
-[固定Rust実装](https://github.com/rust-lang/rust/blob/1.97.0/library/core/src/ops/range.rs#L833-L846)、
-[固定Cargo Guide](https://github.com/verus-lang/verus/blob/426d8b0/source/docs/guide/src/cargo_verus.md)に従う。
-
-Verus frontend/attribute macro、専用rustc、bundled vstd、SMT solverと配布物の供給経路をTCBに含める。
-ZIP digestは配布物の同一性を確認するものであり、その意味論やsolverを独立に証明するものではない。
-製品bodyにassume/admit/external_body/assume_specificationによる免除を設けない。
-`--no-cheating`、同一source確認、指定した負検証でもTCB自体は除去されない。
-[公式TCB](https://verus-lang.github.io/verus/guide/tcb.html)に従い、仕様の十分性と製品callerの適用条件を別に監査する。
+- 有限集合の完全列挙にはその範囲での保証がある。
+- 証明へ移した同一性質の重複は整理できるが、通常compilerでの接続、数値、資源解放、stale結果、GPU、配布物起動を一括削除しない。
+- 証明は仕様への適合を扱い、仕様の物理的妥当性や環境接続を無条件には保証しない。

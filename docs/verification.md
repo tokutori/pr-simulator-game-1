@@ -1,150 +1,185 @@
 # 検証契約
 
-## BPG-001の必須検査
+- 本書は現在の検証項目、実行コマンド、数値許容差、失敗条件を定める。
+- 個々の実行結果・環境・対象版はIssue、PR、実行ログへ記録する。
+- 形式証明の対象と信頼境界は[形式検証](formal-verification.md)を参照する。
 
-- `cargo fmt --check`
-- `cargo clippy --workspace --all-targets --locked -- -D warnings`
-- `cargo test --workspace --locked`
-- `RUSTDOCFLAGS=-D warnings` を設定した `cargo doc --workspace --no-deps --locked`
-- coreの `wasm32v1-none` build（stdを提供しないtarget）
-- WASM adapterの `wasm32-unknown-unknown` build
-- CLIのnativeと `wasm32-wasip2` build
-- Web/Node別のTypeScript typecheck、strict lint、tool unit tests、Web production build
-- dependency boundary、asset manifest、出典・license・hash、Viteのasset取込経路、Markdown数式区切りの検査
+## 1. 検証の階層
 
-CIはLinuxとWindowsで実施する。WASI artifactはbuildまでとし、実行を報告に混同しない。
-PauseReasonsの共有sourceを検証する独立Windows jobと正・負検証の固定ツール、TCB、未証明範囲は[形式検証契約](formal-verification.md)に記載する。
-browser上の物理実行はBPG-007以降、Pages配信はBPG-013で検証する。
-BPG-007は現行Hybridのkeyboard/gamepad入力からWASM tick・named snapshot・Screen描画までを検証する。30/60/120 FPS独立性、入力ライフサイクル、pause/resume、座標変換、terminal同期を対象とする。旧fixtureの飛距離を現行modelの受入条件へ流用しない。
-正式なGameSession遷移と実機受入は、それぞれBPG-017、BPG-015/016で検証する。
+| 階層 | 確認する内容 |
+|---|---|
+| 型・静的検査 | 不正状態の排除、依存方向、生成型・validator、資産と出典の整合 |
+| 単体・数値検査 | 解析解、不変量、独立した基準値、誤差予算、失敗時の保持 |
+| 接続検査 | 本番core・WASM・DOM・ECS・保存I/Oの接続と資源寿命 |
+| CUI描画 | 本番GPU pipelineの実行、画像、画面遷移、計器・操作の到達可能性 |
+| 実端末受入 | 物理入力、ブラウザー、HMD・スマートフォン、通常表示の性能 |
+| fidelity | モデルの出典・適用範囲・実対象との一致 |
 
-## Web実Flight中AutoのCUI観測
+- 各階層の結果は個別に判定する。
+- ビルド成功を描画・実端末・実機精度の合格へ置き換えない。
+- 期待値には解析解、不変量、独立した基準caseを用いる。
+- 共有関数の出力を使う接続試験は、転送・投影を検査するものとして位置付ける。
 
-`npm run measure:web-auto -- VITE_URL OUTPUT_DIRECTORY`は、既存Rust / Three.jsの実Flightをheadless Chromiumで観測する。
-tool専用の`playwright-core 1.60.0`を使用する。初回だけ公式CLI `npx playwright-core install chromium`で対応browserを用意する。
-一致するbrowser cacheがあればdownloadを追加しない。[公式browser手順](https://playwright.dev/docs/browsers)を参照する。
+## 2. 標準検査と実行コマンド
 
-```sh
+Rust toolchain、Node.js、依存ライブラリとVerusはリポジトリの固定設定を使用する。
+通常CIはUbuntuとWindows、および独立したWindows形式検証ジョブで実行する。
+
+~~~sh
+cargo fmt --check
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo test --workspace --locked
+cargo doc --workspace --no-deps --locked
+cargo build -p birdman-game-core --target wasm32v1-none --locked
+cargo build -p birdman-game-wasm --target wasm32-unknown-unknown --locked
+cargo build -p birdman-game-cli --target wasm32-wasip2 --locked
+cargo run -p birdman-game-cli --locked -- verify-hybrid-flight all
 npm ci
-npm run dev -- --host 127.0.0.1 --port 4202 --strictPort
+npm run verify
+~~~
+
+- Rustdocでは `RUSTDOCFLAGS=-D warnings` を設定する。
+- Windows CIは共有・Web側のworkspace試験とNative単独試験を分離し、Native実行ファイルもビルドする。
+- WASIはビルドと実行の結果を分ける。
+- `npm run verify` はWASM生成を一度行い、型検査・lint・試験・資産/依存境界・本番ビルドを実行する。
+
+追加の既存検査は次のとおりである。
+
+~~~sh
+python tools/allocation-check/main.py
+python -m unittest discover -s tools/environment-build -v
+python -m unittest discover -s tools/native-release -v
+~~~
+
+- 依存検査はcoreの `no_std`・I/O分離、crateのDAG、engine型の境界、TypeScriptの型依存を含む循環を検査する。
+- 資産検査はmanifestの存在・hash・重複・登録漏れ、利用条件とViteの取込経路を検査する。
+- 生成schemaはRust DTOからのfreshness、readonly型とtuple、実validatorの不正入力拒否を検査する。
+- 表示テストは必要な操作・相対順・到達可能性・非重複・表示先の意味を検査する。説明文や無関係なsectionの全列挙を仕様として固定しない。
+
+## 3. 物理・空力・制御の基礎検査
+
+### 解析解と不変量
+
+`birdman-game-core/src/tests.rs` は、運動方程式の結果を解析解と運動量収支へ照合する。
+
+| 検査 | 条件 | 許容差・判定 |
+|---|---|---|
+| 座標回転往復 | 90°のdown軸回転とforward単位vector | 各成分誤差 ≤ $10^{-15}$ |
+| 自由落下 | $g=9.81$ m/s²、0.1 s | 位置・速度誤差 ≤ $10^{-13}$ |
+| 定力並進 | 4 kg、12 N、0.2 s | 位置・速度誤差 ≤ $10^{-13}$ |
+| 主軸回転 | $I_{xx}=2$ kg m²、2 N m、0.01 s | quaternion成分誤差 ≤ $10^{-13}$ |
+| 縦方向の内部質量 | 機体4 kg・pilot 1 kg、加速度0.3 m/s²、0.1 s | 位置・速度と合成線運動量の誤差 ≤ $10^{-14}$ |
+| 一般3Dの内部質量 | 非対角慣性、外力なし、pilot加速 | NED線運動量 ≤ $2\times10^{-10}$ kg m/s、角運動量 ≤ $2\times10^{-9}$ kg m²/s |
+| 回転中の並進 | 外力なし、初速とyaw rate | NED速度誤差 ≤ $2\times10^{-12}$ m/s |
+| RK4収束 | 非対称剛体の刻み0.02→0.01 s | 誤差比12–20。四次法の理論比16と照合 |
+| 異常入力 | 非単位quaternion、無効慣性、範囲外pilot、非有限・overflow・失敗load | 元の型付き原因を保持し、途中状態を公開しない |
+
+慣性は正定値と物理的に実現可能な主慣性の条件を検査する。
+quaternionの正規化、最短補間枝と端点、subnormalから大きい有限値までのnormを検査する。
+
+### パイロット・尾翼・風・採点
+
+- pilot policyは加速・制動・移動範囲・速度上限・固定目標への収束・同条件決定性を検査する。
+  tick内極値と全RK stageの一定加速度解析運動を照合し、4096 stepを超える停止系列や制動速度が数値上減少しない条件を型付きに拒否する。
+- 二系統尾翼はauthority両端・Shared混合・飽和・slew・feedback符号・保持incidenceを検査する。
+  全RK stageへ同じ確定操作を渡し、失敗時のpilot・actuator・tickの非commitを確認する。
+- 迎角保護は本番の候補選択・適用域・slew/authority条件を通す。保護の成立と任意入力の全域安定性を分ける。
+- 風は無風・一様風・headwind/crosswind/鉛直流・解析shear・grid trilinear補間を検査する。
+  閉境界と直外、位置依存windの各RK stage評価、元のOutsideGrid/fatal原因を確認する。
+- 発進変換はCGとdatumの位置・速度を一般姿勢、角速度、pilot移動を含めて復元する。
+- scoreはcourse/cross-track/net horizontalの解析値、逆行、高度不変性、軸正規化とoverflowを検査する。
+
+### Static polar
+
+`aerodynamics::polar::tests` は7独立係数列と6成分wrenchを検査する。
+
+- constructorは非有限値、点数不足、重複・逆順、負のCDi/CDv、非正参照量を拒否する。負の揚力・momentは有効である。
+- PWLは全列のknot・補間・異なるslope・両端を照合し、直外を拒否する。係数誤差は概ね $10^{-15}$ とする。
+- $(u,v,w)=(4,12,3)$ m/s、$S=2,b=4,c=0.5,\rho=1$ の独立wrenchで軸と次元化を確認する。
+  演算scaleに対応する約32 epsilonを目安とし、力 $8\times10^{-13}$ N、moment $2\times10^{-12}$ N mを判定する。
+- 固定参照点の変更でdatum wrenchと運動応答が一致すること、同じdatum流を使うことを確認する。
+  100 tickの参照点回帰は位置・速度・角速度・quaternionの成分差 ≤ $10^{-12}$ とする。
+- 借用期間はcompile-fail doctest、allocationなしの対象経路は独立計測、`no_std` は専用targetのbuildで検査する。
+
+### Current-reference hybrid
+
+本番geometry/providerを、公開可能な架空fixtureと独立した極限式へ照合する。
+proxy増分の微係数はstatic基底の回転から分離し、矩形・無ねじり・中立状態を基準とする。
+
+```math
+\widehat p=\frac{pb}{2V},\quad
+\widehat q=\frac{qc}{2V},\quad
+\widehat r=\frac{rb}{2V},\qquad
+C_{l_{\widehat p}}=-\frac{a_W}{6},\quad
+C_{m_{\widehat q}}=-2a_T\frac{S_t}{S}\left(\frac{l_t}{c}\right)^2
 ```
 
-別のCUIから実行する。
-
-```sh
-npm run measure:web-auto -- http://127.0.0.1:4202/pr-simulator-game-1/ target/web-live-auto
+```math
+C_{Y_\beta}=-a_F\frac{S_f}{S},\quad
+C_{n_\beta}=a_F\frac{S_f}{S}\frac{l_f}{b},\quad
+C_{n_{\widehat r}}=-2a_F\frac{S_f}{S}\left(\frac{l_f}{b}\right)^2
 ```
 
-これはVite開発serverの本番Rust / rendererへの接続観測であり、配信bundleのCPU性能試験と区分する。
-通常UIでTypical / Manualを準備し、Countdown後に一度PauseしてHigh / Autoを選択する。
-準備は最大8秒待機し、未準備・未対応・失敗を保持する。設定後のUI Resumeから固定2秒のRunning窓を観測する。
-窓内停止・終端はそのまま不完全とし、Resumeや再試行で補完しない。画像要求は窓の外だけで実行する。
-1280×720、DPR1を使用し、結果JSONへsource/build HEAD、実WASM hash、GPU・browserと確定条件を保存する。
+- $l_t,l_f$ は後方を正とするarmである。
+- beta差分では速度を一定にする。
+- 複数central-difference幅を用い、矩形翼N stripの期待値 $-a_W(1-1/N^2)/6$ と連続極限を個別に検査する。
 
-既存公開bridgeのprototype観測は元method / this / arguments / 戻り値を維持し、実GPU値を変更しない。
-Rust snapshotは既存production decoderを使う。source epoch / frame / timeを持つpolicy-forwarded標本を、到着時刻と分離する。
-確定scale / shadowはsource epochの履歴へ帰属させ、旧標本へ到着時の新pairを付け替えない。実canvas寸法も照合する。
-同じ窓でRAF間隔とRust tick進行・停止・failureを記録し、GPU / CPU / present待機を混同しない。
+| 対象 | 判定 |
+|---|---|
+| geometry | 線型chordの厳密c²積分、quarter-chord、MAC、面積・AR、zero-chord tip、左右対称性 |
+| slope | AR=2で $\pi$、AR=4で $4\pi/3$、大ARで $2\pi$、小ARで $\pi AR$ |
+| 中立増分 | 複数alpha/速度で増分0・static一致。許容差は動圧等の演算scaleに対応 |
+| 符号・風 | p/q/r、fin beta、tail incidence、dihedral、片翼gust、左右相殺、Galilean invariance |
+| 適用域 | global beta、tail角、raw/controlled角差、actual/reference span角と速度比の閉境界・直外 |
+| 零速・異常 | 全点静止の零荷重、datum静止と局所流の未定義参照、微小正速度、wind/density/overflowの原因 |
+| 原子的更新 | 全4 RK stageの保持操作・失敗site/limit/stageと直前成功状態の保持 |
 
-履歴は各4096件に制限し、切捨ては不完全とする。固定窓に対するsource spanは90%以上、両端gapは100 ms以内を要求する。
-uniqueなepoch / frameは20件以上を要求する。20件は5%尾部の最小1標本に対応する分解能であり、分布の信頼区間や80 FPS達成を保証しない。
-各epoch群20件未満はlimitedとし、12.5 ms予算判定を欠損値として保持する。重複・逆順・stale・不明epoch、標本不足を0や成功へ変換しない。
-query未発行・disjoint・旧epoch破棄の全数は取得しない。coverageは観測source span内のframe番号に限定し、全issued queryのcensusと区分する。
-500 msのbounded drain後にJSONを確定する。observer自体の追加CPU費用、headlessの通常60 Hz上限を記録し、補正で差し引かない。
-GPU 12.5 ms、RAF間隔、実80 FPS表示の受入は独立して判断する。通常ユーザーのbrowser profile、OS Window、物理キーを操作しない。
+- actual/reference forwardは厳密に正である。
+- proxy速度比0.8–1.2は参照速度に対する比である。
+- 静的適用域、失速、wake、Re依存、実機精度はそれぞれのモデル契約に従う。
 
-## Web共有UIのCUI検査
+### 動的割当の計測
 
-`npm run test:web-ui -- VITE_URL OUTPUT_DIRECTORY`は、既存のPlaywright-coreとheadless Chromiumから本番の共有UIを操作する。
-上記と同じローカルViteサーバーを使用し、Setupの直接選択、Briefingの技術情報、Countdown、実Flight/HUD、Pause/Resume、
-Result、Analysisの3図、Replay、実CSV/JSONダウンロード、同条件の再試行を検査する。
-JSONレポートへsource/build SHA、実WASM hash、browser/GPU、達成した操作と失敗を保存し、各段階の画像とダウンロード原文も保存する。
-browserは専用の一時contextを使用し、通常のprofile、可視window、computer use、既存のflight-logsを操作しない。
-発進時の予期しないPauseは診断へ保持する。公開Resumeを一度だけ実行して後続画面も検査し、最終結果は失敗とする。
-出力先は専用directoryを指定する。実HMD/Phone VR、物理キー入力、配信bundleの性能と80 FPSの受入は別に確認する。
+- `tools/allocation-check/main.py` はnative debug専用harnessを実行する。
+- 本番provider評価・RK4・実tickの成功とGlobalBetaの型付き失敗を各10,000回計測し、 `alloc`・`alloc_zeroed`・`realloc` の各計数0を要求する。
+- 校正では各1回を検出し、warmup・assert・出力は計測窓の外に置く。
+- failureではdatum site・元cause・失敗stage・非commitも確認する。
 
-```sh
-npm run test:web-ui -- http://127.0.0.1:4202/pr-simulator-game-1/ target/web-ui-screen
-```
+test専用allocatorはSystemへ委譲し、内部でI/O・lock・panicを行わない。
+[`GlobalAlloc`](https://doc.rust-lang.org/core/alloc/trait.GlobalAlloc.html)と
+[`black_box`](https://doc.rust-lang.org/std/hint/fn.black_box.html)の最適化条件に従い、
+実行環境での計測と、全最適化設定に対する証明を区別する。
 
-## 共有elapsed Countdown
+## 4. Hybridの刻み半減と風境界
 
-#379の時間規則はcore、実際の生成WASM/facade/Web main、NativeのUpdate接続で検査する。800 msの表示3秒、1秒の表示2秒、3秒の一度だけのlaunch、不規則差分、同時刻・重複callback、負・非有限・overflow、取消後の旧token、stale owner、frame不可用時の安全取消を対象とする。
-Coreの3回呼出しだけをadapter時間の根拠にしない。Nativeは150 ms以内の実Update列と100 Hz FixedUpdateを通し、Countdown中のrecord未開始とlaunch時のtick 0を確認する。Webは1秒wake-upとは独立したpresentation frame列を使い、frame停止・blur・非表示化による取消を確認する。
-既存#142のVR中断はCountdownの取消とReplayのclock停止・旧timer拒否へ接続する。headlessの実WASM検査、Native GPU描画、実VR機器の受入、release性能の計測を区別して報告する。
+### 共通条件と入力
 
-## 後続の物理検証
+- `tail_simulation::numerical_tests` は現行Playableを100/200/400 Hzのtest-only driverで比較する。
+- 製品は100 Hzを維持する。
+- 100 Hz driverは同じ設定の公開tickと全状態が一致することを要求する。
 
-### BPG-042 native hybrid smoke
+- f64、密度1.225 kg/m³、重力9.80665 m/s²、対気速度9.7 m/s、CG高度50 mを基準とする。
+- 初期body rateは $(0.02,-0.04,0.03)$ rad/s、controllerのq/r gainは0.2 s、slewは1 rad/sとする。
+  初期incidenceを初期commandへ合わせ、開始時のslew過渡を分離する。
+- 0.5 sの共通100 Hz時刻51標本を比較する。modeはManual / Shared(0.5) / Automaticを個別に扱う。
+- Neutral、SmoothChanged、SlewReversalを分ける。
+  変更系列は0.10–0.20 sにmanual intent $(0.01,0.005)$ とq/r demand $(0.01,-0.005)$ rad/s、
+  0.20–0.30 sに逆符号、0.30 sにpilot normalized Set(0.2)、その他はneutral/Holdとする。
+  SmoothChangedは0.20–0.21 sにneutralを挟む。
+- Manualの4 mrad反転は400 Hzのslew上限2.5 mradを超える。100/200 Hzの非作動と400 Hzの作動を確認する。
 
-`cargo run -p birdman-game-cli --locked -- verify-hybrid-flight all`は公開coreの二系統intentを
-Manual/Shared/Automaticから同じ`GameSession`のhybrid tick・記録・終端へ接続する。
-各modeは短い固定入力列を二度実行し、v6 recordとnamed terminal JSONの決定性・保存controls・finalizationを照合する。
-保存queryには既存held-incidence則を適用し、身体targetのSet/Holdは舵authorityから独立させる。
-低初速の独立回帰は適用範囲終了時の元causeと直前成功recordだけを保持し、失敗stageのstateを出力しない。
-CLIは共有HybridSessionPreparationで公開Playable model・Calm環境・controller 3を生成する。browser Typical、距離目標、長時間安定性、収束・実機検証は個別に確認する。旧verify-flightコマンドを提供しない。
+- physics-onlyはFBW・actuator・pilot policyを100 Hzで評価し、各10 msの確定操作を1/2/4 RK4区間へ保持する。
+- coupledはこれらも100/200/400 Hzで評価する。
+- 全driverへ同じ物理時刻の入力を与える。
+- 各load評価で実hybrid validatorを通し、接触前・選択したPWL区間内であることを確認する。
 
-### BPG-042 アプリ統合
+### 誤差予算
 
-既定の二系統flightはnamed schema 2 snapshot、保存schema 6、同じRust GameSessionの入力・記録・終了へ接続する。
-保存schema 6の元identity・cause・stampを検査する。未対応schemaはtyped拒否し、既存bytesを削除しない。TSによるFBW・score再計算を拒否する。
-TailInput schema 2はformatのRust wire型から生成したreadonly TS型・構造validatorを使い、生成freshness、必須・余剰field、Hold/Set、finite・normalized範囲を検査する。
-Web入力はcommandのown enumerable fieldsをplain wire objectへ一度投影してから検証し、prototype・toJSON・getterによる検査値と送信値の不一致を防ぐ。
-rate上限と1024-byte上限のRust拒否、および拒否時のsnapshot・record sample数不変を検査する。snapshot/query/保存形式と性能検証は入力schema生成のscopeから分離する。
-schema 2のrecord queryは実WASM出力を生成validatorへ通し、context/sample/batch/summary/windの欠損・余剰field、variant、tuple、finiteとsafe integerを検査する。exactstamp、quaternion、連続性、終端とscoreの一致、風providerとrequest、世代の意味検査を既存回帰へ保持する。
-100 Hz JSON往復の限定CPU計測は[#307の既存結果](https://github.com/tokutori/pr-simulator-game-1/issues/307#issuecomment-6205379441)を参照する。過去sourceの計測値を現行browser/GPU/FPSの根拠へ転用しない。
-単一facade owner、query/record source世代、同datasetのcursor query、Rust Replay clock、BFCache停止と最終解放を検証する。
-Setup/Briefing、Screen/VRの共通UI、HUDのavailability、未知保存環境のmap/風拒否、current archive/PB routingを対象とする。
-CPU上の型・unit/integration・buildの合格と、実ブラウザー/GPU・スマートフォン・HMDの表示/操作受入を区別する。
-2026-10-08、`1093d4cb`（PR #235）をChromium 148・Playwright 1.60・AMD Radeon 860MのWebGLで確認した。
-ScreenのBoot→Setup→Briefing→Flight keyboard→Pause/Resume→Result→CSV2/JSON6→Analysis→Replay→Retryが成功した。
-Analysisは3chart×3viewportとReplayのJSON全文一致を確認した。
-自然終端の観測は12.33 sの`OutOfValidEnvelope`であり、WaterContactの検査と分離する。
-Phone VRは合成sensor境界とStereo Title/Menu/Setup/Briefingまでを確認した。
-Flight Head・実センサー・実スマートフォン・実HMDは未検証であり、[#15](https://github.com/tokutori/pr-simulator-game-1/issues/15)・[#16](https://github.com/tokutori/pr-simulator-game-1/issues/16)・[#161](https://github.com/tokutori/pr-simulator-game-1/issues/161)の受入を保持する。
-新mockの全mode安定性・長時間安定性・実機性能は、この限定受入の範囲に含めない。
+- 共通時刻での成分別最大絶対差を取り、100/400 Hz差を以下の上限で判定する。
+- 姿勢距離には最短符号のquaternionで $4\operatorname{atan2}(\lVert q_1-q_2\rVert,\lVert q_1+q_2\rVert)$ を用いる。
+- 同じ姿勢・逆符号・$10^{-10}$ radの小回転を別に検査する。
 
-### BPG-043 hybrid量別step-halving
-
-`tail_simulation::numerical_tests`は現行Playable架空mockの同一初期条件・入力列を、
-100/200/400 Hzのtest-only driverで比較する。製品tick・機体値・公開APIは100 Hzのまま維持する。
-既存のtrim参照値・決定性・解析解試験は再実装しない。
-
-- 演算はf64、無風、密度1.225 kg/m³、重力9.80665 m/s²、初速9.7 m/sとする。
-  seed・乱数・browser clockは使用しない。現行trimの合成CG高度50 mから開始し、
-  body rateだけを$(p,q,r)=(0.02,-0.04,0.03)$ rad/sへ変更する。
-  controllerはq/r gain各0.2 s・slew 1 rad/s、modeはManual/Shared(0.5)/Automaticを別に検査する。
-  初期incidenceは各modeの初期rateに対応するcommandへ事前設定し、開始時のslew過渡を分離する。
-- 比較区間は0.5 s、観測は共通100 Hzの51標本とする。Neutral/SmoothChanged/SlewReversalを別に検査する。
-  変更列は0.10–0.20 sにmanual intent$(0.01,0.005)$・q/r demand$(0.01,-0.005)$ rad/s、
-  0.20–0.30 sに両者の符号反転、それ以外は0とする。0.30 sに身体targetへnormalized Set(0.2)を送信し、
-  それ以外はHoldを使用する。すべてのdriverが同じ100 Hzの物理時刻入力を保持する。
-  SmoothChangedだけは0.20–0.21 sにneutralを挟む。Neutral/SmoothChangedでは全control stepの
-  updated incidenceとmixed targetが一致することを検査し、slew非作動を確認する。
-  SlewReversalは元の直接反転を保持する。Manualの4 mrad反転は400 Hzのslew上限2.5 mradを超えるため、
-  100/200 Hzでは非作動・400 Hzでは作動することも検査する。
-- **physics-only**はFBW観測・authority・incidence更新・pilot policyを100 Hzに固定する。
-  各0.01 s区間で一度解決したincidence・pilot加速度を、1/2/4個のRK4区間へ同じ値で保持する。
-  **連成**は同じ入力を保持したまま、control・actuator・pilot policyも100/200/400 Hzへ変更する。
-  両者の結果・許容差を個別に判定する。100 Hz driverの全標本は既存製品tickと完全一致させる。
-- 全RK4 load評価に既存hybrid validatorを適用し、datum alphaがPWLの開区間$(0,0.06)$ radにあり、
-  datum down座標が−40 mより小さいことも検査する。この高度は半径10 m以内のmock geometryを
-  静水面から分離する。接触前の区間だけを比較し、範囲外の外挿・contact time/scoreの生成は行わない。
-
-誤差は共通観測時刻での各量の成分別最大絶対差を取り、さらに区間内の最大値を判定する。
-姿勢は最短quaternion符号を選び、差・和のchord長から$4\operatorname{atan2}(\|q_1-q_2\|,\|q_1+q_2\|)$を使用する。
-異なる単位を一つのmaxへ混在させず、同一姿勢・逆符号・$10^{-10}$ radの小回転を独立に検査する。
-
-以下は実行前に定める量別誤差予算であり、100/400 Hz差のCI gateである。
-400 Hzは同じ方程式の細分参照であり、厳密解に対する絶対誤差上限・実機精度の証明とは区別する。
-step-halvingで得る100/200 Hz差と200/400 Hz差の収縮も同時に要求する。
-連成SlewReversalは刻み別のslew過渡が異なるため、固定収縮率の対象から分離し、量別予算・域内・製品一致を保持する。
-physics-onlyはすべての入力系列で100 Hzのslew評価を保持し、元の収縮条件を適用する。
-滑らかな固定保持RK4の理論収縮率1/16に対してphysics-onlyは1/8を上限とする。
-連成の区間保持・離散feedbackはRK4四次の対象から分離し、一次の理論率1/2に対して3/4を上限とする。
-PWL knot・policy切替・飽和を跨ぐ一般条件へ、この収縮率を適用しない。
-
-| 量 | physics-only予算 | 連成予算 | 丸めscale |
+| 量 | physics-only | coupled | 丸めscale $s$ |
 |---|---:|---:|---:|
 | datum位置 [m] | $10^{-6}$ | $10^{-3}$ | 50 |
 | datum速度 [m/s] | $10^{-6}$ | $10^{-3}$ | 10 |
@@ -154,268 +189,331 @@ PWL knot・policy切替・飽和を跨ぐ一般条件へ、この収縮率を適
 | pilot速度 [m/s] | $10^{-10}$ | $10^{-10}$ | 0.3 |
 | physical incidence [rad] | $10^{-7}$ | $5\times10^{-4}$ | 0.01 |
 
-収縮判定は$D_{200,400}\le cD_{100,200}+4096\epsilon s$とし、$s$は表の量別scale、
-$\epsilon$はf64 epsilonとする。4096は400 Hz系列の200 step・RK4 stage等の累積丸めへの
-事前余裕であり、厳密な丸め誤差上限とは区別する。床以下の量は刻み差の検出限界だけを示す。
-静止pilotや解析的な保持加速度の系列で、収縮の次数を実証したと扱わない。
-許容差を観測結果へ事後fitせず、超過は試験条件・支配誤差の調査対象とする。
-この単位の検査結果は実行時のcommit・toolchain・環境とともに報告する。
-Jacobian/eigen・小摂動は[局所離散線形化](hybrid-numerical-validation.md)、event精度は[contact検証](contact-numerical-validation.md)、
-wind・適用限界近傍は[風とdomain検証](hybrid-wind-domain-validation.md)に条件と量別上限を記載する。
-
-### BPG-043の契約対応
-
-[#211](https://github.com/tokutori/pr-simulator-game-1/issues/211)の9.1–9.4を次の8群で追跡する。
-許容差・演算条件は各契約文書と試験定数を正本とし、以下のnative検査はWindows/Rust 1.97.0である。
-CIは各PRのexact headで判定する。風・domain検査はPR #253で統合し、同sourceを含むPR #269のUbuntu・Windows検査も成功した。
-
-| 指示・契約群 | 既存試験群と条件 | PR・commit | 結果・範囲 |
-|---|---|---|---|
-| 9.1 A/B/D 静的契約 | `polar::tests`のconstructor/PWL/axis/reference、`hybrid::tests`と`hybrid_mock::tests`のgeometry/neutral oracle | [#222](https://github.com/tokutori/pr-simulator-game-1/pull/222)、[#226](https://github.com/tokutori/pr-simulator-game-1/pull/226)、[#228](https://github.com/tokutori/pr-simulator-game-1/pull/228) | merge済み。演算scaleの許容差と独立oracleを使用する |
-| 9.2 B 動的増分 | `hybrid::tests`の微係数・差分幅・strip収束、gust/dihedral/fin/rate/control符号、Galilean invariance | [#226](https://github.com/tokutori/pr-simulator-game-1/pull/226) / `1cb9b8f` | merge済み。staticとproxy増分の二重計上を検査する |
-| 9.3 D/E trim・決定性 | `hybrid_mock::trim::tests`の独立参照と実wrench/core釣合い、`verify-hybrid-flight all`の固定入力二度実行 | [#228](https://github.com/tokutori/pr-simulator-game-1/pull/228) / `8cf2829`、[#235](https://github.com/tokutori/pr-simulator-game-1/pull/235) / `1093d4cb` | angle/x差≤1e-7、力/moment残差≤1e-5。同identity/tick入力を照合し、架空fixtureに限定する |
-| 9.3 F 刻み・量別精度 | `tail_simulation::numerical_tests`のphysics-only/連成、3mode、Neutral/SmoothChanged/SlewReversal | [#249](https://github.com/tokutori/pr-simulator-game-1/pull/249) / `cfab952` | core273＋doc4、両OS CI成功。量別予算・丸めfloor・slew例外を分離する |
-| 9.3 F 局所応答 | `hybrid_linearization`のcentral Jacobian/固有値・小摂動、零風・静止pilot・接触前0.5 s | [#250](https://github.com/tokutori/pr-simulator-game-1/pull/250) / `9f87046` | 2試験/checker24、両OS CI成功。Manual/Automaticとも局所growingが3個残る |
-| 9.3 F event | `contact::tests::numerical`のballistic解析endpointと実RK4、4phase×100/200/400 Hz | [#251](https://github.com/tokutori/pr-simulator-game-1/pull/251) / `e406801` | 2試験・両OS CI成功。O(dt²)補間上限と積分丸めを分離し、hybrid着水へ転用しない |
-| 9.3–9.4 F 風・domain | `numerical_tests::wind_tests`の一様風/shear/上限近傍、全mode量別gate・境界外原子性 | [#253](https://github.com/tokutori/pr-simulator-game-1/pull/253) / `945ed389`、[#269](https://github.com/tokutori/pr-simulator-game-1/pull/269) / `f3f39e5` | merge済み・両OS検査成功。全風領域・長時間安定性は対象外 |
-| 9.4 B/C/E 範囲外・公開 | `hybrid::tests::envelope`の全stage/零速、`tail_control::tests`/`tail_tick`、`session-facade`/`named-record`/`main-tail-integration` | [#226](https://github.com/tokutori/pr-simulator-game-1/pull/226)、[#227](https://github.com/tokutori/pr-simulator-game-1/pull/227)、[#235](https://github.com/tokutori/pr-simulator-game-1/pull/235) / `1093d4cb` | software・上記限定Screen受入成功。現行recordを保存layoutで閲覧し、VR・実端末の未検証範囲を保持する |
-
-表示条件の物理不変は`tail-display-invariants.test.ts`で追加検査する。既存FPS回帰のtick数に加え、
-同一生成WASM・同mode・同じ物理時刻入力・100tick ManualAbortについて、Information 5種、
-3backendと30/60/120 FPS間の全成功state/controls/telemetry・保存sample・finalizationを直接比較する。
-difficulty/PB metadataは物理列から分離する。条件と境界は[局所離散線形化の関連回帰](hybrid-numerical-validation.md)に記載する。
-Windows 11の対象typecheck・eslintと135条件が成功した。合成空間backendの結果は実XR受入と区別する。
-
-### BPG-002 core検証
-
-`birdman-game-core`のunit testsは解析解または運動量不変量を期待値に使用する。
-2026-09-27時点のBPG-002完了時は17件すべて成功した。BPG-003で空力unit test 19件を追加した。
-
-| ケース | 初期条件・比較対象 | 受入許容差・結果 |
-|---|---|---|
-| Body/NED回転往復 | 90°のdown軸回転とforward単位vector | 各成分誤差 $\le 10^{-15}$、成功 |
-| 重力自由落下 | $g=9.81$ m/s²、0.1 s、解析解 | 位置・速度誤差 $\le 10^{-13}$、成功 |
-| 定力並進 | 4 kg、12 N、0.2 s、解析解 | 位置・速度誤差 $\le 10^{-13}$、成功 |
-| 主軸moment | $I_{xx}=2$ kg m²、2 N m、0.01 s、解析回転 | quaternion成分誤差 $\le 10^{-13}$、成功 |
-| 縦方向の内部質量 | 4 kg機体+1 kg pilot、$\ddot{x}_p=0.3$ m/s²、0.1 s、線運動量閉形式 | pilot・datum位置/速度誤差 $\le 10^{-14}$、合成線運動量誤差 $\le 10^{-14}$ kg m/s、成功 |
-| 内部質量運動量 | 一般3D姿勢、非対角慣性、pilot加速、外力なし | NED線運動量誤差 $\le 2\times10^{-10}$ kg m/s、角運動量誤差 $\le 2\times10^{-9}$ kg m²/s、成功 |
-| 回転中の並進 | 外力なし、初速・body yaw rateあり | NED速度誤差 $\le 2\times10^{-12}$ m/s、成功 |
-| 姿勢積分収束 | torque-free非対称剛体、$0.02$ sから$0.01$ sへstepを半減 | 誤差比が12–20の範囲、成功。4次法の理論値16を含む |
-| pilot境界の保持加速度 | 正負の境界、$x=0.49989999$ mの静止、境界直前の転回、低加速度の制動系列 | tick内極値・速度/加速度上限と次policyの受理、固定目標への収束を検査 |
-| pilot stage解析運動 | $x=0.4999997$ m、$v=0.001$ m/s、$a=-2$ m/s²、0.01 s | 全4 stageを一定加速度解析解と比較、範囲内の転回を受理 |
-| pilot policy閉包 | 4組のrange/速度/加速度上限、seed固定の目標反転列、狭travelの静止追従 | 同一入力の決定性、反復後の移動限界と停止証明を検査 |
-| pilot数値適用域 | 4096 stepを超える停止系列、`f64`上で制動速度が減少しない値 | `PilotMotionOutsidePolicyDomain`、入力state不変、連続停止不能errorと区別 |
-| 入力・モデル異常 | 非単位quaternion、非正定値慣性、pilot範囲超過、算術overflow、失敗load、無効step | 型付きerrorを返し、pilot状態をclampせず、部分stateを公開しない |
-
-これらは数値積分器と運動量収支の検証であり、実機飛距離の予測精度を保証しない。
-100 Hzの統合系収束と独立reference caseの追加比較は、空力・風場・control接続後にも継続する。
-
-### BPG-003 空力core検証
-
-2026-09-27時点で追加した19件の空力unit testはすべて成功した。
-
-| ケース | 比較対象 | 受入許容差・結果 |
-|---|---|---|
-| 動圧・揚力・抗力 | $\rho=2$ kg/m³、$V=10$ m/s、$S=2$ m²、$C_L=0.5$、$C_D=0.1 | $q=100$ Pa、$F_x=-20$ N、$F_z=-100$ N、誤差 $\le10^{-12}$、成功 |
-| alpha/beta係数law | rad単位の基準係数と角度微係数 | 解析力との差 $\le10^{-10}$、成功 |
-| 一様windと回転局所速度 | $v_O=(10,0,0)$ m/s、$\omega_z=1$ rad/s、$r=(1,0,0)$ m | $V_i=\sqrt{101}$ m/s、pilot相対速度の変更でflow不変、誤差 $\le10^{-12}$、成功 |
-| 左右対称な主翼 | $y=\pm1$ m、各要素の上向き揚力50 N | 合力 $F_z=-100$ N、roll moment 0、誤差 $\le10^{-12}$、成功 |
-| 作用点と合成重心 | 実pilot position $x_p=0.3$ m、mass ratioから算出した $r_G$ | $M_O-r_G\times F$ の解析値と一致、誤差 $\le10^{-12}$、成功 |
-| 係数moment | 参照span/chordと $C_l,C_m,C_n$ | 各body軸momentの解析値と一致、誤差 $\le10^{-12}$、成功 |
-| 異常入力・適用範囲 | 零速、pure lateral、範囲外角度・動圧、負drag、非有限値、算術overflow | 仕様どおり零荷重または型付きerror、成功 |
-| RK4接続 | 一様空力providerを通した0.01 sの積分step | 抗力による速度低下を確認、成功 |
-
-### BPG-038 全機static polar
-
-`aerodynamics::polar::tests`は実機値を含まない独立fixtureで次を検証する。
-7独立係数列から6成分wrenchを評価し、抗力はCDi+CDvの計算値とする。
-
-| ケース | 独立比較対象・受入条件 |
-|---|---|
-| 構築時検証 | 各列・alphaの非有限値、2点未満、重複・逆順、負CDi/CDv、非正参照量・密度、無効metadataを拒否。負lift/momentは有効 |
-| PWL | 全7列の独立補間、異なる区間slope、元のknot値、両端点、直外の拒否。係数誤差はおおむね $10^{-15}$ |
-| 数値境界 | 極端な有限alpha幅・符号の異なる係数、最小正subnormal速度、計算overflowを区別。外挿やclampは行わない |
-| 力・moment軸 | $(u,v,w)=(4,12,3)$ m/s、$S=2,b=4,c=0.5,\rho=1$、非ゼロCl/Cnの解析6成分。momentの解析値、span/MACの軸対応、同じalpha・Vでbetaを変えたmomentの一致を確認。alpha-only回転と次元化は可換である。許容差は32 epsilon程度の演算scaleを目安とし、力 $8\times10^{-13}$ N、moment $2\times10^{-12}$ N m |
-| 参照点 | 固定PとOの表現で同じdatum wrench、general tensor・moving pilot方程式の応答が一致。さらにalpha=beta=0を維持する軸方向drag+roll fixtureで二つの静的providerを100 tick実行し、位置・速度・角速度・quaternion各成分差 $\le10^{-12}$ |
-| datum flow | Pにoffsetがあり、rate・空間wind gradientがあってもOだけでstaticを評価。XCP/点速度の二重適用がない |
-| frame・風 | NEDからbodyへの逆回転、一様world速度と風の同量加算による荷重不変性 |
-| provider・error | StaticPolar/Hybridの排他的選択を検証。各RK stageの位置でdatum風をsampleし、stage 2のgrid外失敗で途中stateを返さずstatic causeを保持 |
-| 借用・no_std | row借用のcompile-fail doctest、coreの`wasm32v1-none` build、外部allocation probeで構築・評価・RK stepのallocationを計測 |
-
-static部品のゼロ流はalpha未定義errorであり、hybridの全局所点静止特例は次節で検証する。
-mock trim、公開終端・現行recordはBPG-041〜043の試験とする。
-単体polarの合格を、実機精度・wake・失速・Re依存・地面効果の検証として扱わない。
-公開mockはBPG-041で定義・検証し、既定切替はBPG-042の公開型・identity・記録version更新と同時に行う。
-過去のBPG-007の距離・時間は履歴値であり、現行hybridの空力調整targetへ適用しない。
-
-2026-10-05、Windows / Rust 1.97.0の独立したworktreeで上記12件と借用期間のdoctestが成功した。
-repo外の計測用Rust programで`System` allocatorのalloc・alloc_zeroed・reallocを計数し、
-polar・provider・モデル構築のallocation 0、static評価10,000回と既存RK4 step 10,000回のallocation 0を確認した。
-測定は非ゼロ流、P offset、空間wind gradient、moving pilotを含むdebug buildで行った。
-coreのunsafe禁止と依存は維持し、計測用allocatorをcoreやproduct runtimeへ追加しない。
-
-### BPG-039 current-reference hybrid
-
-`aerodynamics::hybrid::tests`は公開可能な架空geometry・polarだけを使用する。
-`python tools/allocation-check/main.py`はnative debug build専用の独立計測harnessを実行する。
-この永続probeは上記BPG-038のrepo外計測原本と区別し、core・Cargo依存・product runtimeを変更しない。
-架空の3surface・空間wind gradient・非zero rateとmoving pilotを構築し、warmup・assert・printを窓外に置く。
-Systemへ転送するtest専用allocatorのalloc・alloc_zeroed・reallocを個別に計数し、校正で各1回を検出する。
-provider評価・RK4・実tickの成功とGlobalBetaによる型付き範囲外を各10,000回計測し、各割当数0を要求する。
-範囲外ではdatum site・元cause・直接評価のstageなしとRK4/tickのFirst stage・tick非commitを検査する。
-入力・出力にblack_boxを用い、最適化による評価除去を抑制する。測定は実行したnative debug環境に限定し、
-全最適化設定・全端末・実時間性能の証明とは扱わない。
-[GlobalAllocの最適化・再入条件](https://doc.rust-lang.org/core/alloc/trait.GlobalAlloc.html)と
-[black_boxのbest-effort条件](https://doc.rust-lang.org/std/hint/fn.black_box.html)に従い、
-allocator内ではI/O・lock・panicを使わず、計数のassertを通常の安全なassertとして窓外で行う。
-2026-10-06、Windows / Rust 1.97.0で校正と上記6窓の各10,000回が成功し、割当3種すべて0を確認した。
-旧BPG-038原本の再実行、新Hybridの構築時実測、他の環境・最適化設定の合格をこの結果に含めない。
-次の微係数はproxy増分だけを正規化し、staticの力基底変化と分離する。
-flat rectangular、no-twist、alpha=0、neutralを基準とし、tailのz offset等は個別oracleの条件に固定する。
-
 ```math
-\widehat p=\frac{pb}{2V},\quad\widehat q=\frac{qc}{2V},\quad\widehat r=\frac{rb}{2V},\qquad
-C_{l_{\widehat p}}=-\frac{a_W}6,\qquad
-C_{m_{\widehat q}}=-2a_T\frac{S_t}{S}\left(\frac{l_t}{c}\right)^2
+D_{200,400}\le cD_{100,200}+4096\epsilon s,\qquad
+c=\begin{cases}1/8&\text{physics-only}\\3/4&\text{coupled}\end{cases}
 ```
 
+- $\epsilon$ はf64 epsilonである。
+- 丸めfloorは事前の演算余裕であり、厳密な丸め誤差証明ではない。
+- coupled SlewReversalは刻み別のslew過渡が異なるため収縮率を要求せず、絶対予算・域内・製品一致を保持する。
+- PWL knot、policy切替、飽和を跨ぐ一般条件へ同じ収縮率を適用しない。
+- 400 Hzは細分参照であり、解析的厳密解や実機に対する絶対誤差保証とは区別する。
+
+### 風・適用域上限近傍
+
+一様風はNED $(0.3,0.1,-0.04)$ m/s、shearは同じ基準風とCG位置 $(0,0,-50)$ mを用いる。
+gradientの行は風N/E/D、列は位置N/E/D、単位はs⁻¹である。
+
+~~~text
+[[0,     0,      0.015],
+ [0.012, 0,      0    ],
+ [0,    -0.003,  0    ]]
+~~~
+
+- 風2条件はSmoothChanged・0.5 sを比較し、datum alphaを $(0,0.06)$ radへ保つ。
+- 上限近傍は公開polar上限から0.002 rad内側、零風・初期rate 0・静止pilot・neutral/Hold・0.05 sとする。
+- この数値fixtureだけpitch gain 0.1 sを使い、公開controllerの0.2 sと分離する。
+- 全条件で前節の量別予算・丸めfloor・収縮率を用い、datum downを−40 m未満に保つ。
+- 上限近傍のalphaは最後のPWL区間内に置く。
+- 区間内確認は補助観測であり、適用域は本番providerで判定する。
+
+- 公開polar上限の $10^{-6}$ rad外側は全modeのFirst stageで `StaticPolar / OutsideEnvelope / StaticAlpha / First` として拒否され、入力状態を保持する。
+- 後段stageの失敗保持も個別に検査する。
+- 上限近傍の結果は選択したtest-local gainに限定する。
+
+## 5. 局所離散線型化
+
+`crates/birdman-game-core/tests/hybrid_linearization.rs` は公開100 Hz tick mapを検査する。
+
+~~~sh
+cargo test -p birdman-game-core --test hybrid_linearization --locked -- --nocapture
+~~~
+
+### 基準と座標
+
+- 現行 `HybridMockDefinition` とtrimから基準を生成し、値や右辺を試験へ転記しない。
+- 密度1.225 kg/m³、重力9.80665 m/s²、対気速度9.7 m/s、零風、heading 0、CG位置 $(0,0,-100)$ mとする。
+- ManualとAutomaticを分け、後者はq/r gain 0.2 s・slew 1 rad/sを使う。
+- 入力はneutral/Holdである。
+- 静止pilotの位置・速度・target保持を全stageで確認する。
+
+| 11座標 | 正規化scale |
+|---|---|
+| datum ground velocityのN/E/D差 | 各9.7 m/s |
+| 基準bodyに対する局所回転vector x/y/z | 各1 rad |
+| body rate p/q/r差 | 各1 rad/s |
+| 水平・垂直尾翼incidence差 | 各0.2 rad |
+
+- 入力姿勢は $q_\mathrm{ref}\operatorname{Exp}(\delta\theta)$、 出力は $\operatorname{Log}(q_\mathrm{ref}^{-1}q)$ とする。
+- 零風の並進対称性でNED位置3成分を除外し、位置だけを平行移動する別回帰で確認する。
+- この省略を位置依存windへ適用しない。
+- 基準trajectoryの11座標変化を $10^{-9}$ 以下、等速位置との差を $10^{-8}$ m以下とする。
+- 初期と50 tick後のJacobianも比較する。
+
+### 微分・擾乱・固有値の予算
+
 ```math
-C_{Y_\beta}=-a_F\frac{S_f}{S},\qquad
-C_{n_\beta}=a_F\frac{S_f}{S}\frac{l_f}{b},\qquad
-C_{n_{\widehat r}}=-2a_F\frac{S_f}{S}\left(\frac{l_f}{b}\right)^2
+J_{:,j}(h)=\frac{F(x+he_j)-F(x-he_j)}{2h},
+\qquad h\in\{2^{-16},2^{-17},2^{-18}\}
 ```
 
-$l_t,l_f$はdatumから後方への正armとする。beta差分ではVを一定に保つ。
-finite rateの動圧差を含むため、複数central-difference幅で小擾乱極限への収束を検査する。
-矩形主翼の等幅N strip midpointには$-a_W(1-1/N^2)/6$を独立期待値とし、
-strip数の増加による連続翼$-a_W/6$へのquadrature収束を別に確認する。
+- 幅間の最大Jacobian成分差は $3\times10^{-7}$ 以下。細幅差は粗幅差 $+2\times10^{-8}$ 以下とする。
+- 固有値絶対値を昇順に照合し、隣接幅の差を $10^{-5}$ 以下とする。
+- 擾乱幅 $2^{-12},2^{-13}$、全11基底の正負、1/10/25/50 tickを比較する。
+  片側応答の一次近似誤差は $3\times10^{-3}$ 以下、幅半減後は元の0.7倍 $+2\times10^{-7}$ 以下とする。
+  正負平均のcentral derivativeと $J^n$ の差は $3\times10^{-5}$ 以下とする。
+- host dev依存の `nalgebra::Schur::try_new` はepsを64 epsilon、反復上限2000とする。
+  Schur再構成・直交性の最大成分残差は各 $2\times10^{-10}$ 以下とする。
+- 固有値は絶対値1の周囲 $10^{-6}$ をneutral、絶対値 $10^{-6}$ 未満をerasedとして分離する。
+  尾翼即時到達枝の2列と2固有値0を検査する。
+  非線型50 tick flowの固有値絶対値を $|\lambda|^{50}$ と比較し、許容差は $5\times10^{-4}(1+\text{予測値})$ とする。
 
-| ケース | 独立比較対象・受入条件 |
+- 全tickはAdvancedを要求し、公開tickとの全状態一致・4 load評価・alpha $(0.03,0.05)$ rad・slew到達枝・飽和余裕を確認する。
+- 接触点はdatum1点、datum高度は90 m超を保つ。
+- pilot移動、PWL節点、slew/飽和切替、適用域終端を跨ぐ微分や長時間安定性は別の検証対象である。
+- 増大modeは結果に記録する。
+- 固有値の検査成功をAutomaticの安定化完了と扱わない。
+
+## 6. 接触・終端時刻の数値検証
+
+### Ballistic基準と事前上限
+
+- `contact::tests::numerical` は外部空力なし・静止pilot・定姿勢を使う。
+- NED水平速度 $(6,8)$ m/s、down速度 $w_0=2$ m/s、重力 $g=9.81$ m/s²、 接触点はdatumとbody down offset 0.4 mの2点とする。
+- offsetを除いたclearanceを $h$ とする。
+
+参照時刻は $t_c=0.4+(0.125,0.375,0.625,0.875)\times0.01$ sから初期高さを定め、
+桁落ちを避けた $t_c=2h/(w_0+\sqrt{w_0^2+2gh})$ で計算する。
+f64・100/200/400 Hz・最大1 sで、解析endpointの接触補間と実RK4 endpointの追加誤差を分離する。
+
+```math
+L(t)-z(t)=\frac{g(t-a)(b-t)}2\le\frac{g\,dt^2}8,
+\qquad
+0\le t_c-\widehat t_c\le\frac{g\,dt^2}{8w_0}
+```
+
+- 内部候補で区間を隔離した後、最大48回の二分幅 $dt/2^{48}$ を加える。
+- 丸め余裕は $128(N+1)\epsilon S$ とし、解析endpointでは $N=0$、RK4では最大step数を使う。
+- 位置scaleは高さ・offset・1秒並進と重力変位、速度scaleは初速と1秒重力増分、姿勢・rateのscaleは1とする。
+- 時刻には位置余裕/$w_0$、二分幅、$8\epsilon\max(t_c,dt)$ を加える。
+
+- course/cross/netは $(6,8,10)t_c$ mで、時刻誤差と対応速度から各誤差上限を作る。
+- 刻み間差は双方の上限の和で判定する。
+- off-grid phaseが刻みごとに異なるため、単調改善や固定収縮率を要求しない。
+- 水平位置・鉛直速度・姿勢・pilot・接触点を同じfractionへ対応させ、実tail tickの保持incidence・record終端も接続検査する。
+- 200/400 Hzの区間indexを100 Hz保存recordへ変換しない。
+
+### 回転接触の隔離と丸め
+
+- slerpのdownは位置の線型項とsin/cosの和で、最短物理角は最大π、内部微分根は高々2個である。
+- nlerpは正の二次normで分母を払うと接触関数が高々三次となり、導関数（二次式）の根で符号区間を隔離する。
+- 本番mathの最短符号・枝・最終正規化を使い、二次根は固定の `polycool` で求める。
+
+- 内部候補の接線分類だけに、距離予算 $128\epsilon S+\lVert r\rVert_1G$ を用いる。
+- $S=\max(|d_0|,|d_1|)+\lVert r\rVert_1$、 通常slerpのbasisを $a,b$ として $G=|a\cdot a-1|+|b\cdot b-1|+|a\cdot b|$ とする。
+- nlerpでは $G=0$ である。
+- 実際の補間でdownを再評価し、帯内の接線と浅い侵入は候補時刻で分類する。
+- 端点と通常交差はdown ≥ 0で判定する。
+
+- 幾何scale $10^{-300}$〜$10^{150}$ を回帰に含める。
+- subnormal下端の丸め予算は未検証である。
+- 単純根では距離予算/局所傾き、接線付近では曲率による増幅が作用するため、 二分幅を任意接線の総時刻精度へ読み替えない。
+- 各点は高々3区間端と必要な1回の最大48精密化で評価し、追加allocationは0とする。
+- 非有限の差分・係数・実評価はMath原因として返し、候補取得後も全点の失敗を検査する。
+
+## 7. セッション・記録・境界の接続
+
+| 対象 | 検査内容 |
 |---|---|
-| geometry・anchor | 線形chordの厳密c²積分、面積重心quarter-chord、投影/実面積・MAC、全体AR、zero-chord tip、coverage・左右対称性・別geometry拒否 |
-| slope数値 | AR=2で$\pi$、AR=4で$4\pi/3$、大ARで$2\pi$、受理可能な微小正ARで$\pi AR$の解析極限と切替点 |
-| current reference | 複数knot/内部alphaと複数V、極小正速度でneutral増分0・static一致。許容差は動圧等の演算scaleに対応させる |
-| 微係数・符号 | 上記p/q/rとfin betaの独立極限、正tail incidenceの負pitch/yaw、左右対称上昇流のroll相殺、片翼grid gust解析力/moment、tip-up dihedralのbeta復元 |
-| frame・風 | 非zero姿勢でworld機体速度とwindの同量加算による全static・increment・totalの不変性 |
-| 閉境界 | global beta、tail incidence、raw/control込みalpha差、actual/reference span角、速度0.8V/1.2Vは境界を包含し直外を拒否。actual/reference forwardは厳密に正 |
-| 零速・fatal | 全点静止だけ0、O静止+回転流/差動windはUndefinedReference、後続wind errorも検査。微小正速度、算術overflow、非有限wind、密度errorの元causeを区別 |
-| RK/tick原子性 | actual providerを通す全4 stageでheld controlを観測し、各stageへenvelope/fatal/wind failureを注入。元cause/site/limit・失敗stageを保持し、actuator/pilot/tickの直前stateが不変 |
-| Scenario互換 | 同providerのwind正本をtelemetryとloadで使用。Hybrid初期roll・欠落tail・tail travel直外を拒否し、runtime rollも非commit。Staticはneutral荷重を提供し、二系統制御はphysical tail incidenceを保持する |
+| Countdown | elapsed時間、800 msでは3秒/1秒では2秒、3秒で発進1回。重複時刻・不規則差分・overflow・取消後token・stale owner |
+| GameSession | 準備・発進・Pause/Resume・終端・Retryの許可と拒否、停止理由の残存、最後の有効状態、tick/record保持 |
+| input | schema 2生成型/validator、Hold/Set、finite/normalized範囲、1024-byte上限、余剰field拒否、拒否時非commit |
+| snapshot/query | schema 2のcontext/sample/batch/summary/wind、tuple、safe integer、exact stamp、quaternion、終端/scoreの整合 |
+| FlightRecord | 全保存sample・finalization・capacity・終端fraction・元cause、CSV/JSON出力、保存key検証 |
+| PB | 比較方式v2、同条件・来歴差・条件差、未知方式の未順位、元JSON/key保持、Web/Nativeの共有selector |
+| Replay/Attract | Rust clock・seek・補間・最短quaternion、確定record不変、独立demoとplayer記録の分離 |
+| 所有権/I/O | query世代とrecord-source世代、stale結果破棄、独立cleanup全試行、IndexedDB transaction、ファイル非上書き |
+| UI | Setup/Briefing、typed HUD/availability、共通Action、group順・凡例色、全表示先、focus/scroll/拒否後の回復 |
 
-ここで検証する対象はcore geometry/provider/Scenarioとload→dynamics/tick境界である。
-新playableのauthority・slew・FBW、公開terminal/Result/record/schema/default、実ブラウザー/HMD・実機精度は別gateである。
-fmt、warning拒否Clippy、workspace test/rustdoc、native/no_std/WASM/WASIとWeb verifyはPRでexact sourceごとに結果を記録する。
-ソフトウェアoracleの合格をwake・失速・Re依存・完全なエネルギー散逸や実機性能の証明として扱わない。
+Web入力はown enumerable fieldsをplain wire objectへ一度投影してから検証し、
+prototype・toJSON・getterにより検査値と送信値が変わる経路を検査する。
+schema生成の構造検査と、時刻・原因・request echo・保存元の意味検査を分ける。
 
-### 空力舵角domainの検証（#209）
+Countdownはcoreだけでなく、実WASM/facade/Web frame列とNative Update/FixedUpdateを通す。
+非表示化・blur・frame停止・VR中断で安全取消し、record未開始と発進tick0を確認する。
 
-要素構築時にalpha・beta・3舵角の組合せで生じる負抗力と非有限係数を拒否する。
-舵角の各正負境界・直外を零速と通常流で検査し、role付きerrorの伝達を確認する。
-scenario構築ではactuatorの全travelがdomainに収まる場合を受理し、各軸の正負側の不足を拒否する。
-既存のneutral荷重・force/moment scaling・aggregate overflowの回帰も維持する。
+- 表示不変回帰は同じ実WASMでManual/Shared/Automaticごとに、Information 5種、 Screen/合成WebXR/合成Phone VR、30/60/120 FPSを比較する。
+- 100 Hz入力はtick20–39で $(0.03,-0.02)$、40–59で逆符号、60でpilot Set(0.05)、その他neutral/Holdとする。
+- 100 tickのManualAbortまでの全状態・controls・telemetry・入力・sample・query・finalization・最終poseを比較する。
+- 同じWASM演算列には追加許容差を設けない。
+- 表示/PB metadataは物理列から分離する。
+- この合成backend検査と実XR端末の受入は区別する。
 
-### BPG-024 空力境界・error契約
+## 8. 環境・地形・視認性
 
-| ケース | 比較対象 | 受入条件 |
-|---|---|---|
-| 角度関数と迎角envelope | 監査で提示された$u=1$ m/s、$w=0.414213562373$ m/sと上限$pi/8$ | 内側入力を許可し、閉境界を許可し、直外を拒否する |
-| envelope境界 | alpha・beta・動圧の下限／上限 | 各閉境界を許可し、その外側を拒否する |
-| 微小・極小速度 | 正のsubnormalを含む局所速度 | 定義済みflow angleと有限な荷重を返し、逆数overflowやNaNを生成しない |
-| load error伝達 | 範囲外の翼要素をRK4 load providerへ接続 | `DynamicsError::Load`から元の`AeroError`と`AerodynamicRole`を取得できる |
-| 公開評価型 | 5 roleを持つ検証済みmodelとzero/nonzero flow | role lookupは必ず値を返し、角度は`Zero`またはalpha/beta両方の`Defined`で表す |
-| 二次抗力のRK4接続 | $\dot v=-kv^2$、$v(t)=v_0/(1+kv_0t)$、$x(t)=\ln(1+kv_0t)/k$ | velocity・positionが解析解に収束し、step半減で誤差が減少する |
+- 登録環境は観測値、湖上外挿、風の空間勾配、鉛直流、波、天空の仮定を分ける。
+- offline生成の欠測、exact-byte hash、方位変換、全N-fast格子・閉境界、 Rust codecとWeb/Nativeの同じ環境identityへの接続を検査する。
+- 未知の保存環境や原点未記録のarchiveへ、現在の地図・風を補完しない。
 
-| BPG | 検証 |
+### 湖岸・島・視差
+
+- 近傍12 km角・30 m DEM、40岸線、主要4島、沖の白石4岩礁のmesh接続を検査する。
+  沖側underlap・陸側探索・水域mask・面の向き・open端・欠測帯・panel中心の三角形包含を確認する。
+- 12 km patch内の岸線遷移幅は600 m以下を要求する。patch外の広い遷移帯と別に扱う。
+- `lake-venue-parallax.test.ts` は本番の姿勢変換とPilot eyeを通す。
+  heading310–320°、pitch/roll各±5°、高度10–30 mで北西稜線がNDC各±0.45・clip内へ入ることを確認する。
+  北西500 m移動時の多景島の画面変位は、遠方稜線の3倍超を要求する。
+- platform・shore・telephoto等のcamera pointと実飛行開始位置から、島と稜線の投影を検査する。
+  幾何投影とrasterization・遮蔽・画素コントラストの受入を分ける。
+
+- AW3D30最高点周辺90 m・9点と国土地理院1 mレーザDEMの独立照合は、 中心標高を差し引いた相対profileでRMSE 2.56〜6.82 mの参考範囲である。
+- DSM/DEM・解像度・表面・時期の差を含み、稜線全体の誤差上限ではない。
+- AW3D30の上書きやruntime API依存へ転用しない。
+- 出典と処理条件は[データ仕様](data-and-formats.md)に集約する。
+
+- 水面・地平線・機体基準・近距離固定物を同時に表示し、静止・前進・横移動・pitch/roll変化で 速度・姿勢・高度の手掛かりを検査する。
+- 岸線や遠景は全方位・複数高度で確認し、 静止画像だけから連続時のoptic flowや時間的aliasingを合格としない。
+- 描画の波と物理の静水面接触が独立していることを確認する。
+
+## 9. WebのCUI描画・操作検査
+
+- 既存の `playwright-core` と対応Chromiumを使用する。
+- 初回のみ公式CLI `npx playwright-core install chromium` でbrowserを準備する。
+- 一致するcacheを再利用し、[公式手順](https://playwright.dev/docs/browsers)に従う。
+
+~~~sh
+npm ci
+npm run dev -- --host 127.0.0.1 --port 4202 --strictPort
+~~~
+
+別の端末から実行する。
+
+~~~sh
+npm run test:web-ui -- http://127.0.0.1:4202/pr-simulator-game-1/ target/web-ui
+npm run measure:web-auto -- http://127.0.0.1:4202/pr-simulator-game-1/ target/web-auto
+~~~
+
+### 画面遷移と実download
+
+- `test:web-ui` は専用BrowserContextから本番ページ・Rust/WASM・Three.jsへ接続する。
+- Setup/Briefing/Countdown/HUD/Pause/Resume/Result、Analysis3図・凡例、Replay・技術情報、 実CSV/JSON出力、同条件Retryを操作する。
+- browser・page・console・HTTP・WebGLのエラーを保持し、非同期body取得とcleanupを有界化する。
+- JSON原文、CSV、条件、画像、実WASM hashを結果へ保存する。
+
+予期しない初期Pauseはfindingとして保持する。
+公開Resumeを一度実行して後段を調べる場合も、最終結果は失敗のままとする。
+
+### Autoのsource窓と性能
+
+- `measure:web-auto` は1280×720・DPR1の実Flightで、Typical/Manualを準備し、 PauseでHigh/Autoを選び、準備を最大8秒待ち、Resume後の2秒Running窓を観測する。
+- 観測中の停止・終端は不完全とし、Resumeでつなぎ直さない。
+- 撮影要求は窓外だけで行う。
+
+- bridge観測は元method・this・引数・戻り値を保持し、実GPU値を変更しない。
+- production decoderを通したRust tickと、epoch/frame/time付きGPU標本を保存する。
+  適用scale/shadowはsource epochへ対応させ、受信時の値へ付け替えない。
+- 履歴上限は4096件、source spanは窓の90%以上、端gapは100 ms以内、unique frameは20件以上を要求する。
+  epochごと20件未満はlimitedとし、12.5 ms判定は欠損値として保持する。
+- 重複・逆順・stale・未知epoch・不足標本は0や成功へ置換しない。
+  coverageは観測source span内のframe番号であり、全issued queryのcensusではない。
+- 500 msのbounded drain後に結果を確定する。実canvas寸法・RAF間隔・Rust tick・停止理由を併記する。
+
+Vite開発serverとproduction bundle、headlessと通常表示の性能は個別に計測する。
+observer費用、headlessの表示上限、CPU/GPU競合を記録し、補正で差し引かない。
+
+## 10. NativeのCUIオフスクリーン検査
+
+利用者向けの起動・キー操作は[Nativeガイド](native-guide.md)へ分離する。
+
+検証専用コードは `verify-harness` featureで有効にする。
+
+~~~sh
+cargo run -p birdman-game-bevy --features verify-harness --locked -- --verify target/native-offscreen --offscreen --verify-size 1280x720 --export-dir target/native-test-logs
+~~~
+
+| 検証オプション | 条件と役割 |
 |---|---|
-| 002 | frame往復、quaternion不変量、機体・パイロットの運動量収支、一般3次元の内部移動、重力、刻み半減収束、参照case比較 |
-| 003 | 5要素role、解析揚抗力、alpha/beta係数、wind subtract、回転局所速度、pilot非加算、moment arm、要素姿勢、zero-speed・envelope・数値境界 |
-| 004 | 無風、一様風Galilean invariance、固定ground launchのheadwind、crosswind、鉛直風、解析shear、grid trilinear解析値・閉境界・範囲外error、WindField→空力→RK4接続 |
-| 005 | 対称grid上昇流とroll相殺、右翼上昇流の解析roll、水平尾翼の解析pitch、垂直尾翼の解析yaw、回転局所速度、二重計上回避 |
-| 006 | lifecycle、身体位置指令・移動限界、接触補間と同時刻終端state、authority両端・Shared混合、actuator飽和・rate limit、決定的scenario、入力replay、空力・FBW・pilot motionを含む100/200 Hz step-halving収束 |
-| 026 | position targetの加速・制動・収束、最大速度・加速度・移動範囲、復帰不能境界のtyped error、同条件決定性、6DoF internal-mass接続 |
-| 027 | actuator deflectionの全RK4 load stageへの伝播、UniformAir/WindField結合、neutral荷重、stage error時の状態不変 |
-| 028 | Manual / Shared / Automaticの統合tick、pilot target・actuator・6DoF一括更新、決定性、load error時の不変性、tick overflow |
-| 029 | 水面非接触・境界・tick内一時接触・接線接触、複数接触点の最早fraction、同時刻physical補間・actuator保持、geometry・tick error |
-| 030 | controlled tickからcontact終端への統合、airborne state返却、post-contact state非公開、contact/dynamics typed error、二系統の全RK4保持incidence・正の接触fractionでの終端actuator一致・fraction 0での旧state保持、record終端・exact時刻・区間内Replayの保持規則 |
-| 031 | configurable body-rate feedbackの符号・axis別飽和・極端な有限rate・無効設定、および合成roll momentを介した6DoF減衰。実機tuningの検証とは区別する |
-| 032 | course-distance score v1の北・東・斜行・逆行・高度不変性、cross-track/net horizontal解析値、極端軸正規化、無効軸・差分overflowのtyped error |
-| 033 | CG launchからdatum stateへの静止閉形式、3D attitude/angular rate/pilot motionを含む位置・速度復元、pilot range・non-finite・datum translation overflowのtyped error |
-| 034 | 固定tick input列の決定的再生、最初のfractional WaterContactとscore v1の一致、TimeLimit/empty input、load/contact/score errorの型付き伝播、Contact後のtick非実行 |
-| 007 | 現行Hybrid inputからnative/WASMのtick・named snapshot・Screenへ接続する。量別許容差、30/60/120 FPS独立性、pause/resume、keyboard/gamepad lifecycle、NED pose変換を検査する。実WebGLの操縦・終端・表示受入は独立に確認する |
-| 008 | Hybrid WindFieldのuniform/grid・局所差分・RK stage error/原因保持・partial state非公開、immutable環境所有/cache、完全identity/seed words/bounded metadata query、env6と現4presetのsky/waves consumer、未知保存環境への代替禁止を検査する |
-| 014 | engine import/型境界、全8 Scene/overlay、anchor別追従、共通操作、backend切替、単一loop、recenter、resource解放 |
-| 015 | 全SceneのWebXR UI、session拒否・終了、reference space、実WebXRManagerと模擬browser APIを通るPilotEye/身体offset/runtime IPD、全anchorのgaze/controller一致、reset共役写像、Screen復帰。実HMDのpose/projectionは別途受入 |
-| 016 | 全SceneのPhone VR UI、同期absolute権限要求・重力較正待ち・relative-only起動失敗・ModelのScreen復帰・不正sample・無通知中の姿勢保持、左右aspect、実Phone backend/StereoEffectの初回pitch/roll・非Flight水平復帰・Eye mount・全anchor/gaze・yaw-only recenter・listener例外時の全cleanup。relative重力sourceのbrowser接続と実スマートフォン/GPUは別途受入 |
-| 017 | Rust GameSession遷移・開始/Pause/終了/Retry規則、preset決定性、Custom、三軸の境界と軌道不変性、WASM snapshotと全backend接続 |
-| 018 | HUD項目とFlight Pilot camera固定、Replay/Attract rig選択、未定義telemetry、全backendの表示と操作。ゲーム値はRust snapshotを表示 |
-| 019 | Rust record sample/finalize/metrics、身体状態・目標列、終端一致、capacity、allocation、集計、format schema、条件別PB、adapter保存I/O |
-| 020 | Rust analysis series/queryと既知値、map軸・風断面、速度/高度、共有cursor、欠損、Screen/VR描画・操作 |
-| 021 | Rust replay clock/seek/interpolation query、snapshot補間、quaternion符号、全backendのResult復帰、原record不変性 |
-| 022 | camera director、Attract、短いrecord、FPS差、demoとplayer記録の分離 |
-| 023 | Boot updateの純粋性、排他遷移、request ID、stale permission、backend開始失敗とScreen復帰、pagehide disposal、実`XRFrame.getPose()`境界のnull |
+| `--verify DIR` | 本番scene・logical input・UI・GPU画像保存を検査する |
+| `--offscreen` | `--verify` 必須。OS windowを作らずImageへ描画する |
+| `--verify-size WIDTHxHEIGHT` | `--verify` 必須。正の整数で検査viewportを指定する |
+| `--verify-replay-cameras` | 自然着水recordの中間時刻を共有UIの全10cameraで撮影する |
+| `--verify-water CASE` | Calm/Typical × Low/Medium/Highの1条件を観測する |
+| `--verify-timing root` / `--verify-timing full` | `--verify-water` 必須。rootはroot-only、fullは全pass診断。既定full |
+| `--verify-water-auto` | `--verify-water` 必須。実Auto policyで5 motionを観測する |
 
-非有限値は入口と積分途中で拒否する。比較は解析解、不変量、独立した基準caseを用いる。
-同じ実装から期待値を生成するだけの試験を検証根拠としない。
-一様風不変性の試験では、位置依存の地面効果や接触を除外して比較する。
-評価対象、初期条件、入力列、許容差、duration、seed、実行環境、commitを記録する。
-100 Hzの適合性は空力・actuator・FBW・身体移動を含む統合系で、軌道・姿勢・接触時刻・scoreを
-刻み半減と比較する。BPG-035では通常の入力範囲でのフライト成立率、失敗理由の表示、
-採用値の出典・仮定・適用範囲、操作性を受入条件に含める。M3〜M6のplayable synthetic game受入と
-実機同定・機体固有fidelity検証は別のgateとして扱う。
+- Replay cameraとwater検査の同時指定は拒否する。
+- offscreenはWinitを登録せず、ScheduleRunnerと本番Image target/readbackを使用する。
+- 既定runnerの最小周期は16.67 ms、`--no-vsync` 併用で待機なしloopを要求する。
+- devは接続確認、releaseは性能計測に用いる。
+- 標準検証の期限はoffscreen180秒・通常window90秒である。
+- 物理100 Hz・Real時計・150 ms安全停止は維持する。
 
-## BPG-008 登録環境の接続と描画確認
+### 標準フロー・資源寿命・shader
 
-登録env6は彦根の1991–2020年・7月のscalar平均風速と最多風向を独立した観測根拠として保持し、
-湖上外挿・空間勾配・鉛直流・波・空の仮定と分離する。offline生成の欠測・入力hash・方位変換・決定性、
-Rust codec、全N-fast格子標本・閉区間境界、recipe/generator/parserのexact-byte hashをsoftware検査で扱う。
-共有Rustが風格子を所有し、現行hybrid catalogのTypical、WASM metadata、Webの定義済みsky/waves、
-nativeのTypicalへ接続する。metadata欠損は補完せず、cloud baseの立体表現はM6に残す。
+- Title/SetupのAuto表示、同一processのCalm↔Typical往復、空cloudのMesh3d不在、
+  旧mesh handleの退役と新handleの復元を検査する。
+- Manual比較の前提を公開UI操作で確定し、Pause中のLow/Medium/High・描画倍率・shadow交換と復元を検査する。
+  適用ACKと実GPU resourceを照合し、pause中のstate・record・波時刻保持を確認する。
+- 開始→Pilot/Chase→Pause/Resume→Result→Map/Altitude/Speed→Replay/Analysis→Result→Retryを通す。
+  全nose-up logical inputの自然終端も実coreで確認する。
+- shader/pipeline readinessを連続5 frame確認し、日本語glyph、折返し、control包含・配置・非重複とPNG保存完了を検査する。
+- Shadow ACKやAuto窓のtimeoutをfindingとして残して後段を調べる場合も、最終exit codeは1とする。
+  GPU/asset/state異常は失敗として保持する。
 
-- PR #282の`66ffddf4`は必須CI成功・merge済みである。native fmt/Clippy・61 testsとWeb verify（95 files / 1751 tests）が成功した。
-  Windows 11 / AMD Radeon 860M / Vulkanのnativeで開始・操縦・Pilot/Chase・Pause/Resume・Result・Retry、10枚のcaptureとexit 0を確認した。
-  同じheadのproduction WebをChromium 148 / ANGLE D3D11でTitleからFlight・Pause・Result・Retryまで確認し、sky/water/PBRの登録条件一致を検査した。
-- PR #285の`c0f3ddba`はWeb verify（95 files / 1763 tests）が成功した。actual WASMから純粋投影・actual Three groupへ接続し、
-  登録env6・未知env99・原点未記録preset、current Calm/Mild・Result/Replay/Retry、archive→Title→Attract、frame stagingを検査した。
-  Windows 11 / AMD Radeon 860M / Chromium 148 / ANGLE D3D11のproduction WebGLで、保存一覧→各archiveのReplay→Titleを確認した。
-  登録会場の表示、未知・原点未記録archiveの汎用背景、Title展示の復帰を確認した。必須CI成功・mergeは別の統合gateである。
+- 本番WaterMaterialと同じ19 bindings・shader・vertexを使う18 probeを16×16のRgba32Floatへ描画する。
+- world position差の変位、本番導出の法線、最終fragment色をreadbackし、有限性・単位/上向き法線・共有変位上界、 平坦入力の零変位・波の空間変動・黒一色・異常輝度を検査する。
+- 通常variantへ検査専用bindingや処理を追加しない。
 
-両headの実描画確認ではsoftware rendererを使用せず、アプリ例外・GPU validation・asset失敗・WebGL context lossの確定エラーはなかった。
-Webの自動favicon要求の404は非配布resourceとして別に記録した。この限定受入は実キーボード・マウス・gamepad、
-スマートフォン・HMD・他GPU、80 FPS性能、M6の高品質描画、実気象・実機fidelityの受入を含まない。
-利用者向けの気象庁出典・加工表示と配布artifactの帰属一覧同期はBPG-013 (#13)の公開gateに残る。
-Pages公開は実施しておらず、必須CI・merge・公開承認やBPG-008の閉了をこれらの検査結果だけで先取りしない。
+- Titleの横長640×480以上では、既定Typical・展示cameraの水面ROI（横3–25%、縦86–96%）を検査する。
+- 対象外寸法はROIだけskipし、float probeを維持する。
+- これは重大な黒色化・飽和・一様面の検出であり、美観の合格基準と分ける。
 
-## 表示・性能・配布
+Replay検査は同じrecordの中間時刻で全cameraを撮影し、選択shot・時刻・Transform/FOV・scoreを記録する。
+全sample/header/finalizationとResult復帰後の終端状態を保持することを確認する。
 
-BPG-010の湖面描画は地形・空に依存しない簡易world上で先行受入する。静止・前進・横移動とpitch/roll変化を与え、world-spaceの波面・反射・表面模様から移動方向・速度変化・姿勢変化を識別できることを目視確認する。描画と静水面接触判定が独立していることも確認する。続くBPG-009では対岸稜線・cockpit/wing基準・近景optic flow・中景landmarkを段階的に有効化し、pitch・roll・yaw・速度・高度・scaleの手掛かりと500 m移動時のparallaxを確認する。BPG-011では稜線視認性を維持するhazeをcloud detailより先に調整し、reflectionへの空・雲の反映も評価する。
-`lake-venue-parallax.test.ts` はOSM由来の多景島detail patchとAW3D30北西側稜線の位置を三次元camera projectionへ通し、500 m移動時に近景のscreen displacementが遠景より大きいことを回帰確認する。`lake-venue-mesh.test.ts` は岸線transition meshの沖側underlapからDEM outer ringまで各頂点が三角形に接続されること、上向きface、離陸海岸のnodata band、対岸北岸の広いDSM欠損帯、主要4島すべての連続した岸線遷移を検査する。水域マスクで有効DSM標高を除外し、疎な標本しかない多景島・オコノ洲はOSM輪郭内を半格子間隔で補間する回帰条件も含む。2026-09-30、local 5198のTitleとReplay Pilot/Chase初期視点を画面確認し、水面・湖岸・対岸地形が同時表示され、岸線underlap拡張後のTitleでも見える範囲に明瞭な隙間がないことを確認した。この画面確認はパネル外余白へ多景島を合わせるカメラ変更前のbuild `4753456b` に対する証拠である。現行Title cameraはOSM島輪郭の中心方位272.17°とviewport寸法からyawを決め、多景島を中央パネル左端から24 px離して配置する。`three-renderer-camera.test.ts` は320〜1920 px幅の5画面寸法で投影位置を検査するが、実画面は新カメラ変更後に未確認である。幾何・投影テストだけでは姿勢・高度を変えた実画面の視認性、500 m飛行中の実描画parallax、全湖岸の稜線誤差受入を満たさない。地形・湖岸・島はTitle背景でもFlight/Replayと同じworldに表示する。
-2026-09-30に岸線の短いオープン端を閉じる処理を追加し、`lake-venue-mesh.test.ts`で該当する北西岸の全サンプルとmesh vertex接続を検査する。local 5198のTitleとDemo Replayの開始直後・飛行約16秒の1280×720表示で水面・湖岸・対岸稜線を再確認し、確認した範囲では背景へ抜ける明瞭な隙間がない。全湖岸を近接飛行する画面確認と、傾斜・高度を変えた系統的なvisual sweepは未実施である。
-湖岸meshの回帰試験には、OSMの短いline fragmentで陸側metadataが局所反転した西岸も追加した。明示的なOSM land maskを使って陸側を再探索し、同区間の全sample profileと頂点接続を確認する。
+### 湖面の6条件とAuto
 
-2026-09-30、対岸4峰のAW3D30 30 m patchに含まれる最高標高sampleの周囲90 m四方を、国土地理院[サーバーサイド標高API](https://maps.gsi.go.jp/development/elevation_s.html)で独立照合した。各patchの最高sampleを中心に南北・東西±30 mの9点を取得し、`build_biwa_world.py`と同じ局所投影（緯度111,132 m/度、経度111,320×cos(35.294075°) m/度）で照合した。9点すべてでAPIの`hsrc`は「1m（レーザ）」だった。中心値を各面から差し引いた相対プロファイルRMSEとAPI側最大点のずれは次の通りである。
+~~~sh
+cargo run -p birdman-game-bevy --features verify-harness --release --locked -- --verify target/native-water --offscreen --no-vsync --verify-size 1280x720 --verify-water typical-high
+~~~
 
-| AW3D30 patch | 相対profile RMSE | API側最大点のずれ（北, 東） |
-|---|---:|---:|
-| 北西 | 3.89 m | +30 m, +30 m |
-| 北 | 2.56 m | 0 m, 0 m |
-| 北西遠方 | 6.82 m | 0 m, 0 m |
-| 西 | 2.74 m | 0 m, 0 m |
+CASEは `calm-low` / `calm-medium` / `calm-high` / `typical-low` / `typical-medium` / `typical-high` である。
+各条件を別process・出力先で実行し、shared preparation・既存画質要求・登録環境を使用する。
 
-この9点照合は山頂付近の短距離な形状比較であり、稜線全体の位置・標高誤差ではない。中心差し引きにより一定の鉛直datum差は除かれるが、DSMとAPI側DEMの表面定義、空間解像度、取得時期の差は残る。したがって値をAW3D30へ上書きせず、地形の独立確認が部分的に済んだ証拠として扱う。GSI APIは返却内容を変更・停止する可能性があるため、実行時依存にはせず、出典と取得日をこの検証記録に残す。
-2026-09-30、local 5198の現行worktreeを新規ブラウザータブで開き、1280×720のTitle画面とDemo Replayの9.5秒・約93 m地点を目視確認した。Titleでは対岸地形が表示され、Replayでは湖面と対岸稜線が連続して見え、確認した範囲に明瞭な水面・地形間の背景抜けはなかった。既存の撮影記録はカメラ位置変更前のため、今回の確認を現行画面の証拠として追記する。傾斜・高度・全湖岸を網羅した検査ではない。
-2026-09-30、全40本のopen shorelineと17島輪郭をサンプル単位で集計した結果、標高transitionが作れない41サンプルは沖の白石を構成する4輪郭だけに集中していた。対応AW3D30画素は有効な地形クラスではなく、既存DSMから岩の高さを作れない。これらはOSMの4輪郭と高島市公表の最高14 mを使う描画専用岩礁meshで覆い、他の高さは輪郭面積による推定値とした。transition試験は通常のopen coastと標高を持つ全島でサンプルを完全接続し、別試験で4岩礁の輪郭・水面下underlap・14 m上限を検査する。離陸地点の湖岸では遷移帯を構成する各パネルの中心点が実際の三角形内に入ることも回帰検査する。変更後のlocal 5198・1280×720 Titleでは見える範囲の水面と湖岸が連続し、目視できる背景抜けはなかった。沖の白石を正面から捉えた近接画面と全湖岸のvisual sweepは未実施である。
-2026-09-30、実会場の `platform`・`shore`・`telephoto` camera pointと記録飛行開始位置から生成したcamera poseで、沖島・多景島・対岸西側稜線・北側稜線の標高ピークが指定画角に入ることを `lake-venue-parallax.test.ts` で検査した。これは実際のworld座標・camera pointを用いた投影試験であり、mesh rasterization、遮蔽、実画面上の視認性を証明しない。画面撮影を伴うmulti-view visual sweepは引き続き必要である。
+- 静止、前進20 m（10 m/s）、横移動6 m（3 m/s）、pitch6°、roll10°の各2秒を観測する。
+  移動はcameraだけへ与え、physicsを変更しない。
+- 初期observerは発進時のChase poseを一度取得し、静止区間はworld固定とする。
+  各区間後はAbort/Retry/Countdownで同じsealed条件の個別flightから開始する。
+- Start画像の保存・正常Running後に開始し、区間内は撮影せず、正常frameの実deltaだけを加算する。
+  focus喪失・ProcessingDelay・過大delta・自然終端を含む中断窓は失敗とする。
+- 近景/遠景/skyのcameraと共通simulation timeを照合する。撮影要求時刻は非同期画像の露光時刻保証ではない。
+- save taskは1件とし、case/stage/serialと保存完了を確認して次へ進む。
+  Pause/Result/Retryはobserverを無効化し、指定画質への復元とResume後の進行を確認する。
 
-2026-09-30、local 5198のbuild `4753456b`を1280×720の新規タブで確認し、TitleとDemo Replay 2.55秒・5.95秒時点の画面確認を行った。画面上で水面・対岸地形は連続し、確認範囲に明瞭な背景抜けは見えなかった。これは遠景の斜め視点であり、島岸や特定の湖岸区間を近接確認した結果ではない。同日に陸側の遷移距離を全40 shoreline fragmentで監査し、断片33の一部で最大2,398 mに達することを確認した。該当位置の岸線サンプル（N=-4,954.7 m, E=-5,531.3 m）から外端（N=-3,546.1 m, E=-3,590.6 m）までの遷移面が接続され、外端標高は約3.04 mだった。これは描画上の接続を示すもので、欠測帯の実地形を裏付ける測量値ではない。高密度の近接visual QAは残る。
+- Auto観測は公開Setup操作から最大10秒待ち、成熟窓・受領率90%以上・資源ACK・pipeline Ready・ 500 ms以内のGPU sourceを確認する。
+- 外部context失効・適用失敗で完了事実を破棄する。
+- Measuringへの戻りと初期完了を区別し、倍率低下だけを成熟窓の根拠にしない。
+- 5 motion後はAuto解除で手動scale/shadow/水面の3値へ戻す。
 
-2026-09-30、同じlocal 5198を再確認し、Demo Replay 16.31秒・161.4 m地点で水面、機体、対岸の同時表示を撮影した。画面上では水面と対岸の間に明瞭な空抜けは見えなかった。これは遠距離視点の一例であり、個別湖岸の近接状態や全方位を検査したものではない。
+- rootはRenderGraph描画命令区間だけを計測し、準備・upload・readback・present待機を含まない。
+- fullは追加pass診断を収集する。
+- 通常Manualへ診断費用を追加せず、検証queryの費用は残す。
+- 履歴4096件からcount/span/mean/nearest-rank p95/maxを出力し、容量不足・非有限・未取得を分ける。
+- pass時間を合算しない。
+- 受領時刻とGPU source時刻、epoch・frame・適用scale/shadow/water品質を区分する。
+- Start保存frameを除きmotion終了frameまでをsource区間とし、End保存完了を受信cutoffとする。
+- 全queryのdrainは保証せず、frame wrap・欠損・重複・metadata不一致・pair別部分窓を明示する。
+- offscreen throughput、通常windowの80 FPS表示、CPUとGPUの同frame合算は個別の確認対象である。
 
-2026-09-30、変更中worktreeで `npm.cmd run verify` が成功した。typecheck、lint、30 test files / 264 tests、repository checks、production buildが通過し、Three.js renderer chunkの500 kB超過警告だけが残った。全Issueの視覚受入や上記欠測帯の実地形一致を証明する検査ではない。
-2026-09-30、水面と地形の継ぎ目対策として、離陸地点周囲の30 m DEM patchを3 km角から12 km角へ拡張した。これにより近傍の低密度 shoreline transition が通常沿岸に重ならない範囲へ広がり、陸側の近接地形探索はOSM land maskで水域のDSM値を避ける。open shorelineの端点付近ではこの探索を止め、隣接する面との連続性を維持する。全shoreline sampleの幅監査では、12 km local patch範囲内の最大transition幅が335.44 m、600 m超が0件となった。離陸海岸のfragment 33は従来最大約2,398 mだった箇所が約335 mまで短縮した。一方、patch外の遠隔海岸には最大約2,404 mの広いtransitionが残る。これは今回の近岸の隙間対策が全湖岸の地形形状を解決した意味ではない。現行worktreeで `npm.cmd run verify` はtypecheck、lint、30 test files / 264 tests、repository checks、production buildまで成功した。local 5198のTitleおよびDemo Replay開始直後を1280×720で確認し、表示範囲には明瞭な水面・地形間の隙間が見えなかった。高密度の近接・全方位visual sweepは未実施である。
+## 11. VR・性能・配布の受入
 
-2026-09-30、`lake-venue-parallax.test.ts` の北・西・北西の稜線投影検査を、runtimeの `flightRelativePose` と `pilotEyePoseThree` を通すPilot cameraへ変更した。北西稜線のpeakはheading 310–320°、pitch ±5°、roll ±5°、高度10–30 mの各条件で、視野中央のNDC ±0.45以内かつnear/far clip内に入る。北西へ500 m移動したときに多景島の投影移動量が遠景稜線の3倍を超えることも確認する。対象test fileは6件成功した。これは姿勢・高度変更時の幾何投影と相対parallaxのsoftware回帰検査であり、地形meshの遮蔽、画素上のコントラスト、実画面の判読性を証明しない。実画面の新規camera条件での確認、近接する島岸・全湖岸の視認性、全稜線の誤差受入は未完了である。
-BPG-012ではframe-time分布、画質振動、physics allocationと実行時間、download量を計測する。
-BPG-013ではsubpath、WASM MIME、cache、asset帰属、keyboard/gamepad、browser smoke testを検証する。
-未確認の端末・browserは明記する。実機同定・物理HIL検証をこれらの合格に含めない。
-VR基盤の開始前に試験用HTTPS配信、HMDとbrowser、スマートフォンとviewerを確保し、
-全Scene fixtureと実フライト接続後の再試験を分けて記録する。
+- 全Sceneとoverlayでanchor、左右眼、視線/controllerのhit、focus・scroll・退出・中断復帰を確認する。
+  WebXRの実pose/projection/IPD/reference reset、Phone VRの重力基準pitch/roll・yaw-only recenter・権限/不正sample・非表示時input破棄を含める。
+- 実機確認はHTTPS、HMD/browser、スマートフォン/viewerの組合せを明記する。模擬sensorや合成backendと分ける。
+- WebとNativeの80 FPS目標は12.5 ms/frameを基準とし、release/production・viewport・GPU/driver・VSync・画質・Auto状態・負荷条件を固定する。
+  frame-time分布、品質振動、CPU/GPU費用、download量を測定する。
+- 配布はsubpath、WASM MIME、cache、公開データの帰属、実入力、browser起動を確認する。
+  Nativeは実アーカイブをソースツリー外へ展開し、元checkout内のassetへアクセスできない条件で
+  GPU/shader/asset読込みと開始→Flight→Result→Retryを検査する。
+- 通常起動・CUI検証・配布物・各OS/CPUの結果を分け、未確認の組合せは明記する。
