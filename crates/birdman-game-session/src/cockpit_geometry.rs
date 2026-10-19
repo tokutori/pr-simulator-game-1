@@ -167,9 +167,9 @@ impl CockpitGeometry {
                 });
             }
         }
-        for index in 0..2 {
+        for (left, right) in lower_points[0].into_iter().zip(lower_points[1]) {
             rods.push(CockpitRod {
-                endpoints: [lower_points[0][index], lower_points[1][index]],
+                endpoints: [left, right],
                 radius: 0.008,
                 material: CockpitMaterial::Frame,
             });
