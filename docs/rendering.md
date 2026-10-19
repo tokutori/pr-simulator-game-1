@@ -89,6 +89,8 @@ screen-space errorと複数視点の稜線誤差で簡略化を検証する。
 AW3D30の海岸側nodataとOSM湖岸線の間には、湖面datumから有効な陸上DSM標高へつなぐshoreline transition meshを置く。`assets/biwa-land-mask.json`でOSM上の水域と陸地を分け、水域にある標高値は地形から除外する。AW3D30の欠測陸地点はCopernicus GLO-30で補う。さらに同一格子内の小さな欠損は最大4セル以内で補間し、水域の欠損は補わない。海岸DSMの欠損が広い場所では粗い地形格子の最大8セル分（最大2.4 km）まで陸上面を探索する。岸線の短い欠損区間は局所岸線法線に沿って遷移面を補間する。OSMの短いline fragmentで陸側metadataが局所的に反転し、指定側に有効地形がない場合は、明示的なland maskを使って反対側を探索する。最終リングの標高は実際に描画する地形三角形から再サンプルする。水域と重なる未接続部は水面下へ沈める。波の上下変位と斜め視点で背景が露出しないよう、岸線から沖側へ240 m、水面下8 mまで重なる帯を設け、沖側2列とも海底下へ配置する。陸側外端は岸線法線方向へ5 m潜り込み、地形面より15 cm低く置いて、独立した三角形分割の画素間の隙間を塞ぐ。水中部分は水面に隠れる。
 AW3D30に有効な標高がなくtransition meshを生成できない沖の白石の4輪郭には、OSM輪郭と高島市公表の最高14 mを基にした低ポリ岩礁meshを別に置く。最高14 mは4岩全体の見た目スケールだけに使い、残る3岩の高さは輪郭面積から得た表示推定値である。このmeshは水面下へ延ばして描画上の隙間を防ぐ。実測地形、collision、飛行物理には使わない。
 
+これらの地形・湖岸・島の表示生成は共有Rust `venue_terrain`へ移し、Web/WASMとNativeが同じ完成meshを使用する。登録40岸線・17島輪郭、疎な多景島/オコノ洲のDSM補間、多景島の既存canopy面、沖の白石4輪郭、砂浜/樹林の頂点色を含む。canopyは元のDSM標本、島地表は補間後のgridを使う。water maskは地表生成で適用し、元の標高参照を破壊しない。属性はNED位置/法線とlinear色として渡し、adapterで法線や標高を再計算しない。CPUでの移植同値性と接続検査は、Nativeの実描画・500 m parallax・相対高さ・実VRの受入とは区別する。
+
 ## 空・雲・haze
 
 共有 `LakeSceneHaze` はsRGB色 `0x9aafb1`、visibility由来のnear/farを所有する。sky未記録時は14 km/80 kmを使用し、metadataを補完しない。地形はcamera view-depth、水面・cloudはradial距離を用い、いずれもsmoothstepで混合する。Native地形は公式MaterialExtension/PBR helperを使用し、Webの通常Screenに合わせてsRGBで混合した結果をlinearへ戻して出力する。Webの既存縮小render targetではworking-linearのfogを維持し、この色空間差をpixel一致と扱わない。Nativeの直接・縮小・offscreen出力は同じterrain式を使用する。地形を含まない既存mirror passへhazeを追加せず、水面のradial hazeを一度だけ適用する。

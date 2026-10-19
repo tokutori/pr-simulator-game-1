@@ -590,7 +590,7 @@ pub(crate) struct EnvironmentAssets<'w, 's> {
     meshes: ResMut<'w, Assets<Mesh>>,
     terrain_materials: ResMut<'w, Assets<TerrainMaterial>>,
     terrain: Query<'w, 's, &'static MeshMaterial3d<TerrainMaterial>>,
-    structures: Query<'w, 's, &'static mut Visibility, With<super::world::VenueStructure>>,
+    venue: Query<'w, 's, &'static mut Visibility, With<super::world::RegisteredVenue>>,
 }
 
 pub(crate) fn apply_environment(
@@ -625,10 +625,10 @@ pub(crate) fn apply_environment(
         mut meshes,
         mut terrain_materials,
         terrain,
-        mut structures,
+        mut venue,
     } = assets;
     let resolved = target.resolve();
-    for mut visibility in &mut structures {
+    for mut visibility in &mut venue {
         visibility.set_if_neq(if resolved.is_ok() {
             Visibility::Inherited
         } else {
@@ -1005,19 +1005,19 @@ mod tests {
         session.action(MenuAction::Prepare).unwrap();
     }
 
-    fn assert_structure_visibility(app: &mut App, expected: Visibility) {
+    fn assert_venue_visibility(app: &mut App, expected: Visibility) {
         let world = app.world_mut();
-        let mut structures = world.query_filtered::<&Visibility, With<world::VenueStructure>>();
-        let projected: Vec<_> = structures.iter(world).copied().collect();
-        assert_eq!(projected, vec![expected; 3]);
+        let mut venue = world.query_filtered::<&Visibility, With<world::RegisteredVenue>>();
+        let projected: Vec<_> = venue.iter(world).copied().collect();
+        assert_eq!(projected, vec![expected; 18]);
     }
 
     #[test]
-    fn archived_unknown_identity_hides_structures_without_changing_record_or_clock() {
+    fn archived_unknown_identity_hides_venue_without_changing_record_or_clock() {
         use birdman_game_core::FlightRecord;
 
         let mut app = environment_app();
-        assert_structure_visibility(&mut app, Visibility::Inherited);
+        assert_venue_visibility(&mut app, Visibility::Inherited);
         prepare_calm(&mut app);
         let (mut header, samples, finalization) = {
             let mut session = app.world_mut().resource_mut::<NativeSession>();
@@ -1056,9 +1056,9 @@ mod tests {
             .core_session()
             .playback_clock();
         app.update();
-        assert_structure_visibility(&mut app, Visibility::Hidden);
+        assert_venue_visibility(&mut app, Visibility::Hidden);
         app.update();
-        assert_structure_visibility(&mut app, Visibility::Hidden);
+        assert_venue_visibility(&mut app, Visibility::Hidden);
         let session = app.world().resource::<NativeSession>();
         assert_eq!(session.game.core_session().snapshot(), before);
         assert_eq!(session.game.core_session().playback_clock(), clock);
@@ -1082,7 +1082,7 @@ mod tests {
             .execute_ui_command(SessionCommand::LeaveReplay {})
             .unwrap();
         app.update();
-        assert_structure_visibility(&mut app, Visibility::Inherited);
+        assert_venue_visibility(&mut app, Visibility::Inherited);
     }
 
     #[test]
@@ -1419,7 +1419,7 @@ mod tests {
         let mut app = environment_app();
         assert_eq!(
             terrain_haze(&app),
-            [TerrainHazeExtension::try_new(Some(25_000.0)).unwrap(); 4]
+            [TerrainHazeExtension::try_new(Some(25_000.0)).unwrap(); 6]
         );
         let original_images: Vec<_> = app.world().resource::<Assets<Image>>().ids().collect();
         let retired_images = environment_image_ids(&mut app);
@@ -1427,7 +1427,7 @@ mod tests {
         app.update();
         assert_eq!(
             terrain_haze(&app),
-            [TerrainHazeExtension::try_new(None).unwrap(); 4]
+            [TerrainHazeExtension::try_new(None).unwrap(); 6]
         );
         let briefing = shared_ui_text(&mut app);
         assert!(briefing.contains("Calm"));
@@ -1835,7 +1835,7 @@ mod tests {
             .remove::<EnvironmentSurface>();
         prepare_calm(&mut app);
         app.update();
-        assert_structure_visibility(&mut app, Visibility::Inherited);
+        assert_venue_visibility(&mut app, Visibility::Inherited);
         let target = EnvironmentTarget::Sealed(
             app.world()
                 .resource::<NativeSession>()

@@ -29,13 +29,13 @@ use birdman_game_session::cockpit_geometry::{CockpitGeometry, CockpitMaterial};
 use birdman_game_session::lake_sky::LAKE_SCENE_LIGHTING;
 use birdman_game_session::tail_geometry::{TailGeometry, TailMaterial};
 use birdman_game_session::venue_structures::{ShoreStructureMesh, registered_structures};
+use birdman_game_session::venue_terrain::{VenueTerrainMaterial, registered_terrain};
 use birdman_game_session::wing_geometry::{
     CARBON_COLOR, MAIN_BEAM_RADIUS, RIB_COLOR, RIB_RADIUS, WingFrame, WingGeometry, WingMaterial,
     WingRodKind, WingSurface,
 };
 use birdman_game_session::wing_texture;
 use birdman_game_session::{LaunchPlatform, launch_venue};
-use serde::Deserialize;
 
 pub(super) const SCENE_SUN_ILLUMINANCE_LUX: f32 = 18_000.0;
 const SCENE_EXPOSURE_SCALE: f32 =
@@ -58,7 +58,7 @@ pub(crate) enum WorldProjection {
 }
 
 #[derive(Component)]
-pub(crate) struct VenueStructure;
+pub(crate) struct RegisteredVenue;
 
 #[derive(Resource, Default)]
 pub(crate) struct RenderHistory {
@@ -130,135 +130,36 @@ impl RenderHistory {
     }
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct TerrainGrid {
-    north_min_meters: f64,
-    east_min_meters: f64,
-    columns: usize,
-    rows: usize,
-    terrain_step_meters: f64,
-    elevation_meters_above_water: Vec<Option<f64>>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct FinePatch {
-    id: String,
-    #[serde(flatten)]
-    grid: TerrainGrid,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Terrain {
-    #[serde(flatten)]
-    grid: TerrainGrid,
-    fine_patches: Vec<FinePatch>,
-}
-
-#[derive(Deserialize)]
-struct LandMasks {
-    grids: Vec<LandMask>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct LandMask {
-    id: String,
-    columns: usize,
-    rows: usize,
-    land_mask_hex: String,
-}
-
-fn land_vertex(mask: &LandMask, index: usize) -> bool {
-    mask.land_mask_hex
-        .as_bytes()
-        .get(index / 4)
-        .and_then(|byte| char::from(*byte).to_digit(16))
-        .is_some_and(|bits| bits & (1 << (index % 4)) != 0)
-}
-
-fn within(grid: &TerrainGrid, north: f64, east: f64) -> bool {
-    north >= grid.north_min_meters
-        && north <= grid.north_min_meters + (grid.rows - 1) as f64 * grid.terrain_step_meters
-        && east >= grid.east_min_meters
-        && east <= grid.east_min_meters + (grid.columns - 1) as f64 * grid.terrain_step_meters
-}
-
-fn terrain_mesh(grid: &TerrainGrid, mask: &LandMask, finer: &[FinePatch]) -> Result<Mesh, String> {
-    if grid.columns < 2
-        || grid.rows < 2
-        || grid.elevation_meters_above_water.len() != grid.columns * grid.rows
-        || mask.columns != grid.columns
-        || mask.rows != grid.rows
-        || mask.land_mask_hex.len() * 4 < grid.columns * grid.rows
-    {
-        return Err("地形grid/mask寸法が一致しない".into());
-    }
-    let mut positions = Vec::new();
-    let mut colors = Vec::new();
-    for row in 0..grid.rows - 1 {
-        for column in 0..grid.columns - 1 {
-            let north =
-                grid.north_min_meters + (grid.rows - 1 - row) as f64 * grid.terrain_step_meters;
-            let east = grid.east_min_meters + column as f64 * grid.terrain_step_meters;
-            if finer.iter().any(|patch| {
-                within(
-                    &patch.grid,
-                    north - grid.terrain_step_meters / 2.0,
-                    east + grid.terrain_step_meters / 2.0,
-                )
-            }) {
-                continue;
-            }
-            let corners = [
-                row * grid.columns + column,
-                row * grid.columns + column + 1,
-                (row + 1) * grid.columns + column,
-                (row + 1) * grid.columns + column + 1,
-            ];
-            for triangle in [
-                [corners[0], corners[2], corners[1]],
-                [corners[1], corners[2], corners[3]],
-            ] {
-                if !triangle.iter().all(|index| {
-                    land_vertex(mask, *index) && grid.elevation_meters_above_water[*index].is_some()
-                }) {
-                    continue;
-                }
-                for index in triangle {
-                    let elevation =
-                        grid.elevation_meters_above_water[index].ok_or("地形高度欠損")?;
-                    if !elevation.is_finite() {
-                        return Err("地形高度が非有限".into());
-                    }
-                    let point = [
-                        grid.east_min_meters
-                            + (index % grid.columns) as f64 * grid.terrain_step_meters,
-                        elevation.max(0.02),
-                        -(grid.north_min_meters
-                            + (grid.rows - 1 - index / grid.columns) as f64
-                                * grid.terrain_step_meters),
-                    ];
-                    positions.push(point.map(|coordinate| coordinate as f32));
-                    colors.push(if elevation < 3.0 {
-                        [0.48, 0.47, 0.31, 1.0]
-                    } else {
-                        [0.19, 0.32, 0.17, 1.0]
-                    });
-                }
-            }
-        }
-    }
-    let mut mesh = Mesh::new(
+fn venue_terrain_mesh(source: &birdman_game_session::venue_terrain::VenueTerrainMesh) -> Mesh {
+    Mesh::new(
         PrimitiveTopology::TriangleList,
-        RenderAssetUsages::RENDER_WORLD,
-    );
-    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
-    mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
-    mesh.compute_flat_normals();
-    Ok(mesh)
+        RenderAssetUsages::default(),
+    )
+    .with_inserted_attribute(
+        Mesh::ATTRIBUTE_POSITION,
+        source
+            .positions_ned
+            .iter()
+            .map(|&[north, east, down]| [east, -down, -north])
+            .collect::<Vec<_>>(),
+    )
+    .with_inserted_attribute(
+        Mesh::ATTRIBUTE_NORMAL,
+        source
+            .normals_ned
+            .iter()
+            .map(|&[north, east, down]| [east, -down, -north])
+            .collect::<Vec<_>>(),
+    )
+    .with_inserted_attribute(
+        Mesh::ATTRIBUTE_COLOR,
+        source
+            .colors_linear
+            .iter()
+            .map(|&[red, green, blue]| [red, green, blue, 1.0])
+            .collect::<Vec<_>>(),
+    )
+    .with_inserted_indices(Indices::U32(source.indices.clone()))
 }
 
 fn rectangular_surface(vertices: [[f32; 3]; 4]) -> Mesh {
@@ -506,49 +407,42 @@ pub(crate) fn setup_world(
         .sky;
     commands.insert_resource(environment);
     super::clouds::spawn(&mut commands, &mut meshes, &mut images, &mut clouds, sky);
-    let terrain: Terrain = serde_json::from_str(include_str!("../../../assets/biwa-terrain.json"))
-        .expect("登録terrain JSONが不正");
-    let masks: LandMasks =
-        serde_json::from_str(include_str!("../../../assets/biwa-land-mask.json"))
-            .expect("登録land mask JSONが不正");
-    let land = terrain_materials.add(TerrainMaterial {
-        base: StandardMaterial {
-            base_color: Color::WHITE,
-            perceptual_roughness: 1.0,
-            fog_enabled: false,
-            opaque_render_method: bevy::material::OpaqueRendererMethod::Forward,
-            ..default()
-        },
-        extension: TerrainHazeExtension::try_new(sky.map(|sky| sky.visibility_m))
-            .expect("登録terrain hazeが不正"),
+    let land_materials = std::array::from_fn::<_, 3, _>(|_| {
+        terrain_materials.add(TerrainMaterial {
+            base: StandardMaterial {
+                base_color: Color::WHITE,
+                perceptual_roughness: 1.0,
+                reflectance: 0.0,
+                double_sided: true,
+                cull_mode: None,
+                fog_enabled: false,
+                opaque_render_method: bevy::material::OpaqueRendererMethod::Forward,
+                ..default()
+            },
+            extension: TerrainHazeExtension::try_new(sky.map(|sky| sky.visibility_m))
+                .expect("登録terrain hazeが不正"),
+        })
     });
-    for (id, grid, finer) in std::iter::once((
-        "broad-terrain",
-        &terrain.grid,
-        terrain.fine_patches.as_slice(),
-    ))
-    .chain(
-        terrain
-            .fine_patches
-            .iter()
-            .map(|patch| (patch.id.as_str(), &patch.grid, &[][..])),
-    ) {
-        let mask = masks
-            .grids
-            .iter()
-            .find(|mask| mask.id == id)
-            .expect("登録land maskが欠損");
-        let mesh = terrain_mesh(grid, mask, finer).expect("登録terrain/maskが不正");
+    for surface in registered_terrain().expect("登録地形・湖岸・島が不正") {
+        let material = match surface.material {
+            VenueTerrainMaterial::Terrain => &land_materials[0],
+            VenueTerrainMaterial::Canopy => &land_materials[1],
+            VenueTerrainMaterial::Rocks => &land_materials[2],
+        };
         commands.spawn((
-            Mesh3d(meshes.add(mesh)),
-            MeshMaterial3d(land.clone()),
+            RegisteredVenue,
+            Name::new(surface.name.clone()),
+            Visibility::Inherited,
+            Mesh3d(meshes.add(venue_terrain_mesh(surface))),
+            MeshMaterial3d(material.clone()),
             Transform::IDENTITY,
             NotShadowCaster,
+            bevy::light::NotShadowReceiver,
         ));
     }
     for structure in registered_structures().expect("登録OSM構造物が不正") {
         commands.spawn((
-            VenueStructure,
+            RegisteredVenue,
             Name::new(format!("lake-biwa-{}-features-osm", structure.kind.name())),
             Visibility::Inherited,
             Mesh3d(meshes.add(shore_structure_mesh(structure))),
@@ -635,6 +529,8 @@ pub(crate) fn setup_world(
     let deck_length =
         platform.length_meters as f32 / (platform.downward_slope_degrees.to_radians() as f32).cos();
     commands.spawn((
+        RegisteredVenue,
+        Visibility::Inherited,
         Mesh3d(meshes.add(Cuboid::new(
             platform.width_meters as f32,
             platform_thickness,
@@ -2154,7 +2050,7 @@ mod tests {
             Option<&Name>,
             &Transform,
             Option<&super::super::clouds::CloudLayer>,
-            Option<&VenueStructure>,
+            Option<&RegisteredVenue>,
         )>();
         let mut reflected_meshes = 0;
         let mut reflected_spars = 0;
@@ -2239,7 +2135,9 @@ mod tests {
                 excluded_meshes += 1;
                 if let Some(handle) = terrain_material {
                     let material = terrain_materials.get(&handle.0).unwrap();
-                    if structure.is_some() {
+                    if structure.is_some()
+                        && name.is_some_and(|name| name.as_str().ends_with("-features-osm"))
+                    {
                         let source = registered_structures()
                             .unwrap()
                             .iter()
@@ -2299,21 +2197,24 @@ mod tests {
                     }
                     assert_eq!(material.base.base_color, Color::WHITE);
                     assert_eq!(material.base.perceptual_roughness, 1.0);
+                    assert_eq!(material.base.reflectance, 0.0);
+                    assert!(material.base.double_sided);
+                    assert!(material.base.cull_mode.is_none());
                     assert!(!material.base.fog_enabled);
                     assert_eq!(
                         material.extension,
                         TerrainHazeExtension::try_new(Some(25_000.0)).unwrap()
                     );
                     assert!(shadow_exclusion.is_some());
-                    assert!(receiver_exclusion.is_none());
+                    assert!(receiver_exclusion.is_some());
+                    assert!(structure.is_some());
+                    assert!(layers.is_none());
                     assert_eq!(*transform, Transform::IDENTITY);
                     terrain_meshes += 1;
                 }
             }
         }
-        let terrain: Terrain =
-            serde_json::from_str(include_str!("../../../assets/biwa-terrain.json")).unwrap();
-        assert_eq!(terrain_meshes, 1 + terrain.fine_patches.len());
+        assert_eq!(terrain_meshes, registered_terrain().unwrap().len());
         assert_eq!(structures, 3);
         assert_eq!(reflected_meshes, 41);
         assert_eq!(reflected_tails, 24);
@@ -2668,14 +2569,39 @@ mod tests {
         }
     }
     #[test]
-    fn registered_terrain_and_masks_have_matching_finite_geometry() {
-        let terrain: Terrain =
-            serde_json::from_str(include_str!("../../../assets/biwa-terrain.json")).unwrap();
-        let masks: LandMasks =
-            serde_json::from_str(include_str!("../../../assets/biwa-land-mask.json")).unwrap();
-        for patch in &terrain.fine_patches {
-            let mask = masks.grids.iter().find(|mask| mask.id == patch.id).unwrap();
-            assert!(terrain_mesh(&patch.grid, mask, &[]).is_ok());
+    fn registered_terrain_attributes_are_projected_without_geometry_or_normal_recalculation() {
+        for source in registered_terrain().unwrap() {
+            let mesh = venue_terrain_mesh(source);
+            let projected = |points: &[[f32; 3]]| {
+                points
+                    .iter()
+                    .map(|&[north, east, down]| [east, -down, -north])
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(
+                mesh.attribute(Mesh::ATTRIBUTE_POSITION)
+                    .unwrap()
+                    .as_float3()
+                    .unwrap(),
+                projected(&source.positions_ned)
+            );
+            assert_eq!(
+                mesh.attribute(Mesh::ATTRIBUTE_NORMAL)
+                    .unwrap()
+                    .as_float3()
+                    .unwrap(),
+                projected(&source.normals_ned)
+            );
+            let colors = source
+                .colors_linear
+                .iter()
+                .map(|&[red, green, blue]| [red, green, blue, 1.0])
+                .collect::<Vec<_>>();
+            assert_eq!(
+                mesh.attribute(Mesh::ATTRIBUTE_COLOR),
+                Some(&bevy::mesh::VertexAttributeValues::Float32x4(colors))
+            );
+            assert_eq!(mesh.indices(), Some(&Indices::U32(source.indices.clone())));
         }
     }
 }
