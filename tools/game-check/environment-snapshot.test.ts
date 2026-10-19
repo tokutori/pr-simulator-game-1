@@ -13,9 +13,9 @@ import { neutralTailInput } from "./current-session-fixture.js";
 const wasmPath = fileURLToPath(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url));
 const assetPath = fileURLToPath(new URL("../../assets/biwa-typical-july-environment-v6.json", import.meta.url));
 const identity = Object.freeze({
-  catalog_version: 4,
+  catalog_version: 5,
   scenario_id: 6,
-  scenario_version: 4,
+  scenario_version: 5,
   aircraft_model_version: 3,
   environment_version: 6,
   controller_profile_version: 3,
@@ -58,7 +58,7 @@ it("classifies JS envelope, bounded JSON and seed-word failures at the actual WA
   for (const input of [null, undefined, 0, true, {}, []]) {
     expect(() => environment_snapshot_for_identity_json(input)).toThrow("InvalidInputType");
   }
-  const duplicate = JSON.stringify(identity).replace("{", '{"catalog_version":4,');
+  const duplicate = JSON.stringify(identity).replace("{", '{"catalog_version":5,');
   for (const input of ["null", "[]", "[1,1,1,1,1,1,0,0]", "{}", "{", duplicate, JSON.stringify({ ...identity, extra: 1 })]) {
     expect(() => environment_snapshot_for_identity_json(input)).toThrow("InvalidJson");
   }
@@ -92,7 +92,7 @@ it("uses selected, sealed, record and Attract identities without modifying the c
     session.open_setup();
     session.set_weather_class(2);
     const selected = record(parse(session.environment_snapshot_json()).projection);
-    expect(selected).toMatchObject({ kind: "available", source: "selected", identity: { catalog_version: 4, scenario_id: 6, environment_version: 6 } });
+    expect(selected).toMatchObject({ kind: "available", source: "selected", identity: { catalog_version: 5, scenario_id: 6, environment_version: 6 } });
     expect(record(record(selected.metadata).sky).kind).toBe("defined");
     expect(record(record(selected.metadata).local_frame).kind).toBe("defined");
     expect(record(record(selected.metadata).waves).wind_velocity_ne_mps).toEqual([-1.767766953, 1.767766953]);
@@ -112,7 +112,7 @@ it("uses selected, sealed, record and Attract identities without modifying the c
     session.leave_replay();
     session.return_to_title();
     session.enter_attract();
-    expect(parse(session.environment_snapshot_json()).projection).toMatchObject({ source: "attract", identity: { catalog_version: 4, scenario_id: 1, environment_version: 1 } });
+    expect(parse(session.environment_snapshot_json()).projection).toMatchObject({ source: "attract", identity: { catalog_version: 5, scenario_id: 1, environment_version: 1 } });
   } finally {
     session.free();
   }

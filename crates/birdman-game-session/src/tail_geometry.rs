@@ -1,9 +1,8 @@
 #![doc = "Static tail presentation derived from registered physical sections; local metres use right/up/aft axes."]
 
-use birdman_game_core::{
-    HybridMockDefinition, HybridSection, HybridSurfaceGeometry, HybridSurfaceRole,
-};
+use birdman_game_core::{HybridMockDefinition, HybridSurfaceGeometry, HybridSurfaceRole};
 
+use crate::airframe_shape::tail_section_point as section_point;
 use crate::wing_geometry::{COVERED_FRACTION, FOAM_COLOR, RIB_COLOR, RIB_RADIUS};
 
 #[doc = "Tail palette, reusing the Web indigo and film and shared wing structural colours."]
@@ -152,15 +151,6 @@ impl TailGeometry {
             ribs,
         })
     }
-}
-
-fn section_point(section: HybridSection, center: [f64; 3], chord: f64) -> [f64; 3] {
-    let point = section.quarter_chord().components();
-    [
-        point[1] - center[1],
-        center[2] - point[2],
-        center[0] - point[0] + (chord - 0.25) * section.chord_m(),
-    ]
 }
 
 #[cfg(test)]

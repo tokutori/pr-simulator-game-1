@@ -91,6 +91,7 @@ Controllerのdisposeは入口で世代とclockを失効し、input・WASM resour
 単独失敗は元のthrow値、複数失敗は試行順のAggregateErrorと最初のcauseを保持する。再入・再呼出しは追加解放を実行しない。
 `TailFlightScenario`は検証済みAircraftModel・launch・hybrid aerodynamics・WindField・tail control・contact geometry・course axisを
 一つの不変構成へ組み立て、native CLIとWASM adapterが共通利用する。外部format decode・I/O・device inputから機器非依存pilot intentへの変換はadapter境界に置く。
+共有sessionの`airframe_shape`がf64の構造寸法・断面を所有し、表示用材質・UV・samplingと、構築時の固定接触polytopeをそれぞれ導出する。物理側は表示meshやengine型を参照せず、coreの既存固定点接触へ渡す。
 FBW rate feedbackはRust coreが直前tickの角速度から生成し、一tick内でpilot intentとともに適用する。
 同一モデル、scenario、機体・身体の初期状態、tickごとの舵・身体位置指令列に対する決定性を保つ。
 パイロット前後移動の力学・入力境界は `pilot-motion.md` に従う。
