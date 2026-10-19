@@ -1,176 +1,261 @@
-# アーキテクチャ契約
+# アーキテクチャ
 
-## 目的と範囲
+## 目的と設計原則
 
-短時間の無推力滑空を通じた広報を目的とする。実行環境はWeb browser、配布先はGitHub Pages。
-physicsはRust/WASM、描画adapterの初期実装はTypeScript/Three.js/WebGLとする。
-ゲームと描画engineの交換境界は `render-boundary.md` に従う。
-RP2040、virtual I/O、sensor fault、HIL、firmware timingは対象外である。
-機体モデルの実機同定と予測精度は、数値計算の正しさとは別に評価する。
+- 本プロジェクトは、短時間の無動力滑空を開始・操縦・着水・結果・再試行まで実行するシミュレーターである。
+- WebとBevy nativeは同じRustの物理、セッション、記録、UIモデルを利用する。
+- 描画品質と実機への適合性は独立した検証対象とする。
 
-## 依存方向
+- 状態の正本、純粋な更新、派生値の導出、副作用境界を分離する。
+- phaseに必須のデータは対応するvariantが所有し、排他的な状態を型で表現する。
+- 同じ規則を複数のplatformに実装しない。adapterは外部イベント・資源・表示APIとの変換を担当する。
+- 現行の二系統尾翼モデルをlive経路と記録形式の対象とする。旧モデル、旧live経路、旧schemaの互換実装を維持しない。
+- 型・形式証明・数値試験・実GPU・操作性・実機fidelityの保証を区別する。
 
-矢印は「左が右に依存する」を表す。
+開発時の運用は[CONTRIBUTING](../CONTRIBUTING.md)、検査方法は[検証](verification.md)に定める。
+
+## crateと依存方向
 
 ```text
-CLI  ──→ format ──→ core
-WASM ──→ format ──→ core
-CLI/WASM ─────────→ core
-CLI/WASM/Bevy ────→ session ──→ format / core
-Web ──→ WASM adapter
-Web app / camera / UI ──→ engine-neutral render contracts
-Three.js adapter ──→ engine-neutral render contracts / Three.js
-composition root ──→ concrete adapter factory
-Web presentation ──→ Screen / WebXR / Phone VR platform adapters
-world-build ──→ offline input data / asset format
+Web application ── WASM adapter ─┐
+CLI ────────────────────────────┼─ session ── format ── core
+Bevy native adapter ────────────┘       └──────────────── core
 ```
 
-coreは `#![no_std]` とし、wasm-bindgen、serde、I/O、clock、network、乱数源、GISへの依存を禁止する。
-必要な乱数は外部でseedから生成し、確定したパラメータを渡す。
-`alloc` はモデル構築に限って許容する。simulation step中のheap allocationは0を要件とする。
-この性能要件の検証は実装段階でallocation計測により行う。
+adapterからcore・formatへの直接参照も許可する。逆方向の依存と循環依存は禁止する。
 
-formatは外部表現をdeserializeして検証し、coreのconstructorから有効なモデルを構築する。
-確定recordのdocument生成と独立したbuild来歴はsessionの`record_archive`が所有し、Web/WASMとNativeは同じ生成処理を呼ぶ。Personal Best比較方式v2は保存済みの解決条件・意味versionからkeyを再生成し、保存keyと照合する。source fingerprint・lock・compiler等の来歴は比較条件へ含めない。保存候補の適格性と比較はformatの`TailPersonalBestSelection`へ集約し、filesystemとIndexedDBの列挙・保存は各adapterが担当する。
-core型の内部不変条件を保持するため、数値フィールドを無条件に公開しない。
-filesystemアクセスとエラー表示はCLI、browser APIと表示はWeb/WASM adapterの責務である。
-CLI/WASMはcoreを直接使用してよい。format経由で物理計算を呼ぶ必要はない。
-CLIはコマンド固有の診断JSONを投影し、FlightRecordの保存codecはformatへ委譲する。
+| 層 | 所有する責務 |
+| --- | --- |
+| `birdman-game-core` | 座標・数学、運動方程式、空力、風場、制御、固定tick、接触、GameSession、FlightRecord、集計・補間query |
+| `birdman-game-format` | 外部設定・環境・記録のcodecと検証、解決済み設定、比較identity、Personal Best選定 |
+| `birdman-game-session` | ApplicationSession、共有command実行、scenario準備・資源所有、archive生成、共有UI・camera・描画用モデル |
+| `birdman-game-wasm` | JavaScript ABI、入力のdecode、共有処理の呼出し、DTOのencode |
+| `birdman-game-cli` | CLI/WASIのI/O、offline検査・出力・計測入口 |
+| `birdman-game-bevy` | nativeウィンドウ、ECS・入力・時刻、共有Viewの投影、GPU資源 |
+| `web/src` | browser資源・権限・focus・保存、presentation、共有契約のDOM/VR/Three.jsへの投影 |
+| `tools` | offline asset処理、schema生成、境界検査、再現可能な検証コマンド |
 
-## 責務とディレクトリ
+- coreとformatは`no_std`を維持する。
+- coreにfilesystem、network、OS時計、乱数取得、GIS、serde、WASM ABI、描画engineを持ち込まない。
+- 乱数seed、環境、入力、時刻観測は外部から明示的に渡す。
+- モデル構築と記録容量の予約は準備段階で行い、固定tickのheap allocationを発生させない設計を要求する。
+- 達成状態は対応するallocation検査で確認する。
 
-| 境界 | 責務 |
-|---|---|
-| `crates/birdman-game-core` | math、frames、dynamics、aerodynamics、environment、control、scenario、simulation、game session、record集計・再生query |
-| `crates/birdman-game-format` | aircraft/scenario/world/recordの外部表現、version、検証・codec |
-| `crates/birdman-game-session` | application session所有権・command実行、設定と準備・archive metadata、共有UI・描画用モデル |
-| `crates/birdman-game-wasm` | WASM ABI、applicationへの変換、RenderSnapshot・分析query |
-| `crates/birdman-game-cli` | native/WASI実行、CSV出力、profiling入口 |
-| `web/src` | device入力、browser/presentation状態、共有UI・camera queryの表示投影、画質、WASM呼出し |
-| `web/src/render/contracts` | engine非依存の描画・UI・view・resource識別子の契約 |
-| `web/src/render/engines/three` | Three.js固有のscene graph、camera、shader、GPU/XR結合 |
-| `tools/world-build` | offline地理・気象処理とasset生成 |
-| `tools/environment-build` | hash固定した気象snapshotの抽出と環境assetのoffline生成 |
-| `tools/asset-check` | 配布assetの登録・出典・hash・利用条件の検査 |
+- 依存の版とfeatureは`Cargo.toml`・`Cargo.lock`を正本とする。
+- coreの数値依存は`libm`と`polycool`であり、`nalgebra`はdesktopの検証用dev-dependencyに限定する。
+- 証明用`vstd`とschema生成用`schemars`は明示的な非default featureとし、通常のnative/WASM実行経路へ有効化しない。
+- Parleyのlocal patchはnative日本語組版に限定し、`vendor/parley`を独立したworkspace memberへ追加しない。
 
-moduleは実装時に追加する。空の細分化crateを増設しない。
-Webはstrict TypeScriptとし、外部APIのnull/undefinedを最小境界で検査する。
-Web実行コードとNode.js用build/toolコードは別tsconfigで型検査し、WebからNode.js moduleへのimportをlintで拒否する。
-Web内部の型依存もDAGとし、選択値・snapshotの型を利用側のAppModelやfacadeへ逆依存させない。
-配布assetの入口とVite build graphの検査は `data-sources.md` に従う。
-失敗は判別可能な型で保持し、状態遷移はdiscriminated unionと網羅的分岐で表現する。
+- 依存境界検査は設計上の禁止依存・feature・対象platformを検査する。
+- manifestの内容を別の一覧へ複写することを目的にしない。
+- 全targetの宣言一覧と、active targetで実際に有効になる依存は区別する。
 
-Web UIはThe Elm Architectureの原則を採用する。単一の不変`AppModel`をbrowser/platform状態の正本とし、
-純粋な`update(model, message)`が次状態と副作用要求を返す。DOMと各backendのviewはModelから導出し、
-event handlerはMessageのみを送信する。非同期完了にはrequest IDを付け、現在状態と一致しない結果を破棄する。
-物理状態はcore/WASMの正本を参照し、UIに複製しない。外部API・描画engine・物理実行の副作用はeffect portへ隔離する。
-このAppModelはbrowserのresource lifecycle、表示状態、編集途中のform、focus等を所有する。
-GameSessionの開始可否、domain phase、pause理由、終了・再試行規則、score、record確定値はRust coreが所有する。
-共通ゲームUIの状態・更新・View導出は[共通UI境界](game-ui-boundary.md)に従い共有Rustが所有する。
-WebはimmutableなViewをAppModelへ観測値として保持し、actionをWASMへ送る。
-Rust coreへ複製したゲーム状態を置かず、WASM境界はsession操作とsnapshot/query単位にまとめる。
-アプリのlive sessionと保存recordは二系統tailへ統一する。
-単一facadeがWASM resourceを単独所有し、controller・record query・Replay/Attractは同じownerへ委譲する。
-共有`ApplicationSession`はprivateな`GameSession`、選択設定、seed・tick上限、成功した準備metadata、独立したAttract記録metadata、開いたarchiveの元JSON・設定・control identityを所有する。
-archiveはformatで検証した後に既存Replayへ移し、現在のモデルで再積分しない。失敗は既存recordとmetadataを保持する。WASMとNativeは同じ復元処理を使用し、filesystem/IndexedDBの一覧・I/Oだけを各adapterに置く。
-UIはapplicationの`SessionCommand`を生成し、Web/Bevyは同じexecutorを呼ぶ。物理準備と設定解決はapplicationに所属する。
-adapterはresource準備の`BackendReadiness`と、Manualを含まない三種類の`ExternalPauseReason`による可用性を観測する。理由の解消は該当理由だけを解除し、Resumeは明示操作とする。
-Resume拒否時のManual理由解除、異常tickのResult化、確定後の表示変換失敗を区別し、自動巻戻しや再発進を行わない。
-coreのqueryは`core_session()`の共有参照を利用し、adapterへ可変参照を公開しない。CountdownはcoreのDuration・attempt tokenをそのまま保持する。
-NativeのFixedUpdate、Webの固定tick scheduler、表示resourceとencodingは各adapterが所有する。
-query途中の変更と保存record自体の変更は別の世代で検査し、同recordの通常再生操作ではAnalysis datasetを再取得しない。
-Scene退出・BFCache退避は入力とclockの停止として扱い、owner置換・非復帰teardownで最終解放する。
+## 状態と実行規則の正本
 
-## 実行契約
+### GameSessionとApplicationSession
 
-simulation tickは100 Hz。clock、tickへの入力割当、pause/resumeはplatform adapterが管理する。
-物理状態をrendererへ可変参照として公開しない。RenderSnapshotを補間し、描画は独立に実行する。
-Rust coreの二系統の`advance_tail_flight_tick_with_contact_report`は同じ力学・contactを共用し、physical incidenceと適用control reportを一度の評価から返す。
-Tail controllerはfixed-tick clockの更新完了後、確定snapshotをframe単位で描画し、Result通知を描画・HUD・入力停止から独立して発行する。
-同じcontrollerの通知は一度だけResultへの同期とrecord確定effectを発行し、adapterの失敗は元の終了理由・cause・scoreを維持した表示通知として扱う。
-通知内のreset/disposeが世代を変更した場合、旧frameの描画・cleanup・失敗通知を新しいcontroller状態へ適用しない。
-Controllerのdisposeは入口で世代とclockを失効し、input・WASM resource・描画pose・HUDの独立cleanupを各一回試行する。
-単独失敗は元のthrow値、複数失敗は試行順のAggregateErrorと最初のcauseを保持する。再入・再呼出しは追加解放を実行しない。
-`TailFlightScenario`は検証済みAircraftModel・launch・hybrid aerodynamics・WindField・tail control・contact geometry・course axisを
-一つの不変構成へ組み立て、native CLIとWASM adapterが共通利用する。外部format decode・I/O・device inputから機器非依存pilot intentへの変換はadapter境界に置く。
-共有sessionの`airframe_shape`がf64の構造寸法・断面を所有し、表示用材質・UV・samplingと、構築時の固定接触polytopeをそれぞれ導出する。物理側は表示meshやengine型を参照せず、coreの既存固定点接触へ渡す。
-FBW rate feedbackはRust coreが直前tickの角速度から生成し、一tick内でpilot intentとともに適用する。
-同一モデル、scenario、機体・身体の初期状態、tickごとの舵・身体位置指令列に対する決定性を保つ。
-パイロット前後移動の力学・入力境界は `pilot-motion.md` に従う。
-FBW authority混合と舵actuator stateは `flight-control.md` に従う。
-Desktop・WebXR・Phone VRはpresentation layerに配置する。head trackingは視線のみへ適用し、
-physicsやFBWを変更しない。権限、reference space、光学profile、loopの契約は `presentation.md` に従う。
-Information・Assistance・Weatherの三軸難易度は `difficulty.md` に従う。
-format境界でpresetを解決し、HUD設定・ControllerConfig・Environmentを分離する。
-coreにDifficulty型を追加しない。難易度による空力係数・actuator特性の変更を禁止する。
-native/WASM間のbitwise一致は要求せず、量ごとの許容差で比較する。
+- `GameSession`はdomain phase、停止理由、封印済みconfiguration、飛行状態、終了理由、score、確定record、RetryとReplayを所有する。
+- 公開snapshotはこの状態から導出する観測値である。
+- Bevyの`Transform`、DOM、TypeScriptのScene名を飛行状態の正本にしない。
 
-主要8 GameSceneとoverlayは `game-flow.md`、視点は `camera.md` に従う。
-Result/Analysis/Replayは `flight-record.md` の記録を共用し、表示契約は `result-analysis.md` に従う。
-chartのplot bounds、目盛、grid、軸・注記の位置と書式、凡例、map scale、北方向、cursor色とbounded scrollは共有Rustで導出する。
-adapterは実測したchart content extentを観測として返し、共有descriptorのlogical pixel座標とalphabetic baselineをSVG・Canvas・Bevyへ投影する。
-初回extentは共有側の1000×520、受理する実測の下限は140×100である。selected windの凡例は静的な意味を表示し、時刻依存の高度・scaleは既存cursor readoutへ集約する。
-最初のbrowser版からPilot視点を採用する。sceneごとのThree.js worldの再生成を避ける。
-開発順は「全Scene共通Screen/VR基盤→物理→ゲーム骨格→記録・解析・Replay→実環境→描画品質→配布」とする。
-実気象・地形の取得をゲーム進行の前提にしない。実行順と完了条件は[GitHub Milestones](https://github.com/tokutori/pr-simulator-game-1/milestones)、作業の依存関係はGitHub Issuesで管理する。
+- `SessionLifecycle`と`ConfiguredPhase`は、設定済み・飛行中・結果・再生に必要なpayloadをvariantへ結合する。
+- 独立したphaseと多数の任意fieldの組合せで不変条件を管理しない。
+- Title用demoのようにphaseをまたいで存続する資源は独立した所有領域に置く。
 
-エラーはcoreでenumとして返す。NaN、無限大、不正な質量・慣性・quaternion、適用範囲外、
-grid範囲外を黙って補正しない。失敗時は直前の有効状態を保持し、部分更新を外部へ公開しない。
-Webは有効recordがあれば終了理由付きResultへ遷移し、boot等の初期化失敗は所属Scene内のfailed状態で扱う。
-再試行・復帰の選択肢を提示し、表示言語はcoreから分離する。
+- `ApplicationSession`はprivateなGameSessionと、難易度、seed、tick上限、準備metadata、archive原文、記録の制御identityを所有する。
+- `HybridSessionPreparation`は機体・環境の共有storageを組み立て、Webとnativeへ同じconfigurationを渡す。
+- 準備をWASM専有処理やUI表示処理にしない。
 
-## Bevy native Screen確認用adapter
+- 共有command executorが、設定、準備、Countdown、Pause、Resume、Retry、Replayの呼出し規則を所有する。
+- UIは型付きcommandを生成し、adapterは時刻・可用性・非同期I/Oの観測を共有側へ渡す。
+- platformごとの再開規則や独立したCountdownを作らない。
 
-`birdman-game-bevy`は既存core/formatとWeb非依存の共有session準備を利用するnative adapterである。
-Bevyの入力・GPU・window・Transformはadapter内部に限定し、物理・GameSession・score・記録の正本はRust coreに保持する。
-nativeのbuild・起動・操作にNode.js、TypeScript、browser、WASM実行環境を要求しない。
-初回#254の対象と実GPU検証はWindows 11のScreenである。#543では同じnative adapterをWindows・macOS・Linuxのx86_64/arm64へ接続する。
-各構成のbuild・CPU smokeと実GPU・操作受入を区別し、既存Webの全Scene/VR契約を維持する。
-native固有のPilot/Chase操作はpresentation状態とし、physics・configuration・記録を変更しない。
-実装範囲と確認手順は[Bevy native Screen](bevy-native-screen.md)に記載する。
+- 停止理由はManual、DocumentHidden、TrackingSuspended、ProcessingDelayの集合である。
+- 各外部観測の解消は対応する理由だけを解除する。
+- 理由の解除で自動再開しない。
+- 明示ResumeはManualを除去し、残る外的理由によって認可を判定する。
+- 拒否されたResumeでもManualの解除は保持する。
 
-## 全機polarとhybridへの移行
+### 固定tickと失敗
 
-BPG-038の`StaticPolar`はborrowed row・離散設定ID・解析方式・model version、
-moment軸・固定参照点・共通参照量を持つ。構築と評価にruntime heap・I/Oは不要である。
-`AerodynamicLoadProvider`はStaticPolarまたはHybridを排他的に借用する。旧5要素と三軸制御の実行系は提供しない。
-BPG-039の`HybridModel`は全機staticを一度評価し、幾何・固定normal・current referenceに基づく局所差分だけを加える。
-`HybridError`はcause・surface/proxy・limitを保持し、RK4境界で失敗stageを付与する。
-TailFlightScenarioは初期状態・launch・contact・courseを同じvalidated core境界へ接続する。
-風の正本は選択したproviderに一つだけ存在し、telemetryもこれを参照する。
-二系統尾翼操作・authority・q/r FBWはTailControlProfileで定義する。
+- 物理周期はcoreの公開`PHYSICS_HZ`を参照する。
+- 現在は100 Hzである。
+- adapterはwall-clock、固定tickへの入力割当、描画補間、表示frameを管理する。
+- 可変dtへの変更、遅延tickの黙示的破棄、独立した二重clockを導入しない。
+- Pause中に物理状態とrecordを進めない。
 
-BPG-041（[#220](https://github.com/tokutori/pr-simulator-game-1/issues/220)）は公開用架空mockの定義・検証までとする。
-公開アプリの既定モデル切替はBPG-042（[#221](https://github.com/tokutori/pr-simulator-game-1/issues/221)）で、
-WASM/TypeScript・snapshot・Screen/VR入力、model/controller identity、record versionと同時に更新する。
-未対応schemaは明示的に拒否し、旧live経路・旧ABI・schema移行を維持しない。
-非公開xlsxと実機数値はrepo・Issue・PR・fixtureへ導入しない。詳しい単位・式・適用範囲は`aerodynamics.md`に従う。
+- Countdownは経過時間を共有側へ渡して認可する。
+- callback回数を秒数へ代用しない。
+- attempt tokenで古い観測を拒否し、初期telemetryと記録開始が成功した後にFlightへ遷移する。
 
-## 参照元と現状
+- 飛行tickは候補状態の評価とcommitを分離する。
+- 失敗したtickをrecordへ追加せず、最後の有効状態と元の型付き原因を保持する。
+- 失敗には操作拒否、再開条件未解消、正常終端、異常終端がある。
+- 全APIに一律の「Errなら全状態不変」を要求しない。
 
-2026-09-27確認: ローカル `simulator1` のoriginは
-`https://github.com/tokutori/simulator-prototype-1.git`、参照HEADは
-`20118837706611db84b70daa024ab2741cf8fc2d`。
-`flight-dynamics-core/src/lib.rs`、`dynamics.rs`、viewerの `coordinates.ts` を確認した。
-no_std、FRD/NED、body-to-NED quaternion、明示的wind入力、RK4を設計参考とする。
-既存stateの並進速度はbody表現、本ゲームはNED表現を採用するため、式を直接転記しない。
-係数と検証ケースはBPG-002以降で適用範囲を再確認する。coreの依存はno_std対応で役割の明確なものに限り、
-crate DAGとtarget buildをCIで検証する。`libm`は数学関数のno_std実装として許可する。
-局所線形化のhost検査だけはWindows/Linux/macOS対象のdev依存として固定`nalgebra`のstd featureを使用し、core製品依存・no_std/WASM buildとは分離する。repository checkerはこのcrate/name/kind/target/完全version pin/featuresの組合せだけを許可する。
-UIおよびTailInputのSchema生成はformat/sessionの非既定`schema` featureから固定`schemars`のoptional依存とderive featureだけを有効化し、CLI exporterで使用する。
-repository checkerはこのfeature wiringと依存宣言を限定許可し、WASM/Bevyの通常依存とfeatureからSchema生成を有効化する経路を拒否する。無関係なfeatureは許容し、別feature経由でSchema生成を有効化する経路は拒否する。coreの依存とformatの`no_std`は維持する。
-具体的なdependency versionはCargo.toml/Cargo.lockを正本とする。Native textのParleyは`vendor/parley`の同版Japanese segmentation backportを適用する独立互換性条件として`=0.9.0`を維持し、vendor限定patchとworkspace除外を検査する。
-registryのsource IDはopaqueであり、checkerは文書化されたregistry/sparse種別と既定registry fieldを検査する。未知種別・git/path/rename/alternate-registryを拒否し、IDの完全一致を依存原点の実証とは扱わない。`cargo metadata --no-deps`は全targetの宣言境界を検査し、active targetの解決・buildは各targetのCIで確認する。
-TailInputのwire型・ControlLayout・Hold/Setはformatを正本とし、既存generatorからreadonly TS型と構造validatorを生成する。
-camelCase入力のexact field検査はWeb adapterに保持し、wireのfield・variant・finite・normalized範囲は生成validatorへ委譲する。
-rate目標のdomain上限、WASMの1024-byte上限、decode完了前のtick更新禁止はRust境界で維持する。snapshot・prepared launch・identityとAnalysis/Replay/Attract queryも共通Rust DTOから型と構造validatorを生成する。保存schemaの意味検証、記録との対応、時刻・世代の整合は各公開境界で保持する。
-Web基準のECMAScript `Number.toFixed` 書式は共有sessionの固定`ryu-js`で保持する。通常依存は同crateへ限定し、他crateへの直接重複配置をrepository checkerで拒否する。
-登録OSM構造物の描画用三角化は共有sessionの`earcut`へ委譲し、形状・寸法・色をWeb/WASMとNativeで共用する。engine adapterは既存APIによる面積重み法線と描画資源だけを生成し、coreや各adapterへ三角化依存・同じ形状規則を複製しない。
-登録地形・湖岸・島も共有sessionの`venue_terrain`を正本とする。既存WebのDSM補間・patch切抜き・岸線接続・島表面・linear頂点色・完成法線を共有で生成し、WASMとNativeはbulk属性を一度だけ座標投影する。原点・water datum・表示近似の意味とunknown identityの会場非表示を保持し、物理地形やcollisionへ接続しない。
+数値契約は[飛行力学](flight-dynamics.md)と[飛行制御](flight-control.md)、記録と終端時刻は[データと形式](data-and-formats.md)に定める。
 
-BPG-001は契約とbuild可能な境界のみを含む。BPG-002/003の6DoF・空力coreは実装済みである。
-GameSession、record、metrics、Analysis/Replay/Attract queryとWASM commandはRustの正本を共用する。
-保存schema 6の二系統state・cause・identity・stampを保持する。未対応schemaの既存データは自動削除しない。
-AppModelはbrowser/presentation状態とimmutableな表示snapshotを保持し、domain phase・score・再生clockを独自更新しない。
-Titleの保存記録一覧は共有Rustの有界queryで指定した最新3件のmetadataだけを保持する。WebはIndexedDBの逆順cursorで必要件数だけ読み、全保存索引・Personal Bestの全候補探索と区別する。共有UI入力のschemaから件数・表示timestamp長・通知長・UTF-8 JSON bytesの上限を生成し、adapterは同じ上限を使用する。長い診断は表示投影だけをUnicode scalar単位で短縮し、元のエラーと保存原本を保持する。毎frameのUI同期へ全件metadataを再送しない。
-開発原則は[設計指針](https://zenn.dev/bem130/articles/1b352797de94e7)に基づく。
+## 数値モデルと座標の境界
+
+- 現行経路は`TailFlightScenario`、二系統の尾翼取付角、共有FBWを使用する。
+- `StaticPolar`と`HybridModel`は排他的な荷重providerであり、同一荷重を二重加算しない。
+- Hybridのstatic項と局所補正、風評価、失敗site・stage・causeを保持する。
+- telemetryは同じ風場を参照する。
+
+- 物理はNED位置・速度、FRD機体座標、bodyからNEDへのquaternionを使用する。
+- 単位とquaternion要素順はadapter境界で検査・変換する。
+- 描画原点、眼位置、機体原点、合成重心は用途を区別する。
+- 表示の都合で物理状態を変更しない。
+
+- Web/nativeの数値比較は、同じmodel・scenario・seed・解決済み設定・tick入力で行う。
+- 異なるcompiler/targetに無条件のbitwise一致を要求しない。
+- 物理一致と、表示補間・視点・入力割当の一致を個別に検査する。
+
+- 共有`airframe_shape`はf64の構造形状を所有し、表示meshと固定物理polytopeを別々に導出する。
+- 材質、UV、表示sampling、f32化、表示たわみを接触点の生成元にしない。
+- 全polytope頂点による静水面支持と、連続曲面・変形機体への近似は別の契約である。
+
+- 湖面の波・空・地形は描画用モデルとして共有する。
+- 物理接触は固定水面を使う。
+- 波高や描画LODから物理水面を変更しない。
+- 非公開xlsxや出典不明の実機値を導入しない。
+
+## 共有UI
+
+### 純粋な更新とView
+
+Rustの`game_ui`がUIの正本を所有する。
+
+```text
+GameUiState × Action → 更新後State × Effect
+State × Session観測 × Platform観測 → GameUiView / GameUiFrame
+GameUiView / GameUiFrame → platform renderer → DOM / VR panel / Bevy entity
+```
+
+- ラベル、主要操作、順序、section、表示条件、theme、HUD、chartの意味は共有Rustで定義する。
+- platformは表示API、フォント計測、safe area、focus、scroll、入力方式を担当する。
+- ボタンIDや表示文字列から意味を再推定しない。
+
+- menuは順序付きsectionとrow/column/gridを持つ。
+- section見出し、control順序、chart legendのsolid色・gradientを各rendererへ転送する。
+- 動的readoutは型付きproviderを用いる。
+- HUDは順序付きgroupとText・Attitude・HeadingTape・Direction・LinearGauge等のnodeを持ち、adapterはkindを網羅的に投影する。
+- IDは差分追跡に用い、計器項目の個別再実装に用いない。
+
+- chartの軸、series、segment、風、marker、cursorはRustのrecord queryから導出する。
+- TypeScriptやBevy UIで飛行物理・scoreを再計算しない。
+- 未提供の警報producerは利用不可として表示し、Custom設定値の保持と実装済み警報の提供を区別する。
+- 致命的なcontroller失敗は通常の情報量設定にかかわらず通知する。
+
+### 構造・動的値・外部入力
+
+- 構造Viewと高頻度の動的Frameを分離する。
+- 構造revisionと依存keyの意味は共有側が所有し、adapterは変更時だけ構造を再投影する。
+- 数値更新ごとにNode・grid・背景・DOM全体を再構築しない。
+- DOMはrenderer境界で反映し、focus・caret・scrollの保持を検査する。
+
+- Titleの保存一覧は共有queryが要求する最大3件の新しいmetadataへ限定する。
+- Webは逆順metadata cursorで取得し、UI JSON入力は131,072 byte、noticeは2,048 Unicode scalar、日時文字列は256文字以内とする。
+- このpreview制限はPersonal Bestの全候補探索を変更しない。
+- 原記録JSONをUI入力へ反復しない。
+
+- 難易度はInformation、Assistance、Weatherの三軸である。
+- presetは三軸を一括設定するshortcutであり、画質とpresentationは別の設定である。
+- UI仕様は[ゲームとUI](gameplay-and-ui.md)に定める。
+
+### schemaとABI
+
+- Rustのserde型とSchemars schemaを正本に、readonlyなTypeScript型とAjv standalone validatorを生成する。
+- 対象にはUI、操作、session snapshot、準備metadata、record queryを含める。
+- 生成物を手編集しない。
+- 生成用featureは通常のWASM/nativeから分離する。
+
+- 構造検査は有限数、必須field、未知field・variant、配列上限を検査する。
+- phase・時刻・record source・generation・quaternionなどの意味検査は契約の所在を明示して保持する。
+- JSONの型assertionだけで境界検査を置き換えない。
+- hot pathと保存用version付き文書の受渡しは、性能計測と入力意味を確認して変更する。
+
+## Webの状態と資源寿命
+
+- WebのAppModelはbrowserが所有するpresentation、resource観測、権限、focus、form draft、非同期要求を保持する。
+- 純粋なupdateからEffectを生成し、browser APIの実行をinterpreterへ分離する。
+- Rust snapshotの観測をTypeScriptの独立したゲーム状態機械へ変換しない。
+
+- 非同期要求IDとrecord source generationを区別する。
+- 古いquery結果、別recordの解析結果、破棄済みownerの通知を受理しない。
+- WASM resourceは単一のowner/facadeが解放する。
+- Scene退出やBFCache待避によるsuspendと、owner交換・終了によるdisposeを区別する。
+
+- 同recordのseek・clock・再生速度はdatasetの寿命を変えない。
+- Retry、設定変更、archive開閉、disposeはrecord sourceを失効させる。
+- Attractのdemoはplayerと独立した有界record・clockを所有し、playerの保存・exportへ混入させない。
+
+- Controllerのdisposeは入口でgenerationとclockを無効化し、input、session、renderer pose、HUD等の独立cleanupをすべて試行する。
+- 最初の失敗で後続を中断しない。
+- 単一原因を保持し、複数原因はAggregateError等で集約する。
+- 再入と再実行によって同じ解放を重複しない。
+
+- PresentationRuntimeもloop、backend、rendererのcleanupをすべて試行し、最初の完了Promiseと結果を共有する。
+- 失敗は原因を保持する空でない型付き結果として通知する。
+- 表示更新とresourceの寿命変更を同じ責務へ混在させない。
+
+## 描画・camera・presentationの境界
+
+### engine非依存の契約
+
+- Screen、WebXR、Phone VRは表示modeである。
+- Three.js、Bevyはengine/backendである。
+- 公開契約へengine固有型を露出しない。
+
+| 契約 | 内容 |
+| --- | --- |
+| snapshot・pose | 機体・pilot・風・終端状態とtyped telemetry |
+| world asset | 登録ID、座標、mesh・属性の共通データ、利用条件 |
+| camera | Pilot/Chase/Replay/Attractのpose、mount、head pose |
+| ViewerFrame | 同一frameのmono/stereo眼、projection、viewport、head frame |
+| UI | Action、View、Frame、anchor、panel bounds、入力hit領域 |
+| capability・quality | 可用なmode、画質・倍率、適用状態、型付き失敗 |
+
+- Three.jsの型・importは`web/src/render/engines/three`内部へ限定する。
+- 具体factoryの接続はcomposition rootが行う。
+- app、presentation、camera、契約層からengine adapterを参照しない。
+- 型専用import、re-export、JSDoc import、`require`、dynamic import、module referenceも同じ境界と依存DAGの対象である。
+
+- 共有cameraの低位basisはapp/runtime型に依存しない。
+- session選択・snapshotの共通観測型もapp所有型への逆参照を持たない。
+- 型の複写によって循環を回避しない。
+
+### cameraとpanel
+
+- Replay/Attractのcamera directorは共有Rustに置く。
+- liveの入力・head trackingはadapterで観測し、aircraft pose、cockpit mount、pilot offset、head poseを合成する。
+- head trackingで物理状態を変更しない。
+
+- layout、hit test、backend描画は同じimmutableなViewerFrameを使う。
+- panelはAbsent・Visible・Unavailableを排他的に表現する。
+- 必須capabilityが失われた際はUnavailableとし、前frameのpanelを残さない。
+- HUDはcamera/head基準のanchor、前方clear region、透明度、stereo可読性を明示する。
+
+- GPU mesh、material、shader、render target、entity/DOMはadapterが所有する。
+- 共有モデルはenvironmentから波スペクトル・空・cloud・地形・機体形状を生成し、adapterが成分選択・uniform・GLSL/WGSL・engine座標へ変換する。
+- 変更のたびに巨大なsceneを再送しない。
+
+- 資源交換は候補の準備成功後にcommitし、旧資源だけを解放する。
+- 空のCloudLayerは型でmesh不在を表現し、頂点・indexが空のmeshをGPU資源として登録しない。
+- 失敗時は有効な旧資源と元原因を保持する。
+
+詳細な描画・空間・品質契約は[描画とplatform](rendering-and-platforms.md)に定める。
+
+## nativeの独立性と検証境界
+
+- native版は同じApplicationSession、共有UI、記録producer/selectorを直接利用する。
+- 起動にNode.js、JavaScript、browser、WebView、WASM実行環境を要求しない。
+- OS/GPU・window systemの通常の依存はnative環境の前提とする。
+
+- native実装と配布対象はWindows/macOS/Linuxのx86_64/arm64、表示対象はScreenである。
+- Webの全Scene/overlayへのScreen/VR契約を維持する。
+- nativeへのXR追加や署名・notarizationの達成は別途検証する。
+
+- build成功、ソース外のCLI smoke、offscreen GPU、実画面の操作、性能、OSごとの受入を区別する。
+- CPUのadapter testだけでshader・描画を確認済みとしない。
+- 形式証明は[形式検証](formal-verification.md)、asset・保存形式・出典は[データと形式](data-and-formats.md)、起動手順は[nativeガイド](native-guide.md)を参照する。

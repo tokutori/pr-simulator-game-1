@@ -4,7 +4,7 @@
 第三者データ・画像・地形・機体assetには各出典の利用条件を適用し、MITへ再ライセンスしない。
 ソフトウェア依存のライセンスも各packageの条件を維持する。
 
-配布assetの一覧と個別条件は `assets/manifest.toml` に記載する。候補一覧は `docs/data-sources.md` に記載する。
+配布assetの一覧と個別条件は `assets/manifest.toml` に記載する。候補一覧は `docs/data-and-formats.md` に記載する。
 候補掲載は取得・再配布の許諾確認を意味しない。
 
 ## 琵琶湖の局所湖岸

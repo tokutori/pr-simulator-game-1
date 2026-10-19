@@ -1,200 +1,364 @@
-# 舵指令・FBW・actuator契約
+# 飛行制御とパイロットの運動
 
-## 所有境界
+本書は二系統尾翼の指令、FBW、actuator、パイロットの移動質量、身体目標、入力機器の境界を定義する。
+座標系・積分・空力・接触は[飛行力学](flight-dynamics.md)、保存・queryは[データ形式](data-and-formats.md)、UIと利用者向け操作は[ゲームとUI](gameplay-and-ui.md)に従う。
 
-制御・authority混合・actuator状態はRust coreの決定的なdomain stateとする。入力機器はTypeScript adapterで
-機器非依存のpilot commandとdesired body rateへ変換し、tick単位でcoreへ渡す。DOMとGamepad APIはこの境界へ含めない。
-observed body rateはRustの直前tick stateから取得し、FBW commandをcore内で生成する。
+## 状態の所有と二系統入力
 
-FBW authorityは舵指令だけに適用する。pilot body targetは別経路であり、authority mixerに含めない。
-Manualはpilot指令を選択し、Automaticはcontroller指令を選択し、Sharedはauthority $a$ による線形混合を行う。
+- 制御、authority混合、actuator、身体の位置・速度・保持目標は共有Rust coreの決定的な状態とする。
+- WebとNativeの入力adapterは機器の値を機器非依存のintentへ変換し、整数tickへ割り当てる。
+- FBWは直前成功tickのbody角速度を観測する。
+- adapterに追加の制御ループや物理定数を置かない。
+- DOM、Gamepad API、OSイベント、描画はこのcore境界に含めない。
+
+| 型 | 意味と範囲 |
+|---|---|
+| `TailPilotIntent` | normalized nose-up/right-turn。各閉区間[-1,1] |
+| `TailRateTarget` | body正方向のpitch q / yaw r目標。各閉区間±0.2 rad/s |
+| `TailIncidence` | 水平・垂直尾翼のphysical effective incidence。各閉区間±0.2 rad |
+| `TailPilotPositionCommand` | 身体位置の`Set`要求または`Hold` |
+| `ControlMode` | Manual、Shared（authority）、Automaticの直和型 |
+| `TailFlightTickState` | body/pilot state、二系統incidence、保持pilot target、整数tickの単一正本 |
+
+- 独立したroll入力は持たない。
+- manualの正nose-up/right-turnは、それぞれ水平・垂直尾翼のphysical incidenceへ-0.2 rad倍で写像する。
+- observed roll rateを操作量に使わない。
+
+FBW authorityは舵指令だけに適用する。Manualはpilot指令、Automaticはcontroller指令を選び、Sharedは有限な $a\in[0,1]$ で線形混合する。
 
 ```math
-u=(1-a)u_{pilot}+a u_{FBW},\qquad 0\le a\le1
+u=(1-a)u_{pilot}+a u_{FBW}
 ```
 
-## 型と単位
+- Informationは表示だけへ作用する。
+- AssistanceのStrong / Assisted / Light / Manualはauthority 1 / 0.5 / 0.2 / 0へ解決する。
+- 既定の支援はLightである。
+- 実際に解決した`ControlMode::Shared`のauthorityを保持し、保存後にAssistanceから再解決しない。
+- 身体の位置目標は舵authorityと独立であり、Automaticでも入力できる。
+- 未入力時は保持中の目標を使用する。
 
-TailPilotIntentはnormalized nose-up/right-turn、TailRateTargetはbody q/r、TailIncidenceは水平・垂直尾翼のphysical angleを保持する。
-ControlModeはManual、Shared(authority)、Automaticの直和型とし、authorityは有限な$[0,1]$へ限定する。
-slew更新はcoreの固定tickに従う。整数tick $k$ のstateは前区間の保持値 $\delta_k$、
-入力 $k$ による更新値 $\delta_{k+1}$ は区間 $(k,k+1]$ の全RK4 stageへ保持する。
-正のcontact fractionは更新後incidenceを保存し、fraction=0は直前incidenceを保存する。
-Replayのexact sampleは保存値、区間内点は終端側sampleの保持incidenceを返す。
-pilot target policyは身体の独立した有限停止条件を検証する。詳細は[pilot-motion](pilot-motion.md)へ従う。
+## FBWとactuator
 
-## エラーと検証
+- `tail_rate_feedback_incidence`は各軸の`gain × (observed - target)`を±0.2 radへ飽和する。
+- `TailControlProfile`のq/r gainは各0.2 s、最大slewは各1 rad/sとし、機体の空力係数から分離する。
+- `advance_tail_control`はauthority混合、physical saturation、slewを純粋に評価し、混合要求と次区間の保持incidenceを返す。
 
-BPG-040の専用二系統境界は`TailPilotIntent`、`TailRateTarget`、`TailControlProfile`とする。
-manual nose-up/right intentは各[-1,1]で、水平・垂直尾翼のphysical incidenceへ各-0.2 rad倍で写像する。
-body q/r targetは各±0.2 rad/sである。`tail_rate_feedback_incidence`は
-gain×(observed-target)を各±0.2 radで飽和する。observed roll rateを操作へ使用しない。
-software profileの初期設定はq/r gain各0.2 s、slew各1 rad/sとし、airframe/polar parameterから分離する。
-`advance_tail_control`は既存ControlModeのauthority混合、physical saturation、slewを純粋に評価し、
-混合targetと次区間の保持incidenceを返す。pilot位置指令はこのmixerの対象外である。
-二系統制御primitiveとHybrid荷重の符号を検証する。
-新mockのWASM・input・record・既定モデルはBPG-042のアプリ統合で同じ二系統契約へ接続する。
+- 整数tick $k$ のstateは前区間の保持値 $\delta_k$ を持つ。
+- 入力 $k$ による更新値 $\delta_{k+1}$ は区間 $(k,k+1]$ の全RK4 stageへ保持する。
+- 正の接触fractionでは更新incidenceを保存し、fraction 0では直前incidenceを保持する。
+- Replayのexact sampleは保存値、区間内点は終端側sampleの保持incidenceを返す。
+- 入力から連続したactuator軌跡を推測しない。
 
-### 局所迎角差と尾翼角の合成範囲保護
+### 局所迎角差と尾翼角の合成範囲
 
-[#262](https://github.com/tokutori/pr-simulator-game-1/issues/262)の保護は二系統の共通Rust tickへ配置し、
-Manual・Shared・Automaticへ同じ規則を適用する。独立した尾翼角飽和は局所迎角差との合計を保証しないため、
-既存hybrid荷重が定義する各proxyの`ControlledAlphaDifference`を参照する。
+Manual・Shared・Automaticの全てへ、同じRust tick内で保護を適用する。
+hybridの各proxyが持つ局所迎角差 $\Delta\alpha_i$ と尾翼角の合計を検査する。
 
 ```math
 I(s)=[-0.2,0.2]\cap\bigcap_i[-0.2-\Delta\alpha_i,0.2-\Delta\alpha_i]
 ```
 
-初めに従来のauthority・slewで生成した保持incidenceを、同じ固定tickの全RK4 stageと公開stateで検査する。
-公開stateは非接触時のweighted endpoint、接触時の同時刻terminal stateである。
-成功した状態はそのまま採用する。尾翼の合成角制限が失敗した場合は、現在stateの許容区間と
-actuatorの`previous ± maximum_slew × PHYSICS_DT_SECONDS`の可到達区間を交差する。
-各軸の投影要求・前tick incidenceの投影値・中央・下限・上限による最大25組を追加検査し、最初の成功結果だけを公開する。
-controller、pilot目標、pilot加速度は一度だけ導出し、候補間で変更しない。
-候補ごとにincidenceを全stageへ保持し、時間刻み、物理式、空力係数、適用範囲を変更しない。
+- 最初に通常のauthority・slewで生成した保持incidenceを、全RK4 stageと公開stateで評価する。
+- 公開stateは非接触時のweighted endpoint、接触時の同時刻terminal stateである。
+- 成功結果は変更せず採用する。
 
-これは有限候補による一tickの検査である。連続区間の網羅、将来の継続安全、失速保護、姿勢・迎角の保持を保証しない。
-`StaticAlpha`、局所速度、風の領域外など、尾翼合成角から独立した失敗は元の型付きerrorを保持する。
-候補が得られない場合は名目指令の元cause/site/stageで終了し、最後の有効stateとrecordを維持する。
-endpointの直接評価はstageを`None`とし、第四stageと混同しない。
+- 合成角制限に失敗した場合は、現在状態の許容区間と`previous ± maximum_slew × PHYSICS_DT_SECONDS`の可到達区間を交差する。
+- 各軸の投影要求、前tick incidenceの投影値、中央、下限、上限から最大25組を追加検査し、最初に成功した結果だけを公開する。
+- controller、身体目標、身体加速度は一度だけ導出して候補間で固定する。
+- incidenceを候補ごとの全stageへ保持し、刻み・物理式・係数・適用範囲を変更しない。
 
-要求intent・manual/feedback/mixed targetは従来のcontrol reportへ保存する。
-保護後の実incidenceはphysical sampleへ保存する。現行controller version 3にこの保護を含め、Personal Bestの比較keyもversionを保持する。
+- この探索は有限候補による1 tickの検査である。
+- 連続区間の網羅、将来の継続安全、失速保護、姿勢・迎角の保持は保証しない。
+- `StaticAlpha`、局所速度、風の領域外等の独立した失敗は元の型付きエラーを保持する。
+- 候補が得られない場合は名目指令の元cause/site/stageで終了し、最後の有効stateとrecordを維持する。
+- endpointの直接評価はstageを`None`とし、Fourth stageと区別する。
 
-`TailPilotPositionCommand`は新しいnormalized inputと`Hold`を排他的に表す。
-`TailPilotPositionMapping`は[-1,0,1]を[-0.4,trim,0.4] mへ区分線形で写像し、出力を±0.4 mに制限する。
-新flightの保持targetはtrimで初期化する。中立inputはtrimへ写像し、input欠損・機器切断の`Hold`は直前targetを維持する。
-この位置commandはControlMode・舵authorityから独立する。物理travel・速度・加速度制約は既存pilot policyが検証する。
+### 迎角と身体目標のsoft保護
 
-`TailFlightTickState`はbody/pilot state、二系統incidence、保持pilot target、整数tickの単一正本である。
-`advance_tail_flight_tick`は直前成功stateのq/rから制御を一度だけ評価し、更新incidenceを全RK4 stageへ保持する。
-Hybrid専用load adapterはphysical incidenceを直接評価する。TailIncidenceをそのまま使用する。
-pilot target policy・moving mass・積分器・contact検索/slerpは既存処理を共有する。
-`advance_tail_flight_tick_with_contact`は着水時にfractional terminal sampleだけを返す。
-fraction 0では直前incidence/target、正fractionでは新incidence/targetを保持し、body/pilot stateは同時刻へ補間する。
-制御・pilot policy・荷重stage・contactの失敗時は部分stateをcommitしない。
-`advance_tail_flight_tick_with_contact_report`は同一評価の`TailControlCommands`と入力を成功outcomeへ付属させる。
-normalized manual intent、body q/r target、manual/FBW/mixed incidence targetを型とaccessorで区別する。
-physical incidenceと保持pilot targetはoutcomeのstate/sampleを参照し、record側で制御を再計算しない。
-fraction 0のreportは未適用の新controlを保持せず、正fractionと整数tickはその区間の適用controlを返す。
-`TailFlightScenarioParameters`は共通のComposite-CG launch/contact検証から二系統のtick-zero stateを生成する。
-`TailFlightScenario`はborrowed Hybrid load/wind、pilot trim、contact、courseを固定し、software profileを機体から分離する。
-telemetry式とdistance scoreは共有coreから導出する。`run`はTimeLimit/WaterContactで同時刻のstateとscoreを返す。
-失敗時は直前成功の二系統stateと元のcause/stageを返し、そのtickをcommitしない。
-新mock機体のWASM/input/record/defaultはBPG-042で一体として接続する。
+- `TailAngleOfAttackGuard`は検証済みprofileに保持するoptional policyである。
+- 公開Playableの設定はdatum alpha運用帯[-0.09,+0.09] rad、preview 1.0 s、pitch gain 1.6 sとし、基準alphaはtrimのdatum alphaである。
+- Manual・Shared・Automaticに同じpolicyを適用し、元のauthority、q/r gain、slewを維持する。
+- これらは合成controllerの設計値であり、hybridのhard envelopeを拡大しない。
 
-GameSessionは既存lifecycleを共有し、TailFlightScenarioと同型のTailFlightTickStateをactive stateへ保持する。
-hybrid tickの成功reportをFlightRecordへ渡し、記録・telemetryの成功後に整数tickを公開する。
-失敗stageのstate・incidence・pilot target・inputを公開せず、直前成功stateをResult/recordへ確定する。
-Resultは元のtick errorを保持する。空力envelopeと有限windのOutsideGridはOutOfValidEnvelope、
-非有限値・算術・policy等の失敗はFatalSimulationErrorとして区別する。
-FlightRecordのfinalizationにも同じ型付きerrorを保存し、失敗tickのsampleを追加しない。
-新既定モデル・新ABI・record schemaの公開切替はBPG-042の同一PRで結合する。
-WASMのadditive Rust入口`HybridSessionPreparation`はmock定義とsurfaceを固定owned cacheへ保持し、
-既存owned環境6のwindを借用したscenarioをGameSessionへ渡す。自己参照とleaked storageを使用しない。
-trimのair-relative速度へCG位置のwindを一度加算してlaunch ground速度とし、同windをtelemetryへ使用する。
-model/controllerの文字列identityはRust定義からrecordへ渡し、UI側で生成しない。
-アプリ既定は`bpg041-playable-hybrid-mock`/version 2と`bpg040-tail-rate-feedback`/version 3である。
-modelのPWL列・geometry・trimと、全modeのsoft alpha/身体target保護は[playableモデル契約](playable-hybrid-model.md)に従う。
+- guardはdatum $O$ で同じ風場を評価し、対地速度から風を引いてbodyへ変換した速度の`atan2(down, forward)`を使う。
+- HUD・record telemetryが示す合成重心 $G$ のalphaとは区別する。
+- 風・数学評価が不能、またはdatum alphaが未定義の場合は予測を適用せず、実RK荷重の元の型付きエラーを保持する。
 
-明示的な`HybridGameSessionBridge`はschema 2のJSON境界を提供する。`control_layout=tail_incidence`を必須とし、
-入力は`nose_up`/`turn_right`、body-positiveの`desired_pitch_rate_rad_s`/`desired_yaw_rate_rad_s`、
-`pilot_position_command`の`hold`/`set`を受け取る。余剰axis・未知field・異なるschemaを拒否する。
-snapshotの`frame`は`menu`/`flight`/`result`の排他型である。physical incidence、身体状態、CG telemetryと
-terminal finalization/causeを同じRust stateから投影する。seedはlow/highの32bit値で正確に受け渡す。
-既定アプリのReplay/Attractは同じbridgeのnamed保存queryを使用する。
-hybridのSetupは既存`DifficultySettings`とcatalog 3を使用する。Calm/Mild/Challenging/NearLimitは
-登録済みuniform provider 1/2/4/5、Typicalはoffline asset 6のgridを使用し、環境metadataと物理のproviderを一致させる。
-Informationは表示だけに作用し、Assistanceは既存Strong/Assisted/Light/Manualをauthority 1/0.5/0.2/0へ解決する。
-Briefing開始後は選択を固定し、18値のconfiguration metadataとmodel/controller identityをRustから供給する。
-snapshotはTitle/FlightSetupで両identityを`null`、BriefingPreparing/BriefingFailed/BriefingReady/Countdown以降で両identityを必須とする。
-Setupの候補は別environment projectionの`selected`で示し、準備失敗・再準備・Countdown取消でもsealed identityを保持する。
-record/PBには同じ成功したpreparationのprofile・course・difficultyを渡す。同じ二系統profileを使用する。
-`control_profile_json()`はsealed controller ID/versionとpitch/yawのrate上限・feedback gain・slewを供給する。
-device adapterは型付き上限へnormalized demandを写像し、TSに物理定数を定義しない。explicit q/r入力は同一ABIを維持する。
-live stateの`pilot_position_target_normalized`は、同じsealed mappingで現在のheld physical targetを逆写像した値である。
-trimを0、両端を±1とし、trimと端点が一致する場合は同じphysical targetを0へ正規化する。
-初期化・Resume・入力機器の再取得はこの値を参照し、現在のphysical positionや初期positionから目標を推定しない。
-`Hold`は直前effective targetを保持した名目要求であり、controller 3のalpha保護は危険側biasをさらにtrim側へ絞り得る。
-元Hold/Set要求とresolved effective targetを区別する。保存記録値とlive入力状態を区別する。
-Flight/Pausedの`frame.progress_m`は`course_parallel_m`・`cross_track_m`・`net_horizontal_m`をRustから供給する。
-sealed initial datumと最新成功datumの変位へdistance score v1の幾何計算を適用し、CG移動・累積経路長と区別する。
-進行値は未確定の診断値であり、Resultは同時刻の既存`finalization.score_m`を保持する。保存queryへcursor scoreを追加しない。
-Result/Replayは`flight_analysis_samples_json()`と`flight_record_sample_at_seconds()`を同じRust保存recordへ接続する。
-queryのschema 2は保存physics/telemetryと`controls.layout`による`tail_incidence`のphysical値を返す。
-Replayの時刻・再生速度・再生可否は既存`GameSession`のclockを使用し、グラフと描画が同じsecondsをqueryする。
-`playback_context_json()`はnamed phase `replay`/`attract`、保存scenario/control identity、difficulty、二系統finalization/causeを返す。
-live `snapshot_json()`はReplayをtyped拒否し、Replay表示は専用context/queryを使用する。未対応schemaを拒否する。
-`export_flight_record_json()`は同じsealed metadataからschema 6とcanonical PB keyを生成する。archiveはsnapshot閲覧へ限定する。
-`TailPersonalBestSelectionBridge`は既存Rust比較を使用し、未対応schemaとmodel/controller/key不一致を比較対象から除外する。
-`enter_attract()`はTitleから独立した有界demo recordを一度生成・保持し、再入時は同recordのclockだけを初期化する。
-demoは登録Calm環境・Automatic制御の架空hybridモデルを使用し、playerのdifficulty・seed・recordへ書き込まない。
-Attractの描画・分析は保存queryを使用し、live snapshot・player record exportを拒否する。`leave_attract()`はTitleへ戻る。
-`flight_record_summary_json()`はResult/Replay/Attractの同recordからRust集計・physics Hz・保存contextを返す。
-最大迎角と確定scoreは理由付き`available`/`unavailable`へ写像し、cursor進行値へ置換しない。
-`flight_wind_grid_json(north_min_m, east_min_m, altitude_m, spacing_m)`は登録済み環境を5×5点でqueryする。
-未知identityと登録領域外は理由付き`unavailable`とし、部分gridや無風への代替値を生成しない。
+混合要求を一度だけ評価し、現在のdatum alphaから許容q帯を求める。
 
-Webの`tail-session-codec`はschema 2と`tail_incidence`を検査し、phaseとframeを結合したimmutableな直和型へ変換する。
-physical incidenceは水平・垂直尾翼の二値、body角速度はroll/pitch/yawの三値として保持する。
-terminalのfraction・stamp・typed causeとRust由来identityを保存し、このcodecから共通表示snapshotを導出する。
-二系統device adapterはArrowUp/Downをnose-up/down、ArrowRight/Leftをright/left turn、J/Lをnormalized身体指令に対応付ける。
-Gamepadは明示したnose-up・right-turn・身体軸だけを読む。キーボード解放はHold、Gamepadの身体軸はSetとする。
-身体の物理target・FBW出力・gain・slewはRustに保持し、Webは呼出し側から受け取ったexplicit q/r demandを変更せず渡す。
+```math
+q_{lo}=\frac{-0.09-\alpha_O}{1.0},\qquad q_{hi}=\frac{0.09-\alpha_O}{1.0}
+```
 
-`parseTailControlProfile`はRustのsealed controller ID/version・pitch/yaw rate limit・gain・slew metadataをstrictに検査する。
-`tailInputFromControlProfile`は同じsealed scenario/aircraft/controller/seedのsnapshotと照合し、normalized demandをRust所有rate limitへ写像する。
-gainとslewはmetadataとして保持する。FBWの評価とsoftware actuator更新はRust coreが所有し、Web側には追加のcontrol loopを設けない。
+physical elevator要求を、このq帯に対応する`gain × (observed q - allowed q)`のincidence区間へ投影して既存slewを適用する。
+rudder要求はこのalpha policyで変更しない。
 
-`BrowserTailPilotInput`は毎tickのRust held targetを使用し、Gamepad再取得時はneutralと身体軸のpickupを確認する。
-身体軸の再取得前とキーボード解放時は`Hold`を送り、現在のphysical positionや中立値で目標を置換しない。
-`TailSessionPort`と`TailFlightController`はnamed JSONとsealed profileを介して入力・fixed tick・共通表示snapshotを接続する。
-発進原点・発進台寸法・方位は`assets/biwa-launch-venue.json`をRust session、Web、nativeで共用する。
-hybrid scenario version 3は北から時計回り315°を初期headingとcourse axisへ適用する。
-NEDの環境風は回転せず、同じCG地点の風をtrimの空気相対速度へ一度加算する。
-reset・snapshot同期・描画の失敗時は入力とclockを停止し、再同期の成功前にtickを再開しない。
-既定アプリはこの二系統port/controllerを使用し、入力・HUD・Resultへ同じsnapshotを渡す。
-`TailAppSessionFacade`は単一ownerとしてWASM resourceを排他的に所有し、命令・snapshot・保存queryを既存境界へ委譲する。
-facade内にdomain phaseや物理状態の独立した正本を保持しない。TailFlightControllerも同じresource ownerのportを使用する。
-非同期queryは観測開始時のopaque owner/query generation tokenを保持し、取得途中の変更後に届いた結果を拒否する。
-Analysis datasetのproofは別のrecord source generationを保持し、Retry・設定変更・archive開閉・disposeで失効する。
-同recordのseek・再生速度・再生可否・clock更新ではdatasetを維持し、cursor queryだけを実行する。
-scenario/seedが同一でもresource世代が異なる結果は受理しない。
-`session-factory`はlayoutを明示した構成からWASM resourceを生成し、単一のfacade ownerへ渡す。
-新factoryはraw bridgeを公開せず、初回projectionに失敗したresourceを解放する。
-`archived-personal-best`はschema 6をRust Tail selectorへ接続する。
-未対応schemaの保存bytesは変更せず、比較から除外する。schema 6の破損とkey・適格性の検証はRust selectorへ委譲する。
-既定アプリのmain・入力・HUD・Result・保存・Replayは同じtail facadeを使用する。
-Scene退出とBFCache退避ではcontrollerを停止し、非復帰teardownとowner置換でresourceを最終解放する。
-AppModelのFlight/Pausedはcontrol layout・Rust phase・共通snapshotを相関した直和型で保持する。
-Resultの保存snapshotはfinalizationと同じ終端stampだけを受理し、Replay/Attractのcursorとは分離する。
-record未取得は理由付きavailabilityで保持する。
-adapter停止ではcontroller世代とlayoutを照合し、Pause同期前の最後の有効snapshotも保持する。Rust domain phaseは変更しない。
-Attractは専用named contextとRust-owned record/clockを通じてfacadeへ接続する。
-Titleのidle/attract表示値はRust phaseと同demo contextから導出し、Attractのlive snapshotやplayer record exportへ迂回しない。
-enter/leaveはrecord sourceの世代を更新し、同demoへ再入した場合も前回の非同期結果を拒否する。
-再生操作はquery generationを更新し、同recordのdataset proofを維持する。
-共通表示の`progressMeters`はFlight/PausedでRustのcourse/cross-track/netを保持し、Resultの確定scoreと区別する。
-保存queryの不足理由は`unavailable`へ保持し、保存cursorの距離を再計算しない。
+- 身体目標は初期trim位置を基準とし、危険側のbiasだけを連続的に絞る。
+- 後方biasはnose-up・alpha増加側、前方biasはnose-down・alpha減少側である。
+- 上側riskは`alpha + preview × max(q, 0)`、下側riskは`alpha + preview × min(q, 0)`とする。
+- trim alphaから各運用端までのheadroomの後半で、残すbias係数を1から0へ下げる。
+- 運用端ではtrim targetへ戻す。
+- 反対側の身体目標は変更せず、固定normalized capを追加しない。
 
-`named-record-query`はschema 2の保存query・Analysis batch・Replay/Attract contextをimmutableな型へ変換する。
-schema 6の二系統尾翼をphysical controlsとして保持する。
-同sessionのRust terminal projectionとphysics frequencyを使用し、layout・stamp・初期/終端・時系列・clockの整合を検査する。
-queryは保存snapshotとRust-owned Replay clockを参照し、再simulation・物理/score/controllerの再評価を行わない。
-queryにrecord identityが含まれないため、非同期の古い応答は呼出し側のsession generation/request IDで拒否する。
-`named-record-analysis`はRust集計のSummaryと固定5×5 Wind queryをfacadeへ接続する。
-Result/Replay/Attractのphase・保存identity・元finalizationを照合し、最大迎角とscoreの不足理由をavailability tagとして保持する。
-風は同recordの登録providerだけを参照し、全25点のfinite値・北row/東column順序・request echo・sourceを検査する。
-未知環境と登録領域外は個別の`unavailable`を保持し、欠損風速や集計値を数値で補填しない。
-Web側で物理・集計・scoreを再評価せず、確定Summaryと保存cursorを分離する。
+- effective targetへの移動は身体の加速度policyとRK4で行い、身体stateを直接変更しない。
+- `Set`の元normalized要求、`Hold`、manual intent、desired rate、manual/FBW/mixed要求をrecordに保存する。
+- 実stateと`resolved_pilot_position_target_m`は採用したeffective targetを保持する。
+- `Hold`は前tickのeffective targetを名目要求とし、作動中の保護はさらにtrim側へ絞り得る。
+- 安全域へ戻っても、過去の未適用targetを自動再開する状態を追加しない。
 
-非有限command、authority範囲外、無効なactuator limit、無効timestep、travel範囲外のstateは型付きerrorとする。
-途中まで進めたactuator stateを公開しない。混合結果と更新結果の決定性を保証する。
+- previewはalpha変化をqから近似する。
+- 空間風・flight-pathの連成、独立したyaw域、任意の将来入力に対する安全は保証しない。
+- 保護後も全RK4 stageと公開endpointの元の荷重検査を適用し、失敗時はlast valid stateと元のsite/cause/limit/stageを保持する。
 
-検証ではManual/Automaticの端点、Sharedの各axis混合、飽和、rate limit、境界値、拒否された入力後の
-入力state不変を確認する。body-rate feedbackはaxis符号、飽和、極端な有限rate、および合成roll momentを用いた
-閉ループ減衰で検証する。数値積分と離散controlの刻み依存は、[量別step-halving](verification.md)で
-physics-onlyと連成の100/200/400 Hz比較へ分離する。局所増大・減衰は[離散線形化](hybrid-numerical-validation.md)で
-Jacobian/固有値と小摂動時系列を照合する。過去のmodel 1の局所増大観測は履歴値として区別する。
-現行Playableの明示的な入力列の受入と局所線形化は個別に検証し、全状態・任意入力や実機の安定性を保証しない。aircraft-specific controllerと
-aerodynamic derivativesのfidelity検証はBPG-035でM6完了後に扱い、M3〜M6をblockしない。
+## 移動質量の力学
+
+- パイロットの身体移動は機体前後方向の1自由度とする。
+- パイロットを除く機体の固定重心をdatum $O$ とし、主翼・尾翼・接触点・眼位置の基準をdatumから保持する。
+- 機体は剛体、パイロットは機体に対して回転しない質点である。
+- 相対位置 $x_p$、速度 $\dot x_p$、加速度 $\ddot x_p$ を扱い、質量・固定高さ・範囲・最大速度・最大加速度・初期状態は検証済み`AircraftModel`へ含める。
+
+機体質量 $m_a$、パイロット質量 $m_p$、固定高さ $z_p$、位置 $r_p^B=(x_p,0,z_p)$ から合成重心を導出する。
+
+```math
+M=m_a+m_p,\qquad r_G^B=\frac{m_p r_p^B}{M}
+```
+
+datumまわりの機体固定慣性を $I_a$、$d_a=-r_G^B$、$d_p=r_p^B-r_G^B$ とし、平行軸の定理で合成慣性を求める。
+
+```math
+I_G=I_a+m_a\left(\lVert d_a\rVert^2 I_3-d_a d_a^T\right)
+       +m_p\left(\lVert d_p\rVert^2 I_3-d_p d_p^T\right)
+```
+
+固定点 $i$ は $r_{Oi}^B$ を保持する。積分状態はdatumの位置・対地速度、姿勢・角速度、$x_p,\dot x_p$ とする。
+
+```math
+p_i^N=p_O^N+R_{NB}r_{Oi}^B,\qquad p_G^N=p_O^N+R_{NB}r_G^B
+```
+
+```math
+v_i^N=v_O^N+R_{NB}(\omega^B\times r_{Oi}^B),\qquad
+v_G^N=v_O^N+R_{NB}(\omega^B\times r_G^B+\dot r_G^B)
+```
+
+- これらは点の運動学的関係であり、移動後の重心へ固定形状の原点を追従させない。
+- 合成重心位置・対地速度を指定する発進条件は、身体状態・姿勢・角速度からdatumへ逆変換し、身体範囲を検証する。
+- 対地速度の入力に風を暗黙加算しない。
+
+### 運動量収支
+
+$v_O^B=R_{NB}^Tv_O^N$、$\dot r_p^B=(\dot x_p,0,0)$ とし、内部質量の相対運動を運動量へ含める。
+
+```math
+P^B=Mv_O^B+m_p(\omega^B\times r_p^B+\dot r_p^B)
+```
+
+```math
+H_O^B=I_a\omega^B+m_p r_p^B\times(v_O^B+\omega^B\times r_p^B+\dot r_p^B)
+```
+
+外力 $F^B$ とdatumまわりの外部モーメント $M_O^B$ は、重力を含む全質量要素・作用点から評価する。
+移動原点の角運動量収支には原点輸送項を含める。
+
+```math
+\dot P^B+\omega^B\times P^B=F^B,\qquad
+\dot H_O^B+\omega^B\times H_O^B=M_O^B-v_O^B\times P^B
+```
+
+- 各RK4 stageで $x_p,\dot x_p,\ddot x_p$ を評価し、収支を連成して並進・角加速度を解く。
+- 内部駆動力を外力へ重複計上せず、重心と慣性だけを更新する準静的近似を使用しない。
+- 各stageは質量・慣性・位置・速度・加速度の有限性と、連成行列の数値的可逆性を検査する。
+- 失敗時は型付きエラーだけを返し、部分更新を公開しない。
+- 内部駆動がエネルギーを投入できるため、身体移動中の機械的エネルギー保存は要求しない。
+
+$m_p=0$、身体静止、無外力時の全運動量・角運動量、一般3次元姿勢の連成を検査する。
+[縦運動の参照式](https://github.com/tokutori/simulator-prototype-1/issues/1)は平面運動の資料であり、一般6DoFへの適用は上記の収支で個別に検証する。
+
+## 身体の目標位置と停止policy
+
+- `TailPilotPositionCommand`は新しいnormalized inputの`Set`と、前tick targetを使う`Hold`を排他的に表す。
+- `TailPilotPositionMapping`は[-1,0,1]を[-0.4,trim,0.4] mへ区分線形に写像し、出力を±0.4 mへ制限する。
+- 新しいflightの保持targetはtrim、中立inputもtrimとする。
+- 欠損・切断の`Hold`は保持中の目標を名目要求とする。
+- 速度・加速度・移動範囲は身体policyが検証し、位置の瞬間的な変更を禁止する。
+- 公開モデルの最大速度0.3 m/s・最大加速度0.8 m/s²と機体値は[Playable仕様](flight-dynamics.md#公開playableモデル)に従う。
+
+目標との距離を $d=|x_t-x|$、最大加速度を $A=a_{max}$、最大速度を $v_{max}$、刻みを $h$ とする。
+
+```math
+v_t=\operatorname{sgn}(x_t-x)\min\left(v_{max},\sqrt{2Ad}\right)
+```
+
+- 要求加速度は $(v_t-\dot x)/h$ を $[-A,A]$ へ制限する。
+- 目標方向の停止位置が目標へ到達している場合は最大制動を要求する。
+- 目標誤差と現在の連続停止距離がともに $Ah^2/2$ 以下なら、近傍の要求終端速度を $w=(x_t-x)/h-\dot x/2$ とする。
+- 次tickに $-w/h$ を適用すれば目標で静止する2 tickの運動学から得られる。
+- この要求も速度・加速度上限と安全検査を通す。
+- 1 tick幅を位置のdead zoneにせず、policyの刻みを100 Hz tick以下とする。
+
+各tickの加速度は全RK4 stageへ保持する。パイロットの位置・速度はstage時刻 $0,h/2,h/2,h$ と終端 $h$ に対して、同じ一定加速度の解析解を使用する。
+
+```math
+x(t)=x+\dot x t+\frac{at^2}{2},\qquad v(t)=\dot x+at
+```
+
+- 他の6DoF状態は通常のRK4で積分する。
+- pilotのstage位置をEuler予測し、境界内で停止する軌跡を範囲外にする処理は使用しない。
+- 終端位置・速度に加え、$0<-\dot x/a<h$ の場合はtick内極値を検査する。
+- 受理候補の終端stateには、次節の有限停止証明を要求する。
+- 証明できない要求加速度は、現在stateの証明済み制動加速度へ二分して近づける。
+- 二分列が有限な`f64`上で端点に一致した時点で終了する。
+- 位置・速度のclampや範囲判定の許容差を追加しない。
+
+### 保持加速度による有限停止証明
+
+速度の絶対値を $v$、$r=v\bmod Ah$ とする。
+速度符号を反転せずに最大制動を繰り返し、最後のtickを $-\dot x/h$ で停止する系列の距離は次式となる。
+
+```math
+S_h(v)=\frac{v^2}{2A}+\frac{r(Ah-r)}{2A}
+```
+
+- この距離を確保できない場合、最大制動後の残速度 $r$ から終端速度 $-w$ へ反転する1 tickと、次の停止tickを検討する。
+- 元の進行方向を正とすると、反転tickの加速度は $-(r+w)/h$、最大前進量は $r^2h/[2(r+w)]$、停止までの変位は $rh/2-wh$ である。
+- $r+w\le Ah$、反転後の速度上限、反対側境界、tick内極値を同時に検査する。
+- 最大反転速度が反対側境界を超える場合は、極値が安全な最小制動加速度を二分探索する。
+
+- 閉形式は制動候補の生成に使用する。
+- 停止証明では積分器と同じ`f64`解析運動を反復し、全held stepの範囲・速度を検査して速度0への到達を確認する。
+- 実数上で等価な停止距離でも演算順序で丸めが異なるため、閉形式だけで可回復性を保証しない。
+- 制動時は近傍の有限な転回点を基準として位置を評価し、微小加速度で遠方の転回点から桁落ちする場合は通常の二次式を使用する。
+
+- 証明上限は4096 held stepである。
+- 100 Hzでは40.96秒に相当し、substepでも同じstep数を上限とする。
+- 計算費用を有限にする数値policyであり、機体の調整項目を追加しない。
+- `f64`上で加速度が速度を減少させない場合も適用範囲外とする。
+- 受理指令の終端は同じ有限停止証明を持ち、証明済み制動の次stateは検査済み系列のsuffixを持つ。
+- 同じ機体モデル・刻みの下で後続policyも受理可能なstateを保つ、という帰納関係を使用する。
+
+- 初期の連続停止位置 $x+\operatorname{sgn}(\dot x)\dot x^2/(2A)$ が移動限界を超える場合は`PilotMotionUnrecoverable`とする。
+- 連続停止位置が範囲内でも、保持加速度・反対側境界・丸め・4096 step以内の系列を得られない場合は`PilotMotionOutsidePolicyDomain`とする。
+- 停止距離の非有限演算も数値適用範囲外である。
+- 後者はこのpolicyの範囲を表し、あらゆる保持加速度制御で停止不能だと判定するものではない。
+- 狭い移動範囲の静止状態からの目標追従にも同じ検査を使用する。
+
+## tickの実行と記録
+
+- `advance_tail_flight_tick`は直前成功stateのq/rから制御を一度評価し、更新incidenceを全stageへ保持する。
+- hybrid荷重はphysical incidenceを直接使い、身体policy・移動質量・積分器・接触探索を共有する。
+- `advance_tail_flight_tick_with_contact`は接触時に同時刻のfractional terminal sampleだけを返す。
+- fraction 0では直前incidence/target、正fractionでは更新値を保持する。
+
+- `advance_tail_flight_tick_with_contact_report`は同一評価の`TailControlCommands`と入力を成功outcomeへ付ける。
+- normalized intent、body q/r target、manual/FBW/mixed要求、実incidence、保持身体目標を区別し、record側で制御を再計算しない。
+- fraction 0のreportへ未適用の新controlを保存しない。
+- 正fractionと整数tickは当該区間の適用controlを返す。
+- 制御・身体policy・荷重・接触の失敗で部分stateをcommitしない。
+
+- `TailFlightScenarioParameters`はComposite-CG launch/contact検証からtick-zero stateを作る。
+- `TailFlightScenario`は借用したhybrid荷重・風、trim、接触点、courseを固定し、software profileを機体定義から分離する。
+- `GameSession`は同じtick stateを保持し、記録・telemetryの成功後だけ整数tickを公開する。
+- 失敗stageのstate・incidence・身体target・入力を公開せず、直前成功stateをResultとrecordへ確定する。
+- 空力envelopeと有限風のOutsideGridはOutOfValidEnvelope、非有限値・算術・policy等はFatalSimulationErrorとして区別し、元のcauseをfinalizationへ保存する。
+- 失敗tickのsampleは追加しない。
+
+- 共有`HybridSessionPreparation`は検証済み機体・surfaceを所有し、同じ登録風場を使うscenarioと解決済みprofile・course・difficultyを構築する。
+- 自己参照やleaked storageを使用しない。
+- Web/WASMとNativeは同じ準備・実行処理へ接続する。
+- Briefing以後の設定を固定し、controllerのID/version・rate上限・gain・slew・迎角guardと、実際のauthorityを保持する。
+- 初期化・Resume・入力機器の再取得は、同じsealed mappingで保持目標を逆写像した`pilot_position_target_normalized`を使う。
+- trimを0、両端を±1とし、trimと端点が同じ場合は同じphysical targetを0へ正規化する。
+- 現在の身体位置から目標を推測せず、元の`Hold`/`Set`要求とresolved effective targetを区別する。
+
+- WASMのschema 2は`control_layout=tail_incidence`を必須とし、二系統intent、body-positiveのq/r目標、`pilot_position_command`の`hold`/`set`を受け取る。
+- 余剰axis、未知field、未対応schemaを拒否する。
+- seedはlow/highの32 bit値で正確に渡す。
+- device adapterはsealed rate上限へnormalized demandを写像し、明示的q/r入力を変更しない。
+- snapshotのphase/frame、physical incidence、身体状態、CG telemetry、terminal stamp/causeの整合は[データ形式](data-and-formats.md)に従う。
+- 保存値を再シミュレーション・再制御して表示しない。
+
+- Webの`TailSessionPort`と`TailFlightController`は単一のfacade ownerのresourceを使う。
+- reset・snapshot同期・描画の失敗時は入力とclockを停止し、再同期の成功前にtickを再開しない。
+- Scene退出とBFCache退避ではcontrollerを停止し、最終teardownとowner置換でresourceを解放する。
+- 古い非同期結果はowner/query generationで拒否し、同じscenario/seedでも異なるresource世代を混同しない。
+- 同じrecordのclock・seek・再生速度更新と、Retry・設定変更・archive開閉・disposeによるrecord source変更を区別する。
+- 所有・effect・queryの契約は[アーキテクチャ](architecture.md)、保存形式・Summary・Replayは[データ形式](data-and-formats.md)へ集約する。
+
+## 入力機器と引継ぎ
+
+- 身体の論理指令はdatum上の目標前後位置とする。
+- キーボードは保持時間を固定tickで積算し、解放時に目標を保持する。
+- キーリピート回数や描画frame数を使わない。
+- 初期target rateは0.4 m/sであり、機器設定で変更できる。
+- ゲームパッドの校正済み身体軸は範囲内の絶対目標位置へ写像し、中立は校正済みの中立位置を指す。
+
+- binding、軸方向、dead zone、校正、感度は機器設定であり、Flight開始時に固定する。
+- 論理舵指令と身体目標は別fieldへ保持し、舵角・姿勢目標・角速度目標を曖昧なpitch値へ混在させない。
+- Webの標準二系統入力はArrowUp/Downがnose-up/down、ArrowRight/Leftがright/left turn、J/Lが身体位置である。
+- ゲームパッドは割り当てたnose-up・right-turn・身体軸だけを読む。
+- キー解放は`Hold`、取得済みゲームパッドの身体軸は`Set`とする。
+
+- 同時に有効な操縦機器は1つとし、切替・切断・非表示・overlay移行時に保留中の押下・軸値を破棄する。
+- 身体目標は直前の有効値へ保持し、再接続時は中立確認と明示的な再取得を要求する。
+- 絶対位置軸への切替では目標との不連続を防ぐpickupを行う。
+- Menuイベントを同じtickのFlight指令へ転用しない。
+- 標準mappingと未対応機器の個別bindingを区別する。
+
+### ゲームパッドの接続とpickup
+
+- 選択接続は、adapterが接続・切断イベントで更新する`{ index, generation }`で識別する。
+- 選択中の接続を維持し、小さいindexの追加で切り替えない。
+- 未選択時と選択接続の消失時だけ、取得配列の先頭から候補を選ぶ。
+- 同じindexの再利用も中立待ちへ戻す。
+- 製品ID、入力timestamp、pollごとのobject同一性を接続識別へ使わない。
+- これは[Gamepad API](https://www.w3.org/TR/gamepad/)のindex・イベント契約に基づく。
+
+- 取得状態は未選択、中立待ち、舵有効・身体pickup待ち、全軸有効の直和型とする。
+- 全割当軸の中立確認前は舵0と保持身体目標を返す。
+- 中立後は舵mappingを受理し、身体軸だけを保持する。
+- 身体軸の絶対mappingが保持目標に一致するか、前後sampleで目標を交差するとpickup成立とする。
+- 成立sampleは保持目標を返し、次sampleから通常mappingへ移る。
+- 保持目標0では中立sampleでpickupも成立する。
+- 許容幅、offset、追加rate limitは設けない。
+- 操作上の妥当性は実機で個別に検証する。
+
+- キーボードの操縦キーを優先し、押下時・押下中はゲームパッドを中立待ちへ戻す。
+- blur、suspend、resume、resetも再armするが、同じ接続がある間は選択indexを維持する。
+- resetだけは新Flightのsnapshotから身体目標を初期化する。
+- 停止中も接続世代を記録し、古い中立確認を流用しない。
+- disposeはkeyboard・blur・接続イベントの全listenerと世代情報を解放する。
+- Menu入力の機器選択・button履歴は別adapterの責務である。
+
+### Phone VR Menuのゲームパッド
+
+- Menu portは必須の`connection: { index, generation }`を返し、有効な選択接続を維持する。
+- 同indexの再接続は新しい接続とし、ID・timestamp・poll objectを識別に使わない。
+- 接続イベントを受信できるactiveな文書を前提とする。
+- 非active時に通知されなかった再接続の識別は保証しない。
+
+- portの`start`/`stop`はPhone VR tracking attemptが所有する。
+- factory生成時はlistenerを登録せず、開始時に登録し、停止・取消・開始失敗・追跡失敗時に解除する。
+- 部分開始失敗や解除例外でも全解除を試行し、旧callbackが新attemptを変更しないようにする。
+- backendの終端と外部資源の解除成功を区別する。
+
+- selectorは接続ごとにbuttonとframe時刻の履歴を持つ。
+- 接続交代・全切断・resetでcursorを中央へ戻し、focusと旧履歴を破棄する。
+- 新接続の初回sampleは経過時間0とし、保持中のprimary/backを履歴へ取り込む。
+- 保持継続では操作せず、解放後の再押下から1回だけ操作する。
+- 内部状態を外部UiAction dispatch前に確定し、dispatch例外で旧履歴を再使用しない。
+- 操縦用の中立確認・身体pickupとは別の入力契約として扱う。
+
+## 検証範囲
+
+- 非有限command、範囲外authority、不正actuator limit・timestep、travel外stateを型付きエラーとし、途中のactuator状態を公開しない。
+- Manual/Automaticの端点、Sharedの各軸混合、飽和、slew、境界値、拒否後の入力状態不変、決定性を検査する。
+- feedbackの軸符号、極端な有限rate、合成roll momentを含む閉ループ減衰も確認する。
+
+- 移動質量は無外力時の運動量・角運動量、非対称姿勢の慣性連成、移動限界、急変、数値収束、100 Hzの誤差を検査する。
+- 初期身体位置・速度、目標列、実位置・速度・加速度、合成重心offsetと質量特性を記録する。
+- 同じ初期状態・機体・環境・舵入力列・身体目標列・刻みの決定性と、身体指令だけを変更した場合の軌道差を確認する。
+
+- 数値積分と離散制御の刻み依存は[量別step-halving](verification.md)でphysics-onlyと連成の100/200/400 Hzへ分ける。
+- 局所増大・減衰は離散線型化のJacobian/固有値と小摂動時系列を照合する。
+- 明示したPlayable入力列、局所線型化、任意入力の安定性、実機fidelityを区別する。
+- 機器切断・切替・再割当・tick割当・UI競合、身体状態と終端時刻の一致はadapterと保存queryを通して検査する。

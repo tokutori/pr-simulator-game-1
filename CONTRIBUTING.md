@@ -34,9 +34,9 @@
 - READMEとNativeガイドには起動・操作・前提環境を記載し、内部設計とCI手順は設計・検証文書へ分ける。
 - 文書の統合時は相互リンク、ソース内参照、配布梱包も更新する。
 
-テキストはUTF-8、改行はLFとし、PowerShellのI/OにもUTF-8を明示する。
-`gh issue` / `gh pr` の本文は `--body-file` で渡し、更新後の内容を確認する。
-GitHubの独立数式は `math` fence、文中数式は `$...$` とする。
+- 文字コード: UTF-8、改行はLFとし、PowerShellのI/OにもUTF-8を明示する。
+- GitHub本文: `--body-file` で渡し、更新後の内容を確認する。
+- 数式: 独立式は `math` fence、文中式は `$...$` とする。
 
 ## ブランチと統合
 
@@ -45,17 +45,16 @@ GitHubの独立数式は `math` fence、文中数式は `$...$` とする。
 3. 局所検査と独立レビューを終えた変更群をまとめてpushし、最新mainとの統合結果で必須CIを確認する。
 4. レビュー対象のHEAD、remoteのHEAD、必須検査の成功を確認して統合する。
 
-依存先が独立レビューと必要な局所検査を完了した固定HEADなら、別worktreeで先行開発できる。
-Draftには依存先PRと固定HEADを示し、親の統合後にbaseをmainへ変更する。
-親が更新された場合は通常mergeで取り込み、影響を確認する。最終的な統合結果のレビューと必須CIは省略しない。
+- 先行開発: 依存先が独立レビューと必要な局所検査を完了した固定HEADなら、別worktreeで進められる。Draftには依存先PRと固定HEADを示す。
+- 親への追従: 親の統合後にbaseをmainへ変更する。更新は通常mergeで取り込み、最終的な統合結果をレビュー・必須CIで確認する。
 
-fast-forward可能な場合は、fetch後に `git merge --ff-only <reviewed-head-sha>` と通常pushでmainを更新する。
-分岐している場合は通常のmergeを行う。保護規則を迂回せず、force push・rebaseは行わない。
-GitHubのMERGED状態とremote mainを確認する。GitHubの「Rebase and merge」はSHAを変えるためFFとは区別する。
+- 統合: FF可能ならfetch後に `git merge --ff-only <reviewed-head-sha>` と通常pushでmainを更新する。分岐している場合は通常のmergeを行う。
+- 履歴と保護: 元のcommitと保護規則を保持する。GitHubの「Rebase and merge」はSHAを変えるため、FF統合には使用しない。
+- 統合確認: GitHubのMERGED状態とremote mainを確認する。
 
-共有build targetは同時使用を避ける。Cargoのtarget/build先にソース自身や祖先directoryを指定しない。
-worktree削除前には絶対path・所有者・未commit変更・ignored directoryとreparse pointを確認する。
-共有npm/cacheのリンクはリンク自体だけを非再帰で解除し、参照先の共有backingを保持してから `git worktree remove` を行う。
+- build先: 共有targetは使用担当を調整し、workspace内の通常targetかソースの兄弟directoryを使う。
+- worktree削除: 絶対path・所有者・未commit変更・ignored directoryとreparse pointを確認する。
+- 共有リンク: リンク自体だけを非再帰で解除し、参照先のbackingを保持してから `git worktree remove` を行う。
 
 ## 検査と公開
 
