@@ -39,6 +39,8 @@ local検査または対象branchの手動実行（`deploy_pages=false`）で補�
 main統合前には依存PRのmerge完了、最新mainとのcombined tree、独立review、既存3gateの成功を必須とする。
 通常pushとfast-forward優先、既存変更の保護、共有build targetのleaseを維持する。force push・rebaseは行わない。
 
+Windowsでworktreeを削除する前に、対象の絶対path・所有者・未commit変更と、内部のJunction・symbolic link等のreparse pointを確認する。共有npm/cacheへ接続したリンクは、参照先を検証してリンク自体だけを非再帰で解除してから`git worktree remove`を実行する。共有backing directoryと他のworktreeは保持する。cleanなGit状態はignored directoryやリンク先の安全性を保証しない。
+
 ## 公開と統合の分離
 
 mainへのpushは検査を実行し、GitHub Pagesを自動公開しない。
