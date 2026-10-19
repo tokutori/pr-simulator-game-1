@@ -594,6 +594,12 @@ pub(crate) struct EnvironmentAssets<'w, 's> {
     venue: Query<'w, 's, &'static mut Visibility, With<super::world::RegisteredVenue>>,
 }
 
+type CloudSurface = (
+    Entity,
+    Option<&'static Mesh3d>,
+    &'static MeshMaterial3d<super::clouds::CloudMaterial>,
+);
+
 pub(crate) fn apply_environment(
     session: Res<NativeSession>,
     quality: Res<WaterQualitySelection>,
@@ -605,14 +611,7 @@ pub(crate) fn apply_environment(
         Option<&mut Aabb>,
     )>,
     mut sun: Query<(&mut DirectionalLight, &mut Transform), With<EnvironmentSun>>,
-    clouds: Query<
-        (
-            Entity,
-            Option<&Mesh3d>,
-            &MeshMaterial3d<super::clouds::CloudMaterial>,
-        ),
-        With<super::clouds::CloudLayer>,
-    >,
+    clouds: Query<CloudSurface, With<super::clouds::CloudLayer>>,
 ) {
     let target = EnvironmentTarget::project(
         session.game.core_session().snapshot().phase(),
