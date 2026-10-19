@@ -224,14 +224,14 @@ impl FlightLogExport {
         Ok(failures)
     }
 
-    pub(crate) fn read_stored(&self, id: u32) -> Result<String, FlightLogError> {
+    pub(crate) fn read_stored(&self, id: u32) -> Result<(PathBuf, String), FlightLogError> {
         let path = &self
             .stored
             .iter()
             .find(|record| record.id == id)
             .ok_or(FlightLogError::StoredRecordUnavailable(id))?
             .path;
-        read_archive(path)
+        read_archive(path).map(|json| (path.clone(), json))
     }
 
     pub(crate) fn save(
@@ -438,7 +438,9 @@ pub(crate) mod tests {
         assert_eq!(records.len(), 1);
         assert!(!records[0].personal_best);
         let id = records[0].id;
-        assert_eq!(export.read_stored(id).unwrap(), json);
+        let (path, loaded) = export.read_stored(id).unwrap();
+        assert_eq!(path, valid);
+        assert_eq!(loaded, json);
         fs::write(directory.0.join("flight-log-4.json"), &json).unwrap();
         export.refresh().unwrap();
         assert_eq!(

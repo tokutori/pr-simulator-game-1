@@ -867,14 +867,15 @@ pub(crate) fn button_actions(world: &mut World) {
                     GameUiEffect::Platform {
                         command: GameUiPlatformCommand::OpenStoredRecord { id },
                     } => {
-                        let json = world
+                        let (path, json) = world
                             .get_resource::<FlightLogExport>()
                             .ok_or("飛行ログの保存先が設定されていない")?
                             .read_stored(id)
                             .map_err(|error| error.to_string())?;
                         world
                             .resource_mut::<NativeSession>()
-                            .open_stored_record(&json)?;
+                            .open_stored_record(&json)
+                            .map_err(|cause| format!("{}: {cause}", path.display()))?;
                     }
                     GameUiEffect::Platform {
                         command: GameUiPlatformCommand::SetWaterQuality { quality },
@@ -3385,14 +3386,8 @@ mod tests {
         let records = export.stored_records();
         assert_eq!(records.len(), 1);
         let record_id = records[0].id;
-        let json = export.read_stored(record_id).unwrap();
+        let (original_path, json) = export.read_stored(record_id).unwrap();
         let document = TailFlightRecordDocument::decode_json(json.as_bytes()).unwrap();
-        let original_path = std::fs::read_dir(export.directory())
-            .unwrap()
-            .next()
-            .unwrap()
-            .unwrap()
-            .path();
         press(&mut app, "game-result-title");
         let selection = app.world().resource::<NativeSession>().game.difficulty();
         let action = format!("game-title-open-record-{record_id}");
@@ -3477,6 +3472,18 @@ mod tests {
                 .archive()
                 .is_none()
         );
+        std::fs::write(&original_path, b"{}").unwrap();
+        press(&mut app, &action);
+        {
+            let session = app.world().resource::<NativeSession>();
+            assert_eq!(
+                session.game.core_session().snapshot().phase(),
+                SessionPhase::Title
+            );
+            let notice = session.notice.as_ref().unwrap();
+            assert!(notice.contains(&original_path.display().to_string()));
+            assert!(notice.contains("Format(InvalidJson)"));
+        }
         std::fs::remove_file(&original_path).unwrap();
         press(&mut app, &action);
         let session = app.world().resource::<NativeSession>();
