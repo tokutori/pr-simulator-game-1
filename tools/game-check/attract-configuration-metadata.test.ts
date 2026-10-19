@@ -8,7 +8,7 @@ beforeAll(() => {
   initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url))) });
 });
 
-const demoMetadata = [4, 2, 0, 0, 4, 1, 4, 3, 1, 3, 0xD3A0, 0, 1, 0, 0, 0, 0, 0, 0];
+const demoMetadata = [4, 2, 0, 0, 4, 1, 4, 3, 1, 3, 0xD3A0, 0, 1, 0, 0, 0, 0, 0];
 
 function selection(session: HybridGameSessionBridge) {
   return { preset: session.difficulty_preset_code(), information: session.information_level_code(),

@@ -129,10 +129,14 @@ describe("current WebAssembly browser binding", () => {
     } finally { controller.dispose(); }
   });
 
-  it.each([0, 1, 2] as const)("runs control mode %i through pause, fractional contact, record selection and retry", (mode) => {
+  it.each([0, 1, 2] as const)("runs control mode %i through a calm flight, fractional contact, record selection and retry", (mode) => {
     const session = createAppSession({ controlModeCode: mode, seedLow: 0, seedHigh: 0 });
     try {
-      launchCurrentSession(session);
+      session.executeOperation("open-setup");
+      session.executeOperation({ kind: "set-difficulty-option", axis: "weather", code: 0 });
+      session.executeOperation("prepare");
+      session.executeOperation("start-flight");
+      session.observeCountdown(session.captureCountdownToken(), 3, true);
       session.executeOperation("pause");
       expect(session.readLifecycle().phaseCode).toBe(6);
       session.executeOperation("resume");
@@ -141,6 +145,7 @@ describe("current WebAssembly browser binding", () => {
       }
       const snapshot = session.readSnapshot();
       if (snapshot.frame.kind !== "result") throw new Error("Expected fractional Result");
+      expect(snapshot.identity).toMatchObject({ kind: "prepared", scenario: { environmentVersion: 1 } });
       expect(snapshot.frame.finalization.reason).toBe("water_contact");
       expect(snapshot.frame.finalization.terminalFraction).toBeGreaterThan(0);
       expect(snapshot.frame.finalization.terminalFraction).toBeLessThan(1);
