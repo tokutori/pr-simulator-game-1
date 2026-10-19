@@ -233,11 +233,15 @@ cargo run -p birdman-game-bevy --locked -- --verify target/bevy-gpu-verification
 
 寸法は正の整数で指定し、`--verify`との併用を必須とする。通常起動は1280×720を維持する。
 
+標準の`--verify`はTitle・Flight Setupを既定のAutoで撮影し、水面の画質比較前に既存の100%描画設定操作でManualへ切り替える。後段ではAutoへの切替と設定復元も検査する。
+同一processでCalmとTypicalを3往復させ、本番の環境更新・GPU描画を通して、空cloudの`Mesh3d`不在、旧meshの解放、新しいmesh handleによる復元を確認する。飛行条件は元の既定値へ戻す。頂点データの非空検査は既存のCPU回帰で行う。
+
 `--verify`は一時停止中の同じ飛行state・camera・simulation時刻でLow→Medium→Highへ交換し、
 `03b-paused-quality-low.png`、`03c-paused-quality-medium.png`、`03d-paused-quality-high.png`を追加保存する。
 新near meshがGPU資源へ反映され、既存shader/pipeline readinessが成立した後に撮影する。
 この経路は画質交換の起動検査であり、時間的optic flow、複数Weather、性能目標の全面的な受入とは分離する。
 同じ停止状態の50%解像度から、共有Auto controllerへ20 msの明示的な人工標本を実`Time<Real>`・`FrameCount`とともに渡し、実際のshadow mapを1024→512へ交換して各画像を保存する。その後、通常のManual 100%操作で2048へ復帰する。各段階では実shadow資源と共有ACK、描画準備、停止中の記録・state・水面時刻の保持を確認する。人工標本は専用段階に限定し、復帰時の既存epoch失効を経て、後続の実GPU Auto窓と分離する。この検査は描画接続fixtureであり、実GPU負荷・Auto判断・80 FPS達成の根拠には含めない。
+Shadow接続fixtureまたは実Auto窓が制限時間内に成立しない場合は、未達内容を保持してManual 100%へ復元し、後段のResult・Replay・Retryを検査する。未達項目の画像は生成せず、全操作を継続できても最終結果を失敗（exit 1）とする。GPU・asset・物理状態のエラーは直ちに検査を終了する。
 OS表示倍率は変更しない。指定寸法とPNGの物理pixel寸法はOS倍率により異なりうるため、保存ログの実寸も確認する。
 
 このmodeは選択したローカルフォントで日本語の単語境界と日本語/Latin混在の折返しを検査し、
