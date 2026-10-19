@@ -113,3 +113,23 @@ impl<State, Payload: Copy, Clock> ConfiguredPhase<State, Payload, Clock> {
         Ok(())
     }
 }
+
+#[cfg(verus_only)]
+#[verus_spec]
+fn verify_result_replay_roundtrip(result: u64, clock: u32) {
+    let mut phase = ConfiguredPhase::<u64, u64, u32>::Result { result };
+    proof! { assert(phase.is_result()); }
+    let entered = phase.enter_replay(clock);
+    proof! {
+        assert(entered.is_ok());
+        assert(phase.is_replay());
+        assert(phase.result_payload() == Some(result));
+        assert(phase.clock_payload() == Some(clock));
+    }
+    let left = phase.leave_replay();
+    proof! {
+        assert(left.is_ok());
+        assert(phase.is_result());
+        assert(phase.result_payload() == Some(result));
+    }
+}

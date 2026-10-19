@@ -137,3 +137,33 @@ impl CountdownState {
         }
     }
 }
+
+#[cfg(verus_only)]
+#[verus_spec(requires state.valid(),)]
+fn verify_countdown_retention(state: CountdownState, advanced_nanos: u128) {
+    let observed = state.observe(state.token, Some(advanced_nanos), true);
+    if let Ok(CountdownAdvance::Waiting(next)) = observed {
+        let remaining = next.remaining_seconds();
+        let repeated = next.observe(next.token, Some(advanced_nanos), true);
+        proof! {
+            assert(next.valid());
+            assert(next.token == state.token);
+            assert(next.duration_seconds == state.duration_seconds);
+            assert(next.elapsed_nanos == advanced_nanos);
+            assert(1 <= remaining <= state.duration_seconds);
+            assert(advanced_nanos >= state.elapsed_nanos ==> next.elapsed_nanos >= state.elapsed_nanos);
+        }
+        match repeated {
+            Ok(CountdownAdvance::Waiting(repeated_state)) => {
+                proof! {
+                    assert(repeated_state.token == next.token);
+                    assert(repeated_state.duration_seconds == next.duration_seconds);
+                    assert(repeated_state.elapsed_nanos == next.elapsed_nanos);
+                }
+            }
+            _ => {
+                proof! { assert(false); }
+            }
+        }
+    }
+}
