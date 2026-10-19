@@ -16,16 +16,16 @@ fn near(actual: f64, expected: f64, tolerance: f64) {
 fn pwl_trim_matches_the_independent_current_model_reference() {
     let definition = HybridMockDefinition::try_new().unwrap();
     let trim = HybridMockTrim::try_new(&definition).unwrap();
-    near(trim.alpha_rad(), 0.0390014274433, 1.0e-7);
-    near(trim.gamma_rad(), -0.0503294807294, 1.0e-7);
-    near(trim.theta_rad(), -0.0113280532861, 1.0e-7);
-    near(trim.pilot_position_m(), 0.0135836773446, 1.0e-7);
-    near(trim.coefficients().lift(), 0.887515985045, 1.0e-10);
-    near(trim.coefficients().induced_drag(), 0.0147059726292, 1.0e-10);
+    near(trim.alpha_rad(), 0.0491134357768, 1.0e-7);
+    near(trim.gamma_rad(), -0.0488331542674, 1.0e-7);
+    near(trim.theta_rad(), 0.0002802815094, 1.0e-7);
+    near(trim.pilot_position_m(), -0.0588716713934, 1.0e-7);
+    near(trim.coefficients().lift(), 0.944236049126, 1.0e-10);
+    near(trim.coefficients().induced_drag(), 0.0161467121517, 1.0e-10);
     near(trim.coefficients().profile_drag(), 0.03, 1.0e-14);
     near(
         trim.coefficients().pitch_moment(),
-        0.00898847759247,
+        -0.0333930592489,
         1.0e-10,
     );
 }
@@ -39,8 +39,8 @@ fn actual_hybrid_wrench_and_coupled_core_preserve_steady_glide_balance() {
 fn playable_trim_rebalances_the_new_tail_moment_without_changing_launch_speed_or_mapping_limits() {
     let definition = HybridMockDefinition::try_new().unwrap();
     let trim = HybridMockTrim::try_new(&definition).unwrap();
-    near(trim.alpha_rad(), 0.0390014274433, 1.0e-7);
-    near(trim.gamma_rad(), -0.0503294807294, 1.0e-7);
+    near(trim.alpha_rad(), 0.0491134357768, 1.0e-7);
+    near(trim.gamma_rad(), -0.0488331542674, 1.0e-7);
     assert!((-0.4..0.4).contains(&trim.pilot_position_m()));
     let mapping = trim.pilot_mapping().unwrap();
     assert_eq!(mapping.trim_target().position_m(), trim.pilot_position_m());
@@ -85,11 +85,11 @@ fn assert_steady_glide_balance() {
         near(*force, 0.0, 1.0e-5);
     }
     near(
-        force_ned[2] + 94.0 * HybridMockTrim::GRAVITY_MPS2,
+        force_ned[2] + 100.0 * HybridMockTrim::GRAVITY_MPS2,
         0.0,
         1.0e-5,
     );
-    let cg_offset_forward = 70.0 / 94.0 * state.pilot_position_m();
+    let cg_offset_forward = 0.6 * state.pilot_position_m();
     let force_body = wrench.force_body_newtons().components();
     let moment = wrench.moment_about_datum_newton_meters().components();
     near(moment[0], 0.0, 1.0e-5);
@@ -134,9 +134,7 @@ fn nonzero_heading_restores_the_supplied_composite_cg_pose_and_ground_velocity()
             .unwrap();
         let offset = state
             .attitude_body_to_ned()
-            .body_to_ned(
-                BodyVector::try_new(70.0 / 94.0 * trim.pilot_position_m(), 0.0, 0.0).unwrap(),
-            )
+            .body_to_ned(BodyVector::try_new(0.6 * trim.pilot_position_m(), 0.0, 0.0).unwrap())
             .unwrap()
             .components();
         for ((datum_component, offset_component), cg_component) in state

@@ -68,7 +68,7 @@ impl HybridMockDefinition {
     /// Identifies the current fictional geometry and static table.
     pub const CONFIGURATION_ID: &'static str = "bpg041-playable-hybrid-mock";
     /// Version of the current complete-aircraft software model.
-    pub const MODEL_VERSION: u32 = 2;
+    pub const MODEL_VERSION: u32 = 3;
     /// Main-wing dihedral in radians.
     pub const WING_DIHEDRAL_RAD: f64 = 5.0 * core::f64::consts::PI / 180.0;
 
@@ -108,9 +108,9 @@ impl HybridMockDefinition {
             *row = playable_polar_row(knot, tail.lift_slope_per_rad())?;
         }
         let aircraft = AircraftModel::try_new(
-            24.0,
+            40.0,
             InertiaTensor::diagonal(900.0, 1000.0, 980.0).map_err(HybridMockError::Math)?,
-            70.0,
+            60.0,
             0.0,
             -0.4,
             0.4,

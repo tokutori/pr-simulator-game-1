@@ -309,7 +309,7 @@ fn playable_polar_has_versioned_closed_domain_and_consistent_synthetic_coefficie
         polar.metadata().configuration_id(),
         "bpg041-playable-hybrid-mock"
     );
-    assert_eq!(polar.metadata().model_version(), 2);
+    assert_eq!(polar.metadata().model_version(), 3);
     assert_eq!(
         polar.metadata().analysis_method(),
         PolarAnalysisMethod::SoftwareFixture
@@ -425,20 +425,20 @@ fn zero_dihedral_geometry_is_a_test_local_math_oracle() {
 }
 
 #[test]
-fn fictional_mass_and_pilot_limits_preserve_the_existing_physical_contract() {
+fn user_requested_mass_preserves_inertia_and_pilot_limits() {
     let definition = HybridMockDefinition::try_new().unwrap();
     let aircraft = definition.aircraft();
-    assert_eq!(aircraft.airframe_mass_kg(), 24.0);
-    assert_eq!(aircraft.pilot_mass_kg(), 70.0);
+    assert_eq!(aircraft.airframe_mass_kg(), 40.0);
+    assert_eq!(aircraft.pilot_mass_kg(), 60.0);
     assert_eq!(aircraft.pilot_vertical_offset_m(), 0.0);
     assert_eq!(
         aircraft.airframe_inertia_about_datum().matrix(),
         [[900.0, 0.0, 0.0], [0.0, 1000.0, 0.0], [0.0, 0.0, 980.0]]
     );
     let expected = AircraftModel::try_new(
-        24.0,
+        40.0,
         InertiaTensor::diagonal(900.0, 1000.0, 980.0).unwrap(),
-        70.0,
+        60.0,
         0.0,
         -0.4,
         0.4,

@@ -87,14 +87,14 @@ fn initial(down: f64) -> TailFlightTickState {
 }
 
 fn telemetry(state: FlightState) -> crate::FlightTelemetry {
-    let offset = BodyVector::try_new(70.0 / 94.0 * state.pilot_position_m(), 0.0, 0.0).unwrap();
+    let offset = BodyVector::try_new(0.6 * state.pilot_position_m(), 0.0, 0.0).unwrap();
     let rotation = state.attitude_body_to_ned();
     let position = state
         .datum_position_ned()
         .translated(rotation.body_to_ned(offset).unwrap())
         .unwrap();
     let relative_velocity =
-        BodyVector::try_new(70.0 / 94.0 * state.pilot_velocity_mps(), 0.0, 0.0).unwrap();
+        BodyVector::try_new(0.6 * state.pilot_velocity_mps(), 0.0, 0.0).unwrap();
     let velocity = state
         .datum_velocity_ned()
         .plus(

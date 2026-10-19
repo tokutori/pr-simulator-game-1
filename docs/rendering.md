@@ -115,7 +115,7 @@ Webの主翼rod160本は、同じ共有Rust端点・半径から4群のInstanced
 
 ## 二系統尾翼の表示
 
-`tail_incidence`の両尾翼はversion付きの公開架空geometryを使う。水平尾翼は面積2.5 m²、span 3.4 m、body quarter-chord `(-arm,y,0.1)` mの矩形surfaceである。公開モデル`bpg041-playable-hybrid-mock` / model version 2のarmは3.6 mとする。垂直尾翼は面積0.5 m²、span 0.7 m、body quarter-chord `(-1.8,0,z)` m、`z∈[-0.45,0.25]` mの矩形surfaceである。LEはquarter-chordからchordの1/4前方、TEは3/4後方に置く。水平尾翼と垂直尾翼は独立した親を持ち、全surfaceをquarter-chord軸まわりに回す。FRDから表示座標への変換後の回転は水平`+X`、垂直`−Y`である。
+`tail_incidence`の両尾翼はversion付きの公開架空geometryを使う。水平尾翼は面積2.5 m²、span 3.4 m、body quarter-chord `(-arm,y,0.1)` mの矩形surfaceである。公開モデル`bpg041-playable-hybrid-mock` / model version 3のarmは3.6 mとする。垂直尾翼は面積0.5 m²、span 0.7 m、body quarter-chord `(-1.8,0,z)` m、`z∈[-0.45,0.25]` mの矩形surfaceである。LEはquarter-chordからchordの1/4前方、TEは3/4後方に置く。水平尾翼と垂直尾翼は独立した親を持ち、全surfaceをquarter-chord軸まわりに回す。FRDから表示座標への変換後の回転は水平`+X`、垂直`−Y`である。
 
 Webはliveのsealed snapshot identity、Result/Analysis/Replay/Attractは当該record contextのconfiguration IDとmodel versionからengine非依存の`TailPresentationGeometryAvailability`を導出する。未登録の組合せは`unavailable`として保持し、adapterは尾翼表示を拒否する。未知のidentityを既定モデルのgeometryへ置換しない。Bevyの既定機体表示は共有session準備と同じPlayableのcore `HybridMockDefinition`のsectionからanchorと矩形頂点を導出する。描画契約の寸法はengine adapterの投影だけへ使用し、physics state、record、係数、contact geometryを変更しない。
 
