@@ -889,6 +889,17 @@ enum VerificationStage {
     Title,
     Start,
     Setup,
+    CloudPrepare(u8),
+    CloudCalm {
+        cycle: u8,
+        layer: Entity,
+        retired_mesh: bevy::asset::AssetId<Mesh>,
+    },
+    CloudTypical {
+        cycle: u8,
+        layer: Entity,
+        retired_mesh: bevy::asset::AssetId<Mesh>,
+    },
     Prepare,
     Briefing,
     Launch,
@@ -1615,6 +1626,8 @@ pub(crate) struct VerificationPresentation<'w, 's> {
     quality: ResMut<'w, WaterQualitySelection>,
     environment: Res<'w, NativeEnvironment>,
     materials: Res<'w, Assets<WaterMaterial>>,
+    meshes: Res<'w, Assets<Mesh>>,
+    cloud_layers: Query<'w, 's, (Entity, Option<&'static Mesh3d>), With<super::clouds::CloudLayer>>,
     rendering: Res<'w, NativeScreenRender>,
     timing_readout: Res<'w, timing::TimingReadout>,
     frame: Res<'w, FrameCount>,
@@ -1649,6 +1662,21 @@ pub(crate) struct VerificationPresentation<'w, 's> {
 }
 
 impl VerificationPresentation<'_, '_> {
+    fn cloud_mesh(&self) -> Result<(Entity, Option<bevy::asset::AssetId<Mesh>>), String> {
+        for (_, mesh) in self.meshes.iter() {
+            if mesh.count_vertices() == 0
+                || mesh.indices().is_some_and(|indices| indices.is_empty())
+            {
+                return Err("Environment exchange registered an empty Mesh".into());
+            }
+        }
+        let (layer, mesh) = self
+            .cloud_layers
+            .single()
+            .map_err(|cause| format!("Cloud layer is unavailable: {cause}"))?;
+        Ok((layer, mesh.map(|mesh| mesh.0.id())))
+    }
+
     fn verify_replay_camera(
         &self,
         session: &NativeSession,
@@ -2048,6 +2076,9 @@ fn advance_step(
             );
             let next = match verification.stage {
                 VerificationStage::Title => VerificationStage::Start,
+                VerificationStage::Setup if verification.water_case.is_none() => {
+                    VerificationStage::CloudPrepare(0)
+                }
                 VerificationStage::Setup => VerificationStage::Prepare,
                 VerificationStage::Briefing => VerificationStage::Launch,
                 VerificationStage::CountdownCapture => VerificationStage::Countdown,
@@ -2324,7 +2355,115 @@ fn advance_step(
                 }
             }
         }
+        VerificationStage::CloudPrepare(cycle) => {
+            require_phase(phase, SessionPhase::FlightSetup)?;
+            let (layer, mesh) = presentation.cloud_mesh()?;
+            let retired_mesh = mesh.ok_or("Typical exhibition cloud mesh is missing")?;
+            session.execute_ui_command(SessionCommand::SelectWeather {
+                weather: WeatherClass::Calm,
+            })?;
+            session.action(MenuAction::Prepare)?;
+            verification.next(VerificationStage::CloudCalm {
+                cycle,
+                layer,
+                retired_mesh,
+            });
+        }
+        VerificationStage::CloudCalm {
+            cycle,
+            layer,
+            retired_mesh,
+        } => {
+            require_phase(phase, SessionPhase::BriefingReady)?;
+            if !verification.readiness.can_capture()
+                || verification.stage_started.elapsed() < Duration::from_millis(250)
+            {
+                return Ok(());
+            }
+            let target = EnvironmentTarget::project(
+                phase,
+                session.game.core_session().configuration_identity(),
+            );
+            let condition = presentation
+                .environment
+                .condition_for(target)
+                .map_err(|cause| format!("Calm cloud environment is unavailable: {cause:?}"))?;
+            let (actual_layer, mesh) = presentation.cloud_mesh()?;
+            if condition.weather != WeatherClass::Calm
+                || condition.sky.is_some()
+                || actual_layer != layer
+                || mesh.is_some()
+                || presentation.meshes.contains(retired_mesh)
+            {
+                return Err("Calm exchange did not retire the previous cloud mesh".into());
+            }
+            println!(
+                "Cloud environment cycle {}: Calm rendered without Mesh3d; previous mesh retired",
+                cycle + 1
+            );
+            session.execute_ui_command(SessionCommand::CancelBriefing {})?;
+            verification.next(VerificationStage::CloudTypical {
+                cycle,
+                layer,
+                retired_mesh,
+            });
+        }
+        VerificationStage::CloudTypical {
+            cycle,
+            layer,
+            retired_mesh,
+        } => {
+            require_phase(phase, SessionPhase::FlightSetup)?;
+            if !verification.readiness.can_capture()
+                || verification.stage_started.elapsed() < Duration::from_millis(250)
+            {
+                return Ok(());
+            }
+            let condition = presentation
+                .environment
+                .condition_for(EnvironmentTarget::DefaultExhibition)
+                .map_err(|cause| format!("Typical cloud environment is unavailable: {cause:?}"))?;
+            let (actual_layer, mesh) = presentation.cloud_mesh()?;
+            let mesh = mesh.ok_or("Typical exchange did not restore the cloud mesh")?;
+            if condition.weather != WeatherClass::Typical
+                || condition.sky.is_none()
+                || actual_layer != layer
+                || mesh == retired_mesh
+                || !presentation.meshes.contains(mesh)
+                || presentation.meshes.contains(retired_mesh)
+            {
+                return Err("Typical exchange did not restore a new cloud mesh".into());
+            }
+            println!(
+                "Cloud environment cycle {}: Typical rendered with a replacement cloud mesh",
+                cycle + 1
+            );
+            session.execute_ui_command(SessionCommand::SelectWeather {
+                weather: birdman_game_session::DEFAULT_WEATHER,
+            })?;
+            if cycle + 1 < 3 {
+                verification.next(VerificationStage::CloudPrepare(cycle + 1));
+            } else {
+                if session.game.difficulty()
+                    != birdman_game_session::default_difficulty(
+                        birdman_game_session::default_control_mode(),
+                    )
+                {
+                    return Err("Cloud verification changed the default flight settings".into());
+                }
+                verification.next(VerificationStage::Prepare);
+            }
+        }
         VerificationStage::Prepare => {
+            if verification.water_case.is_none()
+                && matches!(
+                    presentation.rendering.snapshot().selection,
+                    ScreenRenderSelection::Auto { .. }
+                )
+            {
+                queue_ui_control(commands, "presentation-render-scale-100", None);
+                return Ok(());
+            }
             if let Some(case) = verification.water_case {
                 session.execute_ui_command(SessionCommand::SelectWeather {
                     weather: case.weather,
