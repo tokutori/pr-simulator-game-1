@@ -115,7 +115,7 @@ describe("Current FlightRecord persistence", () => {
       const getAll = vi.spyOn(FakeObjectStore.prototype, "getAll");
       const recent = await repository.recent(gameUiInputQuery.storedRecordLimit);
       expect(recent.map(({ id }) => id)).toEqual([2000, 1999, 1998]);
-      expect(getAll.mock.contexts.map((store) => store.name)).not.toContain("recordMetadata");
+      expect(getAll.mock.contexts.filter((store) => store instanceof FakeObjectStore).map((store) => store.name)).not.toContain("recordMetadata");
       const platform = { ...sharedGameUiPlatform(), stored_records: recent.map(({ id, savedAt, personalBest }) => ({
         id, saved_at: savedAt, personal_best: personalBest
       })) };
@@ -136,15 +136,15 @@ describe("Current FlightRecord persistence", () => {
         const recordIds = view.panels.flatMap((panel) => panel.controls)
           .filter((control) => control.id.startsWith("game-title-open-record-")).map(({ id }) => id);
         expect(recordIds).toEqual([2000, 1999, 1998].map((id) => `game-title-open-record-${String(id)}`));
-        expect(title.session.readSharedUi(platform).scene).toBe("title");
+        expect(title.session.readSharedUi(platform).scene).toBe("Title");
         expect(title.session.updateSharedUi({ kind: "platform", command: { kind: "open_stored_record", id: 2000 } }, platform).effects)
           .toEqual([{ kind: "platform", command: { kind: "open_stored_record", id: 2000 } }]);
       } finally { title.session.dispose(); }
       const flight = createSharedGameUiSession(5);
       try {
         const before = flight.session.readSnapshot();
-        expect(flight.session.readSharedUi(platform).scene).toBe("flight");
-        expect(flight.session.readSharedUi(platform).scene).toBe("flight");
+        expect(flight.session.readSharedUi(platform).scene).toBe("Flight");
+        expect(flight.session.readSharedUi(platform).scene).toBe("Flight");
         expect(flight.session.readSnapshot()).toEqual(before);
         expect(flight.session.updateSharedUi({ kind: "session", command: { kind: "pause" } }, platform).effects)
           .toEqual([{ kind: "session", command: { kind: "pause" } }]);
@@ -169,7 +169,7 @@ describe("Current FlightRecord persistence", () => {
     expect(platform.stored_records[0]?.saved_at).toBe(text);
     const owner = createSharedGameUiSession(0);
     try {
-      expect(owner.session.readSharedUi(platform).scene).toBe("title");
+      expect(owner.session.readSharedUi(platform).scene).toBe("Title");
     } finally { owner.session.dispose(); }
     expect(() => encodeGameUiPlatformInput({ ...sharedGameUiPlatform(),
       stored_records: Array.from({ length: 4 }, (_, index) => ({ id: index + 1, saved_at: "saved", personal_best: false }))

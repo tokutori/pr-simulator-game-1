@@ -65,6 +65,7 @@ export function encodeGameUiPlatformInput(input: GameUiPlatformObservation): str
 }
 
 function displayText(value: string, maximumCharacters: number): string {
+  if (value.length <= maximumCharacters) return value;
   const characters: string[] = [];
   for (const character of value) {
     if (characters.length === maximumCharacters) return `${characters.slice(0, -1).join("")}…`;
