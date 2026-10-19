@@ -2,7 +2,9 @@ use super::*;
 use crate::environment_snapshot::{
     EnvironmentContext, EnvironmentProjection, EnvironmentSnapshot, EnvironmentSource,
 };
-use birdman_game_format::{DifficultyPreset, HudCue};
+use birdman_game_format::{
+    DifficultyPreset, HudCue, TailControlAxesDocument, TailControlProfileDocument,
+};
 
 #[wasm_bindgen]
 impl HybridGameSessionBridge {
@@ -200,36 +202,21 @@ impl HybridGameSessionBridge {
 
 impl HybridGameSessionBridge {
     pub(super) fn control_profile_internal(&self) -> Result<String, BoundaryError> {
-        #[derive(Serialize)]
-        struct Axes {
-            pitch: f64,
-            yaw: f64,
-        }
-        #[derive(Serialize)]
-        struct Profile<'identity> {
-            schema_version: u32,
-            control_layout: ControlLayout,
-            controller_profile_id: &'identity str,
-            controller_profile_version: u32,
-            desired_body_rate_limit_rad_s: Axes,
-            feedback_gain_seconds: Axes,
-            maximum_slew_rad_s: f64,
-        }
         let configuration = self
             .sealed_record_configuration()
             .ok_or(BoundaryError::Session(GameSessionError::InvalidTransition))?;
         let limits = TailRateTarget::limits_rad_per_second();
         let gains = configuration.controller_profile.gains_seconds();
-        serde_json::to_string(&Profile {
+        serde_json::to_string(&TailControlProfileDocument {
             schema_version: SCHEMA_VERSION,
             control_layout: ControlLayout::TailIncidence,
             controller_profile_id: &configuration.identity.controller_profile_id,
             controller_profile_version: configuration.scenario.controller_profile_version,
-            desired_body_rate_limit_rad_s: Axes {
+            desired_body_rate_limit_rad_s: TailControlAxesDocument {
                 pitch: limits[0],
                 yaw: limits[1],
             },
-            feedback_gain_seconds: Axes {
+            feedback_gain_seconds: TailControlAxesDocument {
                 pitch: gains[0],
                 yaw: gains[1],
             },
@@ -294,7 +281,7 @@ impl HybridGameSessionBridge {
         };
         EnvironmentSnapshot::encode(
             EnvironmentContext::Session {
-                phase_code: phase_code(phase),
+                phase: phase.into(),
             },
             projection,
         )

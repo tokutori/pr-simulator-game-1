@@ -213,7 +213,10 @@ fn export_analysis_and_replay_share_saved_incidence_and_the_core_cursor() {
     assert_eq!(bridge.snapshot_internal().unwrap(), before);
 
     bridge.enter_replay().unwrap();
-    assert_eq!(bridge.phase_code(), 9);
+    assert!(matches!(
+        bridge.session.core_session().snapshot().phase(),
+        SessionPhase::Replay
+    ));
     assert!(!bridge.is_archived_replay());
     let context: Value = serde_json::from_str(&bridge.playback_context_json().unwrap()).unwrap();
     assert_eq!(context["phase"], "replay");

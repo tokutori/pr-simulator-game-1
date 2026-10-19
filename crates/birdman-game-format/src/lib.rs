@@ -12,8 +12,10 @@ mod tail_snapshot;
 
 pub use tail_input::{TAIL_INPUT_SCHEMA_VERSION, TailControlLayoutDocument, TailInputDocument};
 pub use tail_snapshot::{
-    EnvironmentIdentity, TailFrameDocument, TailPreparedLaunchDocument, TailPreparedLaunchFrame,
-    TailProgressDocument, TailSnapshotDocument, TailStateDocument, TailTelemetryDocument,
+    EnvironmentIdentity, SessionLifecycleDocument, SessionPhaseDocument, TailControlAxesDocument,
+    TailControlProfileDocument, TailFrameDocument, TailPreparedLaunchDocument,
+    TailPreparedLaunchFrame, TailProgressDocument, TailSnapshotDocument, TailStateDocument,
+    TailTelemetryDocument,
 };
 
 pub use environment::{

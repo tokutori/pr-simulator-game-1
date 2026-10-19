@@ -33,6 +33,23 @@ fn snapshot(bridge: &HybridGameSessionBridge) -> Value {
 }
 
 #[test]
+fn lifecycle_output_names_the_phase_and_exposes_resume_admission() {
+    let title = HybridGameSessionBridge::from_mode(ControlMode::Manual, 5, 42);
+    let lifecycle: Value = serde_json::from_str(&title.lifecycle_snapshot_json().unwrap()).unwrap();
+    assert_eq!(lifecycle["phase"], "title");
+    assert_eq!(lifecycle["control_mode_code"], 0);
+    assert_eq!(lifecycle["countdown_remaining_seconds"], 0);
+    assert_eq!(lifecycle["can_resume"], false);
+
+    let mut paused = launch(ControlMode::Manual, 5);
+    paused.pause(0).unwrap();
+    let lifecycle: Value =
+        serde_json::from_str(&paused.lifecycle_snapshot_json().unwrap()).unwrap();
+    assert_eq!(lifecycle["phase"], "flight_paused");
+    assert_eq!(lifecycle["can_resume"], true);
+}
+
+#[test]
 fn wasm_commands_execute_the_same_application_sequence_as_native_without_an_extra_ready_call() {
     let mut bridge = HybridGameSessionBridge::from_mode(ControlMode::Manual, 2, 42);
     let mut application = ApplicationSession::new(ControlMode::Manual, 2, 42);
@@ -131,7 +148,7 @@ fn prepared_launch_query_matches_the_first_live_frame_without_starting_physics()
             bridge.prepare_internal().unwrap();
             let prepared: Value =
                 serde_json::from_str(&bridge.prepared_launch_internal().unwrap()).unwrap();
-            assert_eq!(prepared["phase_code"], 2);
+            assert_eq!(prepared["phase"], "briefing_preparing");
             assert_eq!(prepared["preview"]["kind"], "prepared");
             assert_eq!(prepared["preview"]["state"]["tick"], 0);
             let initial = prepared["preview"]["state"].clone();
@@ -155,7 +172,7 @@ fn prepared_launch_query_matches_the_first_live_frame_without_starting_physics()
             for _step in 0..2 {
                 let countdown: Value =
                     serde_json::from_str(&bridge.prepared_launch_internal().unwrap()).unwrap();
-                assert_eq!(countdown["phase_code"], 4);
+                assert_eq!(countdown["phase"], "countdown");
                 assert_eq!(countdown["preview"]["state"], initial);
                 assert_eq!(
                     bridge
@@ -653,7 +670,10 @@ fn all_authorities_keep_one_core_lifecycle_and_consistent_terminal_time() {
     ] {
         let mut bridge = launch(mode, 2);
         bridge.pause(0).unwrap();
-        assert_eq!(bridge.phase_code(), 6);
+        assert!(matches!(
+            bridge.session.core_session().snapshot().phase(),
+            SessionPhase::FlightPaused { .. }
+        ));
         assert!(bridge.can_resume());
         bridge.resume().unwrap();
         let neutral = input(json!({"kind":"hold"}));
@@ -833,7 +853,7 @@ fn selection_is_frozen_during_briefing_and_retry_preserves_identity_without_new_
     let difficulty = bridge.session.difficulty();
     let identity = bridge.session.core_session().configuration_identity();
     let sealed_snapshot = snapshot(&bridge);
-    assert_eq!(sealed_snapshot["phase_code"], 2);
+    assert_eq!(sealed_snapshot["phase"], "briefing_preparing");
     assert!(sealed_snapshot["scenario"].is_object());
     assert!(sealed_snapshot["control_identity"].is_object());
     assert!(
@@ -853,14 +873,17 @@ fn selection_is_frozen_during_briefing_and_retry_preserves_identity_without_new_
         identity
     );
     bridge.fail_briefing(0).unwrap();
-    assert_eq!(snapshot(&bridge)["phase_code"], 8);
+    assert_eq!(snapshot(&bridge)["phase"], "briefing_failed");
     assert_eq!(snapshot(&bridge)["scenario"], sealed_snapshot["scenario"]);
     assert_eq!(
         snapshot(&bridge)["control_identity"],
         sealed_snapshot["control_identity"]
     );
     bridge.retry_briefing().unwrap();
-    assert_eq!(bridge.phase_code(), 2);
+    assert!(matches!(
+        bridge.session.core_session().snapshot().phase(),
+        SessionPhase::BriefingPreparing
+    ));
     assert_eq!(
         bridge.session.core_session().configuration_identity(),
         identity
@@ -875,14 +898,14 @@ fn selection_is_frozen_during_briefing_and_retry_preserves_identity_without_new_
         0
     );
     bridge.mark_briefing_ready().unwrap();
-    assert_eq!(snapshot(&bridge)["phase_code"], 3);
+    assert_eq!(snapshot(&bridge)["phase"], "briefing_ready");
     assert_eq!(snapshot(&bridge)["scenario"], sealed_snapshot["scenario"]);
     assert_eq!(
         snapshot(&bridge)["control_identity"],
         sealed_snapshot["control_identity"]
     );
     bridge.start_countdown(2).unwrap();
-    assert_eq!(snapshot(&bridge)["phase_code"], 4);
+    assert_eq!(snapshot(&bridge)["phase"], "countdown");
     assert_eq!(snapshot(&bridge)["scenario"], sealed_snapshot["scenario"]);
     assert_eq!(
         snapshot(&bridge)["control_identity"],
@@ -892,13 +915,19 @@ fn selection_is_frozen_during_briefing_and_retry_preserves_identity_without_new_
         .observe_countdown(bridge.countdown_token(), 1.0, true)
         .unwrap();
     bridge.cancel_countdown().unwrap();
-    assert_eq!(bridge.phase_code(), 3);
+    assert!(matches!(
+        bridge.session.core_session().snapshot().phase(),
+        SessionPhase::BriefingReady
+    ));
     assert_eq!(
         bridge.session.core_session().configuration_identity(),
         identity
     );
     bridge.cancel_briefing().unwrap();
-    assert_eq!(bridge.phase_code(), 1);
+    assert!(matches!(
+        bridge.session.core_session().snapshot().phase(),
+        SessionPhase::FlightSetup
+    ));
     assert!(bridge.sealed_record_configuration().is_none());
     assert!(bridge.sealed_course_axis().is_none());
     assert_eq!(bridge.session.difficulty(), difficulty);

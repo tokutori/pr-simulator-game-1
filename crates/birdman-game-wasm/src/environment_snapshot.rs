@@ -1,8 +1,8 @@
 use birdman_game_core::{NedPoint, NedVector, WindField};
 use birdman_game_format::{
     EnvironmentBasisDocument, EnvironmentFormatError, EnvironmentProvenanceDocument,
-    EnvironmentSourceDocument, GroundWindNormalDocument, LocalNedFrameDocument, SkyStateDocument,
-    WaveStateDocument,
+    EnvironmentSourceDocument, GroundWindNormalDocument, LocalNedFrameDocument,
+    SessionPhaseDocument, SkyStateDocument, WaveStateDocument,
 };
 use serde::Serialize;
 
@@ -43,7 +43,7 @@ pub(crate) enum EnvironmentSource {
 #[derive(Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum EnvironmentContext {
-    Session { phase_code: u32 },
+    Session { phase: SessionPhaseDocument },
     Registry,
 }
 

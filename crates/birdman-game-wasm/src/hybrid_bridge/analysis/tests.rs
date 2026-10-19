@@ -25,7 +25,10 @@ fn complete(weather_code: u32) -> HybridGameSessionBridge {
     .to_string();
     bridge.advance_internal(&input).unwrap();
     bridge.advance_internal(&input).unwrap();
-    assert_eq!(bridge.phase_code(), 7);
+    assert!(matches!(
+        bridge.session.core_session().snapshot().phase(),
+        SessionPhase::Result
+    ));
     bridge
 }
 

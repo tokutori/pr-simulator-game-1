@@ -1,6 +1,6 @@
 //! Browser adapter; no clock or browser state enters the simulation core.
 
-use birdman_game_core::{BriefingFailure, ControlMode, FbwAuthority, SessionPhase};
+use birdman_game_core::{BriefingFailure, ControlMode, FbwAuthority};
 use birdman_game_format::{AssistanceLevel, DifficultyPreset, InformationLevel, WeatherClass};
 use birdman_game_session::application::ExternalPauseReason;
 use wasm_bindgen::{JsValue, prelude::*};
@@ -179,21 +179,5 @@ fn briefing_failure_from_code(code: u32) -> Result<BriefingFailure, JsValue> {
         2 => Ok(BriefingFailure::ScenarioUnavailable),
         3 => Ok(BriefingFailure::InvalidConfiguration),
         _ => Err(JsValue::from_str("briefing failure code must be in [0, 3]")),
-    }
-}
-
-fn phase_code(phase: SessionPhase) -> u32 {
-    match phase {
-        SessionPhase::Title => 0,
-        SessionPhase::FlightSetup => 1,
-        SessionPhase::BriefingPreparing => 2,
-        SessionPhase::BriefingReady => 3,
-        SessionPhase::Countdown { .. } => 4,
-        SessionPhase::FlightRunning => 5,
-        SessionPhase::FlightPaused { .. } => 6,
-        SessionPhase::Result => 7,
-        SessionPhase::BriefingFailed { .. } => 8,
-        SessionPhase::Replay => 9,
-        SessionPhase::Attract => 10,
     }
 }

@@ -5,7 +5,7 @@ use birdman_game_core::{
     TailPilotPositionIntent, TailPilotPositionMapping, TailRateTarget,
 };
 use birdman_game_format::{
-    DifficultySettings, FlightRecordFormatError, InformationLevel,
+    DifficultySettings, FlightRecordFormatError, InformationLevel, SessionLifecycleDocument,
     TAIL_INPUT_SCHEMA_VERSION as SCHEMA_VERSION, TailControlLayoutDocument as ControlLayout,
     TailFlightRecordFinalizationDocument, TailFrameDocument as FrameDocument,
     TailIncidenceDocument, TailInputDocument, TailPersonalBestConfiguration,
@@ -15,12 +15,11 @@ use birdman_game_format::{
     TailTelemetryDocument as TelemetryDocument,
 };
 use birdman_game_session::application::{ApplicationSession, BackendReadiness, SessionCommand};
-use serde::Serialize;
 use wasm_bindgen::{JsValue, prelude::*};
 
 use crate::{
     HybridSessionPreparation, MAX_TICKS, control_mode_from_code,
-    environment_snapshot::EnvironmentIdentity, external_pause_reason_from_code, phase_code,
+    environment_snapshot::EnvironmentIdentity, external_pause_reason_from_code,
 };
 
 const MAX_INPUT_JSON_BYTES: usize = 1_024;
@@ -272,9 +271,16 @@ impl HybridGameSessionBridge {
         self.execute_application(SessionCommand::Retry {}, BackendReadiness::Preparing)
     }
 
-    /// Returns the existing domain phase code.
-    pub fn phase_code(&self) -> u32 {
-        phase_code(self.session.core_session().snapshot().phase())
+    /// Returns lifecycle values from the current shared session.
+    pub fn lifecycle_snapshot_json(&self) -> Result<String, JsValue> {
+        serde_json::to_string(&SessionLifecycleDocument {
+            phase: self.session.core_session().snapshot().phase().into(),
+            control_mode_code: self.control_mode_code(),
+            countdown_remaining_seconds: self.countdown_remaining_seconds(),
+            can_resume: self.can_resume(),
+        })
+        .map_err(BoundaryError::Json)
+        .map_err(BoundaryError::into_js)
     }
 
     /// Returns the displayed selection or archived Manual, Shared or Automatic mode code.
@@ -331,7 +337,7 @@ impl HybridGameSessionBridge {
         serde_json::to_string(&PreparedLaunchDocument {
             schema_version: SCHEMA_VERSION,
             control_layout: ControlLayout::TailIncidence,
-            phase_code: self.phase_code(),
+            phase: self.session.core_session().snapshot().phase().into(),
             preview,
         })
         .map_err(BoundaryError::Json)
@@ -431,7 +437,7 @@ impl HybridGameSessionBridge {
         serde_json::to_string(&SnapshotDocument {
             schema_version: SCHEMA_VERSION,
             control_layout: ControlLayout::TailIncidence,
-            phase_code: phase_code(snapshot.phase()),
+            phase: snapshot.phase().into(),
             control_mode_code: self.control_mode_code(),
             scenario: self
                 .session
