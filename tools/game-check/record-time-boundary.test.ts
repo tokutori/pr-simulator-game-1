@@ -14,7 +14,7 @@ beforeAll(() => {
   try {
     launchCurrentSession(session);
     for (let tick = 0; tick < 5; tick += 1) session.flightPort.advance_tick_json(neutralTailInput);
-    session.executeOperation("abort");
+    session.executeSharedSessionCommand({ kind: "abort" });
     sourceJson = session.exportRecordJson();
   } finally { session.dispose(); }
 });

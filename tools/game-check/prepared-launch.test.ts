@@ -11,15 +11,15 @@ const neutral = encodeTailLogicalInput({ controlLayout: "tail_incidence", noseUp
 
 describe("sealed initial launch presentation", () => {
   for (const mode of [0, 1, 2]) {
-    it.each([0, 1, 2, 3, 4])(`preserves mode ${String(mode)} and weather %s from preparation through launch and Retry`, (weather) => {
+    it.each(["calm", "mild", "typical", "challenging", "near_limit"] as const)(`preserves mode ${String(mode)} and weather %s from preparation through launch and Retry`, (weather) => {
       const bridge = new HybridGameSessionBridge(mode, 21, 22);
       const session = new TailAppSessionFacade(bridge, physics_hz());
       try {
         expect(session.readPreparedLaunchPose()).toBeNull();
-        session.executeOperation("open-setup");
+        session.executeSharedSessionCommand({ kind: "open_setup" });
         expect(session.readPreparedLaunchPose()).toBeNull();
-        session.executeOperation({ kind: "set-difficulty-option", axis: "weather", code: weather });
-        session.executeOperation("prepare");
+        session.executeSharedSessionCommand({ kind: "select_weather", weather });
+        session.executeSharedSessionCommand({ kind: "prepare" });
         const initial = session.readPreparedLaunchPose();
         expect(initial).not.toBeNull();
         expect(initial?.controls?.layout).toBe("tail_incidence");
@@ -28,7 +28,7 @@ describe("sealed initial launch presentation", () => {
         expect(prepared.kind).toBe("prepared");
         expect(bridge.snapshot_json()).toBe(before);
         expect(session.readLifecycle().phaseCode).toBe(3);
-        session.executeOperation("start-flight");
+        session.executeSharedSessionCommand({ kind: "start_countdown" });
         for (let step = 0; step < 3; step++) {
           expect(session.readPreparedLaunchPose()).toEqual(initial);
           session.observeCountdown(session.captureCountdownToken(), 1, true);
@@ -42,11 +42,11 @@ describe("sealed initial launch presentation", () => {
         expect(live.frame.state).toEqual(prepared.state);
         expect(projectFlightRenderPose(display.value, live.frame.state.pilotPositionMeters)).toMatchObject(initial);
         session.flightPort.advance_tick_json(neutral);
-        session.executeOperation("abort");
+        session.executeSharedSessionCommand({ kind: "abort" });
         expect(session.readPreparedLaunchPose()).toBeNull();
-        session.executeOperation("retry");
+        session.executeSharedSessionCommand({ kind: "retry" });
         expect(session.readPreparedLaunchPose()).toEqual(initial);
-        session.executeOperation("cancel-briefing");
+        session.executeSharedSessionCommand({ kind: "cancel_briefing" });
         expect(session.readPreparedLaunchPose()).toBeNull();
       } finally { session.dispose(); }
     });

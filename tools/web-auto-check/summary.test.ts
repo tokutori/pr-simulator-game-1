@@ -12,7 +12,7 @@ launchCurrentSession(session);
 const initialSnapshotJson = session.flightPort.snapshot_json();
 for (let tick = 0; tick < 200; tick++) session.flightPort.advance_tick_json(neutralTailInput);
 const finalSnapshotJson = session.flightPort.snapshot_json();
-session.executeOperation("pause");
+session.executeSharedSessionCommand({ kind: "pause" });
 const pausedSnapshotJson = session.flightPort.snapshot_json();
 session.dispose();
 const policy = (applied = "100") => JSON.stringify({ selection: { kind: "auto", manual_scale: "100", manual_shadow: "full", manual_water_quality: "high" },

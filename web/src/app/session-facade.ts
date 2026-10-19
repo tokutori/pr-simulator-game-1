@@ -1,9 +1,7 @@
-import type { GameSessionOperation } from "./app-state.js";
 import type { DifficultyUiState, ReplayReturnTarget, TailGameSessionProjection } from "./app-state.js";
 import { decodePreparedUiConfiguration, decodeSessionDifficulty } from "./session-selection.js";
 import type { PreparedUiConfiguration, SessionSelectionPort } from "./session-selection.js";
 import { projectTailGameSession } from "./session-snapshot.js";
-import type { GameSessionOperationPort } from "./game-session-operation.js";
 import { readFlightLog } from "../game/flight-log-export.js";
 import type { FlightLogExportPort, FlightLogFormat } from "../game/flight-log-export.js";
 import { projectFlightRenderPose, projectPreparedLaunchRenderPose, projectRecordedFlightSnapshot } from "../game/flight-display-snapshot.js";
@@ -72,10 +70,7 @@ export interface SessionResourcePort extends SessionSelectionPort, FlightLogExpo
   free(): void;
 }
 const ownedSessionResources = new WeakSet<SessionResourcePort>();
-export type TailAppSessionOperation = GameSessionOperation;
-export type TailAppSessionPort = SessionResourcePort & TailSessionPort
-  & Omit<GameSessionOperationPort, "abort"> & {
-    abort(): string;
+export type TailAppSessionPort = SessionResourcePort & TailSessionPort & {
     prepared_launch_snapshot_json(): string;
     game_ui_view_revision(platformJson: string): number;
     game_ui_view_json(platformJson: string): string;
@@ -251,10 +246,6 @@ export class TailAppSessionFacade extends SessionResourceOwner {
       pause: (reason: number) => { this.change(() => { port.pause(reason); }, "retain_record"); },
       clear_pause_reason: (reason: number) => { this.clearPauseReason(reason); },
       advance_tick_json: (json: string) => this.change(() => port.advance_tick_json(json)), free: () => { this.dispose(); } });
-  }
-
-  executeOperation(operation: TailAppSessionOperation): TailAppOperationResult {
-    return this.change(() => executeTailOperation(this.port, operation, this.physicsHz));
   }
 
   readSharedUi(platform: GameUiPlatformObservation): GameUiView {
@@ -542,49 +533,4 @@ function isAnalysisObservationProof(value: unknown): value is AnalysisObservatio
   return typeof source === "object" && source !== null && queryOwner in source && recordSourceGeneration in source
     && typeof source[queryOwner] === "symbol" && typeof source[recordSourceGeneration] === "symbol"
     && typeof value.context === "object" && value.context !== null;
-}
-
-function executeTailOperation(port: TailAppSessionPort, operation: TailAppSessionOperation, physicsHz: number): TailAppOperationResult {
-  if (typeof operation !== "string") {
-    if (operation.kind === "set-information-cue") port.set_information_cue(operation.cueCode, operation.visible);
-    else {
-      switch (operation.axis) {
-        case "preset": port.set_difficulty_preset(operation.code); break;
-        case "information": port.set_information_level(operation.code); break;
-        case "assistance": port.set_assistance_level(operation.code); break;
-        case "weather": port.set_weather_class(operation.code); break;
-      }
-    }
-    return Object.freeze({ kind: "completed" });
-  }
-  switch (operation) {
-    case "open-setup": port.open_setup(); break;
-    case "set-control-manual": port.set_control_mode(0); break;
-    case "set-control-shared": port.set_control_mode(1); break;
-    case "set-control-automatic": port.set_control_mode(2); break;
-    case "return-to-title": port.return_to_title(); break;
-    case "prepare": port.apply_game_ui_session_command_json(JSON.stringify({ kind: "prepare" })); break;
-    case "cancel-briefing": port.cancel_briefing(); break;
-    case "start-flight": port.apply_game_ui_session_command_json(JSON.stringify({ kind: "start_countdown" })); return Object.freeze({ kind: "countdown-started" });
-    case "cancel-countdown": port.cancel_countdown(); break;
-    case "pause": port.pause(0); break;
-    case "resume": port.resume(); break;
-    case "abort": {
-      const snapshot = parseTailSessionSnapshot(port.abort(), physicsHz);
-      if (snapshot.phaseCode !== 7) throw new RangeError("Tail abort must return a Rust Result snapshot");
-      return Object.freeze({ kind: "aborted", terminalSnapshot: snapshot });
-    }
-    case "retry": port.retry(); break;
-    case "retry-briefing": port.apply_game_ui_session_command_json(JSON.stringify({ kind: "retry_briefing" })); break;
-    case "enter-replay": port.enter_replay(); break;
-    case "leave-replay": port.leave_replay(); break;
-    case "enter-attract": port.enter_attract(); break;
-    case "leave-attract": port.leave_attract(); break;
-    default: return unknownOperation(operation);
-  }
-  return Object.freeze({ kind: "completed" });
-}
-
-function unknownOperation(operation: never): never {
-  throw new RangeError(`Unsupported tail session operation: ${String(operation)}`);
 }

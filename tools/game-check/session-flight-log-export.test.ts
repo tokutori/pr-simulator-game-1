@@ -11,12 +11,12 @@ const neutral = encodeTailLogicalInput({ controlLayout: "tail_incidence", noseUp
   desiredPitchRateRadiansPerSecond: 0, desiredYawRateRadiansPerSecond: 0, pilotPositionCommand: { kind: "hold" } });
 
 function complete(session: AppSessionFacade): void {
-  session.executeOperation("open-setup");
-  session.executeOperation("prepare");
-  session.executeOperation("start-flight");
+  session.executeSharedSessionCommand({ kind: "open_setup" });
+  session.executeSharedSessionCommand({ kind: "prepare" });
+  session.executeSharedSessionCommand({ kind: "start_countdown" });
   session.observeCountdown(session.captureCountdownToken(), 3, true);
   session.flightPort.advance_tick_json(neutral);
-  session.executeOperation("abort");
+  session.executeSharedSessionCommand({ kind: "abort" });
 }
 
 describe("layout-owned flight log query boundary with actual WASM", () => {
@@ -40,7 +40,7 @@ describe("layout-owned flight log query boundary with actual WASM", () => {
       expect(session.readFlightLog("json")).toBe(original);
       expect(session.acceptQuery(token, csv).kind).toBe("accepted");
       expect(session.readLifecycle().phaseCode).toBe(7);
-      session.executeOperation("enter-replay");
+      session.executeSharedSessionCommand({ kind: "enter_replay" });
       expect(session.readFlightLog("csv")).toBe(csv);
       expect(session.readFlightLog("json")).toBe(original);
       expect(session.readLifecycle().phaseCode).toBe(9);
@@ -73,9 +73,9 @@ describe("layout-owned flight log query boundary with actual WASM", () => {
       const original = owner.exportRecordJson();
       if (operation === "replace") owner.openArchive(original);
       vi.spyOn(HybridGameSessionBridge.prototype, "export_flight_log_csv").mockImplementationOnce(() => {
-        if (operation === "retry") owner.executeOperation("retry");
+        if (operation === "retry") owner.executeSharedSessionCommand({ kind: "retry" });
         else if (operation === "replace") {
-          owner.executeOperation("leave-replay");
+          owner.executeSharedSessionCommand({ kind: "leave_replay" });
           owner.openArchive(original);
         }
         else owner.dispose();
@@ -89,7 +89,7 @@ describe("layout-owned flight log query boundary with actual WASM", () => {
     const owner = createAppSession({ controlModeCode: 0, seedLow: 21, seedHigh: 22 });
     const csv = vi.spyOn(HybridGameSessionBridge.prototype, "export_flight_log_csv");
     const json = vi.spyOn(HybridGameSessionBridge.prototype, "export_current_flight_record_json");
-    owner.executeOperation("enter-attract");
+    owner.executeSharedSessionCommand({ kind: "enter_attract" });
     expect(() => owner.readFlightLog("csv")).toThrow("Result or Replay");
     expect(() => owner.readFlightLog("json")).toThrow("Result or Replay");
     owner.dispose();

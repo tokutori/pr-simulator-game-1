@@ -662,10 +662,10 @@ describe("Three adapter panel reference with real StereoEffect", () => {
     "applies the actual Rust %s venue projection without hiding water or aircraft", (recordKind) => {
       const session = createAppSession({ controlModeCode: 0, seedLow: 21, seedHigh: 22 });
       try {
-        session.executeOperation("open-setup");
-        session.executeOperation({ kind: "set-difficulty-option", axis: "weather", code: recordKind === "registered-archive" || recordKind === "unknown-archive" ? 2 : 0 });
-        session.executeOperation("prepare"); session.executeOperation("start-flight");
-        session.observeCountdown(session.captureCountdownToken(), 1, true); session.observeCountdown(session.captureCountdownToken(), 1, true); session.observeCountdown(session.captureCountdownToken(), 1, true); session.executeOperation("abort");
+        session.executeSharedSessionCommand({ kind: "open_setup" });
+        session.executeSharedSessionCommand({ kind: "select_weather", weather: recordKind === "registered-archive" || recordKind === "unknown-archive" ? "typical" : "calm" });
+        session.executeSharedSessionCommand({ kind: "prepare" }); session.executeSharedSessionCommand({ kind: "start_countdown" });
+        session.observeCountdown(session.captureCountdownToken(), 1, true); session.observeCountdown(session.captureCountdownToken(), 1, true); session.observeCountdown(session.captureCountdownToken(), 1, true); session.executeSharedSessionCommand({ kind: "abort" });
         let saved = session.exportRecordJson();
         if (recordKind === "unknown-archive") {
           const document = JSON.parse(saved) as { header: { environment_version: number } };
@@ -686,7 +686,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
         expect(scene.getObjectByName("aircraft-presentation-root")?.visible).toBe(true);
         expect(scene.getObjectByName("lake-biwa-distant-water-backing")?.visible).toBe(true);
         if (recordKind !== "current-calm") {
-          session.executeOperation("leave-replay");
+          session.executeSharedSessionCommand({ kind: "leave_replay" });
           const title = parseRuntimeEnvironmentSnapshot(session.readEnvironmentJson(), 0);
           bundle.renderer.setLakeVenueVisible(projectRuntimeVenue(title, 0).kind === "visible");
           bundle.renderer.render(frame());
@@ -957,7 +957,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
     const runtime = new PresentationRuntime({ ...bundle.renderer, dispose() {} }, [{ mode: "phone-vr", start: () => Promise.resolve(), stop: () => Promise.resolve(),
       currentFrame: (timestamp, view, viewer, menu) => phone.backend.currentFrame(timestamp, view, viewer, menu) }], (viewer) => {
       evidence.viewer = viewer;
-      const draft = createFlightFrameViewDraft(model, snapshot, viewer, "ja");
+      const draft = createFlightFrameViewDraft(model, viewer, "ja");
       if (draft.headHud.kind !== "visible") throw new Error("Missing Phone Head layout");
       const size = headHudCanvasSize(draft.headHud.layer);
       const paint = validateHeadHudPaint(prepareHeadHudPaint(new HudCanvasFixture(), draft.headHud, size.width, size.height), viewer);
@@ -1344,7 +1344,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
         currentFrame: (timestamp, view, viewer, menu) => { observed.frame = phone.backend.currentFrame(timestamp, view, viewer, menu); return observed.frame; } }], (viewer) => {
         observed.viewer = viewer;
         if (!paused) return fixturePresentation(createSceneFixture("Title"));
-        const draft = createFlightFrameViewDraft(model, snapshot, viewer, "ja");
+        const draft = createFlightFrameViewDraft(model, viewer, "ja");
         return fixturePresentation(finalizeFlightFrameView(draft, draft.headHud));
       });
       try {

@@ -16,9 +16,9 @@ afterEach(() => { for (const dispose of disposals.splice(0)) dispose(); });
 
 function fixture() {
   const facade = createAppSession({ controlModeCode: 0, seedLow: 21, seedHigh: 22 });
-  facade.executeOperation("open-setup");
-  facade.executeOperation("prepare");
-  facade.executeOperation("start-flight");
+  facade.executeSharedSessionCommand({ kind: "open_setup" });
+  facade.executeSharedSessionCommand({ kind: "prepare" });
+  facade.executeSharedSessionCommand({ kind: "start_countdown" });
   facade.observeCountdown(facade.captureCountdownToken(), 3, true);
   let model = updateApp(createInitialAppModel(), { type: "game-session-synced", ...facade.readGameSessionProjection() }).model;
   const effects: AppEffect[] = [];
@@ -43,7 +43,7 @@ function fixture() {
   disposals.push(() => { controller.dispose(); });
   const abortAtNextTick = (): void => {
     port.advance_tick_json.mockImplementationOnce(() => {
-      facade.executeOperation("abort");
+      facade.executeSharedSessionCommand({ kind: "abort" });
       return facade.flightPort.snapshot_json();
     });
   };
@@ -58,8 +58,8 @@ describe("authoritative Result synchronization across tail adapter failures", ()
     trial.controller.onFrame(10);
     const previousResult = trial.facade.readGameSessionProjection();
     if (previousResult.phaseCode !== 7) throw new Error("Expected the first Rust Result");
-    trial.facade.executeOperation("retry");
-    trial.facade.executeOperation("start-flight");
+    trial.facade.executeSharedSessionCommand({ kind: "retry" });
+    trial.facade.executeSharedSessionCommand({ kind: "start_countdown" });
     trial.facade.observeCountdown(trial.facade.captureCountdownToken(), 3, true);
     trial.dispatch({ type: "game-session-synced", ...trial.facade.readGameSessionProjection() });
     const binding = trial.bindings.bindAppDisplay(trial.port, trial.display, () => trial.facade.readGameSessionProjection(),
@@ -126,7 +126,7 @@ describe("authoritative Result synchronization across tail adapter failures", ()
   it("retains a nonterminal history snapshot while the authoritative Rust phase is paused", () => {
     const trial = fixture();
     const retained = trial.controller.currentDisplaySnapshot;
-    trial.facade.executeOperation("pause");
+    trial.facade.executeSharedSessionCommand({ kind: "pause" });
     trial.dispatch({ type: "game-session-synced", ...trial.facade.readGameSessionProjection() });
     trial.binding.port.fail("Pause presentation failed");
     expect(trial.model().gameSession).toMatchObject({ kind: "paused-flight", snapshot: { phaseCode: 6 } });
@@ -141,7 +141,7 @@ describe("authoritative Result synchronization across tail adapter failures", ()
     trial.controller.onFrame(10);
     expect(trial.model().gameSession.kind).toBe("flight");
     expect(trial.effects).toEqual([]);
-    trial.facade.executeOperation("retry");
+    trial.facade.executeSharedSessionCommand({ kind: "retry" });
     trial.dispatch({ type: "game-session-synced", ...trial.facade.readGameSessionProjection() });
     const model = trial.model();
     trial.dispatch({ type: "flight-controller-result-feedback", identity: trial.binding.identity, message: "Late terminal failure" });

@@ -67,7 +67,7 @@ describe("registered fixed camera terrain clearance", () => {
         desiredPitchRateRadiansPerSecond: 0, desiredYawRateRadiansPerSecond: 0, pilotPositionCommand: { kind: "hold" } });
       for (let tick = 0; tick < physics_hz() * 60 && bridge.phase_code() === 5; tick++) bridge.advance_tick_json(neutral);
       expect(bridge.phase_code()).toBe(7);
-      session.executeOperation("enter-replay");
+      session.executeSharedSessionCommand({ kind: "enter_replay" });
       const dataset = session.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
       expect(dataset.summary.durationSeconds).toBeGreaterThan(10);
       for (const time of [0, dataset.summary.durationSeconds / 2, dataset.summary.durationSeconds]) {

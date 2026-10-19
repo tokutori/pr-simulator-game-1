@@ -88,7 +88,7 @@ describe("named Rust record summary and wind boundary", () => {
       const rawWind = nested(jsonObject(windJson(bridge)), "projection").samples as Record<string, unknown>[];
       expect(wind.projection.samples.map((sample) => sample.velocityNedMetersPerSecond)).toEqual(rawWind.map((sample) => sample.velocity_ned_mps));
       expect(wind.projection.samples).toHaveLength(25);
-      facade.executeOperation("enter-replay");
+      facade.executeSharedSessionCommand({ kind: "enter_replay" });
       facade.seekPlayback(0.005);
       const clock = facade.readPlaybackClock();
       const replaySummary = facade.readRecordSummary();
@@ -156,7 +156,7 @@ describe("named Rust record summary and wind boundary", () => {
     const facade = new TailAppSessionFacade(bridge, physics_hz());
     const liveSnapshot = vi.spyOn(bridge, "snapshot_json");
     try {
-      facade.executeOperation("enter-attract");
+      facade.executeSharedSessionCommand({ kind: "enter_attract" });
       const clock = facade.readPlaybackClock();
       const summary = facade.readRecordSummary();
       expect(summary.context).toEqual(facade.readAttractContext());
@@ -241,7 +241,7 @@ describe("named Rust record summary and wind boundary", () => {
       const token = facade.captureQueryToken();
       const summary = facade.readRecordSummary();
       const wind = Promise.resolve(facade.queryWindGrid(request));
-      facade.executeOperation("retry");
+      facade.executeSharedSessionCommand({ kind: "retry" });
       const snapshot = facade.readSnapshot();
       if (snapshot.identity.kind !== "prepared") throw new Error("Expected the same Retry blueprint");
       expect(snapshot.identity.scenario).toEqual(summary.context.scenario);

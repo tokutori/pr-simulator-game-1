@@ -51,8 +51,8 @@ describe("Screen UI to current WebAssembly GameSession transitions", () => {
       launchCurrentSession(session);
       session.flightPort.advance_tick_json(neutralTailInput);
       session.flightPort.advance_tick_json(neutralTailInput);
-      session.executeOperation("abort");
-      session.executeOperation("enter-replay");
+      session.executeSharedSessionCommand({ kind: "abort" });
+      session.executeSharedSessionCommand({ kind: "enter_replay" });
       session.setPlaybackPlaying(true);
       const record = session.exportRecordJson();
       const initial = updateApp(createInitialAppModel(), { type: "game-session-synced", ...readRuntimeSessionProjection(session) }).model;
@@ -82,7 +82,7 @@ describe("Screen UI to current WebAssembly GameSession transitions", () => {
     try {
       launchCurrentSession(session);
       session.flightPort.advance_tick_json(neutralTailInput);
-      session.executeOperation("abort");
+      session.executeSharedSessionCommand({ kind: "abort" });
       const initial: AppModel = { ...createInitialAppModel(), presentation: { type: "ready", mode: "screen" } };
       const entered = updateApp(initial, { type: "game-session-synced", ...readRuntimeSessionProjection(session) });
       const initialLoad = entered.effects.find((effect) => effect.type === "load-flight-analysis");
@@ -213,7 +213,7 @@ describe("Screen UI to current WebAssembly GameSession transitions", () => {
       let model = updateApp(createInitialAppModel(), { type: "game-session-synced", ...session.readGameSessionProjection() }).model;
       session.flightPort.advance_tick_json(neutralTailInput);
       session.flightPort.advance_tick_json(neutralTailInput);
-      if (terminal === "manual_abort") session.executeOperation("abort");
+      if (terminal === "manual_abort") session.executeSharedSessionCommand({ kind: "abort" });
       else for (let tick = 2; tick < 4_000 && session.readLifecycle().phaseCode === 5; tick += 1) {
         session.flightPort.advance_tick_json(neutralTailInput);
       }

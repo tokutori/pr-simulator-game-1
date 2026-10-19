@@ -188,7 +188,7 @@ describe("pure saved Analysis view projection", () => {
   it("uses named demo final score separately from cursor position and applies the same camera policy in VR", () => {
     const session = new TailAppSessionFacade(new HybridGameSessionBridge(0, 81, 82), physics_hz());
     try {
-      session.executeOperation("enter-attract");
+      session.executeSharedSessionCommand({ kind: "enter_attract" });
       const data = dataset(session);
       const cursorSample = cursor(session, data);
       const gameSession = gameSessionState(10, 0, session.queryRecordDisplay(0), false, "tail_incidence");

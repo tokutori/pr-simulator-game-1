@@ -56,12 +56,17 @@ describe("Direct flight setup selection", () => {
     }
   });
 
-  it.each(["preset", "information", "assistance", "weather"] as const)("sets the selected %s through the current Rust session", (axis) => {
+  it.each([
+    { axis: "preset", command: { kind: "select_preset", preset: "expert" } },
+    { axis: "information", command: { kind: "select_information", information: "minimal" } },
+    { axis: "assistance", command: { kind: "select_assistance", assistance: "light" } },
+    { axis: "weather", command: { kind: "select_weather", weather: "typical" } }
+  ] as const)("sets the selected $axis through the current Rust session", ({ axis, command }) => {
     initSync({ module: new Uint8Array(readFileSync(fileURLToPath(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url)))) });
     const session = createAppSession({ controlModeCode: 0, seedLow: 21, seedHigh: 22 });
     try {
-      session.executeOperation("open-setup");
-      expect(session.executeOperation({ kind: "set-difficulty-option", axis, code: 2 })).toEqual({ kind: "completed" });
+      session.executeSharedSessionCommand({ kind: "open_setup" });
+      expect(session.executeSharedSessionCommand(command)).toEqual({ kind: "completed" });
       const difficulty = session.readDifficulty();
       const value = axis === "preset" ? difficulty.presetCode : axis === "information" ? difficulty.informationCode
         : axis === "assistance" ? difficulty.assistanceCode : difficulty.weatherCode;

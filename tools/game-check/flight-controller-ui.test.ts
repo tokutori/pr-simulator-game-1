@@ -9,7 +9,6 @@ import { readFileSync } from "node:fs";
 import { initSync, maximum_flight_frame_gap_milliseconds, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
 import { createAppSession } from "../../web/src/app/session-factory.js";
 import { TailFlightController } from "../../web/src/game/tail-flight-controller.js";
-import { currentFlightDisplayFixture } from "./current-session-fixture.js";
 import { sharedGameUiPlatform, sharedHudNode } from "./shared-game-ui-fixture.js";
 import { captureConfiguredViewerFrame } from "../../web/src/render/engines/three/viewer-frame.js";
 import { viewExposesAction } from "../../web/src/render/contracts/ui.js";
@@ -33,9 +32,9 @@ describe("Flight controller shared stop diagnosis", () => {
       expect(sharedHudNode(hud, "hud-primary-readouts").label).toBe("飛行処理停止");
       expect(sharedHudNode(hud, "hud-controller-failure").content.value).toContain("Gamepad permission denied");
       expect(sharedHudNode(hud, "hud-primary-readouts").content.value).toContain("Last valid · tick 1");
-      const draft = createFlightFrameViewDraft(model, currentFlightDisplayFixture(), viewer(), "ja");
+      const draft = createFlightFrameViewDraft(model, viewer(), "ja");
       if (model.flightExecution.kind !== "stopped") throw new Error("Missing retained controller state");
-      expect(draft.snapshot).toBe(model.flightExecution.snapshot);
+      expect(draft.model.flightExecution).toBe(model.flightExecution);
       const view = finalizeFlightFrameView(draft, draft.headHud);
       expect(view.description).toContain("停止");
       const diagnosis = view.panels[0]?.controls.find((control) => control.id === "game-controller-stopped");
@@ -131,14 +130,14 @@ describe("Flight controller shared stop diagnosis", () => {
     const requestId = trial.model().pendingGameRequestId;
     if (requestId === null) throw new Error("Missing Abort request");
     expect(retained.kind).toBe("tail_flight");
-    trial.facade.executeOperation("abort");
+    trial.facade.executeSharedSessionCommand({ kind: "abort" });
     trial.controller.reset(trial.session.snapshot_json());
     trial.update({ type: "game-operation-completed", requestId, ...trial.facade.readGameSessionProjection() });
     expect(trial.model().gameSession.kind).toBe("result");
     expect(trial.model().flightExecution).toBe(diagnosis);
     expect(trial.controller.currentSnapshot.phaseCode).toBe(7);
-    trial.facade.executeOperation("retry");
-    trial.facade.executeOperation("start-flight");
+    trial.facade.executeSharedSessionCommand({ kind: "retry" });
+    trial.facade.executeSharedSessionCommand({ kind: "start_countdown" });
     trial.facade.observeCountdown(trial.facade.captureCountdownToken(), 3, true);
     const replacement = trial.bind();
     trial.controller.reset(trial.session.snapshot_json(), replacement.port);
@@ -167,13 +166,17 @@ describe("Flight controller shared stop diagnosis", () => {
 
 function fixture(mode: "screen" | "phone-vr" | "webxr", informationCode = 0) {
   const facade = createAppSession({ controlModeCode: 0, seedLow: 21, seedHigh: 22 });
-  facade.executeOperation("open-setup");
-  facade.executeOperation({ kind: "set-difficulty-option", axis: "information", code: informationCode });
+  facade.executeSharedSessionCommand({ kind: "open_setup" });
+  const information = (["full", "standard", "minimal", "realistic", "custom"] as const)[informationCode];
+  if (information === undefined) throw new RangeError("Unknown fixture information level");
+  facade.executeSharedSessionCommand({ kind: "select_information", information });
   if (informationCode === 4) {
-    for (const cueCode of [0, 1, 2, 3, 4, 5]) facade.executeOperation({ kind: "set-information-cue", cueCode, visible: false });
+    for (const cue of ["telemetry", "attitude", "wind", "flight_path", "angle_of_attack", "warnings"] as const) {
+      facade.executeSharedSessionCommand({ kind: "set_cue", cue, visible: false });
+    }
   }
-  facade.executeOperation("prepare");
-  facade.executeOperation("start-flight");
+  facade.executeSharedSessionCommand({ kind: "prepare" });
+  facade.executeSharedSessionCommand({ kind: "start_countdown" });
   facade.observeCountdown(facade.captureCountdownToken(), 3, true);
   const initial = createInitialAppModel();
   let model: AppModel = { ...updateApp(initial, { type: "game-session-synced", ...facade.readGameSessionProjection() }).model,
@@ -216,7 +219,7 @@ function fixture(mode: "screen" | "phone-vr" | "webxr", informationCode = 0) {
     snapshot_json: () => facade.flightPort.snapshot_json(),
     control_profile_json: () => facade.flightPort.control_profile_json(),
     advance_tick_json: vi.fn((json: string) => {
-      if (terminal) { facade.executeOperation("abort"); return facade.flightPort.snapshot_json(); }
+      if (terminal) { facade.executeSharedSessionCommand({ kind: "abort" }); return facade.flightPort.snapshot_json(); }
       return facade.flightPort.advance_tick_json(json);
     }),
     free: vi.fn(() => { facade.dispose(); })
@@ -234,7 +237,7 @@ function fixture(mode: "screen" | "phone-vr" | "webxr", informationCode = 0) {
     return [];
   });
   const syncPhase = (phaseCode: 5 | 6 | 7): void => {
-    if (phaseCode === 6 && facade.readLifecycle().phaseCode === 5) facade.executeOperation("pause");
+    if (phaseCode === 6 && facade.readLifecycle().phaseCode === 5) facade.executeSharedSessionCommand({ kind: "pause" });
     const projection = facade.readGameSessionProjection();
     if (projection.phaseCode !== phaseCode) throw new Error("Unexpected authoritative phase");
     update({ type: "game-session-synced", ...projection });
