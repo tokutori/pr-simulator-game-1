@@ -2500,12 +2500,7 @@ mod tests {
                 let session = app.world().resource::<NativeSession>();
                 assert_eq!(session.game.core_session().snapshot(), before);
                 assert_eq!(session.game.core_session().playback_clock(), before_clock);
-                let after = TailFlightRecordDocument::from_record(
-                    session.game.core_session().flight_record().unwrap(),
-                    session.game.difficulty(),
-                    session.game.prepared().unwrap().record_identity.clone(),
-                )
-                .unwrap();
+                let after = session.game.flight_record_document().unwrap();
                 assert_eq!(after, expected);
                 assert!(
                     session
