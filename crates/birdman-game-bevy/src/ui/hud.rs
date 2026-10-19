@@ -1,9 +1,8 @@
 use super::super::NativeFont;
 use super::{color, retained_node, retained_ui_transform, set_text, spawn_text};
-use bevy::{input::mouse::MouseScrollUnit, picking::Pickable, prelude::*};
+use bevy::{picking::Pickable, prelude::*};
 use birdman_game_session::game_ui::{
-    GameUiHud, GameUiHudGroupLayout, GameUiHudNode, GameUiHudNodeContent, GameUiHudPlacement,
-    GameUiHudTone, GameUiTheme,
+    GameUiHud, GameUiHudNode, GameUiHudNodeContent, GameUiHudPlacement, GameUiHudTone, GameUiTheme,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -29,15 +28,18 @@ enum HudWidget {
         surface: Entity,
         horizon: Entity,
         marker: Entity,
+        ticks: [(Entity, Entity); 7],
     },
     HeadingTape {
         surface: Entity,
         ticks: Vec<(Entity, Entity)>,
     },
     Direction {
+        surface: Entity,
         needle: Entity,
     },
     LinearGauge {
+        surface: Entity,
         indicator: Entity,
         minimum: Entity,
         maximum: Entity,
@@ -45,6 +47,16 @@ enum HudWidget {
 }
 
 impl HudWidget {
+    fn surface(&self) -> Option<Entity> {
+        match self {
+            Self::Text => None,
+            Self::Attitude { surface, .. }
+            | Self::HeadingTape { surface, .. }
+            | Self::Direction { surface, .. }
+            | Self::LinearGauge { surface, .. } => Some(*surface),
+        }
+    }
+
     fn accepts(&self, content: &GameUiHudNodeContent) -> bool {
         matches!(
             (self, content),
@@ -72,16 +84,11 @@ pub(super) fn setup_hud(commands: &mut Commands) -> RetainedHud {
             Node {
                 position_type: PositionType::Absolute,
                 display: Display::None,
-                flex_direction: FlexDirection::Column,
                 ..default()
             },
             BackgroundColor(Color::NONE),
-            Pickable {
-                should_block_lower: false,
-                is_hoverable: true,
-            },
+            Pickable::IGNORE,
         ))
-        .observe(scroll_hud)
         .id();
     RetainedHud {
         shell,
@@ -126,15 +133,24 @@ pub(super) fn project_hud(
                 .nodes
                 .get_mut(&node.id)
                 .expect("projected HUD node exists");
+            let inline = matches!(node.content, GameUiHudNodeContent::Text { .. });
             set_text(world, retained.label, node.label.clone());
             retained_node(world, retained.label)
                 .map_unchanged(|node| &mut node.display)
-                .set_if_neq(if node.label.is_empty() {
+                .set_if_neq(if inline || node.label.is_empty() {
                     Display::None
                 } else {
                     Display::Flex
                 });
-            set_text(world, retained.value, node.content.value().to_owned());
+            set_text(
+                world,
+                retained.value,
+                if inline && !node.label.is_empty() {
+                    format!("{} {}", node.label, node.content.value())
+                } else {
+                    node.content.value().to_owned()
+                },
+            );
             let tone = match &node.content {
                 GameUiHudNodeContent::Text { tone, .. } => *tone,
                 GameUiHudNodeContent::Attitude { .. }
@@ -153,7 +169,7 @@ pub(super) fn project_hud(
                     .expect("HUD text color exists")
                     .set_if_neq(TextColor(tone_color));
             }
-            project_widget(world, retained, &node.content, hud, &font, ink)?;
+            project_widget(world, retained, node, hud, &font, ink)?;
         }
     }
     retained.previous = Some(hud.clone());
@@ -170,7 +186,6 @@ fn same_structure(previous: &GameUiHud, next: &GameUiHud) -> bool {
             .all(|(previous, next)| {
                 previous.id == next.id
                     && previous.placement == next.placement
-                    && previous.layout == next.layout
                     && previous.nodes.len() == next.nodes.len()
                     && previous
                         .nodes
@@ -178,6 +193,8 @@ fn same_structure(previous: &GameUiHud, next: &GameUiHud) -> bool {
                         .zip(&next.nodes)
                         .all(|(previous, next)| {
                             previous.id == next.id
+                                && previous.bounds == next.bounds
+                                && previous.instrument_height_em == next.instrument_height_em
                                 && std::mem::discriminant(&previous.content)
                                     == std::mem::discriminant(&next.content)
                         })
@@ -195,19 +212,15 @@ fn project_structure(
     retained_node(world, retained.shell).set_if_neq(Node {
         position_type: PositionType::Absolute,
         left: px(layout.offset_px[0]),
-        top: px(layout.offset_px[1]),
+        bottom: px(layout.offset_px[1]),
         width: px(layout.width_px),
-        max_height: px(layout.maximum_height_px),
-        padding: UiRect::axes(px(layout.padding_px[0]), px(layout.padding_px[1])),
-        flex_direction: FlexDirection::Column,
-        row_gap: px(layout.gap_px[1]),
-        overflow: Overflow::scroll_y(),
+        height: px(layout.height_px),
         ..default()
     });
     world
         .get_mut::<BackgroundColor>(retained.shell)
         .expect("HUD background exists")
-        .set_if_neq(BackgroundColor(background));
+        .set_if_neq(BackgroundColor(Color::NONE));
     let mut group_ids = BTreeSet::new();
     let mut node_ids = BTreeSet::new();
     let mut group_entities = Vec::new();
@@ -217,7 +230,14 @@ fn project_structure(
             .groups
             .entry(group.id.clone())
             .or_insert_with(|| shape(world, retained.shell, Node::default(), Color::NONE));
-        retained_node(world, entity).set_if_neq(group_layout(group.layout, hud));
+        retained_node(world, entity).set_if_neq(Node {
+            position_type: PositionType::Absolute,
+            left: px(0),
+            top: px(0),
+            width: percent(100),
+            height: percent(100),
+            ..default()
+        });
         group_entities.push(entity);
         let mut node_entities = Vec::new();
         for node in &group.nodes {
@@ -240,34 +260,32 @@ fn project_structure(
             world.entity_mut(retained_node.card).insert(ChildOf(entity));
             let boxed = match group.placement {
                 GameUiHudPlacement::Instruments => true,
-                GameUiHudPlacement::Readouts | GameUiHudPlacement::Details => false,
+                GameUiHudPlacement::Readouts => false,
             };
             world
                 .get_mut::<Node>(retained_node.card)
                 .expect("HUD card exists")
                 .set_if_neq(Node {
+                    position_type: PositionType::Absolute,
+                    left: percent(node.bounds.x * 100.0),
+                    top: percent(node.bounds.y * 100.0),
                     min_width: px(0),
-                    width: if matches!(group.layout, GameUiHudGroupLayout::Row {}) {
-                        auto()
-                    } else {
-                        percent(100)
-                    },
-                    max_width: percent(100),
-                    flex_grow: if matches!(group.layout, GameUiHudGroupLayout::Row {}) {
-                        1.0
-                    } else {
-                        0.0
-                    },
+                    width: percent(node.bounds.width * 100.0),
+                    height: percent(node.bounds.height * 100.0),
                     flex_direction: FlexDirection::Column,
                     flex_shrink: 0.0,
-                    padding: UiRect::all(px(if boxed { 4 } else { 0 })),
+                    padding: if boxed {
+                        UiRect::axes(px(layout.padding_px[0]), px(layout.padding_px[1]))
+                    } else {
+                        UiRect::ZERO
+                    },
                     ..default()
                 });
             world
                 .get_mut::<BackgroundColor>(retained_node.card)
                 .expect("HUD card background exists")
                 .set_if_neq(BackgroundColor(if boxed {
-                    Color::srgba(0.03, 0.09, 0.12, 0.46)
+                    background
                 } else {
                     Color::NONE
                 }));
@@ -277,6 +295,24 @@ fn project_structure(
                     .expect("HUD text font exists")
                     .map_unchanged(|font| &mut font.font_size)
                     .set_if_neq(FontSize::Px(layout.font_size_px as f32));
+            }
+            if let Some(surface) = retained_node.widget.surface() {
+                let surface_width = match retained_node.widget {
+                    HudWidget::Attitude { .. } => px(node.instrument_height_em
+                        * layout.font_size_px
+                        * layout.attitude_size_px[0]
+                        / layout.attitude_size_px[1]),
+                    HudWidget::Direction { .. } => {
+                        px(node.instrument_height_em * layout.font_size_px)
+                    }
+                    HudWidget::HeadingTape { .. } | HudWidget::LinearGauge { .. } => percent(100),
+                    HudWidget::Text => unreachable!(),
+                };
+                let mut surface = world.get_mut::<Node>(surface).expect("HUD surface exists");
+                surface.width = surface_width;
+                surface.height = px(node.instrument_height_em * layout.font_size_px);
+                surface.align_self = AlignSelf::Center;
+                surface.flex_shrink = 0.0;
             }
             node_entities.push(retained_node.card);
         }
@@ -305,36 +341,6 @@ fn project_structure(
     {
         retained.structure_projections += 1;
     }
-}
-
-fn group_layout(layout: GameUiHudGroupLayout, hud: &GameUiHud) -> Node {
-    let mut node = Node {
-        width: percent(100),
-        flex_shrink: 0.0,
-        row_gap: px(hud.layout.gap_px[1]),
-        column_gap: px(hud.layout.gap_px[0]),
-        ..default()
-    };
-    match layout {
-        GameUiHudGroupLayout::Column {} => node.flex_direction = FlexDirection::Column,
-        GameUiHudGroupLayout::Row {} => {
-            node.flex_direction = FlexDirection::Row;
-            node.flex_wrap = FlexWrap::Wrap;
-        }
-        GameUiHudGroupLayout::Grid { columns } => {
-            let width = hud.layout.width_px - 2.0 * hud.layout.padding_px[0];
-            let fitted = ((width + hud.layout.gap_px[0])
-                / (hud.layout.attitude_size_px[0] + hud.layout.gap_px[0]).max(1.0))
-            .floor()
-            .max(1.0) as u32;
-            node.display = Display::Grid;
-            node.grid_template_columns = vec![RepeatedGridTrack::flex(
-                columns.min(fitted).clamp(1, u16::MAX as u32) as u16,
-                1.0,
-            )];
-        }
-    }
-    node
 }
 
 fn shape(world: &mut World, parent: Entity, node: Node, fill: Color) -> Entity {
@@ -390,30 +396,12 @@ fn spawn_node(
                 },
                 Color::NONE,
             );
-            shape(
-                world,
-                horizon,
-                Node {
-                    position_type: PositionType::Absolute,
-                    width: percent(100),
-                    height: percent(50),
-                    top: percent(50),
-                    ..default()
-                },
-                Color::srgb(0.604, 0.439, 0.278),
-            );
-            shape(
-                world,
-                horizon,
-                Node {
-                    position_type: PositionType::Absolute,
-                    width: percent(100),
-                    height: px(1),
-                    top: percent(50),
-                    ..default()
-                },
-                Color::WHITE,
-            );
+            let ticks = std::array::from_fn(|_| {
+                (
+                    shape(world, horizon, Node::default(), Color::WHITE),
+                    text(world, horizon, font, 12.0),
+                )
+            });
             for (left, width) in [(30.0, 15.0), (55.0, 15.0)] {
                 shape(
                     world,
@@ -453,6 +441,7 @@ fn spawn_node(
                 surface,
                 horizon,
                 marker,
+                ticks,
             }
         }
         GameUiHudNodeContent::HeadingTape { .. } => {
@@ -553,7 +542,7 @@ fn spawn_node(
                     .entity_mut(arm)
                     .insert(UiTransform::from_rotation(Rot2::degrees(rotation)));
             }
-            HudWidget::Direction { needle }
+            HudWidget::Direction { surface, needle }
         }
         GameUiHudNodeContent::LinearGauge { .. } => {
             let surface = shape(
@@ -611,6 +600,7 @@ fn spawn_node(
                 ..default()
             });
             HudWidget::LinearGauge {
+                surface,
                 indicator,
                 minimum,
                 maximum,
@@ -628,39 +618,30 @@ fn spawn_node(
 fn project_widget(
     world: &mut World,
     node: &mut HudNode,
-    content: &GameUiHudNodeContent,
+    source: &GameUiHudNode,
     hud: &GameUiHud,
     font: &Handle<Font>,
     ink: Color,
 ) -> Result<(), String> {
-    match content {
+    match &source.content {
         GameUiHudNodeContent::Text { .. } => {}
         GameUiHudNodeContent::Attitude { geometry, .. } => {
             let HudWidget::Attitude {
                 surface,
                 horizon,
                 marker,
+                ticks,
             } = node.widget
             else {
                 return Err("HUD widget kindが一致しない".to_owned());
             };
             let layer = geometry.horizon();
             let marker_ratio = geometry.flight_path_y_ratio();
-            let size = hud.layout.attitude_size_px;
-            retained_node(world, surface)
-                .map_unchanged(|node| &mut node.width)
-                .set_if_neq(px(size[0]));
-            retained_node(world, surface)
-                .map_unchanged(|node| &mut node.height)
-                .set_if_neq(px(size[1]));
+            let height = source.instrument_height_em * hud.layout.font_size_px;
             world
                 .get_mut::<BackgroundColor>(surface)
                 .expect("ADI background exists")
-                .set_if_neq(BackgroundColor(if layer.is_some() {
-                    Color::srgb(0.224, 0.490, 0.604)
-                } else {
-                    Color::NONE
-                }));
+                .set_if_neq(BackgroundColor(Color::NONE));
             retained_node(world, horizon)
                 .map_unchanged(|node| &mut node.display)
                 .set_if_neq(if layer.is_some() {
@@ -669,13 +650,47 @@ fn project_widget(
                     Display::None
                 });
             if let Some(layer) = layer {
-                let offset = layer.pitch_offset_ratio * size[1];
+                let offset = layer.pitch_offset_ratio * height;
                 let rotation = layer.rotation_degrees.to_radians();
                 retained_ui_transform(world, horizon).set_if_neq(UiTransform {
                     translation: Val2::px(-offset * rotation.sin(), offset * rotation.cos()),
                     rotation: Rot2::degrees(layer.rotation_degrees as f32),
                     ..default()
                 });
+                for ((line, label), tick) in ticks.into_iter().zip(layer.pitch_ticks) {
+                    retained_node(world, line).set_if_neq(Node {
+                        position_type: PositionType::Absolute,
+                        left: percent(50.0 - tick.half_width_ratio * 50.0),
+                        top: percent(50.0 + tick.offset_ratio * 50.0),
+                        width: percent(tick.half_width_ratio * 100.0),
+                        height: px(1),
+                        ..default()
+                    });
+                    retained_node(world, label).set_if_neq(Node {
+                        position_type: PositionType::Absolute,
+                        display: if tick.label_degrees.is_some() {
+                            Display::Flex
+                        } else {
+                            Display::None
+                        },
+                        left: percent(50.0 + tick.half_width_ratio * 50.0),
+                        top: percent(50.0 + tick.offset_ratio * 50.0),
+                        ..default()
+                    });
+                    retained_ui_transform(world, label)
+                        .set_if_neq(UiTransform::from_translation(Val2::percent(0, -50)));
+                    set_text(
+                        world,
+                        label,
+                        tick.label_degrees
+                            .map_or_else(String::new, |value| value.to_string()),
+                    );
+                    world
+                        .get_mut::<TextFont>(label)
+                        .expect("pitch label font exists")
+                        .map_unchanged(|font| &mut font.font_size)
+                        .set_if_neq(FontSize::Px(hud.layout.font_size_px as f32));
+                }
             }
             retained_node(world, marker)
                 .map_unchanged(|node| &mut node.display)
@@ -753,7 +768,7 @@ fn project_widget(
         GameUiHudNodeContent::Direction {
             rotation_degrees, ..
         } => {
-            let HudWidget::Direction { needle } = node.widget else {
+            let HudWidget::Direction { needle, .. } = node.widget else {
                 return Err("HUD widget kindが一致しない".to_owned());
             };
             retained_node(world, needle)
@@ -777,6 +792,7 @@ fn project_widget(
                 indicator,
                 minimum,
                 maximum,
+                ..
             } = node.widget
             else {
                 return Err("HUD widget kindが一致しない".to_owned());
@@ -809,29 +825,11 @@ fn project_widget(
     Ok(())
 }
 
-fn scroll_hud(
-    mut on_scroll: On<Pointer<Scroll>>,
-    mut panels: Query<(&mut ScrollPosition, &ComputedNode)>,
-) {
-    if let Ok((mut position, node)) = panels.get_mut(on_scroll.entity) {
-        let delta = match on_scroll.unit {
-            MouseScrollUnit::Line => on_scroll.y * 20.0,
-            MouseScrollUnit::Pixel => on_scroll.y,
-        };
-        let range = (node.content_size.y - node.size.y).max(0.0) * node.inverse_scale_factor;
-        let next = (position.y - delta).clamp(0.0, range);
-        if next != position.y {
-            position.y = next;
-            on_scroll.propagate(false);
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::super::{
         RetainedUi,
-        tests::{app, press},
+        tests::{add_ui_layout, app, press},
     };
     use super::*;
     use birdman_game_session::game_ui::{GameUiHudAdiGeometry, GameUiHudHeadingTick};
@@ -882,10 +880,27 @@ mod tests {
             for node in &group.nodes {
                 let projected = &retained.nodes[&node.id];
                 assert_eq!(world.get::<Text>(projected.label).unwrap().0, node.label);
+                let inline = matches!(node.content, GameUiHudNodeContent::Text { .. });
                 assert_eq!(
                     world.get::<Text>(projected.value).unwrap().0,
-                    node.content.value()
+                    if inline && !node.label.is_empty() {
+                        format!("{} {}", node.label, node.content.value())
+                    } else {
+                        node.content.value().to_owned()
+                    }
                 );
+                let card = world.get::<Node>(projected.card).unwrap();
+                assert_eq!(card.left, percent(node.bounds.x * 100.0));
+                assert_eq!(card.top, percent(node.bounds.y * 100.0));
+                assert_eq!(card.width, percent(node.bounds.width * 100.0));
+                assert_eq!(card.height, percent(node.bounds.height * 100.0));
+                assert_eq!(card.overflow, Overflow::default());
+                if let Some(surface) = projected.widget.surface() {
+                    assert_eq!(
+                        world.get::<Node>(surface).unwrap().height,
+                        px(node.instrument_height_em * hud.layout.font_size_px)
+                    );
+                }
             }
         }
     }
@@ -920,7 +935,6 @@ mod tests {
         for group in &mut hud.groups {
             group.nodes.reverse();
         }
-        hud.groups[0].layout = GameUiHudGroupLayout::Row {};
         project_hud(app.world_mut(), &mut retained.hud, Some(&hud), &theme).unwrap();
         assert_order_and_text(app.world(), &retained.hud, &hud);
         let retired = hud.groups.remove(1);
@@ -976,7 +990,7 @@ mod tests {
         };
         *rotation_degrees = Some(0.0);
         project_hud(app.world_mut(), &mut retained.hud, Some(&hud), &theme).unwrap();
-        let HudWidget::Direction { needle } = retained.hud.nodes[&direction_id].widget else {
+        let HudWidget::Direction { needle, .. } = retained.hud.nodes[&direction_id].widget else {
             unreachable!()
         };
         let entities = [retained.hud.shell]
@@ -1049,20 +1063,22 @@ mod tests {
             .map(|(id, node)| (id.clone(), node.card))
             .collect::<BTreeMap<_, _>>();
         hud.layout.width_px -= 13.0;
-        hud.layout.maximum_height_px = 100.0;
+        hud.layout.height_px = 100.0;
         hud.layout.opacity = 0.123;
         project_hud(app.world_mut(), &mut retained.hud, Some(&hud), &theme).unwrap();
         assert_eq!(retained.hud.structure_projections, structure_count + 1);
         let shell = app.world().get::<Node>(retained.hud.shell).unwrap();
         assert_eq!(shell.width, px(hud.layout.width_px));
-        assert_eq!(shell.max_height, px(100));
-        assert_eq!(shell.overflow, Overflow::scroll_y());
+        assert_eq!(shell.height, px(100));
+        assert_eq!(shell.top, auto());
+        assert_eq!(shell.bottom, px(hud.layout.offset_px[1]));
+        assert_eq!(shell.overflow, Overflow::default());
         assert_eq!(
             app.world()
                 .get::<BackgroundColor>(retained.hud.shell)
                 .unwrap()
                 .0,
-            color(&theme.panel_background, 0.123).unwrap()
+            Color::NONE
         );
         project_hud(app.world_mut(), &mut retained.hud, None, &theme).unwrap();
         assert_eq!(
@@ -1120,11 +1136,16 @@ mod tests {
                 (
                     GameUiHudNodeContent::Attitude { geometry, .. },
                     HudWidget::Attitude {
-                        horizon, marker, ..
+                        surface,
+                        horizon,
+                        marker,
+                        ticks,
                     },
                 ) => {
                     let layer = geometry.horizon().unwrap();
-                    let offset = layer.pitch_offset_ratio * hud.layout.attitude_size_px[1];
+                    let offset = layer.pitch_offset_ratio
+                        * node.instrument_height_em
+                        * hud.layout.font_size_px;
                     let rotation = layer.rotation_degrees.to_radians();
                     assert_eq!(
                         app.world()
@@ -1137,6 +1158,20 @@ mod tests {
                         app.world().get::<Node>(*marker).unwrap().top,
                         percent(geometry.flight_path_y_ratio().unwrap() * 100.0)
                     );
+                    assert_eq!(
+                        app.world().get::<BackgroundColor>(*surface).unwrap().0,
+                        Color::NONE
+                    );
+                    for ((line, label), tick) in ticks.iter().zip(layer.pitch_ticks) {
+                        let line = app.world().get::<Node>(*line).unwrap();
+                        assert_eq!(line.top, percent(50.0 + tick.offset_ratio * 50.0));
+                        assert_eq!(line.width, percent(tick.half_width_ratio * 100.0));
+                        assert_eq!(
+                            app.world().get::<Text>(*label).unwrap().0,
+                            tick.label_degrees
+                                .map_or_else(String::new, |value| value.to_string())
+                        );
+                    }
                 }
                 (
                     GameUiHudNodeContent::HeadingTape { ticks, .. },
@@ -1164,6 +1199,7 @@ mod tests {
                         indicator,
                         minimum,
                         maximum,
+                        ..
                     },
                 ) => {
                     assert_eq!(
@@ -1196,6 +1232,7 @@ mod tests {
                     surface,
                     horizon,
                     marker,
+                    ..
                 } => {
                     assert_eq!(
                         app.world().get::<Node>(*surface).unwrap().display,
@@ -1208,7 +1245,7 @@ mod tests {
                     assert_eq!(app.world().get::<Node>(*marker).unwrap().top, percent(30));
                 }
                 HudWidget::HeadingTape { ticks, .. } => assert!(ticks.is_empty()),
-                HudWidget::Direction { needle } => assert_eq!(
+                HudWidget::Direction { needle, .. } => assert_eq!(
                     app.world().get::<Node>(*needle).unwrap().display,
                     Display::None
                 ),
@@ -1259,6 +1296,7 @@ mod tests {
             surface,
             horizon,
             marker,
+            ..
         } = retained.hud.nodes[&shared.id].widget
         else {
             unreachable!()
@@ -1286,5 +1324,101 @@ mod tests {
             app.world().get::<Node>(marker).unwrap().top,
             percent(y_ratio * 100.0)
         );
+    }
+
+    #[test]
+    fn shared_bottom_bounds_leave_forward_view_clear_without_scrolling_or_card_overlap() {
+        let mut app = flying_app();
+        let camera = add_ui_layout(&mut app, 1280, 720);
+        let before = app
+            .world()
+            .resource::<super::super::super::native_session::NativeSession>()
+            .game
+            .core_session()
+            .snapshot();
+        let bounds = |world: &World, entity: Entity| {
+            Rect::from_center_size(
+                world.get::<UiGlobalTransform>(entity).unwrap().translation,
+                world.get::<ComputedNode>(entity).unwrap().size(),
+            )
+        };
+        for (width, height, scale) in [
+            (1280, 720, 1.0),
+            (360, 640, 1.0),
+            (600, 720, 1.0),
+            (620, 720, 1.25),
+            (1280, 720, 1.0),
+        ] {
+            for mut window in app
+                .world_mut()
+                .query::<&mut Window>()
+                .iter_mut(app.world_mut())
+            {
+                window.resolution.set(width as f32, height as f32);
+            }
+            {
+                let mut camera = app.world_mut().get_mut::<Camera>(camera).unwrap();
+                let dimensions = UVec2::new(width, height);
+                camera.computed.target_info.as_mut().unwrap().physical_size = dimensions;
+                camera.viewport.as_mut().unwrap().physical_size = dimensions;
+            }
+            app.world_mut().resource_mut::<UiScale>().0 = scale;
+            for _frame in 0..4 {
+                app.update();
+            }
+            let retained = &app.world().resource::<RetainedUi>().hud;
+            let hud = retained.previous.as_ref().unwrap();
+            assert_order_and_text(app.world(), retained, hud);
+            let rail = bounds(app.world(), retained.shell);
+            let shell = app.world().get::<Node>(retained.shell).unwrap();
+            assert_eq!(shell.bottom, px(hud.layout.offset_px[1]));
+            assert_eq!(shell.top, auto());
+            assert_eq!(shell.overflow, Overflow::default());
+            assert_eq!(
+                app.world()
+                    .get::<BackgroundColor>(retained.shell)
+                    .unwrap()
+                    .0,
+                Color::NONE
+            );
+            assert!(
+                rail.min.y >= height as f32 * 0.5,
+                "{width}x{height}: {rail:?}"
+            );
+            assert!(rail.min.x >= -1.0 && rail.max.x <= width as f32 + 1.0);
+            assert!(rail.max.y <= height as f32 + 1.0);
+            let cards = retained.nodes.values().collect::<Vec<_>>();
+            for (index, card) in cards.iter().enumerate() {
+                let card_bounds = bounds(app.world(), card.card);
+                assert!(card_bounds.min.x >= rail.min.x - 1.0);
+                assert!(card_bounds.max.x <= rail.max.x + 1.0);
+                assert!(card_bounds.min.y >= rail.min.y - 1.0);
+                assert!(card_bounds.max.y <= rail.max.y + 1.0);
+                let computed = app.world().get::<ComputedNode>(card.card).unwrap();
+                assert!(
+                    computed.content_size.y <= computed.size().y + 1.0,
+                    "{width}x{height}: card={card_bounds:?}, content={:?}",
+                    computed.content_size
+                );
+                for other in &cards[index + 1..] {
+                    let other_bounds = bounds(app.world(), other.card);
+                    assert!(
+                        card_bounds.max.x <= other_bounds.min.x + 1.0
+                            || other_bounds.max.x <= card_bounds.min.x + 1.0
+                            || card_bounds.max.y <= other_bounds.min.y + 1.0
+                            || other_bounds.max.y <= card_bounds.min.y + 1.0,
+                        "{width}x{height}: {card_bounds:?} overlaps {other_bounds:?}"
+                    );
+                }
+            }
+            assert_eq!(
+                app.world()
+                    .resource::<super::super::super::native_session::NativeSession>()
+                    .game
+                    .core_session()
+                    .snapshot(),
+                before
+            );
+        }
     }
 }

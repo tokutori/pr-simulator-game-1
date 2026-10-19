@@ -2777,7 +2777,7 @@ mod tests {
         );
     }
 
-    fn add_ui_layout(app: &mut App, width: u32, height: u32) -> Entity {
+    pub(super) fn add_ui_layout(app: &mut App, width: u32, height: u32) -> Entity {
         use bevy::{
             asset::{AssetApp, AssetPlugin},
             camera::{ComputedCameraValues, RenderTargetInfo, Viewport},
