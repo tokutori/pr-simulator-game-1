@@ -36,7 +36,7 @@ describe("layout-owned flight log query boundary with actual WASM", () => {
         "target_angular_rate_body_q_rad_s", "target_angular_rate_body_r_rad_s",
         "resolved_pilot_position_target_body_forward_m", "terminal_failure_available", "terminal_failure_json"
       ]));
-      expect(csv.slice(csv.indexOf("\n") + 1)).toMatch(/^2,6,tail_incidence,/);
+      expect(csv.slice(csv.indexOf("\n") + 1)).toMatch(/^3,6,tail_incidence,/);
       expect(session.readFlightLog("json")).toBe(original);
       expect(session.acceptQuery(token, csv).kind).toBe("accepted");
       expect(session.readLifecycle().phaseCode).toBe(7);

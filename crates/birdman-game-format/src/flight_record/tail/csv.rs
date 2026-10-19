@@ -54,9 +54,9 @@ const COLUMNS: &[&str] = &[
     "personal_best_comparison_status",
     "personal_best_comparison_version",
     "build_cargo_lock_sha256",
-    "build_rustc_version",
-    "build_target",
-    "build_profile",
+    "build_rustc_version_json",
+    "build_target_json",
+    "build_profile_json",
     "build_declared_source_commit",
     "build_scenario_sha256",
     "build_aircraft_sha256",
@@ -141,7 +141,7 @@ pub(super) fn encode(
     let columns = COLUMNS;
     let header = &document.header;
     let mut metadata = vec![
-        "2".to_string(),
+        "3".to_string(),
         document.schema_version.to_string(),
         "tail_incidence".to_string(),
         header.catalog_version.to_string(),
@@ -201,9 +201,24 @@ pub(super) fn encode(
         let build = &identity.build;
         metadata.extend([
             digest_hex(build.cargo_lock_sha256),
-            build.rustc_version.clone().unwrap_or_default(),
-            build.target.clone().unwrap_or_default(),
-            build.profile.clone().unwrap_or_default(),
+            build
+                .rustc_version
+                .as_ref()
+                .map(json)
+                .transpose()?
+                .unwrap_or_default(),
+            build
+                .target
+                .as_ref()
+                .map(json)
+                .transpose()?
+                .unwrap_or_default(),
+            build
+                .profile
+                .as_ref()
+                .map(json)
+                .transpose()?
+                .unwrap_or_default(),
             build.declared_source_commit.clone().unwrap_or_default(),
             digest_hex(build.source_fingerprints.scenario),
             digest_hex(build.source_fingerprints.aircraft),

@@ -54,7 +54,7 @@ fn tail_csv_preserves_saved_states_and_exclusive_two_tail_controls() {
             .any(|column| column.contains("actuator_")
                 || column == "target_angular_rate_body_p_rad_s")
     );
-    assert_eq!(csv_value(&rows, 1, "log_export_version"), "2");
+    assert_eq!(csv_value(&rows, 1, "log_export_version"), "3");
     assert_eq!(csv_value(&rows, 1, "record_schema_version"), "6");
     assert_eq!(csv_value(&rows, 1, "control_layout"), "tail_incidence");
     assert_eq!(
@@ -1117,11 +1117,17 @@ fn comparison_metadata_preserves_unranked_archives_and_rejects_forged_current_ke
         TailFlightRecordDocument::decode_json(&current.encode_json().unwrap()).unwrap(),
         current
     );
+    let mut missing_guard = serde_json::to_value(&current.identity_metadata).unwrap();
+    missing_guard["conditions"]["controller_profile"]
+        .as_object_mut()
+        .unwrap()
+        .remove("angle_of_attack_guard");
     for metadata in [
         serde_json::Value::Null,
         serde_json::json!({"future": [1, 2, 3]}),
         serde_json::json!({"comparison_version": 999, "future": {"name": "未対応方式"}}),
         serde_json::json!({"comparison_version": 2}),
+        missing_guard,
         serde_json::json!({"comparison_version": "長".repeat(150_000)}),
     ] {
         let mut value = serde_json::to_value(&current).unwrap();
@@ -1152,7 +1158,7 @@ fn comparison_metadata_preserves_unranked_archives_and_rejects_forged_current_ke
             csv_value(&rows, 1, "personal_best_comparison_status"),
             "unrecognized"
         );
-        assert_eq!(csv_value(&rows, 1, "build_target"), "");
+        assert_eq!(csv_value(&rows, 1, "build_target_json"), "");
     }
     let mut old = current.clone();
     old.identity_metadata = crate::FlightRecordIdentityMetadata::Unspecified;
@@ -1229,8 +1235,8 @@ fn build_provenance_changes_do_not_split_comparisons_and_resolved_authority_does
     let rows = tail_csv_rows(&other_build);
     assert_eq!(csv_value(&rows, 1, "personal_best_comparison_version"), "2");
     assert_eq!(
-        csv_value(&rows, 1, "build_target"),
-        "wasm32-unknown-unknown"
+        csv_value(&rows, 1, "build_target_json"),
+        "\"wasm32-unknown-unknown\""
     );
     assert_eq!(csv_value(&rows, 1, "build_physics_sha256"), "0d".repeat(32));
     let mut bounded = current.clone();
@@ -1249,6 +1255,24 @@ fn build_provenance_changes_do_not_split_comparisons_and_resolved_authority_does
         bounded.validate(),
         Err(FlightRecordFormatError::InvalidRecord)
     );
+    let mut external = current.clone();
+    let crate::FlightRecordIdentityMetadata::Resolved(identity) = &mut external.identity_metadata
+    else {
+        panic!("resolved metadata");
+    };
+    identity.build.rustc_version = Some("=1+1".into());
+    identity.build.target = Some("+SUM(1,2)".into());
+    identity.build.profile = Some("@formula\"value".into());
+    let rows = tail_csv_rows(&external);
+    for (column, expected) in [
+        ("build_rustc_version_json", "=1+1"),
+        ("build_target_json", "+SUM(1,2)"),
+        ("build_profile_json", "@formula\"value"),
+    ] {
+        let cell = csv_value(&rows, 1, column);
+        assert!(cell.starts_with('"'));
+        assert_eq!(serde_json::from_str::<String>(cell).unwrap(), expected);
+    }
     let mut assisted = document();
     assisted.header.difficulty.assistance = super::super::FlightRecordAssistanceDocument::Light;
     let profile = birdman_game_core::TailControlProfile::try_new(0.2, 0.2, 1.0).unwrap();

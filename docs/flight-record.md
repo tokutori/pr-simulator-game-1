@@ -72,7 +72,7 @@ Result/Replay限定のqueryであり、physics、record、Replay clockを更新�
 通常recordのJSONは現行encoder、保存archiveのJSONはopen成功時に保持した検証済み原文を返す。
 記録はschema 6を使用し、未知環境へ現在の環境metadataを流用しない。未保存のsource hashを現在のbuildから補完しない。
 
-CSV export version 2は`control_layout=tail_incidence`と
+CSV export version 3は`control_layout=tail_incidence`と
 水平・垂直尾翼のphysical incidence、nose-up/right-turn intent、$q,r$ target、pilot Hold/Set、
 resolved target、manual/FBW/mixed incidenceを保存値から出力する。尾翼を旧三軸舵へ変換しない。
 CSVはUTF-8/LF、header付きの全標本を出力し、CSVの区切り・引用符・改行をescapeする。
@@ -159,6 +159,7 @@ build来歴には既存4source fingerprint、Cargo.lockのSHA-256、観測した
 取得不能値は不明とし、保存されていない来歴へ現在のbuild情報を補完しない。
 共有Result/Replayの技術情報は比較方式と来歴を表示する。未知rawから表示する方式は`u32`だけに制限する。
 CSVは比較方式の状態・有界なversionと既知build来歴のscalar列を出力する。未知rawと完全な解決済みcontroller条件はJSON exportで保持し、各CSV sampleへ反復しない。
+任意文字列のrustc・target・profileは`_json`列へJSON文字列として格納し、CSVの引用処理と分離する。外部archive由来の先頭記号を表計算の数式として出力しない。
 
 意味versionの更新責務は次のとおりである。
 

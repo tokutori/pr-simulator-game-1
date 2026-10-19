@@ -64,7 +64,7 @@ fn current_log_exports_share_result_replay_state_without_changing_saved_queries(
         csv.lines()
             .nth(1)
             .unwrap()
-            .starts_with("2,6,tail_incidence,")
+            .starts_with("3,6,tail_incidence,")
     );
     assert_eq!(bridge.snapshot_internal().unwrap(), result);
     bridge.enter_replay().unwrap();

@@ -121,7 +121,14 @@ pub struct FlightRecordControllerProfile {
     /// Tail software slew in radians per second.
     pub maximum_slew_rad_per_second: f64,
     /// Saved guard policy, explicitly absent for an unguarded flight.
+    #[serde(deserialize_with = "deserialize_alpha_guard")]
     pub angle_of_attack_guard: Option<FlightRecordAlphaGuard>,
+}
+
+fn deserialize_alpha_guard<'de, Decoder: Deserializer<'de>>(
+    decoder: Decoder,
+) -> Result<Option<FlightRecordAlphaGuard>, Decoder::Error> {
+    Option::<FlightRecordAlphaGuard>::deserialize(decoder)
 }
 
 impl From<TailControlProfile> for FlightRecordControllerProfile {

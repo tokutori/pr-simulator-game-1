@@ -425,14 +425,10 @@ pub(crate) mod tests {
             .unwrap();
         }
         String::from_utf8(
-            TailFlightRecordDocument::from_record(
-                game.core_session().flight_record().unwrap(),
-                game.difficulty(),
-                game.prepared().unwrap().record_identity.clone(),
-            )
-            .unwrap()
-            .encode_json()
-            .unwrap(),
+            game.flight_record_document()
+                .unwrap()
+                .encode_json()
+                .unwrap(),
         )
         .unwrap()
     }

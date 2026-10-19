@@ -2472,12 +2472,7 @@ mod tests {
         app.update();
         let expected = {
             let session = app.world().resource::<NativeSession>();
-            TailFlightRecordDocument::from_record(
-                session.game.core_session().flight_record().unwrap(),
-                session.game.difficulty(),
-                session.game.prepared().unwrap().record_identity.clone(),
-            )
-            .unwrap()
+            session.game.flight_record_document().unwrap()
         };
         assert_eq!(expected.schema_version, 6);
         assert!(expected.header.personal_best_key.is_none());

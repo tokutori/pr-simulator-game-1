@@ -4,7 +4,7 @@ import { IDBFactory } from "fake-indexeddb";
 import { HybridGameSessionBridge, initSync, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
 import { createAppSession, initializeAppSession } from "../../web/src/app/session-factory.js";
 import type { AppSessionConfiguration } from "../../web/src/app/session-factory.js";
-import { createArchivedPersonalBestSelection } from "../../web/src/game/archived-personal-best.js";
+import { createArchivedPersonalBestSelection, personalBestComparisonVersion } from "../../web/src/game/archived-personal-best.js";
 import { FlightRecordRepository, IndexedDbFlightRecordPersistence } from "../../web/src/game/flight-record-store.js";
 import { currentRecordFixture, launchCurrentSession, neutralTailInput } from "./current-session-fixture.js";
 
@@ -113,7 +113,7 @@ describe("current Personal Best selection", () => {
 
   it("retains current records and Personal Best indexes across saves", async () => {
     const json = currentRecordFixture();
-    const repository = new FlightRecordRepository(new IndexedDbFlightRecordPersistence(new IDBFactory(), "current-factory-records"),
+    const repository = new FlightRecordRepository(new IndexedDbFlightRecordPersistence(new IDBFactory(), personalBestComparisonVersion(), "current-factory-records"),
       () => new Date("2026-10-08T00:00:00Z"), createArchivedPersonalBestSelection);
     const first = await repository.saveFrom({ export_flight_record_json: () => json });
     const second = await repository.saveFrom({ export_flight_record_json: () => json });
