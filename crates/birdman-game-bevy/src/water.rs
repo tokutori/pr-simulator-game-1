@@ -973,7 +973,7 @@ mod tests {
         app.init_resource::<NativeSession>()
             .init_resource::<Time<Real>>()
             .init_resource::<bevy::light::DirectionalLightShadowMap>()
-            .init_resource::<super::super::screen_render::NativeScreenRender>()
+            .insert_resource(super::super::screen_render::NativeScreenRender::manual_for_test())
             .init_resource::<CameraMode>()
             .init_resource::<WaterQualitySelection>()
             .init_resource::<Assets<Mesh>>()
@@ -2030,7 +2030,7 @@ mod tests {
         let mut app = App::new();
         app.init_resource::<NativeSession>()
             .init_resource::<Time<Real>>()
-            .init_resource::<super::super::screen_render::NativeScreenRender>()
+            .insert_resource(super::super::screen_render::NativeScreenRender::manual_for_test())
             .init_resource::<bevy::light::DirectionalLightShadowMap>()
             .insert_resource(NativeEnvironment::try_default().unwrap())
             .init_resource::<WaterQualitySelection>()

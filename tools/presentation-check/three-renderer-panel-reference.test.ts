@@ -310,7 +310,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
   it("acknowledges shared scale only after tiny viewport recovery and invalidates changed environment resources", () => {
     const canvas = Object.assign(new EventTarget(), { width: 1280, height: 720 }) as HTMLCanvasElement;
     const policy = new ScreenRenderAutoBridge();
-    const trial = createThreeRenderer(canvas, canvas, null, 60, "low", undefined, { policy, onSnapshot: () => undefined });
+    const trial = createThreeRenderer(canvas, canvas, null, 60, "low", undefined, { policy, scene: () => "Flight", onSnapshot: () => undefined });
     const recording = capture.driver;
     if (recording === null) throw new Error("Missing Screen Auto recording driver");
     let observedViewport = { x: 1280, y: 720, pixelRatio: 1 };
@@ -365,7 +365,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
     const canvas = Object.assign(new EventTarget(), { width: 1280, height: 720 }) as HTMLCanvasElement;
     const policy = new ScreenRenderAutoBridge();
     const published = vi.fn();
-    const trial = createThreeRenderer(canvas, canvas, null, 60, "high", undefined, { policy, onSnapshot: published });
+    const trial = createThreeRenderer(canvas, canvas, null, 60, "high", undefined, { policy, scene: () => "Flight", onSnapshot: published });
     const recording = capture.driver;
     if (recording === null) throw new Error("Missing Auto water recording driver");
     let now = 0;
@@ -418,7 +418,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
   it.each(["preparation", "cleanup"] as const)("preserves the correct triple and manual outcome after water %s failure", async (stage) => {
     const canvas = Object.assign(new EventTarget(), { width: 1280, height: 720 }) as HTMLCanvasElement;
     const policy = new ScreenRenderAutoBridge();
-    const trial = createThreeRenderer(canvas, canvas, null, 60, "high", undefined, { policy, onSnapshot: () => undefined });
+    const trial = createThreeRenderer(canvas, canvas, null, 60, "high", undefined, { policy, scene: () => "Flight", onSnapshot: () => undefined });
     const recording = capture.driver;
     if (recording === null) throw new Error("Missing failing water recording driver");
     trial.renderer.resize({ x: 1280, y: 720, pixelRatio: 1 });
@@ -448,7 +448,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
   it("acknowledges only water-only requests in VR and retains a conflicting Screen request until return", async () => {
     const canvas = Object.assign(new EventTarget(), { width: 1280, height: 720 }) as HTMLCanvasElement;
     const policy = new ScreenRenderAutoBridge();
-    const trial = createThreeRenderer(canvas, canvas, null, 60, "high", undefined, { policy, onSnapshot: () => undefined });
+    const trial = createThreeRenderer(canvas, canvas, null, 60, "high", undefined, { policy, scene: () => "Flight", onSnapshot: () => undefined });
     const recording = capture.driver;
     if (recording === null) throw new Error("Missing VR water recording driver");
     try {

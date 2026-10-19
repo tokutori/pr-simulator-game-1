@@ -3,6 +3,7 @@
 ## 不変条件
 
 難易度はゲーム設定であり、Information・Assistance・Weatherの三軸で構成する。
+公開アプリの既定はFull・Light Assisted FBW・Typicalとする。Lightは既存の0.2 FBW authorityへ解決し、WebとNativeは共有ApplicationSessionの既定値を使用する。明示したManual・Shared・Automaticのconstructorは従来の意味を保持する。
 
 ```math
 D=(D_{information},D_{assistance},D_{weather})

@@ -55,6 +55,13 @@ impl Default for NativeScreenRender {
 }
 
 impl NativeScreenRender {
+    #[cfg(test)]
+    pub(crate) fn manual_for_test() -> Self {
+        let mut rendering = Self::default();
+        rendering.controller.select_auto(false, 0.0).unwrap();
+        rendering
+    }
+
     pub(crate) fn applied(&self) -> ScreenRenderScale {
         self.controller.snapshot().applied
     }
@@ -409,7 +416,19 @@ pub(crate) fn observe_auto(world: &mut World) {
     let support = world
         .get_resource::<bevy::render::renderer::RenderDevice>()
         .map(|device| timing::supported(device.features()));
+    let scene = birdman_game_session::game_ui::game_ui_scene(
+        world
+            .resource::<NativeSession>()
+            .game
+            .core_session()
+            .snapshot()
+            .phase(),
+    );
     let result = world.resource_scope(|world, mut rendering: Mut<NativeScreenRender>| {
+        let scene_request = rendering.controller.set_scene(scene, now_ms)?;
+        if scene_request.is_some() {
+            return Ok(scene_request);
+        }
         world.resource_scope(|world, mut readout: Mut<timing::TimingReadout>| {
             let wrapped = readout
                 .source_frame
@@ -600,6 +619,63 @@ mod tests {
             .add(WaterMaterial::registered(false).unwrap());
         app.update();
         (app, window, camera, material)
+    }
+
+    #[test]
+    fn native_defaults_and_scene_scope_use_the_shared_policy_without_advancing_flight() {
+        let (mut app, _, _, _) = app();
+        app.init_resource::<bevy::diagnostic::FrameCount>()
+            .init_resource::<timing::TimingReadout>();
+        assert!(matches!(
+            app.world()
+                .resource::<NativeScreenRender>()
+                .snapshot()
+                .selection,
+            ScreenRenderSelection::Auto { .. }
+        ));
+        assert_eq!(
+            app.world()
+                .resource::<NativeSession>()
+                .game
+                .difficulty()
+                .assistance(),
+            birdman_game_format::AssistanceLevel::Light
+        );
+        apply_scale(app.world_mut(), ScreenRenderScale::ThreeQuarters).unwrap();
+        let title = app
+            .world()
+            .resource::<NativeSession>()
+            .game
+            .core_session()
+            .snapshot();
+        observe_auto(app.world_mut());
+        assert!(app.world().resource::<NativeScreenRender>().measuring());
+        assert_eq!(
+            app.world()
+                .resource::<NativeSession>()
+                .game
+                .core_session()
+                .snapshot(),
+            title
+        );
+        app.world_mut()
+            .resource_mut::<NativeSession>()
+            .game
+            .execute(
+                birdman_game_session::application::SessionCommand::OpenSetup {},
+                birdman_game_session::application::BackendReadiness::Ready,
+            )
+            .unwrap();
+        observe_auto(app.world_mut());
+        let rendering = app.world().resource::<NativeScreenRender>();
+        assert!(!rendering.measuring());
+        assert!(matches!(
+            rendering.snapshot().selection,
+            ScreenRenderSelection::Manual {
+                scale: ScreenRenderScale::ThreeQuarters,
+                ..
+            }
+        ));
     }
 
     #[test]

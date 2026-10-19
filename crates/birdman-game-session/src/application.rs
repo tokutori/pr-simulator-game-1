@@ -70,11 +70,17 @@ pub struct ApplicationSession {
 
 impl Default for ApplicationSession {
     fn default() -> Self {
-        Self::new(
-            crate::DEFAULT_CONTROL_MODE,
+        let mut application = Self::new(
+            crate::default_control_mode(),
             crate::DEFAULT_MAXIMUM_FLIGHT_TICKS,
             crate::DEFAULT_SESSION_SEED,
-        )
+        );
+        application.difficulty = DifficultySettings::custom(
+            InformationLevel::Full,
+            crate::DEFAULT_ASSISTANCE,
+            crate::DEFAULT_WEATHER,
+        );
+        application
     }
 }
 

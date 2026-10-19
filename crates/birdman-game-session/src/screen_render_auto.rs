@@ -4,6 +4,7 @@ use std::collections::VecDeque;
 
 use serde::{Deserialize, Serialize};
 
+use crate::game_ui::GameUiScene;
 use crate::lake_water::LakeWaterQuality;
 use crate::screen_render_scale::ScreenRenderScale;
 
@@ -163,7 +164,12 @@ impl ScreenRenderAutoSnapshot {
 
 impl Default for ScreenRenderAutoSnapshot {
     fn default() -> Self {
-        Self::manual(ScreenRenderScale::default())
+        ScreenRenderAutoController::new(
+            ScreenRenderScale::default(),
+            ScreenShadowMap::Full,
+            LakeWaterQuality::High,
+        )
+        .snapshot()
     }
 }
 
@@ -229,6 +235,7 @@ enum MeasurementState {
 /// Owns one render lifetime's selection, measurements, and application handshake.
 pub struct ScreenRenderAutoController {
     selection: ScreenRenderSelection,
+    flight_settings: bool,
     applied: ScreenRenderScale,
     shadow: ScreenShadowMap,
     water_quality: LakeWaterQuality,
@@ -246,18 +253,19 @@ pub struct ScreenRenderAutoController {
 }
 
 impl ScreenRenderAutoController {
-    /// Starts with the backend's confirmed resolution and manual selection.
+    /// Starts with Auto and retains the backend's confirmed resources for manual restoration.
     pub fn new(
         applied: ScreenRenderScale,
         shadow: ScreenShadowMap,
         water_quality: LakeWaterQuality,
     ) -> Self {
         Self {
-            selection: ScreenRenderSelection::Manual {
-                scale: applied,
-                shadow,
-                water_quality,
+            selection: ScreenRenderSelection::Auto {
+                manual_scale: applied,
+                manual_shadow: shadow,
+                manual_water_quality: water_quality,
             },
+            flight_settings: true,
             applied,
             shadow,
             water_quality,
@@ -337,6 +345,50 @@ impl ScreenRenderAutoController {
         }
     }
 
+    /// Applies retained flight settings only to preparation and active-flight scenes.
+    pub fn set_scene(
+        &mut self,
+        scene: GameUiScene,
+        now_ms: f64,
+    ) -> Result<Option<ScreenRenderResourceRequest>, ScreenRenderAutoError> {
+        self.check_time(now_ms)?;
+        let flight_settings = match scene {
+            GameUiScene::FlightSetup
+            | GameUiScene::Briefing
+            | GameUiScene::Countdown
+            | GameUiScene::Flight => true,
+            GameUiScene::Boot | GameUiScene::Title | GameUiScene::Result | GameUiScene::Replay => {
+                false
+            }
+        };
+        if self.flight_settings == flight_settings {
+            return Ok(self.requested());
+        }
+        self.reset_window(now_ms)?;
+        self.initial_observation_epoch = None;
+        self.flight_settings = flight_settings;
+        self.resource = ResourceState::Ready;
+        if !matches!(self.measurement, MeasurementState::Unsupported(_)) {
+            self.measurement = MeasurementState::Measuring;
+        }
+        match self.selection {
+            ScreenRenderSelection::Manual {
+                scale,
+                shadow,
+                water_quality,
+            } if flight_settings => self.request(scale, shadow, water_quality),
+            ScreenRenderSelection::Auto {
+                manual_water_quality,
+                ..
+            } if flight_settings => self.request(
+                self.applied,
+                self.shadow,
+                self.water_quality.min(manual_water_quality),
+            ),
+            _ => Ok(None),
+        }
+    }
+
     /// Chooses manual resolution and stops automatic changes.
     pub fn select_manual(
         &mut self,
@@ -375,7 +427,11 @@ impl ScreenRenderAutoController {
         };
         self.resource = ResourceState::Ready;
         self.measurement = MeasurementState::Measuring;
-        self.request(scale, shadow, water_quality)
+        if self.automatic() {
+            Ok(None)
+        } else {
+            self.request(scale, shadow, water_quality)
+        }
     }
 
     /// Changes manual water quality, or the upper bound without raising Auto's applied quality.
@@ -419,7 +475,11 @@ impl ScreenRenderAutoController {
         self.selection = selection;
         self.resource = ResourceState::Ready;
         self.measurement = MeasurementState::Measuring;
-        self.request(scale, shadow, water_quality)
+        if self.flight_settings {
+            self.request(scale, shadow, water_quality)
+        } else {
+            Ok(None)
+        }
     }
 
     /// Enables Auto or restores its retained manual selection.
@@ -615,7 +675,7 @@ impl ScreenRenderAutoController {
     }
 
     fn automatic(&self) -> bool {
-        matches!(self.selection, ScreenRenderSelection::Auto { .. })
+        !self.flight_settings || matches!(self.selection, ScreenRenderSelection::Auto { .. })
     }
 
     /// Projects whether the policy currently accepts a new GPU measurement.
@@ -749,12 +809,16 @@ impl ScreenRenderAutoController {
             .iter()
             .position(|quality| *quality == self.water_quality)
             .unwrap();
-        let water_limit = match self.selection {
-            ScreenRenderSelection::Auto {
-                manual_water_quality,
-                ..
-            } => manual_water_quality,
-            ScreenRenderSelection::Manual { water_quality, .. } => water_quality,
+        let water_limit = if !self.flight_settings {
+            LakeWaterQuality::High
+        } else {
+            match self.selection {
+                ScreenRenderSelection::Auto {
+                    manual_water_quality,
+                    ..
+                } => manual_water_quality,
+                ScreenRenderSelection::Manual { water_quality, .. } => water_quality,
+            }
         };
         let next = if percentile > 12.5 {
             ScreenRenderScale::ALL
@@ -848,6 +912,86 @@ mod tests {
             assert_ne!(controller.snapshot().status, ScreenRenderAutoStatus::Ready);
         }
         controller.pending(start + 2_250.0).unwrap()
+    }
+
+    #[test]
+    fn default_auto_and_scene_scope_preserve_the_flight_selection() {
+        let mut controller = ScreenRenderAutoController::new(
+            ScreenRenderScale::Full,
+            ScreenShadowMap::Full,
+            LakeWaterQuality::High,
+        );
+        assert_eq!(controller.snapshot(), ScreenRenderAutoSnapshot::default());
+        assert!(controller.measurement_enabled());
+        controller
+            .select_manual(ScreenRenderScale::Full, 0.0)
+            .unwrap();
+        let selection = controller.snapshot().selection;
+        for (index, scene) in [
+            GameUiScene::Boot,
+            GameUiScene::Title,
+            GameUiScene::Result,
+            GameUiScene::Replay,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            controller.set_scene(scene, index as f64).unwrap();
+            assert!(controller.measurement_enabled(), "{scene:?}");
+            assert_eq!(controller.snapshot().selection, selection);
+        }
+        for (index, scene) in [
+            GameUiScene::FlightSetup,
+            GameUiScene::Briefing,
+            GameUiScene::Countdown,
+            GameUiScene::Flight,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            controller.set_scene(scene, 4.0 + index as f64).unwrap();
+            assert!(!controller.measurement_enabled(), "{scene:?}");
+            assert_eq!(controller.snapshot().selection, selection);
+            assert_eq!(controller.snapshot().status, ScreenRenderAutoStatus::Manual);
+        }
+    }
+
+    #[test]
+    fn background_adaptation_restores_manual_resources_only_after_the_matching_ack() {
+        let mut controller = ScreenRenderAutoController::new(
+            ScreenRenderScale::Full,
+            ScreenShadowMap::Full,
+            LakeWaterQuality::High,
+        );
+        let manual = controller
+            .select_manual(ScreenRenderScale::ThreeQuarters, 0.0)
+            .unwrap()
+            .unwrap();
+        controller.applied(manual, 0.0, None).unwrap();
+        controller.set_scene(GameUiScene::Title, 1.0).unwrap();
+        let selection = controller.snapshot().selection;
+        let auto = evaluated_window(&mut controller, 3_100.0, 1).unwrap();
+        assert_eq!(auto.scale, ScreenRenderScale::Half);
+        controller.applied(auto, controller.now_ms, None).unwrap();
+        let restore = controller
+            .set_scene(GameUiScene::Flight, controller.now_ms + 1.0)
+            .unwrap()
+            .unwrap();
+        assert_eq!(controller.snapshot().applied, ScreenRenderScale::Half);
+        assert_eq!(controller.snapshot().selection, selection);
+        assert_eq!(restore.scale, ScreenRenderScale::ThreeQuarters);
+        assert_eq!(
+            controller.applied(auto, controller.now_ms, None),
+            Err(ScreenRenderAutoError::StaleRequest)
+        );
+        controller
+            .applied(restore, controller.now_ms, None)
+            .unwrap();
+        assert_eq!(
+            controller.snapshot().applied,
+            ScreenRenderScale::ThreeQuarters
+        );
+        assert_eq!(controller.snapshot().status, ScreenRenderAutoStatus::Manual);
     }
 
     #[test]
@@ -1307,6 +1451,9 @@ mod tests {
             ScreenShadowMap::Full,
             crate::lake_water::LakeWaterQuality::High,
         );
+        controller
+            .select_manual(ScreenRenderScale::Full, 0.0)
+            .unwrap();
         controller.epoch = u32::MAX - 1;
         let before = controller.snapshot();
         assert_eq!(

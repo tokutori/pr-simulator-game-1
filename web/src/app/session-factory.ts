@@ -9,11 +9,10 @@ export interface AppSessionConfiguration {
   readonly seedHigh: number;
 }
 
-export function createAppSession(configuration: AppSessionConfiguration): TailAppSessionFacade {
-  const controlModeCode = boundaryInteger(configuration.controlModeCode, 0, 2);
-  const seedLow = boundaryInteger(configuration.seedLow, 0, 0xffff_ffff);
-  const seedHigh = boundaryInteger(configuration.seedHigh, 0, 0xffff_ffff);
-  const bridge = new HybridGameSessionBridge(controlModeCode, seedLow, seedHigh);
+export function createAppSession(configuration?: AppSessionConfiguration): TailAppSessionFacade {
+  const bridge = configuration === undefined ? HybridGameSessionBridge.public_default()
+    : new HybridGameSessionBridge(boundaryInteger(configuration.controlModeCode, 0, 2),
+      boundaryInteger(configuration.seedLow, 0, 0xffff_ffff), boundaryInteger(configuration.seedHigh, 0, 0xffff_ffff));
   try {
     const facade = new TailAppSessionFacade(bridge, physics_hz());
     facade.readLifecycle();
@@ -24,7 +23,7 @@ export function createAppSession(configuration: AppSessionConfiguration): TailAp
   }
 }
 
-export async function initializeAppSession(configuration: AppSessionConfiguration): Promise<TailAppSessionFacade> {
+export async function initializeAppSession(configuration?: AppSessionConfiguration): Promise<TailAppSessionFacade> {
   await initializeWasmRuntime();
   return createAppSession(configuration);
 }

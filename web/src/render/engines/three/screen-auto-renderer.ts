@@ -39,6 +39,7 @@ export class ScreenAutoRenderer {
 
   boundary(eligible: boolean): void {
     const now = this.now();
+    this.binding.policy.set_scene(this.binding.scene(), now);
     if (eligible !== this.eligible) this.invalidateAt("backend_changed", now);
     else if (this.lastFrame !== null && now - this.lastFrame > 500) this.invalidateAt("interrupted", now);
     this.eligible = eligible;

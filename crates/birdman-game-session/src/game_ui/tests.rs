@@ -2392,7 +2392,7 @@ fn water_quality_operation_retains_applied_selection_and_original_failure() {
     for (operation, expected, enabled) in [
         (
             GameUiWaterQualityOperation::Idle {},
-            "保持選択High · 適用済みHigh",
+            "保持選択High（Screen Auto上限） · 適用済みHigh",
             true,
         ),
         (

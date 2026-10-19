@@ -881,9 +881,7 @@ pub(crate) mod tests {
             ] {
                 let mut source = MainWorld::default();
                 let mut rendering = NativeScreenRender::default();
-                if automatic {
-                    rendering.controller.select_auto(true, 0.0).unwrap();
-                }
+                rendering.controller.select_auto(automatic, 0.0).unwrap();
                 let before = rendering.snapshot();
                 let mut time = Time::<Real>::default();
                 time.advance_by(Duration::from_millis(delta_ms));

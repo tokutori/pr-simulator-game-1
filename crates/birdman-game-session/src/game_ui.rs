@@ -19,6 +19,7 @@ pub use structure::GameUiStructureKey;
 pub use types::*;
 pub use update::update_game_ui;
 pub use view::game_ui_view;
+pub use view::scene as game_ui_scene;
 
 /// Serializes schemas from the exact shared Rust wire types without performing I/O.
 #[cfg(feature = "schema")]

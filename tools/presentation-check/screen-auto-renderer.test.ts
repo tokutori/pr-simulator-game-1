@@ -5,6 +5,7 @@ import { parseScreenRenderAutoSnapshot } from "../../web/src/render/contracts/sc
 import { ScreenAutoRenderer } from "../../web/src/render/engines/three/screen-auto-renderer.js";
 import { gpuTimerFixture } from "./gpu-timer-fixture.js";
 import type { LakeWaterQuality } from "../../web/src/render/contracts/lake-water.js";
+import type { GameScene } from "../../web/src/render/contracts/ui.js";
 
 initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url))) });
 
@@ -12,10 +13,12 @@ function fixture() {
   const gpu = gpuTimerFixture();
   const policy = new ScreenRenderAutoBridge();
   let now = 0;
+  let scene: GameScene = "Flight";
   const applied = vi.fn<(factor: number, shadowMapSize: number, quality: LakeWaterQuality, screen: boolean) => false | { readonly cleanupFailure?: string }>(() => ({}));
   const snapshot = vi.fn();
-  const renderer = new ScreenAutoRenderer(gpu.context, { policy, onSnapshot: snapshot }, applied, () => now++);
+  const renderer = new ScreenAutoRenderer(gpu.context, { policy, scene: () => scene, onSnapshot: snapshot }, applied, () => now++);
   return { ...gpu, policy, renderer, applied, snapshot, time: (value: number) => { now = value; },
+    scene: (value: GameScene) => { scene = value; },
     state: () => parseScreenRenderAutoSnapshot(policy.snapshot_json()) };
 }
 
@@ -85,10 +88,31 @@ describe("Screen renderer with the production Rust GPU policy", () => {
   it("performs no GPU API work while Manual is selected", () => {
     const trial = fixture();
     try {
+      trial.renderer.selectManual(1);
       trial.renderer.boundary(true); trial.renderer.begin(); trial.renderer.end(true);
       expect(trial.gl.getExtension).not.toHaveBeenCalled();
       expect(trial.gl.getQueryParameter).not.toHaveBeenCalled();
       expect(trial.gl.beginQuery).not.toHaveBeenCalled();
+    } finally { trial.renderer.dispose(); }
+  });
+
+  it("defaults to Auto and restores retained Manual after Title background adaptation", () => {
+    const trial = fixture();
+    try {
+      expect(trial.state().selection.kind).toBe("auto");
+      trial.renderer.selectManual(0.75);
+      trial.renderer.boundary(true);
+      const retained = trial.state().selection;
+      trial.scene("Title");
+      for (let frame = 0; frame < 140; frame++) {
+        trial.time(frame * 20 + 3100);
+        trial.renderer.boundary(true);
+        trial.renderer.begin(); trial.renderer.end(true);
+      }
+      expect(trial.state()).toMatchObject({ selection: retained, applied: "50" });
+      trial.scene("Flight");
+      trial.renderer.boundary(true);
+      expect(trial.state()).toMatchObject({ selection: retained, applied: "75", status: { kind: "manual" } });
     } finally { trial.renderer.dispose(); }
   });
 

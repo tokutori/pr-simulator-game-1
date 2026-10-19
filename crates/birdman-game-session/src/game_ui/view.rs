@@ -1683,7 +1683,8 @@ pub(super) fn replay_rate_label(code: u32, current: u32, label: &str) -> String 
     format!("{}{label}", if code == current { "● " } else { "" })
 }
 
-pub(super) fn scene(phase: SessionPhase) -> GameUiScene {
+/// Projects the domain phase to its shared presentation scene.
+pub fn scene(phase: SessionPhase) -> GameUiScene {
     match phase {
         SessionPhase::Title | SessionPhase::Attract => GameUiScene::Title,
         SessionPhase::FlightSetup => GameUiScene::FlightSetup,
