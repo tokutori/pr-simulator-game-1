@@ -1,132 +1,90 @@
 # Native版の利用案内
 
-- Native版はBevyで描画するデスクトップ用Screen版である。
-- Web版と同じRustの飛行計算、操縦支援、ゲーム進行、記録形式、共通UIを使用する。
-- Windows・macOS・Linuxのx86_64とarm64を対象とし、VRはWeb版で扱う。
+Web版と同じ飛行計算・操縦支援・記録を利用するデスクトップ版である。Windows・macOS・Linuxのx86_64とARM64に対応する。
 
-## 起動環境
+## ダウンロードと起動環境
 
-- OSとCPUに一致するarchiveを展開する。
-- Windowsは`birdman-game-bevy.exe`、macOSとLinuxは`./birdman-game-bevy`を起動する。
-- shader、日本語フォント、実行に必要な登録データは実行ファイルに含まれる。
-- Node.js、ブラウザ、ソースツリーの配置は起動条件に含まれない。
+OSとCPUに一致する配布アーカイブを展開し、実行ファイルを起動する。日本語フォント・シェーダー・登録データを組み込んでおり、オフラインで利用できる。
 
-| 環境 | 前提 |
+| 環境 | ファイル名のCPU表記 | 前提・初回起動時の注意 |
+|---|---|---|
+| Windows | `x86_64` / `aarch64` | 対応GPUドライバー。ランタイム不足のエラーが出る場合は、対象CPU用の[Microsoft公式VC++再頒布可能パッケージ](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist/)を導入する |
+| macOS | Intel: `x86_64` / Apple Silicon: `aarch64` | 対応GPU。試用版は無署名のため、Gatekeeperの警告が表示される場合がある |
+| Linux | `x86_64` / `aarch64` | Ubuntu 24.04基準。X11またはWayland、GPUドライバー、Vulkan loaderが必要 |
+
+- Windows: `.\birdman-game-bevy.exe`
+- macOS・Linux: `./birdman-game-bevy`
+- Linuxの実行時パッケージ: `libx11-6`、`libxcursor1`、`libxrandr2`、`libxi6`、`libwayland-client0`、`libxkbcommon0`、`libxkbcommon-x11-0`、`libvulkan1`。
+- ハッシュ照合: PowerShellは `Get-FileHash -Algorithm SHA256 <archive>`、Linuxは `sha256sum -c SHA256SUMS`、macOSは `shasum -a 256 -c SHA256SUMS` を使用する。
+- ビルド来歴: 配布物の `SOURCE.json` とアーカイブ内の `BUILD-INFO.json` に記録する。
+
+## 最初のフライト
+
+1. タイトルの「飛行を設定」から「飛行設定」を開く。
+2. プリセット・計器表示・操縦支援・気象を選ぶ。既定は「すべて（Full）」「軽い支援（Light Assisted FBW）」「標準（Typical）」、3D描画品質は「Auto」である。
+3. 「飛行準備へ進む」で「発進前の確認」を開き、飛行条件と操作方法を確認する。
+4. 「発進カウントダウンを開始」で発進する。取り消すと「発進前の確認」へ戻る。
+5. 飛行終了後、結果画面で距離・終了理由・記録を確認する。
+6. 「同じ条件で再試行」で同じ条件の発進前確認へ戻る。条件を変える場合は「飛行設定」を開く。
+
+- 一時停止: 「一時停止」のメニューから画質設定や操作方法を確認できる。「飛行を再開」で続ける。
+- 自動停止: 非アクティブ化や処理遅延で停止した場合は、原因が解消してから「飛行を再開」を選ぶ。
+- 条件変更: 計器表示・操縦支援・気象は飛行設定で、画質は一時停止中にも変更できる。
+- クレジット: タイトルと一時停止メニューの「クレジット・利用条件」から開く。
+
+## キーボード・マウス操作
+
+| 入力 | 操作 |
 |---|---|
-| Windows | 対応GPU driver。VC++ runtime不足が報告された場合は、対象CPU用の[Microsoft公式VC++ Redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist/)を導入する |
-| macOS | 対象CPU用の実行ファイルと対応GPU。試用配布は無署名であり、Gatekeeper・notarizationの受入状況を確認する |
-| Linux | Ubuntu 24.04のglibcを基準とする。X11またはWayland、対応GPU driver、Vulkan loaderを用意する |
+| ↑ / ↓ | 機首上げ / 下げ |
+| ← / → | 左 / 右旋回 |
+| J / L | パイロットを後方 / 前方へ移動 |
+| C | 操縦席 / 追尾の視点切替 |
+| P / Esc | 飛行の一時停止・再開 |
+| 右ドラッグ | 視点を回転 |
+| Tab / Shift+Tab | メニューのフォーカスを移動 |
+| Enter / Space | 選択中の操作を実行 |
+| 時刻スライダー上の矢印 / Home / End | 解析・記録再生の時刻を変更 |
+| F12 | 作業ディレクトリへスクリーンショットを保存 |
 
-Linuxのruntime packageには`libx11-6`、`libxcursor1`、`libxrandr2`、`libxi6`、`libwayland-client0`、`libxkbcommon0`、`libxkbcommon-x11-0`、`libvulkan1`がある。build成功と実GPUでの受入を区別し、SmartScreen等の配布保護機構への対応状況も確認する。
+- パイロット移動: キーを離すと目標位置を保持する。
+- 記録再生の視点: 再生画面の視点選択を使用する。
+- 終了: ウィンドウを閉じる。
 
-- 配布物の`SHA256SUMS`を照合してから展開する。
-- PowerShellでは`Get-FileHash -Algorithm SHA256 <archive>`、Linuxでは`sha256sum -c SHA256SUMS`、macOSでは`shasum -a 256 -c SHA256SUMS`を使用できる。
-- `SOURCE.json`とarchive内の`BUILD-INFO.json`にはsource SHA、target、実行ファイル等のhashが記録される。
+## 画質と飛行記録
 
-リポジトリから起動する場合は、ルートで次を実行する。
+- 計器: 選択した表示設定に応じ、速度・高度・姿勢・方位・風・迎角などを表示する。
+- 画質: 「Auto」で描画負荷に応じて自動調整する。手動では描画解像度100%・75%・50%と水面画質Low・Medium・Highを選べる。
+- 解析: 飛行軌跡・高度・速度のグラフを、共通の時刻カーソルで確認できる。
+- 保存: 結果と記録再生の画面から、元記録JSONと飛行ログCSVを出力する。保存先は起動時の作業ディレクトリ内の `flight-logs` で、保存ごとに新しいファイルを作る。
+- 一覧: タイトルに条件別の自己ベストを優先して最大3件表示する。JSON保存後と次回起動時に更新する。
+- ファイル管理: 削除や名前の変更はOSのファイル管理機能を使う。
+
+## ソースからの起動とオプション
+
+固定Rustツールチェーンと[Bevyのビルド環境](https://bevy.org/learn/quick-start/getting-started/setup/)を準備し、リポジトリのルートで実行する。初回のReleaseビルドには時間を要する。
 
 ```sh
 cargo run -p birdman-game-bevy --release --locked
 ```
 
-- 固定Rust toolchainと[Bevyのnative build環境](https://bevy.org/learn/quick-start/getting-started/setup/)が必要である。
-- WindowsはMSVC toolchain、macOSはXcode Command Line Toolsを使用する。
-- 依存関係を含む初回Release buildには時間を要する。
-- 操作性やFPSを比較する場合はReleaseを使用する。
-
-## 最初のフライト
-
-1. タイトルの「飛行を設定」からFlight Setupへ進む。
-2. プリセット、表示情報、操縦支援、気象を選択する。既定はFull・Light Assisted FBW・Typical、3D描画品質はAutoである。
-3. 「飛行準備へ進む」でBriefingを開き、飛行条件、代表風、操作方法を確認する。versionやseedは「技術情報」で確認できる。
-4. 「発進カウントダウンを開始」で発進する。取消操作はBriefingへ戻る。
-5. 飛行を操作し、着水または終了後のResultで距離と終了理由を確認する。
-6. 「同じ条件で再試行」は同じ機体・シナリオ・初期条件のBriefingへ戻る。条件変更はFlight Setupへ戻って行う。
-
-- 表示情報、操縦支援、気象、操縦bindingは飛行中に固定する。
-- 湖面画質や3D描画品質は一時停止中にも変更できる。
-- 設定画面を閉じた後はPauseへ戻り、明示的な再開操作で飛行を再開する。
-
-## 操作
-
-| 入力 | 操作 |
+| オプション | 説明 |
 |---|---|
-| ↑ / ↓ | pitch入力 |
-| ← / → | 旋回入力 |
-| J / L | パイロット重心の目標位置を前後へ移動 |
-| C | NativeのFlight表示をPilot / Chaseへ切替 |
-| P / Esc | 飛行の一時停止・復帰 |
-| マウス右ボタンを押してドラッグ | 視点操作 |
-| Tab / Shift+Tab | メニューの操作順にフォーカス移動 |
-| Enter / Space | フォーカスした有効な操作を実行 |
-| Range上の矢印 / Home / End | 解析・Replayの時刻を変更 |
-| F12 | 作業ディレクトリへスクリーンショットを保存 |
+| `--help` / `--version` | 引数一覧、またはバージョン・ビルド情報を表示して終了 |
+| `--no-vsync` | 垂直同期の解除を要求。GPU・OSにより選択される同期方式が異なり、画面のちらつきや消費電力が増える場合がある |
+| `--export-dir DIR` | 飛行記録の保存先を変更 |
+| `--font PATH` | 組込みのM PLUS 1p Regularを指定フォントへ変更 |
 
-- 機体は二系統尾翼モデルであり、独立したroll入力は設けない。
-- パイロット移動入力を解放した後も目標位置を保持する。
-- Replayの視点は画面の共通camera操作から選択する。
-- 終了はウィンドウを閉じて行う。
-
-- 非アクティブ化や処理遅延でも飛行は停止する。
-- 停止理由が解消した後にResumeを実行する。
-- 停止中の物理時刻、記録、水面のsimulation時刻は保持される。
-- 重い処理の直後に停止した場合も、再開可能な状態になるまで待つ。
-
-## 表示と画質
-
-- HUDには設定に応じて速度、高度、時間、距離、姿勢、方位、風、迎角、パイロット目標位置を表示する。
-- 未定義の物理量は数値を補完せず理由を示す。
-- 適用範囲外や計算失敗の終了では最後の有効状態を表示し、Resultの短い説明と「技術情報」に元の原因を保持する。
-- 操縦支援の保護範囲は[飛行制御](flight-control.md)を参照する。
-
-- Autoは有効なGPU計測に応じ、解像度、shadow、水面品質を順に調整する。
-- 手動の100%・75%・50%では3Dと反射の内部解像度を変更し、UIと画角を維持する。
-- 水面Low・Medium・Highと描画倍率は飛行計算や記録を変更しない。
-- Autoの対応状況・適用済み画質・失敗理由は設定表示で確認する。
-
-表示同期を解除する要求は次のとおりである。
-
-```sh
-cargo run -p birdman-game-bevy --release --locked -- --no-vsync
-```
-
-- GPUとOSに応じて同期方式が選択されるため、同期解除とFPS増加は保証されない。
-- tearingや消費電力の増加を伴う場合がある。
-- 画質、処理能力、表示同期による上限は分けて評価する。
-
-## 記録・解析・保存
-
-- ResultのSummary、Analysis、Replayは同じ確定記録を使用する。
-- Analysisには水平軌跡、高度、対気・対地速度のグラフがあり、共有cursorで同じ時刻を参照できる。
-- ReplayからResultへ戻ると選択したtabと時刻を保持する。
-
-- Resultの保存操作からJSONとCSVを出力できる。
-- 既定の保存先は起動時の作業ディレクトリ内の`flight-logs`である。
-- 既存ファイルを上書きしない。
-- 別の保存先は次のように指定する。
+ソースから起動する場合は `--` の後ろへオプションを付ける。
 
 ```sh
 cargo run -p birdman-game-bevy --release --locked -- --export-dir ./my-flight-logs
 ```
 
-- JSONは保存・再生用の完全な記録であり、CSVは位置、速度、加速度、姿勢、角速度、角加速度、入力、操縦・環境diagnostic等のsample列を扱う。
-- 収録項目と単位は[データ形式](data-and-formats.md)を参照する。
-- 欠損値と元の失敗原因を保持する。
+## 利用条件と詳細
 
-- タイトルは保存先の有効な`flight-log-*.json`を読み、Personal Bestを優先して最大3件表示する。
-- JSON保存後と次回起動時に一覧を更新する。
-- CSV、別名ファイル、symbolic linkは一覧の対象外である。
-- 保存記録のReplayはTitleへ戻る。
-- 削除・rename・file dialogは提供しないため、保存ファイルの管理はOSで行う。
-
-## フォント・利用条件・詳細
-
-- 日本語表示には組込M PLUS 1p Regularを使用する。
-- `--font PATH`で利用条件を確認済みのローカルフォントへ変更できる。
-- 実行時のWebフォント取得は不要である。
-
-- `--help`は引数、`--version`はversion、source SHA、OS、CPUを表示する。
-- この2操作はウィンドウやGPU、保存記録を初期化しない。
-- source SHA未指定の開発buildは`unrecorded`と表示する。
-
-第三者Rustライブラリの条件は同梱の`THIRD-PARTY-LICENSES.html`、公開データの帰属は[THIRD_PARTY_DATA.md](../THIRD_PARTY_DATA.md)、フォントの全文licenseは`assets/fonts/MPLUS1p-OFL.txt`を参照する。描画・VRの契約は[描画とplatform](rendering-and-platforms.md)、ゲーム進行は[ゲームとUI](gameplay-and-ui.md)、検査手順と未検証範囲は[検証](verification.md)に記載する。
+- データ出典: [THIRD_PARTY_DATA.md](../THIRD_PARTY_DATA.md)。同梱ライブラリの利用条件は `THIRD-PARTY-LICENSES.html`、フォントの利用条件は `assets/fonts/MPLUS1p-OFL.txt` を参照する。
+- 記録形式: [データ形式](data-and-formats.md)。
+- ゲーム進行・計器・視点: [ゲームとUI](gameplay-and-ui.md)。
+- 開発者向けの描画・VR仕様: [描画とプラットフォーム](rendering-and-platforms.md)。
+- 自動描画検査と受入条件: [検証](verification.md)。

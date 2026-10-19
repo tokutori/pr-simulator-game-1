@@ -129,18 +129,17 @@ u_{surface}=(1-a)u_{pilot,surface}+a u_{FBW,surface},\qquad 0\le a\le1
 | Scene / substate | 表示・許可するoverlay |
 |---|---|
 | Boot | 読込み失敗と再試行 |
-| Title・FlightSetup | Settings・Help・Credits |
-| Briefing | Help・Credits |
+| Title | Credits |
+| FlightSetup・Briefing | 通常の設定・確認画面 |
 | Countdown | 取消・停止案内 |
 | Flight running | HUD・必須警告 |
-| Flight paused | Pause、その子のSettings・Help |
-| Result | Help・Credits |
-| Replay paused | Settings・Help・Credits |
+| Flight paused | Pause、その子のSettings・Help・Credits |
+| Result・Replay | 通常の結果・記録再生画面 |
 
 - Sceneとoverlayの有効な組合せを型で表す。
-- Settingsを閉じる操作だけで物理を再開しない。
-- Manual・非表示・処理遅延・XR中断等の停止理由を保持し、条件解消とResume操作の両方を必要とする。
-- Pause中はtick、controller、actuator、sample数、水面simulation時刻を進めない。
+- Settingsを閉じるとPauseへ戻る。
+- Manual・非表示・処理遅延・XR中断等の停止理由を保持し、条件解消と「飛行を再開」の両方を必要とする。
+- Pause中はtick、controller、actuator、sample数、水面simulation時刻を保持する。
 - 描画・UI・head trackingは継続できる。
 
 - 復帰時はwall-clock差を加算せず、accumulatorの残余と入力境界を再初期化する。

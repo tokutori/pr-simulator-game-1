@@ -426,8 +426,10 @@ observer費用、headlessの表示上限、CPU/GPU競合を記録し、補正で
 
 利用者向けの起動・キー操作は[Nativeガイド](native-guide.md)へ分離する。
 
+検証専用コードは `verify-harness` featureで有効にする。
+
 ~~~sh
-cargo run -p birdman-game-bevy --locked -- --verify target/native-offscreen --offscreen --verify-size 1280x720 --export-dir target/native-test-logs
+cargo run -p birdman-game-bevy --features verify-harness --locked -- --verify target/native-offscreen --offscreen --verify-size 1280x720 --export-dir target/native-test-logs
 ~~~
 
 | 検証オプション | 条件と役割 |
@@ -473,7 +475,7 @@ Replay検査は同じrecordの中間時刻で全cameraを撮影し、選択shot�
 ### 湖面の6条件とAuto
 
 ~~~sh
-cargo run -p birdman-game-bevy --release --locked -- --verify target/native-water --offscreen --no-vsync --verify-size 1280x720 --verify-water typical-high
+cargo run -p birdman-game-bevy --features verify-harness --release --locked -- --verify target/native-water --offscreen --no-vsync --verify-size 1280x720 --verify-water typical-high
 ~~~
 
 CASEは `calm-low` / `calm-medium` / `calm-high` / `typical-low` / `typical-medium` / `typical-high` である。

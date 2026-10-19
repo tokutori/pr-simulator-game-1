@@ -24,7 +24,7 @@
 - manualの正nose-up/right-turnは、それぞれ水平・垂直尾翼のphysical incidenceへ-0.2 rad倍で写像する。
 - observed roll rateを操作量に使わない。
 
-FBW authorityは舵指令だけに適用する。Manualはpilot指令、Automaticはcontroller指令を選び、Sharedは有限な $a\in[0,1]$ で線形混合する。
+FBW authorityは舵指令だけに適用する。Manualはpilot指令、Automaticはcontroller指令を選び、Sharedは有限な $a\in[0,1]$ で線型混合する。
 
 ```math
 u=(1-a)u_{pilot}+a u_{FBW}
@@ -177,7 +177,7 @@ $m_p=0$、身体静止、無外力時の全運動量・角運動量、一般3次
 ## 身体の目標位置と停止policy
 
 - `TailPilotPositionCommand`は新しいnormalized inputの`Set`と、前tick targetを使う`Hold`を排他的に表す。
-- `TailPilotPositionMapping`は[-1,0,1]を[-0.4,trim,0.4] mへ区分線形に写像し、出力を±0.4 mへ制限する。
+- `TailPilotPositionMapping`は[-1,0,1]を[-0.4,trim,0.4] mへ区分線型に写像し、出力を±0.4 mへ制限する。
 - 新しいflightの保持targetはtrim、中立inputもtrimとする。
 - 欠損・切断の`Hold`は保持中の目標を名目要求とする。
 - 速度・加速度・移動範囲は身体policyが検証し、位置の瞬間的な変更を禁止する。

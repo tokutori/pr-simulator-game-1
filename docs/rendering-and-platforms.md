@@ -3,7 +3,6 @@
 ## 境界と空間把握
 
 - 描画は数値snapshotと共有表示モデルの投影である。
-- physics state、入力列、固定tick、FlightRecord、scoreを変更しない。
 - 純粋な波・空・会場・機体・camera・UIの規則は共有Rustが所有し、Three.jsとBevyの型、mesh、shader、sampler、描画pass、資源寿命は各adapterへ閉じ込める。
 - 依存方向は[アーキテクチャ](architecture.md)に従う。
 
@@ -15,13 +14,11 @@
 4. 島、湖岸、識別できるpeak等の中距離landmark。
 5. 近・中・遠景のparallaxとhaze。装飾はこれらの基準を維持する。
 
-- 湖面の実装を地形・空の完成待ちにしない。
-- 全Sceneとoverlayの表示・操作を先に成立させ、景観の追加で前方視界や計器の判読性を失わない。
-- 遠景を一枚のskyboxへ置換して移動時のparallaxを消さない。
+- 全Sceneとoverlayで前方視界と計器の判読性を確保する。
+- 近景・遠景の奥行きを保持し、移動に伴うparallaxを表現する。
 
 - 共通の長さはm、物理位置はlocal NED、機体座標はFRDである。
 - 描画basis、quaternion、眼位置、camera rigは[ゲームとUI](gameplay-and-ui.md#camera)に従う。
-- renderer固有の座標補正を物理へ戻さない。
 
 ## Screenの解像度とAuto
 
@@ -53,7 +50,7 @@
 | 回復 | p95 < 9.5 ms、最低30代表値、span ≥ 1.8秒、鮮度 ≤ 100 ms、source frame受領率 ≥ 90% |
 | 次の交換 | 適用後3秒のcooldownを経過する |
 
-- 欠損sampleは0 msへ補完せず、有効な高負荷履歴を消去しない。
+- 計測窓は実際に受領した有効sampleで構成し、高負荷履歴を保持する。
 - coverage不足時は回復を保留する。
 - resize、backend変更、context復帰、環境・外部品質変更、中断、disjointでは古い窓を失効する。
 - 計測の履歴や時刻をUI構造cache keyへ含めない。
@@ -67,8 +64,7 @@
 - Webは反射と主描画を含むcommand spanを`EXT_disjoint_timer_query_webgl2`で非同期測定する。
 - NativeはBevyのRecorderでsource frame・source時刻・epochが一致するspanを受け取る。
 - GPU upload、screenshot/readback、present待機、CPU全体の時間と区別する。
-- 未使用pipelineを準備待ちへ含めず、未完成frameを有効sampleに数えない。
-- 通常ManualではAuto用queryを発行しない。
+- 使用するpipelineの準備が完了したframeを有効sampleとする。Auto用queryはAuto選択中に発行する。
 - 未対応は原因付きで表示する。
 
 - WebのCSS寸法は保持し、元のDPRと選択倍率の積をThree.jsの公開`setPixelRatio`へ渡す。
@@ -77,19 +73,18 @@
 - 0寸法では交換を保留し、正の寸法へ戻った後に適用する。
 
 - Nativeの縮小targetでもUIとcameraの論理投影を維持する。
-- 反射targetは有効3D寸法に追随し、shadowのみの変更で解像度targetを再生成しない。
+- 反射targetは有効3D寸法に追随する。shadowのみの変更では既存の解像度targetを保持する。
 - shadow調整はmap寸法だけを変更し、cascade、bias、太陽条件を保持する。
 
 - Phone VRは元の描画倍率、WebXRはruntimeのcompositor解像度を維持する。
 - VR中はScreen Autoを停止し、復帰時はepoch/readinessを再準備して保持設定へ戻る。
 - Webのrenderer共有shadow適用値はVR切替後も保持する。
-- Screen AutoをVR向けの性能保証へ読み替えない。
 
 ## 共有水面モデル
 
 - `birdman-game-session::lake_water`は環境条件から波スペクトル、品質別投影、周期画像を純粋に生成する。
 - Web移植基準の式と成分順を使用し、`lake_sky`の全天画像も共用する。
-- 波は描画専用であり、飛行の風、空力荷重、接触面、記録、水面simulation clockを変更しない。
+- 波は描画モデルであり、位相の進行には共有セッションのsimulation timeを使用する。
 
 - 基準spectrumは18成分で、Low・Medium・Highは6・10・18成分を使用する。
 - fetch、JONSWAP重み、方向分散、正規化、steepness上限0.52を保持する。
@@ -97,9 +92,8 @@
 - geometryの位相と方向jitterは固定hash、`patternSeed`はdetail画像だけへ作用する。
 
 - Weatherの波浪入力はscenario準備時に固定する。
-- Calmにも既存波を残し、風の瞬間値から波浪を再生成しない。
+- Calmにも準備時の波浪を保持する。
 - 合成条件の600 m fetch等は描画上の仮定であり、琵琶湖の実測波浪や波浪予報を表さない。
-- 現在の水深分布を持たないscenarioから浅水変形・砕波を推測しない。
 - 位相はsimulation timeだけで進める。
 
 ### Geometryとdetail
@@ -118,7 +112,7 @@
 - 方向norm、noise、LOD境界とstationary pointを含め、全域非表示成分は0とする。
 - choppinessは$q=\min(4.5,0.56/\sum_i B_i)$にFloat32用の余裕を加える。
 - 実数解析では水平変位のLipschitz上界を1未満へ抑える。
-- GPU浮動小数点の全域証明や、画像上の時間的aliasingの保証とは区別する。
+- GPUでの数値・描画結果は[検証](verification.md)の本番shader試験で確認する。
 
 visibilityと実空間勾配の両channelがすべて厳密0の成分は、packet・位相・三角関数の評価を省略できる。非減衰のslope energyは元の成分順ですべて加算し、crestの正規化を保持する。
 
@@ -141,20 +135,18 @@ visibilityと実空間勾配の両channelがすべて厳密0の成分は、packe
 
 ### 色・反射・shadow
 
-- 湖面は不透明とし、湖底を透過表示しない。
+- 湖面は不透明とする。
 - 暗い青灰色の水体色、facet Fresnel、sun glitter、crest/compression由来の明暗・白波、height tint、距離hazeを合成する。
-- 水体色の暗化を天空反射へ適用せず、水平線側は背景空と対応させる。
+- 水体色と天空反射を個別に計算し、水平線側の反射を背景空と対応させる。
 - 反射強度45%は表示上の試作値であり、厳密な粗面BRDFや輝度較正を表さない。
 
 - 反射方向は視線側を向く微小面の法線を用い、裏向きでは幾何法線へ戻す。
 - Fresnelは幾何法線を基準に可視微小面を限定混合する。
-- 遠方反射を視線角だけで消さない。
-- 白波は波頂の局所圧縮から導出し、局所風速だけで砕波を判定しない。
-- 写真の明るい波筋だけから波高や吹送履歴を同定しない。
+- 白波は波頂の局所圧縮から導出する。
 
 - 空と水面radianceは同じ全天画像を使用する。
 - Lowでも低解像度反射を維持し、背景の輝度、水面optic flow、反射の最低品質を守る。
-- 機体の不透明な被覆・骨格は太陽shadowを落とし、透明filmは不透明な板状shadowを落とさない。
+- 太陽shadowのcasterは機体の不透明な被覆・骨格とする。
 
 - 機体反射は水面鏡映cameraと半解像度の透明targetを使用する。
 - 中央眼による近似であり、厳密な両眼反射、局所波面の鏡映幾何、太陽の有限角による半影は含まない。
@@ -166,16 +158,16 @@ visibilityと実空間勾配の両channelがすべて厳密0の成分は、packe
 - alpha合成は`clamp(0.16 + Fresnel * 0.7, 0, 0.72)`を維持する。
 - 丸め後の実target aspectでprojective matrixを構成する。
 
-- Native反射layerは機体と照明に限定し、UI・水面・空・地形を描画しない。
+- Native反射layerは機体と照明に限定する。
 - Webの既存機体・雲反射passでは、shadow receiverがない範囲の再更新だけを抑え、例外時もrenderer共有flagを復元する。
 - 直後の主描画のshadow更新を維持する。
 
-Nativeは既存DirectionalLightの2048 texel・30〜600 mの3段cascadeから、水面の変位後world positionとgeometric normalへ公式shadow samplingを適用する。水面自身のcasterとprepassは無効とし、専用shadow mapの再実装を追加しない。
+Nativeは既存DirectionalLightの2048 texel・30〜600 mの3段cascadeから、水面の変位後world positionとgeometric normalへBevyのshadow samplingを適用する。水面はshadow receiverとして登録する。
 
 ### Adapterと資源交換
 
 - Webは環境・品質変更時にWASMからowned typed arrayをbulk取得し、bridgeを`finally`で解放する。
-- 通常frameや物理tickで画像を再生成しない。
+- 通常frameは準備済み画像を再利用する。
 - Three.jsはDataTexture、sampler、GLSL、mesh、反射passを所有する。
 
 - Nativeは同じ24-slot uploadを使用し、近景gridのUV1へspacingを格納する。
@@ -185,14 +177,11 @@ Nativeは既存DirectionalLightの2048 texel・30〜600 mの3段cascadeから、
 
 - mipmapはBevyの公式生成を利用する。
 - カラーdownsampleの対象formatと既知entry pointを確認し、2×2平均のsampling位置を初回Extract前に補正する。
-- depthと別formatを変更せず、既知sourceと一致しない依存更新は原因付きで拒否する。
-- 自作downsamplingを増やさない。
+- 補正は対象のカラーformatに限定し、依存更新で既知sourceとの不一致が生じた場合は原因付きで拒否する。
 
 - active画像のAssetId/GPU TextureIdとcommand記録を管理し、未準備画像は再queueする。
-- 記録済み画像を恒常dispatchせず、退役画像を追跡から除外する。
-- command記録をGPU完了の同期保証と扱わない。
+- dispatch済みと退役済みの画像を待機列から除外する。commandの記録状態とGPU完了を区別する。
 - 画像はimmutableとし、環境交換は新AssetIdを使用する。
-- pending中の同一AssetId hot-reloadは対象外である。
 
 - 環境交換は必要な全resourceを検証してから画像、material、bounds、太陽を一括更新する。
 - 品質交換はnear/farへ同じ波投影を原子的に適用する。
@@ -203,7 +192,7 @@ Nativeは既存DirectionalLightの2048 texel・30〜600 mの3段cascadeから、
 
 - 太陽方位は北0°の時計回り、太陽高度は水平0°である。
 - 背景、水面、DirectionalLight、glitterへ同じ登録方向を適用する。
-- skyの入力は太陽方位・仰角、雲量、visibilityであり、未使用のcloud baseを補完しない。
+- skyの入力は太陽方位・仰角、雲量、visibilityである。
 - 欠損・未知identityでは方位非依存の中立gradientと既定hazeを使用し、太陽照明・glitter・cloudを無効にする。
 
 - `LakeSceneHaze`はsRGB`0x9aafb1`とvisibility由来のnear/farを所有する。
@@ -214,7 +203,7 @@ Nativeは既存DirectionalLightの2048 texel・30〜600 mの3段cascadeから、
 
 - 共有cloud packetは固定seed`0x4f5a2c91`、lobe、noise、上下面の陰影から最大24 cluster・48 triangleを生成する。
 - 色atlas最大1024×768と法線RG8 atlasを共用し、合計最大4.5 MiB、追加drawは各pass1件とする。
-- cloud fractionから個数への写像は表示近似であり、雲量の測定的再現を主張しない。
+- cloud fractionから個数への写像は表示用の近似とする。
 
 - cloud baseは固定水面からの高さmである。
 - world-upと下端を維持し、各眼と反射viewでは水平billboard方向だけを変更する。
@@ -225,7 +214,7 @@ Nativeは既存DirectionalLightの2048 texel・30〜600 mの3段cascadeから、
 
 - availabilityはUnrecorded・Clear・GroundLevelUnsupported・Elevatedを区別する。
 - cloud fraction正・base0の地表cloudは積雲で表さず、記録値とhazeを保持する。
-- 空cloudは`Option<Mesh>::None`として表し、頂点やindexが空のMeshをAssetsへ登録しない。
+- 空cloudは`Option<Mesh>::None`として表し、面を持つmeshだけをAssetsへ登録する。
 - 環境往復では同じCloudLayerを保持し、必要なときだけMesh3dとowned資源を交換する。
 
 - Nativeの照明は共通のWeb基準色・irradianceを使用する。
@@ -238,25 +227,23 @@ Nativeは既存DirectionalLightの2048 texel・30〜600 mの3段cascadeから、
 - Titleは明示的な会場展示である。
 - live session、Result、Replay、Attractは登録identityとlocal NED origin・water datumを照合する。
 - 保存archiveでidentity未知または原点未記録の場合は会場地形・湖岸・島・platformを隠し、水面・機体・記録再生を保持する。
-- 展示によって欠損の地理原点を記録済みへ変更しない。
+- 展示原点と記録に保存された地理原点を別に保持する。
 
 - 地形、40岸線、17島、湖岸・構造物は共有Rustから完成NED位置/法線・linear色を取得する。
-- adapterで標高や法線を再計算しない。
-- 登録構造物は桟橋5、岸壁4、防波堤3件で、表示寸法をcollisionへ適用しない。
+- adapterは共有出力の標高と法線をそのまま投影する。
+- 登録構造物は桟橋5、岸壁4、防波堤3件で、景観用meshとして扱う。
 - 湖岸・地形の出典と解像度は[データ形式と出典](data-and-formats.md)に従う。
 
 - DSMの水域標本を地表へ使わず、陸地の欠損だけを補う。
-- 島の地表は再sampleしたgrid、樹冠は元DSMを使用し、植生高を二重加算しない。
+- 島の地表は再sampleしたgrid、樹冠は元DSMを使用する。
 - shoreline transitionは実描画三角形へ接続し、水域側へ240 m・水面下8 mの重なり、陸側5 m・地形下15 cmの潜り込みで隙間を防ぐ。
 - 広い岸線欠損の探索上限は粗格子8セル・最大2.4 kmとする。
-- 測量精度の向上や地形collisionを意味しない。
 
 - 機体は公開synthetic構造から、藍色被覆、透明film、水色foam、薄茶rib/縁材、白いcockpit frame、透明nose、白い後部fairing、T字の黒い桁・胴体管を描く。
-- 搭乗者モデルは表示しない。
 - 外観と物理接触は同じ構造形状の独立した導出とし、材質、UV、表示sampling、表示たわみを接触点の入力へ流入させない。
 
 - 主翼のsurface、rib/spar/foam/stringerは同じ共有WingFrameを使用する。
-- 速度変化が0.03 m/sを超えた場合だけpositionとanchorを更新し、topologyを再生成しない。
+- 速度変化が0.03 m/sを超えた場合だけpositionとanchorを更新し、topologyを保持する。
 - surfaceのFloat32丸めと倍精度構造anchorを保持する。
 - 法線は完全な半翼topologyにarea-weighted計算を適用し、材質分割後も共有する。
 - 表示たわみの定数と実機諸元の区分はデータ文書へ集約する。
@@ -269,8 +256,8 @@ Nativeは既存DirectionalLightの2048 texel・30〜600 mの3段cascadeから、
 
 - 尾翼は登録physical geometryのquarter-chordと全surfaceを共有し、水平・垂直それぞれ独立した親でphysical incidenceに従う。
 - FRD変換後は水平+X、垂直−Yの回転を用いる。
-- 未知model identityのgeometryを既定値へ黙って置換しない。
-- 表示geometry、coat/rib配置、曲げを空力係数や慣性・操縦応答の調整へ使用しない。
+- geometryは登録されたmodel identityから解決し、未知のidentityは明示的な未対応として扱う。
+- 被覆・rib配置・曲げは描画モデル、空力・慣性・操縦応答は飛行モデルが所有する。
 
 ## Presentation backend
 
@@ -279,10 +266,10 @@ Nativeは既存DirectionalLightの2048 texel・30〜600 mの3段cascadeから、
 | Web Screen | 単眼。スマートフォンの通常表示も含む |
 | WebXR | immersive-vr。runtimeの眼別pose/projectionを使用する |
 | Phone VR | 左右分割、Device Orientationによる3DoF。位置追跡・reprojection・XR compositorを提供しない |
-| Native Screen | Bevyのデスクトップ描画。Native XRは対象外 |
+| Native Screen | Bevyのデスクトップ描画 |
 
 - Webでは全8 SceneとSettings・Pause・Help・Credits・HUDを同じ共通UIから表示する。
-- Scene変更でXR sessionを終了しない。
+- XR sessionはScene間で共有する。
 - DOM Overlayは任意機能であり、非対応機種でも装着中の主要操作をpanelで完結できるようにする。
 
 - backend種別、capability、session状態、tracking状態は独立した排他型で扱う。
@@ -291,7 +278,7 @@ Nativeは既存DirectionalLightの2048 texel・30〜600 mの3段cascadeから、
 - Screen復帰も失敗した場合はactive backendなしを示し、loopを停止する。
 
 - XR/sensor権限は明示した利用者操作の同期区間で要求する。
-- capability調査は事前に行い、await後のuser activationを仮定しない。
+- capability調査を事前に済ませ、利用者操作の同期区間で権限を要求する。
 - Bootの最小権限UIはScreenに置き、rendererが利用できる場合は読込み中やResultだけを理由にScreenへ戻さない。
 - tracking喪失や退出時はSceneを保持し、Countdown取消・Flight停止・Replay/Attract clock停止を共通sessionへ送る。
 
@@ -302,7 +289,7 @@ Nativeは既存DirectionalLightの2048 texel・30〜600 mの3段cascadeから、
 - VR起動副作用より先に`hidden`・`inert`・`aria-hidden`と対応CSSを反映し、Screen復帰完了後に表示する。
 
 - 非表示でも最新Viewを同じ安定nodeへpatchし、click/change/inputを拒否する。
-- listenerを再登録しない。
+- listenerは所有者の初期化時に一度登録する。
 - focusとscrollは非表示への遷移時に一度退避し、同じScene/overlayへ戻る場合だけ復元する。
 - focusは接続中・有効で、別要素への明示移動がない場合に`preventScroll`付きで復元する。
 
@@ -314,13 +301,13 @@ Nativeは既存DirectionalLightの2048 texel・30〜600 mの3段cascadeから、
 
 | Anchor | 基準と挙動 |
 |---|---|
-| World | 地理world固定。頭部移動ではposeを変更しない |
+| World | 地理world固定 |
 | Cockpit | 航空機と取付位置へ固定し、頭部から独立する |
 | Menu | 開いたときのtracking reference内に固定し、頭部運動で視野内位置が変わる |
 | Head | 現在head poseと固定offsetに追従し、視野内位置を維持する |
 
 - 湖面・地形・cloudはWorld、無限遠skyは方向をWorldへ固定する。
-- sky geometryを眼位置へ平行移動しても回転を同期しない。
+- sky geometryは眼位置への平行移動とworld基準の回転を組み合わせる。
 - 実機相当計器とCountdownはCockpit、全SceneとPause等の操作panelはMenu、非modal Flight情報板はHeadとする。
 
 - Head情報板は前方中央を空け、非操作telemetryを周辺へ配置する。
@@ -334,9 +321,9 @@ T_{eye,object}=T_{R,eye}^{-1}T_{R,object}
 ```
 
 - 機体・PilotEye・head・HUD localを一度ずつ合成する。
-- IPDはstereo projectionで一度だけ適用し、HUD meshへ追加しない。
+- IPDはstereo projectionで一度だけ適用する。
 - head基準のrayとcontroller基準のrayをそれぞれ同じ描画anchorへ変換する。
-- 不可視、disabled、別overlay、clip外のcontrolは選択しない。
+- 選択対象は、現在のoverlayに属する可視・有効・clip内のcontrolとする。
 
 - World/Cockpit panelはphysicalな深度判定・書込み、Menu/Headは世界描画後のoverlayとする。
 - 順序は世界→非操作Head情報板→interactive panel→cursorで、overlayはdepthTest/depthWriteを無効にする。
@@ -345,18 +332,17 @@ T_{eye,object}=T_{R,eye}^{-1}T_{R,object}
 
 ### 同一frameと両眼geometry
 
-- animation loop所有者は常に一つであり、backend切替でphysicsを二重stepしない。
+- animation loopの所有者は常に一つとし、backend間で同じphysics tickを使用する。
 - 順序は前frameのpending入力適用→raw head/眼別geometry取得→physics/機体pose更新→`beginViewFrame()`→View導出/計測/描画/gaze→3D描画とする。
 - 取得後のcamera cut、FOV、viewport、光学profile、明示pose取消、View開始後のpose/lake入力は次frameへ送る。
 
 - `ViewerFrame`はconfigured・runtime-derived・unavailableを区別し、同一frameのraw center-headと各眼のheadFromEye/projectionをコピーして保持する。
-- WebXRは同じ`getViewerPose()`から取得し、片眼やunion cameraをcenter-headの代替にしない。
-- 16要素column-major projectionを保持し、非対称frustum、眼回転、shearを単一FOVへ縮約しない。
+- WebXRのcenter-headと両眼は、同じ`getViewerPose()`から取得する。
+- 16要素column-major projectionを保持し、非対称frustum、眼回転、shearをそのまま扱う。
 
 - 初期対応はleft/right各1眼である。
 - 重複・未知の眼編成、非有限値、非単位pose、退化projectionは原因付きで利用不能とする。
-- geometry失敗だけで有効なcenter trackingまで破棄しない。
-- 前frameのgeometryやbrowser所有の可変配列を流用しない。
+- geometry失敗時も有効なcenter trackingを保持する。各frameのgeometryはbrowserの配列から所有データへ取得する。
 
 - Phone VRは実StereoCameraと同じprojection、aspect倍率0.5、eye separationを使用し、親cameraのaspectはcanvas全体のwidth/heightとする。
 - 眼別FOV、zoom、near/far、focusを近似せず、world matrixを更新して描く。
@@ -374,7 +360,7 @@ T_{eye,object}=T_{R,eye}^{-1}T_{R,object}
 - font読込み等のpendingでは旧入力contextを失効させ、回復を要求せず新geometryを待つ。
 
 - 共通の順序付きsectionと型付きnodeをCanvasの実font・localeで計測し、不変MenuDocumentとviewportへ導出する。
-- 文字を`fillText`のmaxWidthで縮小しない。
+- 文字幅は折返し・再配置で収め、指定したフォント寸法を保持する。
 - advanceとactualBoundingBox、描画のfont・locale・baseline・alignを一致させ、符号付きink metricsから実矩形を復元する。
 
 - 描画、clip、gaze/controller hit、range、chart cursor、ページ操作は同じviewportとoffsetを使用する。
@@ -387,7 +373,7 @@ T_{eye,object}=T_{R,eye}^{-1}T_{R,object}
 - 左右眼の前方水平±15°・垂直±10°を保護領域として写像し、cardと予約Menu領域を分離する。
 - 背景alphaとforeground alphaを独立に保持する。
 - 両眼clip内のinkと角高さ0.35°以上を検査する。
-- この閾値はソフトウェア配置契約であり、実HMDの可読性を保証する実測値として扱わない。
+- この閾値はソフトウェア配置の基準とし、実HMDの可読性は端末別の受入で評価する。
 
 - Head surfaceは独立CanvasTextureとmeshを保持し、非表示中も寿命を維持する。
 - 変更Viewだけを更新し、終了時はtexture/material/geometryを一度ずつ解放する。
@@ -399,13 +385,12 @@ T_{eye,object}=T_{R,eye}^{-1}T_{R,object}
 ### Phone VRの重力基準
 
 - secure contextのDevice OrientationとScreen Orientationを使用する。
-- 開始操作で`requestPermission(true)`を要求し、stereo準備と重力参照・非退化の水平較正が成立するまで開始成功にしない。
-- null、非有限値、不正時刻、初回event timeoutを0度へ置換しない。
+- 開始操作で`requestPermission(true)`を要求し、stereo準備・重力参照・有効な水平較正が揃った時点で開始する。
+- null、非有限値、不正時刻、初回event timeoutは原因付きの追跡エラーとして扱う。
 
 - browserは`deviceorientation`/`deviceorientationabsolute`のうち最初に`absolute=true`となった経路をsession中固定する。
-- Earth参照系の上向きを使用し、relative-onlyのbrowserでは水平基準を推定しない。
+- Earth参照系の上向きを水平基準に使用する。
 - 独立sensor portが同期したrelative-reference-upを提供する余地は保持する。
-- `webkitCompassHeading`だけを重力の根拠にしない。
 
 自然画面向きに固定された姿勢を$D=R_z(\alpha)R_x(\beta)R_y(\gamma)$、Screen Orientation角を$s$、重力と初回水平方位の基底を$B$とすると、head回転は次となる。
 
@@ -414,22 +399,18 @@ H=B D R_z(-s)
 ```
 
 - 度/rad、端末axes、Z-X′-Y″、camera前方を明示して変換する。
-- alpha/beta/gammaを航空機角へ直接代入しない。
 - 較正とrecenterはyawだけを基準化し、pitch/rollを保持する。
-- 画面が鉛直の正面姿勢で水平cameraとなる重力基準を使い、北向きをゲーム正面へ固定しない。
+- 画面が鉛直の正面姿勢で水平cameraとなる重力基準を使い、ゲーム正面は較正時の水平向きから定める。
 
 - 上向き・下向きで水平方位が退化した場合は既存基底を維持する。
 - 初回退化は較正を保留する。
 - 画面回転は同じ基底へ右側補正を適用する。
 - recenter基底差分は上向き軸周りの回転として、Eye mountで共役変換してretained anchorへ適用する。
-- 仮想機体姿勢をsensor補正へ重複適用しない。
 
 - sampleはeventのtimeStampと同Window/time originのperformance.nowで、有限・非負・未来でない・非減少を確認する。
 - 同時刻は許容する。
-- rAF時刻が直前sampleより古い場合をtracking障害としない。
-- Device Orientationは静止時のheartbeatを保証しないため、無通知だけで失敗にせず最新有効姿勢を保持する。
+- rAFとsensorの時刻を区別する。静止中など次のeventを待つ間は、最新の有効姿勢を保持する。
 - 明示不正sample、方位/参照喪失、退出・page lifecycleではtrackingと資源を停止・解放する。
-- 無通知hardware failureの検出は保証しない。
 
 - 初期光学profileは`generic-unverified-v1`、IPD0.064 m、vertical FOV60°、focus10 m、distortion disabledである。
 - 単位は1 world unit=1 mとし、利用者・viewerへの適合値として扱わない。
@@ -452,33 +433,33 @@ H=B D R_z(-s)
 
 - reset変換が得られない場合は選択を停止してScreenへ戻し、再開始を案内する。
 - tracking recenter、panel再配置、reference resetは別eventである。
-- 床高とIPDを二重加算せず、XR cameraへPhone用projectionを上書きしない。
+- 床高・IPD・projectionはXR runtimeの出力を使用する。
 
 ### VR入力と安全
 
 - Screenはkeyboard/pointer/touch、VRはhead-gaze dwellまたは標準mappingのgamepadを用いる。
 - gamepadの左stickはpanel cursor、button0は選択、button1は戻る、右stickはscrollへ接続する。
-- gamepad有効時は同じcontrolへgazeから二重発火させず、非標準mappingは対象外としてgazeを維持する。
+- 標準gamepadが有効な場合は操作元をgamepadへ切り替え、それ以外はgazeを使用する。
 
 - dwellの進行と取消を示し、視線を外して確定を中止できる。
-- 新Sceneに入っただけで意図しないRetry等が発火しないことも確認する。
+- Scene切替後の操作には、新しい入力開始を必要とする。
 - hoverや装着中touchに依存せず、戻る、pause、退出、tab、scroll、数値変更へ到達できるようにする。
-- head trackingを操舵へ自動割当しない。
+- head trackingは視線、keyboard・gamepadは操縦を担当する。
 
 - Phone VRの並進は固定し、Pause中もhead trackingを継続する。
-- 背景を頭部へ回転追従させて視点を固定しない。
+- 背景はworld基準を保持し、頭部回転による見え方の変化を表現する。
 - WebXRのtracking自由度は機器に従う。
 - fullscreen/landscape lockは補助であり、拒否や非対応から通常表示へ復帰できる構成とする。
 
 ## 性能・受入の区分
 
-PC ScreenはWeb/Nativeとも安定80 FPS相当・12.5 ms/frame、スマートフォンは60 FPS、XRはruntime refreshに対応するframe budgetを目標とする。画質縮退や手動倍率の実装だけで目標達成を主張しない。
+PC ScreenはWeb/Nativeとも安定80 FPS相当・12.5 ms/frame、スマートフォンは60 FPS、XRはruntime refreshに対応するframe budgetを目標とする。達成状況は指定端末・実描画負荷で測定する。
 
 - 性能計測はReleaseでOS/GPU、物理解像度、DPR、画質、refresh、VSync、計測区間を固定し、平均とframe-time percentileを記録する。
 - 60 Hz同期の実表示FPSと80 Hz以上の性能受入を区別する。
 - WebのFPSは成功したrender callback、Nativeは実時間Update頻度の750 ms窓であり、100 Hz物理tickやGPU present完了の計数ではない。
 
 - 数式・Float32 upload・CPU生成画像の検査、本番shaderのGPU実行、画面の視認性、物理入力、実Phone/HMDの光学受入を区別する。
-- CPU上界・法線差分、native/WASM量子化比較、模擬XR接続の成功を実GPU/実機の保証へ拡張しない。
+- CPU数値、native/WASM転送、GPU画像、実端末操作は、それぞれ対応する検証結果で評価する。
 - 時間的aliasing、optic flow、parallax、80 FPS、各viewerでの可読性は対象条件で確認する。
 - 実行コマンドと現在の未達事項は[検証](verification.md)へ集約する。

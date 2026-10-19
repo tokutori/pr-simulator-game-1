@@ -17,19 +17,15 @@
 | 描画用world | 東 | 上 | 南 | NEDと同じ原点 |
 
 - 彦根会場の水平原点はWGS84緯度35.294075°、経度136.254448°とし、局所NEDの $N=E=0$ に対応させる。
-- HUDの緯度経度は原点近傍の定数距離換算による局所近似である。
-- 測量・航法用途の測地変換は提供しない。
 - 鉛直原点は描画用の平均水面とする。
 - 合成重心高度 $h$ のNED下向き成分は $-h$ である。
 - 発進台前縁は水面上約10 mにあり、台の幾何形状と機体の発進高度を個別に管理する。
-- 台の上面を座標原点へ含めない。
-- 楕円体高・標高・geoid補正・湖面基準・基準epochはオフライン処理で明記し、描画用地形の鉛直近似を物理高度へ適用しない。
+- 楕円体高・標高・geoid補正・湖面基準・基準epochはオフライン処理で明記する。物理高度は局所NEDの湖面基準から求める。
 
 - `Point`と`Vector`、`BodyFrame`と`NedFrame`を型で区別する。
 - `Point − Point`は`Vector`、`Point + Vector`は`Point`であり、異なるframeの暗黙加算を禁止する。
 - 機体構造の固定点はdatum $O$ からのoffsetで表す。
 - パイロットの移動後も、形状の原点はdatumに保持する。
-- 燃料消費は対象外である。
 
 姿勢quaternionはHamilton積、scalar-first $(w,x,y,z)$、単位長、body-to-NEDの能動回転とする。
 $q_{NB}$ と $R_{NB}$ はbodyのベクトルをNEDへ変換する。
@@ -39,7 +35,7 @@ v^N=R_{NB}v^B,\qquad v^B=R_{NB}^{T}v^N
 ```
 
 - 角速度 $(p,q,r)$ はbody表現の右手系であり、正rollは右翼下げ、正pitchは機首上げ、正yawは右旋回方向である。
-- Euler角は表示時に導出し、積分状態に保存しない。
+- Euler角は表示時にquaternionから導出する。
 - quaternion補間は $q$ と $-q$ の同一姿勢を考慮して最短経路を選ぶ。
 
 描画座標への変換は次式とする。
@@ -97,9 +93,8 @@ I_B=\begin{bmatrix}I_{xx}&0&-I_{xz}\\0&I_{yy}&0\\-I_{xz}&0&I_{zz}\end{bmatrix}
 - 主慣性の三角不等式は等号を許容する。
 - $\Sigma$ の全7主小行列式を非負、$I$ の先頭主小行列式を正とする。
 - 根拠は[Wensing et al., Eq. 9・13](https://arxiv.org/pdf/1701.04395)である。
-- この検査は指定点まわりの慣性を対象とし、質量・重心との完全な空間慣性整合性や実機同定を保証しない。
 
-- 入力binary64を厳密な二進数として扱い、許容差、黙示的な補正、正規化による丸めを導入しない。
+- 入力binary64を厳密な二進数として扱い、指定点まわりの慣性を検査する。
 - $2\Sigma$ の各項をmantissaとexponentへ分解し、次数3以下の積の符号を固定長整数で求める。
 - 各項は $2^{-3222}$ の整数倍であり、最大162積の絶対和は6305 bit未満となる。
 - 100個の64 bit limbへ収容し、heap・追加依存・traceや積のoverflow/underflowを回避する。
@@ -110,7 +105,7 @@ I_B=\begin{bmatrix}I_{xx}&0&-I_{xz}\\0&I_{yy}&0\\-I_{xz}&0&I_{zz}\end{bmatrix}
 ### RK4と原子的更新
 
 - `advance`は正の有限timestep、有限の一定パイロット加速度、重力、機体モデル、現在状態、外力providerを受け取る。
-- providerのbody-frame wrenchは重力を含まない。
+- providerは空力などの非重力外力をbody-frame wrenchとして返す。
 - coreが全質量への重力合力と、パイロット重力のdatumまわりモーメントを加える。
 - 運動量収支の未知量はbody成分の $d v_O^B/dt$ と角加速度である。
 - 積分状態のNED速度へ変換する際は次式を使い、座標成分の微分と物理加速度を区別する。
@@ -123,8 +118,8 @@ I_B=\begin{bmatrix}I_{xx}&0&-I_{xz}\\0&I_{yy}&0\\-I_{xz}&0&I_{zz}\end{bmatrix}
 - 一定加速度を保持するパイロットの位置・速度は各stage時刻と出力時刻で解析解を与える。
 - 連成力はstageごとに再評価する。
 - stage間のパイロット位置の極値も検査し、移動限界を超える加速度を拒否する。
-- 入力状態は変更せず、いずれかのstageが失敗すれば元の型付きエラーだけを返す。
-- 力学step内でheap allocationを行わない。
+- 成功した出力状態を返し、stageの失敗は元の型付きエラーとして返す。
+- 力学stepは固定サイズの値と借用データで計算する。
 
 ## 定常風場
 
@@ -138,30 +133,28 @@ W=W(x,y,z),\qquad V_{air}=V_{ground}-W
 ```
 
 - 公開APIはUniform、Analytic linear gradient、Gridの検証済みconstructorを提供する。
-- 概念的なqueryは`velocity_at(Point3<NedFrame>) -> Result<Vector3<NedFrame>, WindError>`であり、coreはclockを参照しない。
+- queryは`velocity_at(Point3<NedFrame>) -> Result<Vector3<NedFrame>, WindError>`とし、位置から風速を求める。
 - linear gradientは基準NED位置・風速と、行を速度成分、列を位置成分とする $3\times3$ 勾配で定義する。
-- Gridはimmutableな速度sliceを借用し、coreで確保・複製しない。
+- Gridは不変の速度sliceを借用する。
 - 共有`HybridSessionPreparation`が同じ風場を使う機体・発進・controllerを準備する。
 
 - Gridの原点、N/E/D各軸の正の間隔、各軸2以上の点数、NED速度列を検証する。
 - 配列はNが最速、次いでE、Dとし、添字は`((d * count_e) + e) * count_n + n`である。
-- 三線形補間を用い、各軸の閉区間`origin .. origin + spacing * (count - 1)`を受理する。
+- 三線型補間を用い、各軸の閉区間`origin .. origin + spacing * (count - 1)`を受理する。
 - 上端は有限かつ原点より大きい必要がある。
 - overflowまたは丸めによる区間の退化は`WindError::InvalidGridDomain`とする。
 - 上端の添字換算に伴う丸めを補正する一方、1 ULPでも領域外の位置は拒否する。
-- 外挿やclampは行わない。
 - 全機の評価点を含む領域の確保は呼出側の責務であり、外部形式も同じcore検証を使って原因を`EnvironmentFormatError::Wind`へ保持する。
 
 - 風は局所対気速度、$V/\alpha/\beta$/動圧、係数、力・モーメント、6DoF、FBW観測へ一貫して作用する。
-- 向かい風・追い風・横風・上昇流・wind shear・左右非対称流を同じ経路で扱い、独立したcrosswind forceや位置の移流補正を加えない。
-- 対地速度を積分するため、風勾配による別の加速度項も重複加算しない。
+- 向かい風・追い風・横風・上昇流・wind shear・左右非対称流を、各評価点の対気速度から計算する。位置の積分には対地速度を使う。
 
 ```math
 \frac{dW}{dt}=(V_{ground}\cdot\nabla)W,\qquad \frac{\partial W}{\partial t}=0
 ```
 
 - 定常場でも移動中に経験する風は変化する。
-- 要素間の速度差によるモーメントは表現するが、連続流体の完全なvorticity応答は保証しない。
+- 回転流の応答は、離散要素間の相対風速と荷重差から求める。
 - 一様定常風では同じ対気初期条件の姿勢・対気運動を比較し、対地速度を固定した発進の試験と区別する。
 - 時間依存gustとstochastic turbulenceは未対応であり、追加時には明示的なsimulation timeと状態のAPIを定義する。
 - 環境データのschema、出典・仮定、波・空との対応は[データ形式](data-and-formats.md)に従う。
@@ -185,14 +178,12 @@ W=W(x,y,z),\qquad V_{air}=V_{ground}-W
 - 2行以上、全値有限、迎角の厳密単調増加、$C_{Di},C_{Dv}\ge0$、共通面積 $S$・span $b$・MAC $c$ の正値・有限性を構築時に検証する。
 - 負の揚力・モーメントは有効である。
 - 内部値を非公開とし、検証済みconstructorから構築する。
-- 各列を区分線形補間し、節点では元の行、両端では閉区間の値を返す。
+- 各列を区分線型補間し、節点では元の行、両端では閉区間の値を返す。
 - 外挿・端点clamp・失速後曲線の追加は行わず、有限入力のoverflowも型付きエラーとする。
 
 - `StaticPolarMetadata`は解析方式、離散設定ID、非ゼロmodel versionを持つ。
-- 設定IDを舵角として解釈しない。
-- 方式・対象・設定・参照量が異なる表の数値を継ぎ足さず、LLT主翼表を全機VLM表へ加算しない。
-- Re依存と設定間の連続補間は対象外である。
-- 行と設定IDを借用し、構築・評価にheapとI/Oを要しない。
+- 設定IDは離散設定を識別し、解析方式・対象・参照量を揃えた一つの表を選択する。
+- 行と設定IDを借用し、迎角に対して補間する。Re依存と設定間の補間を追加する場合は、表の軸と参照条件を定義する。
 
 ### 力とモーメント
 
@@ -218,7 +209,6 @@ F_{static}^B=q_\infty S(-C_D e_V+C_Y e_Y+C_L e_L)
 
 - $\beta=0$ の表を現在の $\beta$ の力基底で表すkinematic continuationは設計仮定であり、横滑りの非線型係数を同定したものとして扱わない。
 - 実装は速度成分の比を使う同値式により、先に $1/V$ を求める微小速度のoverflowを避ける。
-- minimum airspeedは追加しない。
 
 `moment_point_from_datum`はbody固定点 $P$ の $r_{OP}$ であり、移動する合成重心 $G$ と区別する。
 `PolarMomentAxes`は`BodyFrd`または`WindAtBetaZero`を明示し、roll・yawは $b$、pitchは $c$ で次元化する。
@@ -261,10 +251,10 @@ M_{O,static}^B=M_P^B+r_{OP}^B\times F_{static}^B
 - `HybridSection`はbody FRDのquarter-chord点と非負chordを持ち、zero-chord tipを許容する。
 - 全区間の面積は正とする。
 - 投影span座標は主翼・水平尾翼でbody y、垂直尾翼でbody zとし、厳密昇順である。
-- 隣接sectionのchordとquarter-chord点を線形補間する。
+- 隣接sectionのchordとquarter-chord点を線型補間する。
 - 投影幅 $\Delta u$ とy-z面内の実幅 $\Delta s$ を区別し、sweepのx成分は作用点へ反映する。
 - span面積には加えない。
-- 実面積は片面のplanform面積であり、上下両面のwetted areaを合算しない。
+- 実面積は片面のplanform面積とする。
 
 ```math
 S_{projected}=\sum_j\Delta u_j\frac{c_j+c_{j+1}}2,\qquad
@@ -282,7 +272,7 @@ MAC_{projected}=\frac{\int c(u)^2du}{S_{projected}},\qquad AR_s=\frac{b_s^2}{S_{
 - `HybridProxy`は一つの直線section区間を覆い、正の実面積weightと面積重心のquarter-chord作用点 $r_i^B$ を持つ。
 - 区間の隙間・重複・異なるgeometryへの流用を拒否し、weight和と面積を照合する。
 - `MirrorSpan`はsection・proxy・anchor・frameの反射対称性を要求する。
-- 相対許容差 $10^{-10}$ はこの幾何照合だけに使用し、flow境界を緩和しない。
+- 幾何照合の相対許容差は $10^{-10}$、flowの受理範囲は閉境界表に従う。
 
 - local-to-bodyの正規直交frame $Q_i$ はlocal spanをsectionのy-z方向へ整合させ、twistとdihedralを含む。
 - 固定normalは $n_i^B=Q_i(0,0,1)$ とし、投影spanへdihedralのcosを重ねて乗じない。
@@ -330,15 +320,12 @@ M_O^B=M_{O,static}^B+\sum_i r_i^B\times\Delta F_i^B
 
 - 全機静的荷重を一度だけ評価し、固定normalの差分とその外積を加える。
 - 左右非対称な流れはこの差分からroll momentを生む。
-- proxy drag・固有Cm、独立rate derivative、別の操舵momentを加算しない。
-- controlで力方向を回転せず、全機静的荷重の風向基底変化を二重計上しない。
-- 差分の符号を保持し、非負clamp・fallback・人工dragを追加しない。
-- 局所wake・動的失速・Re依存・地面効果は対象外である。
-- 水面近傍の空力精度は保証しない。
+- proxyの寄与は固定normalに沿う符号付き荷重差と、その作用点によるモーメントである。全機静的表が基準のdrag・固有モーメントを持つ。
+- 近似範囲は定常・固定Reの表と離散要素の局所荷重差であり、wake・動的失速・地面効果のモデル化は別途必要である。
 
 ### 閉境界と失敗条件
 
-以下はソフトウェアの近似範囲であり、実機の測定限界を意味しない。
+以下はソフトウェアモデルの受理範囲である。
 
 | 条件 | 受理範囲 |
 |---|---|
@@ -351,24 +338,23 @@ M_O^B=M_{O,static}^B+\sum_i r_i^B\times\Delta F_i^B
 | actual/referenceのlocal forward | 各厳密に正 |
 
 - 密度・参照量・係数・状態の有限性、正値、姿勢等の条件も検査する。
-- 速度比を $V$ で除算せず、minimum airspeedやruntime reduced-rateの $1/V$ を追加しない。
+- 速度範囲は $0.8V$ と $1.2V$ の積で比較する。
 - 小さい正速度でも全境界を検査し、動圧のunderflowと角度未定義を区別する。
 - $V=0$ では構成・状態・controlを検証した後、全proxyの風とactual流を調べる。
-- datumと全proxyのactual速度が全て0の場合だけ空力0とし、datumだけで早期returnしない。
+- datumと全proxyのactual速度が全て0の場合に空力0を返す。
 - 局所回転流・差動風があれば`UndefinedReference`として拒否し、後続proxyの風の失敗も検査する。
 
 - `AerodynamicEvaluationError::Hybrid`は元の`AeroError`、`HybridSite`、`HybridLimit`を保持する。
 - siteはDatum・StaticPolar・Surface・surface内Proxy index・TailIncidence・Aggregateを区別する。
 - RK4境界は`AerodynamicStage`のFirst〜Fourthを付与し、元の原因を保持する。
-- 非有限計算、風の失敗、unsupported controlを`OutsideEnvelope`へ統合しない。
+- 非有限計算、風の失敗、unsupported controlは、それぞれ固有の型付きエラーとして保持する。
 - 全stageと公開終端の検査に失敗したtickはcommitせず、直前のactuator・パイロット・tickを含む状態を保持する。
 
 ## 公開Playableモデル
 
 - 公開既定は`bpg041-playable-hybrid-mock`のmodel 3、catalog 5 / scenario 5、`bpg040-tail-rate-feedback`のcontroller 3である。
-- geometry、strip、anchor、全機polarは`HybridMockDefinition`が所有・検証し、構築と借用viewにheapとI/Oを使わない。
-- 旧catalog・scenario・controllerの登録と旧保存schemaの互換処理は提供しない。
-- 保存snapshotの閲覧と現行モデルの再積分を区別する。
+- geometry、strip、anchor、全機polarは`HybridMockDefinition`が所有・検証し、固定サイズの値と借用viewで提供する。
+- 現行catalog・scenario・controllerの組合せを登録する。保存snapshotは記録時のデータから閲覧する。
 
 | 面 | 投影面積 / span / MAC [SI] | strip | body quarter-chordとframe |
 |---|---|---|---|
@@ -383,13 +369,10 @@ M_O^B=M_{O,static}^B+\sum_i r_i^B\times\Delta F_i^B
 - 全機参照は $S=18$ m²、$b=18$ m、$c=1$ m、$P=O$、`WindAtBetaZero`である。
 
 - 機体40 kg、パイロット60 kg、datum慣性 $\operatorname{diag}(900,1000,980)$ kg m²を合成入力とする。
-- 慣性を質量比例で再調整しない。
 - パイロットの $y=z=0$、前後範囲±0.4 m、最大速度0.3 m/s、最大加速度0.8 m/s²を使用する。
-- これらの値は実機同定を意味しない。
 
 - datum alphaの閉区間は[-0.18,+0.18] rad、約±10.31°とする。
-- finの参照span角±0.2 radの内側だが、この差だけでactual local flowの余裕を保証しない。
-- 汎用hybridのbeta・local alpha/span/speed・controlled alpha differenceの範囲は拡大しない。
+- finの参照span角、各proxyのactual local flow、control込み迎角差を、汎用hybridの閉境界に照らして個別に検査する。
 
 | datum alpha [rad] | 主翼CL |
 |---:|---:|
@@ -430,19 +413,15 @@ C_m=-0.02+\frac{0.1F_{t,x}^{*}+3.6F_{t,z}^{*}}{18\cdot1}-2.0(\alpha-0.04)
 
 - 最後の項は基準alpha 0.04 radに対する合成復元項であり、係数2.0の単位はrad⁻¹である。
 - $C_Y,C_l,C_n$ は0とする。
-- 実行時は7列を個別にPWL補間し、上記の非線型な生成式を再評価しない。
-- neutralのproxy静荷重を再加算せず、定義域外を元の型付きエラーで拒否する。
+- 実行時は生成済み7列のPWL補間と局所荷重差を評価し、定義域外は元の型付きエラーで拒否する。
 
 - trimは生成済みPWL列に対して求める。
 - $V=9.7$ m/s、$\rho=1.225$ kg/m³、$g=9.80665$ m/s²、alpha探索区間[0,0.06] radを使用する。
 - datum荷重と合成重心まわりモーメントの釣合いからパイロット位置を計算する。
 - 中立・`Hold`の初期目標はtrim位置とし、身体mappingの両端は±0.4 mである。
-- trimの成立は全状態の安定性や飛距離を保証しない。
 - controllerのsoft迎角保護は[飛行制御](flight-control.md#迎角と身体目標のsoft保護)に従う。
 
-- 非公開xlsx、実係数、実機の非公開質量・慣性・形状、元解析ファイルは導入しない。
 - 実データ導入時には来歴・座標・参照量・版・単位を再確認する。
-- 機体空力を難易度や到達距離へ合わせて変更しない。
 - [XFLR5著者のmoment軸説明](https://sourceforge.net/p/xflr5/discussion/679398/thread/9fc00666c9/)と[解析上の制限](https://flow5.tech/xflr5/docs/Part%20IV:%20Limitations.pdf)を参照し、個別表の解析条件と`WindAtBetaZero`の対応を明示する。
 - LLT/VLM、粘性・剥離・抗力評価の制約と、PWL補間・kinematic continuationという実装上の設計判断を区別する。
 
@@ -454,19 +433,17 @@ C_m=-0.02+\frac{0.1F_{t,x}^{*}+3.6F_{t,z}^{*}}{18\cdot1}-2.0(\alpha-0.04)
 
 - 固定tickの周期はcoreの公開定義を参照する。
 - 成功時だけ整数tickと全physical stateを更新する。
-- 描画は前後の有効snapshotを補間し、画質設定で物理tickを変更しない。
+- 描画は前後の有効snapshotを補間する。物理tickは共有coreの固定周期に従う。
 - 遅延時もtickを飛ばさず、frame当たりの処理量を制限する。
-- 回復不能な遅延と非表示状態では明示的に停止し、復帰時のwall-clock差を積分しない。
+- 回復不能な遅延と非表示状態では明示的に停止し、復帰後は保持した物理時刻から再開する。
 - 入力を整数tickへ割り当てて保存する。
-- 同一結果の保証対象はtick入力列であり、人間のwall-clock操作時刻は対象外である。
+- 再現条件は、同じ初期条件と整数tickに割り当てた入力列である。
 
 - 発進条件はdatumの対地位置・速度、姿勢、身体初期位置・速度を明示する。
 - 合成重心の位置・対地速度を指定する形式は、`flight_state_from_composite_cg_launch`が身体状態・姿勢・角速度からmass-ratio offsetを使ってdatumへ変換する。
-- 対地速度指定へ風を暗黙加算しない。
 - trimからの生成では対気条件を明示し、CG地点の風を一度加算して対地速度を得る。
 - 会場の位置・方位は共有の`assets/biwa-launch-venue.json`に従い、北から時計回り315°をheadingとcourse axisへ使用する。
 - NEDの風を機体方位とともに回転せず、yawとtrim pitchを合成する。
-- 台の傾斜をpitchへ混入しない。
 
 - WeatherはCalm / Mild / Typical / Challenging / NearLimitを分類とし、具体的なscenario ID/versionと区別する。
 - 登録環境は順に1/2/6/4/5であり、Typicalは共有のオフラインGrid環境6、その他は登録済みUniform環境を使用する。
@@ -483,10 +460,9 @@ C_m=-0.02+\frac{0.1F_{t,x}^{*}+3.6F_{t,z}^{*}}{18\cdot1}-2.0(\alpha-0.04)
 - 主翼は左右のroot・dihedralの二つの折点・tipにおける閉翼型輪郭を使用する。全chordをcosine分布の32区間で分割する。
 - 尾翼はcoreのneutral sectionの各四隅を使用する。
 
-- 各部分の凸包の全候補頂点を使い、表示surfaceの`f32`頂点、材質境界、UV、描画samplingを参照しない。
+- 各部分の凸包の全候補頂点を、物理用の共有`f64`構造形状から導出する。
 - cockpit frameは同じshell内へ収める。
 - 表示用の主翼たわみ、尾翼角による可動外形、細い構造材の半径は固定接触外形の対象外である。
-- 地形衝突・変形collisionへ一般化せず、全描画meshを毎tick走査しない。
 
 - polytope内の点と回転後の鉛直座標は頂点の凸結合である。
 - したがって全姿勢の静水面に対する支持量は全頂点の最大値と一致する。
@@ -497,8 +473,8 @@ C_m=-0.02+\frac{0.1F_{t,x}^{*}+3.6F_{t,z}^{*}}{18\cdot1}-2.0(\alpha-0.04)
 
 - 接触点はdatumからの固定offsetを持つ。
 - 隣接する成功tick間の状態を補間し、各点の到達fractionから最早eventを選ぶ。
-- 位置・速度・角速度・身体状態は線形補間し、姿勢は短経路slerp、近角は既存nlerpを使う。
-- 通常slerpでは線形項とsin/cosからdown座標の内部極値を列挙する。
+- 位置・速度・角速度・身体状態は線型補間し、姿勢は短経路slerp、近角は既存nlerpを使う。
+- 通常slerpでは線型項とsin/cosからdown座標の内部極値を列挙する。
 - nlerpでは正の二次分母を払った三次式の導関数から区間を隔離する。
 - 各点の内部候補は高々二つであり、固定節点に一致しない接線と短い侵入・離脱も調べる。
 - 最初の到達区間を同じ補間状態上で二分探索して確定する。
@@ -506,20 +482,18 @@ C_m=-0.02+\frac{0.1F_{t,x}^{*}+3.6F_{t,z}^{*}}{18\cdot1}-2.0(\alpha-0.04)
 - 終端の位置・姿勢・actuator・身体状態は同一時刻へ揃える。
 - 正のfractionでは全RK4 stageへ保持した更新incidenceを使い、fraction 0の既存接触では直前snapshotのincidenceを保持する。
 - 内部接触検出はbody stateを補間し、tail tickが同時刻のphysical incidenceとpilot targetを付ける。
-- 入力から連続actuator軌跡を推定しない。
 - `advance_tail_flight_tick_with_contact`はfractional terminal sampleだけを返し、接触後のinteger-tick stateを公開・保存しない。
 - Result・graph・Replayは同じ終端sampleを参照する。
 
 - `TailFlightScenario::run`は100 Hzの機器非依存入力列を順に適用し、最初のWaterContactまたはTimeLimitで終了する。
 - Distance score v1は、発進course axisに対するdatumの符号付き水平変位projectionである。
 - 右向きcross-track変位と直線水平変位長を独立metricとし、軌跡長・CG移動・公式競技計測と区別する。
-- WaterContactではfractional terminal sample、TimeLimitでは最後の有効状態から採点し、終了後のtickを処理しない。
-- 水面波は描画専用であり、波頂による接触時刻の変化、台上走行、拘束解除、複雑な陸地衝突は対象外である。
+- WaterContactではfractional terminal sample、TimeLimitでは最後の有効状態から採点して飛行を確定する。
+- 接触面は静止した基準湖面、接触外形は固定proxyとする。
 
 ## 検証範囲
 
 - 不正値、非正定値慣性、空力適用範囲外、非有限計算は型付きエラーとして返す。
-- 適用範囲外を無条件clampして継続しない。
 - 失速域を使用する場合は、その範囲を含む係数モデルを別途検証する。
 - native/WASM比較はscenario・tick入力列・許容差を事前に固定し、失敗結果へ許容差を事後適合させない。
 
@@ -533,4 +507,4 @@ C_m=-0.02+\frac{0.1F_{t,x}^{*}+3.6F_{t,z}^{*}}{18\cdot1}-2.0(\alpha-0.04)
 - 全成功tickは全RK4 stageと公開endpointの荷重検査を通す。
 - 保存sampleのactual local load再評価、要求report、両pitch符号、独立yaw、slew、guard無効時の一致、未定義alpha、First stageの風エラー、`Hold`/`Set`、未登録identityを回帰検査する。
 - 独立polar/trim/oracleと離散線型化は、明示入力列の受入と区別する。
-- 合格はこのsoftware検査範囲を表し、任意入力・全Weather・全状態の安定性・実機の飛距離予測を保証しない。
+- 検査結果は、明記したソフトウェア条件と数値予算に対して評価する。
