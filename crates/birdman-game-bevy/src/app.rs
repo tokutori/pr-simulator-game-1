@@ -158,8 +158,15 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
     let timing_mode =
         verification_timing_mode(water_verification.is_some(), verification_timing.as_deref())?;
     water_verification = verification_water_auto(water_verification, water_auto)?;
-    let flight_log_export =
+    let mut flight_log_export =
         flight_log::FlightLogExport::new(&std::env::current_dir()?, export_directory.as_deref())?;
+    let library_notice = match flight_log_export.refresh() {
+        Ok(failures) if !failures.is_empty() => {
+            Some(format!("保存記録の一部を読み込めない: {}", failures[0]))
+        }
+        Err(error) => Some(error.to_string()),
+        _ => None,
+    };
     println!(
         "飛行ログの保存先: {}",
         flight_log_export.directory().display()
@@ -204,6 +211,7 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
         .init_resource::<water_quality::WaterQualitySelection>()
         .init_resource::<screen_render::NativeScreenRender>()
         .init_resource::<CameraMode>();
+    app.world_mut().resource_mut::<NativeSession>().notice = library_notice;
     native_assets::register(&mut app);
     if offscreen {
         offscreen::configure(&mut app, verification_size.unwrap_or((1280, 720)))?;
