@@ -3,6 +3,12 @@
  * UI message whose handling is shared by native and browser adapters.
  */
 export type GameUiAction = {
+    readonly kind: "set_credits";
+    /**
+     * Whether the credits replace the current menu.
+     */
+    readonly open: boolean;
+} | {
     /**
      * Operation admitted by the current view.
      */

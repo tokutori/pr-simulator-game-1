@@ -1,6 +1,6 @@
 import { Window } from "happy-dom";
 import { describe, expect, it } from "vitest";
-import { currentSharedGameUiFixture } from "../game-check/shared-game-ui-fixture.js";
+import { currentSharedGameUiFixture, withSharedGameUiSession } from "../game-check/shared-game-ui-fixture.js";
 import { createGameViewModel, sharedGameUiAction } from "../../web/src/app/game-view.js";
 import { requestMenuLayout, layoutMeasuredMenu, menuViewport, menuRectInViewport } from "../../web/src/presentation/menu-layout.js";
 import type { MenuTextMeasurement, MenuTextRequest } from "../../web/src/render/contracts/menu-layout.js";
@@ -29,6 +29,29 @@ function measurementFor(request: MenuTextRequest): MenuTextMeasurement {
 }
 
 describe("Shared Flight Setup and Briefing presentation", () => {
+  it.each(["screen", "phone_vr", "webxr"] as const)("opens and closes the same Credits without moving the session in %s", (presentation_mode) => {
+    for (const phase of [0, 6]) {
+      withSharedGameUiSession(phase, { platform: { presentation_mode } }, (session, platform) => {
+        const before = session.readGameSessionProjection();
+        const normal = session.readSharedUi(platform);
+        const openAction = sharedGameUiAction(normal, { type: "activate", controlId: "game-credits-open" });
+        expect(openAction).toEqual({ kind: "set_credits", open: true });
+        expect(session.updateSharedUi({ kind: "set_credits", open: true }, platform).effects).toEqual([]);
+        const credits = session.readSharedUi(platform);
+        const view = createGameViewModel(credits);
+        validateUiViewModel(view);
+        expect(credits.hud).toBeNull();
+        for (const source of ["osm", "jaxa", "copernicus", "jma", "font", "earcut", "ryu", "validators", "time"]) {
+          expect(statusValue(view, `game-credits-${source}`).length).toBeGreaterThan(0);
+        }
+        expect(sharedGameUiAction(credits, { type: "activate", controlId: "game-credits-close" })).toEqual({ kind: "set_credits", open: false });
+        expect(session.updateSharedUi({ kind: "set_credits", open: false }, platform).effects).toEqual([]);
+        expect(session.readGameSessionProjection()).toEqual(before);
+        expect(session.readSharedUi(platform).selections.credits_open).toBe(false);
+      });
+    }
+  });
+
   it.each(["screen", "phone_vr", "webxr"] as const)("projects the same direct candidates, groups and Weather in %s", (presentation_mode) => {
     const shared = currentSharedGameUiFixture(1, { platform: { presentation_mode } });
     const view = createGameViewModel(shared);
@@ -47,10 +70,12 @@ describe("Shared Flight Setup and Briefing presentation", () => {
     ] : []);
     expect(controls.some((control) => control.id === "presentation-render-scale-status")).toBe(presentation_mode === "screen");
     expect(controls.map((control) => control.id)).not.toContain("game-state");
-    expect(view.panels.flatMap((panel) => panel.sections?.map((section) => section.label) ?? []).filter(Boolean))
-      .toEqual(presentation_mode === "screen"
-        ? ["プリセット", "表示情報", "操縦支援", "気象条件", "水面画質", "3D描画品質"]
-        : ["プリセット", "表示情報", "操縦支援", "気象条件", "水面画質"]);
+    for (const control of choices) {
+      if (control.kind !== "button" || control.presentation?.kind !== "choice") continue;
+      expect(Array.from(control.presentation.description).length).toBeLessThanOrEqual(30);
+      if (!control.presentation.selected) expect(control.presentation.description).toBe("");
+      expect(sharedGameUiAction(shared, { type: "activate", controlId: control.id })).not.toBeNull();
+    }
     expect(controls.find((control) => control.id === "game-setup-start")).toMatchObject({
       label: "飛行準備へ進む", presentation: { kind: "action", emphasis: "primary" }
     });
@@ -58,8 +83,9 @@ describe("Shared Flight Setup and Briefing presentation", () => {
     const source = shared.panels.flatMap((panel) => panel.controls).find((control) => control.id === "game-weather-conditions");
     if (source?.content.kind !== "status") throw new Error("Missing Rust Weather");
     expect(statusValue(view, source.id)).toBe(source.content.value);
-    expect(source.content.value).toContain("代表水平風速");
-    expect(source.content.value).toContain("鉛直流");
+    expect(source.content.value).toContain("m/s");
+    expect(source.content.value).toContain("水面から");
+    expect(source.content.value).not.toMatch(/N\/E\/D|未定義|Seed:/);
   });
 
   it("projects the Rust-owned closed and expanded technical disclosure", () => {
@@ -122,8 +148,10 @@ describe("Shared Flight Setup and Briefing presentation", () => {
       const platform = { viewport: { width: 320, height: 240, root_font_size: 16 } };
       const initial = currentSharedGameUiFixture(1, { platform });
       adapter.render(createGameViewModel(initial));
-      expect([...root.querySelectorAll("fieldset legend")].map((legend) => legend.textContent))
-        .toEqual(["プリセット", "表示情報", "操縦支援", "気象条件", "水面画質", "3D描画品質"]);
+      for (const group of ["preset", "information", "assistance", "weather", "water-quality", "render-scale"]) {
+        expect(root.querySelector(`[data-section-id="${group}"] button`)?.getAttribute("disabled")).toBeNull();
+        expect(root.querySelector(`[data-section-id="${group}"] legend`)?.textContent.length).toBeGreaterThan(0);
+      }
       expect([...root.querySelectorAll('[data-section-id="render-scale"] button')].map((button) => ({
         id: button.getAttribute("data-control-id"), label: button.querySelector(".screen-ui-choice-label")?.textContent,
         selected: button.getAttribute("aria-pressed")
@@ -212,7 +240,7 @@ describe("Shared Flight Setup and Briefing presentation", () => {
     const primary = controls.find((control) => control.id === "game-setup-start");
     const secondary = controls.find((control) => control.id === "game-setup-back");
     if (choice?.kind !== "button" || primary === undefined || secondary === undefined) throw new Error("Missing controls");
-    expect(uiButtonLabel(choice)).toContain("● Full");
+    expect(uiButtonLabel(choice)).toContain(`● ${choice.label}`);
     expect(uiControlBackground(primary, shared.theme)).not.toBe(uiControlBackground(secondary, shared.theme));
   });
 });

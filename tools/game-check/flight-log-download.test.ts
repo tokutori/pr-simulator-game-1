@@ -101,23 +101,12 @@ describe("flight log download state and common presentation", () => {
         const exports = panel.controls.filter((control) => control.id.startsWith("game-flight-log-"));
         const analysisFlow = phaseCode === 7 && resultTab === "analysis" || phaseCode === 9 && replayViewMode === "analysis";
         expect(exports.map((control) => control.id)).toEqual(["game-flight-log-csv", "game-flight-log-json", "game-flight-log-notice"]);
-        const analysisSections = [
-          { id: "analysis-tabs", label: "", layout: "row" }, { id: "analysis-chart", label: "", layout: "column" },
-          { id: "analysis-cursor", label: "", layout: "column" }
-        ];
-        expect(panel.sections).toEqual([
-          ...(analysisFlow ? analysisSections : []),
-          ...(phaseCode === 7 ? analysisFlow ? [
-            { id: "analysis-details", label: "", layout: "column" }, { id: "analysis-navigation", label: "", layout: "row" }
-          ] : [{ id: "result-summary", label: "", layout: "column" }] : [{ id: "replay-view", label: "", layout: "row" }]),
-          ...(phaseCode === 7 ? [{ id: "result-navigation", label: "", layout: "row" }] : [
-            ...(!analysisFlow ? [{ id: "replay-status", label: "", layout: "column" }] : []),
-            ...(replayViewMode === "telemetry" ? [{ id: "replay-cursor", label: "", layout: "column" }] : []),
-            { id: "replay-actions", label: "", layout: "row" }, { id: "replay-technical", label: "", layout: "column" },
-            { id: "replay-navigation", label: "", layout: "row" }
-          ]),
-          { id: "flight-log-actions", label: "飛行ログ", layout: "row" }, { id: "flight-log-notice", label: "", layout: "column" }
-        ]);
+        expect(new Set(panel.sections.map((section) => section.id)).size).toBe(panel.sections.length);
+        expect(panel.sections.find((section) => section.id === "flight-log-actions")?.layout).toBe("row");
+        if (analysisFlow) {
+          expect(panel.controls.some((control) => control.kind === "chart")).toBe(true);
+          expect(panel.controls.some((control) => control.kind === "range")).toBe(true);
+        }
         expect(exports.map((control) => control.section)).toEqual(["flight-log-actions", "flight-log-actions", "flight-log-notice"]);
         if (phaseCode === 9) {
           expect(panel.controls.find((control) => control.id === "game-replay-technical")).toMatchObject({

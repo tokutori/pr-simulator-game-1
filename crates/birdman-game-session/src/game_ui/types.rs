@@ -20,6 +20,8 @@ pub const GAME_UI_SAVED_AT_CHARACTERS: usize = 256;
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct GameUiState {
+    /// Shared credits shown without changing the domain phase.
+    pub credits_open: bool,
     /// Expanded preparation diagnostics.
     pub technical_open: bool,
     /// Result presentation selection.
@@ -39,6 +41,7 @@ pub struct GameUiState {
 impl Default for GameUiState {
     fn default() -> Self {
         Self {
+            credits_open: false,
             technical_open: false,
             result_tab: GameUiResultTab::Summary,
             analysis_chart: GameUiAnalysisChart::Map,
@@ -261,6 +264,11 @@ pub enum GameUiPlatformCommand {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum GameUiAction {
+    /// Opens or closes the shared legal notices.
+    SetCredits {
+        /// Whether the credits replace the current menu.
+        open: bool,
+    },
     /// Produces one canonical domain operation.
     Session {
         /// Operation admitted by the current view.
@@ -454,7 +462,7 @@ impl<'de> Deserialize<'de> for GameUiStoredRecordPreview {
 pub struct GameUiStoredRecord {
     /// Platform key.
     pub id: u32,
-    /// Formatted local save timestamp supplied by the platform.
+    /// Original RFC 3339 save timestamp; the shared view formats it in UTC.
     #[cfg_attr(feature = "schema", schemars(length(max = GAME_UI_SAVED_AT_CHARACTERS)))]
     pub saved_at: String,
     /// Existing Rust-derived Personal Best membership.

@@ -69,7 +69,7 @@ describe("single Rust snapshot application projection", () => {
       }
       model = observeSharedUi(model, facade);
       expect(sharedView(model).panels.flatMap((panel) => panel.controls).some((control) =>
-        control.kind === "status" && control.value.includes("独立したroll"))).toBe(true);
+        control.kind === "status" && control.id === "game-briefing-controls" && control.value.includes("↑") && control.value.includes("↓"))).toBe(true);
       facade.executeSharedSessionCommand({ kind: "start_countdown" });
       facade.observeCountdown(facade.captureCountdownToken(), 3, true);
       for (const expectedPhase of [5, 6, 7] as const) {
@@ -86,7 +86,7 @@ describe("single Rust snapshot application projection", () => {
         if (expectedPhase === 7) expect(hud).toBeNull();
         else {
           if (hud === null) throw new Error("Missing shared live Flight HUD");
-          expect(sharedHudNode(hud, "hud-controls").content.value).toContain("nose-up/down");
+          expect(hud.groups.flatMap((group) => group.nodes).some((node) => node.id === "hud-controls")).toBe(false);
         }
         if (expectedPhase === 5) facade.executeSharedSessionCommand({ kind: "pause" });
         if (expectedPhase === 6) facade.executeSharedSessionCommand({ kind: "abort" });

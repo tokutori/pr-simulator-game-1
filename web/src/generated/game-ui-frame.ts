@@ -385,6 +385,10 @@ export interface GameUiState {
      */
     readonly analysis_time_seconds: number;
     /**
+     * Shared credits shown without changing the domain phase.
+     */
+    readonly credits_open: boolean;
+    /**
      * Paused menu selection.
      */
     readonly pause_overlay: "menu" | "settings" | "help";

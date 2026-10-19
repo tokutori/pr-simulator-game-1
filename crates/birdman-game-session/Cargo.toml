@@ -18,6 +18,7 @@ ryu-js = { version = "=1.0.3", default-features = false }
 schemars = { workspace = true, optional = true }
 image = { version = "=0.25.10", default-features = false }
 earcut = "=0.4.10"
+time = { version = "=0.3.55", default-features = false, features = ["formatting", "parsing"] }
 
 [dev-dependencies]
 sha2.workspace = true

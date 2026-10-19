@@ -268,7 +268,7 @@ export class ScreenUiAdapter {
         data.attrs = { ...data.attrs, "aria-pressed": String(presentation.selected) };
         children = [
           h("span.screen-ui-choice-label", `${presentation.selected ? "● " : ""}${control.label}`),
-          h("small", presentation.description)
+          ...(presentation.description.length > 0 ? [h("small", presentation.description)] : [])
         ];
       }
       if (presentation?.kind === "disclosure") {

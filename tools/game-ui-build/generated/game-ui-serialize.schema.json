@@ -964,6 +964,25 @@
       "oneOf": [
         {
           "additionalProperties": false,
+          "description": "Opens or closes the shared legal notices.",
+          "properties": {
+            "kind": {
+              "const": "set_credits",
+              "type": "string"
+            },
+            "open": {
+              "description": "Whether the credits replace the current menu.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "kind",
+            "open"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
           "description": "Produces one canonical domain operation.",
           "properties": {
             "command": {
@@ -3578,6 +3597,10 @@
           "format": "double",
           "type": "number"
         },
+        "credits_open": {
+          "description": "Shared credits shown without changing the domain phase.",
+          "type": "boolean"
+        },
         "pause_overlay": {
           "$ref": "#/$defs/GameUiPauseOverlay",
           "description": "Paused menu selection."
@@ -3600,6 +3623,7 @@
         }
       },
       "required": [
+        "credits_open",
         "technical_open",
         "result_tab",
         "analysis_chart",

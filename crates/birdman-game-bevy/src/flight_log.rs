@@ -6,7 +6,10 @@ use birdman_game_format::{
     FlightRecordFormatError, MAX_FLIGHT_RECORD_JSON_BYTES, TailFlightRecordDocument,
     TailPersonalBestSelection,
 };
-use birdman_game_session::{game_ui::GameUiStoredRecord, record_archive::RecordExportError};
+use birdman_game_session::{
+    game_ui::{GameUiStoredRecord, game_ui_saved_record_timestamp},
+    record_archive::RecordExportError,
+};
 use std::{
     error::Error,
     fmt,
@@ -187,7 +190,6 @@ impl FlightLogExport {
         let mut selections: Vec<TailPersonalBestSelection> = Vec::new();
         let mut failures = Vec::new();
         let mut next_id = self.next_id;
-        let now = SystemTime::now();
         for (path, modified) in paths {
             let document = match read_archive(&path).and_then(|json| {
                 TailFlightRecordDocument::decode_json(json.as_bytes()).map_err(|source| {
@@ -230,16 +232,12 @@ impl FlightLogExport {
                     selections.push(selection);
                 }
             }
-            let age = now.duration_since(modified).unwrap_or_default().as_secs();
-            let saved_at = if age < 60 {
-                "1分未満前".to_owned()
-            } else if age < 3600 {
-                format!("{}分前", age / 60)
-            } else if age < 86400 {
-                format!("{}時間前", age / 3600)
-            } else {
-                format!("{}日前", age / 86400)
-            };
+            let saved_at = modified
+                .duration_since(UNIX_EPOCH)
+                .ok()
+                .and_then(|duration| i64::try_from(duration.as_secs()).ok())
+                .and_then(game_ui_saved_record_timestamp)
+                .unwrap_or_default();
             stored.push(StoredFlightLog {
                 id,
                 path,

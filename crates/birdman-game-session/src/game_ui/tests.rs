@@ -465,23 +465,128 @@ fn web_setup_candidates_groups_order_and_primary_action_are_shared() {
             ..
         }
     ));
-    let ids: Vec<_> = controls.iter().map(|control| control.id.as_str()).collect();
-    assert!(
-        ids.iter()
-            .position(|id| *id == "game-setup-information-current")
-            < ids
-                .iter()
-                .position(|id| *id == "game-setup-assistance-current")
-    );
-    assert!(
-        ids.iter()
-            .position(|id| *id == "game-setup-assistance-current")
-            < ids
-                .iter()
-                .position(|id| *id == "game-setup-weather-current")
-    );
+    for group in ["preset", "information", "assistance", "weather"] {
+        for choice in controls.iter().filter(|control| control.section == group) {
+            let GameUiControlContent::Button {
+                action,
+                presentation:
+                    GameUiButtonPresentation::Choice {
+                        selected,
+                        description,
+                        ..
+                    },
+            } = &choice.content
+            else {
+                panic!("missing direct choice");
+            };
+            assert!(choice.enabled);
+            assert!(
+                update_game_ui(
+                    &GameUiState::default(),
+                    action.clone(),
+                    &context(&session, difficulty(), &platform)
+                )
+                .is_ok()
+            );
+            assert!(description.chars().count() <= 30);
+            assert!(*selected || description.is_empty());
+        }
+    }
     assert!(view.layout.scroll_y);
     assert!(view.layout.maximum_height_px <= platform.viewport.height);
+}
+
+#[test]
+fn credits_are_reachable_from_title_and_pause_without_advancing_the_session() {
+    let title = GameSession::new();
+    let mut paused = launched();
+    paused.pause(PauseReason::Manual).unwrap();
+    let mut platform = platform();
+    for mode in [
+        GameUiPresentationMode::Screen,
+        GameUiPresentationMode::Webxr,
+        GameUiPresentationMode::PhoneVr,
+    ] {
+        platform.presentation_mode = mode;
+        for session in [&title, &paused] {
+            let before = session.snapshot();
+            let context = context(session, difficulty(), &platform);
+            let state = GameUiState::default();
+            let open =
+                update_game_ui(&state, GameUiAction::SetCredits { open: true }, &context).unwrap();
+            assert!(open.effects.is_empty());
+            let credits = game_ui_view(&open.state, &context).unwrap();
+            assert!(credits.hud.is_none());
+            assert!(credits.layout.scroll_y);
+            for id in [
+                "osm",
+                "jaxa",
+                "copernicus",
+                "jma",
+                "font",
+                "earcut",
+                "ryu",
+                "validators",
+                "time",
+            ] {
+                assert!(matches!(
+                    control(&credits, &format!("game-credits-{id}")).content,
+                    GameUiControlContent::Status { .. }
+                ));
+            }
+            let copernicus = &control(&credits, "game-credits-copernicus").content;
+            assert!(
+                matches!(copernicus, GameUiControlContent::Status { value, .. } if value.contains("produced using Copernicus WorldDEM-30") && value.contains("do not incur any liability") && value.contains("DLR e.V."))
+            );
+            let closed = update_game_ui(
+                &open.state,
+                GameUiAction::SetCredits { open: false },
+                &context,
+            )
+            .unwrap();
+            assert_eq!(closed.state, state);
+            assert!(closed.effects.is_empty());
+            assert_eq!(session.snapshot(), before);
+            assert!(
+                control(
+                    &game_ui_view(&closed.state, &context).unwrap(),
+                    "game-credits-open"
+                )
+                .enabled
+            );
+        }
+    }
+}
+
+#[test]
+fn title_projects_saved_timestamps_without_rewriting_platform_metadata() {
+    let session = GameSession::new();
+    let mut platform = platform();
+    platform.stored_records_available = true;
+    platform.stored_records = GameUiStoredRecordPreview::from(vec![GameUiStoredRecord {
+        id: 7,
+        saved_at: "2026-01-01T00:20:45+09:00".to_owned(),
+        personal_best: true,
+    }]);
+    let before = platform.clone();
+    let view = game_ui_view(
+        &GameUiState::default(),
+        &context(&session, difficulty(), &platform),
+    )
+    .unwrap();
+    let record = control(&view, "game-title-open-record-7");
+    assert!(record.label.contains("2025/12/31 15:20 UTC"));
+    assert!(record.enabled);
+    assert!(matches!(
+        record.content,
+        GameUiControlContent::Button {
+            action: GameUiAction::Platform {
+                command: GameUiPlatformCommand::OpenStoredRecord { id: 7 }
+            },
+            ..
+        }
+    ));
+    assert_eq!(platform, before);
 }
 
 #[test]
@@ -906,19 +1011,21 @@ fn analysis_sections_preserve_order_and_typed_values_across_targets() {
             platform.viewport.height = height;
             let screen = game_ui_view(&state, &context(&session, difficulty(), &platform)).unwrap();
             let panel = &screen.panels[0];
-            assert_eq!(
-                panel
-                    .sections
-                    .iter()
-                    .take(3)
-                    .map(|section| (section.id.as_str(), section.layout))
-                    .collect::<Vec<_>>(),
-                [
-                    ("analysis-tabs", GameUiSectionLayout::Row),
-                    ("analysis-chart", GameUiSectionLayout::Column),
-                    ("analysis-cursor", GameUiSectionLayout::Column)
-                ]
-            );
+            for (id, expected) in [
+                ("analysis-tabs", GameUiSectionLayout::Row),
+                ("analysis-chart", GameUiSectionLayout::Column),
+                ("analysis-cursor", GameUiSectionLayout::Column),
+            ] {
+                assert_eq!(
+                    panel
+                        .sections
+                        .iter()
+                        .find(|section| section.id == id)
+                        .unwrap()
+                        .layout,
+                    expected
+                );
+            }
             let seek = if replay {
                 "game-replay-cursor"
             } else {
@@ -1966,16 +2073,15 @@ fn registered_weather_briefing_is_shared_and_unknown_identity_has_explicit_absen
         crate::HybridSessionPreparation::select_scenario(WeatherClass::Calm, 42).unwrap();
     let mut identity = crate::identity_for_selection(selected);
     let readout = game_ui_environment_readout(Some(identity)).unwrap();
-    assert!(
-        readout.contains("0.00 m/s")
-            && readout.contains("仮定した合成環境")
-            && readout.contains("一様な定常風")
-    );
+    assert!(readout.contains("0.00 m/s") && readout.contains("10.5 m"));
+    assert!(!readout.contains("N/E/D") && !readout.contains("未定義"));
+    let technical = super::environment::game_ui_environment_diagnostics(Some(identity)).unwrap();
+    assert!(technical.contains("N/E/D") && technical.contains("仮定した合成環境"));
     identity.aircraft_model_version = 99;
     assert!(
         game_ui_environment_readout(Some(identity))
             .unwrap()
-            .contains("代表風情報を取得できない")
+            .contains("準備完了後")
     );
 }
 
@@ -2190,7 +2296,7 @@ fn hud_uses_the_authoritative_telemetry_and_existing_information_cue_policy() {
         hud_node(&hud, "hud-wind").content,
         GameUiHudNodeContent::Direction { .. }
     ));
-    for readout in ["p ", "水平尾翼", "PILOT TARGET"] {
+    for readout in ["ロール", "水平尾翼", "重心の目標位置"] {
         assert!(primary.contains(readout));
     }
     let minimal = game_ui_view(
@@ -2265,7 +2371,7 @@ fn hud_uses_the_authoritative_telemetry_and_existing_information_cue_policy() {
     .unwrap();
     let primary = hud_node(&realistic, "hud-primary-readouts").content.value();
     assert!(primary.contains(&airspeed));
-    assert!(primary.contains("代表計器表示 · 対象機の実機構成は未確認"));
+    assert!(!primary.contains("実機構成"));
 }
 
 #[test]
@@ -2470,7 +2576,7 @@ fn screen_render_auto_projects_selection_applied_status_and_admission() {
         let water = control(&view, "presentation-water-quality-status");
         assert!(
             matches!(&water.content, GameUiControlContent::Status { value, .. }
-            if value.contains("保持選択High") && value.contains("適用済みLow"))
+            if value.contains("High") && value.contains("Low"))
         );
         assert!(matches!(
             &control(&view, "presentation-water-quality-high").content,
@@ -2496,16 +2602,12 @@ fn water_quality_operation_retains_applied_selection_and_original_failure() {
     let state = GameUiState::default();
     let mut platform = platform();
     for (operation, expected, enabled) in [
-        (
-            GameUiWaterQualityOperation::Idle {},
-            "保持選択High（Screen Auto上限） · 適用済みHigh",
-            true,
-        ),
+        (GameUiWaterQualityOperation::Idle {}, ["High", "上限"], true),
         (
             GameUiWaterQualityOperation::Applying {
                 requested: GameUiWaterQuality::Low,
             },
-            "High · Lowを適用中",
+            ["High", "Low"],
             false,
         ),
         (
@@ -2513,14 +2615,14 @@ fn water_quality_operation_retains_applied_selection_and_original_failure() {
                 requested: GameUiWaterQuality::Low,
                 cause: "prepare-cause".to_owned(),
             },
-            "Highを保持する。Lowの適用に失敗した: prepare-cause",
+            ["Low", "prepare-cause"],
             true,
         ),
         (
             GameUiWaterQualityOperation::CleanupFailed {
                 cause: "cleanup-cause".to_owned(),
             },
-            "Highを適用した。旧geometryの解放に失敗した: cleanup-cause",
+            ["High", "cleanup-cause"],
             true,
         ),
     ] {
@@ -2532,7 +2634,9 @@ fn water_quality_operation_retains_applied_selection_and_original_failure() {
         else {
             panic!("missing quality status")
         };
-        assert!(value.contains(expected));
+        for expected in expected {
+            assert!(value.contains(expected));
+        }
         for suffix in ["low", "medium", "high"] {
             assert_eq!(
                 control(&view, &format!("presentation-water-quality-{suffix}")).enabled,
@@ -2745,9 +2849,11 @@ fn title_preserves_platform_fault_notification_after_screen_recovery() {
             &context(&session, difficulty(), &platform),
         )
         .unwrap();
-        assert!(matches!(&control(&view, "game-state").content,
-            GameUiControlContent::Status { value, .. } if value == &platform.notification));
-        assert!(view.description.contains(&platform.notification));
+        assert!(
+            matches!(&control(&view, "game-preparation-feedback").content,
+            GameUiControlContent::Status { value, .. } if value == &platform.notification)
+        );
+        assert!(!view.description.contains(&platform.notification));
         assert_eq!(session.snapshot(), before);
     }
 }

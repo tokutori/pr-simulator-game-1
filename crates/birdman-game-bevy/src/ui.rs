@@ -939,11 +939,11 @@ fn project_control(
                         },
                         1.0,
                     )?;
-                    label = format!(
-                        "{}{}\n{description}",
-                        if *selected { "● " } else { "" },
-                        control.label
-                    );
+                    label = format!("{}{}", if *selected { "● " } else { "" }, control.label);
+                    if !description.is_empty() {
+                        label.push('\n');
+                        label.push_str(description);
+                    }
                 }
                 _ => {}
             }
