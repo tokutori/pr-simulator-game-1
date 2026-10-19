@@ -656,15 +656,12 @@ pub(crate) mod tests {
     #[test]
     fn native_contact_save_uses_the_shared_key_and_keeps_archive_reexport_verbatim() {
         use birdman_game_core::{
-            ControlMode, SessionPhase, TailFlightTickInput, TailPilotIntent,
-            TailPilotPositionCommand, TailRateTarget,
+            SessionPhase, TailFlightTickInput, TailPilotIntent, TailPilotPositionCommand,
+            TailRateTarget,
         };
-        use birdman_game_session::application::{
-            ApplicationSession, BackendReadiness, SessionCommand,
-        };
+        use birdman_game_session::application::{BackendReadiness, SessionCommand};
         let directory = TestDirectory::new();
         let mut session = NativeSession::default();
-        session.game = ApplicationSession::new(ControlMode::Manual, 3_000, 42);
         for command in [
             SessionCommand::OpenSetup {},
             SessionCommand::Prepare {},

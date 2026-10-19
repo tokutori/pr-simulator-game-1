@@ -313,7 +313,10 @@ mod tests {
         assert_eq!(projection["identity"]["seed_high"], u32::MAX);
         let metadata = &projection["metadata"];
         assert_eq!(metadata["content_hash"]["kind"], "asset_bytes");
-        assert_eq!(metadata["content_hash"]["sha256"], ENVIRONMENT_V6_SHA256);
+        assert_eq!(
+            metadata["content_hash"]["sha256"],
+            birdman_game_session::record_archive::ENVIRONMENT_V6_SHA256
+        );
         assert_eq!(
             metadata["wind_domain"]["minimum_ned_m"],
             json!([-2000.0, -2000.0, -500.0])
