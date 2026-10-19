@@ -115,6 +115,8 @@ export async function generateGameUiFiles(schemas: GameUiSchemas, root: string):
   }
   const standalone = standaloneCode(ajv, validatorRoots);
   const bundled = await build({
+    absWorkingDir: root,
+    preserveSymlinks: true,
     stdin: { contents: standalone, resolveDir: root, sourcefile: "game-ui-validators.ts", loader: "js" },
     bundle: true,
     platform: "browser",
