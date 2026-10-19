@@ -39,6 +39,11 @@ jobs:
           cache: npm
       - name: Install pinned Rust toolchain
         run: rustup toolchain install --no-self-update
+      - name: Install native Linux window dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pkg-config libx11-dev libxcursor-dev libxrandr-dev libxi-dev libwayland-dev libxkbcommon-dev libxkbcommon-x11-0
       - name: Cache Rust dependencies and tools
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
         with:
@@ -83,6 +88,8 @@ jobs:
         run: python tools/allocation-check/main.py
       - name: Verify offline environment source extraction
         run: python -m unittest discover -s tools/environment-build -v
+      - name: Test native artifact packaging
+        run: python -m unittest discover -s tools/native-release -v
       - run: cargo doc --workspace --no-deps --locked
       - name: Verify core without std
         run: cargo build -p birdman-game-core --target wasm32v1-none --locked
