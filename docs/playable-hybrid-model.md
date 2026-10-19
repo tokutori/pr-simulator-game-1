@@ -7,7 +7,7 @@ versionを分離した合成モデルとRust側の入力保護で改善する。
 
 ## Identity
 
-公開既定は bpg041-playable-hybrid-mock / model 2、catalog 3 / scenario 3、
+公開既定は bpg041-playable-hybrid-mock / model 3、catalog 4 / scenario 4、
 bpg040-tail-rate-feedback / controller 3である。
 Weatherのenvironment対応は1/2/4/5/6、Typicalは共有offline環境6を使用する。
 旧catalog・scenario・controllerの登録と保存schemaの互換処理は提供しない。
@@ -16,8 +16,11 @@ snapshot保存値のqueryと現行モデルの再積分を区別する。
 ## Playableのgeometryとpolar
 
 主翼は投影面積18 m²・span18 m・dihedral5°、水平尾翼は面積2.5 m²・span3.4 m、
-垂直尾翼は面積0.5 m²・span0.7 mとする。airframe24 kg・pilot70 kg、datum慣性diag(900,1000,980) kg m²、
+垂直尾翼は面積0.5 m²・span0.7 mとする。ユーザー指定の公開モデル設定としてairframe40 kg・pilot60 kg、
+datum慣性diag(900,1000,980) kg m²、
 身体前後範囲±0.4 m、最大速度0.3 m/s、最大加速度0.8 m/s²である。
+慣性は質量から独立した合成入力を維持する。質量の改訂は実機同定を意味しない。
+合成重心とtrimは改訂後の質量から既存の運動量収支・釣合い計算で導出する。
 水平尾翼のbody quarter-chordはforward座標-3.6 m、垂直尾翼は-1.8 mとする。
 尾翼の静的moment生成にも同じ3.6 mの腕を用いる。local flowのq由来寄与を含む通常hybrid式を変更せず、
 尾翼の静的復元と動的減衰の釣合いを合成geometryで改善する。
@@ -129,6 +132,8 @@ guard無効時の一致、未定義alpha、First stageの風error、Hold/Set、�
 独立polar/trim/oracle・離散線形化試験を、公開Playableの受入と区別する。
 
 ### 2026-10-09の実行結果
+
+以下はmodel 2・airframe24 kg・pilot70 kgの履歴であり、model 3の受入結果へ転用しない。
 
 rootによる`cargo run -p birdman-game-session --example probe_hybrid_playability --locked`の
 `target/hybrid-playability-v3-continuous.txt`では、連続Set列を含む39列すべてがWaterContact・failureなしで終了した。

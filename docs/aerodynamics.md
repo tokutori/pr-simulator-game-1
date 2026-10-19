@@ -103,7 +103,7 @@ BPG-041 / [#220](https://github.com/tokutori/pr-simulator-game-1/issues/220)で�
 
 `HybridMockDefinition`は公開可能な架空値を所有し、geometry・strip・anchor・全機polarを検証する。
 構築・借用viewはheapとI/Oを使用しない。公開モデルは
-`bpg041-playable-hybrid-mock` / model version 2に統一する。
+`bpg041-playable-hybrid-mock` / model version 3に統一する。
 定義の構築、trim荷重・moving pilot連成残差、動的応答・controller・公開経路を個別に検証する。
 
 | 面 | 投影面積 / span / MAC [SI] | strip | body quarter-chordとframe |
@@ -122,7 +122,8 @@ BPG-041 / [#220](https://github.com/tokutori/pr-simulator-game-1/issues/220)で�
 neutralではproxy静荷重を再加算せず、実行時は7列を個別にPWL補間する。
 理想e=1、profile drag、主翼固有Cm=-0.02はsoftware仮定である。
 
-質量はairframe24 kg・pilot70 kg、datum慣性はdiag(900,1000,980) kg m²である。
+ユーザー指定の公開モデル設定としてairframe40 kg・pilot60 kgとする。
+datum慣性は独立した合成入力diag(900,1000,980) kg m²を維持し、質量比例の再調整を行わない。
 pilotのy=z=0、前後範囲±0.4 m、最大速度0.3 m/s、最大加速度0.8 m/s²を維持する。
 launchは指定された会場の合成重心位置・方位を使用し、yawとtrim pitchを合成する。
 trimのground velocityをCG→datum変換へ渡し、風を暗黙加算せず、platform傾斜をpitchへ混入しない。
