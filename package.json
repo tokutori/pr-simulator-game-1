@@ -24,6 +24,7 @@
     "preview": "vite preview --config web/vite.config.ts",
     "check:repository": "tsx tools/check/main.ts",
     "measure:web-auto": "tsx tools/web-auto-check/main.ts",
+    "test:web-ui": "tsx tools/web-ui-check/main.ts",
     "generate:game-ui": "tsx tools/game-ui-build/main.ts --write",
     "check:game-ui": "tsx tools/game-ui-build/main.ts --check",
     "verify": "npm run check:game-ui && tsx tools/wasm-build/main.ts && npm run --ignore-scripts typecheck && npm run lint && npm run --ignore-scripts test && npm run check:repository && npm run --ignore-scripts build"

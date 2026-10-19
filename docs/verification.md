@@ -53,6 +53,19 @@ query未発行・disjoint・旧epoch破棄の全数は取得しない。coverage
 500 msのbounded drain後にJSONを確定する。observer自体の追加CPU費用、headlessの通常60 Hz上限を記録し、補正で差し引かない。
 GPU 12.5 ms、RAF間隔、実80 FPS表示の受入は独立して判断する。通常ユーザーのbrowser profile、OS Window、物理キーを操作しない。
 
+## Web共有UIのCUI検査
+
+`npm run test:web-ui -- VITE_URL OUTPUT_DIRECTORY`は、既存のPlaywright-coreとheadless Chromiumから本番の共有UIを操作する。
+上記と同じローカルViteサーバーを使用し、Setupの直接選択、Briefingの技術情報、Countdown、実Flight/HUD、Pause/Resume、
+Result、Analysisの3図、Replay、実CSV/JSONダウンロード、同条件の再試行を検査する。
+JSONレポートへsource/build SHA、実WASM hash、browser/GPU、達成した操作と失敗を保存し、各段階の画像とダウンロード原文も保存する。
+browserは専用の一時contextを使用し、通常のprofile、可視window、computer use、既存のflight-logsを操作しない。
+出力先は専用directoryを指定する。実HMD/Phone VR、物理キー入力、配信bundleの性能と80 FPSの受入は別に確認する。
+
+```sh
+npm run test:web-ui -- http://127.0.0.1:4202/pr-simulator-game-1/ target/web-ui-screen
+```
+
 ## 共有elapsed Countdown
 
 #379の時間規則はcore、実際の生成WASM/facade/Web main、NativeのUpdate接続で検査する。800 msの表示3秒、1秒の表示2秒、3秒の一度だけのlaunch、不規則差分、同時刻・重複callback、負・非有限・overflow、取消後の旧token、stale owner、frame不可用時の安全取消を対象とする。
