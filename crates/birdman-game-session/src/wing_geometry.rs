@@ -211,7 +211,11 @@ impl WingGeometry {
 
     #[doc = "Fixed longitudinal beam from the shared spar root to the Web tail endpoint, in right/up/aft metres."]
     pub fn main_beam_endpoints(&self) -> [[f64; 3]; 2] {
-        [self.rods[0].endpoints[0], [0.0, -0.57, 4.75]]
+        Self::registered_main_beam_endpoints()
+    }
+
+    pub(crate) fn registered_main_beam_endpoints() -> [[f64; 3]; 2] {
+        [spar_point(-1.0, 0.0), [0.0, -0.57, 4.75]]
     }
 
     #[doc = "All foam definitions in the same order as WingFrame foam translations."]

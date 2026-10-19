@@ -158,19 +158,25 @@ describe("synthetic Birdman airframe", () => {
     } finally { airframe.dispose(); }
   });
 
-  it("preserves frozen Web cockpit shape and releases its bulk owner immediately", () => {
+  it("projects the fitted shared frame and unchanged cockpit shell and releases its bulk owner immediately", () => {
+    const expected = new CockpitGeometryBridge();
+    const endpoints = expected.rod_endpoints();
+    expected.free();
     const free = vi.spyOn(CockpitGeometryBridge.prototype, "free");
     const airframe = createBirdmanAirframe();
     try {
       expect(free).toHaveBeenCalledTimes(1);
       const frame = airframe.root.getObjectByName("open-cockpit-frame") as Group;
-      expect(frame.children).toHaveLength(14);
+      expect(frame.children).toHaveLength(18);
       expect(airframe.root.children.filter((part) => part.name === "canopy-rim-segment")).toHaveLength(16);
-      const firstRod = frame.children[0] as Mesh;
-      firstRod.updateMatrix();
-      for (const [height, expected] of [[-0.5, [0, -1.17, -1.10]], [0.5, [-0.16, -1.01, -0.75]]] as const) {
-        const actual = new Vector3(0, height, 0).applyMatrix4(firstRod.matrix).toArray();
-        for (const [index, coordinate] of actual.entries()) expect(coordinate).toBeCloseTo(expected[index] ?? Number.NaN, 11);
+      for (const [rodIndex, rod] of frame.children.entries()) {
+        rod.updateMatrix();
+        for (const [endpoint, height] of [-0.5, 0.5].entries()) {
+          const actual = new Vector3(0, height, 0).applyMatrix4(rod.matrix).toArray();
+          for (const [axis, coordinate] of actual.entries()) {
+            expect(coordinate).toBeCloseTo(endpoints[rodIndex * 6 + endpoint * 3 + axis] ?? Number.NaN, 11);
+          }
+        }
       }
       for (const [name, vertices, indices, samples, color, opacity] of [
         ["transparent-canopy", 150, 720, [[0, [0.025, -1.08, -1.10]], [6, [0, -1.045, -1.10]], [125, [0.22, -1.05, -0.31]]], 0xd6e3e5, 0.23],
@@ -202,7 +208,7 @@ describe("synthetic Birdman airframe", () => {
     bridge.free();
     expect(positions).toHaveLength((150 + 125) * 3);
     expect(indices).toHaveLength(720 + 576);
-    expect(radii).toHaveLength(30);
+    expect(radii).toHaveLength(34);
     expect(positions[0]).toBe(100);
   });
 

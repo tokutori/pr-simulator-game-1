@@ -13,6 +13,10 @@ const COCKPIT_STATIONS: [[f64; 4]; 10] = [
     [1.22, -0.87, 0.025, 0.04],
 ];
 
+const FRAME_RADIUS: f64 = 0.012;
+const ATTACHMENT_RADIUS: f64 = 0.008;
+const SHELL_STEPS: u32 = 24;
+
 #[doc = "Material meanings and the existing Web palette, independent of the rendering engine."]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u32)]
@@ -73,7 +77,7 @@ pub struct CockpitSurface {
 
 #[doc = "Static cockpit definition, built once without flight state or I/O."]
 pub struct CockpitGeometry {
-    #[doc = "Fourteen frame tubes followed by sixteen canopy rim segments."]
+    #[doc = "Eighteen shell-contained frame and beam-attachment tubes, followed by sixteen canopy rim segments."]
     pub rods: Vec<CockpitRod>,
     #[doc = "Nose canopy followed by rear fairing."]
     pub surfaces: [CockpitSurface; 2],
@@ -86,6 +90,12 @@ impl Default for CockpitGeometry {
 }
 
 impl CockpitGeometry {
+    pub(crate) fn shell_vertices() -> impl Iterator<Item = [f64; 3]> {
+        COCKPIT_STATIONS.into_iter().flat_map(|station| {
+            (0..SHELL_STEPS).map(move |step| canopy_point(station, step, SHELL_STEPS))
+        })
+    }
+
     #[doc = "Display-only FRD eye mount at the centreline of the widest existing cockpit section. This is a presentation assumption, not a measured pilot eye position. Body displacement is applied by the camera adapter."]
     pub fn pilot_eye_offset_frd() -> [f64; 3] {
         let mut widest = COCKPIT_STATIONS[0];
@@ -97,18 +107,42 @@ impl CockpitGeometry {
         [-widest[0], 0.0, -widest[1]]
     }
 
-    #[doc = "Constructs the unchanged Web cockpit shape and topology."]
+    #[doc = "Constructs the existing cockpit shell and fits its frame to the shell and registered main beam."]
     pub fn new() -> Self {
-        let mut rods = Vec::with_capacity(30);
-        for side in [-1.0, 1.0] {
-            let upper_front = [side * 0.16, -1.01, -0.75];
-            let upper_rear = [side * 0.16, -1.01, 0.65];
-            let lower_front = [side * 0.15, -1.36, -0.65];
-            let lower_rear = [side * 0.15, -1.35, 0.48];
+        let mut rods = Vec::with_capacity(34);
+        let nose = inset_shell_point(COCKPIT_STATIONS[1][0], [0.0, -1.0], FRAME_RADIUS);
+        let [beam_front, beam_rear] =
+            crate::wing_geometry::WingGeometry::registered_main_beam_endpoints();
+        let beam_direction = [beam_rear[1] - beam_front[1], beam_rear[2] - beam_front[2]];
+        let beam_length = beam_direction[0].hypot(beam_direction[1]);
+        let beam_radius = crate::wing_geometry::MAIN_BEAM_RADIUS;
+        let beam_underside = |aft: f64| {
+            let fraction = (aft - beam_front[2]) / beam_direction[1];
+            [
+                0.0,
+                beam_front[1] + fraction * beam_direction[0]
+                    - beam_radius * beam_direction[1] / beam_length,
+                aft + beam_radius * beam_direction[0] / beam_length,
+            ]
+        };
+        let attachment_points = [
+            beam_underside(beam_front[2]),
+            beam_underside(COCKPIT_STATIONS[7][0]),
+        ];
+        let lower_points = [-1.0, 1.0].map(|side| {
+            [
+                inset_shell_point(-0.65, [side, -1.0], FRAME_RADIUS),
+                inset_shell_point(0.48, [side, -1.0], FRAME_RADIUS),
+            ]
+        });
+        for (side_index, side) in [-1.0, 1.0].into_iter().enumerate() {
+            let upper_front = inset_shell_point(-0.75, [side, 1.0], FRAME_RADIUS);
+            let upper_rear = inset_shell_point(0.65, [side, 1.0], FRAME_RADIUS);
+            let [lower_front, lower_rear] = lower_points[side_index];
             for (from, to, radius) in [
-                ([0.0, -1.17, -1.10], upper_front, 0.012),
-                (upper_front, upper_rear, 0.012),
-                (lower_front, lower_rear, 0.012),
+                (nose, upper_front, FRAME_RADIUS),
+                (upper_front, upper_rear, FRAME_RADIUS),
+                (lower_front, lower_rear, FRAME_RADIUS),
                 (upper_front, lower_front, 0.008),
                 (upper_rear, lower_rear, 0.008),
                 (lower_front, upper_rear, 0.007),
@@ -119,10 +153,23 @@ impl CockpitGeometry {
                     material: CockpitMaterial::Frame,
                 });
             }
+            for attachment in attachment_points {
+                let fraction = (attachment[2] - upper_front[2]) / (upper_rear[2] - upper_front[2]);
+                rods.push(CockpitRod {
+                    endpoints: [
+                        attachment,
+                        core::array::from_fn(|axis| {
+                            upper_front[axis] + fraction * (upper_rear[axis] - upper_front[axis])
+                        }),
+                    ],
+                    radius: ATTACHMENT_RADIUS,
+                    material: CockpitMaterial::Frame,
+                });
+            }
         }
-        for aft in [-0.65, 0.48] {
+        for index in 0..2 {
             rods.push(CockpitRod {
-                endpoints: [[-0.15, -1.36, aft], [0.15, -1.36, aft]],
+                endpoints: [lower_points[0][index], lower_points[1][index]],
                 radius: 0.008,
                 material: CockpitMaterial::Frame,
             });
@@ -147,6 +194,46 @@ impl CockpitGeometry {
             ],
         }
     }
+}
+
+fn shell_section(aft: f64) -> [f64; 4] {
+    let [first, last] = COCKPIT_STATIONS
+        .windows(2)
+        .find(|sections| aft >= sections[0][0] && aft <= sections[1][0])
+        .expect("frame point lies within cockpit shell")
+    else {
+        unreachable!()
+    };
+    let fraction = (aft - first[0]) / (last[0] - first[0]);
+    core::array::from_fn(|axis| first[axis] + fraction * (last[axis] - first[axis]))
+}
+
+fn inset_shell_point(aft: f64, direction: [f64; 2], radius: f64) -> [f64; 3] {
+    let section = shell_section(aft);
+    let maximum_slope = COCKPIT_STATIONS
+        .windows(2)
+        .map(|sections| {
+            let [first, last] = [sections[0], sections[1]];
+            (last[2] - first[2]).hypot((last[1] - first[1]).abs() + (last[3] - first[3]).abs())
+                / (last[0] - first[0])
+        })
+        .fold(0.0, f64::max);
+    let inset = radius * (1.0 + maximum_slope);
+    let desired = [direction[0] * section[2], direction[1] * section[3]];
+    let mut scale: f64 = 1.0;
+    for step in 0..SHELL_STEPS {
+        let first = canopy_point(section, step, SHELL_STEPS);
+        let last = canopy_point(section, step + 1, SHELL_STEPS);
+        let edge = [last[0] - first[0], last[1] - first[1]];
+        let length = edge[0].hypot(edge[1]);
+        let normal = [edge[1] / length, -edge[0] / length];
+        let projection = normal[0] * desired[0] + normal[1] * desired[1];
+        if projection > 0.0 {
+            let distance = normal[0] * first[0] + normal[1] * (first[1] - section[1]);
+            scale = scale.min((distance - inset) / projection);
+        }
+    }
+    [desired[0] * scale, section[1] + desired[1] * scale, aft]
 }
 
 fn canopy_point(
@@ -249,7 +336,7 @@ mod tests {
     #[test]
     fn frozen_web_cockpit_stations_topology_and_structure_are_preserved() {
         let geometry = CockpitGeometry::new();
-        assert_eq!(geometry.rods.len(), 30);
+        assert_eq!(geometry.rods.len(), 34);
         assert_eq!(geometry.surfaces[0].positions.len(), 150);
         assert_eq!(geometry.surfaces[0].indices.len(), 720);
         assert_eq!(geometry.surfaces[1].positions.len(), 125);
@@ -286,18 +373,13 @@ mod tests {
             );
             assert_eq!(&surface.indices[..6], &[0, 1, 25, 1, 26, 25]);
         }
-        assert_eq!(
-            geometry.rods[0].endpoints,
-            [[0.0, -1.17, -1.10], [-0.16, -1.01, -0.75]]
-        );
-        assert_eq!(geometry.rods[6].endpoints[1], [0.16, -1.01, -0.75]);
         assert!(
-            geometry.rods[..14]
+            geometry.rods[..18]
                 .iter()
                 .all(|rod| rod.material == CockpitMaterial::Frame)
         );
         assert!(
-            geometry.rods[14..]
+            geometry.rods[18..]
                 .iter()
                 .all(|rod| rod.material == CockpitMaterial::Rim)
         );
@@ -322,7 +404,7 @@ mod tests {
                 }
             }
         }
-        for (index, rod) in geometry.rods[14..].iter().enumerate() {
+        for (index, rod) in geometry.rods[18..].iter().enumerate() {
             assert!(
                 rod.endpoints
                     .iter()
@@ -330,10 +412,133 @@ mod tests {
                     .all(|value| value.is_finite())
             );
             assert_eq!(rod.radius, 0.009);
-            let next = &geometry.rods[14 + (index + 1) % 16];
+            let next = &geometry.rods[18 + (index + 1) % 16];
             for (actual, expected) in rod.endpoints[1].iter().zip(next.endpoints[0]) {
                 assert!((*actual - expected).abs() < 1.0e-12);
             }
         }
+    }
+
+    #[test]
+    fn frame_tube_radii_remain_inside_the_existing_shell() {
+        let geometry = CockpitGeometry::new();
+        for (rod_index, rod) in geometry.rods[..18].iter().enumerate() {
+            for step in 0..=96 {
+                let fraction = f64::from(step) / 96.0;
+                let center: [f64; 3] = core::array::from_fn(|axis| {
+                    rod.endpoints[0][axis]
+                        + fraction * (rod.endpoints[1][axis] - rod.endpoints[0][axis])
+                });
+                for right in -1..=1 {
+                    for up in -1..=1 {
+                        for aft in -1..=1 {
+                            let direction = [f64::from(right), f64::from(up), f64::from(aft)];
+                            let length = direction
+                                .iter()
+                                .map(|value| value * value)
+                                .sum::<f64>()
+                                .sqrt();
+                            if length == 0.0 {
+                                continue;
+                            }
+                            let point = core::array::from_fn(|axis| {
+                                center[axis] + rod.radius * direction[axis] / length
+                            });
+                            assert!(
+                                shell_contains(point),
+                                "frame rod {rod_index}, fraction {fraction}, point {point:?} escapes shell"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn frame_attaches_to_the_registered_beam_without_entering_the_pilot_view() {
+        let geometry = CockpitGeometry::new();
+        let [beam_front, beam_rear] =
+            crate::wing_geometry::WingGeometry::registered_main_beam_endpoints();
+        let beam_direction: [f64; 3] =
+            core::array::from_fn(|axis| beam_rear[axis] - beam_front[axis]);
+        let beam_length_squared = beam_direction
+            .iter()
+            .map(|value| value * value)
+            .sum::<f64>();
+        let [forward, right, down] = CockpitGeometry::pilot_eye_offset_frd();
+        let eye = [right, -down, -forward];
+        for index in [6, 7, 14, 15] {
+            let rod = &geometry.rods[index];
+            let attachment = rod.endpoints[0];
+            let relative: [f64; 3] =
+                core::array::from_fn(|axis| attachment[axis] - beam_front[axis]);
+            let fraction = relative
+                .iter()
+                .zip(beam_direction)
+                .map(|(first, second)| first * second)
+                .sum::<f64>()
+                / beam_length_squared;
+            assert!((-f64::EPSILON..=1.0 + f64::EPSILON).contains(&fraction));
+            let distance = (0..3)
+                .map(|axis| (relative[axis] - fraction * beam_direction[axis]).powi(2))
+                .sum::<f64>()
+                .sqrt();
+            assert!((distance - crate::wing_geometry::MAIN_BEAM_RADIUS).abs() < 1.0e-12);
+            for step in 0..=32 {
+                let fraction = f64::from(step) / 32.0;
+                let point: [f64; 3] = core::array::from_fn(|axis| {
+                    rod.endpoints[0][axis]
+                        + fraction * (rod.endpoints[1][axis] - rod.endpoints[0][axis])
+                });
+                if point[2] < eye[2] {
+                    let above = point[1] - eye[1] - rod.radius;
+                    let forward = eye[2] - point[2] + rod.radius;
+                    assert!(
+                        above.atan2(forward)
+                            > crate::SCREEN_VERTICAL_FIELD_OF_VIEW_DEGREES.to_radians() / 2.0
+                    );
+                }
+                let distance_to_eye = (0..3)
+                    .map(|axis| (point[axis] - eye[axis]).powi(2))
+                    .sum::<f64>()
+                    .sqrt();
+                assert!(distance_to_eye > rod.radius);
+            }
+        }
+    }
+
+    #[test]
+    fn contact_vertices_use_the_same_unmodified_shell_sections() {
+        let vertices: Vec<_> = CockpitGeometry::shell_vertices().collect();
+        assert_eq!(
+            vertices.len(),
+            COCKPIT_STATIONS.len() * SHELL_STEPS as usize
+        );
+        let geometry = CockpitGeometry::new();
+        for surface in &geometry.surfaces {
+            for vertex in &surface.positions {
+                assert!(vertices.iter().any(|candidate| {
+                    vertex
+                        .iter()
+                        .zip(candidate)
+                        .all(|(actual, expected)| (*actual - *expected as f32).abs() < 1.0e-7)
+                }));
+            }
+        }
+    }
+
+    fn shell_contains([right, up, aft]: [f64; 3]) -> bool {
+        if !(COCKPIT_STATIONS[0][0]..=COCKPIT_STATIONS[9][0]).contains(&aft) {
+            return false;
+        }
+        let section = shell_section(aft);
+        (0..SHELL_STEPS).all(|step| {
+            let first = canopy_point(section, step, SHELL_STEPS);
+            let last = canopy_point(section, step + 1, SHELL_STEPS);
+            let signed =
+                (last[0] - first[0]) * (up - first[1]) - (last[1] - first[1]) * (right - first[0]);
+            signed >= -1.0e-12
+        })
     }
 }
