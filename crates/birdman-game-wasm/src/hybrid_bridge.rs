@@ -167,6 +167,11 @@ impl HybridGameSessionBridge {
         ))
     }
 
+    /// Creates the shared public defaults, independently of explicit mode constructors.
+    pub fn public_default() -> Self {
+        Self::from_application(ApplicationSession::default())
+    }
+
     /// Opens the existing Rust FlightSetup phase, clearing prior preparation metadata.
     pub fn open_setup(&mut self) -> Result<(), JsValue> {
         self.execute_application(SessionCommand::OpenSetup {}, BackendReadiness::Preparing)
@@ -335,8 +340,16 @@ impl HybridGameSessionBridge {
     }
 
     fn from_mode(control_mode: ControlMode, maximum_flight_ticks: u64, seed: u64) -> Self {
+        Self::from_application(ApplicationSession::new(
+            control_mode,
+            maximum_flight_ticks,
+            seed,
+        ))
+    }
+
+    fn from_application(session: ApplicationSession) -> Self {
         Self {
-            session: ApplicationSession::new(control_mode, maximum_flight_ticks, seed),
+            session,
             archived: None,
             ui: birdman_game_session::game_ui::GameUiState::default(),
             ui_view_cache: None,

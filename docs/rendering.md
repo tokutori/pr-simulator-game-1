@@ -10,7 +10,8 @@ Desktop・WebXR・Phone VRのbackendと光学profileは [presentation契約](pre
 
 ## Screenの3D描画解像度
 
-Flight SetupとPause Settingsで100%・75%・50%を選択する。既定は100%である。
+Flight SetupとPause SettingsでAuto・100%・75%・50%を選択する。既定はAutoであり、初期の適用済み解像度は100%である。
+共有RustのcontrollerがSceneから有効な品質方針を導出する。FlightSetup・Briefing・Countdown・Flight（Pauseを含む）では保持した選択を適用する。Boot・Title（Attractを含む）・Result・ReplayはAutoを適用し、フライト用の手動選択と水面上限を保持する。フライト側へ復帰すると、手動設定の三値を資源交換のACK後に復元する。背景のAutoは水面Highを上限とする。
 候補・表示順・ラベル・Screen限定の操作受付は共有Rustの`ScreenRenderScale`とgame UIが所有する。
 設定は各物理描画軸の倍率であり、50%では3Dの画素数がおよそ25%になる。UIの論理解像度、画角、入力座標、固定物理tick、飛行記録は維持する。
 Webは元のdevice pixel ratioと選択倍率を分離し、Three.jsの公開`setPixelRatio`へ積を渡す。canvasのCSS寸法は維持する。

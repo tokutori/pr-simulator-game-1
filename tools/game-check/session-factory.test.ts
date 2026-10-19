@@ -12,6 +12,18 @@ initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_ga
 afterEach(() => { vi.restoreAllMocks(); });
 
 describe("current application session factory", () => {
+  it("uses shared Light assistance and the shared seed when no explicit settings are supplied", () => {
+    const session = createAppSession();
+    try {
+      expect(session.readLifecycle()).toMatchObject({ phaseCode: 0, controlModeCode: 1 });
+      expect(session.readDifficulty().assistanceCode).toBe(2);
+      launchCurrentSession(session);
+      const snapshot = session.readSnapshot();
+      if (snapshot.identity.kind !== "prepared") throw new Error("Expected the default prepared identity");
+      expect(snapshot.identity.scenario).toMatchObject({ seedLow: 0x55aa, seedHigh: 0x5f98 });
+    } finally { session.dispose(); }
+  });
+
   it.each([0, 1, 2] as const)("constructs mode %s with Rust-owned state and query generations", (mode) => {
     const session = createAppSession({ controlModeCode: mode, seedLow: 0xffff_ffff, seedHigh: 22 });
     const free = vi.spyOn(HybridGameSessionBridge.prototype, "free");

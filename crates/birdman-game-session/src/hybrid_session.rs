@@ -15,8 +15,7 @@ use birdman_game_format::{
 };
 
 use crate::{
-    DEFAULT_CONTROL_MODE, DEFAULT_MAXIMUM_FLIGHT_TICKS, DEFAULT_SESSION_SEED, DEFAULT_WEATHER,
-    LaunchVenueError,
+    DEFAULT_MAXIMUM_FLIGHT_TICKS, DEFAULT_SESSION_SEED, DEFAULT_WEATHER, LaunchVenueError,
     airframe_contact::{AirframeContactError, registered_contact_points},
     environment::{bundled_environment, preset_wind_for_version},
     launch_venue,
@@ -82,7 +81,7 @@ impl HybridSessionPreparation {
     /// Builds the same default configuration selected by the public Web application.
     pub fn try_default() -> Result<Self, HybridSessionPreparationError> {
         Self::try_new(
-            DEFAULT_CONTROL_MODE,
+            crate::default_control_mode(),
             DEFAULT_MAXIMUM_FLIGHT_TICKS,
             DEFAULT_SESSION_SEED,
         )

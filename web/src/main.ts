@@ -620,12 +620,12 @@ async function initializePresentation(requestId: number): Promise<void> {
     dispatch({ type: "screen-render-observed", snapshot: parseScreenRenderAutoSnapshot(policy.snapshot_json()) });
     const bundle = createThreeRenderer(canvas, panelCanvas, navigator.xr ?? null,
       screen_vertical_field_of_view_degrees(), model.lakeWaterQuality.applied, headHudCanvas, {
-        policy, onSnapshot: (snapshot) => {
+        policy, scene: () => gameSessionPhaseCode(model.gameSession) < 0 ? "Boot" : model.sharedGameUi?.scene ?? "Boot", onSnapshot: (snapshot) => {
           if (flightRenderer === bundle.renderer) dispatch({ type: "screen-render-observed", snapshot });
         }
       });
     presentationOwner = { kind: "renderer", renderer: bundle.renderer };
-    const initializedSession = await initializeAppSession({ controlModeCode: 0, seedLow: 0x55aa, seedHigh: 0x5f98 });
+    const initializedSession = await initializeAppSession();
     const session = initializedSession;
     gameSession = session;
     if (isPageHidden()) throw new Error("Page became hidden during initialization");

@@ -206,10 +206,10 @@ fn prepared_launch_query_matches_the_first_live_frame_without_starting_physics()
 #[test]
 fn shared_native_preparation_matches_wasm_states_records_and_public_defaults() {
     let seed = birdman_game_session::DEFAULT_SESSION_SEED;
-    let defaults = HybridGameSessionBridge::new(0, seed as u32, (seed >> 32) as u32).unwrap();
+    let defaults = HybridGameSessionBridge::public_default();
     assert_eq!(
         defaults.session.difficulty(),
-        birdman_game_session::default_difficulty(birdman_game_session::DEFAULT_CONTROL_MODE)
+        ApplicationSession::default().difficulty()
     );
     assert_eq!(defaults.session.seed(), seed);
     for mode in [

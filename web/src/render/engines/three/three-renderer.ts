@@ -439,6 +439,7 @@ export function createThreeRenderer(
   const screenAuto = screenAutoBinding === undefined ? null
     : new ScreenAutoRenderer(renderer.getContext(), {
       policy: screenAutoBinding.policy,
+      scene: screenAutoBinding.scene,
       onSnapshot(snapshot) {
         screenAutoBinding.onSnapshot(snapshot);
         settleManualLakeQuality(snapshot);

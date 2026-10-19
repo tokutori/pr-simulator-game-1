@@ -42,6 +42,37 @@ fn neutral() -> TailFlightTickInput {
 }
 
 #[test]
+fn public_defaults_select_light_without_reinterpreting_explicit_control_modes() {
+    let mut application = ApplicationSession::default();
+    assert_eq!(
+        application.difficulty().assistance(),
+        AssistanceLevel::Light
+    );
+    assert_eq!(application.seed(), crate::DEFAULT_SESSION_SEED);
+    execute(&mut application, SessionCommand::OpenSetup {});
+    execute(&mut application, SessionCommand::Prepare {});
+    let ControlMode::Shared(authority) = application.prepared().unwrap().control_mode else {
+        panic!("Light assistance must use shared authority");
+    };
+    assert_eq!(authority.value(), 0.2);
+    for (mode, assistance) in [
+        (ControlMode::Manual, AssistanceLevel::Manual),
+        (
+            ControlMode::Shared(birdman_game_core::FbwAuthority::try_new(0.5).unwrap()),
+            AssistanceLevel::Assisted,
+        ),
+        (ControlMode::Automatic, AssistanceLevel::Strong),
+    ] {
+        assert_eq!(
+            ApplicationSession::new(mode, 3, 42)
+                .difficulty()
+                .assistance(),
+            assistance
+        );
+    }
+}
+
+#[test]
 fn record_commands_keep_the_four_wire_shapes_and_reject_other_ui_actions() {
     for (command, json) in [
         (

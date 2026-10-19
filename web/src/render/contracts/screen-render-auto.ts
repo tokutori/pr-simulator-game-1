@@ -1,6 +1,7 @@
 import type { ScreenRenderAutoSnapshot } from "../../generated/screen-render-auto.js";
 import { validateScreenRenderAutoSnapshot } from "../../generated/game-ui-validators.js";
 import type { LakeWaterQuality } from "./lake-water.js";
+import type { GameScene } from "./ui.js";
 
 export function parseScreenRenderAutoSnapshot(json: string): ScreenRenderAutoSnapshot {
   const snapshot: unknown = JSON.parse(json);
@@ -14,6 +15,7 @@ export interface ScreenRenderAutoPolicy {
   snapshot_json(): string;
   epoch(): number;
   measurement_enabled(): boolean;
+  set_scene(scene: GameScene, now: number): void;
   requested_scale_percent(): number;
   requested_shadow_map_size(): number;
   requested_water_quality(): string | undefined;
@@ -32,5 +34,6 @@ export interface ScreenRenderAutoPolicy {
 
 export interface ScreenRenderAutoBinding {
   readonly policy: ScreenRenderAutoPolicy;
+  readonly scene: () => GameScene;
   readonly onSnapshot: (snapshot: ScreenRenderAutoSnapshot) => void;
 }

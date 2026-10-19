@@ -14,7 +14,7 @@ pub struct ScreenRenderAutoBridge {
 
 #[wasm_bindgen]
 impl ScreenRenderAutoBridge {
-    /// Creates the default manual full-resolution controller.
+    /// Creates the default Auto controller with retained full-resolution settings.
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
         Self {
@@ -40,6 +40,16 @@ impl ScreenRenderAutoBridge {
     /// Returns whether the shared policy currently admits measurements.
     pub fn measurement_enabled(&self) -> bool {
         self.controller.measurement_enabled()
+    }
+
+    /// Decodes the shared scene name and applies the shared effective quality policy.
+    pub fn set_scene(&mut self, scene: &str, now_ms: f64) -> Result<(), JsValue> {
+        let scene = serde_json::from_value(serde_json::Value::String(scene.to_owned()))
+            .map_err(|cause| JsValue::from_str(&cause.to_string()))?;
+        self.controller
+            .set_scene(scene, now_ms)
+            .map(|_| ())
+            .map_err(error)
     }
 
     /// Returns zero when no resource application is pending.
