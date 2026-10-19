@@ -1,7 +1,8 @@
 import "./lake-model-fixture.js";
 import { describe, expect, it } from "vitest";
 import { PerspectiveCamera, Vector3 } from "three";
-import { CockpitGeometryBridge, screen_vertical_field_of_view_degrees } from "../../web/pkg/birdman_game_wasm.js";
+import { CockpitGeometryBridge, HybridGameSessionBridge, screen_vertical_field_of_view_degrees } from "../../web/pkg/birdman_game_wasm.js";
+import { encodeTailLogicalInput, parseTailSessionSnapshot } from "../../web/src/game/tail-session-codec.js";
 import {
   createPilotEyePoint, pilotEyePoseThree, poseFrdToThree, syntheticPilotEyePoint
 } from "../../web/src/render/camera/pilot-eye-point.js";
@@ -67,30 +68,34 @@ describe("FRD camera basis", () => {
     const bridge = new CockpitGeometryBridge();
     const endpoints = bridge.rod_endpoints();
     bridge.free();
+    const frontRods = [0, 8].map((rod) => ({
+      nose: new Vector3().fromArray(endpoints, rod * 6),
+      front: new Vector3().fromArray(endpoints, rod * 6 + 3)
+    }));
+    expect(frontRods[0]?.nose).toEqual(frontRods[1]?.nose);
+    expect(frontRods[0]?.front.x).toBeLessThan(0);
+    expect(frontRods[1]?.front.x).toBeGreaterThan(0);
     const point = syntheticPilotEyePoint();
-    for (const initial of [-0.4, 0, 0.4]) {
-      for (const current of [-0.4, 0, 0.4]) {
-        for (const aspect of [9 / 16, 16 / 9]) {
-          const eye = pilotEyePoseThree(point, current, initial);
-          const camera = new PerspectiveCamera(screen_vertical_field_of_view_degrees(), aspect, 0.05, 100_000);
-          camera.position.set(eye.position.x, eye.position.y, eye.position.z);
-          camera.updateMatrixWorld();
-          for (const rod of [0, 6]) {
-            const nose = new Vector3().fromArray(endpoints, rod * 6);
-            const front = new Vector3().fromArray(endpoints, rod * 6 + 3);
-            for (const fraction of [0, 0.1]) {
-              const projected = nose.clone().lerp(front, fraction).project(camera);
-              expect(Math.abs(projected.x)).toBeLessThan(1);
-              expect(Math.abs(projected.y)).toBeLessThan(1);
-              expect(projected.z).toBeGreaterThan(-1);
-              expect(projected.z).toBeLessThan(1);
-            }
+    const { initial, positions } = registeredPilotTravel();
+    for (const current of positions) {
+      for (const aspect of [9 / 16, 16 / 9]) {
+        const eye = pilotEyePoseThree(point, current, initial);
+        const camera = new PerspectiveCamera(screen_vertical_field_of_view_degrees(), aspect, 0.05, 100_000);
+        camera.position.set(eye.position.x, eye.position.y, eye.position.z);
+        camera.updateMatrixWorld();
+        for (const { nose, front } of frontRods) {
+          for (const fraction of [0, 0.1]) {
+            const projected = nose.clone().lerp(front, fraction).project(camera);
+            expect(Math.abs(projected.x)).toBeLessThan(1);
+            expect(Math.abs(projected.y)).toBeLessThan(1);
+            expect(projected.z).toBeGreaterThan(-1);
+            expect(projected.z).toBeLessThan(1);
           }
-          const horizon = camera.position.clone().add(new Vector3(0, 0, -1000)).project(camera);
-          expect(horizon.x).toBeCloseTo(0, 12);
-          expect(horizon.y).toBeCloseTo(0, 12);
-          expect(eye.position.z).toBeCloseTo(-0.06 - (current - initial), 12);
         }
+        const horizon = camera.position.clone().add(new Vector3(0, 0, -1000)).project(camera);
+        expect(horizon.x).toBeCloseTo(0, 12);
+        expect(horizon.y).toBeCloseTo(0, 12);
+        expect(eye.position.z).toBeCloseTo(-0.06 - (current - initial), 12);
       }
     }
   });
@@ -123,6 +128,29 @@ describe("FRD camera basis", () => {
     )));
   });
 });
+
+function registeredPilotTravel(): Readonly<{ initial: number; positions: readonly number[] }> {
+  const session = new HybridGameSessionBridge(0, 0, 0);
+  try {
+    session.open_setup();
+    session.prepare();
+    session.mark_briefing_ready();
+    session.start_countdown(1);
+    session.observe_countdown(session.countdown_token(), 1, true);
+    const initial = parseTailSessionSnapshot(session.snapshot_json());
+    if (initial.frame.kind !== "flight") throw new Error("Expected registered launch state");
+    const positions = [-1, 0, 1].map((normalized) => {
+      const result = parseTailSessionSnapshot(session.advance_tick_json(encodeTailLogicalInput({
+        controlLayout: "tail_incidence", noseUp: 0, turnRight: 0,
+        desiredPitchRateRadiansPerSecond: 0, desiredYawRateRadiansPerSecond: 0,
+        pilotPositionCommand: { kind: "set", normalized }
+      })));
+      if (result.frame.kind !== "flight") throw new Error("Expected registered pilot target");
+      return result.frame.state.pilotPositionTargetMeters;
+    });
+    return { initial: initial.frame.state.pilotPositionMeters, positions };
+  } finally { session.free(); }
+}
 
 function rendererVector(valueFrd: Vec3): Vec3 {
   return vec3(valueFrd.y, -valueFrd.z, -valueFrd.x);
