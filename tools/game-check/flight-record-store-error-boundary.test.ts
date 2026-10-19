@@ -167,7 +167,7 @@ describe("FlightRecord storage error boundary", () => {
       expect(saved.id).toBe(3);
       expect(saved.personalBest).toMatchObject({ kind: "existing", id: route === "indexed" ? 2 : 1 });
       expect(await repository.load(2)).toBe(fixture.json);
-      expect(await repository.list()).toHaveLength(3);
+      expect(await repository.recent(3)).toHaveLength(3);
       expect(trace.entries.every(({ freeCount }) => freeCount === 1)).toBe(true);
       expect(fixture.connections.every(({ close }) => close.mock.calls.length === 1)).toBe(true);
     } finally { await fixture.dispose(); }

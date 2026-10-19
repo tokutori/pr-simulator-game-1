@@ -5,8 +5,6 @@ use birdman_game_session::game_ui::{
     game_ui_view, update_game_ui,
 };
 
-const MAX_UI_INPUT_BYTES: usize = 131_072;
-
 #[wasm_bindgen]
 impl HybridGameSessionBridge {
     /// Observes the shared structural revision without serializing a complete view.
@@ -148,7 +146,7 @@ impl HybridGameSessionBridge {
 }
 
 fn decode<T: serde::de::DeserializeOwned>(json: &str) -> Result<T, JsValue> {
-    if json.len() > MAX_UI_INPUT_BYTES {
+    if json.len() > birdman_game_session::game_ui::GAME_UI_MAX_INPUT_BYTES {
         return Err(JsValue::from_str(
             "shared UI input exceeds the boundary limit",
         ));

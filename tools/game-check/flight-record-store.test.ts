@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { IDBFactory, IDBObjectStore as FakeObjectStore } from "fake-indexeddb";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { initSync } from "../../web/pkg/birdman_game_wasm.js";
+import { HybridGameSessionBridge, initSync } from "../../web/pkg/birdman_game_wasm.js";
 import { createArchivedPersonalBestSelection } from "../../web/src/game/archived-personal-best.js";
 import {
   FlightRecordRepository, IndexedDbFlightRecordPersistence,
@@ -10,6 +10,9 @@ import {
   type StoredFlightRecord, type StoredFlightRecordSummary
 } from "../../web/src/game/flight-record-store.js";
 import { currentRecordFixture } from "./current-session-fixture.js";
+import { gameUiInputQuery } from "../../web/src/generated/game-ui-input-query.js";
+import { encodeGameUiPlatformInput } from "../../web/src/app/game-ui-codec.js";
+import { createSharedGameUiSession, sharedGameUiPlatform } from "./shared-game-ui-fixture.js";
 
 initSync({ module: new Uint8Array(readFileSync(fileURLToPath(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url)))) });
 afterEach(() => { vi.restoreAllMocks(); });
@@ -29,9 +32,10 @@ class MemoryFlightRecordPersistence implements FlightRecordPersistencePort {
   get(id: number): Promise<StoredFlightRecord | null> {
     return Promise.resolve(this.records.find((record) => record.id === id) ?? null);
   }
-  getAll(): Promise<readonly StoredFlightRecordSummary[]> {
+  getRecent(limit: number): Promise<readonly StoredFlightRecordSummary[]> {
     const best = new Set(this.personalBestIds.values());
-    return Promise.resolve(this.records.map(({ id, savedAt }) => ({ id, savedAt, personalBest: best.has(id) })));
+    return Promise.resolve([...this.records].sort((left, right) => right.id - left.id).slice(0, limit)
+      .map(({ id, savedAt }) => ({ id, savedAt, personalBest: best.has(id) })));
   }
 }
 
@@ -97,6 +101,94 @@ async function databaseFixture(records: readonly unknown[] = [], metadata: reado
 }
 
 describe("Current FlightRecord persistence", () => {
+  it("keeps the Title query bounded with 2000 saved records while retaining an older Personal Best", async () => {
+    const json = currentRecordFixture();
+    const selection = createArchivedPersonalBestSelection(json);
+    let key: string;
+    try { key = selection.key_hex(); } finally { selection.free(); }
+    const records = Array.from({ length: 2000 }, (_, index) => ({
+      id: index + 1, savedAt: "2026-10-19T00:00:00.000Z", json
+    }));
+    const fixture = await databaseFixture(records, records.map(({ id, savedAt }) => ({ id, savedAt })), [{ key, recordId: 1 }]);
+    try {
+      const repository = new FlightRecordRepository(fixture.persistence, undefined, createArchivedPersonalBestSelection);
+      const getAll = vi.spyOn(FakeObjectStore.prototype, "getAll");
+      const recent = await repository.recent(gameUiInputQuery.storedRecordLimit);
+      expect(recent.map(({ id }) => id)).toEqual([2000, 1999, 1998]);
+      expect(getAll.mock.contexts.filter((store) => store instanceof FakeObjectStore).map((store) => store.name)).not.toContain("recordMetadata");
+      const platform = { ...sharedGameUiPlatform(), stored_records: recent.map(({ id, savedAt, personalBest }) => ({
+        id, saved_at: savedAt, personal_best: personalBest
+      })) };
+      const input = encodeGameUiPlatformInput(platform);
+      expect(new TextEncoder().encode(input).byteLength).toBeLessThan(gameUiInputQuery.maximumBytes);
+      const unbounded = JSON.stringify({ ...platform, stored_records: records.map(({ id, savedAt }) => ({
+        id, saved_at: savedAt, personal_best: id === 1
+      })) });
+      expect(new TextEncoder().encode(unbounded).byteLength).toBeGreaterThan(gameUiInputQuery.maximumBytes);
+      const boundary = new HybridGameSessionBridge(0, 21, 22);
+      try {
+        expect(() => boundary.game_ui_view_json(unbounded)).toThrow("shared UI input exceeds the boundary limit");
+        expect(() => boundary.game_ui_view_json(input)).not.toThrow();
+      } finally { boundary.free(); }
+      const title = createSharedGameUiSession(0);
+      try {
+        const view = title.session.readSharedUi(platform);
+        const recordIds = view.panels.flatMap((panel) => panel.controls)
+          .filter((control) => control.id.startsWith("game-title-open-record-")).map(({ id }) => id);
+        expect(recordIds).toEqual([2000, 1999, 1998].map((id) => `game-title-open-record-${String(id)}`));
+        expect(title.session.readSharedUi(platform).scene).toBe("Title");
+        expect(title.session.updateSharedUi({ kind: "platform", command: { kind: "open_stored_record", id: 2000 } }, platform).effects)
+          .toEqual([{ kind: "platform", command: { kind: "open_stored_record", id: 2000 } }]);
+      } finally { title.session.dispose(); }
+      const flight = createSharedGameUiSession(5);
+      try {
+        const before = flight.session.readSnapshot();
+        expect(flight.session.readSharedUi(platform).scene).toBe("Flight");
+        expect(flight.session.readSharedUi(platform).scene).toBe("Flight");
+        expect(flight.session.readSnapshot()).toEqual(before);
+        expect(flight.session.updateSharedUi({ kind: "session", command: { kind: "pause" } }, platform).effects)
+          .toEqual([{ kind: "session", command: { kind: "pause" } }]);
+      } finally { flight.session.dispose(); }
+      expect((await repository.saveFrom({ export_flight_record_json: () => json })).personalBest)
+        .toMatchObject({ kind: "existing", id: 1 });
+      expect(await fixture.rows("personalBests")).toEqual([{ key, recordId: 1 }]);
+      expect(await repository.load(1)).toBe(json);
+      expect(await fixture.rows("recordMetadata")).toHaveLength(2001);
+    } finally { await fixture.dispose(); }
+  });
+
+  it("bounds Unicode display diagnostics without changing the original platform observations", () => {
+    const text = "🛩\u0000日本語".repeat(100_000);
+    const platform = sharedGameUiPlatform({ notification: text, flight_controller_failure: text, head_hud_failure: text,
+      water_quality_operation: { kind: "failed", requested: "high", cause: text },
+      screen_render_scale: { ...sharedGameUiPlatform().screen_render_scale, status: { kind: "unsupported", cause: text } },
+      stored_records: [{ id: 1, saved_at: text, personal_best: false }] });
+    const input = encodeGameUiPlatformInput(platform);
+    expect(new TextEncoder().encode(input).byteLength).toBeLessThan(gameUiInputQuery.maximumBytes);
+    expect(platform.notification).toBe(text);
+    expect(platform.stored_records[0]?.saved_at).toBe(text);
+    const owner = createSharedGameUiSession(0);
+    try {
+      expect(owner.session.readSharedUi(platform).scene).toBe("Title");
+    } finally { owner.session.dispose(); }
+    expect(() => encodeGameUiPlatformInput({ ...sharedGameUiPlatform(),
+      stored_records: Array.from({ length: 4 }, (_, index) => ({ id: index + 1, saved_at: "saved", personal_best: false }))
+    })).toThrow();
+  });
+
+  it("rejects invalid preview limits and retains metadata/index errors on the bounded query", async () => {
+    const fixture = await databaseFixture([], [{ id: 1, savedAt: 7 }]);
+    try {
+      const repository = new FlightRecordRepository(fixture.persistence, undefined, createArchivedPersonalBestSelection);
+      for (const limit of [0, -1, 0.5, Number.POSITIVE_INFINITY]) await expect(repository.recent(limit)).rejects.toThrow("positive integer");
+      await expect(repository.recent(gameUiInputQuery.storedRecordLimit)).rejects.toThrow("metadata is malformed");
+    } finally { await fixture.dispose(); }
+    const badIndex = await databaseFixture([], [], [{ key: "invalid", recordId: 1 }]);
+    try {
+      await expect(badIndex.persistence.getRecent(3)).rejects.toThrow("Personal Best index is malformed");
+    } finally { await badIndex.dispose(); }
+  });
+
   it("preserves the Rust export and lists metadata newest first", async () => {
     const json = currentRecordFixture(false);
     const persistence = new MemoryFlightRecordPersistence();
@@ -106,7 +198,7 @@ describe("Current FlightRecord persistence", () => {
     expect(first).toMatchObject({ id: 1, json, personalBest: { kind: "ineligible" } });
     expect(second.id).toBe(2);
     expect(await repository.load(1)).toBe(json);
-    expect(await repository.list()).toEqual([
+    expect(await repository.recent(gameUiInputQuery.storedRecordLimit)).toEqual([
       { id: 2, savedAt: "2026-09-28T00:00:00.000Z", personalBest: false },
       { id: 1, savedAt: "2026-09-28T00:00:00.000Z", personalBest: false }
     ]);
@@ -154,7 +246,7 @@ describe("Current FlightRecord persistence", () => {
       const json = currentRecordFixture();
       expect((await repository.saveFrom({ export_flight_record_json: () => json })).personalBest).toMatchObject({ kind: "candidate", id: 1 });
       expect((await repository.saveFrom({ export_flight_record_json: () => json })).personalBest).toMatchObject({ kind: "existing", id: 1 });
-      expect((await repository.list()).filter(({ personalBest }) => personalBest).map(({ id }) => id)).toEqual([1]);
+      expect((await repository.recent(gameUiInputQuery.storedRecordLimit)).filter(({ personalBest }) => personalBest).map(({ id }) => id)).toEqual([1]);
     } finally { await fixture.dispose(); }
   });
 
@@ -214,14 +306,14 @@ describe("Current FlightRecord persistence", () => {
   it("lists only valid metadata and marks the current indexed record", async () => {
     const fixture = await databaseFixture([], [{ id: 3, savedAt: "saved" }], [{ key: "a".repeat(64), recordId: 3 }]);
     try {
-      expect(await fixture.persistence.getAll()).toEqual([{ id: 3, savedAt: "saved", personalBest: true }]);
+      expect(await fixture.persistence.getRecent(3)).toEqual([{ id: 3, savedAt: "saved", personalBest: true }]);
       expect(await fixture.persistence.get(3)).toBeNull();
     } finally { await fixture.dispose(); }
   });
 
   it("reports malformed metadata and stored records", async () => {
     const metadata = await databaseFixture([], [{ id: "invalid", savedAt: "saved" }]);
-    try { await expect(metadata.persistence.getAll()).rejects.toThrow("IndexedDB record metadata is malformed"); }
+    try { await expect(metadata.persistence.getRecent(3)).rejects.toThrow("IndexedDB record metadata is malformed"); }
     finally { await metadata.dispose(); }
     const records = await databaseFixture([{ id: 3, savedAt: 42, json: currentRecordFixture(false) }]);
     try { await expect(records.persistence.get(3)).rejects.toThrow("IndexedDB flight record is malformed"); }

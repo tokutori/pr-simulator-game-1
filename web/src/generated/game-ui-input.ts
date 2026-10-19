@@ -1,5 +1,21 @@
 /* Generated from birdman-game-session::game_ui. Edit the Rust contract and regenerate. */
 /**
+ * Bounded newest-record preview; the persistence index and PB search remain separate.
+ *
+ * @maxItems 3
+ */
+export type GameUiStoredRecordPreview = readonly [
+] | readonly [
+    GameUiStoredRecord
+] | readonly [
+    GameUiStoredRecord,
+    GameUiStoredRecord
+] | readonly [
+    GameUiStoredRecord,
+    GameUiStoredRecord,
+    GameUiStoredRecord
+];
+/**
  * Current Web replay camera candidates in their shared selection order.
  */
 export type GameUiReplayCamera = "auto" | "pilot" | "chase" | "orbit" | "platform" | "shore" | "overhead" | "side" | "front" | "telephoto";
@@ -52,10 +68,7 @@ export interface GameUiPlatformInput {
      */
     readonly replay_available: boolean;
     readonly screen_render_scale: ScreenRenderAutoSnapshot;
-    /**
-     * Persistence results associated with this owner.
-     */
-    readonly stored_records: readonly GameUiStoredRecord[];
+    readonly stored_records: GameUiStoredRecordPreview;
     /**
      * Platform supports persisted record lookup.
      */

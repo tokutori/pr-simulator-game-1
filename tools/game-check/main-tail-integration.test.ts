@@ -132,7 +132,7 @@ async function fixture(failInitialization = false, seedCurrentArchive = false, d
   }
   if (recordListMode !== "normal") {
     const { FlightRecordRepository } = await import("../../web/src/game/flight-record-store.js");
-    const list = vi.spyOn(FlightRecordRepository.prototype, "list");
+    const list = vi.spyOn(FlightRecordRepository.prototype, "recent");
     if (recordListMode === "loading") list.mockImplementation(() => new Promise(() => undefined));
     else list.mockRejectedValue(new Error("Injected record listing failure"));
   }

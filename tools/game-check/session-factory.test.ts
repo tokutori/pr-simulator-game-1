@@ -120,7 +120,7 @@ describe("current Personal Best selection", () => {
     expect(first.personalBest.kind).toBe("candidate");
     expect(second.personalBest).toMatchObject({ kind: "existing", id: first.id });
     expect(await repository.load(first.id)).toBe(json);
-    expect(await repository.list()).toEqual([
+    expect(await repository.recent(3)).toEqual([
       { id: second.id, savedAt: second.savedAt, personalBest: false },
       { id: first.id, savedAt: first.savedAt, personalBest: true }
     ]);

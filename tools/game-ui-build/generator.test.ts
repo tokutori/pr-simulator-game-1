@@ -1,4 +1,5 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -15,14 +16,18 @@ function schemaBundle(): string {
     $defs: {
       identifier: { type: "integer", format: "uint32", minimum: 0 },
       coordinates: { type: "array", minItems: 3, maxItems: 3, items: { type: "number", format: "double" } },
+      GameUiStoredRecordPreview: { type: "array", maxItems: 3, items: { type: "string" } },
+      GameUiStoredRecord: { type: "object", properties: { saved_at: { type: "string", maxLength: 256 } } },
       ...Object.fromEntries(schemaEntries.filter((entry) => entry.group === group).map((entry) => [entry.name, {
         type: "object",
+        "x-boundary-bytes": 131072,
         additionalProperties: false,
         required: ["kind", "coordinates", ...(group === "serialize" ? ["id"] : [])],
         properties: {
           kind: { const: "fixture", type: "string" },
           id: { $ref: "#/$defs/identifier" },
-          coordinates: { $ref: "#/$defs/coordinates" }
+          coordinates: { $ref: "#/$defs/coordinates" },
+          notification: { type: "string", maxLength: 2048 }
         }
       }]))
     }
@@ -30,6 +35,30 @@ function schemaBundle(): string {
 }
 
 describe("Rust game UI schema generation", () => {
+  it("generates the same validator with ordinary and junction-backed dependencies", async () => {
+    const directory = await mkdtemp(resolve(root, "target/game-ui-module-path-"));
+    const ordinary = resolve(directory, "ordinary");
+    const linked = resolve(directory, "linked");
+    const require = createRequire(import.meta.url);
+    const runtime = require.resolve("ajv/dist/runtime/ucs2length.js");
+    try {
+      for (const fixture of [ordinary, linked]) {
+        await mkdir(resolve(fixture, "tools/game-ui-build"), { recursive: true });
+        await copyFile(resolve(root, "tools/game-ui-build/numeric-formats.ts"), resolve(fixture, "tools/game-ui-build/numeric-formats.ts"));
+      }
+      const ordinaryRuntime = resolve(ordinary, "node_modules/ajv/dist/runtime/ucs2length.js");
+      await mkdir(dirname(ordinaryRuntime), { recursive: true });
+      await copyFile(runtime, ordinaryRuntime);
+      await symlink(resolve(ordinary, "node_modules"), resolve(linked, "node_modules"), "junction");
+      const schemas = parseSchemaBundle(schemaBundle());
+      const source = (files: Awaited<ReturnType<typeof generateGameUiFiles>>) =>
+        files.find((file) => file.path === "web/src/generated/game-ui-validators.js")?.content;
+      const normal = source(await generateGameUiFiles(schemas, ordinary));
+      expect(typeof normal).toBe("string");
+      expect(source(await generateGameUiFiles(schemas, linked))).toBe(normal);
+    } finally { await rm(directory, { recursive: true, force: true }); }
+  });
+
   it("rejects mismatched schema roots and unregistered numeric formats", async () => {
     expect(() => parseSchemaBundle("{}")).toThrow("unexpected schema roots");
     expect(() => parseSchemaBundle(schemaBundle().replace("GameUiView", "OtherView"))).toThrow("Invalid GameUiView");
@@ -98,6 +127,7 @@ describe("Rust game UI schema generation", () => {
     const files = await generateGameUiFiles(schemas, root);
     expect(await generateGameUiFiles(schemas, root)).toEqual(files);
     expect(files.filter((file) => file.path.startsWith("web/src/generated/")).map((file) => file.path)).toEqual([
+      "web/src/generated/game-ui-input-query.ts",
       ...schemaEntries.map((entry) => `web/src/generated/${entry.filename}.ts`),
       "web/src/generated/game-ui-validators.js",
       "web/src/generated/game-ui-validators.d.ts"
