@@ -2216,7 +2216,11 @@ mod tests {
         }
         assert_eq!(terrain_meshes, registered_terrain().unwrap().len());
         assert_eq!(structures, 3);
-        assert_eq!(reflected_meshes, 41);
+        let cockpit = CockpitGeometry::new();
+        assert_eq!(
+            reflected_meshes,
+            9 + cockpit.rods.len() + cockpit.surfaces.len()
+        );
         assert_eq!(reflected_tails, 24);
         assert_eq!(reflected_spars, 24);
         assert_eq!(reflected_internals, 180);

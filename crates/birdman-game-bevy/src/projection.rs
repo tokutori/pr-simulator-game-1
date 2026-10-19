@@ -234,32 +234,66 @@ mod tests {
     #[test]
     fn pilot_mount_keeps_real_nose_frame_and_forward_direction_inside_screen_projection() {
         use bevy::camera::CameraProjection;
+        use birdman_game_core::{
+            HybridMockDefinition, HybridMockTrim, PilotPositionTarget, TailPilotPositionCommand,
+            TailPilotPositionIntent, TailPilotPositionMapping,
+        };
+        let definition = HybridMockDefinition::try_new().unwrap();
+        let aircraft_model = definition.aircraft();
+        let initial = HybridMockTrim::try_new(&definition)
+            .unwrap()
+            .pilot_position_m();
+        let trim = PilotPositionTarget::try_new(&aircraft_model, initial).unwrap();
+        let mapping = TailPilotPositionMapping::try_new(&aircraft_model, initial).unwrap();
+        let endpoints = [-1.0, 1.0].map(|normalized| {
+            mapping
+                .resolve(
+                    &aircraft_model,
+                    trim,
+                    TailPilotPositionCommand::Set(
+                        TailPilotPositionIntent::try_new(normalized).unwrap(),
+                    ),
+                )
+                .unwrap()
+                .position_m()
+        });
         let geometry = CockpitGeometry::new();
-        for initial in [-0.4, 0.0, 0.4] {
-            for current in [-0.4, 0.0, 0.4] {
-                for aspect in [9.0 / 16.0, 16.0 / 9.0] {
-                    let aircraft = Transform::from_xyz(2.0, 10.0, -5.0)
-                        .with_rotation(Quat::from_euler(EulerRot::YXZ, 0.4, -0.2, 0.1));
-                    let camera = camera_transform(aircraft, current, initial, false, Vec2::ZERO);
-                    assert!(camera.forward().distance(aircraft.forward().as_vec3()) < 1.0e-6);
-                    let projection = PerspectiveProjection {
-                        fov: birdman_game_session::SCREEN_VERTICAL_FIELD_OF_VIEW_DEGREES
-                            .to_radians() as f32,
-                        aspect_ratio: aspect,
-                        ..default()
-                    }
-                    .get_clip_from_view();
-                    let view = camera.to_matrix().inverse();
-                    for rod in [0, 6].map(|index| &geometry.rods[index]) {
-                        let nose = Vec3::from_array(rod.endpoints[0].map(|value| value as f32));
-                        let front = Vec3::from_array(rod.endpoints[1].map(|value| value as f32));
-                        for fraction in [0.0, 0.1] {
-                            let point = aircraft.transform_point(nose.lerp(front, fraction));
-                            let clip = projection * view * point.extend(1.0);
-                            assert!(clip.w > 0.0);
-                            assert!((clip.x / clip.w).abs() < 1.0);
-                            assert!((clip.y / clip.w).abs() < 1.0);
-                        }
+        let nose_aft = geometry
+            .rods
+            .iter()
+            .map(|rod| rod.endpoints[0][2])
+            .min_by(f64::total_cmp)
+            .unwrap();
+        let front_rods: Vec<_> = geometry
+            .rods
+            .iter()
+            .filter(|rod| rod.endpoints[0][2] == nose_aft)
+            .collect();
+        assert_eq!(front_rods.len(), 2);
+        for step in 0..=64 {
+            let current = endpoints[0] + (endpoints[1] - endpoints[0]) * f64::from(step) / 64.0;
+            for aspect in [9.0 / 16.0, 16.0 / 9.0] {
+                let aircraft = Transform::from_xyz(2.0, 10.0, -5.0)
+                    .with_rotation(Quat::from_euler(EulerRot::YXZ, 0.4, -0.2, 0.1));
+                let camera = camera_transform(aircraft, current, initial, false, Vec2::ZERO);
+                assert!(camera.forward().distance(aircraft.forward().as_vec3()) < 1.0e-6);
+                let projection = PerspectiveProjection {
+                    fov: birdman_game_session::SCREEN_VERTICAL_FIELD_OF_VIEW_DEGREES.to_radians()
+                        as f32,
+                    aspect_ratio: aspect,
+                    ..default()
+                }
+                .get_clip_from_view();
+                let view = camera.to_matrix().inverse();
+                for rod in &front_rods {
+                    let nose = Vec3::from_array(rod.endpoints[0].map(|value| value as f32));
+                    let front = Vec3::from_array(rod.endpoints[1].map(|value| value as f32));
+                    for fraction in [0.0, 0.1] {
+                        let point = aircraft.transform_point(nose.lerp(front, fraction));
+                        let clip = projection * view * point.extend(1.0);
+                        assert!(clip.w > 0.0);
+                        assert!((clip.x / clip.w).abs() < 1.0);
+                        assert!((clip.y / clip.w).abs() < 1.0);
                     }
                 }
             }
