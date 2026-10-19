@@ -741,8 +741,10 @@ fn processing_delay_description_and_resume_follow_the_authoritative_reason() {
     let platform = platform();
     let state = GameUiState::default();
     let blocked = game_ui_view(&state, &context(&session, difficulty(), &platform)).unwrap();
-    assert!(blocked.description.contains("ProcessingDelay"));
-    assert!(blocked.description.contains("150 ms"));
+    assert!(blocked.description.contains("処理に時間がかかった"));
+    assert!(!blocked.description.contains("ProcessingDelay"));
+    assert!(!blocked.description.contains("Resume"));
+    assert!(control(&blocked, "game-state").label.is_empty());
     assert!(!control(&blocked, "game-flight-resume").enabled);
     session
         .clear_pause_reason(PauseReason::ProcessingDelay)

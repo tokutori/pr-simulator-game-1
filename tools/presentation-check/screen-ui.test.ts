@@ -11,6 +11,30 @@ import type { UiViewModel } from "../../web/src/render/contracts/ui.js";
 import type { GameUiPlatformInput } from "../../web/src/generated/game-ui-input.js";
 
 describe("screen UI DOM patching", () => {
+  it.each(["", "通知"])("renders a status separator only for the nonempty label %s", async label => {
+    const window = new Window();
+    Object.assign(globalThis, { window, document: window.document });
+    try {
+      const { ScreenUiAdapter } = await import("../../web/src/presentation/screen-ui.js");
+      const documentRef = window.document as unknown as Document;
+      const root = documentRef.createElement("main");
+      documentRef.body.append(root);
+      const adapter = new ScreenUiAdapter(root, () => undefined);
+      const fixture = createSceneFixture("Title");
+      adapter.render({ ...fixture, panels: fixture.panels.map(panel => ({ ...panel,
+        sections: [{ id: "notice", label: "", layout: "column" }], controls: [{
+          kind: "status", id: "notice", section: "notice", label, value: "発進準備完了", enabled: false,
+          rect: normalizedRect(0.04, 0.1, 0.92, 0.1)
+        }]
+      })) });
+      expect(required(root, "output#notice").textContent).toBe(label.length === 0 ? "発進準備完了" : "通知: 発進準備完了");
+    } finally {
+      await window.happyDOM.abort();
+      Reflect.deleteProperty(globalThis, "window");
+      Reflect.deleteProperty(globalThis, "document");
+    }
+  });
+
   it("retains temporarily disabled focus until the same enabled node returns without resetting user scroll", async () => {
     const window = new Window();
     Object.assign(globalThis, { window, document: window.document });
@@ -608,7 +632,7 @@ describe("screen UI DOM patching", () => {
             const status = required(root, `output#${control.id}`);
             expect(status.style.position).toBe("");
             expect(status.style.height).toBe("");
-            expect(status.textContent).toBe(`${control.label}: ${control.content.value}`);
+            expect(status.textContent).toBe(control.label.length === 0 ? control.content.value : `${control.label}: ${control.content.value}`);
           }
           const button = required(root, 'button[data-control-id="game-attract-return"]') as HTMLButtonElement;
           expect(button.disabled).toBe(false);
@@ -663,6 +687,11 @@ describe("screen UI DOM patching", () => {
           adapter.render(createGameViewModel(shared));
           hudAdapter.render(projectSharedFlightHudModel(shared.hud, shared.theme));
           hudAdapter.setVisible(true);
+          for (const control of shared.panels.flatMap(panel => panel.controls)) {
+            if (control.content.kind !== "status") continue;
+            expect(required(root, `output#${control.id}`).textContent)
+              .toBe(control.label.length === 0 ? control.content.value : `${control.label}: ${control.content.value}`);
+          }
           const shell = required(root, ".screen-ui-shell");
           const panel = required(root, ".screen-ui-panel");
           expect(panel.dataset.layout).toBeUndefined();

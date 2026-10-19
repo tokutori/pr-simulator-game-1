@@ -1008,7 +1008,11 @@ fn project_control(
             ));
         }
         GameUiControlContent::Status { value, .. } => {
-            label = format!("{}: {value}", control.label);
+            label = if control.label.is_empty() {
+                value.clone()
+            } else {
+                format!("{}: {value}", control.label)
+            };
             if control.id == "game-briefing-technical-content" {
                 world
                     .entity_mut(widget.text)
@@ -2153,6 +2157,14 @@ mod tests {
                     .0
                     .contains(&control.label)
             );
+            if let GameUiControlContent::Status { value, .. } = &control.content {
+                let expected = if control.label.is_empty() {
+                    value.clone()
+                } else {
+                    format!("{}: {value}", control.label)
+                };
+                assert_eq!(app.world().get::<Text>(widget.text).unwrap().0, expected);
+            }
             if let GameUiControlContent::Button { action, .. } = &control.content {
                 assert_eq!(
                     &app.world().get::<MenuButton>(widget.node).unwrap().action,

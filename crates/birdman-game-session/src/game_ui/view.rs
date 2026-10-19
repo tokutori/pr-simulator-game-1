@@ -236,7 +236,7 @@ pub fn game_ui_view(
                 menu.section("flight-status", "", GameUiSectionLayout::Column);
                 menu.status(
                     "game-state",
-                    "状態",
+                    "",
                     if context.platform.notification.is_empty() {
                         &description
                     } else {
@@ -1691,17 +1691,13 @@ fn description(phase: SessionPhase, can_resume: bool) -> String {
         SessionPhase::FlightPaused { reasons }
             if reasons.contains(birdman_game_core::PauseReason::ProcessingDelay) =>
         {
-            format!(
-                "処理遅延（ProcessingDelay）により飛行状態を保持して停止した。frame間隔の上限は{} msである。条件解消後、Resumeで再開する。",
-                crate::MAXIMUM_FLIGHT_FRAME_GAP_MILLISECONDS
-            )
+            "処理に時間がかかったため一時停止した。処理が安定すると再開できる。".to_owned()
         }
         SessionPhase::FlightPaused { .. } if can_resume => {
-            "飛行状態を保持して停止している。Resumeで再開できる。".to_owned()
+            "一時停止中。「飛行を再開」で続ける。".to_owned()
         }
         SessionPhase::FlightPaused { .. } => {
-            "飛行状態を保持して停止している。外部の一時停止条件が解消するまで再開できない。"
-                .to_owned()
+            "一時停止中。画面を操作できる状態になると再開できる。".to_owned()
         }
         SessionPhase::Result => "確定済みterminal snapshotから結果を表示する。".to_owned(),
         SessionPhase::Replay => {

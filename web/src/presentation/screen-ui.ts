@@ -291,7 +291,7 @@ export class ScreenUiAdapter {
       ]);
     }
     if (control.kind === "chart") return this.createChart(control);
-    return h("output.screen-ui-status", { key: control.id, attrs: { id: control.id, "aria-live": "polite" } }, `${control.label}: ${control.value}`);
+    return h("output.screen-ui-status", { key: control.id, attrs: { id: control.id, "aria-live": "polite" } }, control.label.length === 0 ? control.value : `${control.label}: ${control.value}`);
   }
 
   private createChart(control: Extract<UiControl, { readonly kind: "chart" }>): VNode {
