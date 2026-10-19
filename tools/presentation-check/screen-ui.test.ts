@@ -674,7 +674,7 @@ describe("screen UI DOM patching", () => {
           expect(window.getComputedStyle(shell as never).pointerEvents).toBe("auto");
           expect(window.getComputedStyle(hudRoot as never).pointerEvents).toBe("auto");
           expect(hudRoot.style.maxHeight).toBe(`${String(shared.hud.layout.maximum_height_px)}px`);
-          expect(hudRoot.querySelector('output[aria-live="polite"]')?.textContent).toBe("一時停止");
+          expect(hudRoot.querySelector('[data-node="hud-primary-readouts"] .flight-hud-caption')?.textContent).toBe("一時停止");
           expect(Array.from(hudRoot.childNodes)).toEqual(hudNodes);
           const sections = Array.from(panel.querySelectorAll<HTMLElement>(".screen-ui-section"));
           expect(sections.map((section) => section.dataset.sectionId)).toEqual(shared.panels[0]?.sections.map((section) => section.id));

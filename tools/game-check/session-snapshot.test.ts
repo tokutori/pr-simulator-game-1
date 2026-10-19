@@ -3,7 +3,7 @@ import { describe, expect, expectTypeOf, it, vi } from "vitest";
 import { initSync } from "../../web/pkg/birdman_game_wasm.js";
 import { createInitialAppModel, gameSessionSnapshot, gameSessionState, updateApp } from "../../web/src/app/app-state.js";
 import type { AppMessage, AppModel, GameSessionUiState, TailGameSessionProjection } from "../../web/src/app/app-state.js";
-import { sharedGameUiPlatform } from "./shared-game-ui-fixture.js";
+import { sharedGameUiPlatform, sharedHudNode } from "./shared-game-ui-fixture.js";
 import { FlightControllerUiBindings } from "../../web/src/app/flight-controller-port.js";
 import { createFlightUiHudModel } from "../../web/src/app/flight-frame-view.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
@@ -86,7 +86,7 @@ describe("single Rust snapshot application projection", () => {
         if (expectedPhase === 7) expect(hud).toBeNull();
         else {
           if (hud === null) throw new Error("Missing shared live Flight HUD");
-          expect(hud.controlsDescription).toContain("nose-up/down");
+          expect(sharedHudNode(hud, "hud-controls").content.value).toContain("nose-up/down");
         }
         if (expectedPhase === 5) facade.executeOperation("pause");
         if (expectedPhase === 6) facade.executeOperation("abort");
@@ -171,8 +171,8 @@ describe("single Rust snapshot application projection", () => {
         const projected = observeSharedUi({ ...model, presentation: { type: "ready" as const, mode } }, facade, mode);
         const hud = createFlightUiHudModel(projected);
         if (hud === null) throw new Error("Missing shared stopped Flight HUD");
-        expect(hud.warning).toContain("Gamepad permission denied");
-        expect(hud.telemetry).toContain("Last valid · tick 1");
+        expect(sharedHudNode(hud, "hud-controller-failure").content.value).toContain("Gamepad permission denied");
+        expect(sharedHudNode(hud, "hud-primary-readouts").content.value).toContain("Last valid · tick 1");
         expect(sharedView(projected).description).toContain("停止");
       }
       expect(updateApp(model, { type: "ui-action", action: { type: "activate", controlId: "game-flight-abort" } }).effects)

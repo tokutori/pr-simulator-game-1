@@ -199,18 +199,20 @@ pub(super) fn game_ui_hud(
         readouts.push(telemetry_text);
     }
     readouts.extend(supplementary);
-    primary.push(hud_node(
-        "hud-primary-readouts",
-        if failure.is_some() {
-            "飛行処理停止"
-        } else {
-            status
-        },
-        GameUiHudNodeContent::Text {
-            value: readouts.join("\n"),
-            tone: GameUiHudTone::Normal,
-        },
-    ));
+    if !readouts.is_empty() {
+        primary.push(hud_node(
+            "hud-primary-readouts",
+            if failure.is_some() {
+                "飛行処理停止"
+            } else {
+                status
+            },
+            GameUiHudNodeContent::Text {
+                value: readouts.join("\n"),
+                tone: GameUiHudTone::Normal,
+            },
+        ));
+    }
     let mut instruments = Vec::new();
     if let Some(adi) = geometry.adi {
         instruments.push(hud_node(
@@ -283,7 +285,13 @@ pub(super) fn game_ui_hud(
         groups.push(GameUiHudGroup {
             id: "hud-instruments".to_owned(),
             placement: GameUiHudPlacement::Instruments,
-            layout: GameUiHudGroupLayout::Grid { columns: 2 },
+            layout: GameUiHudGroupLayout::Grid {
+                columns: if context.platform.presentation_mode == GameUiPresentationMode::Screen {
+                    2
+                } else {
+                    3
+                },
+            },
             nodes: instruments,
         });
     }

@@ -7,7 +7,7 @@ import type { GameUiAction } from "../../web/src/generated/game-ui-action.js";
 import type { GameUiPlatformInput } from "../../web/src/generated/game-ui-input.js";
 import type { GameUiView } from "../../web/src/generated/game-ui-view.js";
 import { projectSharedFlightHudModel } from "../../web/src/presentation/flight-hud-model.js";
-import type { FlightHudModel } from "../../web/src/presentation/flight-hud-model.js";
+import type { FlightHudModel, FlightHudNode } from "../../web/src/presentation/flight-hud-model.js";
 import { neutralTailInput } from "./current-session-fixture.js";
 import type { LakeWaterQuality } from "../../web/src/render/contracts/lake-water.js";
 
@@ -152,4 +152,22 @@ export function currentSharedHudFixture(options: SharedGameUiFixtureOptions = {}
   const view = currentSharedGameUiFixture(5, options);
   if (view.hud === null) throw new Error("Rust flight fixture did not provide a shared HUD");
   return projectSharedFlightHudModel(view.hud, view.theme);
+}
+
+export function currentSharedHeadHudFixture(options: SharedGameUiFixtureOptions = {}): FlightHudModel {
+  return currentSharedHudFixture({ ...options, platform: { ...options.platform, presentation_mode: "phone_vr" } });
+}
+
+export function sharedHudNodes(model: FlightHudModel): readonly FlightHudNode[] {
+  return model.groups.flatMap((group) => group.nodes);
+}
+
+export function sharedHudNode(model: FlightHudModel, id: string): FlightHudNode {
+  const node = sharedHudNodes(model).find((candidate) => candidate.id === id);
+  if (node === undefined) throw new Error(`Missing shared HUD node: ${id}`);
+  return node;
+}
+
+export function mapSharedHudNodes(model: FlightHudModel, transform: (node: FlightHudNode) => FlightHudNode): FlightHudModel {
+  return { ...model, groups: model.groups.map((group) => ({ ...group, nodes: group.nodes.map(transform) })) };
 }

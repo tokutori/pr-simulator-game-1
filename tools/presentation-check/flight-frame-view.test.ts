@@ -151,13 +151,16 @@ describe("Immutable same-frame Flight view finalization", () => {
     initSync({ module: new Uint8Array(readFileSync(fileURLToPath(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url)))) });
     const session = createAppSession({ controlModeCode: 0, seedLow: 21, seedHigh: 22 });
     launchCurrentSession(session);
-    const model = flightModel("screen");
+    let model = flightModel("screen");
     const controller = new TailFlightController({ ...session.flightPort,
       advance_tick_json: () => { throw new Error("Rust tick failed"); } }, {
       readDemand: () => ({ controlLayout: "tail_incidence", noseUp: 0, turnRight: 0, pilotPositionCommand: { kind: "hold" } }),
       reset() {}, suspend() {}, resume() {}, dispose() {}
     }, renderer, { render: () => { hud.render(createFlightUiHudModel(model)); },
-      fail: (message) => { hud.fail(message); }, setVisible: (visible) => { hud.setVisible(visible); } }, 100, maximum_flight_frame_gap_milliseconds(), () => []);
+      fail: (message) => {
+        model = { ...model, sharedGameUi: currentSharedGameUiFixture(5, { platform: { flight_controller_failure: message } }) };
+        hud.render(createFlightUiHudModel(model));
+      }, setVisible: (visible) => { hud.setVisible(visible); } }, 100, maximum_flight_frame_gap_milliseconds(), () => []);
     const runtime = new PresentationRuntime(renderer, [new ScreenPresentationBackend(() => ({ x: 1280, y: 720, pixelRatio: 1 }))],
       (viewer) => { const draft = createFlightFrameViewDraft(model, controller.currentDisplaySnapshot, viewer, "ja"); return fixturePresentation(finalizeFlightFrameView(draft, draft.headHud)); },
       (timestamp) => { controller.onFrame(timestamp); });
@@ -166,9 +169,9 @@ describe("Immutable same-frame Flight view finalization", () => {
       if (evidence.loop === null) throw new Error("Missing Screen loop");
       evidence.loop(0);
       evidence.loop(20);
-      expect(root.querySelector('output[aria-live="polite"]')?.textContent).toBe("飛行処理を停止した: Rust tick failed");
+      expect(root.querySelector('output[aria-live="polite"]')?.textContent).toBe("停止理由: Rust tick failed");
       evidence.loop(40);
-      expect(root.querySelector('output[aria-live="polite"]')?.textContent).toBe("飛行処理を停止した: Rust tick failed");
+      expect(root.querySelector('output[aria-live="polite"]')?.textContent).toBe("停止理由: Rust tick failed");
       expect(evidence.frames).toBe(3);
     } finally { controller.dispose(); session.dispose(); await runtime.dispose(); await window.happyDOM.abort(); }
   });
@@ -191,7 +194,7 @@ describe("Immutable same-frame Flight view finalization", () => {
     expect(view.headHud).toBe(draft.headHud.layer);
     expect(view.activeOverlay).toBeNull();
     expect(view.panels[0]?.controls.map((control) => control.id)).toEqual(["game-flight-pause"]);
-    expect(draft.hud?.readouts).toBe(captured.sharedGameUi?.hud?.readouts);
+    expect(draft.hud?.groups).toBe(captured.sharedGameUi?.hud?.groups);
   });
 
   it.each(["invalid-view-geometry", "viewer-unavailable"] as const)("keeps %s local to the HUD and explains it in the same Menu", (reason) => {

@@ -10,7 +10,7 @@ import { initSync, maximum_flight_frame_gap_milliseconds, physics_hz } from "../
 import { createAppSession } from "../../web/src/app/session-factory.js";
 import { TailFlightController } from "../../web/src/game/tail-flight-controller.js";
 import { currentFlightDisplayFixture } from "./current-session-fixture.js";
-import { sharedGameUiPlatform } from "./shared-game-ui-fixture.js";
+import { sharedGameUiPlatform, sharedHudNode } from "./shared-game-ui-fixture.js";
 import { captureConfiguredViewerFrame } from "../../web/src/render/engines/three/viewer-frame.js";
 import { viewExposesAction } from "../../web/src/render/contracts/ui.js";
 
@@ -30,9 +30,9 @@ describe("Flight controller shared stop diagnosis", () => {
       expect(trial.onTerminal).not.toHaveBeenCalled();
       const hud = createFlightUiHudModel(model);
       if (hud === null) throw new Error("Missing shared running Flight HUD");
-      expect(hud.status).toBe("飛行処理停止");
-      expect(hud.warning).toContain("Gamepad permission denied");
-      expect(hud.telemetry).toContain("Last valid · tick 1");
+      expect(sharedHudNode(hud, "hud-primary-readouts").label).toBe("飛行処理停止");
+      expect(sharedHudNode(hud, "hud-controller-failure").content.value).toContain("Gamepad permission denied");
+      expect(sharedHudNode(hud, "hud-primary-readouts").content.value).toContain("Last valid · tick 1");
       const draft = createFlightFrameViewDraft(model, currentFlightDisplayFixture(), viewer(), "ja");
       if (model.flightExecution.kind !== "stopped") throw new Error("Missing retained controller state");
       expect(draft.snapshot).toBe(model.flightExecution.snapshot);
@@ -45,12 +45,12 @@ describe("Flight controller shared stop diagnosis", () => {
       if (mode !== "screen") {
         expect(draft.headHud.kind).toBe("visible");
         if (view.headHud.kind !== "visible") throw new Error("Missing stop Head HUD");
-        const warning = view.headHud.elements.find((element) => element.id === "head-warning");
-        const readouts = view.headHud.elements.find((element) => element.id === "head-readouts");
-        if (warning?.kind !== "text" || readouts?.kind !== "text") throw new Error("Missing stop Head HUD text");
-        expect(warning.value).toContain("Gamepad permission denied");
+        const warning = view.headHud.elements.find((element) => element.id === "hud-controller-failure");
+        const readouts = view.headHud.elements.find((element) => element.id === "hud-primary-readouts");
+        if (warning?.content.kind !== "text" || readouts?.content.kind !== "text") throw new Error("Missing stop Head HUD text");
+        expect(warning.content.value).toContain("Gamepad permission denied");
         expect(readouts.label).toBe("飛行処理停止");
-        expect(readouts.value).toContain("Last valid");
+        expect(readouts.content.value).toContain("Last valid");
       }
     }
   });
@@ -147,7 +147,7 @@ describe("Flight controller shared stop diagnosis", () => {
     expect(trial.model().flightExecution).toEqual({ kind: "ready", identity: replacement.identity });
     const hud = createFlightUiHudModel(trial.model());
     if (hud === null) throw new Error("Missing shared replacement Flight HUD");
-    expect(hud.status).not.toBe("飛行処理停止");
+    expect(sharedHudNode(hud, "hud-primary-readouts").label).not.toBe("飛行処理停止");
   });
 
   it("keeps normal terminal notification and Result persistence separate from adapter stops", () => {

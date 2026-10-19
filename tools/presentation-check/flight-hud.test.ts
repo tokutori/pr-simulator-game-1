@@ -1,194 +1,126 @@
 import { Window } from "happy-dom";
-import { describe, expect, it, vi } from "vitest";
-import { currentSharedHudFixture } from "../game-check/shared-game-ui-fixture.js";
+import { describe, expect, it } from "vitest";
+import { currentSharedHudFixture, mapSharedHudNodes, sharedHudNodes } from "../game-check/shared-game-ui-fixture.js";
 import { FlightHudAdapter } from "../../web/src/presentation/flight-hud.js";
 import { earcutLicenseUrl, gameUiValidatorLicenseUrl } from "../../web/src/app/game-ui-codec.js";
 
-describe("Flight HUD DOM lifecycle", () => {
-  it("retains layout writes and heading nodes on numeric frames and applies changed structure", async () => {
+describe("Flight HUD typed DOM projection", () => {
+  it("retains connected keyed widgets, disclosure and scroll across hidden frames and value changes", async () => {
     const window = new Window();
-    const root = window.document.createElement("section") as unknown as HTMLElement;
+    const nativeRoot = window.document.createElement("section");
+    window.document.body.append(nativeRoot);
+    const root = nativeRoot as unknown as HTMLElement;
     const hud = new FlightHudAdapter(root);
-    const model = currentSharedHudFixture();
-    const layout = vi.spyOn(hud as unknown as { applyLayout: (value: typeof model) => void }, "applyLayout");
+    const model = currentSharedHudFixture({ informationCode: 0 });
     try {
       hud.render(model);
-      expect(layout).toHaveBeenCalledTimes(1);
-      const heading = root.querySelector('svg[aria-label="方位目盛"] > g');
-      const ticks = Array.from(heading?.childNodes ?? []);
-      expect(ticks.length).toBeGreaterThan(0);
-      const next = { ...model, layout: { ...model.layout, offset_px: [...model.layout.offset_px] as const },
-        geometry: { ...model.geometry, heading_ticks: model.geometry.heading_ticks.map((tick) => ({ ...tick })) },
-        readouts: "air 12.3 m/s", telemetry: "time 2.0 s" };
+      hud.setVisible(true);
+      const nodes = [...root.querySelectorAll("[data-node]")];
+      const heading = root.querySelector('[data-instrument="heading_tape"]');
+      const ticks = [...heading?.children ?? []];
+      const disclosure = root.querySelector<HTMLDetailsElement>("details");
+      if (disclosure === null) throw new Error("Missing license disclosure");
+      disclosure.open = false;
+      root.scrollTop = 37;
+      hud.render(null);
+      expect(root.hidden).toBe(true);
+      const next = mapSharedHudNodes(model, (node) => ({ ...node, content: { ...node.content, value: `更新 ${node.content.value}` } }));
       hud.render(next);
-      expect(layout).toHaveBeenCalledTimes(1);
-      expect(Array.from(heading?.childNodes ?? [])).toEqual(ticks);
-      expect(root.querySelector(".flight-hud-telemetry")?.textContent).toBe(next.telemetry);
-      hud.render({ ...next, layout: { ...next.layout, width_px: next.layout.width_px + 10 },
-        theme: { ...next.theme, text: "#123456" } });
-      expect(layout).toHaveBeenCalledTimes(2);
-      expect(root.style.width).toBe(`${String(next.layout.width_px + 10)}px`);
-      expect(root.style.color).toBe("#123456");
-      hud.render({ ...next, geometry: { ...next.geometry, heading_ticks: [{ position_ratio: 0.5, major: true, label: "X" }] },
-        labels: { ...next.labels, heading: "HEADING UPDATED" } });
-      expect(heading?.querySelector("text")?.textContent).toBe("X");
-      expect(Array.from(heading?.childNodes ?? [])).not.toEqual(ticks);
-      expect(root.querySelector(".flight-hud-instruments span")?.textContent).toBe("HEADING UPDATED");
-    } finally {
-      layout.mockRestore();
-      await window.happyDOM.abort();
-    }
-  });
-
-  it("hides an absent shared observation while retaining HUD nodes and the next model update", async () => {
-    const window = new Window();
-    const nativeRoot = window.document.createElement("section");
-    const root = nativeRoot as unknown as HTMLElement;
-    window.document.body.append(nativeRoot);
-    const hud = new FlightHudAdapter(root);
-    const nodes = Array.from(root.childNodes);
-    const initial = currentSharedHudFixture();
-    try {
-      hud.render(initial);
-      hud.setVisible(true);
-      expect(root.hidden).toBe(false);
-      expect(() => { hud.render(null); }).not.toThrow();
       expect(root.hidden).toBe(true);
-      expect(root.getAttribute("aria-hidden")).toBe("true");
-      expect(Array.from(root.childNodes)).toEqual(nodes);
-      const updated = { ...initial, status: "共有観測を更新した" };
-      hud.render(updated);
-      expect(root.hidden).toBe(true);
-      expect(root.querySelector('output[aria-live="polite"]')?.textContent).toBe(updated.status);
-      hud.setVisible(true);
-      expect(root.hidden).toBe(false);
+      expect([...root.querySelectorAll("[data-node]")]).toEqual(nodes);
+      expect([...heading?.children ?? []]).toEqual(ticks);
       expect(nodes.every((node) => node.isConnected)).toBe(true);
-    } finally {
-      await window.happyDOM.abort();
-    }
-  });
-
-  it("preserves connected HUD nodes while hidden and applies shared readouts before showing again", async () => {
-    const window = new Window();
-    const nativeRoot = window.document.createElement("section");
-    const root = nativeRoot as unknown as HTMLElement;
-    window.document.body.append(nativeRoot);
-    const hud = new FlightHudAdapter(root);
-    const nodes = Array.from(root.childNodes);
-    const initial = currentSharedHudFixture();
-    try {
-      expect(root.children).toHaveLength(10);
+      expect(disclosure.open).toBe(false);
+      expect(root.scrollTop).toBe(37);
+      expect([...root.querySelectorAll("output")].map((node) => node.textContent)).toEqual(sharedHudNodes(next).map((node) => node.content.value));
       hud.setVisible(true);
-      hud.render(initial);
-      expect(root.hidden).toBe(false);
-      hud.setVisible(false);
-      const updated = { ...initial, status: "時間制限", heading: "17°", pilotPosition: "+0.00 m",
-        wind: "N 2.0 · E -1.0 · D 0.5 m/s", angleOfAttack: "5.7°", headingDegrees: 17,
-        angleOfAttackDegrees: 5.7, windDirectionDegrees: 90, attitude: { rollDegrees: 11, pitchDegrees: 2 },
-        layout: { ...initial.layout, width_px: 280, instrument_columns: 2, controls_visible: false } };
-      hud.render(updated);
-      expect(root.hidden).toBe(true);
-      expect(root.getAttribute("aria-hidden")).toBe("true");
-      expect(Array.from(root.childNodes)).toEqual(nodes);
-      hud.setVisible(true);
-      expect(root.hidden).toBe(false);
       expect(root.getAttribute("aria-hidden")).toBe("false");
-      expect(Array.from(root.childNodes)).toEqual(nodes);
-      expect(nodes.every((node) => node.isConnected)).toBe(true);
-      expect(root.querySelector('output[aria-live="polite"]')?.textContent).toBe(updated.status);
-      const instruments = Array.from(root.querySelectorAll(".flight-hud-instruments output"));
-      expect(instruments.map((node) => node.textContent)).toEqual([updated.heading, updated.pilotPosition, updated.wind, updated.angleOfAttack]);
+      hud.render({ ...next, layout: { ...next.layout, width_px: 280 }, theme: { ...next.theme, text: "#123456" } });
       expect(root.style.width).toBe("280px");
-      expect(root.querySelector<HTMLElement>(".flight-hud-controls")?.hidden).toBe(true);
-      expect(Array.from(root.querySelectorAll(".flight-hud-instruments span")).map((node) => node.textContent))
-        .toEqual([updated.labels.heading, updated.labels.pilotPosition, updated.labels.wind, updated.labels.angleOfAttack]);
-    } finally {
-      await window.happyDOM.abort();
-    }
+      expect(root.style.color).toBe("#123456");
+    } finally { await window.happyDOM.abort(); }
   });
 
-  it("shows Copernicus source and processing notices by default", async () => {
+  it("projects an additional existing-kind node and changed labels without field-specific adapter changes", async () => {
     const window = new Window();
     const root = window.document.createElement("section") as unknown as HTMLElement;
-    try {
-      new FlightHudAdapter(root);
-      const source = Array.from(root.querySelectorAll(".flight-hud-attribution-link")).find((node) => node.textContent.startsWith("© DLR e.V."));
-      const notice = root.querySelector<HTMLDetailsElement>(".flight-hud-attribution-notice");
-      expect(source?.textContent).toContain("provided under COPERNICUS by the European Union and ESA; all rights reserved.");
-      expect(notice?.open).toBe(true);
-      expect(notice?.children[1]?.textContent).toBe("produced using Copernicus WorldDEM-30.");
-      expect(notice?.children[2]?.textContent).toContain("do not incur any liability");
-      const validatorLicense = Array.from(root.querySelectorAll<HTMLAnchorElement>(".flight-hud-attribution-link"))
-        .find((node) => node.textContent === "Game UI validator 利用条件");
-      expect(validatorLicense?.href).toBe(gameUiValidatorLicenseUrl);
-      expect(validatorLicense?.target).toBe("_blank");
-      expect(validatorLicense?.rel).toBe("noopener noreferrer");
-      const earcutLicense = Array.from(root.querySelectorAll<HTMLAnchorElement>(".flight-hud-attribution-link"))
-        .find((node) => node.textContent === "earcut 利用条件");
-      expect(earcutLicense?.href).toBe(earcutLicenseUrl);
-      expect(earcutLicense?.target).toBe("_blank");
-      expect(earcutLicense?.rel).toBe("noopener noreferrer");
-    } finally {
-      await window.happyDOM.abort();
-    }
-  });
-
-  it("projects shared instrument geometry without deriving angles or compass labels", async () => {
-    const window = new Window();
-    const root = window.document.createElement("section") as unknown as HTMLElement;
+    const model = currentSharedHudFixture({ informationCode: 0 });
+    const addition = { id: "independent-readout", label: "姿勢 PITCH 参考値", content: { kind: "text" as const, value: "共有値 7", tone: "normal" as const } };
+    const groups = model.groups.map((group, index) => ({ ...group, nodes: index === 0 ? [...group.nodes, addition] : group.nodes }));
     const hud = new FlightHudAdapter(root);
-    const model = currentSharedHudFixture();
-    const geometry = { adi: { kind: "attitude" as const, horizon: { rotation_degrees: -11, pitch_offset_ratio: 0.025 },
-      flight_path_y_ratio: 0.6 }, angle_of_attack_ratio: 0.75,
-      heading_ticks: [{ position_ratio: 0.5, major: true, label: "N" }, { position_ratio: 0.75, major: false, label: "" }] };
     try {
-      hud.render({ ...model, geometry, windDirectionDegrees: 90 });
-      expect(root.querySelector(".flight-hud-adi > g")?.getAttribute("transform")).toBe("rotate(-11 120 90) translate(0 94.5)");
-      expect(root.querySelector(".flight-hud-adi > circle")?.getAttribute("cy")).toBe("108");
-      const heading = root.querySelector('svg[aria-label="方位目盛"]');
-      expect(heading?.querySelectorAll("g > path")).toHaveLength(2);
-      expect(heading?.querySelector("g > text")?.textContent).toBe("N");
-      expect(root.querySelector('svg[aria-label="迎角目盛"] > polygon')?.getAttribute("points")).toBe("145,5 139,1 151,1");
-      const needle = root.querySelector('svg[aria-label="風向計。矢印は風の流れる方向を示す"] > g');
-      expect(needle?.getAttribute("transform")).toBe("rotate(90 36 36)");
-      const retained = Array.from(root.childNodes);
-      hud.render({ ...model,
-        geometry: { adi: null, angle_of_attack_ratio: null, heading_ticks: [] },
-        windDirectionDegrees: null });
-      expect(root.querySelector(".flight-hud-adi > circle")?.getAttribute("visibility")).toBe("hidden");
-      expect(root.querySelector(".flight-hud-adi")?.classList.contains("is-hidden")).toBe(true);
-      expect(root.querySelector('svg[aria-label="迎角目盛"] > polygon')?.getAttribute("visibility")).toBe("hidden");
-      expect(needle?.getAttribute("visibility")).toBe("hidden");
-      expect(heading?.querySelectorAll("g > path")).toHaveLength(0);
-      expect(Array.from(root.childNodes)).toEqual(retained);
-    } finally {
-      await window.happyDOM.abort();
-    }
+      hud.render({ ...model, groups });
+      const ids = [...root.querySelectorAll("[data-node]")].map((node) => node.getAttribute("data-node"));
+      expect(ids).toEqual(groups.flatMap((group) => group.nodes.map((node) => node.id)));
+      const appended = root.querySelector('[data-node="independent-readout"]');
+      expect(appended?.textContent).toBe(`${addition.label}${addition.content.value}`);
+      hud.render({ ...model, groups: groups.map((group) => ({ ...group, nodes: group.nodes.map((node) => ({ ...node, label: `変更 ${node.label}` })) })) });
+      expect([...root.querySelectorAll("[data-node]")].map((node) => node.getAttribute("data-node"))).toEqual(ids);
+      expect(root.querySelector('[data-node="independent-readout"]')).toBe(appended);
+    } finally { await window.happyDOM.abort(); }
   });
 
-  it("shows the real shared Custom flight path cue through its visible ADI ancestors", async () => {
+  it("projects shared widget geometry, gauge endpoint labels and absent direction without calculating telemetry", async () => {
     const window = new Window();
     const root = window.document.createElement("section") as unknown as HTMLElement;
-    const hud = new FlightHudAdapter(root);
+    const base = currentSharedHudFixture({ informationCode: 0 });
+    const model = mapSharedHudNodes(base, (node) => {
+      switch (node.content.kind) {
+        case "attitude": return { ...node, content: { ...node.content, geometry: { kind: "attitude", horizon: { rotation_degrees: -11, pitch_offset_ratio: 0.025 }, flight_path_y_ratio: 0.6 } } };
+        case "heading_tape": return { ...node, content: { ...node.content, ticks: [{ position_ratio: 0.5, major: true, label: "CUSTOM" }] } };
+        case "direction": return { ...node, content: { ...node.content, rotation_degrees: 90 } };
+        case "linear_gauge": return { ...node, content: { ...node.content, position_ratio: 0.75, minimum_label: "LOW", maximum_label: "HIGH" } };
+        case "text": return node;
+      }
+    });
+    try {
+      const hud = new FlightHudAdapter(root);
+      hud.render(model);
+      expect(root.querySelector('[data-instrument="attitude"] g > g')?.getAttribute("transform")).toBe("rotate(-11 120 90) translate(0 94.5)");
+      expect(root.querySelector('[data-instrument="attitude"] > circle')?.getAttribute("cy")).toBe("108");
+      expect(root.querySelector('[data-instrument="heading_tape"] text')?.textContent).toBe("CUSTOM");
+      expect(root.querySelector('[data-instrument="linear_gauge"] polygon')?.getAttribute("points")).toBe("145,5 139,1 151,1");
+      expect(root.querySelector('[data-instrument="linear_gauge"]')?.textContent).toContain("LOWHIGH");
+      expect(root.querySelector('[data-instrument="direction"] g')?.getAttribute("transform")).toBe("rotate(90 36 36)");
+      hud.render(mapSharedHudNodes(model, (node) => node.content.kind === "direction"
+        ? { ...node, content: { ...node.content, rotation_degrees: null } } : node));
+      expect(root.querySelector('[data-instrument="direction"] g')).toBeNull();
+    } finally { await window.happyDOM.abort(); }
+  });
+
+  it("keeps FlightPathOnly geometry visible through its connected ancestors", async () => {
+    const window = new Window();
+    const root = window.document.createElement("section") as unknown as HTMLElement;
     const model = currentSharedHudFixture({ informationCode: 4,
       hudProfile: { telemetry: false, attitude: false, wind: false, flightPath: true, angleOfAttack: false, warnings: false } });
     try {
-      expect(model.attitude).toBeNull();
-      const geometry = model.geometry.adi;
-      expect(geometry?.kind).toBe("flight_path_only");
-      if (geometry?.kind !== "flight_path_only") throw new Error("Expected shared flight-path-only geometry");
-      hud.setVisible(true);
+      const hud = new FlightHudAdapter(root);
       hud.render(model);
-      const adi = root.querySelector(".flight-hud-adi");
-      const marker = adi?.querySelector("circle");
+      hud.setVisible(true);
+      const content = sharedHudNodes(model).find((node) => node.content.kind === "attitude")?.content;
+      if (content?.kind !== "attitude" || content.geometry.kind !== "flight_path_only") throw new Error("Missing flight path geometry");
       expect(root.hidden).toBe(false);
-      expect(adi?.classList.contains("is-hidden")).toBe(false);
-      expect(adi?.querySelector("g")?.getAttribute("visibility")).toBe("hidden");
-      expect(marker?.parentElement).toBe(adi);
-      expect(marker?.getAttribute("visibility")).toBe("visible");
-      expect(marker?.getAttribute("cy")).toBe(String(geometry.y_ratio * 180));
-    } finally {
-      await window.happyDOM.abort();
-    }
+      const svg = root.querySelector('[data-instrument="attitude"]');
+      expect(svg?.querySelector("g")).toBeNull();
+      expect(svg?.querySelector("circle")?.getAttribute("cy")).toBe(String(content.geometry.y_ratio * 180));
+    } finally { await window.happyDOM.abort(); }
+  });
+
+  it("retains visible legal attribution and bundled license links", async () => {
+    const window = new Window();
+    const root = window.document.createElement("section") as unknown as HTMLElement;
+    try {
+      new FlightHudAdapter(root).render(currentSharedHudFixture());
+      const notice = root.querySelector<HTMLDetailsElement>(".flight-hud-attribution-notice");
+      expect(notice?.open).toBe(true);
+      expect(root.textContent).toContain("provided under COPERNICUS by the European Union and ESA; all rights reserved.");
+      expect(notice?.textContent).toContain("produced using Copernicus WorldDEM-30.");
+      expect(notice?.textContent).toContain("do not incur any liability");
+      for (const href of [gameUiValidatorLicenseUrl, earcutLicenseUrl]) {
+        const link = [...root.querySelectorAll<HTMLAnchorElement>("a")].find((node) => node.href === href);
+        expect(link?.target).toBe("_blank");
+        expect(link?.rel).toBe("noopener noreferrer");
+      }
+    } finally { await window.happyDOM.abort(); }
   });
 });

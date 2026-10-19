@@ -1074,12 +1074,17 @@ fn setup(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
                 HudCue::AngleOfAttack,
                 profile.angle_of_attack(),
             ),
-            ("warnings", "警告cue", HudCue::Warnings, profile.warnings()),
+            (
+                "warnings",
+                "通常警告（未対応）",
+                HudCue::Warnings,
+                profile.warnings(),
+            ),
         ] {
             menu.push(
                 &format!("game-setup-information-{id}"),
                 label,
-                true,
+                cue != HudCue::Warnings,
                 "information-cues",
                 GameUiControlContent::Toggle { cue, value },
             );

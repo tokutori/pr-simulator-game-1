@@ -443,10 +443,11 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
       else {
         if (frameView.headHud.kind !== "visible" || draw.headHud === null) throw new Error("Missing Custom draw");
         const ids = frameView.headHud.elements.map((element) => element.id);
-        expect(ids.includes("head-attitude")).toBe((mask & 2) !== 0);
-        const attitude = frameView.headHud.elements.find((element) => element.kind === "attitude");
-        expect(ids.includes("head-flight-path")).toBe((mask & 8) !== 0 && (mask & 2) === 0);
-        if (attitude?.kind === "attitude") expect(attitude.flightPathAngleDegrees !== null).toBe((mask & 8) !== 0);
+        expect(ids.includes("hud-attitude")).toBe((mask & 2) !== 0 || (mask & 8) !== 0);
+        const attitude = frameView.headHud.elements.find((element) => element.content.kind === "attitude");
+        if (attitude?.content.kind === "attitude" && attitude.content.geometry.kind === "attitude") {
+          expect(attitude.content.geometry.flight_path_y_ratio !== null).toBe((mask & 8) !== 0);
+        }
         expect(draw.headDepth).toEqual([false, false, false]);
       }
     }

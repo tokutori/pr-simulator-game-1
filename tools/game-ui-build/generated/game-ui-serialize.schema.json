@@ -2375,164 +2375,21 @@
       "additionalProperties": false,
       "description": "Shared Web-baseline HUD model; no adapter rederives flight values or labels.",
       "properties": {
-        "angle_of_attack": {
-          "description": "AoA text, including explicit missing-angle marker.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "angle_of_attack_degrees": {
-          "description": "Defined angle of attack in degrees.",
-          "format": "double",
-          "type": [
-            "number",
-            "null"
-          ]
-        },
-        "angle_of_attack_label": {
-          "description": "AoA instrument label.",
-          "type": "string"
-        },
-        "attitude": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/GameUiHudAttitude"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "ADI input already converted into display degrees."
-        },
-        "controls_description": {
-          "description": "Canonical input instructions.",
-          "type": "string"
-        },
-        "flight_path_angle_degrees": {
-          "description": "Flight path indicator angle.",
-          "format": "double",
-          "type": [
-            "number",
-            "null"
-          ]
-        },
-        "geometry": {
-          "$ref": "#/$defs/GameUiHudGeometry",
-          "description": "Shared Web-baseline instrument projections, independent of engine pixels."
-        },
-        "heading": {
-          "description": "Heading instrument text.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "heading_degrees": {
-          "description": "True heading in [0,360).",
-          "format": "double",
-          "type": [
-            "number",
-            "null"
-          ]
-        },
-        "heading_label": {
-          "description": "Heading instrument label.",
-          "type": "string"
+        "groups": {
+          "description": "Ordered groups containing every visible readout and instrument.",
+          "items": {
+            "$ref": "#/$defs/GameUiHudGroup"
+          },
+          "type": "array"
         },
         "layout": {
           "$ref": "#/$defs/GameUiHudLayout",
           "description": "Shared Web-baseline instrument placement and responsive dimensions."
-        },
-        "location": {
-          "description": "Local-frame geographic display.",
-          "type": "string"
-        },
-        "map_attribution": {
-          "description": "Preserved map attribution.",
-          "type": "string"
-        },
-        "pilot_position": {
-          "description": "Pilot displacement instrument text.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "pilot_position_label": {
-          "description": "Pilot instrument label.",
-          "type": "string"
-        },
-        "readouts": {
-          "description": "Primary readouts with shared wording and precision.",
-          "type": "string"
-        },
-        "status": {
-          "description": "Domain-derived state label.",
-          "type": "string"
-        },
-        "supplementary_readouts": {
-          "description": "Angular rates, physical incidences and pilot target text.",
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "telemetry": {
-          "description": "Distance, time and ground-speed text.",
-          "type": "string"
-        },
-        "warning": {
-          "description": "Terminal or model warning.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "wind": {
-          "description": "NED wind readout.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "wind_direction_degrees": {
-          "description": "Ambient air movement direction in [0,360).",
-          "format": "double",
-          "type": [
-            "number",
-            "null"
-          ]
-        },
-        "wind_label": {
-          "description": "Wind instrument label.",
-          "type": "string"
         }
       },
       "required": [
         "layout",
-        "geometry",
-        "status",
-        "attitude",
-        "flight_path_angle_degrees",
-        "warning",
-        "heading_degrees",
-        "wind_direction_degrees",
-        "angle_of_attack_degrees",
-        "readouts",
-        "heading",
-        "heading_label",
-        "pilot_position",
-        "pilot_position_label",
-        "wind",
-        "wind_label",
-        "angle_of_attack",
-        "angle_of_attack_label",
-        "telemetry",
-        "location",
-        "map_attribution",
-        "supplementary_readouts",
-        "controls_description"
+        "groups"
       ],
       "type": "object"
     },
@@ -2589,27 +2446,6 @@
         }
       ]
     },
-    "GameUiHudAttitude": {
-      "additionalProperties": false,
-      "description": "Shared ADI orientation input.",
-      "properties": {
-        "pitch_degrees": {
-          "description": "Pitch angle in degrees.",
-          "format": "double",
-          "type": "number"
-        },
-        "roll_degrees": {
-          "description": "Bank angle in degrees.",
-          "format": "double",
-          "type": "number"
-        }
-      },
-      "required": [
-        "roll_degrees",
-        "pitch_degrees"
-      ],
-      "type": "object"
-    },
     "GameUiHudAttitudeGeometry": {
       "additionalProperties": false,
       "description": "Web-baseline horizon rotation and translation.",
@@ -2631,43 +2467,91 @@
       ],
       "type": "object"
     },
-    "GameUiHudGeometry": {
+    "GameUiHudGroup": {
       "additionalProperties": false,
-      "description": "Shared instrument geometry derived from the authoritative HUD angles.",
+      "description": "A shared HUD group; identifiers track retained nodes without encoding their meaning.",
       "properties": {
-        "adi": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/GameUiHudAdiGeometry"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Visible ADI layers, absent when both attitude and flight path cues are hidden."
+        "id": {
+          "description": "Stable group identity.",
+          "type": "string"
         },
-        "angle_of_attack_ratio": {
-          "description": "AoA position between the displayed -10 and +20 degree endpoints.",
-          "format": "double",
-          "type": [
-            "number",
-            "null"
-          ]
+        "layout": {
+          "$ref": "#/$defs/GameUiHudGroupLayout",
+          "description": "Shared row, column, or responsive grid composition."
         },
-        "heading_ticks": {
-          "description": "Ordered heading tape marks and compass labels.",
+        "nodes": {
+          "description": "Complete visible node sequence.",
           "items": {
-            "$ref": "#/$defs/GameUiHudHeadingTick"
+            "$ref": "#/$defs/GameUiHudNode"
           },
           "type": "array"
+        },
+        "placement": {
+          "$ref": "#/$defs/GameUiHudPlacement",
+          "description": "Shared placement relative to the unobstructed forward view."
         }
       },
       "required": [
-        "adi",
-        "heading_ticks",
-        "angle_of_attack_ratio"
+        "id",
+        "placement",
+        "layout",
+        "nodes"
       ],
       "type": "object"
+    },
+    "GameUiHudGroupLayout": {
+      "description": "A small shared composition vocabulary, independent of DOM and ECS layout engines.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Side-by-side intrinsic widgets and wrapping text.",
+          "properties": {
+            "kind": {
+              "const": "row",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Vertical content in source order.",
+          "properties": {
+            "kind": {
+              "const": "column",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Responsive equal-width instrument cards.",
+          "properties": {
+            "columns": {
+              "description": "Preferred column count before the adapter applies measured width constraints.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "grid",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "columns"
+          ],
+          "type": "object"
+        }
+      ]
     },
     "GameUiHudHeadingTick": {
       "additionalProperties": false,
@@ -2708,10 +2592,6 @@
           "minItems": 2,
           "type": "array"
         },
-        "controls_visible": {
-          "description": "Keyboard description visibility on the selected viewport.",
-          "type": "boolean"
-        },
         "font_size_px": {
           "description": "Readout font size.",
           "format": "double",
@@ -2726,12 +2606,6 @@
           "maxItems": 2,
           "minItems": 2,
           "type": "array"
-        },
-        "instrument_columns": {
-          "description": "Heading, pilot, wind and AoA instrument column count.",
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
         },
         "maximum_height_px": {
           "description": "Reachable vertical scroll height.",
@@ -2777,11 +2651,219 @@
         "gap_px",
         "attitude_size_px",
         "font_size_px",
-        "opacity",
-        "controls_visible",
-        "instrument_columns"
+        "opacity"
       ],
       "type": "object"
+    },
+    "GameUiHudNode": {
+      "additionalProperties": false,
+      "description": "One existing widget instance; adding an instance requires no adapter-specific field.",
+      "properties": {
+        "content": {
+          "$ref": "#/$defs/GameUiHudNodeContent",
+          "description": "Exclusive widget geometry and display values."
+        },
+        "id": {
+          "description": "Stable identity used only to retain this element.",
+          "type": "string"
+        },
+        "label": {
+          "description": "Shared heading, independent of the widget type.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "content"
+      ],
+      "type": "object"
+    },
+    "GameUiHudNodeContent": {
+      "description": "Widget implementations must exhaustively handle each display primitive.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Formatted readout, instructions, attribution, or mandatory failure.",
+          "properties": {
+            "kind": {
+              "const": "text",
+              "type": "string"
+            },
+            "tone": {
+              "$ref": "#/$defs/GameUiHudTone",
+              "description": "Shared visual priority."
+            },
+            "value": {
+              "description": "Fully formatted text; adapters never parse its wording.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "value",
+            "tone"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "ADI with an optional flight-path marker, or the marker alone.",
+          "properties": {
+            "geometry": {
+              "$ref": "#/$defs/GameUiHudAdiGeometry",
+              "description": "Shared horizon and marker geometry."
+            },
+            "kind": {
+              "const": "attitude",
+              "type": "string"
+            },
+            "value": {
+              "description": "Fully formatted pitch, roll, or flight-path reading.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "value",
+            "geometry"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Compass tape or another readout using the same tape primitive.",
+          "properties": {
+            "kind": {
+              "const": "heading_tape",
+              "type": "string"
+            },
+            "ticks": {
+              "description": "Ordered normalized marks and labels.",
+              "items": {
+                "$ref": "#/$defs/GameUiHudHeadingTick"
+              },
+              "type": "array"
+            },
+            "value": {
+              "description": "Formatted central reading.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "value",
+            "ticks"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Direction arrow with an explicit absence for calm or unavailable direction.",
+          "properties": {
+            "kind": {
+              "const": "direction",
+              "type": "string"
+            },
+            "rotation_degrees": {
+              "description": "Clockwise display rotation, absent when no direction is defined.",
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "value": {
+              "description": "Formatted direction and magnitude reading.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "value",
+            "rotation_degrees"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Linear gauge with a shared scale and explicit unavailable value.",
+          "properties": {
+            "kind": {
+              "const": "linear_gauge",
+              "type": "string"
+            },
+            "maximum_label": {
+              "description": "Right endpoint label.",
+              "type": "string"
+            },
+            "minimum_label": {
+              "description": "Left endpoint label.",
+              "type": "string"
+            },
+            "position_ratio": {
+              "description": "Normalized marker position, absent when the reading is undefined.",
+              "format": "double",
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "value": {
+              "description": "Formatted reading including its unit.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "value",
+            "minimum_label",
+            "maximum_label",
+            "position_ratio"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "GameUiHudPlacement": {
+      "description": "HUD placement roles consumed identically by all adapters.",
+      "oneOf": [
+        {
+          "const": "readouts",
+          "description": "Status and primary readings, above the VR clear region.",
+          "type": "string"
+        },
+        {
+          "const": "instruments",
+          "description": "Instruments, below the VR clear region when space permits.",
+          "type": "string"
+        },
+        {
+          "const": "details",
+          "description": "Secondary information in its declared order.",
+          "type": "string"
+        }
+      ]
+    },
+    "GameUiHudTone": {
+      "description": "Shared text priority; mandatory resource failures always use Warning.",
+      "oneOf": [
+        {
+          "const": "normal",
+          "description": "Ordinary operational information.",
+          "type": "string"
+        },
+        {
+          "const": "muted",
+          "description": "Secondary instructions or attribution.",
+          "type": "string"
+        },
+        {
+          "const": "warning",
+          "description": "A mandatory visible failure or warning.",
+          "type": "string"
+        }
+      ]
     },
     "GameUiLayout": {
       "additionalProperties": false,
