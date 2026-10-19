@@ -671,7 +671,7 @@ impl<'a> GameSession<'a> {
     #[cfg_attr(verus_only, vstd::prelude::verus_verify(dual_spec))]
     #[cfg_attr(verus_only, verus_spec(
         ensures Self::new().projection_valid(), Self::new().snapshot() == SessionSnapshot::Title,
-            Self::new().flight_record().is_none(),
+            Self::new().flight_record().is_none(), Self::new().playback_record().is_none(),
         returns Self::new(),
     ))]
     pub const fn new() -> Self {
@@ -905,7 +905,8 @@ impl<'a> GameSession<'a> {
         ensures final(self).projection_valid(), final(self).attract_returned(*old(self), outcome),
             outcome.is_ok() == matches!(old(self).snapshot(), SessionSnapshot::Attract { .. }),
             outcome.is_ok() ==> final(self).snapshot() == SessionSnapshot::Title,
-            outcome.is_err() ==> *final(self) == *old(self),
+            outcome.is_err() ==> outcome == Err(GameSessionError::InvalidTransition)
+                && *final(self) == *old(self),
     ))]
     pub fn leave_attract(&mut self) -> Result<(), GameSessionError> {
         if !matches!(self.phase(), SessionPhase::Attract) {
