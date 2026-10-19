@@ -36,10 +36,6 @@ pub use venue_terrain::VenueTerrainGeometryBridge;
 pub use wing_geometry::WingGeometryBridge;
 pub use wing_texture::{apply_indigo_wing_decal, indigo_wing_texture_size, indigo_wing_textures};
 
-mod personal_best_fingerprints {
-    include!(concat!(env!("OUT_DIR"), "/personal_best_fingerprints.rs"));
-}
-
 const MAX_TICKS: u64 = birdman_game_session::DEFAULT_MAXIMUM_FLIGHT_TICKS;
 
 /// Exposes the fixed simulation frequency to platform callers.

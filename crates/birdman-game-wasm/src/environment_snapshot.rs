@@ -6,7 +6,8 @@ use birdman_game_format::{
 };
 use serde::Serialize;
 
-use crate::{environment::bundled_environment, personal_best_fingerprints};
+use crate::environment::bundled_environment;
+use birdman_game_session::record_archive::{ENVIRONMENT_V6_SHA256, personal_best_content_hashes};
 
 const MAX_IDENTITY_JSON_BYTES: usize = 4_096;
 
@@ -179,7 +180,7 @@ fn bundled_metadata() -> Result<EnvironmentMetadata, EnvironmentSnapshotError> {
     Ok(EnvironmentMetadata {
         name: document.name.clone(),
         content_hash: ContentHash::AssetBytes {
-            sha256: env!("BPG_ENVIRONMENT_V6_SHA256"),
+            sha256: ENVIRONMENT_V6_SHA256,
         },
         local_frame: Defined::Defined(document.local_frame.clone()),
         wind_domain: WindDomain::Grid {
@@ -211,7 +212,7 @@ fn preset_metadata(
     Ok(EnvironmentMetadata {
         name: environment.name.to_owned(),
         content_hash: ContentHash::SourceFingerprint {
-            sha256: personal_best_fingerprints::ENVIRONMENT_SOURCE_FINGERPRINT
+            sha256: personal_best_content_hashes().environment
                 .iter()
                 .map(|byte| format!("{byte:02x}"))
                 .collect(),
@@ -312,10 +313,7 @@ mod tests {
         assert_eq!(projection["identity"]["seed_high"], u32::MAX);
         let metadata = &projection["metadata"];
         assert_eq!(metadata["content_hash"]["kind"], "asset_bytes");
-        assert_eq!(
-            metadata["content_hash"]["sha256"],
-            env!("BPG_ENVIRONMENT_V6_SHA256")
-        );
+        assert_eq!(metadata["content_hash"]["sha256"], ENVIRONMENT_V6_SHA256);
         assert_eq!(
             metadata["wind_domain"]["minimum_ned_m"],
             json!([-2000.0, -2000.0, -500.0])

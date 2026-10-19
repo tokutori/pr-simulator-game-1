@@ -1,8 +1,6 @@
 use super::*;
-use crate::hybrid_record::{HybridRecordError, HybridRecordMetadata};
-use birdman_game_format::{
-    PersonalBestContentHashes, TailFlightRecordDocument, TailPersonalBestSelection,
-};
+use crate::hybrid_record::HybridRecordError;
+use birdman_game_format::{TailFlightRecordDocument, TailPersonalBestSelection};
 use birdman_game_session::record_query::{PlaybackContext, PlaybackFinalization, RecordQueryPhase};
 
 #[wasm_bindgen]
@@ -177,26 +175,17 @@ impl HybridGameSessionBridge {
         if self.session.core_session().snapshot().phase() == SessionPhase::Attract {
             return Err(BoundaryError::Session(GameSessionError::InvalidTransition));
         }
-        let configuration = self
-            .sealed_record_configuration()
-            .ok_or(BoundaryError::Record(HybridRecordError::MetadataMismatch))?;
-        let course_axis = self
-            .sealed_course_axis()
-            .ok_or(BoundaryError::Record(HybridRecordError::MetadataMismatch))?;
-        crate::hybrid_record::export_record_json(
-            self.session.core_session(),
-            HybridRecordMetadata {
-                configuration,
-                course_axis,
-                content_hashes: PersonalBestContentHashes {
-                    scenario: crate::personal_best_fingerprints::SCENARIO_SOURCE_FINGERPRINT,
-                    aircraft: crate::personal_best_fingerprints::AIRCRAFT_SOURCE_FINGERPRINT,
-                    environment: crate::personal_best_fingerprints::ENVIRONMENT_SOURCE_FINGERPRINT,
-                    physics_build: crate::personal_best_fingerprints::PHYSICS_BUILD_FINGERPRINT,
-                },
-            },
-        )
-        .map_err(BoundaryError::Record)
+        let encoded = self
+            .session
+            .flight_record_document()
+            .map_err(|error| BoundaryError::Record(error.into()))?
+            .encode_json()
+            .map_err(|error| BoundaryError::Record(HybridRecordError::Format(error)))?;
+        String::from_utf8(encoded).map_err(|_| {
+            BoundaryError::Record(HybridRecordError::Format(
+                birdman_game_format::FlightRecordFormatError::EncodingFailed,
+            ))
+        })
     }
 
     fn analysis_internal(&self) -> Result<String, BoundaryError> {

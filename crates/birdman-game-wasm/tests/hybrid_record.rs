@@ -13,11 +13,11 @@ use birdman_game_format::{
     InformationLevel, PersonalBestContentHashes, TailFlightRecordDocument,
     TailPersonalBestConfiguration, TailPersonalBestSelection, WeatherClass,
 };
-use birdman_game_wasm::HybridSessionPreparation;
-use hybrid_record::{
-    HybridRecordError, HybridRecordMetadata, analysis_samples_json, export_record_json,
-    playback_sample_json,
+use birdman_game_session::record_archive::{
+    RecordExportError, RecordExportMetadata, export_record_document,
 };
+use birdman_game_wasm::HybridSessionPreparation;
+use hybrid_record::{HybridRecordError, analysis_samples_json, playback_sample_json};
 use serde_json::{Value, json};
 
 fn input() -> TailFlightTickInput {
@@ -55,8 +55,8 @@ fn complete() -> (GameSession<'static>, FlightRecordTailIdentityDocument) {
 fn metadata<'identity>(
     session: &GameSession<'_>,
     identity: &'identity FlightRecordTailIdentityDocument,
-) -> HybridRecordMetadata<'identity> {
-    HybridRecordMetadata {
+) -> RecordExportMetadata<'identity> {
+    RecordExportMetadata {
         configuration: TailPersonalBestConfiguration {
             scenario: session.configuration_identity().unwrap(),
             difficulty: DifficultySettings::custom(
@@ -76,6 +76,17 @@ fn metadata<'identity>(
             physics_build: [4; 32],
         },
     }
+}
+
+fn export_record_json(
+    session: &GameSession<'_>,
+    metadata: RecordExportMetadata<'_>,
+) -> Result<String, RecordExportError> {
+    let bytes = export_record_document(session, metadata)?
+        .encode_json()
+        .map_err(RecordExportError::Format)?;
+    String::from_utf8(bytes)
+        .map_err(|_| RecordExportError::Format(FlightRecordFormatError::EncodingFailed))
 }
 
 #[test]
@@ -195,13 +206,13 @@ fn helpers_reject_unavailable_stale_metadata_and_invalid_query_inputs() {
     stale.configuration.scenario.seed = 0;
     assert!(matches!(
         export_record_json(&session, stale),
-        Err(HybridRecordError::MetadataMismatch)
+        Err(RecordExportError::MetadataMismatch)
     ));
     let mut mismatched = metadata(&session, &identity);
     mismatched.configuration.control_mode = ControlMode::Automatic;
     assert!(matches!(
         export_record_json(&session, mismatched),
-        Err(HybridRecordError::MetadataMismatch)
+        Err(RecordExportError::MetadataMismatch)
     ));
     for time_seconds in [f64::NAN, -0.01, 0.03] {
         assert!(matches!(
@@ -214,13 +225,13 @@ fn helpers_reject_unavailable_stale_metadata_and_invalid_query_inputs() {
     let (active, _) = launch();
     assert!(matches!(
         export_record_json(&active, metadata(&active, &identity)),
-        Err(HybridRecordError::Format(
+        Err(RecordExportError::Format(
             FlightRecordFormatError::RecordUnavailable
         ))
     ));
     assert!(matches!(
         export_record_json(&title, metadata(&session, &identity)),
-        Err(HybridRecordError::RecordUnavailable)
+        Err(RecordExportError::RecordUnavailable)
     ));
     let empty = FlightRecord::try_new(session.flight_record().unwrap().header()).unwrap();
     assert!(matches!(
