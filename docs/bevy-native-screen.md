@@ -234,7 +234,7 @@ cargo run -p birdman-game-bevy --locked -- --verify target/bevy-gpu-verification
 寸法は正の整数で指定し、`--verify`との併用を必須とする。通常起動は1280×720を維持する。
 
 標準の`--verify`はTitle・Flight Setupを既定のAutoで撮影し、水面の画質比較前に既存の100%描画設定操作でManualへ切り替える。後段ではAutoへの切替と設定復元も検査する。
-同一processでCalmとTypicalを3往復させ、本番の環境更新・GPU描画を通して、空cloudの`Mesh3d`不在、旧meshの解放、非空meshによる復元を確認する。飛行条件は元の既定値へ戻す。
+同一processでCalmとTypicalを3往復させ、本番の環境更新・GPU描画を通して、空cloudの`Mesh3d`不在、旧meshの解放、新しいmesh handleによる復元を確認する。飛行条件は元の既定値へ戻す。頂点データの非空検査は既存のCPU回帰で行う。
 
 `--verify`は一時停止中の同じ飛行state・camera・simulation時刻でLow→Medium→Highへ交換し、
 `03b-paused-quality-low.png`、`03c-paused-quality-medium.png`、`03d-paused-quality-high.png`を追加保存する。

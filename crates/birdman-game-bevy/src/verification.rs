@@ -2438,9 +2438,7 @@ fn advance_step(
                 verification.next(VerificationStage::CloudPrepare(cycle + 1));
             } else {
                 if session.game.difficulty()
-                    != birdman_game_session::default_difficulty(
-                        birdman_game_session::default_control_mode(),
-                    )
+                    != birdman_game_session::application::ApplicationSession::default().difficulty()
                 {
                     return Err("Cloud verification changed the default flight settings".into());
                 }
