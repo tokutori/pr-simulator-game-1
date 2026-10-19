@@ -60,6 +60,25 @@
       "oneOf": [
         {
           "additionalProperties": false,
+          "description": "Opens or closes the shared legal notices.",
+          "properties": {
+            "kind": {
+              "const": "set_credits",
+              "type": "string"
+            },
+            "open": {
+              "description": "Whether the credits replace the current menu.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "kind",
+            "open"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
           "description": "Produces one canonical domain operation.",
           "properties": {
             "command": {
@@ -759,7 +778,7 @@
           "type": "boolean"
         },
         "saved_at": {
-          "description": "Formatted local save timestamp supplied by the platform.",
+          "description": "Original RFC 3339 save timestamp; the shared view formats it in UTC.",
           "maxLength": 256,
           "type": "string"
         }

@@ -28,7 +28,8 @@ export type UiButtonPresentation =
 export function uiButtonLabel(control: UiButton): string {
   const presentation = control.presentation;
   if (presentation?.kind === "choice") {
-    return `${presentation.selected ? "●" : "○"} ${control.label}\n${presentation.description}`;
+    const label = `${presentation.selected ? "●" : "○"} ${control.label}`;
+    return presentation.description.length === 0 ? label : `${label}\n${presentation.description}`;
   }
   if (presentation?.kind === "disclosure") return `${presentation.expanded ? "▾" : "▸"} ${control.label}`;
   return control.label;

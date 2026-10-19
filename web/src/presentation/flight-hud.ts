@@ -4,7 +4,6 @@ import { htmlDomApi } from "snabbdom/build/htmldomapi.js";
 import { init } from "snabbdom/build/init.js";
 import type { VNode } from "snabbdom";
 import type { FlightHudModel, FlightHudNode } from "./flight-hud-model.js";
-import { earcutLicenseUrl, gameUiNumberFormatLicenseUrl, gameUiValidatorLicenseUrl } from "../app/game-ui-codec.js";
 
 let nextHudId = 0;
 
@@ -60,8 +59,7 @@ export class FlightHudAdapter {
           "data-group": group.id, "data-placement": group.placement, "data-layout": group.layout.kind,
           style: `display: ${group.layout.kind === "row" ? "flex" : "grid"}; grid-template-columns: ${group.layout.kind === "grid" ? `repeat(${String(group.layout.columns)}, minmax(0, 1fr))` : "minmax(0, 1fr)"}`
         }
-      }, group.nodes.map((node) => hudNode(node, model, this.clipPrefix)))),
-      legalNotices()
+      }, group.nodes.map((node) => hudNode(node, model, this.clipPrefix))))
     ]));
   }
 
@@ -140,25 +138,4 @@ function gauge(node: FlightHudNode, viewBox: string, children: VNode[], style: R
 
 function shape(tag: string, attributes: Record<string, string | number>, text = ""): VNode {
   return h(tag, { attrs: attributes }, text);
-}
-
-function legalNotices(): VNode {
-  return h("footer.flight-hud-attributions", { key: "legal-notices" }, [
-    legalLink("https://www.openstreetmap.org/copyright", "© OpenStreetMap contributors · ODbL"),
-    legalLink("https://earth.jaxa.jp/en/data/policy/", "地形 AW3D30 (JAXA)"),
-    legalLink("https://dataspace.copernicus.eu/explore-data/data-collections/copernicus-contributing-missions/collections-description/COP-DEM",
-      "© DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved."),
-    h("details.flight-hud-attribution-notice", { attrs: { open: true } }, [
-      h("summary", "Copernicus GLO-30 利用条件"),
-      h("p", "produced using Copernicus WorldDEM-30."),
-      h("p", "The organisations in charge of the Copernicus programme by law or by delegation do not incur any liability for any use of the Copernicus WorldDEM-30.")
-    ]),
-    legalLink(gameUiValidatorLicenseUrl, "Game UI validator 利用条件"),
-    legalLink(gameUiNumberFormatLicenseUrl, "ryu-js 利用条件"),
-    legalLink(earcutLicenseUrl, "earcut 利用条件")
-  ]);
-}
-
-function legalLink(href: string, label: string): VNode {
-  return h("a.flight-hud-attribution-link", { attrs: { href, target: "_blank", rel: "noopener noreferrer" } }, label);
 }

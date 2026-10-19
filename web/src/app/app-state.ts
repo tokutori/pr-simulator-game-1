@@ -454,8 +454,8 @@ export function recordListNotice(state: RecordListState): string {
   switch (state.kind) {
     case "unloaded": return "";
     case "loading": return "保存記録を読み込んでいる";
-    case "ready": return state.records.length === 0 ? "保存済みFlightRecordはない" : "";
-    case "failed": return `FlightRecord一覧を取得できない: ${state.message}`;
+    case "ready": return state.records.length === 0 ? "保存記録はまだない。" : "";
+    case "failed": return `保存記録一覧を取得できない: ${state.message}`;
   }
 }
 

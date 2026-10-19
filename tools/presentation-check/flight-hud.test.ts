@@ -2,10 +2,9 @@ import { Window } from "happy-dom";
 import { describe, expect, it } from "vitest";
 import { currentSharedHudFixture, mapSharedHudNodes, sharedHudNodes } from "../game-check/shared-game-ui-fixture.js";
 import { FlightHudAdapter } from "../../web/src/presentation/flight-hud.js";
-import { earcutLicenseUrl, gameUiValidatorLicenseUrl } from "../../web/src/app/game-ui-codec.js";
 
 describe("Flight HUD typed DOM projection", () => {
-  it("retains connected keyed widgets, disclosure and scroll across hidden frames and value changes", async () => {
+  it("retains connected keyed widgets and scroll across hidden frames and value changes", async () => {
     const window = new Window();
     const nativeRoot = window.document.createElement("section");
     window.document.body.append(nativeRoot);
@@ -18,9 +17,6 @@ describe("Flight HUD typed DOM projection", () => {
       const nodes = [...root.querySelectorAll("[data-node]")];
       const heading = root.querySelector('[data-instrument="heading_tape"]');
       const ticks = [...heading?.children ?? []];
-      const disclosure = root.querySelector<HTMLDetailsElement>("details");
-      if (disclosure === null) throw new Error("Missing license disclosure");
-      disclosure.open = false;
       root.scrollTop = 37;
       hud.render(null);
       expect(root.hidden).toBe(true);
@@ -30,7 +26,6 @@ describe("Flight HUD typed DOM projection", () => {
       expect([...root.querySelectorAll("[data-node]")]).toEqual(nodes);
       expect([...heading?.children ?? []]).toEqual(ticks);
       expect(nodes.every((node) => node.isConnected)).toBe(true);
-      expect(disclosure.open).toBe(false);
       expect(root.scrollTop).toBe(37);
       expect([...root.querySelectorAll("output")].map((node) => node.textContent)).toEqual(sharedHudNodes(next).map((node) => node.content.value));
       hud.setVisible(true);
@@ -106,21 +101,15 @@ describe("Flight HUD typed DOM projection", () => {
     } finally { await window.happyDOM.abort(); }
   });
 
-  it("retains visible legal attribution and bundled license links", async () => {
+  it("projects only the shared HUD without appending platform-owned legal panels", async () => {
     const window = new Window();
     const root = window.document.createElement("section") as unknown as HTMLElement;
     try {
       new FlightHudAdapter(root).render(currentSharedHudFixture());
-      const notice = root.querySelector<HTMLDetailsElement>(".flight-hud-attribution-notice");
-      expect(notice?.open).toBe(true);
-      expect(root.textContent).toContain("provided under COPERNICUS by the European Union and ESA; all rights reserved.");
-      expect(notice?.textContent).toContain("produced using Copernicus WorldDEM-30.");
-      expect(notice?.textContent).toContain("do not incur any liability");
-      for (const href of [gameUiValidatorLicenseUrl, earcutLicenseUrl]) {
-        const link = [...root.querySelectorAll<HTMLAnchorElement>("a")].find((node) => node.href === href);
-        expect(link?.target).toBe("_blank");
-        expect(link?.rel).toBe("noopener noreferrer");
-      }
+      expect(root.textContent).toContain("© OpenStreetMap contributors");
+      expect(root.querySelectorAll("[data-node]").length).toBe(sharedHudNodes(currentSharedHudFixture()).length);
+      expect(root.querySelector("details")).toBeNull();
+      expect(root.textContent).not.toContain("do not incur any liability");
     } finally { await window.happyDOM.abort(); }
   });
 });
