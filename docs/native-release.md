@@ -38,3 +38,8 @@ license生成は固定cargo-aboutを用いる単一job、archive生成は全6bui
 全構成を同じSHAで取得できた場合だけdraft Releaseへ添付する。workflow自体はtagやReleaseを作成しない。
 review済みPR headがそのままmainへfast-forwardされた場合、同一SHAのartifactを再利用できる。
 SHAが変化した場合は新しいsourceでbuildする。描画・実機操作は別の受入事項である。
+
+転送Actionの保守は `Artifact transfer check` workflowで検査する。既存の未失効 `native-licenses-<SHA>`
+artifact一個を選択し、download→upload→再download後のfile pathとSHA-256を照合する。
+手動実行ではartifact IDを指定でき、省略時は最新の候補を使用する。対象2workflowを変更したPRでも実行し、
+通常のソース変更には追加待機を導入しない。Nativeの再コンパイル、artifact内データの実行、Release操作は行わない。
