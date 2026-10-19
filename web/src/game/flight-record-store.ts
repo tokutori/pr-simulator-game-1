@@ -38,7 +38,7 @@ export interface SavedFlightRecord extends StoredFlightRecord {
 export interface FlightRecordPersistencePort {
   add(json: string, savedAt: string, selection: PersonalBestSelectionPort): Promise<number>;
   get(id: number): Promise<StoredFlightRecord | null>;
-  getAll(): Promise<readonly StoredFlightRecordSummary[]>;
+  getRecent(limit: number): Promise<readonly StoredFlightRecordSummary[]>;
 }
 
 const maximumRecordBytes = 16 * 1024 * 1024;
@@ -68,11 +68,10 @@ export class FlightRecordRepository {
     return (await this.persistence.get(id))?.json ?? null;
   }
 
-  async list(): Promise<readonly StoredFlightRecordSummary[]> {
-    const records = await this.persistence.getAll();
-    return Object.freeze([...records]
-      .sort((left, right) => right.id - left.id)
-      .map(({ id, savedAt, personalBest }) => Object.freeze({ id, savedAt, personalBest })));
+  async recent(limit: number): Promise<readonly StoredFlightRecordSummary[]> {
+    if (!Number.isSafeInteger(limit) || limit < 1) throw new RangeError("Record preview limit must be a positive integer");
+    const records = await this.persistence.getRecent(limit);
+    return Object.freeze(records.slice(0, limit).map(({ id, savedAt, personalBest }) => Object.freeze({ id, savedAt, personalBest })));
   }
 }
 
@@ -206,50 +205,41 @@ export class IndexedDbFlightRecordPersistence implements FlightRecordPersistence
     }));
   }
 
-  async getAll(): Promise<readonly StoredFlightRecordSummary[]> {
+  async getRecent(limit: number): Promise<readonly StoredFlightRecordSummary[]> {
+    if (!Number.isSafeInteger(limit) || limit < 1) throw new RangeError("Record preview limit must be a positive integer");
     return this.withDatabase((database) => new Promise<readonly StoredFlightRecordSummary[]>((resolve, reject) => {
       const transaction = database.transaction(["recordMetadata", "personalBests"], "readonly");
-      const metadataRequest = transaction.objectStore("recordMetadata").getAll();
-      const personalBests = transaction.objectStore("personalBests");
-      let metadata: readonly StoredFlightRecordMetadata[] | null = null;
+      const rows: StoredFlightRecordMetadata[] = [];
       let personalBestRecordIds: ReadonlySet<number> | null = null;
       let failure: Error | null = null;
-      const abort = (error: unknown): void => {
-        failure = error instanceof Error ? error : new Error(String(error));
-        transaction.abort();
-      };
-      const readPersonalBestIndex = (): void => {
-        const personalBestRequest = personalBests.getAll();
-        personalBestRequest.onsuccess = () => {
-          const result: unknown = personalBestRequest.result;
-          if (Array.isArray(result) && result.every(isPersonalBestEntry)) {
-            personalBestRecordIds = new Set(result.map(({ recordId }) => recordId));
-          } else abort(new TypeError("IndexedDB Personal Best index is malformed"));
-        };
-      };
+      const abort = (error: Error): void => { failure = error; transaction.abort(); };
+      const metadataRequest = transaction.objectStore("recordMetadata").openCursor(null, "prev");
       metadataRequest.onsuccess = () => {
-        const result: unknown = metadataRequest.result;
-        if (!Array.isArray(result) || !result.every(isStoredFlightRecordMetadata)) {
+        const cursor = metadataRequest.result;
+        if (cursor === null) return;
+        const value: unknown = cursor.value;
+        if (!isStoredFlightRecordMetadata(value)) {
           abort(new TypeError("IndexedDB record metadata is malformed"));
           return;
         }
-        metadata = result;
-        readPersonalBestIndex();
+        rows.push(value);
+        if (rows.length < limit) cursor.continue();
+      };
+      const personalBestRequest = transaction.objectStore("personalBests").getAll();
+      personalBestRequest.onsuccess = () => {
+        const entries: unknown = personalBestRequest.result;
+        if (!Array.isArray(entries) || !entries.every(isPersonalBestEntry)) {
+          abort(new TypeError("IndexedDB Personal Best index is malformed"));
+          return;
+        }
+        personalBestRecordIds = new Set(entries.map(({ recordId }) => recordId));
       };
       transaction.oncomplete = () => {
-        const currentMetadata = metadata;
-        const currentPersonalBestRecordIds = personalBestRecordIds;
-        if (currentMetadata === null || currentPersonalBestRecordIds === null) {
-          reject(new TypeError("IndexedDB record metadata or Personal Best index is malformed"));
-        } else {
-          resolve(Object.freeze(currentMetadata.map(({ id, savedAt }) => Object.freeze({
-            id,
-            savedAt,
-            personalBest: currentPersonalBestRecordIds.has(id)
-          }))));
-        }
+        const bestIds = personalBestRecordIds;
+        if (bestIds === null) { reject(new TypeError("IndexedDB Personal Best index is malformed")); return; }
+        resolve(Object.freeze(rows.map(({ id, savedAt }) => Object.freeze({ id, savedAt, personalBest: bestIds.has(id) }))));
       };
-      transaction.onabort = () => { reject(failure ?? transaction.error ?? new Error("IndexedDB record list was aborted")); };
+      transaction.onabort = () => { reject(failure ?? transaction.error ?? new Error("IndexedDB record preview was aborted")); };
     }));
   }
 

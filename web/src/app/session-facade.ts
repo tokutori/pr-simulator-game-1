@@ -23,11 +23,11 @@ import type { FlightRenderPose } from "../render/contracts/runtime.js";
 import type { RecordedFlightRenderPose } from "../render/contracts/camera.js";
 import { projectReplayCamera } from "../render/camera/replay-camera.js";
 import { encodeGameUiAction, encodeGameUiPlatformInput, parseGameUiFrame, parseGameUiUpdate, parseGameUiView, parseReplayCameraView } from "./game-ui-codec.js";
+import type { GameUiPlatformObservation } from "./game-ui-codec.js";
 import type { GameUiReplayCamera } from "../generated/replay-camera.js";
 import type { GameUiAction } from "../generated/game-ui-action.js";
 import type { GameUiEffect, GameUiUpdate } from "../generated/game-ui-effects.js";
 import type { SessionCommand } from "./game-ui-types.js";
-import type { GameUiPlatformInput } from "../generated/game-ui-input.js";
 import type { GameUiView } from "../generated/game-ui-view.js";
 import { mergeGameUiFrame } from "./game-ui-frame.js";
 
@@ -257,7 +257,7 @@ export class TailAppSessionFacade extends SessionResourceOwner {
     return this.change(() => executeTailOperation(this.port, operation, this.physicsHz));
   }
 
-  readSharedUi(platform: GameUiPlatformInput): GameUiView {
+  readSharedUi(platform: GameUiPlatformObservation): GameUiView {
     return this.observe(() => {
       const token = this.captureQueryToken();
       const cached = this.sharedUiCache;
@@ -276,7 +276,7 @@ export class TailAppSessionFacade extends SessionResourceOwner {
     });
   }
 
-  updateSharedUi(action: GameUiAction, platform: GameUiPlatformInput): GameUiUpdate {
+  updateSharedUi(action: GameUiAction, platform: GameUiPlatformObservation): GameUiUpdate {
     return this.change(() => {
       const update = parseGameUiUpdate(this.port.game_ui_action_json(encodeGameUiAction(action), encodeGameUiPlatformInput(platform)));
       return update;

@@ -1,11 +1,16 @@
 import type { GameUiAction } from "../generated/game-ui-action.js";
-import type { GameUiPlatformInput } from "../generated/game-ui-input.js";
+import type { GameUiPlatformInput, GameUiStoredRecord } from "../generated/game-ui-input.js";
 import type { GameUiUpdate } from "../generated/game-ui-effects.js";
 import type { GameUiView } from "../generated/game-ui-view.js";
 import type { GameUiFrame } from "../generated/game-ui-frame.js";
 import type { ReplayCameraView } from "../generated/replay-camera.js";
+import { gameUiInputQuery } from "../generated/game-ui-input-query.js";
 import { validateGameUiAction, validateGameUiPlatformInput, validateGameUiUpdate, validateGameUiView, validateGameUiFrame, validateReplayCameraView } from "../generated/game-ui-validators.js";
 import type { ValidateFunction } from "ajv";
+
+export type GameUiPlatformObservation = Omit<GameUiPlatformInput, "stored_records"> & {
+  readonly stored_records: readonly GameUiStoredRecord[];
+};
 
 export const gameUiValidatorLicenseUrl = new URL("../../../assets/game-ui-validators.LICENSE.txt", import.meta.url).href;
 export const gameUiNumberFormatLicenseUrl = new URL("../../../assets/ryu-js.LICENSE.txt", import.meta.url).href;
@@ -40,8 +45,33 @@ export function encodeGameUiAction(action: GameUiAction): string {
   return encodeBoundary(action, validateGameUiAction, "GameUiAction");
 }
 
-export function encodeGameUiPlatformInput(input: GameUiPlatformInput): string {
-  return encodeBoundary(input, validateGameUiPlatformInput, "GameUiPlatformInput");
+export function encodeGameUiPlatformInput(input: GameUiPlatformObservation): string {
+  const water = input.water_quality_operation;
+  const status = input.screen_render_scale.status;
+  const bounded = { ...input,
+    notification: displayText(input.notification, gameUiInputQuery.noticeCharacters),
+    flight_controller_failure: input.flight_controller_failure == null ? null : displayText(input.flight_controller_failure, gameUiInputQuery.noticeCharacters),
+    head_hud_failure: input.head_hud_failure == null ? null : displayText(input.head_hud_failure, gameUiInputQuery.noticeCharacters),
+    water_quality_operation: "cause" in water ? { ...water, cause: displayText(water.cause, gameUiInputQuery.noticeCharacters) } : water,
+    screen_render_scale: { ...input.screen_render_scale,
+      status: "cause" in status ? { ...status, cause: displayText(status.cause, gameUiInputQuery.noticeCharacters) } : status },
+    stored_records: input.stored_records.map((record) => ({ ...record, saved_at: displayText(record.saved_at, gameUiInputQuery.savedAtCharacters) }))
+  };
+  const json = encodeBoundary(bounded, validateGameUiPlatformInput, "GameUiPlatformInput");
+  if (new TextEncoder().encode(json).byteLength > gameUiInputQuery.maximumBytes) {
+    throw new GameUiBoundaryError("GameUiPlatformInput", ["Encoded input exceeds the shared byte limit"]);
+  }
+  return json;
+}
+
+function displayText(value: string, maximumCharacters: number): string {
+  if (value.length <= maximumCharacters) return value;
+  const characters: string[] = [];
+  for (const character of value) {
+    if (characters.length === maximumCharacters) return `${characters.slice(0, -1).join("")}…`;
+    characters.push(character);
+  }
+  return value;
 }
 
 function parseBoundary<Value>(json: string, validate: ValidateFunction<Value>, name: string): Value {
@@ -56,7 +86,7 @@ function parseBoundary<Value>(json: string, validate: ValidateFunction<Value>, n
   return value;
 }
 
-function encodeBoundary<Value>(value: Value, validate: ValidateFunction<Value>, name: string): string {
+function encodeBoundary<Value>(value: unknown, validate: ValidateFunction<Value>, name: string): string {
   requireBoundary(value, validate, name);
   return JSON.stringify(value);
 }

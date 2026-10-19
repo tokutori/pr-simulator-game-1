@@ -45,7 +45,7 @@ export function sharedGameUiPlatform(overrides: Partial<GameUiPlatformInput> = {
     notification: "",
     flight_controller_failure: null,
     head_hud_failure: null,
-    stored_records: Object.freeze([]),
+    stored_records: Object.freeze([] as const),
     ...overrides
   });
 }

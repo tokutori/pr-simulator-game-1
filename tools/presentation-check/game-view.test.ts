@@ -126,7 +126,7 @@ describe("Shared Rust game View projection", () => {
   });
 
   it("projects stored record choices and native capability restrictions from the shared view", () => {
-    const records = [{ id: 12, saved_at: "2026-09-28T00:00:00.000Z", personal_best: true }];
+    const records = [{ id: 12, saved_at: "2026-09-28T00:00:00.000Z", personal_best: true }] as const;
     const title = currentSharedGameUiFixture(0, { platform: { stored_records: records } });
     const control = createGameViewModel(title).panels.flatMap((panel) => panel.controls).find((control) => control.id === "game-title-open-record-12");
     expect(control).toMatchObject({ kind: "button", enabled: true });

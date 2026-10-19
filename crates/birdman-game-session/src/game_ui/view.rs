@@ -35,7 +35,7 @@ pub fn game_ui_view(
                 true,
             );
             if context.platform.stored_records_available {
-                for record in context.platform.stored_records.iter().take(3) {
+                for record in context.platform.stored_records.iter() {
                     menu.platform(
                         &format!("game-title-open-record-{}", record.id),
                         &format!(

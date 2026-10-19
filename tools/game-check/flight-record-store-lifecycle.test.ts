@@ -60,7 +60,7 @@ async function cleanup(factory: IDBFactory, name: string, connections: readonly 
 }
 
 describe("IndexedDB connection ownership", () => {
-  it.each(["get", "getAll", "add"] as const)("closes late success once after blocked %s and permits retry", async (operation) => {
+  it.each(["get", "getRecent", "add"] as const)("closes late success once after blocked %s and permits retry", async (operation) => {
     const factory = new IDBFactory();
     const name = `blocked-record-${operation}`;
     const observed = observeOpen(factory);
@@ -70,7 +70,7 @@ describe("IndexedDB connection ownership", () => {
     const invoke = (): Promise<unknown> => {
       switch (operation) {
         case "get": return persistence.get(1);
-        case "getAll": return persistence.getAll();
+        case "getRecent": return persistence.getRecent(3);
         case "add": return persistence.add("{}", "2026-10-03T00:00:00.000Z", selection());
       }
     };
@@ -96,7 +96,7 @@ describe("IndexedDB connection ownership", () => {
       expect([...abandoned.objectStoreNames]).toEqual([
         "personalBests", "recordMetadata", "records"
       ]);
-      await expect(invoke()).resolves.toEqual(operation === "get" ? null : operation === "getAll" ? [] : 1);
+      await expect(invoke()).resolves.toEqual(operation === "get" ? null : operation === "add" ? 1 : []);
       const retried = latest(observed.connections);
       expect(retried).not.toBe(abandoned);
       expect(close.mock.contexts.filter((database) => database === retried)).toHaveLength(1);

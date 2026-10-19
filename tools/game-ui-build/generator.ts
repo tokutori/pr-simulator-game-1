@@ -68,8 +68,26 @@ export async function generateGameUiFiles(schemas: GameUiSchemas, root: string):
     inlineRefs: false,
     code: { source: true, esm: true, formats: _`require(${formatsPath}).numericFormats` }
   });
+  ajv.addKeyword({ keyword: "x-boundary-bytes", schemaType: "number", valid: true });
   for (const [name, format] of Object.entries(numericFormats)) ajv.addFormat(name, format);
   const files: GeneratedFile[] = [];
+  const definitions = schemas.deserialize["$defs"];
+  if (!isObject(definitions)) throw new Error("Missing input query definitions");
+  const input = definitions["GameUiPlatformInput"];
+  const records = definitions["GameUiStoredRecordPreview"];
+  const record = definitions["GameUiStoredRecord"];
+  const properties = isObject(input) ? input["properties"] : undefined;
+  const recordProperties = isObject(record) ? record["properties"] : undefined;
+  const notification = isObject(properties) ? properties["notification"] : undefined;
+  const savedAt = isObject(recordProperties) ? recordProperties["saved_at"] : undefined;
+  const query = {
+    maximumBytes: schemaLimit(input, "x-boundary-bytes"),
+    storedRecordLimit: schemaLimit(records, "maxItems"),
+    savedAtCharacters: schemaLimit(savedAt, "maxLength"),
+    noticeCharacters: schemaLimit(notification, "maxLength")
+  };
+  files.push({ path: "web/src/generated/game-ui-input-query.ts", content:
+    `/* ${generatedBanner} */\nexport const gameUiInputQuery = Object.freeze(${JSON.stringify(query, null, 2)} as const);\n` });
   const validatorRoots: Record<string, string> = {};
   const sourceHashes: Record<string, string> = {};
   for (const group of schemaGroups) {
@@ -130,6 +148,14 @@ export async function generateGameUiFiles(schemas: GameUiSchemas, root: string):
     })));
   files.push({ path: "tools/game-ui-build/generated/game-ui-generation.json", content: `${JSON.stringify({ schemaVersion: 2, generators, sources: sourceHashes }, null, 2)}\n` });
   return files;
+}
+
+function schemaLimit(schema: unknown, key: string): number {
+  const value = isObject(schema) ? schema[key] : undefined;
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0) {
+    throw new Error(`Missing positive input query limit: ${key}`);
+  }
+  return value;
 }
 
 export function readonlyDeclarations(source: string): string {

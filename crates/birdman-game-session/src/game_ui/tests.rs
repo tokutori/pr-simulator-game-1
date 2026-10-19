@@ -35,7 +35,7 @@ pub(super) fn platform() -> GameUiPlatformInput {
         notification: String::new(),
         flight_controller_failure: None,
         head_hud_failure: None,
-        stored_records: Vec::new(),
+        stored_records: Default::default(),
     }
 }
 pub(super) fn difficulty() -> DifficultySettings {
@@ -62,6 +62,40 @@ fn control<'view>(view: &'view GameUiView, id: &str) -> &'view GameUiControl {
         .flat_map(|panel| &panel.controls)
         .find(|control| control.id == id)
         .unwrap()
+}
+
+#[test]
+fn stored_record_preview_has_a_bounded_serde_and_native_projection() {
+    let records = (1..=2000)
+        .map(|id| GameUiStoredRecord {
+            id,
+            saved_at: "🛩日本語".repeat(200),
+            personal_best: id == 1,
+        })
+        .collect::<Vec<_>>();
+    let preview = GameUiStoredRecordPreview::from(records.clone());
+    assert_eq!(preview.iter().count(), GAME_UI_STORED_RECORD_LIMIT);
+    assert_eq!(
+        preview.iter().next().unwrap().saved_at.chars().count(),
+        GAME_UI_SAVED_AT_CHARACTERS
+    );
+    let json = serde_json::to_string(&preview).unwrap();
+    assert_eq!(
+        serde_json::from_str::<GameUiStoredRecordPreview>(&json).unwrap(),
+        preview
+    );
+    assert!(
+        serde_json::from_str::<GameUiStoredRecordPreview>(
+            &serde_json::to_string(&records).unwrap()
+        )
+        .is_err()
+    );
+    assert!(
+        serde_json::from_str::<GameUiStoredRecordPreview>(
+            &serde_json::to_string(&records[..1]).unwrap()
+        )
+        .is_err()
+    );
 }
 fn launched() -> GameSession<'static> {
     let mut session = GameSession::new();
