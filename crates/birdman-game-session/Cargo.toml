@@ -17,7 +17,7 @@ serde_json.workspace = true
 ryu-js = { version = "=1.0.3", default-features = false }
 schemars = { workspace = true, optional = true }
 image = { version = "=0.25.10", default-features = false }
-earcut = "=0.4.11"
+earcut = "=0.4.10"
 
 [dev-dependencies]
 sha2.workspace = true

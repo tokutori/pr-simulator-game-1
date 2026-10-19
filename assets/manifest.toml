@@ -42,11 +42,11 @@ processing = "tools/game-ui-build/generator.ts; concatenate the installed packag
 
 [[assets]]
 path = "assets/earcut.LICENSE.txt"
-sha256 = "fc68b2292916b040304bdb603502e04de10801889d8c460c9ad5a45a34e1eee4"
-source = "https://github.com/georust/earcut/blob/v0.4.11/LICENSE-MIT; https://github.com/georust/earcut/blob/v0.4.11/LICENSE-ISC"
-source_version = "earcut 0.4.11; exact Cargo dependency pin"
+sha256 = "c91df0d5f489088a2a14cd66a3048849f20d2e42c71b9503daca7a9a298fc51a"
+source = "https://github.com/georust/earcut/blob/v0.4.10/LICENSE-MIT; https://github.com/georust/earcut/blob/v0.4.10/LICENSE-ISC"
+source_version = "earcut 0.4.10; exact Cargo dependency pin; preserves the Three r186 Earcut 3.0.2 triangulation used by the registered canopy"
 license = "MIT AND ISC"
-license_url = "https://github.com/georust/earcut/blob/v0.4.11/LICENSE-MIT; https://github.com/georust/earcut/blob/v0.4.11/LICENSE-ISC"
+license_url = "https://github.com/georust/earcut/blob/v0.4.10/LICENSE-MIT; https://github.com/georust/earcut/blob/v0.4.10/LICENSE-ISC"
 attribution = "Copyright (c) 2026 The GeoRust Project Developers; Copyright (c) 2016, Mapbox"
 processing = "Complete upstream MIT option and derived Mapbox ISC notices in that order, with dependency identity; UTF-8 LF"
 

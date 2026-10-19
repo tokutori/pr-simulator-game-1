@@ -1,5 +1,5 @@
-earcut 0.4.11
-Source: https://github.com/georust/earcut/tree/v0.4.11
+earcut 0.4.10
+Source: https://github.com/georust/earcut/tree/v0.4.10
 The MIT license option is used. The upstream Mapbox ISC notice is retained below.
 
 Copyright (c) 2026 The GeoRust Project Developers

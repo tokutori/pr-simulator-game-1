@@ -220,6 +220,12 @@ fn canopy_and_four_rocks_keep_original_reference_heights_and_colors() {
             .all(|color| color[1] > color[0] * 4.0 && color[1] > color[2] * 3.0)
     );
     assert!(canopy.positions_ned.iter().all(|point| point[2] < -0.5));
+    let maximum = canopy
+        .positions_ned
+        .iter()
+        .map(|point| -point[2])
+        .fold(f32::NEG_INFINITY, f32::max);
+    assert!((maximum - 10.979_466).abs() < 1e-5);
     let rocks = meshes
         .iter()
         .find(|mesh| mesh.material == VenueTerrainMaterial::Rocks)
@@ -289,6 +295,11 @@ fn shoreline_connects_every_registered_shore_and_terrain_backed_island_sample() 
             .sum::<usize>();
     let mesh = &registered_terrain().unwrap()[0];
     assert_eq!(mesh.positions_ned.len(), expected * 4);
+    let mut referenced = vec![false; mesh.positions_ned.len()];
+    for &index in &mesh.indices {
+        referenced[index as usize] = true;
+    }
+    assert!(referenced.into_iter().all(|used| used));
     for rings in mesh.positions_ned.chunks_exact(4) {
         assert_eq!(rings[0][2], 8.0);
         assert_eq!(rings[1][2], 8.0);
@@ -420,10 +431,60 @@ fn broad_and_detail_packets_use_the_same_normal_at_their_shared_boundary() {
     }
 }
 
-fn rendered_height(mesh: &VenueTerrainMesh, north: f64, east: f64) -> Option<f64> {
-    for triangle in mesh.indices.chunks_exact(3) {
-        let [first, second, third] = [triangle[0], triangle[1], triangle[2]]
-            .map(|index| mesh.positions_ned[index as usize].map(f64::from));
+struct ObservedTriangle {
+    points: [[f64; 3]; 3],
+    bounds: [f64; 4],
+}
+
+fn observed_surface(mesh: &VenueTerrainMesh) -> Vec<ObservedTriangle> {
+    mesh.indices
+        .chunks_exact(3)
+        .map(|triangle| {
+            let points = [triangle[0], triangle[1], triangle[2]]
+                .map(|index| mesh.positions_ned[index as usize].map(f64::from));
+            let bounds = [
+                points
+                    .iter()
+                    .map(|point| point[0])
+                    .fold(f64::INFINITY, f64::min),
+                points
+                    .iter()
+                    .map(|point| point[0])
+                    .fold(f64::NEG_INFINITY, f64::max),
+                points
+                    .iter()
+                    .map(|point| point[1])
+                    .fold(f64::INFINITY, f64::min),
+                points
+                    .iter()
+                    .map(|point| point[1])
+                    .fold(f64::NEG_INFINITY, f64::max),
+            ];
+            let padding = ((bounds[1] - bounds[0]).max(bounds[3] - bounds[2])).max(1.0) * 2e-6;
+            ObservedTriangle {
+                points,
+                bounds: [
+                    bounds[0] - padding,
+                    bounds[1] + padding,
+                    bounds[2] - padding,
+                    bounds[3] + padding,
+                ],
+            }
+        })
+        .collect()
+}
+
+fn rendered_height(surface: &[ObservedTriangle], north: f64, east: f64) -> Option<f64> {
+    for triangle in surface {
+        let [min_north, max_north, min_east, max_east] = triangle.bounds;
+        if north < min_north - 1e-6
+            || north > max_north + 1e-6
+            || east < min_east - 1e-6
+            || east > max_east + 1e-6
+        {
+            continue;
+        }
+        let [first, second, third] = triangle.points;
         let denominator = (second[1] - third[1]) * (first[0] - third[0])
             + (third[0] - second[0]) * (first[1] - third[1]);
         if denominator.abs() < 1e-12 {
@@ -446,6 +507,92 @@ fn rendered_height(mesh: &VenueTerrainMesh, north: f64, east: f64) -> Option<f64
 }
 
 #[test]
+fn coastal_nodata_ramp_joins_the_actual_land_triangles_with_submerged_overlap() {
+    let mut source = grid(
+        3,
+        8,
+        30.0,
+        (0..24).map(|index| (index < 15).then_some(4.0)).collect(),
+        (0..24).map(|index| index < 15).collect(),
+    );
+    source.east_min_meters = -30.0;
+    let shore = Shoreline {
+        schema_version: 2,
+        origin_wgs84: crate::launch_venue().unwrap().origin_wgs84,
+        shorelines_north_east_meters: vec![vec![[0.0, -30.0], [0.0, 30.0]]],
+        shoreline_land_side_signs: vec![1],
+        islands: vec![],
+    };
+    let mesh = shoreline::generate(&shore, std::slice::from_ref(&source)).unwrap();
+    let land = terrain_mesh("land".into(), &source, &[], std::slice::from_ref(&source)).unwrap();
+    let surface = observed_surface(&land);
+    assert_eq!(mesh.indices.len(), 36);
+    assert!(mesh.positions_ned.len() > 8);
+    assert!(mesh.positions_ned.iter().any(|point| point[0] <= -240.0));
+    assert!(mesh.positions_ned.iter().any(|point| point[0] >= 80.0));
+    for rings in mesh.positions_ned.chunks_exact(4) {
+        assert_eq!(rings[0][2], 8.0);
+        assert_eq!(rings[1][2], 8.0);
+        let [north, east, down] = rings[3].map(f64::from);
+        let height = rendered_height(&surface, north, east).unwrap();
+        assert!((-down - height + 0.15).abs() < 0.001);
+    }
+    upward(&mesh);
+}
+
+#[test]
+fn actual_regional_edge_blends_into_broad_terrain_without_overlapping_its_interior() {
+    let (terrain, _) = registered_inputs().unwrap();
+    let grid = &terrain
+        .fine_patches
+        .iter()
+        .find(|patch| patch.id == "terrain-patch-regional-shore")
+        .unwrap()
+        .grid;
+    let meshes = registered_terrain().unwrap();
+    let broad = meshes
+        .iter()
+        .find(|mesh| mesh.name == "lake-biwa-distant-terrain")
+        .unwrap();
+    let regional = meshes
+        .iter()
+        .find(|mesh| mesh.name == "lake-biwa-terrain-patch-regional-shore")
+        .unwrap();
+    let broad_surface = observed_surface(broad);
+    let regional_surface = observed_surface(regional);
+    let mut compared = 0;
+    for row in 0..grid.rows {
+        for column in 0..grid.columns {
+            if row != 0 && column != 0 && row + 1 != grid.rows && column + 1 != grid.columns {
+                continue;
+            }
+            let [north, east] = grid.point(row, column);
+            if let Some(height) = rendered_height(&broad_surface, north, east) {
+                let down = f64::from(regional.positions_ned[row * grid.columns + column][2]);
+                assert!((-down - height).abs() < 0.11);
+                compared += 1;
+            }
+        }
+    }
+    assert!(compared > 100);
+    let mut checked = 0;
+    for triangle in &regional_surface {
+        let north = triangle.points.iter().map(|point| point[0]).sum::<f64>() / 3.0;
+        let east = triangle.points.iter().map(|point| point[1]).sum::<f64>() / 3.0;
+        if north.abs() > 2_000.0 || east.abs() > 2_000.0 {
+            continue;
+        }
+        assert!(rendered_height(&broad_surface, north, east).is_none());
+        assert!(rendered_height(&regional_surface, north, east).is_some());
+        checked += 1;
+        if checked == 100 {
+            break;
+        }
+    }
+    assert_eq!(checked, 100);
+}
+
+#[test]
 fn launch_shore_collar_joins_the_actual_regional_mesh_without_background_gaps() {
     let (terrain, mut shore) = registered_inputs().unwrap();
     let launch = shore.shorelines_north_east_meters[33].clone();
@@ -461,6 +608,8 @@ fn launch_shore_collar_joins_the_actual_regional_mesh_without_background_gaps() 
         .iter()
         .find(|mesh| mesh.name == "lake-biwa-terrain-patch-regional-shore")
         .unwrap();
+    let regional_surface = observed_surface(regional);
+    let collar_surface = observed_surface(&collar);
     let mut joined = 0;
     let mut unjoined = 0;
     let mut panels = 0;
@@ -474,7 +623,7 @@ fn launch_shore_collar_joins_the_actual_regional_mesh_without_background_gaps() 
         }
         joined += 1;
         if point[2] <= 0.0
-            && rendered_height(regional, point[0], point[1])
+            && rendered_height(&regional_surface, point[0], point[1])
                 .is_none_or(|height| (-point[2] - height + 0.15).abs() > 0.003)
         {
             unjoined += 1;
@@ -497,7 +646,7 @@ fn launch_shore_collar_joins_the_actual_regional_mesh_without_background_gaps() 
             ];
             let north = corners.iter().map(|point| f64::from(point[0])).sum::<f64>() / 4.0;
             let east = corners.iter().map(|point| f64::from(point[1])).sum::<f64>() / 4.0;
-            assert!(rendered_height(&collar, north, east).is_some());
+            assert!(rendered_height(&collar_surface, north, east).is_some());
             panels += 1;
         }
     }
