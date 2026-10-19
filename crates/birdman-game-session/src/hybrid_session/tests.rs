@@ -48,7 +48,7 @@ fn cached_hybrid_owners_survive_preparation_moves_and_share_environment_telemetr
     );
     let identity = configuration.identity();
     assert_eq!(identity.catalog_version, CATALOG_VERSION);
-    assert_eq!(identity.scenario_version, 4);
+    assert_eq!(identity.scenario_version, 5);
     assert_eq!(identity.environment_version, 6);
     assert_eq!(
         identity.aircraft_model_version,
@@ -273,7 +273,7 @@ fn every_hybrid_selection_launches_and_scores_along_the_shared_northwest_bearing
             assert!((score.net_horizontal_m() - 100.0).abs() < 1.0e-12);
             assert_eq!(
                 session.configuration_identity().unwrap().scenario_version,
-                4
+                5
             );
         }
     }

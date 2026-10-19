@@ -1,12 +1,8 @@
-#![doc = "Pure main-wing presentation geometry from Web blob 040d65b54cd3e4eb87ffa614da60a818c4e20936. Local metres use right/up/aft axes; structural assumptions affect rendering only."]
+#![doc = "Pure main-wing presentation geometry from Web blob 040d65b54cd3e4eb87ffa614da60a818c4e20936. Local metres use right/up/aft axes. Structural coordinates come from the shared airframe shape; material partitions, sampling and deflection are display-only."]
 
-const HALF_SPAN: f64 = 20.863 / 2.0;
-const ROOT_CHORD: f64 = 1.13;
-const TIP_CHORD: f64 = 0.38;
-const TAPER_EXPONENT: f64 = 1.6;
-const ROOT_LEADING_EDGE: f64 = -0.42;
-const LEADING_SWEEP: f64 = 0.24;
-const BASE_HEIGHT: f64 = -0.73;
+use crate::airframe_shape::{
+    BASE_HEIGHT, HALF_SPAN, chord, dihedral, leading_edge, section_profile, wing_point,
+};
 #[doc = "Display-only chord fraction covered by the opaque dyed skin."]
 pub const COVERED_FRACTION: f64 = 0.5;
 const REFERENCE_SPEED: f64 = 9.5;
@@ -297,23 +293,6 @@ impl WingFrame {
     }
 }
 
-fn chord(span: f64) -> f64 {
-    ROOT_CHORD + (TIP_CHORD - ROOT_CHORD) * (span / HALF_SPAN).powf(TAPER_EXPONENT)
-}
-
-fn leading_edge(span: f64) -> f64 {
-    ROOT_LEADING_EDGE + LEADING_SWEEP * span / HALF_SPAN
-}
-
-fn dihedral(span: f64) -> f64 {
-    let span = span.clamp(0.0, HALF_SPAN);
-    let first = 0.6 * HALF_SPAN;
-    let second = 0.8 * HALF_SPAN;
-    0.008 * span.min(first)
-        + 0.045 * (span.min(second) - first).max(0.0)
-        + 0.12 * (span - second).max(0.0)
-}
-
 fn deflection(span: f64, speed: f64) -> f64 {
     let span = span.clamp(0.0, HALF_SPAN);
     let speed = if speed.is_finite() {
@@ -325,38 +304,6 @@ fn deflection(span: f64, speed: f64) -> f64 {
     let load = 110.0 * 9.81 * load_factor / (2.0 * HALF_SPAN);
     load * span * span * (6.0 * HALF_SPAN * HALF_SPAN - 4.0 * HALF_SPAN * span + span * span)
         / (24.0 * 45e9 * 4e-6)
-}
-
-fn section_profile(fraction: f64) -> [[f64; 2]; 2] {
-    let camber = 0.04;
-    let peak = 0.4;
-    let mean = if fraction < peak {
-        camber * (2.0 * peak * fraction - fraction * fraction) / (peak * peak)
-    } else {
-        camber * ((1.0 - 2.0 * peak) + 2.0 * peak * fraction - fraction * fraction)
-            / ((1.0 - peak) * (1.0 - peak))
-    };
-    let slope = if fraction < peak {
-        2.0 * camber * (peak - fraction) / (peak * peak)
-    } else {
-        2.0 * camber * (peak - fraction) / ((1.0 - peak) * (1.0 - peak))
-    };
-    let thickness = 5.0
-        * 0.12
-        * (0.2969 * fraction.sqrt() - 0.1260 * fraction - 0.3516 * fraction * fraction
-            + 0.2843 * fraction.powi(3)
-            - 0.1036 * fraction.powi(4));
-    let angle = slope.atan();
-    [
-        [
-            fraction - thickness * angle.sin(),
-            mean + thickness * angle.cos(),
-        ],
-        [
-            fraction + thickness * angle.sin(),
-            mean - thickness * angle.cos(),
-        ],
-    ]
 }
 
 fn rib_point(side: f64, span: f64, fraction: f64) -> [f64; 3] {
@@ -385,20 +332,14 @@ fn surface(side: f64, chord_start: f64, chord_end: f64) -> WingSurface {
         for section in 0..=SPAN_STEPS {
             let fraction = section as f64 / SPAN_STEPS as f64;
             let distance = HALF_SPAN * fraction;
-            let section_chord =
-                ROOT_CHORD + (TIP_CHORD - ROOT_CHORD) * fraction.powf(TAPER_EXPONENT);
-            let leading = ROOT_LEADING_EDGE + LEADING_SWEEP * fraction;
             for station in 0..=CHORD_STEPS {
                 let distribution = (1.0
                     - (std::f64::consts::PI * station as f64 / CHORD_STEPS as f64).cos())
                     * 0.5;
                 let station_fraction = chord_start + (chord_end - chord_start) * distribution;
-                let profile = section_profile(station_fraction)[usize::from(!upper)];
-                positions.push([
-                    (side * distance) as f32,
-                    (BASE_HEIGHT + dihedral(distance) + profile[1] * section_chord) as f32,
-                    (leading + profile[0] * section_chord) as f32,
-                ]);
+                positions.push(
+                    wing_point(side, fraction, station_fraction, upper).map(|value| value as f32),
+                );
                 spans.push(distance as f32);
                 uvs.push([fraction as f32, station_fraction as f32]);
             }

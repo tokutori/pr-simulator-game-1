@@ -132,7 +132,7 @@ export function currentNamedAnalysisFixture(options: CurrentNamedAnalysisFixture
     : scenarioId === 4 ? "challenging" : scenarioId === 5 ? "near_limit" : "calm";
   const context: NamedRecordContext = {
     schemaVersion: 2, phase: options.phase ?? "result", controlLayout: "tail_incidence",
-    scenario: { catalogVersion: 4, scenarioId, scenarioVersion: 4, aircraftModelVersion: 3,
+    scenario: { catalogVersion: 5, scenarioId, scenarioVersion: 5, aircraftModelVersion: 3,
       environmentVersion: scenarioId, controllerProfileVersion: 3, seedLow: 21, seedHigh: 22 },
     controlIdentity: { aircraftConfigurationId: "bpg041-playable-hybrid-mock", controllerProfileId: "bpg040-tail-rate-feedback" },
     difficulty: { preset: "custom", information: "full", assistance: "manual", weather, hudProfile: null },

@@ -265,9 +265,9 @@ mod tests {
 
     fn identity(version: u32) -> EnvironmentIdentity {
         SessionScenarioIdentity {
-            catalog_version: 4,
+            catalog_version: 5,
             scenario_id: version,
-            scenario_version: 4,
+            scenario_version: 5,
             aircraft_model_version: 3,
             environment_version: version,
             controller_profile_version: 3,

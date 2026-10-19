@@ -66,7 +66,7 @@ async function runInvariantFlight(mode: number, informationCode: number, backend
     session.observe_countdown(session.countdown_token(), 1, true);
     const initial = parseTailSessionSnapshot(session.snapshot_json());
     if (initial.phaseCode !== 5) throw new Error("Expected a prepared flight");
-    expect(initial.identity).toMatchObject({ kind: "prepared", scenario: { catalogVersion: 4, scenarioVersion: 4,
+    expect(initial.identity).toMatchObject({ kind: "prepared", scenario: { catalogVersion: 5, scenarioVersion: 5,
       aircraftModelVersion: 3, controllerProfileVersion: 3, environmentVersion: 6, seedLow: 11, seedHigh: 12 },
       controls: { aircraftConfigurationId: "bpg041-playable-hybrid-mock" } });
     const committed: FlightFrame[] = [];

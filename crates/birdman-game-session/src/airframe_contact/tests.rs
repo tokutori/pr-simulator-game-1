@@ -1,4 +1,5 @@
 use super::*;
+
 use birdman_game_core::{
     BodyVector, ControlMode, FlightState, GameSession, Gravity, HybridAerodynamicLoad,
     HybridMockDefinition, HybridMockTrim, HybridModel, NedPoint, NedVector, SessionEndReason,
@@ -13,7 +14,9 @@ use birdman_game_format::{
     canonical_tail_personal_best_key,
 };
 
-use crate::{DEFAULT_MAXIMUM_FLIGHT_TICKS, HybridSessionPreparation};
+use crate::{
+    DEFAULT_MAXIMUM_FLIGHT_TICKS, HybridSessionPreparation, cockpit_geometry::CockpitGeometry,
+};
 
 fn neutral_input() -> TailFlightTickInput {
     TailFlightTickInput::new(
@@ -49,44 +52,60 @@ fn maximum_down_offset(attitude: UnitQuaternion, points: &[BodyPoint]) -> f64 {
 }
 
 #[test]
-fn registered_points_retain_all_shell_vertices_and_registered_span_tail_extents() {
+fn registered_points_retain_every_structural_polytope_vertex() {
     let points = registered_contact_points().unwrap();
-    assert!(points.len() > 240 && points.len() < 300);
-    assert_eq!(CockpitGeometry::shell_vertices().count(), 240);
-    for [right, up, aft] in CockpitGeometry::shell_vertices() {
+    assert_eq!(points.len(), 696);
+    assert_eq!(cockpit_shell_vertices().count(), 240);
+    for point in cockpit_shell_vertices().chain(wing_outline_vertices()) {
+        let [right, up, aft] = point;
         assert!(points.contains(&BodyPoint::try_new(-aft, right, -up).unwrap()));
     }
-    for surface in WingGeometry::new().surfaces() {
-        for axis in 0..3 {
-            for maximum in [false, true] {
-                let extent = surface
-                    .positions()
-                    .iter()
-                    .map(|point| point[axis])
-                    .reduce(|first, second| {
-                        if maximum {
-                            first.max(second)
-                        } else {
-                            first.min(second)
-                        }
-                    })
-                    .unwrap();
-                let body_axis = [1, 2, 0][axis];
-                let sign = if axis == 0 { 1.0 } else { -1.0 };
-                assert!(
-                    points
-                        .iter()
-                        .any(|point| { point.components()[body_axis] == sign * f64::from(extent) })
-                );
+    let definition = HybridMockDefinition::try_new().unwrap();
+    for surface in definition.surfaces().unwrap() {
+        if surface.geometry().role() == HybridSurfaceRole::MainWing {
+            continue;
+        }
+        for section in surface.geometry().sections() {
+            for chord in [0.0, 1.0] {
+                let [right, up, aft] = tail_section_point(*section, [0.0; 3], chord);
+                assert!(points.contains(&BodyPoint::try_new(-aft, right, -up).unwrap()));
             }
         }
     }
-    for tail in TailGeometry::registered().unwrap() {
-        for patch in tail.patches.iter().take(2) {
-            for point in patch.vertices {
-                let [right, up, aft] =
-                    core::array::from_fn(|axis| tail.origin[axis] + f64::from(point[axis]));
-                assert!(points.contains(&BodyPoint::try_new(-aft, right, -up).unwrap()));
+}
+
+#[test]
+fn tilted_contact_retains_the_dihedral_section_outline_support() {
+    let points = registered_contact_points().unwrap();
+    for (roll, pitch) in [(0.1, 0.0), (-0.1, 0.0), (0.1, 0.1)] {
+        let orientation = attitude(roll, pitch);
+        let reference = wing_outline_vertices()
+            .map(|[right, up, aft]| {
+                rotated_down(orientation, BodyPoint::try_new(-aft, right, -up).unwrap())
+            })
+            .fold(f64::NEG_INFINITY, f64::max);
+        assert!(maximum_down_offset(orientation, &points) >= reference - 1.0e-12);
+    }
+}
+
+#[test]
+fn polytope_support_bounds_convex_combinations_for_arbitrary_attitudes() {
+    let points = registered_contact_points().unwrap();
+    for (roll, pitch) in [(0.0, 0.0), (0.1, 0.1), (-1.2, 0.3), (2.7, -0.6)] {
+        let orientation = attitude(roll, pitch);
+        let maximum = maximum_down_offset(orientation, &points);
+        for triangle in points.chunks_exact(3) {
+            for weights in [[0.2, 0.3, 0.5], [0.0, 0.5, 0.5], [1.0, 0.0, 0.0]] {
+                let components = core::array::from_fn::<_, 3, _>(|axis| {
+                    triangle
+                        .iter()
+                        .zip(weights)
+                        .map(|(point, weight)| point.components()[axis] * weight)
+                        .sum::<f64>()
+                });
+                let interior =
+                    BodyPoint::try_new(components[0], components[1], components[2]).unwrap();
+                assert!(rotated_down(orientation, interior) <= maximum + 1.0e-12);
             }
         }
     }
@@ -98,7 +117,7 @@ fn shell_contact_tracks_the_full_registered_polygon_under_arbitrary_attitude() {
     let shell = CockpitGeometry::new();
     for (roll, pitch) in [(0.0, 0.0), (0.3, 0.17), (-1.2, 0.3), (2.7, -0.6)] {
         let orientation = attitude(roll, pitch);
-        let shell_maximum = CockpitGeometry::shell_vertices()
+        let shell_maximum = cockpit_shell_vertices()
             .map(|[right, up, aft]| {
                 rotated_down(orientation, BodyPoint::try_new(-aft, right, -up).unwrap())
             })
@@ -270,7 +289,7 @@ fn registered_flight_finishes_at_the_airframe_and_keeps_record_score_and_revisio
             document.header.catalog_version,
             document.header.scenario_version
         ),
-        (4, 4)
+        (5, 5)
     );
     assert_eq!(
         document.header.aircraft_model_version,

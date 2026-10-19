@@ -4,6 +4,7 @@ use birdman_game_core::ControlMode;
 use birdman_game_format::{AssistanceLevel, DifficultySettings, InformationLevel, WeatherClass};
 
 mod airframe_contact;
+mod airframe_shape;
 pub mod application;
 pub mod cockpit_geometry;
 mod environment;

@@ -392,8 +392,8 @@ fn factory_and_snapshot_expose_the_current_tail_layout() {
 
     let bridge = launch(ControlMode::Manual, 2);
     let initial = snapshot(&bridge);
-    assert_eq!(initial["scenario"]["catalog_version"], 4);
-    assert_eq!(initial["scenario"]["scenario_version"], 4);
+    assert_eq!(initial["scenario"]["catalog_version"], 5);
+    assert_eq!(initial["scenario"]["scenario_version"], 5);
     assert_eq!(initial["scenario"]["aircraft_model_version"], 3);
     assert_eq!(initial["scenario"]["controller_profile_version"], 3);
     assert_eq!(
@@ -712,7 +712,7 @@ fn setup_weather_catalog_matches_registered_metadata_and_actual_wind_provider() 
             serde_json::from_str(&bridge.environment_snapshot_json().unwrap()).unwrap();
         assert_eq!(selected["projection"]["source"], "selected");
         assert_eq!(selected["projection"]["kind"], "available");
-        assert_eq!(selected["projection"]["identity"]["catalog_version"], 4);
+        assert_eq!(selected["projection"]["identity"]["catalog_version"], 5);
         assert_eq!(selected["projection"]["identity"]["scenario_id"], version);
         bridge.prepare_internal().unwrap();
         let metadata = bridge.configuration_metadata().unwrap();

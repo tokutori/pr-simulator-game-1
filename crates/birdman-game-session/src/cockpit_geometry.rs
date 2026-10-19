@@ -1,21 +1,11 @@
 #![doc = "Fixed cockpit presentation from Web blob 7b0f8012bf1ac30bf87081e3dfdef62f019cf4c0; local metres use right/up/aft axes."]
 
-const COCKPIT_STATIONS: [[f64; 4]; 10] = [
-    [-1.10, -1.08, 0.025, 0.035],
-    [-1.02, -1.07, 0.065, 0.10],
-    [-0.90, -1.06, 0.12, 0.17],
-    [-0.75, -1.06, 0.17, 0.22],
-    [-0.53, -1.05, 0.20, 0.25],
-    [-0.31, -1.05, 0.22, 0.27],
-    [-0.06, -1.04, 0.23, 0.28],
-    [0.30, -1.03, 0.21, 0.26],
-    [0.77, -0.98, 0.13, 0.17],
-    [1.22, -0.87, 0.025, 0.04],
-];
+use crate::airframe_shape::{
+    COCKPIT_OUTLINE_SEGMENTS, COCKPIT_STATIONS, cockpit_point as canopy_point,
+};
 
 const FRAME_RADIUS: f64 = 0.012;
 const ATTACHMENT_RADIUS: f64 = 0.008;
-const SHELL_STEPS: u32 = 24;
 
 #[doc = "Material meanings and the existing Web palette, independent of the rendering engine."]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -90,12 +80,6 @@ impl Default for CockpitGeometry {
 }
 
 impl CockpitGeometry {
-    pub(crate) fn shell_vertices() -> impl Iterator<Item = [f64; 3]> {
-        COCKPIT_STATIONS.into_iter().flat_map(|station| {
-            (0..SHELL_STEPS).map(move |step| canopy_point(station, step, SHELL_STEPS))
-        })
-    }
-
     #[doc = "Display-only FRD eye mount at the centreline of the widest existing cockpit section. This is a presentation assumption, not a measured pilot eye position. Body displacement is applied by the camera adapter."]
     pub fn pilot_eye_offset_frd() -> [f64; 3] {
         let mut widest = COCKPIT_STATIONS[0];
@@ -221,9 +205,9 @@ fn inset_shell_point(aft: f64, direction: [f64; 2], radius: f64) -> [f64; 3] {
     let inset = radius * (1.0 + maximum_slope);
     let desired = [direction[0] * section[2], direction[1] * section[3]];
     let mut scale: f64 = 1.0;
-    for step in 0..SHELL_STEPS {
-        let first = canopy_point(section, step, SHELL_STEPS);
-        let last = canopy_point(section, step + 1, SHELL_STEPS);
+    for step in 0..COCKPIT_OUTLINE_SEGMENTS {
+        let first = canopy_point(section, step, COCKPIT_OUTLINE_SEGMENTS);
+        let last = canopy_point(section, step + 1, COCKPIT_OUTLINE_SEGMENTS);
         let edge = [last[0] - first[0], last[1] - first[1]];
         let length = edge[0].hypot(edge[1]);
         let normal = [edge[1] / length, -edge[0] / length];
@@ -234,20 +218,6 @@ fn inset_shell_point(aft: f64, direction: [f64; 2], radius: f64) -> [f64; 3] {
         }
     }
     [desired[0] * scale, section[1] + desired[1] * scale, aft]
-}
-
-fn canopy_point(
-    [aft, center, half_width, half_height]: [f64; 4],
-    step: u32,
-    steps: u32,
-) -> [f64; 3] {
-    let angle = f64::from(step) * core::f64::consts::PI * 2.0 / f64::from(steps);
-    let rounded = |value: f64| value.signum() * value.abs().powf(0.8);
-    [
-        half_width * rounded(angle.cos()),
-        center + half_height * rounded(angle.sin()),
-        aft,
-    ]
 }
 
 fn surface(stations: &[[f64; 4]], material: CockpitMaterial) -> CockpitSurface {
@@ -534,10 +504,10 @@ mod tests {
 
     #[test]
     fn contact_vertices_use_the_same_unmodified_shell_sections() {
-        let vertices: Vec<_> = CockpitGeometry::shell_vertices().collect();
+        let vertices: Vec<_> = crate::airframe_shape::cockpit_shell_vertices().collect();
         assert_eq!(
             vertices.len(),
-            COCKPIT_STATIONS.len() * SHELL_STEPS as usize
+            COCKPIT_STATIONS.len() * COCKPIT_OUTLINE_SEGMENTS as usize
         );
         let geometry = CockpitGeometry::new();
         for surface in &geometry.surfaces {
