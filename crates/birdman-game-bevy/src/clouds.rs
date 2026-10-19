@@ -78,7 +78,7 @@ impl Material for CloudMaterial {
 }
 
 pub(crate) struct PreparedClouds {
-    mesh: Mesh,
+    mesh: Option<Mesh>,
     atlases: [Image; 2],
     haze: Vec4,
     sun: Vec4,
@@ -92,35 +92,38 @@ pub(crate) fn prepare(sky: Option<SkyStateDocument>) -> Result<PreparedClouds, S
             "cloud_base=0の雲はground fogに相当するため有限積雲を生成しない。既存haze条件を保持する。"
         );
     }
-    let mut mesh = Mesh::new(
-        PrimitiveTopology::TriangleList,
-        RenderAssetUsages::default(),
-    );
-    mesh.insert_attribute(
-        Mesh::ATTRIBUTE_POSITION,
-        packet
-            .vertices()
-            .iter()
-            .map(|vertex| [vertex[1], -vertex[2], -vertex[0]])
-            .collect::<Vec<_>>(),
-    );
-    mesh.insert_attribute(
-        CLOUD_OFFSET,
-        packet
-            .vertices()
-            .iter()
-            .map(|vertex| [vertex[3], vertex[4]])
-            .collect::<Vec<_>>(),
-    );
-    mesh.insert_attribute(
-        Mesh::ATTRIBUTE_UV_0,
-        packet
-            .vertices()
-            .iter()
-            .map(|vertex| [vertex[5], vertex[6]])
-            .collect::<Vec<_>>(),
-    );
-    mesh.insert_indices(Indices::U32(packet.indices().to_vec()));
+    let mesh = (!packet.vertices().is_empty()).then(|| {
+        let mut mesh = Mesh::new(
+            PrimitiveTopology::TriangleList,
+            RenderAssetUsages::default(),
+        );
+        mesh.insert_attribute(
+            Mesh::ATTRIBUTE_POSITION,
+            packet
+                .vertices()
+                .iter()
+                .map(|vertex| [vertex[1], -vertex[2], -vertex[0]])
+                .collect::<Vec<_>>(),
+        );
+        mesh.insert_attribute(
+            CLOUD_OFFSET,
+            packet
+                .vertices()
+                .iter()
+                .map(|vertex| [vertex[3], vertex[4]])
+                .collect::<Vec<_>>(),
+        );
+        mesh.insert_attribute(
+            Mesh::ATTRIBUTE_UV_0,
+            packet
+                .vertices()
+                .iter()
+                .map(|vertex| [vertex[5], vertex[6]])
+                .collect::<Vec<_>>(),
+        );
+        mesh.insert_indices(Indices::U32(packet.indices().to_vec()));
+        mesh
+    });
     let atlases = [
         (packet.rgba().to_vec(), TextureFormat::Rgba8UnormSrgb),
         (packet.normal_rg().to_vec(), TextureFormat::Rg8Unorm),
@@ -171,9 +174,8 @@ pub(crate) fn spawn(
         haze,
         sun,
     } = prepare(sky).expect("登録cloud packetが不正");
-    commands.spawn((
+    let mut entity = commands.spawn((
         CloudLayer,
-        Mesh3d(meshes.add(mesh)),
         MeshMaterial3d(materials.add(CloudMaterial {
             atlas: images.add(atlas),
             normals: images.add(normals),
@@ -186,12 +188,17 @@ pub(crate) fn spawn(
         NoFrustumCulling,
         RenderLayers::layer(0).with(1),
     ));
+    if let Some(mesh) = mesh {
+        entity.insert(Mesh3d(meshes.add(mesh)));
+    }
 }
 
 pub(crate) fn replace(
+    commands: &mut Commands,
+    entity: Entity,
     meshes: &mut Assets<Mesh>,
     images: &mut Assets<Image>,
-    mesh_handle: &mut Mesh3d,
+    mesh_handle: Option<&Mesh3d>,
     material: &mut CloudMaterial,
     prepared: PreparedClouds,
 ) {
@@ -201,12 +208,20 @@ pub(crate) fn replace(
         haze,
         sun,
     } = prepared;
-    let previous_mesh = std::mem::replace(&mut mesh_handle.0, meshes.add(mesh));
+    let previous_mesh = mesh_handle.map(|handle| handle.0.id());
+    let mut entity = commands.entity(entity);
+    if let Some(mesh) = mesh {
+        entity.insert(Mesh3d(meshes.add(mesh)));
+    } else {
+        entity.remove::<Mesh3d>();
+    }
     let previous_atlas = std::mem::replace(&mut material.atlas, images.add(atlas));
     let previous_normals = std::mem::replace(&mut material.normals, images.add(normals));
     material.haze = haze;
     material.sun = sun;
-    meshes.remove(previous_mesh.id());
+    if let Some(previous_mesh) = previous_mesh {
+        meshes.remove(previous_mesh);
+    }
     images.remove(previous_atlas.id());
     images.remove(previous_normals.id());
 }
@@ -229,6 +244,7 @@ mod tests {
             haze,
             sun,
         } = prepare(Some(sky)).unwrap();
+        let mesh = mesh.unwrap();
         let Some(VertexAttributeValues::Float32x3(positions)) =
             mesh.attribute(Mesh::ATTRIBUTE_POSITION)
         else {
@@ -248,6 +264,79 @@ mod tests {
         let [north, east, down, daylight] = packet.sun_direction_ned();
         assert_eq!(sun, Vec4::new(east, -down, -north, daylight));
         assert_eq!(haze, Vec4::new(4375.0, 25000.0, 0.0, 0.0));
-        assert_eq!(prepare(None).unwrap().mesh.count_vertices(), 0);
+        assert!(prepare(None).unwrap().mesh.is_none());
+    }
+
+    #[test]
+    fn absent_clear_and_ground_level_clouds_have_no_render_mesh() {
+        let sky = birdman_game_session::bundled_environment()
+            .unwrap()
+            .document()
+            .sky;
+        for sky in [
+            None,
+            Some(SkyStateDocument {
+                cloud_fraction: 0.0,
+                ..sky
+            }),
+            Some(SkyStateDocument {
+                cloud_base_m: 0.0,
+                ..sky
+            }),
+        ] {
+            assert!(prepare(sky).unwrap().mesh.is_none());
+        }
+    }
+
+    #[test]
+    fn absent_cloud_layer_keeps_its_entity_without_registering_an_empty_mesh() {
+        let sky = birdman_game_session::bundled_environment()
+            .unwrap()
+            .document()
+            .sky;
+        for sky in [
+            None,
+            Some(SkyStateDocument {
+                cloud_fraction: 0.0,
+                ..sky
+            }),
+            Some(SkyStateDocument {
+                cloud_base_m: 0.0,
+                ..sky
+            }),
+        ] {
+            let mut app = App::new();
+            app.init_resource::<Assets<Mesh>>()
+                .init_resource::<Assets<Image>>()
+                .init_resource::<Assets<CloudMaterial>>()
+                .add_systems(
+                    Startup,
+                    move |mut commands: Commands,
+                          mut meshes: ResMut<Assets<Mesh>>,
+                          mut images: ResMut<Assets<Image>>,
+                          mut materials: ResMut<Assets<CloudMaterial>>| {
+                        spawn(&mut commands, &mut meshes, &mut images, &mut materials, sky);
+                    },
+                );
+            app.update();
+            let world = app.world_mut();
+            let (mesh, material, layers) = world
+                .query_filtered::<(
+                    Option<&Mesh3d>,
+                    &MeshMaterial3d<CloudMaterial>,
+                    &RenderLayers,
+                ), With<CloudLayer>>()
+                .single(world)
+                .unwrap();
+            assert!(mesh.is_none());
+            assert!(layers.intersects(&RenderLayers::layer(1)));
+            assert!(
+                world
+                    .resource::<Assets<CloudMaterial>>()
+                    .contains(material.0.id())
+            );
+            assert_eq!(world.resource::<Assets<Mesh>>().len(), 0);
+            assert_eq!(world.resource::<Assets<Image>>().len(), 2);
+        }
     }
 }

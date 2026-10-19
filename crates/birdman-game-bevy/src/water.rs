@@ -584,6 +584,7 @@ pub(crate) struct NearWaterSurface;
 
 #[derive(SystemParam)]
 pub(crate) struct EnvironmentAssets<'w, 's> {
+    commands: Commands<'w, 's>,
     materials: ResMut<'w, Assets<WaterMaterial>>,
     images: ResMut<'w, Assets<Image>>,
     cloud_materials: ResMut<'w, Assets<super::clouds::CloudMaterial>>,
@@ -592,6 +593,12 @@ pub(crate) struct EnvironmentAssets<'w, 's> {
     terrain: Query<'w, 's, &'static MeshMaterial3d<TerrainMaterial>>,
     venue: Query<'w, 's, &'static mut Visibility, With<super::world::RegisteredVenue>>,
 }
+
+type CloudSurface = (
+    Entity,
+    Option<&'static Mesh3d>,
+    &'static MeshMaterial3d<super::clouds::CloudMaterial>,
+);
 
 pub(crate) fn apply_environment(
     session: Res<NativeSession>,
@@ -604,10 +611,7 @@ pub(crate) fn apply_environment(
         Option<&mut Aabb>,
     )>,
     mut sun: Query<(&mut DirectionalLight, &mut Transform), With<EnvironmentSun>>,
-    mut clouds: Query<
-        (&mut Mesh3d, &MeshMaterial3d<super::clouds::CloudMaterial>),
-        With<super::clouds::CloudLayer>,
-    >,
+    clouds: Query<CloudSurface, With<super::clouds::CloudLayer>>,
 ) {
     let target = EnvironmentTarget::project(
         session.game.core_session().snapshot().phase(),
@@ -619,6 +623,7 @@ pub(crate) fn apply_environment(
         return;
     }
     let EnvironmentAssets {
+        mut commands,
         mut materials,
         mut images,
         mut cloud_materials,
@@ -718,7 +723,7 @@ pub(crate) fn apply_environment(
             prepare_sky_image(high.sky_condition).map_err(EnvironmentFailure::WavePreparation)?;
         let cloud_packet =
             super::clouds::prepare(condition.sky).map_err(EnvironmentFailure::WavePreparation)?;
-        let (mut cloud_mesh, cloud_handle) = clouds.single_mut().map_err(|_| {
+        let (cloud_entity, cloud_mesh, cloud_handle) = clouds.single().map_err(|_| {
             EnvironmentFailure::WavePreparation("有限cloud layerが欠損または重複した".into())
         })?;
         let mut cloud_material = cloud_materials
@@ -760,9 +765,11 @@ pub(crate) fn apply_environment(
             images.remove(image);
         }
         super::clouds::replace(
+            &mut commands,
+            cloud_entity,
             &mut meshes,
             &mut images,
-            &mut cloud_mesh,
+            cloud_mesh,
             &mut cloud_material,
             cloud_packet,
         );
@@ -1003,6 +1010,72 @@ mod tests {
             })
             .unwrap();
         session.action(MenuAction::Prepare).unwrap();
+    }
+
+    #[test]
+    fn cloud_environment_cycles_never_register_empty_meshes_and_release_retired_meshes() {
+        fn cloud_mesh(app: &mut App) -> Option<AssetId<Mesh>> {
+            let world = app.world_mut();
+            world
+                .query_filtered::<Option<&Mesh3d>, With<super::super::clouds::CloudLayer>>()
+                .single(world)
+                .unwrap()
+                .map(|mesh| mesh.0.id())
+        }
+
+        fn assert_uploaded_meshes_are_nonempty(app: &App) {
+            for (_, mesh) in app.world().resource::<Assets<Mesh>>().iter() {
+                assert!(mesh.count_vertices() > 0);
+                assert!(mesh.indices().is_none_or(|indices| !indices.is_empty()));
+            }
+        }
+
+        let mut app = environment_app();
+        let original_mesh_count = app.world().resource::<Assets<Mesh>>().len();
+        let original_image_count = app.world().resource::<Assets<Image>>().len();
+        let mut previous_cloud = cloud_mesh(&mut app).unwrap();
+        assert_uploaded_meshes_are_nonempty(&app);
+        for _cycle in 0..3 {
+            prepare_calm(&mut app);
+            app.update();
+            assert!(cloud_mesh(&mut app).is_none());
+            assert_uploaded_meshes_are_nonempty(&app);
+            assert!(
+                !app.world()
+                    .resource::<Assets<Mesh>>()
+                    .contains(previous_cloud)
+            );
+            assert_eq!(
+                app.world().resource::<Assets<Mesh>>().len(),
+                original_mesh_count - 1
+            );
+            assert_eq!(
+                app.world().resource::<Assets<Image>>().len(),
+                original_image_count
+            );
+            app.world_mut()
+                .resource_mut::<NativeSession>()
+                .execute_ui_command(SessionCommand::CancelBriefing {})
+                .unwrap();
+            app.update();
+            let current_cloud = cloud_mesh(&mut app).unwrap();
+            assert_ne!(current_cloud, previous_cloud);
+            assert_uploaded_meshes_are_nonempty(&app);
+            assert_eq!(
+                app.world().resource::<Assets<Mesh>>().len(),
+                original_mesh_count
+            );
+            assert_eq!(
+                app.world().resource::<Assets<Image>>().len(),
+                original_image_count
+            );
+            previous_cloud = current_cloud;
+            app.world_mut()
+                .resource_mut::<NativeSession>()
+                .execute_ui_command(SessionCommand::ReturnToTitle {})
+                .unwrap();
+            app.update();
+        }
     }
 
     fn assert_venue_visibility(app: &mut App, expected: Visibility) {

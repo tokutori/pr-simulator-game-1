@@ -414,6 +414,11 @@ Windows 11 / AMD Radeon 860Mの実起動とGPU validation・shader・asset読込
 
 ### 描画FPSと性能目標
 
+雲の記録がない環境、雲量0、cloud base 0ではcloud entityの`Mesh3d`を外し、空meshをGPUへ登録しない。
+環境切替時に非空のcloud meshだけを生成し、交換済みの旧meshを解放する。
+Bevy 0.19.1には空meshのallocationを省略した後にuploadを試み、GPU slabの無効key診断を出す経路がある。
+この経路はCPU試験でcloud生成・実環境切替・繰返し復帰を検査する。実GPUでの診断消失は別の受入項目である。
+
 WebとBevyは右上に描画FPSを表示する。750 ms窓で集計し、起動直後・長時間中断後は`FPS —`を表示する。
 100 Hzの物理tickとは独立する。Bevyの値は実時間Updateの周期であり、GPU present完了を直接測定する値ではない。
 同じ派生labelのText更新を省略し、表示・入力・Rustの正本は維持する。
