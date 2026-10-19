@@ -727,12 +727,24 @@ pub(crate) mod tests {
                 .directory(),
             base
         );
-        for requested in [r"\flight-logs", r"C:flight-logs"] {
-            let export = FlightLogExport::new(&base, Some(Path::new(requested))).unwrap();
-            assert!(export.directory().is_absolute());
-            assert!(export.directory().ends_with("flight-logs"));
+        #[cfg(target_os = "windows")]
+        {
+            for requested in [r"\flight-logs", r"C:flight-logs"] {
+                let export = FlightLogExport::new(&base, Some(Path::new(requested))).unwrap();
+                assert!(export.directory().is_absolute());
+                assert!(export.directory().ends_with("flight-logs"));
+            }
+            assert!(FlightLogExport::new(&base, Some(Path::new("invalid\0path"))).is_err());
         }
-        assert!(FlightLogExport::new(&base, Some(Path::new("invalid\0path"))).is_err());
+        #[cfg(unix)]
+        for requested in [r"\flight-logs", r"C:flight-logs"] {
+            assert_eq!(
+                FlightLogExport::new(&base, Some(Path::new(requested)))
+                    .unwrap()
+                    .directory(),
+                base.join(requested)
+            );
+        }
     }
 
     #[test]
