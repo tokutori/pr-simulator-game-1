@@ -3,6 +3,18 @@ use birdman_game_format::InformationLevel;
 
 use super::types::*;
 
+#[derive(Clone, Copy)]
+struct GameUiHudAttitude {
+    roll_degrees: f64,
+    pitch_degrees: f64,
+}
+
+struct GameUiHudGeometry {
+    adi: Option<GameUiHudAdiGeometry>,
+    heading_ticks: Vec<GameUiHudHeadingTick>,
+    angle_of_attack_ratio: Option<f64>,
+}
+
 pub(super) fn game_ui_hud(
     state: &GameUiState,
     context: &GameUiContext<'_, '_>,
@@ -92,13 +104,8 @@ pub(super) fn game_ui_hud(
     let mut readouts = Vec::new();
     if minimal {
         readouts.push(format!("{altitude} · {distance} · {duration}"));
-    } else {
-        if telemetry_visible {
-            readouts.push(format!("{airspeed} · {altitude}"));
-        }
-        if attitude_visible {
-            readouts.push(attitude_text);
-        }
+    } else if telemetry_visible {
+        readouts.push(format!("{airspeed} · {altitude}"));
     }
     let alpha = telemetry.angle_of_attack_rad.map(f64::to_degrees);
     let [wind_north, wind_east, wind_down] = telemetry.wind_velocity_ned_mps.components();
@@ -152,25 +159,175 @@ pub(super) fn game_ui_hud(
     let heading_degrees = attitude_visible.then_some(heading);
     let angle_of_attack_degrees = alpha_visible.then_some(alpha).flatten();
     let menu_layout = super::view::layout(state, context, phase)?;
-    let mut hud = GameUiHud { layout: hud_layout(context.platform, phase, &menu_layout), geometry: hud_geometry(attitude, path_angle, heading_degrees, angle_of_attack_degrees), heading_label: "HEADING".to_owned(), pilot_position_label: "PILOT CG".to_owned(), wind_label: "WIND N/E/D".to_owned(), angle_of_attack_label: "AoA".to_owned(), status: status.to_owned(), attitude,
-        flight_path_angle_degrees: path_angle, warning: None,
-        heading_degrees, wind_direction_degrees: if wind_visible && (wind_north != 0.0 || wind_east != 0.0) { Some(wind_east.atan2(wind_north).to_degrees().rem_euclid(360.0)) } else { None },
-        angle_of_attack_degrees, readouts: readouts.join("\n"), heading: attitude_visible.then(|| format!("{heading:.0}°")),
-        pilot_position: (full || custom && profile.telemetry()).then(|| format!("{:+.2} m", sample.flight_state.pilot_position_m())),
-        wind: wind_visible.then(|| format!("N {wind_north:.1} · E {wind_east:.1} · D {wind_down:.1} m/s")), angle_of_attack: alpha_visible.then(|| alpha.map_or_else(|| "—".to_owned(), |alpha| format!("{alpha:.1}°"))),
-        telemetry: if realistic { "代表計器表示 · 対象機の実機構成は未確認".to_owned() } else if telemetry_visible { format!("対地速度 {:.1} m/s · {distance} · {duration}", telemetry.groundspeed_mps) } else { String::new() },
-        location: format!("緯度 {latitude:.6}° · 経度 {longitude:.6}°"), map_attribution: "湖岸 © OpenStreetMap contributors · ODbL 1.0".to_owned(),
-        supplementary_readouts: supplementary, controls_description: "↑/↓ nose-up/down intent · ←/→ left/right intent · J/L pilot Set · キー解放 pilot Hold · Gamepad pilot Set".to_owned() };
-    if matches!(
+    let layout = hud_layout(context.platform, phase, &menu_layout);
+    let geometry = hud_geometry(
+        attitude,
+        path_angle,
+        heading_degrees,
+        angle_of_attack_degrees,
+    );
+    let failure = matches!(
         phase,
         SessionPhase::FlightRunning | SessionPhase::FlightPaused { .. }
-    ) && let Some(cause) = &context.platform.flight_controller_failure
-    {
-        hud.status = "飛行処理停止".to_owned();
-        hud.warning = Some(format!("停止理由: {cause}"));
-        hud.telemetry = format!("Last valid · tick {} · {time:.2} s", sample.tick_index);
+    )
+    .then_some(context.platform.flight_controller_failure.as_deref())
+    .flatten();
+    let mut primary = Vec::new();
+    if let Some(cause) = failure {
+        primary.push(hud_node(
+            "hud-controller-failure",
+            "",
+            GameUiHudNodeContent::Text {
+                value: format!("停止理由: {cause}"),
+                tone: GameUiHudTone::Warning,
+            },
+        ));
     }
-    Ok(Some(hud))
+    let telemetry_text = if failure.is_some() {
+        format!("Last valid · tick {} · {time:.2} s", sample.tick_index)
+    } else if realistic {
+        "代表計器表示 · 対象機の実機構成は未確認".to_owned()
+    } else if telemetry_visible {
+        format!(
+            "対地速度 {:.1} m/s · {distance} · {duration}",
+            telemetry.groundspeed_mps
+        )
+    } else {
+        String::new()
+    };
+    if !telemetry_text.is_empty() {
+        readouts.push(telemetry_text);
+    }
+    readouts.extend(supplementary);
+    primary.push(hud_node(
+        "hud-primary-readouts",
+        if failure.is_some() {
+            "飛行処理停止"
+        } else {
+            status
+        },
+        GameUiHudNodeContent::Text {
+            value: readouts.join("\n"),
+            tone: GameUiHudTone::Normal,
+        },
+    ));
+    let mut instruments = Vec::new();
+    if let Some(adi) = geometry.adi {
+        instruments.push(hud_node(
+            "hud-attitude",
+            if adi.horizon().is_some() {
+                "ATTITUDE"
+            } else {
+                "FLIGHT PATH"
+            },
+            GameUiHudNodeContent::Attitude {
+                value: if adi.horizon().is_some() {
+                    attitude_text
+                } else {
+                    path_angle.map_or_else(String::new, |angle| format!("{angle:.1}°"))
+                },
+                geometry: adi,
+            },
+        ));
+    }
+    if attitude_visible {
+        instruments.push(hud_node(
+            "hud-heading",
+            "HEADING",
+            GameUiHudNodeContent::HeadingTape {
+                value: format!("{heading:.0}°"),
+                ticks: geometry.heading_ticks,
+            },
+        ));
+    }
+    if full || custom && profile.telemetry() {
+        instruments.push(hud_node(
+            "hud-pilot-position",
+            "PILOT CG",
+            GameUiHudNodeContent::Text {
+                value: format!("{:+.2} m", sample.flight_state.pilot_position_m()),
+                tone: GameUiHudTone::Normal,
+            },
+        ));
+    }
+    if wind_visible {
+        instruments.push(hud_node(
+            "hud-wind",
+            "WIND N/E/D",
+            GameUiHudNodeContent::Direction {
+                value: format!("N {wind_north:.1} · E {wind_east:.1} · D {wind_down:.1} m/s"),
+                rotation_degrees: (wind_north != 0.0 || wind_east != 0.0)
+                    .then(|| wind_east.atan2(wind_north).to_degrees().rem_euclid(360.0)),
+            },
+        ));
+    }
+    if alpha_visible {
+        instruments.push(hud_node(
+            "hud-angle-of-attack",
+            "AoA",
+            GameUiHudNodeContent::LinearGauge {
+                value: alpha.map_or_else(|| "—".to_owned(), |alpha| format!("{alpha:.1}°")),
+                minimum_label: "−10°".to_owned(),
+                maximum_label: "+20°".to_owned(),
+                position_ratio: geometry.angle_of_attack_ratio,
+            },
+        ));
+    }
+    let mut groups = vec![GameUiHudGroup {
+        id: "hud-readouts".to_owned(),
+        placement: GameUiHudPlacement::Readouts,
+        layout: GameUiHudGroupLayout::Column {},
+        nodes: primary,
+    }];
+    if !instruments.is_empty() {
+        groups.push(GameUiHudGroup {
+            id: "hud-instruments".to_owned(),
+            placement: GameUiHudPlacement::Instruments,
+            layout: GameUiHudGroupLayout::Grid { columns: 2 },
+            nodes: instruments,
+        });
+    }
+    if context.platform.presentation_mode == GameUiPresentationMode::Screen {
+        let mut details = vec![
+            hud_node(
+                "hud-location",
+                "",
+                GameUiHudNodeContent::Text {
+                    value: format!("緯度 {latitude:.6}° · 経度 {longitude:.6}°"),
+                    tone: GameUiHudTone::Muted,
+                },
+            ),
+            hud_node(
+                "hud-map-attribution",
+                "",
+                GameUiHudNodeContent::Text {
+                    value: "湖岸 © OpenStreetMap contributors · ODbL 1.0".to_owned(),
+                    tone: GameUiHudTone::Muted,
+                },
+            ),
+        ];
+        if context.platform.viewport.width > 600.0 {
+            details.push(hud_node("hud-controls", "", GameUiHudNodeContent::Text {
+                value: "↑/↓ nose-up/down intent · ←/→ left/right intent · J/L pilot Set · キー解放 pilot Hold · Gamepad pilot Set".to_owned(),
+                tone: GameUiHudTone::Muted,
+            }));
+        }
+        groups.push(GameUiHudGroup {
+            id: "hud-details".to_owned(),
+            placement: GameUiHudPlacement::Details,
+            layout: GameUiHudGroupLayout::Column {},
+            nodes: details,
+        });
+    }
+    Ok(Some(GameUiHud { layout, groups }))
+}
+
+fn hud_node(id: &str, label: &str, content: GameUiHudNodeContent) -> GameUiHudNode {
+    GameUiHudNode {
+        id: id.to_owned(),
+        label: label.to_owned(),
+        content,
+    }
 }
 
 fn hud_geometry(
@@ -275,8 +432,6 @@ fn hud_layout(
         } else {
             0.28
         },
-        controls_visible: !compact,
-        instrument_columns: 2,
     }
 }
 
