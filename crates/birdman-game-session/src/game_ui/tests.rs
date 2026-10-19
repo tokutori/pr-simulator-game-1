@@ -518,6 +518,7 @@ fn credits_are_reachable_from_title_and_pause_without_advancing_the_session() {
             let credits = game_ui_view(&open.state, &context).unwrap();
             assert!(credits.hud.is_none());
             assert!(credits.layout.scroll_y);
+            assert_eq!(credits.active_overlay, Some(GameUiOverlay::Credits));
             for id in [
                 "osm",
                 "jaxa",
@@ -547,6 +548,12 @@ fn credits_are_reachable_from_title_and_pause_without_advancing_the_session() {
             assert_eq!(closed.state, state);
             assert!(closed.effects.is_empty());
             assert_eq!(session.snapshot(), before);
+            assert_ne!(
+                game_ui_view(&closed.state, &context)
+                    .unwrap()
+                    .active_overlay,
+                credits.active_overlay
+            );
             assert!(
                 control(
                     &game_ui_view(&closed.state, &context).unwrap(),
@@ -1714,8 +1721,8 @@ fn controller_resource_failure_preserves_last_valid_hud_and_exit_in_both_modes()
         assert!(matches!(&hud_node(&hud, "hud-controller-failure").content,
             GameUiHudNodeContent::Text { value, tone: GameUiHudTone::Warning } if value == "停止理由: input disposal failed"));
         assert!(
-            primary.content.value().contains("Last valid")
-                && primary.content.value().contains("tick 0")
+            primary.content.value().contains("最後の有効状態")
+                && primary.content.value().contains("0.00 s")
         );
         assert_eq!(session.snapshot(), before);
         session.pause(PauseReason::Manual).unwrap();
@@ -2263,7 +2270,7 @@ fn hud_uses_the_authoritative_telemetry_and_existing_information_cue_policy() {
     assert_eq!(
         value,
         &format!(
-            "PITCH {:.0}° · ROLL {:.0}°",
+            "ピッチ {:.0}° · ロール {:.0}°",
             telemetry.pitch_rad.to_degrees(),
             telemetry.roll_rad.to_degrees()
         )
@@ -2298,7 +2305,7 @@ fn hud_uses_the_authoritative_telemetry_and_existing_information_cue_policy() {
         hud_node(&hud, "hud-wind").content,
         GameUiHudNodeContent::Direction { .. }
     ));
-    for readout in ["ロール", "水平尾翼", "重心の目標位置"] {
+    for readout in ["ロール", "水平尾翼", "パイロット移動の目標位置"] {
         assert!(primary.contains(readout));
     }
     let minimal = game_ui_view(
@@ -2319,7 +2326,7 @@ fn hud_uses_the_authoritative_telemetry_and_existing_information_cue_policy() {
             .all(|group| group.placement != GameUiHudPlacement::Instruments)
     );
     let primary = hud_node(&minimal, "hud-primary-readouts").content.value();
-    assert!(primary.contains("ALT") && primary.contains("時間"));
+    assert!(primary.contains("高度") && primary.contains("時間"));
     let custom_settings = difficulty()
         .with_information(InformationLevel::Custom)
         .with_hud_cue(HudCue::Attitude, false)
@@ -2359,7 +2366,7 @@ fn hud_uses_the_authoritative_telemetry_and_existing_information_cue_policy() {
         }
     ));
     let primary = hud_node(&custom, "hud-primary-readouts").content.value();
-    assert!(primary.contains(&airspeed) && !primary.contains("PITCH"));
+    assert!(primary.contains(&airspeed) && !primary.contains("ピッチ"));
     let realistic = game_ui_view(
         &GameUiState::default(),
         &context(
@@ -2708,7 +2715,7 @@ fn pending_log_download_disables_repeated_io_and_preserves_navigation_and_notifi
         else {
             panic!("missing log notice")
         };
-        assert!(value.contains("要求している") && value.contains("finite-difference"));
+        assert!(value.contains("要求している") && value.contains("速度の差から推定した加速度"));
         platform.flight_log_pending = false;
         for notification in [
             "飛行ログのダウンロードを要求した: flight.csv",

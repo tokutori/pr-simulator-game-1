@@ -172,7 +172,7 @@ describe("single Rust snapshot application projection", () => {
         const hud = createFlightUiHudModel(projected);
         if (hud === null) throw new Error("Missing shared stopped Flight HUD");
         expect(sharedHudNode(hud, "hud-controller-failure").content.value).toContain("Gamepad permission denied");
-        expect(sharedHudNode(hud, "hud-primary-readouts").content.value).toContain("Last valid · tick 1");
+        expect(sharedHudNode(hud, "hud-primary-readouts").content.value).toContain("最後の有効状態 · 0.01 s");
         expect(sharedView(projected).description).toContain("停止");
       }
       expect(updateApp(model, { type: "ui-action", action: { type: "activate", controlId: "game-flight-abort" } }).effects)

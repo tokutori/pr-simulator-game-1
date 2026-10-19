@@ -651,6 +651,8 @@ pub struct GameUiChartCursor {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum GameUiOverlay {
+    /// Data and software attribution, from Title or paused flight.
+    Credits,
     /// Paused flight navigation.
     Pause,
     /// Paused render settings.

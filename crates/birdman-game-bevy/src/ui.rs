@@ -2358,6 +2358,47 @@ mod tests {
     }
 
     #[test]
+    fn credits_entry_and_return_reset_scroll_without_advancing_title_or_paused_flight() {
+        for paused in [false, true] {
+            let mut app = app(640.0, 480.0);
+            if paused {
+                press(&mut app, "game-title-start");
+                press(&mut app, "game-setup-start");
+                press(&mut app, "game-briefing-start");
+                for _ in 0..3 {
+                    app.world_mut()
+                        .resource_mut::<NativeSession>()
+                        .presentation_frame(1.0);
+                }
+                app.update();
+                press(&mut app, "game-flight-pause");
+            }
+            let before = app
+                .world()
+                .resource::<NativeSession>()
+                .game
+                .core_session()
+                .snapshot();
+            let shell = app.world().resource::<RetainedUi>().shell;
+            for action in ["game-credits-open", "game-credits-close"] {
+                app.world_mut()
+                    .entity_mut(shell)
+                    .insert(ScrollPosition(Vec2::new(0.0, 80.0)));
+                press(&mut app, action);
+                assert_eq!(app.world().get::<ScrollPosition>(shell).unwrap().y, 0.0);
+                assert_eq!(
+                    app.world()
+                        .resource::<NativeSession>()
+                        .game
+                        .core_session()
+                        .snapshot(),
+                    before
+                );
+            }
+        }
+    }
+
+    #[test]
     fn updates_preserve_entities_focus_scroll_and_disable_unavailable_controls() {
         let mut app = app(1280.0, 720.0);
         press(&mut app, "game-title-start");

@@ -363,7 +363,8 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     expect(trial.tick).toHaveBeenCalledTimes(1);
     trial.frame(1_015);
     expect(trial.tick).toHaveBeenCalledTimes(1);
-    expect(trial.documentRef.querySelector('.screen-ui-shell')?.textContent).toContain("ProcessingDelay");
+    expect(trial.documentRef.querySelector('.screen-ui-shell')?.textContent).toContain("処理に時間がかかった");
+    expect(trial.pause).toHaveBeenCalledWith(3);
     const resume = (): HTMLButtonElement => {
       const button = trial.documentRef.querySelector<HTMLButtonElement>('button[data-control-id="game-flight-resume"]');
       if (button === null) throw new Error("ProcessingDelay must expose explicit Resume");
@@ -811,7 +812,7 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     trial.launch();
     expect(trial.browser.document.body.textContent).toContain("Injected controller creation failure");
     expect(trial.browser.document.body.textContent).toContain("Injected input cleanup failure");
-    expect(trial.browser.document.body.textContent).toContain("Last valid · tick 0");
+    expect(trial.browser.document.body.textContent).toContain("最後の有効状態 · 0.00 s");
     trial.click("game-flight-abort");
     expect(trial.scene()).toBe("Result");
     expect(trial.free).not.toHaveBeenCalled();
@@ -872,12 +873,12 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     });
     trial.launch();
     expect(trial.browser.document.body.textContent).toContain("Injected Retry reset pose failure");
-    expect(trial.browser.document.body.textContent).toContain("Last valid · tick 0");
+    expect(trial.browser.document.body.textContent).toContain("最後の有効状態 · 0.00 s");
     expect(trial.documentRef.querySelector('[data-control-id="game-flight-pause"]')).toBeNull();
     expect(trial.documentRef.querySelector('[data-control-id="game-flight-resume"]')).toBeNull();
     trial.frame(20);
     trial.frame(100);
-    expect(trial.browser.document.body.textContent).toContain("Last valid · tick 0");
+    expect(trial.browser.document.body.textContent).toContain("最後の有効状態 · 0.00 s");
     trial.click("game-flight-abort");
     expect(trial.scene()).toBe("Result");
     expect(trial.free).not.toHaveBeenCalled();

@@ -581,7 +581,7 @@ describe("layout-discriminated application session facade", () => {
       bridge.pause(3);
       const delayed = facade.readSharedUi(platform);
       expect(delayed.view_revision).toBeGreaterThan(hidden.view_revision);
-      expect(delayed.description).toContain("ProcessingDelay");
+      expect(delayed.description).toContain("処理に時間がかかった");
       expect(() => facade.executeSharedSessionCommand({ kind: "resume" })).toThrow();
       expect(facade.readSharedUi(platform).view_revision).toBeGreaterThan(delayed.view_revision);
     } finally { facade.dispose(); }

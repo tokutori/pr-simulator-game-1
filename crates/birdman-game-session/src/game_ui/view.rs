@@ -1,7 +1,7 @@
 use super::timestamps::saved_at_label;
 use super::{catalog, types::*};
 use crate::application::SessionCommand;
-use birdman_game_core::{SessionEndReason, SessionPhase, SessionReplaySource, SessionSnapshot};
+use birdman_game_core::{SessionPhase, SessionReplaySource, SessionSnapshot};
 use birdman_game_format::{
     AssistanceLevel, DifficultyPreset, HudCue, InformationLevel, WeatherClass,
 };
@@ -282,13 +282,17 @@ pub fn game_ui_view(
                 );
             }
             GameUiPauseOverlay::Settings => {
-                menu.status("game-pause-settings-info", "Flight Settings", "飛行中は難易度・操縦bindingを固定する。変更する場合は飛行を終了してFlightSetupへ戻る。");
+                menu.status(
+                    "game-pause-settings-info",
+                    "描画設定",
+                    "画質を調整する。飛行条件を変更する場合は、飛行を終了して設定画面へ戻る。",
+                );
                 water_quality(&mut menu, context);
                 screen_render_scale(&mut menu, context);
                 menu.section("flight-actions", "", GameUiSectionLayout::Row);
                 menu.action(
                     "game-pause-settings-back",
-                    "Pauseへ戻る",
+                    "一時停止メニューへ戻る",
                     GameUiAction::SetPauseOverlay {
                         overlay: GameUiPauseOverlay::Menu,
                     },
@@ -304,7 +308,7 @@ pub fn game_ui_view(
                 menu.section("flight-actions", "", GameUiSectionLayout::Row);
                 menu.action(
                     "game-pause-help-back",
-                    "Pauseへ戻る",
+                    "一時停止メニューへ戻る",
                     GameUiAction::SetPauseOverlay {
                         overlay: GameUiPauseOverlay::Menu,
                     },
@@ -339,17 +343,21 @@ pub fn game_ui_view(
                 menu.section("result-summary", "", GameUiSectionLayout::Column);
                 menu.status(
                     "game-state",
-                    "状態",
+                    "",
                     if context.platform.notification.is_empty() {
                         &description
                     } else {
                         &context.platform.notification
                     },
                 );
-                menu.status("game-result-analysis", "Summary", &record_summary(context)?);
+                menu.status(
+                    "game-result-analysis",
+                    "飛行の概要",
+                    &record_summary(context)?,
+                );
                 menu.action(
                     "game-result-open-analysis",
-                    "Analysisを見る",
+                    "飛行を分析",
                     GameUiAction::SetResultTab {
                         tab: GameUiResultTab::Analysis,
                     },
@@ -547,7 +555,9 @@ pub fn game_ui_view(
         }
         .to_owned(),
         description,
-        active_overlay: if matches!(phase, SessionPhase::FlightPaused { .. }) {
+        active_overlay: if credits_open {
+            Some(GameUiOverlay::Credits)
+        } else if matches!(phase, SessionPhase::FlightPaused { .. }) {
             Some(match state.pause_overlay {
                 GameUiPauseOverlay::Menu => GameUiOverlay::Pause,
                 GameUiPauseOverlay::Settings => GameUiOverlay::PauseSettings,
@@ -1310,39 +1320,32 @@ fn digest_hex(digest: [u8; 32]) -> String {
 
 fn configuration(context: &GameUiContext<'_, '_>) -> String {
     format!(
-        "{} / {} / {} / {}\n{}",
+        "{} / {} / {} / {}",
         catalog::preset(context.preset).0,
         catalog::information(context.difficulty.information()).0,
         catalog::assistance(context.difficulty.assistance()).0,
-        catalog::weather(context.difficulty.weather()).0,
-        technical_configuration(context).replace('\n', " · ")
+        catalog::weather(context.difficulty.weather()).0
     )
 }
 
 fn record_summary(context: &GameUiContext<'_, '_>) -> Result<String, GameUiError> {
     let Some(record) = context.record else {
-        return Ok("FlightRecordを解析中、または解析データを取得できない".to_owned());
+        return Ok("飛行記録を読み込んでいるか、分析に必要なデータを取得できない。".to_owned());
     };
     let summary = record.summary().map_err(GameUiError::Record)?;
-    let terminal = record
-        .finalization()
-        .map_or("", |result| match result.reason {
-            SessionEndReason::WaterContact => "Splash",
-            SessionEndReason::TimeLimit => "TimeLimit",
-            SessionEndReason::ManualAbort => "ManualAbort",
-            SessionEndReason::OutOfValidEnvelope => "OutsideEnvelope",
-            SessionEndReason::FatalSimulationError => "SimulationError",
-        });
+    let terminal = record.finalization().map_or("", |result| {
+        super::game_ui_result_reason_label(result.reason)
+    });
     let score = summary.score.map_or_else(
-        || "score unavailable (score_not_recorded)".to_owned(),
+        || "飛距離は記録されていない".to_owned(),
         |score| format!("距離 {:.1} m", score.course_parallel_m()),
     );
     let angle = summary.maximum_angle_of_attack_rad.map_or_else(
-        || "AoA unavailable (no_defined_sample)".to_owned(),
-        |angle| format!("最大AoA {:.1}°", angle.to_degrees()),
+        || "迎角は記録されていない".to_owned(),
+        |angle| format!("最大迎角 {:.1}°", angle.to_degrees()),
     );
     Ok(format!(
-        "{terminal} · {score} · 飛行時間 {:.1} s · 最大対気速度 {:.1} m/s · {angle} · 最大|roll| {:.1}°",
+        "{terminal} · {score} · 飛行時間 {:.1} s · 最大対気速度 {:.1} m/s · {angle} · 最大ロール角（絶対値） {:.1}°",
         summary.duration_seconds,
         summary.maximum_airspeed_mps,
         summary.maximum_absolute_roll_rad.to_degrees()
@@ -1367,8 +1370,7 @@ fn logs(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
         enabled,
     );
     let mut notice = if context.platform.flight_log_available {
-        "CSVの加速度は保存標本からのfinite-difference推定値である。JSONは元のFlightRecordである。"
-            .to_owned()
+        "CSVには速度の差から推定した加速度を含む。JSONには飛行記録をそのまま保存する。".to_owned()
     } else {
         "この表示環境では飛行ログのダウンロードに対応していない。".to_owned()
     };
@@ -1496,7 +1498,7 @@ fn analysis(
         menu.status(
             "game-analysis-loading",
             "Analysis",
-            "FlightRecordを取得している",
+            "飛行記録を読み込んでいる",
         );
     }
     Ok(())
@@ -1681,13 +1683,8 @@ fn description(phase: SessionPhase, can_resume: bool) -> String {
         SessionPhase::BriefingFailed { .. } => {
             "飛行準備に失敗した。再試行または設定変更を選択する。".to_owned()
         }
-        SessionPhase::Countdown { .. } => {
-            "物理時間を停止し、発進までの残り時間を表示する。".to_owned()
-        }
-        SessionPhase::FlightRunning => format!(
-            "KeyboardまたはGamepadで操縦する。Physicsは{} Hzで独立して進む。",
-            birdman_game_core::PHYSICS_HZ
-        ),
+        SessionPhase::Countdown { .. } => "発進までお待ちください。".to_owned(),
+        SessionPhase::FlightRunning => "キーボードまたはゲームパッドで操縦する。".to_owned(),
         SessionPhase::FlightPaused { reasons }
             if reasons.contains(birdman_game_core::PauseReason::ProcessingDelay) =>
         {
@@ -1699,11 +1696,9 @@ fn description(phase: SessionPhase, can_resume: bool) -> String {
         SessionPhase::FlightPaused { .. } => {
             "一時停止中。画面を操作できる状態になると再開できる。".to_owned()
         }
-        SessionPhase::Result => "確定済みterminal snapshotから結果を表示する。".to_owned(),
-        SessionPhase::Replay => {
-            "確定済みFlightRecordのposeを再生している。physics stateは進行しない。".to_owned()
-        }
-        SessionPhase::Attract => "Title用の独立したFlightRecordを自動再生している。".to_owned(),
+        SessionPhase::Result => "飛行結果を確認し、再試行や記録再生を選択する。".to_owned(),
+        SessionPhase::Replay => "保存した飛行を再生している。".to_owned(),
+        SessionPhase::Attract => "デモ飛行を再生している。".to_owned(),
     }
 }
 

@@ -44,7 +44,7 @@ fn format_environment_readout(
 ) -> Result<String, EnvironmentFormatError> {
     let Some(identity) = identity.filter(|identity| registered(*identity)) else {
         return Ok(if technical {
-            "代表風情報を取得できない。\n気象による発進風速の上限・下限: 未定義。"
+            "代表風情報を取得できない。"
         } else {
             "気象情報は準備完了後に表示する。"
         }
@@ -102,7 +102,7 @@ fn format_environment_readout(
     );
     if technical {
         readout.push_str(&format!(
-            "\n環境名: {name} · {basis}\n速度成分 N/E/D: {north:.2} / {east:.2} / {down:.2} m/s\n代表地点 N/E/D: {:.1} / {:.1} / {:.1} m\n気象による発進風速の上限・下限: 未定義。",
+            "\n環境名: {name} · {basis}\n速度成分 N/E/D: {north:.2} / {east:.2} / {down:.2} m/s\n代表地点 N/E/D: {:.1} / {:.1} / {:.1} m",
             position[0], position[1], position[2]
         ));
     }

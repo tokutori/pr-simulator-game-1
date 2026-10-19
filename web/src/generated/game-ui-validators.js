@@ -112,8 +112,8 @@ function validate54(data, { instancePath = "", parentData, parentDataProperty, r
     }
     errors++;
   }
-  if ("Pause" !== data) {
-    const err1 = { instancePath, schemaPath: "#/oneOf/0/const", keyword: "const", params: { allowedValue: "Pause" }, message: "must be equal to constant" };
+  if ("Credits" !== data) {
+    const err1 = { instancePath, schemaPath: "#/oneOf/0/const", keyword: "const", params: { allowedValue: "Credits" }, message: "must be equal to constant" };
     if (vErrors === null) {
       vErrors = [err1];
     } else {
@@ -136,8 +136,8 @@ function validate54(data, { instancePath = "", parentData, parentDataProperty, r
     }
     errors++;
   }
-  if ("PauseSettings" !== data) {
-    const err3 = { instancePath, schemaPath: "#/oneOf/1/const", keyword: "const", params: { allowedValue: "PauseSettings" }, message: "must be equal to constant" };
+  if ("Pause" !== data) {
+    const err3 = { instancePath, schemaPath: "#/oneOf/1/const", keyword: "const", params: { allowedValue: "Pause" }, message: "must be equal to constant" };
     if (vErrors === null) {
       vErrors = [err3];
     } else {
@@ -164,8 +164,8 @@ function validate54(data, { instancePath = "", parentData, parentDataProperty, r
       }
       errors++;
     }
-    if ("PauseHelp" !== data) {
-      const err5 = { instancePath, schemaPath: "#/oneOf/2/const", keyword: "const", params: { allowedValue: "PauseHelp" }, message: "must be equal to constant" };
+    if ("PauseSettings" !== data) {
+      const err5 = { instancePath, schemaPath: "#/oneOf/2/const", keyword: "const", params: { allowedValue: "PauseSettings" }, message: "must be equal to constant" };
       if (vErrors === null) {
         vErrors = [err5];
       } else {
@@ -182,14 +182,43 @@ function validate54(data, { instancePath = "", parentData, parentDataProperty, r
         valid0 = true;
         passing0 = 2;
       }
+      const _errs7 = errors;
+      if (typeof data !== "string") {
+        const err6 = { instancePath, schemaPath: "#/oneOf/3/type", keyword: "type", params: { type: "string" }, message: "must be string" };
+        if (vErrors === null) {
+          vErrors = [err6];
+        } else {
+          vErrors.push(err6);
+        }
+        errors++;
+      }
+      if ("PauseHelp" !== data) {
+        const err7 = { instancePath, schemaPath: "#/oneOf/3/const", keyword: "const", params: { allowedValue: "PauseHelp" }, message: "must be equal to constant" };
+        if (vErrors === null) {
+          vErrors = [err7];
+        } else {
+          vErrors.push(err7);
+        }
+        errors++;
+      }
+      var _valid0 = _errs7 === errors;
+      if (_valid0 && valid0) {
+        valid0 = false;
+        passing0 = [passing0, 3];
+      } else {
+        if (_valid0) {
+          valid0 = true;
+          passing0 = 3;
+        }
+      }
     }
   }
   if (!valid0) {
-    const err6 = { instancePath, schemaPath: "#/oneOf", keyword: "oneOf", params: { passingSchemas: passing0 }, message: "must match exactly one schema in oneOf" };
+    const err8 = { instancePath, schemaPath: "#/oneOf", keyword: "oneOf", params: { passingSchemas: passing0 }, message: "must match exactly one schema in oneOf" };
     if (vErrors === null) {
-      vErrors = [err6];
+      vErrors = [err8];
     } else {
-      vErrors.push(err6);
+      vErrors.push(err8);
     }
     errors++;
   } else {

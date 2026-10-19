@@ -58,6 +58,8 @@ export class ScreenUiAdapter {
   }
 
   render(viewModel: UiViewModel, visible = true): void {
+    const scopeChanged = this.currentViewModel !== null && (this.currentViewModel.scene !== viewModel.scene
+      || this.currentViewModel.activeOverlay !== viewModel.activeOverlay);
     this.currentViewModel = viewModel;
     const wasVisible = this.visible;
     if (wasVisible && !visible) {
@@ -89,6 +91,13 @@ export class ScreenUiAdapter {
       attrs: { hidden: !visible, inert: !visible, "aria-hidden": String(!visible) }
     }, [shell]);
     this.currentVNode = patch(this.currentVNode, nextVNode);
+    if (scopeChanged) {
+      const element = this.mount.querySelector<HTMLElement>(".screen-ui-shell");
+      if (element !== null) {
+        element.scrollTop = 0;
+        element.scrollLeft = 0;
+      }
+    }
     this.restoreDom();
     this.observeCharts();
   }

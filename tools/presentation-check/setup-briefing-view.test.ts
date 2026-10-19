@@ -29,6 +29,40 @@ function measurementFor(request: MenuTextRequest): MenuTextMeasurement {
 }
 
 describe("Shared Flight Setup and Briefing presentation", () => {
+  it.each([4, 5, 6, 7, 9, 10])("describes the user activity without internal execution terms in phase %i", phase => {
+    const shared = currentSharedGameUiFixture(phase);
+    expect(shared.description.length).toBeGreaterThan(0);
+    expect(shared.description).not.toMatch(/FlightRecord|terminal|snapshot|Physics|physics|pose|Resume|物理時間/);
+  });
+
+  it.each([0, 6])("resets Screen scroll on Credits entry and return in phase %i", async phase => {
+    const window = new Window();
+    Object.assign(globalThis, { window, document: window.document });
+    try {
+      const { ScreenUiAdapter } = await import("../../web/src/presentation/screen-ui.js");
+      const root = (window.document as unknown as Document).createElement("main");
+      window.document.body.append(root as never);
+      const adapter = new ScreenUiAdapter(root, () => undefined);
+      withSharedGameUiSession(phase, {}, (session, platform) => {
+        adapter.render(createGameViewModel(session.readSharedUi(platform)));
+        const shell = root.querySelector<HTMLElement>(".screen-ui-shell");
+        if (shell === null) throw new Error("Missing Screen shell");
+        for (const open of [true, false]) {
+          shell.scrollTop = 120;
+          shell.scrollLeft = 12;
+          session.updateSharedUi({ kind: "set_credits", open }, platform);
+          adapter.render(createGameViewModel(session.readSharedUi(platform)));
+          expect(root.querySelector(".screen-ui-shell")).toBe(shell);
+          expect(shell.scrollTop).toBe(0);
+          expect(shell.scrollLeft).toBe(0);
+        }
+      });
+    } finally {
+      await window.happyDOM.abort();
+      Reflect.deleteProperty(globalThis, "window"); Reflect.deleteProperty(globalThis, "document");
+    }
+  });
+
   it.each(["screen", "phone_vr", "webxr"] as const)("opens and closes the same Credits without moving the session in %s", (presentation_mode) => {
     for (const phase of [0, 6]) {
       withSharedGameUiSession(phase, { platform: { presentation_mode } }, (session, platform) => {
@@ -41,6 +75,7 @@ describe("Shared Flight Setup and Briefing presentation", () => {
         const view = createGameViewModel(credits);
         validateUiViewModel(view);
         expect(credits.hud).toBeNull();
+        expect(view.activeOverlay).toBe("Credits");
         for (const source of ["osm", "jaxa", "copernicus", "jma", "font", "earcut", "ryu", "validators", "time"]) {
           expect(statusValue(view, `game-credits-${source}`).length).toBeGreaterThan(0);
         }
@@ -48,6 +83,7 @@ describe("Shared Flight Setup and Briefing presentation", () => {
         expect(session.updateSharedUi({ kind: "set_credits", open: false }, platform).effects).toEqual([]);
         expect(session.readGameSessionProjection()).toEqual(before);
         expect(session.readSharedUi(platform).selections.credits_open).toBe(false);
+        expect(createGameViewModel(session.readSharedUi(platform)).activeOverlay).toBe(createGameViewModel(normal).activeOverlay);
       });
     }
   });
@@ -241,6 +277,11 @@ describe("Shared Flight Setup and Briefing presentation", () => {
     const secondary = controls.find((control) => control.id === "game-setup-back");
     if (choice?.kind !== "button" || primary === undefined || secondary === undefined) throw new Error("Missing controls");
     expect(uiButtonLabel(choice)).toContain(`● ${choice.label}`);
+    for (const control of controls) {
+      if (control.kind === "button" && control.presentation?.kind === "choice" && control.presentation.description === "") {
+        expect(uiButtonLabel(control)).not.toContain("\n");
+      }
+    }
     expect(uiControlBackground(primary, shared.theme)).not.toBe(uiControlBackground(secondary, shared.theme));
   });
 });

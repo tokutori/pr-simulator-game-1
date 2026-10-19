@@ -2,7 +2,7 @@
 /**
  * Exclusive current overlay names retained by both renderer adapters.
  */
-export type GameUiOverlay = "Pause" | "PauseSettings" | "PauseHelp";
+export type GameUiOverlay = "Credits" | "Pause" | "PauseSettings" | "PauseHelp";
 /**
  * Pure shared scene and menu projection.
  */

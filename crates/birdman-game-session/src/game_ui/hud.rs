@@ -44,7 +44,7 @@ pub(super) fn game_ui_hud(
                     GameUiError::Session(birdman_game_core::GameSessionError::Score(error))
                 })?
                 .map_or_else(
-                    || "距離 unavailable".to_owned(),
+                    || "距離未記録".to_owned(),
                     |score| format!("距離 {:.1} m", score.course_parallel_m()),
                 );
             (
@@ -100,8 +100,8 @@ pub(super) fn game_ui_hud(
     let time =
         (sample.tick_index as f64 + sample.fraction) / f64::from(birdman_game_core::PHYSICS_HZ);
     let airspeed = format!("対気速度 {:.1} m/s", telemetry.airspeed_mps);
-    let altitude = format!("ALT {:.1} m", telemetry.altitude_m);
-    let attitude_text = format!("PITCH {pitch:.0}° · ROLL {roll:.0}°");
+    let altitude = format!("高度 {:.1} m", telemetry.altitude_m);
+    let attitude_text = format!("ピッチ {pitch:.0}° · ロール {roll:.0}°");
     let duration = format!("時間 {time:.1} s");
     let mut readouts = Vec::new();
     if minimal {
@@ -142,8 +142,8 @@ pub(super) fn game_ui_hud(
                 incidence.rudder_rad().to_degrees()
             ));
             supplementary.push(target.map_or_else(
-                || "重心の目標位置 —".to_owned(),
-                |target| format!("重心の目標位置 {target:+.2} m"),
+                || "パイロット移動の目標位置 —".to_owned(),
+                |target| format!("パイロット移動の目標位置 {target:+.2} m"),
             ));
         }
     }
@@ -179,7 +179,7 @@ pub(super) fn game_ui_hud(
         ));
     }
     let telemetry_text = if failure.is_some() {
-        format!("Last valid · tick {} · {time:.2} s", sample.tick_index)
+        format!("最後の有効状態 · {time:.2} s")
     } else if telemetry_visible {
         format!(
             "対地速度 {:.1} m/s · {distance} · {duration}",
@@ -238,7 +238,7 @@ pub(super) fn game_ui_hud(
     if full || custom && profile.telemetry() {
         instruments.push(hud_node(
             "hud-pilot-position",
-            "重心位置",
+            "パイロット位置",
             GameUiHudNodeContent::Text {
                 value: format!("{:+.2} m", sample.flight_state.pilot_position_m()),
                 tone: GameUiHudTone::Normal,

@@ -240,7 +240,7 @@ describe("flight log download state and common presentation", () => {
       if (!(button instanceof browser.HTMLButtonElement)) throw new Error("Required download button is unavailable");
       button.click();
       expect(dispatch).toHaveBeenLastCalledWith({ type: "activate", controlId: "game-flight-log-csv" });
-      expect(root.textContent).toContain("finite-difference推定値");
+      expect(root.textContent).toContain("速度の差から推定した加速度");
     }
     await browser.happyDOM.abort();
   });

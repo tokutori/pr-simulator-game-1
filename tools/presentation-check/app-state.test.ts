@@ -1578,7 +1578,8 @@ describe("Single Menu scroll state", () => {
       { ...titleScope, panelId: "result-menu" },
       { ...titleScope, viewKey: "analysis:altitude" },
       { kind: "overlay", scene: "Title", panelId: "title-menu", viewKey: "main", overlay: "settings" },
-      { kind: "overlay", scene: "Title", panelId: "title-menu", viewKey: "main", overlay: "help" }
+      { kind: "overlay", scene: "Title", panelId: "title-menu", viewKey: "main", overlay: "help" },
+      { kind: "overlay", scene: "Title", panelId: "title-menu", viewKey: "main", overlay: "Credits" }
     ];
     for (const scope of scopes) {
       const opened = openMenu(readyModel(), titleScope);
@@ -1595,6 +1596,16 @@ describe("Single Menu scroll state", () => {
       type: "menu-scroll-synchronized", generation: settings.menuScroll.generation, target: { kind: "active", scope: { ...settingsScope, overlay: "help" } }
     });
     expect(help.model.menuScroll.generation).toBe(2);
+    const credits = updateApp(help.model, {
+      type: "menu-scroll-synchronized", generation: help.model.menuScroll.generation,
+      target: { kind: "active", scope: { ...settingsScope, overlay: "Credits" } }
+    });
+    expect(credits.model.menuScroll).toMatchObject({ generation: 3, progress: 0 });
+    const returned = updateApp(credits.model, {
+      type: "menu-scroll-synchronized", generation: credits.model.menuScroll.generation,
+      target: { kind: "active", scope: settingsScope }
+    });
+    expect(returned.model.menuScroll).toMatchObject({ generation: 4, progress: 0 });
   });
 
   it("invalidates a close and reopening of the same Menu", () => {
