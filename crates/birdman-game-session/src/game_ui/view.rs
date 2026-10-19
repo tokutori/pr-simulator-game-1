@@ -1721,7 +1721,7 @@ pub(super) fn layout(
             if state.pause_overlay == GameUiPauseOverlay::Settings
                 && (context.platform.presentation_mode != GameUiPresentationMode::Screen
                     || viewport.width
-                        >= super::hud::hud_width(context.platform)
+                        >= super::hud::minimum_hud_width(font)
                             + pause_settings_width
                             + 2.25 * font) =>
         {
@@ -1738,7 +1738,7 @@ pub(super) fn layout(
             if state.replay_view == GameUiReplayView::Telemetry
                 && context.platform.presentation_mode == GameUiPresentationMode::Screen
                 && viewport.width
-                    < super::hud::hud_width(context.platform) + cinematic_width + 2.25 * font =>
+                    < super::hud::minimum_hud_width(font) + cinematic_width + 2.25 * font =>
         {
             GameUiShell::FlightBar
         }
@@ -1749,7 +1749,11 @@ pub(super) fn layout(
     let available_width = (viewport.width - if compact { 1.2 } else { 2.0 } * font).max(1.0);
     let width = match shell {
         GameUiShell::Center => available_width.min(42.0 * font),
-        GameUiShell::Analysis | GameUiShell::FlightBar => viewport.width,
+        GameUiShell::Analysis => viewport.width,
+        GameUiShell::FlightBar if phase == SessionPhase::FlightRunning => {
+            available_width.min(15.5 * font)
+        }
+        GameUiShell::FlightBar => viewport.width,
         GameUiShell::PauseSettings => pause_settings_width,
         GameUiShell::Cinematic => cinematic_width,
     };

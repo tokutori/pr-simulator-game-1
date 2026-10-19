@@ -5,6 +5,7 @@ mod chart;
 mod diagnostics;
 mod environment;
 mod frame;
+mod head_fit;
 mod hud;
 mod structure;
 mod timestamps;
@@ -15,6 +16,7 @@ mod view;
 pub use diagnostics::{game_ui_failure_summary, game_ui_result_reason_label};
 pub use environment::game_ui_environment_readout;
 pub use frame::game_ui_frame;
+pub use head_fit::{GameUiHeadHudFit, GameUiHeadHudNode, GameUiHeadHudSpace, fit_game_ui_head_hud};
 pub(crate) use structure::GameUiStructureCache;
 pub use structure::GameUiStructureKey;
 pub use timestamps::game_ui_saved_record_timestamp;
@@ -32,6 +34,7 @@ pub fn export_game_ui_schema(name: &str) -> Result<String, String> {
     output.subschema_for::<GameUiView>();
     output.subschema_for::<GameUiUpdate>();
     output.subschema_for::<GameUiFrame>();
+    output.subschema_for::<GameUiHeadHudFit>();
     output.subschema_for::<crate::screen_render_auto::ScreenRenderAutoSnapshot>();
     output.subschema_for::<crate::replay_camera::ReplayCameraView>();
     output.subschema_for::<crate::record_query::PlaybackContext<'_>>();
@@ -50,6 +53,7 @@ pub fn export_game_ui_schema(name: &str) -> Result<String, String> {
         .into_generator();
     input.subschema_for::<GameUiAction>();
     input.subschema_for::<GameUiPlatformInput>();
+    input.subschema_for::<GameUiHeadHudSpace>();
     input.subschema_for::<birdman_game_format::TailInputDocument>();
     let bundle = serde_json::json!({
         "serialize": {
@@ -70,6 +74,8 @@ pub fn export_game_ui_schema(name: &str) -> Result<String, String> {
         "input" => ("deserialize", "GameUiPlatformInput"),
         "effects" => ("serialize", "GameUiUpdate"),
         "frame" => ("serialize", "GameUiFrame"),
+        "head-hud-fit" => ("serialize", "GameUiHeadHudFit"),
+        "head-hud-space" => ("deserialize", "GameUiHeadHudSpace"),
         "screen-render-auto" => ("serialize", "ScreenRenderAutoSnapshot"),
         "replay-camera" => ("serialize", "ReplayCameraView"),
         "tail-input" => ("deserialize", "TailInputDocument"),
