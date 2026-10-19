@@ -413,6 +413,52 @@ verus! {
             }
         }
 
+        /// Demo installation retains the lifecycle and admits only one finalized record at Title.
+        pub closed spec fn attract_installed(self, before: Self, record: FlightRecord, outcome: Result<(), GameSessionError>) -> bool {
+            self.lifecycle == before.lifecycle && self.countdown_token == before.countdown_token
+            && if before.phase() == SessionPhase::Title && before.attract_record.is_none()
+                && record.finalization().is_some() {
+                outcome == Ok(()) && self.attract_record == Some(record)
+            } else {
+                outcome == Err(GameSessionError::InvalidTransition) && self == before
+            }
+        }
+
+        /// Attract returns its unchanged record to Title and retains the countdown token.
+        pub closed spec fn attract_returned(self, before: Self, outcome: Result<(), GameSessionError>) -> bool {
+            self.countdown_token == before.countdown_token && match before.lifecycle {
+                SessionLifecycle::Attract { record, .. } => outcome == Ok(())
+                    && self.lifecycle == SessionLifecycle::Title && self.attract_record == Some(record),
+                _ => outcome == Err(GameSessionError::InvalidTransition) && self == before,
+            }
+        }
+
+        /// Result transfers its finalized record while retaining independent session owners.
+        pub closed spec fn result_record_taken(self, before: Self, outcome: Result<FlightRecord, GameSessionError>) -> bool {
+            self.lifecycle_globals_preserved(before) && match before.lifecycle {
+                SessionLifecycle::Configured(configured) =>
+                    if configured.phase.is_result() && configured.record.finalization().is_some() {
+                        outcome == Ok(configured.record) && self.lifecycle == SessionLifecycle::Title
+                    } else {
+                        outcome == Err(GameSessionError::InvalidTransition) && self == before
+                    },
+                _ => outcome == Err(GameSessionError::InvalidTransition) && self == before,
+            }
+        }
+
+        /// Archived replay owns the exact finalized input with a fresh stopped clock.
+        pub closed spec fn archived_replay_opened(self, before: Self, record: FlightRecord, outcome: Result<(), GameSessionError>) -> bool {
+            self.lifecycle_globals_preserved(before)
+            && if matches!(before.phase(), SessionPhase::Title | SessionPhase::Result)
+                && record.finalization().is_some() {
+                outcome == Ok(()) && self.lifecycle == (SessionLifecycle::ArchivedReplay {
+                    record, clock: ReplayClock::new(),
+                })
+            } else {
+                outcome == Err(GameSessionError::InvalidTransition) && self == before
+            }
+        }
+
         /// Pause operations retain the configuration, samples, physical state and unrelated owners.
         pub closed spec fn flight_data_preserved(self, before: Self) -> bool {
             self.attract_record == before.attract_record && self.countdown_token == before.countdown_token
@@ -796,6 +842,8 @@ impl<'a> GameSession<'a> {
     }
 
     /// Returns the record associated with the current playback view.
+    #[cfg_attr(verus_only, vstd::prelude::verus_verify(dual_spec))]
+    #[cfg_attr(verus_only, verus_spec(returns self.playback_record()))]
     pub const fn playback_record(&self) -> Option<&FlightRecord> {
         match &self.lifecycle {
             SessionLifecycle::Attract { record, .. } => Some(record),
@@ -804,8 +852,17 @@ impl<'a> GameSession<'a> {
     }
 
     /// Installs one finalized demonstration record without replacing player records.
+    #[cfg_attr(verus_only, verus_spec(outcome =>
+        requires old(self).projection_valid(),
+        ensures final(self).projection_valid(), final(self).attract_installed(*old(self), record, outcome),
+            final(self).snapshot() == old(self).snapshot(),
+            final(self).flight_record() == old(self).flight_record(),
+            final(self).playback_record() == old(self).playback_record(),
+            outcome.is_ok() ==> record.finalization().is_some(),
+            outcome.is_err() ==> *final(self) == *old(self),
+    ))]
     pub fn install_attract_record(&mut self, record: FlightRecord) -> Result<(), GameSessionError> {
-        if self.phase() != SessionPhase::Title
+        if !matches!(self.phase(), SessionPhase::Title)
             || self.attract_record.is_some()
             || record.finalization().is_none()
         {
@@ -843,11 +900,20 @@ impl<'a> GameSession<'a> {
     }
 
     /// Returns from demonstration playback to Title without changing player records.
+    #[cfg_attr(verus_only, verus_spec(outcome =>
+        requires old(self).projection_valid(),
+        ensures final(self).projection_valid(), final(self).attract_returned(*old(self), outcome),
+            outcome.is_ok() == matches!(old(self).snapshot(), SessionSnapshot::Attract { .. }),
+            outcome.is_ok() ==> final(self).snapshot() == SessionSnapshot::Title,
+            outcome.is_err() ==> *final(self) == *old(self),
+    ))]
     pub fn leave_attract(&mut self) -> Result<(), GameSessionError> {
-        if self.phase() != SessionPhase::Attract {
+        if !matches!(self.phase(), SessionPhase::Attract) {
             return Err(GameSessionError::InvalidTransition);
         }
-        match core::mem::replace(&mut self.lifecycle, SessionLifecycle::Title) {
+        let mut previous_lifecycle = SessionLifecycle::Title;
+        core::mem::swap(&mut self.lifecycle, &mut previous_lifecycle);
+        match previous_lifecycle {
             SessionLifecycle::Attract { record, .. } => {
                 self.attract_record = Some(record);
                 Ok(())
@@ -860,8 +926,18 @@ impl<'a> GameSession<'a> {
     }
 
     /// Moves a finalized result record out of a temporary session.
+    #[cfg_attr(verus_only, verus_spec(outcome =>
+        requires old(self).projection_valid(),
+        ensures final(self).projection_valid(), final(self).result_record_taken(*old(self), outcome),
+            match outcome {
+                Ok(record) => record.finalization().is_some() && old(self).flight_record() == Some(&record)
+                    && final(self).snapshot() == SessionSnapshot::Title
+                    && final(self).flight_record().is_none() && final(self).playback_record().is_none(),
+                Err(_) => *final(self) == *old(self),
+            },
+    ))]
     pub fn take_finalized_result_record(&mut self) -> Result<FlightRecord, GameSessionError> {
-        if self.phase() != SessionPhase::Result
+        if !matches!(self.phase(), SessionPhase::Result)
             || self
                 .flight_record()
                 .and_then(FlightRecord::finalization)
@@ -869,7 +945,9 @@ impl<'a> GameSession<'a> {
         {
             return Err(GameSessionError::InvalidTransition);
         }
-        match core::mem::replace(&mut self.lifecycle, SessionLifecycle::Title) {
+        let mut previous_lifecycle = SessionLifecycle::Title;
+        core::mem::swap(&mut self.lifecycle, &mut previous_lifecycle);
+        match previous_lifecycle {
             SessionLifecycle::Configured(configured) => Ok(configured.record),
             previous => {
                 self.lifecycle = previous;
@@ -892,6 +970,18 @@ impl<'a> GameSession<'a> {
     }
 
     /// Opens a finalized archived record directly in read-only playback from Title or Result.
+    #[cfg_attr(verus_only, verus_spec(outcome =>
+        requires old(self).projection_valid(),
+        ensures final(self).projection_valid(), final(self).archived_replay_opened(*old(self), record, outcome),
+            outcome.is_ok() == (matches!(old(self).snapshot(), SessionSnapshot::Title | SessionSnapshot::Result(_))
+                && record.finalization().is_some()),
+            outcome.is_ok() ==> final(self).flight_record() == Some(&record)
+                && final(self).playback_record() == final(self).flight_record()
+                && final(self).snapshot() == (SessionSnapshot::Replay {
+                    scenario: record.header().scenario, source: SessionReplaySource::ArchivedRecord,
+                }),
+            outcome.is_err() ==> *final(self) == *old(self),
+    ))]
     pub fn open_archived_replay(&mut self, record: FlightRecord) -> Result<(), GameSessionError> {
         if !matches!(self.phase(), SessionPhase::Title | SessionPhase::Result)
             || record.finalization().is_none()
@@ -906,7 +996,14 @@ impl<'a> GameSession<'a> {
     }
 
     /// Returns from read-only playback to the same finalized result.
-    #[cfg_attr(verus_only, verus_spec(result => ensures final(self).replay_changed(*old(self), false, result)))]
+    #[cfg_attr(verus_only, verus_spec(result =>
+        ensures final(self).replay_changed(*old(self), false, result),
+            old(self).projection_valid() ==> final(self).projection_valid(),
+            old(self).projection_valid() && matches!(old(self).snapshot(), SessionSnapshot::Replay {
+                source: SessionReplaySource::ArchivedRecord, ..
+            }) ==> result == Ok(()) && final(self).snapshot() == SessionSnapshot::Title
+                && final(self).flight_record().is_none() && final(self).playback_record().is_none(),
+    ))]
     pub fn leave_replay(&mut self) -> Result<(), GameSessionError> {
         match &mut self.lifecycle {
             SessionLifecycle::Configured(configured) => {
