@@ -20,6 +20,25 @@ function configuredViewer(aspect = 1280 / 720, fieldOfView = 60, near = 0.05): V
 }
 
 describe("Pure Head Flight HUD layout", () => {
+  it.each(["row", "grid"] as const)("preserves %s readout grouping and instrument order across both clear-region bands", (kind) => {
+    const shared = currentSharedHudFixture({ informationCode: 0 });
+    const nodes = ["first", "second"].map((id) => ({ id, label: id, content: { kind: "text" as const, tone: "normal" as const, value: "共通" } }));
+    const model = { ...shared, groups: shared.groups.map((group) => group.placement === "readouts"
+      ? { ...group, layout: kind === "row" ? { kind: "row" as const } : { kind: "grid" as const, columns: 2 }, nodes } : group) };
+    const view = createHeadHudView(model, configuredViewer(), "ja");
+    if (view.kind !== "visible") throw new Error("Missing grouped readout view");
+    const first = view.layer.elements[0];
+    const second = view.layer.elements[1];
+    expect(first?.id).toBe("first");
+    expect(second?.id).toBe("second");
+    expect(first?.bounds.top).toBe(second?.bounds.top);
+    expect(first?.bounds.left).toBeLessThan(second?.bounds.left ?? 0);
+    for (const [index, element] of view.layer.elements.entries()) {
+      const previous = view.layer.elements[index - 1];
+      if (previous !== undefined) expect(element.bounds.top).toBeGreaterThanOrEqual(previous.bounds.top);
+    }
+  });
+
   it("projects an additional existing-kind readout and preserves node order when the labels change", () => {
     const shared = currentSharedHudFixture({ informationCode: 1 });
     const node = { id: "new-readout", label: "姿勢 PITCH", content: { kind: "text" as const, tone: "normal" as const, value: "共通表示" } };

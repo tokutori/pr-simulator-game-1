@@ -2,7 +2,7 @@ import { IDENTITY_POSE, pose, rotateVec3, vec3 } from "../render/contracts/math.
 import type { HeadHudElement, HeadHudRect, VisibleHeadHud } from "../render/contracts/head-hud.js";
 import { headPlaneFitsViews } from "../render/contracts/viewer-frame.js";
 import type { ViewerFrame, ViewerGeometryUnavailableReason } from "../render/contracts/viewer-frame.js";
-import type { FlightHudModel } from "./flight-hud-model.js";
+import type { FlightHudModel, FlightHudNode } from "./flight-hud-model.js";
 import { FLIGHT_MENU_GEOMETRY } from "../render/contracts/ui.js";
 import { formatFrameRate } from "./frame-rate.js";
 
@@ -46,9 +46,9 @@ export function createHeadHudView(model: FlightHudModel | null, viewer: ViewerFr
   validateProfile(profile);
   const instrumentGroups = model?.groups.filter((group) => group.placement !== "readouts") ?? [];
   const instruments = instrumentGroups.flatMap((group) => group.nodes);
+  const readoutGroups = model?.groups.filter((group) => group.placement === "readouts") ?? [];
   const frameRateLabel = framesPerSecond === undefined ? null : formatFrameRate(framesPerSecond);
-  const textElements = model?.groups.filter((group) => group.placement === "readouts")
-    .flatMap((group) => group.nodes.map((node) => Object.freeze({ ...node, bounds: unitRect }))) ?? [];
+  const textElements = readoutGroups.flatMap((group) => group.nodes);
   if (textElements.length === 0 && instruments.length === 0 && frameRateLabel === null) return NO_HEAD_HUD_VIEW;
   if (sharedTheme === null) return NO_HEAD_HUD_VIEW;
   if (viewer.source === "unavailable") return Object.freeze({ kind: "unavailable", reason: viewer.reason });
@@ -93,32 +93,23 @@ export function createHeadHudView(model: FlightHudModel | null, viewer: ViewerFr
     const width = lower;
     const cardWidth = width - 2 * padding;
     if (cardWidth < 8 * textHeightMeters) continue;
-    const topHeights = textElements.map((element) => minimumCardHeight(element, cardWidth, textHeightMeters, padding));
     const frameRateHeight = frameRateLabel === null ? 0 : (2 * HEAD_HUD_CARD_PADDING + HEAD_HUD_LINE_HEIGHT) * textHeightMeters;
     const frameRateOffset = frameRateHeight === 0 ? 0 : frameRateHeight + gap;
-    const textBandHeight = stackedHeight(topHeights, gap) + frameRateOffset;
-    if (textBandHeight > topBandHeight) continue;
-    const maximumColumns = Math.max(1, ...instrumentGroups.map((group) => group.layout.kind === "column" ? 1
-      : group.layout.kind === "row" ? group.nodes.length : group.layout.columns));
+    const maximumColumns = Math.min(Math.max(1, Math.floor(cardWidth / (8 * textHeightMeters))),
+      Math.max(1, ...[...readoutGroups, ...instrumentGroups].map((group) => groupColumns(group))));
     for (let columnLimit = maximumColumns; columnLimit > 0; columnLimit--) {
-      const instrumentRows = instrumentGroups.flatMap((group) => {
-        const columns = Math.min(columnLimit, group.layout.kind === "column" ? 1
-          : group.layout.kind === "row" ? Math.max(1, group.nodes.length) : group.layout.columns);
-        const instrumentWidth = (cardWidth - (columns - 1) * gap) / columns;
-        return Array.from({ length: Math.ceil(group.nodes.length / columns) }, (_, row) => {
-          const nodes = group.nodes.slice(row * columns, (row + 1) * columns);
-          return { nodes, width: instrumentWidth, height: Math.max(...nodes.map((node) =>
-            minimumCardHeight({ ...node, bounds: unitRect }, instrumentWidth, textHeightMeters, padding))) };
-        });
-      });
-      if (instrumentRows.some((row) => row.width < 8 * textHeightMeters)) continue;
+      const readoutRows = groupRows(readoutGroups, columnLimit, cardWidth, gap, textHeightMeters, padding);
+      const instrumentRows = groupRows(instrumentGroups, columnLimit, cardWidth, gap, textHeightMeters, padding);
+      if ([...readoutRows, ...instrumentRows].some((row) => row.width < 8 * textHeightMeters)) continue;
+      const textBandHeight = stackedHeight(readoutRows.map((row) => row.height), gap) + frameRateOffset;
+      if (textBandHeight > topBandHeight) continue;
       const rows = instrumentRows.length;
       const rowHeights = instrumentRows.map((row) => row.height);
-      const bottomRows = Array.from({ length: rows + 1 }, (_, index) => rows - index).find((count) =>
-        stackedHeight(rowHeights.slice(0, count), gap) <= bottomBandHeight &&
-        textBandHeight + (textElements.length > 0 && count < rows ? gap : 0) + stackedHeight(rowHeights.slice(count), gap) <= topBandHeight
+      const topRows = Array.from({ length: rows + 1 }, (_, index) => index).find((count) =>
+        stackedHeight(rowHeights.slice(count), gap) <= bottomBandHeight &&
+        textBandHeight + (textElements.length > 0 && count > 0 ? gap : 0) + stackedHeight(rowHeights.slice(0, count), gap) <= topBandHeight
       );
-      if (bottomRows === undefined) continue;
+      if (topRows === undefined) continue;
       const elements: HeadHudElement[] = [];
       if (frameRateLabel !== null) {
         const frameRateWidth = Math.min(cardWidth, (frameRateLabel.length + 2) * textHeightMeters);
@@ -126,14 +117,15 @@ export function createHeadHudView(model: FlightHudModel | null, viewer: ViewerFr
           bounds: rect((width - padding - frameRateWidth) / width, padding / height, frameRateWidth / width, frameRateHeight / height) }));
       }
       let top = padding + frameRateOffset;
-      textElements.forEach((element, index) => {
-        const cardHeight = topHeights[index] ?? 0;
-        elements.push(Object.freeze({ ...element, bounds: rect(padding / width, top / height, cardWidth / width, cardHeight / height) }));
-        top += cardHeight + gap;
+      readoutRows.forEach((row) => {
+        row.nodes.forEach((node, column) => elements.push(Object.freeze({ ...node, bounds: rect(
+          (padding + column * (row.width + gap)) / width, top / height, row.width / width, row.height / height
+        ) })));
+        top += row.height + gap;
       });
       instrumentRows.forEach((instrumentRow, row) => {
-        const upperRow = row >= bottomRows;
-        const precedingRows = upperRow ? rowHeights.slice(bottomRows, row) : rowHeights.slice(0, row);
+        const upperRow = row < topRows;
+        const precedingRows = upperRow ? rowHeights.slice(0, row) : rowHeights.slice(topRows, row);
         const rowTop = (upperRow ? top : height / 2 - clearBottom + gap) + precedingRows.reduce((sum, value) => sum + value + gap, 0);
         instrumentRow.nodes.forEach((node, column) => elements.push(Object.freeze({ ...node, bounds: rect(
           (padding + column * (instrumentRow.width + gap)) / width,
@@ -157,11 +149,11 @@ export function createHeadHudView(model: FlightHudModel | null, viewer: ViewerFr
   return Object.freeze({ kind: "unavailable", reason: "insufficient-view-area" });
 }
 
-export function headHudElementValue(element: HeadHudElement): string {
+export function headHudElementValue(element: FlightHudNode): string {
   return element.content.value;
 }
 
-export function headHudInstrumentHeight(element: HeadHudElement, textHeight: number): number {
+export function headHudInstrumentHeight(element: FlightHudNode, textHeight: number): number {
   switch (element.content.kind) {
     case "text": return 0;
     case "attitude": return textHeight * 5;
@@ -171,7 +163,7 @@ export function headHudInstrumentHeight(element: HeadHudElement, textHeight: num
   }
 }
 
-function minimumCardHeight(element: HeadHudElement, width: number, textHeight: number, padding: number): number {
+function minimumCardHeight(element: FlightHudNode, width: number, textHeight: number, padding: number): number {
   const charactersPerLine = Math.max(1, Math.floor((width - padding * 2) / textHeight));
   const rows = headHudElementValue(element).split("\n").reduce((sum, value) => sum + Math.max(1, Math.ceil(Array.from(value).length / charactersPerLine)), 0);
   const labelRows = element.label === "" ? 0 : Math.ceil(Array.from(element.label).length / charactersPerLine);
@@ -182,7 +174,24 @@ function stackedHeight(heights: readonly number[], gap: number): number {
   return heights.reduce((sum, value) => sum + value, 0) + Math.max(0, heights.length - 1) * gap;
 }
 
-const unitRect = Object.freeze({ left: 0, top: 0, width: 1, height: 1 });
+function groupColumns(group: FlightHudModel["groups"][number]): number {
+  switch (group.layout.kind) {
+    case "column": return 1;
+    case "row": return Math.max(1, group.nodes.length);
+    case "grid": return group.layout.columns;
+  }
+}
+
+function groupRows(groups: FlightHudModel["groups"], columnLimit: number, width: number, gap: number, textHeight: number, padding: number) {
+  return groups.flatMap((group) => {
+    const columns = Math.min(columnLimit, groupColumns(group));
+    const cardWidth = (width - (columns - 1) * gap) / columns;
+    return Array.from({ length: Math.ceil(group.nodes.length / columns) }, (_, row) => {
+      const nodes = group.nodes.slice(row * columns, (row + 1) * columns);
+      return { nodes, width: cardWidth, height: Math.max(...nodes.map((node) => minimumCardHeight(node, cardWidth, textHeight, padding))) };
+    });
+  });
+}
 
 function rect(left: number, top: number, width: number, height: number): HeadHudRect {
   return Object.freeze({ left, top, width, height });
