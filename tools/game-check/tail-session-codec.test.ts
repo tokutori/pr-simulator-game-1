@@ -373,7 +373,7 @@ describe("versioned two-tail TypeScript boundary", () => {
         expect(initial.controlLayout).toBe("tail_incidence");
         expect(initial.controlModeCode).toBe(mode);
         expect(initial.identity).toMatchObject({ kind: "prepared",
-          scenario: { catalogVersion: 3, scenarioId: 6, scenarioVersion: 3, aircraftModelVersion: 2,
+          scenario: { catalogVersion: 4, scenarioId: 6, scenarioVersion: 4, aircraftModelVersion: 3,
             environmentVersion: 6, controllerProfileVersion: 3, seedLow: 0xffff_ffff, seedHigh: 0xffff_ffff },
           controls: { aircraftConfigurationId: "bpg041-playable-hybrid-mock", controllerProfileId: "bpg040-tail-rate-feedback" } });
         if (initial.frame.kind !== "flight") throw new Error("Expected flight frame");

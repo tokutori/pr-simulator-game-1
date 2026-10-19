@@ -1,24 +1,10 @@
 use birdman_game_core::{NedVector, SessionScenarioIdentity, WindField};
-use birdman_game_format::{EnvironmentBasisDocument, EnvironmentFormatError, WeatherClass};
+use birdman_game_format::{EnvironmentBasisDocument, EnvironmentFormatError};
 
-use crate::{
-    HybridSessionPreparation, bundled_environment, identity_for_selection,
-    preset_environment_for_version,
-};
+use crate::{HybridSessionPreparation, bundled_environment, preset_environment_for_version};
 
 pub(super) fn registered(identity: SessionScenarioIdentity) -> bool {
-    [
-        WeatherClass::Calm,
-        WeatherClass::Mild,
-        WeatherClass::Typical,
-        WeatherClass::Challenging,
-        WeatherClass::NearLimit,
-    ]
-    .into_iter()
-    .any(|weather| {
-        HybridSessionPreparation::select_scenario(weather, identity.seed)
-            .is_ok_and(|selection| identity_for_selection(selection) == identity)
-    })
+    HybridSessionPreparation::recognizes_environment_identity(identity.into())
 }
 
 pub(super) fn registered_wind(

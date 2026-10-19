@@ -11,7 +11,9 @@ use crate::{environment::bundled_environment, personal_best_fingerprints};
 const MAX_IDENTITY_JSON_BYTES: usize = 4_096;
 
 pub(crate) use birdman_game_session::preset_wind_for_version;
-use birdman_game_session::{PresetEnvironment, preset_environment_for_version};
+use birdman_game_session::{
+    HybridSessionPreparation, PresetEnvironment, preset_environment_for_version,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum EnvironmentSnapshotError {
@@ -149,12 +151,7 @@ pub(crate) fn for_identity(
     source: EnvironmentSource,
     identity: EnvironmentIdentity,
 ) -> Result<EnvironmentProjection, EnvironmentSnapshotError> {
-    let registered = identity.catalog_version == 3
-        && identity.scenario_version == 3
-        && identity.aircraft_model_version == 2
-        && identity.controller_profile_version == 3
-        && identity.scenario_id == identity.environment_version
-        && matches!(identity.scenario_id, 1 | 2 | 4 | 5 | 6);
+    let registered = HybridSessionPreparation::recognizes_environment_identity(identity);
     if !registered {
         return Ok(EnvironmentProjection::Unavailable { source, identity });
     }
@@ -267,10 +264,10 @@ mod tests {
 
     fn identity(version: u32) -> EnvironmentIdentity {
         SessionScenarioIdentity {
-            catalog_version: 3,
+            catalog_version: 4,
             scenario_id: version,
-            scenario_version: 3,
-            aircraft_model_version: 2,
+            scenario_version: 4,
+            aircraft_model_version: 3,
             environment_version: version,
             controller_profile_version: 3,
             seed: u64::MAX,
@@ -380,7 +377,7 @@ mod tests {
                 0 => changed.catalog_version = 1,
                 1 => changed.scenario_id = 3,
                 2 => changed.scenario_version = 2,
-                3 => changed.aircraft_model_version = 3,
+                3 => changed.aircraft_model_version = 2,
                 4 => changed.environment_version = 3,
                 5 => changed.controller_profile_version = 5,
                 _ => unreachable!(),

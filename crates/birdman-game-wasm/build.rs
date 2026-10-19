@@ -61,6 +61,10 @@ fn main() {
         shared_environment_source,
         shared_venue_source,
         shared_venue_asset,
+        workspace_dir.join("crates/birdman-game-session/src/airframe_contact.rs"),
+        workspace_dir.join("crates/birdman-game-session/src/cockpit_geometry.rs"),
+        workspace_dir.join("crates/birdman-game-session/src/wing_geometry.rs"),
+        workspace_dir.join("crates/birdman-game-session/src/tail_geometry.rs"),
     ];
 
     println!("cargo:rerun-if-changed={}", environment_asset.display());

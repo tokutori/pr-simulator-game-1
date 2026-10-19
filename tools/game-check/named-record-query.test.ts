@@ -74,7 +74,7 @@ describe("named saved-record query boundary", () => {
       const context = parseNamedAttractContext(session.playback_context_json());
       expect(parseNamedPlaybackContext(session.playback_context_json())).toEqual(context);
       expect(context).toMatchObject({ phase: "attract", controlLayout: "tail_incidence",
-        scenario: { catalogVersion: 3, scenarioVersion: 3, aircraftModelVersion: 2, controllerProfileVersion: 3, environmentVersion: 1 },
+        scenario: { catalogVersion: 4, scenarioVersion: 4, aircraftModelVersion: 3, controllerProfileVersion: 3, environmentVersion: 1 },
         controlIdentity: { aircraftConfigurationId: "bpg041-playable-hybrid-mock" },
         difficulty: { information: "minimal", assistance: "strong", weather: "calm", hudProfile: null } });
       expect(context.controlIdentity.aircraftConfigurationId.length).toBeGreaterThan(0);

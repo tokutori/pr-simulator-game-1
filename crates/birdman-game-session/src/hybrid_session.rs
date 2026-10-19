@@ -9,21 +9,23 @@ use birdman_game_core::{
     TailFlightScenarioParameters, TailIncidence, WindField,
 };
 use birdman_game_format::{
-    ConfigurationError, EnvironmentFormatError, FlightRecordTailIdentityDocument, ScenarioCatalog,
-    ScenarioCatalogEntry, ScenarioSelection, WeatherClass,
+    ConfigurationError, EnvironmentFormatError, EnvironmentIdentity,
+    FlightRecordTailIdentityDocument, ScenarioCatalog, ScenarioCatalogEntry, ScenarioSelection,
+    WeatherClass,
 };
 
 use crate::{
     DEFAULT_CONTROL_MODE, DEFAULT_MAXIMUM_FLIGHT_TICKS, DEFAULT_SESSION_SEED, DEFAULT_WEATHER,
     LaunchVenueError,
+    airframe_contact::{AirframeContactError, registered_contact_points},
     environment::{bundled_environment, preset_wind_for_version},
     launch_venue,
 };
 
 const CONTROLLER_PROFILE_ID: &str = "bpg040-tail-rate-feedback";
 const CONTROLLER_PROFILE_VERSION: u32 = 3;
-const CATALOG_VERSION: u32 = 3;
-const SCENARIO_VERSION: u32 = 3;
+const CATALOG_VERSION: u32 = 4;
+const SCENARIO_VERSION: u32 = 4;
 const SCENARIOS: [ScenarioCatalogEntry; 5] = [
     entry(1, WeatherClass::Calm),
     entry(2, WeatherClass::Mild),
@@ -31,7 +33,7 @@ const SCENARIOS: [ScenarioCatalogEntry; 5] = [
     entry(5, WeatherClass::NearLimit),
     entry(6, WeatherClass::Typical),
 ];
-const CONTACT_POINTS: [BodyPoint; 1] = [BodyPoint::origin()];
+static CONTACT_POINTS: OnceLock<Result<Vec<BodyPoint>, AirframeContactError>> = OnceLock::new();
 static HYBRID_DEFINITION: OnceLock<Result<HybridMockDefinition, HybridMockError>> = OnceLock::new();
 static HYBRID_SURFACES: OnceLock<Result<[HybridSurface<'static>; 3], HybridMockError>> =
     OnceLock::new();
@@ -39,6 +41,8 @@ static HYBRID_SURFACES: OnceLock<Result<[HybridSurface<'static>; 3], HybridMockE
 /// Typed preparation failures before any hybrid session state or record is published.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HybridSessionPreparationError {
+    /// The registered airframe contact points could not be constructed.
+    ContactGeometry(AirframeContactError),
     /// The shared launch venue configuration failed validation.
     Venue(LaunchVenueError),
     /// The requested weather has no matching registered scenario or model identity.
@@ -96,7 +100,7 @@ impl HybridSessionPreparation {
         Self::try_new_for_weather(control_mode, maximum_flight_ticks, seed, DEFAULT_WEATHER)
     }
 
-    /// Resolves Weather against catalog three and uses the matching registered wind provider.
+    /// Resolves Weather against the current catalog and its registered wind provider.
     pub fn try_new_for_weather(
         control_mode: ControlMode,
         maximum_flight_ticks: u64,
@@ -163,7 +167,7 @@ impl HybridSessionPreparation {
             TailIncidence::neutral(),
             Gravity::try_new(HybridMockTrim::GRAVITY_MPS2)
                 .map_err(HybridSessionPreparationError::Dynamics)?,
-            &CONTACT_POINTS,
+            cached_contact_points()?,
             course_axis,
         )
         .map_err(HybridSessionPreparationError::Scenario)?;
@@ -207,7 +211,7 @@ impl HybridSessionPreparation {
         })
     }
 
-    /// Selects registered catalog-three identities without constructing a flight state.
+    /// Selects current registered identities without constructing a flight state.
     pub fn select_scenario(
         weather: WeatherClass,
         seed: u64,
@@ -215,6 +219,16 @@ impl HybridSessionPreparation {
         ScenarioCatalog::try_new(CATALOG_VERSION, &SCENARIOS)
             .and_then(|catalog| catalog.select(weather, seed))
             .map_err(HybridSessionPreparationError::Configuration)
+    }
+
+    /// Identifies current registered model/scenario conditions from their canonical selection.
+    pub fn recognizes_environment_identity(identity: EnvironmentIdentity) -> bool {
+        let seed = u64::from(identity.seed_low) | (u64::from(identity.seed_high) << 32);
+        SCENARIOS.iter().any(|entry| {
+            Self::select_scenario(entry.weather, seed).is_ok_and(|selection| {
+                EnvironmentIdentity::from(identity_for_selection(selection)) == identity
+            })
+        })
     }
 
     /// Returns the exact software profile used to seal this scenario.
@@ -266,6 +280,14 @@ fn cached_definition() -> Result<&'static HybridMockDefinition, HybridSessionPre
         .get_or_init(HybridMockDefinition::try_new)
         .as_ref()
         .map_err(|error| HybridSessionPreparationError::Mock(*error))
+}
+
+fn cached_contact_points() -> Result<&'static [BodyPoint], HybridSessionPreparationError> {
+    CONTACT_POINTS
+        .get_or_init(registered_contact_points)
+        .as_ref()
+        .map(Vec::as_slice)
+        .map_err(|error| HybridSessionPreparationError::ContactGeometry(*error))
 }
 
 fn cached_surfaces() -> Result<&'static [HybridSurface<'static>; 3], HybridSessionPreparationError>

@@ -3,6 +3,7 @@
 use birdman_game_core::ControlMode;
 use birdman_game_format::{AssistanceLevel, DifficultySettings, InformationLevel, WeatherClass};
 
+mod airframe_contact;
 pub mod application;
 pub mod cockpit_geometry;
 mod environment;
@@ -22,6 +23,7 @@ pub mod venue_terrain;
 pub mod wing_geometry;
 pub mod wing_texture;
 
+pub use airframe_contact::AirframeContactError;
 pub use environment::{
     PresetEnvironment, RuntimeEnvironment, bundled_environment, initialize_bundled_environment,
     preset_environment_for_version, preset_wind_for_version,
