@@ -1,8 +1,9 @@
 import "./lake-model-fixture.js";
 import { describe, expect, it } from "vitest";
 import { PerspectiveCamera, Vector3 } from "three";
-import { CockpitGeometryBridge, HybridGameSessionBridge, screen_vertical_field_of_view_degrees } from "../../web/pkg/birdman_game_wasm.js";
-import { encodeTailLogicalInput, parseTailSessionSnapshot } from "../../web/src/game/tail-session-codec.js";
+import { CockpitGeometryBridge, screen_vertical_field_of_view_degrees } from "../../web/pkg/birdman_game_wasm.js";
+import { createAppSession } from "../../web/src/app/session-factory.js";
+import { currentFlightPoseFixture, launchCurrentSession } from "../game-check/current-session-fixture.js";
 import {
   createPilotEyePoint, pilotEyePoseThree, poseFrdToThree, syntheticPilotEyePoint
 } from "../../web/src/render/camera/pilot-eye-point.js";
@@ -54,6 +55,7 @@ describe("FRD camera basis", () => {
   it("keeps Pilot forward aligned with the northwest launch heading", () => {
     const heading = -Math.PI / 4;
     const eye = flightRelativePose({
+      ...currentFlightPoseFixture(),
       datumPositionNed: { north: 0, east: 0, down: -10.5 },
       attitudeBodyToNed: frdEulerQuaternion(0, 0, heading),
       pilotPositionMeters: 0,
@@ -113,6 +115,7 @@ describe("FRD camera basis", () => {
   ] as const)("keeps Chase aimed at the aircraft after %s", (_label, roll, pitch, yaw) => {
     const datumPositionNed = { north: 21, east: -7, down: -10.5 };
     const chase = flightRelativePose({
+      ...currentFlightPoseFixture(),
       datumPositionNed,
       attitudeBodyToNed: frdEulerQuaternion(roll, pitch, yaw),
       pilotPositionMeters: 0,
@@ -130,26 +133,22 @@ describe("FRD camera basis", () => {
 });
 
 function registeredPilotTravel(): Readonly<{ initial: number; positions: readonly number[] }> {
-  const session = new HybridGameSessionBridge(0, 0, 0);
+  const session = createAppSession({ controlModeCode: 0, seedLow: 0, seedHigh: 0 });
   try {
-    session.open_setup();
-    session.prepare();
-    session.mark_briefing_ready();
-    session.start_countdown(1);
-    session.observe_countdown(session.countdown_token(), 1, true);
-    const initial = parseTailSessionSnapshot(session.snapshot_json());
+    launchCurrentSession(session);
+    const initial = session.readSnapshot();
     if (initial.frame.kind !== "flight") throw new Error("Expected registered launch state");
     const positions = [-1, 0, 1].map((normalized) => {
-      const result = parseTailSessionSnapshot(session.advance_tick_json(encodeTailLogicalInput({
+      const result = session.flightPort.advanceTick({
         controlLayout: "tail_incidence", noseUp: 0, turnRight: 0,
         desiredPitchRateRadiansPerSecond: 0, desiredYawRateRadiansPerSecond: 0,
         pilotPositionCommand: { kind: "set", normalized }
-      })));
+      });
       if (result.frame.kind !== "flight") throw new Error("Expected registered pilot target");
-      return result.frame.state.pilotPositionTargetMeters;
+      return result.frame.state.pilot_position_target_m;
     });
-    return { initial: initial.frame.state.pilotPositionMeters, positions };
-  } finally { session.free(); }
+    return { initial: initial.frame.state.pilot_position_m, positions };
+  } finally { session.dispose(); }
 }
 
 function rendererVector(valueFrd: Vec3): Vec3 {

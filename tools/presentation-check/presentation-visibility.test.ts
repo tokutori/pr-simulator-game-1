@@ -1,14 +1,15 @@
 import { Window } from "happy-dom";
 import { afterEach, describe, expect, it } from "vitest";
-import { createInitialAppModel, gameSessionPhaseCode, gameSessionSnapshot, gameSessionState, updateApp } from "../../web/src/app/app-state.js";
+import { createInitialAppModel, gameSessionPhase, gameSessionSnapshot, updateApp } from "../../web/src/app/app-state.js";
 import type { AppMessage, AppModel, PresentationUiState } from "../../web/src/app/app-state.js";
 import { createBootViewModel } from "../../web/src/app/boot-view.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
 import { screenUiVisible } from "../../web/src/app/presentation-visibility.js";
-import { currentFlightDisplayFixture, currentRecordedDisplayFixture } from "../game-check/current-session-fixture.js";
+import { currentFlightSnapshotFixture } from "../game-check/current-session-fixture.js";
+import type { GamePhase } from "../../web/src/app/session-snapshot.js";
 import { FlightHudAdapter } from "../../web/src/presentation/flight-hud.js";
 import { createFlightUiHudModel } from "../../web/src/app/flight-frame-view.js";
-import { createSharedGameUiSession, currentSharedGameUiFixture, sharedGameUiPlatform } from "../game-check/shared-game-ui-fixture.js";
+import { createSharedGameUiSession, currentGameSessionProjectionFixture, currentSharedGameUiFixture, sharedGameUiPlatform } from "../game-check/shared-game-ui-fixture.js";
 import type { UiAction } from "../../web/src/render/contracts/ui.js";
 
 describe("Model-derived Screen visibility", () => {
@@ -49,7 +50,7 @@ describe("App update to Screen DOM and HUD lifecycle", () => {
     Reflect.deleteProperty(globalThis, "document");
   });
 
-  async function harness(phaseCode: number) {
+  async function harness(phase: GamePhase) {
     window = new Window();
     Object.assign(globalThis, { window, document: window.document });
     const { ScreenUiAdapter } = await import("../../web/src/presentation/screen-ui.js");
@@ -60,16 +61,16 @@ describe("App update to Screen DOM and HUD lifecycle", () => {
     const renderedTicks: number[] = [];
     const hud = new FlightHudAdapter(hudRoot);
     const actions: UiAction[] = [];
-    sharedSession = phaseCode >= 0 ? createSharedGameUiSession(phaseCode) : null;
-    let model = readyModel(phaseCode, sharedSession?.session.readSharedUi(sharedSession.platform) ?? null);
+    sharedSession = phase !== "boot" ? createSharedGameUiSession(phase) : null;
+    let model = readyModel(phase, sharedSession?.session.readSharedUi(sharedSession.platform) ?? null);
     const adapter = new ScreenUiAdapter(root, (action) => {
       actions.push(action);
       send({ type: "ui-action", action });
     });
     function render(): void {
-      const phase = gameSessionPhaseCode(model.gameSession);
-      if (phase >= 0) {
-        if (sharedSession === null || sharedSession.session.readLifecycle().phaseCode !== phase) throw new Error("Expected the retained Rust scene");
+      const phase = gameSessionPhase(model.gameSession);
+      if (phase !== "boot") {
+        if (sharedSession === null || sharedSession.session.readLifecycle().phase !== phase) throw new Error("Expected the retained Rust scene");
         const view = sharedSession.session.readSharedUi(sharedGameUiPlatform({ notification: model.status }));
         model = updateApp(model, { type: "shared-game-ui-observed", view: { ...view,
           hud: model.sharedGameUi?.hud ?? view.hud } }).model;
@@ -80,10 +81,10 @@ describe("App update to Screen DOM and HUD lifecycle", () => {
       hud.render(hudModel);
       hud.setVisible(visible && hudModel !== null);
       if (snapshot !== null) {
-        renderedTicks.push(snapshot.stamp.tick);
+        renderedTicks.push(("frame" in snapshot && snapshot.frame.kind !== "menu" ? snapshot.frame.state.tick : "tick_index" in snapshot ? snapshot.tick_index : 0));
       }
       const view = model.sharedGameUi;
-      adapter.render(model.gameSession.kind === "boot" || view === null ? createBootViewModel(model) : createGameViewModel(view), visible);
+      adapter.render(model.gameSession.phase === "boot" || view === null ? createBootViewModel(model) : createGameViewModel(view), visible);
     }
     function send(message: AppMessage): void {
       const transition = updateApp(model, message);
@@ -100,8 +101,8 @@ describe("App update to Screen DOM and HUD lifecycle", () => {
     return { root, hudRoot, renderedTicks, actions, send, model: () => model };
   }
 
-  it.each([-1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10])("preserves connected DOM and HUD during stereo and cache transitions in phase %s", async (phaseCode) => {
-    const app = await harness(phaseCode);
+  it.each(["boot", "title", "flight_setup", "briefing_preparing", "briefing_ready", "countdown", "flight_running", "flight_paused", "result", "briefing_failed", "replay", "attract"] as const)("preserves connected DOM and HUD during stereo and cache transitions in phase %s", async (phase) => {
+    const app = await harness(phase);
     const mount = required(app.root, ".screen-ui-mount");
     const shell = required(app.root, ".screen-ui-shell");
     const hudNodes = Array.from(app.hudRoot.childNodes);
@@ -119,7 +120,7 @@ describe("App update to Screen DOM and HUD lifecycle", () => {
     };
 
     for (const mode of ["phone-vr", "webxr"] as const) {
-      app.send(phaseCode <= 0
+      app.send(phase === "boot" || phase === "title"
         ? { type: "ui-action", action: { type: "activate", controlId: `boot-enter-${mode}` } }
         : { type: "shared-game-ui-effect", effect: { kind: "platform", command: {
           kind: "set_presentation", mode: mode === "phone-vr" ? "phone_vr" : mode
@@ -155,7 +156,7 @@ describe("App update to Screen DOM and HUD lifecycle", () => {
   });
 
   it("retains Screen during rejection and restores after startup failure", async () => {
-    const app = await harness(0);
+    const app = await harness("title");
     const mount = required(app.root, ".screen-ui-mount");
     app.send({ type: "ui-action", action: { type: "activate", controlId: "boot-enter-phone-vr" } });
     const denied = app.model().presentation;
@@ -179,7 +180,7 @@ describe("App update to Screen DOM and HUD lifecycle", () => {
   });
 
   it.each(["settings", "help"] as const)("keeps Pause %s connected through cache recovery", async (overlay) => {
-    const app = await harness(6);
+    const app = await harness("flight_paused");
     required(app.root, `[data-control-id="game-pause-open-${overlay}"]`).click();
     const back = required(app.root, `[data-control-id="game-pause-${overlay}-back"]`);
     app.send({ type: "page-suspended" });
@@ -191,23 +192,19 @@ describe("App update to Screen DOM and HUD lifecycle", () => {
     expect(back.isConnected).toBe(true);
     back.click();
     expect(app.actions).toHaveLength(2);
-    expect(app.model().gameSession.kind).toBe("paused-flight");
+    expect(app.model().gameSession.phase).toBe("flight_paused");
     expect(app.model().sharedGameUi?.selections.pause_overlay).toBe("menu");
   });
 
   it("updates the connected HUD while its monocular DOM is hidden", async () => {
-    const app = await harness(5);
+    const app = await harness("flight_running");
     const nodes = Array.from(app.hudRoot.childNodes);
     app.send({ type: "page-suspended" });
-    const base = currentFlightDisplayFixture();
-    const snapshot = { ...base, stamp: { ...base.stamp, tick: 20, timeSeconds: 0.2 },
-      telemetry: { kind: "available" as const, value: { ...base.telemetry.value, altitudeMeters: 7 } } };
-    app.send({
-      type: "game-session-synced", phaseCode: 5, controlModeCode: 0,
-      difficulty: app.model().difficulty, configurationMetadata: null,
-      countdownRemainingSeconds: 0, display: { kind: "available", value: snapshot }, canResume: false, controlLayout: "tail_incidence"
-    });
-    const observation = currentSharedGameUiFixture(5);
+    const base = currentFlightSnapshotFixture();
+    const snapshot = { ...base, frame: { ...base.frame, state: { ...base.frame.state, tick: 20, flight_time_s: 0.2 } } };
+    app.send({ type: "game-session-synced", ...currentGameSessionProjectionFixture("flight_running"),
+      phase: "flight_running", display: { kind: "available", value: snapshot } });
+    const observation = currentSharedGameUiFixture("flight_running");
     if (observation.hud === null) throw new Error("Missing shared HUD");
     app.send({ type: "shared-game-ui-observed", view: { ...observation, hud: { ...observation.hud,
       groups: observation.hud.groups.map((group) => ({ ...group, nodes: group.nodes.map((node) => node.id === "hud-primary-readouts"
@@ -223,14 +220,13 @@ describe("App update to Screen DOM and HUD lifecycle", () => {
   });
 });
 
-function readyModel(phaseCode: number, sharedGameUi: AppModel["sharedGameUi"]): AppModel {
+function readyModel(phase: GamePhase, sharedGameUi: AppModel["sharedGameUi"]): AppModel {
   const initial = updateApp(createInitialAppModel(), { type: "initialize" }).model;
   const ready = updateApp(initial, {
     type: "presentation-initialized", requestId: 1, activeMode: "screen",
     webXrAvailable: true, phoneVrAvailable: true, status: "Ready"
   }).model;
-  const gameSession = gameSessionState(phaseCode, 3, phaseCode === 5 || phaseCode === 6 ? currentFlightDisplayFixture(phaseCode) : phaseCode === 9 || phaseCode === 10 ? currentRecordedDisplayFixture() : null, true, "tail_incidence", phaseCode === 9 ? "result" : undefined);
-  if (gameSession === null) throw new Error("Invalid game phase fixture");
+  const gameSession = phase === "boot" ? { phase: "boot" as const } : currentGameSessionProjectionFixture(phase);
   return { ...ready, gameSession, sharedGameUi };
 }
 

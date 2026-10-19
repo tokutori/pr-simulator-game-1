@@ -4,11 +4,16 @@ import { createGameViewModel, sharedGameUiAction } from "../../web/src/app/game-
 import { validateUiViewModel } from "../../web/src/render/contracts/ui.js";
 import { NO_HEAD_HUD } from "../../web/src/render/contracts/head-hud.js";
 import type { GameUiAction } from "../../web/src/generated/game-ui-action.js";
-import { parseGameUiFrame, parseGameUiView } from "../../web/src/app/game-ui-codec.js";
+import { contractValidator } from "../game-ui-build/validate.js";
+import type { GameUiView } from "../../web/src/generated/game-ui-view.js";
+import type { GameUiFrame } from "../../web/src/generated/game-ui-frame.js";
+
+const validateView = contractValidator<GameUiView>("view");
+const validateFrame = contractValidator<GameUiFrame>("frame");
 
 describe("Shared Rust game View projection", () => {
   it("requires the shared range display string at both view and frame boundaries", () => {
-    const view = currentSharedGameUiFixture(7, { ticks: 30, actions: [
+    const view = currentSharedGameUiFixture("result", { ticks: 30, actions: [
       { kind: "set_result_tab", tab: "analysis" }, { kind: "seek_analysis", time_seconds: 0.25 }
     ] });
     const control = view.panels.flatMap((panel) => panel.controls).find((control) => control.content.kind === "range");
@@ -17,17 +22,17 @@ describe("Shared Rust game View projection", () => {
     const frame = { view_revision: view.view_revision, selections: view.selections, hud: view.hud,
       ranges: [{ id: control.id, value: control.content.value, display_value: control.content.display_value }],
       readouts: [], button_labels: [], chart_cursor: null };
-    expect(parseGameUiView(JSON.stringify(view))).toEqual(view);
-    expect(parseGameUiFrame(JSON.stringify(frame))).toEqual(frame);
+    expect(validateView(view)).toBe(true);
+    expect(validateFrame(frame)).toBe(true);
     for (const display_value of [undefined, 0.3]) {
-      expect(() => parseGameUiView(JSON.stringify({ ...view, panels: view.panels.map((panel) => ({ ...panel,
+      expect(validateView({ ...view, panels: view.panels.map((panel) => ({ ...panel,
         controls: panel.controls.map((candidate) => candidate.id === control.id
-          ? { ...candidate, content: { ...candidate.content, display_value } } : candidate) })) }))).toThrow("GameUiView");
-      expect(() => parseGameUiFrame(JSON.stringify({ ...frame, ranges: [{ ...frame.ranges[0], display_value }] }))).toThrow("GameUiFrame");
+          ? { ...candidate, content: { ...candidate.content, display_value } } : candidate) })) })).toBe(false);
+      expect(validateFrame({ ...frame, ranges: [{ ...frame.ranges[0], display_value }] })).toBe(false);
     }
   });
 
-  it.each([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10])("preserves every published field and control in phase %s", (phase) => {
+  it.each(["title", "flight_setup", "briefing_preparing", "briefing_ready", "countdown", "flight_running", "flight_paused", "result", "briefing_failed", "replay", "attract"] as const)("preserves every published field and control in phase %s", (phase) => {
     for (const presentation_mode of ["screen", "phone_vr", "webxr"] as const) {
       const shared = currentSharedGameUiFixture(phase, { platform: { presentation_mode } });
       const before = JSON.stringify(shared);
@@ -63,8 +68,8 @@ describe("Shared Rust game View projection", () => {
   });
 
   it("keeps Flight information outside the menu and projects the VR pause action exactly", () => {
-    const screen = createGameViewModel(currentSharedGameUiFixture(5));
-    const vr = createGameViewModel(currentSharedGameUiFixture(5, { platform: { presentation_mode: "phone_vr" } }));
+    const screen = createGameViewModel(currentSharedGameUiFixture("flight_running"));
+    const vr = createGameViewModel(currentSharedGameUiFixture("flight_running", { platform: { presentation_mode: "phone_vr" } }));
     expect(screen.panels.flatMap((panel) => panel.controls.map((control) => control.id))).toEqual(["game-flight-pause", "game-flight-abort"]);
     expect(vr.panels.flatMap((panel) => panel.controls.map((control) => control.id))).toEqual(["game-flight-pause"]);
     expect(vr.panels.every((panel) => panel.anchor === "menu")).toBe(true);
@@ -72,16 +77,16 @@ describe("Shared Rust game View projection", () => {
 
   it.each(["menu", "settings", "help"] as const)("projects shared paused %s controls and the domain resume permission", (overlay) => {
     const actions: readonly GameUiAction[] = overlay === "menu" ? [] : [{ kind: "set_pause_overlay", overlay }];
-    const view = createGameViewModel(currentSharedGameUiFixture(6, { actions }));
+    const view = createGameViewModel(currentSharedGameUiFixture("flight_paused", { actions }));
     expect(view.activeOverlay).toBe(overlay === "menu" ? "Pause" : overlay === "settings" ? "PauseSettings" : "PauseHelp");
-    const blocked = currentSharedGameUiFixture(6, { pauseReason: 1 });
+    const blocked = currentSharedGameUiFixture("flight_paused", { pauseReason: 1 });
     const resume = blocked.panels.flatMap((panel) => panel.controls).find((control) => control.id === "game-flight-resume");
     expect(sharedGameUiAction(blocked, { type: "activate", controlId: "game-flight-resume" })).toBeNull();
     if (overlay === "menu") expect(resume?.enabled).toBe(false);
   });
 
   it("maps only enabled, published actions and rejects wrong control kinds or invalid ranges", () => {
-    const setup = currentSharedGameUiFixture(1);
+    const setup = currentSharedGameUiFixture("flight_setup");
     const button = setup.panels.flatMap((panel) => panel.controls).find((control) => control.id === "game-setup-start");
     if (button?.content.kind !== "button") throw new Error("Missing start action");
     expect(sharedGameUiAction(setup, { type: "activate", controlId: button.id })).toBe(button.content.action);
@@ -90,9 +95,9 @@ describe("Shared Rust game View projection", () => {
       action: { type: "activate", controlId: button.id } })).toBe(button.content.action);
     expect(sharedGameUiAction(setup, { type: "set-toggle", controlId: button.id, value: true })).toBeNull();
     expect(sharedGameUiAction(setup, { type: "activate", controlId: "unknown" })).toBeNull();
-    const pending = currentSharedGameUiFixture(1, { platform: { operation_pending: true } });
+    const pending = currentSharedGameUiFixture("flight_setup", { platform: { operation_pending: true } });
     expect(sharedGameUiAction(pending, { type: "activate", controlId: button.id })).toBeNull();
-    const analysis = currentSharedGameUiFixture(7, { actions: [{ kind: "set_result_tab", tab: "analysis" }] });
+    const analysis = currentSharedGameUiFixture("result", { actions: [{ kind: "set_result_tab", tab: "analysis" }] });
     const range = analysis.panels.flatMap((panel) => panel.controls).find((control) => control.content.kind === "range");
     if (range?.content.kind !== "range") throw new Error("Missing analysis range");
     expect(sharedGameUiAction(analysis, { type: "set-range", controlId: range.id, value: range.content.minimum }))
@@ -103,7 +108,7 @@ describe("Shared Rust game View projection", () => {
   });
 
   it.each(["map", "altitude", "speed"] as const)("retains the shared %s chart payload without generating another series", (chart) => {
-    const shared = currentSharedGameUiFixture(7, { ticks: 20, actions: [
+    const shared = currentSharedGameUiFixture("result", { ticks: 20, actions: [
       { kind: "set_result_tab", tab: "analysis" }, { kind: "set_analysis_chart", chart }
     ] });
     const source = shared.panels.flatMap((panel) => panel.controls).find((control) => control.content.kind === "chart");
@@ -127,11 +132,11 @@ describe("Shared Rust game View projection", () => {
 
   it("projects stored record choices and native capability restrictions from the shared view", () => {
     const records = [{ id: 12, saved_at: "2026-09-28T00:00:00.000Z", personal_best: true }] as const;
-    const title = currentSharedGameUiFixture(0, { platform: { stored_records: records } });
+    const title = currentSharedGameUiFixture("title", { platform: { stored_records: records } });
     const control = createGameViewModel(title).panels.flatMap((panel) => panel.controls).find((control) => control.id === "game-title-open-record-12");
     expect(control).toMatchObject({ kind: "button", enabled: true });
     expect(control?.label).toContain("Personal Best");
-    const native = currentSharedGameUiFixture(7, { platform: { stored_records_available: false, flight_log_available: false, supported_replay_cameras: ["pilot", "chase"] } });
+    const native = currentSharedGameUiFixture("result", { platform: { stored_records_available: false, flight_log_available: false, supported_replay_cameras: ["pilot", "chase"] } });
     expect(native.panels.flatMap((panel) => panel.controls).filter((control) => control.id.includes("download")).every((control) => !control.enabled)).toBe(true);
   });
 

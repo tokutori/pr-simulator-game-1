@@ -1,12 +1,12 @@
 import type { ScreenRenderAutoBinding, ScreenRenderInvalidation } from "../../contracts/screen-render-auto.js";
-import { parseScreenRenderAutoSnapshot } from "../../contracts/screen-render-auto.js";
+import type { ScreenRenderAutoSnapshot } from "../../../generated/screen-render-auto.js";
 import { GpuWorkTimer } from "./gpu-work-timer.js";
 import type { GpuQueryObservation } from "./gpu-work-timer.js";
 import type { LakeWaterQuality } from "../../contracts/lake-water.js";
 
 export class ScreenAutoRenderer {
   private frame = 0;
-  private lastPublished = "";
+  private lastPublished: ScreenRenderAutoSnapshot | null = null;
   private lastFrame: number | null = null;
   private eligible = false;
   private prepared = false;
@@ -135,10 +135,9 @@ export class ScreenAutoRenderer {
   }
 
   private publish(): void {
-    const json = this.binding.policy.snapshot_json();
-    if (json === this.lastPublished) return;
-    const snapshot = parseScreenRenderAutoSnapshot(json);
-    this.lastPublished = json;
+    const snapshot = this.binding.snapshot();
+    if (snapshot === this.lastPublished) return;
+    this.lastPublished = snapshot;
     this.binding.onSnapshot(snapshot);
   }
 }

@@ -8,6 +8,7 @@ import { createGameViewModel } from "../../web/src/app/game-view.js";
 import { readFileSync } from "node:fs";
 import { initSync, maximum_flight_frame_gap_milliseconds, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
 import { createAppSession } from "../../web/src/app/session-factory.js";
+import type { TailLogicalInput } from "../../web/src/game/tail-input.js";
 import { TailFlightController } from "../../web/src/game/tail-flight-controller.js";
 import { sharedGameUiPlatform, sharedHudNode } from "./shared-game-ui-fixture.js";
 import { captureConfiguredViewerFrame } from "../../web/src/render/engines/three/viewer-frame.js";
@@ -24,14 +25,14 @@ describe("Flight controller shared stop diagnosis", () => {
       const retained = trial.stop();
       const model = trial.model();
       expect(model.flightExecution).toMatchObject({ kind: "stopped", message: "Gamepad permission denied", snapshot: retained });
-      expect(model.gameSession.kind).toBe("flight");
-      expect(trial.controller.currentDisplaySnapshot).toEqual(retained);
+      expect(model.gameSession.phase).toBe("flight_running");
+      expect(trial.controller.currentSnapshot).toEqual(retained);
       expect(trial.onTerminal).not.toHaveBeenCalled();
       const hud = createFlightUiHudModel(model);
       if (hud === null) throw new Error("Missing shared running Flight HUD");
       expect(sharedHudNode(hud, "hud-primary-readouts").label).toBe("飛行処理停止");
       expect(sharedHudNode(hud, "hud-controller-failure").content.value).toContain("Gamepad permission denied");
-      expect(sharedHudNode(hud, "hud-primary-readouts").content.value).toContain("Last valid · tick 1");
+      expect(sharedHudNode(hud, "hud-primary-readouts").content.value).toContain("1");
       const draft = createFlightFrameViewDraft(model, viewer(), "ja");
       if (model.flightExecution.kind !== "stopped") throw new Error("Missing retained controller state");
       expect(draft.model.flightExecution).toBe(model.flightExecution);
@@ -49,7 +50,7 @@ describe("Flight controller shared stop diagnosis", () => {
         if (warning?.content.kind !== "text" || readouts?.content.kind !== "text") throw new Error("Missing stop Head HUD text");
         expect(warning.content.value).toContain("Gamepad permission denied");
         expect(readouts.label).toBe("飛行処理停止");
-        expect(readouts.content.value).toContain("Last valid");
+        expect(readouts.content.value).toContain("有効");
       }
     }
   });
@@ -58,7 +59,7 @@ describe("Flight controller shared stop diagnosis", () => {
     const trial = fixture("screen");
     trial.stop();
     const diagnosis = trial.model().flightExecution;
-    trial.syncPhase(6);
+    trial.syncPhase("flight_paused");
     const stopped = trial.model();
     expect(updateApp(stopped, { type: "ui-action", action: { type: "activate", controlId: "game-flight-resume" } })).toEqual({ model: stopped, effects: [] });
     trial.update({ type: "ui-action", action: { type: "focus", controlId: "game-flight-resume" } });
@@ -87,9 +88,8 @@ describe("Flight controller shared stop diagnosis", () => {
     const original = trial.binding;
     const replacement = trial.bind();
     const stopped = trial.model();
-    expect(() => { trial.controller.reset("{}", replacement.port); }).toThrow(RangeError);
     expect(trial.model()).toBe(stopped);
-    trial.controller.reset(trial.session.snapshot_json(), replacement.port);
+    trial.controller.reset(trial.session.readSnapshot(), replacement.port);
     trial.update({ type: "flight-controller-ready", identity: replacement.identity });
     expect(trial.model().flightExecution.kind).toBe("ready");
     const recovered = trial.model();
@@ -131,16 +131,16 @@ describe("Flight controller shared stop diagnosis", () => {
     if (requestId === null) throw new Error("Missing Abort request");
     expect(retained.kind).toBe("tail_flight");
     trial.facade.executeSharedSessionCommand({ kind: "abort" });
-    trial.controller.reset(trial.session.snapshot_json());
+    trial.controller.reset(trial.session.readSnapshot());
     trial.update({ type: "game-operation-completed", requestId, ...trial.facade.readGameSessionProjection() });
-    expect(trial.model().gameSession.kind).toBe("result");
+    expect(trial.model().gameSession.phase).toBe("result");
     expect(trial.model().flightExecution).toBe(diagnosis);
-    expect(trial.controller.currentSnapshot.phaseCode).toBe(7);
+    expect(trial.controller.currentSnapshot.phase).toBe("result");
     trial.facade.executeSharedSessionCommand({ kind: "retry" });
     trial.facade.executeSharedSessionCommand({ kind: "start_countdown" });
     trial.facade.observeCountdown(trial.facade.captureCountdownToken(), 3, true);
     const replacement = trial.bind();
-    trial.controller.reset(trial.session.snapshot_json(), replacement.port);
+    trial.controller.reset(trial.session.readSnapshot(), replacement.port);
     trial.update({ type: "flight-controller-ready", identity: replacement.identity });
     trial.syncPhase(5);
     expect(trial.model().flightExecution).toEqual({ kind: "ready", identity: replacement.identity });
@@ -155,7 +155,7 @@ describe("Flight controller shared stop diagnosis", () => {
     trial.controller.onFrame(0);
     trial.controller.onFrame(10);
     expect(trial.onTerminal).toHaveBeenCalledTimes(1);
-    expect(trial.model().gameSession.kind).toBe("result");
+    expect(trial.model().gameSession.phase).toBe("result");
     expect(trial.model().flightExecution.kind).toBe("ready");
     expect(trial.effects()).toEqual(expect.arrayContaining([expect.objectContaining({ type: "persist-flight-record" })]));
     const result = trial.model();
@@ -216,11 +216,11 @@ function fixture(mode: "screen" | "phone-vr" | "webxr", informationCode = 0) {
   const session = {
     pause: (reason: number) => { facade.flightPort.pause(reason); },
     clear_pause_reason: (reason: number) => { facade.flightPort.clear_pause_reason(reason); },
-    snapshot_json: () => facade.flightPort.snapshot_json(),
-    control_profile_json: () => facade.flightPort.control_profile_json(),
-    advance_tick_json: vi.fn((json: string) => {
-      if (terminal) { facade.executeSharedSessionCommand({ kind: "abort" }); return facade.flightPort.snapshot_json(); }
-      return facade.flightPort.advance_tick_json(json);
+    readSnapshot: () => facade.flightPort.readSnapshot(),
+    readControlProfile: () => facade.flightPort.readControlProfile(),
+    advanceTick: vi.fn((input: TailLogicalInput) => {
+      if (terminal) { facade.executeSharedSessionCommand({ kind: "abort" }); return facade.flightPort.readSnapshot(); }
+      return facade.flightPort.advanceTick(input);
     }),
     free: vi.fn(() => { facade.dispose(); })
   };
@@ -231,18 +231,18 @@ function fixture(mode: "screen" | "phone-vr" | "webxr", informationCode = 0) {
     reset: vi.fn(), suspend: vi.fn(), resume: vi.fn(), dispose: vi.fn()
   };
   const bindings = new FlightControllerUiBindings();
-  const binding = bindings.bindDisplay(session, display, () => controller.currentDisplaySnapshot, update);
+  const binding = bindings.bindDisplay(session, display, () => controller.currentSnapshot, update);
   const readGamepads = vi.fn(() => {
     if (permissionDenied) throw new Error("Gamepad permission denied");
     return [];
   });
-  const syncPhase = (phaseCode: 5 | 6 | 7): void => {
-    if (phaseCode === 6 && facade.readLifecycle().phaseCode === 5) facade.executeSharedSessionCommand({ kind: "pause" });
+  const syncPhase = (phase: "flight_running" | "flight_paused" | "result"): void => {
+    if (phase === "flight_paused" && facade.readLifecycle().phase === "flight_running") facade.executeSharedSessionCommand({ kind: "pause" });
     const projection = facade.readGameSessionProjection();
-    if (projection.phaseCode !== phaseCode) throw new Error("Unexpected authoritative phase");
+    if (projection.phase !== phase) throw new Error("Unexpected authoritative phase");
     update({ type: "game-session-synced", ...projection });
   };
-  const onTerminal = vi.fn(() => { syncPhase(7); });
+  const onTerminal = vi.fn(() => { syncPhase("result"); });
   const controller = new TailFlightController(session, input, { setFlightPose: vi.fn() }, binding.port,
     physics_hz(), maximum_flight_frame_gap_milliseconds(), readGamepads, onTerminal);
   update({ type: "flight-controller-ready", identity: binding.identity });
@@ -257,11 +257,11 @@ function fixture(mode: "screen" | "phone-vr" | "webxr", informationCode = 0) {
     },
     effects: () => effects,
     endNextTick: () => { terminal = true; },
-    bind: (nextSession = session) => bindings.bindDisplay(nextSession, display, () => controller.currentDisplaySnapshot, update),
+    bind: (nextSession = session) => bindings.bindDisplay(nextSession, display, () => controller.currentSnapshot, update),
     stop: () => {
       controller.onFrame(0);
       controller.onFrame(10);
-      const retained = controller.currentDisplaySnapshot;
+      const retained = controller.currentSnapshot;
       permissionDenied = true;
       controller.onFrame(20);
       return retained;

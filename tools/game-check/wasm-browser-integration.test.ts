@@ -55,7 +55,7 @@ it("clears a DOM pilot target across terminal Result and Rust Retry", () => {
     controller.onFrame(1010);
     controller.onFrame(1020);
     expect(controller.currentSnapshot.frame.state.pilotPositionTargetNormalized).toBeCloseTo(0, 12);
-    expect(session.readLifecycle().phaseCode).toBe(5);
+    expect(session.readLifecycle().phase).toBe("flight_running");
   } finally {
     if (controller === null) { input.dispose(); session.dispose(); }
     else controller.dispose();
@@ -87,7 +87,7 @@ describe("current WebAssembly browser binding", () => {
       }, dispatch);
     const input = {
       reset: (): void => undefined, resume: (): void => undefined, dispose: (): void => undefined,
-      suspend: (): void => { if (port === "input-suspend" && session.readLifecycle().phaseCode === 7) throw failure; },
+      suspend: (): void => { if (port === "input-suspend" && session.readLifecycle().phase === "result") throw failure; },
       readDemand: () => ({ controlLayout: "tail_incidence" as const, noseUp: 0, turnRight: 0, pilotPositionCommand: { kind: "hold" as const } })
     };
     dispatch({ type: "flight-controller-ready", identity: binding.identity });
@@ -97,13 +97,13 @@ describe("current WebAssembly browser binding", () => {
       binding.onTerminal(snapshot);
     });
     const controller = new TailFlightController(session.flightPort, input, {
-      setFlightPose: (pose): void => { if (pose !== null && port === "renderer" && session.readLifecycle().phaseCode === 7) throw failure; }
+      setFlightPose: (pose): void => { if (pose !== null && port === "renderer" && session.readLifecycle().phase === "result") throw failure; }
     }, binding.port, physics_hz(), maximum_flight_frame_gap_milliseconds(), () => [], onTerminal);
     try {
       controller.onFrame(0);
-      for (let frame = 1; frame <= 4_000 && controller.currentSnapshot.phaseCode === 5; frame += 1) controller.onFrame(frame * 10);
+      for (let frame = 1; frame <= 4_000 && controller.currentSnapshot.phase === "flight_running"; frame += 1) controller.onFrame(frame * 10);
       const terminal = controller.currentSnapshot;
-      expect(terminal.phaseCode).toBe(7);
+      expect(terminal.phase).toBe("result");
       if (terminal.frame.kind !== "result") throw new Error("Expected Result frame");
       expect(terminal.frame.finalization.reason).toBe("water_contact");
       expect(onTerminal).toHaveBeenCalledExactlyOnceWith(terminal);
@@ -138,9 +138,9 @@ describe("current WebAssembly browser binding", () => {
       session.executeSharedSessionCommand({ kind: "start_countdown" });
       session.observeCountdown(session.captureCountdownToken(), 3, true);
       session.executeSharedSessionCommand({ kind: "pause" });
-      expect(session.readLifecycle().phaseCode).toBe(6);
+      expect(session.readLifecycle().phase).toBe("flight_paused");
       session.executeSharedSessionCommand({ kind: "resume" });
-      for (let tick = 0; tick < 4_000 && session.readLifecycle().phaseCode === 5; tick += 1) {
+      for (let tick = 0; tick < 4_000 && session.readLifecycle().phase === "flight_running"; tick += 1) {
         session.flightPort.advance_tick_json(neutralTailInput);
       }
       const snapshot = session.readSnapshot();
@@ -163,7 +163,7 @@ describe("current WebAssembly browser binding", () => {
         expect(() => { selection.consider_existing(0, encoded); }).toThrow(/InvalidRecord/);
       } finally { selection.free(); }
       session.executeSharedSessionCommand({ kind: "retry" });
-      expect(session.readLifecycle().phaseCode).toBe(3);
+      expect(session.readLifecycle().phase).toBe("briefing_ready");
     } finally { session.dispose(); }
   });
 
@@ -179,10 +179,10 @@ describe("current WebAssembly browser binding", () => {
       }, physics_hz(), maximum_flight_frame_gap_milliseconds(), () => []);
       try {
         controller.onFrame(0);
-        for (let frame = 1; frame <= fps * 40 && controller.currentSnapshot.phaseCode === 5; frame += 1) {
+        for (let frame = 1; frame <= fps * 40 && controller.currentSnapshot.phase === "flight_running"; frame += 1) {
           controller.onFrame(frame * 1_000 / fps);
         }
-        expect(controller.currentSnapshot.phaseCode).toBe(7);
+        expect(controller.currentSnapshot.phase).toBe("result");
         results.push(session.exportRecordJson());
       } finally { controller.dispose(); }
     }
@@ -220,12 +220,12 @@ describe("current WebAssembly browser binding", () => {
     try {
       const selection = session.readDifficulty();
       session.executeSharedSessionCommand({ kind: "enter_attract" });
-      expect(session.readLifecycle().phaseCode).toBe(10);
+      expect(session.readLifecycle().phase).toBe("attract");
       expect(session.readPlaybackContext().phase).toBe("attract");
       expect(session.queryRecordSample(0).controls.layout).toBe("tail_incidence");
       expect(() => session.exportRecordJson()).toThrow();
       session.executeSharedSessionCommand({ kind: "leave_attract" });
-      expect(session.readLifecycle().phaseCode).toBe(0);
+      expect(session.readLifecycle().phase).toBe("title");
       expect(session.readDifficulty()).toEqual(selection);
     } finally { session.dispose(); }
   });

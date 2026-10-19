@@ -3,7 +3,7 @@ import venueFeatures from "../../../assets/biwa-venue-features.json";
 import registeredEnvironment from "../../../assets/biwa-typical-july-environment-v6.json";
 import type { FixedCameraPoint, FixedCameraPointId } from "../render/contracts/camera.js";
 import { LAUNCH_PLATFORM } from "../render/contracts/launch-venue.js";
-import type { DisplayAvailability } from "./flight-display-snapshot.js";
+import type { DisplayAvailability } from "../render/contracts/runtime.js";
 import type { RuntimeEnvironmentProjection } from "./runtime-environment.js";
 
 export interface VenueMapPoint {
@@ -131,10 +131,10 @@ export const NO_VENUE_MAP: VenueMapProjection = Object.freeze({ kind: "unavailab
 export function venueMapForEnvironment(environment: RuntimeEnvironmentProjection): VenueMapProjection {
   if (environment.kind === "unavailable") return Object.freeze({ kind: "unavailable", reason: "environment_unavailable" });
   const frame = environment.value.localFrame;
-  if (frame.kind === "unavailable") return frame;
-  if (frame.value.latitudeDegrees !== analysisMap.originWgs84.latitudeDegrees
-      || frame.value.longitudeDegrees !== analysisMap.originWgs84.longitudeDegrees
-      || frame.value.waterLevelDatum !== registeredEnvironment.local_frame.water_level_datum) {
+  if (frame.kind === "unavailable") return Object.freeze({ kind: "unavailable", reason: "origin_not_recorded" });
+  if (frame.value.latitude_degrees !== analysisMap.originWgs84.latitudeDegrees
+      || frame.value.longitude_degrees !== analysisMap.originWgs84.longitudeDegrees
+      || frame.value.water_level_datum !== registeredEnvironment.local_frame.water_level_datum) {
     return Object.freeze({ kind: "unavailable", reason: "unregistered_origin" });
   }
   return Object.freeze({ kind: "available", value: BIWA_VENUE_MAP });

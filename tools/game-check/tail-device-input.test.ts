@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_TAIL_GAMEPAD_CONFIGURATION, DEFAULT_TAIL_KEYBOARD_CONFIGURATION,
   tailGamepadDemand, tailInputWithRateDemand, tailKeyboardDemand } from "../../web/src/game/tail-device-input.js";
-import { encodeTailLogicalInput } from "../../web/src/game/tail-session-codec.js";
+import { encodeTailLogicalInput } from "../../web/src/game/tail-input.js";
 
 describe("two-tail device-independent demand", () => {
   it("maps explicit two-axis keyboard bindings and leaves old roll keys unassigned", () => {

@@ -92,7 +92,7 @@ describe("Flight HUD typed DOM projection", () => {
     const window = new Window();
     const root = window.document.createElement("section") as unknown as HTMLElement;
     const model = currentSharedHudFixture({ informationCode: 4,
-      hudProfile: { telemetry: false, attitude: false, wind: false, flightPath: true, angleOfAttack: false, warnings: false } });
+      hudProfile: { telemetry: false, attitude: false, wind: false, flight_path: true, angle_of_attack: false, warnings: false } });
     try {
       const hud = new FlightHudAdapter(root);
       hud.render(model);

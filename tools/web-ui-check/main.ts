@@ -121,15 +121,15 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
     checks.push("Setup direct choices and actual weather; Briefing initially closed and expandable provenance");
     await click("game-briefing-start");
     await scene("Flight");
-    await page.waitForFunction(() => window.__liveAuto.phase === 6 || window.__liveAuto.phase === 5 && (window.__liveAuto.tick ?? 0) >= 10);
-    if (await page.evaluate(() => window.__liveAuto.phase) === 6) {
+    await page.waitForFunction(() => window.__liveAuto.phase === "flight_paused" || window.__liveAuto.phase === "flight_running" && (window.__liveAuto.tick ?? 0) >= 10);
+    if (await page.evaluate(() => window.__liveAuto.phase) === "flight_paused") {
       report.startupPause = await page.evaluate(() => ({ tick: window.__liveAuto.tick,
         snapshotJson: window.__liveAuto.snapshotJson, pauseEvents: window.__uiPauseEvents,
         text: document.querySelector(".screen-ui-shell")?.textContent }));
       findings.push("Flight suspended before the initial Running observation; continued once through the public Resume action");
       await click("game-flight-resume");
     }
-    await page.waitForFunction(() => window.__liveAuto.phase === 5 && (window.__liveAuto.tick ?? 0) >= 10);
+    await page.waitForFunction(() => window.__liveAuto.phase === "flight_running" && (window.__liveAuto.tick ?? 0) >= 10);
     const hud = page.locator('.flight-hud[aria-hidden="false"]');
     await hud.waitFor({ state: "visible" });
     const kinds = await hud.locator("[data-kind]").evaluateAll(nodes => [...new Set(nodes.map(node => node.getAttribute("data-kind")))]);
@@ -137,10 +137,10 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
     assert.ok(await hud.locator("output").count() > 0);
     report.hudKinds = kinds;
     await click("game-flight-pause");
-    await page.waitForFunction(() => window.__liveAuto.phase === 6);
+    await page.waitForFunction(() => window.__liveAuto.phase === "flight_paused");
     await screenshot("03-paused-hud");
     await click("game-flight-resume");
-    await page.waitForFunction(() => window.__liveAuto.phase === 5);
+    await page.waitForFunction(() => window.__liveAuto.phase === "flight_running");
     await click("game-flight-abort");
     await scene("Result");
     checks.push("Countdown to actual flight ticks; five typed HUD kinds; Pause and Resume; Abort to Result");

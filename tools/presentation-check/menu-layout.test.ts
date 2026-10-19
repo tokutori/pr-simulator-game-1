@@ -13,7 +13,7 @@ import { createGameViewModel } from "../../web/src/app/game-view.js";
 import { currentSharedGameUiFixture } from "../game-check/shared-game-ui-fixture.js";
 
 const font = Object.freeze({ family: "system-ui, sans-serif", weight: 600, style: "normal", generation: 0 } as const);
-const style = Object.freeze({ theme: currentSharedGameUiFixture(0).theme,
+const style = Object.freeze({ theme: currentSharedGameUiFixture("title").theme,
   fontMeters: 0.04, font, locale: "ja", previousLabel: "前頁", nextLabel: "次頁", caption: "Software fixture" });
 const controls: readonly UiControl[] = Object.freeze([
   { kind: "button", id: "resume", section: "actions", label: "飛行を再開する", enabled: true, rect: normalizedRect(0.04, 0.8, 0.44, 0.08) },
@@ -49,7 +49,7 @@ function documentFor(request: MenuLayoutRequest): MenuDocument {
 }
 
 function chart(): UiChart {
-  const view = createGameViewModel(currentSharedGameUiFixture(7, { ticks: 20,
+  const view = createGameViewModel(currentSharedGameUiFixture("result", { ticks: 20,
     actions: [{ kind: "set_result_tab", tab: "analysis" }] }));
   const chart = view.panels.flatMap((panel) => panel.controls).find((control) => control.kind === "chart");
   if (chart?.kind !== "chart") throw new Error("Missing real shared map chart");
@@ -58,7 +58,7 @@ function chart(): UiChart {
 
 describe("Pure measured Menu document and shared viewport", () => {
   it.each(["phone_vr", "webxr"] as const)("uses the shared rounding-boundary range text in %s", (presentation_mode) => {
-    const shared = currentSharedGameUiFixture(7, { ticks: 30, platform: { presentation_mode }, actions: [
+    const shared = currentSharedGameUiFixture("result", { ticks: 30, platform: { presentation_mode }, actions: [
       { kind: "set_result_tab", tab: "analysis" }, { kind: "seek_analysis", time_seconds: 0.25 }
     ] });
     const panel = createGameViewModel(shared).panels[0];

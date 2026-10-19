@@ -1,5 +1,6 @@
+import type { SessionLifecycleDocument } from "../generated/session-lifecycle.js";
 export interface PageFlightSessionPort {
-  phase_code(): number;
+  phase(): SessionLifecycleDocument["phase"];
   cancel_countdown(): void;
   pause(reason: number): void;
 }
@@ -11,11 +12,11 @@ export function suspendPageFlight(
 ): void {
   inputController?.suspend();
   if (session === null) return;
-  const phaseCode = session.phase_code();
-  if (phaseCode === 4) {
+  const phase = session.phase();
+  if (phase === "countdown") {
     session.cancel_countdown();
     synchronize();
-  } else if (phaseCode === 5 || phaseCode === 6) {
+  } else if (phase === "flight_running" || phase === "flight_paused") {
     session.pause(1);
     synchronize();
   }

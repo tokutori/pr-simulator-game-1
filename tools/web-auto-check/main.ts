@@ -5,7 +5,8 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { transform } from "esbuild";
 import { chromium } from "playwright-core";
-import { parseScreenRenderAutoSnapshot } from "../../web/src/render/contracts/screen-render-auto.js";
+import type { ScreenRenderAutoSnapshot } from "../../web/src/generated/screen-render-auto.js";
+import { readContract } from "../game-ui-build/validate.js";
 import { summarize } from "./summary.js";
 
 const [address, destination] = process.argv.slice(2);
@@ -103,7 +104,7 @@ try {
     await page.waitForTimeout(250);
     const json = await page.evaluate(() => window.__liveAuto.policyJson);
     assert.ok(json !== null, "The live shared policy was not observed");
-    preparation = parseScreenRenderAutoSnapshot(json);
+    preparation = readContract<ScreenRenderAutoSnapshot>("screen_render_auto", json);
     if (["ready", "coverage_limited", "failed", "unsupported"].includes(preparation.status.kind)) break;
   } while (Date.now() - preparationStart < 8000);
   report.autoPreparation = { elapsedMs: Date.now() - preparationStart, snapshot: preparation,
@@ -114,13 +115,13 @@ try {
   await click("game-pause-settings-back");
   await control("game-flight-resume").waitFor({ state: "visible" });
   await click("game-flight-resume");
-  await page.waitForFunction(() => window.__liveAuto.phase === 5);
+  await page.waitForFunction(() => window.__liveAuto.phase === "flight_running");
   const observation = await page.evaluate(() => window.__liveAuto.measure());
   const summary = summarize(observation);
   report.observation = observation;
   report.summary = summary;
-  assert.equal(summary.initial.phaseCode, 5);
-  assert.equal(summary.initial.identity.scenario.scenarioId, 6, "The actual Rust scenario is not Typical");
+  assert.equal(summary.initial.phase, "flight_running");
+  assert.equal(summary.initial.scenario?.scenario_id, 6, "The actual Rust scenario is not Typical");
   await page.screenshot({ path: resolve(output, "02-live-window-end.png") });
   report.after = await page.evaluate(() => ({ phase: window.__liveAuto.phase, tick: window.__liveAuto.tick,
     snapshotJson: window.__liveAuto.snapshotJson, contextLosses: window.__liveAuto.contextLosses }));

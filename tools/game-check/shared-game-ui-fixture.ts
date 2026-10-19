@@ -2,13 +2,17 @@ import { readFileSync } from "node:fs";
 import { HybridGameSessionBridge, initSync, physics_hz, ScreenRenderAutoBridge } from "../../web/pkg/birdman_game_wasm.js";
 import { parseScreenRenderAutoSnapshot } from "../../web/src/render/contracts/screen-render-auto.js";
 import { TailAppSessionFacade } from "../../web/src/app/session-facade.js";
-import type { HudProfileUiState } from "../../web/src/app/session-selection.js";
+import type { FlightRecordHudProfileDocument } from "../../web/src/generated/record-context.js";
+import type { SessionPhase } from "../../web/src/app/session-snapshot.js";
+import type { TailGameSessionProjection } from "../../web/src/app/session-snapshot.js";
+import { readRuntimeSessionProjection } from "../../web/src/app/session-runtime-projection.js";
 import type { GameUiAction } from "../../web/src/generated/game-ui-action.js";
 import type { GameUiPlatformInput } from "../../web/src/generated/game-ui-input.js";
 import type { GameUiView } from "../../web/src/generated/game-ui-view.js";
 import { projectSharedFlightHudModel } from "../../web/src/presentation/flight-hud-model.js";
 import type { FlightHudModel, FlightHudNode } from "../../web/src/presentation/flight-hud-model.js";
 import { neutralTailInput } from "./current-session-fixture.js";
+import { encodeTailLogicalInput } from "../../web/src/game/tail-input.js";
 import type { LakeWaterQuality } from "../../web/src/render/contracts/lake-water.js";
 
 initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url))) });
@@ -20,7 +24,7 @@ export interface SharedGameUiFixtureOptions {
   readonly assistanceCode?: 0 | 1 | 2 | 3;
   readonly weatherCode?: 0 | 1 | 2 | 3 | 4;
   readonly presetCode?: 0 | 1 | 2 | 3;
-  readonly hudProfile?: HudProfileUiState;
+  readonly hudProfile?: FlightRecordHudProfileDocument;
   readonly ticks?: number;
   readonly pauseReason?: 0 | 1 | 2;
 }
@@ -64,14 +68,14 @@ export function sharedScreenRenderSnapshot(scale: "100" | "75" | "50" = "100", q
   } finally { bridge.free(); }
 }
 
-export function createSharedGameUiSession(phaseCode: number, options: SharedGameUiFixtureOptions = {}):
+export function createSharedGameUiSession(phase: SessionPhase, options: SharedGameUiFixtureOptions = {}):
   Readonly<{ session: TailAppSessionFacade; platform: GameUiPlatformInput }> {
   const bridge = new HybridGameSessionBridge(0, 21, 22);
   let owner: TailAppSessionFacade | null = null;
   try {
-    if (![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].includes(phaseCode)) throw new RangeError("Unsupported shared UI fixture phase");
-    if (phaseCode === 10) bridge.enter_attract();
-    else if (phaseCode !== 0) {
+    owner = new TailAppSessionFacade(bridge, physics_hz());
+    if (phase === "attract") bridge.enter_attract();
+    else if (phase !== "title") {
       bridge.open_setup();
       if (options.presetCode !== undefined) bridge.set_difficulty_preset(options.presetCode);
       if (options.informationCode !== undefined) bridge.set_information_level(options.informationCode);
@@ -79,31 +83,30 @@ export function createSharedGameUiSession(phaseCode: number, options: SharedGame
       if (options.weatherCode !== undefined) bridge.set_weather_class(options.weatherCode);
       if (options.hudProfile !== undefined) {
         const profile = options.hudProfile;
-        [profile.telemetry, profile.attitude, profile.wind, profile.flightPath, profile.angleOfAttack, profile.warnings]
+        [profile.telemetry, profile.attitude, profile.wind, profile.flight_path, profile.angle_of_attack, profile.warnings]
           .forEach((visible, code) => { bridge.set_information_cue(code, visible); });
       }
-      if (phaseCode >= 2) {
+      if (phase !== "flight_setup") {
         bridge.prepare();
-        if (phaseCode === 8) bridge.fail_briefing(0);
-        else if (phaseCode !== 2) {
+        if (phase === "briefing_failed") bridge.fail_briefing(0);
+        else if (phase !== "briefing_preparing") {
           bridge.mark_briefing_ready();
-          if (phaseCode >= 4) {
-            bridge.start_countdown(phaseCode === 4 ? 3 : 1);
-            if (phaseCode >= 5) {
+          if (phase !== "briefing_ready") {
+            bridge.start_countdown(phase === "countdown" ? 3 : 1);
+            if (phase !== "countdown") {
               bridge.observe_countdown(bridge.countdown_token(), 1, true);
               const ticks = options.ticks ?? 2;
               if (!Number.isSafeInteger(ticks) || ticks < 0) throw new RangeError("Fixture tick count must be a nonnegative integer");
-              for (let index = 0; index < ticks && bridge.phase_code() === 5; index += 1) bridge.advance_tick_json(neutralTailInput);
-              if (phaseCode === 6) bridge.pause(options.pauseReason ?? 0);
-              if (phaseCode === 7 || phaseCode === 9) bridge.abort();
-              if (phaseCode === 9) bridge.enter_replay();
+              for (let index = 0; index < ticks && owner.readSnapshot().phase === "flight_running"; index += 1) bridge.advance_tick_json(encodeTailLogicalInput(neutralTailInput));
+              if (phase === "flight_paused") bridge.pause(options.pauseReason ?? 0);
+              if (phase === "result" || phase === "replay") bridge.abort();
+              if (phase === "replay") bridge.enter_replay();
             }
           }
         }
       }
     }
-    if (bridge.phase_code() !== phaseCode) throw new RangeError("Fixture did not reach the requested Rust phase");
-    owner = new TailAppSessionFacade(bridge, physics_hz());
+    if (owner.readLifecycle().phase !== phase) throw new RangeError("Fixture did not reach the requested Rust phase");
     const platform = sharedGameUiPlatform(options.platform);
     for (const action of options.actions ?? []) {
       if (action.kind === "set_replay_view") {
@@ -124,9 +127,9 @@ export function createSharedGameUiSession(phaseCode: number, options: SharedGame
   }
 }
 
-export function withSharedGameUiSession<Value>(phaseCode: number, options: SharedGameUiFixtureOptions,
+export function withSharedGameUiSession<Value>(phase: SessionPhase, options: SharedGameUiFixtureOptions,
   observe: (session: TailAppSessionFacade, platform: GameUiPlatformInput) => Value): Value {
-  const { session, platform } = createSharedGameUiSession(phaseCode, options);
+  const { session, platform } = createSharedGameUiSession(phase, options);
   try { return observe(session, platform); }
   finally { session.dispose(); }
 }
@@ -144,12 +147,16 @@ export function selectSharedReplayView(session: TailAppSessionFacade, platform: 
   if (session.readSharedUi(platform).selections.replay_view !== target) throw new Error("Replay view selector did not reach its target");
 }
 
-export function currentSharedGameUiFixture(phaseCode = 0, options: SharedGameUiFixtureOptions = {}): GameUiView {
-  return withSharedGameUiSession(phaseCode, options, (session, platform) => session.readSharedUi(platform));
+export function currentSharedGameUiFixture(phase: SessionPhase = "title", options: SharedGameUiFixtureOptions = {}): GameUiView {
+  return withSharedGameUiSession(phase, options, (session, platform) => session.readSharedUi(platform));
+}
+
+export function currentGameSessionProjectionFixture(phase: SessionPhase, options: SharedGameUiFixtureOptions = {}): TailGameSessionProjection {
+  return withSharedGameUiSession(phase, options, session => readRuntimeSessionProjection(session));
 }
 
 export function currentSharedHudFixture(options: SharedGameUiFixtureOptions = {}): FlightHudModel {
-  const view = currentSharedGameUiFixture(5, options);
+  const view = currentSharedGameUiFixture("flight_running", options);
   if (view.hud === null) throw new Error("Rust flight fixture did not provide a shared HUD");
   return projectSharedFlightHudModel(view.hud, view.theme);
 }

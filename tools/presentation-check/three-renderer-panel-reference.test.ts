@@ -21,12 +21,12 @@ import { PhoneVrPresentationBackend } from "../../web/src/presentation/phone-vr-
 import { PHONE_VR_OPTICAL_PROFILE } from "../../web/src/presentation/phone-vr-contracts.js";
 import type { PhoneVrSensorPort, PhoneVrSensorReading } from "../../web/src/presentation/phone-vr-contracts.js";
 import { hitTestControl, intersectPanel } from "../../web/src/presentation/panel-interaction.js";
-import { createInitialAppModel, gameSessionState, updateApp } from "../../web/src/app/app-state.js";
+import { createInitialAppModel, updateApp } from "../../web/src/app/app-state.js";
 import type { AppModel } from "../../web/src/app/app-state.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
 import { createFlightFrameViewDraft, finalizeFlightFrameView } from "../../web/src/app/flight-frame-view.js";
-import { currentFlightDisplayFixture } from "../game-check/current-session-fixture.js";
-import { currentSharedGameUiFixture } from "../game-check/shared-game-ui-fixture.js";
+import { currentFlightPoseFixture } from "../game-check/current-session-fixture.js";
+import { currentGameSessionProjectionFixture, currentSharedGameUiFixture } from "../game-check/shared-game-ui-fixture.js";
 import { headHudCanvasSize, prepareHeadHudPaint, validateHeadHudPaint } from "../../web/src/presentation/head-hud-canvas.js";
 import { PresentationRuntime } from "../../web/src/presentation/runtime.js";
 import { HudCanvasFixture } from "./hud-canvas-fixture.js";
@@ -36,7 +36,7 @@ import { ScreenRenderAutoBridge, lake_scene_ambient_color_srgb, lake_scene_ambie
 import { parseScreenRenderAutoSnapshot } from "../../web/src/render/contracts/screen-render-auto.js";
 import { initSync } from "../../web/pkg/birdman_game_wasm.js";
 import { createAppSession } from "../../web/src/app/session-factory.js";
-import { parseRuntimeEnvironmentSnapshot } from "../../web/src/game/runtime-environment.js";
+import { projectRuntimeEnvironment } from "../../web/src/game/runtime-environment.js";
 import { projectRuntimeVenue } from "../../web/src/game/runtime-venue.js";
 import * as lakeWater from "../../web/src/render/contracts/lake-water.js";
 import * as lakeDetail from "../../web/src/render/engines/three/lake-detail-texture.js";
@@ -372,7 +372,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
     const clock = vi.spyOn(performance, "now").mockImplementation(() => now);
     try {
       trial.renderer.resize({ x: 1280, y: 720, pixelRatio: 1 });
-      trial.renderer.setFlightPose({ datumPositionNed: { north: 0, east: 0, down: -10 }, attitudeBodyToNed: IDENTITY_POSE.orientation,
+      trial.renderer.setFlightPose({ ...currentFlightPoseFixture(), datumPositionNed: { north: 0, east: 0, down: -10 }, attitudeBodyToNed: IDENTITY_POSE.orientation,
         pilotPositionMeters: 0.03, initialPilotPositionMeters: 0, simulationTimeSeconds: 12.345 });
       trial.renderer.render(frame());
       const original = lakeDrawResources(recording).foreground;
@@ -498,7 +498,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
   });
 
   it("exchanges quality geometry and wave budgets without regenerating detail or reflection resources", async () => {
-    bundle.renderer.setFlightPose({ datumPositionNed: { north: 0, east: 0, down: -10 }, attitudeBodyToNed: IDENTITY_POSE.orientation,
+    bundle.renderer.setFlightPose({ ...currentFlightPoseFixture(), datumPositionNed: { north: 0, east: 0, down: -10 }, attitudeBodyToNed: IDENTITY_POSE.orientation,
       pilotPositionMeters: 0.03, initialPilotPositionMeters: 0, simulationTimeSeconds: 12.345 });
     bundle.renderer.render(frame());
     const original = lakeDrawResources(driver);
@@ -631,12 +631,11 @@ describe("Three adapter panel reference with real StereoEffect", () => {
     const failure = new Error("Injected geometry disposal failure");
     const onDispose = (): never => { throw failure; };
     previous.addEventListener("dispose", onDispose);
-    const session = gameSessionState(1, 0, null);
-    if (session === null) throw new Error("Missing quality selection session");
+    const session = currentGameSessionProjectionFixture("flight_setup");
     const initial: AppModel = {
       ...createInitialAppModel(), presentation: { type: "ready", mode: "screen" }, gameSession: session,
       lakeWaterQuality: { kind: "ready", applied: "low", cleanup: { kind: "complete" } },
-      sharedGameUi: currentSharedGameUiFixture(1, { platform: { water_quality: "low" } })
+      sharedGameUi: currentSharedGameUiFixture("flight_setup", { platform: { water_quality: "low" } })
     };
     const requested = updateApp(initial, { type: "shared-game-ui-effect", effect: { kind: "platform", command: { kind: "set_water_quality", quality: "high" } } });
     try {
@@ -647,7 +646,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
       expect(foreground.material.uniforms.uWaveCount?.value).toBe(18);
       const completed = updateApp(requested.model, { type: "lake-water-quality-applied", requestId: initial.nextRequestId, quality: "high", cleanup }).model;
       expect(completed.lakeWaterQuality).toEqual({ kind: "ready", applied: "high", cleanup });
-      const controls = createGameViewModel(currentSharedGameUiFixture(1, { platform: { water_quality: "high",
+      const controls = createGameViewModel(currentSharedGameUiFixture("flight_setup", { platform: { water_quality: "high",
         water_quality_operation: { kind: "cleanup_failed", cause: failure.message } } })).panels[0]?.controls ?? [];
       expect(controls.find((control) => control.id === "presentation-water-quality-high")).toMatchObject({ presentation: { selected: true } });
       expect(controls.find((control) => control.id === "presentation-water-quality-status")).toMatchObject({ value: `Highを適用した。旧geometryの解放に失敗した: ${failure.message}` });
@@ -673,10 +672,9 @@ describe("Three adapter panel reference with real StereoEffect", () => {
           saved = JSON.stringify(document);
         }
         if (recordKind !== "current-calm") session.openArchive(saved);
-        const phaseCode = session.readLifecycle().phaseCode;
-        const identity = recordKind === "current-calm" ? session.readRecordSummary().context.scenario : session.readPlaybackContext().scenario;
-        const environment = parseRuntimeEnvironmentSnapshot(session.readEnvironmentJson(), phaseCode, identity);
-        bundle.renderer.setLakeVenueVisible(projectRuntimeVenue(environment, phaseCode).kind === "visible");
+        const phase = session.readLifecycle().phase;
+        const environment = projectRuntimeEnvironment(session.readEnvironment());
+        bundle.renderer.setLakeVenueVisible(projectRuntimeVenue(environment, phase).kind === "visible");
         bundle.renderer.render(frame());
         const scene = driver.scene;
         const venue = scene?.getObjectByName("lake-biwa-launch-venue");
@@ -687,8 +685,8 @@ describe("Three adapter panel reference with real StereoEffect", () => {
         expect(scene.getObjectByName("lake-biwa-distant-water-backing")?.visible).toBe(true);
         if (recordKind !== "current-calm") {
           session.executeSharedSessionCommand({ kind: "leave_replay" });
-          const title = parseRuntimeEnvironmentSnapshot(session.readEnvironmentJson(), 0);
-          bundle.renderer.setLakeVenueVisible(projectRuntimeVenue(title, 0).kind === "visible");
+          const title = projectRuntimeEnvironment(session.readEnvironment());
+          bundle.renderer.setLakeVenueVisible(projectRuntimeVenue(title, "title").kind === "visible");
           bundle.renderer.render(frame());
           expect(venue.visible).toBe(true);
         }
@@ -859,7 +857,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
         bundle.renderer.resize(currentViewport);
         bundle.renderer.setStereoPresentation(configuration.profile);
         if (configuration.external) {
-          bundle.renderer.setFlightPose({ datumPositionNed: { north: 4, east: 2, down: -10 }, attitudeBodyToNed: { w: 1, x: 0, y: 0, z: 0 }, pilotPositionMeters: 0, initialPilotPositionMeters: 0 });
+          bundle.renderer.setFlightPose({ ...currentFlightPoseFixture(), datumPositionNed: { north: 4, east: 2, down: -10 }, attitudeBodyToNed: { w: 1, x: 0, y: 0, z: 0 }, pilotPositionMeters: 0, initialPilotPositionMeters: 0 });
           bundle.renderer.setFlightCameraMode("platform");
           bundle.renderer.setCinematicCameraView({ pose: pose(vec3(10, 4, -3), IDENTITY_POSE.orientation), verticalFieldOfViewDegrees: 42 });
         }
@@ -891,7 +889,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
   it("holds captured Phone optics through a view-phase camera cut and applies latest pending optics next frame", () => {
     const changedViewport = { x: 720, y: 1280, pixelRatio: 2 };
     const changedProfile = { ...PHONE_VR_OPTICAL_PROFILE, eyeSeparationMeters: 0.071, focusDistanceMeters: 3, verticalFieldOfViewDegrees: 68 };
-    const flight: FlightRenderPose = { datumPositionNed: { north: 4, east: 2, down: -10 }, attitudeBodyToNed: IDENTITY_POSE.orientation, pilotPositionMeters: 0, initialPilotPositionMeters: 0 };
+    const flight: FlightRenderPose = { ...currentFlightPoseFixture(), datumPositionNed: { north: 4, east: 2, down: -10 }, attitudeBodyToNed: IDENTITY_POSE.orientation, pilotPositionMeters: 0, initialPilotPositionMeters: 0 };
     bundle.renderer.resize(viewport);
     bundle.renderer.setStereoPresentation(PHONE_VR_OPTICAL_PROFILE);
     bundle.renderer.setFlightPose(flight);
@@ -934,21 +932,10 @@ describe("Three adapter panel reference with real StereoEffect", () => {
   });
 
   it("keeps the Phone Head layer fixed in both actual StereoEffect eyes through body, PilotEye and head rotations", async () => {
-    const valuesSnapshot = {
-    ...currentFlightDisplayFixture(5),
-    positionNed: { north: 0, east: 0, down: 0 }, velocityNed: { north: 0, east: 0, down: 0 },
-    attitudeBodyToNed: { w: 1, x: 0, y: 0, z: 0 }, pilotPositionMeters: 0, pilotVelocityMetersPerSecond: 0,
-    stamp: { kind: "exact" as const, tick: 0, fraction: 0, timeSeconds: 0 },
-    telemetry: { kind: "available" as const, value: { altitudeMeters: 12, airspeedMetersPerSecond: 8, groundspeedMetersPerSecond: 9,
-      windVelocityNedMetersPerSecond: { north: 0, east: 0, down: 0 }, angleOfAttackRadians: { kind: "available" as const, value: 0 }, sideslipAngleRadians: { kind: "available" as const, value: 0 },
-      rollRadians: 0, pitchRadians: 0, headingRadians: 0 } }
-  };
-    const snapshot = valuesSnapshot;
-    const gameSession = gameSessionState(5, 0, snapshot, true);
-    if (gameSession === null) throw new Error("Missing Flight fixture");
+    const gameSession = currentGameSessionProjectionFixture("flight_running");
     const model = { ...createInitialAppModel(), gameSession, presentation: { type: "ready", mode: "phone-vr" } as const,
-      sharedGameUi: currentSharedGameUiFixture(5, { platform: { presentation_mode: "phone_vr" } }) };
-    let currentFlight: FlightRenderPose = { datumPositionNed: { north: 100, east: 25, down: -8 },
+      sharedGameUi: currentSharedGameUiFixture("flight_running", { platform: { presentation_mode: "phone_vr" } }) };
+    let currentFlight: FlightRenderPose = { ...currentFlightPoseFixture(), datumPositionNed: { north: 100, east: 25, down: -8 },
       attitudeBodyToNed: IDENTITY_POSE.orientation, pilotPositionMeters: 0, initialPilotPositionMeters: 0 };
     bundle.renderer.resize(viewport);
     bundle.renderer.setFlightPose(currentFlight);
@@ -1162,7 +1149,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
         trial.renderer.setFlightPose(null);
         assertProjection(fieldOfView, size);
         expectMatrix(singleDraw(localDriver).camera, poseMatrix(titleScreenCameraPoseForViewport(size.x, size.y, fieldOfView)));
-        trial.renderer.setFlightPose({
+        trial.renderer.setFlightPose({ ...currentFlightPoseFixture(),
           datumPositionNed: { north: 0, east: 0, down: -10 }, attitudeBodyToNed: IDENTITY_POSE.orientation,
           pilotPositionMeters: 0, initialPilotPositionMeters: 0
         });
@@ -1192,13 +1179,13 @@ describe("Three adapter panel reference with real StereoEffect", () => {
     bundle.renderer.render(current);
     const baseline = driver.draws.map((draw) => ({ camera: draw.camera.clone(), panel: draw.panel.clone() }));
     const heading = -Math.PI / 4;
-    const initial: FlightRenderPose = {
+    const initial: FlightRenderPose = { ...currentFlightPoseFixture(),
       datumPositionNed: { north: 0.3, east: -0.2, down: -10.4 },
       attitudeBodyToNed: quaternion(Math.cos(heading / 2), 0, 0, Math.sin(heading / 2)),
       pilotPositionMeters: 0.17,
       initialPilotPositionMeters: 0.17,
       controls: { layout: "tail_incidence", physicalIncidence: { horizontalTailRadians: 0.035, verticalTailRadians: -0.018 } },
-      tailGeometry: { kind: "available", value: { kind: "bpg041_playable_version_two", horizontalTailArmMeters: 3.6 } }
+      tailGeometry: { kind: "available", value: { horizontalTailArmMeters: 3.6 } }
     };
     bundle.renderer.setPreparedFlightPose(initial);
     driver.draws.length = 0;
@@ -1232,18 +1219,18 @@ describe("Three adapter panel reference with real StereoEffect", () => {
     });
   });
 
-  it("renders the current physical tail controls and resets absent controls", () => {
-    const base = { datumPositionNed: { north: 0, east: 0, down: -10 }, attitudeBodyToNed: { w: 1, x: 0, y: 0, z: 0 },
+  it("renders the current physical tail controls and resets them when the pose is cleared", () => {
+    const base = { ...currentFlightPoseFixture(), datumPositionNed: { north: 0, east: 0, down: -10 }, attitudeBodyToNed: { w: 1, x: 0, y: 0, z: 0 },
       pilotPositionMeters: 0, initialPilotPositionMeters: 0 };
     bundle.renderer.setFlightPose({ ...base, controls: { layout: "tail_incidence", physicalIncidence: { horizontalTailRadians: 0.02, verticalTailRadians: -0.03 } },
-      tailGeometry: { kind: "available", value: { kind: "bpg041_playable_version_two", horizontalTailArmMeters: 3.6 } } });
+      tailGeometry: { kind: "available", value: { horizontalTailArmMeters: 3.6 } } });
     expect(() => { bundle.renderer.render(frame({})); }).not.toThrow();
     expect(driver.draws).toHaveLength(1);
     expect(driver.scene?.getObjectByName("horizontal-tail-incidence")?.rotation.x).toBeCloseTo(0.02);
     expect(driver.scene?.getObjectByName("vertical-tail-incidence")?.rotation.y).toBeCloseTo(0.03);
     expect(driver.scene?.getObjectByName("horizontal-tail-incidence")?.position.z).toBe(3.6);
     expect(driver.scene?.getObjectByName("vertical-tail-incidence")?.position.z).toBe(1.8);
-    bundle.renderer.setFlightPose(base);
+    bundle.renderer.setFlightPose(null);
     bundle.renderer.render(frame({}));
     expect(driver.scene?.getObjectByName("horizontal-tail-incidence")?.visible).toBe(false);
     expect(driver.scene?.getObjectByName("vertical-tail-incidence")?.visible).toBe(false);
@@ -1252,7 +1239,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
   });
 
   it("preserves Pilot/Cockpit and external Replay transforms without an additional Title basis", () => {
-    const flight: FlightRenderPose = {
+    const flight: FlightRenderPose = { ...currentFlightPoseFixture(),
       datumPositionNed: { north: 100, east: 25, down: -8 },
       attitudeBodyToNed: { w: Math.cos(0.1), x: Math.sin(0.1), y: 0, z: 0 },
       pilotPositionMeters: 0.15, initialPilotPositionMeters: 0
@@ -1277,7 +1264,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
   });
 
   it("composites terminal Menu and Head panels after the world while restoring physical panel depth", () => {
-    const flight: FlightRenderPose = {
+    const flight: FlightRenderPose = { ...currentFlightPoseFixture(),
       datumPositionNed: { north: 256.7, east: 0, down: -0.05 },
       attitudeBodyToNed: { w: Math.cos(0.04), x: Math.sin(0.04), y: 0, z: 0 },
       pilotPositionMeters: 0.15, initialPilotPositionMeters: 0
@@ -1320,20 +1307,9 @@ describe("Three adapter panel reference with real StereoEffect", () => {
 
   it.each([[1280, 720], [720, 1280]] as const)("fits the actual Pause Menu and hit targets in both frozen StereoEffect eyes at %s x %s", async (width, height) => {
     const size = { x: width, y: height, pixelRatio: 1 };
-    const valuesSnapshot = {
-    ...currentFlightDisplayFixture(6),
-    positionNed: { north: 0, east: 0, down: 0 }, velocityNed: { north: 0, east: 0, down: 0 },
-    attitudeBodyToNed: { w: 1, x: 0, y: 0, z: 0 }, pilotPositionMeters: 0, pilotVelocityMetersPerSecond: 0,
-    stamp: { kind: "exact" as const, tick: 0, fraction: 0, timeSeconds: 0 },
-    telemetry: { kind: "available" as const, value: { altitudeMeters: 12, airspeedMetersPerSecond: 8, groundspeedMetersPerSecond: 9,
-      windVelocityNedMetersPerSecond: { north: 0, east: 0, down: 0 }, angleOfAttackRadians: { kind: "available" as const, value: 0 }, sideslipAngleRadians: { kind: "available" as const, value: 0 },
-      rollRadians: 0, pitchRadians: 0, headingRadians: 0 } }
-  };
-    const snapshot = valuesSnapshot;
-    const gameSession = gameSessionState(6, 0, snapshot, true);
-    if (gameSession === null) throw new Error("Missing Pause domain fixture");
+    const gameSession = currentGameSessionProjectionFixture("flight_paused");
     const model = { ...createInitialAppModel(), gameSession, presentation: { type: "ready", mode: "phone-vr" } as const,
-      sharedGameUi: currentSharedGameUiFixture(6, { platform: { presentation_mode: "phone_vr" } }) };
+      sharedGameUi: currentSharedGameUiFixture("flight_paused", { platform: { presentation_mode: "phone_vr" } }) };
     for (const pilotPositionMeters of [-0.15, 0.1, 0.35]) {
       bundle.renderer.resize(size);
       bundle.renderer.setFlightPose(null);
@@ -1350,7 +1326,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
       try {
         expect(await runtime.start("phone-vr")).toEqual({ ok: true });
         driver.tick(1, null);
-        bundle.renderer.setFlightPose({ datumPositionNed: { north: 100, east: 25, down: -8 },
+        bundle.renderer.setFlightPose({ ...currentFlightPoseFixture(), datumPositionNed: { north: 100, east: 25, down: -8 },
           attitudeBodyToNed: IDENTITY_POSE.orientation, pilotPositionMeters, initialPilotPositionMeters: 0.1 });
         paused = true;
         driver.draws.length = 0;
@@ -1401,7 +1377,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
 
   it.each(["menu", "head", "cockpit", "world"] as const)("matches real Phone VR %s gaze to both rendered eyes for moving PilotEye positions", async (anchor) => {
     for (const pilotPositionMeters of [-0.15, 0.1, 0.35]) {
-      const flight: FlightRenderPose = {
+      const flight: FlightRenderPose = { ...currentFlightPoseFixture(),
         datumPositionNed: { north: 100, east: 25, down: -8 },
         attitudeBodyToNed: { w: Math.cos(0.1), x: Math.sin(0.1), y: 0, z: 0 },
         pilotPositionMeters, initialPilotPositionMeters: 0.1
@@ -1443,7 +1419,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
   });
 
   it.each(["pilot", "platform"] as const)("preserves Phone VR tracking/Menu recenter with the %s mount", async (mode) => {
-    const flight: FlightRenderPose = {
+    const flight: FlightRenderPose = { ...currentFlightPoseFixture(),
       datumPositionNed: { north: 100, east: 25, down: -8 },
       attitudeBodyToNed: { w: Math.cos(0.1), x: Math.sin(0.1), y: 0, z: 0 },
       pilotPositionMeters: 0.35, initialPilotPositionMeters: 0.1

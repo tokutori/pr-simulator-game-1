@@ -9,7 +9,7 @@ import type { ViewerFrame } from "../../web/src/render/contracts/viewer-frame.js
 import { captureConfiguredViewerFrame } from "../../web/src/render/engines/three/viewer-frame.js";
 import { convexQuadsOverlap } from "./hud-canvas-fixture.js";
 
-const profile = Object.freeze({ telemetry: true, attitude: true, wind: true, flightPath: true, angleOfAttack: true, warnings: true });
+const profile = Object.freeze({ telemetry: true, attitude: true, wind: true, flight_path: true, angle_of_attack: true, warnings: true });
 
 function configuredViewer(aspect = 1280 / 720, fieldOfView = 60, near = 0.05): ViewerFrame {
   const camera = new PerspectiveCamera(fieldOfView, aspect, near, 100);
@@ -84,7 +84,7 @@ describe("Pure Head Flight HUD layout", () => {
 
   it("keeps shared FlightPathOnly geometry independent of attitude and horizontal angle gauges", () => {
     const shared = currentSharedHudFixture({ informationCode: 4,
-      hudProfile: { ...profile, attitude: false, flightPath: true } });
+      hudProfile: { ...profile, attitude: false, flight_path: true } });
     const model = mapSharedHudNodes(shared, (node) => node.content.kind === "attitude"
       ? { ...node, content: { ...node.content, value: "28°", geometry: { kind: "flight_path_only", y_ratio: 0.37 } } } : node);
     const view = createHeadHudView(model, configuredViewer(), "ja");
@@ -169,7 +169,7 @@ describe("Pure Head Flight HUD layout", () => {
   it.each(Array.from({ length: 64 }, (_, mask) => ({ mask })))("keeps all Custom cues independent for mask $mask", ({ mask }) => {
     const custom = {
       telemetry: (mask & 1) !== 0, attitude: (mask & 2) !== 0, wind: (mask & 4) !== 0,
-      flightPath: (mask & 8) !== 0, angleOfAttack: (mask & 16) !== 0, warnings: (mask & 32) !== 0
+      flight_path: (mask & 8) !== 0, angle_of_attack: (mask & 16) !== 0, warnings: (mask & 32) !== 0
     };
     const model = currentSharedHudFixture({ informationCode: 4, hudProfile: custom });
     const view = createHeadHudView(model, configuredViewer(), "ja");
@@ -179,11 +179,11 @@ describe("Pure Head Flight HUD layout", () => {
     }
     if (view.kind !== "visible") throw new Error("Expected visible Custom HUD");
     const byId = new Map(view.layer.elements.map((element) => [element.id, element]));
-    expect(byId.has("hud-attitude")).toBe(custom.attitude || custom.flightPath);
+    expect(byId.has("hud-attitude")).toBe(custom.attitude || custom.flight_path);
     expect(byId.has("hud-heading")).toBe(custom.attitude);
     expect(byId.has("hud-pilot-position")).toBe(custom.telemetry);
     expect(byId.has("hud-wind")).toBe(custom.wind);
-    expect(byId.has("hud-angle-of-attack")).toBe(custom.angleOfAttack);
+    expect(byId.has("hud-angle-of-attack")).toBe(custom.angle_of_attack);
     expect(byId.has("hud-controller-failure")).toBe(false);
     if (custom.attitude) expect(byId.get("hud-attitude")?.content).toEqual(sharedHudNode(model, "hud-attitude").content);
   });
@@ -258,7 +258,7 @@ describe("Pure Head Flight HUD layout", () => {
     expect(createHeadHudView(model, configuredViewer(0.05), "ja")).toEqual({ kind: "unavailable", reason: "insufficient-view-area" });
     expect(createHeadHudView(model, configuredViewer(1, 20), "ja")).toEqual({ kind: "unavailable", reason: "insufficient-view-area" });
     expect(createHeadHudView(model, configuredViewer(1, 60, 3), "ja")).toEqual({ kind: "unavailable", reason: "insufficient-view-area" });
-    expect(createHeadHudView(currentSharedHudFixture({ informationCode: 4, hudProfile: { ...profile, telemetry: false, attitude: false, wind: false, flightPath: false, angleOfAttack: false, warnings: false } }), unavailableViewerFrame("viewer-unavailable"), "ja")).toEqual({ kind: "absent" });
+    expect(createHeadHudView(currentSharedHudFixture({ informationCode: 4, hudProfile: { ...profile, telemetry: false, attitude: false, wind: false, flight_path: false, angle_of_attack: false, warnings: false } }), unavailableViewerFrame("viewer-unavailable"), "ja")).toEqual({ kind: "absent" });
   });
 
 });

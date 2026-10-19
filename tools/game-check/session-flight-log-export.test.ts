@@ -3,19 +3,18 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { HybridGameSessionBridge, initSync } from "../../web/pkg/birdman_game_wasm.js";
 import { createAppSession } from "../../web/src/app/session-factory.js";
 import type { AppSessionFacade } from "../../web/src/app/session-facade.js";
-import { encodeTailLogicalInput } from "../../web/src/game/tail-session-codec.js";
 
 initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url))) });
 afterEach(() => { vi.restoreAllMocks(); });
-const neutral = encodeTailLogicalInput({ controlLayout: "tail_incidence", noseUp: 0, turnRight: 0,
-  desiredPitchRateRadiansPerSecond: 0, desiredYawRateRadiansPerSecond: 0, pilotPositionCommand: { kind: "hold" } });
+const neutral = ({ controlLayout: "tail_incidence", noseUp: 0, turnRight: 0,
+  desiredPitchRateRadiansPerSecond: 0, desiredYawRateRadiansPerSecond: 0, pilotPositionCommand: { kind: "hold" as const } });
 
 function complete(session: AppSessionFacade): void {
   session.executeSharedSessionCommand({ kind: "open_setup" });
   session.executeSharedSessionCommand({ kind: "prepare" });
   session.executeSharedSessionCommand({ kind: "start_countdown" });
   session.observeCountdown(session.captureCountdownToken(), 3, true);
-  session.flightPort.advance_tick_json(neutral);
+  session.flightPort.advanceTick(neutral);
   session.executeSharedSessionCommand({ kind: "abort" });
 }
 
@@ -39,11 +38,11 @@ describe("layout-owned flight log query boundary with actual WASM", () => {
       expect(csv.slice(csv.indexOf("\n") + 1)).toMatch(/^3,6,tail_incidence,/);
       expect(session.readFlightLog("json")).toBe(original);
       expect(session.acceptQuery(token, csv).kind).toBe("accepted");
-      expect(session.readLifecycle().phaseCode).toBe(7);
+      expect(session.readLifecycle().phase).toBe("result");
       session.executeSharedSessionCommand({ kind: "enter_replay" });
       expect(session.readFlightLog("csv")).toBe(csv);
       expect(session.readFlightLog("json")).toBe(original);
-      expect(session.readLifecycle().phaseCode).toBe(9);
+      expect(session.readLifecycle().phase).toBe("replay");
     } finally { session.dispose(); }
   });
 

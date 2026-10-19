@@ -69,7 +69,7 @@ describe("Screen UI to current WebAssembly GameSession transitions", () => {
       const paused = updateApp(recovery.model, { type: "replay-clock-command-completed", requestId: pause.requestId, generation: pause.generation,
         state: { timeSeconds: clock.timeSeconds, rateCode: clock.rateCode, playing: false } });
       expect(paused.effects.some((effect) => effect.type === "schedule-replay-clock-tick")).toBe(false);
-      expect(session.readLifecycle().phaseCode).toBe(9);
+      expect(session.readLifecycle().phase).toBe("replay");
       expect(session.exportRecordJson()).toBe(record);
     } finally { session.dispose(); }
   });
@@ -134,11 +134,11 @@ describe("Screen UI to current WebAssembly GameSession transitions", () => {
       expect(updateApp(rejected.model, { type: "flight-analysis-cursor-loaded", requestId: oldCursor.requestId,
         sample: oldSample }).model).toBe(rejected.model);
       if (failure === "display") {
-        expect(session.readLifecycle().phaseCode).toBe(3);
+        expect(session.readLifecycle().phase).toBe("briefing_ready");
         expect(rejected.model.gameSession.kind).toBe("briefing-ready");
         expect(rejected.effects).toEqual([]);
       } else {
-        expect(session.readLifecycle().phaseCode).toBe(7);
+        expect(session.readLifecycle().phase).toBe("result");
         expect(session.flightPort.snapshot_json()).toBe(before);
         expect(session.exportRecordJson()).toBe(record);
         expect(rejected.model.gameSession.kind).toBe("result");
@@ -214,7 +214,7 @@ describe("Screen UI to current WebAssembly GameSession transitions", () => {
       session.flightPort.advance_tick_json(neutralTailInput);
       session.flightPort.advance_tick_json(neutralTailInput);
       if (terminal === "manual_abort") session.executeSharedSessionCommand({ kind: "abort" });
-      else for (let tick = 2; tick < 4_000 && session.readLifecycle().phaseCode === 5; tick += 1) {
+      else for (let tick = 2; tick < 4_000 && session.readLifecycle().phase === "flight_running"; tick += 1) {
         session.flightPort.advance_tick_json(neutralTailInput);
       }
       const before = session.flightPort.snapshot_json();

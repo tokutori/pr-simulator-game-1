@@ -155,7 +155,7 @@ describe("Head HUD Canvas preflight and painting", () => {
 
   it("paints FlightPathOnly at the shared ADI vertical ratio without an attitude horizon", () => {
     const shared = currentSharedHudFixture({ informationCode: 4,
-      hudProfile: { telemetry: false, attitude: false, wind: false, flightPath: true, angleOfAttack: false, warnings: false } });
+      hudProfile: { telemetry: false, attitude: false, wind: false, flight_path: true, angle_of_attack: false, warnings: false } });
     const model = mapSharedHudNodes(shared, (node) => node.content.kind === "attitude"
       ? { ...node, content: { ...node.content, value: "28°", geometry: { kind: "flight_path_only", y_ratio: 0.37 } } } : node);
     const view = flightView(1280 / 720, model);
@@ -257,7 +257,7 @@ describe("Head HUD Canvas preflight and painting", () => {
     const stereo = new StereoCamera(); stereo.aspect = 0.5;
     const viewer = captureConfiguredViewerFrame(camera, stereo);
     const custom = { telemetry: (mask & 1) !== 0, attitude: (mask & 2) !== 0, wind: (mask & 4) !== 0,
-      flightPath: (mask & 8) !== 0, angleOfAttack: (mask & 16) !== 0, warnings: (mask & 32) !== 0 };
+      flight_path: (mask & 8) !== 0, angle_of_attack: (mask & 16) !== 0, warnings: (mask & 32) !== 0 };
     const view = createHeadHudView(currentSharedHudFixture({ informationCode: 4, hudProfile: custom }), viewer, "ja");
     if (mask === 0 || mask === 32) { expect(view.kind).toBe("absent"); return; }
     if (view.kind !== "visible") throw new Error("Missing Custom layout");

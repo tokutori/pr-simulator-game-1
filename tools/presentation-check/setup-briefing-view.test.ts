@@ -30,7 +30,7 @@ function measurementFor(request: MenuTextRequest): MenuTextMeasurement {
 
 describe("Shared Flight Setup and Briefing presentation", () => {
   it.each(["screen", "phone_vr", "webxr"] as const)("projects the same direct candidates, groups and Weather in %s", (presentation_mode) => {
-    const shared = currentSharedGameUiFixture(1, { platform: { presentation_mode } });
+    const shared = currentSharedGameUiFixture("flight_setup", { platform: { presentation_mode } });
     const view = createGameViewModel(shared);
     validateUiViewModel(view);
     const controls = view.panels.flatMap((panel) => panel.controls);
@@ -63,8 +63,8 @@ describe("Shared Flight Setup and Briefing presentation", () => {
   });
 
   it("projects the Rust-owned closed and expanded technical disclosure", () => {
-    const closed = currentSharedGameUiFixture(3);
-    const open = currentSharedGameUiFixture(3, { actions: [{ kind: "toggle_technical" }] });
+    const closed = currentSharedGameUiFixture("briefing_ready");
+    const open = currentSharedGameUiFixture("briefing_ready", { actions: [{ kind: "toggle_technical" }] });
     const closedView = createGameViewModel(closed);
     const openView = createGameViewModel(open);
     expect(JSON.stringify(closedView)).not.toContain("Seed:");
@@ -76,18 +76,18 @@ describe("Shared Flight Setup and Briefing presentation", () => {
     expect(open.selections.technical_open).toBe(true);
   });
 
-  it.each([1, 2, 3, 4, 8])("preserves preparation phase %i and explicit operation admission", (phase) => {
+  it.each(["flight_setup", "briefing_preparing", "briefing_ready", "countdown", "briefing_failed"] as const)("preserves preparation phase %s and explicit operation admission", (phase) => {
     const shared = currentSharedGameUiFixture(phase);
     const view = createGameViewModel(shared);
     expect(view.panels.flatMap((panel) => panel.controls.map((control) => control.id))).not.toContain("game-state");
     const pending = currentSharedGameUiFixture(phase, { platform: { operation_pending: true, notification: "準備条件を確認する。" } });
     expect(createGameViewModel(pending).panels.flatMap((panel) => panel.controls).filter((control) => control.kind !== "status").every((control) => !control.enabled)).toBe(true);
-    expect(shared.scene).toBe(phase === 1 ? "FlightSetup" : phase === 4 ? "Countdown" : "Briefing");
+    expect(shared.scene).toBe(phase === "flight_setup" ? "FlightSetup" : phase === "countdown" ? "Countdown" : "Briefing");
   });
 
-  it.each([1, 3])("keeps primary, back and disclosure reachable in a short portrait VR menu in phase %i", (phase) => {
+  it.each(["flight_setup", "briefing_ready"] as const)("keeps primary, back and disclosure reachable in a short portrait VR menu in phase %s", (phase) => {
     const shared = currentSharedGameUiFixture(phase, { platform: { presentation_mode: "phone_vr" },
-      actions: phase === 3 ? [{ kind: "toggle_technical" }] : [] });
+      actions: phase === "briefing_ready" ? [{ kind: "toggle_technical" }] : [] });
     const view = createGameViewModel(shared);
     const panel = view.panels[0];
     if (panel === undefined) throw new Error("Missing panel");
@@ -99,7 +99,7 @@ describe("Shared Flight Setup and Briefing presentation", () => {
     if (result.kind !== "ready") throw new Error(result.reason);
     const initial = menuViewport(result.document, 0);
     expect(initial.maximumOffsetMeters).toBeGreaterThan(0);
-    const ids = phase === 1 ? ["game-setup-start", "game-setup-back"]
+    const ids = phase === "flight_setup" ? ["game-setup-start", "game-setup-back"]
       : ["game-briefing-start", "game-briefing-cancel", "game-briefing-technical"];
     for (const id of ids) {
       const control = result.document.controls.find((control) => control.control.id === id);
@@ -120,7 +120,7 @@ describe("Shared Flight Setup and Briefing presentation", () => {
       const actions: unknown[] = [];
       const adapter = new ScreenUiAdapter(root, (action) => actions.push(action));
       const platform = { viewport: { width: 320, height: 240, root_font_size: 16 } };
-      const initial = currentSharedGameUiFixture(1, { platform });
+      const initial = currentSharedGameUiFixture("flight_setup", { platform });
       adapter.render(createGameViewModel(initial));
       expect([...root.querySelectorAll("fieldset legend")].map((legend) => legend.textContent))
         .toEqual(["プリセット", "表示情報", "操縦支援", "気象条件", "水面画質", "3D描画品質"]);
@@ -137,7 +137,7 @@ describe("Shared Flight Setup and Briefing presentation", () => {
       const shell = root.querySelector<HTMLElement>(".screen-ui-shell");
       if (selected === null || shell === null) throw new Error("Missing Setup DOM");
       selected.focus(); shell.scrollTop = 40;
-      const updated = currentSharedGameUiFixture(1, { platform, informationCode: 2 });
+      const updated = currentSharedGameUiFixture("flight_setup", { platform, informationCode: 2 });
       adapter.render(createGameViewModel(updated));
       expect(root.querySelector('[data-control-id="game-setup-select-information-0"]')).toBe(selected);
       expect(documentRef.activeElement).toBe(selected);
@@ -152,11 +152,11 @@ describe("Shared Flight Setup and Briefing presentation", () => {
       expect(actions).toEqual([{ type: "activate", controlId: selected.dataset.controlId }]);
       expect(root.querySelector('[data-control-id="game-setup-start"]')?.getAttribute("data-emphasis")).toBe("primary");
       expect(root.querySelector('[data-control-id="game-setup-back"]')?.getAttribute("data-emphasis")).toBe("secondary");
-      adapter.render(createGameViewModel(currentSharedGameUiFixture(3)));
+      adapter.render(createGameViewModel(currentSharedGameUiFixture("briefing_ready")));
       const disclosure = root.querySelector<HTMLButtonElement>('[data-control-id="game-briefing-technical"]');
       if (disclosure === null) throw new Error("Missing disclosure");
       disclosure.focus();
-      adapter.render(createGameViewModel(currentSharedGameUiFixture(3, { actions: [{ kind: "toggle_technical" }] })));
+      adapter.render(createGameViewModel(currentSharedGameUiFixture("briefing_ready", { actions: [{ kind: "toggle_technical" }] })));
       expect(root.querySelector('[data-control-id="game-briefing-technical"]')).toBe(disclosure);
       expect(documentRef.activeElement).toBe(disclosure);
       expect(disclosure.getAttribute("aria-expanded")).toBe("true");
@@ -168,8 +168,8 @@ describe("Shared Flight Setup and Briefing presentation", () => {
   });
 
   it.each([
-    { phase: 3, disclosureId: "game-briefing-technical" },
-    { phase: 7, disclosureId: "game-result-technical" }
+    { phase: "briefing_ready" as const, disclosureId: "game-briefing-technical" },
+    { phase: "result" as const, disclosureId: "game-result-technical" }
   ])("links $disclosureId to its rendered content and preserves focus across disclosure updates", async ({ phase, disclosureId }) => {
     const window = new Window();
     Object.assign(globalThis, { window, document: window.document });
@@ -206,7 +206,7 @@ describe("Shared Flight Setup and Briefing presentation", () => {
   });
 
   it("uses common selected markers and primary/secondary emphasis for VR painting", () => {
-    const shared = currentSharedGameUiFixture(1);
+    const shared = currentSharedGameUiFixture("flight_setup");
     const controls = createGameViewModel(shared).panels.flatMap((panel) => panel.controls);
     const choice = controls.find((control) => control.id === "game-setup-select-information-0");
     const primary = controls.find((control) => control.id === "game-setup-start");

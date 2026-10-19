@@ -53,7 +53,7 @@ describe.each(angles)("actual WASM record interpolation: $field", (angle) => {
       expectAngle(archive.queryRecordSample(0.01), angle, end);
       expect(archive.readFlightLog("json")).toBe(stored);
       expect(archive.readPlaybackClock()).toEqual(clock);
-      expect(archive.readLifecycle().phaseCode).toBe(9);
+      expect(archive.readLifecycle().phase).toBe("replay");
     } finally {
       archive.dispose();
     }

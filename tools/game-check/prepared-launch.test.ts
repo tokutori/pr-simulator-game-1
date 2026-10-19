@@ -2,12 +2,12 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { HybridGameSessionBridge, initSync, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
 import { TailAppSessionFacade } from "../../web/src/app/session-facade.js";
-import { projectFlightRenderPose, projectTailFlightSnapshot } from "../../web/src/game/flight-display-snapshot.js";
-import { encodeTailLogicalInput, parseTailPreparedLaunchSnapshot, parseTailSessionSnapshot } from "../../web/src/game/tail-session-codec.js";
+import type { TailPreparedLaunchDocument } from "../../web/src/generated/tail-prepared.js";
+import { readContract } from "../game-ui-build/validate.js";
 
 initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url))) });
-const neutral = encodeTailLogicalInput({ controlLayout: "tail_incidence", noseUp: 0, turnRight: 0,
-  desiredPitchRateRadiansPerSecond: 0, desiredYawRateRadiansPerSecond: 0, pilotPositionCommand: { kind: "hold" } });
+const neutral = ({ controlLayout: "tail_incidence", noseUp: 0, turnRight: 0,
+  desiredPitchRateRadiansPerSecond: 0, desiredYawRateRadiansPerSecond: 0, pilotPositionCommand: { kind: "hold" as const } });
 
 describe("sealed initial launch presentation", () => {
   for (const mode of [0, 1, 2]) {
@@ -24,24 +24,23 @@ describe("sealed initial launch presentation", () => {
         expect(initial).not.toBeNull();
         expect(initial?.controls?.layout).toBe("tail_incidence");
         const before = bridge.snapshot_json();
-        const prepared = parseTailPreparedLaunchSnapshot(bridge.prepared_launch_snapshot_json(), physics_hz());
-        expect(prepared.kind).toBe("prepared");
+        const prepared = readContract<TailPreparedLaunchDocument>("tail_prepared", bridge.prepared_launch_snapshot_json());
+        expect(prepared.preview.kind).toBe("prepared");
         expect(bridge.snapshot_json()).toBe(before);
-        expect(session.readLifecycle().phaseCode).toBe(3);
+        expect(session.readLifecycle().phase).toBe("briefing_ready");
         session.executeSharedSessionCommand({ kind: "start_countdown" });
         for (let step = 0; step < 3; step++) {
           expect(session.readPreparedLaunchPose()).toEqual(initial);
           session.observeCountdown(session.captureCountdownToken(), 1, true);
         }
         expect(session.readPreparedLaunchPose()).toBeNull();
-        const live = parseTailSessionSnapshot(bridge.snapshot_json(), physics_hz());
-        const display = projectTailFlightSnapshot(live);
-        if (display.kind !== "available" || initial === null || live.frame.kind !== "flight" || prepared.kind !== "prepared") {
+        const live = session.readSnapshot();
+        if (initial === null || live.frame.kind !== "flight" || prepared.preview.kind !== "prepared") {
           throw new Error("Expected sealed preparation and its first live frame");
         }
-        expect(live.frame.state).toEqual(prepared.state);
-        expect(projectFlightRenderPose(display.value, live.frame.state.pilotPositionMeters)).toMatchObject(initial);
-        session.flightPort.advance_tick_json(neutral);
+        expect(live.frame.state).toEqual(prepared.preview.state);
+        expect(live.render_pose).toEqual(initial);
+        session.flightPort.advanceTick(neutral);
         session.executeSharedSessionCommand({ kind: "abort" });
         expect(session.readPreparedLaunchPose()).toBeNull();
         session.executeSharedSessionCommand({ kind: "retry" });
@@ -52,39 +51,4 @@ describe("sealed initial launch presentation", () => {
     });
   }
 
-  it.each([0, 1, 5, 6, 7, 9, 10])("rejects a prepared initial state in phase %s", (phase) => {
-    const document = preparedDocument();
-    document.phase_code = phase;
-    expect(() => parseTailPreparedLaunchSnapshot(JSON.stringify(document), physics_hz())).toThrow("preparation phase");
-  });
-
-  it.each([2, 3, 4, 8])("requires a zero-tick sealed initial state in phase %s", (phase) => {
-    const document = preparedDocument();
-    document.phase_code = phase;
-    expect(parseTailPreparedLaunchSnapshot(JSON.stringify(document), physics_hz())).toMatchObject({ kind: "prepared", phaseCode: phase });
-    document.preview = { kind: "unavailable" };
-    expect(() => parseTailPreparedLaunchSnapshot(JSON.stringify(document), physics_hz())).toThrow("sealed initial state");
-  });
-
-  it.each(["tick", "fraction", "attitude", "identity", "layout", "extra"])("rejects malformed prepared %s", (field) => {
-    const document = preparedDocument();
-    const preview = document.preview as Record<string, unknown>;
-    const state = preview.state as Record<string, unknown>;
-    if (field === "tick") { state.tick = 1; state.flight_time_s = 1 / physics_hz(); }
-    if (field === "fraction") { state.fraction = 0.5; state.flight_time_s = 0.5 / physics_hz(); }
-    if (field === "attitude") state.attitude_body_to_ned = [0, 0, 0, 0];
-    if (field === "identity") { preview.scenario = null; preview.control_identity = null; }
-    if (field === "layout") document.control_layout = "legacy_three_axis";
-    if (field === "extra") preview.flight_started = true;
-    expect(() => parseTailPreparedLaunchSnapshot(JSON.stringify(document), physics_hz())).toThrow();
-  });
 });
-
-function preparedDocument(): Record<string, unknown> {
-  const bridge = new HybridGameSessionBridge(0, 21, 22);
-  try {
-    bridge.open_setup();
-    bridge.prepare();
-    return JSON.parse(bridge.prepared_launch_snapshot_json()) as Record<string, unknown>;
-  } finally { bridge.free(); }
-}

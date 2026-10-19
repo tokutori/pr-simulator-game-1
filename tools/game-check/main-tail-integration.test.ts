@@ -2,13 +2,13 @@ import { readFileSync } from "node:fs";
 import { IDBFactory } from "fake-indexeddb";
 import { Window as BrowserWindow } from "happy-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { parseGameUiView } from "../../web/src/app/game-ui-codec.js";
+import { readContract } from "../game-ui-build/validate.js";
+import type { GameUiView } from "../../web/src/generated/game-ui-view.js";
 import type { LakeWaterQualityCleanupResult, RendererAdapter } from "../../web/src/render/contracts/runtime.js";
 import { unavailableViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
 import type { WebXrSessionPort } from "../../web/src/presentation/webxr-contracts.js";
 import { sharedGameUiPlatform } from "./shared-game-ui-fixture.js";
 import type { ScreenRenderAutoBinding } from "../../web/src/render/contracts/screen-render-auto.js";
-import { parseScreenRenderAutoSnapshot } from "../../web/src/render/contracts/screen-render-auto.js";
 
 const teardowns: (() => Promise<void>)[] = [];
 afterEach(async () => {
@@ -63,7 +63,7 @@ async function fixture(failInitialization = false, seedCurrentArchive = false, d
       if (quality !== "low" && quality !== "medium" && quality !== "high") throw new Error("Missing requested water quality");
       policy.applied(policy.requested_epoch(), policy.requested_scale_percent(), policy.requested_shadow_map_size(), quality, nowMilliseconds);
     }
-    screenBinding.onSnapshot(parseScreenRenderAutoSnapshot(policy.snapshot_json()));
+    screenBinding.onSnapshot(screenBinding.snapshot());
   };
   const acknowledgeWaterQuality = (quality: Parameters<RendererAdapter["setLakeWaterQuality"]>[0]): void => {
     screenBinding?.policy.select_water_quality(quality, nowMilliseconds);
@@ -121,7 +121,7 @@ async function fixture(failInitialization = false, seedCurrentArchive = false, d
       archived.mark_briefing_ready();
       archived.start_countdown(1);
       archived.observe_countdown(archived.countdown_token(), 1, true);
-      const { encodeTailLogicalInput } = await import("../../web/src/game/tail-session-codec.js");
+      const { encodeTailLogicalInput } = await import("../../web/src/game/tail-input.js");
       const neutral = encodeTailLogicalInput({ controlLayout: "tail_incidence", noseUp: 0, turnRight: 0,
         desiredPitchRateRadiansPerSecond: 0, desiredYawRateRadiansPerSecond: 0, pilotPositionCommand: { kind: "hold" } });
       for (let tick = 0; tick < 5; tick += 1) archived.advance_tick_json(neutral);
@@ -260,9 +260,9 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     owner.executeSharedSessionCommand({ kind: "prepare" });
     owner.executeSharedSessionCommand({ kind: "start_countdown" });
     const obsolete = owner.captureCountdownToken();
-    expect(owner.readLifecycle().phaseCode).toBe(4);
+    expect(owner.readLifecycle().phase).toBe("countdown");
     trial.endWebXr();
-    await vi.waitFor(() => { expect(owner.readLifecycle().phaseCode).toBe(3); });
+    await vi.waitFor(() => { expect(owner.readLifecycle().phase).toBe("briefing_ready"); });
     expect(owner.observeCountdown(obsolete, 3, true)).toEqual({ kind: "ignored" });
     expect(trial.observeCountdown.mock.results.filter((result) => result.type === "return" && result.value === 3)).toHaveLength(0);
     expect(trial.tick).not.toHaveBeenCalled();
@@ -281,7 +281,7 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
       expect(update.effects).toContainEqual({ kind: "session", command: { kind: "cancel_countdown" } });
     } else expect(() => owner.updateSharedUi({ kind: "toggle_technical" }, sharedGameUiPlatform())).toThrow();
     expect(owner.acceptQuery(query, undefined).kind).toBe("stale");
-    expect(owner.readLifecycle().phaseCode).toBe(4);
+    expect(owner.readLifecycle().phase).toBe("countdown");
     trial.countdownTick(800);
     expect(trial.documentRef.querySelector(".screen-ui-shell")?.textContent).toContain("3 秒");
     trial.countdownTick(200);
@@ -396,7 +396,7 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     const observedView = () => {
       const result = trial.sharedView.mock.results.at(-1);
       if (result?.type !== "return" || typeof result.value !== "string") throw new Error("Shared Rust UI view is unavailable");
-      return parseGameUiView(result.value);
+      return readContract<GameUiView>("view", result.value);
     };
     await vi.waitFor(() => {
       expect(trial.scene()).toBe("Title");
@@ -829,7 +829,7 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
       })
         : trial.tick.mock.results.some((result) => {
           const snapshot: unknown = JSON.parse(result.value as string);
-          return typeof snapshot === "object" && snapshot !== null && "phase_code" in snapshot && snapshot.phase_code === 7;
+          return typeof snapshot === "object" && snapshot !== null && "phase" in snapshot && snapshot.phase === "result";
         });
       if (terminal && !injected) { injected = true; throw new Error("Injected committed Result view failure"); }
     });

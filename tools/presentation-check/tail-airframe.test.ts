@@ -7,7 +7,7 @@ import type { BirdmanAirframe } from "../../web/src/render/engines/three/birdman
 import type { TailPresentationGeometryAvailability } from "../../web/src/render/contracts/flight-controls.js";
 
 const PLAYABLE_GEOMETRY = Object.freeze({ kind: "available",
-  value: Object.freeze({ kind: "bpg041_playable_version_two", horizontalTailArmMeters: 3.6 }) }) satisfies TailPresentationGeometryAvailability;
+  value: Object.freeze({ horizontalTailArmMeters: 3.6 }) }) satisfies TailPresentationGeometryAvailability;
 
 function group(airframe: BirdmanAirframe, name: string): Group {
   const node = airframe.root.getObjectByName(name);
@@ -171,7 +171,7 @@ describe("physical two-tail airframe adapter", () => {
       const invalidGeometry: readonly (TailPresentationGeometryAvailability | undefined)[] = [
         undefined, { kind: "unavailable", reason: "unregistered_aircraft_geometry" },
         { kind: "available", value: { kind: "bpg041_version_one", horizontalTailArmMeters: 3.6 } } as unknown as TailPresentationGeometryAvailability,
-        { kind: "available", value: { kind: "bpg041_playable_version_two", horizontalTailArmMeters: Number.NaN } } as unknown as TailPresentationGeometryAvailability
+        { kind: "available", value: { horizontalTailArmMeters: Number.NaN } } as unknown as TailPresentationGeometryAvailability
       ];
       for (const geometry of invalidGeometry) {
         expect(() => { airframe.setVisualState(null, { ...controls, physicalIncidence: { horizontalTailRadians: 0.2, verticalTailRadians: 0.2 } }, geometry); }).toThrow("registered aircraft geometry");

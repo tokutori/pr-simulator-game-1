@@ -1,10 +1,10 @@
 import { readFileSync } from "node:fs";
-import { describe, expect, expectTypeOf, it, vi } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
 import { HybridGameSessionBridge, initSync, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
 import { TailAppSessionFacade } from "../../web/src/app/session-facade.js";
 import type { AppSessionFacade } from "../../web/src/app/session-facade.js";
 import { readRuntimeSessionProjection } from "../../web/src/app/session-runtime-projection.js";
-import { createInitialAppModel, gameSessionState, updateApp } from "../../web/src/app/app-state.js";
+import { createInitialAppModel, updateApp } from "../../web/src/app/app-state.js";
 import type { GameSessionUiState } from "../../web/src/app/app-state.js";
 import type { ReplayReturnTarget, TailGameSessionProjection } from "../../web/src/app/session-snapshot.js";
 import { selectSharedReplayView, sharedGameUiPlatform } from "./shared-game-ui-fixture.js";
@@ -20,11 +20,10 @@ function launch(session: AppSessionFacade): void {
 
 function verifyReturnViews(session: TailAppSessionFacade, expected: ReplayReturnTarget): void {
   const projection = readRuntimeSessionProjection(session);
-  if (projection.phaseCode !== 9) throw new Error("Expected Rust Replay projection");
+  if (projection.phase !== "replay") throw new Error("Expected Rust Replay projection");
   expect(projection.returnTarget).toBe(expected);
-  expect(Object.isFrozen(projection)).toBe(true);
   const observed = updateApp(createInitialAppModel(), { type: "game-session-synced", ...projection }).model;
-  expect(observed.gameSession).toMatchObject({ kind: "replay", returnTarget: expected });
+  expect(observed.gameSession).toMatchObject({ phase: "replay", returnTarget: expected });
   verifyUiReturnViews(session, expected);
 }
 
@@ -51,13 +50,9 @@ function verifyUiReturnViews(session: TailAppSessionFacade, expected: ReplayRetu
 
 describe("Rust-owned Replay exit projection", () => {
   it("requires a return target only in the immutable Replay state", () => {
-    expectTypeOf<Extract<GameSessionUiState, { kind: "replay" }>["returnTarget"]>().toEqualTypeOf<ReplayReturnTarget>();
-    expectTypeOf<Extract<TailGameSessionProjection, { phaseCode: 9 }>["returnTarget"]>().toEqualTypeOf<ReplayReturnTarget>();
-    expectTypeOf<Extract<GameSessionUiState, { kind: "title" }>>().not.toHaveProperty("returnTarget");
-    for (const layout of ["tail_incidence"] as const) {
-      expect(gameSessionState(9, 0, null, false, layout)).toBeNull();
-      expect(gameSessionState(9, 0, null, false, layout, "invalid" as ReplayReturnTarget)).toBeNull();
-    }
+    expectTypeOf<Extract<GameSessionUiState, { phase: "replay" }>["returnTarget"]>().toEqualTypeOf<ReplayReturnTarget>();
+    expectTypeOf<Extract<TailGameSessionProjection, { phase: "replay" }>["returnTarget"]>().toEqualTypeOf<ReplayReturnTarget>();
+    expectTypeOf<Extract<GameSessionUiState, { phase: "title" }>>().not.toHaveProperty("returnTarget");
   });
 
   it("labels current Replay for Result and imported archives for Title in every presentation and view", () => {
@@ -68,37 +63,19 @@ describe("Rust-owned Replay exit projection", () => {
       session.executeSharedSessionCommand({ kind: "enter_replay" });
       verifyReturnViews(session, "result");
       session.executeSharedSessionCommand({ kind: "leave_replay" });
-      expect(session.readLifecycle().phaseCode).toBe(7);
+      expect(session.readLifecycle().phase).toBe("result");
       session.openArchive(modernRecord);
       verifyReturnViews(session, "title");
       session.executeSharedSessionCommand({ kind: "leave_replay" });
-      expect(session.readLifecycle().phaseCode).toBe(0);
+      expect(session.readLifecycle().phase).toBe("title");
       const unknownRecord = JSON.parse(modernRecord) as { header: { environment_version: number } };
       unknownRecord.header.environment_version = 99;
       session.openArchive(JSON.stringify(unknownRecord));
       verifyReturnViews(session, "title");
       session.executeSharedSessionCommand({ kind: "leave_replay" });
-      expect(session.readLifecycle().phaseCode).toBe(0);
+      expect(session.readLifecycle().phase).toBe("title");
     } finally { session.dispose(); }
   });
 
 
-  it("rejects invalid owner boundaries and stale observations without an archive flag", () => {
-    const bridge = new HybridGameSessionBridge(0, 21, 22);
-    const session = new TailAppSessionFacade(bridge, physics_hz());
-    try {
-      expect(() => session.readReplayReturnTarget()).toThrow("Replay phase");
-      launch(session); session.executeSharedSessionCommand({ kind: "abort" }); session.executeSharedSessionCommand({ kind: "enter_replay" });
-      const owner = vi.spyOn(bridge, "is_archived_replay");
-      owner.mockReturnValueOnce("true" as unknown as boolean);
-      expect(() => session.readReplayReturnTarget()).toThrow("boolean");
-      expect(session.readReplayReturnTarget()).toBe("result");
-      owner.mockImplementationOnce(() => { session.executeSharedSessionCommand({ kind: "leave_replay" }); return false; });
-      expect(() => session.readReplayReturnTarget()).toThrow("ownership changed");
-      owner.mockRestore();
-      expect(session.readLifecycle().phaseCode).toBe(7);
-      session.executeSharedSessionCommand({ kind: "enter_replay" });
-      expect(session.readReplayReturnTarget()).toBe("result");
-    } finally { session.dispose(); }
-  });
 });

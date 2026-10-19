@@ -75,7 +75,7 @@ const panel: UiPanel = { id: "menu", title: "Pause", anchor: "menu", localPose: 
   { kind: "button", id: "resume", label: "Resume", enabled: true, rect: normalizedRect(0.04, 0.2, 0.92, 0.08) },
   { kind: "status", id: "help", label: "方法", value: "A\n\nB\n", enabled: false, rect: normalizedRect(0.04, 0.4, 0.92, 0.2) }
 ] };
-const style = { theme: currentSharedGameUiFixture(0).theme, fontMeters: 0.04, font: { family: "system-ui, sans-serif", weight: 600, style: "normal", generation: 0 } as const,
+const style = { theme: currentSharedGameUiFixture("title").theme, fontMeters: 0.04, font: { family: "system-ui, sans-serif", weight: 600, style: "normal", generation: 0 } as const,
   locale: "ja", previousLabel: "前頁", nextLabel: "次頁", caption: "Build" };
 
 function prepare(context: MenuDrawingContext, source = panel, presentation = style) {
@@ -90,7 +90,7 @@ function prepare(context: MenuDrawingContext, source = panel, presentation = sty
 
 describe("Canvas measurement boundary and shared Menu painting", () => {
   it("keeps shared section headings and paints solid and gradient legend swatches after measurement", () => {
-    const view = createGameViewModel(currentSharedGameUiFixture(7, { ticks: 20, actions: [{ kind: "set_result_tab", tab: "analysis" }] }));
+    const view = createGameViewModel(currentSharedGameUiFixture("result", { ticks: 20, actions: [{ kind: "set_result_tab", tab: "analysis" }] }));
     const plot = view.panels.flatMap((panel) => panel.controls).find((control) => control.kind === "chart");
     if (plot?.kind !== "chart") throw new Error("Missing chart fixture");
     const legend = [
@@ -188,7 +188,7 @@ describe("Canvas measurement boundary and shared Menu painting", () => {
 
   it("projects shared chart baselines, anchors, rotation and series cursor colours without a second label layout", () => {
     for (const kind of ["map", "speed"] as const) {
-      const view = createGameViewModel(currentSharedGameUiFixture(7, { ticks: 20, actions: [
+      const view = createGameViewModel(currentSharedGameUiFixture("result", { ticks: 20, actions: [
         { kind: "set_result_tab", tab: "analysis" }, { kind: "set_analysis_chart", chart: kind }
       ] }));
       const chart = view.panels.flatMap((entry) => entry.controls).find((control) => control.kind === "chart");

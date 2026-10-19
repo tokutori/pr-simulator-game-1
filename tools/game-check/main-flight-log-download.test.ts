@@ -54,7 +54,7 @@ async function fixture(archive = false) {
   session.mark_briefing_ready();
   session.start_countdown(1);
   session.observe_countdown(session.countdown_token(), 1, true);
-  const { encodeTailLogicalInput } = await import("../../web/src/game/tail-session-codec.js");
+  const { encodeTailLogicalInput } = await import("../../web/src/game/tail-input.js");
   session.advance_tick_json(encodeTailLogicalInput({ controlLayout: "tail_incidence", noseUp: 0, turnRight: 0,
     desiredPitchRateRadiansPerSecond: 0, desiredYawRateRadiansPerSecond: 0, pilotPositionCommand: { kind: "hold" } }));
   session.abort();
@@ -195,11 +195,11 @@ describe("actual Tail main, facade and generated WASM flight log download", () =
 
   it("rejects native JS export error paths outside Result and Replay without changing their phase", async () => {
     const trial = await fixture();
-    const assertRejected = (phaseCode: number): void => {
-      expect(trial.session.phase_code()).toBe(phaseCode);
+    const assertRejected = (phase: number): void => {
+      expect(trial.session.phase_code()).toBe(phase);
       expect(() => trial.session.export_current_flight_record_json()).toThrow();
       expect(() => trial.session.export_flight_log_csv()).toThrow();
-      expect(trial.session.phase_code()).toBe(phaseCode);
+      expect(trial.session.phase_code()).toBe(phase);
     };
     trial.session.return_to_title();
     assertRejected(0);

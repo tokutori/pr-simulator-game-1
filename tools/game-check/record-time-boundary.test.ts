@@ -65,7 +65,7 @@ describe("actual current WASM fractional record time", () => {
       archive.openArchive(fractionalRecordJson(4, fraction));
       const stored = archive.readFlightLog("json");
       const clock = archive.readPlaybackClock();
-      const phase = archive.readLifecycle().phaseCode;
+      const phase = archive.readLifecycle().phase;
       const analysis = archive.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
       expect(analysis.samples).toHaveLength(6);
       expect(analysis.samples.at(-1)?.state.datumPositionNedMeters[0]).toBe(100);
@@ -81,7 +81,7 @@ describe("actual current WASM fractional record time", () => {
       expect(() => archive.queryRecordSample(duration + 1e-12)).toThrow(/OutsideRecordedRange/);
       expect(archive.readFlightLog("json")).toBe(stored);
       expect(archive.readPlaybackClock()).toEqual(clock);
-      expect(archive.readLifecycle().phaseCode).toBe(phase);
+      expect(archive.readLifecycle().phase).toBe(phase);
     } finally { archive.dispose(); }
   });
 
