@@ -161,7 +161,7 @@ repository checkerはこのfeature wiringと依存宣言を限定許可し、WAS
 registryのsource IDはopaqueであり、checkerは文書化されたregistry/sparse種別と既定registry fieldを検査する。未知種別・git/path/rename/alternate-registryを拒否し、IDの完全一致を依存原点の実証とは扱わない。`cargo metadata --no-deps`は全targetの宣言境界を検査し、active targetの解決・buildは各targetのCIで確認する。
 TailInputのwire型・ControlLayout・Hold/Setはformatを正本とし、既存generatorからreadonly TS型と構造validatorを生成する。
 camelCase入力のexact field検査はWeb adapterに保持し、wireのfield・variant・finite・normalized範囲は生成validatorへ委譲する。
-rate目標のdomain上限、WASMの1024-byte上限、decode完了前のtick更新禁止はRust境界で維持する。snapshot/queryと保存schemaの生成はこの入力契約から独立した移行対象である。
+rate目標のdomain上限、WASMの1024-byte上限、decode完了前のtick更新禁止はRust境界で維持する。snapshot・prepared launch・identityとAnalysis/Replay/Attract queryも共通Rust DTOから型と構造validatorを生成する。保存schemaの意味検証、記録との対応、時刻・世代の整合は各公開境界で保持する。
 Web基準のECMAScript `Number.toFixed` 書式は共有sessionの固定`ryu-js`で保持する。通常依存は同crateへ限定し、他crateへの直接重複配置をrepository checkerで拒否する。
 登録OSM構造物の描画用三角化は共有sessionの`earcut`へ委譲し、形状・寸法・色をWeb/WASMとNativeで共用する。engine adapterは既存APIによる面積重み法線と描画資源だけを生成し、coreや各adapterへ三角化依存・同じ形状規則を複製しない。
 登録地形・湖岸・島も共有sessionの`venue_terrain`を正本とする。既存WebのDSM補間・patch切抜き・岸線接続・島表面・linear頂点色・完成法線を共有で生成し、WASMとNativeはbulk属性を一度だけ座標投影する。原点・water datum・表示近似の意味とunknown identityの会場非表示を保持し、物理地形やcollisionへ接続しない。

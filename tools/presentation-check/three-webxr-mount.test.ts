@@ -18,7 +18,7 @@ import { createSceneFixture } from "../../web/src/presentation/fixtures.js";
 import { WebXrPresentationBackend } from "../../web/src/presentation/webxr-backend.js";
 import { PresentationRuntime } from "../../web/src/presentation/runtime.js";
 import { createInitialAppModel, gameSessionState, updateApp } from "../../web/src/app/app-state.js";
-import { createFlightFrameViewDraft, failFlightMenuFrame, finalizeFlightFrameView, flightMenuFailureRecovery } from "../../web/src/app/flight-frame-view.js";
+import { createFlightFrameViewDraft, finalizeFlightFrameView, menuFrameFailureRecovery } from "../../web/src/app/flight-frame-view.js";
 import { currentFlightDisplayFixture } from "../game-check/current-session-fixture.js";
 import { currentSharedGameUiFixture } from "../game-check/shared-game-ui-fixture.js";
 import { projectHeadPoint } from "../../web/src/render/contracts/viewer-frame.js";
@@ -302,7 +302,7 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
           } } : information === 4 ? { hudProfile: initial.difficulty.hudProfile } : {}),
           platform: { presentation_mode: "webxr" }
         }) };
-      const draft = createFlightFrameViewDraft(model, snapshot, viewer, "ja");
+      const draft = createFlightFrameViewDraft(model, viewer, "ja");
       if (draft.headHud.kind !== "visible") throw new Error("Missing Head HUD");
       const dimensions = headHudCanvasSize(draft.headHud.layer);
       const preparation = validateHeadHudPaint(prepareHeadHudPaint(new HudCanvasFixture(), draft.headHud, dimensions.width, dimensions.height), viewer);
@@ -325,7 +325,8 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
       if (evidence.viewer === null || evidence.viewer.source !== "runtime-derived" || evidence.view === null || evidence.view.headHud.kind !== "visible" || draw.headHud === null) throw new Error("Missing same-frame Head evidence");
       const hud = evidence.view.headHud;
       if (information === "flight-path-only") {
-        expect(hud.elements.map((element) => element.id)).toEqual(["head-flight-path"]);
+        expect(hud.elements).toHaveLength(1);
+        expect(hud.elements[0]?.content).toMatchObject({ kind: "attitude", geometry: { kind: "flight_path_only" } });
       }
       const layerProjections: Vector3[] = [];
       for (const [eyeIndex, eye] of evidence.viewer.eyes.entries()) {
@@ -417,7 +418,7 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
           telemetry: (mask & 1) !== 0, attitude: (mask & 2) !== 0, wind: (mask & 4) !== 0,
           flightPath: (mask & 8) !== 0, angleOfAttack: (mask & 16) !== 0, warnings: (mask & 32) !== 0
         }, platform: { presentation_mode: "webxr" } }) };
-      const draft = createFlightFrameViewDraft(model, snapshot, viewer, "ja");
+      const draft = createFlightFrameViewDraft(model, viewer, "ja");
       if (mask === 0 || mask === 32) {
         expect(draft.headHud.kind).toBe("absent");
         captured = finalizeFlightFrameView(draft, draft.headHud);
@@ -443,10 +444,11 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
       else {
         if (frameView.headHud.kind !== "visible" || draw.headHud === null) throw new Error("Missing Custom draw");
         const ids = frameView.headHud.elements.map((element) => element.id);
-        expect(ids.includes("head-attitude")).toBe((mask & 2) !== 0);
-        const attitude = frameView.headHud.elements.find((element) => element.kind === "attitude");
-        expect(ids.includes("head-flight-path")).toBe((mask & 8) !== 0 && (mask & 2) === 0);
-        if (attitude?.kind === "attitude") expect(attitude.flightPathAngleDegrees !== null).toBe((mask & 8) !== 0);
+        expect(ids.includes("hud-attitude")).toBe((mask & 2) !== 0 || (mask & 8) !== 0);
+        const attitude = frameView.headHud.elements.find((element) => element.content.kind === "attitude");
+        if (attitude?.content.kind === "attitude" && attitude.content.geometry.kind === "attitude") {
+          expect(attitude.content.geometry.flight_path_y_ratio !== null).toBe((mask & 8) !== 0);
+        }
         expect(draw.headDepth).toEqual([false, false, false]);
       }
     }
@@ -553,38 +555,33 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
   it("clears failed Menu pick and Head before guarded after-frame Screen recovery", async () => {
     view = centeredPanel("menu", composePose(eyePose(flight), head));
     session.run(100, head);
-    const valuesSnapshot = {
-    ...currentFlightDisplayFixture(5),
-    positionNed: { north: 0, east: 0, down: 0 }, velocityNed: { north: 0, east: 0, down: 0 },
-    attitudeBodyToNed: { w: 1, x: 0, y: 0, z: 0 }, pilotPositionMeters: 0, pilotVelocityMetersPerSecond: 0,
-    stamp: { kind: "exact" as const, tick: 0, fraction: 0, timeSeconds: 0 },
-    telemetry: { kind: "available" as const, value: { altitudeMeters: 0, airspeedMetersPerSecond: 0, groundspeedMetersPerSecond: 0,
-      windVelocityNedMetersPerSecond: { north: 0, east: 0, down: 0 }, angleOfAttackRadians: { kind: "unavailable" as const, reason: "undefined_flow_angle" as const }, sideslipAngleRadians: { kind: "unavailable" as const, reason: "undefined_flow_angle" as const },
-      rollRadians: 0, pitchRadians: 0, headingRadians: 0 } }
-  };
-    const snapshot = valuesSnapshot;
-    const gameSession = gameSessionState(5, 0, snapshot, true);
-    if (gameSession === null) throw new Error("Missing Flight fixture");
-    let model = { ...createInitialAppModel(), gameSession, presentation: { type: "ready", mode: "webxr" } as const,
-      sharedGameUi: currentSharedGameUiFixture(5, { platform: { presentation_mode: "webxr" } }) } as ReturnType<typeof createInitialAppModel>;
-    const draft = createFlightFrameViewDraft(model, snapshot, { source: "unavailable", reason: "invalid-view-geometry", trackingFromHead: head }, "ja");
-    const failure = failFlightMenuFrame(draft, view, "context-unavailable");
+    bundle.renderer.stopLoop();
+    let model = { ...createInitialAppModel(), presentation: { type: "ready", mode: "webxr" } as const } as ReturnType<typeof createInitialAppModel>;
     onUiAction = (action) => { model = updateApp(model, { type: "ui-action", action }).model; };
     actions.length = 0;
-    queueMicrotask(() => {
-      const message = flightMenuFailureRecovery(model, failure);
-      if (message !== null) model = updateApp(model, message).model;
+    const runtime = new PresentationRuntime({ ...bundle.renderer, dispose() {} }, [{
+      mode: "webxr", start: () => Promise.resolve(), stop: () => Promise.resolve(),
+      currentFrame: (timestamp, value, viewer, menu) => backend.currentFrame(timestamp, value, viewer, menu)
+    }], () => ({ viewModel: view, menu: { kind: "unavailable", reason: "context-unavailable" } }), () => undefined,
+    (mode, reason) => {
+      const frameModel = model;
+      queueMicrotask(() => {
+        const message = menuFrameFailureRecovery(model, frameModel, mode, reason);
+        if (message !== null) model = updateApp(model, message).model;
+      });
     });
-    view = failure.viewModel;
-    session.run(200, head);
-    expect(lastDraw(driver).panel).toBeNull();
-    expect(lastDraw(driver).headHud).toBeNull();
-    expect(actions).toEqual([{ type: "focus", controlId: null }]);
-    session.select(10_000, head);
-    expect(actions).toEqual([{ type: "focus", controlId: null }]);
-    expect(model.presentation).toEqual({ type: "ready", mode: "webxr" });
-    await Promise.resolve();
-    expect(model.presentation.type).toBe("transitioning");
+    try {
+      expect(await runtime.start("webxr")).toEqual({ ok: true });
+      session.run(200, head);
+      expect(lastDraw(driver).panel).toBeNull();
+      expect(lastDraw(driver).headHud).toBeNull();
+      expect(actions).toEqual([{ type: "focus", controlId: null }]);
+      session.select(10_000, head);
+      expect(actions).toEqual([{ type: "focus", controlId: null }]);
+      expect(model.presentation).toEqual({ type: "ready", mode: "webxr" });
+      await Promise.resolve();
+      expect(model.presentation.type).toBe("transitioning");
+    } finally { await runtime.dispose(); }
   });
 
   it("retains PilotEye, moving body offset, runtime head and IPD exactly once in both native eyes", async () => {

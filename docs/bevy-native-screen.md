@@ -104,7 +104,7 @@ Retry・タイトルへ戻る操作・操縦支援の変更でも画質を保持
 独立したroll入力は現行二系統モデルに追加しない。操作機器を解放した後のpilot目標保持も既存coreの契約を使用する。
 
 Resultは終了理由、確定距離、短い原因説明を表示し、入れ子の内部診断は「技術情報」に格納する。
-HUDの文言、表示値、表示条件と配置は共有Rust `GameUiHud`を使用する。Web基準のADI、FPI、方位目盛、風向針、AoA指示をretained ECSへ投影する。ADIのpitch係数・clamp、FPI位置、方位ラベル、AoA位置は共有Rustのgeometry descriptorで導出し、物理値を再計算しない。
+HUDの文言、表示値、表示条件と配置は共有Rust `GameUiHud`を使用する。順序付きgroupと型付きnodeをretained ECSへ投影し、Text・Attitude・HeadingTape・Direction・LinearGaugeの種類だけをadapterが実装する。ADIのpitch係数・clamp、FPI位置、方位ラベル、AoA位置は共有geometryを使用し、個別の計器一覧や物理値を再定義しない。同型nodeの追加と文言変更は共有providerだけで完結する。
 Customで姿勢cueを非表示にしても、飛行経路cueを選択した場合は独立したFPI領域を表示する。Replay入場時は共有UIで選択されたcameraを毎回適用し、Flight・Resultの視点切替と分離する。
 一時停止中は停止理由と再開方法を優先し、未回復の再開ボタンを非活性で表示する。
 メニューの幅、最大scroll高、候補列数、CTAの順序と最低高は共有Viewのlogical pixelを使用する。

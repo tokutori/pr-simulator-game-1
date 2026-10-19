@@ -12,7 +12,7 @@ describe("Non-interactive Head HUD contract", () => {
     expectTypeOf<VisibleHeadHud["anchor"]>().toEqualTypeOf<"head">();
     expectTypeOf<VisibleHeadHud>().not.toHaveProperty("controls");
     expectTypeOf<HeadHudElement>().not.toHaveProperty("action");
-    expectTypeOf<Extract<HeadHudElement, { kind: "angle-of-attack" }>["ratio"]>().toEqualTypeOf<number>();
+    expectTypeOf<Extract<HeadHudElement["content"], { kind: "linear_gauge" }>["position_ratio"]>().toEqualTypeOf<number | null>();
     const hud = createHeadHudFixture(currentSharedGameUiFixture().theme);
     const view = { ...createSceneFixture("Flight"), headHud: hud };
     expect(() => { validateUiViewModel(view); }).not.toThrow();
@@ -64,17 +64,12 @@ describe("Non-interactive Head HUD contract", () => {
     const bounds = { left: 0, top: 0.7, width: 0.1, height: 0.1 };
     const geometry = { kind: "attitude" as const, horizon: { rotation_degrees: 0, pitch_offset_ratio: 0 }, flight_path_y_ratio: null };
     const invalid: readonly HeadHudElement[] = [
-      { id: "attitude", label: "ADI", bounds, kind: "attitude", rollDegrees: Number.NaN, pitchDegrees: 0, flightPathAngleDegrees: null, geometry },
-      { id: "path", label: "ADI", bounds, kind: "attitude", rollDegrees: 0, pitchDegrees: 0, flightPathAngleDegrees: Number.NaN, geometry },
-      { id: "heading", label: "HDG", bounds, kind: "heading", degrees: Number.NaN, value: "invalid", ticks: [] },
-      { id: "wind", label: "WIND", bounds, kind: "wind", degrees: Number.NaN, value: "invalid" },
-      { id: "aoa", label: "AoA", bounds, kind: "angle-of-attack", degrees: Number.NaN, value: "invalid", ratio: 0.5 },
-      { id: "path", label: "PATH", bounds, kind: "flight-path", degrees: Number.NaN, value: "invalid", yRatio: 0.5 },
-      { id: "geometry", label: "ADI", bounds, kind: "attitude", rollDegrees: 0, pitchDegrees: 0, flightPathAngleDegrees: null,
-        geometry: { ...geometry, horizon: { rotation_degrees: Number.NaN, pitch_offset_ratio: 0 } } },
-      { id: "geometry", label: "HDG", bounds, kind: "heading", degrees: 0, value: "0°", ticks: [{ position_ratio: 1.1, major: true, label: "N" }] },
-      { id: "geometry", label: "AoA", bounds, kind: "angle-of-attack", degrees: 5, value: "5", ratio: Number.NaN },
-      { id: "geometry", label: "PATH", bounds, kind: "flight-path", degrees: 5, value: "5", yRatio: -0.1 }
+      { id: "attitude", label: "ADI", bounds, content: { kind: "attitude", value: "invalid",
+        geometry: { ...geometry, horizon: { rotation_degrees: Number.NaN, pitch_offset_ratio: 0 } } } },
+      { id: "path", label: "PATH", bounds, content: { kind: "attitude", value: "invalid", geometry: { kind: "flight_path_only", y_ratio: -0.1 } } },
+      { id: "heading", label: "HDG", bounds, content: { kind: "heading_tape", value: "invalid", ticks: [{ position_ratio: 1.1, major: true, label: "N" }] } },
+      { id: "wind", label: "WIND", bounds, content: { kind: "direction", rotation_degrees: Number.NaN, value: "invalid" } },
+      { id: "aoa", label: "AoA", bounds, content: { kind: "linear_gauge", value: "invalid", minimum_label: "0", maximum_label: "1", position_ratio: Number.NaN } }
     ];
     for (const element of invalid) expect(() => { validateHeadHudLayer({ ...hud, elements: [element] }); }).toThrow(RangeError);
   });

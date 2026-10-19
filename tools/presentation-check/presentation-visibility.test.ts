@@ -209,10 +209,12 @@ describe("App update to Screen DOM and HUD lifecycle", () => {
     });
     const observation = currentSharedGameUiFixture(5);
     if (observation.hud === null) throw new Error("Missing shared HUD");
-    app.send({ type: "shared-game-ui-observed", view: { ...observation, hud: { ...observation.hud, readouts: "ALT 7.0 m" } } });
+    app.send({ type: "shared-game-ui-observed", view: { ...observation, hud: { ...observation.hud,
+      groups: observation.hud.groups.map((group) => ({ ...group, nodes: group.nodes.map((node) => node.id === "hud-primary-readouts"
+        ? { ...node, content: { ...node.content, value: "ALT 7.0 m" } } : node) })) } } });
     expect(app.hudRoot.hidden).toBe(true);
     expect(app.renderedTicks.at(-1)).toBe(20);
-    expect(app.hudRoot.querySelector(".flight-hud-readouts")?.textContent).toContain("ALT 7.0 m");
+    expect(app.hudRoot.querySelector('[data-node="hud-primary-readouts"] output')?.textContent).toContain("ALT 7.0 m");
     app.send({ type: "page-restored" });
     completeScreenRecovery(app);
     expect(app.hudRoot.hidden).toBe(false);

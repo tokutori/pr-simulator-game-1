@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Euler, Matrix4, PerspectiveCamera, Quaternion, StereoCamera, Vector3 } from "three";
-import { currentSharedGameUiFixture, currentSharedHudFixture } from "../game-check/shared-game-ui-fixture.js";
+import { currentSharedGameUiFixture, currentSharedHeadHudFixture as currentSharedHudFixture, mapSharedHudNodes, sharedHudNode, sharedHudNodes } from "../game-check/shared-game-ui-fixture.js";
 import { createHeadHudView, DEFAULT_HEAD_HUD_PROFILE, headHudElementValue } from "../../web/src/presentation/head-hud-view.js";
 import { validateHeadHudLayer } from "../../web/src/render/contracts/head-hud.js";
 import { IDENTITY_POSE, pose, quaternion, transformPoint, vec3 } from "../../web/src/render/contracts/math.js";
@@ -20,28 +20,63 @@ function configuredViewer(aspect = 1280 / 720, fieldOfView = 60, near = 0.05): V
 }
 
 describe("Pure Head Flight HUD layout", () => {
+  it.each(["row", "grid"] as const)("preserves %s readout grouping and instrument order across both clear-region bands", (kind) => {
+    const shared = currentSharedHudFixture({ informationCode: 0 });
+    const nodes = ["first", "second"].map((id) => ({ id, label: id, content: { kind: "text" as const, tone: "normal" as const, value: "共通" } }));
+    const model = { ...shared, groups: shared.groups.map((group) => group.placement === "readouts"
+      ? { ...group, layout: kind === "row" ? { kind: "row" as const } : { kind: "grid" as const, columns: 2 }, nodes } : group) };
+    const view = createHeadHudView(model, configuredViewer(), "ja");
+    if (view.kind !== "visible") throw new Error("Missing grouped readout view");
+    const first = view.layer.elements[0];
+    const second = view.layer.elements[1];
+    expect(first?.id).toBe("first");
+    expect(second?.id).toBe("second");
+    expect(first?.bounds.top).toBe(second?.bounds.top);
+    expect(first?.bounds.left).toBeLessThan(second?.bounds.left ?? 0);
+    for (const [index, element] of view.layer.elements.entries()) {
+      const previous = view.layer.elements[index - 1];
+      if (previous !== undefined) expect(element.bounds.top).toBeGreaterThanOrEqual(previous.bounds.top);
+    }
+  });
+
+  it("projects an additional existing-kind readout and preserves node order when the labels change", () => {
+    const shared = currentSharedHudFixture({ informationCode: 1 });
+    const node = { id: "new-readout", label: "姿勢 PITCH", content: { kind: "text" as const, tone: "normal" as const, value: "共通表示" } };
+    const model = { ...shared, groups: shared.groups.map((group, index) => ({ ...group, nodes: index === 0 ? [...group.nodes, node] : group.nodes })) };
+    const view = createHeadHudView(model, configuredViewer(), "ja");
+    if (view.kind !== "visible") throw new Error("Missing additional readout layout");
+    expect(view.layer.elements.map((element) => element.id)).toEqual(sharedHudNodes(model).map((element) => element.id));
+    expect(view.layer.elements.find((element) => element.id === node.id)?.content).toBe(node.content);
+    const changed = createHeadHudView(mapSharedHudNodes(model, (element) => ({ ...element, label: "変更済み" })), configuredViewer(), "ja");
+    if (changed.kind !== "visible") throw new Error("Missing changed-label layout");
+    expect(changed.layer.elements.map((element) => element.id)).toEqual(view.layer.elements.map((element) => element.id));
+  });
+
   it("projects shared geometry overrides and layout opacity without deriving them from angles", () => {
     const shared = currentSharedHudFixture({ informationCode: 0 });
-    const geometry = {
-      adi: { kind: "attitude" as const, horizon: { rotation_degrees: 17, pitch_offset_ratio: 0.21 }, flight_path_y_ratio: 0.73 },
-      heading_ticks: [{ position_ratio: 0.24, major: true, label: "CUSTOM" }, { position_ratio: 0.76, major: false, label: "" }],
-      angle_of_attack_ratio: 0.5
-    };
+    const adi = { kind: "attitude" as const, horizon: { rotation_degrees: 17, pitch_offset_ratio: 0.21 }, flight_path_y_ratio: 0.73 };
+    const ticks = [{ position_ratio: 0.24, major: true, label: "CUSTOM" }, { position_ratio: 0.76, major: false, label: "" }];
     const theme = { ...shared.theme, text: "#123456", panel_background: "#234567" };
-    const model = { ...shared, geometry, theme, layout: { ...shared.layout, opacity: 0.41 },
-      attitude: { rollDegrees: -45, pitchDegrees: -25 }, flightPathAngleDegrees: -15,
-      headingDegrees: 125, heading: "SHARED HEADING 125.75°", angleOfAttackDegrees: 5, angleOfAttack: "5.0°" };
+    const model = mapSharedHudNodes({ ...shared, theme, layout: { ...shared.layout, opacity: 0.41 } }, (node) => {
+      switch (node.content.kind) {
+        case "attitude": return { ...node, content: { ...node.content, geometry: adi } };
+        case "heading_tape": return { ...node, content: { ...node.content, value: "SHARED HEADING 125.75°", ticks } };
+        case "linear_gauge": return { ...node, content: { ...node.content, value: "5.0°", position_ratio: 0.5 } };
+        case "text":
+        case "direction": return node;
+      }
+    });
     const before = JSON.stringify(model);
     const view = createHeadHudView(model, configuredViewer(), "ja");
     if (view.kind !== "visible") throw new Error("Expected shared geometry override HUD");
-    const attitude = view.layer.elements.find((element) => element.kind === "attitude");
-    const heading = view.layer.elements.find((element) => element.kind === "heading");
-    const aoa = view.layer.elements.find((element) => element.kind === "angle-of-attack");
-    expect(attitude?.kind === "attitude" && attitude.geometry).toBe(geometry.adi);
-    expect(heading?.kind === "heading" && heading.ticks).toBe(geometry.heading_ticks);
+    const attitude = view.layer.elements.find((element) => element.content.kind === "attitude");
+    const heading = view.layer.elements.find((element) => element.content.kind === "heading_tape");
+    const aoa = view.layer.elements.find((element) => element.content.kind === "linear_gauge");
+    expect(attitude?.content.kind === "attitude" && attitude.content.geometry).toBe(adi);
+    expect(heading?.content.kind === "heading_tape" && heading.content.ticks).toBe(ticks);
     if (heading === undefined) throw new Error("Missing shared heading element");
-    expect(headHudElementValue(heading)).toBe(model.heading);
-    expect(aoa).toMatchObject({ degrees: 5, ratio: 0.5 });
+    expect(headHudElementValue(heading)).toBe("SHARED HEADING 125.75°");
+    expect(aoa?.content).toMatchObject({ value: "5.0°", position_ratio: 0.5 });
     expect(view.layer.theme).toBe(theme);
     expect(view.layer.backgroundAlpha).toBe(0.41);
     expect(JSON.stringify(model)).toBe(before);
@@ -50,12 +85,12 @@ describe("Pure Head Flight HUD layout", () => {
   it("keeps shared FlightPathOnly geometry independent of attitude and horizontal angle gauges", () => {
     const shared = currentSharedHudFixture({ informationCode: 4,
       hudProfile: { ...profile, attitude: false, flightPath: true } });
-    const model = { ...shared, flightPathAngleDegrees: 28,
-      geometry: { ...shared.geometry, adi: { kind: "flight_path_only" as const, y_ratio: 0.37 } } };
+    const model = mapSharedHudNodes(shared, (node) => node.content.kind === "attitude"
+      ? { ...node, content: { ...node.content, value: "28°", geometry: { kind: "flight_path_only", y_ratio: 0.37 } } } : node);
     const view = createHeadHudView(model, configuredViewer(), "ja");
     if (view.kind !== "visible") throw new Error("Expected shared FlightPathOnly HUD");
-    expect(view.layer.elements.some((element) => element.kind === "attitude")).toBe(false);
-    expect(view.layer.elements.find((element) => element.kind === "flight-path")).toMatchObject({ degrees: 28, yRatio: 0.37 });
+    expect(view.layer.elements.find((element) => element.content.kind === "attitude")?.content)
+      .toMatchObject({ value: "28°", geometry: { kind: "flight_path_only", y_ratio: 0.37 } });
   });
 
   it("reserves a small upper-right FPS card outside the forward clear region without changing physical readouts", () => {
@@ -66,7 +101,7 @@ describe("Pure Head Flight HUD layout", () => {
     expect(() => { validateHeadHudLayer(view.layer); }).not.toThrow();
     const fps = view.layer.elements.find((element) => element.id === "head-frame-rate");
     if (fps === undefined) throw new Error("Missing frame rate card");
-    expect(fps).toMatchObject({ kind: "text", value: "FPS 72.5", label: "" });
+    expect(fps).toMatchObject({ content: { kind: "text", value: "FPS 72.5" }, label: "" });
     expect(fps.bounds.left).toBeGreaterThan(0.5);
     expect(fps.bounds.width).toBeLessThan(0.25);
     for (const element of view.layer.elements.filter((element) => element !== fps)) {
@@ -86,7 +121,7 @@ describe("Pure Head Flight HUD layout", () => {
       expect(view.layer.theme).toBe(theme);
       expect(view.layer.backgroundAlpha).toBe(theme.hud_opacity);
       expect(view.layer.elements).toHaveLength(1);
-      expect(view.layer.elements[0]).toMatchObject({ id: "head-frame-rate", value: rate === null ? "FPS —" : "FPS 90.0" });
+      expect(view.layer.elements[0]).toMatchObject({ id: "head-frame-rate", content: { value: rate === null ? "FPS —" : "FPS 90.0" } });
       expect(() => { validateHeadHudLayer(view.layer); }).not.toThrow();
     }
     expect(createHeadHudView(null, configuredViewer(), "ja").kind).toBe("absent");
@@ -107,26 +142,27 @@ describe("Pure Head Flight HUD layout", () => {
   });
 
   it.each([
-    { code: 0, kinds: ["attitude", "heading", "wind", "angle-of-attack"] },
-    { code: 1, kinds: ["attitude", "heading"] },
+    { code: 0, kinds: ["attitude", "heading_tape", "direction", "linear_gauge"] },
+    { code: 1, kinds: ["attitude", "heading_tape"] },
     { code: 2, kinds: [] },
-    { code: 3, kinds: ["attitude", "heading"] },
-    { code: 4, kinds: ["attitude", "heading", "wind", "angle-of-attack"] }
+    { code: 3, kinds: ["attitude", "heading_tape"] },
+    { code: 4, kinds: ["attitude", "heading_tape", "direction", "linear_gauge"] }
   ] as const)("uses the shared Information model for level $code", ({ code, kinds }) => {
     const model = currentSharedHudFixture({ informationCode: code, ...(code === 4 ? { hudProfile: profile } : {}) });
     const before = JSON.stringify(model);
     const view = createHeadHudView(model, configuredViewer(), "ja");
     if (view.kind !== "visible") throw new Error("Expected visible Flight HUD");
-    expect(view.layer.elements.filter((element) => element.kind !== "text").map((element) => element.kind)).toEqual(kinds);
-    expect(view.layer.elements.find((element) => element.kind === "attitude")).toMatchObject(model.attitude ?? {});
+    expect(view.layer.elements.filter((element) => element.content.kind !== "text").map((element) => element.content.kind)).toEqual(kinds);
+    expect(view.layer.elements.map((node) => node.id)).toEqual(sharedHudNodes(model).map((node) => node.id));
+    for (const node of view.layer.elements) expect(node.content).toBe(sharedHudNode(model, node.id).content);
     expect(JSON.stringify(model)).toBe(before);
-    if (code === 0 || code === 4) expect(view.layer.elements.find((element) => element.id === "head-pilot"))
-      .toMatchObject({ kind: "text", label: model.labels.pilotPosition, value: model.pilotPosition });
+    if (code === 0 || code === 4) expect(view.layer.elements.find((element) => element.id === "hud-pilot-position"))
+      .toMatchObject(sharedHudNode(model, "hud-pilot-position"));
     expect(Object.isFrozen(view.layer.elements)).toBe(true);
     expect(() => { validateHeadHudLayer(view.layer); }).not.toThrow();
     if (code === 3) {
-      const readouts = view.layer.elements.find((element) => element.kind === "text" && element.id === "head-readouts");
-      expect(readouts?.kind === "text" && readouts.value.includes("対象機の実機構成は未確認")).toBe(true);
+      const readouts = view.layer.elements.find((element) => element.id === "hud-primary-readouts");
+      expect(readouts?.content.value).toContain("対象機の実機構成は未確認");
     }
   });
 
@@ -135,30 +171,30 @@ describe("Pure Head Flight HUD layout", () => {
       telemetry: (mask & 1) !== 0, attitude: (mask & 2) !== 0, wind: (mask & 4) !== 0,
       flightPath: (mask & 8) !== 0, angleOfAttack: (mask & 16) !== 0, warnings: (mask & 32) !== 0
     };
-    const model = { ...currentSharedHudFixture({ informationCode: 4, hudProfile: custom }), warning: custom.warnings ? "飛行計算を停止した" : null };
+    const model = currentSharedHudFixture({ informationCode: 4, hudProfile: custom });
     const view = createHeadHudView(model, configuredViewer(), "ja");
-    if (mask === 0) {
+    if (mask === 0 || mask === 32) {
       expect(view).toEqual({ kind: "absent" });
       return;
     }
     if (view.kind !== "visible") throw new Error("Expected visible Custom HUD");
     const byId = new Map(view.layer.elements.map((element) => [element.id, element]));
-    expect(byId.has("head-attitude")).toBe(custom.attitude);
-    expect(byId.has("head-heading")).toBe(custom.attitude);
-    expect(byId.has("head-pilot")).toBe(custom.telemetry);
-    expect(byId.has("head-wind")).toBe(custom.wind);
-    expect(byId.has("head-aoa")).toBe(custom.angleOfAttack);
-    expect(byId.has("head-warning")).toBe(custom.warnings);
-    expect(byId.has("head-flight-path")).toBe(custom.flightPath && !custom.attitude);
-    if (custom.attitude) expect(byId.get("head-attitude")).toMatchObject({ flightPathAngleDegrees: custom.flightPath ? model.flightPathAngleDegrees : null });
+    expect(byId.has("hud-attitude")).toBe(custom.attitude || custom.flightPath);
+    expect(byId.has("hud-heading")).toBe(custom.attitude);
+    expect(byId.has("hud-pilot-position")).toBe(custom.telemetry);
+    expect(byId.has("hud-wind")).toBe(custom.wind);
+    expect(byId.has("hud-angle-of-attack")).toBe(custom.angleOfAttack);
+    expect(byId.has("hud-controller-failure")).toBe(false);
+    if (custom.attitude) expect(byId.get("hud-attitude")?.content).toEqual(sharedHudNode(model, "hud-attitude").content);
   });
 
   it("preserves undefined flow angles without inventing instrument values", () => {
-    const model = { ...currentSharedHudFixture(), angleOfAttackDegrees: null, angleOfAttack: "迎角未定義" };
+    const model = mapSharedHudNodes(currentSharedHudFixture({ informationCode: 0 }), (node) => node.content.kind === "linear_gauge"
+      ? { ...node, content: { ...node.content, value: "迎角未定義", position_ratio: null } } : node);
     const view = createHeadHudView(model, configuredViewer(), "ja");
     if (view.kind !== "visible") throw new Error("Missing undefined-angle HUD");
-    expect(view.layer.elements.find((element) => element.id === "head-aoa")).toMatchObject({ kind: "text", value: model.angleOfAttack });
-    expect(view.layer.elements.some((element) => element.kind === "attitude" || element.kind === "heading")).toBe(true);
+    expect(view.layer.elements.find((element) => element.id === "hud-angle-of-attack")?.content).toMatchObject({ kind: "linear_gauge", value: "迎角未定義", position_ratio: null });
+    expect(view.layer.elements.some((element) => element.content.kind === "attitude" || element.content.kind === "heading_tape")).toBe(true);
   });
 
   it("fits asymmetric canted sheared views and keeps each card inside both eye clips", () => {

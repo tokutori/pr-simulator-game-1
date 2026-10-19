@@ -18,6 +18,7 @@ export type MenuControlTextRole = "label" | "value" |
 
 export type MenuTextSlot =
   | { readonly kind: "fixed"; readonly role: MenuFixedTextRole }
+  | { readonly kind: "section"; readonly role: "heading"; readonly sectionId: string }
   | { readonly kind: "control"; readonly controlId: string; readonly role: MenuControlTextRole; readonly index: number };
 
 export interface MenuFontIdentity {
@@ -35,6 +36,7 @@ export interface MenuTextRequest {
   readonly fontMeters: number;
   readonly font: MenuFontIdentity;
   readonly chartText?: UiChart["presentation"]["x_axis"];
+  readonly legend?: UiChart["presentation"]["legend"][number];
   readonly widthMeters: number;
 }
 
@@ -54,6 +56,7 @@ export interface MenuTextMeasurement {
 }
 
 export interface MenuLayoutRow {
+  readonly heading: Readonly<{ id: string; label: string }> | null;
   readonly controls: readonly Readonly<{ control: UiControl; left: number; width: number }>[];
 }
 
@@ -86,6 +89,7 @@ export interface MenuDocument {
   readonly request: MenuLayoutRequest;
   readonly title: MenuTextLayout;
   readonly caption: MenuTextLayout;
+  readonly sectionHeadings: readonly MenuTextLayout[];
   readonly controls: readonly MenuControlLayout[];
   readonly contentHeightMeters: number;
   readonly previous: MenuTextMeasurement;

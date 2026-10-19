@@ -5,7 +5,8 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { initSync } from "../../web/pkg/birdman_game_wasm.js";
 import { createInitialAppModel, updateApp } from "../../web/src/app/app-state.js";
-import type { AppModel, GameSessionOperation, GameSessionProjection } from "../../web/src/app/app-state.js";
+import type { AppModel, GameSessionProjection } from "../../web/src/app/app-state.js";
+import type { SessionCommand } from "../../web/src/app/game-ui-types.js";
 import { createAppSession } from "../../web/src/app/session-factory.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
 import { sharedGameUiPlatform } from "../game-check/shared-game-ui-fixture.js";
@@ -46,7 +47,7 @@ describe("Phone VR UI Gamepad connection ownership", () => {
       }
       fixture.actions.length = 0;
       fixture.frame();
-      expect(fixture.operations).not.toContain("start-flight");
+      expect(fixture.operations).not.toContainEqual({ kind: "start_countdown" });
       expect(fixture.session.readLifecycle().phaseCode).toBe(3);
       expect(fixture.actions.filter((action) => action.type === "activate" || action.type === "back")).toEqual([]);
       const selected = change === "lower index addition" ? first : replacement;
@@ -57,10 +58,10 @@ describe("Phone VR UI Gamepad connection ownership", () => {
       fixture.frame();
       selected.buttons = [{ pressed: true }, { pressed: false }];
       fixture.frame();
-      expect(fixture.operations).toEqual(["start-flight"]);
+      expect(fixture.operations).toEqual([{ kind: "start_countdown" }]);
       expect(fixture.session.readLifecycle().phaseCode).toBe(4);
       fixture.frame();
-      expect(fixture.operations).toEqual(["start-flight"]);
+      expect(fixture.operations).toEqual([{ kind: "start_countdown" }]);
     }
   );
 });
@@ -404,10 +405,10 @@ function gamepad(index: number, buttons: readonly boolean[] = [false, false]): T
 
 async function createFixture(browser: GamepadBrowser, options: { readonly autoStart?: boolean; readonly initialSample?: boolean } = {}) {
   const session = createAppSession({ controlModeCode: 0, seedLow: 21, seedHigh: 22 });
-  session.executeOperation("open-setup");
-  session.executeOperation("prepare");
+  session.executeSharedSessionCommand({ kind: "open_setup" });
+  session.executeSharedSessionCommand({ kind: "prepare" });
   const actions: UiAction[] = [];
-  const operations: GameSessionOperation[] = [];
+  const operations: SessionCommand[] = [];
   let model: AppModel = { ...createInitialAppModel(), presentation: { type: "ready", mode: "phone-vr" } };
   const projection = (): GameSessionProjection => session.readGameSessionProjection();
   const platform = sharedGameUiPlatform({ presentation_mode: "phone_vr" });
@@ -428,7 +429,7 @@ async function createFixture(browser: GamepadBrowser, options: { readonly autoSt
         model = transition.model;
         for (const command of transition.effects) {
           if (command.type !== "shared-game-session-command") continue;
-          if (command.command.kind === "start_countdown") operations.push("start-flight");
+          if (command.command.kind === "start_countdown") operations.push(command.command);
           session.executeSharedSessionCommand(command.command);
           model = updateApp(model, { type: "game-operation-completed", requestId: command.requestId, ...projection() }).model;
         }

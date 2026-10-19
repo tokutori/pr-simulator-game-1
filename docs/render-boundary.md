@@ -77,7 +77,7 @@ surfaceのbase/spanは既存Webと同じFloat32丸めを保ち、構造材anchor
 WASMは既存Lake系と同じ所有型typed-arrayを返し、Three.js/BevyはGPU resourceとmaterialを所有する。
 法線は完全な半翼topologyに既存area-weighted APIを適用し、material分割後もその法線を使う。
 Webの藍染textureと透明filmを保持し、Nativeの主翼skin/filmを共有形状へ投影する。
-Nativeの藍染texture、cockpit・rodの全面移植とVR・描画性能の受入は後続範囲であり、主翼cutで#96全体を完了扱いにしない。
+Nativeにも藍染texture、cockpit・rod・尾翼の表示実装を接続している。全Scene・VR・描画性能の受入は未完了であり、表示実装の存在と#96全体の受入を区別する。
 GPU resource handleはadapter内部に保持し、上位ではasset IDを使用する。
 dispose・resize・world load・frame描画・capability取得の所有者と失敗時状態を定義する。
 PresentationRuntimeのdisposeはloop停止・backend停止・renderer解放を独立して全試行する。

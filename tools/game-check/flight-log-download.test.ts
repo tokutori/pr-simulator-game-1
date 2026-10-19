@@ -67,7 +67,7 @@ const analysisFixture = (() => {
   try {
     launchCurrentSession(session);
     session.flightPort.advance_tick_json(neutralTailInput);
-    session.executeOperation("abort");
+    session.executeSharedSessionCommand({ kind: "abort" });
     return session.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
   } finally { session.dispose(); }
 })();
@@ -79,7 +79,7 @@ describe("flight log download state and common presentation", () => {
     { label: "Replay Analysis", phaseCode: 9, resultTab: "summary", replayViewMode: "analysis" },
     { label: "Replay Telemetry", phaseCode: 9, resultTab: "summary", replayViewMode: "telemetry" },
     { label: "Replay Cinematic", phaseCode: 9, resultTab: "summary", replayViewMode: "cinematic" }
-  ] as const)("preserves shared download sections and flow or normalized navigation in $label", ({ phaseCode, resultTab, replayViewMode }) => {
+  ] as const)("preserves shared ordered download sections and navigation across backends in $label", ({ phaseCode, resultTab, replayViewMode }) => {
     for (const mode of ["screen", "phone-vr", "webxr"] as const) {
       for (const analysisChart of ["map", "altitude", "speed"] as const) {
         const actions: GameUiAction[] = phaseCode === 7
@@ -100,34 +100,26 @@ describe("flight log download state and common presentation", () => {
         expect(panel.sections.length).toBeGreaterThan(0);
         const exports = panel.controls.filter((control) => control.id.startsWith("game-flight-log-"));
         const analysisFlow = phaseCode === 7 && resultTab === "analysis" || phaseCode === 9 && replayViewMode === "analysis";
-        const flow = mode === "screen";
-        const groupedFlow = flow && (analysisFlow || phaseCode === 9);
-        expect(exports.map((control) => control.id)).toEqual(groupedFlow
-          ? ["game-flight-log-notice", "game-flight-log-csv", "game-flight-log-json"]
-          : ["game-flight-log-csv", "game-flight-log-json", "game-flight-log-notice"]);
-        if (flow) {
-          expect(panel.sections).toEqual(analysisFlow ? [
-            { id: "analysis-tabs", label: "", layout: "row" }, { id: "analysis-chart", label: "", layout: "column" },
-            { id: "analysis-cursor", label: "", layout: "column" }, { id: "analysis-details", label: "", layout: "column" },
-            { id: "analysis-navigation", label: "", layout: "row" }
-          ] : phaseCode === 9 ? [
-            { id: "replay-status", label: "", layout: "column" },
+        expect(exports.map((control) => control.id)).toEqual(["game-flight-log-csv", "game-flight-log-json", "game-flight-log-notice"]);
+        const analysisSections = [
+          { id: "analysis-tabs", label: "", layout: "row" }, { id: "analysis-chart", label: "", layout: "column" },
+          { id: "analysis-cursor", label: "", layout: "column" }
+        ];
+        expect(panel.sections).toEqual([
+          ...(analysisFlow ? analysisSections : []),
+          ...(phaseCode === 7 ? analysisFlow ? [
+            { id: "analysis-details", label: "", layout: "column" }, { id: "analysis-navigation", label: "", layout: "row" }
+          ] : [{ id: "result-summary", label: "", layout: "column" }] : [{ id: "replay-view", label: "", layout: "row" }]),
+          ...(phaseCode === 7 ? [{ id: "result-navigation", label: "", layout: "row" }] : [
+            ...(!analysisFlow ? [{ id: "replay-status", label: "", layout: "column" }] : []),
             ...(replayViewMode === "telemetry" ? [{ id: "replay-cursor", label: "", layout: "column" }] : []),
-            { id: "replay-actions", label: "", layout: "row" }
-          ] : [
-            "game-state", "game-result-analysis", "game-result-open-analysis", "game-result-configuration",
-            "game-result-terminal", "technical", "game-result-replay", "game-result-retry", "game-result-setup",
-            "game-result-title", "game-flight-log-csv", "game-flight-log-json", "game-flight-log-notice"
-          ].map((id) => ({ id, label: "", layout: "column" })));
-          expect(exports.map((control) => control.section)).toEqual(analysisFlow
-            ? ["analysis-details", "analysis-navigation", "analysis-navigation"]
-            : phaseCode === 9 ? ["replay-status", "replay-actions", "replay-actions"]
-              : ["game-flight-log-csv", "game-flight-log-json", "game-flight-log-notice"]);
-          expect(panel.controls.map((control) => control.id)).toEqual(panel.sections.flatMap((section) =>
-            panel.controls.filter((control) => control.section === section.id).map((control) => control.id)));
-        } else {
-          expect(panel.sections.map((section) => section.layout)).toEqual(panel.sections.map(() => "normalized"));
-        }
+            { id: "replay-actions", label: "", layout: "row" }, { id: "replay-navigation", label: "", layout: "row" }
+          ]),
+          { id: "flight-log-actions", label: "飛行ログ", layout: "row" }, { id: "flight-log-notice", label: "", layout: "column" }
+        ]);
+        expect(exports.map((control) => control.section)).toEqual(["flight-log-actions", "flight-log-actions", "flight-log-notice"]);
+        expect(panel.controls.map((control) => control.id)).toEqual(panel.sections.flatMap((section) =>
+          panel.controls.filter((control) => control.section === section.id).map((control) => control.id)));
         expect([panel.size.width, panel.size.height].every(Number.isFinite)).toBe(true);
         expect(panel.size.width).toBeGreaterThan(0);
         expect(panel.size.height).toBeGreaterThan(0);
@@ -139,7 +131,7 @@ describe("flight log download state and common presentation", () => {
           expect(control.rect.x + control.rect.width).toBeLessThanOrEqual(1);
           expect(control.rect.y + control.rect.height).toBeLessThanOrEqual(1);
         }
-        for (const exported of flow ? [] : exports) {
+        for (const exported of exports) {
           for (const control of panel.controls) {
             if (control.id === exported.id) continue;
             const horizontal = Math.min(exported.rect.x + exported.rect.width, control.rect.x + control.rect.width)

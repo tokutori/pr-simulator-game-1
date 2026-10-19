@@ -301,7 +301,7 @@ describe("screen UI DOM patching", () => {
     }
   });
 
-  it.each(["Result", "Replay"] as const)("preserves normalized %s analysis layout and hidden chart updates", async (scene) => {
+  it.each(["Result", "Replay"] as const)("preserves ordered %s analysis layout and hidden chart updates", async (scene) => {
     const window = new Window();
     Object.assign(globalThis, { window, document: window.document });
     const { ScreenUiAdapter } = await import("../../web/src/presentation/screen-ui.js");
@@ -330,7 +330,7 @@ describe("screen UI DOM patching", () => {
         anchor: "menu",
         localPose: IDENTITY_POSE,
         size: { width: 2.4, height: 1.8 },
-        sections: [{ id: "analysis", label: "", layout: "normalized" }],
+        sections: [{ id: "analysis", label: "", layout: "column" }],
         controls: [
           { kind: "button", id: "map", section: "analysis", label: "Map", enabled: true, rect: normalizedRect(0.08, 0.7, 0.25, 0.07) },
           chart
@@ -345,15 +345,13 @@ describe("screen UI DOM patching", () => {
     const figure = root.querySelector<HTMLElement>(".screen-ui-chart");
     const svg = figure?.querySelector("svg");
     expect(shell?.dataset.mode).toBe("analysis");
-    expect(panel?.dataset.layout).toBe("normalized");
+    expect(panel?.querySelector('[data-layout="column"]')).not.toBeNull();
     expect(svg?.namespaceURI).toBe("http://www.w3.org/2000/svg");
     expect(svg?.querySelector("path")?.namespaceURI).toBe("http://www.w3.org/2000/svg");
     expect(svg?.querySelector("text")?.namespaceURI).toBe("http://www.w3.org/2000/svg");
-    expect(button?.style.left).toBe("8%");
-    expect(button?.style.top).toBe("70%");
-    expect(figure?.style.left).toBe("8%");
-    expect(figure?.style.top).toBe("22%");
-    expect(figure?.style.height).toBe("30%");
+    expect(button?.style.position).toBe("");
+    expect(figure?.style.position).toBe("");
+    expect((button?.compareDocumentPosition(figure as Node) ?? 0) & 4).toBe(4);
     const updated: UiViewModel = { ...view, panels: view.panels.map((entry) => ({
       ...entry, controls: entry.controls.map((control) => control.kind === "chart" ? { ...control, cursor_x: 0.1 } : control)
     })) };
@@ -674,7 +672,7 @@ describe("screen UI DOM patching", () => {
           expect(window.getComputedStyle(shell as never).pointerEvents).toBe("auto");
           expect(window.getComputedStyle(hudRoot as never).pointerEvents).toBe("auto");
           expect(hudRoot.style.maxHeight).toBe(`${String(shared.hud.layout.maximum_height_px)}px`);
-          expect(hudRoot.querySelector('output[aria-live="polite"]')?.textContent).toBe("一時停止");
+          expect(hudRoot.querySelector('[data-node="hud-primary-readouts"] .flight-hud-caption')?.textContent).toBe("一時停止");
           expect(Array.from(hudRoot.childNodes)).toEqual(hudNodes);
           const sections = Array.from(panel.querySelectorAll<HTMLElement>(".screen-ui-section"));
           expect(sections.map((section) => section.dataset.sectionId)).toEqual(shared.panels[0]?.sections.map((section) => section.id));
@@ -745,7 +743,7 @@ describe("screen UI DOM patching", () => {
     const fixture = createSceneFixture("Result");
     view = {
       ...fixture,
-      panels: fixture.panels.map((panel) => ({ ...panel, sections: [{ id: "measured", label: "", layout: "normalized" }], controls: [
+      panels: fixture.panels.map((panel) => ({ ...panel, sections: [{ id: "measured", label: "", layout: "column" }], controls: [
         ...panel.controls.map((control) => ({ ...control, section: "measured" })),
         { kind: "status", id: "long-notice", section: "measured", label: "通知", value: "元のfailure原因\n2行目\n3行目\n4行目", enabled: false, rect: normalizedRect(0.04, 0.72, 0.92, 0.085) },
         {
@@ -773,7 +771,8 @@ describe("screen UI DOM patching", () => {
     expect(svg.querySelector('path[stroke-dasharray="7 6"]')?.getAttribute("d")).toBe("M 171 26 V 112");
     expect(svg.querySelector(".screen-ui-chart-axis")?.textContent).toBe("Time (s)");
     const notice = required(root, "#long-notice");
-    expect(notice.tabIndex).toBe(0);
+    expect(notice.style.position).toBe("");
+    expect(notice.style.maxHeight).toBe("");
     expect(notice.textContent).toBe("通知: 元のfailure原因\n2行目\n3行目\n4行目");
     expect(root.querySelector("svg")).toBe(svg);
     expect(required(root, ".screen-ui-chart").style.overflow).toBe("auto");

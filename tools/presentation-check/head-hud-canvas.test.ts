@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { PerspectiveCamera, StereoCamera } from "three";
-import { currentSharedHudFixture } from "../game-check/shared-game-ui-fixture.js";
+import { currentSharedHeadHudFixture as currentSharedHudFixture, mapSharedHudNodes } from "../game-check/shared-game-ui-fixture.js";
 import { browserHeadHudContext, drawHeadHud, headHudCanvasSize, headHudPaintedTextInk, prepareHeadHudPaint, validateHeadHudPaint } from "../../web/src/presentation/head-hud-canvas.js";
 import type { HeadHudDrawingContext, HeadHudTextMetrics } from "../../web/src/presentation/head-hud-canvas.js";
 import { createHeadHudView } from "../../web/src/presentation/head-hud-view.js";
@@ -94,15 +94,20 @@ describe("Head HUD Canvas preflight and painting", () => {
   it.each([0.5, 0.17])("paints shared ADI, heading labels and AoA +5 at shared ratio %s with theme and opacity", (ratio) => {
     const shared = currentSharedHudFixture({ informationCode: 0 });
     const theme = { ...shared.theme, text: "#123456", panel_background: "#234567", muted_text: "#345678", focus_outline: "#456789" };
-    const model = { ...shared, theme, layout: { ...shared.layout, opacity: 0.41 }, warning: "SHARED WARNING",
-      attitude: { rollDegrees: -45, pitchDegrees: -25 }, flightPathAngleDegrees: -15,
-      angleOfAttackDegrees: 5, angleOfAttack: "5.0°", headingDegrees: 125, heading: "SHARED 125.75°",
-      geometry: { adi: { kind: "attitude" as const, horizon: { rotation_degrees: 17, pitch_offset_ratio: 0.21 }, flight_path_y_ratio: 0.73 },
-        angle_of_attack_ratio: ratio, heading_ticks: [
+    const headingTicks = [
           { position_ratio: 0.24, major: true, label: "N" },
           { position_ratio: 0.51, major: false, label: "" },
           { position_ratio: 0.76, major: true, label: "E" }
-        ] } };
+        ];
+    const model = mapSharedHudNodes({ ...shared, theme, layout: { ...shared.layout, opacity: 0.41 } }, (node) => {
+      switch (node.content.kind) {
+        case "attitude": return { ...node, content: { ...node.content, geometry: { kind: "attitude", horizon: { rotation_degrees: 17, pitch_offset_ratio: 0.21 }, flight_path_y_ratio: 0.73 } } };
+        case "heading_tape": return { ...node, content: { ...node.content, value: "SHARED 125.75°", ticks: headingTicks } };
+        case "linear_gauge": return { ...node, content: { ...node.content, value: "5.0°", position_ratio: ratio } };
+        case "text":
+        case "direction": return node;
+      }
+    });
     const view = flightView(1280 / 720, model);
     const size = headHudCanvasSize(view.layer);
     const context = new RecordingHeadContext();
@@ -116,10 +121,9 @@ describe("Head HUD Canvas preflight and painting", () => {
     };
     drawHeadHud(context, preparation);
     expect(context.fills.every((fill) => fill.alpha === 0.41 && fill.color === theme.panel_background)).toBe(true);
-    expect(context.texts.filter((text) => text.value === "SHARED WARNING").every((text) => text.color === theme.focus_outline)).toBe(true);
     expect(context.texts.every((text) => text.alpha === view.layer.foregroundAlpha)).toBe(true);
-    expect(context.texts.some((text) => text.value === model.heading)).toBe(true);
-    const attitude = instrument("head-attitude");
+    expect(context.texts.some((text) => text.value === "SHARED 125.75°")).toBe(true);
+    const attitude = instrument("hud-attitude");
     const horizon = context.strokes.find((stroke) => stroke.color === theme.text &&
       Math.abs((stroke.startX + stroke.endX) / 2 - (attitude.left + attitude.width / 2 - Math.sin(17 * Math.PI / 180) * 0.21 * attitude.height)) < 1e-6);
     expect(horizon).toBeDefined();
@@ -128,8 +132,8 @@ describe("Head HUD Canvas preflight and painting", () => {
     expect(context.strokes.some((stroke) => stroke.color === theme.focus_outline &&
       Math.abs(stroke.startY - (attitude.top + 0.73 * attitude.height)) < 1e-6 &&
       Math.abs(stroke.endX - (attitude.left + attitude.width / 2)) < 1e-6)).toBe(true);
-    const heading = instrument("head-heading");
-    for (const tick of model.geometry.heading_ticks) {
+    const heading = instrument("hud-heading");
+    for (const tick of headingTicks) {
       const x = heading.left + tick.position_ratio * heading.width;
       expect(context.strokes).toContainEqual({ startX: x, endX: x, startY: heading.top + heading.height * (tick.major ? 0.5 : 0.75),
         endY: heading.top + heading.height, color: tick.major ? theme.text : theme.muted_text, alpha: view.layer.foregroundAlpha });
@@ -141,25 +145,25 @@ describe("Head HUD Canvas preflight and painting", () => {
           x: ink?.x, baseline: ink?.baseline, color: theme.text });
       }
     }
-    const aoa = instrument("head-aoa");
+    const aoa = instrument("hud-angle-of-attack");
     const markerX = aoa.left + aoa.width * (0.05 + ratio * 0.9);
     expect(context.strokes.some((stroke) => stroke.color === theme.focus_outline &&
       Math.abs(stroke.startX - markerX) < 1e-6 && Math.abs(stroke.endX - markerX) < 1e-6 &&
-      Math.abs(stroke.startY - (aoa.top + aoa.height * 0.15)) < 1e-6 &&
+      Math.abs(stroke.startY - (aoa.top + aoa.height * 0.35)) < 1e-6 &&
       Math.abs(stroke.endY - (aoa.top + aoa.height * 0.85)) < 1e-6)).toBe(true);
   });
 
   it("paints FlightPathOnly at the shared ADI vertical ratio without an attitude horizon", () => {
     const shared = currentSharedHudFixture({ informationCode: 4,
       hudProfile: { telemetry: false, attitude: false, wind: false, flightPath: true, angleOfAttack: false, warnings: false } });
-    const model = { ...shared, flightPathAngleDegrees: 28,
-      geometry: { ...shared.geometry, adi: { kind: "flight_path_only" as const, y_ratio: 0.37 } } };
+    const model = mapSharedHudNodes(shared, (node) => node.content.kind === "attitude"
+      ? { ...node, content: { ...node.content, value: "28°", geometry: { kind: "flight_path_only", y_ratio: 0.37 } } } : node);
     const view = flightView(1280 / 720, model);
     const size = headHudCanvasSize(view.layer);
     const context = new RecordingHeadContext();
     const preparation = prepareHeadHudPaint(context, view, size.width, size.height);
     if (preparation.kind !== "ready") throw new Error("Missing FlightPathOnly paint plan");
-    const card = preparation.cards.find((candidate) => candidate.element.kind === "flight-path");
+    const card = preparation.cards.find((candidate) => candidate.element.content.kind === "attitude");
     if (card === undefined) throw new Error("Missing FlightPathOnly card");
     const markerY = card.top + card.padding + (card.label.length + card.value.length) * preparation.fontSize * 1.5 + 0.37 * card.instrumentHeight;
     drawHeadHud(context, preparation);
@@ -210,12 +214,14 @@ describe("Head HUD Canvas preflight and painting", () => {
       const camera = new PerspectiveCamera(60, aspect, 0.05, 100); camera.updateMatrixWorld(true);
     const stereo = new StereoCamera(); stereo.aspect = 0.5;
     const viewer = captureConfiguredViewerFrame(camera, stereo);
-    const model = { ...currentSharedHudFixture({ informationCode: code as 0 | 4 }),
-      warning: "モデルの適用範囲を超えたため終了した", readouts: "ALT 123.4 m · IAS 12.3 m/s · GS 23.4 m/s",
-      telemetry: "123.40 s · distance 1234.5 m", wind: "N -12.3 · E +5.6 · D -8.9 m/s" };
+    const model = mapSharedHudNodes(currentSharedHudFixture({ informationCode: code as 0 | 4,
+      platform: { flight_controller_failure: "モデルの適用範囲を超えたため終了した" } }), (node) => {
+      if (node.id === "hud-primary-readouts") return { ...node, content: { ...node.content, value: "ALT 123.4 m · IAS 12.3 m/s · GS 23.4 m/s\n123.40 s · distance 1234.5 m" } };
+      return node.content.kind === "direction" ? { ...node, content: { ...node.content, value: "N -12.3 · E +5.6 · D -8.9 m/s" } } : node;
+    });
     const view = createHeadHudView(model, viewer, "ja");
     if (view.kind !== "visible") throw new Error("Missing warning-and-long-values layout");
-    expect(view.layer.elements.some((element) => element.id === "head-warning")).toBe(true);
+    expect(view.layer.elements.some((element) => element.id === "hud-controller-failure")).toBe(true);
     const size = headHudCanvasSize(view.layer);
     expect(validateHeadHudPaint(prepareHeadHudPaint(new RecordingHeadContext(), view, size.width, size.height), viewer).kind).toBe("ready");
   });
@@ -301,9 +307,9 @@ describe("Head HUD Canvas preflight and painting", () => {
       expect(fill.left + fill.width <= clear.left * size.width || fill.left >= (clear.left + clear.width) * size.width ||
         fill.top + fill.height <= clear.top * size.height || fill.top >= (clear.top + clear.height) * size.height).toBe(true);
     }
-    const wind = preparation.cards.find((card) => card.element.id === "head-wind");
-    if (wind?.element.kind !== "wind") throw new Error("Missing wind card");
-    expect(wind.value.map((line) => line.value).join("")).toBe(wind.element.value);
+    const wind = preparation.cards.find((card) => card.element.content.kind === "direction");
+    if (wind === undefined) throw new Error("Missing wind card");
+    expect(wind.value.map((line) => line.value).join("")).toBe(wind.element.content.value);
   });
 
   it.each(["invalidMetrics", "excessiveInk"] as const)("rejects %s before painting any card", (field) => {

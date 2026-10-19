@@ -28,6 +28,7 @@ class RecordingContext implements MenuDrawingContext {
   globalAlpha = 1;
   readonly drawings: { value: string; x: number; y: number; font: string; locale: string; baseline: string; align: string; color: string; alpha: number }[] = [];
   readonly boxes: { x: number; y: number; width: number; height: number; color: string; alpha: number }[] = [];
+  readonly gradients: { x: number; y: number; width: number; height: number; colors: readonly [string, string] }[] = [];
   readonly translations: { x: number; y: number }[] = [];
   readonly rotations: number[] = [];
   readonly paths: { x: number; y: number }[] = [];
@@ -39,6 +40,7 @@ class RecordingContext implements MenuDrawingContext {
   };
   clearRect(): void {}
   fillRect(coordinateX: number, coordinateY: number, width: number, height: number): void { this.boxes.push({ x: coordinateX, y: coordinateY, width, height, color: this.fillStyle, alpha: this.globalAlpha }); }
+  fillGradientRect(x: number, y: number, width: number, height: number, colors: readonly [string, string]): void { this.gradients.push({ x, y, width, height, colors }); }
   fillText(value: string, coordinateX: number, coordinateY: number): void { this.drawings.push({ value, x: coordinateX, y: coordinateY,
     font: this.font, locale: this.locale, baseline: this.baseline, align: this.align, color: this.fillStyle, alpha: this.globalAlpha }); }
   strokeRect(): void {}
@@ -87,6 +89,27 @@ function prepare(context: MenuDrawingContext, source = panel, presentation = sty
 }
 
 describe("Canvas measurement boundary and shared Menu painting", () => {
+  it("keeps shared section headings and paints solid and gradient legend swatches after measurement", () => {
+    const view = createGameViewModel(currentSharedGameUiFixture(7, { ticks: 20, actions: [{ kind: "set_result_tab", tab: "analysis" }] }));
+    const plot = view.panels.flatMap((panel) => panel.controls).find((control) => control.kind === "chart");
+    if (plot?.kind !== "chart") throw new Error("Missing chart fixture");
+    const legend = [
+      { label: "AIR SPEED", color: "#ee1234", segment_gradient: null },
+      { label: "GROUND SPEED", color: "#1234ee", segment_gradient: null },
+      { label: "PROGRESS", color: "#112233", segment_gradient: ["#112233", "#aabbcc"] as const }
+    ];
+    const source: UiPanel = { ...panel, size: { width: 2.4, height: 4 },
+      sections: [{ id: "chart", label: "共通の見出し", layout: "column" }],
+      controls: [{ ...plot, section: "chart", presentation: { ...plot.presentation, legend } }] };
+    const context = new RecordingContext();
+    const prepared = prepare(context, source);
+    expect(prepared.request.texts.filter((text) => text.legend !== undefined).map((text) => text.legend)).toEqual(legend);
+    drawMeasuredMenu(context, menuViewport(prepared.document, 0), prepared.canvas.width, prepared.canvas.height);
+    expect(context.drawings.some((text) => text.value === "共通の見出し")).toBe(true);
+    for (const color of ["#ee1234", "#1234ee"]) expect(context.boxes.some((box) => box.color === color && box.width > 0 && box.height > 0)).toBe(true);
+    expect(context.gradients.some((gradient) => gradient.colors[0] === "#112233" && gradient.colors[1] === "#aabbcc" && gradient.width > 0)).toBe(true);
+  });
+
   it("paints the supplied shared theme for panels, text and every control emphasis without a local palette", () => {
     const theme = { ...style.theme, panel_background: "#102030", text: "#d1e2f3", muted_text: "#a1b2c3",
       primary_background: "#234567", normal_background: "#345678", choice_background: "#456789", panel_opacity: 0.37 };

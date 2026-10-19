@@ -656,50 +656,137 @@ pub enum GameUiOverlay {
 pub struct GameUiHud {
     /// Shared Web-baseline instrument placement and responsive dimensions.
     pub layout: GameUiHudLayout,
-    /// Shared Web-baseline instrument projections, independent of engine pixels.
-    pub geometry: GameUiHudGeometry,
-    /// Domain-derived state label.
-    pub status: String,
-    /// ADI input already converted into display degrees.
-    pub attitude: Option<GameUiHudAttitude>,
-    /// Flight path indicator angle.
-    pub flight_path_angle_degrees: Option<f64>,
-    /// Terminal or model warning.
-    pub warning: Option<String>,
-    /// True heading in [0,360).
-    pub heading_degrees: Option<f64>,
-    /// Ambient air movement direction in [0,360).
-    pub wind_direction_degrees: Option<f64>,
-    /// Defined angle of attack in degrees.
-    pub angle_of_attack_degrees: Option<f64>,
-    /// Primary readouts with shared wording and precision.
-    pub readouts: String,
-    /// Heading instrument text.
-    pub heading: Option<String>,
-    /// Heading instrument label.
-    pub heading_label: String,
-    /// Pilot displacement instrument text.
-    pub pilot_position: Option<String>,
-    /// Pilot instrument label.
-    pub pilot_position_label: String,
-    /// NED wind readout.
-    pub wind: Option<String>,
-    /// Wind instrument label.
-    pub wind_label: String,
-    /// AoA text, including explicit missing-angle marker.
-    pub angle_of_attack: Option<String>,
-    /// AoA instrument label.
-    pub angle_of_attack_label: String,
-    /// Distance, time and ground-speed text.
-    pub telemetry: String,
-    /// Local-frame geographic display.
-    pub location: String,
-    /// Preserved map attribution.
-    pub map_attribution: String,
-    /// Angular rates, physical incidences and pilot target text.
-    pub supplementary_readouts: Vec<String>,
-    /// Canonical input instructions.
-    pub controls_description: String,
+    /// Ordered groups containing every visible readout and instrument.
+    pub groups: Vec<GameUiHudGroup>,
+}
+
+/// A shared HUD group; identifiers track retained nodes without encoding their meaning.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct GameUiHudGroup {
+    /// Stable group identity.
+    pub id: String,
+    /// Shared placement relative to the unobstructed forward view.
+    pub placement: GameUiHudPlacement,
+    /// Shared row, column, or responsive grid composition.
+    pub layout: GameUiHudGroupLayout,
+    /// Complete visible node sequence.
+    pub nodes: Vec<GameUiHudNode>,
+}
+
+/// HUD placement roles consumed identically by all adapters.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum GameUiHudPlacement {
+    /// Status and primary readings, above the VR clear region.
+    Readouts,
+    /// Instruments, below the VR clear region when space permits.
+    Instruments,
+    /// Secondary information in its declared order.
+    Details,
+}
+
+/// A small shared composition vocabulary, independent of DOM and ECS layout engines.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum GameUiHudGroupLayout {
+    /// Side-by-side intrinsic widgets and wrapping text.
+    Row {},
+    /// Vertical content in source order.
+    Column {},
+    /// Responsive equal-width instrument cards.
+    Grid {
+        /// Preferred column count before the adapter applies measured width constraints.
+        columns: u32,
+    },
+}
+
+/// One existing widget instance; adding an instance requires no adapter-specific field.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct GameUiHudNode {
+    /// Stable identity used only to retain this element.
+    pub id: String,
+    /// Shared heading, independent of the widget type.
+    pub label: String,
+    /// Exclusive widget geometry and display values.
+    pub content: GameUiHudNodeContent,
+}
+
+/// Widget implementations must exhaustively handle each display primitive.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum GameUiHudNodeContent {
+    /// Formatted readout, instructions, attribution, or mandatory failure.
+    Text {
+        /// Fully formatted text; adapters never parse its wording.
+        value: String,
+        /// Shared visual priority.
+        tone: GameUiHudTone,
+    },
+    /// ADI with an optional flight-path marker, or the marker alone.
+    Attitude {
+        /// Fully formatted pitch, roll, or flight-path reading.
+        value: String,
+        /// Shared horizon and marker geometry.
+        geometry: GameUiHudAdiGeometry,
+    },
+    /// Compass tape or another readout using the same tape primitive.
+    HeadingTape {
+        /// Formatted central reading.
+        value: String,
+        /// Ordered normalized marks and labels.
+        ticks: Vec<GameUiHudHeadingTick>,
+    },
+    /// Direction arrow with an explicit absence for calm or unavailable direction.
+    Direction {
+        /// Formatted direction and magnitude reading.
+        value: String,
+        /// Clockwise display rotation, absent when no direction is defined.
+        rotation_degrees: Option<f64>,
+    },
+    /// Linear gauge with a shared scale and explicit unavailable value.
+    LinearGauge {
+        /// Formatted reading including its unit.
+        value: String,
+        /// Left endpoint label.
+        minimum_label: String,
+        /// Right endpoint label.
+        maximum_label: String,
+        /// Normalized marker position, absent when the reading is undefined.
+        position_ratio: Option<f64>,
+    },
+}
+
+impl GameUiHudNodeContent {
+    /// Returns the shared formatted reading without interpreting the node's identity.
+    pub fn value(&self) -> &str {
+        match self {
+            Self::Text { value, .. }
+            | Self::Attitude { value, .. }
+            | Self::HeadingTape { value, .. }
+            | Self::Direction { value, .. }
+            | Self::LinearGauge { value, .. } => value,
+        }
+    }
+}
+
+/// Shared text priority; mandatory resource failures always use Warning.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum GameUiHudTone {
+    /// Ordinary operational information.
+    Normal,
+    /// Secondary instructions or attribution.
+    Muted,
+    /// A mandatory visible failure or warning.
+    Warning,
 }
 
 /// Instrument placement in logical pixels with platform safe-area insets applied by adapters.
@@ -723,34 +810,6 @@ pub struct GameUiHudLayout {
     pub font_size_px: f64,
     /// Panel background opacity.
     pub opacity: f64,
-    /// Keyboard description visibility on the selected viewport.
-    pub controls_visible: bool,
-    /// Heading, pilot, wind and AoA instrument column count.
-    pub instrument_columns: u32,
-}
-
-/// Shared ADI orientation input.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(deny_unknown_fields)]
-pub struct GameUiHudAttitude {
-    /// Bank angle in degrees.
-    pub roll_degrees: f64,
-    /// Pitch angle in degrees.
-    pub pitch_degrees: f64,
-}
-
-/// Shared instrument geometry derived from the authoritative HUD angles.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(deny_unknown_fields)]
-pub struct GameUiHudGeometry {
-    /// Visible ADI layers, absent when both attitude and flight path cues are hidden.
-    pub adi: Option<GameUiHudAdiGeometry>,
-    /// Ordered heading tape marks and compass labels.
-    pub heading_ticks: Vec<GameUiHudHeadingTick>,
-    /// AoA position between the displayed -10 and +20 degree endpoints.
-    pub angle_of_attack_ratio: Option<f64>,
 }
 
 /// Visible ADI region with an attitude layer or an independent flight path cue.
@@ -892,8 +951,6 @@ pub enum GameUiSectionLayout {
     ChoiceGrid,
     /// Horizontal action row.
     Row,
-    /// Shared normalized chart and control positions.
-    Normalized,
 }
 
 /// Shared control, including data and admitted semantic action.
@@ -951,6 +1008,8 @@ pub enum GameUiControlContent {
     },
     /// Derived readout.
     Status {
+        /// Typed dynamic-value provider; static values require no frame patch.
+        source: GameUiReadoutSource,
         /// Shared formatted content.
         value: String,
     },
@@ -961,6 +1020,23 @@ pub enum GameUiControlContent {
         /// Fully derived axes, geometry and cursor; adapters render this value.
         plot: Box<GameUiChart>,
     },
+}
+
+/// Shared source for frame-varying readouts, independent of element identity.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum GameUiReadoutSource {
+    /// Value retained in the structural view.
+    Static,
+    /// Remaining countdown duration.
+    Countdown,
+    /// Current playback time and record duration.
+    PlaybackTime,
+    /// Terminal distance and current playback time.
+    PlaybackSummary,
+    /// Record sample at the common analysis cursor.
+    AnalysisCursor,
 }
 
 /// Complete engine-independent recorded chart.

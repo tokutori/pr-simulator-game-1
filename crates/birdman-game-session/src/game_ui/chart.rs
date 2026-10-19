@@ -107,7 +107,7 @@ pub(super) fn record_chart(
             }
         }
     }
-    let cursor = chart_cursor(kind, &chart, cursor, time);
+    let cursor = chart_cursor("game-analysis-plot", kind, &chart, cursor, time);
     chart.cursor_x = cursor.cursor_x;
     chart.cursor_points = cursor.cursor_points;
     if let Some(selected) = cursor.selected_wind_vector {
@@ -492,13 +492,14 @@ mod presentation_tests {
 }
 
 pub(super) fn chart_cursor(
+    id: &str,
     kind: GameUiAnalysisChart,
     plot: &GameUiChart,
     sample: FlightRecordPlaybackSample,
     time: f64,
 ) -> GameUiChartCursor {
     let mut cursor = GameUiChartCursor {
-        id: "game-analysis-plot".to_owned(),
+        id: id.to_owned(),
         cursor_x: Some(time),
         cursor_points: Vec::new(),
         selected_wind_vector: None,

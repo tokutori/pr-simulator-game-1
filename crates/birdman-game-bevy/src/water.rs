@@ -1253,7 +1253,7 @@ mod tests {
             .iter()
             .flat_map(|panel| &panel.controls)
             .filter_map(|control| {
-                if let GameUiControlContent::Status { value } = &control.content {
+                if let GameUiControlContent::Status { value, .. } = &control.content {
                     Some(format!("{}: {value}", control.label))
                 } else {
                     None

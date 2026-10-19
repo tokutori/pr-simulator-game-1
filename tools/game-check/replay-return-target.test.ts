@@ -13,7 +13,7 @@ import { validateUiViewModel } from "../../web/src/render/contracts/ui.js";
 initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url))) });
 
 function launch(session: AppSessionFacade): void {
-  session.executeOperation("open-setup"); session.executeOperation("prepare"); session.executeOperation("start-flight");
+  session.executeSharedSessionCommand({ kind: "open_setup" }); session.executeSharedSessionCommand({ kind: "prepare" }); session.executeSharedSessionCommand({ kind: "start_countdown" });
   session.observeCountdown(session.captureCountdownToken(), 1, true); session.observeCountdown(session.captureCountdownToken(), 1, true); session.observeCountdown(session.captureCountdownToken(), 1, true);
 }
 
@@ -62,21 +62,21 @@ describe("Rust-owned Replay exit projection", () => {
   it("labels current Replay for Result and imported archives for Title in every presentation and view", () => {
     const session = new TailAppSessionFacade(new HybridGameSessionBridge(0, 21, 22), physics_hz());
     try {
-      launch(session); session.executeOperation("abort");
+      launch(session); session.executeSharedSessionCommand({ kind: "abort" });
       const modernRecord = session.exportRecordJson();
-      session.executeOperation("enter-replay");
+      session.executeSharedSessionCommand({ kind: "enter_replay" });
       verifyReturnViews(session, "result");
-      session.executeOperation("leave-replay");
+      session.executeSharedSessionCommand({ kind: "leave_replay" });
       expect(session.readLifecycle().phaseCode).toBe(7);
       session.openArchive(modernRecord);
       verifyReturnViews(session, "title");
-      session.executeOperation("leave-replay");
+      session.executeSharedSessionCommand({ kind: "leave_replay" });
       expect(session.readLifecycle().phaseCode).toBe(0);
       const unknownRecord = JSON.parse(modernRecord) as { header: { environment_version: number } };
       unknownRecord.header.environment_version = 99;
       session.openArchive(JSON.stringify(unknownRecord));
       verifyReturnViews(session, "title");
-      session.executeOperation("leave-replay");
+      session.executeSharedSessionCommand({ kind: "leave_replay" });
       expect(session.readLifecycle().phaseCode).toBe(0);
     } finally { session.dispose(); }
   });
@@ -87,16 +87,16 @@ describe("Rust-owned Replay exit projection", () => {
     const session = new TailAppSessionFacade(bridge, physics_hz());
     try {
       expect(() => session.readReplayReturnTarget()).toThrow("Replay phase");
-      launch(session); session.executeOperation("abort"); session.executeOperation("enter-replay");
+      launch(session); session.executeSharedSessionCommand({ kind: "abort" }); session.executeSharedSessionCommand({ kind: "enter_replay" });
       const owner = vi.spyOn(bridge, "is_archived_replay");
       owner.mockReturnValueOnce("true" as unknown as boolean);
       expect(() => session.readReplayReturnTarget()).toThrow("boolean");
       expect(session.readReplayReturnTarget()).toBe("result");
-      owner.mockImplementationOnce(() => { session.executeOperation("leave-replay"); return false; });
+      owner.mockImplementationOnce(() => { session.executeSharedSessionCommand({ kind: "leave_replay" }); return false; });
       expect(() => session.readReplayReturnTarget()).toThrow("ownership changed");
       owner.mockRestore();
       expect(session.readLifecycle().phaseCode).toBe(7);
-      session.executeOperation("enter-replay");
+      session.executeSharedSessionCommand({ kind: "enter_replay" });
       expect(session.readReplayReturnTarget()).toBe("result");
     } finally { session.dispose(); }
   });

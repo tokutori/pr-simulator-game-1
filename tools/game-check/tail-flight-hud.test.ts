@@ -10,7 +10,7 @@ import { encodeTailLogicalInput, parseTailSessionSnapshot } from "../../web/src/
 import { FlightHudAdapter } from "../../web/src/presentation/flight-hud.js";
 import { projectSharedFlightHudModel } from "../../web/src/presentation/flight-hud-model.js";
 import { parseGameUiView } from "../../web/src/app/game-ui-codec.js";
-import { currentSharedHudFixture, sharedGameUiPlatform, withSharedGameUiSession } from "./shared-game-ui-fixture.js";
+import { currentSharedHudFixture, sharedHudNode, sharedGameUiPlatform, withSharedGameUiSession } from "./shared-game-ui-fixture.js";
 import { createHeadHudView } from "../../web/src/presentation/head-hud-view.js";
 import { captureConfiguredViewerFrame } from "../../web/src/render/engines/three/viewer-frame.js";
 
@@ -36,8 +36,8 @@ function advance(session: HybridGameSessionBridge): void {
     pilotPositionCommand: { kind: "set", normalized: 0.1 } }));
 }
 
-function sharedHud(session: HybridGameSessionBridge) {
-  const view = parseGameUiView(session.game_ui_view_json(JSON.stringify(sharedGameUiPlatform())));
+function sharedHud(session: HybridGameSessionBridge, head = false) {
+  const view = parseGameUiView(session.game_ui_view_json(JSON.stringify(sharedGameUiPlatform(head ? { presentation_mode: "phone_vr" } : {}))));
   if (view.hud === null) throw new Error("Missing shared Rust HUD");
   return projectSharedFlightHudModel(view.hud, view.theme);
 }
@@ -55,23 +55,27 @@ describe("tail-aware shared Flight HUD", () => {
       const model = sharedHud(session);
       const rate = snapshot.angularRateBodyRadiansPerSecond.value;
       const degrees = (value: number): string => (value * 180 / Math.PI).toFixed(1);
-      expect(model.attitude?.rollDegrees).toBeCloseTo(snapshot.telemetry.value.rollRadians * 180 / Math.PI, 12);
-      expect(model.attitude?.pitchDegrees).toBeCloseTo(snapshot.telemetry.value.pitchRadians * 180 / Math.PI, 12);
-      expect(model.supplementaryReadouts).toEqual([
+      const attitude = sharedHudNode(model, "hud-attitude").content;
+      expect(attitude.kind === "attitude" && attitude.geometry).toMatchObject({ kind: "attitude", horizon: {
+        rotation_degrees: -snapshot.telemetry.value.rollRadians * 180 / Math.PI
+      } });
+      const readouts = sharedHudNode(model, "hud-primary-readouts").content.value;
+      for (const line of [
         `p ${degrees(rate.roll)}  q ${degrees(rate.pitch)}  r ${degrees(rate.yaw)} °/s`,
         `水平尾翼 ${degrees(snapshot.controls.physicalIncidence.horizontalTailRadians)}°  垂直尾翼 ${degrees(snapshot.controls.physicalIncidence.verticalTailRadians)}°`,
         `PILOT TARGET ${snapshot.pilotPositionTargetMeters.value.toFixed(2)} m`
-      ]);
-      expect(model.telemetry).toContain(`距離 ${snapshot.progressMeters.value.courseParallelMeters.toFixed(1)} m`);
-      expect(model.telemetry).not.toContain("確定距離");
-      expect(model.pilotPosition).toContain(snapshot.pilotPositionMeters.toFixed(2));
-      expect(model.controlsDescription).toContain("nose-up/down intent");
-      expect(model.controlsDescription).toContain("←/→ left/right intent");
-      expect(model.controlsDescription).toContain("pilot Hold");
-      expect(model.controlsDescription).not.toContain("A/D roll");
-      expect(Object.isFrozen(model.supplementaryReadouts)).toBe(true);
+      ]) expect(readouts).toContain(line);
+      expect(readouts).toContain(`距離 ${snapshot.progressMeters.value.courseParallelMeters.toFixed(1)} m`);
+      expect(readouts).not.toContain("確定距離");
+      expect(sharedHudNode(model, "hud-pilot-position").content.value).toContain(snapshot.pilotPositionMeters.toFixed(2));
+      const controls = sharedHudNode(model, "hud-controls").content.value;
+      expect(controls).toContain("nose-up/down intent");
+      expect(controls).toContain("←/→ left/right intent");
+      expect(controls).toContain("pilot Hold");
+      expect(controls).not.toContain("A/D roll");
+      expect(Object.isFrozen(model.groups)).toBe(true);
       session.pause(0);
-      expect(sharedHud(session).status).toBe("一時停止");
+      expect(sharedHudNode(sharedHud(session), "hud-primary-readouts").label).toBe("一時停止");
     } finally {
       session.free();
     }
@@ -79,17 +83,16 @@ describe("tail-aware shared Flight HUD", () => {
 
   it("keeps Information and Custom visibility independent from the physical controls", () => {
       const controls = withSharedGameUiSession(5, { ticks: 0 }, (owner) => owner.readSnapshot());
-      expect(currentSharedHudFixture({ informationCode: 2, ticks: 0 }).supplementaryReadouts).toEqual([]);
+      expect(sharedHudNode(currentSharedHudFixture({ informationCode: 2, ticks: 0 }), "hud-primary-readouts").content.value).not.toContain("水平尾翼");
       const attitudeProfile = { telemetry: false, attitude: true,
         wind: false, flightPath: false, angleOfAttack: false, warnings: false };
       const attitudeOnly = currentSharedHudFixture({ informationCode: 4, hudProfile: attitudeProfile, ticks: 0 });
-      expect(attitudeOnly.supplementaryReadouts).toHaveLength(1);
-      expect(attitudeOnly.supplementaryReadouts[0]).toMatch(/^p /);
+      expect(sharedHudNode(attitudeOnly, "hud-primary-readouts").content.value).toMatch(/^p /);
       const telemetryProfile = { telemetry: true, attitude: false,
         wind: false, flightPath: false, angleOfAttack: false, warnings: false };
       const telemetryOnly = currentSharedHudFixture({ informationCode: 4, hudProfile: telemetryProfile, ticks: 0 });
-      expect(telemetryOnly.supplementaryReadouts).toHaveLength(2);
-      expect(telemetryOnly.supplementaryReadouts[0]).toMatch(/^水平尾翼 /);
+      expect(sharedHudNode(telemetryOnly, "hud-primary-readouts").content.value).toContain("水平尾翼 ");
+      expect(sharedHudNode(telemetryOnly, "hud-primary-readouts").content.value).not.toMatch(/^p /);
       for (const options of [{ informationCode: 2 as const }, { informationCode: 4 as const, hudProfile: attitudeProfile },
         { informationCode: 4 as const, hudProfile: telemetryProfile }]) {
         withSharedGameUiSession(5, { ...options, ticks: 0 }, (owner) => {
@@ -107,15 +110,14 @@ describe("tail-aware shared Flight HUD", () => {
       const model = sharedHud(session);
       const root = window.document.createElement("section") as unknown as HTMLElement;
       const adapter = new FlightHudAdapter(root);
-      const nodes = [...root.children];
       adapter.render(model);
-      expect(root.querySelector(".flight-hud-readouts")?.textContent).toContain(model.supplementaryReadouts[1]);
-      expect(root.querySelector(".flight-hud-controls")?.textContent).toBe(model.controlsDescription);
-      expect(root.querySelector(".flight-hud-instrument-pilot-position output")?.textContent).toBe(model.pilotPosition);
-      expect(root.querySelector('[data-instrument="pilot-position"]')).toBeNull();
+      const nodes = [...root.children];
+      expect(root.querySelector('[data-node="hud-primary-readouts"] output')?.textContent).toContain("水平尾翼");
+      expect(root.querySelector('[data-node="hud-controls"] output')?.textContent).toBe(sharedHudNode(model, "hud-controls").content.value);
+      expect(root.querySelector('[data-node="hud-pilot-position"] output')?.textContent).toBe(sharedHudNode(model, "hud-pilot-position").content.value);
       adapter.setVisible(false);
       adapter.render(currentSharedHudFixture({ informationCode: 2 }));
-      expect(root.querySelector(".flight-hud-readouts")?.textContent).not.toContain("水平尾翼");
+      expect(root.querySelector('[data-node="hud-primary-readouts"] output')?.textContent).not.toContain("水平尾翼");
       adapter.setVisible(true);
       adapter.render(model);
       expect([...root.children]).toEqual(nodes);
@@ -124,13 +126,14 @@ describe("tail-aware shared Flight HUD", () => {
       camera.updateMatrixWorld(true);
       const stereo = new StereoCamera();
       stereo.aspect = 0.5;
-      const view = createHeadHudView(model, captureConfiguredViewerFrame(camera, stereo), "ja");
+      const headModel = sharedHud(session, true);
+      const view = createHeadHudView(headModel, captureConfiguredViewerFrame(camera, stereo), "ja");
       expect(view.kind).toBe("visible");
       if (view.kind !== "visible") throw new Error("Expected tail Head HUD");
       expect(view.layer.anchor).toBe("head");
-      const readouts = view.layer.elements.find((element) => element.id === "head-readouts");
-      expect(readouts?.kind === "text" && readouts.value.includes(model.supplementaryReadouts[1] ?? "")).toBe(true);
-      expect(view.layer.elements.find((element) => element.id === "head-pilot")).toMatchObject({ kind: "text", value: model.pilotPosition });
+      const readouts = view.layer.elements.find((element) => element.id === "hud-primary-readouts");
+      expect(readouts?.content.value).toContain("水平尾翼");
+      expect(view.layer.elements.find((element) => element.id === "hud-pilot-position")?.content).toEqual(sharedHudNode(model, "hud-pilot-position").content);
       expect(view.layer.clearRegion.height).toBeGreaterThan(0);
     } finally {
       session.free();
@@ -159,10 +162,11 @@ describe("tail-aware shared Flight HUD", () => {
       expect(parseGameUiView(replay.game_ui_view_json(JSON.stringify(sharedGameUiPlatform()))).selections.replay_view).toBe("telemetry");
       replay.seek_playback(0.005);
       const model = sharedHud(replay);
-      expect(model.status).toBe("記録再生");
-      expect(model.telemetry).toContain("保存標本");
-      expect(model.telemetry).not.toContain("確定距離");
-      expect(model.supplementaryReadouts[2]).toBe("PILOT TARGET unavailable");
+      const readouts = sharedHudNode(model, "hud-primary-readouts");
+      expect(readouts.label).toBe("記録再生");
+      expect(readouts.content.value).toContain("保存標本");
+      expect(readouts.content.value).not.toContain("確定距離");
+      expect(readouts.content.value).toContain("PILOT TARGET unavailable");
       expect(snapshot.stamp.timeSeconds).toBe(0.005);
     } finally {
       source.free();

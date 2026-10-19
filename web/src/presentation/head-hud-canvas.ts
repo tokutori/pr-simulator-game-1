@@ -106,18 +106,22 @@ export function prepareHeadHudPaint(context: HeadHudDrawingContext, view: HeadHu
     const left = element.bounds.left * width;
     const top = element.bounds.top * height;
     const instrumentText: HeadHudTextInk[] = [];
-    if (element.kind === "heading") {
+    const content = element.content;
+    if (content.kind === "heading_tape" || content.kind === "linear_gauge") {
       const textTop = top + padding + (label.length + value.length) * lineHeight;
-      for (const tick of element.ticks) {
-        if (!tick.major || tick.label === "") continue;
-        const metrics = measuredLine(context, tick.label, lineHeight);
+      const labels = content.kind === "heading_tape"
+        ? content.ticks.filter((tick) => tick.major && tick.label !== "").map((tick) => ({ value: tick.label, ratio: tick.position_ratio }))
+        : [{ value: content.minimum_label, ratio: 0 }, { value: content.maximum_label, ratio: 1 }];
+      for (const tick of labels) {
+        const metrics = measuredLine(context, tick.value, lineHeight);
         if (metrics === null) {
           context.restore();
           return Object.freeze({ kind: "unavailable", reason: "text-overflow", width, height });
         }
-        const x = left + padding + tick.position_ratio * (cardWidth - padding * 2) - metrics.width / 2;
+        const x = Math.max(left + padding + Math.max(0, metrics.left), Math.min(left + cardWidth - padding - metrics.right,
+          left + padding + tick.ratio * (cardWidth - padding * 2) - metrics.width / 2));
         const baseline = textTop + lineHeight / 2 + (metrics.ascent - metrics.descent) / 2;
-        const ink = Object.freeze({ value: tick.label, x, baseline, left: x - metrics.left, top: baseline - metrics.ascent,
+        const ink = Object.freeze({ value: tick.value, x, baseline, left: x - metrics.left, top: baseline - metrics.ascent,
           width: metrics.left + metrics.right, height: metrics.ascent + metrics.descent });
         if (ink.left < left + padding || ink.left + ink.width > left + cardWidth - padding ||
             ink.top < textTop || ink.top + ink.height > textTop + instrumentHeight) {
@@ -151,7 +155,8 @@ export function drawHeadHud(context: HeadHudDrawingContext, preparation: HeadHud
     context.setFillStyle(layer.theme.panel_background);
     context.fillRect(card.left, card.top, card.width, card.height);
     context.setGlobalAlpha(layer.foregroundAlpha);
-    context.setFillStyle(card.element.kind === "text" && card.element.tone === "warning" ? layer.theme.focus_outline : layer.theme.text);
+    context.setFillStyle(card.element.content.kind === "text" && card.element.content.tone === "warning" ? layer.theme.focus_outline
+      : card.element.content.kind === "text" && card.element.content.tone === "muted" ? layer.theme.muted_text : layer.theme.text);
     for (const text of paintedCardText(card, lineHeight)) context.fillText(text.value, text.x, text.baseline);
     const textTop = card.top + card.padding + (card.label.length + card.value.length) * lineHeight;
     drawInstrument(context, card.element, card.left + card.padding, textTop,
@@ -249,11 +254,16 @@ function drawInstrument(context: HeadHudDrawingContext, element: HeadHudElement,
   theme: VisibleHeadHud["theme"]): void {
   const centerX = left + width / 2;
   const centerY = top + height / 2;
-  switch (element.kind) {
+  const content = element.content;
+  switch (content.kind) {
     case "text": return;
     case "attitude": {
-      const roll = element.geometry.horizon.rotation_degrees * Math.PI / 180;
-      const pitchOffset = element.geometry.horizon.pitch_offset_ratio * height;
+      if (content.geometry.kind === "flight_path_only") {
+        drawFlightPathMarker(context, centerX, top + content.geometry.y_ratio * height, fontSize, theme.focus_outline);
+        return;
+      }
+      const roll = content.geometry.horizon.rotation_degrees * Math.PI / 180;
+      const pitchOffset = content.geometry.horizon.pitch_offset_ratio * height;
       const length = Math.min(width * 0.43, height * 0.5);
       const directionX = Math.cos(roll);
       const directionY = Math.sin(roll);
@@ -265,19 +275,20 @@ function drawInstrument(context: HeadHudDrawingContext, element: HeadHudElement,
         horizonX + directionX * length, horizonY + directionY * length, theme.text, fontSize);
       line(context, centerX - length * 0.45, centerY, centerX + length * 0.45, centerY, theme.focus_outline, fontSize);
       line(context, centerX, centerY - fontSize * 0.25, centerX, centerY + fontSize * 0.25, theme.focus_outline, fontSize);
-      if (element.geometry.flight_path_y_ratio !== null) drawFlightPathMarker(context, centerX,
-        top + element.geometry.flight_path_y_ratio * height, fontSize, theme.focus_outline);
+      if (content.geometry.flight_path_y_ratio !== null) drawFlightPathMarker(context, centerX,
+        top + content.geometry.flight_path_y_ratio * height, fontSize, theme.focus_outline);
       return;
     }
-    case "heading":
-      for (const tick of element.ticks) {
+    case "heading_tape":
+      for (const tick of content.ticks) {
         const tickX = left + tick.position_ratio * width;
         line(context, tickX, top + height * (tick.major ? 0.5 : 0.75), tickX, top + height, tick.major ? theme.text : theme.muted_text, fontSize);
       }
       line(context, centerX - fontSize * 0.2, top + height * 0.9, centerX + fontSize * 0.2, top + height * 0.9, theme.focus_outline, fontSize);
       return;
-    case "wind": {
-      const radians = element.degrees * Math.PI / 180;
+    case "direction": {
+      if (content.rotation_degrees === null) return;
+      const radians = content.rotation_degrees * Math.PI / 180;
       const radius = Math.min(width * 0.3, height * 0.4);
       const endX = centerX + Math.sin(radians) * radius;
       const endY = centerY - Math.cos(radians) * radius;
@@ -286,17 +297,15 @@ function drawInstrument(context: HeadHudDrawingContext, element: HeadHudElement,
       line(context, endX, endY, endX - Math.sin(radians + 0.5) * radius * 0.35, endY + Math.cos(radians + 0.5) * radius * 0.35, theme.focus_outline, fontSize);
       return;
     }
-    case "angle-of-attack": {
+    case "linear_gauge": {
       const innerWidth = width * 0.9;
       const innerLeft = left + width * 0.05;
       line(context, innerLeft, centerY, innerLeft + innerWidth, centerY, theme.text, fontSize);
       line(context, centerX, top + height * 0.3, centerX, top + height * 0.7, theme.muted_text, fontSize);
-      line(context, innerLeft + element.ratio * innerWidth, top + height * 0.15, innerLeft + element.ratio * innerWidth, top + height * 0.85, theme.focus_outline, fontSize);
+      if (content.position_ratio !== null) line(context, innerLeft + content.position_ratio * innerWidth, top + height * 0.35,
+        innerLeft + content.position_ratio * innerWidth, top + height * 0.85, theme.focus_outline, fontSize);
       return;
     }
-    case "flight-path":
-      drawFlightPathMarker(context, centerX, top + element.yRatio * height, fontSize, theme.focus_outline);
-      return;
   }
 }
 

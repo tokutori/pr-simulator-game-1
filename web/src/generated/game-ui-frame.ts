@@ -1,22 +1,5 @@
 /* Generated from birdman-game-session::game_ui. Edit the Rust contract and regenerate. */
 /**
- * Visible ADI region with an attitude layer or an independent flight path cue.
- */
-export type GameUiHudAdiGeometry = {
-    /**
-     * Flight path marker position relative to the ADI height.
-     */
-    readonly flight_path_y_ratio: number | null;
-    readonly horizon: GameUiHudAttitudeGeometry;
-    readonly kind: "attitude";
-} | {
-    readonly kind: "flight_path_only";
-    /**
-     * Flight path marker position relative to the ADI height.
-     */
-    readonly y_ratio: number;
-};
-/**
  * Lightweight per-frame UI observation associated with one published structural view.
  */
 export interface GameUiFrame {
@@ -144,121 +127,129 @@ export interface GameUiChartPoint1 {
  */
 export interface GameUiHud {
     /**
-     * AoA text, including explicit missing-angle marker.
+     * Ordered groups containing every visible readout and instrument.
      */
-    readonly angle_of_attack: string | null;
-    /**
-     * Defined angle of attack in degrees.
-     */
-    readonly angle_of_attack_degrees: number | null;
-    /**
-     * AoA instrument label.
-     */
-    readonly angle_of_attack_label: string;
-    /**
-     * ADI input already converted into display degrees.
-     */
-    readonly attitude: GameUiHudAttitude | null;
-    /**
-     * Canonical input instructions.
-     */
-    readonly controls_description: string;
-    /**
-     * Flight path indicator angle.
-     */
-    readonly flight_path_angle_degrees: number | null;
-    readonly geometry: GameUiHudGeometry;
-    /**
-     * Heading instrument text.
-     */
-    readonly heading: string | null;
-    /**
-     * True heading in [0,360).
-     */
-    readonly heading_degrees: number | null;
-    /**
-     * Heading instrument label.
-     */
-    readonly heading_label: string;
+    readonly groups: readonly GameUiHudGroup[];
     readonly layout: GameUiHudLayout;
-    /**
-     * Local-frame geographic display.
-     */
-    readonly location: string;
-    /**
-     * Preserved map attribution.
-     */
-    readonly map_attribution: string;
-    /**
-     * Pilot displacement instrument text.
-     */
-    readonly pilot_position: string | null;
-    /**
-     * Pilot instrument label.
-     */
-    readonly pilot_position_label: string;
-    /**
-     * Primary readouts with shared wording and precision.
-     */
-    readonly readouts: string;
-    /**
-     * Domain-derived state label.
-     */
-    readonly status: string;
-    /**
-     * Angular rates, physical incidences and pilot target text.
-     */
-    readonly supplementary_readouts: readonly string[];
-    /**
-     * Distance, time and ground-speed text.
-     */
-    readonly telemetry: string;
-    /**
-     * Terminal or model warning.
-     */
-    readonly warning: string | null;
-    /**
-     * NED wind readout.
-     */
-    readonly wind: string | null;
-    /**
-     * Ambient air movement direction in [0,360).
-     */
-    readonly wind_direction_degrees: number | null;
-    /**
-     * Wind instrument label.
-     */
-    readonly wind_label: string;
 }
 /**
- * Shared ADI orientation input.
+ * A shared HUD group; identifiers track retained nodes without encoding their meaning.
  */
-export interface GameUiHudAttitude {
+export interface GameUiHudGroup {
     /**
-     * Pitch angle in degrees.
+     * Stable group identity.
      */
-    readonly pitch_degrees: number;
+    readonly id: string;
     /**
-     * Bank angle in degrees.
+     * Shared row, column, or responsive grid composition.
      */
-    readonly roll_degrees: number;
+    readonly layout: {
+        readonly kind: "row";
+    } | {
+        readonly kind: "column";
+    } | {
+        /**
+         * Preferred column count before the adapter applies measured width constraints.
+         */
+        readonly columns: number;
+        readonly kind: "grid";
+    };
+    /**
+     * Complete visible node sequence.
+     */
+    readonly nodes: readonly GameUiHudNode[];
+    /**
+     * Shared placement relative to the unobstructed forward view.
+     */
+    readonly placement: "readouts" | "instruments" | "details";
 }
 /**
- * Shared Web-baseline instrument projections, independent of engine pixels.
+ * One existing widget instance; adding an instance requires no adapter-specific field.
  */
-export interface GameUiHudGeometry {
+export interface GameUiHudNode {
     /**
-     * Visible ADI layers, absent when both attitude and flight path cues are hidden.
+     * Exclusive widget geometry and display values.
      */
-    readonly adi: GameUiHudAdiGeometry | null;
+    readonly content: {
+        readonly kind: "text";
+        /**
+         * Shared visual priority.
+         */
+        readonly tone: "normal" | "muted" | "warning";
+        /**
+         * Fully formatted text; adapters never parse its wording.
+         */
+        readonly value: string;
+    } | {
+        /**
+         * Shared horizon and marker geometry.
+         */
+        readonly geometry: {
+            /**
+             * Flight path marker position relative to the ADI height.
+             */
+            readonly flight_path_y_ratio: number | null;
+            readonly horizon: GameUiHudAttitudeGeometry;
+            readonly kind: "attitude";
+        } | {
+            readonly kind: "flight_path_only";
+            /**
+             * Flight path marker position relative to the ADI height.
+             */
+            readonly y_ratio: number;
+        };
+        readonly kind: "attitude";
+        /**
+         * Fully formatted pitch, roll, or flight-path reading.
+         */
+        readonly value: string;
+    } | {
+        readonly kind: "heading_tape";
+        /**
+         * Ordered normalized marks and labels.
+         */
+        readonly ticks: readonly GameUiHudHeadingTick[];
+        /**
+         * Formatted central reading.
+         */
+        readonly value: string;
+    } | {
+        readonly kind: "direction";
+        /**
+         * Clockwise display rotation, absent when no direction is defined.
+         */
+        readonly rotation_degrees: number | null;
+        /**
+         * Formatted direction and magnitude reading.
+         */
+        readonly value: string;
+    } | {
+        readonly kind: "linear_gauge";
+        /**
+         * Right endpoint label.
+         */
+        readonly maximum_label: string;
+        /**
+         * Left endpoint label.
+         */
+        readonly minimum_label: string;
+        /**
+         * Normalized marker position, absent when the reading is undefined.
+         */
+        readonly position_ratio: number | null;
+        /**
+         * Formatted reading including its unit.
+         */
+        readonly value: string;
+    };
     /**
-     * AoA position between the displayed -10 and +20 degree endpoints.
+     * Stable identity used only to retain this element.
      */
-    readonly angle_of_attack_ratio: number | null;
+    readonly id: string;
     /**
-     * Ordered heading tape marks and compass labels.
+     * Shared heading, independent of the widget type.
      */
-    readonly heading_ticks: readonly GameUiHudHeadingTick[];
+    readonly label: string;
 }
 /**
  * Horizon rotation and translation.
@@ -305,10 +296,6 @@ export interface GameUiHudLayout {
         number
     ];
     /**
-     * Keyboard description visibility on the selected viewport.
-     */
-    readonly controls_visible: boolean;
-    /**
      * Readout font size.
      */
     readonly font_size_px: number;
@@ -322,10 +309,6 @@ export interface GameUiHudLayout {
         number,
         number
     ];
-    /**
-     * Heading, pilot, wind and AoA instrument column count.
-     */
-    readonly instrument_columns: number;
     /**
      * Reachable vertical scroll height.
      */

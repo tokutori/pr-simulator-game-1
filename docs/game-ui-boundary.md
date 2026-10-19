@@ -38,7 +38,13 @@ standalone validatorはbrowser用ESMへbundleし、実行時の`eval`を使用�
 
 ## Platform差分
 
-HUD adapterは前回の共有観測を参照し、値だけのframeでは静的layout/themeの再投影を省く。Nativeは既存layout比較とtheme失効を使い、必要時だけgrid・背景・文字色・fontを適用する。Webはlayout値と使用色を比較し、同じheading目盛のSVG nodeを保持する。表示内容や共有UIの正本・構造revisionは増やさない。CPU/ECS/DOM回帰の合格はGPU負荷や80 FPS達成の根拠とは区別する。
+HUDは順序付き`GameUiHudGroup`と型付きnodeを正本とする。readouts・instruments・detailsの配置方針、row・column・grid、文言・値・単位・geometryを共有Rustで導出する。各adapterはText・Attitude・HeadingTape・Direction・LinearGaugeを網羅的に投影する。同型の表示項目追加にadapter側の項目列挙を追加しない。node IDは保持対象の追跡に使用し、表示名やprefixからwidgetの意味・表示条件を推定しない。
+
+Head HUDも同じnodeへ表示面上のboundsだけを付加する。Screen専用の位置情報や操作説明を省略する方針は共有providerが所有する。前方clear region、head-fixed pose、透明度、両眼の可読性は既存の計測契約を保持する。通常警告のproducerは未対応であり、Customの選択値を保持して操作能力を無効表示する。必須のcontroller failureはInformation設定によらず表示する。
+
+メニューは順序付きsectionとrow・column・choice gridから配置を導出する。描画用rectから順序やgroupを復元しない。sectionの見出し、操作順、chart legendの色とgradientをScreen・VR・Nativeで保持する。frameの動的readoutは`GameUiReadoutSource`、buttonは型付きactionでproviderを決定し、IDは更新対象の追跡だけに使用する。
+
+HUD adapterは前回の共有観測を参照し、値だけのframeでは静的layout/themeの再投影を省く。Nativeはlayout比較とtheme失効、WebはSnabbdomのkeyとlayout cacheにより、既存widget・heading目盛・disclosure・scrollを保持する。表示内容や共有UIの正本・構造revisionは増やさない。CPU/ECS/DOM回帰の合格はGPU負荷や80 FPS達成の根拠とは区別する。
 
 メニューは既存Webの設定フォーム・確認・primary CTA・secondary CTA・技術情報を基準とする。
 logical pixel、600px breakpoint、最大scroll高、候補列数は共通Viewの値を使う。

@@ -1,189 +1,34 @@
-import type { FlightHudModel } from "./flight-hud-model.js";
+import { attributesModule } from "snabbdom/build/modules/attributes.js";
+import { h } from "snabbdom/build/h.js";
+import { htmlDomApi } from "snabbdom/build/htmldomapi.js";
+import { init } from "snabbdom/build/init.js";
+import type { VNode } from "snabbdom";
+import type { FlightHudModel, FlightHudNode } from "./flight-hud-model.js";
 import { earcutLicenseUrl, gameUiNumberFormatLicenseUrl, gameUiValidatorLicenseUrl } from "../app/game-ui-codec.js";
 
+let nextHudId = 0;
+
 export class FlightHudAdapter {
-  private previous: FlightHudModel | null = null;
-  private readonly status: HTMLOutputElement;
-  private readonly warning: HTMLOutputElement;
-  private readonly telemetry: HTMLOutputElement;
-  private readonly location: HTMLOutputElement;
-  private readonly mapAttribution: HTMLAnchorElement;
-  private readonly terrainAttribution: HTMLAnchorElement;
-  private readonly copernicusAttribution: HTMLAnchorElement;
-  private readonly copernicusLicenseNotice: HTMLDetailsElement;
-  private readonly adi: SVGSVGElement;
-  private readonly horizon: SVGGElement;
-  private readonly readouts: HTMLOutputElement;
-  private readonly headingInstrument: HTMLDivElement;
-  private readonly headingReadout: HTMLOutputElement;
-  private readonly pilotPositionInstrument: HTMLDivElement;
-  private readonly pilotPositionReadout: HTMLOutputElement;
-  private readonly windInstrument: HTMLDivElement;
-  private readonly windReadout: HTMLOutputElement;
-  private readonly angleInstrument: HTMLDivElement;
-  private readonly angleReadout: HTMLOutputElement;
-  private readonly headingScale: SVGGElement;
-  private readonly windNeedle: SVGGElement;
-  private readonly angleIndicator: SVGPolygonElement;
-  private readonly flightPathIndicator: SVGCircleElement;
-  private readonly controls: HTMLParagraphElement;
-  private readonly instruments: HTMLDivElement;
-  private readonly instrumentLabels: readonly HTMLSpanElement[];
+  private readonly patch: ReturnType<typeof init>;
+  private tree: VNode | Element;
+  private layoutKey = "";
+  private readonly clipPrefix = `flight-hud-${String(++nextHudId)}`;
 
   constructor(private readonly root: HTMLElement) {
     const documentRef = root.ownerDocument;
-    const heading = documentRef.createElement("h2");
-    heading.textContent = "FLIGHT";
-    this.status = documentRef.createElement("output");
-    this.status.setAttribute("aria-live", "polite");
-    this.warning = documentRef.createElement("output");
-    this.warning.className = "flight-hud-warning";
-    this.telemetry = documentRef.createElement("output");
-    this.telemetry.className = "flight-hud-telemetry";
-    this.location = documentRef.createElement("output");
-    this.location.className = "flight-hud-location";
-    this.mapAttribution = documentRef.createElement("a");
-    this.mapAttribution.className = "flight-hud-attribution";
-    this.mapAttribution.href = "https://www.openstreetmap.org/copyright";
-    this.mapAttribution.target = "_blank";
-    this.mapAttribution.rel = "noopener noreferrer";
-    this.terrainAttribution = documentRef.createElement("a");
-    this.terrainAttribution.className = "flight-hud-attribution-link";
-    this.terrainAttribution.href = "https://earth.jaxa.jp/en/data/policy/";
-    this.terrainAttribution.target = "_blank";
-    this.terrainAttribution.rel = "noopener noreferrer";
-    this.terrainAttribution.textContent = "地形 AW3D30 (JAXA)";
-    this.copernicusAttribution = documentRef.createElement("a");
-    this.copernicusAttribution.className = "flight-hud-attribution-link";
-    this.copernicusAttribution.href = "https://dataspace.copernicus.eu/explore-data/data-collections/copernicus-contributing-missions/collections-description/COP-DEM";
-    this.copernicusAttribution.target = "_blank";
-    this.copernicusAttribution.rel = "noopener noreferrer";
-    this.copernicusAttribution.textContent = "© DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved.";
-    this.copernicusLicenseNotice = documentRef.createElement("details");
-    this.copernicusLicenseNotice.className = "flight-hud-attribution-notice";
-    this.copernicusLicenseNotice.open = true;
-    const licenseSummary = documentRef.createElement("summary");
-    licenseSummary.textContent = "Copernicus GLO-30 利用条件";
-    const modifiedNotice = documentRef.createElement("p");
-    modifiedNotice.textContent = "produced using Copernicus WorldDEM-30.";
-    const liabilityNotice = documentRef.createElement("p");
-    liabilityNotice.textContent = "The organisations in charge of the Copernicus programme by law or by delegation do not incur any liability for any use of the Copernicus WorldDEM-30.";
-    this.copernicusLicenseNotice.append(licenseSummary, modifiedNotice, liabilityNotice);
-    this.adi = documentRef.createElementNS("http://www.w3.org/2000/svg", "svg");
-    this.adi.setAttribute("viewBox", "0 0 240 180");
-    this.adi.setAttribute("role", "img");
-    this.adi.setAttribute("aria-label", "姿勢指示器");
-    this.adi.classList.add("flight-hud-adi");
-    const defs = documentRef.createElementNS("http://www.w3.org/2000/svg", "defs");
-    const clip = documentRef.createElementNS("http://www.w3.org/2000/svg", "clipPath");
-    clip.id = "flight-adi-clip";
-    const clipRect = documentRef.createElementNS("http://www.w3.org/2000/svg", "rect");
-    clipRect.setAttribute("x", "26"); clipRect.setAttribute("y", "18");
-    clipRect.setAttribute("width", "188"); clipRect.setAttribute("height", "144");
-    clipRect.setAttribute("rx", "72");
-    clip.append(clipRect); defs.append(clip);
-    this.horizon = documentRef.createElementNS("http://www.w3.org/2000/svg", "g");
-    this.horizon.setAttribute("clip-path", "url(#flight-adi-clip)");
-    this.horizon.setAttribute("transform", "translate(0 90)");
-    const sky = documentRef.createElementNS("http://www.w3.org/2000/svg", "rect");
-    sky.setAttribute("x", "-240"); sky.setAttribute("y", "-240"); sky.setAttribute("width", "720"); sky.setAttribute("height", "420");
-    sky.setAttribute("fill", "#397d9a");
-    const ground = documentRef.createElementNS("http://www.w3.org/2000/svg", "rect");
-    ground.setAttribute("x", "-240"); ground.setAttribute("y", "0"); ground.setAttribute("width", "720"); ground.setAttribute("height", "240");
-    ground.setAttribute("fill", "#9a7047");
-    this.horizon.append(sky, ground);
-    for (const pitch of [-30, -20, -10, 10, 20, 30]) {
-      const y = -pitch * 2.2;
-      const line = documentRef.createElementNS("http://www.w3.org/2000/svg", "path");
-      const half = Math.abs(pitch) % 20 === 0 ? 27 : 17;
-      line.setAttribute("d", `M ${String(120 - half)} ${String(y)} H ${String(120 + half)}`);
-      line.setAttribute("stroke", "white"); line.setAttribute("stroke-width", "2");
-      this.horizon.append(line);
-      const label = documentRef.createElementNS("http://www.w3.org/2000/svg", "text");
-      label.setAttribute("x", String(120 + half + 5)); label.setAttribute("y", String(y + 4));
-      label.setAttribute("fill", "white"); label.setAttribute("font-size", "9"); label.textContent = String(Math.abs(pitch));
-      this.horizon.append(label);
-    }
-    const frame = documentRef.createElementNS("http://www.w3.org/2000/svg", "rect");
-    frame.setAttribute("x", "26"); frame.setAttribute("y", "18"); frame.setAttribute("width", "188"); frame.setAttribute("height", "144");
-    frame.setAttribute("rx", "72"); frame.setAttribute("fill", "none"); frame.setAttribute("stroke", "#e8eee5"); frame.setAttribute("stroke-width", "3");
-    const aircraft = documentRef.createElementNS("http://www.w3.org/2000/svg", "path");
-    aircraft.setAttribute("d", "M 72 91 H 108 L 113 82 H 127 L 132 91 H 168 M 120 86 V 96");
-    aircraft.setAttribute("fill", "none"); aircraft.setAttribute("stroke", "#ffd45c"); aircraft.setAttribute("stroke-width", "5"); aircraft.setAttribute("stroke-linecap", "round"); aircraft.setAttribute("stroke-linejoin", "round");
-    this.flightPathIndicator = documentRef.createElementNS("http://www.w3.org/2000/svg", "circle");
-    this.flightPathIndicator.setAttribute("r", "5");
-    this.flightPathIndicator.setAttribute("fill", "none");
-    this.flightPathIndicator.setAttribute("stroke", "#7df4c5");
-    this.flightPathIndicator.setAttribute("stroke-width", "3");
-    this.adi.append(defs, this.horizon, frame, aircraft, this.flightPathIndicator);
-    const instruments = documentRef.createElement("div");
-    instruments.className = "flight-hud-instruments";
-    this.instruments = instruments;
-    const headingInstrument = instrumentOutput(documentRef, instruments, "HDG", "heading");
-    this.headingInstrument = headingInstrument.cell;
-    this.headingReadout = headingInstrument.output;
-    const headingGauge = svgGauge(documentRef, headingInstrument.cell, "heading", "0 0 220 50", "方位目盛");
-    this.headingScale = documentRef.createElementNS("http://www.w3.org/2000/svg", "g");
-    headingGauge.append(this.headingScale, svgElement(documentRef, "path", {
-      d: "M 110 28 L 104 38 H 116 Z", fill: "#ffd45c"
-    }));
-    const pilotPositionInstrument = instrumentOutput(documentRef, instruments, "PILOT CG", "pilot-position");
-    this.pilotPositionInstrument = pilotPositionInstrument.cell;
-    this.pilotPositionReadout = pilotPositionInstrument.output;
-    const windInstrument = instrumentOutput(documentRef, instruments, "WIND N / E / D", "wind");
-    this.windInstrument = windInstrument.cell;
-    this.windReadout = windInstrument.output;
-    const windGauge = svgGauge(documentRef, windInstrument.cell, "wind", "0 0 72 72", "風向計。矢印は風の流れる方向を示す");
-    windGauge.append(
-      svgElement(documentRef, "circle", { cx: "36", cy: "36", r: "27", fill: "none", stroke: "#b9c9c2", "stroke-width": "1.5" }),
-      svgElement(documentRef, "path", { d: "M 36 9 V 63 M 9 36 H 63", stroke: "#526c70", "stroke-width": "1" })
-    );
-    const northLabel = svgElement(documentRef, "text", { x: "36", y: "8", "text-anchor": "middle", fill: "#f3f4e8", "font-size": "7" });
-    northLabel.textContent = "N";
-    windGauge.append(northLabel);
-    this.windNeedle = documentRef.createElementNS("http://www.w3.org/2000/svg", "g");
-    this.windNeedle.append(svgElement(documentRef, "path", { d: "M 36 15 L 31 38 L 36 34 L 41 38 Z", fill: "#ffd45c" }));
-    windGauge.append(this.windNeedle);
-    const angleInstrument = instrumentOutput(documentRef, instruments, "ANGLE OF ATTACK", "angle");
-    this.angleInstrument = angleInstrument.cell;
-    this.angleReadout = angleInstrument.output;
-    this.instrumentLabels = [headingInstrument.caption, pilotPositionInstrument.caption, windInstrument.caption, angleInstrument.caption];
-    const angleGauge = svgGauge(documentRef, angleInstrument.cell, "angle-of-attack", "0 0 200 34", "迎角目盛");
-    angleGauge.append(svgElement(documentRef, "path", { d: "M 10 16 H 190", stroke: "#b9c9c2", "stroke-width": "3" }));
-    for (let index = 0; index <= 6; index += 1) {
-      const x = 10 + index * 30;
-      angleGauge.append(svgElement(documentRef, "path", { d: `M ${String(x)} 12 V 21`, stroke: "#b9c9c2", "stroke-width": "1" }));
-    }
-    this.angleIndicator = svgElement(documentRef, "polygon", { points: "70,5 64,1 76,1", fill: "#ffd45c" });
-    angleGauge.append(this.angleIndicator);
-    this.readouts = documentRef.createElement("output");
-    this.readouts.className = "flight-hud-readouts";
-    this.controls = documentRef.createElement("p");
-    this.controls.className = "flight-hud-controls";
-    const attributions = documentRef.createElement("div");
-    attributions.className = "flight-hud-attributions";
-    const validatorLicense = documentRef.createElement("a");
-    validatorLicense.className = "flight-hud-attribution-link";
-    validatorLicense.href = gameUiValidatorLicenseUrl;
-    validatorLicense.target = "_blank";
-    validatorLicense.rel = "noopener noreferrer";
-    validatorLicense.textContent = "Game UI validator 利用条件";
-    const numberFormatLicense = documentRef.createElement("a");
-    numberFormatLicense.className = "flight-hud-attribution-link";
-    numberFormatLicense.href = gameUiNumberFormatLicenseUrl;
-    numberFormatLicense.target = "_blank";
-    numberFormatLicense.rel = "noopener noreferrer";
-    numberFormatLicense.textContent = "ryu-js 利用条件";
-    const earcutLicense = documentRef.createElement("a");
-    earcutLicense.className = "flight-hud-attribution-link";
-    earcutLicense.href = earcutLicenseUrl;
-    earcutLicense.target = "_blank";
-    earcutLicense.rel = "noopener noreferrer";
-    earcutLicense.textContent = "earcut 利用条件";
-    attributions.append(this.mapAttribution, this.terrainAttribution, this.copernicusAttribution, this.copernicusLicenseNotice, validatorLicense, numberFormatLicense, earcutLicense);
+    this.patch = init([attributesModule], {
+      ...htmlDomApi,
+      createElement: (name: string, options?: ElementCreationOptions) => documentRef.createElement(name, options),
+      createElementNS: (namespace, name, options) => documentRef.createElementNS(namespace, name, options),
+      createTextNode: (value) => documentRef.createTextNode(value),
+      createComment: (value) => documentRef.createComment(value)
+    });
+    const mount = documentRef.createElement("div");
+    mount.className = "flight-hud-content";
     root.className = "flight-hud";
     root.setAttribute("aria-label", "Flight status");
-    root.replaceChildren(heading, this.status, this.warning, this.adi, this.readouts, instruments, this.telemetry, this.location, attributions, this.controls);
+    root.replaceChildren(mount);
+    this.tree = mount;
     this.setVisible(false);
   }
 
@@ -192,85 +37,32 @@ export class FlightHudAdapter {
       this.setVisible(false);
       return;
     }
-    this.applyModel(model);
-  }
-
-  private applyModel(model: FlightHudModel): void {
-    const previous = this.previous;
-    if (previous === null || !sameLayout(previous.layout, model.layout)
-        || previous.theme.text !== model.theme.text || previous.theme.panel_background !== model.theme.panel_background) {
-      this.applyLayout(model);
-    }
-    const labels = [model.labels.heading, model.labels.pilotPosition, model.labels.wind, model.labels.angleOfAttack];
-    labels.forEach((label, index) => { const caption = this.instrumentLabels[index]; if (caption !== undefined && caption.textContent !== label) caption.textContent = label; });
-    this.status.textContent = model.status;
-    this.warning.textContent = model.warning ?? "";
-    this.warning.hidden = model.warning === null;
-    const adi = model.geometry.adi;
-    const horizon = adi?.kind === "attitude" ? adi.horizon : null;
-    const flightPathYRatio = adi === null ? null : adi.kind === "attitude" ? adi.flight_path_y_ratio : adi.y_ratio;
-    if (adi === null) {
-      this.adi.classList.add("is-hidden");
-    } else {
-      this.adi.classList.remove("is-hidden");
-    }
-    this.readouts.textContent = [model.readouts, ...model.supplementaryReadouts].filter((line) => line !== "").join("\n");
-    this.controls.textContent = model.controlsDescription;
-    this.horizon.setAttribute("visibility", horizon === null ? "hidden" : "visible");
-    this.flightPathIndicator.setAttribute("visibility", flightPathYRatio === null ? "hidden" : "visible");
-    if (flightPathYRatio !== null) {
-      const y = flightPathYRatio * 180;
-      this.flightPathIndicator.setAttribute("cx", "120");
-      this.flightPathIndicator.setAttribute("cy", String(y));
-    }
-    this.headingInstrument.hidden = model.heading === null;
-    this.headingReadout.textContent = model.heading ?? "";
-    if (previous === null || !sameHeadingTicks(previous.geometry.heading_ticks, model.geometry.heading_ticks)) {
-      renderHeadingScale(this.headingScale, model.geometry.heading_ticks);
-    }
-    this.pilotPositionInstrument.hidden = model.pilotPosition === null;
-    this.pilotPositionReadout.textContent = model.pilotPosition ?? "";
-    this.windInstrument.hidden = model.wind === null;
-    this.windReadout.textContent = model.wind ?? "";
-    this.windNeedle.setAttribute("visibility", model.windDirectionDegrees === null ? "hidden" : "visible");
-    if (model.windDirectionDegrees !== null) this.windNeedle.setAttribute("transform", `rotate(${String(model.windDirectionDegrees)} 36 36)`);
-    this.angleInstrument.hidden = model.angleOfAttack === null;
-    this.angleReadout.textContent = model.angleOfAttack ?? "";
-    this.angleIndicator.setAttribute("visibility", model.geometry.angle_of_attack_ratio === null ? "hidden" : "visible");
-    if (model.geometry.angle_of_attack_ratio !== null) {
-      const x = 10 + model.geometry.angle_of_attack_ratio * 180;
-      this.angleIndicator.setAttribute("points", `${String(x)},5 ${String(x - 6)},1 ${String(x + 6)},1`);
-    }
-    this.telemetry.textContent = model.telemetry;
-    this.location.textContent = model.location;
-    this.mapAttribution.textContent = model.mapAttribution;
-    if (horizon !== null) {
-      this.horizon.setAttribute("transform", `rotate(${String(horizon.rotation_degrees)} 120 90) translate(0 ${String(90 + horizon.pitch_offset_ratio * 180)})`);
-    }
-    this.previous = model;
-  }
-
-  private applyLayout(model: FlightHudModel): void {
     const layout = model.layout;
-    this.root.dataset.shared = "true";
-    this.root.style.left = `max(${String(layout.offset_px[0])}px, env(safe-area-inset-left))`;
-    this.root.style.top = `max(${String(layout.offset_px[1])}px, env(safe-area-inset-top))`;
-    this.root.style.width = `${String(layout.width_px)}px`;
-    this.root.style.maxHeight = `${String(layout.maximum_height_px)}px`;
-    this.root.style.padding = `${String(layout.padding_px[1])}px ${String(layout.padding_px[0])}px`;
-    this.root.style.gap = `${String(layout.gap_px[1])}px ${String(layout.gap_px[0])}px`;
-    this.root.style.gridTemplateColumns = `${String(layout.attitude_size_px[0])}px minmax(0, 1fr)`;
-    this.root.style.fontSize = `${String(layout.font_size_px)}px`;
-    this.root.style.color = model.theme.text;
-    this.root.style.background = `color-mix(in srgb, ${model.theme.panel_background} ${String(layout.opacity * 100)}%, transparent)`;
-    this.adi.style.width = `${String(layout.attitude_size_px[0])}px`;
-    this.adi.style.height = `${String(layout.attitude_size_px[1])}px`;
-    this.instruments.style.gridTemplateColumns = `repeat(${String(layout.instrument_columns)}, minmax(0, 1fr))`;
-    this.controls.hidden = !layout.controls_visible;
-  }
-
-  fail(message: string): void {
-    this.status.textContent = `飛行処理を停止した: ${message}`;
+    const layoutKey = JSON.stringify([layout, model.theme.text, model.theme.panel_background]);
+    if (layoutKey !== this.layoutKey) {
+      this.root.dataset.shared = "true";
+      Object.assign(this.root.style, {
+      left: `max(${String(layout.offset_px[0])}px, env(safe-area-inset-left))`,
+      top: `max(${String(layout.offset_px[1])}px, env(safe-area-inset-top))`,
+      width: `${String(layout.width_px)}px`, maxHeight: `${String(layout.maximum_height_px)}px`,
+      padding: `${String(layout.padding_px[1])}px ${String(layout.padding_px[0])}px`,
+      fontSize: `${String(layout.font_size_px)}px`, color: model.theme.text,
+      background: `color-mix(in srgb, ${model.theme.panel_background} ${String(layout.opacity * 100)}%, transparent)`
+      });
+      this.layoutKey = layoutKey;
+    }
+    this.tree = this.patch(this.tree, h("div.flight-hud-content", {
+      attrs: { style: `gap: ${String(layout.gap_px[1])}px ${String(layout.gap_px[0])}px` }
+    }, [
+      ...model.groups.map((group) => h("section.flight-hud-group", {
+        key: group.id,
+        attrs: {
+          "data-group": group.id, "data-placement": group.placement, "data-layout": group.layout.kind,
+          style: `display: ${group.layout.kind === "row" ? "flex" : "grid"}; grid-template-columns: ${group.layout.kind === "grid" ? `repeat(${String(group.layout.columns)}, minmax(0, 1fr))` : "minmax(0, 1fr)"}`
+        }
+      }, group.nodes.map((node) => hudNode(node, model, this.clipPrefix)))),
+      legalNotices()
+    ]));
   }
 
   setVisible(visible: boolean): void {
@@ -279,72 +71,94 @@ export class FlightHudAdapter {
   }
 }
 
-function sameLayout(previous: FlightHudModel["layout"], layout: FlightHudModel["layout"]): boolean {
-  return Object.keys(layout).every((key) => {
-    const value = layout[key as keyof typeof layout];
-    const retained = previous[key as keyof typeof previous];
-    return typeof value === "object"
-      ? typeof retained === "object" && value.every((entry, index) => entry === retained[index])
-      : value === retained;
-  });
+function hudNode(node: FlightHudNode, model: FlightHudModel, clipPrefix: string): VNode {
+  const content = node.content;
+  return h("div.flight-hud-node", {
+    key: node.id,
+    attrs: { "data-node": node.id, "data-kind": content.kind, "data-tone": content.kind === "text" ? content.tone : "normal" }
+  }, [
+    h("span.flight-hud-caption", node.label),
+    h("output.flight-hud-value", { attrs: { "aria-label": node.label, "aria-live": content.kind === "text" && content.tone === "warning" ? "polite" : "off" } }, content.value),
+    ...widget(node, model, clipPrefix)
+  ]);
 }
 
-function sameHeadingTicks(previous: FlightHudModel["geometry"]["heading_ticks"], ticks: FlightHudModel["geometry"]["heading_ticks"]): boolean {
-  return previous.length === ticks.length && ticks.every((tick, index) => {
-    const retained = previous[index];
-    return retained !== undefined && tick.position_ratio === retained.position_ratio && tick.major === retained.major && tick.label === retained.label;
-  });
-}
-
-function instrumentOutput(documentRef: Document, root: HTMLElement, label: string, name: string): { readonly cell: HTMLDivElement; readonly output: HTMLOutputElement; readonly caption: HTMLSpanElement } {
-  const cell = documentRef.createElement("div");
-  cell.className = `flight-hud-instrument flight-hud-instrument-${name}`;
-  const caption = documentRef.createElement("span");
-  caption.textContent = label;
-  const output = documentRef.createElement("output");
-  output.setAttribute("aria-label", label);
-  cell.append(caption, output);
-  root.append(cell);
-  return Object.freeze({ cell, output, caption });
-}
-
-function svgGauge(documentRef: Document, cell: HTMLElement, name: string, viewBox: string, label: string): SVGSVGElement {
-  const svg = documentRef.createElementNS("http://www.w3.org/2000/svg", "svg");
-  svg.setAttribute("viewBox", viewBox);
-  svg.setAttribute("role", "img");
-  svg.setAttribute("aria-label", label);
-  svg.setAttribute("data-instrument", name);
-  cell.append(svg);
-  return svg;
-}
-
-function renderHeadingScale(group: SVGGElement, ticks: FlightHudModel["geometry"]["heading_ticks"]): void {
-  const documentRef = group.ownerDocument;
-  group.replaceChildren();
-  for (const tick of ticks) {
-    const x = tick.position_ratio * 220;
-    const major = tick.major;
-    group.append(svgElement(documentRef, "path", {
-      d: `M ${String(x)} ${major ? "28" : "33"} V 40`,
-      stroke: major ? "#f3f4e8" : "#b9c9c2",
-      "stroke-width": major ? "1.5" : "1"
-    }));
-    if (major) {
-      const label = svgElement(documentRef, "text", {
-        x: String(x), y: "22", "text-anchor": "middle", fill: "#f3f4e8", "font-size": "8"
-      });
-      label.textContent = tick.label;
-      group.append(label);
+function widget(node: FlightHudNode, model: FlightHudModel, clipPrefix: string): VNode[] {
+  const content = node.content;
+  switch (content.kind) {
+    case "text": return [];
+    case "attitude": {
+      const geometry = content.geometry;
+      const horizon = geometry.kind === "attitude" ? geometry.horizon : null;
+      const flightPath = geometry.kind === "attitude" ? geometry.flight_path_y_ratio : geometry.y_ratio;
+      const clipId = `${clipPrefix}-${encodeURIComponent(node.id)}`;
+      const shapes: VNode[] = [h("defs", [h("clipPath", { attrs: { id: clipId } }, [shape("rect", { x: 26, y: 18, width: 188, height: 144, rx: 72 })])])];
+      if (horizon !== null) shapes.push(h("g", { attrs: { "clip-path": `url(#${clipId})` } }, [
+        h("g", { attrs: { transform: `rotate(${String(horizon.rotation_degrees)} 120 90) translate(0 ${String(90 + horizon.pitch_offset_ratio * 180)})` } }, [
+          shape("rect", { x: -240, y: -240, width: 720, height: 240, fill: "#397d9a" }),
+          shape("rect", { x: -240, y: 0, width: 720, height: 240, fill: "#9a7047" }),
+          ...[-30, -20, -10, 0, 10, 20, 30].flatMap((pitch) => {
+            const half = pitch === 0 ? 94 : Math.abs(pitch) % 20 === 0 ? 27 : 17;
+            return [shape("path", { d: `M ${String(120 - half)} ${String(-pitch * 2.2)} H ${String(120 + half)}`, stroke: "white", "stroke-width": 2 }),
+              shape("text", { x: 125 + half, y: -pitch * 2.2 + 4, fill: "white", "font-size": 9 }, pitch === 0 ? "" : String(Math.abs(pitch)))];
+          })
+        ])
+      ]));
+      shapes.push(shape("rect", { x: 26, y: 18, width: 188, height: 144, rx: 72, fill: "none", stroke: model.theme.text, "stroke-width": 3 }),
+        shape("path", { d: "M 72 91 H 108 L 113 82 H 127 L 132 91 H 168 M 120 86 V 96", fill: "none", stroke: model.theme.focus_outline, "stroke-width": 5 }));
+      if (flightPath !== null) shapes.push(shape("circle", { cx: 120, cy: flightPath * 180, r: 5, fill: "none", stroke: "#7df4c5", "stroke-width": 3 }));
+      return [gauge(node, "0 0 240 180", shapes, { width: `${String(model.layout.attitude_size_px[0])}px`, height: `${String(model.layout.attitude_size_px[1])}px` })];
     }
+    case "heading_tape": return [gauge(node, "0 0 220 50", [
+      ...content.ticks.map((tick, index) => h("g", { key: index }, [
+        shape("path", { d: `M ${String(tick.position_ratio * 220)} ${tick.major ? "28" : "33"} V 40`, stroke: model.theme.text, "stroke-width": tick.major ? 1.5 : 1 }),
+        shape("text", { x: tick.position_ratio * 220, y: 22, "text-anchor": "middle", fill: model.theme.text, "font-size": 8 }, tick.label)
+      ])), shape("path", { d: "M 110 28 L 104 38 H 116 Z", fill: model.theme.focus_outline })
+    ])];
+    case "direction": return [gauge(node, "0 0 72 72", [
+      shape("circle", { cx: 36, cy: 36, r: 27, fill: "none", stroke: model.theme.muted_text, "stroke-width": 1.5 }),
+      shape("path", { d: "M 36 9 V 63 M 9 36 H 63", stroke: model.theme.muted_text }),
+      shape("text", { x: 36, y: 8, "text-anchor": "middle", fill: model.theme.text, "font-size": 7 }, "N"),
+      ...(content.rotation_degrees === null ? [] : [h("g", { attrs: { transform: `rotate(${String(content.rotation_degrees)} 36 36)` } }, [
+        shape("path", { d: "M 36 15 L 31 38 L 36 34 L 41 38 Z", fill: model.theme.focus_outline })
+      ])])
+    ])];
+    case "linear_gauge": return [gauge(node, "0 0 200 42", [
+      shape("path", { d: "M 10 16 H 190", stroke: model.theme.muted_text, "stroke-width": 3 }),
+      ...Array.from({ length: 7 }, (_, index) => shape("path", { d: `M ${String(10 + index * 30)} 12 V 21`, stroke: model.theme.muted_text })),
+      shape("text", { x: 10, y: 39, fill: model.theme.text, "font-size": 9 }, content.minimum_label),
+      shape("text", { x: 190, y: 39, "text-anchor": "end", fill: model.theme.text, "font-size": 9 }, content.maximum_label),
+      ...(content.position_ratio === null ? [] : [shape("polygon", { points: `${String(10 + content.position_ratio * 180)},5 ${String(4 + content.position_ratio * 180)},1 ${String(16 + content.position_ratio * 180)},1`, fill: model.theme.focus_outline })])
+    ])];
   }
 }
 
-function svgElement<K extends keyof SVGElementTagNameMap>(
-  documentRef: Document,
-  name: K,
-  attributes: Readonly<Record<string, string>>
-): SVGElementTagNameMap[K] {
-  const element = documentRef.createElementNS("http://www.w3.org/2000/svg", name);
-  for (const [key, value] of Object.entries(attributes)) element.setAttribute(key, value);
-  return element;
+function gauge(node: FlightHudNode, viewBox: string, children: VNode[], style: Record<string, string> = {}): VNode {
+  return h("svg", { attrs: { viewBox, role: "img", "aria-label": node.label, "data-instrument": node.content.kind,
+    style: Object.entries(style).map(([name, value]) => `${name}: ${value}`).join("; ") } }, children);
+}
+
+function shape(tag: string, attributes: Record<string, string | number>, text = ""): VNode {
+  return h(tag, { attrs: attributes }, text);
+}
+
+function legalNotices(): VNode {
+  return h("footer.flight-hud-attributions", { key: "legal-notices" }, [
+    legalLink("https://www.openstreetmap.org/copyright", "© OpenStreetMap contributors · ODbL"),
+    legalLink("https://earth.jaxa.jp/en/data/policy/", "地形 AW3D30 (JAXA)"),
+    legalLink("https://dataspace.copernicus.eu/explore-data/data-collections/copernicus-contributing-missions/collections-description/COP-DEM",
+      "© DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved."),
+    h("details.flight-hud-attribution-notice", { attrs: { open: true } }, [
+      h("summary", "Copernicus GLO-30 利用条件"),
+      h("p", "produced using Copernicus WorldDEM-30."),
+      h("p", "The organisations in charge of the Copernicus programme by law or by delegation do not incur any liability for any use of the Copernicus WorldDEM-30.")
+    ]),
+    legalLink(gameUiValidatorLicenseUrl, "Game UI validator 利用条件"),
+    legalLink(gameUiNumberFormatLicenseUrl, "ryu-js 利用条件"),
+    legalLink(earcutLicenseUrl, "earcut 利用条件")
+  ]);
+}
+
+function legalLink(href: string, label: string): VNode {
+  return h("a.flight-hud-attribution-link", { attrs: { href, target: "_blank", rel: "noopener noreferrer" } }, label);
 }

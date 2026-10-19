@@ -35,6 +35,7 @@ pub fn game_ui_view(
                 true,
             );
             if context.platform.stored_records_available {
+                menu.section("stored-records", "保存記録", GameUiSectionLayout::Column);
                 for record in context.platform.stored_records.iter() {
                     menu.platform(
                         &format!("game-title-open-record-{}", record.id),
@@ -52,6 +53,7 @@ pub fn game_ui_view(
                         true,
                     );
                 }
+                menu.automatic_sections();
             }
             menu.session(
                 "game-title-demo",
@@ -126,7 +128,6 @@ pub fn game_ui_view(
                 true,
             );
             feedback(&mut menu, context);
-            menu.preparation_rects();
         }
         SessionPhase::BriefingPreparing
         | SessionPhase::BriefingReady
@@ -175,14 +176,14 @@ pub fn game_ui_view(
             if !matches!(phase, SessionPhase::BriefingFailed { .. }) {
                 feedback(&mut menu, context);
             }
-            menu.preparation_rects();
         }
         SessionPhase::Countdown { remaining_seconds } => {
             progress(&mut menu, phase);
-            menu.status(
+            menu.live_status(
                 "game-countdown-status",
                 "発進まで",
                 &format!("{remaining_seconds} 秒"),
+                GameUiReadoutSource::Countdown,
             );
             menu.session(
                 "game-countdown-cancel",
@@ -192,9 +193,9 @@ pub fn game_ui_view(
                 true,
             );
             feedback(&mut menu, context);
-            menu.preparation_rects();
         }
         SessionPhase::FlightRunning => {
+            menu.section("flight-actions", "", GameUiSectionLayout::Row);
             if context.platform.flight_controller_failure.is_none() {
                 menu.session(
                     "game-flight-pause",
@@ -218,6 +219,7 @@ pub fn game_ui_view(
         }
         SessionPhase::FlightPaused { .. } => match state.pause_overlay {
             GameUiPauseOverlay::Menu => {
+                menu.section("flight-status", "", GameUiSectionLayout::Column);
                 menu.status(
                     "game-state",
                     "状態",
@@ -227,6 +229,7 @@ pub fn game_ui_view(
                         &context.platform.notification
                     },
                 );
+                menu.section("flight-actions", "", GameUiSectionLayout::Row);
                 menu.session(
                     "game-flight-resume",
                     "Resume",
@@ -262,6 +265,7 @@ pub fn game_ui_view(
                 menu.status("game-pause-settings-info", "Flight Settings", "飛行中は難易度・操縦bindingを固定する。変更する場合は飛行を終了してFlightSetupへ戻る。");
                 water_quality(&mut menu, context);
                 screen_render_scale(&mut menu, context);
+                menu.section("flight-actions", "", GameUiSectionLayout::Row);
                 menu.action(
                     "game-pause-settings-back",
                     "Pauseへ戻る",
@@ -277,6 +281,7 @@ pub fn game_ui_view(
                     "操縦方法",
                     catalog::FLIGHT_CONTROL_INSTRUCTIONS,
                 );
+                menu.section("flight-actions", "", GameUiSectionLayout::Row);
                 menu.action(
                     "game-pause-help-back",
                     "Pauseへ戻る",
@@ -290,6 +295,7 @@ pub fn game_ui_view(
         SessionPhase::Result => {
             if state.result_tab == GameUiResultTab::Analysis {
                 analysis(&mut menu, state, context, false)?;
+                menu.section("analysis-details", "", GameUiSectionLayout::Column);
                 menu.status(
                     "game-result-configuration",
                     "保存条件 / 風",
@@ -300,6 +306,7 @@ pub fn game_ui_view(
                     "通知",
                     &context.platform.notification,
                 );
+                menu.section("analysis-navigation", "", GameUiSectionLayout::Row);
                 menu.action(
                     "game-result-open-summary",
                     "Summary",
@@ -309,6 +316,7 @@ pub fn game_ui_view(
                     true,
                 );
             } else {
+                menu.section("result-summary", "", GameUiSectionLayout::Column);
                 menu.status(
                     "game-state",
                     "状態",
@@ -371,6 +379,7 @@ pub fn game_ui_view(
                     }
                 }
             }
+            menu.section("result-navigation", "", GameUiSectionLayout::Row);
             menu.session(
                 "game-result-replay",
                 if state.result_tab == GameUiResultTab::Analysis {
@@ -434,13 +443,14 @@ pub fn game_ui_view(
             if let (Some(clock), Some(record)) = (context.session.playback_clock(), context.record)
             {
                 let duration = record.duration_seconds().map_err(GameUiError::Record)?;
-                menu.status(
+                menu.live_status(
                     "game-attract-time",
                     "Record time",
                     &format!("{:.2} / {duration:.2} s", clock.time_seconds()),
+                    GameUiReadoutSource::PlaybackTime,
                 );
                 let summary = record.summary().map_err(GameUiError::Record)?;
-                menu.status(
+                menu.live_status(
                     "game-attract-distance",
                     "確定距離 / 保存時刻",
                     &format!(
@@ -451,6 +461,7 @@ pub fn game_ui_view(
                         ),
                         clock.time_seconds()
                     ),
+                    GameUiReadoutSource::PlaybackSummary,
                 );
             }
             menu.session(
@@ -466,6 +477,7 @@ pub fn game_ui_view(
         phase,
         SessionPhase::FlightRunning | SessionPhase::FlightPaused { .. }
     ) {
+        menu.section("flight-diagnostics", "", GameUiSectionLayout::Column);
         if let Some(cause) = &context.platform.flight_controller_failure {
             description = format!("飛行処理停止。最後の有効状態を表示する。停止理由: {cause}");
             menu.status("game-controller-stopped", "飛行処理停止", &description);
@@ -480,7 +492,7 @@ pub fn game_ui_view(
             );
         }
     }
-    menu.position_controls(state, phase, context.platform.presentation_mode);
+    menu.position_controls();
     if !context.platform.notification.is_empty() && phase == SessionPhase::Title {
         description.push_str(" · ");
         description.push_str(&context.platform.notification);
@@ -558,9 +570,25 @@ pub fn game_ui_view(
 struct Menu {
     controls: Vec<GameUiControl>,
     sections: Vec<GameUiSection>,
+    active_section: Option<String>,
 }
 
 impl Menu {
+    fn section(&mut self, id: &str, label: &str, layout: GameUiSectionLayout) {
+        if !self.sections.iter().any(|section| section.id == id) {
+            self.sections.push(GameUiSection {
+                id: id.to_owned(),
+                label: label.to_owned(),
+                layout,
+            });
+        }
+        self.active_section = Some(id.to_owned());
+    }
+
+    fn automatic_sections(&mut self) {
+        self.active_section = None;
+    }
+
     fn push(
         &mut self,
         id: &str,
@@ -569,6 +597,7 @@ impl Menu {
         section: &str,
         content: GameUiControlContent,
     ) {
+        let section = self.active_section.as_deref().unwrap_or(section);
         if !self.sections.iter().any(|existing| existing.id == section) {
             let (heading, layout) = match &content {
                 GameUiControlContent::Button {
@@ -593,12 +622,17 @@ impl Menu {
         });
     }
     fn status(&mut self, id: &str, label: &str, value: &str) {
+        self.live_status(id, label, value, GameUiReadoutSource::Static);
+    }
+
+    fn live_status(&mut self, id: &str, label: &str, value: &str, source: GameUiReadoutSource) {
         self.push(
             id,
             label,
             false,
             id,
             GameUiControlContent::Status {
+                source,
                 value: value.to_owned(),
             },
         );
@@ -676,323 +710,55 @@ impl Menu {
             },
         );
     }
-    fn preparation_rects(&mut self) {
-        let count = self.controls.len() as f64;
-        for (index, control) in self.controls.iter_mut().enumerate() {
-            control.rect = rect(0.04, 0.02 + index as f64 * 0.94 / count, 0.92, 0.90 / count);
-        }
-    }
-    fn position_controls(
-        &mut self,
-        state: &GameUiState,
-        phase: SessionPhase,
-        mode: GameUiPresentationMode,
-    ) {
-        if mode == GameUiPresentationMode::Screen
-            && (matches!(
-                phase,
-                SessionPhase::FlightRunning | SessionPhase::FlightPaused { .. }
-            ) || phase == SessionPhase::Replay
-                && state.replay_view != GameUiReplayView::Analysis)
-        {
-            let groups: &[(&str, GameUiSectionLayout)] = if phase == SessionPhase::Replay {
-                &[
-                    ("replay-status", GameUiSectionLayout::Column),
-                    ("replay-cursor", GameUiSectionLayout::Column),
-                    ("replay-actions", GameUiSectionLayout::Row),
-                ]
-            } else {
-                &[
-                    ("flight-status", GameUiSectionLayout::Column),
-                    ("water-quality", GameUiSectionLayout::ChoiceGrid),
-                    ("render-scale", GameUiSectionLayout::ChoiceGrid),
-                    ("flight-actions", GameUiSectionLayout::Row),
-                ]
-            };
-            for control in &mut self.controls {
-                control.section = match &control.content {
-                    GameUiControlContent::Status { .. } => groups[0].0,
-                    GameUiControlContent::Range { .. } => groups[1].0,
-                    GameUiControlContent::Button {
-                        presentation: GameUiButtonPresentation::Choice { group, .. },
-                        ..
-                    } if group == "render-scale" => "render-scale",
-                    GameUiControlContent::Button {
-                        presentation: GameUiButtonPresentation::Choice { .. },
-                        ..
-                    } => groups[1].0,
-                    _ => groups[groups.len() - 1].0,
-                }
-                .to_owned();
-            }
+    fn position_controls(&mut self) {
+        self.sections.retain(|section| {
             self.controls
-                .sort_by_key(|control| groups.iter().position(|(id, _)| *id == control.section));
-            self.sections = groups
                 .iter()
-                .copied()
-                .filter(|(id, _)| self.controls.iter().any(|control| control.section == *id))
-                .map(|(id, layout)| GameUiSection {
-                    id: id.to_owned(),
-                    label: self
-                        .sections
-                        .iter()
-                        .find(|section| section.id == id)
-                        .map(|section| section.label.clone())
-                        .unwrap_or_default(),
-                    layout,
-                })
-                .collect();
-            return;
-        }
-        let screen_analysis = mode == GameUiPresentationMode::Screen
-            && (phase == SessionPhase::Result && state.result_tab == GameUiResultTab::Analysis
-                || phase == SessionPhase::Replay
-                    && state.replay_view == GameUiReplayView::Analysis);
-        if screen_analysis {
-            let groups = [
-                ("analysis-tabs", GameUiSectionLayout::Row),
-                ("analysis-chart", GameUiSectionLayout::Column),
-                ("analysis-cursor", GameUiSectionLayout::Column),
-                ("analysis-details", GameUiSectionLayout::Column),
-                ("analysis-navigation", GameUiSectionLayout::Row),
-            ];
-            for control in &mut self.controls {
-                control.section = match control.id.as_str() {
-                    "game-analysis-map" | "game-analysis-altitude" | "game-analysis-speed" => {
-                        groups[0].0
-                    }
-                    "game-analysis-plot" | "game-analysis-loading" => groups[1].0,
-                    "game-analysis-cursor"
-                    | "game-replay-cursor"
-                    | "game-analysis-cursor-values" => groups[2].0,
-                    _ if matches!(control.content, GameUiControlContent::Status { .. }) => {
-                        groups[3].0
-                    }
-                    _ => groups[4].0,
-                }
-                .to_owned();
-            }
-            self.controls
-                .sort_by_key(|control| groups.iter().position(|(id, _)| *id == control.section));
-            self.sections = groups
-                .into_iter()
-                .filter(|(id, _)| self.controls.iter().any(|control| control.section == *id))
-                .map(|(id, layout)| GameUiSection {
-                    id: id.to_owned(),
-                    label: String::new(),
-                    layout,
-                })
-                .collect();
-            return;
-        }
-        if mode == GameUiPresentationMode::Screen
-            && (phase == SessionPhase::Attract
-                || phase == SessionPhase::Result && state.result_tab == GameUiResultTab::Summary)
-        {
-            return;
-        }
-        let expanded_head_failure = phase == SessionPhase::FlightRunning
-            && mode != GameUiPresentationMode::Screen
-            && self
-                .controls
-                .iter()
-                .any(|control| control.id == "game-head-hud-unavailable");
-        let expanded_controller_failure = phase == SessionPhase::FlightRunning
-            && mode != GameUiPresentationMode::Screen
-            && self
-                .controls
-                .iter()
-                .any(|control| control.id == "game-controller-stopped");
-        let normalized = matches!(
-            phase,
-            SessionPhase::Result
-                | SessionPhase::Replay
-                | SessionPhase::Attract
-                | SessionPhase::FlightRunning
-                | SessionPhase::FlightPaused { .. }
-        );
-        if normalized {
-            for section in &mut self.sections {
-                section.layout = GameUiSectionLayout::Normalized;
-            }
-        }
-        let mut action_index = 0;
-        let mut bottom = 0.795;
-        let total = self
-            .controls
+                .any(|control| control.section == section.id)
+        });
+        let rows: usize = self
+            .sections
             .iter()
-            .filter(|control| !matches!(control.content, GameUiControlContent::Status { .. }))
-            .count() as f64
-            * 0.085
-            + 0.035;
-        let scale = (0.76 / total).min(1.0);
-        for control in &mut self.controls {
-            let fixed = match control.id.as_str() {
-                "game-flight-pause" if mode == GameUiPresentationMode::Screen => {
-                    Some(rect(0.63, 0.90, 0.32, 0.07))
+            .map(|section| {
+                let count = self
+                    .controls
+                    .iter()
+                    .filter(|control| control.section == section.id)
+                    .count();
+                match section.layout {
+                    GameUiSectionLayout::Column => count,
+                    GameUiSectionLayout::ChoiceGrid => count.div_ceil(3),
+                    GameUiSectionLayout::Row => usize::from(count > 0),
                 }
-                "game-flight-pause" if expanded_head_failure => Some(rect(0.10, 0.20, 0.80, 0.16)),
-                "game-flight-pause" => Some(rect(0.10, 0.30, 0.80, 0.40)),
-                "game-head-hud-unavailable"
-                    if expanded_head_failure && expanded_controller_failure =>
-                {
-                    Some(rect(0.08, 0.30, 0.84, 0.31))
-                }
-                "game-controller-stopped"
-                    if expanded_head_failure && expanded_controller_failure =>
-                {
-                    Some(rect(0.08, 0.62, 0.84, 0.25))
-                }
-                "game-controller-stopped" if expanded_controller_failure => {
-                    Some(rect(0.08, 0.36, 0.84, 0.44))
-                }
-                "game-flight-abort" if expanded_head_failure && expanded_controller_failure => {
-                    Some(rect(0.08, 0.89, 0.84, 0.10))
-                }
-                "game-flight-abort" if expanded_controller_failure => {
-                    Some(rect(0.08, 0.84, 0.84, 0.13))
-                }
-                "game-head-hud-unavailable" if expanded_head_failure => {
-                    Some(rect(0.08, 0.40, 0.84, 0.55))
-                }
-                "game-flight-abort" => Some(rect(0.28, 0.90, 0.32, 0.07)),
-                "game-pause-settings-info" => Some(rect(0.08, 0.20, 0.84, 0.12)),
-                "game-pause-help-info" => Some(rect(0.08, 0.24, 0.84, 0.25)),
-                "game-pause-settings-back" => Some(rect(0.08, 0.84, 0.84, 0.085)),
-                "game-pause-help-back" => Some(rect(0.08, 0.72, 0.84, 0.085)),
-                "game-state" if matches!(phase, SessionPhase::FlightPaused { .. }) => {
-                    Some(rect(0.08, 0.20, 0.84, 0.12))
-                }
-                "game-result-analysis" => Some(rect(0.08, 0.15, 0.84, 0.085)),
-                "game-result-configuration" if state.result_tab == GameUiResultTab::Analysis => {
-                    Some(rect(0.04, 0.645, 0.92, 0.065))
-                }
-                "game-result-analysis-notice" => Some(rect(0.04, 0.72, 0.92, 0.085)),
-                "game-analysis-map" => Some(if phase == SessionPhase::Replay {
-                    rect(0.26, 0.035, 0.22, 0.06)
-                } else {
-                    rect(0.02, 0.025, 0.30, 0.06)
-                }),
-                "game-analysis-altitude" => Some(if phase == SessionPhase::Replay {
-                    rect(0.50, 0.035, 0.22, 0.06)
-                } else {
-                    rect(0.35, 0.025, 0.30, 0.06)
-                }),
-                "game-analysis-speed" => Some(if phase == SessionPhase::Replay {
-                    rect(0.74, 0.035, 0.24, 0.06)
-                } else {
-                    rect(0.68, 0.025, 0.30, 0.06)
-                }),
-                "game-analysis-plot" | "game-analysis-loading" => {
-                    Some(if phase == SessionPhase::Replay {
-                        rect(0.04, 0.12, 0.92, 0.59)
-                    } else {
-                        rect(0.04, 0.105, 0.92, 0.40)
-                    })
-                }
-                "game-analysis-cursor" => Some(rect(0.04, 0.52, 0.92, 0.045)),
-                "game-analysis-cursor-values" => Some(if phase == SessionPhase::Replay {
-                    rect(0.04, 0.82, 0.92, 0.075)
-                } else {
-                    rect(0.04, 0.57, 0.92, 0.065)
-                }),
-                "game-result-open-summary" => Some(rect(0.02, 0.82, 0.30, 0.07)),
-                "game-result-replay" if state.result_tab == GameUiResultTab::Analysis => {
-                    Some(rect(0.35, 0.82, 0.30, 0.07))
-                }
-                "game-result-retry" if state.result_tab == GameUiResultTab::Analysis => {
-                    Some(rect(0.68, 0.82, 0.30, 0.07))
-                }
-                "game-result-setup" if state.result_tab == GameUiResultTab::Analysis => {
-                    Some(rect(0.18, 0.91, 0.30, 0.07))
-                }
-                "game-result-title" if state.result_tab == GameUiResultTab::Analysis => {
-                    Some(rect(0.52, 0.91, 0.30, 0.07))
-                }
-                "game-replay-view-mode" => {
-                    Some(if state.replay_view == GameUiReplayView::Analysis {
-                        rect(0.02, 0.035, 0.22, 0.06)
-                    } else {
-                        rect(0.04, 0.84, 0.92, 0.07)
-                    })
-                }
-                "game-replay-play-pause" => {
-                    Some(if state.replay_view == GameUiReplayView::Analysis {
-                        rect(0.04, 0.74, 0.15, 0.06)
-                    } else {
-                        rect(0.04, 0.31, 0.30, 0.07)
-                    })
-                }
-                "game-replay-cursor" => Some(if state.replay_view == GameUiReplayView::Analysis {
-                    rect(0.21, 0.74, 0.75, 0.06)
-                } else {
-                    rect(0.04, 0.52, 0.92, 0.07)
-                }),
-                "game-replay-camera" => Some(if state.replay_view == GameUiReplayView::Analysis {
-                    rect(0.04, 0.91, 0.32, 0.06)
-                } else {
-                    rect(0.36, 0.31, 0.60, 0.07)
-                }),
-                "game-replay-time" => Some(rect(0.04, 0.62, 0.92, 0.08)),
-                "game-replay-return" => Some(if state.replay_view == GameUiReplayView::Analysis {
-                    rect(0.64, 0.91, 0.32, 0.06)
-                } else {
-                    rect(0.04, 0.12, 0.92, 0.075)
-                }),
-                "game-replay-speed-0_5" => Some(rect(0.04, 0.22, 0.29, 0.07)),
-                "game-replay-speed-1" => Some(rect(0.355, 0.22, 0.29, 0.07)),
-                "game-replay-speed-2" => Some(rect(0.67, 0.22, 0.29, 0.07)),
-                "game-attract-status" => Some(rect(0.04, 0.72, 0.92, 0.08)),
-                "game-attract-time" => Some(rect(0.04, 0.62, 0.92, 0.07)),
-                "game-attract-distance" => Some(rect(0.04, 0.52, 0.92, 0.07)),
-                "game-attract-return" => Some(rect(0.04, 0.40, 0.92, 0.075)),
-                _ => None,
+            })
+            .sum();
+        let height = 0.90 / rows.max(1) as f64;
+        let mut row = 0;
+        for section in &self.sections {
+            let count = self
+                .controls
+                .iter()
+                .filter(|control| control.section == section.id)
+                .count();
+            let columns = match section.layout {
+                GameUiSectionLayout::Column => 1,
+                GameUiSectionLayout::ChoiceGrid => 3,
+                GameUiSectionLayout::Row => count.max(1),
             };
-            if let Some(position) = fixed {
-                control.rect = position;
-            } else if matches!(phase, SessionPhase::FlightPaused { .. }) {
-                let top = if state.pause_overlay == GameUiPauseOverlay::Settings {
-                    0.35
-                } else {
-                    0.40
-                };
+            for (index, control) in self
+                .controls
+                .iter_mut()
+                .filter(|control| control.section == section.id)
+                .enumerate()
+            {
                 control.rect = rect(
-                    0.08,
-                    top + f64::from(action_index)
-                        * if state.pause_overlay == GameUiPauseOverlay::Settings {
-                            0.09
-                        } else {
-                            0.11
-                        },
-                    0.84,
-                    0.085,
+                    0.04 + 0.92 * (index % columns) as f64 / columns as f64,
+                    0.04 + (row + index / columns) as f64 * height,
+                    0.90 / columns as f64,
+                    height * 0.94,
                 );
-                action_index += 1;
-            } else if matches!(phase, SessionPhase::Title | SessionPhase::Result)
-                && control.id != "game-state"
-                && !control.id.starts_with("game-flight-log-")
-            {
-                let height = if control.id == "game-result-configuration" {
-                    0.11
-                } else {
-                    0.075
-                } * scale;
-                bottom -= height;
-                control.rect = rect(0.08, bottom, 0.84, height);
-                bottom -= 0.01 * scale;
             }
-            if matches!(phase, SessionPhase::Result | SessionPhase::Replay)
-                && !control.id.starts_with("game-flight-log-")
-            {
-                control.rect.y *= 0.81;
-                control.rect.height *= 0.81;
-            }
-            match control.id.as_str() {
-                "game-flight-log-csv" => control.rect = rect(0.04, 0.83, 0.44, 0.065),
-                "game-flight-log-json" => control.rect = rect(0.52, 0.83, 0.44, 0.065),
-                "game-flight-log-notice" => control.rect = rect(0.04, 0.91, 0.92, 0.085),
-                _ => {}
-            }
+            row += count.div_ceil(columns);
         }
     }
 }
@@ -1074,12 +840,17 @@ fn setup(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
                 HudCue::AngleOfAttack,
                 profile.angle_of_attack(),
             ),
-            ("warnings", "警告cue", HudCue::Warnings, profile.warnings()),
+            (
+                "warnings",
+                "通常警告（未対応）",
+                HudCue::Warnings,
+                profile.warnings(),
+            ),
         ] {
             menu.push(
                 &format!("game-setup-information-{id}"),
                 label,
-                true,
+                cue != HudCue::Warnings,
                 "information-cues",
                 GameUiControlContent::Toggle { cue, value },
             );
@@ -1203,6 +974,7 @@ fn feedback(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
 }
 
 fn water_quality(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
+    menu.automatic_sections();
     use crate::lake_water::LakeWaterQuality;
     use crate::screen_render_auto::ScreenRenderSelection;
     let current = context.platform.water_quality;
@@ -1288,6 +1060,7 @@ fn water_quality(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
 }
 
 fn screen_render_scale(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
+    menu.automatic_sections();
     use crate::screen_render_auto::{ScreenRenderAutoStatus, ScreenRenderSelection};
     use crate::screen_render_scale::ScreenRenderScale;
     if context.platform.presentation_mode != GameUiPresentationMode::Screen {
@@ -1428,6 +1201,7 @@ fn record_summary(context: &GameUiContext<'_, '_>) -> Result<String, GameUiError
 }
 
 fn logs(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
+    menu.section("flight-log-actions", "飛行ログ", GameUiSectionLayout::Row);
     let enabled = context.platform.flight_log_available
         && !context.platform.flight_log_pending
         && context.record.is_some();
@@ -1456,6 +1230,7 @@ fn logs(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
         notice.push_str(" · ");
         notice.push_str(&context.platform.notification);
     }
+    menu.section("flight-log-notice", "", GameUiSectionLayout::Column);
     menu.status("game-flight-log-notice", "ログ出力", &notice);
 }
 
@@ -1465,6 +1240,7 @@ fn analysis(
     context: &GameUiContext<'_, '_>,
     replay: bool,
 ) -> Result<(), GameUiError> {
+    menu.section("analysis-tabs", "", GameUiSectionLayout::Row);
     for (chart, id, label) in [
         (GameUiAnalysisChart::Map, "game-analysis-map", "Map"),
         (
@@ -1498,6 +1274,42 @@ fn analysis(
         } else {
             state.analysis_time_seconds.min(duration)
         };
+        let plot = super::chart::record_chart(
+            record,
+            state.analysis_chart,
+            time,
+            context.platform.chart_extent,
+        )?;
+        let sample = record
+            .sample_at_seconds(time)
+            .map_err(GameUiError::Record)?;
+        let selected_wind_label = if state.analysis_chart == GameUiAnalysisChart::Map {
+            plot.vectors.first().map(|vector| vector.label.as_str())
+        } else {
+            None
+        };
+        let readout = super::frame::analysis_cursor_readout(
+            sample,
+            time,
+            record.header().scenario,
+            selected_wind_label,
+        );
+        menu.section("analysis-chart", "", GameUiSectionLayout::Column);
+        menu.push(
+            "game-analysis-plot",
+            match state.analysis_chart {
+                GameUiAnalysisChart::Map => "水平軌跡",
+                GameUiAnalysisChart::Altitude => "Altitude vs time",
+                GameUiAnalysisChart::Speed => "Airspeed / Groundspeed",
+            },
+            false,
+            "analysis",
+            GameUiControlContent::Chart {
+                chart: state.analysis_chart,
+                plot: Box::new(plot),
+            },
+        );
+        menu.section("analysis-cursor", "", GameUiSectionLayout::Column);
         menu.push(
             if replay {
                 "game-replay-cursor"
@@ -1524,42 +1336,14 @@ fn analysis(
                 step: 0.01,
             },
         );
-        let plot = super::chart::record_chart(
-            record,
-            state.analysis_chart,
-            time,
-            context.platform.chart_extent,
-        )?;
-        let sample = record
-            .sample_at_seconds(time)
-            .map_err(GameUiError::Record)?;
-        let selected_wind_label = if state.analysis_chart == GameUiAnalysisChart::Map {
-            plot.vectors.first().map(|vector| vector.label.as_str())
-        } else {
-            None
-        };
-        let readout = super::frame::analysis_cursor_readout(
-            sample,
-            time,
-            record.header().scenario,
-            selected_wind_label,
+        menu.live_status(
+            "game-analysis-cursor-values",
+            "At cursor",
+            &readout,
+            GameUiReadoutSource::AnalysisCursor,
         );
-        menu.push(
-            "game-analysis-plot",
-            match state.analysis_chart {
-                GameUiAnalysisChart::Map => "水平軌跡",
-                GameUiAnalysisChart::Altitude => "Altitude vs time",
-                GameUiAnalysisChart::Speed => "Airspeed / Groundspeed",
-            },
-            false,
-            "analysis",
-            GameUiControlContent::Chart {
-                chart: state.analysis_chart,
-                plot: Box::new(plot),
-            },
-        );
-        menu.status("game-analysis-cursor-values", "At cursor", &readout);
     } else {
+        menu.section("analysis-chart", "", GameUiSectionLayout::Column);
         menu.status(
             "game-analysis-loading",
             "Analysis",
@@ -1582,6 +1366,7 @@ fn replay(
         GameUiReplayView::Telemetry => GameUiReplayView::Analysis,
         GameUiReplayView::Analysis => GameUiReplayView::Cinematic,
     };
+    menu.section("replay-view", "", GameUiSectionLayout::Row);
     menu.action(
         "game-replay-view-mode",
         &format!(
@@ -1600,12 +1385,15 @@ fn replay(
             && let Some(record) = context.record
         {
             let duration = record.duration_seconds().map_err(GameUiError::Record)?;
-            menu.status(
+            menu.section("replay-status", "", GameUiSectionLayout::Column);
+            menu.live_status(
                 "game-replay-time",
                 "Record time",
                 &format!("{:.2} / {duration:.2} s", clock.time_seconds()),
+                GameUiReadoutSource::PlaybackTime,
             );
             if state.replay_view == GameUiReplayView::Telemetry {
+                menu.section("replay-cursor", "", GameUiSectionLayout::Column);
                 menu.push(
                     "game-replay-cursor",
                     "Replay time (s)",
@@ -1622,6 +1410,7 @@ fn replay(
                 );
             }
         }
+        menu.section("replay-actions", "", GameUiSectionLayout::Row);
         menu.action(
             "game-replay-play-pause",
             if clock.is_playing() { "Pause" } else { "Play" },
@@ -1652,6 +1441,7 @@ fn replay(
         .map(|camera| camera.label())
         .collect::<Vec<_>>();
     if !unavailable.is_empty() {
+        menu.section("replay-diagnostics", "", GameUiSectionLayout::Column);
         menu.status(
             "game-replay-camera-support",
             "Camera対応",
@@ -1665,6 +1455,7 @@ fn replay(
             ..
         }
     );
+    menu.section("replay-navigation", "", GameUiSectionLayout::Row);
     menu.session(
         "game-replay-return",
         if title_return {

@@ -3,7 +3,7 @@ import { describe, expect, expectTypeOf, it, vi } from "vitest";
 import { initSync } from "../../web/pkg/birdman_game_wasm.js";
 import { createInitialAppModel, gameSessionSnapshot, gameSessionState, updateApp } from "../../web/src/app/app-state.js";
 import type { AppMessage, AppModel, GameSessionUiState, TailGameSessionProjection } from "../../web/src/app/app-state.js";
-import { sharedGameUiPlatform } from "./shared-game-ui-fixture.js";
+import { sharedGameUiPlatform, sharedHudNode } from "./shared-game-ui-fixture.js";
 import { FlightControllerUiBindings } from "../../web/src/app/flight-controller-port.js";
 import { createFlightUiHudModel } from "../../web/src/app/flight-frame-view.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
@@ -23,9 +23,9 @@ function projection(session: TailAppSessionFacade): TailGameSessionProjection {
 }
 
 function launch(session: TailAppSessionFacade): void {
-  session.executeOperation("open-setup");
-  session.executeOperation("prepare");
-  session.executeOperation("start-flight");
+  session.executeSharedSessionCommand({ kind: "open_setup" });
+  session.executeSharedSessionCommand({ kind: "prepare" });
+  session.executeSharedSessionCommand({ kind: "start_countdown" });
   session.observeCountdown(session.captureCountdownToken(), 3, true);
 }
 
@@ -60,8 +60,8 @@ describe("single Rust snapshot application projection", () => {
     const facade = session();
     try {
       let model = createInitialAppModel();
-      for (const operation of ["open-setup", "prepare"] as const) {
-        facade.executeOperation(operation);
+      for (const kind of ["open_setup", "prepare"] as const) {
+        facade.executeSharedSessionCommand({ kind });
         const menu = projection(facade);
         expect(menu.display).toEqual({ kind: "unavailable", reason: "menu_phase" });
         model = updateApp(model, { type: "game-session-synced", ...menu }).model;
@@ -70,7 +70,7 @@ describe("single Rust snapshot application projection", () => {
       model = observeSharedUi(model, facade);
       expect(sharedView(model).panels.flatMap((panel) => panel.controls).some((control) =>
         control.kind === "status" && control.value.includes("独立したroll"))).toBe(true);
-      facade.executeOperation("start-flight");
+      facade.executeSharedSessionCommand({ kind: "start_countdown" });
       facade.observeCountdown(facade.captureCountdownToken(), 3, true);
       for (const expectedPhase of [5, 6, 7] as const) {
         const current = projection(facade);
@@ -86,10 +86,10 @@ describe("single Rust snapshot application projection", () => {
         if (expectedPhase === 7) expect(hud).toBeNull();
         else {
           if (hud === null) throw new Error("Missing shared live Flight HUD");
-          expect(hud.controlsDescription).toContain("nose-up/down");
+          expect(sharedHudNode(hud, "hud-controls").content.value).toContain("nose-up/down");
         }
-        if (expectedPhase === 5) facade.executeOperation("pause");
-        if (expectedPhase === 6) facade.executeOperation("abort");
+        if (expectedPhase === 5) facade.executeSharedSessionCommand({ kind: "pause" });
+        if (expectedPhase === 6) facade.executeSharedSessionCommand({ kind: "abort" });
       }
       expect(model.gameSession.kind).toBe("result");
       expect(() => projectTailGameSession(facade.readSnapshot(), { ...facade.readLifecycle(), phaseCode: 5 }, model.difficulty, null)).toThrow("disagree");
@@ -120,7 +120,7 @@ describe("single Rust snapshot application projection", () => {
     try {
       launch(facade);
       facade.flightPort.advance_tick_json(neutral);
-      facade.executeOperation("abort");
+      facade.executeSharedSessionCommand({ kind: "abort" });
       const early = facade.queryRecordDisplay(0.005);
       const terminal = facade.queryRecordDisplay(0.01);
       expect(isTerminalSessionSnapshot(early)).toBe(false);
@@ -171,8 +171,8 @@ describe("single Rust snapshot application projection", () => {
         const projected = observeSharedUi({ ...model, presentation: { type: "ready" as const, mode } }, facade, mode);
         const hud = createFlightUiHudModel(projected);
         if (hud === null) throw new Error("Missing shared stopped Flight HUD");
-        expect(hud.warning).toContain("Gamepad permission denied");
-        expect(hud.telemetry).toContain("Last valid · tick 1");
+        expect(sharedHudNode(hud, "hud-controller-failure").content.value).toContain("Gamepad permission denied");
+        expect(sharedHudNode(hud, "hud-primary-readouts").content.value).toContain("Last valid · tick 1");
         expect(sharedView(projected).description).toContain("停止");
       }
       expect(updateApp(model, { type: "ui-action", action: { type: "activate", controlId: "game-flight-abort" } }).effects)
@@ -189,7 +189,7 @@ describe("single Rust snapshot application projection", () => {
       facade.flightPort.advance_tick_json(neutral);
       const beforePause = projection(facade);
       if (beforePause.phaseCode !== 5) throw new Error("Expected a live tail projection");
-      facade.executeOperation("pause");
+      facade.executeSharedSessionCommand({ kind: "pause" });
       let model = updateApp(createInitialAppModel(), { type: "game-session-synced", ...projection(facade) }).model;
       const bindings = new FlightControllerUiBindings();
       const binding = bindings.bindDisplay(facade.flightPort, { render: vi.fn(), setVisible: vi.fn() },

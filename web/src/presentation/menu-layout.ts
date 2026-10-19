@@ -6,7 +6,7 @@ import type { MenuClippedRect, MenuContentPoint, MenuControlLayout, MenuControlT
   MenuLayoutRow, MenuMeasuredLine, MenuOpeningReadability, MenuPoint, MenuRect, MenuTextLayout, MenuTextMeasurement, MenuTextRequest,
   MenuRangeResult, MenuTextSlot, MenuViewport } from "../render/contracts/menu-layout.js";
 import { uiButtonLabel } from "../render/contracts/ui.js";
-import type { PanelSize, UiChart, UiControl, UiPanel } from "../render/contracts/ui.js";
+import type { PanelSize, UiChart, UiPanel } from "../render/contracts/ui.js";
 import { projectHeadPoint } from "../render/contracts/viewer-frame.js";
 import type { ViewerFrame } from "../render/contracts/viewer-frame.js";
 
@@ -24,18 +24,18 @@ export function requestMenuLayout(panel: UiPanel, surfaceSize: PanelSize, style:
   const gapMeters = style.fontMeters * 0.35;
   const contentWidth = surfaceSize.width - paddingMeters * 2;
   if (contentWidth <= paddingMeters * 2) throw new RangeError("Menu surface is narrower than its text padding");
-  const rows = menuRows(panel.controls, surfaceSize.width < surfaceSize.height, contentWidth, style.fontMeters);
+  const rows = menuRows(panel, surfaceSize.width < surfaceSize.height, contentWidth, style.fontMeters);
   const font = Object.freeze({ ...style.font });
   const texts: MenuTextRequest[] = [];
-  const addText = (slot: MenuTextSlot, value: string, widthMeters: number, chartText?: UiChart["presentation"]["x_axis"]): void => {
+  const addText = (slot: MenuTextSlot, value: string, widthMeters: number, chartText?: UiChart["presentation"]["x_axis"], legend?: UiChart["presentation"]["legend"][number]): void => {
     const chart = slot.kind === "control" ? panel.controls.find((control) => control.id === slot.controlId) : undefined;
     const fontMeters = chartText === undefined || chart?.kind !== "chart" ? style.fontMeters
       : style.fontMeters * chartText.font_size / chart.presentation.tick_font_size;
     const textFont = chartText === undefined ? font : Object.freeze({ ...font, weight: chartText.font_weight });
     const identity = JSON.stringify([panel.id, surfaceSize.width, surfaceSize.height, style.locale, style.fontMeters,
-      textFont.family, textFont.weight, textFont.style, textFont.generation, slot, value, widthMeters, chartText]);
+      textFont.family, textFont.weight, textFont.style, textFont.generation, slot, value, widthMeters, chartText, legend]);
     texts.push(Object.freeze({ identity, slot: Object.freeze(slot), value, widthMeters, fontMeters, font: textFont, locale: style.locale,
-      ...(chartText === undefined ? {} : { chartText }) }));
+      ...(chartText === undefined ? {} : { chartText }), ...(legend === undefined ? {} : { legend }) }));
   };
   addText({ kind: "fixed", role: "title" }, panel.title, contentWidth);
   addText({ kind: "fixed", role: "caption" }, style.caption, contentWidth);
@@ -43,7 +43,9 @@ export function requestMenuLayout(panel: UiPanel, surfaceSize: PanelSize, style:
   if (pageWidth <= 0) throw new RangeError("Menu surface has no space for page controls");
   addText({ kind: "fixed", role: "previous" }, style.previousLabel, pageWidth);
   addText({ kind: "fixed", role: "next" }, style.nextLabel, pageWidth);
-  for (const row of rows) for (const item of row.controls) {
+  for (const row of rows) {
+    if (row.heading !== null && row.heading.label !== "") addText({ kind: "section", role: "heading", sectionId: row.heading.id }, row.heading.label, contentWidth);
+    for (const item of row.controls) {
     const control = item.control;
     const width = item.width - paddingMeters * 2;
     const addControlText = (role: MenuControlTextRole, index: number, value: string, textWidth = width, chartText?: UiChart["presentation"]["x_axis"]): void => {
@@ -65,37 +67,40 @@ export function requestMenuLayout(panel: UiPanel, surfaceSize: PanelSize, style:
         }
         presentation.x_ticks.forEach((tick, index) => { addControlText("x-tick", index, tick.text.label, width / presentation.x_ticks.length, tick.text); });
         presentation.y_ticks.forEach((tick, index) => { addControlText("y-tick", index, tick.text.label, width / presentation.y_ticks.length, tick.text); });
-        presentation.legend.forEach((entry, index) => { addControlText("legend", index, entry.label); });
+        presentation.legend.forEach((entry, index) => {
+          addText({ kind: "control", controlId: control.id, role: "legend", index }, entry.label, width - style.fontMeters * 2, undefined, entry);
+        });
         [...presentation.marker_labels, ...presentation.time_marker_labels, ...presentation.reference_labels]
           .forEach((annotation, index) => { addControlText("annotation", index, annotation.label, width, annotation); });
         break;
       }
     }
   }
+  }
   return Object.freeze({ panel, theme: style.theme, surfaceSize: Object.freeze({ ...surfaceSize }), fontMeters: style.fontMeters, font,
     lineHeightMeters: style.fontMeters * 1.35, paddingMeters, gapMeters, rows, texts: Object.freeze(texts) });
 }
 
-function menuRows(controls: readonly UiControl[], portrait: boolean, width: number, fontMeters: number): readonly MenuLayoutRow[] {
-  const ordered = controls.map((control, index) => ({ control, index }))
-    .sort((left, right) => left.control.rect.y - right.control.rect.y || left.control.rect.x - right.control.rect.x || left.index - right.index);
-  const groups: UiControl[][] = [];
-  for (const item of ordered) {
-    const previous = groups[groups.length - 1];
-    const first = previous?.[0];
-    if (!portrait && previous !== undefined && first !== undefined && item.control.kind !== "chart" &&
-        previous.every((control) => control.kind !== "chart") && Math.abs(item.control.rect.y - first.rect.y) < 1e-8 &&
-        previous.every((control) => item.control.rect.x >= control.rect.x + control.rect.width)) previous.push(item.control);
-    else groups.push([item.control]);
+function menuRows(panel: UiPanel, portrait: boolean, width: number, fontMeters: number): readonly MenuLayoutRow[] {
+  const sections = panel.sections ?? [{ id: "", label: "", layout: "column" as const }];
+  if (new Set(sections.map((section) => section.id)).size !== sections.length ||
+      panel.sections !== undefined && panel.controls.some((control) => !sections.some((section) => section.id === control.section))) {
+    throw new RangeError("Menu controls must belong to unique declared sections");
   }
-  return Object.freeze(groups.flatMap((group) => {
-    const left = Math.min(...group.map((control) => control.rect.x));
-    const right = Math.max(...group.map((control) => control.rect.x + control.rect.width));
-    const items = group.map((control) => Object.freeze({ control,
-      left: (control.rect.x - left) / (right - left) * width, width: control.rect.width / (right - left) * width }));
-    return items.some((item) => item.width < fontMeters * 8)
-      ? group.map((control) => Object.freeze({ controls: Object.freeze([Object.freeze({ control, left: 0, width })]) }))
-      : [Object.freeze({ controls: Object.freeze(items) })];
+  return Object.freeze(sections.flatMap((section) => {
+    const controls = panel.sections === undefined ? panel.controls : panel.controls.filter((control) => control.section === section.id);
+    const limit = portrait ? 1 : Math.max(1, Math.floor(width / (fontMeters * 8)));
+    let columns: number;
+    switch (section.layout) {
+      case "column": columns = 1; break;
+      case "row": columns = Math.min(limit, Math.max(1, controls.length)); break;
+      case "choice_grid": columns = Math.min(limit, 3); break;
+    }
+    return Array.from({ length: Math.ceil(controls.length / columns) }, (_, row) => Object.freeze({
+      heading: row === 0 ? Object.freeze({ id: section.id, label: section.label }) : null,
+      controls: Object.freeze(controls.slice(row * columns, (row + 1) * columns).map((control, column) =>
+        Object.freeze({ control, left: column * width / columns, width: width / columns })))
+    }));
   }));
 }
 
@@ -125,13 +130,21 @@ export function layoutMeasuredMenu(request: MenuLayoutRequest, measurements: rea
   const title = textLayout(required("title"), 0, 0);
   let top = title.bounds.height + request.gapMeters;
   const controls: MenuControlLayout[] = [];
+  const sectionHeadings: MenuTextLayout[] = [];
   for (const row of request.rows) {
+    if (row.heading !== null && row.heading.label !== "") {
+      const specification = request.texts.find((text) => text.slot.kind === "section" && text.slot.sectionId === row.heading?.id);
+      if (specification === undefined) return unavailable("invalid-layout");
+      const heading = textLayout(specification, 0, top);
+      sectionHeadings.push(heading);
+      top += heading.bounds.height + request.gapMeters;
+    }
     const layouts = row.controls.map((item): MenuControlLayout => {
       const specifications = request.texts.filter((text) => text.slot.kind === "control" && text.slot.controlId === item.control.id);
       const texts: MenuTextLayout[] = [];
       let textTop = top + request.paddingMeters;
       const placeText = (specification: MenuTextRequest): void => {
-        const text = textLayout(specification, item.left + request.paddingMeters, textTop);
+        const text = textLayout(specification, item.left + request.paddingMeters + (specification.legend === undefined ? 0 : request.fontMeters * 2), textTop);
         texts.push(text);
         textTop += text.bounds.height;
       };
@@ -175,7 +188,7 @@ export function layoutMeasuredMenu(request: MenuLayoutRequest, measurements: rea
   if (![contentHeightMeters, footerHeightMeters].every(Number.isFinite) ||
       request.surfaceSize.height - footerHeightMeters - request.paddingMeters * 2 - request.gapMeters <= 0 ||
       controls.some((control) => !finiteRect(control.bounds) || (control.kind === "chart" && !finiteRect(control.plot)))) return unavailable("invalid-layout");
-  return Object.freeze({ kind: "ready", document: Object.freeze({ request, title, caption, controls: Object.freeze(controls),
+  return Object.freeze({ kind: "ready", document: Object.freeze({ request, title, caption, sectionHeadings: Object.freeze(sectionHeadings), controls: Object.freeze(controls),
     contentHeightMeters, previous, next, footerHeightMeters }) });
 }
 
@@ -291,6 +304,7 @@ export function validateMenuOpeningInk(document: MenuDocument, viewer: ViewerFra
   if (viewer.source === "unavailable") return Object.freeze({ kind: "unavailable", reason: viewer.reason });
   const size = document.request.surfaceSize;
   const lines: readonly MenuMeasuredLine[] = [...document.title.lines, ...document.caption.lines,
+    ...document.sectionHeadings.flatMap((heading) => heading.lines),
     ...document.controls.flatMap((control) => control.texts.flatMap((text) => text.lines)), ...document.previous.lines, ...document.next.lines];
   try {
     let minimumInkAngleDegrees = Number.POSITIVE_INFINITY;

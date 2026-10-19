@@ -42,13 +42,13 @@ it("clears a DOM pilot target across terminal Result and Rust Retry", () => {
     controller.onFrame(100);
     window.dispatchEvent(new window.KeyboardEvent("keyup", { code: "KeyL" }));
     expect(controller.currentSnapshot.frame.state.pilotPositionTargetNormalized).toBeGreaterThan(0.03);
-    session.executeOperation("abort");
+    session.executeSharedSessionCommand({ kind: "abort" });
     controller.reset(session.flightPort.snapshot_json());
     const resultPress = new window.KeyboardEvent("keydown", { code: "KeyL", cancelable: true });
     window.dispatchEvent(resultPress);
     expect(resultPress.defaultPrevented).toBe(false);
-    session.executeOperation("retry");
-    session.executeOperation("start-flight");
+    session.executeSharedSessionCommand({ kind: "retry" });
+    session.executeSharedSessionCommand({ kind: "start_countdown" });
     session.observeCountdown(session.captureCountdownToken(), 3, true);
     controller.reset(session.flightPort.snapshot_json());
     controller.onFrame(1000);
@@ -132,14 +132,14 @@ describe("current WebAssembly browser binding", () => {
   it.each([0, 1, 2] as const)("runs control mode %i through a calm flight, fractional contact, record selection and retry", (mode) => {
     const session = createAppSession({ controlModeCode: mode, seedLow: 0, seedHigh: 0 });
     try {
-      session.executeOperation("open-setup");
-      session.executeOperation({ kind: "set-difficulty-option", axis: "weather", code: 0 });
-      session.executeOperation("prepare");
-      session.executeOperation("start-flight");
+      session.executeSharedSessionCommand({ kind: "open_setup" });
+      session.executeSharedSessionCommand({ kind: "select_weather", weather: "calm" });
+      session.executeSharedSessionCommand({ kind: "prepare" });
+      session.executeSharedSessionCommand({ kind: "start_countdown" });
       session.observeCountdown(session.captureCountdownToken(), 3, true);
-      session.executeOperation("pause");
+      session.executeSharedSessionCommand({ kind: "pause" });
       expect(session.readLifecycle().phaseCode).toBe(6);
-      session.executeOperation("resume");
+      session.executeSharedSessionCommand({ kind: "resume" });
       for (let tick = 0; tick < 4_000 && session.readLifecycle().phaseCode === 5; tick += 1) {
         session.flightPort.advance_tick_json(neutralTailInput);
       }
@@ -162,7 +162,7 @@ describe("current WebAssembly browser binding", () => {
         expect(selection.selected_existing_id()).toBe(12);
         expect(() => { selection.consider_existing(0, encoded); }).toThrow(/InvalidRecord/);
       } finally { selection.free(); }
-      session.executeOperation("retry");
+      session.executeSharedSessionCommand({ kind: "retry" });
       expect(session.readLifecycle().phaseCode).toBe(3);
     } finally { session.dispose(); }
   });
@@ -219,12 +219,12 @@ describe("current WebAssembly browser binding", () => {
     const session = createAppSession({ controlModeCode: 0, seedLow: 21, seedHigh: 22 });
     try {
       const selection = session.readDifficulty();
-      session.executeOperation("enter-attract");
+      session.executeSharedSessionCommand({ kind: "enter_attract" });
       expect(session.readLifecycle().phaseCode).toBe(10);
       expect(session.readPlaybackContext().phase).toBe("attract");
       expect(session.queryRecordSample(0).controls.layout).toBe("tail_incidence");
       expect(() => session.exportRecordJson()).toThrow();
-      session.executeOperation("leave-attract");
+      session.executeSharedSessionCommand({ kind: "leave_attract" });
       expect(session.readLifecycle().phaseCode).toBe(0);
       expect(session.readDifficulty()).toEqual(selection);
     } finally { session.dispose(); }
