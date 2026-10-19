@@ -5,7 +5,7 @@
 表示と操作には、WebAssembly・Three.jsによるWeb版と、Bevyによるネイティブ版を用意する。
 
 広報版では、松原水泳場付近から湖中央方向へ約500 m、数十秒間の飛行を設計目標とする。
-この目標と、現在の架空機体モデルの性能は分けて扱う。
+**注意:** この目標と、現在の架空機体モデルの性能は分けて扱う。
 Web版はキーボードとゲームパッドによる操作に対応する。
 操縦方式には`Manual`・`Shared`・`Automatic`があり、FBWによる操縦支援を備える。
 
@@ -31,7 +31,7 @@ Windows・macOS・Linuxの各`x86_64`/`arm64`への対応は、[#543 / PR #544](
 `birdman-game-core`は、次の処理を提供する。
 
 - 6自由度の剛体運動（6DoF）、パイロットの重心移動、空間風場。
-- 全機体の静的空力特性表（static polar）と、`current-reference hybrid`空力モデル。
+- 全機の静的空力特性と、現在の流れを基準とする局所荷重の差分を組み合わせたハイブリッド空力モデル。
 - 水平尾翼・垂直尾翼の操舵権限配分、取付角の変化速度制限、FBW。
 - パイロット位置の制御、固定周期の飛行更新、発進条件の変換。
 - 更新区間内の接触時刻を求める着水判定、飛距離の採点。
@@ -60,7 +60,16 @@ Windows・macOS・Linuxの各`x86_64`/`arm64`への対応は、[#543 / PR #544](
 
 ### ゲーム進行と既定モデル
 
-Rustの`GameSession`が、`Title`・`Setup`・`Briefing`・`Countdown`・`Flight`・`Result`・`Replay`を管理する。
+Rustの`GameSession`が、次のシーンの進行を管理する。
+
+- `Title`
+- `Setup`
+- `Briefing`
+- `Countdown`
+- `Flight`
+- `Result`
+- `Replay`
+
 独立したデモ記録の再生は`Attract`として管理する。
 `Setup`では、表示情報（`Information`）、操縦支援（`Assistance`）、気象条件（`Weather`）を選択する。
 `Briefing`では、発進前に準備結果を確認する。
