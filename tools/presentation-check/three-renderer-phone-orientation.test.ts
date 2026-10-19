@@ -1,4 +1,5 @@
 import { configuredViewerFixture, visiblePanelFrame } from "./viewer-fixture.js";
+import { currentFlightPoseFixture } from "../game-check/current-session-fixture.js";
 import { fixtureBackendFrame } from "./menu-fixture.js";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { Euler, Matrix4, Quaternion, Vector3 } from "three";
@@ -97,8 +98,9 @@ describe("Phone VR browser orientation through the Three adapter and StereoEffec
   beforeEach(() => {
     bundle.renderer.setStereoPresentation(null);
     bundle.renderer.setFlightPose({
+      ...currentFlightPoseFixture(),
       datumPositionNed: { north: 0, east: 0, down: -20 },
-      attitudeBodyToNed: IDENTITY_POSE.orientation,
+      attitudeBodyToNed: { ...IDENTITY_POSE.orientation },
       pilotPositionMeters: 0,
       initialPilotPositionMeters: 0
     });

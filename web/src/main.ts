@@ -1,3 +1,4 @@
+import type { GamePhase } from "./app/session-snapshot.js";
 import "./styles.css";
 import { installBrowserPageLifecycle } from "./app/browser-page-lifecycle.js";
 import { BrowserFlightLogDownload } from "./app/browser-flight-log-download.js";
@@ -10,7 +11,7 @@ import { initializeAppSession } from "./app/session-factory.js";
 import { initializeWasmRuntime } from "./game/wasm-flight.js";
 import type { TailAppSessionFacade } from "./app/session-facade.js";
 import { projectRuntimePlaybackClock, readRuntimeSessionProjection } from "./app/session-runtime-projection.js";
-import { createInitialAppModel, flightAnalysisData, gameSessionPhaseCode, isCurrentFlightLogDownload, isGameFlowActivation, isStaleGameFlowActivation, recordListEntries, recordListNotice, replayPoseData, updateApp } from "./app/app-state.js";
+import { createInitialAppModel, flightAnalysisData, gameSessionPhase, isCurrentFlightLogDownload, isGameFlowActivation, isStaleGameFlowActivation, recordListEntries, recordListNotice, replayPoseData, updateApp } from "./app/app-state.js";
 import type {
   AppEffect,
   AppMessage,
@@ -41,12 +42,12 @@ import { createBrowserPhoneVrGamepadInputPort } from "./presentation/phone-vr-ga
 import { BrowserTailPilotInput, DEFAULT_BROWSER_TAIL_INPUT_CONFIGURATION } from "./game/browser-tail-input.js";
 import { TailFlightController } from "./game/tail-flight-controller.js";
 import { maximum_flight_frame_gap_milliseconds, screen_vertical_field_of_view_degrees, ScreenRenderAutoBridge } from "../pkg/birdman_game_wasm.js";
-import { parseScreenRenderAutoSnapshot } from "./render/contracts/screen-render-auto.js";
+import type { ScreenRenderAutoSnapshot } from "./generated/screen-render-auto.js";
 import { suspendPageFlight } from "./game/page-flight-lifecycle.js";
 import { DEFAULT_LAKE_VISUAL_CONDITION } from "./render/contracts/lake-water.js";
 import { createArchivedPersonalBestSelection, personalBestComparisonVersion } from "./game/archived-personal-best.js";
 import { FlightRecordRepository, IndexedDbFlightRecordPersistence } from "./game/flight-record-store.js";
-import { parseRuntimeEnvironmentSnapshot, sameEnvironmentIdentity } from "./game/runtime-environment.js";
+import { projectRuntimeEnvironment } from "./game/runtime-environment.js";
 import type { RuntimeEnvironmentProjection } from "./game/runtime-environment.js";
 import { projectRuntimeVenue } from "./game/runtime-venue.js";
 import { viewExposesAction } from "./render/contracts/ui.js";
@@ -113,14 +114,14 @@ const screenUi = new ScreenUiAdapter(uiRoot, (action) => {
 const flightLogDownload = new BrowserFlightLogDownload(document);
 
 function dispatch(message: AppMessage): void {
-  const previousPhaseCode = gameSessionPhaseCode(model.gameSession);
+  const previousPhase = gameSessionPhase(model.gameSession);
   const transition = updateApp(model, message);
   model = transition.model;
   runSideEffects([
     () => {
       synchronizeSharedGameUi();
       synchronizeMenuScroll();
-      if ([9, 10].includes(previousPhaseCode) && ![9, 10].includes(gameSessionPhaseCode(model.gameSession))) flightController?.renderCurrentSnapshot();
+      if (["replay", "attract"].includes(previousPhase) && !["replay", "attract"].includes(gameSessionPhase(model.gameSession))) flightController?.renderCurrentSnapshot();
       renderModel();
     },
     ...transition.effects.map((effect) => () => { runEffect(effect); })
@@ -138,28 +139,28 @@ function runSideEffects(actions: readonly (() => void)[]): void {
 }
 
 function renderModel(): void {
-  const phaseCode = gameSessionPhaseCode(model.gameSession);
+  const phase = gameSessionPhase(model.gameSession);
   const domVisible = screenUiVisible(model.presentation);
   frameRateDisplay.render(runtime?.framesPerSecond ?? null, domVisible);
   const environment = currentRuntimeEnvironment();
   flightRenderer?.setLakeVisualCondition(environment.kind === "available" ? environment.value.waves : DEFAULT_LAKE_VISUAL_CONDITION);
   flightRenderer?.setLakeSkyCondition(environment.kind === "available" && environment.value.sky.kind === "available"
     ? environment.value.sky.value.condition : null);
-  flightRenderer?.setLakeVenueVisible(gameSession !== null && projectRuntimeVenue(environment, phaseCode).kind === "visible");
+  flightRenderer?.setLakeVenueVisible(gameSession !== null && projectRuntimeVenue(environment, phase).kind === "visible");
   controllerHudDisplay.render();
-  const replay = (phaseCode === 9 || phaseCode === 10) ? replayPoseData(model.replayPose) : null;
+  const replay = (phase === "replay" || phase === "attract") ? replayPoseData(model.replayPose) : null;
   const camera = replay?.replayCamera ?? null;
   flightRenderer?.setCinematicCameraView(camera?.cinematic ?? null);
   flightRenderer?.setFlightCameraMode(camera?.mode ?? "pilot");
-  if (phaseCode === 9 || phaseCode === 10) {
+  if (phase === "replay" || phase === "attract") {
     flightRenderer?.setPreparedFlightPose(null);
     flightRenderer?.setFlightPose(replay);
-  } else if (phaseCode === 2 || phaseCode === 3 || phaseCode === 4 || phaseCode === 8) {
+  } else if (phase === "briefing_preparing" || phase === "briefing_ready" || phase === "countdown" || phase === "briefing_failed") {
     flightRenderer?.setFlightPose(null);
     flightRenderer?.setPreparedFlightPose(gameSession?.readPreparedLaunchPose() ?? null);
   } else {
     flightRenderer?.setPreparedFlightPose(null);
-    if (phaseCode <= 1 || (phaseCode === 7 && flightController === null)) {
+    if (["boot", "title", "flight_setup"].includes(phase) || (phase === "result" && flightController === null)) {
       flightRenderer?.setFlightPose(null);
     }
   }
@@ -279,15 +280,13 @@ function runEffect(effect: AppEffect): void {
       const session = gameSession;
       if (!isCurrentFlightLogDownload(model, effect.requestId, effect.source)) return;
       try {
-        if (session === null || session.readLifecycle().phaseCode !== effect.source.phaseCode) throw new Error("有効なRust FlightRecordを取得できない");
-        const token = session.captureQueryToken();
+        if (session === null || session.readLifecycle().phase !== effect.source.phase) throw new Error("有効なRust FlightRecordを取得できない");
         const text = session.readFlightLog(effect.format);
         if (gameSession !== session || !isCurrentFlightLogDownload(model, effect.requestId, effect.source)) return;
-        if (session.acceptQuery(token, text).kind === "stale") throw new Error("Rust FlightRecordの取得対象が変更された");
         flightLogDownload.download({
           text,
           format: effect.format,
-          filename: `flight-log-${effect.source.phaseCode === 7 ? "result" : "replay"}-${String(effect.requestId)}.${effect.format}`
+          filename: `flight-log-${effect.source.phase === "result" ? "result" : "replay"}-${String(effect.requestId)}.${effect.format}`
         });
       } catch (error: unknown) {
         if (gameSession === session) dispatch({ type: "flight-log-download-failed", requestId: effect.requestId, source: effect.source, message: errorMessage(error) });
@@ -465,11 +464,9 @@ function runEffect(effect: AppEffect): void {
         return;
       }
       try {
-        const token = session.captureQueryToken();
         const analysis = session.readAnalysisDataset({ kind: "available", value: {
-          northMinimumMeters: -1_500, eastMinimumMeters: -1_500, altitudeMeters: 10, spacingMeters: 750
+          north_min_m: -1_500, east_min_m: -1_500, altitude_m: 10, spacing_m: 750
         } });
-        if (gameSession !== session || session.acceptQuery(token, analysis).kind === "stale") return;
         dispatch({ type: "flight-analysis-loaded", requestId: effect.requestId, data: analysis });
       } catch (error: unknown) {
         dispatch({ type: "flight-analysis-failed", requestId: effect.requestId, message: errorMessage(error) });
@@ -484,9 +481,7 @@ function runEffect(effect: AppEffect): void {
         return;
       }
       try {
-        const token = session.captureQueryToken();
         const sample = session.queryAnalysisCursor(effect.timeSeconds, analysis);
-        if (gameSession !== session || session.acceptQuery(token, sample).kind === "stale") return;
         dispatch({ type: "flight-analysis-cursor-loaded", requestId: effect.requestId, sample });
       } catch (error: unknown) {
         dispatch({ type: "flight-analysis-cursor-failed", requestId: effect.requestId, message: errorMessage(error) });
@@ -501,10 +496,8 @@ function runEffect(effect: AppEffect): void {
         return;
       }
       try {
-        const token = session.captureQueryToken();
         const pose = session.queryReplayCamera(effect.timeSeconds, model.replayCameraMode,
           model.presentation.type === "ready" && model.presentation.mode === "screen", analysis);
-        if (gameSession !== session || session.acceptQuery(token, pose).kind === "stale") return;
         dispatch({ type: "flight-replay-pose-loaded", requestId: effect.requestId, pose });
       } catch (error: unknown) {
         dispatch({ type: "flight-replay-pose-failed", requestId: effect.requestId, message: errorMessage(error) });
@@ -577,7 +570,7 @@ function runReplayClockCommand(
   } catch (error: unknown) {
     let state: ReplayClockState | undefined;
     try {
-      if (gameSession === session && [9, 10].includes(session.readLifecycle().phaseCode)) {
+      if (gameSession === session && ["replay", "attract"].includes(session.readLifecycle().phase)) {
         session.setPlaybackPlaying(false);
         state = projectRuntimePlaybackClock(session.readPlaybackClock());
       }
@@ -613,10 +606,18 @@ async function initializePresentation(requestId: number): Promise<void> {
       policy.select_water_quality(retainedSelection.kind === "auto" ? retainedSelection.manual_water_quality : retainedSelection.water_quality, performance.now());
       if (retainedSelection.kind === "auto") policy.select_auto(true, performance.now());
     }
-    dispatch({ type: "screen-render-observed", snapshot: parseScreenRenderAutoSnapshot(policy.snapshot_json()) });
+    let cachedScreenSnapshot: { readonly json: string; readonly value: ScreenRenderAutoSnapshot } | null = null;
+    const screenSnapshot = (): ScreenRenderAutoSnapshot => {
+      const json = policy.snapshot_json();
+      if (cachedScreenSnapshot === null || cachedScreenSnapshot.json !== json) {
+        cachedScreenSnapshot = { json, value: JSON.parse(json) as ScreenRenderAutoSnapshot };
+      }
+      return cachedScreenSnapshot.value;
+    };
+    dispatch({ type: "screen-render-observed", snapshot: screenSnapshot() });
     const bundle = createThreeRenderer(canvas, panelCanvas, navigator.xr ?? null,
       screen_vertical_field_of_view_degrees(), model.lakeWaterQuality.applied, headHudCanvas, {
-        policy, scene: () => gameSessionPhaseCode(model.gameSession) < 0 ? "Boot" : model.sharedGameUi?.scene ?? "Boot", onSnapshot: (snapshot) => {
+        policy, snapshot: screenSnapshot, scene: () => gameSessionPhase(model.gameSession) === "boot" ? "Boot" : model.sharedGameUi?.scene ?? "Boot", onSnapshot: (snapshot) => {
           if (flightRenderer === bundle.renderer) dispatch({ type: "screen-render-observed", snapshot });
         }
       });
@@ -734,7 +735,7 @@ function dispatchBackendResult(
 }
 
 function currentViewModel() {
-  if (gameSessionPhaseCode(model.gameSession) < 0) return createBootViewModel(model);
+  if (gameSessionPhase(model.gameSession) === "boot") return createBootViewModel(model);
   if (model.sharedGameUi === null) return createBootViewModel(model);
   return createGameViewModel(model.sharedGameUi);
 }
@@ -749,7 +750,7 @@ function sharedGameUiPlatformInput(): GameUiPlatformObservation {
     : quality.kind === "failed" ? { kind: "failed", requested: quality.requested, cause: quality.message }
       : quality.cleanup.kind === "failed" ? { kind: "cleanup_failed", cause: quality.cleanup.message }
         : { kind: "idle" };
-  const notification = [model.status, gameSessionPhaseCode(model.gameSession) === 0 ? recordListNotice(model.recordList) : "",
+  const notification = [model.status, gameSessionPhase(model.gameSession) === "title" ? recordListNotice(model.recordList) : "",
     model.flightLogDownload.kind === "failed" || model.flightLogDownload.kind === "requested"
     ? model.flightLogDownload.message : "", model.lakeWaterQuality.kind === "failed" ? model.lakeWaterQuality.message : ""]
     .filter((value) => value.length > 0).join(" · ");
@@ -769,7 +770,7 @@ function sharedGameUiPlatformInput(): GameUiPlatformObservation {
     screen_render_scale: model.screenRenderScale,
     notification,
     flight_controller_failure: model.flightExecution.kind === "stopped"
-      && [5, 6].includes(gameSessionPhaseCode(model.gameSession)) ? model.flightExecution.message : null,
+      && ["flight_running", "flight_paused"].includes(gameSessionPhase(model.gameSession)) ? model.flightExecution.message : null,
     head_hud_failure: headHudResourceFailure,
     stored_records: Object.freeze(recordListEntries(model.recordList).map((record) => Object.freeze({ id: record.id,
       saved_at: record.savedAt, personal_best: record.personalBest })))
@@ -778,17 +779,15 @@ function sharedGameUiPlatformInput(): GameUiPlatformObservation {
 
 function synchronizeSharedGameUi(): void {
   const session = gameSession;
-  if (session === null || gameSessionPhaseCode(model.gameSession) < 0) return;
-  const token = session.captureQueryToken();
+  if (session === null || gameSessionPhase(model.gameSession) === "boot") return;
   const view = session.readSharedUi(sharedGameUiPlatformInput());
-  if (gameSession !== session || session.acceptQuery(token, view).kind === "stale") return;
   const transition = updateApp(model, { type: "shared-game-ui-observed", view });
   model = transition.model;
   for (const effect of transition.effects) runEffect(effect);
 }
 
 function runSharedGameSessionCommand(command: SessionCommand, requestId: number): void {
-  const requestedPhaseCode = gameSessionPhaseCode(model.gameSession);
+  const requestedPhase = gameSessionPhase(model.gameSession);
   const session = gameSession;
   if (session === null) {
     dispatch({ type: "game-operation-failed", requestId, message: "Rust GameSession is unavailable" });
@@ -806,21 +805,21 @@ function runSharedGameSessionCommand(command: SessionCommand, requestId: number)
     if (command.kind === "resume") flightController?.resume();
     if (result.kind === "aborted") {
       runSideEffects([
-        () => { flightController?.synchronizeSnapshot(session.flightPort.snapshot_json()); },
+        () => { flightController?.synchronizeSnapshot(session.readSnapshot()); },
         () => { completeGameOperation(requestId); }
       ]);
       return;
     }
     completeGameOperation(requestId);
   } catch (error: unknown) {
-    dispatchGameOperationFailure(requestId, errorMessage(error), { command, requestedPhaseCode });
+    dispatchGameOperationFailure(requestId, errorMessage(error), { command, requestedPhase });
   }
 }
 
 function dispatchGameOperationFailure(
   requestId: number,
   message: string,
-  context?: { readonly command: SessionCommand; readonly requestedPhaseCode: number }
+  context?: { readonly command: SessionCommand; readonly requestedPhase: GamePhase }
 ): void {
   const session = gameSession;
   if (session === null) {
@@ -830,14 +829,14 @@ function dispatchGameOperationFailure(
   const dataset = flightAnalysisData(model.analysis);
   try {
     const currentSession = readRuntimeSessionProjection(session);
-    const phaseCode = currentSession.phaseCode;
-    if (phaseCode === 7 && model.gameSession.kind === "result" && model.pendingGameRequestId !== requestId) {
+    const phase = currentSession.phase;
+    if (phase === "result" && model.gameSession.phase === "result" && model.pendingGameRequestId !== requestId) {
       dispatch({ type: "game-session-status", message: `終端表示処理に失敗した: ${message}` });
       return;
     }
     const failureMessage = context === undefined
       ? message
-      : `${context.command.kind} rejected: UI phase ${String(context.requestedPhaseCode)}, Rust phase ${String(phaseCode)}; ${message}`;
+      : `${context.command.kind} rejected: UI phase ${context.requestedPhase}, Rust phase ${phase}; ${message}`;
     dispatch({ type: "game-operation-failed", requestId, message: failureMessage, currentSession,
       analysisSourceInvalidated: dataset !== null && !session.isAnalysisDatasetCurrent(dataset) });
   } catch (syncError: unknown) {
@@ -919,7 +918,7 @@ function createFlightController(session: TailAppSessionFacade): void {
   const renderer = flightRenderer;
   if (renderer === null) throw new Error("Flight renderer is unavailable");
   const binding = flightControllerUi.bindAppDisplay(session.flightPort, controllerHudDisplay,
-    () => session.readGameSessionProjection(), () => controller.currentDisplaySnapshot, dispatch);
+    () => session.readGameSessionProjection(), () => controller.currentSnapshot, dispatch);
   const input = new BrowserTailPilotInput(window, { ...DEFAULT_BROWSER_TAIL_INPUT_CONFIGURATION,
     keyboard: { ...DEFAULT_BROWSER_TAIL_INPUT_CONFIGURATION.keyboard, physicsHz } });
   let controller: TailFlightController;
@@ -942,8 +941,8 @@ function resetFlightController(): void {
   const session = gameSession;
   if (controller === null || session === null) throw new Error("Flight controller is unavailable");
   const binding = flightControllerUi.bindAppDisplay(session.flightPort, controllerHudDisplay,
-    () => session.readGameSessionProjection(), () => controller.currentDisplaySnapshot, dispatch);
-  try { controller.reset(session.flightPort.snapshot_json(), binding.port, binding.onTerminal); }
+    () => session.readGameSessionProjection(), () => controller.currentSnapshot, dispatch);
+  try { controller.reset(session.readSnapshot(), binding.port, binding.onTerminal); }
   catch (error: unknown) {
     publishControllerInitializationFailure(session, binding.identity, error);
     throw error;
@@ -955,7 +954,7 @@ function publishControllerInitializationFailure(session: TailAppSessionFacade,
   identity: FlightControllerIdentity, error: unknown): void {
   dispatch({ type: "flight-controller-ready", identity });
   const projection = session.readGameSessionProjection();
-  if (projection.phaseCode === 5 || projection.phaseCode === 6) {
+  if (projection.phase === "flight_running" || projection.phase === "flight_paused") {
     dispatch({ type: "flight-controller-stopped", identity, message: errorMessage(error), snapshot: projection.display.value });
   }
 }
@@ -968,7 +967,7 @@ async function persistFlightRecord(
     const repository = createFlightRecordRepository();
     const saved = await repository.saveFrom({ export_flight_record_json: () => session.exportRecordJson() });
     dispatch({ type: "refresh-stored-flight-records" });
-    if (gameSession === session && session.acceptQuery(token, saved).kind === "accepted" && session.readLifecycle().phaseCode === 7) {
+    if (gameSession === session && session.acceptQuery(token, saved).kind === "accepted" && session.readLifecycle().phase === "result") {
       const personalBestMessage = saved.personalBest.kind === "candidate"
         ? "Personal Bestを更新した"
         : saved.personalBest.kind === "existing"
@@ -982,7 +981,7 @@ async function persistFlightRecord(
       });
     }
   } catch (error: unknown) {
-    if (gameSession === session && session.acceptQuery(token, undefined).kind === "accepted" && session.readLifecycle().phaseCode === 7) {
+    if (gameSession === session && session.acceptQuery(token, undefined).kind === "accepted" && session.readLifecycle().phase === "result") {
       dispatch({ type: "game-session-status", message: `FlightRecord保存に失敗した: ${errorMessage(error)}` });
     }
   }
@@ -1013,11 +1012,11 @@ function dispatchUiAction(action: UiAction): void {
     return;
   }
   const session = gameSession;
-  const displayedPhaseCode = gameSessionPhaseCode(model.gameSession);
+  const displayedPhase = gameSessionPhase(model.gameSession);
   if (session !== null && isGameFlowActivation(action)) {
     syncGameSession();
-    const synchronizedPhaseCode = gameSessionPhaseCode(model.gameSession);
-    if (isStaleGameFlowActivation(action, displayedPhaseCode, synchronizedPhaseCode)
+    const synchronizedPhase = gameSessionPhase(model.gameSession);
+    if (isStaleGameFlowActivation(action, displayedPhase, synchronizedPhase)
         && !viewExposesAction(currentViewModel(), action)) return;
   }
   if ((action.type === "activate" || action.type === "set-toggle" || action.type === "set-range")
@@ -1076,7 +1075,7 @@ function suspendPageFlightState(): void {
   try {
     const session = gameSession;
     const pagePort = session === null ? null : {
-      phase_code: () => session.readLifecycle().phaseCode,
+      phase: () => session.readLifecycle().phase,
       cancel_countdown: () => { session.executeSharedSessionCommand({ kind: "cancel_countdown" }); },
       pause: (reason: number) => {
         if (reason !== 1) throw new RangeError("Page suspension requires the page-hidden reason");
@@ -1109,7 +1108,7 @@ function resolvePresentationTransitionPause(): void {
 
 function pauseSessionForReason(reason: "page_hidden" | "presentation_transition"): void {
   const session = gameSession;
-  if (session === null || ![5, 6].includes(session.readLifecycle().phaseCode)) return;
+  if (session === null || !["flight_running", "flight_paused"].includes(session.readLifecycle().phase)) return;
   try {
     session.pauseForReason(reason);
     syncGameSession();
@@ -1120,7 +1119,7 @@ function pauseSessionForReason(reason: "page_hidden" | "presentation_transition"
 
 function clearSessionPauseReason(reason: number): void {
   const session = gameSession;
-  if (session === null || session.readLifecycle().phaseCode !== 6) return;
+  if (session === null || session.readLifecycle().phase !== "flight_paused") return;
   try {
     session.clearPauseReason(reason);
     syncGameSession();
@@ -1136,21 +1135,8 @@ function syncGameSession(): void {
 }
 
 function currentRuntimeEnvironment(): RuntimeEnvironmentProjection {
-  const session = gameSession;
-  if (session === null) return Object.freeze({ kind: "unavailable", reason: "no_selection" });
-  try {
-    const phaseCode = session.readLifecycle().phaseCode;
-    const identity = phaseCode === 9 || phaseCode === 10 ? session.readPlaybackContext().scenario
-      : session.readSnapshot().identity;
-    const expected = "kind" in identity ? identity.kind === "prepared" ? identity.scenario : undefined : identity;
-    const environment = parseRuntimeEnvironmentSnapshot(session.readEnvironmentJson(), phaseCode, expected);
-    const analysis = flightAnalysisData(model.analysis);
-    if (analysis !== null && environment.kind === "available"
-        && !sameEnvironmentIdentity(environment.value.identity, analysis.context.scenario)) return Object.freeze({ kind: "unavailable", reason: "invalid_snapshot" });
-    return environment;
-  } catch {
-    return Object.freeze({ kind: "unavailable", reason: "invalid_snapshot" });
-  }
+  return gameSession === null ? { kind: "unavailable", reason: "no_selection" }
+    : projectRuntimeEnvironment(gameSession.readEnvironment());
 }
 
 function currentViewport(): ViewportSize {

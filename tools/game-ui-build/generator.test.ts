@@ -1,9 +1,7 @@
-import { copyFile, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
-import { createRequire } from "node:module";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import type { ValidateFunction } from "ajv";
 import ts from "typescript";
 import { generateGameUiFiles, parseSchemaBundle, readonlyDeclarations, schemaEntries } from "./generator.js";
 
@@ -35,38 +33,13 @@ function schemaBundle(): string {
 }
 
 describe("Rust game UI schema generation", () => {
-  it("generates the same validator with ordinary and junction-backed dependencies", async () => {
-    const directory = await mkdtemp(resolve(root, "target/game-ui-module-path-"));
-    const ordinary = resolve(directory, "ordinary");
-    const linked = resolve(directory, "linked");
-    const require = createRequire(import.meta.url);
-    const runtime = require.resolve("ajv/dist/runtime/ucs2length.js");
-    try {
-      for (const fixture of [ordinary, linked]) {
-        await mkdir(resolve(fixture, "tools/game-ui-build"), { recursive: true });
-        await copyFile(resolve(root, "tools/game-ui-build/numeric-formats.ts"), resolve(fixture, "tools/game-ui-build/numeric-formats.ts"));
-      }
-      const ordinaryRuntime = resolve(ordinary, "node_modules/ajv/dist/runtime/ucs2length.js");
-      await mkdir(dirname(ordinaryRuntime), { recursive: true });
-      await copyFile(runtime, ordinaryRuntime);
-      await symlink(resolve(ordinary, "node_modules"), resolve(linked, "node_modules"), "junction");
-      const schemas = parseSchemaBundle(schemaBundle());
-      const source = (files: Awaited<ReturnType<typeof generateGameUiFiles>>) =>
-        files.find((file) => file.path === "web/src/generated/game-ui-validators.js")?.content;
-      const normal = source(await generateGameUiFiles(schemas, ordinary));
-      expect(typeof normal).toBe("string");
-      expect(source(await generateGameUiFiles(schemas, linked))).toBe(normal);
-    } finally { await rm(directory, { recursive: true, force: true }); }
-  });
-
-  it("rejects mismatched schema roots and unregistered numeric formats", async () => {
+  it("rejects mismatched schema roots", () => {
     expect(() => parseSchemaBundle("{}")).toThrow("unexpected schema roots");
     expect(() => parseSchemaBundle(schemaBundle().replace("GameUiView", "OtherView"))).toThrow("Invalid GameUiView");
-    await expect(generateGameUiFiles(parseSchemaBundle(schemaBundle().replaceAll('"double"', '"unknown_number_format"')), root)).rejects.toThrow("unknown format");
   });
 
   it("generates deeply readonly declarations and fixed-size tuples", async () => {
-    const files = await generateGameUiFiles(parseSchemaBundle(schemaBundle()), root);
+    const files = await generateGameUiFiles(parseSchemaBundle(schemaBundle()));
     const declaration = files.find((file) => file.path === "web/src/generated/game-ui-view.ts");
     expect(declaration?.content).toContain('readonly kind: "fixture"');
     expect(declaration?.content).toContain("readonly coordinates: Coordinates");
@@ -77,7 +50,7 @@ describe("Rust game UI schema generation", () => {
   });
 
   it("checks generated readonly and tuple contracts with the TypeScript compiler", async () => {
-    const files = await generateGameUiFiles(parseSchemaBundle(schemaBundle()), root);
+    const files = await generateGameUiFiles(parseSchemaBundle(schemaBundle()));
     const declaration = files.find((file) => file.path === "web/src/generated/game-ui-view.ts");
     if (declaration === undefined) throw new Error("Missing generated view declarations");
     const imports = 'import type { Coordinates, GameUiView } from "./generated.js";\nimport type { Nested } from "./nested.js";\n'
@@ -122,55 +95,20 @@ describe("Rust game UI schema generation", () => {
     }
   }, 10_000);
 
-  it("generates deterministic standalone browser validators that reject unsafe boundaries", async () => {
+  it("generates deterministic types and schema without runtime validators", async () => {
     const schemas = parseSchemaBundle(schemaBundle());
-    const files = await generateGameUiFiles(schemas, root);
-    expect(await generateGameUiFiles(schemas, root)).toEqual(files);
+    const files = await generateGameUiFiles(schemas);
+    expect(await generateGameUiFiles(schemas)).toEqual(files);
     expect(files.filter((file) => file.path.startsWith("web/src/generated/")).map((file) => file.path)).toEqual([
       "web/src/generated/game-ui-input-query.ts",
-      ...schemaEntries.map((entry) => `web/src/generated/${entry.filename}.ts`),
-      "web/src/generated/game-ui-validators.js",
-      "web/src/generated/game-ui-validators.d.ts"
+      ...schemaEntries.map((entry) => `web/src/generated/${entry.filename}.ts`)
     ]);
     expect(files.filter((file) => file.path.startsWith("tools/game-ui-build/generated/")).map((file) => file.path)).toEqual([
       "tools/game-ui-build/generated/game-ui-serialize.schema.json",
       "tools/game-ui-build/generated/game-ui-deserialize.schema.json",
       "tools/game-ui-build/generated/game-ui-generation.json"
     ]);
-    const javascript = files.find((file) => file.path === "web/src/generated/game-ui-validators.js");
-    if (javascript === undefined) throw new Error("Missing generated standalone validators");
-    expect(javascript.content).not.toMatch(/\beval\s*\(|\bnew Function\s*\(|from ["']node:/);
-    const module: unknown = await import(`data:text/javascript;base64,${Buffer.from(javascript.content).toString("base64")}`);
-    if (typeof module !== "object" || module === null || !("validateGameUiView" in module) || typeof module.validateGameUiView !== "function") {
-      throw new Error("Missing generated view validator");
-    }
-    const valid = { kind: "fixture", id: 4294967295, coordinates: [1, 2, 3] };
-    const invalidDocuments = [
-      { ...valid, id: 4294967296 },
-      { ...valid, id: 0.5 },
-      { ...valid, id: -1 },
-      { ...valid, kind: "unknown" },
-      { ...valid, extra: true },
-      { ...valid, coordinates: [1, 2] },
-      { ...valid, coordinates: [1, 2, 3, 4] },
-      { ...valid, coordinates: [1, Number.NaN, 3] },
-      { ...valid, coordinates: [1, Number.POSITIVE_INFINITY, 3] }
-    ];
-    for (const entry of schemaEntries) {
-      const name = `validate${entry.name}`;
-      const validate = (module as Readonly<Record<string, unknown>>)[name] as ValidateFunction;
-      expect(typeof validate).toBe("function");
-      expect(validate(valid)).toBe(true);
-      for (const invalid of invalidDocuments) expect(validate(invalid)).toBe(false);
-      expect(validate({ kind: "fixture", coordinates: [1, 2, 3] })).toBe(entry.group === "deserialize");
-      expect(validate({ ...valid, kind: "unknown", id: -1, extra: true })).toBe(false);
-      expect(validate.errors?.map((error) => error.instancePath)).toEqual(expect.arrayContaining(["/kind", "/id", ""]));
-    }
-    expect(javascript.content.match(/^function validate\d+\(/gm))
-      .toHaveLength(schemaEntries.length + new Set(schemaEntries.map((entry) => entry.group)).size * 2);
-    const license = files.find((file) => file.path === "assets/game-ui-validators.LICENSE.txt");
-    expect(license?.content).toContain("Copyright (c) 2015-2021 Evgeny Poberezkin");
-    expect(license?.content).toContain("Copyright (c) 2020 Evan Wallace");
-    expect(license?.content).toContain("Permission is hereby granted");
+    expect(files.some((file) => file.path.endsWith("validators.js") || file.path.endsWith("validators.d.ts")
+      || file.path.endsWith("validators.LICENSE.txt"))).toBe(false);
   });
 });

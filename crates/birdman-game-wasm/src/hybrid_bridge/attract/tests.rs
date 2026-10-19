@@ -18,7 +18,10 @@ fn independent_demo_metadata_and_exit_preserve_player_selection() {
         .execute(SessionCommand::EnterAttract {}, BackendReadiness::Preparing)
         .unwrap();
     let projected = context(&bridge);
-    assert_eq!(bridge.phase_code(), 10);
+    assert!(matches!(
+        bridge.session.core_session().snapshot().phase(),
+        SessionPhase::Attract
+    ));
     assert_eq!(projected["phase"], "attract");
     assert_eq!(projected["control_layout"], "tail_incidence");
     assert_eq!(projected["scenario"]["catalog_version"], 5);
@@ -45,7 +48,10 @@ fn independent_demo_metadata_and_exit_preserve_player_selection() {
     assert_eq!(environment["projection"]["source"], "attract");
     assert_eq!(environment["projection"]["identity"], projected["scenario"]);
     bridge.leave_attract().unwrap();
-    assert_eq!(bridge.phase_code(), 0);
+    assert!(matches!(
+        bridge.session.core_session().snapshot().phase(),
+        SessionPhase::Title
+    ));
     assert_eq!(bridge.control_mode_code(), 0);
     assert_eq!(bridge.weather_class_code(), 3);
     assert_eq!(bridge.session.difficulty(), selected);
@@ -194,6 +200,9 @@ fn invalid_enter_does_not_replace_a_player_result_or_its_export() {
             .is_err()
     );
     assert_eq!(bridge.export_flight_record_json().unwrap(), before);
-    assert_eq!(bridge.phase_code(), 7);
+    assert!(matches!(
+        bridge.session.core_session().snapshot().phase(),
+        SessionPhase::Result
+    ));
     assert!(bridge.session.attract().is_none());
 }

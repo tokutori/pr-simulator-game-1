@@ -17,10 +17,10 @@ import type { UiAction, UiViewModel } from "../../web/src/render/contracts/ui.js
 import { createSceneFixture } from "../../web/src/presentation/fixtures.js";
 import { WebXrPresentationBackend } from "../../web/src/presentation/webxr-backend.js";
 import { PresentationRuntime } from "../../web/src/presentation/runtime.js";
-import { createInitialAppModel, gameSessionState, updateApp } from "../../web/src/app/app-state.js";
+import { createInitialAppModel, updateApp } from "../../web/src/app/app-state.js";
 import { createFlightFrameViewDraft, finalizeFlightFrameView, menuFrameFailureRecovery } from "../../web/src/app/flight-frame-view.js";
-import { currentFlightDisplayFixture } from "../game-check/current-session-fixture.js";
-import { currentSharedGameUiFixture } from "../game-check/shared-game-ui-fixture.js";
+import { currentFlightPoseFixture } from "../game-check/current-session-fixture.js";
+import { currentGameSessionProjectionFixture, currentSharedGameUiFixture } from "../game-check/shared-game-ui-fixture.js";
 import { projectHeadPoint } from "../../web/src/render/contracts/viewer-frame.js";
 import type { ViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
 import { HEAD_HUD_MINIMUM_INK_HEIGHT_DEGREES, headHudCanvasSize, headHudPaintedTextInk, prepareHeadHudPaint, validateHeadHudPaint } from "../../web/src/presentation/head-hud-canvas.js";
@@ -222,9 +222,9 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
   let onUiAction: ((action: UiAction) => void) | null;
   const viewport = { x: 1280, y: 720, pixelRatio: 1 };
   const head = pose(vec3(0.06, 0.08, -0.05), quaternion(Math.cos(0.13), 0, Math.sin(0.13), 0));
-  const flight: FlightRenderPose = {
+  const flight: FlightRenderPose = { ...currentFlightPoseFixture(),
     datumPositionNed: { north: 100, east: 25, down: -8 },
-    attitudeBodyToNed: quaternion(Math.cos(0.17), Math.sin(0.17), 0, 0),
+    attitudeBodyToNed: { ...quaternion(Math.cos(0.17), Math.sin(0.17), 0, 0) },
     pilotPositionMeters: 0.12, initialPilotPositionMeters: 0.12
   };
 
@@ -277,29 +277,14 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
       currentFrame: (timestamp, projectedView, rawHead, menu) => backend.currentFrame(timestamp, projectedView, rawHead, menu)
     }], (viewer) => {
       evidence.viewer = viewer;
-      const valuesSnapshot = {
-    ...currentFlightDisplayFixture(5),
-    positionNed: { north: 0, east: 0, down: 0 }, velocityNed: { north: 8, east: 0, down: 0 },
-    attitudeBodyToNed: { w: 1, x: 0, y: 0, z: 0 }, pilotPositionMeters: 0, pilotVelocityMetersPerSecond: 0,
-    stamp: { kind: "exact" as const, tick: 0, fraction: 0, timeSeconds: 0 },
-    telemetry: { kind: "available" as const, value: { altitudeMeters: 15, airspeedMetersPerSecond: 8, groundspeedMetersPerSecond: 9,
-      windVelocityNedMetersPerSecond: { north: 0, east: 0, down: 0 }, angleOfAttackRadians: { kind: "available" as const, value: 0 }, sideslipAngleRadians: { kind: "available" as const, value: 0 },
-      rollRadians: 0, pitchRadians: 0, headingRadians: 0 } }
-  };
-      const snapshot = valuesSnapshot;
-      const gameSession = gameSessionState(5, 0, snapshot, true);
-      if (gameSession === null) throw new Error("Missing Flight session");
+      const gameSession = currentGameSessionProjectionFixture("flight_running");
       const initial = createInitialAppModel();
       const model = { ...initial, gameSession, presentation: { type: "ready", mode: "webxr" } as const,
-        difficulty: { ...initial.difficulty, informationCode: information === "flight-path-only" ? 4 : information,
-          hudProfile: information === "flight-path-only"
-            ? { telemetry: false, attitude: false, wind: false, flightPath: true, angleOfAttack: false, warnings: false }
-            : initial.difficulty.hudProfile },
-        sharedGameUi: currentSharedGameUiFixture(5, {
+        sharedGameUi: currentSharedGameUiFixture("flight_running", {
           informationCode: information === "flight-path-only" ? 4 : information,
           ...(information === "flight-path-only" ? { hudProfile: {
-            telemetry: false, attitude: false, wind: false, flightPath: true, angleOfAttack: false, warnings: false
-          } } : information === 4 ? { hudProfile: initial.difficulty.hudProfile } : {}),
+            telemetry: false, attitude: false, wind: false, flight_path: true, angle_of_attack: false, warnings: false
+          } } : information === 4 ? { hudProfile: { telemetry: true, attitude: true, wind: true, flight_path: true, angle_of_attack: true, warnings: true } } : {}),
           platform: { presentation_mode: "webxr" }
         }) };
       const draft = createFlightFrameViewDraft(model, viewer, "ja");
@@ -317,7 +302,7 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
     const worldProjections: Vector3[] = [];
     for (const [index, pilotPositionMeters] of [-0.1, 0.12, 0.4].entries()) {
       const bodyRotation = new Quaternion().setFromEuler(new Euler(index * 0.13, index * -0.24, index * 0.17));
-      currentFlight = { ...flight, pilotPositionMeters, attitudeBodyToNed: quaternion(bodyRotation.w, bodyRotation.x, bodyRotation.y, bodyRotation.z) };
+      currentFlight = { ...flight, pilotPositionMeters, attitudeBodyToNed: { ...quaternion(bodyRotation.w, bodyRotation.x, bodyRotation.y, bodyRotation.z) } };
       const headRotation = new Quaternion().setFromEuler(new Euler(index * -0.16, index * 0.22, index * -0.11));
       const rawHead = pose(vec3(index * 0.05, index * 0.02, index * -0.03), quaternion(headRotation.w, headRotation.x, headRotation.y, headRotation.z));
       session.run(100 + index * 20, rawHead);
@@ -391,18 +376,7 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
   });
 
   it("keeps all 64 Custom cue combinations and all-off Pause access through actual native eye frames", async () => {
-    const valuesSnapshot = {
-    ...currentFlightDisplayFixture(5),
-    positionNed: { north: 0, east: 0, down: 0 }, velocityNed: { north: 8, east: 0, down: 0 },
-    attitudeBodyToNed: { w: 1, x: 0, y: 0, z: 0 }, pilotPositionMeters: 0, pilotVelocityMetersPerSecond: 0,
-    stamp: { kind: "exact" as const, tick: 0, fraction: 0, timeSeconds: 0 },
-    telemetry: { kind: "available" as const, value: { altitudeMeters: 15, airspeedMetersPerSecond: 8, groundspeedMetersPerSecond: 9,
-      windVelocityNedMetersPerSecond: { north: 0, east: 0, down: 0 }, angleOfAttackRadians: { kind: "available" as const, value: 0 }, sideslipAngleRadians: { kind: "available" as const, value: 0 },
-      rollRadians: 0, pitchRadians: 0, headingRadians: 0 } }
-  };
-    const snapshot = valuesSnapshot;
-    const gameSession = gameSessionState(5, 0, snapshot, true);
-    if (gameSession === null) throw new Error("Missing Flight session");
+    const gameSession = currentGameSessionProjectionFixture("flight_running");
     const initial = createInitialAppModel();
     let mask = 0;
     let captured: UiViewModel | null = null;
@@ -411,12 +385,9 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
       currentFrame: (timestamp, projectedView, rawHead, menu) => backend.currentFrame(timestamp, projectedView, rawHead, menu)
     }], (viewer) => {
       const model = { ...initial, gameSession, presentation: { type: "ready", mode: "webxr" } as const,
-        difficulty: { ...initial.difficulty, informationCode: 4, hudProfile: {
+        sharedGameUi: currentSharedGameUiFixture("flight_running", { informationCode: 4, hudProfile: {
           telemetry: (mask & 1) !== 0, attitude: (mask & 2) !== 0, wind: (mask & 4) !== 0,
-          flightPath: (mask & 8) !== 0, angleOfAttack: (mask & 16) !== 0, warnings: (mask & 32) !== 0
-        } }, sharedGameUi: currentSharedGameUiFixture(5, { informationCode: 4, hudProfile: {
-          telemetry: (mask & 1) !== 0, attitude: (mask & 2) !== 0, wind: (mask & 4) !== 0,
-          flightPath: (mask & 8) !== 0, angleOfAttack: (mask & 16) !== 0, warnings: (mask & 32) !== 0
+          flight_path: (mask & 8) !== 0, angle_of_attack: (mask & 16) !== 0, warnings: (mask & 32) !== 0
         }, platform: { presentation_mode: "webxr" } }) };
       const draft = createFlightFrameViewDraft(model, viewer, "ja");
       if (mask === 0 || mask === 32) {

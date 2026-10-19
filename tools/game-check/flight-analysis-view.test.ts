@@ -1,20 +1,17 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { HybridGameSessionBridge, initSync, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
-import { analysisCursorData, createInitialAppModel, flightAnalysisData, gameSessionState, updateApp } from "../../web/src/app/app-state.js";
+import { analysisCursorData, createInitialAppModel, flightAnalysisData, updateApp } from "../../web/src/app/app-state.js";
 import type { AppModel } from "../../web/src/app/app-state.js";
 import { projectRuntimePlaybackClock, readRuntimeSessionProjection } from "../../web/src/app/session-runtime-projection.js";
-import { createGameViewModel } from "../../web/src/app/game-view.js";
 import { selectSharedReplayView, sharedGameUiPlatform } from "./shared-game-ui-fixture.js";
 import { TailAppSessionFacade } from "../../web/src/app/session-facade.js";
-import { analysisScenarioId, projectAnalysisCursor, projectAnalysisView } from "../../web/src/game/flight-analysis-view.js";
 import type { NamedAnalysisCursor, NamedAnalysisDataset } from "../../web/src/game/flight-analysis-view.js";
-import type { NamedWindGridRequest } from "../../web/src/game/named-record-analysis.js";
-import { encodeTailLogicalInput } from "../../web/src/game/tail-session-codec.js";
-import { validateUiViewModel } from "../../web/src/render/contracts/ui.js";
+import type { WindGridRequest } from "../../web/src/app/session-facade.js";
+import { encodeTailLogicalInput } from "../../web/src/game/tail-input.js";
 
 initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url))) });
-const windRequest: NamedWindGridRequest = { northMinimumMeters: -10, eastMinimumMeters: -10, altitudeMeters: 10, spacingMeters: 5 };
+const windRequest: WindGridRequest = { north_min_m: -10, east_min_m: -10, altitude_m: 10, spacing_m: 5 };
 const neutral = encodeTailLogicalInput({ controlLayout: "tail_incidence", noseUp: 0, turnRight: 0,
   desiredPitchRateRadiansPerSecond: 0, desiredYawRateRadiansPerSecond: 0, pilotPositionCommand: { kind: "hold" } });
 
@@ -30,7 +27,7 @@ function result(ticks = 3, seed = 41): TailAppSessionFacade {
   return new TailAppSessionFacade(bridge, physics_hz());
 }
 
-function dataset(session: TailAppSessionFacade, request: NamedWindGridRequest = windRequest): NamedAnalysisDataset {
+function dataset(session: TailAppSessionFacade, request: WindGridRequest = windRequest): NamedAnalysisDataset {
   return session.readAnalysisDataset({ kind: "available", value: request });
 }
 
@@ -71,144 +68,26 @@ function leaveReplay(session: TailAppSessionFacade): void {
   session.executeSharedSessionCommand({ kind: "leave_replay" });
 }
 
-describe("pure saved Analysis view projection", () => {
-  it("uses Rust composite CG and telemetry, preserving original finalization and reasoned metrics", () => {
-    const session = result();
-    try {
-      const data = dataset(session);
-      const view = projectAnalysisView(data);
-      const sample = data.samples[0];
-      if (sample === undefined) throw new Error("Expected the initial Rust sample");
-      expect(sample.state.datumPositionNedMeters).not.toEqual(sample.state.telemetry.compositeCgPositionNedMeters);
-      expect(view.samples[0]).toMatchObject({ northMeters: sample.state.telemetry.compositeCgPositionNedMeters[0],
-        eastMeters: sample.state.telemetry.compositeCgPositionNedMeters[1], altitudeMeters: sample.state.telemetry.altitudeMeters,
-        airspeedMetersPerSecond: sample.state.telemetry.airspeedMetersPerSecond });
-      expect(view.summary.score).toBe(data.summary.scoreMeters);
-      expect(view.summary.maximumAngleOfAttackRadians).toBe(data.summary.maximumAngleOfAttackRadians);
-      expect(view.origin).toMatchObject({ kind: "named_record", context: data.context });
-      expect(projectAnalysisCursor(cursor(session, data), data)).toEqual(view.samples[0]);
-      expect(data.samples[0]).toBe(sample);
-    } finally { session.dispose(); }
-  });
-
-  it("rejects different sample, summary, wind and cursor contexts without committing partial Model updates", () => {
+describe("saved Analysis asynchronous application state", () => {
+  it("rejects foreign cursor contexts and stale requests while retaining the accepted dataset", () => {
     const session = result();
     const other = result(3, 43);
     try {
       const data = dataset(session);
-      const otherData = dataset(other);
-      expect(() => projectAnalysisView({ ...data, context: otherData.context })).toThrow(/different records/);
-      expect(() => projectAnalysisView({ ...data, windGrid: otherData.windGrid })).toThrow(/different records/);
-      expect(() => projectAnalysisCursor(cursor(other, otherData), data)).toThrow(/another record/);
-      const model = updateApp(createInitialAppModel(), { type: "game-session-synced", ...session.readGameSessionProjection() }).model;
-      const loaded = updateApp({ ...model, analysis: { kind: "loading", requestId: 4, nextRequestId: 5, retained: null } }, { type: "flight-analysis-loaded", requestId: 4, data }).model;
       const currentCursor = cursor(session, data);
+      const model = updateApp(createInitialAppModel(), { type: "game-session-synced", ...session.readGameSessionProjection() }).model;
+      const loaded = updateApp({ ...model, analysis: { kind: "loading", requestId: 4, nextRequestId: 5, retained: null } },
+        { type: "flight-analysis-loaded", requestId: 4, data }).model;
       const previous: AppModel = { ...loaded, analysisCursor: { kind: "loading", requestId: 7, nextRequestId: 8, retained: currentCursor } };
-      const rejected = updateApp(previous, { type: "flight-analysis-cursor-loaded", requestId: 7, sample: cursor(other, otherData) });
+      const rejected = updateApp(previous, { type: "flight-analysis-cursor-loaded", requestId: 7, sample: cursor(other, dataset(other)) });
       expect(analysisCursorData(rejected.model.analysisCursor)).toBe(currentCursor);
       expect(flightAnalysisData(rejected.model.analysis)).toBe(data);
       expect(rejected.model.analysisCursor.kind).toBe("failed");
-      expect(rejected.model.status).toContain("一致しない");
       expect(rejected.effects).toEqual([]);
-      const rejectedData = updateApp({ ...previous, analysis: { kind: "loading", requestId: 8, nextRequestId: 9, retained: data } }, {
-        type: "flight-analysis-loaded", requestId: 8, data: { ...data, summary: otherData.summary }
-      });
-      expect(flightAnalysisData(rejectedData.model.analysis)).toBe(data);
-      expect(rejectedData.effects).toEqual([]);
-      expect(updateApp({ ...previous, analysisCursor: { kind: "loading", requestId: 9, nextRequestId: 10, retained: currentCursor } }, {
-        type: "flight-analysis-cursor-loaded", requestId: 7, sample: currentCursor
-      }).model).toMatchObject({ analysisCursor: { kind: "loading", requestId: 9, nextRequestId: 10 } });
+      expect(updateApp({ ...previous, analysisCursor: { kind: "loading", requestId: 9, nextRequestId: 10, retained: currentCursor } },
+        { type: "flight-analysis-cursor-loaded", requestId: 7, sample: currentCursor }).model)
+        .toMatchObject({ analysisCursor: { kind: "loading", requestId: 9, nextRequestId: 10 } });
     } finally { session.dispose(); other.dispose(); }
-  });
-
-  it("preserves one-sample zero-duration records and does not generate a missing score or wind", () => {
-    const session = result(0);
-    try {
-      const loaded = dataset(session);
-      const data: NamedAnalysisDataset = { ...loaded, windGrid: { kind: "unavailable", reason: "not_requested" } };
-      expect(projectAnalysisView(data)).toMatchObject({ samples: [expect.objectContaining({ timeSeconds: 0 })],
-        summary: { durationSeconds: 0 }, windGrid: { kind: "unavailable", reason: "not_requested" } });
-    } finally { session.dispose(); }
-  });
-
-  it("preserves explicitly unrecorded current metrics in named Replay", () => {
-    const source = result();
-    const session = new TailAppSessionFacade(new HybridGameSessionBridge(0, 81, 82), physics_hz());
-    try {
-      const saved = JSON.parse(source.exportRecordJson()) as Record<string, unknown>;
-      (saved.finalization as Record<string, unknown>).score_m = null;
-      for (const sample of saved.samples as Record<string, unknown>[]) ((sample.state as Record<string, unknown>).telemetry as Record<string, unknown>).angle_of_attack_rad = null;
-      session.openArchive(JSON.stringify(saved));
-      const data = dataset(session);
-      const view = projectAnalysisView(data);
-      expect(data.samples.map((sample) => sample.controls.layout)).toEqual(Array.from({ length: data.samples.length }, () => "tail_incidence"));
-      expect(view.origin).toMatchObject({ kind: "named_record", context: { phase: "replay", controlLayout: "tail_incidence" } });
-      expect(view.summary.score).toEqual({ kind: "unavailable", reason: "score_not_recorded" });
-      expect(view.summary.maximumAngleOfAttackRadians).toEqual({ kind: "unavailable", reason: "no_defined_sample" });
-      expect(projectAnalysisCursor(cursor(session, data, 0.005), data).timeSeconds).toBe(0.005);
-    } finally { source.dispose(); session.dispose(); }
-  });
-
-  it("shows unknown environment and original saved failure without selecting the player's map or zero wind", () => {
-    const source = result();
-    const session = new TailAppSessionFacade(new HybridGameSessionBridge(0, 81, 82), physics_hz());
-    try {
-      const saved = JSON.parse(source.exportRecordJson()) as Record<string, unknown>;
-      const header = saved.header as Record<string, unknown>;
-      header.environment_version = 99;
-      header.scenario_id = 999;
-      Object.assign(saved.finalization as Record<string, unknown>, { reason: "out_of_valid_envelope", disposition: "failed", failure: {
-        dynamics: { load: { aerodynamic: { hybrid: { site: { proxy: { surface: "horizontal_tail", index: 1 } },
-          cause: { wind: "outside_grid" }, limit: null, stage: "second" } } } }
-      } });
-      session.openArchive(JSON.stringify(saved));
-      const data = dataset(session);
-      const view = projectAnalysisView(data);
-      expect(view.windGrid).toEqual({ kind: "unavailable", reason: "unregistered_environment_identity" });
-      expect(view.origin).toMatchObject({ context: { finalization: { failure: { kind: "dynamics" } } } });
-      expect(analysisScenarioId(data, 1)).toBe(999);
-      const gameSession = gameSessionState(9, 0, session.queryRecordDisplay(0), false, "tail_incidence", session.readReplayReturnTarget());
-      if (gameSession === null) throw new Error("Expected the Rust Replay display");
-      for (const mode of ["screen", "phone-vr", "webxr"] as const) {
-        const platform = sharedGameUiPlatform({ presentation_mode: mode === "phone-vr" ? "phone_vr" : mode });
-        selectSharedReplayView(session, platform, "analysis");
-        const ui = createGameViewModel(session.readSharedUi(platform));
-        validateUiViewModel(ui);
-        const controls = ui.panels.flatMap((panel) => panel.controls);
-        const readout = controls.find((control) => control.id === "game-analysis-cursor-values");
-        if (readout?.kind !== "status") throw new Error("Expected the saved cursor and wind readout");
-        expect(readout.value).toContain("unregistered_environment_identity");
-        const chart = controls.find((control) => control.kind === "chart");
-        if (chart?.kind !== "chart") throw new Error("Expected the saved Analysis chart");
-        expect(chart.series.some((series) => series.label.includes("彦根"))).toBe(false);
-      }
-    } finally { source.dispose(); session.dispose(); }
-  });
-
-  it("uses named demo final score separately from cursor position and applies the same camera policy in VR", () => {
-    const session = new TailAppSessionFacade(new HybridGameSessionBridge(0, 81, 82), physics_hz());
-    try {
-      session.executeSharedSessionCommand({ kind: "enter_attract" });
-      const data = dataset(session);
-      const cursorSample = cursor(session, data);
-      const gameSession = gameSessionState(10, 0, session.queryRecordDisplay(0), false, "tail_incidence");
-      if (gameSession === null) throw new Error("Expected the Rust Attract display");
-      const model: AppModel = { ...createInitialAppModel(), gameSession,
-        analysis: { kind: "ready", data, nextRequestId: 1 }, analysisCursor: { kind: "ready", sample: cursorSample, nextRequestId: 1 } };
-      const distance = createGameViewModel(session.readSharedUi(sharedGameUiPlatform())).panels.flatMap((panel) => panel.controls).find((control) => control.id === "game-attract-distance");
-      const expected = data.summary.scoreMeters.kind === "available" ? `${data.summary.scoreMeters.value.courseParallelMeters.toFixed(1)} m` : "距離未記録";
-      expect(distance).toMatchObject({ label: "確定距離 / 保存時刻", value: `${expected} · t 0.00 s` });
-      expect(session.queryReplayCamera(0, "auto", true, data).replayCamera.mode).toBe("platform");
-      expect(session.queryReplayCamera(0, "auto", false, data).replayCamera.mode).toBe("pilot");
-      const resultSession = result();
-      try {
-        const phaseMismatch = updateApp({ ...model, analysis: { kind: "loading", requestId: 5, nextRequestId: 6, retained: data } }, {
-          type: "flight-analysis-loaded", requestId: 5, data: dataset(resultSession)
-        });
-        expect(flightAnalysisData(phaseMismatch.model.analysis)).toBe(data);
-        expect(phaseMismatch.model.status).toContain("phase");
-      } finally { resultSession.dispose(); }
-    } finally { session.dispose(); }
   });
 
   it("refreshes named Result and Replay contexts while retaining the shared cursor without persisting twice", () => {

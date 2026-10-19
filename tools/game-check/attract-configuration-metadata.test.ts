@@ -1,3 +1,6 @@
+import { readContract } from "../game-ui-build/validate.js";
+import type { SessionLifecycleDocument } from "../../web/src/generated/session-lifecycle.js";
+import { encodeTailLogicalInput } from "../../web/src/game/tail-input.js";
 import { readFileSync } from "node:fs";
 import { beforeAll, expect, it } from "vitest";
 import { HybridGameSessionBridge, TailPersonalBestSelectionBridge, initSync } from "../../web/pkg/birdman_game_wasm.js";
@@ -56,10 +59,10 @@ it.each([0, 1, 2, 3, 4])("preserves player Information %s and Custom cues across
         expect(session.playback_clock_state()).toEqual(clock);
         expect(session.playback_context_json()).toBe(context);
         expect(session.flight_analysis_samples_json()).toBe(samples);
-        expect(session.phase_code()).toBe(10);
+        expect(readContract<SessionLifecycleDocument>("lifecycle", session.lifecycle_snapshot_json()).phase).toBe("attract");
       }
       session.leave_attract();
-      expect(session.phase_code()).toBe(0);
+      expect(readContract<SessionLifecycleDocument>("lifecycle", session.lifecycle_snapshot_json()).phase).toBe("title");
       expect(selection(session)).toEqual(selected);
     }
     session.open_setup(); expect(selection(session)).toEqual(selected);
@@ -92,14 +95,14 @@ it("keeps configuration queries observational through Briefing, pause, Result an
     expect(metadata.slice(0, 4)).toEqual([4, 4, 3, 2]);
     expect(metadata.slice(12)).toEqual([1, 1, 0, 1, 1, 1]);
     const stableQuery = () => {
-      const phase = session.phase_code();
-      const snapshot = phase === 9 ? session.playback_context_json() : session.snapshot_json();
-      const samples = phase === 9 ? session.flight_analysis_samples_json() : null;
-      const clock = phase === 9 ? Array.from(session.playback_clock_state()) : null;
+      const phase = readContract<SessionLifecycleDocument>("lifecycle", session.lifecycle_snapshot_json()).phase;
+      const snapshot = phase === "replay" ? session.playback_context_json() : session.snapshot_json();
+      const samples = phase === "replay" ? session.flight_analysis_samples_json() : null;
+      const clock = phase === "replay" ? Array.from(session.playback_clock_state()) : null;
       expect(Array.from(session.configuration_metadata())).toEqual(metadata);
-      expect(session.phase_code()).toBe(phase);
-      expect(phase === 9 ? session.playback_context_json() : session.snapshot_json()).toBe(snapshot);
-      if (phase === 9) {
+      expect(readContract<SessionLifecycleDocument>("lifecycle", session.lifecycle_snapshot_json()).phase).toBe(phase);
+      expect(phase === "replay" ? session.playback_context_json() : session.snapshot_json()).toBe(snapshot);
+      if (phase === "replay") {
         expect(session.flight_analysis_samples_json()).toBe(samples);
         expect(Array.from(session.playback_clock_state())).toEqual(clock);
       }
@@ -107,7 +110,7 @@ it("keeps configuration queries observational through Briefing, pause, Result an
     stableQuery(); session.fail_briefing(0); stableQuery(); session.retry_briefing(); stableQuery();
     session.mark_briefing_ready(); stableQuery(); session.start_countdown(1); stableQuery();
     session.observe_countdown(session.countdown_token(), 1, true); stableQuery(); session.pause(0); stableQuery();
-    session.resume(); session.advance_tick_json(neutralTailInput); session.abort(); stableQuery();
+    session.resume(); session.advance_tick_json(encodeTailLogicalInput(neutralTailInput)); session.abort(); stableQuery();
     const json = session.export_flight_record_json();
     const best = new TailPersonalBestSelectionBridge(json);
     try { expect(best.is_eligible()).toBe(false); } finally { best.free(); }
@@ -124,7 +127,7 @@ it("retains current archive preset metadata independently of the demo declaratio
   const archived = new HybridGameSessionBridge(2, 31, 32);
   try {
     player.open_setup(); player.set_difficulty_preset(1); startFlight(player);
-    player.advance_tick_json(neutralTailInput); player.abort();
+    player.advance_tick_json(encodeTailLogicalInput(neutralTailInput)); player.abort();
     const metadata = Array.from(player.configuration_metadata());
     expect(metadata[0]).toBe(1);
     const json = player.export_flight_record_json();

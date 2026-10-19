@@ -83,7 +83,84 @@ fn fixture_record(duration: f64, reason: SessionEndReason) -> FlightRecord {
 }
 
 fn view(record: &FlightRecord, time: f64, camera: GameUiReplayCamera) -> ReplayCameraView {
-    replay_camera_view(record, time, camera, GameUiPresentationMode::Screen, false).unwrap()
+    replay_camera_view(
+        record,
+        None,
+        time,
+        camera,
+        GameUiPresentationMode::Screen,
+        false,
+    )
+    .unwrap()
+}
+
+#[test]
+fn render_pose_matches_the_same_record_sample_and_retains_unknown_geometry() {
+    let record = fixture_record(0.4, SessionEndReason::TimeLimit);
+    let identity = FlightRecordTailIdentityDocument {
+        aircraft_configuration_id: birdman_game_core::HybridMockDefinition::CONFIGURATION_ID.into(),
+        controller_profile_id: "camera-fixture".into(),
+    };
+    let sample = record.sample_at_seconds(0.205).unwrap();
+    let projection = replay_camera_view(
+        &record,
+        Some(&identity),
+        0.205,
+        GameUiReplayCamera::Chase,
+        GameUiPresentationMode::Screen,
+        false,
+    )
+    .unwrap();
+    let pose = projection.render_pose;
+    assert_eq!(
+        pose.datum_position_ned,
+        sample.flight_state.datum_position_ned().components().into()
+    );
+    assert_eq!(
+        pose.attitude_body_to_ned,
+        sample
+            .flight_state
+            .attitude_body_to_ned()
+            .components()
+            .into()
+    );
+    assert_eq!(
+        pose.pilot_position_meters,
+        sample.flight_state.pilot_position_m()
+    );
+    assert_eq!(pose.initial_pilot_position_meters, 0.1);
+    assert_eq!(
+        pose.simulation_time_seconds,
+        (sample.tick_index as f64 + sample.fraction) / f64::from(birdman_game_core::PHYSICS_HZ)
+    );
+    assert_eq!(
+        pose.airspeed_meters_per_second,
+        Some(sample.telemetry.airspeed_mps)
+    );
+    assert_eq!(
+        pose.wind_velocity_ned_meters_per_second,
+        Some(sample.telemetry.wind_velocity_ned_mps.components().into())
+    );
+    assert_eq!(
+        pose.controls.physical_incidence.horizontal_tail_radians,
+        sample.actuators.elevator_rad()
+    );
+    assert_eq!(
+        pose.controls.physical_incidence.vertical_tail_radians,
+        sample.actuators.rudder_rad()
+    );
+    assert!(matches!(
+        pose.tail_geometry,
+        birdman_game_format::RenderTailGeometry::Available { .. }
+    ));
+    let document = serde_json::to_value(projection).unwrap();
+    assert!(document["sample"].get("render_pose").is_none());
+    assert!(document["render_pose"].is_object());
+    let unknown = view(&record, 0.205, GameUiReplayCamera::Chase);
+    assert!(matches!(
+        unknown.render_pose.tail_geometry,
+        birdman_game_format::RenderTailGeometry::Unavailable { .. }
+    ));
 }
 
 #[test]
@@ -98,7 +175,7 @@ fn manual_rigs_preserve_web_geometry_fov_and_complete_sample_at_one_time() {
         let cinematic = output.cinematic.unwrap();
         let sample = record.sample_at_seconds(2.005).unwrap();
         assert_eq!(output.sample, RecordedPlaybackSample::from(sample));
-        assert_eq!(output.initial_pilot_position_m, 0.1);
+        assert_eq!(output.render_pose.initial_pilot_position_meters, 0.1);
         assert_eq!(cinematic.vertical_field_of_view_degrees, fov);
         let target = render_position(sample.flight_state.datum_position_ned().components());
         assert_eq!(
@@ -230,6 +307,7 @@ fn director_preserves_opening_low_altitude_terminal_attract_and_vr_choices() {
         assert_eq!(
             replay_camera_view(
                 &record,
+                None,
                 time,
                 GameUiReplayCamera::Auto,
                 GameUiPresentationMode::Screen,
@@ -245,14 +323,22 @@ fn director_preserves_opening_low_altitude_terminal_attract_and_vr_choices() {
         GameUiPresentationMode::PhoneVr,
     ] {
         assert_eq!(
-            replay_camera_view(&record, 0.0, GameUiReplayCamera::Auto, presentation, false)
-                .unwrap()
-                .camera,
+            replay_camera_view(
+                &record,
+                None,
+                0.0,
+                GameUiReplayCamera::Auto,
+                presentation,
+                false
+            )
+            .unwrap()
+            .camera,
             GameUiReplayCamera::Pilot
         );
         assert_eq!(
             replay_camera_view(
                 &record,
+                None,
                 10.0,
                 GameUiReplayCamera::Shore,
                 presentation,
@@ -263,9 +349,16 @@ fn director_preserves_opening_low_altitude_terminal_attract_and_vr_choices() {
             GameUiReplayCamera::Shore
         );
         assert_eq!(
-            replay_camera_view(&record, 10.0, GameUiReplayCamera::Auto, presentation, true)
-                .unwrap()
-                .camera,
+            replay_camera_view(
+                &record,
+                None,
+                10.0,
+                GameUiReplayCamera::Auto,
+                presentation,
+                true
+            )
+            .unwrap()
+            .camera,
             GameUiReplayCamera::Pilot
         );
     }
@@ -335,6 +428,7 @@ fn queries_are_readonly_and_handle_vertical_coincident_and_invalid_targets() {
         assert_eq!(
             replay_camera_view(
                 &record,
+                None,
                 time,
                 GameUiReplayCamera::Auto,
                 GameUiPresentationMode::Screen,

@@ -1049,11 +1049,6 @@ fn credits(menu: &mut Menu) {
             include_str!("../../../../assets/ryu-js.LICENSE.txt"),
         ),
         (
-            "validators",
-            "UIデータの検査",
-            include_str!("../../../../assets/game-ui-validators.LICENSE.txt"),
-        ),
-        (
             "time",
             "保存日時の表示",
             include_str!("../../../../assets/time.LICENSE.txt"),

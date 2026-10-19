@@ -15,12 +15,12 @@ describe("current application session factory", () => {
   it("uses shared Light assistance and the shared seed when no explicit settings are supplied", () => {
     const session = createAppSession();
     try {
-      expect(session.readLifecycle()).toMatchObject({ phaseCode: 0, controlModeCode: 1 });
-      expect(session.readDifficulty().assistanceCode).toBe(2);
+      expect(session.readLifecycle()).toMatchObject({ phase: "title", control_mode_code: 1 });
       launchCurrentSession(session);
       const snapshot = session.readSnapshot();
-      if (snapshot.identity.kind !== "prepared") throw new Error("Expected the default prepared identity");
-      expect(snapshot.identity.scenario).toMatchObject({ seedLow: 0x55aa, seedHigh: 0x5f98 });
+      expect(snapshot.scenario).toMatchObject({ seed_low: 0x55aa, seed_high: 0x5f98 });
+      session.executeSharedSessionCommand({ kind: "abort" });
+      expect(session.readRecordSummary().context.difficulty.assistance).toBe("light");
     } finally { session.dispose(); }
   });
 
@@ -28,17 +28,17 @@ describe("current application session factory", () => {
     const session = createAppSession({ controlModeCode: mode, seedLow: 0xffff_ffff, seedHigh: 22 });
     const free = vi.spyOn(HybridGameSessionBridge.prototype, "free");
     try {
-      expect(session.readLifecycle()).toMatchObject({ phaseCode: 0, controlModeCode: mode });
+      expect(session.readLifecycle()).toMatchObject({ phase: "title", control_mode_code: mode });
       expect(session.physicsHz).toBe(physics_hz());
       const observed = session.captureQueryToken();
       launchCurrentSession(session);
       expect(session.acceptQuery(observed, "Title").kind).toBe("stale");
-      session.flightPort.advance_tick_json(neutralTailInput);
-      expect(session.readSnapshot()).toMatchObject({ frame: { kind: "flight", state: { tick: 1, pilotPositionTargetNormalized: 0 } } });
+      session.flightPort.advanceTick(neutralTailInput);
+      expect(session.readSnapshot()).toMatchObject({ frame: { kind: "flight", state: { tick: 1, pilot_position_target_normalized: 0 } } });
       const snapshot = session.readSnapshot();
-      if (snapshot.frame.kind !== "flight" || snapshot.identity.kind !== "prepared") throw new Error("Expected a sealed Rust flight");
-      expect(snapshot.frame.state.physicalIncidence).not.toHaveProperty("roll");
-      expect(snapshot.identity.scenario.seedLow).toBe(0xffff_ffff);
+      if (snapshot.frame.kind !== "flight" || snapshot.scenario === null) throw new Error("Expected a sealed Rust flight");
+      expect(snapshot.frame.state.physical_incidence).not.toHaveProperty("roll");
+      expect(snapshot.scenario.seed_low).toBe(0xffff_ffff);
       const beforeRetry = session.captureQueryToken();
       session.executeSharedSessionCommand({ kind: "abort" });
       const record = session.exportRecordJson();
@@ -48,7 +48,7 @@ describe("current application session factory", () => {
       session.flightPort.free();
       expect(session.acceptQuery(beforeDispose, record).kind).toBe("stale");
       expect(() => session.readLifecycle()).toThrow("disposed");
-      expect(() => session.flightPort.snapshot_json()).toThrow("disposed");
+      expect(() => session.flightPort.readSnapshot()).toThrow("disposed");
     } finally {
       session.dispose();
     }
@@ -61,7 +61,7 @@ describe("current application session factory", () => {
       initializeAppSession({ controlModeCode: 2, seedLow: 31, seedHigh: 32 })
     ]);
     try {
-      expect(sessions.map((session) => session.readLifecycle().controlModeCode)).toEqual([1, 2]);
+      expect(sessions.map((session) => session.readLifecycle().control_mode_code)).toEqual([1, 2]);
     } finally {
       sessions.forEach((session) => { session.dispose(); });
     }
@@ -69,8 +69,8 @@ describe("current application session factory", () => {
 
   it("releases a resource whose first projection fails", () => {
     const free = vi.spyOn(HybridGameSessionBridge.prototype, "free");
-    vi.spyOn(HybridGameSessionBridge.prototype, "phase_code").mockReturnValue(99);
-    expect(() => createAppSession({ controlModeCode: 0, seedLow: 31, seedHigh: 32 })).toThrow(RangeError);
+    vi.spyOn(HybridGameSessionBridge.prototype, "lifecycle_snapshot_json").mockImplementation(() => { throw new Error("Injected lifecycle failure"); });
+    expect(() => createAppSession({ controlModeCode: 0, seedLow: 31, seedHigh: 32 })).toThrow("Injected lifecycle failure");
     expect(free).toHaveBeenCalledTimes(1);
   });
 

@@ -57,7 +57,7 @@ import { createBirdmanAirframe, NO_AIRFRAME_CONTROLS } from "./birdman-airframe.
 import { createLakeVenue } from "./lake-venue-mesh.js";
 import { LAUNCH_PLATFORM } from "../../contracts/launch-venue.js";
 import type { ScreenRenderAutoBinding } from "../../contracts/screen-render-auto.js";
-import { parseScreenRenderAutoSnapshot } from "../../contracts/screen-render-auto.js";
+import type { ScreenRenderAutoSnapshot } from "../../../generated/screen-render-auto.js";
 import { ScreenAutoRenderer } from "./screen-auto-renderer.js";
 import { applyScreenRenderResources } from "./screen-render-resources.js";
 
@@ -428,7 +428,7 @@ export function createThreeRenderer(
     lakeQuality?: LakeQualityRequest;
   }>;
   let pendingViewInputs: PendingViewInputs | null = null;
-  const settleManualLakeQuality = (snapshot: ReturnType<typeof parseScreenRenderAutoSnapshot>): void => {
+  const settleManualLakeQuality = (snapshot: ScreenRenderAutoSnapshot): void => {
     const request = manualLakeQualityRequest;
     if (request === null || screenAutoBinding === undefined || snapshot.status.kind === "applying"
         || screenAutoBinding.policy.requested_scale_percent() !== 0) return;
@@ -439,6 +439,7 @@ export function createThreeRenderer(
   const screenAuto = screenAutoBinding === undefined ? null
     : new ScreenAutoRenderer(renderer.getContext(), {
       policy: screenAutoBinding.policy,
+      snapshot: screenAutoBinding.snapshot,
       scene: screenAutoBinding.scene,
       onSnapshot(snapshot) {
         screenAutoBinding.onSnapshot(snapshot);
@@ -513,7 +514,7 @@ export function createThreeRenderer(
       manualLakeQualityRequest = request;
       try {
         screenAuto.selectWaterQuality(request.quality);
-        if (screenAutoBinding !== undefined) settleManualLakeQuality(parseScreenRenderAutoSnapshot(screenAutoBinding.policy.snapshot_json()));
+        if (screenAutoBinding !== undefined) settleManualLakeQuality(screenAutoBinding.snapshot());
       }
       catch (cause: unknown) { manualLakeQualityRequest = null; request.reject(cause); }
       return;

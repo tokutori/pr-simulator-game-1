@@ -1,5 +1,6 @@
-import { parseTailSessionSnapshot } from "../../web/src/game/tail-session-codec.js";
-import { parseScreenRenderAutoSnapshot } from "../../web/src/render/contracts/screen-render-auto.js";
+import type { TailSnapshotDocument } from "../../web/src/generated/tail-snapshot.js";
+import { readContract } from "../game-ui-build/validate.js";
+import type { ScreenRenderAutoSnapshot } from "../../web/src/generated/screen-render-auto.js";
 import type { EpochObservation, LiveObservation } from "./browser-observer.js";
 
 export function distribution(values: readonly number[]) {
@@ -10,8 +11,8 @@ export function distribution(values: readonly number[]) {
 }
 
 export function summarize(observation: LiveObservation) {
-  const initial = parseTailSessionSnapshot(observation.initialSnapshotJson);
-  const final = parseTailSessionSnapshot(observation.finalSnapshotJson);
+  const initial = readContract<TailSnapshotDocument>("tail_snapshot", observation.initialSnapshotJson);
+  const final = readContract<TailSnapshotDocument>("tail_snapshot", observation.finalSnapshotJson);
   const inWindow = (at: number) => at >= observation.startMs && at < Math.min(observation.endMs, observation.observedEndMs);
   const forwarded = observation.forwardedGpu.filter(sample => inWindow(sample.sourceMs));
   const groups = new Map<number, { source: EpochObservation; values: number[]; frames: number[]; firstSourceMs: number; lastSourceMs: number }>();
@@ -31,7 +32,7 @@ export function summarize(observation: LiveObservation) {
     groups.set(sample.epoch, group);
   }
   const gpu = [...groups.entries()].map(([epoch, group]) => {
-    const snapshot = parseScreenRenderAutoSnapshot(group.source.snapshotJson);
+    const snapshot = readContract<ScreenRenderAutoSnapshot>("screen_render_auto", group.source.snapshotJson);
     const first = Math.min(...group.frames);
     const last = Math.max(...group.frames);
     const unique = new Set(group.frames).size;
@@ -49,12 +50,12 @@ export function summarize(observation: LiveObservation) {
   const sourceStart = sourceTimes.length === 0 ? null : Math.min(...sourceTimes);
   const sourceEnd = sourceTimes.length === 0 ? null : Math.max(...sourceTimes);
   const sourceWindowCoverage = sourceStart === null || sourceEnd === null ? 0 : (sourceEnd - sourceStart) / (observation.endMs - observation.startMs);
-  const tickAdvance = (initial.phaseCode === 5 || initial.phaseCode === 6) && (final.phaseCode === 5 || final.phaseCode === 6 || final.phaseCode === 7)
+  const tickAdvance = initial.frame.kind !== "menu" && final.frame.kind !== "menu"
     ? final.frame.state.tick - initial.frame.state.tick : null;
   const problems = [...observation.observerErrors];
   if (observation.interrupted !== null) problems.push(observation.interrupted);
   if (observation.truncated) problems.push("Bounded observation capacity exceeded");
-  if (initial.phaseCode !== 5 || final.phaseCode !== 5 || frames.some(frame => frame.phase !== 5) || observation.phases.some(state => state.phase !== 5)) problems.push("The window contains a non-Running Rust phase");
+  if (initial.phase !== "flight_running" || final.phase !== "flight_running" || frames.some(frame => frame.phase !== "flight_running") || observation.phases.some(state => state.phase !== "flight_running")) problems.push("The window contains a non-Running Rust phase");
   if (tickAdvance === null || tickAdvance <= 0) problems.push("Rust physical tick did not advance");
   if (frames.length < 2) problems.push("Insufficient RAF observations");
   if (gpu.length === 0) problems.push("No attributable fresh policy-forwarded GPU sample");
@@ -65,7 +66,7 @@ export function summarize(observation: LiveObservation) {
   if (frames.some(frame => {
     const source = observation.epochs.findLast(event => event.at <= frame.at);
     if (source === undefined) return true;
-    const snapshot = parseScreenRenderAutoSnapshot(source.snapshotJson);
+    const snapshot = readContract<ScreenRenderAutoSnapshot>("screen_render_auto", source.snapshotJson);
     const scale = Number(snapshot.applied) / 100;
     return frame.width !== 1280 * scale || frame.height !== 720 * scale;
   })) problems.push("Actual canvas dimensions do not match the source-time confirmed scale");

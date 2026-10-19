@@ -1,5 +1,6 @@
 import { boundaryNumber } from "./tail-boundary-values.js";
-import type { TailLogicalInput, TailPilotPositionCommand } from "./tail-session-codec.js";
+import type { TailLogicalInput, TailPilotPositionCommand } from "./tail-input.js";
+import type { TailControlProfileDocument } from "../generated/tail-control-profile.js";
 
 export interface TailPilotDemand {
   readonly controlLayout: "tail_incidence";
@@ -101,4 +102,12 @@ export function tailInputWithRateDemand(demand: TailPilotDemand, rates: TailRate
   return Object.freeze({ ...demand,
     desiredPitchRateRadiansPerSecond: boundaryNumber(rates.pitchRadiansPerSecond),
     desiredYawRateRadiansPerSecond: boundaryNumber(rates.yawRadiansPerSecond) });
+}
+
+export function tailInputFromControlProfile(demand: TailPilotDemand, profile: TailControlProfileDocument): TailLogicalInput {
+  const limits = profile.desired_body_rate_limit_rad_s;
+  return tailInputWithRateDemand(demand, {
+    pitchRadiansPerSecond: boundaryNumber(demand.noseUp, -1, 1) * limits.pitch,
+    yawRadiansPerSecond: boundaryNumber(demand.turnRight, -1, 1) * limits.yaw
+  });
 }

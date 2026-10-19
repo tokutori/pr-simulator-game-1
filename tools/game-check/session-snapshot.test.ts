@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, expectTypeOf, it, vi } from "vitest";
 import { initSync } from "../../web/pkg/birdman_game_wasm.js";
-import { createInitialAppModel, gameSessionSnapshot, gameSessionState, updateApp } from "../../web/src/app/app-state.js";
+import { createInitialAppModel, gameSessionSnapshot, updateApp } from "../../web/src/app/app-state.js";
 import type { AppMessage, AppModel, GameSessionUiState } from "../../web/src/app/app-state.js";
 import { sharedGameUiPlatform, sharedHudNode } from "./shared-game-ui-fixture.js";
 import { FlightControllerUiBindings } from "../../web/src/app/flight-controller-port.js";
@@ -9,17 +9,15 @@ import { createFlightUiHudModel } from "../../web/src/app/flight-frame-view.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
 import { createAppSession } from "../../web/src/app/session-factory.js";
 import type { TailAppSessionFacade } from "../../web/src/app/session-facade.js";
-import { isTerminalSessionSnapshot, projectTailGameSession } from "../../web/src/app/session-snapshot.js";
-import type { TailGameSessionProjection, TerminalSessionSnapshot } from "../../web/src/app/session-snapshot.js";
-import type { FlightDisplaySnapshot } from "../../web/src/game/flight-display-snapshot.js";
-import { encodeTailLogicalInput } from "../../web/src/game/tail-session-codec.js";
+import { projectTailGameSession } from "../../web/src/app/session-snapshot.js";
+import type { TailGameSessionProjection } from "../../web/src/app/session-snapshot.js";
 
 initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url))) });
-const neutral = encodeTailLogicalInput({ controlLayout: "tail_incidence", noseUp: 0, turnRight: 0,
-  desiredPitchRateRadiansPerSecond: 0, desiredYawRateRadiansPerSecond: 0, pilotPositionCommand: { kind: "hold" } });
+const neutral = ({ controlLayout: "tail_incidence" as const, noseUp: 0, turnRight: 0,
+  desiredPitchRateRadiansPerSecond: 0, desiredYawRateRadiansPerSecond: 0, pilotPositionCommand: { kind: "hold" as const } });
 
 function projection(session: TailAppSessionFacade): TailGameSessionProjection {
-  return projectTailGameSession(session.readSnapshot(), session.readLifecycle(), createInitialAppModel().difficulty, null);
+  return projectTailGameSession(session.readSnapshot(), session.readLifecycle());
 }
 
 function launch(session: TailAppSessionFacade): void {
@@ -45,18 +43,15 @@ function sharedView(model: AppModel) {
   return createGameViewModel(model.sharedGameUi);
 }
 
-describe("single Rust snapshot application projection", () => {
-  it("correlates the public live layout and phase types and requires terminal record proof", () => {
-    expectTypeOf<Extract<GameSessionUiState, { kind: "flight"; controlLayout: "tail_incidence" }>["snapshot"]["phaseCode"]>().toEqualTypeOf<5>();
-    expectTypeOf<Extract<GameSessionUiState, { kind: "paused-flight"; controlLayout: "tail_incidence" }>["snapshot"]["phaseCode"]>().toEqualTypeOf<6>();
-    expectTypeOf<Extract<FlightDisplaySnapshot, { kind: "tail_record" }>>().not.toExtend<TerminalSessionSnapshot>();
-    expectTypeOf<Extract<Extract<GameSessionUiState, { kind: "result"; controlLayout: "tail_incidence" }>["display"], { kind: "available" }>["value"]["kind"]>()
-      .toEqualTypeOf<"tail_result" | "tail_record">();
-    expectTypeOf<Extract<Extract<GameSessionUiState, { kind: "attract"; controlLayout: "tail_incidence" }>["display"], { kind: "available" }>["value"]["kind"]>()
-      .toEqualTypeOf<"tail_record">();
+describe("raw Rust snapshot application observations", () => {
+  it("correlates named lifecycle states with their required display payload", () => {
+    expectTypeOf<Extract<GameSessionUiState, { phase: "flight_running" }>["display"]["value"]["phase"]>().toEqualTypeOf<"flight_running">();
+    expectTypeOf<Extract<GameSessionUiState, { phase: "flight_paused" }>["display"]["value"]["phase"]>().toEqualTypeOf<"flight_paused">();
+    expectTypeOf<Extract<GameSessionUiState, { phase: "replay" }>["returnTarget"]>().toEqualTypeOf<"title" | "result">();
+    expectTypeOf<Extract<GameSessionUiState, { phase: "boot" }>>().not.toHaveProperty("display");
   });
 
-  it("derives menu, live, pause and Result from real Rust snapshots without legacy fields", () => {
+  it("holds the generated menu, live, paused and Result values without a phase alias model", () => {
     const facade = session();
     try {
       let model = createInitialAppModel();
@@ -72,83 +67,35 @@ describe("single Rust snapshot application projection", () => {
         control.kind === "status" && control.id === "game-briefing-controls" && control.value.includes("↑") && control.value.includes("↓"))).toBe(true);
       facade.executeSharedSessionCommand({ kind: "start_countdown" });
       facade.observeCountdown(facade.captureCountdownToken(), 3, true);
-      for (const expectedPhase of [5, 6, 7] as const) {
+      for (const phase of ["flight_running", "flight_paused", "result"] as const) {
         const current = projection(facade);
-        expect(current.phaseCode).toBe(expectedPhase);
-        model = updateApp(model, { type: "game-session-synced", ...current }).model;
-        model = observeSharedUi(model, facade);
+        expect(current.phase).toBe(phase);
+        model = observeSharedUi(updateApp(model, { type: "game-session-synced", ...current }).model, facade);
         const snapshot = gameSessionSnapshot(model.gameSession);
-        if (snapshot === null) throw new Error("Missing Rust display snapshot");
-        expect(snapshot.controls.layout).toBe("tail_incidence");
-        expect(snapshot).not.toHaveProperty("actuatorDeflectionRadians");
-        expect(snapshot).not.toHaveProperty("tick");
-        const hud = createFlightUiHudModel(model);
-        if (expectedPhase === 7) expect(hud).toBeNull();
+        expect(current.display.kind).toBe("available");
+        if (current.display.kind !== "available") throw new Error("Missing Rust display");
+        expect(snapshot).toBe(current.display.value);
+        expect(snapshot).not.toHaveProperty("positionNed");
+        if (phase === "result") expect(createFlightUiHudModel(model)).toBeNull();
         else {
-          if (hud === null) throw new Error("Missing shared live Flight HUD");
-          expect(hud.groups.flatMap((group) => group.nodes).some((node) => node.id === "hud-controls")).toBe(false);
+          const hud = createFlightUiHudModel(model);
+          expect(hud).not.toBeNull();
+          expect(hud?.groups.flatMap((group) => group.nodes).some((node) => node.id === "hud-controls")).toBe(false);
         }
-        if (expectedPhase === 5) facade.executeSharedSessionCommand({ kind: "pause" });
-        if (expectedPhase === 6) facade.executeSharedSessionCommand({ kind: "abort" });
+        if (phase === "flight_running") facade.executeSharedSessionCommand({ kind: "pause" });
+        if (phase === "flight_paused") facade.executeSharedSessionCommand({ kind: "abort" });
       }
-      expect(model.gameSession.kind).toBe("result");
-      expect(() => projectTailGameSession(facade.readSnapshot(), { ...facade.readLifecycle(), phaseCode: 5 }, model.difficulty, null)).toThrow("disagree");
-    } finally {
-      facade.dispose();
-    }
-  });
-
-  it("rejects layout and phase mismatch without publishing a partial AppModel", () => {
-    const facade = session();
-    try {
-      launch(facade);
-      const current = projection(facade);
-      if (current.phaseCode !== 5) throw new Error("Expected a live tail projection");
-      const tail = current.display.value;
-      expect(gameSessionState(6, 0, tail, false, "tail_incidence")).toBeNull();
-      expect(gameSessionState(1, 0, tail, false, "tail_incidence")).toBeNull();
-      const initial = createInitialAppModel();
-      const malformed = { type: "game-session-synced", ...current, phaseCode: 6 } as unknown as AppMessage;
-      expect(updateApp(initial, malformed).model.gameSession).toBe(initial.gameSession);
-    } finally {
-      facade.dispose();
-    }
-  });
-
-  it("keeps Result at the recorded terminal stamp and Playback at its independent cursor", () => {
-    const facade = session();
-    try {
-      launch(facade);
-      facade.flightPort.advance_tick_json(neutral);
-      facade.executeSharedSessionCommand({ kind: "abort" });
-      const early = facade.queryRecordDisplay(0.005);
-      const terminal = facade.queryRecordDisplay(0.01);
-      expect(isTerminalSessionSnapshot(early)).toBe(false);
-      expect(gameSessionState(7, 0, early, false, "tail_incidence")).toBeNull();
-      const result = gameSessionState(7, 0, terminal, false, "tail_incidence");
-      expect(result?.kind).toBe("result");
-      expect(gameSessionSnapshot(result ?? { kind: "boot", phaseCode: -1 })).toBe(terminal);
-      for (const phase of [9, 10]) {
-        const playback = gameSessionState(phase, 0, early, false, "tail_incidence", phase === 9 ? "result" : undefined);
-        expect(playback?.kind).toBe(phase === 9 ? "replay" : "attract");
-        if (playback === null) throw new Error("Missing Playback projection");
-        expect(gameSessionSnapshot(playback)).toBe(early);
-      }
-      expect(gameSessionState(7, 0, null, false, "tail_incidence")).toMatchObject({
-        kind: "result", display: { kind: "unavailable", reason: "record_not_loaded" }
-      });
-    } finally {
-      facade.dispose();
-    }
+      expect(model.gameSession.phase).toBe("result");
+    } finally { facade.dispose(); }
   });
 
   it("uses one last valid tail snapshot for Screen and Head HUD and rejects old controller notifications", () => {
     const facade = session();
     try {
       launch(facade);
-      facade.flightPort.advance_tick_json(neutral);
+      facade.flightPort.advanceTick(neutral);
       const current = projection(facade);
-      if (current.phaseCode !== 5) throw new Error("Expected a live tail projection");
+      if (current.phase !== "flight_running") throw new Error("Expected a live tail projection");
       let model = updateApp(createInitialAppModel(), { type: "game-session-synced", ...current }).model;
       const bindings = new FlightControllerUiBindings();
       const display = { render: vi.fn(), setVisible: vi.fn() };
@@ -186,9 +133,9 @@ describe("single Rust snapshot application projection", () => {
     const facade = session();
     try {
       launch(facade);
-      facade.flightPort.advance_tick_json(neutral);
+      facade.flightPort.advanceTick(neutral);
       const beforePause = projection(facade);
-      if (beforePause.phaseCode !== 5) throw new Error("Expected a live tail projection");
+      if (beforePause.phase !== "flight_running") throw new Error("Expected a live tail projection");
       facade.executeSharedSessionCommand({ kind: "pause" });
       let model = updateApp(createInitialAppModel(), { type: "game-session-synced", ...projection(facade) }).model;
       const bindings = new FlightControllerUiBindings();
@@ -196,8 +143,8 @@ describe("single Rust snapshot application projection", () => {
         () => beforePause.display.value, (message) => { model = observeSharedUi(updateApp(model, message).model, facade); });
       model = updateApp(model, { type: "flight-controller-ready", identity: binding.identity }).model;
       binding.port.fail("Pause synchronization failed");
-      expect(model.gameSession).toMatchObject({ kind: "paused-flight", phaseCode: 6, snapshot: { phaseCode: 6 } });
-      expect(model.flightExecution).toMatchObject({ kind: "stopped", snapshot: { phaseCode: 5 } });
+      expect(model.gameSession).toMatchObject({ phase: "flight_paused", display: { value: { phase: "flight_paused" } } });
+      expect(model.flightExecution).toMatchObject({ kind: "stopped", snapshot: { phase: "flight_running" } });
       if (model.flightExecution.kind !== "stopped") throw new Error("Missing retained stop projection");
       expect(model.flightExecution.snapshot).toBe(beforePause.display.value);
       const resume = updateApp(model, { type: "ui-action", action: { type: "activate", controlId: "game-flight-resume" } });

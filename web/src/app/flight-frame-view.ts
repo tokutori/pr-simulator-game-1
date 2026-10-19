@@ -1,6 +1,6 @@
 import { createBootViewModel } from "./boot-view.js";
 import { createGameViewModel } from "./game-view.js";
-import { gameSessionPhaseCode } from "./app-state.js";
+import { gameSessionPhase } from "./app-state.js";
 import type { AppMessage, AppModel } from "./app-state.js";
 import type { FlightHudModel } from "../presentation/flight-hud-model.js";
 import { projectSharedFlightHudModel } from "../presentation/flight-hud-model.js";
@@ -33,7 +33,7 @@ export function createFlightUiHudModel(model: AppModel): FlightHudModel | null {
 }
 
 export function finalizeFlightFrameView(draft: FlightFrameViewDraft, headHud: HeadHudView): UiViewModel {
-  const view = gameSessionPhaseCode(draft.model.gameSession) < 0
+  const view = gameSessionPhase(draft.model.gameSession) === "boot"
     ? createBootViewModel(draft.model)
     : draft.model.sharedGameUi === null ? createBootViewModel(draft.model)
     : createGameViewModel(draft.model.sharedGameUi, headHud.kind === "visible" ? headHud.layer : NO_HEAD_HUD);

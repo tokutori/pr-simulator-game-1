@@ -1,9 +1,52 @@
 #![doc = "Static tail presentation derived from registered physical sections; local metres use right/up/aft axes."]
 
 use birdman_game_core::{HybridMockDefinition, HybridSurfaceGeometry, HybridSurfaceRole};
+use birdman_game_format::{RenderGeometryUnavailable, RenderTailGeometry, RenderTailGeometryValue};
+use std::sync::OnceLock;
 
 use crate::airframe_shape::tail_section_point as section_point;
 use crate::wing_geometry::{COVERED_FRACTION, FOAM_COLOR, RIB_COLOR, RIB_RADIUS};
+
+static RENDER_GEOMETRY: OnceLock<Result<RenderTailGeometryValue, &'static str>> = OnceLock::new();
+
+/// Resolves small presentation metadata without constructing tail meshes per frame.
+pub fn render_geometry(identity: Option<(&str, u32)>) -> Result<RenderTailGeometry, &'static str> {
+    if identity
+        != Some((
+            HybridMockDefinition::CONFIGURATION_ID,
+            HybridMockDefinition::MODEL_VERSION,
+        ))
+    {
+        return Ok(RenderTailGeometry::Unavailable {
+            reason: RenderGeometryUnavailable::UnregisteredAircraftGeometry,
+        });
+    }
+    RENDER_GEOMETRY
+        .get_or_init(|| {
+            let definition =
+                HybridMockDefinition::try_new().map_err(|_| "Invalid registered aircraft")?;
+            let surfaces = definition
+                .surfaces()
+                .map_err(|_| "Invalid registered surfaces")?;
+            let geometry = surfaces
+                .iter()
+                .find(|surface| surface.geometry().role() == HybridSurfaceRole::HorizontalTail)
+                .ok_or("Missing registered horizontal tail")?
+                .geometry();
+            let [first, last] = geometry.sections() else {
+                return Err("Registered tail requires two sections");
+            };
+            Ok(RenderTailGeometryValue {
+                horizontal_tail_arm_meters: -(first.quarter_chord().components()[0]
+                    + last.quarter_chord().components()[0])
+                    / 2.0,
+            })
+        })
+        .as_ref()
+        .copied()
+        .map(|value| RenderTailGeometry::Available { value })
+        .map_err(|cause| *cause)
+}
 
 #[doc = "Tail palette, reusing the Web indigo and film and shared wing structural colours."]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -156,6 +199,35 @@ impl TailGeometry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn render_metadata_uses_physical_pivot_and_rejects_unknown_model_names_or_versions() {
+        let registered = Some((
+            HybridMockDefinition::CONFIGURATION_ID,
+            HybridMockDefinition::MODEL_VERSION,
+        ));
+        let RenderTailGeometry::Available { value } = render_geometry(registered).unwrap() else {
+            panic!("registered physical geometry must be available");
+        };
+        let [horizontal, _] = TailGeometry::registered().unwrap();
+        assert_eq!(value.horizontal_tail_arm_meters, horizontal.origin[2]);
+        for identity in [
+            None,
+            Some(("unknown-aircraft", HybridMockDefinition::MODEL_VERSION)),
+            Some((HybridMockDefinition::CONFIGURATION_ID, u32::MAX)),
+        ] {
+            assert_eq!(
+                render_geometry(identity).unwrap(),
+                RenderTailGeometry::Unavailable {
+                    reason: RenderGeometryUnavailable::UnregisteredAircraftGeometry,
+                }
+            );
+        }
+        assert_eq!(
+            render_geometry(registered).unwrap(),
+            RenderTailGeometry::Available { value }
+        );
+    }
 
     #[test]
     fn registered_tails_preserve_physical_outline_and_join_cover_to_film() {

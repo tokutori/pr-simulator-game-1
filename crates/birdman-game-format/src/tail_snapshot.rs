@@ -2,7 +2,7 @@ use alloc::boxed::Box;
 use birdman_game_core::{DistanceScore, FlightTelemetry, SessionScenarioIdentity};
 
 use crate::{
-    FlightRecordTailIdentityDocument, TailControlLayoutDocument,
+    FlightRecordTailIdentityDocument, FlightRenderPose, TailControlLayoutDocument,
     TailFlightRecordFinalizationDocument, TailIncidenceDocument,
 };
 
@@ -49,6 +49,101 @@ impl From<SessionScenarioIdentity> for EnvironmentIdentity {
     }
 }
 
+/// Named application phase shared by runtime output documents.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum SessionPhaseDocument {
+    /// Title and saved-record selection.
+    Title,
+    /// Flight configuration.
+    FlightSetup,
+    /// Resource preparation in progress.
+    BriefingPreparing,
+    /// Prepared flight awaiting launch.
+    BriefingReady,
+    /// Timed launch countdown.
+    Countdown,
+    /// Running flight.
+    FlightRunning,
+    /// Paused flight.
+    FlightPaused,
+    /// Finalized flight result.
+    Result,
+    /// Preparation failed with a retained reason.
+    BriefingFailed,
+    /// Recorded flight playback.
+    Replay,
+    /// Independent demonstration playback.
+    Attract,
+}
+
+impl From<birdman_game_core::SessionPhase> for SessionPhaseDocument {
+    fn from(phase: birdman_game_core::SessionPhase) -> Self {
+        use birdman_game_core::SessionPhase;
+        match phase {
+            SessionPhase::Title => Self::Title,
+            SessionPhase::FlightSetup => Self::FlightSetup,
+            SessionPhase::BriefingPreparing => Self::BriefingPreparing,
+            SessionPhase::BriefingReady => Self::BriefingReady,
+            SessionPhase::Countdown { .. } => Self::Countdown,
+            SessionPhase::FlightRunning => Self::FlightRunning,
+            SessionPhase::FlightPaused { .. } => Self::FlightPaused,
+            SessionPhase::Result => Self::Result,
+            SessionPhase::BriefingFailed { .. } => Self::BriefingFailed,
+            SessionPhase::Replay => Self::Replay,
+            SessionPhase::Attract => Self::Attract,
+        }
+    }
+}
+
+/// Runtime lifecycle values obtained from one session observation.
+#[derive(serde::Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct SessionLifecycleDocument {
+    /// Current named phase.
+    pub phase: SessionPhaseDocument,
+    /// Manual, Shared or Automatic selection.
+    pub control_mode_code: u32,
+    /// Rounded-up countdown seconds, or zero outside Countdown.
+    pub countdown_remaining_seconds: u32,
+    /// Whether the current pause conditions admit an explicit resume.
+    pub can_resume: bool,
+}
+
+/// Pitch and yaw values in the units declared by their containing field.
+#[derive(serde::Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct TailControlAxesDocument {
+    /// Horizontal-tail control axis.
+    pub pitch: f64,
+    /// Vertical-tail control axis.
+    pub yaw: f64,
+}
+
+/// Resolved controller limits supplied to input adapters.
+#[derive(serde::Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct TailControlProfileDocument<'identity> {
+    /// Current input document version.
+    pub schema_version: u32,
+    /// Current physical control layout.
+    pub control_layout: TailControlLayoutDocument,
+    /// Registered controller identifier.
+    pub controller_profile_id: &'identity str,
+    /// Registered controller version.
+    pub controller_profile_version: u32,
+    /// Desired angular-rate limits in radians per second.
+    pub desired_body_rate_limit_rad_s: TailControlAxesDocument,
+    /// Feedback gains in seconds.
+    pub feedback_gain_seconds: TailControlAxesDocument,
+    /// Maximum physical incidence rate in radians per second.
+    pub maximum_slew_rad_s: f64,
+}
+
 /// Current live snapshot with borrowed immutable control identity.
 #[derive(serde::Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -59,9 +154,8 @@ pub struct TailSnapshotDocument<'identity> {
     pub schema_version: u32,
     /// Current two-tail layout.
     pub control_layout: TailControlLayoutDocument,
-    /// Domain phase projected by the platform adapter.
-    #[cfg_attr(feature = "schema", schemars(range(max = 8)))]
-    pub phase_code: u32,
+    /// Current named domain phase.
+    pub phase: SessionPhaseDocument,
     /// Manual, Shared or Automatic control selection.
     #[cfg_attr(feature = "schema", schemars(range(max = 2)))]
     pub control_mode_code: u32,
@@ -69,6 +163,8 @@ pub struct TailSnapshotDocument<'identity> {
     pub scenario: Option<EnvironmentIdentity>,
     /// Borrowed model/controller names, explicitly null before preparation.
     pub control_identity: Option<&'identity FlightRecordTailIdentityDocument>,
+    /// Renderer-ready projection of the same committed state.
+    pub render_pose: Option<FlightRenderPose>,
     /// Projection for the current menu, live flight or terminal phase.
     pub frame: TailFrameDocument,
 }
@@ -84,8 +180,7 @@ pub struct TailPreparedLaunchDocument<'identity> {
     /// Current two-tail layout.
     pub control_layout: TailControlLayoutDocument,
     /// Current domain phase, including phases without a prepared projection.
-    #[cfg_attr(feature = "schema", schemars(range(max = 10)))]
-    pub phase_code: u32,
+    pub phase: SessionPhaseDocument,
     /// Sealed zero-tick state or explicit absence.
     pub preview: TailPreparedLaunchFrame<'identity>,
 }
@@ -105,6 +200,8 @@ pub enum TailPreparedLaunchFrame<'identity> {
         control_identity: &'identity FlightRecordTailIdentityDocument,
         /// Zero-tick initial state.
         state: Box<TailStateDocument>,
+        /// Renderer-ready sealed initial state.
+        render_pose: Box<FlightRenderPose>,
     },
 }
 

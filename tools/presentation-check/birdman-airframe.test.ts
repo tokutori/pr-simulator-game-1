@@ -44,7 +44,7 @@ describe("synthetic Birdman airframe", () => {
       const retained = tails.flatMap((tail) => tail.children.map((part) => (part as Mesh).geometry));
       airframe.setVisualState(13, { layout: "tail_incidence", physicalIncidence: {
         horizontalTailRadians: 0.12, verticalTailRadians: -0.08 } },
-      { kind: "available", value: { kind: "bpg041_playable_version_two", horizontalTailArmMeters: 3.6 } });
+      { kind: "available", value: { horizontalTailArmMeters: 3.6 } });
       expect(tails[0]?.rotation.x).toBeCloseTo(0.12);
       expect(tails[1]?.rotation.y).toBeCloseTo(0.08);
       expect(tails.flatMap((tail) => tail.children.map((part) => (part as Mesh).geometry))).toEqual(retained);
@@ -404,7 +404,7 @@ describe("synthetic Birdman airframe", () => {
       const initialY = leftPosition.getY(tip);
       const initialFoamY = foam.position.y;
       airframe.setVisualState(13, { layout: "tail_incidence", physicalIncidence: { horizontalTailRadians: 0.12, verticalTailRadians: -0.08 } },
-        { kind: "available", value: { kind: "bpg041_playable_version_two", horizontalTailArmMeters: 3.6 } });
+        { kind: "available", value: { horizontalTailArmMeters: 3.6 } });
       expect(leftPosition.getY(tip)).toBeGreaterThan(initialY);
       expect(foam.position.y).toBeGreaterThan(initialFoamY);
       expect(airframe.root.getObjectByName("horizontal-tail-incidence")?.rotation.x).toBeCloseTo(0.12);

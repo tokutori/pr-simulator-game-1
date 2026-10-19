@@ -6,31 +6,31 @@ import { describe, expect, it } from "vitest";
 import { createInitialAppModel, updateApp } from "../../web/src/app/app-state.js";
 import type { AppModel } from "../../web/src/app/app-state.js";
 import { sharedGameUiAction } from "../../web/src/app/game-view.js";
-import { currentSharedGameUiFixture, withSharedGameUiSession } from "../game-check/shared-game-ui-fixture.js";
+import { currentGameSessionProjectionFixture, currentSharedGameUiFixture, sharedGameUiPlatform, withSharedGameUiSession } from "../game-check/shared-game-ui-fixture.js";
 
 function setupModel(): AppModel {
-  return { ...createInitialAppModel(), gameSession: { kind: "setup", phaseCode: 1, controlLayout: "tail_incidence" },
-    presentation: { type: "ready", mode: "screen" }, sharedGameUi: currentSharedGameUiFixture(1) };
+  return { ...createInitialAppModel(), gameSession: currentGameSessionProjectionFixture("flight_setup"),
+    presentation: { type: "ready", mode: "screen" }, sharedGameUi: currentSharedGameUiFixture("flight_setup") };
 }
 
 describe("Direct flight setup selection", () => {
   it.each([
     ["preset", 2], ["information", 2], ["assistance", 2], ["weather", 3]
   ] as const)("requests the selected %s value without owning a domain draft", (axis, code) => {
-    withSharedGameUiSession(1, {}, (session, platform) => {
+    withSharedGameUiSession("flight_setup", {}, (session, platform) => {
       const model = { ...setupModel(), sharedGameUi: session.readSharedUi(platform) };
       const action = { type: "activate" as const, controlId: `game-setup-select-${axis}-${String(code)}` };
       const admitted = sharedGameUiAction(model.sharedGameUi, action);
       if (admitted === null) throw new Error("Missing shared difficulty choice");
       const next = updateApp(model, { type: "ui-action", action });
-      expect(next.model.difficulty).toBe(model.difficulty);
+      expect(next.model.gameSession).toBe(model.gameSession);
       expect(next.effects).toEqual([{ type: "update-shared-game-ui", action: admitted }]);
       const shared = session.updateSharedUi(admitted, platform);
       expect(shared.effects).toHaveLength(1);
       const effect = shared.effects[0];
       if (effect?.kind !== "session") throw new Error("Missing Rust difficulty command");
       const pending = updateApp(next.model, { type: "shared-game-ui-effect", effect });
-      expect(pending.model.difficulty).toBe(model.difficulty);
+      expect(pending.model.gameSession).toBe(model.gameSession);
       expect(pending.effects).toEqual([{ type: "shared-game-session-command", command: effect.command, requestId: 1 }]);
       const observed = updateApp(pending.model, { type: "shared-game-ui-observed",
         view: session.readSharedUi({ ...platform, operation_pending: true }) }).model;
@@ -49,7 +49,7 @@ describe("Direct flight setup selection", () => {
 
   it("rejects selection outside Setup and preserves the selected value", () => {
     for (const model of [createInitialAppModel(), { ...setupModel(),
-      gameSession: { kind: "title" as const, phaseCode: 0 as const, controlLayout: "tail_incidence" as const }, sharedGameUi: currentSharedGameUiFixture(0) }]) {
+      gameSession: currentGameSessionProjectionFixture("title"), sharedGameUi: currentSharedGameUiFixture("title") }]) {
       const next = updateApp(model, { type: "ui-action", action: { type: "activate", controlId: "game-setup-select-weather-0" } });
       expect(next.model).toBe(model);
       expect(next.effects).toEqual([]);
@@ -67,10 +67,9 @@ describe("Direct flight setup selection", () => {
     try {
       session.executeSharedSessionCommand({ kind: "open_setup" });
       expect(session.executeSharedSessionCommand(command)).toEqual({ kind: "completed" });
-      const difficulty = session.readDifficulty();
-      const value = axis === "preset" ? difficulty.presetCode : axis === "information" ? difficulty.informationCode
-        : axis === "assistance" ? difficulty.assistanceCode : difficulty.weatherCode;
-      expect(value).toBe(2);
+      const selected = session.readSharedUi(sharedGameUiPlatform()).panels.flatMap((panel) => panel.controls)
+        .find((control) => control.id === `game-setup-select-${axis}-2`);
+      expect(selected?.content.kind === "button" ? selected.content.presentation : null).toMatchObject({ kind: "choice", selected: true });
     } finally { session.dispose(); }
   });
 });

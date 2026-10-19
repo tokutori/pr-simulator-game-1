@@ -7,8 +7,8 @@ use birdman_game_core::{
     FlightState, FlightTelemetry, MathError, SessionEndReason, TailIncidence, UnitQuaternion,
 };
 use birdman_game_format::{
-    FlightRecordStateDocument, FlightRecordTelemetryDocument, LocalNedFrameDocument,
-    TailIncidenceDocument, WeatherClass,
+    FlightRecordStateDocument, FlightRecordTailIdentityDocument, FlightRecordTelemetryDocument,
+    FlightRenderPose, LocalNedFrameDocument, TailIncidenceDocument, WeatherClass,
 };
 use serde::{Deserialize, Serialize};
 
@@ -20,7 +20,7 @@ use crate::game_ui::{GameUiPresentationMode, GameUiReplayCamera};
 #[serde(deny_unknown_fields)]
 pub struct ReplayCameraView {
     sample: RecordedPlaybackSample,
-    initial_pilot_position_m: f64,
+    render_pose: FlightRenderPose,
     camera: GameUiReplayCamera,
     cinematic: Option<CinematicCameraView>,
 }
@@ -150,6 +150,8 @@ pub enum ReplayCameraError {
     Math(MathError),
     /// Registered camera-point metadata is invalid.
     InvalidVenue,
+    /// The registered physical geometry could not supply presentation metadata.
+    Geometry(&'static str),
 }
 
 #[derive(Deserialize)]
@@ -183,6 +185,7 @@ static VENUE: OnceLock<Result<VenueCameraPoints, ReplayCameraError>> = OnceLock:
 /// orientation from the record checkpoints, independently of frame rate and seek order.
 pub fn replay_camera_view(
     record: &FlightRecord,
+    identity: Option<&FlightRecordTailIdentityDocument>,
     time_seconds: f64,
     selection: GameUiReplayCamera,
     presentation: GameUiPresentationMode,
@@ -199,16 +202,31 @@ pub fn replay_camera_view(
     let sample = record
         .sample_at_seconds(time)
         .map_err(ReplayCameraError::Record)?;
+    let initial_pilot_position_m = record
+        .samples()
+        .first()
+        .ok_or(ReplayCameraError::Record(
+            FlightRecordQueryError::EmptyRecord,
+        ))?
+        .flight_state
+        .pilot_position_m();
+    let tail_geometry = crate::tail_geometry::render_geometry(identity.map(|identity| {
+        (
+            identity.aircraft_configuration_id.as_str(),
+            record.header().scenario.aircraft_model_version,
+        )
+    }))
+    .map_err(ReplayCameraError::Geometry)?;
     let mut view = ReplayCameraView {
         sample: sample.into(),
-        initial_pilot_position_m: record
-            .samples()
-            .first()
-            .ok_or(ReplayCameraError::Record(
-                FlightRecordQueryError::EmptyRecord,
-            ))?
-            .flight_state
-            .pilot_position_m(),
+        render_pose: crate::render_pose::flight_render_pose(
+            sample.flight_state,
+            sample.actuators,
+            initial_pilot_position_m,
+            (sample.tick_index as f64 + sample.fraction) / f64::from(birdman_game_core::PHYSICS_HZ),
+            Some(sample.telemetry),
+            tail_geometry,
+        ),
         camera,
         cinematic: None,
     };

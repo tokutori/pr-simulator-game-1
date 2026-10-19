@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { initSync, ScreenRenderAutoBridge } from "../../web/pkg/birdman_game_wasm.js";
-import { parseScreenRenderAutoSnapshot } from "../../web/src/render/contracts/screen-render-auto.js";
+import { screenRenderAutoSnapshotReader } from "../game-check/shared-game-ui-fixture.js";
 import { ScreenAutoRenderer } from "../../web/src/render/engines/three/screen-auto-renderer.js";
 import { gpuTimerFixture } from "./gpu-timer-fixture.js";
 import type { LakeWaterQuality } from "../../web/src/render/contracts/lake-water.js";
@@ -12,14 +12,15 @@ initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_ga
 function fixture() {
   const gpu = gpuTimerFixture();
   const policy = new ScreenRenderAutoBridge();
+  const readSnapshot = screenRenderAutoSnapshotReader(policy);
   let now = 0;
   let scene: GameScene = "Flight";
   const applied = vi.fn<(factor: number, shadowMapSize: number, quality: LakeWaterQuality, screen: boolean) => false | { readonly cleanupFailure?: string }>(() => ({}));
   const snapshot = vi.fn();
-  const renderer = new ScreenAutoRenderer(gpu.context, { policy, scene: () => scene, onSnapshot: snapshot }, applied, () => now++);
+  const renderer = new ScreenAutoRenderer(gpu.context, { policy, snapshot: readSnapshot, scene: () => scene, onSnapshot: snapshot }, applied, () => now++);
   return { ...gpu, policy, renderer, applied, snapshot, time: (value: number) => { now = value; },
     scene: (value: GameScene) => { scene = value; },
-    state: () => parseScreenRenderAutoSnapshot(policy.snapshot_json()) };
+    state: () => readSnapshot() };
 }
 
 describe("Screen renderer with the production Rust GPU policy", () => {

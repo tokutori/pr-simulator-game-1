@@ -1,3 +1,6 @@
+import { readContract } from "../game-ui-build/validate.js";
+import type { SessionLifecycleDocument } from "../../web/src/generated/session-lifecycle.js";
+import { encodeTailLogicalInput } from "../../web/src/game/tail-input.js";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -88,7 +91,7 @@ it("uses selected, sealed, record and Attract identities without modifying the c
   initSync({ module: new Uint8Array(readFileSync(wasmPath)) });
   const session = new HybridGameSessionBridge(0, 21, 22);
   try {
-    expect(parse(session.environment_snapshot_json())).toMatchObject({ context: { kind: "session", phase_code: 0 }, projection: { kind: "no_selection" } });
+    expect(parse(session.environment_snapshot_json())).toMatchObject({ context: { kind: "session", phase: "title" }, projection: { kind: "no_selection" } });
     session.open_setup();
     session.set_weather_class(2);
     const selected = record(parse(session.environment_snapshot_json()).projection);
@@ -129,7 +132,7 @@ it("retains archived samples when environment metadata is unavailable", () => {
     session.mark_briefing_ready();
     session.start_countdown(1);
     session.observe_countdown(session.countdown_token(), 1, true);
-    session.advance_tick_json(neutralTailInput);
+    session.advance_tick_json(encodeTailLogicalInput(neutralTailInput));
     session.abort();
     const document = parse(session.export_flight_record_json());
     const header = record(document.header);
@@ -140,7 +143,7 @@ it("retains archived samples when environment metadata is unavailable", () => {
       expect(archive.flight_record_sample_at_seconds(0)).toEqual(before);
       const currentSummary = record(parse(session.flight_record_summary_json()).summary);
       expect(record(parse(archive.flight_record_summary_json()).summary)).toEqual(currentSummary);
-      expect(archive.phase_code()).toBe(9);
+      expect(readContract<SessionLifecycleDocument>("lifecycle", archive.lifecycle_snapshot_json()).phase).toBe("replay");
       expect(archive.is_archived_replay()).toBe(true);
       archive.leave_replay();
     }

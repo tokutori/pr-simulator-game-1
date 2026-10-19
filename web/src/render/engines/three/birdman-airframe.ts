@@ -91,11 +91,6 @@ function bulkNumber(values: Float32Array | Float64Array | Uint32Array, index: nu
   return value;
 }
 
-function registeredHorizontalTailArmMeters(kind: string, armMeters: number, registeredArm: number): number {
-  if (kind === "bpg041_playable_version_two" && armMeters === registeredArm) return armMeters;
-  throw new RangeError("Tail presentation requires registered aircraft geometry");
-}
-
 function pointRod(rod: Object3D, from: Vector3, to: Vector3): void {
   const vector = to.clone().sub(from);
   rod.position.copy(from).add(to).multiplyScalar(0.5);
@@ -337,8 +332,7 @@ export function createBirdmanAirframe(onVisualReady?: () => void): BirdmanAirfra
     if (controls.layout === "tail_incidence") {
       if (tailGeometry?.kind !== "available") throw new RangeError("Tail presentation requires registered aircraft geometry");
       const geometry = tailGeometry.value;
-      horizontalTailArmMeters = registeredHorizontalTailArmMeters(geometry.kind, geometry.horizontalTailArmMeters,
-        registeredHorizontalArm);
+      horizontalTailArmMeters = geometry.horizontalTailArmMeters;
     }
     if (sharedWing.update(airspeedMetersPerSecond ?? Number.NaN)) {
       const nextPositions = sharedWing.surface_positions();

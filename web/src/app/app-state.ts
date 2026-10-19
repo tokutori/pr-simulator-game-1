@@ -1,13 +1,13 @@
+import type { GamePhase } from "./session-snapshot.js";
 import type { FlightCameraMode, LakeWaterQualityCleanupResult, PresentationMode, RecordedFlightRenderPose } from "../render/contracts/runtime.js";
 import type { LakeWaterQuality } from "../render/contracts/lake-water.js";
 import type { UiAction } from "../render/contracts/ui.js";
 import type { MenuScrollContext, MenuScrollIntent, MenuScrollScope, MenuScrollState } from "../render/contracts/menu-layout.js";
-import type { FlightDisplaySnapshot } from "../game/flight-display-snapshot.js";
-import { attractSessionProjection, isPlaybackSessionSnapshot, isRetainedLiveSnapshot, liveSessionProjection, projectionSnapshot, terminalSessionProjection } from "./session-snapshot.js";
-import type { AttractSessionProjection, FlightSnapshotInput, GameSessionProjection, LiveSessionProjection, LiveSessionSnapshot, PlaybackSessionSnapshot, RecordDisplay, ReplayReturnTarget, SessionControlLayout, TailGameSessionProjection, TerminalSessionProjection } from "./session-snapshot.js";
-import type { ConfigurationMetadataUiState, DifficultyUiState, HudProfileUiState } from "./session-selection.js";
+import type { FlightSnapshotInput } from "./session-snapshot.js";
+import { isRetainedLiveSnapshot } from "./session-snapshot.js";
+import type { GameSessionProjection, LiveSessionSnapshot, TailGameSessionProjection } from "./session-snapshot.js";
 import type { FlightAnalysisInput, FlightAnalysisCursorInput } from "../game/flight-analysis-view.js";
-import { analysisCursorMatches, validateAnalysisInput } from "../game/flight-analysis-view.js";
+import { analysisCursorMatches } from "../game/flight-analysis-view.js";
 import type { GameUiView } from "../generated/game-ui-view.js";
 import type { GameUiAction } from "../generated/game-ui-action.js";
 import type { GameUiEffect } from "../generated/game-ui-effects.js";
@@ -105,20 +105,7 @@ export type PresentationUiState = LivePresentationUiState
   | { readonly type: "cached"; readonly retained: LivePresentationUiState }
   | { readonly type: "hidden" };
 
-export type GameSessionUiState = { readonly kind: "boot"; readonly phaseCode: -1 }
-  | ({ readonly controlLayout: SessionControlLayout } & (
-  | { readonly kind: "title"; readonly phaseCode: 0 }
-  | { readonly kind: "setup"; readonly phaseCode: 1 }
-  | { readonly kind: "briefing-preparing"; readonly phaseCode: 2 }
-  | { readonly kind: "briefing-ready"; readonly phaseCode: 3 }
-  | { readonly kind: "countdown"; readonly phaseCode: 4; readonly countdownRemainingSeconds: number }
-  | { readonly kind: "briefing-failed"; readonly phaseCode: 8 }
-  | { readonly kind: "replay"; readonly phaseCode: 9; readonly returnTarget: ReplayReturnTarget; readonly display: RecordDisplay<PlaybackSessionSnapshot> }
-))
-  | (Readonly<{ kind: "flight"; phaseCode: 5 }> & LiveSessionProjection<5>)
-  | (Readonly<{ kind: "paused-flight"; phaseCode: 6; canResume: boolean }> & LiveSessionProjection<6>)
-  | (Readonly<{ kind: "result"; phaseCode: 7 }> & TerminalSessionProjection)
-  | (Readonly<{ kind: "attract"; phaseCode: 10 }> & AttractSessionProjection);
+export type GameSessionUiState = Readonly<{ phase: "boot" }> | GameSessionProjection;
 
 export type MenuFocusState =
   | { readonly kind: "none" }
@@ -129,7 +116,7 @@ export type AppMenuScrollState =
   | (Extract<MenuScrollState, { kind: "active" }> & { readonly focus: MenuFocusState });
 
 export interface FlightLogSource {
-  readonly phaseCode: 7 | 9;
+  readonly phase: "result" | "replay";
   readonly revision: number;
 }
 
@@ -158,9 +145,6 @@ export interface AppModel {
   readonly gameSession: GameSessionUiState;
   readonly flightExecution: FlightExecutionUiState;
   readonly menuScroll: AppMenuScrollState;
-  readonly controlModeCode: number;
-  readonly difficulty: DifficultyUiState;
-  readonly configurationMetadata: ConfigurationMetadataUiState | null;
   readonly briefingDetailsOpen: boolean;
   readonly analysis: FlightAnalysisState;
   readonly resultTab: "summary" | "analysis";
@@ -208,7 +192,7 @@ export type AppMessage =
       readonly snapshot: FlightSnapshotInput;
     }
   | { readonly type: "tail-controller-terminal"; readonly identity: FlightControllerIdentity;
-      readonly projection: Extract<TailGameSessionProjection, { phaseCode: 7 }> }
+      readonly projection: Extract<TailGameSessionProjection, { phase: "result" }> }
   | { readonly type: "flight-controller-result-feedback"; readonly identity: FlightControllerIdentity; readonly message: string }
   | {
       readonly type: "presentation-initialized";
@@ -326,84 +310,32 @@ export function canSelectLakeWaterQuality(model: AppModel): boolean {
 
 function canSelectRenderingSettings(model: AppModel): boolean {
   return model.presentation.type === "ready" && model.pendingGameRequestId === null
-    && (model.gameSession.kind === "setup" || (model.gameSession.kind === "paused-flight"
+    && (model.gameSession.phase === "flight_setup" || (model.gameSession.phase === "flight_paused"
       && model.sharedGameUi?.selections.pause_overlay === "settings" && model.flightExecution.kind !== "stopped"));
 }
 
-export function gameSessionPhaseCode(session: GameSessionUiState): number {
-  return session.phaseCode;
+export function gameSessionPhase(session: GameSessionUiState): GamePhase {
+  return session.phase;
 }
 
 export function isStaleGameFlowActivation(
   action: UiAction,
-  displayedPhaseCode: number,
-  actualPhaseCode: number
+  displayedPhase: GamePhase,
+  actualPhase: GamePhase
 ): boolean {
-  return isGameFlowActivation(action) && displayedPhaseCode !== actualPhaseCode;
+  return isGameFlowActivation(action) && displayedPhase !== actualPhase;
 }
 
 export function isGameFlowActivation(action: UiAction): boolean {
   return (action.type === "activate" || action.type === "set-toggle") && action.controlId.startsWith("game-");
 }
 
-export function gameSessionSnapshot(session: GameSessionUiState): FlightDisplaySnapshot | null {
-  return "snapshot" in session ? session.snapshot : "display" in session && session.display.kind === "available" ? session.display.value : null;
+export function gameSessionSnapshot(session: GameSessionUiState): FlightSnapshotInput | null {
+  return "display" in session && session.display.kind === "available" ? session.display.value : null;
 }
 
 export function gameSessionCountdown(session: GameSessionUiState): number {
-  return session.kind === "countdown" ? session.countdownRemainingSeconds : 0;
-}
-
-export function gameSessionState(
-  phaseCode: number,
-  countdownRemainingSeconds: number,
-  snapshotInput: FlightSnapshotInput | null,
-  canResume = false,
-  controlLayout: SessionControlLayout = "tail_incidence",
-  returnTarget?: ReplayReturnTarget
-): GameSessionUiState | null {
-  const snapshot = snapshotInput;
-  const selection = { controlLayout };
-  if ([0, 1, 2, 3, 4, 8].includes(phaseCode) && snapshot !== null) return null;
-  switch (phaseCode) {
-    case -1: return { kind: "boot", phaseCode: -1 };
-    case 0: return { ...selection, kind: "title", phaseCode: 0 };
-    case 1: return { ...selection, kind: "setup", phaseCode: 1 };
-    case 2: return { ...selection, kind: "briefing-preparing", phaseCode: 2 };
-    case 3: return { ...selection, kind: "briefing-ready", phaseCode: 3 };
-    case 4:
-      return Number.isSafeInteger(countdownRemainingSeconds) && countdownRemainingSeconds >= 0
-        ? { ...selection, kind: "countdown", phaseCode: 4, countdownRemainingSeconds }
-        : null;
-    case 5: {
-      const live = snapshot === null ? null : liveSessionProjection(snapshot, phaseCode);
-      return live === null ? null : { ...live, kind: "flight", phaseCode };
-    }
-    case 6: {
-      const live = snapshot === null ? null : liveSessionProjection(snapshot, phaseCode);
-      return live === null ? null : {
-        ...live,
-        kind: "paused-flight",
-        phaseCode,
-        canResume
-      };
-    }
-    case 7: {
-      const terminal = terminalSessionProjection(snapshot);
-      return terminal === null ? null : { ...terminal, kind: "result", phaseCode: 7 };
-    }
-    case 8: return { ...selection, kind: "briefing-failed", phaseCode: 8 };
-    case 9:
-      if (returnTarget !== "title" && returnTarget !== "result") return null;
-      return snapshot !== null && !isPlaybackSessionSnapshot(snapshot) ? null
-        : { ...selection, kind: "replay", phaseCode: 9, returnTarget, display: snapshot === null
-          ? Object.freeze({ kind: "unavailable", reason: "record_not_loaded" }) : Object.freeze({ kind: "available", value: snapshot }) };
-    case 10: {
-      const attract = attractSessionProjection(snapshot);
-      return attract === null ? null : { ...attract, kind: "attract", phaseCode: 10 };
-    }
-    default: return null;
-  }
+  return session.phase === "countdown" ? session.countdown_remaining_seconds : 0;
 }
 
 export function createInitialAppModel(): AppModel {
@@ -418,18 +350,9 @@ export function createInitialAppModel(): AppModel {
     webXrAvailable: false,
     phoneVrAvailable: false,
     presentation: Object.freeze({ type: "uninitialized" }),
-    gameSession: Object.freeze({ kind: "boot", phaseCode: -1 }),
+    gameSession: Object.freeze({ phase: "boot" }),
     flightExecution: Object.freeze({ kind: "unbound" }),
     menuScroll: Object.freeze({ kind: "closed", generation: 0 }),
-    controlModeCode: 0,
-    difficulty: Object.freeze({
-      presetCode: 4,
-      informationCode: 0,
-      hudProfile: fullHudProfile(),
-      assistanceCode: 3,
-      weatherCode: 0
-    }),
-    configurationMetadata: null,
     analysis: Object.freeze({ kind: "idle", nextRequestId: 1 }),
     analysisCursor: Object.freeze({ kind: "idle", nextRequestId: 1 }),
     replayPose: Object.freeze({ kind: "idle", nextRequestId: 1 }),
@@ -505,7 +428,7 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
           || retained.presentation.type === "failed"
         ? transition(retained)
         : beginScreenRecovery(retained, { origin: "page-restoration", from: null });
-      const playback = recovered.model.gameSession.kind === "attract"
+      const playback = recovered.model.gameSession.phase === "attract"
         ? beginReplayClockCommand(recovered.model, { kind: "play" }, true)
         : transition(recovered.model);
       return transition(playback.model, [
@@ -533,7 +456,7 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
           : Object.freeze({ ...model.lakeWaterQuality, applied: message.snapshot.water_quality }) }));
     case "shared-game-ui-observed": {
       const next = withModel(model, { sharedGameUi: message.view });
-      return [9, 10].includes(gameSessionPhaseCode(model.gameSession)) && next.replayCameraMode !== model.replayCameraMode
+      return ["replay", "attract"].includes(gameSessionPhase(model.gameSession)) && next.replayCameraMode !== model.replayCameraMode
         ? withReplayPoseQuery(next, next.analysisCursorTimeSeconds, false) : transition(next);
     }
     case "shared-game-ui-effect":
@@ -567,7 +490,7 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
       const execution = model.flightExecution;
       if (execution.kind !== "ready" || execution.identity.sessionId !== message.identity.sessionId
           || execution.identity.controllerId !== message.identity.controllerId
-          || (model.gameSession.kind !== "flight" && model.gameSession.kind !== "paused-flight")) return transition(model);
+          || (model.gameSession.phase !== "flight_running" && model.gameSession.phase !== "flight_paused")) return transition(model);
       const snapshot = message.snapshot;
       if (!isRetainedLiveSnapshot(snapshot)) return transition(model);
       return transition(withModel(model, {
@@ -578,15 +501,15 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
     case "tail-controller-terminal": {
       const execution = model.flightExecution;
       if (execution.kind === "unbound" || execution.identity.sessionId !== message.identity.sessionId
-          || execution.identity.controllerId !== message.identity.controllerId || model.gameSession.kind === "boot"
-          || ![5, 6, 7].includes(model.gameSession.phaseCode)) return transition(model);
-      if (model.gameSession.kind === "result") return transition(model);
+          || execution.identity.controllerId !== message.identity.controllerId || model.gameSession.phase === "boot"
+          || !["flight_running", "flight_paused", "result"].includes(model.gameSession.phase)) return transition(model);
+      if (model.gameSession.phase === "result") return transition(model);
       return updateApp(model, { type: "game-session-synced", ...message.projection });
     }
     case "flight-controller-result-feedback": {
       const execution = model.flightExecution;
       if (execution.kind === "unbound" || execution.identity.sessionId !== message.identity.sessionId
-          || execution.identity.controllerId !== message.identity.controllerId || model.gameSession.kind !== "result") return transition(model);
+          || execution.identity.controllerId !== message.identity.controllerId || model.gameSession.phase !== "result") return transition(model);
       return transition(withModel(model, { status: `終端表示処理に失敗した: ${message.message}` }));
     }
     case "flight-log-download-requested":
@@ -610,7 +533,7 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
         { type: "cancel-pending-request", mode: "webxr" },
         { type: "cancel-pending-request", mode: "phone-vr" }
       ];
-      if (model.gameSession.kind === "replay" || model.gameSession.kind === "attract") {
+      if (model.gameSession.phase === "replay" || model.gameSession.phase === "attract") {
         const paused = beginReplayClockCommand(suspended, { kind: "pause" }, false);
         suspended = paused.model;
         effects.push(...paused.effects);
@@ -693,56 +616,48 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
       return beginScreenRecovery(model, { origin: "backend-fault", from: message.mode, cause: message.message });
     }
     case "game-session-synced": {
-      const gameSession = gameSessionState(message.phaseCode, message.countdownRemainingSeconds, projectionSnapshot(message), message.canResume, message.controlLayout, "returnTarget" in message ? message.returnTarget : undefined);
-      if (gameSession === null) return transition(withModel(model, { status: "無効なGameSession snapshotを破棄した" }));
-      const previousPhaseCode = gameSessionPhaseCode(model.gameSession);
-      const nextPhaseCode = gameSessionPhaseCode(gameSession);
-      const returningReplay = previousPhaseCode === 9 && nextPhaseCode === 7;
-      const enteringResult = entersResult(previousPhaseCode, nextPhaseCode) && !returningReplay;
+      const gameSession: GameSessionProjection = message;
+      const previousPhase = gameSessionPhase(model.gameSession);
+      const nextPhase = gameSessionPhase(gameSession);
+      const returningReplay = previousPhase === "replay" && nextPhase === "result";
+      const enteringResult = entersResult(previousPhase, nextPhase) && !returningReplay;
       const analysis = flightAnalysisData(model.analysis);
-      const refreshingNamedAnalysis = [7, 9, 10].includes(nextPhaseCode) && (analysisPhaseMismatch(analysis, nextPhaseCode)
-        || (returningReplay && analysis === null) || (nextPhaseCode === 7 && model.analysis.kind === "idle"));
+      const refreshingNamedAnalysis = ["result", "replay", "attract"].includes(nextPhase) && (analysisPhaseMismatch(analysis, nextPhase)
+        || (returningReplay && analysis === null) || (nextPhase === "result" && model.analysis.kind === "idle"));
       const analysisRequestId = enteringResult || refreshingNamedAnalysis ? model.analysis.nextRequestId : null;
       const effects: AppEffect[] = enteringResult && analysisRequestId !== null
         ? [{ type: "persist-flight-record" }, { type: "load-flight-analysis", requestId: analysisRequestId }]
         : refreshingNamedAnalysis && analysisRequestId !== null ? [{ type: "load-flight-analysis", requestId: analysisRequestId }] : [];
       return transition(withModel(model, {
         gameSession: Object.freeze(gameSession),
-        controlModeCode: message.controlModeCode,
-        difficulty: message.difficulty,
-        configurationMetadata: message.configurationMetadata,
-        analysis: observeAnalysisPhase(model.analysis, nextPhaseCode, analysisRequestId, refreshingNamedAnalysis),
-        analysisCursor: [7, 9, 10].includes(nextPhaseCode) && !enteringResult && !refreshingNamedAnalysis
+        analysis: observeAnalysisPhase(model.analysis, nextPhase, analysisRequestId, refreshingNamedAnalysis),
+        analysisCursor: ["result", "replay", "attract"].includes(nextPhase) && !enteringResult && !refreshingNamedAnalysis
           ? model.analysisCursor : Object.freeze({ kind: "idle", nextRequestId: model.analysisCursor.nextRequestId }),
-        replayClock: [9, 10].includes(nextPhaseCode) ? model.replayClock : stopReplayClock(model.replayClock)
+        replayClock: ["replay", "attract"].includes(nextPhase) ? model.replayClock : stopReplayClock(model.replayClock)
       }), effects);
     }
     case "game-operation-completed": {
-      const gameSession = gameSessionState(message.phaseCode, message.countdownRemainingSeconds, projectionSnapshot(message), message.canResume, message.controlLayout, "returnTarget" in message ? message.returnTarget : undefined);
+      const gameSession: GameSessionProjection = message;
       if (model.pendingGameRequestId !== message.requestId) return transition(model);
-      if (gameSession === null) return transition(withModel(model, {
-        pendingGameRequestId: null,
-        status: "GameSessionから不正な状態snapshotを受信した"
-      }));
-      const previousPhaseCode = gameSessionPhaseCode(model.gameSession);
-      const nextPhaseCode = gameSessionPhaseCode(gameSession);
-      const returningReplay = previousPhaseCode === 9 && nextPhaseCode === 7;
-      const enteringResult = entersResult(previousPhaseCode, nextPhaseCode) && !returningReplay;
-      const enteringReplay = previousPhaseCode !== 9 && nextPhaseCode === 9;
-      const enteringAttract = previousPhaseCode !== 10 && nextPhaseCode === 10;
+      const previousPhase = gameSessionPhase(model.gameSession);
+      const nextPhase = gameSessionPhase(gameSession);
+      const returningReplay = previousPhase === "replay" && nextPhase === "result";
+      const enteringResult = entersResult(previousPhase, nextPhase) && !returningReplay;
+      const enteringReplay = previousPhase !== "replay" && nextPhase === "replay";
+      const enteringAttract = previousPhase !== "attract" && nextPhase === "attract";
       const enteringPlayback = enteringReplay || enteringAttract;
-      const leavingPlayback = [9, 10].includes(previousPhaseCode) && ![9, 10].includes(nextPhaseCode);
+      const leavingPlayback = ["replay", "attract"].includes(previousPhase) && !["replay", "attract"].includes(nextPhase);
       const replayClock = enteringPlayback
         ? requestReplayClock({ ...model.replayClock,
           observation: Object.freeze({ ...model.replayClock.observation, playing: false }) }, true)
         : leavingPlayback ? stopReplayClock(model.replayClock)
-        : [9, 10].includes(nextPhaseCode) ? model.replayClock
+        : ["replay", "attract"].includes(nextPhase) ? model.replayClock
         : Object.freeze({ ...model.replayClock,
           observation: Object.freeze({ ...model.replayClock.observation, playing: false }) });
       const analysis = flightAnalysisData(model.analysis);
-      const refreshingNamedAnalysis = [7, 9, 10].includes(nextPhaseCode) && (message.analysisSourceInvalidated === true
-        || analysisPhaseMismatch(analysis, nextPhaseCode) || (returningReplay && analysis === null)
-        || (nextPhaseCode === 7 && model.analysis.kind === "idle"));
+      const refreshingNamedAnalysis = ["result", "replay", "attract"].includes(nextPhase) && (message.analysisSourceInvalidated === true
+        || analysisPhaseMismatch(analysis, nextPhase) || (returningReplay && analysis === null)
+        || (nextPhase === "result" && model.analysis.kind === "idle"));
       const analysisRequestId = enteringResult || enteringAttract || refreshingNamedAnalysis || (enteringReplay && analysis === null)
         ? model.analysis.nextRequestId
         : null;
@@ -754,7 +669,7 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
           generation: replayClock.generation,
           command: {
             kind: "synchronize",
-            seekTimeSeconds: enteringReplay && previousPhaseCode === 7
+            seekTimeSeconds: enteringReplay && previousPhase === "result"
               ? model.analysisCursorTimeSeconds
               : null
           }
@@ -768,25 +683,21 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
       return transition(withModel(model, {
         pendingGameRequestId: null,
         gameSession: Object.freeze(gameSession),
-        controlModeCode: message.controlModeCode,
-        difficulty: message.difficulty,
-        configurationMetadata: message.configurationMetadata,
         status: "",
-        analysis: observeAnalysisPhase(model.analysis, nextPhaseCode, analysisRequestId, refreshingNamedAnalysis),
-        analysisCursor: [7, 9, 10].includes(nextPhaseCode) && !enteringResult && !refreshingNamedAnalysis
+        analysis: observeAnalysisPhase(model.analysis, nextPhase, analysisRequestId, refreshingNamedAnalysis),
+        analysisCursor: ["result", "replay", "attract"].includes(nextPhase) && !enteringResult && !refreshingNamedAnalysis
           ? model.analysisCursor : Object.freeze({ kind: "idle", nextRequestId: model.analysisCursor.nextRequestId }),
-        replayPose: enteringPlayback || ![9, 10].includes(nextPhaseCode) || message.analysisSourceInvalidated === true
+        replayPose: enteringPlayback || !["replay", "attract"].includes(nextPhase) || message.analysisSourceInvalidated === true
           ? Object.freeze({ kind: "idle", nextRequestId: model.replayPose.nextRequestId }) : model.replayPose,
         replayClock
       }), effects);
     }
     case "flight-analysis-loaded":
       if (model.analysis.kind !== "loading" || model.analysis.requestId !== message.requestId
-          || ![7, 9, 10].includes(gameSessionPhaseCode(model.gameSession))) return transition(model);
+          || !["result", "replay", "attract"].includes(gameSessionPhase(model.gameSession))) return transition(model);
       {
         try {
-          validateAnalysisInput(message.data);
-          if (analysisPhaseMismatch(message.data, gameSessionPhaseCode(model.gameSession))) {
+          if (analysisPhaseMismatch(message.data, gameSessionPhase(model.gameSession))) {
             throw new RangeError("Analysis context and Rust session phase disagree");
           }
         } catch (error: unknown) {
@@ -798,14 +709,14 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
           }));
         }
         const requestId = model.analysisCursor.nextRequestId;
-        const playbackPhase = gameSessionPhaseCode(model.gameSession);
-        const replayPoseRequestId = [9, 10].includes(playbackPhase) ? model.replayPose.nextRequestId : null;
+        const playbackPhase = gameSessionPhase(model.gameSession);
+        const replayPoseRequestId = ["replay", "attract"].includes(playbackPhase) ? model.replayPose.nextRequestId : null;
         const timeSeconds = model.analysisCursorTimeSeconds;
         const effects: AppEffect[] = [{ type: "load-flight-analysis-cursor", requestId, timeSeconds }];
         if (replayPoseRequestId !== null) {
           effects.push({ type: "load-flight-replay-pose", requestId: replayPoseRequestId, timeSeconds });
         }
-        if ([9, 10].includes(playbackPhase) && model.replayClock.observation.playing) {
+        if (["replay", "attract"].includes(playbackPhase) && model.replayClock.observation.playing) {
           effects.push({ type: "schedule-replay-clock-tick", generation: model.replayClock.generation, delayMilliseconds: 50 });
         }
         return transition(withModel(model, {
@@ -819,21 +730,21 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
       }
     case "flight-analysis-failed":
       if (model.analysis.kind !== "loading" || model.analysis.requestId !== message.requestId
-          || ![7, 9, 10].includes(gameSessionPhaseCode(model.gameSession))) return transition(model);
+          || !["result", "replay", "attract"].includes(gameSessionPhase(model.gameSession))) return transition(model);
       return transition(withModel(model, {
         analysis: Object.freeze({ kind: "failed", nextRequestId: model.analysis.nextRequestId,
           message: message.message, retained: null }),
         analysisCursor: settleAnalysisCursor(model.analysisCursor),
-        replayClock: gameSessionPhaseCode(model.gameSession) === 10
+        replayClock: gameSessionPhase(model.gameSession) === "attract"
           ? Object.freeze({ ...model.replayClock, generation: model.replayClock.generation + 1,
             observation: Object.freeze({ ...model.replayClock.observation, playing: false }) }) : model.replayClock,
         status: `Analysisデータを取得できない: ${message.message}`
       }));
     case "flight-analysis-cursor-loaded":
       if (model.analysisCursor.kind !== "loading" || model.analysisCursor.requestId !== message.requestId
-          || ![7, 9, 10].includes(gameSessionPhaseCode(model.gameSession))) return transition(model);
+          || !["result", "replay", "attract"].includes(gameSessionPhase(model.gameSession))) return transition(model);
       if (!analysisCursorMatches(flightAnalysisData(model.analysis), message.sample) || ("kind" in message.sample
-          && message.sample.context.phase !== analysisPhase(gameSessionPhaseCode(model.gameSession)))) return transition(withModel(model, {
+          && message.sample.context.phase !== analysisPhase(gameSessionPhase(model.gameSession)))) return transition(withModel(model, {
         analysisCursor: Object.freeze({ kind: "failed", nextRequestId: model.analysisCursor.nextRequestId,
           message: "Analysis cursorの記録または操縦layoutが一致しない", retained: model.analysisCursor.retained }),
         status: "Analysis cursorの記録または操縦layoutが一致しない"
@@ -842,7 +753,7 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
         nextRequestId: model.analysisCursor.nextRequestId, sample: message.sample }) }));
     case "flight-analysis-cursor-failed":
       if (model.analysisCursor.kind !== "loading" || model.analysisCursor.requestId !== message.requestId
-          || ![7, 9, 10].includes(gameSessionPhaseCode(model.gameSession))) return transition(model);
+          || !["result", "replay", "attract"].includes(gameSessionPhase(model.gameSession))) return transition(model);
       return transition(withModel(model, {
         analysisCursor: Object.freeze({ kind: "failed", nextRequestId: model.analysisCursor.nextRequestId,
           message: message.message, retained: null }),
@@ -850,15 +761,15 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
       }));
     case "flight-replay-pose-loaded":
       if (model.replayPose.kind !== "loading" || model.replayPose.requestId !== message.requestId
-          || ![9, 10].includes(gameSessionPhaseCode(model.gameSession))) return transition(model);
+          || !["replay", "attract"].includes(gameSessionPhase(model.gameSession))) return transition(model);
       return transition(withModel(model, { replayPose: Object.freeze({ kind: "ready",
         nextRequestId: model.replayPose.nextRequestId, pose: message.pose }) }));
     case "flight-replay-pose-failed":
       if (model.replayPose.kind !== "loading" || model.replayPose.requestId !== message.requestId
-          || ![9, 10].includes(gameSessionPhaseCode(model.gameSession))) return transition(model);
+          || !["replay", "attract"].includes(gameSessionPhase(model.gameSession))) return transition(model);
       return transition(withModel(model, {
         replayPose: Object.freeze({ kind: "failed", nextRequestId: model.replayPose.nextRequestId, message: message.message }),
-        replayClock: gameSessionPhaseCode(model.gameSession) === 10
+        replayClock: gameSessionPhase(model.gameSession) === "attract"
           ? Object.freeze({ ...model.replayClock, generation: model.replayClock.generation + 1,
             observation: Object.freeze({ ...model.replayClock.observation, playing: false }) }) : model.replayClock,
         status: `Replay poseを取得できない: ${message.message}`
@@ -866,10 +777,10 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
     case "replay-clock-tick":
       return updateReplayClock(model, message);
     case "replay-clock-command-completed": {
-      const phaseCode = gameSessionPhaseCode(model.gameSession);
+      const phase = gameSessionPhase(model.gameSession);
       if (model.replayClock.kind !== "requesting" || model.replayClock.requestId !== message.requestId
           || model.replayClock.generation !== message.generation
-          || ![9, 10].includes(phaseCode)) return transition(model);
+          || !["replay", "attract"].includes(phase)) return transition(model);
       const speed = playbackRateForCode(message.state.rateCode);
       if (speed === null || !Number.isFinite(message.state.timeSeconds) || message.state.timeSeconds < 0) {
         return transition(withModel(model, {
@@ -927,7 +838,7 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
         pendingGameRequestId: null,
         status: message.message,
         analysis: message.analysisSourceInvalidated === true
-          ? observeAnalysisPhase(model.analysis, 0, null, true) : model.analysis,
+          ? observeAnalysisPhase(model.analysis, "title", null, true) : model.analysis,
         analysisCursor: message.analysisSourceInvalidated === true
           ? Object.freeze({ kind: "idle", nextRequestId: model.analysisCursor.nextRequestId }) : model.analysisCursor,
         replayPose: message.analysisSourceInvalidated === true
@@ -1044,7 +955,7 @@ function updateUiAction(model: AppModel, action: UiAction): AppTransition {
     const semantic = sharedGameUiAction(model.sharedGameUi, action);
     return semantic === null ? transition(model) : transition(model, [{ type: "update-shared-game-ui", action: semantic }]);
   }
-  if (action.type !== "activate" || model.gameSession.kind !== "boot") return transition(model);
+  if (action.type !== "activate" || model.gameSession.phase !== "boot") return transition(model);
   switch (action.controlId) {
     case "boot-enter-webxr": return beginPermissionRequest(model, "webxr");
     case "boot-enter-phone-vr": return beginPermissionRequest(model, "phone-vr");
@@ -1109,10 +1020,10 @@ function updateSharedUiEffect(model: AppModel, effect: GameUiEffect): AppTransit
     case "recenter_menu": return transition(model, [{ type: "recenter-menu" }]);
     case "download_flight_csv":
     case "download_record_json": {
-      const phaseCode = gameSessionPhaseCode(model.gameSession);
-      if ((phaseCode !== 7 && phaseCode !== 9) || model.flightLogDownload.kind === "pending" || model.presentation.type !== "ready") return transition(model);
+      const phase = gameSessionPhase(model.gameSession);
+      if ((phase !== "result" && phase !== "replay") || model.flightLogDownload.kind === "pending" || model.presentation.type !== "ready") return transition(model);
       const requestId = model.nextFlightLogDownloadRequestId;
-      const source: FlightLogSource = Object.freeze({ phaseCode, revision: model.flightRecordSourceRevision });
+      const source: FlightLogSource = Object.freeze({ phase, revision: model.flightRecordSourceRevision });
       const format = command.kind === "download_flight_csv" ? "csv" : "json";
       return transition(withModel(model, { flightLogDownload: Object.freeze({ kind: "pending", requestId, source, format }),
         nextFlightLogDownloadRequestId: requestId + 1 }), [{ type: "download-flight-log", requestId, source, format }]);
@@ -1132,8 +1043,8 @@ function updateReplayClock(
   model: AppModel,
   message: Extract<AppMessage, { readonly type: "replay-clock-tick" }>
 ): AppTransition {
-  const phaseCode = gameSessionPhaseCode(model.gameSession);
-  if (!model.replayClock.observation.playing || ![9, 10].includes(phaseCode) || message.generation !== model.replayClock.generation
+  const phase = gameSessionPhase(model.gameSession);
+  if (!model.replayClock.observation.playing || !["replay", "attract"].includes(phase) || message.generation !== model.replayClock.generation
       || flightAnalysisData(model.analysis) === null || !Number.isFinite(message.elapsedSeconds) || message.elapsedSeconds < 0) {
     return transition(model);
   }
@@ -1207,8 +1118,8 @@ function beginStoredFlightRecordLoad(model: AppModel): AppTransition {
   }), [{ type: "load-stored-flight-records", requestId }]);
 }
 
-function entersResult(previousPhaseCode: number, nextPhaseCode: number): boolean {
-  return previousPhaseCode !== 7 && nextPhaseCode === 7;
+function entersResult(previousPhase: GamePhase, nextPhase: GamePhase): boolean {
+  return previousPhase !== "result" && nextPhase === "result";
 }
 
 function beginPermissionRequest(model: AppModel, mode: "webxr" | "phone-vr"): AppTransition {
@@ -1276,7 +1187,7 @@ function updateBackendCompletion(
       presentation: Object.freeze({ type: "ready", mode: message.activeMode }),
       status: `${causePrefix}${outcome}`
     });
-    return [9, 10].includes(gameSessionPhaseCode(next.gameSession))
+    return ["replay", "attract"].includes(gameSessionPhase(next.gameSession))
       ? withReplayPoseQuery(next, next.analysisCursorTimeSeconds, false) : transition(next);
   }
   const outcome = message.ok
@@ -1290,7 +1201,7 @@ function updateBackendCompletion(
 }
 
 function beginScreenRecovery(model: AppModel, origin: ScreenRecoveryOrigin): AppTransition {
-  const playback = origin.origin === "backend-fault" && (model.gameSession.kind === "replay" || model.gameSession.kind === "attract")
+  const playback = origin.origin === "backend-fault" && (model.gameSession.phase === "replay" || model.gameSession.phase === "attract")
     ? beginReplayClockCommand(withModel(model, { replayClock: stopReplayClock(model.replayClock) }), { kind: "pause" }, false)
     : transition(model);
   model = playback.model;
@@ -1311,9 +1222,9 @@ function isInVr(state: PresentationUiState): boolean {
   return state.type === "ready" && state.mode !== "screen";
 }
 
-function observeAnalysisPhase(state: FlightAnalysisState, phaseCode: number, requestId: number | null,
+function observeAnalysisPhase(state: FlightAnalysisState, phase: GamePhase, requestId: number | null,
   clearData: boolean): FlightAnalysisState {
-  const keepData = [7, 9, 10].includes(phaseCode) && !clearData;
+  const keepData = ["result", "replay", "attract"].includes(phase) && !clearData;
   const data = keepData ? flightAnalysisData(state) : null;
   if (requestId !== null) return Object.freeze({ kind: "loading", requestId, nextRequestId: requestId + 1, retained: data });
   if (!keepData) return Object.freeze({ kind: "idle", nextRequestId: state.nextRequestId });
@@ -1326,15 +1237,15 @@ function settleAnalysisCursor(state: AnalysisCursorState): AnalysisCursorState {
     : Object.freeze({ kind: "ready", nextRequestId: state.nextRequestId, sample: state.retained });
 }
 
-function analysisPhase(phaseCode: number): "result" | "replay" | "attract" | "unavailable" {
-  if (phaseCode === 7) return "result";
-  if (phaseCode === 9) return "replay";
-  if (phaseCode === 10) return "attract";
+function analysisPhase(phase: GamePhase): "result" | "replay" | "attract" | "unavailable" {
+  if (phase === "result") return "result";
+  if (phase === "replay") return "replay";
+  if (phase === "attract") return "attract";
   return "unavailable";
 }
 
-function analysisPhaseMismatch(data: FlightAnalysisInput | null, phaseCode: number): boolean {
-  return data !== null && data.context.phase !== analysisPhase(phaseCode);
+function analysisPhaseMismatch(data: FlightAnalysisInput | null, phase: GamePhase): boolean {
+  return data !== null && data.context.phase !== analysisPhase(phase);
 }
 
 function labelForMode(mode: PresentationMode): string {
@@ -1346,7 +1257,7 @@ function labelForMode(mode: PresentationMode): string {
 }
 
 function withModel(model: AppModel, changes: Partial<AppModel>): AppModel {
-  const sourceChanged = changes.gameSession !== undefined && changes.gameSession.phaseCode !== model.gameSession.phaseCode
+  const sourceChanged = changes.gameSession !== undefined && changes.gameSession.phase !== model.gameSession.phase
     || changes.pendingGameRequestId !== undefined && changes.pendingGameRequestId !== null && changes.pendingGameRequestId !== model.pendingGameRequestId;
   const unavailable = changes.presentation?.type === "hidden" || changes.presentation?.type === "cached";
   return freezeAppModel({
@@ -1364,7 +1275,7 @@ function freezeAppModel(source: AppModelSource): AppModel {
     get briefingDetailsOpen() { return source.sharedGameUi?.selections.technical_open ?? false; },
     get resultTab() { return source.sharedGameUi?.selections.result_tab ?? "summary"; },
     get analysisChart() { return source.sharedGameUi?.selections.analysis_chart ?? "map"; },
-    get analysisCursorTimeSeconds() { return [9, 10].includes(source.gameSession.phaseCode)
+    get analysisCursorTimeSeconds() { return ["replay", "attract"].includes(source.gameSession.phase)
       ? replayClockObservation(source.replayClock).timeSeconds : source.sharedGameUi?.selections.analysis_time_seconds ?? 0; },
     get replayViewMode() { return source.sharedGameUi?.selections.replay_view ?? "cinematic"; },
     get replayCameraMode() { return source.sharedGameUi?.selections.replay_camera ?? "auto"; }
@@ -1373,22 +1284,12 @@ function freezeAppModel(source: AppModelSource): AppModel {
 
 export function isCurrentFlightLogDownload(model: AppModel, requestId: number, source: FlightLogSource): boolean {
   return model.flightLogDownload.kind === "pending" && model.flightLogDownload.requestId === requestId
-    && model.flightLogDownload.source.phaseCode === source.phaseCode
+    && model.flightLogDownload.source.phase === source.phase
     && model.flightLogDownload.source.revision === source.revision
-    && model.flightRecordSourceRevision === source.revision && model.gameSession.phaseCode === source.phaseCode
+    && model.flightRecordSourceRevision === source.revision && model.gameSession.phase === source.phase
     && model.pendingGameRequestId === null && model.presentation.type === "ready";
 }
 
-function fullHudProfile(): HudProfileUiState {
-  return Object.freeze({
-    telemetry: true,
-    attitude: true,
-    wind: true,
-    flightPath: true,
-    angleOfAttack: true,
-    warnings: true
-  });
-}
 
 function transition(model: AppModel, effects: readonly AppEffect[] = []): AppTransition {
   return Object.freeze({ model, effects: Object.freeze([...effects]) });

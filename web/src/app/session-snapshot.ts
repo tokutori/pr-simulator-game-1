@@ -1,107 +1,36 @@
-import { projectTailFlightSnapshot } from "../game/flight-display-snapshot.js";
-import type { DisplayAvailability, FlightDisplaySnapshot } from "../game/flight-display-snapshot.js";
-import type { TailSessionSnapshot } from "../game/tail-session-codec.js";
-import type { ConfigurationMetadataUiState, DifficultyUiState } from "./session-selection.js";
+import type { TailSnapshotDocument } from "../generated/tail-snapshot.js";
+import type { RecordedPlaybackSample } from "../generated/record-sample.js";
+import type { PlaybackContext } from "../generated/record-context.js";
+import type { SessionLifecycleDocument } from "../generated/session-lifecycle.js";
+import type { DisplayAvailability, FlightRenderPose } from "../render/contracts/runtime.js";
 
-export interface SessionLifecycleProjection {
-  readonly phaseCode: number;
-  readonly controlModeCode: 0 | 1 | 2;
-  readonly countdownRemainingSeconds: number;
-  readonly canResume: boolean;
-}
-
+export type SessionLifecycleProjection = SessionLifecycleDocument;
+export type SessionPhase = SessionLifecycleDocument["phase"];
+export type GamePhase = SessionPhase | "boot";
 export type ReplayReturnTarget = "title" | "result";
-
-export type SessionControlLayout = "tail_incidence";
-export type FlightSnapshotInput = FlightDisplaySnapshot;
-export type LiveSessionSnapshot<Phase extends 5 | 6 = 5 | 6> =
-  Extract<FlightDisplaySnapshot, { kind: "tail_flight" }> & Readonly<{ phaseCode: Phase }>;
-export type LiveSessionProjection<Phase extends 5 | 6> =
-  Readonly<{ controlLayout: "tail_incidence"; snapshot: LiveSessionSnapshot<Phase> }>;
-
-declare const terminalRecordStamp: unique symbol;
-type TerminalRecordSnapshot = Extract<FlightDisplaySnapshot, { kind: "tail_record" }>
-  & Readonly<{ [terminalRecordStamp]: true }>;
-export type TerminalSessionSnapshot = Extract<FlightDisplaySnapshot, { kind: "tail_result" }> | TerminalRecordSnapshot;
-export type PlaybackSessionSnapshot = Extract<FlightDisplaySnapshot, { kind: "tail_record" }>;
-export type RecordDisplay<Value> = DisplayAvailability<Value, "record_not_loaded">;
-export type TerminalSessionProjection =
-  Readonly<{ controlLayout: "tail_incidence"; display: RecordDisplay<TerminalSessionSnapshot> }>;
-export type AttractSessionProjection =
-  Readonly<{ controlLayout: "tail_incidence"; display: RecordDisplay<PlaybackSessionSnapshot> }>;
-
-interface SessionSelectionProjection {
-  readonly controlModeCode: number;
-  readonly difficulty: DifficultyUiState;
-  readonly configurationMetadata: ConfigurationMetadataUiState | null;
-  readonly countdownRemainingSeconds: number;
-}
-export type TailGameSessionProjection = SessionSelectionProjection & Readonly<{ controlLayout: "tail_incidence"; canResume: boolean }> & (
-  | Readonly<{ phaseCode: 0 | 1 | 2 | 3 | 4 | 8; display: DisplayAvailability<never, "menu_phase"> }>
-  | Readonly<{ phaseCode: 5; display: Readonly<{ kind: "available"; value: Extract<LiveSessionSnapshot<5>, { kind: "tail_flight" }> }> }>
-  | Readonly<{ phaseCode: 6; display: Readonly<{ kind: "available"; value: Extract<LiveSessionSnapshot<6>, { kind: "tail_flight" }> }> }>
-  | Readonly<{ phaseCode: 7; display: RecordDisplay<Extract<TerminalSessionSnapshot, { kind: "tail_result" | "tail_record" }>> }>
-  | Readonly<{ phaseCode: 9; returnTarget: ReplayReturnTarget; display: RecordDisplay<Extract<PlaybackSessionSnapshot, { kind: "tail_record" }>> }>
-  | Readonly<{ phaseCode: 10; display: RecordDisplay<Extract<PlaybackSessionSnapshot, { kind: "tail_record" }>> }>
+export type PlaybackSessionSnapshot = RecordedPlaybackSample & Readonly<{ context: PlaybackContext }>;
+export type FlightSnapshotInput = TailSnapshotDocument | PlaybackSessionSnapshot;
+export type LiveSessionSnapshot<Phase extends "flight_running" | "flight_paused" = "flight_running" | "flight_paused"> =
+  TailSnapshotDocument & Readonly<{ phase: Phase; render_pose: FlightRenderPose; frame: Extract<TailSnapshotDocument["frame"], { kind: "flight" }> }>;
+type TerminalSessionSnapshot = TailSnapshotDocument & Readonly<{ phase: "result"; render_pose: FlightRenderPose; frame: Extract<TailSnapshotDocument["frame"], { kind: "result" }> }>;
+type RecordDisplay<Value> = DisplayAvailability<Value, "record_not_loaded">;
+export type TailGameSessionProjection = SessionLifecycleDocument & (
+  | Readonly<{ phase: Exclude<SessionPhase, "flight_running" | "flight_paused" | "result" | "replay" | "attract">;
+      display: DisplayAvailability<never, "menu_phase"> }>
+  | Readonly<{ phase: "flight_running"; display: Readonly<{ kind: "available"; value: LiveSessionSnapshot<"flight_running"> }> }>
+  | Readonly<{ phase: "flight_paused"; display: Readonly<{ kind: "available"; value: LiveSessionSnapshot<"flight_paused"> }> }>
+  | Readonly<{ phase: "result"; display: RecordDisplay<TerminalSessionSnapshot> }>
+  | Readonly<{ phase: "replay"; returnTarget: ReplayReturnTarget; display: RecordDisplay<PlaybackSessionSnapshot> }>
+  | Readonly<{ phase: "attract"; display: RecordDisplay<PlaybackSessionSnapshot> }>
 );
 export type GameSessionProjection = TailGameSessionProjection;
 
-export function isLiveSessionSnapshot<Phase extends 5 | 6>(snapshot: FlightDisplaySnapshot, phaseCode: Phase): snapshot is LiveSessionSnapshot<Phase> {
-  return snapshot.kind === "tail_flight" && snapshot.phaseCode === phaseCode;
+export function isRetainedLiveSnapshot(snapshot: FlightSnapshotInput): snapshot is LiveSessionSnapshot {
+  return "frame" in snapshot && (snapshot.phase === "flight_running" || snapshot.phase === "flight_paused") && snapshot.frame.kind === "flight";
 }
 
-export function isRetainedLiveSnapshot(snapshot: FlightDisplaySnapshot): snapshot is LiveSessionSnapshot {
-  return isLiveSessionSnapshot(snapshot, 5) || isLiveSessionSnapshot(snapshot, 6);
-}
-
-export function liveSessionProjection<Phase extends 5 | 6>(snapshot: FlightDisplaySnapshot, phaseCode: Phase): LiveSessionProjection<Phase> | null {
-  return isLiveSessionSnapshot(snapshot, phaseCode) ? { controlLayout: "tail_incidence", snapshot } : null;
-}
-
-export function isTerminalSessionSnapshot(snapshot: FlightDisplaySnapshot): snapshot is TerminalSessionSnapshot {
-  return (snapshot.kind === "tail_result" || snapshot.kind === "tail_record")
-    && snapshot.stamp.tick === snapshot.finalization.terminalTick
-    && snapshot.stamp.fraction === snapshot.finalization.terminalFraction;
-}
-
-export function terminalSessionProjection(snapshot: FlightDisplaySnapshot | null): TerminalSessionProjection | null {
-  if (snapshot === null) return { controlLayout: "tail_incidence", display: Object.freeze({ kind: "unavailable", reason: "record_not_loaded" }) };
-  return isTerminalSessionSnapshot(snapshot)
-    ? { controlLayout: "tail_incidence", display: Object.freeze({ kind: "available", value: snapshot }) } : null;
-}
-
-export function isPlaybackSessionSnapshot(snapshot: FlightDisplaySnapshot): snapshot is PlaybackSessionSnapshot {
-  return snapshot.kind === "tail_record";
-}
-
-export function attractSessionProjection(snapshot: FlightDisplaySnapshot | null): AttractSessionProjection | null {
-  if (snapshot === null) return { controlLayout: "tail_incidence", display: Object.freeze({ kind: "unavailable", reason: "record_not_loaded" }) };
-  return isPlaybackSessionSnapshot(snapshot)
-    ? { controlLayout: "tail_incidence", display: Object.freeze({ kind: "available", value: snapshot }) } : null;
-}
-
-export function projectionSnapshot(projection: GameSessionProjection): FlightDisplaySnapshot | null {
-  return projection.display.kind === "available" ? projection.display.value : null;
-}
-
-export function projectTailGameSession(snapshot: TailSessionSnapshot, lifecycle: SessionLifecycleProjection,
-  difficulty: DifficultyUiState, configurationMetadata: ConfigurationMetadataUiState | null): TailGameSessionProjection {
-  if (snapshot.phaseCode !== lifecycle.phaseCode || snapshot.controlModeCode !== lifecycle.controlModeCode) {
-    throw new RangeError("Rust session lifecycle and snapshot disagree");
-  }
-  const common = { controlLayout: "tail_incidence" as const, controlModeCode: lifecycle.controlModeCode,
-    difficulty, configurationMetadata, countdownRemainingSeconds: lifecycle.countdownRemainingSeconds, canResume: lifecycle.canResume };
-  const display = projectTailFlightSnapshot(snapshot);
-  if (snapshot.phaseCode === 5 || snapshot.phaseCode === 6) {
-    if (display.kind !== "available" || display.value.kind !== "tail_flight" || display.value.phaseCode !== snapshot.phaseCode) throw new RangeError("Rust flight projection requires a live tail snapshot");
-    return snapshot.phaseCode === 5
-      ? Object.freeze({ ...common, phaseCode: 5, display: Object.freeze({ kind: "available", value: Object.freeze({ ...display.value, phaseCode: 5 }) }) })
-      : Object.freeze({ ...common, phaseCode: 6, display: Object.freeze({ kind: "available", value: Object.freeze({ ...display.value, phaseCode: 6 }) }) });
-  }
-  if (snapshot.phaseCode === 7) {
-    if (display.kind !== "available" || display.value.kind !== "tail_result") throw new RangeError("Rust Result projection requires a terminal tail snapshot");
-    return Object.freeze({ ...common, phaseCode: 7, display: Object.freeze({ kind: "available", value: display.value }) });
-  }
-  if (display.kind !== "unavailable") throw new RangeError("Rust menu projection cannot retain a flight snapshot");
-  return Object.freeze({ ...common, phaseCode: snapshot.phaseCode, display });
+export function projectTailGameSession(snapshot: TailSnapshotDocument, lifecycle: SessionLifecycleDocument): TailGameSessionProjection {
+  const display = snapshot.frame.kind === "menu" ? { kind: "unavailable" as const, reason: "menu_phase" as const }
+    : { kind: "available" as const, value: snapshot };
+  return { ...lifecycle, display } as TailGameSessionProjection;
 }

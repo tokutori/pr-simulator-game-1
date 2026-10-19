@@ -1,26 +1,25 @@
 use birdman_game_core::{
     ControlMode, CountdownProgress, CourseAxis, DistanceScoreError, DynamicsError, FlightState,
-    GameSessionError, PilotPositionTarget, SessionPhase, SessionSnapshot, SessionTerminalState,
-    TailControlError, TailFlightTickInput, TailPilotIntent, TailPilotPositionCommand,
-    TailPilotPositionIntent, TailPilotPositionMapping, TailRateTarget,
+    FlightTelemetry, GameSessionError, PilotPositionTarget, SessionPhase, SessionSnapshot,
+    SessionTerminalState, TailControlError, TailFlightTickInput, TailIncidence, TailPilotIntent,
+    TailPilotPositionCommand, TailPilotPositionIntent, TailPilotPositionMapping, TailRateTarget,
 };
 use birdman_game_format::{
-    DifficultySettings, FlightRecordFormatError, InformationLevel,
-    TAIL_INPUT_SCHEMA_VERSION as SCHEMA_VERSION, TailControlLayoutDocument as ControlLayout,
-    TailFlightRecordFinalizationDocument, TailFrameDocument as FrameDocument,
-    TailIncidenceDocument, TailInputDocument, TailPersonalBestConfiguration,
-    TailPilotPositionCommandDocument, TailPreparedLaunchDocument as PreparedLaunchDocument,
+    DifficultySettings, FlightRecordFormatError, FlightRenderPose, InformationLevel,
+    SessionLifecycleDocument, TAIL_INPUT_SCHEMA_VERSION as SCHEMA_VERSION,
+    TailControlLayoutDocument as ControlLayout, TailFlightRecordFinalizationDocument,
+    TailFrameDocument as FrameDocument, TailIncidenceDocument, TailInputDocument,
+    TailPersonalBestConfiguration, TailPilotPositionCommandDocument,
+    TailPreparedLaunchDocument as PreparedLaunchDocument,
     TailPreparedLaunchFrame as PreparedLaunchFrame, TailProgressDocument as ProgressDocument,
     TailSnapshotDocument as SnapshotDocument, TailStateDocument as StateDocument,
-    TailTelemetryDocument as TelemetryDocument,
 };
 use birdman_game_session::application::{ApplicationSession, BackendReadiness, SessionCommand};
-use serde::Serialize;
 use wasm_bindgen::{JsValue, prelude::*};
 
 use crate::{
     HybridSessionPreparation, MAX_TICKS, control_mode_from_code,
-    environment_snapshot::EnvironmentIdentity, external_pause_reason_from_code, phase_code,
+    environment_snapshot::EnvironmentIdentity, external_pause_reason_from_code,
 };
 
 const MAX_INPUT_JSON_BYTES: usize = 1_024;
@@ -120,6 +119,7 @@ enum BoundaryError {
     Json(serde_json::Error),
     Application(birdman_game_session::application::ApplicationError),
     Camera(birdman_game_session::replay_camera::ReplayCameraError),
+    Geometry(&'static str),
 }
 
 impl BoundaryError {
@@ -139,6 +139,7 @@ impl BoundaryError {
             Self::Json(error) => format!("hybrid boundary JSON failed: {error}"),
             Self::Application(error) => format!("application command failed: {error:?}"),
             Self::Camera(error) => format!("record camera projection failed: {error:?}"),
+            Self::Geometry(error) => format!("aircraft presentation geometry failed: {error}"),
             error => format!("hybrid boundary rejected: {error:?}"),
         };
         JsValue::from_str(&message)
@@ -272,9 +273,16 @@ impl HybridGameSessionBridge {
         self.execute_application(SessionCommand::Retry {}, BackendReadiness::Preparing)
     }
 
-    /// Returns the existing domain phase code.
-    pub fn phase_code(&self) -> u32 {
-        phase_code(self.session.core_session().snapshot().phase())
+    /// Returns lifecycle values from the current shared session.
+    pub fn lifecycle_snapshot_json(&self) -> Result<String, JsValue> {
+        serde_json::to_string(&SessionLifecycleDocument {
+            phase: self.session.core_session().snapshot().phase().into(),
+            control_mode_code: self.control_mode_code(),
+            countdown_remaining_seconds: self.countdown_remaining_seconds(),
+            can_resume: self.can_resume(),
+        })
+        .map_err(BoundaryError::Json)
+        .map_err(BoundaryError::into_js)
     }
 
     /// Returns the displayed selection or archived Manual, Shared or Automatic mode code.
@@ -324,6 +332,12 @@ impl HybridGameSessionBridge {
                         .into(),
                     control_identity: &prepared.record_identity,
                     state: Box::new(state_from_tick(state, self.required_pilot_mapping()?)?),
+                    render_pose: Box::new(self.render_pose_internal(
+                        state.flight_state(),
+                        state.incidence(),
+                        0.0,
+                        None,
+                    )?),
                 }
             }
             None => PreparedLaunchFrame::Unavailable,
@@ -331,7 +345,7 @@ impl HybridGameSessionBridge {
         serde_json::to_string(&PreparedLaunchDocument {
             schema_version: SCHEMA_VERSION,
             control_layout: ControlLayout::TailIncidence,
-            phase_code: self.phase_code(),
+            phase: self.session.core_session().snapshot().phase().into(),
             preview,
         })
         .map_err(BoundaryError::Json)
@@ -384,39 +398,67 @@ impl HybridGameSessionBridge {
 
     fn snapshot_internal(&self) -> Result<String, BoundaryError> {
         let snapshot = self.session.core_session().snapshot();
-        let frame = match snapshot {
+        let (frame, render_pose) = match snapshot {
             SessionSnapshot::TailFlightRunning { state, .. }
-            | SessionSnapshot::TailFlightPaused { state, .. } => FrameDocument::Flight {
-                state: state_from_tick(state, self.required_pilot_mapping()?)?,
-                telemetry: self.required_telemetry()?,
-                progress_m: self.required_progress()?,
-            },
+            | SessionSnapshot::TailFlightPaused { state, .. } => {
+                let telemetry = self.required_telemetry()?;
+                let render_pose = self.render_pose_internal(
+                    state.flight_state(),
+                    state.incidence(),
+                    state.tick_index() as f64 / f64::from(birdman_game_core::PHYSICS_HZ),
+                    Some(telemetry),
+                )?;
+                (
+                    FrameDocument::Flight {
+                        state: state_from_tick(state, self.required_pilot_mapping()?)?,
+                        telemetry: telemetry.into(),
+                        progress_m: self.required_progress()?,
+                    },
+                    Some(render_pose),
+                )
+            }
             SessionSnapshot::Result(result) => {
-                let state = match result.state {
-                    SessionTerminalState::TailTick(state) => {
-                        state_from_tick(state, self.required_pilot_mapping()?)?
-                    }
-                    SessionTerminalState::TailWaterContact(sample) => state_document(
-                        sample.interval_start_tick(),
-                        sample.fraction(),
-                        sample.flight_state(),
+                let (state, incidence) = match result.state {
+                    SessionTerminalState::TailTick(state) => (
+                        state_from_tick(state, self.required_pilot_mapping()?)?,
+                        state.incidence(),
+                    ),
+                    SessionTerminalState::TailWaterContact(sample) => (
+                        state_document(
+                            sample.interval_start_tick(),
+                            sample.fraction(),
+                            sample.flight_state(),
+                            sample.incidence(),
+                            sample.pilot_position_target(),
+                            self.required_pilot_mapping()?,
+                        )?,
                         sample.incidence(),
-                        sample.pilot_position_target(),
-                        self.required_pilot_mapping()?,
-                    )?,
+                    ),
                 };
+                let telemetry = self.required_telemetry()?;
+                let render_pose = self.render_pose_internal(
+                    result.state.flight_state(),
+                    incidence,
+                    state.flight_time_s,
+                    Some(telemetry),
+                )?;
                 let finalization = self
                     .session
                     .core_session()
                     .flight_record()
                     .and_then(birdman_game_core::FlightRecord::finalization)
                     .ok_or(BoundaryError::Session(GameSessionError::InvalidTransition))?;
-                FrameDocument::Result {
-                    state,
-                    telemetry: self.required_telemetry()?,
-                    finalization: TailFlightRecordFinalizationDocument::try_from_core(finalization)
+                (
+                    FrameDocument::Result {
+                        state,
+                        telemetry: telemetry.into(),
+                        finalization: TailFlightRecordFinalizationDocument::try_from_core(
+                            finalization,
+                        )
                         .map_err(BoundaryError::Format)?,
-                }
+                    },
+                    Some(render_pose),
+                )
             }
             SessionSnapshot::Replay { .. } | SessionSnapshot::Attract { .. } => {
                 return Err(BoundaryError::UnsupportedPhase);
@@ -426,12 +468,12 @@ impl HybridGameSessionBridge {
             | SessionSnapshot::BriefingPreparing { .. }
             | SessionSnapshot::BriefingReady { .. }
             | SessionSnapshot::BriefingFailed { .. }
-            | SessionSnapshot::Countdown { .. } => FrameDocument::Menu,
+            | SessionSnapshot::Countdown { .. } => (FrameDocument::Menu, None),
         };
         serde_json::to_string(&SnapshotDocument {
             schema_version: SCHEMA_VERSION,
             control_layout: ControlLayout::TailIncidence,
-            phase_code: phase_code(snapshot.phase()),
+            phase: snapshot.phase().into(),
             control_mode_code: self.control_mode_code(),
             scenario: self
                 .session
@@ -442,6 +484,7 @@ impl HybridGameSessionBridge {
                 .session
                 .prepared()
                 .map(|metadata| &metadata.record_identity),
+            render_pose,
             frame,
         })
         .map_err(BoundaryError::Json)
@@ -454,13 +497,51 @@ impl HybridGameSessionBridge {
             .ok_or(BoundaryError::Session(GameSessionError::InvalidTransition))
     }
 
-    fn required_telemetry(&self) -> Result<TelemetryDocument, BoundaryError> {
+    fn required_telemetry(&self) -> Result<FlightTelemetry, BoundaryError> {
         self.session
             .core_session()
             .telemetry()
             .map_err(|error| BoundaryError::Session(GameSessionError::Telemetry(error)))?
-            .map(TelemetryDocument::from)
             .ok_or(BoundaryError::Session(GameSessionError::InvalidTransition))
+    }
+
+    fn render_pose_internal(
+        &self,
+        state: FlightState,
+        incidence: TailIncidence,
+        simulation_time_seconds: f64,
+        telemetry: Option<FlightTelemetry>,
+    ) -> Result<FlightRenderPose, BoundaryError> {
+        let core = self.session.core_session();
+        let initial_pilot = core
+            .flight_record()
+            .and_then(|record| record.samples().first())
+            .map(|sample| sample.flight_state.pilot_position_m())
+            .or_else(|| {
+                core.prepared_launch_state()
+                    .map(|state| state.flight_state().pilot_position_m())
+            })
+            .ok_or(BoundaryError::Session(GameSessionError::InvalidTransition))?;
+        let identity = self
+            .session
+            .display_control_identity()
+            .zip(core.configuration_identity())
+            .map(|(identity, scenario)| {
+                (
+                    identity.aircraft_configuration_id.as_str(),
+                    scenario.aircraft_model_version,
+                )
+            });
+        let geometry = birdman_game_session::tail_geometry::render_geometry(identity)
+            .map_err(BoundaryError::Geometry)?;
+        Ok(birdman_game_session::render_pose::flight_render_pose(
+            state,
+            incidence,
+            initial_pilot,
+            simulation_time_seconds,
+            telemetry,
+            geometry,
+        ))
     }
 
     fn required_progress(&self) -> Result<ProgressDocument, BoundaryError> {

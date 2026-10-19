@@ -103,7 +103,7 @@ adapterからcore・formatへの直接参照も許可する。逆方向の依存
 - telemetryは同じ風場を参照する。
 
 - 物理はNED位置・速度、FRD機体座標、bodyからNEDへのquaternionを使用する。
-- 単位とquaternion要素順はadapter境界で検査・変換する。
+- 単位とquaternion要素順はproducerとadapterの接続試験で確認し、描画APIに必要な座標変換をadapterで行う。
 - 描画原点、眼位置、機体原点、合成重心は用途を区別する。
 - 表示の都合で物理状態を変更しない。
 
@@ -162,15 +162,14 @@ GameUiView / GameUiFrame → platform renderer → DOM / VR panel / Bevy entity
 
 ### schemaとABI
 
-- Rustのserde型とSchemars schemaを正本に、readonlyなTypeScript型とAjv standalone validatorを生成する。
-- 対象にはUI、操作、session snapshot、準備metadata、record queryを含める。
-- 生成物を手編集しない。
-- 生成用featureは通常のWASM/nativeから分離する。
-
-- 構造検査は有限数、必須field、未知field・variant、配列上限を検査する。
-- phase・時刻・record source・generation・quaternionなどの意味検査は契約の所在を明示して保持する。
-- JSONの型assertionだけで境界検査を置き換えない。
-- hot pathと保存用version付き文書の受渡しは、性能計測と入力意味を確認して変更する。
+- Rustのserde型とSchemars schemaを正本に、readonlyなTypeScript型と接続試験用のschemaを生成する。対象はUI、操作、session snapshot、準備metadata、環境、record queryである。
+- 生成型のreadonlyとtuple制約はTypeScript compilerで検査する。schema生成用featureとAjvによるschema検査は開発ツールの経路へ限定する。
+- 同一buildのWASM出力は、instanceを所有するfacadeの内部でJSONをparseし、生成DTOへ直接接続する。phase、profile、環境、描画poseの正本は共有Rustに置く。
+- WebはDTOを保持し、DOM・engine APIに必要な投影だけを行う。readonlyは静的な変更制約とし、時刻・score・quaternion等の数値契約はRustのproducerとcoreで検査する。
+- 外部の保存JSONはformatのcodecで受理する。内部出力の受渡しと、外部原文のdecodeを独立した境界として扱う。
+- Web入力はown fieldとgetterの値を一度捕捉し、prototype由来の値を送信内容から分離する。捕捉後にownerの生存を確認し、サイズ制限とRustの受理規則を適用する。
+- 非同期要求、record source、Countdownのtokenはadapterの実際の待機と資源寿命を管理する。構造・数値・所有権の接続試験は[検証](verification.md)に定める。
+- 生成物を手編集しない。hot pathと保存用文書の変更は、転送量・decode費用・入力意味を個別に確認する。
 
 ## Webの状態と資源寿命
 

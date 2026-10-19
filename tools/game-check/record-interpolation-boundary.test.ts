@@ -3,14 +3,14 @@ import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
 import { initSync } from "../../web/pkg/birdman_game_wasm.js";
 import { createAppSession } from "../../web/src/app/session-factory.js";
-import type { NamedRecordSample } from "../../web/src/game/named-record-query.js";
+import type { RecordedPlaybackSample } from "../../web/src/generated/record-sample.js";
 import { record } from "../shared/validation.js";
 import { currentRecordFixture } from "./current-session-fixture.js";
 
 const wasmPath = fileURLToPath(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url));
 const angles = [
-  { field: "angle_of_attack_rad", telemetry: "angleOfAttackRadians" },
-  { field: "sideslip_angle_rad", telemetry: "sideslipAngleRadians" }
+  { field: "angle_of_attack_rad", telemetry: "angle_of_attack_rad" },
+  { field: "sideslip_angle_rad", telemetry: "sideslip_angle_rad" }
 ] as const;
 type AngleField = typeof angles[number]["field"];
 let sourceJson: string;
@@ -29,11 +29,11 @@ function recordJson(field: AngleField, start: number | null, end: number | null)
   return JSON.stringify(document);
 }
 
-function expectAngle(sample: NamedRecordSample, angle: typeof angles[number], expected: number | null): void {
-  const actual = sample.state.telemetry[angle.telemetry];
+function expectAngle(sample: RecordedPlaybackSample, angle: typeof angles[number], expected: number | null): void {
+  const actual = sample.state.telemetry[angle.field];
   expect(actual).toBe(expected);
   expect(sample.controls.layout).toBe("tail_incidence");
-  expect(sample.state.datumPositionNedMeters.every(Number.isFinite)).toBe(true);
+  expect(sample.state.datum_position_ned_m.every(Number.isFinite)).toBe(true);
 }
 
 describe.each(angles)("actual WASM record interpolation: $field", (angle) => {
@@ -53,7 +53,7 @@ describe.each(angles)("actual WASM record interpolation: $field", (angle) => {
       expectAngle(archive.queryRecordSample(0.01), angle, end);
       expect(archive.readFlightLog("json")).toBe(stored);
       expect(archive.readPlaybackClock()).toEqual(clock);
-      expect(archive.readLifecycle().phaseCode).toBe(9);
+      expect(archive.readLifecycle().phase).toBe("replay");
     } finally {
       archive.dispose();
     }

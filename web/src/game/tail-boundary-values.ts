@@ -1,8 +1,22 @@
-export function ownBoundaryValue(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(ownBoundaryValue);
-  return typeof value === "object" && value !== null
-    ? Object.setPrototypeOf(Object.fromEntries(Object.entries(value).map(([key, field]) => [key, ownBoundaryValue(field)])), null) as Record<string, unknown>
-    : value;
+export function captureJsonInput<Value>(value: Value): Value {
+  const ancestors = new Set<object>();
+  const capture = (field: unknown): unknown => {
+    if (typeof field === "object" && field !== null) {
+      if (ancestors.has(field)) throw new RangeError("JSON input contains a cycle");
+      ancestors.add(field);
+      const result = Array.isArray(field)
+        ? Object.setPrototypeOf(Array.from({ length: field.length }, (_, index) => Object.hasOwn(field, index) ? capture(field[index]) : null), null) as unknown[]
+        : Object.setPrototypeOf(Object.fromEntries(Object.entries(field).map(([key, child]) => [key, capture(child)])), null) as Record<string, unknown>;
+      ancestors.delete(field);
+      return result;
+    }
+    if (typeof field === "function" || typeof field === "symbol" || typeof field === "bigint" || field === undefined
+        || typeof field === "number" && !Number.isFinite(field)) {
+      throw new RangeError("JSON input requires data fields");
+    }
+    return field;
+  };
+  return capture(value) as Value;
 }
 
 export function boundaryObject(value: unknown, fields: readonly string[]): Record<string, unknown> {
@@ -27,25 +41,4 @@ export function boundaryInteger(value: unknown, minimum = 0, maximum = Number.MA
   const number = boundaryNumber(value, minimum, maximum);
   if (!Number.isSafeInteger(number)) throw new RangeError("Tail boundary integer must be exact");
   return number;
-}
-
-export function boundaryTag<const Tags extends readonly string[]>(value: unknown, tags: Tags): Tags[number] {
-  if (typeof value !== "string" || !tags.includes(value)) throw new RangeError("Unknown tail boundary tag");
-  return value;
-}
-
-export function boundaryTuple(value: unknown, length: number): readonly number[] {
-  if (!Array.isArray(value) || value.length !== length) throw new RangeError("Invalid tail boundary tuple length");
-  return Object.freeze(value.map((component: unknown) => boundaryNumber(component)));
-}
-
-export function boundaryExternalTag(value: unknown): Readonly<{ tag: string; payload: unknown }> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new RangeError("Tail failure must use a known externally tagged variant");
-  }
-  const keys = Object.keys(value);
-  const tag = keys[0];
-  if (keys.length !== 1 || tag === undefined) throw new RangeError("Tail failure must have exactly one variant");
-  const object = value as Record<string, unknown>;
-  return { tag, payload: object[tag] };
 }

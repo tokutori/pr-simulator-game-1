@@ -17,12 +17,15 @@ describe("shared recorded cinematic camera projection", () => {
       const dataset = session.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
       const frame = session.queryReplayCamera(0.015, "side", true, dataset);
       const sample = session.queryRecordSample(0.015);
-      expect(frame.simulationTimeSeconds).toBe(sample.timeSeconds);
-      expect(frame.controls).toEqual(sample.controls);
-      expect(frame.airspeedMetersPerSecond).toBe(sample.state.telemetry.airspeedMetersPerSecond);
-      expect(frame.windVelocityNedMetersPerSecond).toEqual({ north: sample.state.windAtCgNedMetersPerSecond[0],
-        east: sample.state.windAtCgNedMetersPerSecond[1], down: sample.state.windAtCgNedMetersPerSecond[2] });
-      expect(frame.tailGeometry?.kind).toBe("available");
+      expect(frame.simulationTimeSeconds).toBe(sample.flight_time_s);
+      expect(frame.controls).toEqual({ layout: sample.controls.layout, physicalIncidence: {
+        horizontalTailRadians: sample.controls.physical_incidence.horizontal_tail_rad,
+        verticalTailRadians: sample.controls.physical_incidence.vertical_tail_rad
+      } });
+      expect(frame.airspeedMetersPerSecond).toBe(sample.state.telemetry.airspeed_mps);
+      expect(frame.windVelocityNedMetersPerSecond).toEqual({ north: sample.state.wind_at_cg_ned_mps[0],
+        east: sample.state.wind_at_cg_ned_mps[1], down: sample.state.wind_at_cg_ned_mps[2] });
+      expect(frame.tailGeometry.kind).toBe("available");
       const camera = frame.replayCamera.cinematic;
       if (camera === null) throw new Error("Missing shared Side camera");
       expect(camera.pose.position).toEqual(vec3(frame.datumPositionNed.east + 30, -frame.datumPositionNed.down + 9, -frame.datumPositionNed.north - 4));
