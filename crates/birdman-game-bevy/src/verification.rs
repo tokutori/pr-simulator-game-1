@@ -1224,6 +1224,7 @@ pub(crate) struct Verification {
     paused_water_time: Option<f32>,
     paused_window: Option<(UVec2, f32)>,
     auto_capture_scale: Option<ScreenRenderScale>,
+    findings: Vec<String>,
     failure: Option<String>,
     completion: Option<Sender<Result<(), String>>>,
     capture_target: RenderTarget,
@@ -1295,6 +1296,7 @@ impl Verification {
                 paused_water_time: None,
                 paused_window: None,
                 auto_capture_scale: None,
+                findings: Vec::new(),
                 failure: None,
                 completion: Some(sender),
                 capture_target,
@@ -1311,6 +1313,17 @@ impl Verification {
             && sender.send(result).is_err()
         {
             error!("Verification completion receiver is unavailable");
+        }
+    }
+
+    fn completion_result(&self) -> Result<(), String> {
+        if self.findings.is_empty() {
+            Ok(())
+        } else {
+            Err(format!(
+                "Native verification completed with unmet timing checks: {}",
+                self.findings.join("; ")
+            ))
         }
     }
 
@@ -1906,7 +1919,6 @@ pub(crate) fn advance(
     });
     match result {
         Ok(()) if verification.stage == VerificationStage::Finished => {
-            verification.complete(Ok(()));
             if let Some(case) = verification.water_case {
                 println!(
                     "Water case {case:?} completed: camera-only observation, actual sealed Weather/quality and core Pause/Resume/Retry. Visual temporal acceptance and physical input are separate."
@@ -1916,7 +1928,18 @@ pub(crate) fn advance(
                     "GPU captures and scripted logical-input core loop completed; visual review and physical keyboard/mouse acceptance are separate."
                 );
             }
-            exit.write(AppExit::Success);
+            match verification.completion_result() {
+                Ok(()) => {
+                    verification.complete(Ok(()));
+                    exit.write(AppExit::Success);
+                }
+                Err(error) => {
+                    error!("{error}");
+                    verification.complete(Err(error.clone()));
+                    verification.failure = Some(error);
+                    exit.write(AppExit::error());
+                }
+            }
         }
         Ok(()) => {}
         Err(error) => {
@@ -2815,9 +2838,19 @@ fn advance_step(
                     return Err(format!("Shadow draw fixture resource failure: {cause}"));
                 }
                 if verification.stage_started.elapsed() > Duration::from_secs(8) {
-                    return Err(format!(
-                        "Shadow draw fixture did not acknowledge its resources: {snapshot:?}"
-                    ));
+                    let finding = format!(
+                        "Shadow draw fixture did not acknowledge its resources: {snapshot:?}, frame_delta={frame_delta:?}, preparation={:?}, preparation_epoch={}, source_frame={:?}; remaining shadow captures are unverified",
+                        presentation.timing_readout.preparation,
+                        presentation.timing_readout.preparation_epoch,
+                        presentation.timing_readout.source_frame,
+                    );
+                    println!(
+                        "Unmet timing check: {finding}; restoring Manual 100% and continuing the core loop"
+                    );
+                    verification.findings.push(finding);
+                    queue_ui_control(commands, "presentation-render-scale-100", None);
+                    verification.next(VerificationStage::RenderScaleRestored);
+                    return Ok(());
                 }
                 if snapshot.shadow == expected && verification.readiness.can_capture() {
                     presentation.verify_render_scale(ScreenRenderScale::Half, window)?;
@@ -2855,12 +2888,19 @@ fn advance_step(
                     matches!(snapshot.status, ScreenRenderAutoStatus::Unsupported { .. });
                 let observed = verification.stage_started.elapsed();
                 if observed > Duration::from_secs(8) {
-                    return Err(format!(
-                        "Auto verification has no completed fresh GPU measurement: {snapshot:?}, preparation={:?}, preparation_epoch={}, source_frame={:?}",
+                    let finding = format!(
+                        "Auto verification has no completed fresh GPU measurement: {snapshot:?}, frame_delta={frame_delta:?}, preparation={:?}, preparation_epoch={}, source_frame={:?}",
                         presentation.timing_readout.preparation,
                         presentation.timing_readout.preparation_epoch,
                         presentation.timing_readout.source_frame,
-                    ));
+                    );
+                    println!(
+                        "Unmet timing check: {finding}; restoring Manual 100% and continuing the core loop"
+                    );
+                    verification.findings.push(finding);
+                    queue_ui_control(commands, "presentation-render-scale-100", None);
+                    verification.next(VerificationStage::RenderScaleAutoRestored);
+                    return Ok(());
                 }
                 if (unsupported || (accepted && observed >= Duration::from_secs(4)))
                     && projection_settled
@@ -3798,6 +3838,24 @@ mod tests {
         }
         app.world_mut().remove_resource::<super::Verification>();
         assert_eq!(super::shadow_draw_fixture_target(app.world()), None);
+    }
+
+    #[test]
+    fn unmet_timing_checks_survive_restoration_and_fail_final_completion() {
+        let mut app = countdown_driver_app();
+        let mut verification = app.world_mut().resource_mut::<super::Verification>();
+        assert_eq!(verification.completion_result(), Ok(()));
+        verification.findings.push("original shadow timeout".into());
+        verification.next(VerificationStage::RenderScaleRestored);
+        assert!(matches!(verification.capture, CaptureState::Idle));
+        assert!(verification.failure.is_none());
+        verification.findings.push("original Auto timeout".into());
+        verification.next(VerificationStage::RenderScaleAutoRestored);
+        verification.next(VerificationStage::Finished);
+        let error = verification.completion_result().unwrap_err();
+        assert!(error.contains("original shadow timeout"));
+        assert!(error.contains("original Auto timeout"));
+        assert_eq!(verification.findings.len(), 2);
     }
 
     #[test]
