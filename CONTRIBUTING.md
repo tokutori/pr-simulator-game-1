@@ -1,98 +1,68 @@
 # 開発手順
 
-## PRの単位
+全媒体の文章には [AGENTS.mdの記述原則](AGENTS.md#全媒体の記述原則)を適用する。
+以下はIssue・PR・文書への具体的な適用方法と開発手順である。
 
-[GitHub Issues](https://github.com/tokutori/pr-simulator-game-1/issues)を作業計画・依存関係・進捗の正本とする。
-各IssueにはPurpose、Scope、Non-goals、Contracts affected、Implementation、Verification、
-Completion criteria、Dependenciesを記載する。依存先はIssue番号でリンクする。
-既存BPG IDは維持し、新規IDはGitHub上で重複を確認する。
-実行順と段階ごとの完了条件は[GitHub Milestones](https://github.com/tokutori/pr-simulator-game-1/milestones)で管理する。
-計画変更はIssue本文・milestoneへ直接反映し、関連する設計契約を同一作業で更新する。
-PRには対象Issueをリンクし、実施結果と未達条件を記録する。
-CIはコード・設計文書・assetを検査する。Issue本文や依存関係の検査・同期は行わず、着手時とレビュー時に確認する。
+## Issue・PR・文書の記述
 
-1. 依存BPGのmerge完了と基底commitを確認する。以下の先行条件を満たす場合は固定した依存HEADを確認する。
-2. `feat/bpg-###-description` 等のブランチを作成する。
-3. 対象の契約、実装、検証、文書を同一PRに含める。
-4. CIと差分を確認し、検査結果と未検証範囲をPR本文に記載する。
-5. レビュー完了後、対象head SHAを確認してmergeする。
+[Issues](https://github.com/tokutori/pr-simulator-game-1/issues)を作業と依存関係、
+[Milestones](https://github.com/tokutori/pr-simulator-game-1/milestones)を段階ごとの達成目標の正本とする。
 
-commitは目的別のConventional Commitsとする。検査未実施の機能を完了として扱わない。
-通常の開発ではmainへの変更をPR経由で管理する。
+### Issue
 
-Issueは達成目標または独立した障害を単位とし、補助関数や個別試験ごとの増設を避ける。
-PRは関連する機能・全adapter・検証をまとめ、目的別のcommitを保持する。
-局所的に整合した変更群をまとめてpushし、最終combined treeのCIを確認する。専用の文書PRや追加gateで待機を増やさない。
+- 利用者向けの達成目標または独立した障害を単位とする。補助関数や小さな試験ごとに分割しない。
+- 本文は「目的」「実装方針・対象範囲」「完了条件のチェックリスト」を基本とする。同じ制約を複数の節へ繰り返さない。
+- 実装統合後もOPENを維持する場合は、「完了した実装」と「残るClose条件」へ更新する。
+- 親Issueには現在の対応表と残課題だけを置く。個別PRの試験件数・CI履歴・内部運用規則を蓄積しない。
+- 調査方針は本文へ統合する。同じ調査を複数担当が重複コメントせず、新しい決定・完了・問題だけをまとめて報告する。
+- 計画変更は本文とmilestoneへ反映する。既存BPG IDを保持し、新規IDは重複を確認する。
 
-feature branchは早期にDraft PRを作成する。`Check`はmain/bevyへのpush、無条件のpull_request、手動実行で起動する。
-PRは仮merge tree、pushと手動実行は対象headを検査する。未PR・merge conflict中の先行head検査が必要な場合は、
-local検査または対象branchの手動実行（`deploy_pages=false`）で補完する。競合解消後はPRの3gateを確認する。
+### PR・報告
 
-## 依存作業の先行
+- 関連する実装、全adapterへの接続、検証、文書更新をまとめる。commitは目的別のConventional Commitsとする。
+- タイトルは `<type>(<scope>): <日本語の要約>` とする。
+- 冒頭に `Closes #番号`、残件がある場合は `Refs #番号` とその理由を書く。
+- 本文は「概要」「主な変更点」「検証結果」を基本とし、最終HEADで確認した結果を記載する。
+- 途中のCI失敗・デバッグ日記・ブランチ切替手順・無関係な未変更事項を列挙しない。merge前に古いDraft時点の記述を更新する。
+- 進捗報告は前回からの完了・変更点、現在の作業、新たな問題をIssue/PR単位で示す。回答が必要な質問は分離する。
 
-依存先が独立review・必要な局所検査を完了した不変のHEADに固定されている場合は、別worktree/branchで依存作業を先行できる。
-親branch/sourceは変更しない。親PR未merge中はchild PRのbaseを親branchとし、依存HEADのSHAを明記する。
-親PRのmerge後はchild PRのbaseをmainへ変更し、必要な通常mergeで最新mainを取り込み、combined treeと最終gateを確認する。
-親HEADが更新された場合はreview・局所検査の状況を再確認し、通常mergeで取り込み、影響範囲を確認する。
-親CIの失敗や変更により、childにも修正・再検査が必要となる手戻りリスクを伴う。
+### 文書
 
-main統合前には依存PRのmerge完了、最新mainとのcombined tree、独立review、既存3gateの成功を必須とする。
-通常pushとfast-forward優先、既存変更の保護、共有build targetのleaseを維持する。force push・rebaseは行わない。
+- `docs/` は主題別の現行仕様・利用案内とする。Issue/PRごとの境界文書や検証文書を増設しない。
+- 仕様変更時は該当節を書き換えて統合し、廃止した仕様と移行経緯を除く。
+- 作業履歴の日時・SHA・PR/CI番号・個人のローカルパスはIssue・PR・実行ログへ置く。出典の固定版・取得時点・ライセンス等の必要な根拠は保持する。
+- READMEとNativeガイドには起動・操作・前提環境を記載し、内部設計とCI手順は設計・検証文書へ分ける。
+- 文書の統合時は相互リンク、ソース内参照、配布梱包も更新する。
 
-Windowsでworktreeを削除する前に、対象の絶対path・所有者・未commit変更と、内部のJunction・symbolic link等のreparse pointを確認する。共有npm/cacheへ接続したリンクは、参照先を検証してリンク自体だけを非再帰で解除してから`git worktree remove`を実行する。共有backing directoryと他のworktreeは保持する。cleanなGit状態はignored directoryやリンク先の安全性を保証しない。
+テキストはUTF-8、改行はLFとし、PowerShellのI/OにもUTF-8を明示する。
+`gh issue` / `gh pr` の本文は `--body-file` で渡し、更新後の内容を確認する。
+GitHubの独立数式は `math` fence、文中数式は `$...$` とする。
 
-## 公開と統合の分離
+## ブランチと統合
 
-mainへのpushは検査を実行し、GitHub Pagesを自動公開しない。
-公開は明示的な公開指示を受けた後、`Check`の`workflow_dispatch`をmainに対して実行し、`deploy_pages`を有効にする。
-Ubuntu・Windowsの検査成功後に、同じrunで生成したartifactだけを公開する。
-Rust cacheの保存はmainへのpushと非公開の手動検査（`deploy_pages=false`）が担当し、Pages公開runは復元だけを行う。
-保存元のrunが失敗した場合は、同じmainの非公開手動検査でcacheを更新できる。
+1. 現在のbranch・worktree・remote・差分と依存先を確認し、無関係な変更を保持する。
+2. 独立したbranchで実装し、並行作業には別worktreeを使う。早期にDraft PRを作成する。
+3. 局所検査と独立レビューを終えた変更群をまとめてpushし、最新mainとの統合結果で必須CIを確認する。
+4. レビュー対象のHEAD、remoteのHEAD、必須検査の成功を確認して統合する。
 
-Windowsは公式[sccache-action](https://github.com/mozilla-actions/sccache-action)と固定sccache v0.18.0で、
-既存target cacheを補完する。compiler cacheも同じ条件でのみ書き込み、PR・Pages公開は`READ_ONLY`とする。
-既存rust-cacheのroot profile識別を保持し、compiler cacheは実際のcompiler・target・引数・入力が適合する成果だけを再利用する。
-既存targetの復元後にWindowsのwrapperを有効化し、rust-cacheが両OSへ適用するincremental無効化を維持する。
-Clippyではwrapperを明示解除する。最終link・試験実行・Web検査は引き続き実行する。
-既存targetを保持する読取り専用の導入PRとcompiler側の初回cold、main保存後の自然な後続runを区分する。
-公式Actionのpost統計と既存step時間・repo cache容量で効果を確認し、初回cold runから短縮率を断定しない。
-Windows先行の範囲と、両OS・設定変更後の再利用・容量の残条件は[#511](https://github.com/tokutori/pr-simulator-game-1/issues/511)に保持する。
+依存先が独立レビューと必要な局所検査を完了した固定HEADなら、別worktreeで先行開発できる。
+Draftには依存先PRと固定HEADを示し、親の統合後にbaseをmainへ変更する。
+親が更新された場合は通常mergeで取り込み、影響を確認する。最終的な統合結果のレビューと必須CIは省略しない。
 
-## Fast-forward優先
+fast-forward可能な場合は、fetch後に `git merge --ff-only <reviewed-head-sha>` と通常pushでmainを更新する。
+分岐している場合は通常のmergeを行う。保護規則を迂回せず、force push・rebaseは行わない。
+GitHubのMERGED状態とremote mainを確認する。GitHubの「Rebase and merge」はSHAを変えるためFFとは区別する。
 
-GitHubの通常mergeボタンは `--no-ff` 相当である。Rebase and mergeはSHAを変更するため、
-元のcommitを保持するfast-forwardとは区別する。
-根拠: [GitHub公式: Pull request merges](https://docs.github.com/en/pull-requests/reference/pull-request-merges)。
+共有build targetは同時使用を避ける。Cargoのtarget/build先にソース自身や祖先directoryを指定しない。
+worktree削除前には絶対path・所有者・未commit変更・ignored directoryとreparse pointを確認する。
+共有npm/cacheのリンクはリンク自体だけを非再帰で解除し、参照先の共有backingを保持してから `git worktree remove` を行う。
 
-fast-forward可能で、レビュー・CI・リポジトリ規則を満たす場合は、ローカルで
-`git merge --ff-only <reviewed-head-sha>` を実行し、通常のpushでmainを更新する。
-実行直前にfetchし、レビュー対象SHAとremote headの一致、作業ツリーのclean状態を確認する。
-push競合が発生した場合は再取得して再判定する。force pushは禁止する。
-GitHubでPRがmergedとなり、remote mainが意図したcommitを指すことを確認する。
-間接mergeではPRの保護条件が自動強制されない場合があるため、必須検査を省略しない。
+## 検査と公開
 
-履歴が分岐している場合は通常のmerge commitを使用する。
-保護規則で直接pushが禁止される場合も、規則を迂回せず通常のPR mergeを使用する。
-変更済みの統合結果を再検証する。fast-forwardのためだけの履歴改変は要求しない。
-この手順はmerge方式の契約であり、個別PRのレビュー完了を意味しない。
-
-## 数式と本文
-
-GitHubの[公式数式記法](https://docs.github.com/en/get-started/writing-on-github/working-with-advanced-formatting/writing-mathematical-expressions)
-に従い、独立式は言語名 `math` のfenced code block、文中式は `$...$` を使用する。
-`math` block内に追加のドル区切りを入れない。
-ChatGPT固有の参照マーカーと数式区切りは転記しない。
-`gh issue create` / `gh pr create` は `--body-file` でUTF-8本文を渡し、作成後に表示を確認する。
-
-## 検査
-
-READMEのコマンドと `docs/verification.md` を参照する。
-ローカルは変更箇所のlint、freshなbindingを用いた型検査、関連試験を先行する。Rust UI/ABI変更時は必要な生成を一回行う。
-Cargoのtarget/build directoryにはソースの祖先または同一directoryを指定しない。workspace配下の通常targetまたはソースと兄弟のcacheを使用する。WASM生成入口はCargo metadataの実解決先を検査し、危険配置を生成前に拒否する。
-UI-only変更では無関係な数値fixtureの反復を省き、最終CIの全検査を保持する。
-Windows CIはworkspace試験からnative packageを除外し、その後native単独の試験とbuildを実行する。
-これによりWebやcoreのdev依存によるfeature統合をnative試験から分離する。全packageのtests/doctestsを保持し、
-Linux CIは従来のworkspace一括試験を継続する。
-compiler・linter警告と、CI基盤の非推奨警告を確認し、解消してからmergeする。
-外部サービス起因で解消不能な警告は原因・影響・追跡IssueをPRに記録する。
-実機妥当性とソフトウェア検査の合格を区別する。
+- 変更箇所のlint・型検査・関連試験を先行し、Rust UI/ABIの生成は必要な範囲でまとめて行う。
+- 検査コマンドは [README](README.md) と[検証仕様](docs/verification.md)を参照する。最終CIのUbuntu・Windows・Verusの3ゲートを確認する。
+- compiler/linter警告を確認する。外部サービスの未解消警告は原因・影響・追跡先を記録する。
+- ソフトウェア試験、GPU描画、物理キー・HMD操作、実機妥当性を区別し、実施済み・失敗・未実施を報告する。
+- UI・描画は可能な範囲を再現可能なCUI/headless/offscreen試験で確認する。
+- mainへのpushではGitHub Pagesを公開しない。明示的な公開指示の後、mainの `Check` を `workflow_dispatch`・`deploy_pages=true` で実行し、そのrunで検査を通過した成果物を公開する。
+- CI cacheの保存はtrusted main pushと非公開手動検査が担当する。PRとPages公開runは読取り専用とする。
