@@ -687,38 +687,32 @@ fn project_view(
             scroll.y = 0.0;
         }
         for panel in &view.panels {
-            if !normalized {
-                for section in &panel.sections {
-                    let group = world
-                        .spawn((
-                            ChildOf(retained.content),
-                            Node {
-                                width: percent(100),
-                                flex_shrink: 0.0,
-                                flex_direction: FlexDirection::Column,
-                                row_gap: px(view.layout.gap_px),
-                                ..default()
-                            },
-                        ))
-                        .id();
-                    if !section.label.is_empty() {
-                        spawn_text(world, group, &section.label, font, 16.0, text_color);
-                    }
-                    let columns = world
-                        .spawn((ChildOf(group), section_node(section.layout, &view.layout)))
-                        .id();
-                    retained.sections.insert(section.id.clone(), columns);
+            for section in &panel.sections {
+                let group = world
+                    .spawn((
+                        ChildOf(retained.content),
+                        Node {
+                            width: percent(100),
+                            flex_shrink: 0.0,
+                            flex_direction: FlexDirection::Column,
+                            row_gap: px(view.layout.gap_px),
+                            ..default()
+                        },
+                    ))
+                    .id();
+                if !section.label.is_empty() {
+                    spawn_text(world, group, &section.label, font, 16.0, text_color);
                 }
+                let columns = world
+                    .spawn((ChildOf(group), section_node(section.layout, &view.layout)))
+                    .id();
+                retained.sections.insert(section.id.clone(), columns);
             }
             for control in &panel.controls {
-                let parent = if normalized {
-                    retained.content
-                } else {
-                    *retained
-                        .sections
-                        .get(&control.section)
-                        .ok_or_else(|| format!("UI sectionが存在しない: {}", control.section))?
-                };
+                let parent = *retained
+                    .sections
+                    .get(&control.section)
+                    .ok_or_else(|| format!("UI sectionが存在しない: {}", control.section))?;
                 let node = world
                     .spawn((
                         ChildOf(parent),
