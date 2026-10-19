@@ -84,7 +84,27 @@ current-session の `enter_replay` / `leave_replay` は同 module の二つの m
 成功時の結果 payload 完全保持と指定 clock の格納、拒否時の enum 全体保持を検証する。
 必須三群、exact compiler inventory、rename / missing-target 拒否、発進前の Replay 認可と結果改変を誤って主張する負例を既存 runner に追加する。
 外側の record / configuration はこの method へ借用せず、Rust の所有分離と GameSession の通常回帰で保持を確認する。
-これらの外側 payload、GameSession wrapper 全体、archived Replay / Attract、clock の浮動小数点演算は Verus の直接証明範囲に含めない。
+この初回cutの範囲はcurrent-sessionの内部phase遷移に限定する。
+GameSessionの外側payloadと保存済み記録の所有権は、後続の本番接続と次節の追加cutで扱う。
+`enter_attract`とclockの浮動小数点演算は直接証明の対象外である。
+
+### 保存済み記録の所有権移譲
+
+追加cutでは、`GameSession`の実bodyで`open_archived_replay`、`take_finalized_result_record`、
+`install_attract_record`、`leave_attract`と`playback_record`を直接検証する。
+入力recordの確定状態と許可phaseを認可条件とし、record全体の同一性によってheader・sample・finalizationの保持を示す。
+成功時は同じrecordをReplay、Titleのdemo保管領域、または戻り値へ移譲し、拒否時はsession全体を保持する。
+archived ReplayとResult取り出しは独立したdemoとcountdown tokenを保持し、demoの再登録は既存recordを上書きしない。
+
+固定vstdが未対応の`mem::replace`二箇所は、Titleの局所値と`mem::swap`を行って同じmatchへ渡す等価な標準操作に変更する。
+payloadを持たないTitle・Attract・Resultの三つのguardは、同じvariantを判定する`!matches!`へ統一する。
+型・認可条件・処理順・数値計算・容量予約は維持し、新しい標準ライブラリの公理は追加しない。
+
+private ownerを使う三つの本番clientと、既存の公開domain driverへ追加した三つのclientを検査する。
+既存runnerのexact compiler inventoryへ対象method・clientを登録し、未確定recordの受入と閲覧recordの改変を
+意図的に主張する二つの負例を指定assertionで拒否する。
+`enter_attract`のduration・再生時計の数値計算、allocator、公開prepare/retry/advance/abortの既存未証明境界は維持する。
+別の形式モデル、新しいassume、無条件のexternal bodyは追加しない。
 
 ### Retry の本番所有体
 

@@ -12,6 +12,104 @@ use crate::dynamics::FlightState;
 
 #[cfg(verus_only)]
 verus! {
+    fn verify_session_archived_record_ownership<'a>(
+        mut session: GameSession<'a>,
+        record: FlightRecord,
+    )
+        requires session.projection_valid(),
+    {
+        reveal(GameSession::lifecycle_globals_preserved);
+        reveal(GameSession::replay_changed);
+        reveal(GameSession::archived_replay_opened);
+        let ghost before = session;
+        let ghost provided = record;
+        let opened = session.open_archived_replay(record);
+        match opened {
+            Ok(()) => {
+                assert(matches!(before.phase(), SessionPhase::Title | SessionPhase::Result));
+                assert(provided.finalization().is_some());
+                assert(*session.flight_record().unwrap() == provided);
+                assert(session.playback_record() == session.flight_record());
+                let returned = session.leave_replay();
+                assert(returned == Ok(()));
+                assert(session.lifecycle == SessionLifecycle::Title);
+                assert(session.flight_record().is_none());
+                assert(session.playback_record().is_none());
+            },
+            Err(_) => { assert(session == before); },
+        }
+        assert(session.attract_record == before.attract_record);
+        assert(session.countdown_token == before.countdown_token);
+    }
+
+    fn verify_session_result_record_transfer<'a>(mut session: GameSession<'a>)
+        requires session.projection_valid(),
+    {
+        reveal(GameSession::lifecycle_globals_preserved);
+        reveal(GameSession::result_record_taken);
+        let ghost before = session;
+        let taken = session.take_finalized_result_record();
+        match taken {
+            Ok(record) => {
+                assert(before.phase() == SessionPhase::Result);
+                assert(record.finalization().is_some());
+                assert(before.flight_record() == Some(&record));
+                assert(session.lifecycle == SessionLifecycle::Title);
+                assert(session.flight_record().is_none());
+                assert(session.playback_record().is_none());
+            },
+            Err(_) => { assert(session == before); },
+        }
+        assert(session.attract_record == before.attract_record);
+        assert(session.countdown_token == before.countdown_token);
+    }
+
+    fn verify_session_demo_record_ownership<'a>(
+        record: FlightRecord,
+        replacement: FlightRecord,
+        mut playback: GameSession<'a>,
+    )
+        requires playback.projection_valid(),
+    {
+        reveal(GameSession::attract_installed);
+        reveal(GameSession::attract_returned);
+        let mut installed = GameSession::new();
+        let ghost provided = record;
+        let outcome = installed.install_attract_record(record);
+        assert(installed.lifecycle == SessionLifecycle::Title);
+        assert(installed.flight_record().is_none());
+        assert(installed.playback_record().is_none());
+        if outcome.is_ok() {
+            assert(provided.finalization().is_some());
+            assert(installed.attract_record == Some(provided));
+            let ghost sealed = installed;
+            let overwritten = installed.install_attract_record(replacement);
+            assert(overwritten == Err(GameSessionError::InvalidTransition));
+            assert(installed == sealed);
+        } else {
+            assert(provided.finalization().is_none());
+            assert(installed.attract_record.is_none());
+        }
+        let ghost before = playback;
+        let returned = playback.leave_attract();
+        proof {
+            match before.lifecycle {
+                SessionLifecycle::Attract { record, .. } => {
+                    assert(before.playback_record() == Some(&record));
+                    assert(returned == Ok(()));
+                    assert(playback.lifecycle == SessionLifecycle::Title);
+                    assert(playback.attract_record == Some(record));
+                    assert(playback.playback_record().is_none());
+                },
+                _ => {
+                    assert(returned == Err(GameSessionError::InvalidTransition));
+                    assert(playback == before);
+                },
+            }
+        }
+        assert(playback.countdown_token == before.countdown_token);
+    }
+
     fn verify_game_session_configured_lifecycle<'a>(
         configuration: GameSessionConfiguration<'a>,
         record: FlightRecord,
