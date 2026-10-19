@@ -3753,6 +3753,7 @@ mod tests {
         .init_resource::<super::super::screen_render::NativeScreenRender>()
         .init_resource::<super::timing::TimingReadout>()
         .init_resource::<bevy::light::DirectionalLightShadowMap>()
+        .init_resource::<Assets<Mesh>>()
         .init_resource::<Assets<super::WaterMaterial>>()
         .init_resource::<Assets<Image>>()
         .init_resource::<InputFocus>()
