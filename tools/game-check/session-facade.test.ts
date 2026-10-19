@@ -9,9 +9,9 @@ import type { GameUiUpdate } from "../../web/src/generated/game-ui-effects.js";
 import { readContract } from "../game-ui-build/validate.js";
 
 initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url))) });
-const neutralTail = ({ controlLayout: "tail_incidence", noseUp: 0, turnRight: 0,
+const neutralTail = ({ controlLayout: "tail_incidence" as const, noseUp: 0, turnRight: 0,
   desiredPitchRateRadiansPerSecond: 0, desiredYawRateRadiansPerSecond: 0, pilotPositionCommand: { kind: "hold" as const } });
-const windRequest = { northMinimumMeters: -10, eastMinimumMeters: -10, altitudeMeters: 10, spacingMeters: 5 };
+const windRequest = { north_min_m: -10, east_min_m: -10, altitude_m: 10, spacing_m: 5 };
 
 function launch(facade: AppSessionFacade): void {
   facade.executeSharedSessionCommand({ kind: "open_setup" });
@@ -28,6 +28,32 @@ function advance(facade: AppSessionFacade): void {
 }
 
 describe("layout-discriminated application session facade", () => {
+  it.each(["tick", "action", "platform", "session", "record", "wind"] as const)("checks owner liveness after capturing input getters (%s)", (boundary) => {
+    const bridge = new HybridGameSessionBridge(0, 21, 22);
+    const facade = new TailAppSessionFacade(bridge, physics_hz());
+    const methods = { tick: "advance_tick_json", action: "game_ui_action_json", platform: "game_ui_view_revision",
+      session: "apply_game_ui_session_command_json", record: "apply_game_ui_record_action_json", wind: "flight_wind_grid_json" } as const;
+    const call = vi.spyOn(bridge, methods[boundary]);
+    const free = vi.spyOn(bridge, "free");
+    let reads = 0;
+    const dispose = (): void => { reads += 1; facade.dispose(); };
+    try {
+      expect(() => {
+        switch (boundary) {
+          case "tick": facade.flightPort.advanceTick({ ...neutralTail, get noseUp() { dispose(); return 0; } }); break;
+          case "action": facade.updateSharedUi({ get kind() { dispose(); return "toggle_technical" as const; } }, sharedGameUiPlatform()); break;
+          case "platform": facade.readSharedUi({ ...sharedGameUiPlatform(), get notification() { dispose(); return ""; } }); break;
+          case "session": facade.executeSharedSessionCommand({ get kind() { dispose(); return "open_setup" as const; } }); break;
+          case "record": facade.executeSharedRecordAction({ get kind() { dispose(); return "toggle_replay_playing" as const; } }); break;
+          case "wind": facade.queryWindGrid({ ...windRequest, get north_min_m() { dispose(); return -10; } }); break;
+        }
+      }).toThrow("disposed");
+      expect(reads).toBe(1);
+      expect(call).not.toHaveBeenCalled();
+      expect(free).toHaveBeenCalledTimes(1);
+    } finally { facade.dispose(); }
+  });
+
   it("preserves its observation through the raw Model and rejects plain or foreign datasets before a cursor read", () => {
     const bridge = new HybridGameSessionBridge(0, 21, 22);
     const facade = new TailAppSessionFacade(bridge, physics_hz());
@@ -221,11 +247,9 @@ describe("layout-discriminated application session facade", () => {
       const token = facade.captureQueryToken();
       const display = facade.queryRecordDisplay(0.005);
       expect(facade.acceptQuery(token, display)).toMatchObject({ kind: "accepted" });
-      expect(display.kind).toBe("tail_record");
-      expect(display.stamp.flight_time_s).toBe(0.005);
-      if (display.kind !== "tail_record") throw new Error("Expected saved tail display");
-      expect(display.finalization).toEqual(result.terminalSnapshot.frame.finalization);
-      expect(display.progress_m).toMatchObject({ kind: "unavailable" });
+      expect(display.flight_time_s).toBe(0.005);
+      expect(display.context.finalization.value).toEqual(result.terminalSnapshot.frame.finalization);
+      expect(display).not.toHaveProperty("progress_m");
       facade.executeSharedSessionCommand({ kind: "enter_replay" });
       liveSnapshot.mockClear();
       expect(facade.readPlaybackContext().control_layout).toBe("tail_incidence");
@@ -484,8 +508,8 @@ describe("layout-discriminated application session facade", () => {
         const observed = facade.readSharedUi(platform);
         const suffix = (["0_5", "1", "2"] as const)[code];
         const speeds = observed.panels.flatMap((panel) => panel.controls).filter((control) => control.id.startsWith("game-replay-speed-"));
-        expect(speeds.find((control) => control.id === `game-replay-speed-${suffix}`)?.selected).toBe(true);
-        expect(speeds.filter((control) => control.selected)).toHaveLength(1);
+        expect(speeds.find((control) => control.id === `game-replay-speed-${suffix}`)?.label).toBe(`● ${(["0.5×", "1×", "2×"] as const)[code]}`);
+        expect(speeds.filter((control) => control.label.startsWith("● "))).toHaveLength(1);
         expect(observed.view_revision).toBe(retained.view_revision);
         expect(facade.readPlaybackClock().rateCode).toBe(code);
       }

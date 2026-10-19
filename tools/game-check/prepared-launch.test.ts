@@ -6,7 +6,7 @@ import type { TailPreparedLaunchDocument } from "../../web/src/generated/tail-pr
 import { readContract } from "../game-ui-build/validate.js";
 
 initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url))) });
-const neutral = ({ controlLayout: "tail_incidence", noseUp: 0, turnRight: 0,
+const neutral = ({ controlLayout: "tail_incidence" as const, noseUp: 0, turnRight: 0,
   desiredPitchRateRadiansPerSecond: 0, desiredYawRateRadiansPerSecond: 0, pilotPositionCommand: { kind: "hold" as const } });
 
 describe("sealed initial launch presentation", () => {
@@ -22,7 +22,7 @@ describe("sealed initial launch presentation", () => {
         session.executeSharedSessionCommand({ kind: "prepare" });
         const initial = session.readPreparedLaunchPose();
         expect(initial).not.toBeNull();
-        expect(initial?.controls?.layout).toBe("tail_incidence");
+        expect(initial?.controls.layout).toBe("tail_incidence");
         const before = bridge.snapshot_json();
         const prepared = readContract<TailPreparedLaunchDocument>("tail_prepared", bridge.prepared_launch_snapshot_json());
         expect(prepared.preview.kind).toBe("prepared");
@@ -39,7 +39,10 @@ describe("sealed initial launch presentation", () => {
           throw new Error("Expected sealed preparation and its first live frame");
         }
         expect(live.frame.state).toEqual(prepared.preview.state);
-        expect(live.render_pose).toEqual(initial);
+        const { airspeedMetersPerSecond, windVelocityNedMetersPerSecond, ...initialPose } = initial;
+        expect(airspeedMetersPerSecond).toBeNull();
+        expect(windVelocityNedMetersPerSecond).toBeNull();
+        expect(live.render_pose).toMatchObject(initialPose);
         session.flightPort.advanceTick(neutral);
         session.executeSharedSessionCommand({ kind: "abort" });
         expect(session.readPreparedLaunchPose()).toBeNull();

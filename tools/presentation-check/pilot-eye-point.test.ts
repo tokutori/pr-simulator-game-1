@@ -57,7 +57,7 @@ describe("FRD camera basis", () => {
     const eye = flightRelativePose({
       ...currentFlightPoseFixture(),
       datumPositionNed: { north: 0, east: 0, down: -10.5 },
-      attitudeBodyToNed: frdEulerQuaternion(0, 0, heading),
+      attitudeBodyToNed: { ...frdEulerQuaternion(0, 0, heading) },
       pilotPositionMeters: 0,
       initialPilotPositionMeters: 0
     }, pilotEyePoseThree(syntheticPilotEyePoint(), 0));
@@ -117,7 +117,7 @@ describe("FRD camera basis", () => {
     const chase = flightRelativePose({
       ...currentFlightPoseFixture(),
       datumPositionNed,
-      attitudeBodyToNed: frdEulerQuaternion(roll, pitch, yaw),
+      attitudeBodyToNed: { ...frdEulerQuaternion(roll, pitch, yaw) },
       pilotPositionMeters: 0,
       initialPilotPositionMeters: 0
     }, poseFrdToThree(replayCameraPoseFrd("chase")));

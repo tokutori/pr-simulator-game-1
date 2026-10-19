@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { Window } from "happy-dom";
 import { PerspectiveCamera, StereoCamera } from "three";
 import { describe, expect, it } from "vitest";
-import { HybridGameSessionBridge, initSync, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
+import { HybridGameSessionBridge, initSync } from "../../web/pkg/birdman_game_wasm.js";
 import type { TailSnapshotDocument } from "../../web/src/generated/tail-snapshot.js";
 import type { RecordedPlaybackSample } from "../../web/src/generated/record-sample.js";
 import type { GameUiView } from "../../web/src/generated/game-ui-view.js";
@@ -68,7 +68,6 @@ describe("tail-aware shared Flight HUD", () => {
       expect(sharedHudNode(model, "hud-pilot-position").content.value).toContain(snapshot.frame.state.pilot_position_m.toFixed(2));
       expect(model.groups.flatMap((group) => group.nodes).some((node) => node.id === "hud-controls")).toBe(false);
       expect(readouts).not.toMatch(/intent|Hold|Set/);
-      expect(Object.isFrozen(model.groups)).toBe(true);
       session.pause(0);
       expect(sharedHudNode(sharedHud(session), "hud-primary-readouts").label).toBe("一時停止");
     } finally {

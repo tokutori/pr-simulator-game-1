@@ -87,7 +87,6 @@ OpenStreetMapの[ゲーム・シミュレーション向け帰属指針](https:/
 | `assets/test-fonts/FiraMono-subset.ttf` | Mozilla FoundationとTelefonica S.A.の著作物。[SIL Open Font License 1.1](assets/test-fonts/FiraMono-LICENSE.txt)。CPU試験専用であり、製品のフォント読込みとNative配布物には含めない。 |
 | `assets/earcut.LICENSE.txt` | GeoRust earcutのMITと、派生元MapboxのISCの両告知。ポリゴンの三角形分割に使用する。 |
 | `assets/ryu-js.LICENSE.txt` | ryu-jsのBoost Software License 1.0。数値の文字列変換に使用する。 |
-| `assets/game-ui-validators.LICENSE.txt` | AjvとesbuildのMIT。生成したUI検査コードに含まれる告知を保持する。 |
 | `assets/time.LICENSE.txt` | timeと有効な依存ライブラリのMITを選択した告知。保存日時の変換に使用する。 |
 
 WebのThree.js・SnabbdomとNativeのBevyを含む依存ライブラリにも、各ライセンスを適用する。

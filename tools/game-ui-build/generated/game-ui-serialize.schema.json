@@ -377,6 +377,123 @@
         }
       ]
     },
+    "ContentHash": {
+      "description": "Asset identity or implementation provenance of an environment definition.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Exact registered JSON bytes.",
+          "properties": {
+            "kind": {
+              "const": "asset_bytes",
+              "type": "string"
+            },
+            "sha256": {
+              "description": "SHA-256 digest of the immutable asset.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "sha256"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Shared provider implementation provenance.",
+          "properties": {
+            "kind": {
+              "const": "source_fingerprint",
+              "type": "string"
+            },
+            "sha256": {
+              "description": "SHA-256 fingerprint of the provider source.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "sha256"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Defined": {
+      "description": "Explicitly recorded or unavailable metadata.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "No recorded value is available.",
+          "properties": {
+            "kind": {
+              "const": "unavailable",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Value supplied by the registered environment.",
+          "properties": {
+            "kind": {
+              "const": "defined",
+              "type": "string"
+            },
+            "value": {
+              "$ref": "#/$defs/LocalNedFrameDocument"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Defined2": {
+      "description": "Explicitly recorded or unavailable metadata.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "No recorded value is available.",
+          "properties": {
+            "kind": {
+              "const": "unavailable",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Value supplied by the registered environment.",
+          "properties": {
+            "kind": {
+              "const": "defined",
+              "type": "string"
+            },
+            "value": {
+              "$ref": "#/$defs/SkyStateDocument"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "DifficultyPreset": {
       "description": "Named preset whose axes are resolved independently.",
       "oneOf": [
@@ -483,6 +600,142 @@
         }
       ]
     },
+    "EnvironmentBasisDocument": {
+      "description": "Evidence attached to a component; assumptions and tuning require explicit reasons.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Direct observation from one source snapshot.",
+          "properties": {
+            "description": {
+              "description": "What was observed, including measurement scope.",
+              "type": "string"
+            },
+            "kind": {
+              "const": "observed",
+              "type": "string"
+            },
+            "source_index": {
+              "description": "Index of the source snapshot.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "source_index",
+            "description"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Reproducible processing of identified sources.",
+          "properties": {
+            "kind": {
+              "const": "derived",
+              "type": "string"
+            },
+            "method": {
+              "description": "Transformation and applicability limitations.",
+              "type": "string"
+            },
+            "source_indices": {
+              "description": "Nonempty list of source snapshot indices.",
+              "items": {
+                "format": "uint32",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "kind",
+            "source_indices",
+            "method"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A model assumption unsupported by direct measurement.",
+          "properties": {
+            "kind": {
+              "const": "assumed",
+              "type": "string"
+            },
+            "rationale": {
+              "description": "Assumption and its applicable scope.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "rationale"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Deliberate gameplay or visual tuning.",
+          "properties": {
+            "kind": {
+              "const": "game_tuned",
+              "type": "string"
+            },
+            "rationale": {
+              "description": "Purpose and limitations of the tuning.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "rationale"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "EnvironmentContext": {
+      "description": "Origin of one environment snapshot.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "One application session observation.",
+          "properties": {
+            "kind": {
+              "const": "session",
+              "type": "string"
+            },
+            "phase": {
+              "$ref": "#/$defs/SessionPhaseDocument",
+              "description": "Named phase observed with the selected provider identity."
+            }
+          },
+          "required": [
+            "kind",
+            "phase"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Explicit immutable registry query.",
+          "properties": {
+            "kind": {
+              "const": "registry",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "EnvironmentIdentity": {
       "additionalProperties": false,
       "description": "Exact split-seed scenario identity shared by live and environment query boundaries.",
@@ -545,6 +798,300 @@
         "controller_profile_version",
         "seed_low",
         "seed_high"
+      ],
+      "type": "object"
+    },
+    "EnvironmentMetadata": {
+      "additionalProperties": false,
+      "description": "Representative values, spatial domain and source provenance of one provider.",
+      "properties": {
+        "content_hash": {
+          "$ref": "#/$defs/ContentHash",
+          "description": "Exact asset hash or implementation source fingerprint."
+        },
+        "ground_wind_normals": {
+          "description": "Recorded ground-wind normal observations.",
+          "items": {
+            "$ref": "#/$defs/GroundWindNormalDocument"
+          },
+          "type": "array"
+        },
+        "local_frame": {
+          "$ref": "#/$defs/Defined",
+          "description": "Recorded geographic origin and water reference."
+        },
+        "name": {
+          "description": "Registered human-readable environment name.",
+          "type": "string"
+        },
+        "provenance": {
+          "$ref": "#/$defs/EnvironmentProvenanceDocument",
+          "description": "Distinction between observed, derived, assumed and game-tuned values."
+        },
+        "representative_altitude_m": {
+          "description": "Representative height above the fixed water plane in metres.",
+          "format": "double",
+          "type": "number"
+        },
+        "representative_position_ned_m": {
+          "description": "Representative north/east/down position in metres.",
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "representative_velocity_ned_mps": {
+          "description": "Air velocity at the representative point in NED metres per second.",
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "sky": {
+          "$ref": "#/$defs/Defined2",
+          "description": "Recorded sky conditions without renderer fallback values."
+        },
+        "sources": {
+          "description": "Registered data sources and notices.",
+          "items": {
+            "$ref": "#/$defs/EnvironmentSourceDocument"
+          },
+          "type": "array"
+        },
+        "waves": {
+          "$ref": "#/$defs/WaveStateDocument",
+          "description": "Shared display-only wave conditions."
+        },
+        "wind_domain": {
+          "$ref": "#/$defs/WindDomain",
+          "description": "Physical wind coverage."
+        }
+      },
+      "required": [
+        "name",
+        "content_hash",
+        "local_frame",
+        "wind_domain",
+        "representative_position_ned_m",
+        "representative_altitude_m",
+        "representative_velocity_ned_mps",
+        "waves",
+        "sky",
+        "sources",
+        "ground_wind_normals",
+        "provenance"
+      ],
+      "type": "object"
+    },
+    "EnvironmentProjection": {
+      "description": "Registered environment availability without fallback to another identity.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "The current phase has no environment selection.",
+          "properties": {
+            "kind": {
+              "const": "no_selection",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The requested identity is not registered.",
+          "properties": {
+            "identity": {
+              "$ref": "#/$defs/EnvironmentIdentity",
+              "description": "Original identity retained without aliases."
+            },
+            "kind": {
+              "const": "unavailable",
+              "type": "string"
+            },
+            "source": {
+              "$ref": "#/$defs/EnvironmentSource",
+              "description": "Owner of the requested identity."
+            }
+          },
+          "required": [
+            "kind",
+            "source",
+            "identity"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Metadata from the registered provider used by flight preparation.",
+          "properties": {
+            "identity": {
+              "$ref": "#/$defs/EnvironmentIdentity",
+              "description": "Fully matched registered identity."
+            },
+            "kind": {
+              "const": "available",
+              "type": "string"
+            },
+            "metadata": {
+              "$ref": "#/$defs/EnvironmentMetadata",
+              "description": "Bounded descriptive metadata without the full wind grid."
+            },
+            "source": {
+              "$ref": "#/$defs/EnvironmentSource",
+              "description": "Owner of the resolved identity."
+            }
+          },
+          "required": [
+            "kind",
+            "source",
+            "identity",
+            "metadata"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "EnvironmentProvenanceDocument": {
+      "additionalProperties": false,
+      "description": "Required component provenance, with no implicit evidence classification.",
+      "properties": {
+        "local_frame": {
+          "$ref": "#/$defs/EnvironmentBasisDocument",
+          "description": "Origin and fixed-water datum basis."
+        },
+        "sky": {
+          "$ref": "#/$defs/EnvironmentBasisDocument",
+          "description": "Sun, cloud and visibility basis."
+        },
+        "waves": {
+          "$ref": "#/$defs/EnvironmentBasisDocument",
+          "description": "Effective fetch, wind history and visual detail basis."
+        },
+        "wind_grid": {
+          "$ref": "#/$defs/EnvironmentBasisDocument",
+          "description": "Entire wind grid, including spatial, vertical and temporal assumptions."
+        }
+      },
+      "required": [
+        "local_frame",
+        "wind_grid",
+        "waves",
+        "sky"
+      ],
+      "type": "object"
+    },
+    "EnvironmentSnapshot": {
+      "additionalProperties": false,
+      "description": "Versioned environment metadata without the full wind-grid samples.",
+      "properties": {
+        "context": {
+          "$ref": "#/$defs/EnvironmentContext",
+          "description": "Session or registry origin."
+        },
+        "projection": {
+          "$ref": "#/$defs/EnvironmentProjection",
+          "description": "Explicit availability of the requested registered environment."
+        },
+        "schema_version": {
+          "description": "Current environment snapshot wire version.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "schema_version",
+        "context",
+        "projection"
+      ],
+      "type": "object"
+    },
+    "EnvironmentSource": {
+      "description": "Owner whose selected environment is being observed.",
+      "oneOf": [
+        {
+          "const": "selected",
+          "description": "Current Flight Setup selection.",
+          "type": "string"
+        },
+        {
+          "const": "sealed",
+          "description": "Sealed flight configuration.",
+          "type": "string"
+        },
+        {
+          "const": "record",
+          "description": "Current finalized flight record.",
+          "type": "string"
+        },
+        {
+          "const": "archive",
+          "description": "Opened saved archive.",
+          "type": "string"
+        },
+        {
+          "const": "attract",
+          "description": "Independent demonstration record.",
+          "type": "string"
+        },
+        {
+          "const": "registry",
+          "description": "Explicit immutable registry query.",
+          "type": "string"
+        }
+      ]
+    },
+    "EnvironmentSourceDocument": {
+      "additionalProperties": false,
+      "description": "Attribution and identity for one offline input snapshot.",
+      "properties": {
+        "attribution": {
+          "description": "Required attribution and modification notice.",
+          "type": "string"
+        },
+        "input_sha256": {
+          "description": "Lowercase hexadecimal SHA-256 of the exact offline input bytes.",
+          "type": "string"
+        },
+        "license": {
+          "description": "License or public-data terms name.",
+          "type": "string"
+        },
+        "license_url": {
+          "description": "Primary URL describing the data's usage terms.",
+          "type": "string"
+        },
+        "title": {
+          "description": "Data or document title.",
+          "type": "string"
+        },
+        "url": {
+          "description": "Source URL, retained for traceability and never fetched by this codec.",
+          "type": "string"
+        },
+        "version": {
+          "description": "Dataset version, period or immutable publication identity.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "title",
+        "url",
+        "version",
+        "input_sha256",
+        "license",
+        "license_url",
+        "attribution"
       ],
       "type": "object"
     },
@@ -958,6 +1505,74 @@
           "type": "string"
         }
       ]
+    },
+    "FlightRenderPose": {
+      "additionalProperties": false,
+      "description": "Engine-independent presentation of one committed or recorded aircraft state.",
+      "properties": {
+        "airspeedMetersPerSecond": {
+          "description": "Airspeed used by the visual wing-flex model.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "attitudeBodyToNed": {
+          "$ref": "#/$defs/RenderAttitude",
+          "description": "Scalar-first body-to-NED orientation."
+        },
+        "controls": {
+          "$ref": "#/$defs/RenderTailControls",
+          "description": "Held physical control positions."
+        },
+        "datumPositionNed": {
+          "$ref": "#/$defs/RenderNedVector",
+          "description": "Fixed aircraft datum in NED metres."
+        },
+        "initialPilotPositionMeters": {
+          "description": "Pilot position at the beginning of this flight or record.",
+          "format": "double",
+          "type": "number"
+        },
+        "pilotPositionMeters": {
+          "description": "Current longitudinal pilot position.",
+          "format": "double",
+          "type": "number"
+        },
+        "simulationTimeSeconds": {
+          "description": "Shared simulation time for environmental animation.",
+          "format": "double",
+          "type": "number"
+        },
+        "tailGeometry": {
+          "$ref": "#/$defs/RenderTailGeometry",
+          "description": "Geometry resolved from the recorded model identity."
+        },
+        "windVelocityNedMetersPerSecond": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RenderNedVector"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Ambient wind at the composite centre of gravity."
+        }
+      },
+      "required": [
+        "datumPositionNed",
+        "attitudeBodyToNed",
+        "pilotPositionMeters",
+        "initialPilotPositionMeters",
+        "simulationTimeSeconds",
+        "airspeedMetersPerSecond",
+        "windVelocityNedMetersPerSecond",
+        "controls",
+        "tailGeometry"
+      ],
+      "type": "object"
     },
     "GameUiAction": {
       "description": "UI message whose handling is shared by native and browser adapters.",
@@ -3885,6 +4500,65 @@
       ],
       "type": "object"
     },
+    "GroundWindNormalDocument": {
+      "additionalProperties": false,
+      "description": "Monthly ground-station evidence, kept separate from a spatial lake-wind estimate.",
+      "properties": {
+        "first_year": {
+          "description": "Inclusive first year of the statistical period.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "last_year": {
+          "description": "Inclusive last year of the statistical period.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "mean_speed_mps": {
+          "description": "Mean scalar wind speed in m/s, not a mean velocity-vector magnitude.",
+          "format": "double",
+          "type": "number"
+        },
+        "measurement_scope": {
+          "description": "Observation height, averaging and site limitations, including unknowns.",
+          "type": "string"
+        },
+        "month": {
+          "description": "Calendar month in [1, 12].",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "prevailing_from_degrees": {
+          "description": "Most frequent meteorological from-direction, clockwise from north.",
+          "format": "double",
+          "type": "number"
+        },
+        "source_index": {
+          "description": "Index into the environment source list.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "station": {
+          "description": "Station name or stable identifier.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source_index",
+        "station",
+        "first_year",
+        "last_year",
+        "month",
+        "mean_speed_mps",
+        "prevailing_from_degrees",
+        "measurement_scope"
+      ],
+      "type": "object"
+    },
     "HudCue": {
       "description": "Stable identity for one independently configurable HUD cue.",
       "oneOf": [
@@ -4215,6 +4889,32 @@
         }
       ]
     },
+    "LocalNedFrameDocument": {
+      "additionalProperties": false,
+      "description": "Right-handed NED frame with down zero at the scenario's fixed water surface.",
+      "properties": {
+        "latitude_degrees": {
+          "description": "WGS84 origin latitude, in degrees.",
+          "format": "double",
+          "type": "number"
+        },
+        "longitude_degrees": {
+          "description": "WGS84 origin longitude, in degrees.",
+          "format": "double",
+          "type": "number"
+        },
+        "water_level_datum": {
+          "description": "Description of water-level datum and any geodetic approximation.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "latitude_degrees",
+        "longitude_degrees",
+        "water_level_datum"
+      ],
+      "type": "object"
+    },
     "MathFailureDocument": {
       "description": "Original mathematical failure.",
       "oneOf": [
@@ -4511,6 +5211,174 @@
       ],
       "type": "object"
     },
+    "RenderAttitude": {
+      "additionalProperties": false,
+      "description": "Scalar-first orientation components used by rendering APIs.",
+      "properties": {
+        "w": {
+          "description": "Scalar component.",
+          "format": "double",
+          "type": "number"
+        },
+        "x": {
+          "description": "Body x component.",
+          "format": "double",
+          "type": "number"
+        },
+        "y": {
+          "description": "Body y component.",
+          "format": "double",
+          "type": "number"
+        },
+        "z": {
+          "description": "Body z component.",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "w",
+        "x",
+        "y",
+        "z"
+      ],
+      "type": "object"
+    },
+    "RenderGeometryUnavailable": {
+      "description": "Geometry lookup failure carried to presentation adapters.",
+      "oneOf": [
+        {
+          "const": "unregistered_aircraft_geometry",
+          "description": "Model identifier or version is unregistered.",
+          "type": "string"
+        }
+      ]
+    },
+    "RenderNedVector": {
+      "additionalProperties": false,
+      "description": "Named NED vector used by rendering APIs.",
+      "properties": {
+        "down": {
+          "description": "Down component.",
+          "format": "double",
+          "type": "number"
+        },
+        "east": {
+          "description": "East component.",
+          "format": "double",
+          "type": "number"
+        },
+        "north": {
+          "description": "North component.",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "north",
+        "east",
+        "down"
+      ],
+      "type": "object"
+    },
+    "RenderTailControls": {
+      "additionalProperties": false,
+      "description": "Current two-tail layout and held incidence.",
+      "properties": {
+        "layout": {
+          "$ref": "#/$defs/TailControlLayoutDocument",
+          "description": "Physical layout."
+        },
+        "physicalIncidence": {
+          "$ref": "#/$defs/RenderTailIncidence",
+          "description": "Held physical incidence."
+        }
+      },
+      "required": [
+        "layout",
+        "physicalIncidence"
+      ],
+      "type": "object"
+    },
+    "RenderTailGeometry": {
+      "description": "Explicit geometry availability for current and imported model identities.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Registered physical geometry.",
+          "properties": {
+            "kind": {
+              "const": "available",
+              "type": "string"
+            },
+            "value": {
+              "$ref": "#/$defs/RenderTailGeometryValue",
+              "description": "Model-derived presentation parameters."
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The selected model has no registered presentation.",
+          "properties": {
+            "kind": {
+              "const": "unavailable",
+              "type": "string"
+            },
+            "reason": {
+              "$ref": "#/$defs/RenderGeometryUnavailable",
+              "description": "Reason for the absent geometry."
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "RenderTailGeometryValue": {
+      "additionalProperties": false,
+      "description": "Registered tail presentation parameters.",
+      "properties": {
+        "horizontalTailArmMeters": {
+          "description": "Aft distance to the horizontal tail's physical quarter-chord pivot.",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "horizontalTailArmMeters"
+      ],
+      "type": "object"
+    },
+    "RenderTailIncidence": {
+      "additionalProperties": false,
+      "description": "Physical tail incidence in the renderer's public units.",
+      "properties": {
+        "horizontalTailRadians": {
+          "description": "Horizontal tail angle in radians.",
+          "format": "double",
+          "type": "number"
+        },
+        "verticalTailRadians": {
+          "description": "Vertical tail angle in radians.",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "horizontalTailRadians",
+        "verticalTailRadians"
+      ],
+      "type": "object"
+    },
     "ReplayCameraView": {
       "additionalProperties": false,
       "description": "Recorded camera projection; unavailable fixed points retain the existing Chase fallback.",
@@ -4528,9 +5396,8 @@
             }
           ]
         },
-        "initial_pilot_position_m": {
-          "format": "double",
-          "type": "number"
+        "render_pose": {
+          "$ref": "#/$defs/FlightRenderPose"
         },
         "sample": {
           "$ref": "#/$defs/RecordedPlaybackSample"
@@ -4538,7 +5405,7 @@
       },
       "required": [
         "sample",
-        "initial_pilot_position_m",
+        "render_pose",
         "camera",
         "cinematic"
       ],
@@ -5191,6 +6058,138 @@
         }
       ]
     },
+    "SessionLifecycleDocument": {
+      "additionalProperties": false,
+      "description": "Runtime lifecycle values obtained from one session observation.",
+      "properties": {
+        "can_resume": {
+          "description": "Whether the current pause conditions admit an explicit resume.",
+          "type": "boolean"
+        },
+        "control_mode_code": {
+          "description": "Manual, Shared or Automatic selection.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "countdown_remaining_seconds": {
+          "description": "Rounded-up countdown seconds, or zero outside Countdown.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "phase": {
+          "$ref": "#/$defs/SessionPhaseDocument",
+          "description": "Current named phase."
+        }
+      },
+      "required": [
+        "phase",
+        "control_mode_code",
+        "countdown_remaining_seconds",
+        "can_resume"
+      ],
+      "type": "object"
+    },
+    "SessionPhaseDocument": {
+      "description": "Named application phase shared by runtime output documents.",
+      "oneOf": [
+        {
+          "const": "title",
+          "description": "Title and saved-record selection.",
+          "type": "string"
+        },
+        {
+          "const": "flight_setup",
+          "description": "Flight configuration.",
+          "type": "string"
+        },
+        {
+          "const": "briefing_preparing",
+          "description": "Resource preparation in progress.",
+          "type": "string"
+        },
+        {
+          "const": "briefing_ready",
+          "description": "Prepared flight awaiting launch.",
+          "type": "string"
+        },
+        {
+          "const": "countdown",
+          "description": "Timed launch countdown.",
+          "type": "string"
+        },
+        {
+          "const": "flight_running",
+          "description": "Running flight.",
+          "type": "string"
+        },
+        {
+          "const": "flight_paused",
+          "description": "Paused flight.",
+          "type": "string"
+        },
+        {
+          "const": "result",
+          "description": "Finalized flight result.",
+          "type": "string"
+        },
+        {
+          "const": "briefing_failed",
+          "description": "Preparation failed with a retained reason.",
+          "type": "string"
+        },
+        {
+          "const": "replay",
+          "description": "Recorded flight playback.",
+          "type": "string"
+        },
+        {
+          "const": "attract",
+          "description": "Independent demonstration playback.",
+          "type": "string"
+        }
+      ]
+    },
+    "SkyStateDocument": {
+      "additionalProperties": false,
+      "description": "Fixed sky inputs in local geographical coordinates, independent of a 3D engine.",
+      "properties": {
+        "cloud_base_m": {
+          "description": "Cloud-base height above the fixed water surface, in metres.",
+          "format": "double",
+          "type": "number"
+        },
+        "cloud_fraction": {
+          "description": "Fractional cloud coverage, in [0, 1].",
+          "format": "double",
+          "type": "number"
+        },
+        "sun_azimuth_degrees": {
+          "description": "Direction toward the sun, clockwise from north, in [0, 360) degrees.",
+          "format": "double",
+          "type": "number"
+        },
+        "sun_elevation_degrees": {
+          "description": "Sun elevation above the horizontal, in [-90, 90] degrees.",
+          "format": "double",
+          "type": "number"
+        },
+        "visibility_m": {
+          "description": "Positive visibility distance, in metres.",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "sun_azimuth_degrees",
+        "sun_elevation_degrees",
+        "cloud_fraction",
+        "cloud_base_m",
+        "visibility_m"
+      ],
+      "type": "object"
+    },
     "SummaryDocument": {
       "additionalProperties": false,
       "description": "Aggregate query with the exact record context and physics frequency.",
@@ -5285,6 +6284,27 @@
       ],
       "type": "object"
     },
+    "TailControlAxesDocument": {
+      "additionalProperties": false,
+      "description": "Pitch and yaw values in the units declared by their containing field.",
+      "properties": {
+        "pitch": {
+          "description": "Horizontal-tail control axis.",
+          "format": "double",
+          "type": "number"
+        },
+        "yaw": {
+          "description": "Vertical-tail control axis.",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "pitch",
+        "yaw"
+      ],
+      "type": "object"
+    },
     "TailControlFailureDocument": {
       "description": "Original two-tail control failure.",
       "oneOf": [
@@ -5340,6 +6360,55 @@
           "type": "string"
         }
       ]
+    },
+    "TailControlProfileDocument": {
+      "additionalProperties": false,
+      "description": "Resolved controller limits supplied to input adapters.",
+      "properties": {
+        "control_layout": {
+          "$ref": "#/$defs/TailControlLayoutDocument",
+          "description": "Current physical control layout."
+        },
+        "controller_profile_id": {
+          "description": "Registered controller identifier.",
+          "type": "string"
+        },
+        "controller_profile_version": {
+          "description": "Registered controller version.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "desired_body_rate_limit_rad_s": {
+          "$ref": "#/$defs/TailControlAxesDocument",
+          "description": "Desired angular-rate limits in radians per second."
+        },
+        "feedback_gain_seconds": {
+          "$ref": "#/$defs/TailControlAxesDocument",
+          "description": "Feedback gains in seconds."
+        },
+        "maximum_slew_rad_s": {
+          "description": "Maximum physical incidence rate in radians per second.",
+          "format": "double",
+          "type": "number"
+        },
+        "schema_version": {
+          "description": "Current input document version.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "schema_version",
+        "control_layout",
+        "controller_profile_id",
+        "controller_profile_version",
+        "desired_body_rate_limit_rad_s",
+        "feedback_gain_seconds",
+        "maximum_slew_rad_s"
+      ],
+      "type": "object"
     },
     "TailFlightRecordFinalizationDocument": {
       "additionalProperties": false,
@@ -5511,12 +6580,9 @@
           "$ref": "#/$defs/TailControlLayoutDocument",
           "description": "Current two-tail layout."
         },
-        "phase_code": {
-          "description": "Current domain phase, including phases without a prepared projection.",
-          "format": "uint32",
-          "maximum": 10,
-          "minimum": 0,
-          "type": "integer"
+        "phase": {
+          "$ref": "#/$defs/SessionPhaseDocument",
+          "description": "Current domain phase, including phases without a prepared projection."
         },
         "preview": {
           "$ref": "#/$defs/TailPreparedLaunchFrame",
@@ -5533,7 +6599,7 @@
       "required": [
         "schema_version",
         "control_layout",
-        "phase_code",
+        "phase",
         "preview"
       ],
       "type": "object"
@@ -5567,6 +6633,10 @@
               "const": "prepared",
               "type": "string"
             },
+            "render_pose": {
+              "$ref": "#/$defs/FlightRenderPose",
+              "description": "Renderer-ready sealed initial state."
+            },
             "scenario": {
               "$ref": "#/$defs/EnvironmentIdentity",
               "description": "Sealed scenario identity."
@@ -5580,7 +6650,8 @@
             "kind",
             "scenario",
             "control_identity",
-            "state"
+            "state",
+            "render_pose"
           ],
           "type": "object"
         }
@@ -5644,12 +6715,20 @@
           "$ref": "#/$defs/TailFrameDocument",
           "description": "Projection for the current menu, live flight or terminal phase."
         },
-        "phase_code": {
-          "description": "Domain phase projected by the platform adapter.",
-          "format": "uint32",
-          "maximum": 8,
-          "minimum": 0,
-          "type": "integer"
+        "phase": {
+          "$ref": "#/$defs/SessionPhaseDocument",
+          "description": "Current named domain phase."
+        },
+        "render_pose": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FlightRenderPose"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Renderer-ready projection of the same committed state."
         },
         "scenario": {
           "anyOf": [
@@ -5673,10 +6752,11 @@
       "required": [
         "schema_version",
         "control_layout",
-        "phase_code",
+        "phase",
         "control_mode_code",
         "scenario",
         "control_identity",
+        "render_pose",
         "frame"
       ],
       "type": "object"
@@ -5916,6 +6996,45 @@
         }
       ]
     },
+    "WaveStateDocument": {
+      "additionalProperties": false,
+      "description": "Stable rendering inputs; waves do not change the physics contact surface.",
+      "properties": {
+        "detail_amplitude_scale": {
+          "description": "Render-detail amplitude multiplier, in (0, 3].",
+          "format": "double",
+          "type": "number"
+        },
+        "fetch_m": {
+          "description": "Effective fetch, in metres, within the renderer's 0..50 km range.",
+          "format": "double",
+          "type": "number"
+        },
+        "pattern_seed": {
+          "description": "Explicit deterministic pattern seed.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "wind_velocity_ne_mps": {
+          "description": "Horizontal wind history used for the wave approximation, in N/E m/s.",
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        }
+      },
+      "required": [
+        "wind_velocity_ne_mps",
+        "fetch_m",
+        "detail_amplitude_scale",
+        "pattern_seed"
+      ],
+      "type": "object"
+    },
     "WeatherClass": {
       "description": "Weather classification attached to a versioned scenario catalog.",
       "oneOf": [
@@ -5977,6 +7096,61 @@
         "projection"
       ],
       "type": "object"
+    },
+    "WindDomain": {
+      "description": "Spatial coverage of the shared physical wind provider.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Spatially uniform wind.",
+          "properties": {
+            "kind": {
+              "const": "uniform",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Closed bounds of the registered wind grid.",
+          "properties": {
+            "kind": {
+              "const": "grid",
+              "type": "string"
+            },
+            "maximum_ned_m": {
+              "description": "Maximum north/east/down coordinate in metres.",
+              "items": {
+                "format": "double",
+                "type": "number"
+              },
+              "maxItems": 3,
+              "minItems": 3,
+              "type": "array"
+            },
+            "minimum_ned_m": {
+              "description": "Minimum north/east/down coordinate in metres.",
+              "items": {
+                "format": "double",
+                "type": "number"
+              },
+              "maxItems": 3,
+              "minItems": 3,
+              "type": "array"
+            }
+          },
+          "required": [
+            "kind",
+            "minimum_ned_m",
+            "maximum_ned_m"
+          ],
+          "type": "object"
+        }
+      ]
     },
     "WindFailureDocument": {
       "description": "Original wind-field construction or sampling failure.",

@@ -129,7 +129,7 @@ describe("Flight controller shared stop diagnosis", () => {
     expect(trial.effects()).toEqual([expect.objectContaining({ type: "shared-game-session-command", command: { kind: "abort" } })]);
     const requestId = trial.model().pendingGameRequestId;
     if (requestId === null) throw new Error("Missing Abort request");
-    expect(retained.kind).toBe("tail_flight");
+    expect(retained.phase).toBe("flight_running");
     trial.facade.executeSharedSessionCommand({ kind: "abort" });
     trial.controller.reset(trial.session.readSnapshot());
     trial.update({ type: "game-operation-completed", requestId, ...trial.facade.readGameSessionProjection() });
@@ -142,7 +142,7 @@ describe("Flight controller shared stop diagnosis", () => {
     const replacement = trial.bind();
     trial.controller.reset(trial.session.readSnapshot(), replacement.port);
     trial.update({ type: "flight-controller-ready", identity: replacement.identity });
-    trial.syncPhase(5);
+    trial.syncPhase("flight_running");
     expect(trial.model().flightExecution).toEqual({ kind: "ready", identity: replacement.identity });
     const hud = createFlightUiHudModel(trial.model());
     if (hud === null) throw new Error("Missing shared replacement Flight HUD");

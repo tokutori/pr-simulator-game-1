@@ -114,9 +114,9 @@ describe("same-build Rust/WASM generated DTO connections", () => {
       expect(document.samples).toHaveLength(ticks + 1);
       expect(viewer.session.readRecordSummary().summary.sample_count).toBe(ticks + 1);
       expect(viewer.session.queryRecordSample(ticks / 200).flight_time_s).toBe(ticks / 200);
-      expect(viewer.session.exportRecordJson()).toBe(original);
+      expect(viewer.session.readFlightLog("json")).toBe(original);
       viewer.session.executeSharedSessionCommand({ kind: "leave_replay" });
-      expect(() => viewer.session.openArchive("{malformed archive")).toThrow();
+      expect(() => { viewer.session.openArchive("{malformed archive"); }).toThrow();
       expect(viewer.session.readLifecycle().phase).toBe("title");
     } finally { source.session.dispose(); viewer.session.dispose(); }
   });

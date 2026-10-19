@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { HybridGameSessionBridge, initSync, physics_hz, ScreenRenderAutoBridge } from "../../web/pkg/birdman_game_wasm.js";
-import { parseScreenRenderAutoSnapshot } from "../../web/src/render/contracts/screen-render-auto.js";
+import type { ScreenRenderAutoSnapshot } from "../../web/src/generated/screen-render-auto.js";
 import { TailAppSessionFacade } from "../../web/src/app/session-facade.js";
 import type { FlightRecordHudProfileDocument } from "../../web/src/generated/record-context.js";
 import type { SessionPhase } from "../../web/src/app/session-snapshot.js";
@@ -54,6 +54,15 @@ export function sharedGameUiPlatform(overrides: Partial<GameUiPlatformInput> = {
   });
 }
 
+export function screenRenderAutoSnapshotReader(policy: ScreenRenderAutoBridge): () => ScreenRenderAutoSnapshot {
+  let previous: { readonly json: string; readonly value: ScreenRenderAutoSnapshot } | null = null;
+  return () => {
+    const json = policy.snapshot_json();
+    if (previous === null || previous.json !== json) previous = { json, value: JSON.parse(json) as ScreenRenderAutoSnapshot };
+    return previous.value;
+  };
+}
+
 export function sharedScreenRenderSnapshot(scale: "100" | "75" | "50" = "100", quality: LakeWaterQuality = "high"): GameUiPlatformInput["screen_render_scale"] {
   const bridge = new ScreenRenderAutoBridge();
   try {
@@ -64,7 +73,7 @@ export function sharedScreenRenderSnapshot(scale: "100" | "75" | "50" = "100", q
       if (requestedQuality === undefined) throw new Error("Missing requested water quality");
       bridge.applied(bridge.requested_epoch(), Number(scale), bridge.requested_shadow_map_size(), requestedQuality, 0);
     }
-    return parseScreenRenderAutoSnapshot(bridge.snapshot_json());
+    return screenRenderAutoSnapshotReader(bridge)();
   } finally { bridge.free(); }
 }
 
@@ -151,8 +160,8 @@ export function currentSharedGameUiFixture(phase: SessionPhase = "title", option
   return withSharedGameUiSession(phase, options, (session, platform) => session.readSharedUi(platform));
 }
 
-export function currentGameSessionProjectionFixture(phase: SessionPhase, options: SharedGameUiFixtureOptions = {}): TailGameSessionProjection {
-  return withSharedGameUiSession(phase, options, session => readRuntimeSessionProjection(session));
+export function currentGameSessionProjectionFixture<Phase extends SessionPhase>(phase: Phase, options: SharedGameUiFixtureOptions = {}): TailGameSessionProjection & Readonly<{ phase: Phase }> {
+  return withSharedGameUiSession(phase, options, session => readRuntimeSessionProjection(session)) as TailGameSessionProjection & Readonly<{ phase: Phase }>;
 }
 
 export function currentSharedHudFixture(options: SharedGameUiFixtureOptions = {}): FlightHudModel {

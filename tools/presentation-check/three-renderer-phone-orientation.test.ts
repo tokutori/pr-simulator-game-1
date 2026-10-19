@@ -100,7 +100,7 @@ describe("Phone VR browser orientation through the Three adapter and StereoEffec
     bundle.renderer.setFlightPose({
       ...currentFlightPoseFixture(),
       datumPositionNed: { north: 0, east: 0, down: -20 },
-      attitudeBodyToNed: IDENTITY_POSE.orientation,
+      attitudeBodyToNed: { ...IDENTITY_POSE.orientation },
       pilotPositionMeters: 0,
       initialPilotPositionMeters: 0
     });

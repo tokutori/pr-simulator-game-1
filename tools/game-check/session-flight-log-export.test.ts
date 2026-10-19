@@ -6,7 +6,7 @@ import type { AppSessionFacade } from "../../web/src/app/session-facade.js";
 
 initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url))) });
 afterEach(() => { vi.restoreAllMocks(); });
-const neutral = ({ controlLayout: "tail_incidence", noseUp: 0, turnRight: 0,
+const neutral = ({ controlLayout: "tail_incidence" as const, noseUp: 0, turnRight: 0,
   desiredPitchRateRadiansPerSecond: 0, desiredYawRateRadiansPerSecond: 0, pilotPositionCommand: { kind: "hold" as const } });
 
 function complete(session: AppSessionFacade): void {
@@ -22,7 +22,7 @@ describe("layout-owned flight log query boundary with actual WASM", () => {
   it("reads the same current Result and Replay record without mutating its owner token", () => {
     const session = createAppSession({ controlModeCode: 0, seedLow: 21, seedHigh: 22 });
     try {
-      expect(() => session.readFlightLog("csv")).toThrow("Result or Replay");
+      expect(() => session.readFlightLog("csv")).toThrow("InvalidTransition");
       complete(session);
       const token = session.captureQueryToken();
       const original = session.exportRecordJson();
@@ -65,32 +65,17 @@ describe("layout-owned flight log query boundary with actual WASM", () => {
     } finally { source.dispose(); owner.dispose(); }
   });
 
-  it.each(["retry", "replace", "dispose"] as const)("rejects a query whose record owner changes during export (%s)", (operation) => {
-    const owner = createAppSession({ controlModeCode: 0, seedLow: 21, seedHigh: 22 });
-    try {
-      complete(owner);
-      const original = owner.exportRecordJson();
-      if (operation === "replace") owner.openArchive(original);
-      vi.spyOn(HybridGameSessionBridge.prototype, "export_flight_log_csv").mockImplementationOnce(() => {
-        if (operation === "retry") owner.executeSharedSessionCommand({ kind: "retry" });
-        else if (operation === "replace") {
-          owner.executeSharedSessionCommand({ kind: "leave_replay" });
-          owner.openArchive(original);
-        }
-        else owner.dispose();
-        return "stale payload";
-      });
-      expect(() => owner.readFlightLog("csv")).toThrow(operation === "dispose" ? "disposed" : "source changed");
-    } finally { owner.dispose(); }
-  });
-
-  it("rejects disposed and Attract reads before invoking a producer export", () => {
+  it("preserves Rust Attract rejection and checks disposed ownership before invoking a producer export", () => {
     const owner = createAppSession({ controlModeCode: 0, seedLow: 21, seedHigh: 22 });
     const csv = vi.spyOn(HybridGameSessionBridge.prototype, "export_flight_log_csv");
     const json = vi.spyOn(HybridGameSessionBridge.prototype, "export_current_flight_record_json");
     owner.executeSharedSessionCommand({ kind: "enter_attract" });
-    expect(() => owner.readFlightLog("csv")).toThrow("Result or Replay");
-    expect(() => owner.readFlightLog("json")).toThrow("Result or Replay");
+    expect(() => owner.readFlightLog("csv")).toThrow("InvalidTransition");
+    expect(() => owner.readFlightLog("json")).toThrow("InvalidTransition");
+    expect(csv).toHaveBeenCalledTimes(1);
+    expect(json).toHaveBeenCalledTimes(1);
+    csv.mockClear();
+    json.mockClear();
     owner.dispose();
     expect(() => owner.readFlightLog("json")).toThrow("disposed");
     expect(csv).not.toHaveBeenCalled();

@@ -63,10 +63,10 @@ describe("browser cache to Rust session boundary", () => {
       for (let roundTrip = 0; roundTrip < 2; roundTrip += 1) {
         const before = readState();
         event("pagehide", true);
-        expect(session.phase_code()).toBe(6);
+        expect(pagePort(session).phase()).toBe("flight_paused");
         controller.onFrame(40_000 + roundTrip * 50_000);
         event("pageshow", true);
-        expect(session.phase_code()).toBe(6);
+        expect(pagePort(session).phase()).toBe("flight_paused");
         expect(session.can_resume()).toBe(false);
         controller.onFrame(40_010 + roundTrip * 50_000);
         expect(session.can_resume()).toBe(true);
@@ -104,7 +104,7 @@ describe("browser cache to Rust session boundary", () => {
       const event = new window.Event("pagehide");
       Object.defineProperty(event, "persisted", { value: true });
       window.dispatchEvent(event);
-      expect(session.phase_code()).toBe(3);
+      expect(pagePort(session).phase()).toBe("briefing_ready");
       expect(synchronize).toHaveBeenCalledOnce();
       expect(session.observe_countdown(token, 1, true)).toBe(0);
     } finally {

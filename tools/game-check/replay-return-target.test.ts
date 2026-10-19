@@ -52,7 +52,7 @@ describe("Rust-owned Replay exit projection", () => {
   it("requires a return target only in the immutable Replay state", () => {
     expectTypeOf<Extract<GameSessionUiState, { phase: "replay" }>["returnTarget"]>().toEqualTypeOf<ReplayReturnTarget>();
     expectTypeOf<Extract<TailGameSessionProjection, { phase: "replay" }>["returnTarget"]>().toEqualTypeOf<ReplayReturnTarget>();
-    expectTypeOf<Extract<GameSessionUiState, { phase: "title" }>>().not.toHaveProperty("returnTarget");
+    expectTypeOf<Exclude<GameSessionUiState, { phase: "replay" }>>().not.toHaveProperty("returnTarget");
   });
 
   it("labels current Replay for Result and imported archives for Title in every presentation and view", () => {

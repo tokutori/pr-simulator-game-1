@@ -6,7 +6,7 @@ import { projectSharedFlightHudModel } from "../../web/src/presentation/flight-h
 
 describe("shared flight HUD instruments", () => {
   it("preserves the authoritative Rust nodes and layout without independent telemetry or policy", () => {
-    withSharedGameUiSession(5, {}, (session, platform) => {
+    withSharedGameUiSession("flight_running", {}, (session, platform) => {
       const view = session.readSharedUi(platform);
       if (view.hud === null) throw new Error("Missing shared HUD");
       const model = projectSharedFlightHudModel(view.hud, view.theme);
@@ -34,7 +34,7 @@ describe("shared flight HUD instruments", () => {
 
   it("receives Custom cue visibility and FlightPathOnly geometry from the Rust owner", () => {
     const model = currentSharedHudFixture({ informationCode: 4, hudProfile: {
-      telemetry: false, attitude: false, wind: true, flightPath: true, angleOfAttack: true, warnings: true
+      telemetry: false, attitude: false, wind: true, flight_path: true, angle_of_attack: true, warnings: true
     } });
     const contents = sharedHudNodes(model).map((node) => node.content);
     expect(contents.some((content) => content.kind === "heading_tape")).toBe(false);

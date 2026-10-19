@@ -89,7 +89,7 @@ function pilotCameraForFlight(
   const flight: FlightRenderPose = {
     ...currentFlightPoseFixture(),
     datumPositionNed: { north, east, down: -height },
-    attitudeBodyToNed: bodyToNed,
+    attitudeBodyToNed: { ...bodyToNed },
     pilotPositionMeters: 0,
     initialPilotPositionMeters: 0
   };

@@ -21,7 +21,7 @@ export function contractValidator<Value>(key: typeof schemaEntries[number]["key"
   return validate;
 }
 
-export function readContract<Value>(key: typeof schemaEntries[number]["key"], json: string): Value {
+export function readContract<Value>(key: typeof schemaEntries[number]["key"], json: string): Readonly<Value> {
   const value: unknown = JSON.parse(json);
   const validate = contractValidator<Value>(key);
   if (!validate(value)) throw new Error(`${key}: ${validator.errorsText(validate.errors)}`);

@@ -49,8 +49,8 @@ describe("Screen UI to current WebAssembly GameSession transitions", () => {
     const session = createAppSession({ controlModeCode: 0, seedLow: 21, seedHigh: 22 });
     try {
       launchCurrentSession(session);
-      session.flightPort.advance_tick_json(neutralTailInput);
-      session.flightPort.advance_tick_json(neutralTailInput);
+      session.flightPort.advanceTick(neutralTailInput);
+      session.flightPort.advanceTick(neutralTailInput);
       session.executeSharedSessionCommand({ kind: "abort" });
       session.executeSharedSessionCommand({ kind: "enter_replay" });
       session.setPlaybackPlaying(true);
@@ -81,7 +81,7 @@ describe("Screen UI to current WebAssembly GameSession transitions", () => {
     const resyncFailure = failure === "resync" || failure === "resync_retry";
     try {
       launchCurrentSession(session);
-      session.flightPort.advance_tick_json(neutralTailInput);
+      session.flightPort.advanceTick(neutralTailInput);
       session.executeSharedSessionCommand({ kind: "abort" });
       const initial: AppModel = { ...createInitialAppModel(), presentation: { type: "ready", mode: "screen" } };
       const entered = updateApp(initial, { type: "game-session-synced", ...readRuntimeSessionProjection(session) });
@@ -102,7 +102,7 @@ describe("Screen UI to current WebAssembly GameSession transitions", () => {
       const operation = requested.effects.find((effect) => effect.type === "shared-game-session-command");
       if (operation?.type !== "shared-game-session-command") throw new Error("Result did not request Retry");
       expect(operation.command).toEqual({ kind: "retry" });
-      const before = session.flightPort.snapshot_json();
+      const before = session.flightPort.readSnapshot();
       const record = session.exportRecordJson();
       const token = session.captureQueryToken();
       if (failure === "display") {
@@ -135,13 +135,13 @@ describe("Screen UI to current WebAssembly GameSession transitions", () => {
         sample: oldSample }).model).toBe(rejected.model);
       if (failure === "display") {
         expect(session.readLifecycle().phase).toBe("briefing_ready");
-        expect(rejected.model.gameSession.kind).toBe("briefing-ready");
+        expect(rejected.model.gameSession.phase).toBe("briefing_ready");
         expect(rejected.effects).toEqual([]);
       } else {
         expect(session.readLifecycle().phase).toBe("result");
-        expect(session.flightPort.snapshot_json()).toBe(before);
+        expect(session.flightPort.readSnapshot()).toEqual(before);
         expect(session.exportRecordJson()).toBe(record);
-        expect(rejected.model.gameSession.kind).toBe("result");
+        expect(rejected.model.gameSession.phase).toBe("result");
         expect(rejected.model.resultTab).toBe("summary");
         expect(rejected.model.analysisCursorTimeSeconds).toBe(0);
         {
@@ -196,7 +196,7 @@ describe("Screen UI to current WebAssembly GameSession transitions", () => {
           if (continuedCursor?.type !== "load-flight-analysis-cursor") throw new Error("Failed Retry did not allow Analysis seek");
           model = updateApp(continued.model, { type: "flight-analysis-cursor-loaded", requestId: continuedCursor.requestId,
             sample: session.queryAnalysisCursor(continuedCursor.timeSeconds, currentDataset) }).model;
-          expect(analysisCursorData(model.analysisCursor)?.timeSeconds).toBe(0.005);
+          expect(analysisCursorData(model.analysisCursor)?.flight_time_s).toBe(0.005);
           const retryAgain = sharedUiTransition(session, model, { type: "activate", controlId: "game-result-retry" });
           expect(retryAgain.effects).toEqual([{ type: "shared-game-session-command", command: { kind: "retry" },
             requestId: retryAgain.model.pendingGameRequestId }]);
@@ -211,38 +211,38 @@ describe("Screen UI to current WebAssembly GameSession transitions", () => {
     try {
       launchCurrentSession(session);
       let model = updateApp(createInitialAppModel(), { type: "game-session-synced", ...session.readGameSessionProjection() }).model;
-      session.flightPort.advance_tick_json(neutralTailInput);
-      session.flightPort.advance_tick_json(neutralTailInput);
+      session.flightPort.advanceTick(neutralTailInput);
+      session.flightPort.advanceTick(neutralTailInput);
       if (terminal === "manual_abort") session.executeSharedSessionCommand({ kind: "abort" });
       else for (let tick = 2; tick < 4_000 && session.readLifecycle().phase === "flight_running"; tick += 1) {
-        session.flightPort.advance_tick_json(neutralTailInput);
+        session.flightPort.advanceTick(neutralTailInput);
       }
-      const before = session.flightPort.snapshot_json();
+      const before = session.flightPort.readSnapshot();
       const encoded = session.exportRecordJson();
       const entered = updateApp(model, { type: "game-session-synced", ...session.readGameSessionProjection() });
       model = entered.model;
       const load = entered.effects.find((effect) => effect.type === "load-flight-analysis");
       if (load?.type !== "load-flight-analysis") throw new Error("Result did not request Analysis");
       const analysis = session.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
-      expect(analysis.context.finalization.reason).toBe(terminal);
+      expect(analysis.context.finalization.value.reason).toBe(terminal);
       const completeCursor = (transition: ReturnType<typeof updateApp>): void => {
         model = transition.model;
         const query = transition.effects.find((effect) => effect.type === "load-flight-analysis-cursor");
         if (query?.type !== "load-flight-analysis-cursor") throw new Error("Result cursor query was not requested");
         const sample = session.queryAnalysisCursor(query.timeSeconds, analysis);
         model = updateApp(model, { type: "flight-analysis-cursor-loaded", requestId: query.requestId, sample }).model;
-        expect(analysisCursorData(model.analysisCursor)?.timeSeconds).toBeCloseTo(query.timeSeconds, 12);
+        expect(analysisCursorData(model.analysisCursor)?.flight_time_s).toBeCloseTo(query.timeSeconds, 12);
         expect(model.analysisCursor.kind).toBe("ready");
-        expect(model.gameSession.kind).toBe("result");
+        expect(model.gameSession.phase).toBe("result");
       };
       completeCursor(updateApp(model, { type: "flight-analysis-loaded", requestId: load.requestId, data: analysis }));
       expect(analysisCursorData(model.analysisCursor)?.state).toEqual(analysis.samples[0]?.state);
       model = sharedUiTransition(session, model, { type: "activate", controlId: "game-result-open-analysis" }).model;
-      for (const timeSeconds of [0.005, analysis.summary.durationSeconds]) {
+      for (const timeSeconds of [0.005, analysis.summary.summary.duration_seconds]) {
         completeCursor(sharedUiTransition(session, model, { type: "set-range", controlId: "game-analysis-cursor", value: timeSeconds }));
       }
       expect(analysisCursorData(model.analysisCursor)?.state).toEqual(analysis.samples.at(-1)?.state);
-      expect(session.flightPort.snapshot_json()).toBe(before);
+      expect(session.flightPort.readSnapshot()).toEqual(before);
       expect(session.exportRecordJson()).toBe(encoded);
     } finally { session.dispose(); }
   });
@@ -341,30 +341,30 @@ describe("Screen UI to current WebAssembly GameSession transitions", () => {
     try {
       synchronize();
       activate("game-title-start");
-      expect(model.gameSession.kind).toBe("setup");
+      expect(model.gameSession.phase).toBe("flight_setup");
       activate("game-setup-select-information-4");
       const windCue = root.querySelector<HTMLInputElement>('input[data-control-id="game-setup-information-wind"]');
       if (windCue === null) throw new Error("Custom wind cue toggle is missing");
       windCue.checked = false;
       windCue.dispatchEvent(new window.Event("change", { bubbles: true }) as unknown as Event);
-      expect(session.readDifficulty().hudProfile.wind).toBe(false);
+      expect(session.readSharedUi(sharedGameUiPlatform()).panels.flatMap(panel => panel.controls).find(control => control.id === "game-setup-information-wind")?.content).toMatchObject({ kind: "toggle", value: false });
       activate("game-setup-start");
-      expect(model.gameSession.kind).toBe("briefing-ready");
+      expect(model.gameSession.phase).toBe("briefing_ready");
       activate("game-briefing-start");
-      expect(model.gameSession.kind).toBe("countdown");
+      expect(model.gameSession.phase).toBe("countdown");
       activate("game-countdown-cancel");
       activate("game-briefing-start");
       session.observeCountdown(session.captureCountdownToken(), 3, true);
       synchronize();
       activate("game-flight-pause");
       activate("game-pause-open-settings");
-      expect(model.gameSession.kind === "paused-flight" && model.sharedGameUi?.selections.pause_overlay).toBe("settings");
+      expect(model.gameSession.phase === "flight_paused" && model.sharedGameUi?.selections.pause_overlay).toBe("settings");
       activate("game-pause-settings-back");
       activate("game-flight-resume");
-      session.flightPort.advance_tick_json(neutralTailInput);
-      session.flightPort.advance_tick_json(neutralTailInput);
+      session.flightPort.advanceTick(neutralTailInput);
+      session.flightPort.advanceTick(neutralTailInput);
       activate("game-flight-abort");
-      expect(model.gameSession.kind).toBe("result");
+      expect(model.gameSession.phase).toBe("result");
       const record = JSON.parse(session.exportRecordJson()) as { schema_version: number; header: { difficulty: { hud_profile: { wind: boolean } } } };
       expect(record.schema_version).toBe(6);
       expect(record.header.difficulty.hud_profile.wind).toBe(false);
@@ -381,7 +381,7 @@ describe("Screen UI to current WebAssembly GameSession transitions", () => {
       completeRecordQueries(cursor.effects);
       render();
       activate("game-result-replay");
-      expect(model.gameSession.kind).toBe("replay");
+      expect(model.gameSession.phase).toBe("replay");
       const synchronizeClock = lastEffects.find((effect) => effect.type === "control-replay-clock");
       if (synchronizeClock?.type !== "control-replay-clock") throw new Error("Replay clock synchronization was not requested");
       completeRecordQueries(lastEffects);
@@ -395,16 +395,16 @@ describe("Screen UI to current WebAssembly GameSession transitions", () => {
       if (advanceClock?.type !== "control-replay-clock") throw new Error("Replay advance was not requested");
       runClockEffect(advanceClock);
       expect(model.replayClock.observation.playing).toBe(false);
-      expect(model.analysisCursorTimeSeconds).toBeCloseTo(analysis.summary.durationSeconds);
+      expect(model.analysisCursorTimeSeconds).toBeCloseTo(analysis.summary.summary.duration_seconds);
       activate("game-replay-return");
       activate("game-result-retry");
-      expect(model.gameSession.kind).toBe("briefing-ready");
+      expect(model.gameSession.phase).toBe("briefing_ready");
       activate("game-briefing-cancel");
       activate("game-setup-back");
       activate("game-title-demo");
-      expect(model.gameSession.kind).toBe("attract");
+      expect(model.gameSession.phase).toBe("attract");
       activate("game-attract-return");
-      expect(model.gameSession.kind).toBe("title");
+      expect(model.gameSession.phase).toBe("title");
     } finally {
       session.dispose();
       await window.happyDOM.abort();

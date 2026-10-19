@@ -29,13 +29,13 @@ function measurementFor(request: MenuTextRequest): MenuTextMeasurement {
 }
 
 describe("Shared Flight Setup and Briefing presentation", () => {
-  it.each([4, 5, 6, 7, 9, 10])("describes the user activity without internal execution terms in phase %i", phase => {
+  it.each(["countdown", "flight_running", "flight_paused", "result", "replay", "attract"] as const)("describes the user activity without internal execution terms in phase %s", phase => {
     const shared = currentSharedGameUiFixture(phase);
     expect(shared.description.length).toBeGreaterThan(0);
     expect(shared.description).not.toMatch(/FlightRecord|terminal|snapshot|Physics|physics|pose|Resume|物理時間/);
   });
 
-  it.each([0, 6])("resets Screen scroll on Credits entry and return in phase %i", async phase => {
+  it.each(["title", "flight_paused"] as const)("resets Screen scroll on Credits entry and return in phase %s", async phase => {
     const window = new Window();
     Object.assign(globalThis, { window, document: window.document });
     try {
@@ -64,7 +64,7 @@ describe("Shared Flight Setup and Briefing presentation", () => {
   });
 
   it.each(["screen", "phone_vr", "webxr"] as const)("opens and closes the same Credits without moving the session in %s", (presentation_mode) => {
-    for (const phase of [0, 6]) {
+    for (const phase of ["title", "flight_paused"] as const) {
       withSharedGameUiSession(phase, { platform: { presentation_mode } }, (session, platform) => {
         const before = session.readGameSessionProjection();
         const normal = session.readSharedUi(platform);
@@ -76,7 +76,7 @@ describe("Shared Flight Setup and Briefing presentation", () => {
         validateUiViewModel(view);
         expect(credits.hud).toBeNull();
         expect(view.activeOverlay).toBe("Credits");
-        for (const source of ["osm", "jaxa", "copernicus", "jma", "font", "earcut", "ryu", "validators", "time"]) {
+        for (const source of ["osm", "jaxa", "copernicus", "jma", "font", "earcut", "ryu", "time"]) {
           expect(statusValue(view, `game-credits-${source}`).length).toBeGreaterThan(0);
         }
         expect(sharedGameUiAction(credits, { type: "activate", controlId: "game-credits-close" })).toEqual({ kind: "set_credits", open: false });

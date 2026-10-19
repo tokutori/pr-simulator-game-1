@@ -1,3 +1,5 @@
+import { readContract } from "../game-ui-build/validate.js";
+import type { SessionLifecycleDocument } from "../../web/src/generated/session-lifecycle.js";
 import { readFileSync } from "node:fs";
 import { Window as BrowserWindow } from "happy-dom";
 import { indexedDB, IDBKeyRange } from "fake-indexeddb";
@@ -101,7 +103,7 @@ describe("actual Tail main, facade and generated WASM flight log download", () =
     expect(json).toHaveBeenCalledTimes(1);
     expect(await trial.blobs[0]?.text()).toBe(expectedCsv);
     expect(await trial.blobs[1]?.text()).toBe(before);
-    expect(trial.session.phase_code()).toBe(7);
+    expect(readContract<SessionLifecycleDocument>("lifecycle", trial.session.lifecycle_snapshot_json()).phase).toBe("result");
     expect(trial.session.export_current_flight_record_json()).toBe(before);
     expect(trial.browser.document.body.textContent).toContain("ダウンロードを要求した");
     expect(trial.revokeUrl).not.toHaveBeenCalled();
@@ -126,7 +128,7 @@ describe("actual Tail main, facade and generated WASM flight log download", () =
     trial.button("game-flight-log-csv").click();
     expect(await trial.blobs[0]?.text()).toBe(trial.original);
     expect(trial.session.playback_clock_state()).toEqual(clock);
-    expect(trial.session.phase_code()).toBe(9);
+    expect(readContract<SessionLifecycleDocument>("lifecycle", trial.session.lifecycle_snapshot_json()).phase).toBe("replay");
     expect(trial.session.is_archived_replay()).toBe(true);
     expect(trial.browser.document.body.textContent).toContain("速度の差から推定した加速度");
     const csv = trial.session.export_flight_log_csv();
@@ -159,7 +161,7 @@ describe("actual Tail main, facade and generated WASM flight log download", () =
     });
     trial.button("game-flight-log-csv").click();
     expect(trial.createUrl).not.toHaveBeenCalled();
-    expect(trial.session.phase_code()).toBe(3);
+    expect(readContract<SessionLifecycleDocument>("lifecycle", trial.session.lifecycle_snapshot_json()).phase).toBe("briefing_ready");
     expect(trial.browser.document.body.textContent).not.toContain("ダウンロードを要求した");
   });
 
@@ -190,33 +192,33 @@ describe("actual Tail main, facade and generated WASM flight log download", () =
     expect(trial.button("game-flight-log-json").disabled).toBe(false);
     trial.button("game-flight-log-json").click();
     expect(trial.createUrl).toHaveBeenCalledTimes(2);
-    expect(trial.session.phase_code()).toBe(7);
+    expect(readContract<SessionLifecycleDocument>("lifecycle", trial.session.lifecycle_snapshot_json()).phase).toBe("result");
   });
 
   it("rejects native JS export error paths outside Result and Replay without changing their phase", async () => {
     const trial = await fixture();
-    const assertRejected = (phase: number): void => {
-      expect(trial.session.phase_code()).toBe(phase);
+    const assertRejected = (phase: SessionLifecycleDocument["phase"]): void => {
+      expect(readContract<SessionLifecycleDocument>("lifecycle", trial.session.lifecycle_snapshot_json()).phase).toBe(phase);
       expect(() => trial.session.export_current_flight_record_json()).toThrow();
       expect(() => trial.session.export_flight_log_csv()).toThrow();
-      expect(trial.session.phase_code()).toBe(phase);
+      expect(readContract<SessionLifecycleDocument>("lifecycle", trial.session.lifecycle_snapshot_json()).phase).toBe(phase);
     };
     trial.session.return_to_title();
-    assertRejected(0);
+    assertRejected("title");
     trial.session.enter_attract();
-    assertRejected(10);
+    assertRejected("attract");
     trial.session.leave_attract();
     trial.session.open_setup();
-    assertRejected(1);
+    assertRejected("flight_setup");
     trial.session.prepare();
-    assertRejected(2);
+    assertRejected("briefing_preparing");
     trial.session.mark_briefing_ready();
-    assertRejected(3);
+    assertRejected("briefing_ready");
     trial.session.start_countdown(1);
-    assertRejected(4);
+    assertRejected("countdown");
     trial.session.observe_countdown(trial.session.countdown_token(), 1, true);
-    assertRejected(5);
+    assertRejected("flight_running");
     trial.session.pause(0);
-    assertRejected(6);
+    assertRejected("flight_paused");
   });
 });

@@ -5,6 +5,7 @@ import type { FlightLogExportPort, FlightLogFormat } from "../game/flight-log-ex
 import type { NamedAnalysisCursor, NamedAnalysisDataset } from "../game/flight-analysis-view.js";
 import type { TailResultSnapshot, TailSessionPort } from "../game/tail-flight-controller.js";
 import { encodeTailLogicalInput } from "../game/tail-input.js";
+import { captureJsonInput } from "../game/tail-boundary-values.js";
 import type { DisplayAvailability, FlightRenderPose, RecordedFlightRenderPose } from "../render/contracts/runtime.js";
 import { projectReplayCamera } from "../render/camera/replay-camera.js";
 import { encodeGameUiAction, encodeGameUiPlatformInput } from "./game-ui-codec.js";
@@ -192,8 +193,8 @@ abstract class SessionResourceOwner {
     });
   }
 
-  protected readOutput<Value>(read: () => string): Value {
-    return this.observe(() => JSON.parse(read()) as Value);
+  protected readOutput<Value>(read: () => string): Readonly<Value> {
+    return this.observe(() => JSON.parse(read()) as Readonly<Value>);
   }
 }
 
@@ -206,7 +207,10 @@ export class TailAppSessionFacade extends SessionResourceOwner {
     this.flightPort = {
       readSnapshot: () => this.readSnapshot(),
       readControlProfile: () => this.readOutput<TailControlProfileDocument>(() => port.control_profile_json()),
-      advanceTick: (input) => this.change(() => this.readOutput<TailSnapshotDocument>(() => port.advance_tick_json(encodeTailLogicalInput(input)))),
+      advanceTick: (input) => {
+        const json = encodeTailLogicalInput(input);
+        return this.change(() => this.readOutput<TailSnapshotDocument>(() => port.advance_tick_json(json)));
+      },
       pause: (reason) => { this.change(() => { port.pause(reason); }, "retain_record"); },
       clear_pause_reason: (reason) => { this.clearPauseReason(reason); },
       free: () => { this.dispose(); }
@@ -214,8 +218,8 @@ export class TailAppSessionFacade extends SessionResourceOwner {
   }
 
   readSharedUi(platform: GameUiPlatformObservation): GameUiView {
+    const platformJson = encodeGameUiPlatformInput(platform);
     return this.observe(() => {
-      const platformJson = encodeGameUiPlatformInput(platform);
       const revision = this.port.game_ui_view_revision(platformJson);
       this.sharedUiCache = this.sharedUiCache !== null && this.sharedUiCache.view_revision === revision
         ? mergeGameUiFrame(this.sharedUiCache, this.readOutput<GameUiFrame>(() => this.port.game_ui_frame_json(revision, platformJson)))
@@ -225,20 +229,25 @@ export class TailAppSessionFacade extends SessionResourceOwner {
   }
 
   updateSharedUi(action: GameUiAction, platform: GameUiPlatformObservation): GameUiUpdate {
-    return this.change(() => this.readOutput(() => this.port.game_ui_action_json(encodeGameUiAction(action), encodeGameUiPlatformInput(platform))), "retain_record");
+    const actionJson = encodeGameUiAction(action);
+    const platformJson = encodeGameUiPlatformInput(platform);
+    return this.change(() => this.readOutput(() => this.port.game_ui_action_json(actionJson, platformJson)), "retain_record");
   }
 
   executeSharedSessionCommand(command: SessionCommand): TailAppOperationResult {
+    const captured = captureJsonInput(command);
+    const json = JSON.stringify(captured);
     return this.change(() => {
-      this.port.apply_game_ui_session_command_json(JSON.stringify(command));
-      if (command.kind === "start_countdown") return { kind: "countdown-started" };
-      if (command.kind === "abort") return { kind: "aborted", terminalSnapshot: this.readSnapshot() as TailResultSnapshot };
+      this.port.apply_game_ui_session_command_json(json);
+      if (captured.kind === "start_countdown") return { kind: "countdown-started" };
+      if (captured.kind === "abort") return { kind: "aborted", terminalSnapshot: this.readSnapshot() as TailResultSnapshot };
       return { kind: "completed" };
     });
   }
 
   executeSharedRecordAction(action: Extract<GameUiEffect, { kind: "record" }>["action"]): void {
-    this.change(() => { this.port.apply_game_ui_record_action_json(encodeGameUiAction(action)); }, "retain_record");
+    const json = encodeGameUiAction(action);
+    this.change(() => { this.port.apply_game_ui_record_action_json(json); }, "retain_record");
   }
 
   pauseForReason(reason: "page_hidden" | "presentation_transition"): void {
@@ -289,7 +298,8 @@ export class TailAppSessionFacade extends SessionResourceOwner {
   }
 
   queryWindGrid(request: WindGridRequest): WindDocument {
-    return this.readOutput(() => this.port.flight_wind_grid_json(request.north_min_m, request.east_min_m, request.altitude_m, request.spacing_m));
+    const { north_min_m, east_min_m, altitude_m, spacing_m } = request;
+    return this.readOutput(() => this.port.flight_wind_grid_json(north_min_m, east_min_m, altitude_m, spacing_m));
   }
 
   queryRecordSample(seconds: number): RecordedPlaybackSample {
@@ -331,7 +341,7 @@ export class TailAppSessionFacade extends SessionResourceOwner {
 export type AppSessionFacade = TailAppSessionFacade;
 
 function playbackClock(values: ArrayLike<number>): PlaybackClock {
-  return { timeSeconds: values[0]!, rateCode: values[1]! as 0 | 1 | 2, kind: values[2] === 0 ? "paused" : "playing" };
+  return { timeSeconds: values[0] as number, rateCode: values[1] as 0 | 1 | 2, kind: values[2] === 0 ? "paused" : "playing" };
 }
 
 function isRecordSourceToken(value: unknown): value is RecordSourceToken {

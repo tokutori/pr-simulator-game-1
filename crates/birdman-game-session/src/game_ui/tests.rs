@@ -527,7 +527,6 @@ fn credits_are_reachable_from_title_and_pause_without_advancing_the_session() {
                 "font",
                 "earcut",
                 "ryu",
-                "validators",
                 "time",
             ] {
                 assert!(matches!(

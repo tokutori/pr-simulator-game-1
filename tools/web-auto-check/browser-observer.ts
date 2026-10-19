@@ -176,7 +176,7 @@ declare global {
         observer.tick = object(state) && typeof state.tick === "number" ? state.tick : null;
         if (capture.kind === "collecting") {
           append(capture.observation.phases, { at: started, phase: returned.phase, tick: observer.tick });
-          if (returned.phase !== "flight_running") interrupt?.(`Rust phase changed to ${String(returned.phase)}`);
+          if (returned.phase !== "flight_running") interrupt?.(`Rust phase changed to ${returned.phase}`);
         }
       }
       if (object(returned) && object(returned.selection) && typeof returned.applied === "string" && object(returned.status)) {

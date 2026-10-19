@@ -13,7 +13,7 @@ import { projectTailGameSession } from "../../web/src/app/session-snapshot.js";
 import type { TailGameSessionProjection } from "../../web/src/app/session-snapshot.js";
 
 initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url))) });
-const neutral = ({ controlLayout: "tail_incidence", noseUp: 0, turnRight: 0,
+const neutral = ({ controlLayout: "tail_incidence" as const, noseUp: 0, turnRight: 0,
   desiredPitchRateRadiansPerSecond: 0, desiredYawRateRadiansPerSecond: 0, pilotPositionCommand: { kind: "hold" as const } });
 
 function projection(session: TailAppSessionFacade): TailGameSessionProjection {

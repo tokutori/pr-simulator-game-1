@@ -710,13 +710,13 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
         }
         const requestId = model.analysisCursor.nextRequestId;
         const playbackPhase = gameSessionPhase(model.gameSession);
-        const replayPoseRequestId = [9, 10].includes(playbackPhase) ? model.replayPose.nextRequestId : null;
+        const replayPoseRequestId = ["replay", "attract"].includes(playbackPhase) ? model.replayPose.nextRequestId : null;
         const timeSeconds = model.analysisCursorTimeSeconds;
         const effects: AppEffect[] = [{ type: "load-flight-analysis-cursor", requestId, timeSeconds }];
         if (replayPoseRequestId !== null) {
           effects.push({ type: "load-flight-replay-pose", requestId: replayPoseRequestId, timeSeconds });
         }
-        if ([9, 10].includes(playbackPhase) && model.replayClock.observation.playing) {
+        if (["replay", "attract"].includes(playbackPhase) && model.replayClock.observation.playing) {
           effects.push({ type: "schedule-replay-clock-tick", generation: model.replayClock.generation, delayMilliseconds: 50 });
         }
         return transition(withModel(model, {

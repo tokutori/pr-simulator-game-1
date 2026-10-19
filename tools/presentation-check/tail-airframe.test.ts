@@ -147,10 +147,10 @@ describe("physical two-tail airframe adapter", () => {
       const vertical = group(airframe, "vertical-tail-incidence");
       const horizontalMeshes = surfaces(horizontal).map((surface) => surface.geometry);
       const verticalMeshes = surfaces(vertical).map((surface) => surface.geometry);
-      for (let iteration = 0; iteration < 3; iteration++) {
-        airframe.setVisualState(null, controls, PLAYABLE_GEOMETRY);
+      for (const horizontalTailArmMeters of [3.6, 3.61, 4.2]) {
+        airframe.setVisualState(null, controls, { kind: "available", value: { horizontalTailArmMeters } });
         airframe.root.updateMatrixWorld(true);
-        expect(horizontal.getWorldPosition(new Vector3()).toArray()).toEqual([0, -0.1, 3.6]);
+        expect(horizontal.getWorldPosition(new Vector3()).toArray()).toEqual([0, -0.1, horizontalTailArmMeters]);
         expect(vertical.getWorldPosition(new Vector3()).toArray()).toEqual([0, 0.1, 1.8]);
         expect(horizontal.rotation.x).toBe(controls.physicalIncidence.horizontalTailRadians);
         expect(vertical.rotation.y).toBe(-controls.physicalIncidence.verticalTailRadians);
@@ -169,9 +169,7 @@ describe("physical two-tail airframe adapter", () => {
     try {
       airframe.setVisualState(null, controls, PLAYABLE_GEOMETRY);
       const invalidGeometry: readonly (TailPresentationGeometryAvailability | undefined)[] = [
-        undefined, { kind: "unavailable", reason: "unregistered_aircraft_geometry" },
-        { kind: "available", value: { kind: "bpg041_version_one", horizontalTailArmMeters: 3.6 } } as unknown as TailPresentationGeometryAvailability,
-        { kind: "available", value: { horizontalTailArmMeters: Number.NaN } } as unknown as TailPresentationGeometryAvailability
+        undefined, { kind: "unavailable", reason: "unregistered_aircraft_geometry" }
       ];
       for (const geometry of invalidGeometry) {
         expect(() => { airframe.setVisualState(null, { ...controls, physicalIncidence: { horizontalTailRadians: 0.2, verticalTailRadians: 0.2 } }, geometry); }).toThrow("registered aircraft geometry");

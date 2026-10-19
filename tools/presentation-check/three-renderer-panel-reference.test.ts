@@ -26,14 +26,14 @@ import type { AppModel } from "../../web/src/app/app-state.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
 import { createFlightFrameViewDraft, finalizeFlightFrameView } from "../../web/src/app/flight-frame-view.js";
 import { currentFlightPoseFixture } from "../game-check/current-session-fixture.js";
-import { currentGameSessionProjectionFixture, currentSharedGameUiFixture } from "../game-check/shared-game-ui-fixture.js";
+import { currentGameSessionProjectionFixture, currentSharedGameUiFixture, screenRenderAutoSnapshotReader } from "../game-check/shared-game-ui-fixture.js";
 import { headHudCanvasSize, prepareHeadHudPaint, validateHeadHudPaint } from "../../web/src/presentation/head-hud-canvas.js";
 import { PresentationRuntime } from "../../web/src/presentation/runtime.js";
 import { HudCanvasFixture } from "./hud-canvas-fixture.js";
 import { gpuTimerFixture } from "./gpu-timer-fixture.js";
 import { ScreenRenderAutoBridge, lake_scene_ambient_color_srgb, lake_scene_ambient_irradiance,
   lake_scene_sunlight_color_srgb, lake_scene_sunlight_irradiance } from "../../web/pkg/birdman_game_wasm.js";
-import { parseScreenRenderAutoSnapshot } from "../../web/src/render/contracts/screen-render-auto.js";
+
 import { initSync } from "../../web/pkg/birdman_game_wasm.js";
 import { createAppSession } from "../../web/src/app/session-factory.js";
 import { projectRuntimeEnvironment } from "../../web/src/game/runtime-environment.js";
@@ -310,7 +310,8 @@ describe("Three adapter panel reference with real StereoEffect", () => {
   it("acknowledges shared scale only after tiny viewport recovery and invalidates changed environment resources", () => {
     const canvas = Object.assign(new EventTarget(), { width: 1280, height: 720 }) as HTMLCanvasElement;
     const policy = new ScreenRenderAutoBridge();
-    const trial = createThreeRenderer(canvas, canvas, null, 60, "low", undefined, { policy, scene: () => "Flight", onSnapshot: () => undefined });
+    const readSnapshot = screenRenderAutoSnapshotReader(policy);
+    const trial = createThreeRenderer(canvas, canvas, null, 60, "low", undefined, { policy, snapshot: readSnapshot, scene: () => "Flight", onSnapshot: () => undefined });
     const recording = capture.driver;
     if (recording === null) throw new Error("Missing Screen Auto recording driver");
     let observedViewport = { x: 1280, y: 720, pixelRatio: 1 };
@@ -321,12 +322,12 @@ describe("Three adapter panel reference with real StereoEffect", () => {
       observedViewport = { x: 0.2, y: 0.2, pixelRatio: 1 };
       trial.renderer.resize(observedViewport);
       recording.tick(0, null);
-      expect(parseScreenRenderAutoSnapshot(policy.snapshot_json())).toMatchObject({ applied: "100", status: { kind: "applying", requested: "50" } });
+      expect(readSnapshot()).toMatchObject({ applied: "100", status: { kind: "applying", requested: "50" } });
       expect(recording.getDrawingBufferSize(new Vector2()).toArray()).toEqual([1280, 720]);
       observedViewport = { x: 1280, y: 720, pixelRatio: 1 };
       trial.renderer.resize(observedViewport);
       recording.tick(20, null);
-      expect(parseScreenRenderAutoSnapshot(policy.snapshot_json())).toMatchObject({ applied: "50", status: { kind: "manual" } });
+      expect(readSnapshot()).toMatchObject({ applied: "50", status: { kind: "manual" } });
       expect(recording.getDrawingBufferSize(new Vector2()).toArray()).toEqual([640, 360]);
       const epoch = policy.epoch();
       trial.renderer.setLakeVisualCondition({ ...lakeWater.DEFAULT_LAKE_VISUAL_CONDITION, patternSeed: 77 });
@@ -364,15 +365,16 @@ describe("Three adapter panel reference with real StereoEffect", () => {
   it("projects shared Auto water steps and restores the retained upper quality without recreating detail textures", async () => {
     const canvas = Object.assign(new EventTarget(), { width: 1280, height: 720 }) as HTMLCanvasElement;
     const policy = new ScreenRenderAutoBridge();
+    const readSnapshot = screenRenderAutoSnapshotReader(policy);
     const published = vi.fn();
-    const trial = createThreeRenderer(canvas, canvas, null, 60, "high", undefined, { policy, scene: () => "Flight", onSnapshot: published });
+    const trial = createThreeRenderer(canvas, canvas, null, 60, "high", undefined, { policy, snapshot: readSnapshot, scene: () => "Flight", onSnapshot: published });
     const recording = capture.driver;
     if (recording === null) throw new Error("Missing Auto water recording driver");
     let now = 0;
     const clock = vi.spyOn(performance, "now").mockImplementation(() => now);
     try {
       trial.renderer.resize({ x: 1280, y: 720, pixelRatio: 1 });
-      trial.renderer.setFlightPose({ ...currentFlightPoseFixture(), datumPositionNed: { north: 0, east: 0, down: -10 }, attitudeBodyToNed: IDENTITY_POSE.orientation,
+      trial.renderer.setFlightPose({ ...currentFlightPoseFixture(), datumPositionNed: { north: 0, east: 0, down: -10 }, attitudeBodyToNed: { ...IDENTITY_POSE.orientation },
         pilotPositionMeters: 0.03, initialPilotPositionMeters: 0, simulationTimeSeconds: 12.345 });
       trial.renderer.render(frame());
       const original = lakeDrawResources(recording).foreground;
@@ -390,25 +392,25 @@ describe("Three adapter panel reference with real StereoEffect", () => {
       for (let index = 0; index < 240; index++) {
         now = index * 100;
         recording.tick(now, null);
-        const snapshot = parseScreenRenderAutoSnapshot(policy.snapshot_json());
+        const snapshot = readSnapshot();
         const profile = lakeWater.lakeWaterQualityProfile(snapshot.water_quality);
         expect(original.mesh.geometry.getAttribute("position").count).toBe((profile.meshSegments + 1) ** 2);
         expect(original.material.uniforms.uWaveCount?.value).toBe(profile.componentCount);
         applied.add(snapshot.water_quality);
       }
       expect([...applied]).toEqual(["high", "medium", "low"]);
-      expect(parseScreenRenderAutoSnapshot(policy.snapshot_json())).toMatchObject({ applied: "50", shadow: "quarter", water_quality: "low" });
+      expect(readSnapshot()).toMatchObject({ applied: "50", shadow: "quarter", water_quality: "low" });
       const geometry = original.mesh.geometry;
       await trial.renderer.setLakeWaterQuality("medium");
       const autoPublications = published.mock.calls.length;
       await trial.renderer.setLakeWaterQuality("medium");
       expect(published).toHaveBeenCalledTimes(autoPublications);
       expect(original.mesh.geometry).toBe(geometry);
-      expect(parseScreenRenderAutoSnapshot(policy.snapshot_json())).toMatchObject({ selection: { manual_water_quality: "medium" }, water_quality: "low" });
+      expect(readSnapshot()).toMatchObject({ selection: { manual_water_quality: "medium" }, water_quality: "low" });
       trial.renderer.setScreenRenderAuto(false);
       now += 20;
       recording.tick(now, null);
-      expect(parseScreenRenderAutoSnapshot(policy.snapshot_json())).toMatchObject({ applied: "100", shadow: "full", water_quality: "medium" });
+      expect(readSnapshot()).toMatchObject({ applied: "100", shadow: "full", water_quality: "medium" });
       expect(original.material.uniforms.uWaveCount?.value).toBe(10);
       expect(original.material.uniforms.uDetailNear?.value).toBe(detail);
       expect(original.material.uniforms.uTimeSeconds?.value).toBe(12.345);
@@ -418,7 +420,8 @@ describe("Three adapter panel reference with real StereoEffect", () => {
   it.each(["preparation", "cleanup"] as const)("preserves the correct triple and manual outcome after water %s failure", async (stage) => {
     const canvas = Object.assign(new EventTarget(), { width: 1280, height: 720 }) as HTMLCanvasElement;
     const policy = new ScreenRenderAutoBridge();
-    const trial = createThreeRenderer(canvas, canvas, null, 60, "high", undefined, { policy, scene: () => "Flight", onSnapshot: () => undefined });
+    const readSnapshot = screenRenderAutoSnapshotReader(policy);
+    const trial = createThreeRenderer(canvas, canvas, null, 60, "high", undefined, { policy, snapshot: readSnapshot, scene: () => "Flight", onSnapshot: () => undefined });
     const recording = capture.driver;
     if (recording === null) throw new Error("Missing failing water recording driver");
     trial.renderer.resize({ x: 1280, y: 720, pixelRatio: 1 });
@@ -437,7 +440,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
         : expect(request).resolves.toEqual({ kind: "failed", message: failure.message });
       recording.tick(0, null);
       await settled;
-      const snapshot = parseScreenRenderAutoSnapshot(policy.snapshot_json());
+      const snapshot = readSnapshot();
       expect(snapshot).toMatchObject({ applied: "100", shadow: "full", water_quality: stage === "preparation" ? "high" : "low",
         status: { kind: "failed", cause: failure.message } });
       expect(original.mesh.geometry === geometry).toBe(stage === "preparation");
@@ -448,7 +451,8 @@ describe("Three adapter panel reference with real StereoEffect", () => {
   it("acknowledges only water-only requests in VR and retains a conflicting Screen request until return", async () => {
     const canvas = Object.assign(new EventTarget(), { width: 1280, height: 720 }) as HTMLCanvasElement;
     const policy = new ScreenRenderAutoBridge();
-    const trial = createThreeRenderer(canvas, canvas, null, 60, "high", undefined, { policy, scene: () => "Flight", onSnapshot: () => undefined });
+    const readSnapshot = screenRenderAutoSnapshotReader(policy);
+    const trial = createThreeRenderer(canvas, canvas, null, 60, "high", undefined, { policy, snapshot: readSnapshot, scene: () => "Flight", onSnapshot: () => undefined });
     const recording = capture.driver;
     if (recording === null) throw new Error("Missing VR water recording driver");
     try {
@@ -461,19 +465,19 @@ describe("Three adapter panel reference with real StereoEffect", () => {
       const low = trial.renderer.setLakeWaterQuality("low");
       recording.tick(0, null);
       await low;
-      expect(parseScreenRenderAutoSnapshot(policy.snapshot_json())).toMatchObject({ applied: "100", shadow: "full", water_quality: "low" });
+      expect(readSnapshot()).toMatchObject({ applied: "100", shadow: "full", water_quality: "low" });
       expect(recording.resizeCalls).toBe(resizes);
       const geometry = original.mesh.geometry;
       trial.renderer.setScreenRenderScale(0.5);
       const high = trial.renderer.setLakeWaterQuality("high");
       recording.tick(20, null);
-      expect(parseScreenRenderAutoSnapshot(policy.snapshot_json())).toMatchObject({ applied: "100", water_quality: "low", status: { kind: "applying" } });
+      expect(readSnapshot()).toMatchObject({ applied: "100", water_quality: "low", status: { kind: "applying" } });
       expect(original.mesh.geometry).toBe(geometry);
       expect(recording.resizeCalls).toBe(resizes);
       recording.xr.isPresenting = false;
       recording.tick(40, null);
       await high;
-      expect(parseScreenRenderAutoSnapshot(policy.snapshot_json())).toMatchObject({ applied: "50", water_quality: "high" });
+      expect(readSnapshot()).toMatchObject({ applied: "50", water_quality: "high" });
     } finally { trial.renderer.dispose(); }
   });
 
@@ -498,7 +502,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
   });
 
   it("exchanges quality geometry and wave budgets without regenerating detail or reflection resources", async () => {
-    bundle.renderer.setFlightPose({ ...currentFlightPoseFixture(), datumPositionNed: { north: 0, east: 0, down: -10 }, attitudeBodyToNed: IDENTITY_POSE.orientation,
+    bundle.renderer.setFlightPose({ ...currentFlightPoseFixture(), datumPositionNed: { north: 0, east: 0, down: -10 }, attitudeBodyToNed: { ...IDENTITY_POSE.orientation },
       pilotPositionMeters: 0.03, initialPilotPositionMeters: 0, simulationTimeSeconds: 12.345 });
     bundle.renderer.render(frame());
     const original = lakeDrawResources(driver);
@@ -889,7 +893,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
   it("holds captured Phone optics through a view-phase camera cut and applies latest pending optics next frame", () => {
     const changedViewport = { x: 720, y: 1280, pixelRatio: 2 };
     const changedProfile = { ...PHONE_VR_OPTICAL_PROFILE, eyeSeparationMeters: 0.071, focusDistanceMeters: 3, verticalFieldOfViewDegrees: 68 };
-    const flight: FlightRenderPose = { ...currentFlightPoseFixture(), datumPositionNed: { north: 4, east: 2, down: -10 }, attitudeBodyToNed: IDENTITY_POSE.orientation, pilotPositionMeters: 0, initialPilotPositionMeters: 0 };
+    const flight: FlightRenderPose = { ...currentFlightPoseFixture(), datumPositionNed: { north: 4, east: 2, down: -10 }, attitudeBodyToNed: { ...IDENTITY_POSE.orientation }, pilotPositionMeters: 0, initialPilotPositionMeters: 0 };
     bundle.renderer.resize(viewport);
     bundle.renderer.setStereoPresentation(PHONE_VR_OPTICAL_PROFILE);
     bundle.renderer.setFlightPose(flight);
@@ -936,7 +940,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
     const model = { ...createInitialAppModel(), gameSession, presentation: { type: "ready", mode: "phone-vr" } as const,
       sharedGameUi: currentSharedGameUiFixture("flight_running", { platform: { presentation_mode: "phone_vr" } }) };
     let currentFlight: FlightRenderPose = { ...currentFlightPoseFixture(), datumPositionNed: { north: 100, east: 25, down: -8 },
-      attitudeBodyToNed: IDENTITY_POSE.orientation, pilotPositionMeters: 0, initialPilotPositionMeters: 0 };
+      attitudeBodyToNed: { ...IDENTITY_POSE.orientation }, pilotPositionMeters: 0, initialPilotPositionMeters: 0 };
     bundle.renderer.resize(viewport);
     bundle.renderer.setFlightPose(currentFlight);
     const phone = await startPhone(bundle, viewport);
@@ -957,7 +961,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
       expect(await runtime.start("phone-vr")).toEqual({ ok: true });
       for (const [index, pilotPositionMeters] of [-0.15, 0.12, 0.35].entries()) {
         const body = new Quaternion().setFromAxisAngle(new Vector3(0.3, 0.7, -0.2).normalize(), index * 0.2);
-        currentFlight = { ...currentFlight, pilotPositionMeters, attitudeBodyToNed: quaternion(body.w, body.x, body.y, body.z) };
+        currentFlight = { ...currentFlight, pilotPositionMeters, attitudeBodyToNed: { ...quaternion(body.w, body.x, body.y, body.z) } };
         phone.emit({ alpha: index * 11, beta: 90 - index * 7, gamma: index * 5, timestampMs: 100 + index * 100, gravityEvidence: { kind: "earth-z-up" } });
         driver.draws.length = 0;
         driver.tick(100 + index * 100, null);
@@ -1150,7 +1154,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
         assertProjection(fieldOfView, size);
         expectMatrix(singleDraw(localDriver).camera, poseMatrix(titleScreenCameraPoseForViewport(size.x, size.y, fieldOfView)));
         trial.renderer.setFlightPose({ ...currentFlightPoseFixture(),
-          datumPositionNed: { north: 0, east: 0, down: -10 }, attitudeBodyToNed: IDENTITY_POSE.orientation,
+          datumPositionNed: { north: 0, east: 0, down: -10 }, attitudeBodyToNed: { ...IDENTITY_POSE.orientation },
           pilotPositionMeters: 0, initialPilotPositionMeters: 0
         });
         assertProjection(fieldOfView, size);
@@ -1181,7 +1185,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
     const heading = -Math.PI / 4;
     const initial: FlightRenderPose = { ...currentFlightPoseFixture(),
       datumPositionNed: { north: 0.3, east: -0.2, down: -10.4 },
-      attitudeBodyToNed: quaternion(Math.cos(heading / 2), 0, 0, Math.sin(heading / 2)),
+      attitudeBodyToNed: { ...quaternion(Math.cos(heading / 2), 0, 0, Math.sin(heading / 2)) },
       pilotPositionMeters: 0.17,
       initialPilotPositionMeters: 0.17,
       controls: { layout: "tail_incidence", physicalIncidence: { horizontalTailRadians: 0.035, verticalTailRadians: -0.018 } },
@@ -1327,7 +1331,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
         expect(await runtime.start("phone-vr")).toEqual({ ok: true });
         driver.tick(1, null);
         bundle.renderer.setFlightPose({ ...currentFlightPoseFixture(), datumPositionNed: { north: 100, east: 25, down: -8 },
-          attitudeBodyToNed: IDENTITY_POSE.orientation, pilotPositionMeters, initialPilotPositionMeters: 0.1 });
+          attitudeBodyToNed: { ...IDENTITY_POSE.orientation }, pilotPositionMeters, initialPilotPositionMeters: 0.1 });
         paused = true;
         driver.draws.length = 0;
         driver.tick(100, null);

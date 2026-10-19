@@ -8,7 +8,7 @@ describe("Three.js flight pose conversion", () => {
     const converted = flightRelativePose({
       ...currentFlightPoseFixture(),
       datumPositionNed: Object.freeze({ north: 0, east: 0, down: 0 }),
-      attitudeBodyToNed: quaternion(1, 0, 0, 0),
+      attitudeBodyToNed: { ...quaternion(1, 0, 0, 0) },
       pilotPositionMeters: 0,
       initialPilotPositionMeters: 0
     }, {
@@ -30,7 +30,7 @@ describe("Three.js flight pose conversion", () => {
     const converted = flightRelativePose({
       ...currentFlightPoseFixture(),
       datumPositionNed: Object.freeze({ north: 1, east: 2, down: 3 }),
-      attitudeBodyToNed: quaternion(yawQuarterTurn, 0, 0, yawQuarterTurn),
+      attitudeBodyToNed: { ...quaternion(yawQuarterTurn, 0, 0, yawQuarterTurn) },
       pilotPositionMeters: 0,
       initialPilotPositionMeters: 0
     }, {

@@ -70,7 +70,7 @@ describe("application runtime session projection", () => {
       const clock = session.setPlaybackPlaying(false);
       const cursor = session.queryAnalysisCursor(clock.timeSeconds, dataset);
       expect(cursor.flight_time_s).toBe(clock.timeSeconds);
-      expect(session.queryReplayCamera(clock.timeSeconds, "auto", true, dataset).controls?.layout).toBe("tail_incidence");
+      expect(session.queryReplayCamera(clock.timeSeconds, "auto", true, dataset).controls.layout).toBe("tail_incidence");
       expect(projectRuntimePlaybackClock(clock)).toEqual({ timeSeconds: clock.timeSeconds, rateCode: clock.rateCode, playing: false });
     } finally { session.dispose(); }
   });
@@ -81,7 +81,7 @@ describe("application runtime session projection", () => {
     try {
       archived.open_setup(); archived.prepare(); archived.mark_briefing_ready();
       archived.start_countdown(1); archived.observe_countdown(archived.countdown_token(), 1, true);
-      archived.advance_tick_json(encodeTailLogicalInput({ noseUp: 0.05, turnRight: -0.05,
+      archived.advance_tick_json(encodeTailLogicalInput({ controlLayout: "tail_incidence", noseUp: 0.05, turnRight: -0.05,
         desiredPitchRateRadiansPerSecond: 0.01, desiredYawRateRadiansPerSecond: -0.01,
         pilotPositionCommand: { kind: "set", normalized: 0.25 } }));
       archived.abort();
@@ -98,7 +98,7 @@ describe("application runtime session projection", () => {
       if (terminalSample === undefined) throw new Error("Expected the saved terminal control sample");
       expect(terminalSample.controls.physical_incidence.horizontal_tail_rad).not.toBe(0);
       expect(cursor.controls).toEqual(terminalSample.controls);
-      expect(pose.controls?.physicalIncidence.horizontalTailRadians).toBe(terminalSample.controls.physical_incidence.horizontal_tail_rad);
+      expect(pose.controls.physicalIncidence.horizontalTailRadians).toBe(terminalSample.controls.physical_incidence.horizontal_tail_rad);
       expect(cursor).not.toHaveProperty("pilot_position_target_normalized");
       expect(session.readPlaybackClock()).toEqual(clock);
       expect(session.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" }).samples).toEqual(dataset.samples);
@@ -169,8 +169,7 @@ describe("registered environment and venue projection", () => {
       for (const unknown of [false, true]) {
         if (unknown) { session.executeSharedSessionCommand({ kind: "leave_replay" }); nested(saved, "header").environment_version = 99; }
         session.openArchive(JSON.stringify(saved));
-        const data = session.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
-        const environment = parseRuntimeEnvironmentSnapshot(session.readEnvironmentJson(), 9, data.context.scenario);
+        const environment = projectRuntimeEnvironment(session.readEnvironment());
         expect(environment.kind).toBe(unknown ? "unavailable" : "available");
         if (unknown) expect(environment).toEqual({ kind: "unavailable", reason: "unregistered_environment_identity" });
         else expect(environment).toMatchObject({ kind: "available", value: { sky: { kind: "available", value: {
@@ -198,10 +197,9 @@ describe("registered environment and venue projection", () => {
     const session = prepared();
     try {
       const snapshot = session.readSnapshot();
-      if (snapshot.identity.kind !== "prepared") throw new Error("Expected a sealed scenario");
-      expect(snapshot.identity.scenario.scenarioId).toBe(6);
-      const projection = parseRuntimeEnvironmentSnapshot(session.readEnvironmentJson(), 3, snapshot.identity.scenario);
-      expect(projection).toMatchObject({ kind: "available", value: { identity: snapshot.identity.scenario, localFrame: { kind: "available" } } });
+      expect(snapshot.scenario?.scenario_id).toBe(6);
+      const projection = projectRuntimeEnvironment(session.readEnvironment());
+      expect(projection).toMatchObject({ kind: "available", value: { identity: snapshot.scenario, localFrame: { kind: "defined" } } });
       expect(venueMapForEnvironment(projection)).toMatchObject({ kind: "available", value: { origin: "launch-origin-wgs84-35.294075-136.254448" } });
     } finally { session.dispose(); }
   });
@@ -215,7 +213,7 @@ describe("registered environment and venue projection", () => {
       if (change === "origin") nested(nested(metadata, "local_frame"), "value").longitude_degrees = 137;
       if (change === "datum") nested(nested(metadata, "local_frame"), "value").water_level_datum = "another datum";
       if (change === "missing-origin") metadata.local_frame = { kind: "unavailable" };
-      const environment = parseRuntimeEnvironmentSnapshot(JSON.stringify(document), 9, context.scenario);
+      const environment = projectRuntimeEnvironment(document);
       expect(projectRuntimeVenue(environment, "replay")).toEqual({ kind: "unavailable", reason: change === "missing-origin" ? "origin_not_recorded" : "unregistered_origin" });
       expect(projectRuntimeVenue(environment, "result")).toEqual({ kind: "unavailable", reason: "context_mismatch" });
     } finally { session.dispose(); }

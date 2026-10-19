@@ -30,7 +30,7 @@ function fixture() {
   };
   const port = { readSnapshot: () => facade.flightPort.readSnapshot(), readControlProfile: () => facade.flightPort.readControlProfile(),
     pause: (reason: number) => { facade.flightPort.pause(reason); }, clear_pause_reason: (reason: number) => { facade.flightPort.clear_pause_reason(reason); },
-    advanceTick: vi.fn(facade.flightPort.advanceTick), free: () => { facade.dispose(); } };
+    advanceTick: vi.fn(facade.flightPort.advanceTick.bind(facade.flightPort)), free: () => { facade.dispose(); } };
   const input = { readDemand: vi.fn(() => ({ controlLayout: "tail_incidence" as const, noseUp: 0, turnRight: 0,
     pilotPositionCommand: { kind: "hold" as const } })), reset: vi.fn(), suspend: vi.fn(), resume: vi.fn(), dispose: vi.fn() };
   const renderer = { setFlightPose: vi.fn<(pose: FlightRenderPose | null) => void>() };
@@ -154,12 +154,12 @@ describe("authoritative Result synchronization across tail adapter failures", ()
       trial.controller.onFrame(tick * 10);
     }
     const terminal: TailControllerSnapshot = trial.controller.currentSnapshot;
-    if (terminal.phase !== "result") throw new Error("Expected a bounded Rust flight to reach Result");
+    if (terminal.phase !== "result" || terminal.frame.kind !== "result") throw new Error("Expected a bounded Rust flight to reach Result");
     expect(terminal.frame.finalization.reason).toBe("water_contact");
-    expect(trial.model().gameSession).toMatchObject({ kind: "result" });
+    expect(trial.model().gameSession).toMatchObject({ phase: "result" });
     const stored: unknown = JSON.parse(trial.facade.exportRecordJson());
     expect(stored).toMatchObject({ finalization: { reason: terminal.frame.finalization.reason,
-      terminal_tick: terminal.frame.finalization.terminalTick, terminal_fraction: terminal.frame.finalization.terminalFraction } });
+      terminal_tick: terminal.frame.finalization.terminal_tick, terminal_fraction: terminal.frame.finalization.terminal_fraction } });
     expect(trial.messages.filter((message) => message.type === "tail-controller-terminal")).toHaveLength(1);
     expect(gameSessionSnapshot(trial.model().gameSession)).toEqual(trial.controller.currentSnapshot);
     expect(trial.effects.filter((effect) => effect.type === "persist-flight-record")).toHaveLength(1);
@@ -169,17 +169,17 @@ describe("authoritative Result synchronization across tail adapter failures", ()
     const trial = fixture();
     trial.input.readDemand.mockReturnValue({ controlLayout: "tail_incidence", noseUp: 1, turnRight: 1, pilotPositionCommand: { kind: "hold" } });
     trial.display.render.mockImplementation((snapshot) => {
-      if (snapshot.kind === "tail_result") throw new Error("Injected failure Result HUD error");
+      if (snapshot.phase === "result") throw new Error("Injected failure Result HUD error");
     });
     trial.controller.onFrame(0);
     for (let tick = 1; tick <= 20_000 && trial.facade.readLifecycle().phase === "flight_running"; tick += 1) trial.controller.onFrame(tick * 10);
     const terminal = trial.controller.currentSnapshot;
-    if (terminal.phase !== "result") throw new Error("Expected a bounded Rust flight to reach Result");
+    if (terminal.phase !== "result" || terminal.frame.kind !== "result") throw new Error("Expected a bounded Rust flight to reach Result");
     expect(terminal.frame.finalization.reason).toBe("out_of_valid_envelope");
     expect(terminal.frame.finalization.failure).not.toBeNull();
     expect(trial.model().gameSession.phase).toBe("result");
     expect(gameSessionSnapshot(trial.model().gameSession)).toEqual(trial.controller.currentSnapshot);
-    expect(trial.facade.readRecordSummary().context.finalization).toEqual(terminal.frame.finalization);
+    expect(trial.facade.readRecordSummary().context.finalization.value).toEqual(terminal.frame.finalization);
     expect(trial.model().status).toContain("Injected failure Result HUD error");
     expect(trial.effects.filter((effect) => effect.type === "persist-flight-record")).toHaveLength(1);
   });

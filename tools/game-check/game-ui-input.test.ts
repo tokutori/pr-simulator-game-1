@@ -42,7 +42,7 @@ describe("UI input data captured before Rust admission", () => {
     const expected = encodeGameUiPlatformInput(platform);
     const descriptor = Object.getOwnPropertyDescriptor(Object.prototype, "toJSON");
     let calls = 0;
-    let observed = "";
+    let observed: string;
     try {
       Object.defineProperty(Object.prototype, "toJSON", { configurable: true, value: () => { calls += 1; return "redirected"; } });
       observed = encodeGameUiPlatformInput(platform);

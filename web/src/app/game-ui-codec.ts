@@ -7,7 +7,6 @@ export type GameUiPlatformObservation = Omit<GameUiPlatformInput, "stored_record
   readonly stored_records: readonly GameUiStoredRecord[];
 };
 
-
 export class GameUiBoundaryError extends Error {
   constructor(readonly boundary: string, readonly diagnostics: readonly string[], options?: ErrorOptions) {
     super(`${boundary}: ${diagnostics.join("; ")}`, options);
@@ -52,7 +51,6 @@ function displayText(value: string, maximumCharacters: number): string {
 function encodeBoundary(value: unknown, name: string): string {
   try {
     const json = JSON.stringify(captureJsonInput(value));
-    if (json === undefined) throw new TypeError("JSON input requires a document");
     return json;
   } catch (cause) {
     throw new GameUiBoundaryError(name, ["Input cannot be represented as JSON data"], { cause });

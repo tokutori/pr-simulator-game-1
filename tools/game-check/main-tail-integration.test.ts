@@ -588,7 +588,7 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     trial.click("game-title-open-record-1");
     await vi.waitFor(() => { expect(trial.scene()).toBe("Replay"); });
     expect(trial.renderer.setLakeSkyCondition.mock.lastCall?.[0]).toEqual(condition);
-    expect(trial.renderer.setFlightPose.mock.lastCall?.[0]?.controls?.layout).toBe("tail_incidence");
+    expect(trial.renderer.setFlightPose.mock.lastCall?.[0]?.controls.layout).toBe("tail_incidence");
   });
 
   it("projects shared Screen scale choices through the real WASM UI and retains the preference through flight and Retry", async () => {
@@ -650,7 +650,10 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     }
     expect(trial.scene()).toBe("Flight");
     expect(trial.renderer.setPreparedFlightPose.mock.lastCall?.[0]).toBeNull();
-    expect(trial.renderer.setFlightPose.mock.lastCall?.[0]).toMatchObject(initial);
+    const { airspeedMetersPerSecond, windVelocityNedMetersPerSecond, ...initialPose } = initial;
+    expect(airspeedMetersPerSecond).toBeNull();
+    expect(windVelocityNedMetersPerSecond).toBeNull();
+    expect(trial.renderer.setFlightPose.mock.lastCall?.[0]).toMatchObject(initialPose);
     trial.click("game-flight-abort");
     trial.click("game-result-retry");
     expect(trial.scene()).toBe("Briefing");
@@ -675,7 +678,7 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     trial.launch();
     trial.frame(0);
     trial.frame(10);
-    expect(trial.renderer.setFlightPose.mock.calls.at(-1)?.[0]?.controls?.layout).toBe("tail_incidence");
+    expect(trial.renderer.setFlightPose.mock.calls.at(-1)?.[0]?.controls.layout).toBe("tail_incidence");
     trial.click("game-flight-abort");
     expect(trial.scene()).toBe("Result");
     await vi.waitFor(() => { expect(trial.exportRecord).toHaveBeenCalledTimes(1); });
@@ -698,7 +701,7 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     trial.click("game-title-demo");
     expect(trial.scene()).toBe("Title");
     expect(trial.documentRef.querySelector('[data-control-id="game-attract-return"]')).not.toBeNull();
-    expect(trial.renderer.setFlightPose.mock.calls.at(-1)?.[0]?.controls?.layout).toBe("tail_incidence");
+    expect(trial.renderer.setFlightPose.mock.calls.at(-1)?.[0]?.controls.layout).toBe("tail_incidence");
     expect(trial.free).not.toHaveBeenCalled();
   });
 
@@ -781,7 +784,7 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     trial.click("game-title-open-record-1");
     await vi.waitFor(() => { expect(trial.scene()).toBe("Replay"); });
     expect(trial.renderer.setLakeVenueVisible.mock.lastCall?.[0]).toBe(true);
-    expect(trial.renderer.setFlightPose.mock.calls.at(-1)?.[0]?.controls?.layout).toBe("tail_incidence");
+    expect(trial.renderer.setFlightPose.mock.calls.at(-1)?.[0]?.controls.layout).toBe("tail_incidence");
     expect(trial.exportRecord).not.toHaveBeenCalled();
     trial.click("game-replay-view-mode");
     trial.click("game-replay-speed-2");
@@ -794,7 +797,7 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     expect(trial.renderer.setLakeVenueVisible.mock.lastCall?.[0]).toBe(true);
     trial.launch();
     expect(trial.renderer.setLakeVenueVisible.mock.lastCall?.[0]).toBe(true);
-    expect(trial.renderer.setFlightPose.mock.calls.at(-1)?.[0]?.controls?.layout).toBe("tail_incidence");
+    expect(trial.renderer.setFlightPose.mock.calls.at(-1)?.[0]?.controls.layout).toBe("tail_incidence");
     expect(trial.free).not.toHaveBeenCalled();
   });
 
@@ -848,7 +851,7 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     await vi.waitFor(() => { expect(trial.browser.document.body.textContent).toContain("FlightRecord 1を保存した"); });
     trial.click("game-result-replay");
     expect(trial.scene()).toBe("Replay");
-    expect(trial.renderer.setFlightPose.mock.calls.at(-1)?.[0]?.controls?.layout).toBe("tail_incidence");
+    expect(trial.renderer.setFlightPose.mock.calls.at(-1)?.[0]?.controls.layout).toBe("tail_incidence");
     expect(trial.exportRecord).toHaveBeenCalledTimes(1);
   });
 

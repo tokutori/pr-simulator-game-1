@@ -836,7 +836,7 @@ function dispatchGameOperationFailure(
     }
     const failureMessage = context === undefined
       ? message
-      : `${context.command.kind} rejected: UI phase ${String(context.requestedPhase)}, Rust phase ${String(phase)}; ${message}`;
+      : `${context.command.kind} rejected: UI phase ${context.requestedPhase}, Rust phase ${phase}; ${message}`;
     dispatch({ type: "game-operation-failed", requestId, message: failureMessage, currentSession,
       analysisSourceInvalidated: dataset !== null && !session.isAnalysisDatasetCurrent(dataset) });
   } catch (syncError: unknown) {

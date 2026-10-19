@@ -78,7 +78,6 @@ export function currentFlightSnapshotFixture(phase: "flight_running" | "flight_p
 
 export function currentFlightPoseFixture(): FlightRenderPose {
   const snapshot = currentFlightSnapshotFixture();
-  if (snapshot.render_pose === null) throw new Error("Current flight fixture has no render pose");
   return snapshot.render_pose;
 }
 

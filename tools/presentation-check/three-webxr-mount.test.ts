@@ -224,7 +224,7 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
   const head = pose(vec3(0.06, 0.08, -0.05), quaternion(Math.cos(0.13), 0, Math.sin(0.13), 0));
   const flight: FlightRenderPose = { ...currentFlightPoseFixture(),
     datumPositionNed: { north: 100, east: 25, down: -8 },
-    attitudeBodyToNed: quaternion(Math.cos(0.17), Math.sin(0.17), 0, 0),
+    attitudeBodyToNed: { ...quaternion(Math.cos(0.17), Math.sin(0.17), 0, 0) },
     pilotPositionMeters: 0.12, initialPilotPositionMeters: 0.12
   };
 
@@ -302,7 +302,7 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
     const worldProjections: Vector3[] = [];
     for (const [index, pilotPositionMeters] of [-0.1, 0.12, 0.4].entries()) {
       const bodyRotation = new Quaternion().setFromEuler(new Euler(index * 0.13, index * -0.24, index * 0.17));
-      currentFlight = { ...flight, pilotPositionMeters, attitudeBodyToNed: quaternion(bodyRotation.w, bodyRotation.x, bodyRotation.y, bodyRotation.z) };
+      currentFlight = { ...flight, pilotPositionMeters, attitudeBodyToNed: { ...quaternion(bodyRotation.w, bodyRotation.x, bodyRotation.y, bodyRotation.z) } };
       const headRotation = new Quaternion().setFromEuler(new Euler(index * -0.16, index * 0.22, index * -0.11));
       const rawHead = pose(vec3(index * 0.05, index * 0.02, index * -0.03), quaternion(headRotation.w, headRotation.x, headRotation.y, headRotation.z));
       session.run(100 + index * 20, rawHead);

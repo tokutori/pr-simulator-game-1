@@ -69,13 +69,13 @@ describe("two-tail controller through the Rust WASM port", () => {
     trial.key("keydown", "ArrowUp");
     trial.controller.onFrame(gap);
     if (gap > maximum_flight_frame_gap_milliseconds()) {
-      expect(trial.session.phase_code()).toBe(6);
+      expect(trial.port.readSnapshot().phase).toBe("flight_paused");
       expect(trial.port.pause).toHaveBeenCalledExactlyOnceWith(3);
       expect(trial.input.readDemand).not.toHaveBeenCalled();
       expect(trial.port.advance_tick_json).not.toHaveBeenCalled();
       expect(trial.controller.currentSnapshot.frame.state.tick).toBe(0);
     } else {
-      expect(trial.session.phase_code()).toBe(5);
+      expect(trial.port.readSnapshot().phase).toBe("flight_running");
       expect(trial.port.pause).not.toHaveBeenCalled();
       expect(trial.input.readDemand).toHaveBeenCalledTimes(Math.floor(gap / 10));
     }
@@ -98,7 +98,7 @@ describe("two-tail controller through the Rust WASM port", () => {
     expect(trial.session.can_resume()).toBe(false);
     trial.controller.onFrame(2_025);
     expect(trial.port.clear_pause_reason).toHaveBeenCalledExactlyOnceWith(3);
-    expect(trial.session.phase_code()).toBe(6);
+    expect(trial.port.readSnapshot().phase).toBe("flight_paused");
     expect(trial.session.can_resume()).toBe(true);
     trial.controller.onFrame(2_035);
     expect(trial.input.readDemand).toHaveBeenCalledTimes(1);
@@ -128,12 +128,12 @@ describe("two-tail controller through the Rust WASM port", () => {
     trial.controller.onFrame(1_000);
     trial.session.pause(1);
     trial.controller.onFrame(1_010);
-    expect(trial.session.phase_code()).toBe(6);
+    expect(trial.port.readSnapshot().phase).toBe("flight_paused");
     expect(trial.session.can_resume()).toBe(false);
     expect(trial.port.clear_pause_reason).toHaveBeenCalledExactlyOnceWith(3);
     trial.session.clear_pause_reason(1);
     expect(trial.session.can_resume()).toBe(true);
-    expect(trial.session.phase_code()).toBe(6);
+    expect(trial.port.readSnapshot().phase).toBe("flight_paused");
   });
 
   it.each(["pause", "clear_pause_reason"] as const)("retains the last flight state when processing delay %s fails", (operation) => {

@@ -110,7 +110,7 @@ describe("owned input data and Rust admission", () => {
   it("does not invoke polluted global toJSON or inherit command fields", () => {
     const originals = new Map(["toJSON", "kind", "normalized"].map((key) => [key, Object.getOwnPropertyDescriptor(Object.prototype, key)]));
     let calls = 0;
-    let encoded = "";
+    let encoded: string;
     try {
       Object.defineProperty(Object.prototype, "toJSON", { value: () => { calls += 1; return "redirected"; }, configurable: true });
       Object.defineProperty(Object.prototype, "kind", { value: "hold", configurable: true });

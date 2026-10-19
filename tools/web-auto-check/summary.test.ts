@@ -9,11 +9,11 @@ import { distribution, summarize } from "./summary.js";
 initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url))) });
 const session = createAppSession({ controlModeCode: 0, seedLow: 21, seedHigh: 22 });
 launchCurrentSession(session);
-const initialSnapshotJson = session.flightPort.snapshot_json();
-for (let tick = 0; tick < 200; tick++) session.flightPort.advance_tick_json(neutralTailInput);
-const finalSnapshotJson = session.flightPort.snapshot_json();
+const initialSnapshotJson = JSON.stringify(session.flightPort.readSnapshot());
+for (let tick = 0; tick < 200; tick++) session.flightPort.advanceTick(neutralTailInput);
+const finalSnapshotJson = JSON.stringify(session.flightPort.readSnapshot());
 session.executeSharedSessionCommand({ kind: "pause" });
-const pausedSnapshotJson = session.flightPort.snapshot_json();
+const pausedSnapshotJson = JSON.stringify(session.flightPort.readSnapshot());
 session.dispose();
 const policy = (applied = "100") => JSON.stringify({ selection: { kind: "auto", manual_scale: "100", manual_shadow: "full", manual_water_quality: "high" },
   applied, shadow: "full", water_quality: "high", status: { kind: "ready" } });
@@ -24,8 +24,8 @@ function fixture(): LiveObservation {
     forwardedGpu: Array.from({ length: 100 }, (_, index) => ({ epoch: 7, epochBefore: 7, frame: index + 1,
       sourceMs: 1010 + index * 20, arrivalMs: 1040 + index * 20, gpuWorkMs: 10 })),
     frames: Array.from({ length: 120 }, (_, index) => ({ at: 1005 + index * 16.67, timestamp: 1005 + index * 16.67,
-      phase: 5, tick: index === 119 ? 200 : 0, width: 1280, height: 720 })),
-    phases: [{ at: 1010, phase: 5, tick: 1 }, { at: 2990, phase: 5, tick: 199 }],
+      phase: "flight_running", tick: index === 119 ? 200 : 0, width: 1280, height: 720 })),
+    phases: [{ at: 1010, phase: "flight_running", tick: 1 }, { at: 2990, phase: "flight_running", tick: 199 }],
     truncated: false, observerErrors: [], observerMilliseconds: 0.5, observerCalls: 100 };
 }
 

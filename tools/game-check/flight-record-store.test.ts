@@ -130,7 +130,7 @@ describe("Current FlightRecord persistence", () => {
         expect(() => boundary.game_ui_view_json(unbounded)).toThrow("shared UI input exceeds the boundary limit");
         expect(() => boundary.game_ui_view_json(input)).not.toThrow();
       } finally { boundary.free(); }
-      const title = createSharedGameUiSession(0);
+      const title = createSharedGameUiSession("title");
       try {
         const view = title.session.readSharedUi(platform);
         const recordIds = view.panels.flatMap((panel) => panel.controls)
@@ -140,7 +140,7 @@ describe("Current FlightRecord persistence", () => {
         expect(title.session.updateSharedUi({ kind: "platform", command: { kind: "open_stored_record", id: 2000 } }, platform).effects)
           .toEqual([{ kind: "platform", command: { kind: "open_stored_record", id: 2000 } }]);
       } finally { title.session.dispose(); }
-      const flight = createSharedGameUiSession(5);
+      const flight = createSharedGameUiSession("flight_running");
       try {
         const before = flight.session.readSnapshot();
         expect(flight.session.readSharedUi(platform).scene).toBe("Flight");
@@ -167,13 +167,17 @@ describe("Current FlightRecord persistence", () => {
     expect(new TextEncoder().encode(input).byteLength).toBeLessThan(gameUiInputQuery.maximumBytes);
     expect(platform.notification).toBe(text);
     expect(platform.stored_records[0]?.saved_at).toBe(text);
-    const owner = createSharedGameUiSession(0);
+    const owner = createSharedGameUiSession("title");
     try {
       expect(owner.session.readSharedUi(platform).scene).toBe("Title");
     } finally { owner.session.dispose(); }
-    expect(() => encodeGameUiPlatformInput({ ...sharedGameUiPlatform(),
+    const oversizedPreview = encodeGameUiPlatformInput({ ...sharedGameUiPlatform(),
       stored_records: Array.from({ length: 4 }, (_, index) => ({ id: index + 1, saved_at: "saved", personal_best: false }))
-    })).toThrow();
+    });
+    const boundary = new HybridGameSessionBridge(0, 21, 22);
+    try {
+      expect(() => boundary.game_ui_view_json(oversizedPreview)).toThrow();
+    } finally { boundary.free(); }
   });
 
   it("rejects invalid preview limits and retains metadata/index errors on the bounded query", async () => {
