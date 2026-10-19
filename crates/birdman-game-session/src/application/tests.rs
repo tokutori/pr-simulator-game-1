@@ -42,6 +42,93 @@ fn neutral() -> TailFlightTickInput {
 }
 
 #[test]
+fn archive_owner_preserves_saved_settings_text_and_player_selection_without_reintegration() {
+    use birdman_game_format::{DifficultyPreset, HudCue, TailFlightRecordDocument};
+    for custom in [false, true] {
+        let mut source = ApplicationSession::new(ControlMode::Manual, 2, 42);
+        execute(&mut source, SessionCommand::OpenSetup {});
+        execute(
+            &mut source,
+            SessionCommand::SelectPreset {
+                preset: DifficultyPreset::Realistic,
+            },
+        );
+        if custom {
+            execute(
+                &mut source,
+                SessionCommand::SetCue {
+                    cue: HudCue::Wind,
+                    visible: true,
+                },
+            );
+        }
+        execute(&mut source, SessionCommand::Prepare {});
+        launch(&mut source);
+        for _ in 0..2 {
+            source.advance_tail_flight_tick(neutral()).unwrap();
+        }
+        let mut document = TailFlightRecordDocument::from_record(
+            source.core_session().flight_record().unwrap(),
+            source.difficulty(),
+            source.prepared().unwrap().record_identity.clone(),
+        )
+        .unwrap();
+        document.header.aircraft_model_version = 999;
+        let json = format!(
+            "\n{}\n ",
+            String::from_utf8(document.encode_json().unwrap()).unwrap()
+        );
+        let mut viewer = ApplicationSession::default();
+        let selection = viewer.difficulty();
+        viewer.open_archived_record_json(&json).unwrap();
+        assert!(viewer.prepared().is_none());
+        assert_eq!(viewer.archive().unwrap().original_json(), json);
+        assert_eq!(
+            viewer.archive().unwrap().difficulty(),
+            document.header.difficulty
+        );
+        assert_eq!(
+            viewer.archive().unwrap().control_identity(),
+            &document.control_identity
+        );
+        assert_eq!(viewer.display_preset(), source.difficulty().preset_label());
+        assert_eq!(
+            viewer.display_difficulty().hud_profile(),
+            source.difficulty().hud_profile()
+        );
+        assert_eq!(
+            viewer.display_difficulty().weather(),
+            source.difficulty().weather()
+        );
+        assert_eq!(viewer.difficulty(), selection);
+        let before = viewer.core_session().snapshot();
+        viewer.seek_playback(0.005).unwrap();
+        let clock = viewer.core_session().playback_clock();
+        assert_eq!(
+            viewer.open_archived_record_json("{}"),
+            Err(ArchiveError::Format(
+                birdman_game_format::FlightRecordFormatError::InvalidJson
+            ))
+        );
+        assert_eq!(
+            viewer.open_archived_record_json(&json),
+            Err(ArchiveError::Session(GameSessionError::InvalidTransition))
+        );
+        assert_eq!(viewer.core_session().snapshot(), before);
+        assert_eq!(viewer.core_session().playback_clock(), clock);
+        assert_eq!(viewer.archive().unwrap().original_json(), json);
+        execute(&mut viewer, SessionCommand::LeaveReplay {});
+        assert_eq!(
+            viewer.core_session().snapshot().phase(),
+            SessionPhase::Title
+        );
+        assert!(viewer.archive().is_none());
+        assert_eq!(viewer.difficulty(), selection);
+        assert_eq!(viewer.display_preset(), selection.preset_label());
+    }
+}
+
+#[test]
 fn record_commands_keep_the_four_wire_shapes_and_reject_other_ui_actions() {
     for (command, json) in [
         (

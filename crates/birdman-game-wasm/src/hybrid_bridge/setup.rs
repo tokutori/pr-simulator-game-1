@@ -93,13 +93,7 @@ impl HybridGameSessionBridge {
 
     /// Returns the existing preset code, including 4=Custom.
     pub fn difficulty_preset_code(&self) -> u32 {
-        if self.session.core_session().snapshot().phase() == SessionPhase::Attract {
-            return crate::preset_code(self.display_difficulty().preset_label());
-        }
-        self.archived.as_ref().map_or_else(
-            || crate::preset_code(self.session.difficulty().preset_label()),
-            |metadata| metadata.preset_code(),
-        )
+        crate::preset_code(self.session.display_preset())
     }
 
     /// Returns the existing Information code.
@@ -271,7 +265,7 @@ impl HybridGameSessionBridge {
                     crate::environment_snapshot::EnvironmentSnapshotError::MissingSessionIdentity,
                 )?;
                 crate::environment_snapshot::for_identity(
-                    if self.archived.is_some() {
+                    if self.session.archive().is_some() {
                         EnvironmentSource::Archive
                     } else {
                         EnvironmentSource::Record

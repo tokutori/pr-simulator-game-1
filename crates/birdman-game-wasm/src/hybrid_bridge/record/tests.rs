@@ -152,7 +152,7 @@ fn imported_tail_log_keeps_exact_original_text_unknown_identity_and_failed_open_
         expected_csv
     );
     bridge.leave_replay().unwrap();
-    assert!(bridge.archived.is_none());
+    assert!(bridge.session.archive().is_none());
     assert!(bridge.export_current_record_internal().is_err());
     assert!(bridge.export_csv_internal().is_err());
 }

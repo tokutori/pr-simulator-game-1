@@ -1,52 +1,9 @@
 use super::*;
 use crate::hybrid_record::{HybridRecordError, HybridRecordMetadata};
 use birdman_game_format::{
-    FlightRecordDifficultyDocument, FlightRecordPresetDocument, HudProfile,
     PersonalBestContentHashes, TailFlightRecordDocument, TailPersonalBestSelection,
 };
 use birdman_game_session::record_query::{PlaybackContext, PlaybackFinalization, RecordQueryPhase};
-
-pub(super) struct ArchiveMetadata {
-    difficulty: FlightRecordDifficultyDocument,
-    control_identity: FlightRecordTailIdentityDocument,
-    original_json: String,
-}
-
-impl ArchiveMetadata {
-    fn difficulty(&self) -> FlightRecordDifficultyDocument {
-        self.difficulty
-    }
-
-    pub(super) fn preset_code(&self) -> u32 {
-        match self.difficulty().preset {
-            FlightRecordPresetDocument::Beginner => 0,
-            FlightRecordPresetDocument::Standard => 1,
-            FlightRecordPresetDocument::Expert => 2,
-            FlightRecordPresetDocument::Realistic => 3,
-            FlightRecordPresetDocument::Custom => 4,
-        }
-    }
-
-    fn settings(&self) -> DifficultySettings {
-        let difficulty = self.difficulty();
-        let mut settings = DifficultySettings::custom(
-            crate::information_from_record(difficulty.information),
-            crate::assistance_from_record(difficulty.assistance),
-            crate::weather_from_record(difficulty.weather),
-        );
-        if let Some(profile) = difficulty.hud_profile {
-            settings = settings.with_hud_profile(HudProfile::new(
-                profile.telemetry,
-                profile.attitude,
-                profile.wind,
-                profile.flight_path,
-                profile.angle_of_attack,
-                profile.warnings,
-            ));
-        }
-        settings
-    }
-}
 
 #[wasm_bindgen]
 impl HybridGameSessionBridge {
@@ -104,7 +61,7 @@ impl HybridGameSessionBridge {
     /// Reports an archived Replay without creating another game phase or clock.
     pub fn is_archived_replay(&self) -> bool {
         self.session.core_session().snapshot().phase() == SessionPhase::Replay
-            && self.archived.is_some()
+            && self.session.archive().is_some()
     }
 
     /// Returns named Replay identity and terminal metadata without evaluating the current model.
@@ -160,8 +117,8 @@ impl HybridGameSessionBridge {
     fn export_current_record_internal(&self) -> Result<String, BoundaryError> {
         match self.session.core_session().snapshot().phase() {
             SessionPhase::Result => self.export_record_internal(),
-            SessionPhase::Replay => match &self.archived {
-                Some(ArchiveMetadata { original_json, .. }) => Ok(original_json.clone()),
+            SessionPhase::Replay => match self.session.archive() {
+                Some(metadata) => Ok(metadata.original_json().to_owned()),
                 None => self.export_record_internal(),
             },
             _ => Err(BoundaryError::Session(GameSessionError::InvalidTransition)),
@@ -213,9 +170,7 @@ impl HybridGameSessionBridge {
     }
 
     pub(super) fn display_difficulty(&self) -> DifficultySettings {
-        self.archived
-            .as_ref()
-            .map_or(self.session.display_difficulty(), ArchiveMetadata::settings)
+        self.session.display_difficulty()
     }
 
     pub(super) fn export_record_internal(&self) -> Result<String, BoundaryError> {
@@ -260,21 +215,16 @@ impl HybridGameSessionBridge {
     }
 
     fn open_archive_internal(&mut self, json: &str) -> Result<(), BoundaryError> {
-        let document = TailFlightRecordDocument::decode_json(json.as_bytes())
-            .map_err(BoundaryError::Format)?;
-        let metadata = ArchiveMetadata {
-            difficulty: document.header.difficulty,
-            control_identity: document.control_identity.clone(),
-            original_json: json.to_owned(),
-        };
-        let record = document
-            .to_finalized_core_record()
-            .map_err(BoundaryError::Format)?;
         self.session
-            .open_archived_replay(record)
-            .map_err(BoundaryError::Session)?;
-        self.archived = Some(metadata);
-        Ok(())
+            .open_archived_record_json(json)
+            .map_err(|error| match error {
+                birdman_game_session::application::ArchiveError::Format(error) => {
+                    BoundaryError::Format(error)
+                }
+                birdman_game_session::application::ArchiveError::Session(error) => {
+                    BoundaryError::Session(error)
+                }
+            })
     }
 
     fn playback_context_internal(&self) -> Result<String, BoundaryError> {
@@ -309,15 +259,11 @@ impl HybridGameSessionBridge {
                 metadata.difficulty.into(),
             )
         } else {
-            match &self.archived {
-                Some(ArchiveMetadata {
-                    difficulty,
-                    control_identity,
-                    ..
-                }) => (
+            match self.session.archive() {
+                Some(metadata) => (
                     ControlLayout::TailIncidence,
-                    Some(control_identity),
-                    *difficulty,
+                    Some(metadata.control_identity()),
+                    metadata.difficulty(),
                 ),
                 None => (
                     ControlLayout::TailIncidence,
