@@ -36,6 +36,9 @@ renderer契約は `web/src/render/contracts/`、初期adapterは `web/src/render
 camera rigは `web/src/render/camera/` で数値poseを生成する。
 web appと共通rendererからThree.jsのScene、Object3D、Vector3、Quaternion、Camera、Material、Texture、
 WebGLRendererをimport/re-exportしない。型だけのimport、動的import経由の漏出も検査する。
+検査はTypeScriptのASTとプロジェクトのmodule解決設定を使い、import元に対して解決したpathを判定する。
+import/re-export、型query、JSDoc型依存、require、import assignment、reference directiveを同じ境界へ通す。
+相対pathの正規化とWindows区切りを扱い、解決不能な動的specifierは拒否する。
 CLI/core/formatは描画engineに依存しない。
 composition rootだけが具体adapterのfactoryをimportし、返却値は共通interfaceとして扱う。
 
