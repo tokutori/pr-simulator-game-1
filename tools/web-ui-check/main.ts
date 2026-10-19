@@ -126,6 +126,9 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
         const bounds = node.getBoundingClientRect();
         if (bounds.left < -1 || bounds.right > innerWidth + 1 || node.scrollWidth > node.clientWidth + 1) invalid.push(node.dataset.controlId ?? node.textContent);
       }
+      for (const node of document.querySelectorAll<HTMLElement>(".screen-ui-choice small")) {
+        if (node.getBoundingClientRect().height > Number.parseFloat(getComputedStyle(node).lineHeight) + 1) invalid.push(`説明が複数行: ${node.textContent}`);
+      }
       return invalid;
     });
     assert.deepEqual(overflowing, []);

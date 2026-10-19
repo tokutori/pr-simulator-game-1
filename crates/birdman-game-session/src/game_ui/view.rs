@@ -1114,13 +1114,9 @@ fn water_quality(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
         },
     );
     for (quality, suffix, description) in [
-        (GameUiWaterQuality::Low, "low", "描画負荷を抑える"),
-        (
-            GameUiWaterQuality::Medium,
-            "medium",
-            "描画負荷と波面密度の均衡",
-        ),
-        (GameUiWaterQuality::High, "high", "波面の描画密度を優先する"),
+        (GameUiWaterQuality::Low, "low", "負荷を抑える"),
+        (GameUiWaterQuality::Medium, "medium", "負荷と密度の均衡"),
+        (GameUiWaterQuality::High, "high", "波面の密度を優先"),
     ] {
         menu.push(
             &format!("presentation-water-quality-{suffix}"),
@@ -1208,7 +1204,7 @@ fn screen_render_scale(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
                 group_label: "3D描画品質".to_owned(),
                 selected: automatic,
                 description: if automatic {
-                    "負荷に応じて解像度・影・水面を自動調整".to_owned()
+                    "負荷に応じて調整".to_owned()
                 } else {
                     String::new()
                 },
@@ -1229,7 +1225,7 @@ fn screen_render_scale(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
                     group: "render-scale".to_owned(),
                     group_label: "3D描画品質".to_owned(),
                     selected: matches!(render.selection, ScreenRenderSelection::Manual { scale: selected, .. } if selected == scale),
-                    description: if !automatic && render.applied == scale { "低い倍率ほど描画負荷を抑える".to_owned() } else { String::new() },
+                    description: String::new(),
                 },
             },
         );
