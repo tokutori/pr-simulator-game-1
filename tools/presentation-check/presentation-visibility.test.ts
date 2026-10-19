@@ -8,8 +8,7 @@ import { screenUiVisible } from "../../web/src/app/presentation-visibility.js";
 import { currentFlightDisplayFixture, currentRecordedDisplayFixture } from "../game-check/current-session-fixture.js";
 import { FlightHudAdapter } from "../../web/src/presentation/flight-hud.js";
 import { createFlightUiHudModel } from "../../web/src/app/flight-frame-view.js";
-import { currentSharedGameUiFixture, withSharedGameUiSession } from "../game-check/shared-game-ui-fixture.js";
-import type { GameUiAction } from "../../web/src/generated/game-ui-action.js";
+import { createSharedGameUiSession, currentSharedGameUiFixture, sharedGameUiPlatform } from "../game-check/shared-game-ui-fixture.js";
 import type { UiAction } from "../../web/src/render/contracts/ui.js";
 
 describe("Model-derived Screen visibility", () => {
@@ -40,8 +39,11 @@ describe("Model-derived Screen visibility", () => {
 
 describe("App update to Screen DOM and HUD lifecycle", () => {
   let window: Window | null = null;
+  let sharedSession: ReturnType<typeof createSharedGameUiSession> | null = null;
 
   afterEach(async () => {
+    sharedSession?.session.dispose();
+    sharedSession = null;
     await window?.happyDOM.abort();
     Reflect.deleteProperty(globalThis, "window");
     Reflect.deleteProperty(globalThis, "document");
@@ -58,8 +60,8 @@ describe("App update to Screen DOM and HUD lifecycle", () => {
     const renderedTicks: number[] = [];
     const hud = new FlightHudAdapter(hudRoot);
     const actions: UiAction[] = [];
-    const sharedActions: GameUiAction[] = [];
-    let model = readyModel(phaseCode);
+    sharedSession = phaseCode >= 0 ? createSharedGameUiSession(phaseCode) : null;
+    let model = readyModel(phaseCode, sharedSession?.session.readSharedUi(sharedSession.platform) ?? null);
     const adapter = new ScreenUiAdapter(root, (action) => {
       actions.push(action);
       send({ type: "ui-action", action });
@@ -67,8 +69,8 @@ describe("App update to Screen DOM and HUD lifecycle", () => {
     function render(): void {
       const phase = gameSessionPhaseCode(model.gameSession);
       if (phase >= 0) {
-        const view = currentSharedGameUiFixture(phase, { actions: sharedActions,
-          platform: { notification: model.status } });
+        if (sharedSession === null || sharedSession.session.readLifecycle().phaseCode !== phase) throw new Error("Expected the retained Rust scene");
+        const view = sharedSession.session.readSharedUi(sharedGameUiPlatform({ notification: model.status }));
         model = updateApp(model, { type: "shared-game-ui-observed", view: { ...view,
           hud: model.sharedGameUi?.hud ?? view.hud } }).model;
       }
@@ -88,10 +90,8 @@ describe("App update to Screen DOM and HUD lifecycle", () => {
       model = transition.model;
       for (const effect of transition.effects) {
         if (effect.type !== "update-shared-game-ui") continue;
-        const shared = withSharedGameUiSession(gameSessionPhaseCode(model.gameSession), {
-          actions: sharedActions, platform: { notification: model.status }
-        }, (session, platform) => session.updateSharedUi(effect.action, platform));
-        sharedActions.push(effect.action);
+        if (sharedSession === null) throw new Error("Expected the retained Rust session");
+        const shared = sharedSession.session.updateSharedUi(effect.action, sharedGameUiPlatform({ notification: model.status }));
         for (const effect of shared.effects) model = updateApp(model, { type: "shared-game-ui-effect", effect }).model;
       }
       render();
@@ -221,7 +221,7 @@ describe("App update to Screen DOM and HUD lifecycle", () => {
   });
 });
 
-function readyModel(phaseCode: number): AppModel {
+function readyModel(phaseCode: number, sharedGameUi: AppModel["sharedGameUi"]): AppModel {
   const initial = updateApp(createInitialAppModel(), { type: "initialize" }).model;
   const ready = updateApp(initial, {
     type: "presentation-initialized", requestId: 1, activeMode: "screen",
@@ -229,7 +229,7 @@ function readyModel(phaseCode: number): AppModel {
   }).model;
   const gameSession = gameSessionState(phaseCode, 3, phaseCode === 5 || phaseCode === 6 ? currentFlightDisplayFixture(phaseCode) : phaseCode === 9 || phaseCode === 10 ? currentRecordedDisplayFixture() : null, true, "tail_incidence", phaseCode === 9 ? "result" : undefined);
   if (gameSession === null) throw new Error("Invalid game phase fixture");
-  return { ...ready, gameSession, sharedGameUi: phaseCode < 0 ? null : currentSharedGameUiFixture(phaseCode) };
+  return { ...ready, gameSession, sharedGameUi };
 }
 
 function completeScreenRecovery(app: { model(): AppModel; send(message: AppMessage): void }): void {
