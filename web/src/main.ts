@@ -44,7 +44,7 @@ import { maximum_flight_frame_gap_milliseconds, screen_vertical_field_of_view_de
 import { parseScreenRenderAutoSnapshot } from "./render/contracts/screen-render-auto.js";
 import { suspendPageFlight } from "./game/page-flight-lifecycle.js";
 import { DEFAULT_LAKE_VISUAL_CONDITION } from "./render/contracts/lake-water.js";
-import { createArchivedPersonalBestSelection } from "./game/archived-personal-best.js";
+import { createArchivedPersonalBestSelection, personalBestComparisonVersion } from "./game/archived-personal-best.js";
 import { FlightRecordRepository, IndexedDbFlightRecordPersistence } from "./game/flight-record-store.js";
 import { parseRuntimeEnvironmentSnapshot, sameEnvironmentIdentity } from "./game/runtime-environment.js";
 import type { RuntimeEnvironmentProjection } from "./game/runtime-environment.js";
@@ -990,7 +990,7 @@ async function persistFlightRecord(
 
 function createFlightRecordRepository(): FlightRecordRepository {
   return new FlightRecordRepository(
-    new IndexedDbFlightRecordPersistence(window.indexedDB),
+    new IndexedDbFlightRecordPersistence(window.indexedDB, personalBestComparisonVersion()),
     undefined,
     createArchivedPersonalBestSelection
   );

@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { IDBFactory, IDBObjectStore as FakeObjectStore } from "fake-indexeddb";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { HybridGameSessionBridge, initSync } from "../../web/pkg/birdman_game_wasm.js";
-import { createArchivedPersonalBestSelection } from "../../web/src/game/archived-personal-best.js";
+import { createArchivedPersonalBestSelection, personalBestComparisonVersion } from "../../web/src/game/archived-personal-best.js";
 import {
   FlightRecordRepository, IndexedDbFlightRecordPersistence,
   type FlightRecordPersistencePort, type PersonalBestSelectionPort,
@@ -85,7 +85,7 @@ async function databaseFixture(records: readonly unknown[] = [], metadata: reado
     await done;
   } finally { database.close(); }
   return {
-    factory, name, persistence: new IndexedDbFlightRecordPersistence(factory, name),
+    factory, name, persistence: new IndexedDbFlightRecordPersistence(factory, personalBestComparisonVersion(), name),
     async rows(store: string): Promise<unknown[]> {
       const connection = await requestResult(factory.open(name));
       try {
@@ -109,7 +109,7 @@ describe("Current FlightRecord persistence", () => {
     const records = Array.from({ length: 2000 }, (_, index) => ({
       id: index + 1, savedAt: "2026-10-19T00:00:00.000Z", json
     }));
-    const fixture = await databaseFixture(records, records.map(({ id, savedAt }) => ({ id, savedAt })), [{ key, recordId: 1 }]);
+    const fixture = await databaseFixture(records, records.map(({ id, savedAt }) => ({ id, savedAt })), [{ key, recordId: 1, comparisonVersion: personalBestComparisonVersion() }]);
     try {
       const repository = new FlightRecordRepository(fixture.persistence, undefined, createArchivedPersonalBestSelection);
       const getAll = vi.spyOn(FakeObjectStore.prototype, "getAll");
@@ -151,7 +151,7 @@ describe("Current FlightRecord persistence", () => {
       } finally { flight.session.dispose(); }
       expect((await repository.saveFrom({ export_flight_record_json: () => json })).personalBest)
         .toMatchObject({ kind: "existing", id: 1 });
-      expect(await fixture.rows("personalBests")).toEqual([{ key, recordId: 1 }]);
+      expect(await fixture.rows("personalBests")).toEqual([{ key, recordId: 1, comparisonVersion: personalBestComparisonVersion() }]);
       expect(await repository.load(1)).toBe(json);
       expect(await fixture.rows("recordMetadata")).toHaveLength(2001);
     } finally { await fixture.dispose(); }
@@ -229,13 +229,13 @@ describe("Current FlightRecord persistence", () => {
       const first = new TestPersonalBestSelection(true);
       expect(await fixture.persistence.add(json, "second", first)).toBe(2);
       expect(first.consideredIds).toEqual([1]);
-      expect(await fixture.rows("personalBests")).toEqual([{ key: "a".repeat(64), recordId: 2 }]);
+      expect(await fixture.rows("personalBests")).toEqual([{ key: "a".repeat(64), recordId: 2, comparisonVersion: personalBestComparisonVersion() }]);
       const second = new TestPersonalBestSelection();
       expect(await fixture.persistence.add(json, "third", second)).toBe(3);
       expect(second.consideredIds).toEqual([2]);
       expect(await fixture.rows("records")).toHaveLength(3);
       expect(await fixture.rows("recordMetadata")).toHaveLength(3);
-      expect(await fixture.rows("personalBests")).toEqual([{ key: "a".repeat(64), recordId: 2 }]);
+      expect(await fixture.rows("personalBests")).toEqual([{ key: "a".repeat(64), recordId: 2, comparisonVersion: personalBestComparisonVersion() }]);
     } finally { await fixture.dispose(); }
   });
 
@@ -250,6 +250,33 @@ describe("Current FlightRecord persistence", () => {
     } finally { await fixture.dispose(); }
   });
 
+  it.each([undefined, 999])("keeps old or unknown index revisions unranked and scans current candidates (revision=%s)", async (revision) => {
+    const json = currentRecordFixture();
+    const selection = createArchivedPersonalBestSelection(json);
+    let key: string;
+    try { key = selection.key_hex(); } finally { selection.free(); }
+    const old = JSON.parse(json) as Record<string, unknown>;
+    delete old.identity_metadata;
+    const unknown = { ...old, identity_metadata: { comparison_version: 999, future: "原文を保持する" } };
+    const records = [
+      { id: 1, savedAt: "old", json: JSON.stringify(old) },
+      { id: 2, savedAt: "unknown", json: JSON.stringify(unknown) },
+      { id: 3, savedAt: "current", json }
+    ];
+    const index = revision === undefined ? { key, recordId: 1 } : { key, recordId: 1, comparisonVersion: revision };
+    const fixture = await databaseFixture(records, records.map(({ id, savedAt }) => ({ id, savedAt })), [index]);
+    try {
+      const repository = new FlightRecordRepository(fixture.persistence, undefined, createArchivedPersonalBestSelection);
+      expect((await repository.recent(3)).every(({ personalBest }) => !personalBest)).toBe(true);
+      expect(await fixture.rows("personalBests")).toEqual([index]);
+      expect((await repository.saveFrom({ export_flight_record_json: () => json })).personalBest).toMatchObject({ kind: "existing", id: 3 });
+      expect((await repository.recent(3)).filter(({ personalBest }) => personalBest).map(({ id }) => id)).toEqual([3]);
+      expect(await repository.load(1)).toBe(records[0]?.json);
+      expect(await repository.load(2)).toBe(records[1]?.json);
+      expect(await fixture.rows("personalBests")).toEqual([{ key, recordId: 3, comparisonVersion: personalBestComparisonVersion() }]);
+    } finally { await fixture.dispose(); }
+  });
+
   it.each([false, true])("retains unsupported stored bytes without blocking a current save (indexed=%s)", async (indexed) => {
     const json = JSON.stringify({ schema_version: 5, unused: "preserve stored bytes" });
     const current = currentRecordFixture();
@@ -257,7 +284,7 @@ describe("Current FlightRecord persistence", () => {
     let key: string;
     try { key = selection.key_hex(); } finally { selection.free(); }
     const fixture = await databaseFixture([{ id: 1, savedAt: "unsupported", json }],
-      [{ id: 1, savedAt: "unsupported" }], indexed ? [{ key, recordId: 1 }] : []);
+      [{ id: 1, savedAt: "unsupported" }], indexed ? [{ key, recordId: 1, comparisonVersion: personalBestComparisonVersion() }] : []);
     try {
       const repository = new FlightRecordRepository(fixture.persistence, undefined, createArchivedPersonalBestSelection);
       expect((await repository.saveFrom({ export_flight_record_json: () => current })).personalBest).toMatchObject({ kind: "candidate", id: 2 });
@@ -304,7 +331,7 @@ describe("Current FlightRecord persistence", () => {
   });
 
   it("lists only valid metadata and marks the current indexed record", async () => {
-    const fixture = await databaseFixture([], [{ id: 3, savedAt: "saved" }], [{ key: "a".repeat(64), recordId: 3 }]);
+    const fixture = await databaseFixture([], [{ id: 3, savedAt: "saved" }], [{ key: "a".repeat(64), recordId: 3, comparisonVersion: personalBestComparisonVersion() }]);
     try {
       expect(await fixture.persistence.getRecent(3)).toEqual([{ id: 3, savedAt: "saved", personalBest: true }]);
       expect(await fixture.persistence.get(3)).toBeNull();

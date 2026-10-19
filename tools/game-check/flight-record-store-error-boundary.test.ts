@@ -63,7 +63,7 @@ async function createFixture(route: ComparisonRoute, existingJson: string) {
       transaction.objectStore("records").add({ id, json: recordJson, savedAt });
       transaction.objectStore("recordMetadata").add({ id, savedAt });
     }
-    if (route !== "scan") transaction.objectStore("personalBests").put({ key, recordId: 2 });
+    if (route !== "scan") transaction.objectStore("personalBests").put({ key, recordId: 2, comparisonVersion: TailPersonalBestSelectionBridge.comparison_version() });
     await done;
   } finally {
     database.close();
@@ -149,7 +149,7 @@ describe("FlightRecord storage error boundary", () => {
     sample.state.pilot_position_m = "invalid";
     const fixture = await createFixture(route, JSON.stringify(document));
     const trace = tracedSelections();
-    const repository = new FlightRecordRepository(new IndexedDbFlightRecordPersistence(fixture.factory, fixture.name), () => new Date(savedAt), trace.create);
+    const repository = new FlightRecordRepository(new IndexedDbFlightRecordPersistence(fixture.factory, 2, fixture.name), () => new Date(savedAt), trace.create);
     try {
       const before = await fixture.state();
       const failure = await rejection(repository.saveFrom({ export_flight_record_json: () => fixture.json }));
@@ -189,7 +189,7 @@ describe("FlightRecord storage error boundary", () => {
   ])("normalizes $name without bypassing abort or resource cleanup", async ({ reason, message }) => {
     const fixture = await createFixture("scan", waterContactRecord());
     const trace = tracedSelections({ reason });
-    const repository = new FlightRecordRepository(new IndexedDbFlightRecordPersistence(fixture.factory, fixture.name), () => new Date(savedAt), trace.create);
+    const repository = new FlightRecordRepository(new IndexedDbFlightRecordPersistence(fixture.factory, 2, fixture.name), () => new Date(savedAt), trace.create);
     try {
       const before = await fixture.state();
       const failure = await rejection(repository.saveFrom({ export_flight_record_json: () => fixture.json }));
@@ -210,7 +210,7 @@ describe("FlightRecord storage error boundary", () => {
   it.each(["request error", "explicit abort"] as const)("preserves the IndexedDB fallback for an unrecorded %s", async (mode) => {
     const fixture = await createFixture("scan", waterContactRecord());
     const trace = tracedSelections();
-    const repository = new FlightRecordRepository(new IndexedDbFlightRecordPersistence(fixture.factory, fixture.name), () => new Date(savedAt), trace.create);
+    const repository = new FlightRecordRepository(new IndexedDbFlightRecordPersistence(fixture.factory, 2, fixture.name), () => new Date(savedAt), trace.create);
     const originalAdd = Object.getOwnPropertyDescriptor(FakeObjectStore.prototype, "add")?.value as IDBObjectStore["add"];
     let requestFailure: DOMException | null = null;
     let transactionFailure: DOMException | null = null;

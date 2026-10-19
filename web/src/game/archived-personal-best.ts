@@ -4,6 +4,10 @@ import { boundaryInteger } from "./tail-boundary-values.js";
 
 const maximumRecordBytes = 16 * 1024 * 1024;
 
+export function personalBestComparisonVersion(): number {
+  return TailPersonalBestSelectionBridge.comparison_version();
+}
+
 export function createArchivedPersonalBestSelection(recordJson: string): PersonalBestSelectionPort {
   requireCurrentRecord(recordJson);
   const selection = new TailPersonalBestSelectionBridge(recordJson);

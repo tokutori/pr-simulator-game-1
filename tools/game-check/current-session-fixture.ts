@@ -15,20 +15,35 @@ export function launchCurrentSession(session: AppSessionFacade): void {
   session.observeCountdown(session.captureCountdownToken(), 3, true);
 }
 
+let cachedContactRecord: string | undefined;
+
 export function currentRecordFixture(eligible = true): string {
+  if (eligible && cachedContactRecord !== undefined) return cachedContactRecord;
   const session = createAppSession({ controlModeCode: 0, seedLow: 21, seedHigh: 22 });
   try {
-    launchCurrentSession(session);
+    session.executeSharedSessionCommand({ kind: "open_setup" });
+    session.executeSharedSessionCommand({ kind: "select_weather", weather: "calm" });
+    session.executeSharedSessionCommand({ kind: "prepare" });
+    session.executeSharedSessionCommand({ kind: "start_countdown" });
+    session.observeCountdown(session.captureCountdownToken(), 3, true);
     session.flightPort.advance_tick_json(neutralTailInput);
-    session.executeSharedSessionCommand({ kind: "abort" });
+    if (!eligible) session.executeSharedSessionCommand({ kind: "abort" });
+    else {
+      for (let tick = 1; tick < 90_000 && session.readSnapshot().phaseCode !== 7; tick += 1) {
+        session.flightPort.advance_tick_json(neutralTailInput);
+      }
+    }
     const document = JSON.parse(session.exportRecordJson()) as {
-      header: { personal_best_key: number[] | null };
-      finalization: { reason: string; disposition: string };
+      samples: readonly unknown[];
+      finalization: { reason: string; terminal_tick: number; terminal_fraction: number };
     };
     if (eligible) {
-      document.finalization.reason = "water_contact";
-      document.finalization.disposition = "complete";
-      document.header.personal_best_key = Array.from({ length: 32 }, () => 8);
+      if (document.finalization.reason !== "water_contact") throw new Error("Contact fixture did not reach a valid water contact");
+      document.samples = document.samples.slice(0, 2);
+      document.finalization.terminal_tick = 1;
+      document.finalization.terminal_fraction = 0;
+      cachedContactRecord = JSON.stringify(document);
+      return cachedContactRecord;
     }
     return JSON.stringify(document);
   } finally {

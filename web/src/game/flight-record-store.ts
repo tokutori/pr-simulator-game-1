@@ -78,6 +78,7 @@ export class FlightRecordRepository {
 export class IndexedDbFlightRecordPersistence implements FlightRecordPersistencePort {
   constructor(
     private readonly factory: IDBFactory,
+    private readonly comparisonVersion: number,
     private readonly databaseName = "birdman-flight-records"
   ) {}
 
@@ -106,7 +107,7 @@ export class IndexedDbFlightRecordPersistence implements FlightRecordPersistence
                 abort(new TypeError("Rust returned an invalid Personal Best selection"));
                 return;
               }
-              transaction.objectStore("personalBests").put({ key, recordId: selectedId });
+              transaction.objectStore("personalBests").put({ key, recordId: selectedId, comparisonVersion: this.comparisonVersion });
             }
           } catch (error: unknown) {
             abort(error);
@@ -147,6 +148,10 @@ export class IndexedDbFlightRecordPersistence implements FlightRecordPersistence
             }
             if (!isPersonalBestEntry(indexed) || indexed.key !== key) {
               abort(new TypeError("IndexedDB Personal Best index is malformed"));
+              return;
+            }
+            if (indexed.comparisonVersion !== this.comparisonVersion) {
+              scanExistingRecords();
               return;
             }
             const existingRequest = records.get(indexed.recordId);
@@ -232,7 +237,9 @@ export class IndexedDbFlightRecordPersistence implements FlightRecordPersistence
           abort(new TypeError("IndexedDB Personal Best index is malformed"));
           return;
         }
-        personalBestRecordIds = new Set(entries.map(({ recordId }) => recordId));
+        personalBestRecordIds = new Set(entries
+          .filter(({ comparisonVersion }) => comparisonVersion === this.comparisonVersion)
+          .map(({ recordId }) => recordId));
       };
       transaction.oncomplete = () => {
         const bestIds = personalBestRecordIds;
@@ -336,7 +343,7 @@ function isStoredFlightRecordMetadata(value: unknown): value is StoredFlightReco
     && "savedAt" in value && typeof value.savedAt === "string";
 }
 
-function isPersonalBestEntry(value: unknown): value is { readonly key: string; readonly recordId: number } {
+function isPersonalBestEntry(value: unknown): value is { readonly key: string; readonly recordId: number; readonly comparisonVersion?: unknown } {
   return typeof value === "object" && value !== null
     && "key" in value && typeof value.key === "string" && /^[0-9a-f]{64}$/.test(value.key)
     && "recordId" in value && typeof value.recordId === "number"

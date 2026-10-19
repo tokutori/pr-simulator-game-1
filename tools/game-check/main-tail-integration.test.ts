@@ -126,7 +126,7 @@ async function fixture(failInitialization = false, seedCurrentArchive = false, d
         desiredPitchRateRadiansPerSecond: 0, desiredYawRateRadiansPerSecond: 0, pilotPositionCommand: { kind: "hold" } });
       for (let tick = 0; tick < 5; tick += 1) archived.advance_tick_json(neutral);
       archived.abort();
-      const repository = new FlightRecordRepository(new IndexedDbFlightRecordPersistence(persistence), () => new Date("2026-10-08T00:00:00Z"), createArchivedPersonalBestSelection);
+      const repository = new FlightRecordRepository(new IndexedDbFlightRecordPersistence(persistence, wasm.TailPersonalBestSelectionBridge.comparison_version()), () => new Date("2026-10-08T00:00:00Z"), createArchivedPersonalBestSelection);
       await repository.saveFrom(archived);
     } finally { archived.free(); }
   }

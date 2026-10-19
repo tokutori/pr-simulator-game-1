@@ -66,7 +66,7 @@ describe("IndexedDB connection ownership", () => {
     const observed = observeOpen(factory);
     const close = vi.spyOn(FakeDatabase.prototype, "close");
     const transaction = vi.spyOn(FakeDatabase.prototype, "transaction");
-    const persistence = new IndexedDbFlightRecordPersistence(factory, name);
+    const persistence = new IndexedDbFlightRecordPersistence(factory, 2, name);
     const invoke = (): Promise<unknown> => {
       switch (operation) {
         case "get": return persistence.get(1);
@@ -113,7 +113,7 @@ describe("IndexedDB connection ownership", () => {
     const close = vi.spyOn(FakeDatabase.prototype, "close");
     const transaction = vi.spyOn(FakeDatabase.prototype, "transaction");
     try {
-      await expect(new IndexedDbFlightRecordPersistence(factory, name).get(1)).resolves.toBeNull();
+      await expect(new IndexedDbFlightRecordPersistence(factory, 2, name).get(1)).resolves.toBeNull();
       const database = latest(observed.connections);
       expect(close.mock.contexts.filter((connection) => connection === database)).toHaveLength(1);
       expect(transaction.mock.calls.filter(([, mode], index) =>
@@ -131,7 +131,7 @@ describe("IndexedDB connection ownership", () => {
     const failure = new Error("Injected synchronous open failure");
     const observed = observeOpen(factory);
     vi.spyOn(factory, "open").mockImplementationOnce(() => { throw failure; });
-    const persistence = new IndexedDbFlightRecordPersistence(factory, name);
+    const persistence = new IndexedDbFlightRecordPersistence(factory, 2, name);
     try {
       await expect(persistence.get(1)).rejects.toBe(failure);
       expect(observed.requests).toHaveLength(0);
@@ -153,7 +153,7 @@ describe("IndexedDB connection ownership", () => {
     original.close();
     const observed = observeOpen(factory);
     try {
-      await expect(new IndexedDbFlightRecordPersistence(factory, name).get(1))
+      await expect(new IndexedDbFlightRecordPersistence(factory, 2, name).get(1))
         .rejects.toThrow("Unsupported flight record database version; stored data is retained");
       const retained = await openResult(factory.open(name, 1));
       expect(retained.version).toBe(1);
@@ -177,7 +177,7 @@ describe("IndexedDB connection ownership", () => {
     const observed = observeOpen(factory);
     const close = vi.spyOn(FakeDatabase.prototype, "close");
     try {
-      await expect(new IndexedDbFlightRecordPersistence(factory, name).get(1)).rejects.toMatchObject({ name: "VersionError" });
+      await expect(new IndexedDbFlightRecordPersistence(factory, 2, name).get(1)).rejects.toMatchObject({ name: "VersionError" });
       expect(observed.connections).toHaveLength(0);
       expect(close).not.toHaveBeenCalled();
     } finally {
@@ -202,7 +202,7 @@ describe("IndexedDB connection ownership", () => {
       });
     });
     const close = vi.spyOn(FakeDatabase.prototype, "close");
-    const persistence = new IndexedDbFlightRecordPersistence(factory, name);
+    const persistence = new IndexedDbFlightRecordPersistence(factory, 2, name);
     try {
       if (failureMode === "synchronous throw") await expect(persistence.get(1)).rejects.toBe(failure);
       else await expect(persistence.get(1)).rejects.toMatchObject({ name: "AbortError" });
