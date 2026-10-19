@@ -331,6 +331,26 @@ mod tests {
                 assert!((-down - height) * sign < 0.0);
             }
         }
+        for step in 0..=64 {
+            let aft = minimum_aft + (maximum_aft - minimum_aft) * f64::from(step) / 64.0;
+            let eye = [right, -down, aft];
+            for rod in &geometry.rods[..18] {
+                let direction: [f64; 3] =
+                    core::array::from_fn(|axis| rod.endpoints[1][axis] - rod.endpoints[0][axis]);
+                let length_squared = direction.iter().map(|value| value * value).sum::<f64>();
+                let fraction = ((0..3)
+                    .map(|axis| (eye[axis] - rod.endpoints[0][axis]) * direction[axis])
+                    .sum::<f64>()
+                    / length_squared)
+                    .clamp(0.0, 1.0);
+                let distance_squared = (0..3)
+                    .map(|axis| {
+                        (eye[axis] - rod.endpoints[0][axis] - fraction * direction[axis]).powi(2)
+                    })
+                    .sum::<f64>();
+                assert!(distance_squared > rod.radius * rod.radius);
+            }
+        }
     }
 
     #[test]
