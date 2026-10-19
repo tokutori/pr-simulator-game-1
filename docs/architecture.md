@@ -122,7 +122,8 @@ Webは有効recordがあれば終了理由付きResultへ遷移し、boot等の�
 `birdman-game-bevy`は既存core/formatとWeb非依存の共有session準備を利用するnative adapterである。
 Bevyの入力・GPU・window・Transformはadapter内部に限定し、物理・GameSession・score・記録の正本はRust coreに保持する。
 nativeのbuild・起動・操作にNode.js、TypeScript、browser、WASM実行環境を要求しない。
-今回の対象はWindows 11のScreenであり、既存Webの全Scene/VR契約は維持する。
+初回#254の対象と実GPU検証はWindows 11のScreenである。#543では同じnative adapterをWindows・macOS・Linuxのx86_64/arm64へ接続する。
+各構成のbuild・CPU smokeと実GPU・操作受入を区別し、既存Webの全Scene/VR契約を維持する。
 native固有のPilot/Chase操作はpresentation状態とし、physics・configuration・記録を変更しない。
 実装範囲と確認手順は[Bevy native Screen](bevy-native-screen.md)に記載する。
 

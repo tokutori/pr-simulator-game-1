@@ -1,7 +1,8 @@
 import { record, nonEmpty } from "../shared/validation.js";
 
 export const HOST_NUMERICAL_TEST_TARGET = 'cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))';
-export const NATIVE_SCREEN_TARGET = 'cfg(target_os = "windows")';
+export const NATIVE_SCREEN_TARGET = 'cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))';
+export const NATIVE_LINUX_WINDOW_TARGET = 'cfg(target_os = "linux")';
 
 const allowed = new Map<string, readonly string[]>([
   ["birdman-game-core", ["libm"]],
@@ -39,7 +40,9 @@ export function assertNativeTextPatch(workspace: unknown): void {
 
 function isNativeEngineDependency(crate: string, dependency: Record<string, unknown>): boolean {
   return crate === "birdman-game-bevy"
-    && dependency.target === NATIVE_SCREEN_TARGET
+    && (dependency.target === NATIVE_SCREEN_TARGET
+      || dependency.target === NATIVE_LINUX_WINDOW_TARGET && Array.isArray(dependency.features)
+      && dependency.features.length === 2 && dependency.features.includes("x11") && dependency.features.includes("wayland"))
     && isCompleteVersionPin(dependency.req)
     && isDefaultRegistrySource(dependency)
     && dependency.path === undefined

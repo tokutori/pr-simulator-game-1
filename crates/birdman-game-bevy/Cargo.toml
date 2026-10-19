@@ -11,7 +11,7 @@ description = "Native Screen adapter for the existing Birdman hybrid game sessio
 birdman-game-core.workspace = true
 birdman-game-session = { path = "../birdman-game-session" }
 
-[target.'cfg(target_os = "windows")'.dependencies]
+[target.'cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))'.dependencies]
 birdman-game-format.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -22,6 +22,9 @@ bevy = { version = "=0.19.1", default-features = false, features = [
   "bevy_mesh", "bevy_shader", "bevy_material", "bevy_light", "bevy_render",
   "bevy_core_pipeline", "bevy_pbr", "bevy_text", "bevy_ui", "bevy_ui_render", "bevy_input_focus", "ui_picking", "png"
 ] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+bevy = { version = "=0.19.1", default-features = false, features = ["x11", "wayland"] }
 
 [lints]
 workspace = true

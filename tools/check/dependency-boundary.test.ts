@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assertDependencyBoundary, assertNativeTextPatch, HOST_NUMERICAL_TEST_TARGET, NATIVE_SCREEN_TARGET } from "./dependency-boundary.js";
+import { assertDependencyBoundary, assertNativeTextPatch, HOST_NUMERICAL_TEST_TARGET, NATIVE_LINUX_WINDOW_TARGET, NATIVE_SCREEN_TARGET } from "./dependency-boundary.js";
 
 const numericalDependency = {
   name: "nalgebra", kind: "dev", target: HOST_NUMERICAL_TEST_TARGET, req: "=0.35.0",
@@ -339,10 +339,24 @@ describe("Cargo dependency boundary", () => {
     }
   );
 
-  it("allows the pinned Windows native complex-script segmentation backport", () => {
+  it("allows the pinned desktop native complex-script segmentation backport", () => {
     expect(() => { assertDependencyBoundary([
       { name: "birdman-game-bevy", dependencies: [nativeTextDependency] }
     ]); }).not.toThrow();
+  });
+
+  it("limits the additional Linux engine declaration to its two window backends", () => {
+    const dependency = { ...nativeEngineDependency, target: NATIVE_LINUX_WINDOW_TARGET, features: ["x11", "wayland"] };
+    const check = (difference: object): void => {
+      assertDependencyBoundary([
+        { name: "birdman-game-bevy", dependencies: [{ ...dependency, ...difference }] }
+      ]);
+    };
+    expect(() => { check({}); }).not.toThrow();
+    for (const difference of [
+      { target: null }, { target: 'cfg(target_arch = "wasm32")' }, { kind: "dev" },
+      { features: ["x11"] }, { features: ["x11", "wayland", "bevy_audio"] }
+    ]) expect(() => { check(difference); }).toThrow("Forbidden native engine dependency");
   });
 
   it.each(["birdman-game-core", "birdman-game-format", "birdman-game-session", "birdman-game-wasm"])(

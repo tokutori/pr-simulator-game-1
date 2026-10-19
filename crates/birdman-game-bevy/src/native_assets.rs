@@ -9,6 +9,10 @@ pub(crate) fn register(app: &mut App) {
     embedded_asset!(app, "../assets/native_terrain_haze.wgsl");
 }
 
+pub(crate) fn bundled_font() -> &'static [u8] {
+    include_bytes!("../../../assets/fonts/MPLUS1p-Regular.ttf")
+}
+
 pub(crate) fn water_shader_path() -> AssetPath<'static> {
     AssetPath::from_path_buf(embedded_path!("../assets/native_water.wgsl")).with_source("embedded")
 }
@@ -36,6 +40,11 @@ mod tests {
         shader::{Shader, ShaderLoader, ShaderRef},
     };
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn embedded_japanese_font_preserves_cjk_and_mixed_script_layout() {
+        crate::app::verification::verify_text_layout(bundled_font()).unwrap();
+    }
 
     #[test]
     fn material_shaders_load_through_embedded_reader_without_filesystem_assets() {

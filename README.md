@@ -1,7 +1,7 @@
 # 広報用鳥人間シミュレーターゲーム
 
 琵琶湖を舞台とする短時間の無推力滑空ゲーム。
-Rust coreの物理・ゲーム処理を、WebAssembly / Three.jsのWeb版とBevyのWindows native Screen版から利用する。
+Rust coreの物理・ゲーム処理を、WebAssembly / Three.jsのWeb版とBevyのdesktop native Screen版から利用する。
 
 広報版の設計目標は、松原水泳場付近から湖中央方向への約500 m、数十秒のフライトである。
 keyboard / gamepad、Manual / Shared / Automatic、FBWを備える。設計目標は架空mockの性能保証と区別する。
