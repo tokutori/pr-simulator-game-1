@@ -1,3 +1,4 @@
+use birdman_game_session::game_ui::GameUiScene;
 use birdman_game_session::lake_water::LakeWaterQuality;
 use birdman_game_session::screen_render_auto::{
     ScreenGpuSample, ScreenRenderAutoController, ScreenRenderAutoError, ScreenRenderInvalidation,
@@ -44,10 +45,11 @@ impl ScreenRenderAutoBridge {
 
     /// Decodes the shared scene name and applies the shared effective quality policy.
     pub fn set_scene(&mut self, scene: &str, now_ms: f64) -> Result<(), JsValue> {
-        let scene = serde_json::from_value(serde_json::Value::String(scene.to_owned()))
-            .map_err(|cause| JsValue::from_str(&cause.to_string()))?;
+        let scene: GameUiScene =
+            serde_json::from_value(serde_json::Value::String(scene.to_owned()))
+                .map_err(|cause| JsValue::from_str(&cause.to_string()))?;
         self.controller
-            .set_scene(scene, now_ms)
+            .set_scope(scene.screen_render_scope(), now_ms)
             .map(|_| ())
             .map_err(error)
     }
