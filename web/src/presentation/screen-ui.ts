@@ -260,7 +260,7 @@ export class ScreenUiAdapter {
     if (control.kind === "button") {
       const data: VNodeData = { key: control.id, attrs: { type: "button" }, dataset: { controlId: control.id }, props: { disabled: !control.enabled } };
       const presentation = control.presentation;
-      let selector = control.id === "game-result-configuration" ? "button.screen-ui-multiline" : "button";
+      let selector = "button";
       let children: string | VNode[] = control.label;
       if (presentation?.kind === "action") data.dataset = { ...data.dataset, emphasis: presentation.emphasis };
       if (presentation?.kind === "choice") {
