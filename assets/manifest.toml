@@ -1,6 +1,26 @@
 schema_version = 1
 
 [[assets]]
+path = "assets/fonts/MPLUS1p-Regular.ttf"
+sha256 = "2f294ad496432b1608f070d310e3aa2adcf1de4af429f4901df97ec4bd361ed1"
+source = "https://github.com/google/fonts/blob/47d54ca1ebb14fd864695f1d39dc734f39017c33/ofl/mplus1p/MPLUS1p-Regular.ttf"
+source_version = "google/fonts commit 47d54ca1ebb14fd864695f1d39dc734f39017c33"
+license = "OFL-1.1"
+license_url = "https://github.com/google/fonts/blob/47d54ca1ebb14fd864695f1d39dc734f39017c33/ofl/mplus1p/OFL.txt"
+attribution = "Copyright 2016 The M+ Project Authors; Copyright 2016 The Rounded M+ Project Authors"
+processing = "Unmodified upstream TrueType, 1758688 bytes; embedded native Japanese default font; no runtime download or OS font prerequisite"
+
+[[assets]]
+path = "assets/fonts/MPLUS1p-OFL.txt"
+sha256 = "9606aafb46de3f65c701d2ce5f2377b224b1355d06ada6171951a957e4d48278"
+source = "https://github.com/google/fonts/blob/47d54ca1ebb14fd864695f1d39dc734f39017c33/ofl/mplus1p/OFL.txt"
+source_version = "google/fonts commit 47d54ca1ebb14fd864695f1d39dc734f39017c33; complete font notice"
+license = "OFL-1.1"
+license_url = "https://github.com/google/fonts/blob/47d54ca1ebb14fd864695f1d39dc734f39017c33/ofl/mplus1p/OFL.txt"
+attribution = "Copyright 2016 The M+ Project Authors; Copyright 2016 The Rounded M+ Project Authors"
+processing = "Complete upstream copyright and SIL Open Font License 1.1; UTF-8 LF with one trailing space removed; distributed alongside every native archive"
+
+[[assets]]
 path = "assets/test-fonts/FiraMono-subset.ttf"
 sha256 = "45131c5e913a5c7b4311101303e3c320a97b93a27a64b7262b533ee0d31ae03c"
 source = "https://github.com/bevyengine/bevy/blob/v0.19.1/crates/bevy_text/src/FiraMono-subset.ttf"

@@ -4,9 +4,9 @@
 
 [#254](https://github.com/tokutori/pr-simulator-game-1/issues/254)の確認用実装を`bevy`ブランチで開発し、検証後にmainへ統合した。
 比較基準とbaseは`c5408914015f2f5c2679c033efca41e6b6be8404`に固定する。
-既存Web版は維持し、今回のnative対象はWindows 11のScreenに限定する。
+既存Web版を維持し、nativeのScreen対象をWindows・macOS・Linuxのx86_64/arm64へ広げる（[#543](https://github.com/tokutori/pr-simulator-game-1/issues/543)）。初回#254の対象はWindows 11であり、下記の過去GPU検証結果もその環境に限定される。各OSの実compilerによるbuildとCPU smoke、実GPU・操作受入を個別に記録する。
 2026-10-09の指示に基づくmain統合後も、ユーザー受入と追加修正の完了を区別する。
-GitHub Pagesの公開は明示的な手動操作へ分離し、releaseは今回の対象外とする。
+GitHub Pagesの公開は明示的な手動操作へ分離する。Native確認用archiveはdraft/prereleaseへ添付し、公開release・署名・installerは対象外とする。
 
 ## 起動
 
@@ -29,15 +29,23 @@ cargo run -p birdman-game-bevy --release --locked -- --no-vsync
 tearingやGPU負荷・消費電力の増加が生じうる。物理tick・入力割当・画質・安全停止は同じ契約を使用する。
 
 Rustは既存の1.97.0、Bevyは`=0.19.1`を使用する。BevyのMSRVは1.95.0である。
-[公式setup](https://bevy.org/learn/quick-start/getting-started/setup/)に従うWindowsのnative build環境とGPU driverが必要である。
+[公式setup](https://bevy.org/learn/quick-start/getting-started/setup/)に従う各OSのnative build環境とGPU driverが必要である。
+LinuxはX11/Waylandを有効にする。[固定版の公式依存](https://github.com/bevyengine/bevy/blob/v0.19.1/docs/linux_dependencies.md)を参照し、Ubuntuでは`pkg-config libx11-dev libxcursor-dev libxrandr-dev libxi-dev libwayland-dev libxkbcommon-dev libxkbcommon-x11-0`を用意する。音声とgamepad用のBevy featureは追加しない。
+macOSはXcode Command Line Tools、WindowsはMSVCの対象architecture用toolchainを使用する。arm64とx86_64はそれぞれ実hostでbuildし、archiveを区別する。
 Node.js、npm、TypeScript、ブラウザ、WASM runtimeはnative版の起動条件に含めない。
 workspaceのReleaseはThinLTO、codegen-units=1、opt-level既定3を使用する。同じprofileはWeb生成時のRelease WASMとRelease CLI/WASIにも適用され、通常の起動コマンドは保持する。
 初回やprofile変更後は依存の再compileを伴うため、定常の最終crate最適化時間と区別する。従来のfat LTOでは初回build26分17秒、継続修正の再build26分07秒を記録した。ThinLTOの検証と採否は[#501](https://github.com/tokutori/pr-simulator-game-1/issues/501)に記録する。
 build完了後の同じ起動コマンドでは、生成済みbinaryを再利用する。
 
+配布archiveの起動前提・検査とchecksumは[Native preview配布](native-release.md)を参照する。
+`birdman-game-bevy --help`と`birdman-game-bevy --version`はwindow・GPU・font・保存記録の初期化を行わない。
+`--version`はpackage version、build時に渡したsource SHA、実OSとarchitectureを表示する。
+開発buildで`BPG_NATIVE_SOURCE_SHA`を指定しない場合は`unrecorded`と表示する。archiveには固定した完全SHAを渡す。
+ソースdirectory外の展開先・別cwdでのCPU smokeはassetの自己完結性を確認する一部であり、GPU描画と入力受入を別に確認する。
+
 ## モデルと状態の正本
 
-既定は現行二系統hybrid・Manual・Full・Typical、seed `0x00005f98000055aa`、最大4,000 tickである。
+既定は現行二系統hybrid・Light Assisted FBW・Full・Typical、seed `0x00005f98000055aa`、最大4,000 tickである。
 共有Rust準備と既存GameSession、力学、空力、制御、接触、score、recordを直接利用する。
 Bevy Transformはtyped snapshotの描画投影であり、physics stateを所有しない。
 固定tickはcoreの`PHYSICS_HZ`を参照し、描画frame・camera・ウィンドウ寸法から分離する。
@@ -124,24 +132,22 @@ Native runtime assetの入力経路は次のとおりである。
 | `biwa-venue-features.json` | 共有Rustで登録原点を検証し、桟橋5・岸壁4・防波堤3件の静的meshを両adapterへ投影 | OpenStreetMap contributors、ODbL-1.0。三角化のearcut通知は`earcut.LICENSE.txt` |
 | environment v6・launch venue・analysis map・venue featuresのJSON | 共有Rustの既存`include_*`からdecode | manifestに記載した気象庁・OpenStreetMap・利用者提供の設定と加工条件 |
 | 水面detail・sky panorama・cloud color/normal・主翼/尾翼のmesh/texture | 既存共有Rustの表示モデルと登録済み入力から生成 | 既存source/manifestの帰属を保持し、別fileの手作業配置は不要 |
-| 日本語font | 対象WindowsのMeiryo、または`--font PATH`で明示したローカルfile | 下記のOS font前提・利用条件。binaryへ含めない |
+| 日本語font | `assets/fonts/MPLUS1p-Regular.ttf`をbinaryへ埋込み、`--font PATH`指定時だけローカルfileを読む | Google Fonts固定commitの無改変M PLUS 1p Regular、OFL-1.1。copyrightと全文licenseをarchiveへ同梱 |
 
 WGSLは既存Bevyのembedded readerへ直接登録し、build時checkoutの絶対pathやfilesystemへのfallbackを使用しない。shader directoryのcopyは不要である。`embedded_watcher`は有効にしない。テスト専用FiraMono subsetはproductionのfont入力に使用しない。
 本変更のCPU検査は、不存在のfilesystem asset rootで本番Materialの参照を実`AssetServer`/`ShaderLoader`へ通し、3 shaderの読込みと未登録pathの原因付き失敗を確認する。shaderのGPU compile、ソースdirectory外へ移した実行ファイルの起動、配布物全体の受入は[#385](https://github.com/tokutori/pr-simulator-game-1/issues/385)の未完条件として区分する。
-日本語表示はWindowsにインストールされたMeiryoをローカルで読み取る。フォントファイルをrepositoryやbinaryへ同梱しない。
+日本語表示は組込M PLUS 1p Regularを使用する。OS fontや実行時のWeb取得を起動条件へ含めない。出典・SHA256・完全なOFLは`assets/manifest.toml`と`assets/fonts/MPLUS1p-OFL.txt`へ記録する。font自体は無改変とし、Meiryoは再配布しない。`--font PATH`で指定するfileの利用条件は利用者が確認する。
 日本語の単語分割にはICU辞書を使用する。Bevy 0.19.1が利用するParley 0.9.0へ公式の`complex-scripts`選択処理を限定backportし、
-Windows native依存だけで有効化する。出典と変更範囲は`vendor/parley/BACKPORT.md`に記録する。
+Windows/macOS/Linuxのnative依存だけで有効化する。出典と変更範囲は`vendor/parley/BACKPORT.md`に記録する。
 ICU4X 2.3の`BidiClass::to_icu4c_value`に関する非推奨警告は、公式のconst mask処理を限定backportして解消した。
 出典と23分類のbit対応・未知分類の処理は[backport記録](../vendor/parley/BACKPORT.md)を参照する。
 警告の抑制や依存versionの後退は行わない。
-利用と再配布の境界は[Microsoftのfont FAQ](https://learn.microsoft.com/en-us/typography/fonts/font-faq)に従う。
-未導入環境では起動時に明示的なエラーを返し、利用許諾を持つフォントを`--font`で指定する。
 
 ## Three.js版との差分
 
 native ScreenのPilot/Chase切替はpresentation機能として提供し、core configuration・physics・recordを変更しない。
 水面・空・機体・湖岸/地形はBevy adapterで表示する。水面の波・反射は描画専用であり、接触判定は既存coreを使用する。
-水面shaderの完全一致、全Scene装飾、複雑なAnalysis、保存記録の管理画面、全Replay/gamepad、VRと別OSの対応は今回の対象外である。
+水面shaderの完全一致、全Scene装飾、複雑なAnalysis、保存記録の管理画面、全Replay/gamepad、VRは初回確認の対象外である。別OSのbuild・配布は#543で扱い、実GPU・操作受入は構成別に記録する。
 共有UI接続では記録由来の解析系列、seek、再生停止・再開、再生速度を接続する。
 解析の軸名・単位、目盛、grid、基準線、legend、地図のscaleと北方位、plotの配置は共有`GameUiChart.presentation`から投影する。chart viewportの実測寸法を共有UIへ渡し、静的要素はview revisionの変更時だけ再投影する。seek中は同じcursor entityと共有系列色を使用する。低高さでは共有overflow契約に従ってchart内部をスクロールし、seek操作領域を保持する。文字のbaselineはBevyが使用するフォントの実測metricsから変換する。今回のchart投影に対する実GPU検査は未実施である。
 Replay cameraは共通候補順序のAuto・Pilot・Chase・Orbit・Platform・Shore・Overhead・Side・Front・Telephotoを提供する。既存Webを移植基準とする共有RustのgeometryとDirectorを使用し、Attractも同じrecord時刻からshotを選択する。固定点は登録環境のoriginとwater datumが一致する場合に使用する。退出時は通常Screenの60°FOVへ復帰する。本追加の実GPU描画は未確認である。

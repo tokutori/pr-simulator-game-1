@@ -66,9 +66,7 @@ struct CameraMode {
 
 pub(super) fn run() -> Result<(), Box<dyn Error>> {
     let mut arguments = std::env::args().skip(1);
-    let mut font_path =
-        PathBuf::from(std::env::var("WINDIR").unwrap_or_else(|_| "C:/Windows".into()))
-            .join("Fonts/meiryo.ttc");
+    let mut font_path = None;
     let mut verification_directory = None;
     let mut verification_size = None;
     let mut water_verification = None;
@@ -85,10 +83,11 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
             "--verify-water-auto" => water_auto = true,
             "--verify-replay-cameras" => replay_camera_verification = true,
             "--font" => {
-                font_path = arguments
-                    .next()
-                    .ok_or("--font requires a local font path")?
-                    .into()
+                font_path = Some(PathBuf::from(
+                    arguments
+                        .next()
+                        .ok_or("--font requires a local font path")?,
+                ));
             }
             "--export-dir" => {
                 export_directory = Some(PathBuf::from(
@@ -125,6 +124,16 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
                         .ok_or("--verify-timing requires root or full")?,
                 );
             }
+            "--version" => {
+                println!(
+                    "birdman-game-bevy {} source {} {} {}",
+                    env!("CARGO_PKG_VERSION"),
+                    option_env!("BPG_NATIVE_SOURCE_SHA").unwrap_or("unrecorded"),
+                    std::env::consts::OS,
+                    std::env::consts::ARCH,
+                );
+                return Ok(());
+            }
             "--help" => {
                 println!(
                     "birdman-game-bevy [--font PATH] [--no-vsync] [--verify DIR [--offscreen] [--verify-size WIDTHxHEIGHT] [--verify-water WEATHER-QUALITY [--verify-timing root|full] | --verify-replay-cameras]]\n矢印: pitch/yaw、J/L: pilot target、P: Pause/Resume、C: Pilot/Chase、右drag: 視点、F12: Screenshot\n--no-vsync: WindowはAutoNoVsyncを要求する。既定はFifo。非対応環境ではfallbackする。--offscreen併用時はrunnerの待機を解除する。\n--verify: logical input/core loopとGPU画像保存を検査する。物理キー操作の検査ではない。\n--offscreen: --verifyをOSウィンドウなしで実行し、本番sceneとUIをImageへ描画する。\n--verify-size: 検査viewportの寸法を指定する。通常起動の寸法とOS表示倍率は変更しない。\n--verify-water: calm/typicalとlow/medium/highの6条件から1条件を検査する。例: typical-low。\n--verify-timing: --verify-waterの診断方式。rootはManualにもroot-only計測を許可し、fullは従来の全pass診断を使用する。省略時はfull。\n--verify-replay-cameras: 自然着水した実記録の中間時刻を共有UIの全cameraから撮影する。--verify-waterとの同時指定は不可。"
@@ -134,6 +143,9 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
                 );
                 println!(
                     "--export-dir DIR: 飛行ログJSON/CSVの保存先。既定は起動時の作業directory/flight-logs。既存fileは上書きしない。"
+                );
+                println!(
+                    "日本語fontは組込M PLUS 1p Regular（OFL-1.1）を使用する。--font PATHでローカルfontへ変更できる。--versionはbuild sourceとOS/architectureを表示する。"
                 );
                 return Ok(());
             }
@@ -171,12 +183,12 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
         "飛行ログの保存先: {}",
         flight_log_export.directory().display()
     );
-    let font_bytes = std::fs::read(&font_path).map_err(|error| {
-        format!(
-            "日本語フォントを読めない: {} ({error})。--font PATH を指定する。",
-            font_path.display()
-        )
-    })?;
+    let font_bytes = match font_path {
+        Some(path) => std::fs::read(&path).map_err(|error| {
+            format!("指定した日本語fontを読めない: {} ({error})", path.display())
+        })?,
+        None => native_assets::bundled_font().to_vec(),
+    };
     if verification_directory.is_some() {
         verification::verify_text_layout(&font_bytes)?;
     }
