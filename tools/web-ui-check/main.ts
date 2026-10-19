@@ -234,4 +234,4 @@ try {
   }
   await writeFile(resolve(output, "result.json"), `${JSON.stringify(report, null, 2)}\n`, "utf8");
 }
-console.log(JSON.stringify({ status: report.status, sourceHead: head, output, checks, failure: report.failure }, null, 2));
+console.log(JSON.stringify({ status: report.status, sourceHead: head, output, checks, findings, failure: report.failure }, null, 2));

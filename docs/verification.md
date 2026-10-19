@@ -60,6 +60,7 @@ GPU 12.5 ms、RAF間隔、実80 FPS表示の受入は独立して判断する。
 Result、Analysisの3図、Replay、実CSV/JSONダウンロード、同条件の再試行を検査する。
 JSONレポートへsource/build SHA、実WASM hash、browser/GPU、達成した操作と失敗を保存し、各段階の画像とダウンロード原文も保存する。
 browserは専用の一時contextを使用し、通常のprofile、可視window、computer use、既存のflight-logsを操作しない。
+発進時の予期しないPauseは診断へ保持する。公開Resumeを一度だけ実行して後続画面も検査し、最終結果は失敗とする。
 出力先は専用directoryを指定する。実HMD/Phone VR、物理キー入力、配信bundleの性能と80 FPSの受入は別に確認する。
 
 ```sh
