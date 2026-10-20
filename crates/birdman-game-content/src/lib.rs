@@ -4,8 +4,10 @@
 extern crate alloc;
 
 mod aircraft;
+mod shape;
 
 pub use aircraft::{AircraftDefinition, AircraftDefinitionError};
+pub use shape::{AircraftShape, AirfoilFace, ContactSampling, ShapeError, SurfaceShape};
 
 /// Complete source of the registered fictional glider, in body FRD coordinates and SI units.
 pub const PLAYABLE_AIRCRAFT_JSON: &[u8] =

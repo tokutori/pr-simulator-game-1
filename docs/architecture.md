@@ -28,7 +28,7 @@ adapterからcore・formatへの直接参照も許可する。逆方向の依存
 | --- | --- |
 | `birdman-game-core` | 座標・数学、運動方程式、空力、風場、制御、固定tick、接触、GameSession、FlightRecord、集計・補間query |
 | `birdman-game-format` | 外部設定・環境・記録のcodecと検証、解決済み設定、比較identity、Personal Best選定 |
-| `birdman-game-content` | 登録機体JSONと検証済みの質量・空力storage。sectionとstrip境界から借用可能な荷重モデルを準備する |
+| `birdman-game-content` | 登録機体JSON、検証済みの質量・空力storageと中立構造形状。sectionとstrip境界から荷重モデル、外皮と構造から接触支持点を準備する |
 | `birdman-game-session` | ApplicationSession、共有command実行、scenario準備・資源所有、archive生成、共有UI・camera・描画用モデル |
 | `birdman-game-wasm` | JavaScript ABI、入力のdecode、共有処理の呼出し、DTOのencode |
 | `birdman-game-cli` | CLI/WASIのI/O、offline検査・出力・計測入口 |

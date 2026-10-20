@@ -1,0 +1,376 @@
+use alloc::vec::Vec;
+use birdman_game_core::{BodyPoint, BodyVector, HybridSurfaceRole, MathError};
+use birdman_game_format::aircraft::{
+    AircraftAirfoilDocument, AircraftCockpitStationDocument, AircraftDocument,
+    AircraftSectionDocument, AircraftSurfaceDocument,
+};
+
+/// Invalid structural sampling input or arithmetic.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ShapeError {
+    /// A sampling coordinate is non-finite.
+    NonFinite,
+    /// A chord fraction lies outside the closed unit interval.
+    InvalidChordFraction,
+    /// A span coordinate lies outside the named surface.
+    OutsideSurface(HybridSurfaceRole),
+    /// A forward coordinate lies outside the cockpit shell.
+    OutsideCockpit,
+    /// A resolution lies outside the bounded structural sampling contract.
+    InvalidSampling,
+    /// A derived point or frame cannot be represented by finite coordinates.
+    Math(MathError),
+}
+
+/// Side of the normalized mean-line and thickness profile.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AirfoilFace {
+    /// Negative local-down side: body up for wing/tail and body right for the fin.
+    Upper,
+    /// Positive local-down side, opposite the upper profile.
+    Lower,
+}
+
+/// Bounded sampling of neutral structural support points, independent of materials.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ContactSampling {
+    chord_steps: u32,
+    circumference_steps: u32,
+}
+
+impl ContactSampling {
+    /// Samples cosine-spaced chord fractions and closed cockpit/beam rings.
+    pub fn try_new(chord_steps: u32, circumference_steps: u32) -> Result<Self, ShapeError> {
+        if !(2..=128).contains(&chord_steps) || !(4..=128).contains(&circumference_steps) {
+            return Err(ShapeError::InvalidSampling);
+        }
+        Ok(Self {
+            chord_steps,
+            circumference_steps,
+        })
+    }
+}
+
+impl Default for ContactSampling {
+    fn default() -> Self {
+        Self {
+            chord_steps: 32,
+            circumference_steps: 24,
+        }
+    }
+}
+
+/// Borrowed structural shape in body FRD metres, before actuation and elastic deformation.
+#[derive(Clone, Copy)]
+pub struct AircraftShape<'a> {
+    document: &'a AircraftDocument,
+}
+
+impl<'a> AircraftShape<'a> {
+    pub(crate) const fn new(document: &'a AircraftDocument) -> Self {
+        Self { document }
+    }
+
+    /// Borrows one validated surface, including its complete piecewise-linear section knots.
+    pub fn surface(self, role: HybridSurfaceRole) -> SurfaceShape<'a> {
+        let source = self
+            .document
+            .surfaces
+            .iter()
+            .find(|surface| surface.role.core_role() == role)
+            .expect("validated aircraft contains every unique surface role");
+        SurfaceShape { source, role }
+    }
+
+    /// Interpolates cockpit dimensions at a closed forward-axis coordinate.
+    pub fn cockpit_station(
+        self,
+        forward_m: f64,
+    ) -> Result<AircraftCockpitStationDocument, ShapeError> {
+        if !forward_m.is_finite() {
+            return Err(ShapeError::NonFinite);
+        }
+        let stations = &self.document.structure.cockpit_stations;
+        if let Some(station) = stations
+            .iter()
+            .find(|station| station.forward_m == forward_m)
+        {
+            return Ok(*station);
+        }
+        let pair = stations
+            .windows(2)
+            .find(|pair| forward_m < pair[0].forward_m && forward_m > pair[1].forward_m)
+            .ok_or(ShapeError::OutsideCockpit)?;
+        let fraction = fraction_between(forward_m, pair[0].forward_m, pair[1].forward_m);
+        Ok(AircraftCockpitStationDocument {
+            forward_m,
+            center_down_m: interpolate(pair[0].center_down_m, pair[1].center_down_m, fraction),
+            half_width_m: interpolate(pair[0].half_width_m, pair[1].half_width_m, fraction),
+            half_height_m: interpolate(pair[0].half_height_m, pair[1].half_height_m, fraction),
+        })
+    }
+
+    /// Samples the superellipse shell; angle zero points to body right, π/2 to body down.
+    pub fn cockpit_point(self, forward_m: f64, angle_rad: f64) -> Result<BodyPoint, ShapeError> {
+        if !angle_rad.is_finite() {
+            return Err(ShapeError::NonFinite);
+        }
+        let station = self.cockpit_station(forward_m)?;
+        let rounded = |value: f64| {
+            value.signum()
+                * libm::pow(
+                    value.abs(),
+                    self.document.structure.cockpit_rounding_exponent,
+                )
+        };
+        body_point([
+            forward_m,
+            station.half_width_m * rounded(libm::cos(angle_rad)),
+            station.center_down_m + station.half_height_m * rounded(libm::sin(angle_rad)),
+        ])
+    }
+
+    /// Builds the neutral outer polytope from all section knots, cockpit stations and beam ends.
+    pub fn contact_points(self, sampling: ContactSampling) -> Result<Vec<BodyPoint>, ShapeError> {
+        let mut points = Vec::new();
+        for role in [
+            HybridSurfaceRole::MainWing,
+            HybridSurfaceRole::HorizontalTail,
+            HybridSurfaceRole::VerticalTail,
+        ] {
+            let surface = self.surface(role);
+            for span in surface.span_stations_m() {
+                for step in 0..=sampling.chord_steps {
+                    let fraction = match step {
+                        0 => 0.0,
+                        step if step == sampling.chord_steps => 1.0,
+                        step => {
+                            (1.0 - libm::cos(
+                                core::f64::consts::PI * f64::from(step)
+                                    / f64::from(sampling.chord_steps),
+                            )) * 0.5
+                        }
+                    };
+                    for face in [AirfoilFace::Upper, AirfoilFace::Lower] {
+                        push_distinct(&mut points, surface.point(span, fraction, face)?);
+                    }
+                }
+            }
+        }
+        for station in &self.document.structure.cockpit_stations {
+            for step in 0..sampling.circumference_steps {
+                let angle = core::f64::consts::TAU * f64::from(step)
+                    / f64::from(sampling.circumference_steps);
+                push_distinct(&mut points, self.cockpit_point(station.forward_m, angle)?);
+            }
+        }
+        self.append_beam_points(&mut points, sampling.circumference_steps)?;
+        Ok(points)
+    }
+
+    fn append_beam_points(self, points: &mut Vec<BodyPoint>, steps: u32) -> Result<(), ShapeError> {
+        let structure = &self.document.structure;
+        let [first, second] = structure.main_beam_endpoints_frd_m;
+        let delta = core::array::from_fn::<_, 3, _>(|axis| second[axis] - first[axis]);
+        let direction = body_vector(delta)?;
+        let length = direction.norm().map_err(ShapeError::Math)?;
+        let direction = direction.scaled(1.0 / length).map_err(ShapeError::Math)?;
+        let components = direction.components();
+        let reference_axis = (0..3)
+            .min_by(|first, second| {
+                components[*first]
+                    .abs()
+                    .total_cmp(&components[*second].abs())
+            })
+            .expect("three coordinate axes");
+        let reference = body_vector(core::array::from_fn(|axis| {
+            f64::from(axis == reference_axis)
+        }))?;
+        let right = direction.cross(reference).map_err(ShapeError::Math)?;
+        let norm = right.norm().map_err(ShapeError::Math)?;
+        let right = right.scaled(1.0 / norm).map_err(ShapeError::Math)?;
+        let down = direction.cross(right).map_err(ShapeError::Math)?;
+        for center in [first, second] {
+            for step in 0..steps {
+                let angle = core::f64::consts::TAU * f64::from(step) / f64::from(steps);
+                let offset = right
+                    .scaled(structure.main_beam_radius_m * libm::cos(angle))
+                    .and_then(|right| {
+                        right.plus(down.scaled(structure.main_beam_radius_m * libm::sin(angle))?)
+                    })
+                    .map_err(ShapeError::Math)?;
+                push_distinct(
+                    points,
+                    body_point(center)?
+                        .translated(offset)
+                        .map_err(ShapeError::Math)?,
+                );
+            }
+        }
+        Ok(())
+    }
+}
+
+/// One neutral lifting surface with the same stations as its aerodynamic geometry.
+#[derive(Clone, Copy)]
+pub struct SurfaceShape<'a> {
+    source: &'a AircraftSurfaceDocument,
+    role: HybridSurfaceRole,
+}
+
+impl<'a> SurfaceShape<'a> {
+    /// Complete closed span range along body y, or body z for the fin.
+    pub fn span_bounds_m(self) -> [f64; 2] {
+        let sections = &self.source.sections;
+        [
+            sections[0].quarter_chord_frd_m[self.span_axis()],
+            sections[sections.len() - 1].quarter_chord_frd_m[self.span_axis()],
+        ]
+    }
+
+    /// Every exact source span station, including all dihedral and taper breaks.
+    pub fn span_stations_m(self) -> impl DoubleEndedIterator<Item = f64> + ExactSizeIterator + 'a {
+        self.source
+            .sections
+            .iter()
+            .map(move |section| section.quarter_chord_frd_m[self.span_axis()])
+    }
+
+    /// Returns exact source knots and linearly interpolates the intermediate quarter-chord/chord.
+    pub fn section(self, span_m: f64) -> Result<AircraftSectionDocument, ShapeError> {
+        if !span_m.is_finite() {
+            return Err(ShapeError::NonFinite);
+        }
+        let axis = self.span_axis();
+        if let Some(section) = self
+            .source
+            .sections
+            .iter()
+            .find(|section| section.quarter_chord_frd_m[axis] == span_m)
+        {
+            return Ok(*section);
+        }
+        let pair = self
+            .source
+            .sections
+            .windows(2)
+            .find(|pair| {
+                span_m > pair[0].quarter_chord_frd_m[axis]
+                    && span_m < pair[1].quarter_chord_frd_m[axis]
+            })
+            .ok_or(ShapeError::OutsideSurface(self.role))?;
+        let fraction = (span_m - pair[0].quarter_chord_frd_m[axis])
+            / (pair[1].quarter_chord_frd_m[axis] - pair[0].quarter_chord_frd_m[axis]);
+        let mut point = core::array::from_fn(|coordinate| {
+            interpolate(
+                pair[0].quarter_chord_frd_m[coordinate],
+                pair[1].quarter_chord_frd_m[coordinate],
+                fraction,
+            )
+        });
+        point[axis] = span_m;
+        Ok(AircraftSectionDocument {
+            quarter_chord_frd_m: point,
+            chord_m: interpolate(pair[0].chord_m, pair[1].chord_m, fraction),
+        })
+    }
+
+    /// Samples the closed airfoil in XZ for wing/tail or XY for the fin, at a fixed span.
+    pub fn point(
+        self,
+        span_m: f64,
+        chord_fraction: f64,
+        face: AirfoilFace,
+    ) -> Result<BodyPoint, ShapeError> {
+        if !chord_fraction.is_finite() {
+            return Err(ShapeError::NonFinite);
+        }
+        if !(0.0..=1.0).contains(&chord_fraction) {
+            return Err(ShapeError::InvalidChordFraction);
+        }
+        let section = self.section(span_m)?;
+        let profile = airfoil_profile(self.source.airfoil, chord_fraction, face);
+        let mut point = section.quarter_chord_frd_m;
+        point[0] += (0.25 - profile[0]) * section.chord_m;
+        match self.role {
+            HybridSurfaceRole::MainWing | HybridSurfaceRole::HorizontalTail => {
+                point[2] -= profile[1] * section.chord_m;
+            }
+            HybridSurfaceRole::VerticalTail => point[1] += profile[1] * section.chord_m,
+        }
+        body_point(point)
+    }
+
+    const fn span_axis(self) -> usize {
+        match self.role {
+            HybridSurfaceRole::MainWing | HybridSurfaceRole::HorizontalTail => 1,
+            HybridSurfaceRole::VerticalTail => 2,
+        }
+    }
+}
+
+fn airfoil_profile(source: AircraftAirfoilDocument, chord: f64, face: AirfoilFace) -> [f64; 2] {
+    if chord == 0.0 || chord == 1.0 {
+        return [chord, 0.0];
+    }
+    let camber = source.camber_ratio;
+    let peak = source.camber_position_ratio;
+    let (mean, slope) = if chord < peak {
+        let ratio = chord / peak;
+        (
+            camber * ratio * (2.0 - ratio),
+            (2.0 * camber * ((peak - chord) / peak)) / peak,
+        )
+    } else {
+        let remainder = 1.0 - peak;
+        let ratio = (1.0 - chord) / remainder;
+        (
+            camber * ratio * (2.0 - ratio),
+            (2.0 * camber * ((peak - chord) / remainder)) / remainder,
+        )
+    };
+    let thickness = 5.0
+        * source.thickness_ratio
+        * (0.2969 * libm::sqrt(chord) - 0.1260 * chord - 0.3516 * chord * chord
+            + 0.2843 * chord * chord * chord
+            - 0.1036 * chord * chord * chord * chord);
+    let angle = libm::atan(slope);
+    let side = match face {
+        AirfoilFace::Upper => 1.0,
+        AirfoilFace::Lower => -1.0,
+    };
+    [
+        chord - side * thickness * libm::sin(angle),
+        mean + side * thickness * libm::cos(angle),
+    ]
+}
+
+fn interpolate(first: f64, second: f64, fraction: f64) -> f64 {
+    first * (1.0 - fraction) + second * fraction
+}
+
+fn fraction_between(value: f64, first: f64, second: f64) -> f64 {
+    let interval = second - first;
+    if interval.is_finite() {
+        (value - first) / interval
+    } else {
+        (value * 0.5 - first * 0.5) / (second * 0.5 - first * 0.5)
+    }
+}
+
+fn body_point([forward, right, down]: [f64; 3]) -> Result<BodyPoint, ShapeError> {
+    BodyPoint::try_new(forward, right, down).map_err(ShapeError::Math)
+}
+
+fn body_vector([forward, right, down]: [f64; 3]) -> Result<BodyVector, ShapeError> {
+    BodyVector::try_new(forward, right, down).map_err(ShapeError::Math)
+}
+
+fn push_distinct(points: &mut Vec<BodyPoint>, point: BodyPoint) {
+    if points.last() != Some(&point) {
+        points.push(point);
+    }
+}
+
+#[cfg(test)]
+mod tests;

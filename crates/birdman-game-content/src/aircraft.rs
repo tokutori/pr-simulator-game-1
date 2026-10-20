@@ -22,6 +22,8 @@ pub enum AircraftDefinitionError {
     Aerodynamics(AeroError),
     /// A derived strip partition or complete hybrid model was invalid.
     Hybrid(HybridError),
+    /// A structural outer point or its sampling frame was invalid.
+    Shape(crate::ShapeError),
     /// The requested operating point could not form a steady-glide equilibrium.
     Trim(SteadyGlideError),
 }
@@ -33,6 +35,7 @@ pub struct AircraftDefinition {
     surfaces: Vec<SurfaceStorage>,
     rows: Vec<StaticPolarRow>,
     reference: ElementReference,
+    contact_points: Vec<BodyPoint>,
 }
 
 struct SurfaceStorage {
@@ -82,12 +85,16 @@ impl AircraftDefinition {
             wing.projected_mac_m(),
         )
         .map_err(AircraftDefinitionError::Aerodynamics)?;
+        let contact_points = crate::AircraftShape::new(&document)
+            .contact_points(crate::ContactSampling::default())
+            .map_err(AircraftDefinitionError::Shape)?;
         let definition = Self {
             document,
             aircraft,
             surfaces,
             rows,
             reference,
+            contact_points,
         };
         HybridModel::try_new(definition.polar()?, &definition.surfaces()?)
             .map_err(AircraftDefinitionError::Hybrid)?;
@@ -97,6 +104,16 @@ impl AircraftDefinition {
     /// Borrows the validated source of the physical, structural and camera parameters.
     pub fn document(&self) -> &AircraftDocument {
         &self.document
+    }
+
+    /// Borrows the physical outer shape from the same validated aircraft document.
+    pub fn shape(&self) -> crate::AircraftShape<'_> {
+        crate::AircraftShape::new(&self.document)
+    }
+
+    /// Borrows the prepared neutral structural polytope used by physical contact generation.
+    pub fn contact_points(&self) -> &[BodyPoint] {
+        &self.contact_points
     }
 
     /// Returns the mass and pilot model prepared from the same source.
