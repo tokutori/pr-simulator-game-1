@@ -29,6 +29,7 @@ mod replay_clock;
 mod scenario;
 mod scoring;
 mod session_contract;
+mod steady_glide;
 mod tail_control;
 mod tail_scenario;
 mod tail_simulation;
@@ -58,7 +59,7 @@ pub use game_session::{
     PauseReason, PauseReasons, SessionPhase, SessionReplaySource, SessionResult, SessionSnapshot,
     SessionTerminalState,
 };
-pub use hybrid_mock::{HybridMockDefinition, HybridMockError, HybridMockTrim};
+pub use hybrid_mock::{HybridMockDefinition, HybridMockError};
 pub use scenario::{
     CompositeCgLaunchConditions, FlightScenarioError, FlightTelemetry, FlightTelemetryError,
     flight_state_from_composite_cg_launch,
@@ -68,6 +69,7 @@ pub use scoring::{
     course_distance_score,
 };
 pub use session_contract::{SessionEndReason, SessionScenarioIdentity};
+pub use steady_glide::{SteadyGlideConditions, SteadyGlideError, SteadyGlideTrim};
 pub use tail_control::{
     TailAngleOfAttackGuard, TailControlCommands, TailControlError, TailControlProfile,
     TailControlUpdate, TailPilotIntent, TailPilotPositionCommand, TailPilotPositionIntent,

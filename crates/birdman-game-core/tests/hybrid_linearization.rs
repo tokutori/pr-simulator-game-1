@@ -6,11 +6,11 @@ use std::cell::Cell;
 use birdman_game_core::{
     AerodynamicEvaluationError, AircraftModel, BodyPoint, BodyVector, ControlMode,
     ExternalLoadProvider, FlightState, Gravity, HybridAerodynamicLoad, HybridMockDefinition,
-    HybridMockTrim, HybridModel, LoadError, NedPoint, NedVector, PHYSICS_DT_SECONDS,
-    PilotAcceleration, TailControlProfile, TailFlightTickConfig, TailFlightTickInput,
-    TailFlightTickOutcome, TailFlightTickState, TailIncidence, TailPilotIntent,
-    TailPilotPositionCommand, TailRateTarget, UnitQuaternion, WaterContactGeometry, WindField,
-    Wrench, advance, advance_tail_flight_tick_with_contact_report,
+    HybridModel, LoadError, NedPoint, NedVector, PHYSICS_DT_SECONDS, PilotAcceleration,
+    TailControlProfile, TailFlightTickConfig, TailFlightTickInput, TailFlightTickOutcome,
+    TailFlightTickState, TailIncidence, TailPilotIntent, TailPilotPositionCommand, TailRateTarget,
+    UnitQuaternion, WaterContactGeometry, WindField, Wrench, advance,
+    advance_tail_flight_tick_with_contact_report,
 };
 use nalgebra::{Quaternion, SMatrix, SVector, UnitQuaternion as Rotation, Vector3, linalg::Schur};
 
@@ -176,21 +176,21 @@ impl TickMap<'_> {
 fn with_map(mode: ControlMode, verify: impl FnOnce(&TickMap<'_>)) {
     let definition = HybridMockDefinition::try_new().unwrap();
     let aircraft = definition.aircraft();
-    let trim = HybridMockTrim::try_new(&definition).unwrap();
+    let trim = definition.trim().unwrap();
     let initial_flight = trim
         .initial_state_for_ground_launch(NedPoint::try_new(0.0, 0.0, -100.0).unwrap(), 0.0)
         .unwrap();
     let surfaces = definition.surfaces().unwrap();
     let load = HybridAerodynamicLoad::try_new(
         HybridModel::try_new(definition.polar().unwrap(), &surfaces).unwrap(),
-        HybridMockTrim::AIR_DENSITY_KG_M3,
+        HybridMockDefinition::TRIM_AIR_DENSITY_KG_M3,
         WindField::uniform(NedVector::zero()),
     )
     .unwrap();
     let contact_points = [BodyPoint::origin()];
     let mapping = trim.pilot_mapping().unwrap();
     let profile = TailControlProfile::try_new(0.2, 0.2, 1.0).unwrap();
-    let gravity = Gravity::try_new(HybridMockTrim::GRAVITY_MPS2).unwrap();
+    let gravity = Gravity::try_new(HybridMockDefinition::TRIM_GRAVITY_MPS2).unwrap();
     verify(&TickMap {
         aircraft,
         initial: TailFlightTickState::try_new(

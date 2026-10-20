@@ -169,14 +169,14 @@ fn verify_mode_at_speed(
 ) -> Result<TailFlightRecordDocument, String> {
     use birdman_game_core::{
         BodyPoint, BodyVector, CompositeCgLaunchConditions, CourseAxis, Gravity,
-        HybridAerodynamicLoad, HybridMockDefinition, HybridMockTrim, HybridModel, NedPoint,
-        NedVector, SessionScenarioIdentity, TailControlProfile, TailFlightScenario,
+        HybridAerodynamicLoad, HybridMockDefinition, HybridModel, NedPoint, NedVector,
+        SessionScenarioIdentity, TailControlProfile, TailFlightScenario,
         TailFlightScenarioParameters, TailIncidence, WindField,
     };
     const CONTACT_POINTS: [BodyPoint; 1] = [BodyPoint::origin()];
     let definition = HybridMockDefinition::try_new().map_err(super::display_error)?;
     let surfaces = definition.surfaces().map_err(super::display_error)?;
-    let trim = HybridMockTrim::try_new(&definition).map_err(super::display_error)?;
+    let trim = definition.trim().map_err(super::display_error)?;
     let cg_position = NedPoint::try_new(0.0, 0.0, -10.5).map_err(super::display_error)?;
     let initial = trim
         .initial_state_for_ground_launch(cg_position, 0.0)
@@ -185,7 +185,7 @@ fn verify_mode_at_speed(
         cg_position,
         initial
             .datum_velocity_ned()
-            .scaled(speed_mps / HybridMockTrim::AIRSPEED_MPS)
+            .scaled(speed_mps / HybridMockDefinition::TRIM_AIRSPEED_MPS)
             .map_err(super::display_error)?,
         initial.attitude_body_to_ned(),
         BodyVector::zero(),
@@ -197,7 +197,7 @@ fn verify_mode_at_speed(
         definition.aircraft(),
         launch,
         TailIncidence::neutral(),
-        Gravity::try_new(HybridMockTrim::GRAVITY_MPS2).map_err(super::display_error)?,
+        Gravity::try_new(HybridMockDefinition::TRIM_GRAVITY_MPS2).map_err(super::display_error)?,
         &CONTACT_POINTS,
         CourseAxis::try_new(1.0, 0.0).map_err(super::display_error)?,
     )
@@ -205,7 +205,7 @@ fn verify_mode_at_speed(
     let load = HybridAerodynamicLoad::try_new(
         HybridModel::try_new(definition.polar().map_err(super::display_error)?, &surfaces)
             .map_err(super::display_error)?,
-        HybridMockTrim::AIR_DENSITY_KG_M3,
+        HybridMockDefinition::TRIM_AIR_DENSITY_KG_M3,
         WindField::uniform(NedVector::zero()),
     )
     .map_err(super::display_error)?;

@@ -6,6 +6,7 @@
 
 | 対象 | 現行契約 |
 | --- | --- |
+| 機体JSON | `AircraftDocument`、schema 1、最大256 KiB |
 | 環境JSON | `EnvironmentDocument`、schema 1、最大8 MiB |
 | 飛行記録JSON | `TailFlightRecordDocument`、schema 6、最大16 MiB |
 | 飛行ログCSV | export version 3 |
@@ -125,6 +126,15 @@ Analysis用の発進台・湖岸・望遠camera点はOSMとAW3D30に基づく試
 - 表示たわみのE=45 GPa、I=4×10⁻⁶ m⁴、支持質量110 kg、基準速度9.5 m/s、load factor 0.3–1.6は描画用仮定である。
 - 機体・pilotの実行時質量や運動方程式へ代入しない。
 - 空力・質量・慣性・制御の正本は[飛行力学](flight-dynamics.md)と[飛行制御](flight-control.md)に定める。
+
+## 機体JSON
+
+- `AircraftDocument`は機体ID・モデル版、機体質量と慣性、パイロット質量と移動制限、主翼・水平尾翼・垂直尾翼、全機静特性、構造外形、トリム条件を保持する。
+- 座標は機体固定のFRD、寸法はSI単位とする。各翼の四分の一翼弦点・翼弦長から平面形と上反角を表し、空力の参照面積・スパン・平均空力翼弦を同じ主翼から導出する。
+- 構造定義は主桁の端点・半径・曲げ剛性、コックピット断面、フレーム半径、パイロット視点の取付位置を保持する。
+- 全階層で未知fieldを拒否する。各翼の断面・strip境界、静特性の行、コックピット断面はそれぞれ128件を上限とし、有限値、物理量、順序、対称性、静特性の補間範囲を検証する。
+- `cargo run -p birdman-game-cli --locked -- validate-aircraft <path>`で外部ファイルを検査できる。
+- 定常滑空の成立性は`SteadyGlideTrim`が質量モデル・静特性・指定条件から解く。パイロットの上下位置と静特性の参照点を含め、合成重心まわりの力・モーメントの釣合を確認する。
 
 ## 環境JSON
 
@@ -289,6 +299,7 @@ keyは次の条件をSHA-256へ入力する。
 - 新旧方式の横断比較、key補完、既存JSONの書換えを行わない。
 
 - build来歴は4種のsource fingerprint、Cargo.lock SHA-256、観測したrustc・target・profileを保持する。
+- 機体・環境・scenarioのsource fingerprintは共有実装と登録データから導出し、各adapterはその来歴を記録へ付与する。
 - `BPG_NATIVE_SOURCE_SHA`が明示された場合だけsource commit宣言値を保存する。
 - この宣言はlocal treeのclean状態を保証しない。
 - 取得不能値は不明のまま保持する。

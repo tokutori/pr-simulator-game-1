@@ -2,8 +2,8 @@ use super::*;
 use crate::{
     AeroError, AerodynamicEvaluationError, AerodynamicStage, BodyPoint, BodyVector,
     CompositeCgLaunchConditions, CourseAxis, DynamicsError, FbwAuthority, Gravity,
-    HybridAerodynamicLoad, HybridError, HybridMockDefinition, HybridMockTrim, HybridModel,
-    HybridSite, HybridSurface, LoadError, NedPoint, NedVector, TailControlProfile,
+    HybridAerodynamicLoad, HybridError, HybridMockDefinition, HybridModel, HybridSite,
+    HybridSurface, LoadError, NedPoint, NedVector, TailControlProfile,
     TailFlightScenarioParameters, TailIncidence, TailPilotIntent, TailPilotPositionCommand,
     TailRateTarget, WindField,
 };
@@ -50,16 +50,20 @@ fn configuration_for_heading<'a>(
     mode: ControlMode,
     heading_rad: f64,
 ) -> GameSessionConfiguration<'a> {
-    let trim = HybridMockTrim::try_new(definition).unwrap();
+    let trim = definition.trim().unwrap();
     let ground = trim
         .initial_state_for_ground_launch(NedPoint::try_new(0.0, 0.0, cg_down).unwrap(), heading_rad)
         .unwrap();
     let launch = CompositeCgLaunchConditions::try_new(
         NedPoint::try_new(0.0, 0.0, cg_down).unwrap(),
         NedVector::try_new(
-            HybridMockTrim::AIRSPEED_MPS * libm::cos(trim.gamma_rad()) * libm::cos(heading_rad),
-            HybridMockTrim::AIRSPEED_MPS * libm::cos(trim.gamma_rad()) * libm::sin(heading_rad),
-            -HybridMockTrim::AIRSPEED_MPS * libm::sin(trim.gamma_rad()),
+            HybridMockDefinition::TRIM_AIRSPEED_MPS
+                * libm::cos(trim.gamma_rad())
+                * libm::cos(heading_rad),
+            HybridMockDefinition::TRIM_AIRSPEED_MPS
+                * libm::cos(trim.gamma_rad())
+                * libm::sin(heading_rad),
+            -HybridMockDefinition::TRIM_AIRSPEED_MPS * libm::sin(trim.gamma_rad()),
         )
         .unwrap(),
         ground.attitude_body_to_ned(),
@@ -72,14 +76,14 @@ fn configuration_for_heading<'a>(
         definition.aircraft(),
         launch,
         TailIncidence::neutral(),
-        Gravity::try_new(HybridMockTrim::GRAVITY_MPS2).unwrap(),
+        Gravity::try_new(HybridMockDefinition::TRIM_GRAVITY_MPS2).unwrap(),
         &CONTACT_POINTS,
         CourseAxis::try_new(libm::cos(heading_rad), libm::sin(heading_rad)).unwrap(),
     )
     .unwrap();
     let load = HybridAerodynamicLoad::try_new(
         HybridModel::try_new(definition.polar().unwrap(), surfaces).unwrap(),
-        HybridMockTrim::AIR_DENSITY_KG_M3,
+        HybridMockDefinition::TRIM_AIR_DENSITY_KG_M3,
         wind,
     )
     .unwrap();
@@ -394,7 +398,7 @@ fn tail_session_failed_stage_retains_last_successful_state_record_and_original_c
 fn tail_session_contact_at_start_does_not_record_unelapsed_input() {
     let definition = HybridMockDefinition::try_new().unwrap();
     let surfaces = definition.surfaces().unwrap();
-    let trim = HybridMockTrim::try_new(&definition).unwrap();
+    let trim = definition.trim().unwrap();
     let probe = trim
         .initial_state_for_ground_launch(NedPoint::origin(), 0.0)
         .unwrap();

@@ -64,9 +64,7 @@ fn cached_hybrid_owners_survive_preparation_moves_and_share_environment_telemetr
     assert_eq!(initial.incidence(), TailIncidence::neutral());
     assert_eq!(
         initial.pilot_position_target().position_m(),
-        HybridMockTrim::try_new(definition)
-            .unwrap()
-            .pilot_position_m()
+        definition.trim().unwrap().pilot_position_m()
     );
     let telemetry = session.telemetry().unwrap().unwrap();
     assert_eq!(
@@ -78,7 +76,7 @@ fn cached_hybrid_owners_survive_preparation_moves_and_share_environment_telemetr
             .velocity_at(telemetry.composite_cg_position_ned_m)
             .unwrap()
     );
-    assert!((telemetry.airspeed_mps - HybridMockTrim::AIRSPEED_MPS).abs() < 1.0e-12);
+    assert!((telemetry.airspeed_mps - HybridMockDefinition::TRIM_AIRSPEED_MPS).abs() < 1.0e-12);
     assert!((telemetry.altitude_m - 10.5).abs() < 1.0e-12);
     session.advance_tail_flight_tick(neutral_input()).unwrap();
     session.advance_tail_flight_tick(neutral_input()).unwrap();
@@ -197,7 +195,7 @@ fn registered_weather_keeps_catalog_identity_and_provider_values() {
             preset_wind_for_version(selection.environment_version).unwrap()
         };
         assert_eq!(telemetry.wind_velocity_ned_mps.components(), expected);
-        assert!((telemetry.airspeed_mps - HybridMockTrim::AIRSPEED_MPS).abs() < 1.0e-12);
+        assert!((telemetry.airspeed_mps - HybridMockDefinition::TRIM_AIRSPEED_MPS).abs() < 1.0e-12);
     }
 }
 
@@ -391,7 +389,7 @@ fn assert_playable_sequence(sequence: PlayabilitySequence) {
     let wind = bundled_environment().unwrap().wind_field().unwrap();
     let loads = HybridAerodynamicLoad::try_new(
         HybridModel::try_new(definition.polar().unwrap(), surfaces).unwrap(),
-        HybridMockTrim::AIR_DENSITY_KG_M3,
+        HybridMockDefinition::TRIM_AIR_DENSITY_KG_M3,
         wind,
     )
     .unwrap();
@@ -414,7 +412,7 @@ fn assert_playable_sequence(sequence: PlayabilitySequence) {
         assert_eq!(guard.alpha_interval_rad(), [-0.09, 0.09]);
         assert_eq!(
             guard.trim_alpha_rad(),
-            HybridMockTrim::try_new(definition).unwrap().alpha_rad()
+            definition.trim().unwrap().alpha_rad()
         );
         let mut session = launch(preparation.into_parts().0);
         for tick in 1..=DEFAULT_MAXIMUM_FLIGHT_TICKS {

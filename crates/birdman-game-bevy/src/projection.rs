@@ -237,14 +237,12 @@ mod tests {
     fn pilot_mount_keeps_real_nose_frame_and_forward_direction_inside_screen_projection() {
         use bevy::camera::CameraProjection;
         use birdman_game_core::{
-            HybridMockDefinition, HybridMockTrim, PilotPositionTarget, TailPilotPositionCommand,
+            HybridMockDefinition, PilotPositionTarget, TailPilotPositionCommand,
             TailPilotPositionIntent, TailPilotPositionMapping,
         };
         let definition = HybridMockDefinition::try_new().unwrap();
         let aircraft_model = definition.aircraft();
-        let initial = HybridMockTrim::try_new(&definition)
-            .unwrap()
-            .pilot_position_m();
+        let initial = definition.trim().unwrap().pilot_position_m();
         let trim = PilotPositionTarget::try_new(&aircraft_model, initial).unwrap();
         let mapping = TailPilotPositionMapping::try_new(&aircraft_model, initial).unwrap();
         let endpoints = [-1.0, 1.0].map(|normalized| {

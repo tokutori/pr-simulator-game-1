@@ -1,13 +1,10 @@
 use crate::{
     AeroError, AircraftModel, BodyPoint, BodyVector, DynamicsError, ElementOrientation,
-    ElementReference, HybridAnchor, HybridError, HybridModel, HybridProxy, HybridSection,
+    ElementReference, Gravity, HybridAnchor, HybridError, HybridModel, HybridProxy, HybridSection,
     HybridSurface, HybridSurfaceGeometry, HybridSurfaceRole, InertiaTensor, MathError,
     PlanformSymmetry, PolarAnalysisMethod, PolarMomentAxes, StaticPolar, StaticPolarCoefficients,
-    StaticPolarMetadata, StaticPolarRow,
+    StaticPolarMetadata, StaticPolarRow, SteadyGlideConditions, SteadyGlideError, SteadyGlideTrim,
 };
-
-mod trim;
-pub use trim::HybridMockTrim;
 
 const PLAYABLE_POLAR_KNOTS: [(f64, f64); 9] = [
     (-0.18, -0.20),
@@ -43,8 +40,8 @@ pub enum HybridMockError {
     Aerodynamics(AeroError),
     /// Invalid complete geometry, strip partition or hybrid model.
     Hybrid(HybridError),
-    /// The specified steady glide has no upright trim in its designated polar segment.
-    TrimNotBracketed,
+    /// The specified operating conditions cannot form a steady-glide equilibrium.
+    Trim(SteadyGlideError),
 }
 
 /// Owned, allocation-free BPG-041 mock data with borrowed validated load views.
@@ -71,6 +68,25 @@ impl HybridMockDefinition {
     pub const MODEL_VERSION: u32 = 3;
     /// Main-wing dihedral in radians.
     pub const WING_DIHEDRAL_RAD: f64 = 5.0 * core::f64::consts::PI / 180.0;
+    /// Specified still-air trim airspeed in metres per second.
+    pub const TRIM_AIRSPEED_MPS: f64 = 9.7;
+    /// Specified still-air trim density in kilograms per cubic metre.
+    pub const TRIM_AIR_DENSITY_KG_M3: f64 = 1.225;
+    /// Specified gravitational acceleration in metres per second squared.
+    pub const TRIM_GRAVITY_MPS2: f64 = 9.80665;
+
+    /// Resolves the registered operating point with the generic core equilibrium solver.
+    pub fn trim(&self) -> Result<SteadyGlideTrim, HybridMockError> {
+        let conditions = SteadyGlideConditions::try_new(
+            Self::TRIM_AIRSPEED_MPS,
+            Self::TRIM_AIR_DENSITY_KG_M3,
+            Gravity::try_new(Self::TRIM_GRAVITY_MPS2).map_err(HybridMockError::Dynamics)?,
+            [0.0, 0.06],
+        )
+        .map_err(HybridMockError::Trim)?;
+        SteadyGlideTrim::try_new(self.aircraft, self.polar()?, conditions)
+            .map_err(HybridMockError::Trim)
+    }
 
     /// Builds and validates one complete rectangular mock, without I/O or allocation.
     pub fn try_new() -> Result<Self, HybridMockError> {
@@ -307,3 +323,6 @@ fn playable_polar_row(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod trim_tests;

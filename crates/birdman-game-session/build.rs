@@ -11,7 +11,6 @@ fn main() {
     let manifest_dir = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
     let workspace_dir = manifest_dir.join("../..").canonicalize().unwrap();
     let core_source = workspace_dir.join("crates/birdman-game-core/src");
-    let wasm_source = workspace_dir.join("crates/birdman-game-wasm/src/lib.rs");
     let environment_snapshot_source =
         workspace_dir.join("crates/birdman-game-session/src/environment_snapshot.rs");
     let environment_asset = workspace_dir.join("assets/biwa-typical-july-environment-v6.json");
@@ -23,14 +22,13 @@ fn main() {
     let shared_venue_source = workspace_dir.join("crates/birdman-game-session/src/launch_venue.rs");
     let shared_venue_asset = workspace_dir.join("assets/biwa-launch-venue.json");
     let hybrid_aircraft_source = core_source.join("hybrid_mock.rs");
-    let hybrid_trim_source = core_source.join("hybrid_mock/trim.rs");
+    let hybrid_trim_source = core_source.join("steady_glide.rs");
     let dynamics_source = core_source.join("dynamics.rs");
     let aerodynamics_source = core_source.join("aerodynamics.rs");
     let wind_source = core_source.join("wind_field.rs");
 
     let core_files = rust_sources(&workspace_dir, &core_source);
     let aircraft_files = vec![
-        wasm_source.clone(),
         dynamics_source.clone(),
         aerodynamics_source.clone(),
         shared_defaults_source.clone(),
@@ -39,7 +37,6 @@ fn main() {
         hybrid_trim_source,
     ];
     let environment_files = vec![
-        wasm_source.clone(),
         environment_snapshot_source.clone(),
         aerodynamics_source,
         wind_source,
@@ -48,7 +45,6 @@ fn main() {
         shared_environment_source.clone(),
     ];
     let scenario_files = vec![
-        wasm_source,
         environment_snapshot_source,
         shared_defaults_source,
         shared_hybrid_source,
