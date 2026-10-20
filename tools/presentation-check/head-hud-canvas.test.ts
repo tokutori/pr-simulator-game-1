@@ -37,6 +37,7 @@ class RecordingHeadContext implements HeadHudDrawingContext {
   invalidMetrics = false;
   excessiveInk = false;
   tinyInk = false;
+  degreeFallback = false;
 
   clearRect(...dimensions: [number, number, number, number]): void { this.clears.push(dimensions); }
   fillRect(left: number, top: number, width: number, height: number): void { this.fills.push({ alpha: this.alpha, left, top, width, height, color: this.fillColor }); }
@@ -46,10 +47,10 @@ class RecordingHeadContext implements HeadHudDrawingContext {
   }
   measureText(value: string): HeadHudTextMetrics {
     this.typography.push({ kind: "measure", locale: this.locale, font: this.font, baseline: this.baseline, align: this.align });
-    const width = Array.from(value).reduce((sum, character) => sum + this.fontSize * (character.charCodeAt(0) > 255 ? 1 : 0.65), 0);
+    const width = Array.from(value).reduce((sum, character) => sum + this.fontSize * (character === "°" && this.degreeFallback ? 1.1 : character.charCodeAt(0) > 255 ? 1 : 0.65), 0);
     return { width, left: this.excessiveInk ? width * 10 : 0, right: width,
-      ascent: this.invalidMetrics ? Number.NaN : this.fontSize * (this.tinyInk ? 0.1 : this.negativeAscent ? -0.1 : this.negativeDescent ? 1 : 0.7),
-      descent: this.fontSize * (this.tinyInk ? 0.05 : this.negativeAscent ? 1 : this.negativeDescent ? -0.1 : 0.2) };
+      ascent: this.invalidMetrics ? Number.NaN : this.fontSize * (this.tinyInk || this.degreeFallback && value.trim() === "°" ? 0.1 : this.negativeAscent ? -0.1 : this.negativeDescent ? 1 : 0.7),
+      descent: this.fontSize * (this.tinyInk || this.degreeFallback && value.trim() === "°" ? 0.05 : this.negativeAscent ? 1 : this.negativeDescent ? -0.1 : 0.2) };
   }
   save(): void { this.states.push({ alpha: this.alpha, fontSize: this.fontSize, fillColor: this.fillColor, strokeColor: this.strokeColor }); }
   restore(): void {
@@ -91,6 +92,22 @@ function flightView(aspect = 1280 / 720, model: FlightHudModel = currentSharedHu
 }
 
 describe("Head HUD Canvas preflight and painting", () => {
+  it("keeps a wide fallback degree sign with the numeric heading and angle in portrait", () => {
+    const context = new RecordingHeadContext();
+    context.degreeFallback = true;
+    const camera = new PerspectiveCamera(60, 720 / 1280, 0.05, 100);
+    camera.updateMatrixWorld(true);
+    const stereo = new StereoCamera();
+    stereo.aspect = 0.5;
+    const viewer = captureConfiguredViewerFrame(camera, stereo);
+    const view = createHeadHudView(currentSharedHudFixture({ informationCode: 0 }), viewer, "ja");
+    if (view.kind !== "visible") throw new Error("Missing portrait HUD");
+    const size = headHudCanvasSize(view.layer);
+    const prepared = prepareHeadHudPaint(context, view, size.width, size.height);
+    expect(validateHeadHudPaint(prepared, viewer).kind).toBe("ready");
+    expect(headHudPaintedTextInk(prepared).some(line => line.value.trim() === "°")).toBe(false);
+  });
+
   it.each([0.5, 0.17])("paints shared ADI, heading labels and AoA +5 at shared ratio %s with theme and opacity", (ratio) => {
     const shared = currentSharedHudFixture({ informationCode: 0 });
     const theme = { ...shared.theme, text: "#123456", panel_background: "#234567", muted_text: "#345678", focus_outline: "#456789" };

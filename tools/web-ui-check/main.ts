@@ -361,7 +361,9 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
     try {
       await profiler.send("Profiler.enable");
       await profiler.send("Profiler.startPreciseCoverage", { callCount: true, detailed: false });
-      const headResults = [];
+      const headResults: { name: string; outcome: string; samples: number; medianMilliseconds: number; p95Milliseconds: number;
+        hudBytes: number; wasmCallsPerFrame: number; maximumInputBytesPerFrame: number }[] = [];
+      report.headHud = { measurements: headResults, measurement: "30 calls per scenario, CDP coverage enabled; input bound includes the 1024-byte space limit; not a frame-rate acceptance" };
       for (const scenario of headScenarios) {
       const headMeasurement = await page.evaluate(async input => {
         if (window.__uiViewJson === null) throw new Error("Missing shared HUD View");
@@ -381,6 +383,10 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
             elapsed.push(performance.now() - start);
           }
           elapsed.sort((first, second) => first - second);
+          const lowerMedian = elapsed[14];
+          const upperMedian = elapsed[15];
+          const p95 = elapsed[28];
+          if (lowerMedian === undefined || upperMedian === undefined || p95 === undefined) throw new Error("Missing Head fit measurement samples");
           if (scenario.name !== "narrow-fallback" && last.kind !== "visible") throw new Error(`Head HUD ${scenario.name}: ${last.kind}`);
           if (last.kind === "visible") {
             const size = canvasModule.headHudCanvasSize(last.layer);
@@ -395,7 +401,7 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
             canvasModule.drawHeadHud(drawingContext, validated);
             if (scenario.name === "landscape") image = canvas.toDataURL("image/png");
           }
-        return { measurement: { name: scenario.name, outcome: last.kind, samples: elapsed.length, medianMilliseconds: elapsed[15], p95Milliseconds: elapsed[28] },
+        return { measurement: { name: scenario.name, outcome: last.kind, samples: elapsed.length, medianMilliseconds: (lowerMedian + upperMedian) / 2, p95Milliseconds: p95 },
           image, hudBytes: new TextEncoder().encode(JSON.stringify({ layout: model.layout, groups: model.groups })).length };
       }, { scenario, model: new URL("../src/presentation/flight-hud-model.ts", moduleUrl).href,
         view: new URL("../src/presentation/head-hud-view.ts", moduleUrl).href, canvas: new URL("../src/presentation/head-hud-canvas.ts", moduleUrl).href });
@@ -410,7 +416,6 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
         await writeFile(resolve(output, "03-head-hud.png"), Buffer.from(headMeasurement.image.slice("data:image/png;base64,".length), "base64"));
       }
       }
-      report.headHud = { measurements: headResults, measurement: "30 calls per scenario, CDP coverage enabled; input bound includes the 1024-byte space limit; not a frame-rate acceptance" };
       await profiler.send("Profiler.stopPreciseCoverage");
     } finally { await profiler.detach(); }
     checks.push("HD/FHD・文字拡大の下端HUDは全値・14px文字高・非重複を保持し、実CanvasのHead HUDは両眼と前方中央へ収まる");
