@@ -17,7 +17,6 @@ pub(super) struct RetainedHud {
 
 struct HudNode {
     card: Entity,
-    label: Entity,
     value: Entity,
     widget: HudWidget,
 }
@@ -133,19 +132,10 @@ pub(super) fn project_hud(
                 .nodes
                 .get_mut(&node.id)
                 .expect("projected HUD node exists");
-            let inline = matches!(node.content, GameUiHudNodeContent::Text { .. });
-            set_text(world, retained.label, node.label.clone());
-            retained_node(world, retained.label)
-                .map_unchanged(|node| &mut node.display)
-                .set_if_neq(if inline || node.label.is_empty() {
-                    Display::None
-                } else {
-                    Display::Flex
-                });
             set_text(
                 world,
                 retained.value,
-                if inline && !node.label.is_empty() {
+                if !node.label.is_empty() {
                     format!("{} {}", node.label, node.content.value())
                 } else {
                     node.content.value().to_owned()
@@ -163,12 +153,10 @@ pub(super) fn project_hud(
                 GameUiHudTone::Muted => muted,
                 GameUiHudTone::Warning => Color::srgb(1.0, 0.6, 0.4),
             };
-            for entity in [retained.label, retained.value] {
-                world
-                    .get_mut::<TextColor>(entity)
-                    .expect("HUD text color exists")
-                    .set_if_neq(TextColor(tone_color));
-            }
+            world
+                .get_mut::<TextColor>(retained.value)
+                .expect("HUD text color exists")
+                .set_if_neq(TextColor(tone_color));
             project_widget(world, retained, node, hud, &font, ink)?;
         }
     }
@@ -289,13 +277,11 @@ fn project_structure(
                 } else {
                     Color::NONE
                 }));
-            for text in [retained_node.label, retained_node.value] {
-                world
-                    .get_mut::<TextFont>(text)
-                    .expect("HUD text font exists")
-                    .map_unchanged(|font| &mut font.font_size)
-                    .set_if_neq(FontSize::Px(layout.font_size_px as f32));
-            }
+            world
+                .get_mut::<TextFont>(retained_node.value)
+                .expect("HUD text font exists")
+                .map_unchanged(|font| &mut font.font_size)
+                .set_if_neq(FontSize::Px(layout.font_size_px as f32));
             if let Some(surface) = retained_node.widget.surface() {
                 let surface_width = match retained_node.widget {
                     HudWidget::Attitude { .. } => px(node.instrument_height_em
@@ -367,7 +353,6 @@ fn spawn_node(
     font: &Handle<Font>,
 ) -> HudNode {
     let card = shape(world, parent, Node::default(), Color::NONE);
-    let label = text(world, card, font, 12.0);
     let value = text(world, card, font, 12.0);
     let widget = match &node.content {
         GameUiHudNodeContent::Text { .. } => HudWidget::Text,
@@ -609,7 +594,6 @@ fn spawn_node(
     };
     HudNode {
         card,
-        label,
         value,
         widget,
     }
@@ -879,11 +863,9 @@ mod tests {
             );
             for node in &group.nodes {
                 let projected = &retained.nodes[&node.id];
-                assert_eq!(world.get::<Text>(projected.label).unwrap().0, node.label);
-                let inline = matches!(node.content, GameUiHudNodeContent::Text { .. });
                 assert_eq!(
                     world.get::<Text>(projected.value).unwrap().0,
-                    if inline && !node.label.is_empty() {
+                    if !node.label.is_empty() {
                         format!("{} {}", node.label, node.content.value())
                     } else {
                         node.content.value().to_owned()
@@ -1002,7 +984,7 @@ mod tests {
                     .hud
                     .nodes
                     .values()
-                    .flat_map(|node| [node.card, node.label, node.value]),
+                    .flat_map(|node| [node.card, node.value]),
             )
             .collect::<Vec<_>>();
         let observed = |world: &World| {
