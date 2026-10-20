@@ -341,7 +341,7 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
     const headScenarios = [
       { name: "landscape", aspect: 1280 / 720, maximumWidthMeters: 2.16 },
       { name: "portrait", aspect: 720 / 1280, maximumWidthMeters: 2.16 },
-      { name: "narrow-fallback", aspect: 1280 / 720, maximumWidthMeters: 0.85 }
+      { name: "narrow-fallback", aspect: 1280 / 720, maximumWidthMeters: 0.3 }
     ].map(scenario => {
       const camera = new PerspectiveCamera(60, scenario.aspect, 0.05, 100);
       camera.updateMatrixWorld(true);
