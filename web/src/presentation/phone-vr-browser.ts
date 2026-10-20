@@ -33,20 +33,56 @@ export function createBrowserPhoneVrSensorPort(
   let absoluteOrientationListener: ((event: DeviceOrientationReadingEvent) => void) | null = null;
   let screenOrientationListener: (() => void) | null = null;
   let listeningGeneration = 0;
+  let availability: Promise<PhoneVrAvailability> | null = null;
+  let cancelAvailabilityProbe: (() => void) | null = null;
+
+  const probeAvailability = (): Promise<PhoneVrAvailability> => new Promise((resolve) => {
+    const probe = { settled: false };
+    const finish = (result: PhoneVrAvailability) => {
+      if (probe.settled) return;
+      probe.settled = true;
+      clearTimeout(timer);
+      cancelAvailabilityProbe = null;
+      let failure: unknown;
+      for (const type of ["deviceorientation", "deviceorientationabsolute"]) {
+        try { targetWindow.removeEventListener(type, receive); }
+        catch (error) { failure ??= error; }
+      }
+      resolve(failure === undefined ? result : { supported: false, message: "端末姿勢の確認を終了できなかった。ページを再読み込みしてください。" });
+    };
+    const receive = (event: DeviceOrientationReadingEvent) => {
+      if (event.absolute && [event.alpha, event.beta, event.gamma, event.timeStamp].every((value) =>
+        typeof value === "number" && Number.isFinite(value)) && readScreenOrientationAngle(targetWindow) !== null) {
+        finish({ supported: true, message: "端末姿勢センサーを利用できる。" });
+      }
+    };
+    const timer = setTimeout(() => { finish({ supported: false, message: "端末姿勢を取得できないため、スマートフォンVRは利用できない。" }); }, 1500);
+    cancelAvailabilityProbe = () => { finish({ supported: false, message: "端末姿勢の確認を中断した。" }); };
+    try {
+      targetWindow.addEventListener("deviceorientation", receive);
+      if (!probe.settled) targetWindow.addEventListener("deviceorientationabsolute", receive);
+    } catch {
+      finish({ supported: false, message: "端末姿勢センサーを利用できない。" });
+    }
+  });
 
   return Object.freeze({
     checkAvailability(): Promise<PhoneVrAvailability> {
-      if (!targetWindow.isSecureContext) return Promise.resolve({ supported: false, message: "Phone VR requires a secure HTTPS context" });
+      if (!targetWindow.isSecureContext) return Promise.resolve({ supported: false, message: "スマートフォンVRにはHTTPS接続が必要である。" });
       if (typeof targetWindow.DeviceOrientationEvent === "undefined") {
-        return Promise.resolve({ supported: false, message: "Device orientation events are unavailable in this browser" });
+        return Promise.resolve({ supported: false, message: "このブラウザでは端末姿勢を取得できない。" });
       }
       if (targetWindow.screen.orientation === undefined) {
-        return Promise.resolve({ supported: false, message: "Screen orientation data is unavailable in this browser" });
+        return Promise.resolve({ supported: false, message: "このブラウザでは画面の向きを取得できない。" });
       }
       if (!Number.isFinite(targetWindow.screen.orientation.angle)) {
-        return Promise.resolve({ supported: false, message: "Screen orientation angle is unavailable" });
+        return Promise.resolve({ supported: false, message: "画面の向きを取得できない。" });
       }
-      return Promise.resolve({ supported: true, message: "Phone VR sensor API is available; permission and gravity-referenced absolute events are still required" });
+      if (targetWindow.DeviceOrientationEvent.requestPermission !== undefined) {
+        return Promise.resolve({ supported: true, message: "切替時に端末姿勢センサーの利用を許可してください。" });
+      }
+      availability ??= probeAvailability();
+      return availability;
     },
     requestPermissionFromUserGesture(): Promise<PhoneVrPermissionResult> {
       if (typeof targetWindow.DeviceOrientationEvent === "undefined") {
@@ -74,6 +110,7 @@ export function createBrowserPhoneVrSensorPort(
       screenOrientationHandler: (angle: number | null) => void
     ): void {
       if (orientationListener !== null) throw new Error("Phone VR sensor listener is already active");
+      cancelAvailabilityProbe?.();
       const generation = ++listeningGeneration;
       let source: "deviceorientation" | "deviceorientationabsolute" | null = null;
       const receive = (eventSource: "deviceorientation" | "deviceorientationabsolute", event: DeviceOrientationReadingEvent) => {
@@ -97,6 +134,7 @@ export function createBrowserPhoneVrSensorPort(
       targetWindow.screen.orientation?.addEventListener("change", screenOrientationListener);
     },
     stopListening(): void {
+      cancelAvailabilityProbe?.();
       listeningGeneration++;
       const orientation = orientationListener;
       const absoluteOrientation = absoluteOrientationListener;

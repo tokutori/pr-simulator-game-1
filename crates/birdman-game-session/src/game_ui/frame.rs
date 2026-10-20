@@ -165,13 +165,13 @@ pub(super) fn analysis_cursor_readout(
     let [north, east, _] = sample.telemetry.composite_cg_position_ned_m.components();
     let [wind_north, wind_east, wind_down] = sample.telemetry.wind_velocity_ned_mps.components();
     let mut readout = format!(
-        "t {time:.2} s · N {north:.1} m · E {east:.1} m · h {:.1} m\nVair {:.1} · Vground {:.1} · WN {wind_north:.1} · WE {wind_east:.1} · WD {wind_down:.1} m/s",
+        "飛行時間 {time:.2} s · 北 {north:.1} m · 東 {east:.1} m · 高度 {:.1} m\n対気速度 {:.1} m/s · 対地速度 {:.1} m/s\n風: 北向き {wind_north:.1} m/s · 東向き {wind_east:.1} m/s · 下向き {wind_down:.1} m/s",
         sample.telemetry.altitude_m,
         sample.telemetry.airspeed_mps,
         sample.telemetry.groundspeed_mps
     );
     if !super::environment::registered(identity) {
-        readout.push_str(" · 風場 unavailable (unregistered_environment_identity)");
+        readout.push_str(" · 周辺の風場データを取得できない");
     }
     if let Some(label) = selected_wind_label {
         readout.push('\n');

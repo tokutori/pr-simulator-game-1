@@ -6,6 +6,8 @@ use birdman_game_format::{
     AssistanceLevel, DifficultyPreset, HudCue, InformationLevel, WeatherClass,
 };
 
+mod result;
+
 /// Projects shared menu content, action admission, groups, layout and record charts.
 pub fn game_ui_view(
     state: &GameUiState,
@@ -316,145 +318,9 @@ pub fn game_ui_view(
                 );
             }
         },
-        SessionPhase::Result => {
-            if state.result_tab == GameUiResultTab::Analysis {
-                analysis(&mut menu, state, context, false)?;
-                menu.section("analysis-details", "", GameUiSectionLayout::Column);
-                menu.status(
-                    "game-result-configuration",
-                    "保存条件 / 風",
-                    &configuration(context),
-                );
-                menu.status(
-                    "game-result-analysis-notice",
-                    "通知",
-                    &context.platform.notification,
-                );
-                menu.section("analysis-navigation", "", GameUiSectionLayout::Row);
-                menu.action(
-                    "game-result-open-summary",
-                    "Summary",
-                    GameUiAction::SetResultTab {
-                        tab: GameUiResultTab::Summary,
-                    },
-                    true,
-                );
-            } else {
-                menu.section("result-summary", "", GameUiSectionLayout::Column);
-                menu.status(
-                    "game-state",
-                    "",
-                    if context.platform.notification.is_empty() {
-                        &description
-                    } else {
-                        &context.platform.notification
-                    },
-                );
-                menu.status(
-                    "game-result-analysis",
-                    "飛行の概要",
-                    &record_summary(context)?,
-                );
-                menu.action(
-                    "game-result-open-analysis",
-                    "飛行を分析",
-                    GameUiAction::SetResultTab {
-                        tab: GameUiResultTab::Analysis,
-                    },
-                    context.platform.analysis_available,
-                );
-                menu.status(
-                    "game-result-configuration",
-                    "飛行条件",
-                    &configuration(context),
-                );
-                if let SessionSnapshot::Result(result) = context.session.snapshot() {
-                    menu.status(
-                        "game-result-terminal",
-                        "終了理由",
-                        super::game_ui_result_reason_label(result.reason),
-                    );
-                    if result.failure.is_some() {
-                        menu.status(
-                            "game-result-failure",
-                            "原因",
-                            super::game_ui_failure_summary(result.failure),
-                        );
-                    }
-                    menu.push(
-                        "game-result-technical",
-                        "技術情報",
-                        true,
-                        "technical",
-                        GameUiControlContent::Button {
-                            action: GameUiAction::ToggleTechnical {},
-                            presentation: GameUiButtonPresentation::Disclosure {
-                                expanded: state.technical_open,
-                            },
-                        },
-                    );
-                    if state.technical_open {
-                        menu.status(
-                            "game-result-technical-content",
-                            "技術情報",
-                            &format!(
-                                "{}\n終了理由: {:?}\n失敗したtickの診断:\n{:#?}",
-                                technical_configuration(context),
-                                result.reason,
-                                result.failure
-                            ),
-                        );
-                    }
-                }
-            }
-            menu.section("result-navigation", "", GameUiSectionLayout::Row);
-            menu.session(
-                "game-result-replay",
-                if state.result_tab == GameUiResultTab::Analysis {
-                    "Replay"
-                } else {
-                    "Replayを見る"
-                },
-                SessionCommand::EnterReplay {},
-                GameUiEmphasis::Normal,
-                context.platform.replay_available && context.record.is_some(),
-            );
-            menu.session(
-                "game-result-retry",
-                if state.result_tab == GameUiResultTab::Analysis {
-                    "同条件で再試行"
-                } else {
-                    "同じ条件で再試行"
-                },
-                SessionCommand::Retry {},
-                GameUiEmphasis::Normal,
-                true,
-            );
-            menu.session(
-                "game-result-setup",
-                if state.result_tab == GameUiResultTab::Analysis {
-                    "設定"
-                } else {
-                    "設定を変更"
-                },
-                SessionCommand::OpenSetup {},
-                GameUiEmphasis::Normal,
-                true,
-            );
-            menu.session(
-                "game-result-title",
-                if state.result_tab == GameUiResultTab::Analysis {
-                    "Title"
-                } else {
-                    "Titleへ戻る"
-                },
-                SessionCommand::ReturnToTitle {},
-                GameUiEmphasis::Normal,
-                true,
-            );
-            logs(&mut menu, context);
-        }
+        SessionPhase::Result => result::result(&mut menu, state, context)?,
         SessionPhase::Replay => {
+            notification(&mut menu, context);
             replay(&mut menu, state, context)?;
             logs(&mut menu, context);
         }
@@ -1328,28 +1194,11 @@ fn configuration(context: &GameUiContext<'_, '_>) -> String {
     )
 }
 
-fn record_summary(context: &GameUiContext<'_, '_>) -> Result<String, GameUiError> {
-    let Some(record) = context.record else {
-        return Ok("飛行記録を読み込んでいるか、分析に必要なデータを取得できない。".to_owned());
-    };
-    let summary = record.summary().map_err(GameUiError::Record)?;
-    let terminal = record.finalization().map_or("", |result| {
-        super::game_ui_result_reason_label(result.reason)
-    });
-    let score = summary.score.map_or_else(
-        || "飛距離は記録されていない".to_owned(),
-        |score| format!("距離 {:.1} m", score.course_parallel_m()),
-    );
-    let angle = summary.maximum_angle_of_attack_rad.map_or_else(
-        || "迎角は記録されていない".to_owned(),
-        |angle| format!("最大迎角 {:.1}°", angle.to_degrees()),
-    );
-    Ok(format!(
-        "{terminal} · {score} · 飛行時間 {:.1} s · 最大対気速度 {:.1} m/s · {angle} · 最大ロール角（絶対値） {:.1}°",
-        summary.duration_seconds,
-        summary.maximum_airspeed_mps,
-        summary.maximum_absolute_roll_rad.to_degrees()
-    ))
+fn notification(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
+    if !context.platform.notification.is_empty() {
+        menu.section("record-notification", "", GameUiSectionLayout::Column);
+        menu.status("game-state", "", &context.platform.notification);
+    }
 }
 
 fn logs(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
@@ -1377,10 +1226,6 @@ fn logs(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
     if context.platform.flight_log_pending {
         notice.push_str(" · 飛行ログのダウンロードを要求している。");
     }
-    if !context.platform.notification.is_empty() {
-        notice.push_str(" · ");
-        notice.push_str(&context.platform.notification);
-    }
     menu.section("flight-log-notice", "", GameUiSectionLayout::Column);
     menu.status("game-flight-log-notice", "ログ出力", &notice);
 }
@@ -1393,13 +1238,13 @@ fn analysis(
 ) -> Result<(), GameUiError> {
     menu.section("analysis-tabs", "", GameUiSectionLayout::Row);
     for (chart, id, label) in [
-        (GameUiAnalysisChart::Map, "game-analysis-map", "Map"),
+        (GameUiAnalysisChart::Map, "game-analysis-map", "軌跡"),
         (
             GameUiAnalysisChart::Altitude,
             "game-analysis-altitude",
-            "Altitude",
+            "高度",
         ),
-        (GameUiAnalysisChart::Speed, "game-analysis-speed", "Speed"),
+        (GameUiAnalysisChart::Speed, "game-analysis-speed", "速度"),
     ] {
         menu.action(
             id,
@@ -1450,8 +1295,8 @@ fn analysis(
             "game-analysis-plot",
             match state.analysis_chart {
                 GameUiAnalysisChart::Map => "水平軌跡",
-                GameUiAnalysisChart::Altitude => "Altitude vs time",
-                GameUiAnalysisChart::Speed => "Airspeed / Groundspeed",
+                GameUiAnalysisChart::Altitude => "高度の推移",
+                GameUiAnalysisChart::Speed => "対気速度・対地速度",
             },
             false,
             "analysis",
@@ -1468,9 +1313,9 @@ fn analysis(
                 "game-analysis-cursor"
             },
             if replay {
-                "Replay time (s)"
+                "再生時刻 (s)"
             } else {
-                "Flight time (s)"
+                "飛行時間 (s)"
             },
             context.platform.analysis_available,
             "analysis",
@@ -1489,7 +1334,7 @@ fn analysis(
         );
         menu.live_status(
             "game-analysis-cursor-values",
-            "At cursor",
+            "選択地点の値",
             &readout,
             GameUiReadoutSource::AnalysisCursor,
         );
@@ -1497,7 +1342,7 @@ fn analysis(
         menu.section("analysis-chart", "", GameUiSectionLayout::Column);
         menu.status(
             "game-analysis-loading",
-            "Analysis",
+            "飛行の分析",
             "飛行記録を読み込んでいる",
         );
     }

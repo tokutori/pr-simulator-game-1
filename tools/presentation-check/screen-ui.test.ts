@@ -431,9 +431,10 @@ describe("screen UI DOM patching", () => {
       expect(panel.dataset.layout).toBeUndefined();
       expect(sections.map((section) => section.dataset.sectionId)).toEqual(sharedSections.map((section) => section.id));
       expect(sections.map((section) => section.dataset.layout)).toEqual(sharedSections.map((section) => section.layout));
-      expect(sections[0]?.dataset.sectionId).toBe("analysis-tabs");
-      expect(sections[1]?.dataset.sectionId).toBe("analysis-chart");
-      expect(sections[1]?.querySelector(".screen-ui-chart")).not.toBeNull();
+      const tabs = sections.find((section) => section.dataset.sectionId === "analysis-tabs");
+      const chart = sections.find((section) => section.querySelector(".screen-ui-chart") !== null);
+      if (tabs === undefined || chart === undefined) throw new Error("Missing analysis tabs/chart");
+      expect(tabs.compareDocumentPosition(chart) & 4).toBe(4);
       expect(required(root, ".screen-ui-chart").style.position).toBe("");
       expect(required(root, ".screen-ui-range").style.height).toBe("");
       for (const section of sections) {
@@ -797,7 +798,7 @@ describe("screen UI DOM patching", () => {
     expect(svg.getAttribute("viewBox")).toBe("0 0 298 160");
     expect(svg.style.getPropertyValue("--screen-chart-tick-font")).toBe("14px");
     expect(svg.querySelector('path[stroke-dasharray="7 6"]')?.getAttribute("d")).toBe("M 171 26 V 112");
-    expect(svg.querySelector(".screen-ui-chart-axis")?.textContent).toBe("Time (s)");
+    expect(svg.querySelector(".screen-ui-chart-axis")?.textContent).toBe(analysisChart().x_axis_label);
     const notice = required(root, "#long-notice");
     expect(notice.style.position).toBe("");
     expect(notice.style.maxHeight).toBe("");

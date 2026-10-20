@@ -27,7 +27,7 @@ pub(super) fn record_chart(
         .max(0.01);
     let mut chart = GameUiChart {
         presentation: initial_presentation(extent)?,
-        x_axis_label: "Time (s)".to_owned(),
+        x_axis_label: "飛行時間 (s)".to_owned(),
         y_axis_label: String::new(),
         x_minimum: 0.0,
         x_maximum: duration,
@@ -45,7 +45,7 @@ pub(super) fn record_chart(
     match kind {
         GameUiAnalysisChart::Map => map_chart(&mut chart, record)?,
         GameUiAnalysisChart::Altitude => {
-            chart.y_axis_label = "Altitude (m)".to_owned();
+            chart.y_axis_label = "高度 (m)".to_owned();
             let range = padded_range(
                 samples
                     .iter()
@@ -76,7 +76,7 @@ pub(super) fn record_chart(
             ];
         }
         GameUiAnalysisChart::Speed => {
-            chart.y_axis_label = "Speed (m/s)".to_owned();
+            chart.y_axis_label = "速度 (m/s)".to_owned();
             let range = padded_range(samples.iter().flat_map(|sample| {
                 [
                     sample.telemetry.airspeed_mps,
@@ -329,9 +329,9 @@ fn complete_presentation(chart: &mut GameUiChart) {
                 .filter(|(_, vector)| !vector.label.is_empty())
                 .map(|(index, vector)| GameUiChartLegend {
                     label: if chart.equal_axis_scale && index == 0 {
-                        "選択sampleの風（矢印は空気の移動先）".to_owned()
+                        "選択地点の風（矢印は空気の移動先）".to_owned()
                     } else {
-                        vector.label.clone()
+                        "周辺の風（発進高度・矢印は空気の移動先）".to_owned()
                     },
                     color: vector.color.clone(),
                     segment_gradient: None,
@@ -523,10 +523,7 @@ pub(super) fn chart_cursor(
             };
             let end = point(start.x + east * scale, start.y + north * scale);
             cursor.selected_wind_vector = Some(GameUiChartVector {
-                label: format!(
-                    "選択sampleの風 · h {:.1} m · 矢印は空気の移動先 · {scale:.1} m/(m/s)",
-                    sample.telemetry.altitude_m
-                ),
+                label: format!("選択地点の風の矢印: 1 m/s あたり {scale:.1} m"),
                 color: "#f2b35e".to_owned(),
                 segment: if speed > 0.0 {
                     clip_segment(
@@ -684,12 +681,22 @@ fn wind_grid(
     } else {
         0.0
     };
-    let vertical = range(samples.iter().map(|(_, velocity)| velocity[2]));
     for (index, (position, velocity)) in samples.into_iter().enumerate() {
         let start = point(position[1], position[0]);
         let end = point(start.x + velocity[1] * scale, start.y + velocity[0] * scale);
-        chart.vectors.push(GameUiChartVector { label: if index == 0 { format!("風断面 h {altitude:.1} m · W_D {:.1}…{:.1} m/s · 矢印は空気の移動先 · 1 m/s = {scale:.1} m", vertical[0], vertical[1]) } else { String::new() },
-            color: "#c7eb72".to_owned(), segment: if scale > 0.0 && velocity[0].hypot(velocity[1]) > 0.0 { clip_segment(start, end, bounds) } else { None } });
+        chart.vectors.push(GameUiChartVector {
+            label: if index == 0 {
+                "周辺の風".to_owned()
+            } else {
+                String::new()
+            },
+            color: "#c7eb72".to_owned(),
+            segment: if scale > 0.0 && velocity[0].hypot(velocity[1]) > 0.0 {
+                clip_segment(start, end, bounds)
+            } else {
+                None
+            },
+        });
     }
     Ok(())
 }

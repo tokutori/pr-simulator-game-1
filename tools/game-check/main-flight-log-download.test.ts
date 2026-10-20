@@ -1,4 +1,3 @@
-import { readContract } from "../game-ui-build/validate.js";
 import type { SessionLifecycleDocument } from "../../web/src/generated/session-lifecycle.js";
 import { readFileSync } from "node:fs";
 import { Window as BrowserWindow } from "happy-dom";
@@ -80,12 +79,16 @@ async function fixture(archive = false) {
     await browser.happyDOM.abort();
   });
   await import("../../web/src/main.js");
-  await vi.waitFor(() => { expect(browser.document.querySelector('[data-control-id="game-flight-log-csv"]')).not.toBeNull(); });
   const button = (id: string): HTMLButtonElement => {
     const element = browser.document.querySelector(`[data-control-id="${id}"]`);
     if (!(element instanceof browser.HTMLButtonElement)) throw new Error(`Required button ${id} is unavailable`);
     return element as unknown as HTMLButtonElement;
   };
+  if (!archive) {
+    await vi.waitFor(() => { expect(browser.document.querySelector('[data-control-id="game-result-technical"]')).not.toBeNull(); });
+    button("game-result-technical").click();
+  }
+  await vi.waitFor(() => { expect(browser.document.querySelector('[data-control-id="game-flight-log-csv"]')).not.toBeNull(); });
   return { browser, renderer, session, facade, original, blobs, createUrl, revokeUrl, click, button, pageHide, free,
     pageRestore: () => { pageEvent("pageshow", true); } };
 }
@@ -103,11 +106,13 @@ describe("actual Tail main, facade and generated WASM flight log download", () =
     expect(json).toHaveBeenCalledTimes(1);
     expect(await trial.blobs[0]?.text()).toBe(expectedCsv);
     expect(await trial.blobs[1]?.text()).toBe(before);
-    expect(readContract<SessionLifecycleDocument>("lifecycle", trial.session.lifecycle_snapshot_json()).phase).toBe("result");
+    expect(trial.facade.readLifecycle().phase).toBe("result");
     expect(trial.session.export_current_flight_record_json()).toBe(before);
     expect(trial.browser.document.body.textContent).toContain("ダウンロードを要求した");
     expect(trial.revokeUrl).not.toHaveBeenCalled();
     trial.button("game-result-open-analysis").click();
+    expect(trial.browser.document.querySelector('[data-control-id="game-flight-log-csv"]')).toBeNull();
+    trial.button("game-result-open-summary").click();
     expect(trial.button("game-flight-log-csv").disabled).toBe(false);
     trial.pageHide(true);
     expect(trial.free).not.toHaveBeenCalled();
@@ -128,7 +133,7 @@ describe("actual Tail main, facade and generated WASM flight log download", () =
     trial.button("game-flight-log-csv").click();
     expect(await trial.blobs[0]?.text()).toBe(trial.original);
     expect(trial.session.playback_clock_state()).toEqual(clock);
-    expect(readContract<SessionLifecycleDocument>("lifecycle", trial.session.lifecycle_snapshot_json()).phase).toBe("replay");
+    expect(trial.facade.readLifecycle().phase).toBe("replay");
     expect(trial.session.is_archived_replay()).toBe(true);
     expect(trial.browser.document.body.textContent).toContain("速度の差から推定した加速度");
     const csv = trial.session.export_flight_log_csv();
@@ -161,7 +166,7 @@ describe("actual Tail main, facade and generated WASM flight log download", () =
     });
     trial.button("game-flight-log-csv").click();
     expect(trial.createUrl).not.toHaveBeenCalled();
-    expect(readContract<SessionLifecycleDocument>("lifecycle", trial.session.lifecycle_snapshot_json()).phase).toBe("briefing_ready");
+    expect(trial.facade.readLifecycle().phase).toBe("briefing_ready");
     expect(trial.browser.document.body.textContent).not.toContain("ダウンロードを要求した");
   });
 
@@ -188,20 +193,23 @@ describe("actual Tail main, facade and generated WASM flight log download", () =
     expect(trial.createUrl).toHaveBeenCalledTimes(1);
     expect(errors).toContain(failure);
     if (failedRender === 2) expect(trial.browser.document.body.textContent).toContain("ダウンロードを要求した");
-    else trial.button("game-result-open-analysis").click();
+    else {
+      trial.button("game-result-open-analysis").click();
+      trial.button("game-result-open-summary").click();
+    }
     expect(trial.button("game-flight-log-json").disabled).toBe(false);
     trial.button("game-flight-log-json").click();
     expect(trial.createUrl).toHaveBeenCalledTimes(2);
-    expect(readContract<SessionLifecycleDocument>("lifecycle", trial.session.lifecycle_snapshot_json()).phase).toBe("result");
+    expect(trial.facade.readLifecycle().phase).toBe("result");
   });
 
   it("rejects native JS export error paths outside Result and Replay without changing their phase", async () => {
     const trial = await fixture();
     const assertRejected = (phase: SessionLifecycleDocument["phase"]): void => {
-      expect(readContract<SessionLifecycleDocument>("lifecycle", trial.session.lifecycle_snapshot_json()).phase).toBe(phase);
+      expect(trial.facade.readLifecycle().phase).toBe(phase);
       expect(() => trial.session.export_current_flight_record_json()).toThrow();
       expect(() => trial.session.export_flight_log_csv()).toThrow();
-      expect(readContract<SessionLifecycleDocument>("lifecycle", trial.session.lifecycle_snapshot_json()).phase).toBe(phase);
+      expect(trial.facade.readLifecycle().phase).toBe(phase);
     };
     trial.session.return_to_title();
     assertRejected("title");

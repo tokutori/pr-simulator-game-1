@@ -2516,6 +2516,14 @@ mod tests {
 
         let directory = TestDirectory::new();
         let mut app = analysis_app();
+        assert!(
+            !app.world()
+                .resource::<RetainedUi>()
+                .widgets
+                .contains_key("game-flight-log-json")
+        );
+        press(&mut app, "game-result-open-summary");
+        press(&mut app, "game-result-technical");
         assert!(!platform_input(app.world_mut()).flight_log_available);
         for id in ["game-flight-log-json", "game-flight-log-csv"] {
             let node = app.world().resource::<RetainedUi>().widgets[id].node;
@@ -2562,8 +2570,7 @@ mod tests {
                         .unwrap()
                         .starts_with("飛行ログを保存した: ")
                 );
-                let notice =
-                    &app.world().resource::<RetainedUi>().widgets["game-flight-log-notice"];
+                let notice = &app.world().resource::<RetainedUi>().widgets["game-state"];
                 let text = &app.world().get::<Text>(notice.text).unwrap().0;
                 assert!(text.contains("飛行ログを保存した: "));
                 assert!(text.contains(&export_directory.display().to_string()));
@@ -2596,6 +2603,8 @@ mod tests {
         use birdman_game_format::TailFlightRecordDocument;
         let directory = TestDirectory::new();
         let mut app = analysis_app();
+        press(&mut app, "game-result-open-summary");
+        press(&mut app, "game-result-technical");
         app.insert_resource(FlightLogExport::new(&directory.0, None).unwrap());
         app.update();
         press(&mut app, "game-flight-log-json");
@@ -2726,6 +2735,8 @@ mod tests {
         let blocked = directory.0.join("existing-file");
         std::fs::write(&blocked, b"preserve\n").unwrap();
         let mut app = analysis_app();
+        press(&mut app, "game-result-open-summary");
+        press(&mut app, "game-result-technical");
         app.insert_resource(FlightLogExport::new(&directory.0, Some(&blocked)).unwrap());
         app.update();
         let before = app
