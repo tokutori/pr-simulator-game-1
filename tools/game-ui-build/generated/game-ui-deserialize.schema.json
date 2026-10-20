@@ -337,6 +337,54 @@
       ],
       "type": "object"
     },
+    "GameUiHeadHudSpace": {
+      "additionalProperties": false,
+      "description": "Available head-fixed space after optical clipping, clear-region and menu reservation.",
+      "properties": {
+        "bottom_band_m": {
+          "description": "Top edge and height of the preferred lower band, in metres from the plane top.",
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "size_m": {
+          "description": "Complete visible HUD plane width and height, in metres.",
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "text_height_m": {
+          "description": "Required angular text height projected into the HUD plane, in metres.",
+          "format": "double",
+          "type": "number"
+        },
+        "top_band_m": {
+          "description": "Top edge and height of the optional upper band, in metres from the plane top.",
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        }
+      },
+      "required": [
+        "size_m",
+        "top_band_m",
+        "bottom_band_m",
+        "text_height_m"
+      ],
+      "type": "object"
+    },
     "GameUiPauseOverlay": {
       "description": "Exclusive pause overlay.",
       "oneOf": [

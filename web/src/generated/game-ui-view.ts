@@ -54,7 +54,7 @@ export interface GameUiHud {
     readonly layout: GameUiHudLayout;
 }
 /**
- * A shared HUD group; identifiers track retained nodes without encoding their meaning.
+ * One shared horizontal row; identifiers only track its retained elements.
  */
 export interface GameUiHudGroup {
     /**
@@ -62,32 +62,19 @@ export interface GameUiHudGroup {
      */
     readonly id: string;
     /**
-     * Shared row, column, or responsive grid composition.
-     */
-    readonly layout: {
-        readonly kind: "row";
-    } | {
-        readonly kind: "column";
-    } | {
-        /**
-         * Preferred column count before the adapter applies measured width constraints.
-         */
-        readonly columns: number;
-        readonly kind: "grid";
-    };
-    /**
-     * Complete visible node sequence.
+     * Complete visible row in its shared left-to-right order.
      */
     readonly nodes: readonly GameUiHudNode[];
     /**
      * Shared placement relative to the unobstructed forward view.
      */
-    readonly placement: "readouts" | "instruments" | "details";
+    readonly placement: "readouts" | "instruments";
 }
 /**
  * One existing widget instance; adding an instance requires no adapter-specific field.
  */
 export interface GameUiHudNode {
+    readonly bounds: GameUiRect;
     /**
      * Exclusive widget geometry and display values.
      */
@@ -168,9 +155,34 @@ export interface GameUiHudNode {
      */
     readonly id: string;
     /**
-     * Shared heading, independent of the widget type.
+     * Instrument drawing height relative to the shared HUD font size; zero for text.
+     */
+    readonly instrument_height_em: number;
+    /**
+     * Caption preceding the value in one formatted paragraph, independent of widget type.
      */
     readonly label: string;
+}
+/**
+ * Shared normalized rectangle within the bottom HUD rail.
+ */
+export interface GameUiRect {
+    /**
+     * Height.
+     */
+    readonly height: number;
+    /**
+     * Width.
+     */
+    readonly width: number;
+    /**
+     * Left edge.
+     */
+    readonly x: number;
+    /**
+     * Top edge.
+     */
+    readonly y: number;
 }
 /**
  * Horizon rotation and translation.
@@ -181,9 +193,41 @@ export interface GameUiHudAttitudeGeometry {
      */
     readonly pitch_offset_ratio: number;
     /**
+     * Shared pitch ladder in the translated and rotated horizon coordinate system.
+     *
+     * @minItems 7
+     * @maxItems 7
+     */
+    readonly pitch_ticks: readonly [
+        GameUiHudPitchTick,
+        GameUiHudPitchTick,
+        GameUiHudPitchTick,
+        GameUiHudPitchTick,
+        GameUiHudPitchTick,
+        GameUiHudPitchTick,
+        GameUiHudPitchTick
+    ];
+    /**
      * Clockwise horizon rotation in display coordinates.
      */
     readonly rotation_degrees: number;
+}
+/**
+ * One pitch ladder mark relative to the complete ADI width and height.
+ */
+export interface GameUiHudPitchTick {
+    /**
+     * Half of the horizontal mark width.
+     */
+    readonly half_width_ratio: number;
+    /**
+     * Absolute pitch in degrees; the horizon has no numeric label.
+     */
+    readonly label_degrees: number | null;
+    /**
+     * Vertical offset from the zero-pitch horizon.
+     */
+    readonly offset_ratio: number;
 }
 /**
  * One heading tape mark in normalized instrument coordinates.
@@ -231,11 +275,11 @@ export interface GameUiHudLayout {
         number
     ];
     /**
-     * Reachable vertical scroll height.
+     * Shared rail height enclosing every published node.
      */
-    readonly maximum_height_px: number;
+    readonly height_px: number;
     /**
-     * Left and top viewport offsets.
+     * Left and bottom viewport insets; the bottom edge is the viewport anchor.
      *
      * @minItems 2
      * @maxItems 2
@@ -245,7 +289,7 @@ export interface GameUiHudLayout {
         number
     ];
     /**
-     * Panel background opacity.
+     * Individual card background opacity; the surrounding rail is transparent.
      */
     readonly opacity: number;
     /**
@@ -259,7 +303,7 @@ export interface GameUiHudLayout {
         number
     ];
     /**
-     * Responsive panel width.
+     * Responsive rail width without scrolling.
      */
     readonly width_px: number;
 }
@@ -641,7 +685,7 @@ export interface GameUiControl {
      * Shared visible label.
      */
     readonly label: string;
-    readonly rect: GameUiRect;
+    readonly rect: GameUiRect1;
     /**
      * Section identifier.
      */
@@ -1269,7 +1313,7 @@ export interface GameUiChartVector {
 /**
  * Shared spatial or normalized position.
  */
-export interface GameUiRect {
+export interface GameUiRect1 {
     /**
      * Height.
      */

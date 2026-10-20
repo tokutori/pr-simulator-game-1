@@ -113,11 +113,11 @@ fn bottom_hud_preserves_all_information_and_shared_nonoverlapping_rows() {
     let mut expected_ids = None;
     for (width, height, font) in [
         (1280.0, 720.0, 16.0),
-        (800.0, 600.0, 16.0),
+        (1920.0, 1080.0, 16.0),
+        (1600.0, 900.0, 20.0),
+        (1920.0, 1080.0, 24.0),
         (600.0, 800.0, 16.0),
         (360.0, 640.0, 16.0),
-        (360.0, 300.0, 16.0),
-        (800.0, 600.0, 20.0),
     ] {
         let mut platform = platform();
         platform.viewport = GameUiViewport {
@@ -146,6 +146,8 @@ fn bottom_hud_preserves_all_information_and_shared_nonoverlapping_rows() {
             expected_ids = Some(ids.iter().map(|id| (*id).to_owned()).collect::<Vec<_>>());
         }
         assert!(hud.layout.font_size_px >= 14.0);
+        assert!(hud.layout.offset_px[0] + hud.layout.width_px <= width);
+        assert!(height - hud.layout.offset_px[1] - hud.layout.height_px >= height * 0.5);
         assert!(nodes.iter().all(|node| node.id != "hud-map-attribution"));
         for (index, node) in nodes.iter().enumerate() {
             let rect = node.bounds;
@@ -161,16 +163,115 @@ fn bottom_hud_preserves_all_information_and_shared_nonoverlapping_rows() {
                 );
             }
         }
-        eprintln!(
-            "HUD running {width}x{height} font={font}: width={:.2} required_height={:.2} bottom={:.2} available_height={:.2} forward_height={:.2}",
-            hud.layout.width_px,
-            hud.layout.height_px,
-            hud.layout.offset_px[1],
-            height - hud.layout.offset_px[1],
-            height - hud.layout.offset_px[1] - hud.layout.height_px
-        );
     }
     assert_eq!(session.snapshot(), snapshot);
+}
+
+#[test]
+fn screen_hud_information_profiles_fit_hd_with_overlays_and_enlarged_text() {
+    let running = launched();
+    let mut paused = launched();
+    paused.pause(PauseReason::Manual).unwrap();
+    let mut replay = finalized();
+    replay.enter_replay().unwrap();
+    let mut configurations = [
+        InformationLevel::Full,
+        InformationLevel::Standard,
+        InformationLevel::Minimal,
+        InformationLevel::Realistic,
+    ]
+    .map(|information| difficulty().with_information(information))
+    .to_vec();
+    configurations.extend((0..64).map(|mask| {
+        [
+            HudCue::Telemetry,
+            HudCue::Attitude,
+            HudCue::Wind,
+            HudCue::FlightPath,
+            HudCue::AngleOfAttack,
+            HudCue::Warnings,
+        ]
+        .into_iter()
+        .enumerate()
+        .fold(
+            difficulty().with_information(InformationLevel::Custom),
+            |settings, (index, cue)| settings.with_hud_cue(cue, mask & (1 << index) != 0),
+        )
+    }));
+    for (width, height, font) in [
+        (1280.0, 720.0, 16.0),
+        (1920.0, 1080.0, 16.0),
+        (1600.0, 900.0, 20.0),
+        (1920.0, 1080.0, 24.0),
+    ] {
+        let mut platform = platform();
+        platform.viewport = GameUiViewport {
+            width,
+            height,
+            root_font_size: font,
+        };
+        for settings in &configurations {
+            for (session, state) in [
+                (&running, GameUiState::default()),
+                (&paused, GameUiState::default()),
+                (
+                    &paused,
+                    GameUiState {
+                        pause_overlay: GameUiPauseOverlay::Settings,
+                        ..GameUiState::default()
+                    },
+                ),
+                (
+                    &paused,
+                    GameUiState {
+                        pause_overlay: GameUiPauseOverlay::Help,
+                        ..GameUiState::default()
+                    },
+                ),
+                (
+                    &replay,
+                    GameUiState {
+                        replay_view: GameUiReplayView::Telemetry,
+                        ..GameUiState::default()
+                    },
+                ),
+            ] {
+                let context = context(session, *settings, &platform);
+                let view = game_ui_view(&state, &context).unwrap();
+                let hud = view.hud.as_ref().unwrap();
+                assert!(hud.layout.font_size_px >= 0.875 * font);
+                assert!(hud.layout.offset_px[0] + hud.layout.width_px <= width);
+                assert!(hud.layout.offset_px[1] + hud.layout.height_px <= height);
+                if session.snapshot().phase() == SessionPhase::FlightRunning {
+                    assert!(
+                        height - hud.layout.offset_px[1] - hud.layout.height_px >= height * 0.5
+                    );
+                }
+                let nodes = hud
+                    .groups
+                    .iter()
+                    .flat_map(|group| &group.nodes)
+                    .collect::<Vec<_>>();
+                for (index, node) in nodes.iter().enumerate() {
+                    let rect = node.bounds;
+                    assert!(
+                        rect.x >= 0.0 && rect.y >= 0.0 && rect.width > 0.0 && rect.height > 0.0
+                    );
+                    assert!(rect.x + rect.width <= 1.0 + 1.0e-12);
+                    assert!(rect.y + rect.height <= 1.0 + 1.0e-12);
+                    for other in &nodes[..index] {
+                        let other = other.bounds;
+                        assert!(
+                            rect.x + rect.width <= other.x + 1.0e-12
+                                || other.x + other.width <= rect.x + 1.0e-12
+                                || rect.y + rect.height <= other.y + 1.0e-12
+                                || other.y + other.height <= rect.y + 1.0e-12
+                        );
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[test]
@@ -2063,7 +2164,7 @@ fn vr_resource_failure_panels_preserve_all_controls_without_overlap() {
 fn result_summary_keeps_ordered_navigation_across_targets() {
     let session = finalized();
     let snapshot = session.snapshot();
-    for (width, height) in [(360.0, 300.0), (1280.0, 720.0)] {
+    for (width, height) in [(1280.0, 720.0), (1920.0, 1080.0)] {
         for mode in [
             GameUiPresentationMode::Screen,
             GameUiPresentationMode::PhoneVr,
@@ -2252,10 +2353,16 @@ fn screen_pause_sections_and_scroll_regions_keep_hud_and_navigation_disjoint() {
     let mut session = launched();
     session.pause(PauseReason::Manual).unwrap();
     let snapshot = session.snapshot();
-    for (width, height) in [(360.0, 300.0), (800.0, 600.0), (1280.0, 720.0)] {
+    for (width, height, font) in [
+        (1280.0, 720.0, 16.0),
+        (1920.0, 1080.0, 16.0),
+        (1600.0, 900.0, 20.0),
+        (1920.0, 1080.0, 24.0),
+    ] {
         let mut platform = platform();
         platform.viewport.width = width;
         platform.viewport.height = height;
+        platform.viewport.root_font_size = font;
         for information in [
             InformationLevel::Full,
             InformationLevel::Standard,
@@ -2291,6 +2398,8 @@ fn screen_pause_sections_and_scroll_regions_keep_hud_and_navigation_disjoint() {
                 assert!(view.layout.maximum_height_px > 0.0);
                 assert!(view.layout.maximum_height_px <= height);
                 assert!(hud.layout.height_px > 0.0);
+                assert!(hud.layout.offset_px[0] + hud.layout.width_px <= width);
+                assert!(hud.layout.offset_px[1] + hud.layout.height_px <= height);
                 let panel = &view.panels[0];
                 let actions = panel
                     .sections

@@ -267,7 +267,7 @@ pub(super) fn game_ui_hud(
             },
         ));
     }
-    let groups = position_hud(&mut layout, primary, instruments, true);
+    let groups = position_hud(&mut layout, primary, instruments, true, 0.55);
     Ok(Some(GameUiHud { layout, groups }))
 }
 
@@ -446,13 +446,14 @@ pub(super) fn position_hud(
     readouts: Vec<GameUiHudNode>,
     instruments: Vec<GameUiHudNode>,
     allow_side_by_side: bool,
+    text_width_ratio: f64,
 ) -> Vec<GameUiHudGroup> {
     let [padding_x, padding_y] = layout.padding_px;
     let content_width = (layout.width_px - 2.0 * padding_x).max(1.0);
     let minimum_readout_width = 14.0 * layout.font_size_px;
     let minimum_instrument_width = instruments
         .iter()
-        .map(|node| hud_node_width(node, layout))
+        .map(|node| hud_node_width(node, layout, text_width_ratio))
         .sum::<f64>()
         + instruments.len().saturating_sub(1) as f64 * layout.gap_px[0];
     let spare_width =
@@ -470,8 +471,16 @@ pub(super) fn position_hud(
         readouts,
         readout_width,
         layout,
+        text_width_ratio,
     );
-    let readout_height = position_rows(&mut groups, padding_x, padding_y, readout_width, layout);
+    let readout_height = position_rows(
+        &mut groups,
+        padding_x,
+        padding_y,
+        readout_width,
+        layout,
+        text_width_ratio,
+    );
     let instrument_width = if side_by_side {
         content_width - readout_width - layout.gap_px[0]
     } else {
@@ -483,6 +492,7 @@ pub(super) fn position_hud(
         instruments,
         instrument_width,
         layout,
+        text_width_ratio,
     );
     let instrument_height = position_rows(
         &mut instrument_rows,
@@ -498,6 +508,7 @@ pub(super) fn position_hud(
         },
         instrument_width,
         layout,
+        text_width_ratio,
     );
     layout.height_px = 2.0 * padding_y
         + if side_by_side {
@@ -527,11 +538,12 @@ fn hud_rows(
     nodes: Vec<GameUiHudNode>,
     width: f64,
     layout: &GameUiHudLayout,
+    text_width_ratio: f64,
 ) -> Vec<GameUiHudGroup> {
     let mut rows: Vec<GameUiHudGroup> = Vec::new();
     let mut used_width = 0.0;
     for node in nodes {
-        let minimum_width = hud_node_width(&node, layout).min(width);
+        let minimum_width = hud_node_width(&node, layout, text_width_ratio).min(width);
         let gap = if used_width > 0.0 {
             layout.gap_px[0]
         } else {
@@ -568,13 +580,14 @@ fn position_rows(
     top: f64,
     width: f64,
     layout: &GameUiHudLayout,
+    text_width_ratio: f64,
 ) -> f64 {
     let mut y = top;
     for group in groups.iter_mut() {
         let widths: Vec<_> = group
             .nodes
             .iter()
-            .map(|node| hud_node_width(node, layout).min(width))
+            .map(|node| hud_node_width(node, layout, text_width_ratio).min(width))
             .collect();
         let free_width =
             (width - widths.iter().sum::<f64>() - (widths.len() - 1) as f64 * layout.gap_px[0])
@@ -584,7 +597,7 @@ fn position_rows(
         let node_count = group.nodes.len() as f64;
         for (node, minimum_width) in group.nodes.iter_mut().zip(widths) {
             let node_width = minimum_width + free_width / node_count;
-            let node_height = hud_node_height(node, node_width, layout);
+            let node_height = hud_node_height(node, node_width, layout, text_width_ratio);
             node.bounds = GameUiRect {
                 x,
                 y,
@@ -606,7 +619,7 @@ fn position_rows(
     }
 }
 
-fn hud_node_width(node: &GameUiHudNode, layout: &GameUiHudLayout) -> f64 {
+fn hud_node_width(node: &GameUiHudNode, layout: &GameUiHudLayout, text_width_ratio: f64) -> f64 {
     let font = layout.font_size_px;
     match &node.content {
         GameUiHudNodeContent::Text { value, tone } => {
@@ -616,13 +629,18 @@ fn hud_node_width(node: &GameUiHudNode, layout: &GameUiHudLayout) -> f64 {
             let columns = UnicodeWidthStr::width(node.label.as_str())
                 + 1
                 + value.lines().map(UnicodeWidthStr::width).max().unwrap_or(0);
-            (columns as f64 * font * 0.55).max(4.0 * font)
+            (columns as f64 * font * text_width_ratio).max(4.0 * font)
         }
         _ => 4.0 * font + 2.0 * layout.padding_px[0],
     }
 }
 
-fn hud_node_height(node: &mut GameUiHudNode, width: f64, layout: &GameUiHudLayout) -> f64 {
+fn hud_node_height(
+    node: &mut GameUiHudNode,
+    width: f64,
+    layout: &GameUiHudLayout,
+    text_width_ratio: f64,
+) -> f64 {
     let font = layout.font_size_px;
     let is_text = matches!(node.content, GameUiHudNodeContent::Text { .. });
     let content_width = (width
@@ -635,7 +653,7 @@ fn hud_node_height(node: &mut GameUiHudNode, width: f64, layout: &GameUiHudLayou
     let lines = |text: &str| -> f64 {
         text.lines()
             .map(|line| {
-                (UnicodeWidthStr::width(line) as f64 * font * 0.55 / content_width)
+                (UnicodeWidthStr::width(line) as f64 * font * text_width_ratio / content_width)
                     .ceil()
                     .max(1.0)
             })

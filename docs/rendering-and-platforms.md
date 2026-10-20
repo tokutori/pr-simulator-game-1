@@ -296,6 +296,8 @@ Nativeは既存DirectionalLightの2048 texel・30〜600 mの3段cascadeから、
 - Screen HUDはFlight/PauseとReplay Telemetry、VR Head HUDはactive Flightに表示する。
 - Result、Replay Cinematic/Analysis、Attractは共有HUD観測に従って非表示とする。
 - FPSはHUD観測の有無から独立する。
+- Screen HUDは下端の透明な領域へ配置し、主要数値、計器、右下の操作を分離する。各cardは共有boundsへ投影し、全体背景とスクロールを使用しない。姿勢計は透明な線画と共有ピッチ目盛を描く。
+- Head HUDは両眼の前方中央と操作panelを避け、下側の帯へ優先して配置する。下側に収まらない場合は行単位で先頭の情報を上側へ移し、共有Rustのfit結果を投影する。
 
 ## VRの座標・anchor
 

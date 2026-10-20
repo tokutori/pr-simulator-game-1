@@ -223,8 +223,10 @@ Retryはsealed configuration、初期状態、scenario seed、波の位相基準
 - 通常menuは順序付きsectionのColumn・Row・ChoiceGridを正本とし、座標やID文字列からgroupや順序を復元しない。
 - Statusは型付きsourceから動的値へ接続する。
 
-- HUDは順序付きgroupと型付きnodeを使用する。
-- groupはReadouts・Instruments・DetailsのplacementとRow・Column・Gridを持ち、nodeはID、label、Text・Attitude・HeadingTape・Direction・LinearGaugeの内容を持つ。
+- HUDは画面下端を基準とする透明な領域へ配置する。主要数値と計器を横並びの行へまとめ、右下の操作領域と前方中央を空ける。
+- 共有RustがReadouts・Instrumentsの行、領域全体の寸法、各nodeの正規化boundsと文字高に対する計器の高さを決定する。
+- nodeはID、label、Text・Attitude・HeadingTape・Direction・LinearGaugeの内容を持つ。パイロットの実位置と目標位置は一つの値として表示する。
+- 姿勢計は透明な線画、ピッチ目盛、飛行経路マーカーを使用する。地図の出典表示は地図とクレジットへ配置する。
 - adapterは種類を網羅的に投影し、同型計器の追加で項目別の表示実装を増やさない。
 - node IDは保持対象の識別だけに使用する。
 
@@ -233,9 +235,10 @@ Retryはsealed configuration、初期状態、scenario seed、波の位相基準
 - chartは系列、色、gradient、legend、cursorの意味を保持し、全backendでswatchと系列の対応を維持する。
 
 - ScreenはDOM/SVG、VRはCanvasとpanel、Nativeはretained ECSへ投影する。
-- viewport、文字計測、pixel/meter変換、focus、scroll、pointer捕捉、GPU資源はadapterの責務である。
+- viewport、文字計測、pixel/meter変換、focus、menuのscroll、pointer捕捉、GPU資源はadapterの責務である。
 - 同じSceneの値更新でnode・focus・scrollを保持し、Scene変更で適切に初期化する。
-- 画面外の操作はscrollとkeyboard focusで到達可能にする。
+- menu内の画面外の操作はscrollとkeyboard focusで到達可能にする。HUDはスクロールを使用しない。
+- Screenの最低対応解像度はUI倍率適用後の1280×720、推奨は1920×1080以上とする。
 
 VRを含むanchor、両眼への収まり、透明度、前方clear regionは[描画とplatform](rendering-and-platforms.md)に従う。保存全件の索引とTitle最大3枠の表示queryは分離し、毎frameの共通UI入力を有界に保つ。
 
