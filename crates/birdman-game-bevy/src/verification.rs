@@ -1416,6 +1416,7 @@ pub(crate) struct VerificationUiHierarchy<'w, 's> {
         ),
     >,
     parents: Query<'w, 's, &'static ChildOf, Without<OverrideClip>>,
+    names: Query<'w, 's, &'static Name>,
     windows: Query<'w, 's, &'static Window>,
 }
 
@@ -1468,7 +1469,12 @@ pub(crate) fn verify_ui_layout(
             if !labels
                 .iter()
                 .any(|(entity, text, node, layout, transform, _)| {
-                    text.0.starts_with("技術情報: ")
+                    hierarchy
+                        .parents
+                        .get(entity)
+                        .ok()
+                        .and_then(|parent| hierarchy.names.get(parent.parent()).ok())
+                        .is_some_and(|name| name.as_str() == "game-result-technical-content")
                         && text.0.contains(&expected)
                         && !node.is_empty()
                         && !layout.glyphs.is_empty()
