@@ -9,7 +9,8 @@ import { PerspectiveCamera, StereoCamera } from "three";
 import type { Browser } from "playwright-core";
 import type { GameUiView } from "../../web/src/generated/game-ui-view.js";
 import { captureConfiguredViewerFrame } from "../../web/src/render/engines/three/viewer-frame.js";
-import { observeWaterRenderer, verifySkyRenderer, verifyWaterRenderer } from "./water.js";
+import { observeLiveSky, observeWaterRenderer, verifySkyRenderer, verifyWaterRenderer } from "./water.js";
+import type { WaterShaderReference } from "./water.js";
 
 declare global {
   interface Window {
@@ -20,12 +21,27 @@ declare global {
 
 const [address, destination, ...options] = process.argv.slice(2);
 assert.ok(address !== undefined && destination !== undefined, "Usage: npm run test:web-ui -- VITE_URL OUTPUT_DIRECTORY");
-assert.ok(options.every(option => option === "--allow-dirty"), "Unknown Web UI check option");
+assert.ok(options.every(option => option === "--without-gpu-timer" || option === "--allow-dirty" || option.startsWith("--water-reference=")), "Unknown Web UI check option");
+const withoutGpuTimer = options.includes("--without-gpu-timer");
 const url = new URL(address);
 assert.ok(["127.0.0.1", "localhost", "[::1]"].includes(url.hostname), "Use the local Vite development server");
 const output = resolve(destination);
 await mkdir(output, { recursive: true });
 await writeFile(resolve(output, "result.json"), `${JSON.stringify({ status: "failed", failure: "Web UI verification did not complete" })}\n`, "utf8");
+const referenceOptions = options.filter(option => option.startsWith("--water-reference="));
+assert.ok(referenceOptions.length <= 1, "Specify one water shader reference");
+let waterReference: WaterShaderReference | undefined;
+let waterReferenceSha256: string | undefined;
+if (referenceOptions[0] !== undefined) {
+  const source = await readFile(resolve(referenceOptions[0].slice("--water-reference=".length)), "utf8");
+  const reference = JSON.parse(source) as Partial<WaterShaderReference>;
+  assert.ok(typeof reference.sourceHead === "string" && /^[a-f0-9]{40}$/.test(reference.sourceHead));
+  assert.ok(typeof reference.vertexShader === "string" && reference.vertexShader.length > 0);
+  assert.ok(typeof reference.fragmentShader === "string" && reference.fragmentShader.length > 0);
+  waterReference = { sourceHead: reference.sourceHead, vertexShader: reference.vertexShader, fragmentShader: reference.fragmentShader };
+  waterReferenceSha256 = createHash("sha256").update(source).digest("hex");
+  await writeFile(resolve(output, "water-reference.json"), source, "utf8");
+}
 const root = resolve(import.meta.dirname, "../..");
 const gitOptions = { cwd: root, encoding: "utf8" as const, maxBuffer: 16 * 1024 * 1024 };
 const head = execFileSync("git", ["rev-parse", "HEAD"], gitOptions).trim();
@@ -45,7 +61,8 @@ const wasm: { url: string; sha256: string; status: number }[] = [];
 const responses: Promise<void>[] = [];
 let moduleUrl: string | undefined;
 const report: Record<string, unknown> = { sourceHead: head, execution: "Local Vite; production Rust/WASM, DOM and WebGL2; isolated browser context",
-  sourceDiffSha256: sourcePatch.length === 0 ? null : createHash("sha256").update(sourcePatch).digest("hex"),
+  sourceDiffSha256: sourcePatch.length === 0 ? null : createHash("sha256").update(sourcePatch).digest("hex"), withoutGpuTimer,
+  waterReference: waterReference === undefined ? null : { sourceHead: waterReference.sourceHead, sha256: waterReferenceSha256 },
   viewport: { width: 1280, height: 720, dpr: 1 }, errors, warnings, checks, findings, wasm,
   limits: "Screen UI smoke only. No HMD, Phone VR, physical keyboard or 80 FPS acceptance; no performance budget is inferred." };
 
@@ -176,8 +193,29 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
     await observeWaterRenderer(page);
     const observer = await transform(await readFile(resolve(root, "tools/web-auto-check/browser-observer.ts"), "utf8"), { loader: "ts", format: "iife", target: "es2023" });
     await page.addInitScript({ content: observer.code });
+    if (withoutGpuTimer) await page.addInitScript(() => {
+      const descriptor = Object.getOwnPropertyDescriptor(WebGL2RenderingContext.prototype, "getExtension");
+      if (descriptor === undefined || typeof descriptor.value !== "function") throw new Error("WebGL2 extension entry point is unavailable");
+      const original = descriptor.value as (name: string) => unknown;
+      Object.defineProperty(WebGL2RenderingContext.prototype, "getExtension", { ...descriptor, value(this: WebGL2RenderingContext, name: string): unknown {
+        return name === "EXT_disjoint_timer_query_webgl2" ? null : Reflect.apply(original, this, [name]);
+      } });
+    });
     await page.goto(url.href, { waitUntil: "domcontentloaded" });
     await scene("Title");
+    const preparation = await page.evaluate(() => window.__waterCheck.preparation);
+    assert.equal(preparation.filter(item => item.stage === "material-compile-wall").length, 2);
+    assert.ok(preparation.some(item => item.stage === "texture-upload-submit"));
+    report.rendererPreparation = { timing: "CPU submission / asynchronous material compilation wall time in milliseconds", stages: preparation };
+    if (withoutGpuTimer) {
+      await page.waitForFunction(() => window.__waterCheck.auto?.status.kind === "unsupported");
+      report.unsupportedAuto = await page.evaluate(() => window.__waterCheck.auto);
+      assert.deepEqual(await page.evaluate(() => {
+        const state = window.__waterCheck.auto;
+        return [state?.applied, state?.shadow, state?.water_quality];
+      }), ["50", "quarter", "low"]);
+      checks.push("GPU timer非対応の本番Autoが50%・shadow512・水面Lowを適用する");
+    }
     assert.equal(await control("boot-enter-phone-vr").isDisabled(), true);
     checks.push("実姿勢センサーのないChromiumではPhone VR切替を無効にする");
     report.build = await page.locator(".build-version").innerText();
@@ -295,13 +333,23 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
     await click("game-setup-select-weather-2");
     await click("game-setup-start");
     await scene("Briefing");
-    report.sky = await verifySkyRenderer(page, output);
+    await page.waitForFunction(() => window.__waterCheck.skyCondition() !== null);
+    const typicalSky = await observeLiveSky(page);
+    await click("game-briefing-technical");
+    const repeatedSky = await observeLiveSky(page);
+    assert.deepEqual(repeatedSky, typicalSky, "A live UI update regenerated the sky texture");
+    await click("game-briefing-technical");
+    report.sky = await verifySkyRenderer(page, new URL("../src/render/engines/three/three-renderer.ts", moduleUrl).href, output);
     await screenshot("sky-briefing");
     checks.push("生成した天空を背景と水面で共用し、4方位・天頂・左右眼で遠景雲と並進不変性を確認する");
     await click("game-briefing-cancel");
     await click("game-setup-select-weather-0");
     await click("game-setup-start");
     await scene("Briefing");
+    await page.waitForFunction(() => window.__waterCheck.skyCondition() === null);
+    const calmSky = await observeLiveSky(page);
+    assert.notEqual(calmSky.textureId, typicalSky.textureId, "Changing the weather retained the previous sky texture");
+    report.liveSky = { typical: typicalSky, repeated: repeatedSky, calm: calmSky };
     const briefingConditions = await page.locator("#game-briefing-conditions").innerText();
     const briefingWeather = await page.locator("#game-weather-conditions").innerText();
     await noEmptyLabelPrefix();
@@ -351,7 +399,7 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
         window.__waterCheck.water.children.every(node => "geometry" in node &&
           (node.geometry as import("three").BufferGeometry).getAttribute("position").count === (expected / 4 + 1) ** 2),
       { low: 96, medium: 144, high: 224 }[quality]);
-      waterMeasurements.push(await verifyWaterRenderer(page, new URL("../src/render/engines/three/lake-water-geometry.ts", moduleUrl).href, output, quality));
+      waterMeasurements.push(await verifyWaterRenderer(page, new URL("../src/render/engines/three/lake-water-geometry.ts", moduleUrl).href, output, quality, waterReference));
     }
     report.water = waterMeasurements;
     await click("presentation-render-scale-auto");

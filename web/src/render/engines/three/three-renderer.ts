@@ -17,6 +17,7 @@ import {
   Scene,
   SRGBColorSpace,
   StereoCamera,
+  Texture,
   ShaderMaterial,
   UniformsLib,
   UniformsUtils,
@@ -73,6 +74,7 @@ type ThreeWebXrState =
 export interface ThreeRendererBundle {
   readonly renderer: RendererAdapter;
   readonly webxr: WebXrSessionPort;
+  prepare(): Promise<void>;
 }
 
 // Place Takeshima just outside the centered title panel at every viewport
@@ -1069,7 +1071,45 @@ export function createThreeRenderer(
 
   return Object.freeze({
     renderer: rendererAdapter,
-    webxr
+    webxr,
+    async prepare(): Promise<void> {
+      ensureActive(disposed);
+      if (loopRunning || renderer.xr.isPresenting || stereoPresentation !== null) throw new Error("Initial renderer preparation requires an idle Screen renderer");
+      screenAuto?.boundary(width > 0 && height > 0);
+      const textures = new Set<Texture>([skyTexture]);
+      scene.traverse(object => {
+        if (!(object instanceof Mesh)) return;
+        const mesh = object as Mesh;
+        for (const material of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
+          const values: readonly unknown[] = Object.values(material);
+          for (const value of values) if (isTexture(value)) textures.add(value);
+          if (material instanceof ShaderMaterial) for (const uniform of Object.values(material.uniforms)) {
+            if (isTexture(uniform.value)) textures.add(uniform.value);
+          }
+        }
+      });
+      for (const texture of textures) if (!texture.isRenderTargetTexture) renderer.initTexture(texture);
+      renderer.initRenderTarget(reflectionTarget);
+      scene.updateMatrixWorld(true);
+      await renderer.compileAsync(scene, camera);
+      ensureActive(disposed);
+      const previousTarget = renderer.getRenderTarget();
+      const previousBackground = scene.background;
+      const previousXrEnabled = renderer.xr.enabled;
+      let compilation: Promise<unknown>;
+      try {
+        scene.background = null;
+        renderer.xr.enabled = false;
+        renderer.setRenderTarget(reflectionTarget);
+        compilation = renderer.compileAsync(scene, reflectionCamera);
+      } finally {
+        renderer.setRenderTarget(previousTarget);
+        renderer.xr.enabled = previousXrEnabled;
+        scene.background = previousBackground;
+      }
+      await compilation;
+      ensureActive(disposed);
+    }
   });
 
   function clearSession(session = sessionFromState(xrState)): void {
@@ -1164,6 +1204,10 @@ function transformRay(ray: SelectRay, worldFromTracking: Pose | null): SelectRay
 
 function ensureActive(disposed: boolean): void {
   if (disposed) throw new Error("Three.js renderer has been disposed");
+}
+
+function isTexture(value: unknown): value is Texture {
+  return value instanceof Texture;
 }
 
 function lakeUniform<T>(material: ShaderMaterial, name: string, expectedValue: T): { value: T } {
@@ -1335,21 +1379,20 @@ vec2 lakeWaveSlope(vec2 worldXZ) {
   // filtering fades subpixel wavelengths smoothly as they recede from the eye.
   float waveSlopeX = 0.0;
   float waveSlopeZ = 0.0;
-  for (int i = 0; i < 24; i++) {
-    if (i < uWaveCount) {
-      vec4 ka = uWaveKAmplitude[i];
-      vec4 op = uWaveOmegaPhase[i];
-      float k = ka.z;
-      vec2 direction = ka.xy;
-      mat3 modulation = lakeWaveModulation(worldXZ, direction, k, op.y);
-      vec3 warp = modulation[1];
-      float phase = k * dot(direction, worldXZ) + warp.x - op.x * uTimeSeconds + op.y;
+  int componentCount = min(uWaveCount, 24);
+  for (int i = 0; i < componentCount; i++) {
+    vec4 ka = uWaveKAmplitude[i];
+    vec4 op = uWaveOmegaPhase[i];
+    float k = ka.z;
+    vec2 direction = ka.xy;
+    mat3 modulation = lakeWaveModulation(worldXZ, direction, k, op.y);
+    vec3 warp = modulation[1];
+    float phase = k * dot(direction, worldXZ) + warp.x - op.x * uTimeSeconds + op.y;
+    float geometricVisibility = 1.0 - smoothstep(1.3, 2.5, k * vSurfaceState.z);
+    float pixelVisibility = 1.0 - smoothstep(2.0, 5.0, fwidth(phase));
+    float normalWeight = (1.0 - geometricVisibility) * pixelVisibility * 0.65;
+    if (normalWeight != 0.0) {
       vec2 phaseGradient = k * direction + warp.yz;
-      float geometricVisibility = 1.0 - smoothstep(1.3, 2.5, k * vSurfaceState.z);
-      float pixelVisibility = 1.0 - smoothstep(2.0, 5.0, fwidth(phase));
-      // Transfer waves that outgrow the mesh to the pixel normal. A weak
-      // transfer creates an empty band wherever geometric detail ends.
-      float normalWeight = (1.0 - geometricVisibility) * pixelVisibility * 0.65;
       float crestBasis = 0.5 + 0.5 * sin(phase);
       vec3 packet = modulation[0];
       vec2 gradient = ka.w * (packet.x * 3.0 * crestBasis * crestBasis * cos(phase) * phaseGradient

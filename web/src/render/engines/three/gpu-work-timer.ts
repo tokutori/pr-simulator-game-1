@@ -15,9 +15,11 @@ export type GpuQueryObservation =
   | { readonly kind: "disjoint" }
   | { readonly kind: "unsupported"; readonly cause: string };
 
+type TimerCapability = { readonly kind: "supported"; readonly extension: TimerExtension }
+  | { readonly kind: "unsupported"; readonly cause: string };
+
 export class GpuWorkTimer {
-  private capability: { readonly kind: "unchecked" } | { readonly kind: "supported"; readonly extension: TimerExtension }
-    | { readonly kind: "unsupported"; readonly cause: string } = { kind: "unchecked" };
+  private capability: { readonly kind: "unchecked" } | TimerCapability = { kind: "unchecked" };
   private pending: { readonly query: WebGLQuery; readonly source: GpuQuerySource }[] = [];
   private active: { readonly query: WebGLQuery; readonly source: GpuQuerySource } | null = null;
 
@@ -47,7 +49,12 @@ export class GpuWorkTimer {
     return observations;
   }
 
-  begin(source: GpuQuerySource): GpuQueryObservation | null {
+  availability(): GpuQueryObservation | null {
+    const capability = this.resolveCapability();
+    return capability.kind === "unsupported" ? capability : null;
+  }
+
+  private resolveCapability(): TimerCapability {
     if (this.capability.kind === "unchecked") {
       const extension = this.gl.getExtension("EXT_disjoint_timer_query_webgl2") as TimerExtension | null;
       if (extension === null) this.capability = { kind: "unsupported", cause: "EXT_disjoint_timer_query_webgl2" };
@@ -58,8 +65,13 @@ export class GpuWorkTimer {
           : { kind: "unsupported", cause: "GPU elapsed-query counter is unavailable" };
       }
     }
-    if (this.capability.kind === "unsupported") return this.capability;
-    const extension = this.capability.extension;
+    return this.capability;
+  }
+
+  begin(source: GpuQuerySource): GpuQueryObservation | null {
+    const capability = this.resolveCapability();
+    if (capability.kind === "unsupported") return capability;
+    const extension = capability.extension;
     if (this.pending.length >= 4 || this.active !== null) return null;
     if (this.gl.getQuery(extension.TIME_ELAPSED_EXT, this.gl.CURRENT_QUERY) !== null) return null;
     const query = this.gl.createQuery();

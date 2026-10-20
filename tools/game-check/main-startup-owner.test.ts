@@ -49,6 +49,7 @@ async function fixture(options: { readonly deferScreenStart?: boolean; readonly 
   vi.doMock("../../web/src/render/engines/three/three-renderer.js", () => ({
     createThreeRenderer: () => ({
       renderer,
+      prepare: () => Promise.resolve(),
       webxr: { checkAvailability: () => Promise.resolve({ supported: false, message: "Headless WebXR is unavailable" }) }
     })
   }));

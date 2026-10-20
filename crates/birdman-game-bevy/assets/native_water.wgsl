@@ -252,18 +252,19 @@ fn lake_micro_detail(position: vec2<f32>, footprint_x: vec2<f32>, footprint_y: v
 
 fn lake_wave_slope(position: vec2<f32>, spacing: f32) -> vec2<f32> {
     var slope = vec2<f32>(0.0);
-    for (var component: u32 = 0u; component < 24u; component += 1u) {
-        if component < u32(geometry_parameters.x) {
-            let wave = geometry_waves[component];
-            let timing = geometry_motion[component];
-            let modulation = lake_wave_modulation(position, wave.xy, wave.z, timing.y);
+    let component_count = min(u32(geometry_parameters.x), 24u);
+    for (var component: u32 = 0u; component < component_count; component += 1u) {
+        let wave = geometry_waves[component];
+        let timing = geometry_motion[component];
+        let modulation = lake_wave_modulation(position, wave.xy, wave.z, timing.y);
+        let warp = modulation[1];
+        let phase = wave.z * dot(wave.xy, position) + warp.x - timing.x * camera_time.w + timing.y;
+        let geometric_visibility = 1.0 - smoothstep(1.3, 2.5, wave.z * spacing);
+        let pixel_visibility = 1.0 - smoothstep(2.0, 5.0, fwidth(phase));
+        let normal_weight = (1.0 - geometric_visibility) * pixel_visibility * 0.65;
+        if normal_weight != 0.0 {
             let packet = modulation[0];
-            let warp = modulation[1];
-            let phase = wave.z * dot(wave.xy, position) + warp.x - timing.x * camera_time.w + timing.y;
             let phase_gradient = wave.z * wave.xy + warp.yz;
-            let geometric_visibility = 1.0 - smoothstep(1.3, 2.5, wave.z * spacing);
-            let pixel_visibility = 1.0 - smoothstep(2.0, 5.0, fwidth(phase));
-            let normal_weight = (1.0 - geometric_visibility) * pixel_visibility * 0.65;
             let crest_basis = 0.5 + 0.5 * sin(phase);
             slope += wave.w * (packet.x * 3.0 * crest_basis * crest_basis * cos(phase) * phase_gradient
                 + (2.0 * crest_basis * crest_basis * crest_basis - 0.625) * packet.yz) * normal_weight;

@@ -73,6 +73,10 @@ interface RecordingDriver {
   readonly scene: Scene | null;
   readonly xr: { isPresenting: boolean; enabled: boolean };
   readonly resizeCalls: number;
+  readonly initializedTextures: Texture[];
+  readonly initializedTargets: WebGLRenderTarget[];
+  readonly compileCalls: { scene: Object3D; camera: Camera; target: unknown; background: unknown; xrEnabled: boolean }[];
+  compileGate: Promise<unknown> | null;
   getPixelRatio(): number;
   getSize(target: Vector2): Vector2;
   getDrawingBufferSize(target: Vector2): Vector2;
@@ -90,6 +94,10 @@ vi.mock("three", async (importOriginal) => {
     readonly shadowMap = { enabled: false, autoUpdate: true, needsUpdate: false };
     readonly renderCalls: RecordingDriver["renderCalls"] = [];
     reflectionFailure: Error | null = null;
+    readonly initializedTextures: Texture[] = [];
+    readonly initializedTargets: WebGLRenderTarget[] = [];
+    readonly compileCalls: RecordingDriver["compileCalls"] = [];
+    compileGate: Promise<unknown> | null = null;
     autoClear = true;
     private readonly size = new actual.Vector2();
     private readonly clearColor = new actual.Color();
@@ -116,6 +124,12 @@ vi.mock("three", async (importOriginal) => {
     setRenderTarget(target: unknown): void { this.target = target; }
     getRenderTarget(): unknown { return this.target; }
     clear(): void {}
+    initTexture(texture: Texture): void { this.initializedTextures.push(texture); }
+    initRenderTarget(target: WebGLRenderTarget): void { this.initializedTargets.push(target); }
+    compileAsync(scene: Scene, camera: Camera): Promise<unknown> {
+      this.compileCalls.push({ scene, camera, target: this.target, background: scene.background, xrEnabled: this.xr.enabled });
+      return this.compileGate ?? Promise.resolve(scene);
+    }
     setAnimationLoop(callback: ((timestamp: number, frame: XRFrame) => void) | null): void { this.animationLoop = callback; }
     tick(timestamp: number, viewer: XRViewerPose | null): void {
       this.animationLoop?.(timestamp, { getViewerPose: () => viewer } as unknown as XRFrame);
@@ -204,6 +218,46 @@ describe("Three adapter panel reference with real StereoEffect", () => {
   });
 
   afterAll(() => { bundle.renderer.dispose(); });
+
+  it("prepares each current texture and sequential Screen/reflection variants before the loop", async () => {
+    const canvas = { width: 1280, height: 720 } as HTMLCanvasElement;
+    const trial = createThreeRenderer(canvas, canvas, null, 60, "low", canvas);
+    const recording = capture.driver;
+    if (recording === null) throw new Error("Missing preparation driver");
+    try {
+      trial.renderer.resize(viewport);
+      await trial.prepare();
+      expect(recording.renderCalls).toEqual([]);
+      expect(recording.initializedTextures.length).toBeGreaterThan(4);
+      expect(new Set(recording.initializedTextures).size).toBe(recording.initializedTextures.length);
+      expect(recording.initializedTextures.every(texture => !texture.isRenderTargetTexture)).toBe(true);
+      expect(recording.initializedTargets).toHaveLength(1);
+      expect(recording.compileCalls).toHaveLength(2);
+      expect(recording.compileCalls[0]?.target).toBeNull();
+      expect(recording.compileCalls[0]?.background).toBeInstanceOf(Texture);
+      expect(recording.compileCalls[1]?.target).toBe(recording.initializedTargets[0]);
+      expect(recording.compileCalls[1]?.background).toBeNull();
+      expect(recording.compileCalls[1]?.xrEnabled).toBe(false);
+      expect((recording.compileCalls[0]?.scene as Scene).background).toBe(recording.compileCalls[0]?.background);
+    } finally { trial.renderer.dispose(); }
+  });
+
+  it("stops preparation after disposal while the Screen shader compilation is pending", async () => {
+    const canvas = { width: 1280, height: 720 } as HTMLCanvasElement;
+    const trial = createThreeRenderer(canvas, canvas, null, 60, "low", canvas);
+    const recording = capture.driver;
+    if (recording === null) throw new Error("Missing preparation driver");
+    let release: () => void = () => undefined;
+    recording.compileGate = new Promise<void>(resolve => { release = resolve; });
+    trial.renderer.resize(viewport);
+    const preparing = trial.prepare();
+    const rejected = expect(preparing).rejects.toThrow("disposed");
+    trial.renderer.dispose();
+    release();
+    await rejected;
+    expect(recording.compileCalls).toHaveLength(1);
+    expect(recording.renderCalls).toEqual([]);
+  });
 
   it.each([[true, false], [true, true], [false, false], [false, true]])(
     "skips unused reflection shadows and restores auto=%s requested=%s before the main pass",

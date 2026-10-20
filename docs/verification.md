@@ -407,14 +407,17 @@ npm run measure:web-auto -- http://127.0.0.1:4202/pr-simulator-game-1/ target/we
 - 飛行の100 Hz固定更新と150 ms安全停止は、描画コールバック到着時の `performance.now()` を同じ固定更新時計へ渡して判定する。
   RAFのtimestampは描画の時刻として扱う。ResumeとRetry後は、最初の到着を新しい基点とする。
 - `test:web-ui` は専用BrowserContextから本番ページ・Rust/WASM・Three.jsへ接続する。
+  - `--without-gpu-timer`は計測拡張が非対応の経路を再現し、軽量Autoの実適用を確認する。`--allow-dirty`は変更差分とSHA-256を保存してローカル開発中のsourceを識別する。
+  - 初期texture生成、uploadのCPU投入、非同期material compileの待機、初回drawのCPU投入を個別に記録する。
 - Setup/Briefing/Countdown/HUD/Pause/Resume/Result、Analysis3図・凡例、Replay・技術情報、 実CSV/JSON出力、同条件Retryを操作する。
 - browser・page・console・HTTP・WebGLのエラーを保持し、非同期body取得とcleanupを有界化する。
 - JSON原文、CSV、条件、画像、実WASM hashを結果へ保存する。
 - 統合前のローカル差分は`test:web-ui`へ`--allow-dirty`を指定し、基準HEAD・repository全体の`source.patch`・差分SHA-256を保存する。新規sourceはindexへ認識させ、検査前後のHEAD・差分・新規source集合を照合する。出力先はrepository外またはignored directoryを使用する。
 - 水面はLow/Medium/Highを実操作で切り替え、4方位と左右眼で4×4のchunkをカリングする。同じ時刻・camera・materialの単一meshとのRGBA差を各channelで1/255以内とし、可視draw数・送信頂点数・WebGL診断を記録する。
-- 上空の雲は雲量0/25/100%と太陽高度5°/55°/90°を含む5条件について、4方位・天頂・左右眼のHD画像を35枚保存する。並進による画素差は1/255以内とする。
-- 背景・近景/遠景水面の天空texture共用、同値条件でのtexture再利用、検査後の元条件復元、雲専用geometryの撤去を確認する。
-- `--allow-dirty`はsource差分とSHA-256を保存し、CUI検査中のHEAD・差分の一致を確認する。
+- 本番画面のUI更新で天空textureを再利用し、気象切替で交換することを検査する。背景・近景/遠景水面のtexture共用と雲専用geometryの撤去を照合する。
+- 上空の雲は独立した本番rendererで雲量0/25/100%と太陽高度5°/55°/90°を含む5条件を描画し、4方位・天頂・左右眼のHD画像を35枚保存する。並進による画素差は1/255以内とし、同値条件でのtexture再利用と本番画面の資源保持を検査する。
+- `--water-reference=FILE`は`sourceHead`・`vertexShader`・`fragmentShader`を持つ固定版JSONを保存し、3時刻の旧/新shaderを同条件で比較する。GPU計測対応時は本番loopを一時停止し、640×360・shadow更新固定のdrawを旧/新交互に6回ずつ測定する。query非対応と無効観測は原因を記録する。
+  - 描画buffer寸法・pixel ratio、GPU timer/parallel compile拡張、fragment highp精度を記録する。描画命令の送信と同期readbackのCPU実時間を分けて採取する。
 - Screenの配置はUI倍率適用後の1280×720以上で検査し、1920×1080以上を推奨する。全Scene・overlay・Information・Customの64種類のcueと文字拡大で、要素の保持、最低文字高、非重複、前方中央の空きを確認する。
 - HUDは下端へ配置し、全体背景とスクロールを使用しない。VRの視角・両眼への収まりはScreenの解像度とは別に検査する。
 
