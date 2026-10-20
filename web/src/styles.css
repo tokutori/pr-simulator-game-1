@@ -165,6 +165,7 @@ body {
 
 .screen-ui-shell[data-shared="true"][data-shell="pause_settings"],
 .screen-ui-shell[data-shared="true"][data-shell="cinematic"] {
+  position: fixed;
   inset: auto;
   top: max(0.75rem, env(safe-area-inset-top));
   right: max(0.75rem, env(safe-area-inset-right));

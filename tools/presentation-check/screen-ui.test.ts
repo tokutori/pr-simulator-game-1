@@ -714,6 +714,7 @@ describe("screen UI DOM patching", () => {
             expect(shared.hud.layout.offset_px[1]).toBeGreaterThan(shared.layout.maximum_height_px);
           } else {
             expect(shared.layout.shell).toBe("pause_settings");
+            expect(computed.position).toBe("fixed");
             expect(shared.hud.layout.offset_px[0] + shared.hud.layout.width_px)
               .toBeLessThan(width - 12 - shared.layout.width_px);
           }
