@@ -324,6 +324,7 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
     await page.waitForFunction(() => window.__liveAuto.phase === "flight_paused");
     await screenshot("03-paused-hud");
     await click("game-pause-open-settings");
+    await click("presentation-render-scale-100");
     const waterMeasurements = [];
     for (const quality of ["low", "medium", "high"] as const) {
       await click(`presentation-water-quality-${quality}`);
@@ -334,6 +335,7 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
       waterMeasurements.push(await verifyWaterRenderer(page, new URL("../src/render/engines/three/lake-water-geometry.ts", moduleUrl).href, output, quality));
     }
     report.water = waterMeasurements;
+    await click("presentation-render-scale-auto");
     await click("game-pause-settings-back");
     checks.push("全水面品質・4方位・左右眼でchunk cullingと単一meshの画素一致を検査する");
     const hudMeasurements = [];

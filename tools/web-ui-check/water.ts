@@ -57,7 +57,8 @@ export async function verifyWaterRenderer(page: Page, geometryUrl: string, outpu
     const images: { name: string; data: string }[] = [];
     const measurements: { camera: string; chunks: number; submittedVertices: number; drawCalls: number; maximumChannelError: number; changedPixels: number }[] = [];
     const errors: number[] = [];
-    const render = (camera: import("three").Camera): Uint8Array => {
+    const probe = {
+    render(camera: import("three").Camera): Uint8Array {
       draws.length = 0;
       renderer.setRenderTarget(target);
       renderer.render(scene, camera);
@@ -66,8 +67,8 @@ export async function verifyWaterRenderer(page: Page, geometryUrl: string, outpu
       const error = context.getError();
       if (error !== context.NO_ERROR) errors.push(error);
       return pixels;
-    };
-    const image = (pixels: Uint8Array): string => {
+    },
+    image(pixels: Uint8Array): string {
       const canvas = document.createElement("canvas");
       canvas.width = width; canvas.height = height;
       const drawing = canvas.getContext("2d");
@@ -78,6 +79,7 @@ export async function verifyWaterRenderer(page: Page, geometryUrl: string, outpu
       }
       drawing.putImageData(data, 0, 0);
       return canvas.toDataURL("image/png");
+    }
     };
     try {
       renderer.shadowMap.autoUpdate = false;
@@ -103,14 +105,14 @@ export async function verifyWaterRenderer(page: Page, geometryUrl: string, outpu
       for (const view of cameras) {
         for (const chunk of chunks) chunk.visible = true;
         monolith.visible = false;
-        const chunkPixels = render(view.camera);
+        const chunkPixels = probe.render(view.camera);
         const visible = new Set(draws);
         const submittedVertices = chunks.filter(chunk => visible.has(chunk.name))
           .reduce((sum, chunk) => sum + chunk.geometry.getAttribute("position").count, 0);
         const drawCalls = renderer.info.render.calls;
         for (const chunk of chunks) chunk.visible = false;
         monolith.visible = true;
-        const referencePixels = render(view.camera);
+        const referencePixels = probe.render(view.camera);
         let maximumChannelError = 0;
         let changedPixels = 0;
         for (let pixel = 0; pixel < width * height; pixel++) {
@@ -124,7 +126,7 @@ export async function verifyWaterRenderer(page: Page, geometryUrl: string, outpu
         }
         if (new Set(chunkPixels).size < 16) throw new Error("Water image has insufficient color variation");
         measurements.push({ camera: view.name, chunks: visible.size, submittedVertices, drawCalls, maximumChannelError, changedPixels });
-        if (input.quality === "high" && ["heading-0", "left-eye"].includes(view.name)) images.push({ name: view.name, data: image(chunkPixels) });
+        if (input.quality === "high" && ["heading-0", "left-eye"].includes(view.name)) images.push({ name: view.name, data: probe.image(chunkPixels) });
       }
       return { quality: input.quality, segments, maxVerticesPerDraw: Math.max(...chunks.map(chunk => chunk.geometry.getAttribute("position").count)),
         reflectionEnabled: waterMaterial.uniforms.uReflectionEnabled?.value as number | undefined,
