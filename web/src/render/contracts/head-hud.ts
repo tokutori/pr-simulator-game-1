@@ -10,7 +10,7 @@ export interface HeadHudRect {
   readonly height: number;
 }
 
-export type HeadHudElement = SharedHudNode & { readonly bounds: HeadHudRect };
+export type HeadHudElement = Omit<SharedHudNode, "bounds"> & { readonly bounds: HeadHudRect };
 
 export interface VisibleHeadHud {
   readonly kind: "visible";

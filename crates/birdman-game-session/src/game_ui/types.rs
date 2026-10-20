@@ -686,7 +686,7 @@ pub struct GameUiHud {
     pub groups: Vec<GameUiHudGroup>,
 }
 
-/// A shared HUD group; identifiers track retained nodes without encoding their meaning.
+/// One shared horizontal row; identifiers only track its retained elements.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
@@ -695,9 +695,7 @@ pub struct GameUiHudGroup {
     pub id: String,
     /// Shared placement relative to the unobstructed forward view.
     pub placement: GameUiHudPlacement,
-    /// Shared row, column, or responsive grid composition.
-    pub layout: GameUiHudGroupLayout,
-    /// Complete visible node sequence.
+    /// Complete visible row in its shared left-to-right order.
     pub nodes: Vec<GameUiHudNode>,
 }
 
@@ -706,28 +704,10 @@ pub struct GameUiHudGroup {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum GameUiHudPlacement {
-    /// Status and primary readings, above the VR clear region.
+    /// Primary numerical readings on the left or first bottom band.
     Readouts,
-    /// Instruments, below the VR clear region when space permits.
+    /// Instruments on the right or second bottom band.
     Instruments,
-    /// Secondary information in its declared order.
-    Details,
-}
-
-/// A small shared composition vocabulary, independent of DOM and ECS layout engines.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum GameUiHudGroupLayout {
-    /// Side-by-side intrinsic widgets and wrapping text.
-    Row {},
-    /// Vertical content in source order.
-    Column {},
-    /// Responsive equal-width instrument cards.
-    Grid {
-        /// Preferred column count before the adapter applies measured width constraints.
-        columns: u32,
-    },
 }
 
 /// One existing widget instance; adding an instance requires no adapter-specific field.
@@ -737,8 +717,12 @@ pub enum GameUiHudGroupLayout {
 pub struct GameUiHudNode {
     /// Stable identity used only to retain this element.
     pub id: String,
-    /// Shared heading, independent of the widget type.
+    /// Caption preceding the value in one formatted paragraph, independent of widget type.
     pub label: String,
+    /// Shared normalized rectangle within the bottom HUD rail.
+    pub bounds: GameUiRect,
+    /// Instrument drawing height relative to the shared HUD font size; zero for text.
+    pub instrument_height_em: f64,
     /// Exclusive widget geometry and display values.
     pub content: GameUiHudNodeContent,
 }
@@ -820,12 +804,12 @@ pub enum GameUiHudTone {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct GameUiHudLayout {
-    /// Left and top viewport offsets.
+    /// Left and bottom viewport insets; the bottom edge is the viewport anchor.
     pub offset_px: [f64; 2],
-    /// Responsive panel width.
+    /// Responsive rail width without scrolling.
     pub width_px: f64,
-    /// Reachable vertical scroll height.
-    pub maximum_height_px: f64,
+    /// Shared rail height enclosing every published node.
+    pub height_px: f64,
     /// Horizontal and vertical padding.
     pub padding_px: [f64; 2],
     /// Horizontal and vertical grid gaps.
@@ -834,7 +818,7 @@ pub struct GameUiHudLayout {
     pub attitude_size_px: [f64; 2],
     /// Readout font size.
     pub font_size_px: f64,
-    /// Panel background opacity.
+    /// Individual card background opacity; the surrounding rail is transparent.
     pub opacity: f64,
 }
 
@@ -887,6 +871,21 @@ pub struct GameUiHudAttitudeGeometry {
     pub rotation_degrees: f64,
     /// Pre-rotation pitch translation relative to the ADI height.
     pub pitch_offset_ratio: f64,
+    /// Shared pitch ladder in the translated and rotated horizon coordinate system.
+    pub pitch_ticks: [GameUiHudPitchTick; 7],
+}
+
+/// One pitch ladder mark relative to the complete ADI width and height.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct GameUiHudPitchTick {
+    /// Vertical offset from the zero-pitch horizon.
+    pub offset_ratio: f64,
+    /// Half of the horizontal mark width.
+    pub half_width_ratio: f64,
+    /// Absolute pitch in degrees; the horizon has no numeric label.
+    pub label_degrees: Option<u32>,
 }
 
 /// One heading tape mark in normalized instrument coordinates.

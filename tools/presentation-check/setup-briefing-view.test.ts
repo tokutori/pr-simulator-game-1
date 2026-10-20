@@ -76,7 +76,7 @@ describe("Shared Flight Setup and Briefing presentation", () => {
         validateUiViewModel(view);
         expect(credits.hud).toBeNull();
         expect(view.activeOverlay).toBe("Credits");
-        for (const source of ["osm", "jaxa", "copernicus", "jma", "font", "earcut", "ryu", "time"]) {
+        for (const source of ["osm", "jaxa", "copernicus", "jma", "font", "earcut", "ryu", "time", "unicode-width"]) {
           expect(statusValue(view, `game-credits-${source}`).length).toBeGreaterThan(0);
         }
         expect(sharedGameUiAction(credits, { type: "activate", controlId: "game-credits-close" })).toEqual({ kind: "set_credits", open: false });

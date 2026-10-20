@@ -511,14 +511,13 @@ describe("screen UI DOM patching", () => {
         if (replayView === "telemetry") {
           if (shared.hud === null) throw new Error("Replay Telemetry must retain its shared HUD");
           expect(hudRoot.hidden).toBe(false);
-          expect(hudRoot.style.maxHeight).toBe(`${String(shared.hud.layout.maximum_height_px)}px`);
-          if (width === 360) {
+          expect(Number.parseFloat(hudRoot.style.height)).toBeCloseTo(shared.hud.layout.height_px, 9);
+          if (shared.layout.shell === "flight_bar") {
             expect(shell.dataset.shell).toBe("flight_bar");
             expect(window.getComputedStyle(shell as never).position).toBe("fixed");
             expect(window.getComputedStyle(shell as never).bottom).toBe("0px");
             expect(window.getComputedStyle(shell as never).right).toBe("0px");
-            expect(shared.hud.layout.offset_px[1] + shared.hud.layout.maximum_height_px)
-              .toBeLessThan(height - shared.layout.maximum_height_px);
+            expect(shared.hud.layout.offset_px[1]).toBeGreaterThan(shared.layout.maximum_height_px);
           } else {
             expect(shell.dataset.shell).toBe("cinematic");
             expect(shared.hud.layout.offset_px[0] + shared.hud.layout.width_px)
@@ -699,9 +698,9 @@ describe("screen UI DOM patching", () => {
           expect(shell.style.maxHeight).toBe(`${String(shared.layout.maximum_height_px)}px`);
           expect(shell.style.overflowY).toBe("auto");
           expect(window.getComputedStyle(shell as never).pointerEvents).toBe("auto");
-          expect(window.getComputedStyle(hudRoot as never).pointerEvents).toBe("auto");
-          expect(hudRoot.style.maxHeight).toBe(`${String(shared.hud.layout.maximum_height_px)}px`);
-          expect(hudRoot.querySelector('[data-node="hud-primary-readouts"] .flight-hud-caption')?.textContent).toBe("一時停止");
+          expect(window.getComputedStyle(hudRoot as never).pointerEvents).toBe("none");
+          expect(Number.parseFloat(hudRoot.style.height)).toBeCloseTo(shared.hud.layout.height_px, 9);
+          expect(hudRoot.querySelector('[data-node="hud-primary-readouts"] output')?.textContent).toBe(shared.hud.groups.flatMap((group) => group.nodes).find((node) => node.id === "hud-primary-readouts")?.content.value);
           expect(Array.from(hudRoot.childNodes)).toEqual(hudNodes);
           const sections = Array.from(panel.querySelectorAll<HTMLElement>(".screen-ui-section"));
           expect(sections.map((section) => section.dataset.sectionId)).toEqual(shared.panels[0]?.sections.map((section) => section.id));
@@ -712,10 +711,10 @@ describe("screen UI DOM patching", () => {
           if (shared.layout.shell === "flight_bar") {
             expect(computed.bottom).toBe("0px");
             expect(computed.right).toBe("0px");
-            expect(shared.hud.layout.offset_px[1] + shared.hud.layout.maximum_height_px)
-              .toBeLessThan(height - shared.layout.maximum_height_px);
+            expect(shared.hud.layout.offset_px[1]).toBeGreaterThan(shared.layout.maximum_height_px);
           } else {
             expect(shared.layout.shell).toBe("pause_settings");
+            expect(computed.position).toBe("fixed");
             expect(shared.hud.layout.offset_px[0] + shared.hud.layout.width_px)
               .toBeLessThan(width - 12 - shared.layout.width_px);
           }

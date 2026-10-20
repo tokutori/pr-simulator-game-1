@@ -5,6 +5,9 @@ import type { ViewerFrame, ViewerGeometryUnavailableReason } from "../render/con
 import type { FlightHudModel, FlightHudNode } from "./flight-hud-model.js";
 import { FLIGHT_MENU_GEOMETRY } from "../render/contracts/ui.js";
 import { formatFrameRate } from "./frame-rate.js";
+import { game_ui_head_hud_fit_json } from "../../pkg/birdman_game_wasm.js";
+import type { GameUiHeadHudFit } from "../generated/head-hud-fit.js";
+import type { GameUiHeadHudSpace } from "../generated/head-hud-space.js";
 
 export interface HeadHudLayoutProfile {
   readonly distanceMeters: number;
@@ -44,12 +47,10 @@ export function createHeadHudView(model: FlightHudModel | null, viewer: ViewerFr
   framesPerSecond?: number | null, sharedTheme: FlightHudModel["theme"] | null = model?.theme ?? null): HeadHudView {
   if (locale.trim() === "") throw new RangeError("Head HUD display locale must be explicit");
   validateProfile(profile);
-  const instrumentGroups = model?.groups.filter((group) => group.placement !== "readouts") ?? [];
-  const instruments = instrumentGroups.flatMap((group) => group.nodes);
-  const readoutGroups = model?.groups.filter((group) => group.placement === "readouts") ?? [];
+  const nodes = model?.groups.flatMap((group) => group.nodes) ?? [];
+  const sourceNodes = new Map(nodes.map((node) => [node.id, node]));
   const frameRateLabel = framesPerSecond === undefined ? null : formatFrameRate(framesPerSecond);
-  const textElements = readoutGroups.flatMap((group) => group.nodes);
-  if (textElements.length === 0 && instruments.length === 0 && frameRateLabel === null) return NO_HEAD_HUD_VIEW;
+  if (nodes.length === 0 && frameRateLabel === null) return NO_HEAD_HUD_VIEW;
   if (sharedTheme === null) return NO_HEAD_HUD_VIEW;
   if (viewer.source === "unavailable") return Object.freeze({ kind: "unavailable", reason: viewer.reason });
 
@@ -76,6 +77,7 @@ export function createHeadHudView(model: FlightHudModel | null, viewer: ViewerFr
   }
   const padding = textHeightMeters * HEAD_HUD_CARD_PADDING;
   const gap = textHeightMeters * HEAD_HUD_CARD_GAP;
+  const hudJson = model === null ? null : JSON.stringify({ layout: model.layout, groups: model.groups });
   for (let step = 0; step <= 24; step++) {
     const height = profile.maximumHeightMeters * (1 - step / 32);
     const topBandHeight = height / 2 - clearTop - gap - padding;
@@ -85,7 +87,9 @@ export function createHeadHudView(model: FlightHudModel | null, viewer: ViewerFr
     let lower = 0;
     let upper = profile.maximumWidthMeters;
     if (!headPlaneFitsViews(viewer, localPose, textHeightMeters, height, profile.clipMargin)) continue;
-    for (let iteration = 0; iteration < 28; iteration++) {
+    const maximumWidthFits = headPlaneFitsViews(viewer, localPose, upper, height, profile.clipMargin);
+    if (maximumWidthFits) lower = upper;
+    else for (let iteration = 0; iteration < 28; iteration++) {
       const candidate = (lower + upper) / 2;
       if (headPlaneFitsViews(viewer, localPose, candidate, height, profile.clipMargin)) lower = candidate;
       else upper = candidate;
@@ -95,43 +99,30 @@ export function createHeadHudView(model: FlightHudModel | null, viewer: ViewerFr
     if (cardWidth < 8 * textHeightMeters) continue;
     const frameRateHeight = frameRateLabel === null ? 0 : (2 * HEAD_HUD_CARD_PADDING + HEAD_HUD_LINE_HEIGHT) * textHeightMeters;
     const frameRateOffset = frameRateHeight === 0 ? 0 : frameRateHeight + gap;
-    const maximumColumns = Math.min(Math.max(1, Math.floor(cardWidth / (8 * textHeightMeters))),
-      Math.max(1, ...[...readoutGroups, ...instrumentGroups].map((group) => groupColumns(group))));
-    for (let columnLimit = maximumColumns; columnLimit > 0; columnLimit--) {
-      const readoutRows = groupRows(readoutGroups, columnLimit, cardWidth, gap, textHeightMeters, padding);
-      const instrumentRows = groupRows(instrumentGroups, columnLimit, cardWidth, gap, textHeightMeters, padding);
-      if ([...readoutRows, ...instrumentRows].some((row) => row.width < 8 * textHeightMeters)) continue;
-      const textBandHeight = stackedHeight(readoutRows.map((row) => row.height), gap) + frameRateOffset;
-      if (textBandHeight > topBandHeight) continue;
-      const rows = instrumentRows.length;
-      const rowHeights = instrumentRows.map((row) => row.height);
-      const topRows = Array.from({ length: rows + 1 }, (_, index) => index).find((count) =>
-        stackedHeight(rowHeights.slice(count), gap) <= bottomBandHeight &&
-        textBandHeight + (textElements.length > 0 && count > 0 ? gap : 0) + stackedHeight(rowHeights.slice(0, count), gap) <= topBandHeight
-      );
-      if (topRows === undefined) continue;
+      const space: GameUiHeadHudSpace = {
+        size_m: [width, height], text_height_m: textHeightMeters,
+        top_band_m: [padding + frameRateOffset, Math.max(0, topBandHeight - frameRateOffset)],
+        bottom_band_m: [height / 2 - clearBottom + gap, bottomBandHeight]
+      };
+      const fitted = hudJson === null ? { kind: "fitted" as const, nodes: [] }
+        : JSON.parse(game_ui_head_hud_fit_json(hudJson, JSON.stringify(space))) as GameUiHeadHudFit;
+      if (fitted.kind === "unavailable") {
+        if (maximumWidthFits) break;
+        continue;
+      }
       const elements: HeadHudElement[] = [];
       if (frameRateLabel !== null) {
         const frameRateWidth = Math.min(cardWidth, (frameRateLabel.length + 2) * textHeightMeters);
         elements.push(Object.freeze({ id: "head-frame-rate", label: "", content: Object.freeze({ kind: "text", value: frameRateLabel, tone: "normal" }),
+          instrument_height_em: 0,
           bounds: rect((width - padding - frameRateWidth) / width, padding / height, frameRateWidth / width, frameRateHeight / height) }));
       }
-      let top = padding + frameRateOffset;
-      readoutRows.forEach((row) => {
-        row.nodes.forEach((node, column) => elements.push(Object.freeze({ ...node, bounds: rect(
-          (padding + column * (row.width + gap)) / width, top / height, row.width / width, row.height / height
-        ) })));
-        top += row.height + gap;
-      });
-      instrumentRows.forEach((instrumentRow, row) => {
-        const upperRow = row < topRows;
-        const precedingRows = upperRow ? rowHeights.slice(0, row) : rowHeights.slice(topRows, row);
-        const rowTop = (upperRow ? top : height / 2 - clearBottom + gap) + precedingRows.reduce((sum, value) => sum + value + gap, 0);
-        instrumentRow.nodes.forEach((node, column) => elements.push(Object.freeze({ ...node, bounds: rect(
-          (padding + column * (instrumentRow.width + gap)) / width,
-          rowTop / height, instrumentRow.width / width, instrumentRow.height / height
-        ) })));
-      });
+      for (const placement of fitted.nodes) {
+        const node = sourceNodes.get(placement.id);
+        if (node === undefined) throw new Error(`Shared HUD placement has no source: ${placement.id}`);
+        elements.push(Object.freeze({ ...node, instrument_height_em: placement.instrument_height_em,
+          bounds: rect(placement.bounds.x, placement.bounds.y, placement.bounds.width, placement.bounds.height) }));
+      }
       const clearWidth = Math.min(width / 2, clearRight) - Math.max(-width / 2, clearLeft);
       return Object.freeze({
         kind: "visible", textHeightMeters,
@@ -144,53 +135,16 @@ export function createHeadHudView(model: FlightHudModel | null, viewer: ViewerFr
           elements: Object.freeze(elements)
         })
       });
-    }
   }
   return Object.freeze({ kind: "unavailable", reason: "insufficient-view-area" });
 }
 
-export function headHudElementValue(element: FlightHudNode): string {
+export function headHudElementValue(element: Pick<FlightHudNode, "content">): string {
   return element.content.value;
 }
 
-export function headHudInstrumentHeight(element: FlightHudNode, textHeight: number): number {
-  switch (element.content.kind) {
-    case "text": return 0;
-    case "attitude": return textHeight * 5;
-    case "heading_tape":
-    case "direction":
-    case "linear_gauge": return textHeight * 3;
-  }
-}
-
-function minimumCardHeight(element: FlightHudNode, width: number, textHeight: number, padding: number): number {
-  const charactersPerLine = Math.max(1, Math.floor((width - padding * 2) / textHeight));
-  const rows = headHudElementValue(element).split("\n").reduce((sum, value) => sum + Math.max(1, Math.ceil(Array.from(value).length / charactersPerLine)), 0);
-  const labelRows = element.label === "" ? 0 : Math.ceil(Array.from(element.label).length / charactersPerLine);
-  return 2 * padding + (rows + labelRows) * textHeight * HEAD_HUD_LINE_HEIGHT + headHudInstrumentHeight(element, textHeight);
-}
-
-function stackedHeight(heights: readonly number[], gap: number): number {
-  return heights.reduce((sum, value) => sum + value, 0) + Math.max(0, heights.length - 1) * gap;
-}
-
-function groupColumns(group: FlightHudModel["groups"][number]): number {
-  switch (group.layout.kind) {
-    case "column": return 1;
-    case "row": return Math.max(1, group.nodes.length);
-    case "grid": return group.layout.columns;
-  }
-}
-
-function groupRows(groups: FlightHudModel["groups"], columnLimit: number, width: number, gap: number, textHeight: number, padding: number) {
-  return groups.flatMap((group) => {
-    const columns = Math.min(columnLimit, groupColumns(group));
-    const cardWidth = (width - (columns - 1) * gap) / columns;
-    return Array.from({ length: Math.ceil(group.nodes.length / columns) }, (_, row) => {
-      const nodes = group.nodes.slice(row * columns, (row + 1) * columns);
-      return { nodes, width: cardWidth, height: Math.max(...nodes.map((node) => minimumCardHeight(node, cardWidth, textHeight, padding))) };
-    });
-  });
+export function headHudInstrumentHeight(element: Pick<FlightHudNode, "instrument_height_em">, textHeight: number): number {
+  return element.instrument_height_em * textHeight;
 }
 
 function rect(left: number, top: number, width: number, height: number): HeadHudRect {

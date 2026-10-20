@@ -3010,6 +3010,72 @@
       ],
       "type": "object"
     },
+    "GameUiHeadHudFit": {
+      "description": "Exhaustive head-layout result; insufficient space never omits an element.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Every source element fits at the requested text height.",
+          "properties": {
+            "kind": {
+              "const": "fitted",
+              "type": "string"
+            },
+            "nodes": {
+              "description": "Complete source-node placement in the original shared order.",
+              "items": {
+                "$ref": "#/$defs/GameUiHeadHudNode"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "kind",
+            "nodes"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The reserved bands cannot contain the complete HUD.",
+          "properties": {
+            "kind": {
+              "const": "unavailable",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "GameUiHeadHudNode": {
+      "additionalProperties": false,
+      "description": "Shared placement of one retained element in the head-fixed plane.",
+      "properties": {
+        "bounds": {
+          "$ref": "#/$defs/GameUiRect",
+          "description": "Normalized left/top rectangle within the complete HUD plane."
+        },
+        "id": {
+          "description": "Identity of the unchanged source node.",
+          "type": "string"
+        },
+        "instrument_height_em": {
+          "description": "Shared instrument height in multiples of the required text height.",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "id",
+        "bounds",
+        "instrument_height_em"
+      ],
+      "type": "object"
+    },
     "GameUiHud": {
       "additionalProperties": false,
       "description": "Shared Web-baseline HUD model; no adapter rederives flight values or labels.",
@@ -3094,6 +3160,15 @@
           "format": "double",
           "type": "number"
         },
+        "pitch_ticks": {
+          "description": "Shared pitch ladder in the translated and rotated horizon coordinate system.",
+          "items": {
+            "$ref": "#/$defs/GameUiHudPitchTick"
+          },
+          "maxItems": 7,
+          "minItems": 7,
+          "type": "array"
+        },
         "rotation_degrees": {
           "description": "Clockwise horizon rotation in display coordinates.",
           "format": "double",
@@ -3102,24 +3177,21 @@
       },
       "required": [
         "rotation_degrees",
-        "pitch_offset_ratio"
+        "pitch_offset_ratio",
+        "pitch_ticks"
       ],
       "type": "object"
     },
     "GameUiHudGroup": {
       "additionalProperties": false,
-      "description": "A shared HUD group; identifiers track retained nodes without encoding their meaning.",
+      "description": "One shared horizontal row; identifiers only track its retained elements.",
       "properties": {
         "id": {
           "description": "Stable group identity.",
           "type": "string"
         },
-        "layout": {
-          "$ref": "#/$defs/GameUiHudGroupLayout",
-          "description": "Shared row, column, or responsive grid composition."
-        },
         "nodes": {
-          "description": "Complete visible node sequence.",
+          "description": "Complete visible row in its shared left-to-right order.",
           "items": {
             "$ref": "#/$defs/GameUiHudNode"
           },
@@ -3133,64 +3205,9 @@
       "required": [
         "id",
         "placement",
-        "layout",
         "nodes"
       ],
       "type": "object"
-    },
-    "GameUiHudGroupLayout": {
-      "description": "A small shared composition vocabulary, independent of DOM and ECS layout engines.",
-      "oneOf": [
-        {
-          "additionalProperties": false,
-          "description": "Side-by-side intrinsic widgets and wrapping text.",
-          "properties": {
-            "kind": {
-              "const": "row",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Vertical content in source order.",
-          "properties": {
-            "kind": {
-              "const": "column",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Responsive equal-width instrument cards.",
-          "properties": {
-            "columns": {
-              "description": "Preferred column count before the adapter applies measured width constraints.",
-              "format": "uint32",
-              "minimum": 0,
-              "type": "integer"
-            },
-            "kind": {
-              "const": "grid",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind",
-            "columns"
-          ],
-          "type": "object"
-        }
-      ]
     },
     "GameUiHudHeadingTick": {
       "additionalProperties": false,
@@ -3246,13 +3263,13 @@
           "minItems": 2,
           "type": "array"
         },
-        "maximum_height_px": {
-          "description": "Reachable vertical scroll height.",
+        "height_px": {
+          "description": "Shared rail height enclosing every published node.",
           "format": "double",
           "type": "number"
         },
         "offset_px": {
-          "description": "Left and top viewport offsets.",
+          "description": "Left and bottom viewport insets; the bottom edge is the viewport anchor.",
           "items": {
             "format": "double",
             "type": "number"
@@ -3262,7 +3279,7 @@
           "type": "array"
         },
         "opacity": {
-          "description": "Panel background opacity.",
+          "description": "Individual card background opacity; the surrounding rail is transparent.",
           "format": "double",
           "type": "number"
         },
@@ -3277,7 +3294,7 @@
           "type": "array"
         },
         "width_px": {
-          "description": "Responsive panel width.",
+          "description": "Responsive rail width without scrolling.",
           "format": "double",
           "type": "number"
         }
@@ -3285,7 +3302,7 @@
       "required": [
         "offset_px",
         "width_px",
-        "maximum_height_px",
+        "height_px",
         "padding_px",
         "gap_px",
         "attitude_size_px",
@@ -3298,6 +3315,10 @@
       "additionalProperties": false,
       "description": "One existing widget instance; adding an instance requires no adapter-specific field.",
       "properties": {
+        "bounds": {
+          "$ref": "#/$defs/GameUiRect",
+          "description": "Shared normalized rectangle within the bottom HUD rail."
+        },
         "content": {
           "$ref": "#/$defs/GameUiHudNodeContent",
           "description": "Exclusive widget geometry and display values."
@@ -3306,14 +3327,21 @@
           "description": "Stable identity used only to retain this element.",
           "type": "string"
         },
+        "instrument_height_em": {
+          "description": "Instrument drawing height relative to the shared HUD font size; zero for text.",
+          "format": "double",
+          "type": "number"
+        },
         "label": {
-          "description": "Shared heading, independent of the widget type.",
+          "description": "Caption preceding the value in one formatted paragraph, independent of widget type.",
           "type": "string"
         }
       },
       "required": [
         "id",
         "label",
+        "bounds",
+        "instrument_height_em",
         "content"
       ],
       "type": "object"
@@ -3464,22 +3492,48 @@
         }
       ]
     },
+    "GameUiHudPitchTick": {
+      "additionalProperties": false,
+      "description": "One pitch ladder mark relative to the complete ADI width and height.",
+      "properties": {
+        "half_width_ratio": {
+          "description": "Half of the horizontal mark width.",
+          "format": "double",
+          "type": "number"
+        },
+        "label_degrees": {
+          "description": "Absolute pitch in degrees; the horizon has no numeric label.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "offset_ratio": {
+          "description": "Vertical offset from the zero-pitch horizon.",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "offset_ratio",
+        "half_width_ratio",
+        "label_degrees"
+      ],
+      "type": "object"
+    },
     "GameUiHudPlacement": {
       "description": "HUD placement roles consumed identically by all adapters.",
       "oneOf": [
         {
           "const": "readouts",
-          "description": "Status and primary readings, above the VR clear region.",
+          "description": "Primary numerical readings on the left or first bottom band.",
           "type": "string"
         },
         {
           "const": "instruments",
-          "description": "Instruments, below the VR clear region when space permits.",
-          "type": "string"
-        },
-        {
-          "const": "details",
-          "description": "Secondary information in its declared order.",
+          "description": "Instruments on the right or second bottom band.",
           "type": "string"
         }
       ]

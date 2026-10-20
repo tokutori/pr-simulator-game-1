@@ -5,8 +5,11 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { transform } from "esbuild";
 import { chromium } from "playwright-core";
+import { PerspectiveCamera, StereoCamera } from "three";
 import type { Browser } from "playwright-core";
 import type { GameUiView } from "../../web/src/generated/game-ui-view.js";
+import { captureConfiguredViewerFrame } from "../../web/src/render/engines/three/viewer-frame.js";
+import { observeWaterRenderer, verifyWaterRenderer } from "./water.js";
 
 declare global {
   interface Window {
@@ -45,6 +48,63 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
   const click = async (id: string) => { await control(id).scrollIntoViewIfNeeded(); await control(id).click(); };
   const scene = async (name: string) => page.waitForFunction(expected => document.querySelector(".screen-ui-shell")?.getAttribute("data-scene") === expected, name);
   const screenshot = async (name: string) => page.screenshot({ path: resolve(output, `${name}.png`) });
+  const measureHud = async (forwardClear: boolean) => {
+    const measured = await page.evaluate(clear => {
+      const root = document.querySelector<HTMLElement>('.flight-hud[aria-hidden="false"]');
+      const menu = document.querySelector<HTMLElement>(".screen-ui-shell");
+      if (root === null || menu === null) throw new Error("The live HUD/menu is unavailable");
+      const geometry = {
+        rect(node: Element) {
+          const bounds = node.getBoundingClientRect();
+          return { left: bounds.left, top: bounds.top, right: bounds.right, bottom: bounds.bottom, width: bounds.width, height: bounds.height };
+        },
+        overlap(first: Pick<DOMRect, "left" | "right" | "top" | "bottom">, second: Pick<DOMRect, "left" | "right" | "top" | "bottom">) {
+          return first.left < second.right - 1 && second.left < first.right - 1 && first.top < second.bottom - 1 && second.top < first.bottom - 1;
+        }
+      };
+      const issues: string[] = [];
+      const minimumFontSize = Math.max(14, Number.parseFloat(getComputedStyle(document.documentElement).fontSize) * 0.875);
+      const rootBounds = geometry.rect(root);
+      const style = getComputedStyle(root);
+      const menuBounds = geometry.rect(menu);
+      if (rootBounds.left < -1 || rootBounds.right > innerWidth + 1 || rootBounds.top < -1 || rootBounds.bottom > innerHeight + 1) issues.push("HUD outside viewport");
+      if (clear && rootBounds.top < innerHeight * 0.5) issues.push("HUD enters the forward upper half");
+      if (style.backgroundColor !== "rgba(0, 0, 0, 0)" || style.overflowX !== "visible" || style.overflowY !== "visible") issues.push("HUD background/scroll");
+      const nodes = [...root.querySelectorAll<HTMLElement>("[data-node]")].map(node => {
+        const bounds = geometry.rect(node);
+        const nodeStyle = getComputedStyle(node);
+        const id = node.dataset.node ?? "unknown";
+        if (node.scrollWidth > node.clientWidth + 1 || node.scrollHeight > node.clientHeight + 1) issues.push(`${id}: content overflow`);
+        if (geometry.overlap(bounds, menuBounds)) issues.push(`${id}: overlaps the menu`);
+        const range = document.createRange();
+        const header = node.querySelector(".flight-hud-header");
+        if (header === null) throw new Error("Missing HUD header");
+        range.selectNodeContents(header);
+        const textBounds = range.getBoundingClientRect();
+        const fontSize = Number.parseFloat(nodeStyle.fontSize);
+        if (fontSize < minimumFontSize - 0.01 || textBounds.left < bounds.left - 1 || textBounds.right > bounds.right + 1 || textBounds.bottom > bounds.bottom + 1) issues.push(`${id}: text size/bounds`);
+        return { id, bounds, fontSize, contentWidth: node.scrollWidth, contentHeight: node.scrollHeight };
+      });
+      for (let index = 0; index < nodes.length; index++) for (const other of nodes.slice(0, index)) {
+        const node = nodes[index];
+        if (node !== undefined && geometry.overlap(node.bounds, other.bounds)) issues.push(`${node.id}: overlaps ${other.id}`);
+      }
+      const glyphs = [...root.querySelectorAll<SVGTextElement>("svg text")].filter(node => node.textContent !== "").map(node => {
+        const matrix = node.getScreenCTM();
+        const pixels = Number.parseFloat(getComputedStyle(node).fontSize) * (matrix === null ? 0 : Math.hypot(matrix.a, matrix.b));
+        if (pixels < minimumFontSize - 0.1) issues.push(`Instrument label below the shared font size: ${node.textContent}`);
+        return { text: node.textContent, fontSize: pixels };
+      });
+      const opaqueAdi = [...root.querySelectorAll<SVGElement>('[data-instrument="attitude"] rect, [data-instrument="attitude"] path')]
+        .filter(node => node.closest("defs") === null && ![null, "none"].includes(node.getAttribute("fill")));
+      if (opaqueAdi.length > 0) issues.push("ADI has opaque area fills");
+      return { viewport: { width: innerWidth, height: innerHeight, rootFontSize: getComputedStyle(document.documentElement).fontSize },
+        bounds: rootBounds, nodes, glyphs, issues };
+    }, forwardClear);
+    if (measured.issues.length > 0) report.hudFailure = measured;
+    assert.deepEqual(measured.issues, []);
+    return measured;
+  };
   const noEmptyLabelPrefix = async () => {
     const values = await page.locator(".screen-ui-status, .flight-hud output").allTextContents();
     assert.deepEqual(values.filter(value => /^\s*[:：]/u.test(value)), [], "An empty label must not add a leading colon");
@@ -104,6 +164,7 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
     if (response.status() >= 400 && !response.url().endsWith("/favicon.ico")) errors.push(`HTTP ${String(response.status())} ${response.url()}`);
   });
   try {
+    await observeWaterRenderer(page);
     const observer = await transform(await readFile(resolve(root, "tools/web-auto-check/browser-observer.ts"), "utf8"), { loader: "ts", format: "iife", target: "es2023" });
     await page.addInitScript({ content: observer.code });
     await page.goto(url.href, { waitUntil: "domcontentloaded" });
@@ -149,7 +210,7 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
     await page.setViewportSize({ width: 1280, height: 720 });
     await click("game-credits-open");
     await page.getByRole("heading", { name: "クレジット・利用条件", exact: true }).waitFor({ state: "visible" });
-    for (const source of ["osm", "jaxa", "copernicus", "jma", "font", "earcut", "ryu", "time"]) {
+    for (const source of ["osm", "jaxa", "copernicus", "jma", "font", "earcut", "ryu", "time", "unicode-width"]) {
       assert.ok(await page.locator(`#game-credits-${source}`).count() > 0, `Missing credit: ${source}`);
     }
     await click("game-credits-close");
@@ -258,9 +319,129 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
     assert.doesNotMatch(await hud.innerText(), /緯度|経度|実機構成は未確認|incidence|intent|Hold|PILOT TARGET|COPERNICUS/);
     await noEmptyLabelPrefix();
     report.hudKinds = kinds;
+    report.runningHud = await measureHud(true);
     await click("game-flight-pause");
     await page.waitForFunction(() => window.__liveAuto.phase === "flight_paused");
     await screenshot("03-paused-hud");
+    await click("game-pause-open-settings");
+    await click("presentation-render-scale-100");
+    const waterMeasurements = [];
+    for (const quality of ["low", "medium", "high"] as const) {
+      await click(`presentation-water-quality-${quality}`);
+      await page.waitForFunction(expected => window.__waterCheck.water.children.length === 16 &&
+        window.__waterCheck.water.children.every(node => "geometry" in node &&
+          (node.geometry as import("three").BufferGeometry).getAttribute("position").count === (expected / 4 + 1) ** 2),
+      { low: 96, medium: 144, high: 224 }[quality]);
+      waterMeasurements.push(await verifyWaterRenderer(page, new URL("../src/render/engines/three/lake-water-geometry.ts", moduleUrl).href, output, quality));
+    }
+    report.water = waterMeasurements;
+    await click("presentation-render-scale-auto");
+    await click("game-pause-settings-back");
+    checks.push("全水面品質・4方位・左右眼でchunk cullingと単一meshの画素一致を検査する");
+    const hudMeasurements = [];
+    for (const [width, height, font] of [[1280, 720, 16], [1920, 1080, 16], [1600, 900, 20], [1920, 1080, 24]] as const) {
+      await page.setViewportSize({ width, height });
+      await page.evaluate(size => { document.documentElement.style.fontSize = `${String(size)}px`; }, font);
+      await page.waitForFunction(size => {
+        const hud = document.querySelector<HTMLElement>('.flight-hud[aria-hidden="false"]');
+        return hud !== null && Math.abs(Number.parseFloat(getComputedStyle(hud).fontSize) - size * 0.875) < 0.01;
+      }, font);
+      hudMeasurements.push(await measureHud(false));
+      await screenshot(`03-hud-${String(width)}x${String(height)}-font${String(font)}`);
+    }
+    report.hudMeasurements = hudMeasurements;
+    await page.evaluate(() => { document.documentElement.style.removeProperty("font-size"); });
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await page.waitForFunction(() => {
+      const hud = document.querySelector<HTMLElement>('.flight-hud[aria-hidden="false"]');
+      return hud !== null && Math.abs(Number.parseFloat(getComputedStyle(hud).fontSize) - 14) < 0.01;
+    });
+    for (const [open, back, name] of [["game-pause-open-settings", "game-pause-settings-back", "settings"], ["game-pause-open-help", "game-pause-help-back", "help"]] as const) {
+      await click(open);
+      await control(back).waitFor({ state: "visible" });
+      await measureHud(false);
+      await screenshot(`03-hud-pause-${name}`);
+      await click(back);
+    }
+    const headScenarios = [
+      { name: "landscape", aspect: 1280 / 720, maximumWidthMeters: 2.16 },
+      { name: "portrait", aspect: 720 / 1280, maximumWidthMeters: 2.16 },
+      { name: "narrow-fallback", aspect: 1280 / 720, maximumWidthMeters: 0.3 }
+    ].map(scenario => {
+      const camera = new PerspectiveCamera(60, scenario.aspect, 0.05, 100);
+      camera.updateMatrixWorld(true);
+      const stereo = new StereoCamera();
+      stereo.aspect = 0.5;
+      return { ...scenario, viewer: captureConfiguredViewerFrame(camera, stereo) };
+    });
+    const profiler = await context.newCDPSession(page);
+    try {
+      await profiler.send("Profiler.enable");
+      const headResults: { name: string; coverageEnabled: boolean; outcome: string; samples: number; medianMilliseconds: number; p95Milliseconds: number;
+        hudBytes: number; wasmCallsPerFrame: number | null; maximumInputBytesPerFrame: number | null }[] = [];
+      report.headHud = { measurements: headResults, measurement: "30 calls per scenario and coverage mode; input bound includes the 1024-byte space limit; not a frame-rate acceptance" };
+      for (const coverageEnabled of [false, true]) {
+      if (coverageEnabled) await profiler.send("Profiler.startPreciseCoverage", { callCount: true, detailed: false });
+      for (const scenario of headScenarios) {
+      const headMeasurement = await page.evaluate(async input => {
+        if (window.__uiViewJson === null) throw new Error("Missing shared HUD View");
+        const shared = JSON.parse(window.__uiViewJson) as GameUiView;
+        if (shared.hud === null) throw new Error("Missing shared HUD");
+        const modelModule = await import(input.model) as typeof import("../../web/src/presentation/flight-hud-model.js");
+        const viewModule = await import(input.view) as typeof import("../../web/src/presentation/head-hud-view.js");
+        const canvasModule = await import(input.canvas) as typeof import("../../web/src/presentation/head-hud-canvas.js");
+        const model = modelModule.projectSharedFlightHudModel(shared.hud, shared.theme);
+        const scenario = input.scenario;
+        let image: string | null = null;
+          const elapsed = [];
+          let last: ReturnType<typeof viewModule.createHeadHudView> = { kind: "absent" };
+          for (let iteration = 0; iteration < 30; iteration++) {
+            const start = performance.now();
+            last = viewModule.createHeadHudView(model, scenario.viewer, "ja", { ...viewModule.DEFAULT_HEAD_HUD_PROFILE, maximumWidthMeters: scenario.maximumWidthMeters });
+            elapsed.push(performance.now() - start);
+          }
+          elapsed.sort((first, second) => first - second);
+          const lowerMedian = elapsed[14];
+          const upperMedian = elapsed[15];
+          const p95 = elapsed[28];
+          if (lowerMedian === undefined || upperMedian === undefined || p95 === undefined) throw new Error("Missing Head fit measurement samples");
+          if (scenario.name !== "narrow-fallback" && last.kind !== "visible") throw new Error(`Head HUD ${scenario.name}: ${last.kind}`);
+          if (last.kind === "visible") {
+            const size = canvasModule.headHudCanvasSize(last.layer);
+            const canvas = document.createElement("canvas");
+            canvas.width = size.width; canvas.height = size.height;
+            const drawing = canvas.getContext("2d");
+            if (drawing === null) throw new Error("Missing Head Canvas");
+            const drawingContext = canvasModule.browserHeadHudContext(drawing);
+            const prepared = canvasModule.prepareHeadHudPaint(drawingContext, last, size.width, size.height);
+            const validated = canvasModule.validateHeadHudPaint(prepared, scenario.viewer);
+            if (validated.kind !== "ready") throw new Error(`Head Canvas ${scenario.name}: ${validated.kind}`);
+            canvasModule.drawHeadHud(drawingContext, validated);
+            image = canvas.toDataURL("image/png");
+          }
+        return { measurement: { name: scenario.name, outcome: last.kind, samples: elapsed.length, medianMilliseconds: (lowerMedian + upperMedian) / 2, p95Milliseconds: p95 },
+          image, hudBytes: new TextEncoder().encode(JSON.stringify({ layout: model.layout, groups: model.groups })).length };
+      }, { scenario, model: new URL("../src/presentation/flight-hud-model.ts", moduleUrl).href,
+        view: new URL("../src/presentation/head-hud-view.ts", moduleUrl).href, canvas: new URL("../src/presentation/head-hud-canvas.ts", moduleUrl).href });
+      let calls: number | null = null;
+      if (coverageEnabled) {
+        const coverage = await profiler.send("Profiler.takePreciseCoverage");
+        calls = coverage.result.flatMap(script => script.functions).filter(item => item.functionName === "game_ui_head_hud_fit_json")
+          .reduce((sum, item) => sum + (item.ranges[0]?.count ?? 0), 0) / 30;
+        assert.ok(calls > 0, "The production shared Head fit was not profiled");
+        if (scenario.name === "narrow-fallback") assert.equal(calls, 1, "An impossible maximum-width fit must not repeat shared queries");
+      }
+      headResults.push({ ...headMeasurement.measurement, coverageEnabled, hudBytes: headMeasurement.hudBytes, wasmCallsPerFrame: calls,
+        maximumInputBytesPerFrame: calls === null ? null : calls * (headMeasurement.hudBytes + 1024) });
+      if (headMeasurement.image !== null) {
+        const name = scenario.name === "landscape" ? "03-head-hud.png" : `03-head-hud-${scenario.name}.png`;
+        await writeFile(resolve(output, name), Buffer.from(headMeasurement.image.slice("data:image/png;base64,".length), "base64"));
+      }
+      }
+      if (coverageEnabled) await profiler.send("Profiler.stopPreciseCoverage");
+      }
+    } finally { await profiler.detach(); }
+    checks.push("HD/FHD・文字拡大の下端HUDは全値・14px文字高・非重複を保持し、実CanvasのHead HUDは両眼と前方中央へ収まる");
     const pausedTick = await page.evaluate(() => window.__liveAuto.tick);
     report.pausedCreditsScroll = await creditsScroll("flight_paused", "03-paused-credits");
     await page.setViewportSize({ width: 1280, height: 720 });
@@ -302,6 +483,8 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
     await click("game-replay-technical");
     await click("game-replay-view-mode");
     await control("game-replay-cursor").waitFor({ state: "visible" });
+    report.replayHud = await measureHud(false);
+    await screenshot("05-replay-hud");
     await click("game-replay-view-mode");
     await control("game-analysis-speed").waitFor({ state: "visible" });
     assert.equal(await download("json", "replay-record"), originalJson);

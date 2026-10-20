@@ -120,6 +120,7 @@ export function createHeadHudFixture(theme: GameUiView["theme"]): VisibleHeadHud
     elements: Object.freeze([Object.freeze({
       id: "flight-status",
       label: "FLIGHT",
+      instrument_height_em: 0,
       content: Object.freeze({ kind: "text", value: "合成HUD fixture", tone: "normal" }),
       bounds: Object.freeze({ left: 0.1, top: 0.7, width: 0.8, height: 0.2 })
     })])

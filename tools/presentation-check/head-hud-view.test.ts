@@ -1,10 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import * as sharedHeadFit from "../../web/pkg/birdman_game_wasm.js";
 import { Euler, Matrix4, PerspectiveCamera, Quaternion, StereoCamera, Vector3 } from "three";
 import { currentSharedGameUiFixture, currentSharedHeadHudFixture as currentSharedHudFixture, mapSharedHudNodes, sharedHudNode, sharedHudNodes } from "../game-check/shared-game-ui-fixture.js";
 import { createHeadHudView, DEFAULT_HEAD_HUD_PROFILE, headHudElementValue } from "../../web/src/presentation/head-hud-view.js";
 import { validateHeadHudLayer } from "../../web/src/render/contracts/head-hud.js";
 import { IDENTITY_POSE, pose, quaternion, transformPoint, vec3 } from "../../web/src/render/contracts/math.js";
-import { copyProjectionMatrix, projectHeadPoint, unavailableViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
+import { copyProjectionMatrix, headPlaneFitsViews, projectHeadPoint, unavailableViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
 import type { ViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
 import { captureConfiguredViewerFrame } from "../../web/src/render/engines/three/viewer-frame.js";
 import { convexQuadsOverlap } from "./hud-canvas-fixture.js";
@@ -20,11 +21,35 @@ function configuredViewer(aspect = 1280 / 720, fieldOfView = 60, near = 0.05): V
 }
 
 describe("Pure Head Flight HUD layout", () => {
-  it.each(["row", "grid"] as const)("preserves %s readout grouping and instrument order across both clear-region bands", (kind) => {
+  it("ends an impossible maximum-width fit after one shared query", () => {
+    const model = currentSharedHudFixture({ informationCode: 0 });
+    const fit = vi.spyOn(sharedHeadFit, "game_ui_head_hud_fit_json");
+    try {
+      expect(createHeadHudView(model, configuredViewer(), "ja", { ...DEFAULT_HEAD_HUD_PROFILE, maximumWidthMeters: 0.3 }))
+        .toEqual({ kind: "unavailable", reason: "insufficient-view-area" });
+      expect(fit).toHaveBeenCalledTimes(1);
+    } finally { fit.mockRestore(); }
+  });
+
+  it("continues reducing height while the initial portrait plane is optically clipped", () => {
+    const viewer = configuredViewer(720 / 1280);
+    const profile = { ...DEFAULT_HEAD_HUD_PROFILE, maximumHeightMeters: 4 };
+    const initialPose = pose(vec3(0, 0, -profile.distanceMeters), IDENTITY_POSE.orientation);
+    expect(headPlaneFitsViews(viewer, initialPose, profile.maximumWidthMeters, profile.maximumHeightMeters, profile.clipMargin)).toBe(false);
+    const model = currentSharedHudFixture({ informationCode: 0 });
+    const view = createHeadHudView(model, viewer, "ja", profile);
+    if (view.kind !== "visible") throw new Error("Missing shorter portrait plane");
+    expect(view.layer.size.height).toBeLessThan(profile.maximumHeightMeters);
+    expect(view.layer.elements.map(element => element.id)).toEqual(sharedHudNodes(model).map(element => element.id));
+    expect(() => { validateHeadHudLayer(view.layer); }).not.toThrow();
+  });
+
+  it("preserves shared row order and places every element below the clear region when it fits", () => {
     const shared = currentSharedHudFixture({ informationCode: 0 });
-    const nodes = ["first", "second"].map((id) => ({ id, label: id, content: { kind: "text" as const, tone: "normal" as const, value: "共通" } }));
-    const model = { ...shared, groups: shared.groups.map((group) => group.placement === "readouts"
-      ? { ...group, layout: kind === "row" ? { kind: "row" as const } : { kind: "grid" as const, columns: 2 }, nodes } : group) };
+    const source = sharedHudNodes(shared)[0];
+    if (source === undefined) throw new Error("Missing shared HUD node");
+    const nodes = ["first", "second"].map((id) => ({ ...source, id, label: id, content: { kind: "text" as const, tone: "normal" as const, value: "共通" } }));
+    const model = { ...shared, groups: shared.groups.map((group, index) => index === 0 ? { ...group, nodes } : group) };
     const view = createHeadHudView(model, configuredViewer(), "ja");
     if (view.kind !== "visible") throw new Error("Missing grouped readout view");
     const first = view.layer.elements[0];
@@ -33,15 +58,16 @@ describe("Pure Head Flight HUD layout", () => {
     expect(second?.id).toBe("second");
     expect(first?.bounds.top).toBe(second?.bounds.top);
     expect(first?.bounds.left).toBeLessThan(second?.bounds.left ?? 0);
-    for (const [index, element] of view.layer.elements.entries()) {
-      const previous = view.layer.elements[index - 1];
-      if (previous !== undefined) expect(element.bounds.top).toBeGreaterThanOrEqual(previous.bounds.top);
-    }
+    expect(view.layer.elements.map((element) => element.id)).toEqual(sharedHudNodes(model).map((node) => node.id));
+    for (const element of view.layer.elements) expect(element.bounds.top)
+      .toBeGreaterThanOrEqual(view.layer.clearRegion.top + view.layer.clearRegion.height);
   });
 
   it("projects an additional existing-kind readout and preserves node order when the labels change", () => {
     const shared = currentSharedHudFixture({ informationCode: 1 });
-    const node = { id: "new-readout", label: "姿勢 PITCH", content: { kind: "text" as const, tone: "normal" as const, value: "共通表示" } };
+    const source = sharedHudNodes(shared)[0];
+    if (source === undefined) throw new Error("Missing shared HUD node");
+    const node = { ...source, id: "new-readout", label: "姿勢 PITCH", content: { kind: "text" as const, tone: "normal" as const, value: "共通表示" } };
     const model = { ...shared, groups: shared.groups.map((group, index) => ({ ...group, nodes: index === 0 ? [...group.nodes, node] : group.nodes })) };
     const view = createHeadHudView(model, configuredViewer(), "ja");
     if (view.kind !== "visible") throw new Error("Missing additional readout layout");
@@ -54,7 +80,9 @@ describe("Pure Head Flight HUD layout", () => {
 
   it("projects shared geometry overrides and layout opacity without deriving them from angles", () => {
     const shared = currentSharedHudFixture({ informationCode: 0 });
-    const adi = { kind: "attitude" as const, horizon: { rotation_degrees: 17, pitch_offset_ratio: 0.21 }, flight_path_y_ratio: 0.73 };
+    const source = sharedHudNode(shared, "hud-attitude").content;
+    if (source.kind !== "attitude" || source.geometry.kind !== "attitude") throw new Error("Expected shared attitude source");
+    const adi = { ...source.geometry, horizon: { ...source.geometry.horizon, rotation_degrees: 17, pitch_offset_ratio: 0.21 }, flight_path_y_ratio: 0.73 };
     const ticks = [{ position_ratio: 0.24, major: true, label: "CUSTOM" }, { position_ratio: 0.76, major: false, label: "" }];
     const theme = { ...shared.theme, text: "#123456", panel_background: "#234567" };
     const model = mapSharedHudNodes({ ...shared, theme, layout: { ...shared.layout, opacity: 0.41 } }, (node) => {
@@ -157,7 +185,7 @@ describe("Pure Head Flight HUD layout", () => {
     for (const node of view.layer.elements) expect(node.content).toBe(sharedHudNode(model, node.id).content);
     expect(JSON.stringify(model)).toBe(before);
     if (code === 0 || code === 4) expect(view.layer.elements.find((element) => element.id === "hud-pilot-position"))
-      .toMatchObject(sharedHudNode(model, "hud-pilot-position"));
+      .toMatchObject({ id: "hud-pilot-position", content: sharedHudNode(model, "hud-pilot-position").content });
     expect(Object.isFrozen(view.layer.elements)).toBe(true);
     expect(() => { validateHeadHudLayer(view.layer); }).not.toThrow();
     if (code === 3) {

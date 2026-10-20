@@ -394,7 +394,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
         recording.tick(now, null);
         const snapshot = readSnapshot();
         const profile = lakeWater.lakeWaterQualityProfile(snapshot.water_quality);
-        expect(original.mesh.geometry.getAttribute("position").count).toBe((profile.meshSegments + 1) ** 2);
+        expect(original.mesh.geometry.getAttribute("position").count).toBe((profile.meshSegments / 4 + 1) ** 2);
         expect(original.material.uniforms.uWaveCount?.value).toBe(profile.componentCount);
         applied.add(snapshot.water_quality);
       }
@@ -524,7 +524,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
         await bundle.renderer.setLakeWaterQuality(quality);
         const profile = lakeWater.lakeWaterQualityProfile(quality);
         const projection = createLakeWaveProjection(lakeWater.DEFAULT_LAKE_VISUAL_CONDITION, quality);
-        expect(original.foreground.mesh.geometry.getAttribute("position").count).toBe((profile.meshSegments + 1) ** 2);
+        expect(original.foreground.mesh.geometry.getAttribute("position").count).toBe((profile.meshSegments / 4 + 1) ** 2);
         expect(original.foreground.material.uniforms.uWaveCount?.value).toBe(profile.componentCount);
         expect(original.backing.material.uniforms.uWaveCount?.value).toBe(profile.componentCount);
         expect(original.foreground.material.uniforms.uChoppiness?.value).toBe(projection.choppiness);
@@ -646,7 +646,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
       const cleanup = await bundle.renderer.setLakeWaterQuality("high");
       expect(cleanup).toEqual({ kind: "failed", message: failure.message });
       expect(Object.is(foreground.mesh.geometry, previous)).toBe(false);
-      expect(foreground.mesh.geometry.getAttribute("position").count).toBe(225 ** 2);
+      expect(foreground.mesh.geometry.getAttribute("position").count).toBe(57 ** 2);
       expect(foreground.material.uniforms.uWaveCount?.value).toBe(18);
       const completed = updateApp(requested.model, { type: "lake-water-quality-applied", requestId: initial.nextRequestId, quality: "high", cleanup }).model;
       expect(completed.lakeWaterQuality).toEqual({ kind: "ready", applied: "high", cleanup });

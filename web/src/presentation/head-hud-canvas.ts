@@ -70,7 +70,6 @@ export interface PaintedLine {
 
 interface PreparedCard {
   readonly element: HeadHudElement;
-  readonly label: readonly PaintedLine[];
   readonly value: readonly PaintedLine[];
   readonly left: number;
   readonly top: number;
@@ -95,11 +94,10 @@ export function prepareHeadHudPaint(context: HeadHudDrawingContext, view: HeadHu
   for (const element of layer.elements) {
     const cardWidth = element.bounds.width * width;
     const cardHeight = element.bounds.height * height;
-    const padding = fontSize * HEAD_HUD_CARD_PADDING;
-    const label = element.label === "" ? [] : prepareHudTextLines(context, element.label, cardWidth - padding * 2, lineHeight);
-    const value = prepareHudTextLines(context, headHudElementValue(element), cardWidth - padding * 2, lineHeight);
+    const padding = element.content.kind === "text" ? 0 : fontSize * HEAD_HUD_CARD_PADDING;
+    const value = prepareHudTextLines(context, element.label !== "" ? `${element.label} ${headHudElementValue(element)}` : headHudElementValue(element), cardWidth - padding * 2, lineHeight);
     const instrumentHeight = headHudInstrumentHeight(element, fontSize);
-    if (label === null || value === null || (label.length + value.length) * lineHeight + instrumentHeight + padding * 2 > cardHeight + 1e-6) {
+    if (value === null || value.length * lineHeight + instrumentHeight + padding * 2 > cardHeight + 1e-6) {
       context.restore();
       return Object.freeze({ kind: "unavailable", reason: "text-overflow", width, height });
     }
@@ -107,10 +105,34 @@ export function prepareHeadHudPaint(context: HeadHudDrawingContext, view: HeadHu
     const top = element.bounds.top * height;
     const instrumentText: HeadHudTextInk[] = [];
     const content = element.content;
+    if (content.kind === "attitude" && content.geometry.kind === "attitude") {
+      const horizon = content.geometry.horizon;
+      const roll = horizon.rotation_degrees * Math.PI / 180;
+      const instrumentTop = top + padding + value.length * lineHeight;
+      const instrumentWidth = cardWidth - 2 * padding;
+      for (const tick of horizon.pitch_ticks) {
+        if (tick.label_degrees === null) continue;
+        const metrics = measuredLine(context, String(tick.label_degrees), lineHeight);
+        if (metrics === null) {
+          context.restore();
+          return Object.freeze({ kind: "unavailable", reason: "text-overflow", width, height });
+        }
+        const across = tick.half_width_ratio * instrumentWidth + fontSize * 0.7;
+        const down = (horizon.pitch_offset_ratio + tick.offset_ratio) * instrumentHeight;
+        const centerX = left + cardWidth / 2 + Math.cos(roll) * across - Math.sin(roll) * down;
+        const centerY = instrumentTop + instrumentHeight / 2 + Math.sin(roll) * across + Math.cos(roll) * down;
+        const x = centerX - metrics.width / 2;
+        const baseline = centerY + (metrics.ascent - metrics.descent) / 2;
+        const ink = { value: String(tick.label_degrees), x, baseline,
+          left: x - metrics.left, top: baseline - metrics.ascent, width: metrics.left + metrics.right, height: metrics.ascent + metrics.descent };
+        if (ink.left >= left + padding && ink.left + ink.width <= left + cardWidth - padding
+            && ink.top >= instrumentTop && ink.top + ink.height <= instrumentTop + instrumentHeight) instrumentText.push(Object.freeze(ink));
+      }
+    }
     if (content.kind === "heading_tape" || content.kind === "linear_gauge") {
-      const textTop = top + padding + (label.length + value.length) * lineHeight;
+      const textTop = top + padding + value.length * lineHeight;
       const labels = content.kind === "heading_tape"
-        ? content.ticks.filter((tick) => tick.major && tick.label !== "").map((tick) => ({ value: tick.label, ratio: tick.position_ratio }))
+        ? content.ticks.filter((tick) => tick.label !== "").map((tick) => ({ value: tick.label, ratio: tick.position_ratio }))
         : [{ value: content.minimum_label, ratio: 0 }, { value: content.maximum_label, ratio: 1 }];
       for (const tick of labels) {
         const metrics = measuredLine(context, tick.value, lineHeight);
@@ -131,7 +153,7 @@ export function prepareHeadHudPaint(context: HeadHudDrawingContext, view: HeadHu
         instrumentText.push(ink);
       }
     }
-    cards.push(Object.freeze({ element, label: Object.freeze(label), value: Object.freeze(value), left, top,
+    cards.push(Object.freeze({ element, value: Object.freeze(value), left, top,
       width: cardWidth, height: cardHeight, padding, instrumentHeight, instrumentText: Object.freeze(instrumentText) }));
   }
   context.restore();
@@ -158,7 +180,7 @@ export function drawHeadHud(context: HeadHudDrawingContext, preparation: HeadHud
     context.setFillStyle(card.element.content.kind === "text" && card.element.content.tone === "warning" ? layer.theme.focus_outline
       : card.element.content.kind === "text" && card.element.content.tone === "muted" ? layer.theme.muted_text : layer.theme.text);
     for (const text of paintedCardText(card, lineHeight)) context.fillText(text.value, text.x, text.baseline);
-    const textTop = card.top + card.padding + (card.label.length + card.value.length) * lineHeight;
+    const textTop = card.top + card.padding + card.value.length * lineHeight;
     drawInstrument(context, card.element, card.left + card.padding, textTop,
       card.width - card.padding * 2, card.instrumentHeight, fontSize, layer.theme);
     context.restore();
@@ -172,7 +194,7 @@ export function headHudPaintedTextInk(preparation: HeadHudPaintPreparation): rea
 }
 
 function paintedCardText(card: PreparedCard, lineHeight: number): readonly HeadHudTextInk[] {
-  return [...[...card.label, ...card.value].map((text, index) => {
+  return [...card.value.map((text, index) => {
     const x = card.left + card.padding + Math.max(0, text.metrics.left);
     const baseline = card.top + card.padding + index * lineHeight + lineHeight / 2 + (text.metrics.ascent - text.metrics.descent) / 2;
     return Object.freeze({ value: text.value, x, baseline, left: x - text.metrics.left, top: baseline - text.metrics.ascent,
@@ -259,7 +281,7 @@ function drawInstrument(context: HeadHudDrawingContext, element: HeadHudElement,
     case "text": return;
     case "attitude": {
       if (content.geometry.kind === "flight_path_only") {
-        drawFlightPathMarker(context, centerX, top + content.geometry.y_ratio * height, fontSize, theme.focus_outline);
+        drawFlightPathMarker(context, centerX, top + content.geometry.y_ratio * height, fontSize, "#7df4c5");
         return;
       }
       const roll = content.geometry.horizon.rotation_degrees * Math.PI / 180;
@@ -269,14 +291,18 @@ function drawInstrument(context: HeadHudDrawingContext, element: HeadHudElement,
       const directionY = Math.sin(roll);
       const perpendicularX = -directionY;
       const perpendicularY = directionX;
-      const horizonX = centerX + perpendicularX * pitchOffset;
-      const horizonY = centerY + perpendicularY * pitchOffset;
-      line(context, horizonX - directionX * length, horizonY - directionY * length,
-        horizonX + directionX * length, horizonY + directionY * length, theme.text, fontSize);
+      for (const tick of content.geometry.horizon.pitch_ticks) {
+        const tickOffset = pitchOffset + tick.offset_ratio * height;
+        const horizonX = centerX + perpendicularX * tickOffset;
+        const horizonY = centerY + perpendicularY * tickOffset;
+        const halfWidth = tick.half_width_ratio * width;
+        line(context, horizonX - directionX * halfWidth, horizonY - directionY * halfWidth,
+          horizonX + directionX * halfWidth, horizonY + directionY * halfWidth, theme.text, fontSize);
+      }
       line(context, centerX - length * 0.45, centerY, centerX + length * 0.45, centerY, theme.focus_outline, fontSize);
       line(context, centerX, centerY - fontSize * 0.25, centerX, centerY + fontSize * 0.25, theme.focus_outline, fontSize);
       if (content.geometry.flight_path_y_ratio !== null) drawFlightPathMarker(context, centerX,
-        top + content.geometry.flight_path_y_ratio * height, fontSize, theme.focus_outline);
+        top + content.geometry.flight_path_y_ratio * height, fontSize, "#7df4c5");
       return;
     }
     case "heading_tape":

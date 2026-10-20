@@ -37,6 +37,7 @@ class RecordingHeadContext implements HeadHudDrawingContext {
   invalidMetrics = false;
   excessiveInk = false;
   tinyInk = false;
+  degreeFallback = false;
 
   clearRect(...dimensions: [number, number, number, number]): void { this.clears.push(dimensions); }
   fillRect(left: number, top: number, width: number, height: number): void { this.fills.push({ alpha: this.alpha, left, top, width, height, color: this.fillColor }); }
@@ -46,10 +47,10 @@ class RecordingHeadContext implements HeadHudDrawingContext {
   }
   measureText(value: string): HeadHudTextMetrics {
     this.typography.push({ kind: "measure", locale: this.locale, font: this.font, baseline: this.baseline, align: this.align });
-    const width = Array.from(value).reduce((sum, character) => sum + this.fontSize * (character.charCodeAt(0) > 255 ? 1 : 0.65), 0);
+    const width = Array.from(value).reduce((sum, character) => sum + this.fontSize * (character === "°" && this.degreeFallback ? 1.1 : character.charCodeAt(0) > 255 ? 1 : 0.65), 0);
     return { width, left: this.excessiveInk ? width * 10 : 0, right: width,
-      ascent: this.invalidMetrics ? Number.NaN : this.fontSize * (this.tinyInk ? 0.1 : this.negativeAscent ? -0.1 : this.negativeDescent ? 1 : 0.7),
-      descent: this.fontSize * (this.tinyInk ? 0.05 : this.negativeAscent ? 1 : this.negativeDescent ? -0.1 : 0.2) };
+      ascent: this.invalidMetrics ? Number.NaN : this.fontSize * (this.tinyInk || this.degreeFallback && value.trim() === "°" ? 0.1 : this.negativeAscent ? -0.1 : this.negativeDescent ? 1 : 0.7),
+      descent: this.fontSize * (this.tinyInk || this.degreeFallback && value.trim() === "°" ? 0.05 : this.negativeAscent ? 1 : this.negativeDescent ? -0.1 : 0.2) };
   }
   save(): void { this.states.push({ alpha: this.alpha, fontSize: this.fontSize, fillColor: this.fillColor, strokeColor: this.strokeColor }); }
   restore(): void {
@@ -91,17 +92,33 @@ function flightView(aspect = 1280 / 720, model: FlightHudModel = currentSharedHu
 }
 
 describe("Head HUD Canvas preflight and painting", () => {
+  it("keeps a wide fallback degree sign with the numeric heading and angle in portrait", () => {
+    const context = new RecordingHeadContext();
+    context.degreeFallback = true;
+    const camera = new PerspectiveCamera(60, 720 / 1280, 0.05, 100);
+    camera.updateMatrixWorld(true);
+    const stereo = new StereoCamera();
+    stereo.aspect = 0.5;
+    const viewer = captureConfiguredViewerFrame(camera, stereo);
+    const view = createHeadHudView(currentSharedHudFixture({ informationCode: 0 }), viewer, "ja");
+    if (view.kind !== "visible") throw new Error("Missing portrait HUD");
+    const size = headHudCanvasSize(view.layer);
+    const prepared = prepareHeadHudPaint(context, view, size.width, size.height);
+    expect(validateHeadHudPaint(prepared, viewer).kind).toBe("ready");
+    expect(headHudPaintedTextInk(prepared).some(line => line.value.trim() === "°")).toBe(false);
+  });
+
   it.each([0.5, 0.17])("paints shared ADI, heading labels and AoA +5 at shared ratio %s with theme and opacity", (ratio) => {
     const shared = currentSharedHudFixture({ informationCode: 0 });
     const theme = { ...shared.theme, text: "#123456", panel_background: "#234567", muted_text: "#345678", focus_outline: "#456789" };
     const headingTicks = [
           { position_ratio: 0.24, major: true, label: "N" },
-          { position_ratio: 0.51, major: false, label: "" },
+          { position_ratio: 0.51, major: false, label: "NE" },
           { position_ratio: 0.76, major: true, label: "E" }
         ];
     const model = mapSharedHudNodes({ ...shared, theme, layout: { ...shared.layout, opacity: 0.41 } }, (node) => {
       switch (node.content.kind) {
-        case "attitude": return { ...node, content: { ...node.content, geometry: { kind: "attitude", horizon: { rotation_degrees: 17, pitch_offset_ratio: 0.21 }, flight_path_y_ratio: 0.73 } } };
+        case "attitude": return node.content.geometry.kind !== "attitude" ? node : { ...node, content: { ...node.content, geometry: { ...node.content.geometry, horizon: { ...node.content.geometry.horizon, rotation_degrees: 17, pitch_offset_ratio: 0.21 }, flight_path_y_ratio: 0.73 } } };
         case "heading_tape": return { ...node, content: { ...node.content, value: "SHARED 125.75°", ticks: headingTicks } };
         case "linear_gauge": return { ...node, content: { ...node.content, value: "5.0°", position_ratio: ratio } };
         case "text":
@@ -116,20 +133,20 @@ describe("Head HUD Canvas preflight and painting", () => {
     const instrument = (id: string) => {
       const card = preparation.cards.find((candidate) => candidate.element.id === id);
       if (card === undefined) throw new Error(`Missing ${id} card`);
-      return { left: card.left + card.padding, top: card.top + card.padding + (card.label.length + card.value.length) * preparation.fontSize * 1.5,
+      return { left: card.left + card.padding, top: card.top + card.padding + card.value.length * preparation.fontSize * 1.5,
         width: card.width - card.padding * 2, height: card.instrumentHeight };
     };
     drawHeadHud(context, preparation);
     expect(context.fills.every((fill) => fill.alpha === 0.41 && fill.color === theme.panel_background)).toBe(true);
     expect(context.texts.every((text) => text.alpha === view.layer.foregroundAlpha)).toBe(true);
-    expect(context.texts.some((text) => text.value === "SHARED 125.75°")).toBe(true);
+    expect(context.texts.map((text) => text.value).join("")).toContain("SHARED 125.75°");
     const attitude = instrument("hud-attitude");
     const horizon = context.strokes.find((stroke) => stroke.color === theme.text &&
       Math.abs((stroke.startX + stroke.endX) / 2 - (attitude.left + attitude.width / 2 - Math.sin(17 * Math.PI / 180) * 0.21 * attitude.height)) < 1e-6);
     expect(horizon).toBeDefined();
     expect(((horizon?.startY ?? 0) + (horizon?.endY ?? 0)) / 2)
       .toBeCloseTo(attitude.top + attitude.height / 2 + Math.cos(17 * Math.PI / 180) * 0.21 * attitude.height, 9);
-    expect(context.strokes.some((stroke) => stroke.color === theme.focus_outline &&
+    expect(context.strokes.some((stroke) => stroke.color === "#7df4c5" &&
       Math.abs(stroke.startY - (attitude.top + 0.73 * attitude.height)) < 1e-6 &&
       Math.abs(stroke.endX - (attitude.left + attitude.width / 2)) < 1e-6)).toBe(true);
     const heading = instrument("hud-heading");
@@ -137,7 +154,7 @@ describe("Head HUD Canvas preflight and painting", () => {
       const x = heading.left + tick.position_ratio * heading.width;
       expect(context.strokes).toContainEqual({ startX: x, endX: x, startY: heading.top + heading.height * (tick.major ? 0.5 : 0.75),
         endY: heading.top + heading.height, color: tick.major ? theme.text : theme.muted_text, alpha: view.layer.foregroundAlpha });
-      if (tick.major) {
+      if (tick.label !== "") {
         const ink = headHudPaintedTextInk(preparation).find((candidate) => candidate.value === tick.label);
         expect(ink).toBeDefined();
         expect((ink?.left ?? 0) + (ink?.width ?? 0) / 2).toBeCloseTo(x, 9);
@@ -165,7 +182,7 @@ describe("Head HUD Canvas preflight and painting", () => {
     if (preparation.kind !== "ready") throw new Error("Missing FlightPathOnly paint plan");
     const card = preparation.cards.find((candidate) => candidate.element.content.kind === "attitude");
     if (card === undefined) throw new Error("Missing FlightPathOnly card");
-    const markerY = card.top + card.padding + (card.label.length + card.value.length) * preparation.fontSize * 1.5 + 0.37 * card.instrumentHeight;
+    const markerY = card.top + card.padding + card.value.length * preparation.fontSize * 1.5 + 0.37 * card.instrumentHeight;
     drawHeadHud(context, preparation);
     expect(context.strokes).toHaveLength(2);
     expect(context.strokes[0]?.startY).toBeCloseTo(markerY, 9);
@@ -204,7 +221,7 @@ describe("Head HUD Canvas preflight and painting", () => {
     const preparation = prepareHeadHudPaint(context, view, size.width, size.height);
     expect(preparation.kind).toBe("ready");
     if (preparation.kind !== "ready") throw new Error("Signed ink plan missing");
-    expect(preparation.cards.every((card) => [...card.label, ...card.value].every((line) => (field === "negativeAscent" ? line.metrics.ascent : line.metrics.descent) < 0))).toBe(true);
+    expect(preparation.cards.every((card) => card.value.every((line) => (field === "negativeAscent" ? line.metrics.ascent : line.metrics.descent) < 0))).toBe(true);
     expect(headHudPaintedTextInk(preparation).every((ink) => ink.height > 0 && (field === "negativeAscent" ? ink.top > ink.baseline : ink.top + ink.height < ink.baseline))).toBe(true);
     drawHeadHud(context, preparation);
     expect(context.texts.length).toBeGreaterThan(0);
@@ -309,7 +326,8 @@ describe("Head HUD Canvas preflight and painting", () => {
     }
     const wind = preparation.cards.find((card) => card.element.content.kind === "direction");
     if (wind === undefined) throw new Error("Missing wind card");
-    expect(wind.value.map((line) => line.value).join("")).toBe(wind.element.content.value);
+    expect(wind.value.map((line) => line.value).join(""))
+      .toBe(`${wind.element.label} ${wind.element.content.value}`.replaceAll("\n", ""));
   });
 
   it.each(["invalidMetrics", "excessiveInk"] as const)("rejects %s before painting any card", (field) => {

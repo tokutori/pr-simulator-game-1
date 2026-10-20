@@ -41,23 +41,21 @@ export class FlightHudAdapter {
     if (layoutKey !== this.layoutKey) {
       this.root.dataset.shared = "true";
       Object.assign(this.root.style, {
-      left: `max(${String(layout.offset_px[0])}px, env(safe-area-inset-left))`,
-      top: `max(${String(layout.offset_px[1])}px, env(safe-area-inset-top))`,
-      width: `${String(layout.width_px)}px`, maxHeight: `${String(layout.maximum_height_px)}px`,
-      padding: `${String(layout.padding_px[1])}px ${String(layout.padding_px[0])}px`,
-      fontSize: `${String(layout.font_size_px)}px`, color: model.theme.text,
-      background: `color-mix(in srgb, ${model.theme.panel_background} ${String(layout.opacity * 100)}%, transparent)`
+      width: `${String(layout.width_px)}px`, height: `${String(layout.height_px)}px`,
+      fontSize: `${String(layout.font_size_px)}px`, color: model.theme.text
       });
+      this.root.style.setProperty("--hud-left", `${String(layout.offset_px[0])}px`);
+      this.root.style.setProperty("--hud-bottom", `${String(layout.offset_px[1])}px`);
+      this.root.style.setProperty("--hud-card-background", `color-mix(in srgb, ${model.theme.panel_background} ${String(layout.opacity * 100)}%, transparent)`);
+      this.root.style.setProperty("--hud-padding-x", `${String(layout.padding_px[0])}px`);
+      this.root.style.setProperty("--hud-padding-y", `${String(layout.padding_px[1])}px`);
       this.layoutKey = layoutKey;
     }
-    this.tree = this.patch(this.tree, h("div.flight-hud-content", {
-      attrs: { style: `gap: ${String(layout.gap_px[1])}px ${String(layout.gap_px[0])}px` }
-    }, [
+    this.tree = this.patch(this.tree, h("div.flight-hud-content", [
       ...model.groups.map((group) => h("section.flight-hud-group", {
         key: group.id,
         attrs: {
-          "data-group": group.id, "data-placement": group.placement, "data-layout": group.layout.kind,
-          style: `display: ${group.layout.kind === "row" ? "flex" : "grid"}; grid-template-columns: ${group.layout.kind === "grid" ? `repeat(${String(group.layout.columns)}, minmax(0, 1fr))` : "minmax(0, 1fr)"}`
+          "data-group": group.id, "data-placement": group.placement
         }
       }, group.nodes.map((node) => hudNode(node, model, this.clipPrefix))))
     ]));
@@ -73,10 +71,13 @@ function hudNode(node: FlightHudNode, model: FlightHudModel, clipPrefix: string)
   const content = node.content;
   return h("div.flight-hud-node", {
     key: node.id,
-    attrs: { "data-node": node.id, "data-kind": content.kind, "data-tone": content.kind === "text" ? content.tone : "normal" }
+    attrs: { "data-node": node.id, "data-kind": content.kind, "data-tone": content.kind === "text" ? content.tone : "normal",
+      style: `left: ${String(node.bounds.x * 100)}%; top: ${String(node.bounds.y * 100)}%; width: ${String(node.bounds.width * 100)}%; height: ${String(node.bounds.height * 100)}%` }
   }, [
-    h("span.flight-hud-caption", node.label),
-    h("output.flight-hud-value", { attrs: { "aria-label": node.label, "aria-live": content.kind === "text" && content.tone === "warning" ? "polite" : "off" } }, content.value),
+    h("div.flight-hud-header", [
+      ...(node.label === "" ? [] : [h("span.flight-hud-caption", node.label), " "]),
+      h("output.flight-hud-value", { attrs: { "aria-label": node.label || content.value, "aria-live": content.kind === "text" && content.tone === "warning" ? "polite" : "off" } }, content.value)
+    ]),
     ...widget(node, model, clipPrefix)
   ]);
 }
@@ -93,47 +94,48 @@ function widget(node: FlightHudNode, model: FlightHudModel, clipPrefix: string):
       const shapes: VNode[] = [h("defs", [h("clipPath", { attrs: { id: clipId } }, [shape("rect", { x: 26, y: 18, width: 188, height: 144, rx: 72 })])])];
       if (horizon !== null) shapes.push(h("g", { attrs: { "clip-path": `url(#${clipId})` } }, [
         h("g", { attrs: { transform: `rotate(${String(horizon.rotation_degrees)} 120 90) translate(0 ${String(90 + horizon.pitch_offset_ratio * 180)})` } }, [
-          shape("rect", { x: -240, y: -240, width: 720, height: 240, fill: "#397d9a" }),
-          shape("rect", { x: -240, y: 0, width: 720, height: 240, fill: "#9a7047" }),
-          ...[-30, -20, -10, 0, 10, 20, 30].flatMap((pitch) => {
-            const half = pitch === 0 ? 94 : Math.abs(pitch) % 20 === 0 ? 27 : 17;
-            return [shape("path", { d: `M ${String(120 - half)} ${String(-pitch * 2.2)} H ${String(120 + half)}`, stroke: "white", "stroke-width": 2 }),
-              shape("text", { x: 125 + half, y: -pitch * 2.2 + 4, fill: "white", "font-size": 9 }, pitch === 0 ? "" : String(Math.abs(pitch)))];
+          ...horizon.pitch_ticks.flatMap((tick) => {
+            const half = tick.half_width_ratio * 240;
+            return [shape("path", { d: `M ${String(120 - half)} ${String(tick.offset_ratio * 180)} H ${String(120 + half)}`, stroke: model.theme.text, "stroke-width": 2 }),
+              ...(tick.label_degrees === null ? [] : [shape("text", { x: 138 + half, y: tick.offset_ratio * 180 + 4, fill: model.theme.text, "text-anchor": "middle", "font-size": "var(--hud-instrument-font-size)" }, String(tick.label_degrees))])];
           })
         ])
       ]));
       shapes.push(shape("rect", { x: 26, y: 18, width: 188, height: 144, rx: 72, fill: "none", stroke: model.theme.text, "stroke-width": 3 }),
         shape("path", { d: "M 72 91 H 108 L 113 82 H 127 L 132 91 H 168 M 120 86 V 96", fill: "none", stroke: model.theme.focus_outline, "stroke-width": 5 }));
       if (flightPath !== null) shapes.push(shape("circle", { cx: 120, cy: flightPath * 180, r: 5, fill: "none", stroke: "#7df4c5", "stroke-width": 3 }));
-      return [gauge(node, "0 0 240 180", shapes, { width: `${String(model.layout.attitude_size_px[0])}px`, height: `${String(model.layout.attitude_size_px[1])}px` })];
+      return [gauge(node, model, [240, 180], shapes)];
     }
-    case "heading_tape": return [gauge(node, "0 0 220 50", [
+    case "heading_tape": return [gauge(node, model, [220, 50], [
       ...content.ticks.map((tick, index) => h("g", { key: index }, [
         shape("path", { d: `M ${String(tick.position_ratio * 220)} ${tick.major ? "28" : "33"} V 40`, stroke: model.theme.text, "stroke-width": tick.major ? 1.5 : 1 }),
-        shape("text", { x: tick.position_ratio * 220, y: 22, "text-anchor": "middle", fill: model.theme.text, "font-size": 8 }, tick.label)
+        shape("text", { x: tick.position_ratio * 220, y: 22, "text-anchor": "middle", fill: model.theme.text, "font-size": "var(--hud-instrument-font-size)" }, tick.label)
       ])), shape("path", { d: "M 110 28 L 104 38 H 116 Z", fill: model.theme.focus_outline })
     ])];
-    case "direction": return [gauge(node, "0 0 72 72", [
+    case "direction": return [gauge(node, model, [72, 72], [
       shape("circle", { cx: 36, cy: 36, r: 27, fill: "none", stroke: model.theme.muted_text, "stroke-width": 1.5 }),
       shape("path", { d: "M 36 9 V 63 M 9 36 H 63", stroke: model.theme.muted_text }),
-      shape("text", { x: 36, y: 8, "text-anchor": "middle", fill: model.theme.text, "font-size": 7 }, "N"),
+      shape("text", { x: 36, y: 20, "text-anchor": "middle", fill: model.theme.text, "font-size": "var(--hud-instrument-font-size)" }, "N"),
       ...(content.rotation_degrees === null ? [] : [h("g", { attrs: { transform: `rotate(${String(content.rotation_degrees)} 36 36)` } }, [
         shape("path", { d: "M 36 15 L 31 38 L 36 34 L 41 38 Z", fill: model.theme.focus_outline })
       ])])
     ])];
-    case "linear_gauge": return [gauge(node, "0 0 200 42", [
+    case "linear_gauge": return [gauge(node, model, [200, 42], [
       shape("path", { d: "M 10 16 H 190", stroke: model.theme.muted_text, "stroke-width": 3 }),
       ...Array.from({ length: 7 }, (_, index) => shape("path", { d: `M ${String(10 + index * 30)} 12 V 21`, stroke: model.theme.muted_text })),
-      shape("text", { x: 10, y: 39, fill: model.theme.text, "font-size": 9 }, content.minimum_label),
-      shape("text", { x: 190, y: 39, "text-anchor": "end", fill: model.theme.text, "font-size": 9 }, content.maximum_label),
+      shape("text", { x: 10, y: 39, fill: model.theme.text, "font-size": "var(--hud-instrument-font-size)" }, content.minimum_label),
+      shape("text", { x: 190, y: 39, "text-anchor": "end", fill: model.theme.text, "font-size": "var(--hud-instrument-font-size)" }, content.maximum_label),
       ...(content.position_ratio === null ? [] : [shape("polygon", { points: `${String(10 + content.position_ratio * 180)},5 ${String(4 + content.position_ratio * 180)},1 ${String(16 + content.position_ratio * 180)},1`, fill: model.theme.focus_outline })])
     ])];
   }
 }
 
-function gauge(node: FlightHudNode, viewBox: string, children: VNode[], style: Record<string, string> = {}): VNode {
-  return h("svg", { attrs: { viewBox, role: "img", "aria-label": node.label, "data-instrument": node.content.kind,
-    style: Object.entries(style).map(([name, value]) => `${name}: ${value}`).join("; ") } }, children);
+function gauge(node: FlightHudNode, model: FlightHudModel, [width, height]: readonly [number, number], children: VNode[]): VNode {
+  const drawingWidth = node.bounds.width * model.layout.width_px - model.layout.padding_px[0] * 2;
+  const drawingHeight = node.instrument_height_em * model.layout.font_size_px;
+  const scale = Math.min(drawingWidth / width, drawingHeight / height);
+  return h("svg", { attrs: { viewBox: `0 0 ${String(width)} ${String(height)}`, role: "img", "aria-label": node.label || node.content.value, "data-instrument": node.content.kind,
+    style: `height: ${String(node.instrument_height_em)}em; --hud-instrument-font-size: ${String(model.layout.font_size_px / scale)}px` } }, children);
 }
 
 function shape(tag: string, attributes: Record<string, string | number>, text = ""): VNode {

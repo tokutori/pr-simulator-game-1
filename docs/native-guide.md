@@ -17,6 +17,7 @@ OSとCPUに一致する配布アーカイブを展開し、実行ファイルを
 - Linuxの実行時パッケージ: `libx11-6`、`libxcursor1`、`libxrandr2`、`libxi6`、`libwayland-client0`、`libxkbcommon0`、`libxkbcommon-x11-0`、`libvulkan1`。
 - ハッシュ照合: PowerShellは `Get-FileHash -Algorithm SHA256 <archive>`、Linuxは `sha256sum -c SHA256SUMS`、macOSは `shasum -a 256 -c SHA256SUMS` を使用する。
 - ビルド来歴: 配布物の `SOURCE.json` とアーカイブ内の `BUILD-INFO.json` に記録する。
+- 画面の最低対応解像度: UI倍率を適用した後の表示領域で1280×720。推奨は1920×1080以上である。
 
 ## 最初のフライト
 

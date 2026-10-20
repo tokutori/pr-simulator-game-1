@@ -107,6 +107,260 @@ fn hud_node<'view>(hud: &'view GameUiHud, id: &str) -> &'view GameUiHudNode {
 }
 
 #[test]
+fn bottom_hud_preserves_all_information_and_shared_nonoverlapping_rows() {
+    let session = launched();
+    let snapshot = session.snapshot();
+    let mut expected_ids = None;
+    for (width, height, font) in [
+        (1280.0, 720.0, 16.0),
+        (1920.0, 1080.0, 16.0),
+        (1600.0, 900.0, 20.0),
+        (1920.0, 1080.0, 24.0),
+        (600.0, 800.0, 16.0),
+        (360.0, 640.0, 16.0),
+    ] {
+        let mut platform = platform();
+        platform.viewport = GameUiViewport {
+            width,
+            height,
+            root_font_size: font,
+        };
+        let view = game_ui_view(
+            &GameUiState::default(),
+            &context(&session, difficulty(), &platform),
+        )
+        .unwrap();
+        let hud = view.hud.unwrap();
+        let nodes = hud
+            .groups
+            .iter()
+            .flat_map(|group| &group.nodes)
+            .collect::<Vec<_>>();
+        let ids = nodes
+            .iter()
+            .map(|node| node.id.as_str())
+            .collect::<Vec<_>>();
+        if let Some(expected) = &expected_ids {
+            assert_eq!(&ids, expected);
+        } else {
+            expected_ids = Some(ids.iter().map(|id| (*id).to_owned()).collect::<Vec<_>>());
+        }
+        assert!(hud.layout.font_size_px >= 14.0);
+        assert!(hud.layout.offset_px[0] + hud.layout.width_px <= width);
+        if width * 16.0 / font >= 1280.0 && height * 16.0 / font >= 720.0 {
+            assert!(height - hud.layout.offset_px[1] - hud.layout.height_px >= height * 0.5);
+        }
+        assert!(nodes.iter().all(|node| node.id != "hud-map-attribution"));
+        for (index, node) in nodes.iter().enumerate() {
+            let rect = node.bounds;
+            assert!(rect.x >= 0.0 && rect.y >= 0.0 && rect.width > 0.0 && rect.height > 0.0);
+            assert!(rect.x + rect.width <= 1.0 + 1.0e-12 && rect.y + rect.height <= 1.0 + 1.0e-12);
+            for other in &nodes[..index] {
+                let other = other.bounds;
+                assert!(
+                    rect.x + rect.width <= other.x + 1.0e-12
+                        || other.x + other.width <= rect.x + 1.0e-12
+                        || rect.y + rect.height <= other.y + 1.0e-12
+                        || other.y + other.height <= rect.y + 1.0e-12
+                );
+            }
+        }
+    }
+    assert_eq!(session.snapshot(), snapshot);
+}
+
+#[test]
+fn screen_hud_information_profiles_fit_hd_with_overlays_and_enlarged_text() {
+    let running = launched();
+    let mut paused = launched();
+    paused.pause(PauseReason::Manual).unwrap();
+    let mut replay = finalized();
+    replay.enter_replay().unwrap();
+    let mut configurations = [
+        InformationLevel::Full,
+        InformationLevel::Standard,
+        InformationLevel::Minimal,
+        InformationLevel::Realistic,
+    ]
+    .map(|information| difficulty().with_information(information))
+    .to_vec();
+    configurations.extend((0..64).map(|mask| {
+        [
+            HudCue::Telemetry,
+            HudCue::Attitude,
+            HudCue::Wind,
+            HudCue::FlightPath,
+            HudCue::AngleOfAttack,
+            HudCue::Warnings,
+        ]
+        .into_iter()
+        .enumerate()
+        .fold(
+            difficulty().with_information(InformationLevel::Custom),
+            |settings, (index, cue)| settings.with_hud_cue(cue, mask & (1 << index) != 0),
+        )
+    }));
+    for (width, height, font) in [
+        (1280.0, 720.0, 16.0),
+        (1920.0, 1080.0, 16.0),
+        (1600.0, 900.0, 20.0),
+        (1920.0, 1080.0, 24.0),
+    ] {
+        let mut platform = platform();
+        platform.viewport = GameUiViewport {
+            width,
+            height,
+            root_font_size: font,
+        };
+        for settings in &configurations {
+            for (session, state) in [
+                (&running, GameUiState::default()),
+                (&paused, GameUiState::default()),
+                (
+                    &paused,
+                    GameUiState {
+                        pause_overlay: GameUiPauseOverlay::Settings,
+                        ..GameUiState::default()
+                    },
+                ),
+                (
+                    &paused,
+                    GameUiState {
+                        pause_overlay: GameUiPauseOverlay::Help,
+                        ..GameUiState::default()
+                    },
+                ),
+                (
+                    &replay,
+                    GameUiState {
+                        replay_view: GameUiReplayView::Telemetry,
+                        ..GameUiState::default()
+                    },
+                ),
+            ] {
+                let context = context(session, *settings, &platform);
+                let view = game_ui_view(&state, &context).unwrap();
+                let hud = view.hud.as_ref().unwrap();
+                assert!(hud.layout.font_size_px >= 0.875 * font);
+                assert!(hud.layout.offset_px[0] + hud.layout.width_px <= width);
+                assert!(hud.layout.offset_px[1] + hud.layout.height_px <= height);
+                if session.snapshot().phase() == SessionPhase::FlightRunning {
+                    assert!(
+                        height - hud.layout.offset_px[1] - hud.layout.height_px >= height * 0.5
+                    );
+                }
+                let nodes = hud
+                    .groups
+                    .iter()
+                    .flat_map(|group| &group.nodes)
+                    .collect::<Vec<_>>();
+                for (index, node) in nodes.iter().enumerate() {
+                    let rect = node.bounds;
+                    assert!(
+                        rect.x >= 0.0 && rect.y >= 0.0 && rect.width > 0.0 && rect.height > 0.0
+                    );
+                    assert!(rect.x + rect.width <= 1.0 + 1.0e-12);
+                    assert!(rect.y + rect.height <= 1.0 + 1.0e-12);
+                    for other in &nodes[..index] {
+                        let other = other.bounds;
+                        assert!(
+                            rect.x + rect.width <= other.x + 1.0e-12
+                                || other.x + other.width <= rect.x + 1.0e-12
+                                || rect.y + rect.height <= other.y + 1.0e-12
+                                || other.y + other.height <= rect.y + 1.0e-12
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn head_hud_fits_complete_shared_rows_in_lower_band_before_using_upper_space() {
+    let session = launched();
+    let platform = platform();
+    let hud = game_ui_view(
+        &GameUiState::default(),
+        &context(&session, difficulty(), &platform),
+    )
+    .unwrap()
+    .hud
+    .unwrap();
+    let expected = hud
+        .groups
+        .iter()
+        .flat_map(|group| &group.nodes)
+        .map(|node| node.id.clone())
+        .collect::<Vec<_>>();
+    for (width, bottom_height, upper_used) in [(2.0, 0.8, false), (0.9, 0.28, true)] {
+        let space = GameUiHeadHudSpace {
+            size_m: [width, 2.4],
+            top_band_m: [0.05, 0.7],
+            bottom_band_m: [1.5, bottom_height],
+            text_height_m: 0.025,
+        };
+        let GameUiHeadHudFit::Fitted { nodes } = fit_game_ui_head_hud(&hud, space) else {
+            panic!("complete head HUD did not fit")
+        };
+        assert_eq!(
+            nodes.iter().map(|node| node.id.clone()).collect::<Vec<_>>(),
+            expected
+        );
+        assert_eq!(
+            nodes.iter().any(|node| node.bounds.y < 1.5 / 2.4),
+            upper_used
+        );
+        for node in nodes {
+            let top = node.bounds.y * 2.4;
+            let bottom = (node.bounds.y + node.bounds.height) * 2.4;
+            assert!(
+                (top >= 0.05 && bottom <= 0.75 + 1.0e-9)
+                    || (top >= 1.5 && bottom <= 1.5 + bottom_height + 1.0e-9)
+            );
+        }
+    }
+    assert_eq!(
+        fit_game_ui_head_hud(
+            &hud,
+            GameUiHeadHudSpace {
+                size_m: [0.2, 2.4],
+                top_band_m: [0.05, 0.01],
+                bottom_band_m: [1.5, 0.01],
+                text_height_m: 0.025
+            }
+        ),
+        GameUiHeadHudFit::Unavailable
+    );
+    let valid_space = GameUiHeadHudSpace {
+        size_m: [2.0, 2.4],
+        top_band_m: [0.05, 0.7],
+        bottom_band_m: [1.5, 0.8],
+        text_height_m: 0.025,
+    };
+    for value in [f64::NAN, f64::INFINITY, -1.0, f64::MAX] {
+        let mut invalid = hud.clone();
+        invalid.layout.gap_px[0] = value;
+        assert_eq!(
+            fit_game_ui_head_hud(&invalid, valid_space),
+            GameUiHeadHudFit::Unavailable
+        );
+    }
+    for tiny_height in [f64::from_bits(1), f64::MIN_POSITIVE] {
+        assert_eq!(
+            fit_game_ui_head_hud(
+                &hud,
+                GameUiHeadHudSpace {
+                    text_height_m: tiny_height,
+                    ..valid_space
+                }
+            ),
+            GameUiHeadHudFit::Unavailable
+        );
+    }
+}
+
+#[test]
 fn dynamic_providers_follow_typed_sources_after_control_identities_are_renamed() {
     let mut session = finalized();
     session.enter_replay().unwrap();
@@ -1716,12 +1970,18 @@ fn controller_resource_failure_preserves_last_valid_hud_and_exit_in_both_modes()
         assert!(value.contains("最後の有効状態") && value.contains("input disposal failed"));
         let hud = view.hud.unwrap();
         let primary = hud_node(&hud, "hud-primary-readouts");
-        assert_eq!(primary.label, "飛行処理停止");
+        assert_eq!(
+            primary.content.value(),
+            format!(
+                "{:.1} m/s",
+                session.telemetry().unwrap().unwrap().airspeed_mps
+            )
+        );
         assert!(matches!(&hud_node(&hud, "hud-controller-failure").content,
             GameUiHudNodeContent::Text { value, tone: GameUiHudTone::Warning } if value == "停止理由: input disposal failed"));
         assert!(
-            primary.content.value().contains("最後の有効状態")
-                && primary.content.value().contains("0.00 s")
+            hud_node(&hud, "hud-last-valid-state").label == "最後の有効状態"
+                && hud_node(&hud, "hud-last-valid-state").content.value() == "0.00 s"
         );
         assert_eq!(session.snapshot(), before);
         session.pause(PauseReason::Manual).unwrap();
@@ -1781,7 +2041,7 @@ fn head_hud_resource_failure_is_independent_of_controller_and_session() {
     assert!(value.contains("insufficient-view-area"));
     assert_eq!(
         hud_node(&view.hud.unwrap(), "hud-primary-readouts").label,
-        "滑空中"
+        "対気"
     );
     assert_eq!(session.snapshot(), before);
     assert!(
@@ -1906,7 +2166,7 @@ fn vr_resource_failure_panels_preserve_all_controls_without_overlap() {
 fn result_summary_keeps_ordered_navigation_across_targets() {
     let session = finalized();
     let snapshot = session.snapshot();
-    for (width, height) in [(360.0, 300.0), (1280.0, 720.0)] {
+    for (width, height) in [(1280.0, 720.0), (1920.0, 1080.0)] {
         for mode in [
             GameUiPresentationMode::Screen,
             GameUiPresentationMode::PhoneVr,
@@ -2050,10 +2310,7 @@ fn replay_sections_keep_typed_controls_and_readout_sources_across_targets() {
                 );
                 if let Some(hud) = &view.hud {
                     if width == 360.0 {
-                        assert!(
-                            hud.layout.offset_px[1] + hud.layout.maximum_height_px
-                                < height - view.layout.maximum_height_px
-                        );
+                        assert!(hud.layout.offset_px[1] > view.layout.maximum_height_px);
                     } else {
                         assert!(
                             hud.layout.offset_px[0] + hud.layout.width_px
@@ -2098,10 +2355,16 @@ fn screen_pause_sections_and_scroll_regions_keep_hud_and_navigation_disjoint() {
     let mut session = launched();
     session.pause(PauseReason::Manual).unwrap();
     let snapshot = session.snapshot();
-    for (width, height) in [(360.0, 300.0), (800.0, 600.0), (1280.0, 720.0)] {
+    for (width, height, font) in [
+        (1280.0, 720.0, 16.0),
+        (1920.0, 1080.0, 16.0),
+        (1600.0, 900.0, 20.0),
+        (1920.0, 1080.0, 24.0),
+    ] {
         let mut platform = platform();
         platform.viewport.width = width;
         platform.viewport.height = height;
+        platform.viewport.root_font_size = font;
         for information in [
             InformationLevel::Full,
             InformationLevel::Standard,
@@ -2126,13 +2389,19 @@ fn screen_pause_sections_and_scroll_regions_keep_hud_and_navigation_disjoint() {
                 let view = game_ui_view(&state, &context).unwrap();
                 let frame = game_ui_frame(&state, &context, &view, view.view_revision).unwrap();
                 let hud = view.hud.as_ref().unwrap();
-                assert_eq!(hud_node(hud, "hud-primary-readouts").label, "一時停止");
+                assert!(
+                    hud_node(hud, "hud-primary-readouts")
+                        .content
+                        .value()
+                        .contains("m")
+                );
                 assert_eq!(frame.hud, view.hud);
                 assert!(view.layout.scroll_y && !view.layout.passthrough);
                 assert!(view.layout.maximum_height_px > 0.0);
                 assert!(view.layout.maximum_height_px <= height);
-                assert!(hud.layout.maximum_height_px > 0.0);
-                assert!(hud.layout.offset_px[1] + hud.layout.maximum_height_px <= height);
+                assert!(hud.layout.height_px > 0.0);
+                assert!(hud.layout.offset_px[0] + hud.layout.width_px <= width);
+                assert!(hud.layout.offset_px[1] + hud.layout.height_px <= height);
                 let panel = &view.panels[0];
                 let actions = panel
                     .sections
@@ -2157,8 +2426,7 @@ fn screen_pause_sections_and_scroll_regions_keep_hud_and_navigation_disjoint() {
                     assert!(hud.layout.offset_px[0] + hud.layout.width_px < menu_left);
                 } else {
                     assert_eq!(view.layout.shell, GameUiShell::FlightBar);
-                    let menu_top = height - view.layout.maximum_height_px;
-                    assert!(hud.layout.offset_px[1] + hud.layout.maximum_height_px < menu_top);
+                    assert!(hud.layout.offset_px[1] > view.layout.maximum_height_px);
                 }
                 assert_eq!(session.snapshot(), snapshot);
             }
@@ -2269,7 +2537,7 @@ fn hud_uses_the_authoritative_telemetry_and_existing_information_cue_policy() {
     assert_eq!(
         value,
         &format!(
-            "ピッチ {:.0}° · ロール {:.0}°",
+            "ピッチ{:.0}°\nロール{:.0}°",
             telemetry.pitch_rad.to_degrees(),
             telemetry.roll_rad.to_degrees()
         )
@@ -2295,18 +2563,35 @@ fn hud_uses_the_authoritative_telemetry_and_existing_information_cue_policy() {
             telemetry.angle_of_attack_rad.unwrap().to_degrees()
         )
     );
-    let airspeed = format!("対気速度 {:.1} m/s", telemetry.airspeed_mps);
+    let airspeed = format!("{:.1} m/s", telemetry.airspeed_mps);
     let primary = hud_node(&hud, "hud-primary-readouts").content.value();
     assert!(primary.contains(&airspeed));
     assert!(!primary.contains("IAS"));
-    assert!(primary.contains(&format!("対地速度 {:.1} m/s", telemetry.groundspeed_mps)));
+    assert_eq!(
+        hud_node(&hud, "hud-groundspeed").content.value(),
+        format!("{:.1} m/s", telemetry.groundspeed_mps)
+    );
     assert!(matches!(
         hud_node(&hud, "hud-wind").content,
         GameUiHudNodeContent::Direction { .. }
     ));
-    for readout in ["ロール", "水平尾翼", "パイロット移動の目標位置"] {
-        assert!(primary.contains(readout));
-    }
+    assert_eq!(
+        hud_node(&hud, "hud-angular-rates").label,
+        "ロール/ピッチ/ヨー"
+    );
+    assert_eq!(hud_node(&hud, "hud-tail-incidence").label, "水平/垂直尾翼");
+    assert_eq!(
+        hud_node(&hud, "hud-pilot-position").label,
+        "パイロット位置（目標）"
+    );
+    assert_eq!(
+        hud.groups
+            .iter()
+            .flat_map(|group| &group.nodes)
+            .filter(|node| node.id == "hud-pilot-position")
+            .count(),
+        1
+    );
     let minimal = game_ui_view(
         &GameUiState::default(),
         &context(
@@ -2324,8 +2609,19 @@ fn hud_uses_the_authoritative_telemetry_and_existing_information_cue_policy() {
             .iter()
             .all(|group| group.placement != GameUiHudPlacement::Instruments)
     );
-    let primary = hud_node(&minimal, "hud-primary-readouts").content.value();
-    assert!(primary.contains("高度") && primary.contains("時間"));
+    assert_eq!(hud_node(&minimal, "hud-primary-readouts").label, "高度");
+    assert!(
+        hud_node(&minimal, "hud-elapsed")
+            .content
+            .value()
+            .ends_with(" s")
+    );
+    assert!(
+        hud_node(&minimal, "hud-distance")
+            .content
+            .value()
+            .ends_with(" m")
+    );
     let custom_settings = difficulty()
         .with_information(InformationLevel::Custom)
         .with_hud_cue(HudCue::Attitude, false)

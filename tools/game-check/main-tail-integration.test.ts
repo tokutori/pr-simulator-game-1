@@ -867,7 +867,7 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     trial.launch();
     expect(trial.browser.document.body.textContent).toContain("Injected controller creation failure");
     expect(trial.browser.document.body.textContent).toContain("Injected input cleanup failure");
-    expect(trial.browser.document.body.textContent).toContain("最後の有効状態 · 0.00 s");
+    expect(trial.documentRef.querySelector('[data-node="hud-last-valid-state"] output')?.textContent).toBe("0.00 s");
     trial.click("game-flight-abort");
     expect(trial.scene()).toBe("Result");
     expect(trial.free).not.toHaveBeenCalled();
@@ -928,12 +928,12 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     });
     trial.launch();
     expect(trial.browser.document.body.textContent).toContain("Injected Retry reset pose failure");
-    expect(trial.browser.document.body.textContent).toContain("最後の有効状態 · 0.00 s");
+    expect(trial.documentRef.querySelector('[data-node="hud-last-valid-state"] output')?.textContent).toBe("0.00 s");
     expect(trial.documentRef.querySelector('[data-control-id="game-flight-pause"]')).toBeNull();
     expect(trial.documentRef.querySelector('[data-control-id="game-flight-resume"]')).toBeNull();
     trial.frame(20);
     trial.frame(100);
-    expect(trial.browser.document.body.textContent).toContain("最後の有効状態 · 0.00 s");
+    expect(trial.documentRef.querySelector('[data-node="hud-last-valid-state"] output')?.textContent).toBe("0.00 s");
     trial.click("game-flight-abort");
     expect(trial.scene()).toBe("Result");
     expect(trial.free).not.toHaveBeenCalled();

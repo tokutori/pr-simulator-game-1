@@ -403,6 +403,9 @@ npm run measure:web-auto -- http://127.0.0.1:4202/pr-simulator-game-1/ target/we
 - Setup/Briefing/Countdown/HUD/Pause/Resume/Result、Analysis3図・凡例、Replay・技術情報、 実CSV/JSON出力、同条件Retryを操作する。
 - browser・page・console・HTTP・WebGLのエラーを保持し、非同期body取得とcleanupを有界化する。
 - JSON原文、CSV、条件、画像、実WASM hashを結果へ保存する。
+- 水面はLow/Medium/Highを実操作で切り替え、4方位と左右眼で4×4のchunkをカリングする。同じ時刻・camera・materialの単一meshとのRGBA差を各channelで1/255以内とし、可視draw数・送信頂点数・WebGL診断を記録する。
+- Screenの配置はUI倍率適用後の1280×720以上で検査し、1920×1080以上を推奨する。全Scene・overlay・Information・Customの64種類のcueと文字拡大で、要素の保持、最低文字高、非重複、前方中央の空きを確認する。
+- HUDは下端へ配置し、全体背景とスクロールを使用しない。VRの視角・両眼への収まりはScreenの解像度とは別に検査する。
 
 予期しない初期Pauseはfindingとして保持する。
 公開Resumeを一度実行して後段を調べる場合も、最終結果は失敗のままとする。

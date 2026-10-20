@@ -1054,6 +1054,11 @@ fn credits(menu: &mut Menu) {
             include_str!("../../../../assets/time.LICENSE.txt"),
         ),
         (
+            "unicode-width",
+            "表示幅の見積り",
+            include_str!("../../../../assets/unicode-width.LICENSE.txt"),
+        ),
+        (
             "dependencies",
             "その他のソフトウェア",
             "Web: Three.js・Snabbdom（MIT）\nNative: Bevy（MIT / Apache-2.0）と各依存ライブラリ\n配布物には第三者ソフトウェアのライセンス一覧と、対応する著作権・利用条件を同梱する。\nデータ・画像・フォントの一覧と出典:\nhttps://github.com/tokutori/pr-simulator-game-1/blob/main/THIRD_PARTY_DATA.md",
@@ -1721,7 +1726,7 @@ pub(super) fn layout(
             if state.pause_overlay == GameUiPauseOverlay::Settings
                 && (context.platform.presentation_mode != GameUiPresentationMode::Screen
                     || viewport.width
-                        >= super::hud::hud_width(context.platform)
+                        >= super::hud::minimum_hud_width(font)
                             + pause_settings_width
                             + 2.25 * font) =>
         {
@@ -1738,7 +1743,7 @@ pub(super) fn layout(
             if state.replay_view == GameUiReplayView::Telemetry
                 && context.platform.presentation_mode == GameUiPresentationMode::Screen
                 && viewport.width
-                    < super::hud::hud_width(context.platform) + cinematic_width + 2.25 * font =>
+                    < super::hud::minimum_hud_width(font) + cinematic_width + 2.25 * font =>
         {
             GameUiShell::FlightBar
         }
@@ -1749,7 +1754,11 @@ pub(super) fn layout(
     let available_width = (viewport.width - if compact { 1.2 } else { 2.0 } * font).max(1.0);
     let width = match shell {
         GameUiShell::Center => available_width.min(42.0 * font),
-        GameUiShell::Analysis | GameUiShell::FlightBar => viewport.width,
+        GameUiShell::Analysis => viewport.width,
+        GameUiShell::FlightBar if phase == SessionPhase::FlightRunning => {
+            available_width.min(15.5 * font)
+        }
+        GameUiShell::FlightBar => viewport.width,
         GameUiShell::PauseSettings => pause_settings_width,
         GameUiShell::Cinematic => cinematic_width,
     };

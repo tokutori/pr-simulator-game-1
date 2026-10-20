@@ -9,7 +9,7 @@
 ## ゲーム内と配布物の表示
 
 - Titleと一時停止メニューの「クレジット・利用条件」から、出典・加工告知・免責・同梱コードの利用条件を閲覧できる。
-- 飛行画面には短い地図帰属を表示し、データとOSSの詳細はクレジットにまとめる。
+- 地図上には短い帰属を表示し、データとOSSの詳細はクレジットにまとめる。
 - 配布物には本書、必要な著作権・利用条件、第三者ソフトウェアのライセンス一覧を含める。
 - データ内の出典と加工情報も保持する。クレジットの表示によって、再配布時の告知義務がなくなるわけではない。
 
@@ -88,6 +88,7 @@ OpenStreetMapの[ゲーム・シミュレーション向け帰属指針](https:/
 | `assets/earcut.LICENSE.txt` | GeoRust earcutのMITと、派生元MapboxのISCの両告知。ポリゴンの三角形分割に使用する。 |
 | `assets/ryu-js.LICENSE.txt` | ryu-jsのBoost Software License 1.0。数値の文字列変換に使用する。 |
 | `assets/time.LICENSE.txt` | timeと有効な依存ライブラリのMITを選択した告知。保存日時の変換に使用する。 |
+| `assets/unicode-width.LICENSE.txt` | unicode-widthのMITを選択した告知。表示幅の見積りに使用する。 |
 
 WebのThree.js・SnabbdomとNativeのBevyを含む依存ライブラリにも、各ライセンスを適用する。
 Native配布物の第三者ソフトウェア一覧は、固定した`Cargo.lock`と対象構成から生成する。
