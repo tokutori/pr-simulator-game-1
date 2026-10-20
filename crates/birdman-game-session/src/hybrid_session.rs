@@ -3,10 +3,10 @@ use std::sync::OnceLock;
 use birdman_game_core::{
     ActuatorError, BodyPoint, BodyVector, CompositeCgLaunchConditions, ControlMode, CourseAxis,
     DistanceScoreError, DynamicsError, GameSessionConfiguration, GameSessionError, Gravity,
-    HybridAerodynamicLoad, HybridError, HybridMockDefinition, HybridMockError, HybridMockTrim,
-    HybridModel, HybridSurface, MathError, NedPoint, NedVector, SessionScenarioIdentity,
-    TailAngleOfAttackGuard, TailControlProfile, TailFlightScenario, TailFlightScenarioError,
-    TailFlightScenarioParameters, TailIncidence, WindField,
+    HybridAerodynamicLoad, HybridError, HybridMockDefinition, HybridMockError, HybridModel,
+    HybridSurface, MathError, NedPoint, NedVector, SessionScenarioIdentity, TailAngleOfAttackGuard,
+    TailControlProfile, TailFlightScenario, TailFlightScenarioError, TailFlightScenarioParameters,
+    TailIncidence, WindField,
 };
 use birdman_game_format::{
     ConfigurationError, EnvironmentFormatError, EnvironmentIdentity,
@@ -40,6 +40,8 @@ static HYBRID_SURFACES: OnceLock<Result<[HybridSurface<'static>; 3], HybridMockE
 /// Typed preparation failures before any hybrid session state or record is published.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HybridSessionPreparationError {
+    /// The specified operating point cannot be converted to a launch state.
+    Trim(birdman_game_core::SteadyGlideError),
     /// The registered airframe contact points could not be constructed.
     ContactGeometry(AirframeContactError),
     /// The shared launch venue configuration failed validation.
@@ -125,8 +127,9 @@ impl HybridSessionPreparation {
                     .map_err(HybridSessionPreparationError::Math)?,
             )
         };
-        let trim =
-            HybridMockTrim::try_new(definition).map_err(HybridSessionPreparationError::Mock)?;
+        let trim = definition
+            .trim()
+            .map_err(HybridSessionPreparationError::Mock)?;
         let cg_position =
             NedPoint::try_new(0.0, 0.0, -10.5).map_err(HybridSessionPreparationError::Math)?;
         let platform = launch_venue()
@@ -134,7 +137,7 @@ impl HybridSessionPreparation {
             .platform;
         let air_state = trim
             .initial_state_for_ground_launch(cg_position, platform.heading_rad())
-            .map_err(HybridSessionPreparationError::Mock)?;
+            .map_err(HybridSessionPreparationError::Trim)?;
         let wind_velocity = wind
             .velocity_at(cg_position)
             .map_err(|error| {
@@ -164,7 +167,7 @@ impl HybridSessionPreparation {
             definition.aircraft(),
             launch,
             TailIncidence::neutral(),
-            Gravity::try_new(HybridMockTrim::GRAVITY_MPS2)
+            Gravity::try_new(HybridMockDefinition::TRIM_GRAVITY_MPS2)
                 .map_err(HybridSessionPreparationError::Dynamics)?,
             cached_contact_points()?,
             course_axis,
@@ -178,7 +181,7 @@ impl HybridSessionPreparation {
                 surfaces,
             )
             .map_err(HybridSessionPreparationError::Hybrid)?,
-            HybridMockTrim::AIR_DENSITY_KG_M3,
+            HybridMockDefinition::TRIM_AIR_DENSITY_KG_M3,
             wind,
         )
         .map_err(HybridSessionPreparationError::Hybrid)?;

@@ -808,7 +808,8 @@ fn setup_weather_catalog_matches_registered_metadata_and_actual_wind_provider() 
             );
         }
         assert!(
-            (telemetry.airspeed_mps - birdman_game_core::HybridMockTrim::AIRSPEED_MPS).abs()
+            (telemetry.airspeed_mps - birdman_game_core::HybridMockDefinition::TRIM_AIRSPEED_MPS)
+                .abs()
                 < 1e-12
         );
     }

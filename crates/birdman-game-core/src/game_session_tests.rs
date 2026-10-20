@@ -5,7 +5,7 @@ use super::{
 };
 use crate::{
     BodyPoint, BodyVector, CompositeCgLaunchConditions, ControlMode, CourseAxis, Gravity,
-    HybridAerodynamicLoad, HybridMockDefinition, HybridMockTrim, HybridModel, NedPoint, NedVector,
+    HybridAerodynamicLoad, HybridMockDefinition, HybridModel, NedPoint, NedVector,
     TailControlProfile, TailFlightScenario, TailFlightScenarioParameters, TailFlightTickInput,
     TailIncidence, TailPilotIntent, TailPilotPositionCommand, TailRateTarget, WindField,
 };
@@ -67,16 +67,16 @@ fn prepared_launch_projection_is_read_only_and_preserves_the_retry_initial_state
 fn configuration(maximum_ticks: u64) -> GameSessionConfiguration<'static> {
     let definition = Box::leak(Box::new(HybridMockDefinition::try_new().unwrap()));
     let surfaces = Box::leak(Box::new(definition.surfaces().unwrap()));
-    let trim = HybridMockTrim::try_new(definition).unwrap();
+    let trim = definition.trim().unwrap();
     let ground = trim
         .initial_state_for_ground_launch(NedPoint::try_new(0.0, 0.0, -10.5).unwrap(), 0.0)
         .unwrap();
     let launch = CompositeCgLaunchConditions::try_new(
         NedPoint::try_new(0.0, 0.0, -10.5).unwrap(),
         NedVector::try_new(
-            HybridMockTrim::AIRSPEED_MPS * libm::cos(trim.gamma_rad()),
+            HybridMockDefinition::TRIM_AIRSPEED_MPS * libm::cos(trim.gamma_rad()),
             0.0,
-            -HybridMockTrim::AIRSPEED_MPS * libm::sin(trim.gamma_rad()),
+            -HybridMockDefinition::TRIM_AIRSPEED_MPS * libm::sin(trim.gamma_rad()),
         )
         .unwrap(),
         ground.attitude_body_to_ned(),
@@ -91,14 +91,14 @@ fn configuration(maximum_ticks: u64) -> GameSessionConfiguration<'static> {
             definition.aircraft(),
             launch,
             TailIncidence::neutral(),
-            Gravity::try_new(HybridMockTrim::GRAVITY_MPS2).unwrap(),
+            Gravity::try_new(HybridMockDefinition::TRIM_GRAVITY_MPS2).unwrap(),
             &CONTACTS,
             CourseAxis::try_new(1.0, 0.0).unwrap(),
         )
         .unwrap(),
         HybridAerodynamicLoad::try_new(
             HybridModel::try_new(definition.polar().unwrap(), surfaces).unwrap(),
-            HybridMockTrim::AIR_DENSITY_KG_M3,
+            HybridMockDefinition::TRIM_AIR_DENSITY_KG_M3,
             WindField::uniform(NedVector::zero()),
         )
         .unwrap(),

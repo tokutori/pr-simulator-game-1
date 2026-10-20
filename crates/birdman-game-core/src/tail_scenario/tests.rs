@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     AerodynamicEvaluationError, AerodynamicStage, BodyVector, ContactError, DynamicsError,
-    FbwAuthority, HybridMockDefinition, HybridMockTrim, HybridModel, HybridSite, LoadError,
+    FbwAuthority, HybridMockDefinition, HybridModel, HybridSite, LoadError, SteadyGlideTrim,
     TailPilotIntent, TailPilotPositionCommand, TailPilotPositionIntent, TailRateTarget, WindField,
 };
 
@@ -12,17 +12,17 @@ fn near(actual: f64, expected: f64, tolerance: f64) {
     );
 }
 
-fn launch(trim: HybridMockTrim, height: f64, heading: f64) -> CompositeCgLaunchConditions {
+fn launch(trim: SteadyGlideTrim, height: f64, heading: f64) -> CompositeCgLaunchConditions {
     let state = trim
         .initial_state_for_ground_launch(NedPoint::try_new(0.0, 0.0, -height).unwrap(), heading)
         .unwrap();
-    let horizontal_speed = HybridMockTrim::AIRSPEED_MPS * libm::cos(trim.gamma_rad());
+    let horizontal_speed = HybridMockDefinition::TRIM_AIRSPEED_MPS * libm::cos(trim.gamma_rad());
     CompositeCgLaunchConditions::try_new(
         NedPoint::try_new(0.0, 0.0, -height).unwrap(),
         NedVector::try_new(
             horizontal_speed * libm::cos(heading),
             horizontal_speed * libm::sin(heading),
-            -HybridMockTrim::AIRSPEED_MPS * libm::sin(trim.gamma_rad()),
+            -HybridMockDefinition::TRIM_AIRSPEED_MPS * libm::sin(trim.gamma_rad()),
         )
         .unwrap(),
         state.attitude_body_to_ned(),
@@ -41,13 +41,9 @@ fn parameters<'a>(
 ) -> TailFlightScenarioParameters<'a> {
     TailFlightScenarioParameters::try_new(
         definition.aircraft(),
-        launch(
-            HybridMockTrim::try_new(definition).unwrap(),
-            height,
-            heading,
-        ),
+        launch(definition.trim().unwrap(), height, heading),
         TailIncidence::neutral(),
-        Gravity::try_new(HybridMockTrim::GRAVITY_MPS2).unwrap(),
+        Gravity::try_new(HybridMockDefinition::TRIM_GRAVITY_MPS2).unwrap(),
         contacts,
         CourseAxis::try_new(libm::cos(heading), libm::sin(heading)).unwrap(),
     )
@@ -74,13 +70,13 @@ fn tail_scenario_seals_composite_cg_launch_trim_and_shared_telemetry() {
     let wind = WindField::uniform(NedVector::try_new(0.2, -0.1, 0.0).unwrap());
     let load = HybridAerodynamicLoad::try_new(
         HybridModel::try_new(definition.polar().unwrap(), &surfaces).unwrap(),
-        HybridMockTrim::AIR_DENSITY_KG_M3,
+        HybridMockDefinition::TRIM_AIR_DENSITY_KG_M3,
         wind,
     )
     .unwrap();
     let parameters = parameters(&definition, &contacts, 10.5, 0.37);
     let scenario = TailFlightScenario::try_new(parameters, load, profile()).unwrap();
-    let trim = HybridMockTrim::try_new(&definition).unwrap();
+    let trim = definition.trim().unwrap();
     assert_eq!(
         scenario.initial_state().flight_state(),
         trim.initial_state_for_ground_launch(NedPoint::try_new(0.0, 0.0, -10.5).unwrap(), 0.37,)
@@ -102,7 +98,7 @@ fn tail_scenario_seals_composite_cg_launch_trim_and_shared_telemetry() {
     near(telemetry.altitude_m, 10.5, 1.0e-14);
     near(
         telemetry.groundspeed_mps,
-        HybridMockTrim::AIRSPEED_MPS,
+        HybridMockDefinition::TRIM_AIRSPEED_MPS,
         1.0e-14,
     );
     near(telemetry.heading_rad, 0.37, 1.0e-14);
@@ -154,7 +150,7 @@ fn tail_scenario_runner_is_deterministic_in_all_modes_and_scores_exact_terminal_
     let contacts = [BodyPoint::origin()];
     let load = HybridAerodynamicLoad::try_new(
         HybridModel::try_new(definition.polar().unwrap(), &surfaces).unwrap(),
-        HybridMockTrim::AIR_DENSITY_KG_M3,
+        HybridMockDefinition::TRIM_AIR_DENSITY_KG_M3,
         WindField::uniform(NedVector::zero()),
     )
     .unwrap();
@@ -237,7 +233,7 @@ fn tail_scenario_runner_returns_previous_success_state_and_original_failed_stage
     .unwrap();
     let load = HybridAerodynamicLoad::try_new(
         HybridModel::try_new(definition.polar().unwrap(), &surfaces).unwrap(),
-        HybridMockTrim::AIR_DENSITY_KG_M3,
+        HybridMockDefinition::TRIM_AIR_DENSITY_KG_M3,
         wind,
     )
     .unwrap();
@@ -287,12 +283,12 @@ fn tail_scenario_runner_returns_previous_success_state_and_original_failed_stage
 #[test]
 fn tail_scenario_rejects_invalid_contact_and_initial_load_without_creating_a_ready_model() {
     let definition = HybridMockDefinition::try_new().unwrap();
-    let trim = HybridMockTrim::try_new(&definition).unwrap();
+    let trim = definition.trim().unwrap();
     let parameters = TailFlightScenarioParameters::try_new(
         definition.aircraft(),
         launch(trim, 10.5, 0.0),
         TailIncidence::neutral(),
-        Gravity::try_new(HybridMockTrim::GRAVITY_MPS2).unwrap(),
+        Gravity::try_new(HybridMockDefinition::TRIM_GRAVITY_MPS2).unwrap(),
         &[],
         CourseAxis::try_new(1.0, 0.0).unwrap(),
     );
@@ -306,7 +302,7 @@ fn tail_scenario_rejects_invalid_contact_and_initial_load_without_creating_a_rea
     let contacts = [BodyPoint::origin()];
     let load = HybridAerodynamicLoad::try_new(
         HybridModel::try_new(definition.polar().unwrap(), &surfaces).unwrap(),
-        HybridMockTrim::AIR_DENSITY_KG_M3,
+        HybridMockDefinition::TRIM_AIR_DENSITY_KG_M3,
         WindField::uniform(NedVector::zero()),
     )
     .unwrap();
@@ -323,7 +319,7 @@ fn tail_scenario_rejects_invalid_contact_and_initial_load_without_creating_a_rea
         definition.aircraft(),
         reverse,
         TailIncidence::neutral(),
-        Gravity::try_new(HybridMockTrim::GRAVITY_MPS2).unwrap(),
+        Gravity::try_new(HybridMockDefinition::TRIM_GRAVITY_MPS2).unwrap(),
         &contacts,
         CourseAxis::try_new(1.0, 0.0).unwrap(),
     )

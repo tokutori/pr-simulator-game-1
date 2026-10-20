@@ -2,11 +2,11 @@ use super::*;
 
 use birdman_game_core::{
     BodyVector, ControlMode, FlightState, GameSession, Gravity, HybridAerodynamicLoad,
-    HybridMockDefinition, HybridMockTrim, HybridModel, NedPoint, NedVector, SessionEndReason,
-    SessionPhase, SessionTerminalState, TailFlightTickConfig, TailFlightTickInput,
-    TailFlightTickOutcome, TailFlightTickState, TailIncidence, TailPilotIntent,
-    TailPilotPositionCommand, TailPilotPositionMapping, TailRateTarget, UnitQuaternion,
-    WaterContactGeometry, WindField, advance_tail_flight_tick_with_contact, course_distance_score,
+    HybridMockDefinition, HybridModel, NedPoint, NedVector, SessionEndReason, SessionPhase,
+    SessionTerminalState, TailFlightTickConfig, TailFlightTickInput, TailFlightTickOutcome,
+    TailFlightTickState, TailIncidence, TailPilotIntent, TailPilotPositionCommand,
+    TailPilotPositionMapping, TailRateTarget, UnitQuaternion, WaterContactGeometry, WindField,
+    advance_tail_flight_tick_with_contact, course_distance_score,
 };
 use birdman_game_format::{
     AssistanceLevel, DifficultySettings, InformationLevel, TailFlightRecordDocument,
@@ -147,14 +147,14 @@ fn actual_core_contact_selects_the_lower_registered_point_at_the_earliest_fracti
     let definition = HybridMockDefinition::try_new().unwrap();
     let aircraft = definition.aircraft();
     let surfaces = definition.surfaces().unwrap();
-    let trim = HybridMockTrim::try_new(&definition).unwrap();
+    let trim = definition.trim().unwrap();
     let mapping = TailPilotPositionMapping::try_new(&aircraft, trim.pilot_position_m()).unwrap();
     let profile = HybridSessionPreparation::try_default()
         .unwrap()
         .controller_profile();
     let loads = HybridAerodynamicLoad::try_new(
         HybridModel::try_new(definition.polar().unwrap(), &surfaces).unwrap(),
-        HybridMockTrim::AIR_DENSITY_KG_M3,
+        HybridMockDefinition::TRIM_AIR_DENSITY_KG_M3,
         WindField::uniform(NedVector::zero()),
     )
     .unwrap();
@@ -162,7 +162,7 @@ fn actual_core_contact_selects_the_lower_registered_point_at_the_earliest_fracti
         ControlMode::Manual,
         profile,
         mapping,
-        Gravity::try_new(HybridMockTrim::GRAVITY_MPS2).unwrap(),
+        Gravity::try_new(HybridMockDefinition::TRIM_GRAVITY_MPS2).unwrap(),
     );
     let points = registered_contact_points().unwrap();
     let geometry = WaterContactGeometry::try_new(&points).unwrap();
@@ -177,7 +177,9 @@ fn actual_core_contact_selects_the_lower_registered_point_at_the_earliest_fracti
         let max_down = maximum_down_offset(orientation, &points);
         for clearance in [0.001, 1.0] {
             let velocity = orientation
-                .body_to_ned(BodyVector::try_new(HybridMockTrim::AIRSPEED_MPS, 0.0, 0.0).unwrap())
+                .body_to_ned(
+                    BodyVector::try_new(HybridMockDefinition::TRIM_AIRSPEED_MPS, 0.0, 0.0).unwrap(),
+                )
                 .unwrap()
                 .components();
             let flight = FlightState::try_new(

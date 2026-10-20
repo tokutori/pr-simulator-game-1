@@ -354,6 +354,7 @@ M_O^B=M_{O,static}^B+\sum_i r_i^B\times\Delta F_i^B
 
 - 公開既定は`bpg041-playable-hybrid-mock`のmodel 3、catalog 5 / scenario 5、`bpg040-tail-rate-feedback`のcontroller 3である。
 - geometry、strip、anchor、全機polarは`HybridMockDefinition`が所有・検証し、固定サイズの値と借用viewで提供する。
+- 定常滑空は汎用の`SteadyGlideTrim`が、質量モデル・全機polar・`SteadyGlideConditions`から求める。指定した迎角区間で力の釣合を解き、合成重心まわりのモーメントを満たすパイロット位置を求める。
 - 現行catalog・scenario・controllerの組合せを登録する。保存snapshotは記録時のデータから閲覧する。
 
 | 面 | 投影面積 / span / MAC [SI] | strip | body quarter-chordとframe |

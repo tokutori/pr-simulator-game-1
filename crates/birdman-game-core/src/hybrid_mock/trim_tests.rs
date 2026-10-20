@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
-    Gravity, HybridAerodynamicLoad, HybridModel, PilotAcceleration, TailIncidence,
-    TailPilotPositionCommand, TailPilotPositionIntent, WindField, advance,
+    Gravity, HybridAerodynamicLoad, HybridModel, NedPoint, NedVector, PilotAcceleration,
+    TailIncidence, TailPilotPositionCommand, TailPilotPositionIntent, WindField, advance,
     pilot_target_acceleration,
 };
 
@@ -15,7 +15,7 @@ fn near(actual: f64, expected: f64, tolerance: f64) {
 #[test]
 fn pwl_trim_matches_the_independent_current_model_reference() {
     let definition = HybridMockDefinition::try_new().unwrap();
-    let trim = HybridMockTrim::try_new(&definition).unwrap();
+    let trim = definition.trim().unwrap();
     near(trim.alpha_rad(), 0.0491134357768, 1.0e-7);
     near(trim.gamma_rad(), -0.0488331542674, 1.0e-7);
     near(trim.theta_rad(), 0.0002802815094, 1.0e-7);
@@ -38,7 +38,7 @@ fn actual_hybrid_wrench_and_coupled_core_preserve_steady_glide_balance() {
 #[test]
 fn playable_trim_rebalances_the_new_tail_moment_without_changing_launch_speed_or_mapping_limits() {
     let definition = HybridMockDefinition::try_new().unwrap();
-    let trim = HybridMockTrim::try_new(&definition).unwrap();
+    let trim = definition.trim().unwrap();
     near(trim.alpha_rad(), 0.0491134357768, 1.0e-7);
     near(trim.gamma_rad(), -0.0488331542674, 1.0e-7);
     assert!((-0.4..0.4).contains(&trim.pilot_position_m()));
@@ -60,7 +60,7 @@ fn playable_trim_rebalances_the_new_tail_moment_without_changing_launch_speed_or
 fn assert_steady_glide_balance() {
     let definition = HybridMockDefinition::try_new().unwrap();
     let aircraft = definition.aircraft();
-    let trim = HybridMockTrim::try_new(&definition).unwrap();
+    let trim = definition.trim().unwrap();
     let state = trim
         .initial_state_for_ground_launch(NedPoint::try_new(0.0, 0.0, -10.5).unwrap(), 0.0)
         .unwrap();
@@ -68,7 +68,7 @@ fn assert_steady_glide_balance() {
     let hybrid = HybridModel::try_new(definition.polar().unwrap(), &surfaces).unwrap();
     let load = HybridAerodynamicLoad::try_new(
         hybrid,
-        HybridMockTrim::AIR_DENSITY_KG_M3,
+        HybridMockDefinition::TRIM_AIR_DENSITY_KG_M3,
         WindField::uniform(NedVector::zero()),
     )
     .unwrap();
@@ -85,7 +85,7 @@ fn assert_steady_glide_balance() {
         near(*force, 0.0, 1.0e-5);
     }
     near(
-        force_ned[2] + 100.0 * HybridMockTrim::GRAVITY_MPS2,
+        force_ned[2] + 100.0 * HybridMockDefinition::TRIM_GRAVITY_MPS2,
         0.0,
         1.0e-5,
     );
@@ -102,7 +102,7 @@ fn assert_steady_glide_balance() {
         &aircraft,
         &state,
         acceleration,
-        Gravity::try_new(HybridMockTrim::GRAVITY_MPS2).unwrap(),
+        Gravity::try_new(HybridMockDefinition::TRIM_GRAVITY_MPS2).unwrap(),
         &load,
         0.01,
     )
@@ -126,7 +126,7 @@ fn assert_steady_glide_balance() {
 #[test]
 fn nonzero_heading_restores_the_supplied_composite_cg_pose_and_ground_velocity() {
     let definition = HybridMockDefinition::try_new().unwrap();
-    let trim = HybridMockTrim::try_new(&definition).unwrap();
+    let trim = definition.trim().unwrap();
     let position = NedPoint::try_new(12.0, -8.0, -10.5).unwrap();
     for heading in [-core::f64::consts::FRAC_PI_4, 0.63] {
         let state = trim
@@ -195,7 +195,7 @@ fn nonzero_heading_restores_the_supplied_composite_cg_pose_and_ground_velocity()
 fn neutral_and_missing_position_intents_preserve_trim_instead_of_zeroing_the_pilot() {
     let definition = HybridMockDefinition::try_new().unwrap();
     let aircraft = definition.aircraft();
-    let trim = HybridMockTrim::try_new(&definition).unwrap();
+    let trim = definition.trim().unwrap();
     let mapping = trim.pilot_mapping().unwrap();
     let previous = mapping.trim_target();
     for (intent, expected) in [

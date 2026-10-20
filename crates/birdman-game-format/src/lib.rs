@@ -3,6 +3,7 @@
 
 extern crate alloc;
 
+pub mod aircraft;
 mod environment;
 mod flight_record;
 mod personal_best;
