@@ -3118,7 +3118,11 @@ fn advance_step(
         }
         VerificationStage::Replay => {
             require_phase(phase, SessionPhase::Replay)?;
-            if verification.stage_started.elapsed() >= Duration::from_millis(250)
+            if session.ui.replay_view == GameUiReplayView::Cinematic {
+                queue_ui_control(commands, "game-replay-view-mode", None);
+            } else if session.ui.replay_view != GameUiReplayView::Telemetry {
+                return Err("Published Replay view control did not select Telemetry".into());
+            } else if verification.stage_started.elapsed() >= Duration::from_millis(250)
                 && verification.readiness.can_capture()
             {
                 verification.capture(commands, "04d-replay.png");
