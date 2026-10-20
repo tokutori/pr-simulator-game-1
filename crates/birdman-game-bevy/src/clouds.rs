@@ -176,6 +176,11 @@ pub(crate) fn spawn(
     } = prepare(sky).expect("登録cloud packetが不正");
     let mut entity = commands.spawn((
         CloudLayer,
+        if mesh.is_some() {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        },
         MeshMaterial3d(materials.add(CloudMaterial {
             atlas: images.add(atlas),
             normals: images.add(normals),
@@ -210,6 +215,11 @@ pub(crate) fn replace(
     } = prepared;
     let previous_mesh = mesh_handle.map(|handle| handle.0.id());
     let mut entity = commands.entity(entity);
+    entity.insert(if mesh.is_some() {
+        Visibility::Inherited
+    } else {
+        Visibility::Hidden
+    });
     if let Some(mesh) = mesh {
         entity.insert(Mesh3d(meshes.add(mesh)));
     } else {
@@ -230,6 +240,104 @@ pub(crate) fn replace(
 mod tests {
     use super::*;
     use bevy::mesh::VertexAttributeValues;
+
+    #[test]
+    fn cloud_replacement_restores_material_extraction_visibility_after_an_empty_mesh() {
+        use bevy::{
+            asset::{AssetApp, AssetPlugin},
+            camera::{
+                primitives::Frustum,
+                visibility::{VisibilityPlugin, VisibilitySystems, VisibleEntities},
+            },
+            ecs::system::RunSystemOnce,
+            mesh::skinning::SkinnedMeshInverseBindposes,
+        };
+
+        #[derive(Resource, Default)]
+        struct VisibilityChanges(Vec<bool>);
+
+        type CloudSurface = (
+            Entity,
+            Option<&'static Mesh3d>,
+            &'static MeshMaterial3d<CloudMaterial>,
+        );
+
+        let sky = birdman_game_session::bundled_environment()
+            .unwrap()
+            .document()
+            .sky;
+        let mut app = App::new();
+        app.add_plugins((
+            MinimalPlugins,
+            AssetPlugin::default(),
+            TransformPlugin,
+            VisibilityPlugin,
+        ))
+        .init_asset::<Mesh>()
+        .init_asset::<SkinnedMeshInverseBindposes>()
+        .init_asset::<Image>()
+        .init_asset::<CloudMaterial>()
+        .init_resource::<VisibilityChanges>()
+        .add_systems(
+            PostUpdate,
+            (|layers: Query<&ViewVisibility, (With<CloudLayer>, Changed<ViewVisibility>)>,
+              mut changes: ResMut<VisibilityChanges>| {
+                changes
+                    .0
+                    .extend(layers.iter().map(|visibility| visibility.get()));
+            })
+            .after(VisibilitySystems::MarkNewlyHiddenEntitiesInvisible),
+        );
+        app.world_mut().spawn((
+            Camera::default(),
+            Frustum::default(),
+            VisibleEntities::default(),
+        ));
+        app.world_mut()
+            .run_system_once(
+                move |mut commands: Commands,
+                      mut meshes: ResMut<Assets<Mesh>>,
+                      mut images: ResMut<Assets<Image>>,
+                      mut materials: ResMut<Assets<CloudMaterial>>| {
+                    spawn(
+                        &mut commands,
+                        &mut meshes,
+                        &mut images,
+                        &mut materials,
+                        Some(sky),
+                    );
+                },
+            )
+            .unwrap();
+        app.update();
+        for next_sky in [None, Some(sky)] {
+            app.world_mut()
+                .run_system_once(
+                    move |mut commands: Commands,
+                          mut meshes: ResMut<Assets<Mesh>>,
+                          mut images: ResMut<Assets<Image>>,
+                          mut materials: ResMut<Assets<CloudMaterial>>,
+                          layers: Query<CloudSurface, With<CloudLayer>>| {
+                        let (entity, mesh, material) = layers.single().unwrap();
+                        replace(
+                            &mut commands,
+                            entity,
+                            &mut meshes,
+                            &mut images,
+                            mesh,
+                            &mut materials.get_mut(material.0.id()).unwrap(),
+                            prepare(next_sky).unwrap(),
+                        );
+                    },
+                )
+                .unwrap();
+            app.update();
+        }
+        assert_eq!(
+            app.world().resource::<VisibilityChanges>().0,
+            [true, false, true]
+        );
+    }
 
     #[test]
     fn production_mesh_and_atlas_project_the_shared_packet() {
@@ -320,15 +428,17 @@ mod tests {
                 );
             app.update();
             let world = app.world_mut();
-            let (mesh, material, layers) = world
+            let (mesh, material, layers, visibility) = world
                 .query_filtered::<(
                     Option<&Mesh3d>,
                     &MeshMaterial3d<CloudMaterial>,
                     &RenderLayers,
+                    &Visibility,
                 ), With<CloudLayer>>()
                 .single(world)
                 .unwrap();
             assert!(mesh.is_none());
+            assert_eq!(*visibility, Visibility::Hidden);
             assert!(layers.intersects(&RenderLayers::layer(1)));
             assert!(
                 world

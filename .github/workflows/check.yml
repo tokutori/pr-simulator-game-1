@@ -38,7 +38,11 @@ jobs:
           node-version: '24.14.1'
           cache: npm
       - name: Install pinned Rust toolchain
-        run: rustup toolchain install --no-self-update
+        shell: bash
+        run: |
+          rustup toolchain install --no-self-update
+          rustup default "$(rustup show active-toolchain | cut -d ' ' -f1)"
+          rustup toolchain uninstall stable
       - name: Install native Linux window dependencies
         if: runner.os == 'Linux'
         run: |

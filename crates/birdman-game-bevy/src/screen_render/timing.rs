@@ -181,10 +181,19 @@ struct TimingPacket {
     shadow: ScreenShadowMap,
     water_quality: LakeWaterQuality,
     preparation: PipelinePreparation,
+    #[cfg(feature = "verify-harness")]
+    eligible: bool,
+    #[cfg(feature = "verify-harness")]
+    pending_materials: usize,
 }
 
 fn observe_preparation(packet: Res<TimingPacket>, mut main: ResMut<MainWorld>) {
     if let Some(mut readout) = main.get_resource_mut::<TimingReadout>() {
+        #[cfg(feature = "verify-harness")]
+        {
+            readout.eligible = packet.eligible;
+            readout.pending_materials = packet.pending_materials;
+        }
         readout.preparation_epoch = packet.epoch;
         if readout.preparation != packet.preparation {
             readout.preparation = packet.preparation.clone();
@@ -233,6 +242,10 @@ fn extract_packet(
         shadow: rendering.snapshot().shadow,
         water_quality: rendering.snapshot().water_quality,
         preparation: PipelinePreparation::Pending,
+        #[cfg(feature = "verify-harness")]
+        eligible: active,
+        #[cfg(feature = "verify-harness")]
+        pending_materials: 0,
     });
 }
 
@@ -260,7 +273,7 @@ fn begin_work(world: &mut World) {
     if !packet.active {
         return;
     }
-    packet.preparation = scene_preparation(world);
+    packet.preparation = scene_preparation(world, &mut packet);
     if packet.preparation != PipelinePreparation::Ready
         && !world.resource::<TimingMode>().full_diagnostics()
     {
@@ -330,11 +343,20 @@ fn add_binned_pipelines<B: BinnedPhaseItem>(
     }
 }
 
-fn scene_preparation(world: &World) -> PipelinePreparation {
-    if world
+fn scene_preparation(world: &World, _packet: &mut TimingPacket) -> PipelinePreparation {
+    let pending = world
         .get_resource::<PendingMeshMaterialQueues>()
-        .is_some_and(|queues| queues.values().any(|queue| !queue.current_frame.is_empty()))
+        .map_or(0, |queues| {
+            queues
+                .values()
+                .map(|queue| queue.current_frame.len())
+                .sum::<usize>()
+        });
+    #[cfg(feature = "verify-harness")]
     {
+        _packet.pending_materials = pending;
+    }
+    if pending > 0 {
         return PipelinePreparation::Pending;
     }
     let Some(cache) = world.get_resource::<PipelineCache>() else {
@@ -435,6 +457,10 @@ pub(crate) struct TimingReadout {
     pub(crate) preparation: PipelinePreparation,
     pub(crate) preparation_epoch: u32,
     pub(super) preparation_changed: bool,
+    #[cfg(feature = "verify-harness")]
+    pub(crate) eligible: bool,
+    #[cfg(feature = "verify-harness")]
+    pub(crate) pending_materials: usize,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -1105,6 +1131,10 @@ pub(crate) mod tests {
                     shadow: ScreenShadowMap::Full,
                     water_quality: LakeWaterQuality::High,
                     preparation: PipelinePreparation::Pending,
+                    #[cfg(feature = "verify-harness")]
+                    eligible: active,
+                    #[cfg(feature = "verify-harness")]
+                    pending_materials: 0,
                 });
                 for _ in 0..2 {
                     let render_app = app.get_sub_app_mut(RenderApp).unwrap();

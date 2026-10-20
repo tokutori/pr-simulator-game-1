@@ -429,7 +429,9 @@ pub(crate) fn observe_auto(world: &mut World) {
             .phase(),
     );
     let result = world.resource_scope(|world, mut rendering: Mut<NativeScreenRender>| {
-        let scene_request = rendering.controller.set_scene(scene, now_ms)?;
+        let scene_request = rendering
+            .controller
+            .set_scope(scene.screen_render_scope(), now_ms)?;
         if scene_request.is_some() {
             return Ok(scene_request);
         }
