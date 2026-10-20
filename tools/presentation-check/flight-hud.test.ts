@@ -78,6 +78,11 @@ describe("Flight HUD typed DOM projection", () => {
       expect(root.querySelector('[data-instrument="attitude"] g > g')?.getAttribute("transform")).toBe("rotate(-11 120 90) translate(0 94.5)");
       expect(root.querySelector('[data-instrument="attitude"] > circle')?.getAttribute("cy")).toBe("108");
       expect(root.querySelector('[data-instrument="heading_tape"] text')?.textContent).toBe("CUSTOM");
+      hud.render(mapSharedHudNodes(model, node => node.content.kind === "heading_tape"
+        ? { ...node, bounds: { ...node.bounds, width: (110 + model.layout.padding_px[0] * 2) / model.layout.width_px }, instrument_height_em: 2.5 }
+        : node));
+      const heading = root.querySelector<SVGElement>('[data-instrument="heading_tape"]');
+      expect(Number.parseFloat(heading?.style.getPropertyValue("--hud-instrument-font-size") ?? "0")).toBeCloseTo(model.layout.font_size_px * 2, 9);
       expect(root.querySelector('[data-instrument="linear_gauge"] polygon')?.getAttribute("points")).toBe("145,5 139,1 151,1");
       expect(root.querySelector('[data-instrument="linear_gauge"]')?.textContent).toContain("LOWHIGH");
       expect(root.querySelector('[data-instrument="direction"] g')?.getAttribute("transform")).toBe("rotate(90 36 36)");

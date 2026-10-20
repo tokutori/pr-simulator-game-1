@@ -363,9 +363,8 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
         const viewModule = await import(input.view) as typeof import("../../web/src/presentation/head-hud-view.js");
         const canvasModule = await import(input.canvas) as typeof import("../../web/src/presentation/head-hud-canvas.js");
         const model = modelModule.projectSharedFlightHudModel(shared.hud, shared.theme);
-        const measurements = [];
+        const scenario = input.scenario;
         let image: string | null = null;
-        for (const scenario of input.scenarios) {
           const elapsed = [];
           let last: ReturnType<typeof viewModule.createHeadHudView> = { kind: "absent" };
           for (let iteration = 0; iteration < 30; iteration++) {
@@ -388,16 +387,15 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
             canvasModule.drawHeadHud(drawingContext, validated);
             if (scenario.name === "landscape") image = canvas.toDataURL("image/png");
           }
-          measurements.push({ name: scenario.name, outcome: last.kind, samples: elapsed.length, medianMilliseconds: elapsed[15], p95Milliseconds: elapsed[28] });
-        }
-        return { measurements, image, hudBytes: new TextEncoder().encode(JSON.stringify({ layout: model.layout, groups: model.groups })).length };
-      }, { scenarios: [scenario], model: new URL("../src/presentation/flight-hud-model.ts", moduleUrl).href,
+        return { measurement: { name: scenario.name, outcome: last.kind, samples: elapsed.length, medianMilliseconds: elapsed[15], p95Milliseconds: elapsed[28] },
+          image, hudBytes: new TextEncoder().encode(JSON.stringify({ layout: model.layout, groups: model.groups })).length };
+      }, { scenario, model: new URL("../src/presentation/flight-hud-model.ts", moduleUrl).href,
         view: new URL("../src/presentation/head-hud-view.ts", moduleUrl).href, canvas: new URL("../src/presentation/head-hud-canvas.ts", moduleUrl).href });
       const coverage = await profiler.send("Profiler.takePreciseCoverage");
       const calls = coverage.result.flatMap(script => script.functions).filter(item => item.functionName === "game_ui_head_hud_fit_json")
         .reduce((sum, item) => sum + (item.ranges[0]?.count ?? 0), 0);
       assert.ok(calls > 0, "The production shared Head fit was not profiled");
-      headResults.push({ ...headMeasurement.measurements[0], hudBytes: headMeasurement.hudBytes, wasmCallsPerFrame: calls / 30,
+      headResults.push({ ...headMeasurement.measurement, hudBytes: headMeasurement.hudBytes, wasmCallsPerFrame: calls / 30,
         maximumInputBytesPerFrame: calls / 30 * (headMeasurement.hudBytes + 1024) });
       if (scenario.name === "landscape") {
         if (headMeasurement.image === null) throw new Error("Missing Head HUD image");
