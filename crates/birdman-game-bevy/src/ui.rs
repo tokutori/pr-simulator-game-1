@@ -3461,7 +3461,12 @@ mod tests {
                 .core_session()
                 .snapshot();
             let retained_hud = app.world().resource::<RetainedUi>().hud.shell;
-            for (width, height) in [(1280, 720), (800, 600), (360, 300), (1280, 720)] {
+            for (width, height, scale) in [
+                (1280, 720, 1.0),
+                (1920, 1080, 1.0),
+                (1600, 900, 1.25),
+                (1280, 720, 1.0),
+            ] {
                 for mut window in app
                     .world_mut()
                     .query::<&mut Window>()
@@ -3475,6 +3480,7 @@ mod tests {
                     camera.computed.target_info.as_mut().unwrap().physical_size = dimensions;
                     camera.viewport.as_mut().unwrap().physical_size = dimensions;
                 }
+                app.world_mut().resource_mut::<UiScale>().0 = scale;
                 for overlay in [
                     GameUiPauseOverlay::Menu,
                     GameUiPauseOverlay::Settings,
