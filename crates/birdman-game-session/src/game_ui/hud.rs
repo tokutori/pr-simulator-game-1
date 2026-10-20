@@ -95,7 +95,7 @@ pub(super) fn game_ui_hud(
     let heading = telemetry.heading_rad.to_degrees().rem_euclid(360.0);
     let time =
         (sample.tick_index as f64 + sample.fraction) / f64::from(birdman_game_core::PHYSICS_HZ);
-    let attitude_text = format!("ピッチ {pitch:.0}°\nロール {roll:.0}°");
+    let attitude_text = format!("ピッチ{pitch:.0}°\nロール{roll:.0}°");
     let alpha = telemetry.angle_of_attack_rad.map(f64::to_degrees);
     let [wind_north, wind_east, wind_down] = telemetry.wind_velocity_ned_mps.components();
     let velocity = sample.flight_state.datum_velocity_ned().components();
@@ -176,40 +176,36 @@ pub(super) fn game_ui_hud(
     }
     if full || custom {
         if attitude_visible {
-            let rates = sample.flight_state.angular_velocity_body().components();
-            for ((id, label), rate) in [
-                ("hud-roll-rate", "ロール"),
-                ("hud-pitch-rate", "ピッチ"),
-                ("hud-yaw-rate", "ヨー"),
-            ]
-            .into_iter()
-            .zip(rates)
-            {
-                primary.push(text_node(
-                    id,
-                    label,
-                    format!("{:.1} °/s", rate.to_degrees()),
-                ));
-            }
+            let [roll_rate, pitch_rate, yaw_rate] =
+                sample.flight_state.angular_velocity_body().components();
+            primary.push(text_node(
+                "hud-angular-rates",
+                "ロール/ピッチ/ヨー",
+                format!(
+                    "{:.1}/{:.1}/{:.1} °/s",
+                    roll_rate.to_degrees(),
+                    pitch_rate.to_degrees(),
+                    yaw_rate.to_degrees()
+                ),
+            ));
         }
         if telemetry_visible {
             primary.push(text_node(
-                "hud-elevator-incidence",
-                "水平尾翼",
-                format!("{:.1}°", sample.actuators.elevator_rad().to_degrees()),
-            ));
-            primary.push(text_node(
-                "hud-rudder-incidence",
-                "垂直尾翼",
-                format!("{:.1}°", sample.actuators.rudder_rad().to_degrees()),
+                "hud-tail-incidence",
+                "水平/垂直尾翼",
+                format!(
+                    "{:.1}/{:.1}°",
+                    sample.actuators.elevator_rad().to_degrees(),
+                    sample.actuators.rudder_rad().to_degrees()
+                ),
             ));
             primary.push(text_node(
                 "hud-pilot-position",
                 "パイロット位置（目標）",
                 format!(
-                    "{:+.2} m（{}）",
+                    "{:+.2} ({}) m",
                     sample.flight_state.pilot_position_m(),
-                    target.map_or_else(|| "—".to_owned(), |target| format!("{target:+.2} m")),
+                    target.map_or_else(|| "—".to_owned(), |target| format!("{target:+.2}")),
                 ),
             ));
         }
@@ -219,7 +215,7 @@ pub(super) fn game_ui_hud(
         instruments.push(hud_node(
             "hud-attitude",
             if adi.horizon().is_some() {
-                "姿勢"
+                ""
             } else {
                 "飛行経路"
             },
@@ -246,10 +242,10 @@ pub(super) fn game_ui_hud(
     if wind_visible {
         instruments.push(hud_node(
             "hud-wind",
-            "風",
+            "風 m/s",
             GameUiHudNodeContent::Direction {
                 value: format!(
-                    "水平 {:.1}\n{} {:.1} m/s",
+                    "\n水平{:.1}\n{}{:.1}",
                     wind_north.hypot(wind_east),
                     if wind_down < 0.0 { "上昇" } else { "下降" },
                     wind_down.abs()
@@ -372,7 +368,7 @@ fn rounded_bearing(value: f64) -> u32 {
 }
 
 pub(super) fn minimum_hud_width(font: f64) -> f64 {
-    19.0 * font
+    32.0 * (0.875 * font).max(14.0)
 }
 
 fn hud_layout(
@@ -430,7 +426,7 @@ fn hud_layout(
         } else {
             [0.6 * font, 0.4 * font]
         },
-        gap_px: [0.5 * font, 0.25 * font],
+        gap_px: [0.45 * font, 0.25 * font],
         attitude_size_px: if compact {
             [4.8 * font, 3.2 * font]
         } else {
@@ -453,12 +449,18 @@ pub(super) fn position_hud(
 ) -> Vec<GameUiHudGroup> {
     let [padding_x, padding_y] = layout.padding_px;
     let content_width = (layout.width_px - 2.0 * padding_x).max(1.0);
-    let side_by_side = allow_side_by_side
-        && content_width >= 48.0 * layout.font_size_px
-        && !readouts.is_empty()
-        && !instruments.is_empty();
+    let minimum_readout_width = 14.0 * layout.font_size_px;
+    let minimum_instrument_width = instruments
+        .iter()
+        .map(|node| hud_node_width(node, layout))
+        .sum::<f64>()
+        + instruments.len().saturating_sub(1) as f64 * layout.gap_px[0];
+    let spare_width =
+        content_width - minimum_readout_width - minimum_instrument_width - layout.gap_px[0];
+    let side_by_side =
+        allow_side_by_side && spare_width >= 0.0 && !readouts.is_empty() && !instruments.is_empty();
     let readout_width = if side_by_side {
-        content_width * 0.46
+        minimum_readout_width + spare_width * 0.45
     } else {
         content_width
     };
@@ -640,11 +642,13 @@ fn hud_node_height(node: &mut GameUiHudNode, width: f64, layout: &GameUiHudLayou
             .sum::<f64>()
             .max(1.0)
     };
-    let text_height = if is_text {
-        lines(&format!("{} {}", node.label, node.content.value())) * font * 1.5
-    } else {
-        (lines(&node.label) + lines(node.content.value())) * font * 1.5
-    };
+    let text_height = lines(&format!(
+        "{}{}{}",
+        node.label,
+        if node.label.is_empty() { "" } else { " " },
+        node.content.value()
+    )) * font
+        * 1.5;
     node.instrument_height_em = match node.content {
         GameUiHudNodeContent::Text { .. } => 0.0,
         GameUiHudNodeContent::Attitude { .. } => {
@@ -685,9 +689,18 @@ mod geometry_tests {
         assert!((adi.flight_path_y_ratio().unwrap() - (90.0 + 6.6) / 180.0).abs() < 1.0e-12);
         assert_eq!(geometry.angle_of_attack_ratio, Some(0.5));
         assert_eq!(geometry.heading_ticks.len(), 13);
-        assert_eq!(geometry.heading_ticks[0].label, "300");
+        assert!(geometry.heading_ticks[0].major && geometry.heading_ticks[0].label.is_empty());
         assert_eq!(geometry.heading_ticks[6].label, "N");
-        assert_eq!(geometry.heading_ticks[12].label, "060");
+        assert!(geometry.heading_ticks[12].major && geometry.heading_ticks[12].label.is_empty());
+        assert_eq!(
+            adi.horizon()
+                .unwrap()
+                .pitch_ticks
+                .iter()
+                .filter_map(|tick| tick.label_degrees)
+                .collect::<Vec<_>>(),
+            vec![20, 20]
+        );
         for (angle, path, ratio) in [
             (-100.0, (90.0 + 66.0) / 180.0, 0.0),
             (100.0, (90.0 - 66.0) / 180.0, 1.0),
@@ -732,9 +745,10 @@ mod geometry_tests {
                 label
             );
         }
-        assert_eq!(
-            hud_geometry(None, None, Some(0.5), None).heading_ticks[0].label,
-            "301"
+        assert!(
+            hud_geometry(None, None, Some(0.5), None).heading_ticks[0]
+                .label
+                .is_empty()
         );
         let hidden = hud_geometry(None, None, None, None);
         assert!(
