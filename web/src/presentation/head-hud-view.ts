@@ -77,6 +77,7 @@ export function createHeadHudView(model: FlightHudModel | null, viewer: ViewerFr
   }
   const padding = textHeightMeters * HEAD_HUD_CARD_PADDING;
   const gap = textHeightMeters * HEAD_HUD_CARD_GAP;
+  const hudJson = model === null ? null : JSON.stringify({ layout: model.layout, groups: model.groups });
   for (let step = 0; step <= 24; step++) {
     const height = profile.maximumHeightMeters * (1 - step / 32);
     const topBandHeight = height / 2 - clearTop - gap - padding;
@@ -101,8 +102,8 @@ export function createHeadHudView(model: FlightHudModel | null, viewer: ViewerFr
         top_band_m: [padding + frameRateOffset, Math.max(0, topBandHeight - frameRateOffset)],
         bottom_band_m: [height / 2 - clearBottom + gap, bottomBandHeight]
       };
-      const fitted = model === null ? { kind: "fitted" as const, nodes: [] }
-        : JSON.parse(game_ui_head_hud_fit_json(JSON.stringify({ layout: model.layout, groups: model.groups }), JSON.stringify(space))) as GameUiHeadHudFit;
+      const fitted = hudJson === null ? { kind: "fitted" as const, nodes: [] }
+        : JSON.parse(game_ui_head_hud_fit_json(hudJson, JSON.stringify(space))) as GameUiHeadHudFit;
       if (fitted.kind === "unavailable") continue;
       const elements: HeadHudElement[] = [];
       if (frameRateLabel !== null) {
