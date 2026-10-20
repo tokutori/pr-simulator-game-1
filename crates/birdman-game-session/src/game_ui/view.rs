@@ -1054,6 +1054,11 @@ fn credits(menu: &mut Menu) {
             include_str!("../../../../assets/time.LICENSE.txt"),
         ),
         (
+            "unicode-width",
+            "表示幅の見積り",
+            include_str!("../../../../assets/unicode-width.LICENSE.txt"),
+        ),
+        (
             "dependencies",
             "その他のソフトウェア",
             "Web: Three.js・Snabbdom（MIT）\nNative: Bevy（MIT / Apache-2.0）と各依存ライブラリ\n配布物には第三者ソフトウェアのライセンス一覧と、対応する著作権・利用条件を同梱する。\nデータ・画像・フォントの一覧と出典:\nhttps://github.com/tokutori/pr-simulator-game-1/blob/main/THIRD_PARTY_DATA.md",

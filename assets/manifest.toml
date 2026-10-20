@@ -1,6 +1,16 @@
 schema_version = 1
 
 [[assets]]
+path = "assets/unicode-width.LICENSE.txt"
+sha256 = "08b22dc0aa48b4dd825fe2cf2229aaf94017500abaf2e120080b08cf5276fb1b"
+source = "https://github.com/unicode-rs/unicode-width/tree/v0.2.2"
+source_version = "unicode-width 0.2.2; exact Cargo.lock runtime version"
+license = "MIT"
+license_url = "https://github.com/unicode-rs/unicode-width/blob/v0.2.2/LICENSE-MIT"
+attribution = "Copyright (c) 2015 The Rust Project Developers; Copyright 2012-2025 The Rust Project Developers"
+processing = "Selected upstream MIT option; preserves LICENSE-MIT and generated table copyright notices; UTF-8 LF; embedded in shared credits"
+
+[[assets]]
 path = "assets/time.LICENSE.txt"
 sha256 = "c20f392f0c1ef200b711dfc0d4604b16063e5f32414464df23bce4fd94c5ca73"
 source = "https://github.com/time-rs/time; https://github.com/jhpratt/deranged; https://github.com/jhpratt/num-conv; https://github.com/jhpratt/powerfmt"

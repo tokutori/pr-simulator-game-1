@@ -207,7 +207,7 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
     await page.setViewportSize({ width: 1280, height: 720 });
     await click("game-credits-open");
     await page.getByRole("heading", { name: "クレジット・利用条件", exact: true }).waitFor({ state: "visible" });
-    for (const source of ["osm", "jaxa", "copernicus", "jma", "font", "earcut", "ryu", "time"]) {
+    for (const source of ["osm", "jaxa", "copernicus", "jma", "font", "earcut", "ryu", "time", "unicode-width"]) {
       assert.ok(await page.locator(`#game-credits-${source}`).count() > 0, `Missing credit: ${source}`);
     }
     await click("game-credits-close");
