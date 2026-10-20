@@ -969,20 +969,20 @@ async function persistFlightRecord(
     dispatch({ type: "refresh-stored-flight-records" });
     if (gameSession === session && session.acceptQuery(token, saved).kind === "accepted" && session.readLifecycle().phase === "result") {
       const personalBestMessage = saved.personalBest.kind === "candidate"
-        ? "Personal Bestを更新した"
+        ? "自己ベストを更新した"
         : saved.personalBest.kind === "existing"
-          ? `Personal Best ${String(saved.personalBest.id)}を維持した`
+          ? `自己ベスト: 記録 ${String(saved.personalBest.id)}`
           : saved.personalBest.kind === "ineligible"
-            ? "Personal Best対象外の記録である"
+            ? "参考記録"
             : "";
       dispatch({
         type: "game-session-status",
-        message: `FlightRecord ${String(saved.id)}を保存した${personalBestMessage.length > 0 ? `。${personalBestMessage}` : ""}`
+        message: `飛行記録 ${String(saved.id)}を保存した${personalBestMessage.length > 0 ? `。${personalBestMessage}` : ""}`
       });
     }
   } catch (error: unknown) {
     if (gameSession === session && session.acceptQuery(token, undefined).kind === "accepted" && session.readLifecycle().phase === "result") {
-      dispatch({ type: "game-session-status", message: `FlightRecord保存に失敗した: ${errorMessage(error)}` });
+      dispatch({ type: "game-session-status", message: `飛行記録を保存できなかった: ${errorMessage(error)}` });
     }
   }
 }

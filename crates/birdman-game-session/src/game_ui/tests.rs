@@ -1188,32 +1188,31 @@ fn shared_chart_layout_preserves_the_web_pixel_policy_and_observed_extent() {
                         && label.position.y <= height - 4.0
                 );
             }
-            let labels: Vec<_> = plot
+            let colors: Vec<_> = plot
                 .series
                 .iter()
-                .map(|series| series.label.as_str())
-                .chain(plot.markers.iter().map(|marker| marker.label.as_str()))
+                .map(|series| series.color.as_str())
+                .chain(plot.markers.iter().map(|marker| marker.color.as_str()))
                 .chain(
                     plot.vectors
                         .iter()
-                        .enumerate()
-                        .filter(|(_, vector)| !vector.label.is_empty())
-                        .map(|(index, vector)| {
-                            if kind == GameUiAnalysisChart::Map && index == 0 {
-                                "選択sampleの風（矢印は空気の移動先）"
-                            } else {
-                                vector.label.as_str()
-                            }
-                        }),
+                        .filter(|vector| !vector.label.is_empty())
+                        .map(|vector| vector.color.as_str()),
                 )
                 .collect();
             assert_eq!(
                 presentation
                     .legend
                     .iter()
-                    .map(|entry| entry.label.as_str())
+                    .map(|entry| entry.color.as_str())
                     .collect::<Vec<_>>(),
-                labels
+                colors
+            );
+            assert!(
+                presentation
+                    .legend
+                    .iter()
+                    .all(|entry| !entry.label.is_empty())
             );
         }
     }
@@ -1573,8 +1572,12 @@ fn unknown_archived_environment_remains_explicit_in_full_and_lightweight_readout
         else {
             panic!("missing archived wind readout")
         };
-        assert!(value.contains("unregistered_environment_identity"));
-        assert!(value.contains("WN 0.0 · WE 0.0 · WD 0.0 m/s"));
+        assert!(value.contains("周辺の風場データを取得できない"));
+        assert!(
+            value.contains("北向き 0.0 m/s")
+                && value.contains("東向き 0.0 m/s")
+                && value.contains("下向き 0.0 m/s")
+        );
     }
     let GameUiControlContent::Status { value, .. } =
         &control(&fresh, "game-analysis-cursor-values").content
@@ -1666,7 +1669,7 @@ fn lightweight_frame_matches_fresh_full_view_without_record_series() {
                 plot.presentation
                     .legend
                     .iter()
-                    .any(|entry| entry.label == "選択sampleの風（矢印は空気の移動先）")
+                    .any(|entry| entry.color == "#f2b35e" && entry.label.contains("選択地点の風"))
             );
             assert!(
                 !plot
@@ -1866,13 +1869,14 @@ fn replay_entry_selects_the_first_supported_camera_and_preserves_supported_choic
 }
 
 #[test]
-fn entering_replay_resets_only_its_ui_view_to_the_web_default() {
+fn entering_replay_resets_its_view_and_disclosure_while_retaining_camera_and_cursor() {
     let session = finalized();
     let platform = platform();
     let state = GameUiState {
         replay_view: GameUiReplayView::Analysis,
         replay_camera: GameUiReplayCamera::Chase,
         analysis_time_seconds: 0.015,
+        technical_open: true,
         ..GameUiState::default()
     };
     let update = update_game_ui(
@@ -1884,6 +1888,7 @@ fn entering_replay_resets_only_its_ui_view_to_the_web_default() {
     )
     .unwrap();
     assert_eq!(update.state.replay_view, GameUiReplayView::Cinematic);
+    assert!(!update.state.technical_open);
     assert_eq!(update.state.replay_camera, state.replay_camera);
     assert_eq!(
         update.state.analysis_time_seconds,
@@ -2176,34 +2181,84 @@ fn result_summary_keeps_ordered_navigation_across_targets() {
             platform.viewport.width = width;
             platform.viewport.height = height;
             platform.presentation_mode = mode;
-            let view = game_ui_view(
-                &GameUiState::default(),
-                &context(&session, difficulty(), &platform),
-            )
-            .unwrap();
-            let panel = &view.panels[0];
-            let navigation = panel
-                .sections
-                .iter()
-                .find(|section| section.id == "result-navigation")
-                .unwrap();
-            assert_eq!(navigation.layout, GameUiSectionLayout::Row);
-            assert_eq!(
-                panel
-                    .controls
-                    .iter()
-                    .filter(|control| control.section == navigation.id)
-                    .map(|control| control.id.as_str())
-                    .collect::<Vec<_>>(),
-                [
-                    "game-result-replay",
-                    "game-result-retry",
-                    "game-result-setup",
-                    "game-result-title"
-                ]
-            );
-            assert_eq!(view.theme.button_min_height_px, 44.0);
-            assert_eq!(session.snapshot(), snapshot);
+            platform.notification = "保存と自己ベストの更新を確認した。".to_owned();
+            for tab in [GameUiResultTab::Summary, GameUiResultTab::Analysis] {
+                for technical_open in [false, true] {
+                    let state = GameUiState {
+                        result_tab: tab,
+                        technical_open,
+                        ..GameUiState::default()
+                    };
+                    let context = context(&session, difficulty(), &platform);
+                    let view = game_ui_view(&state, &context).unwrap();
+                    let panel = &view.panels[0];
+                    assert_eq!(panel.sections.first().unwrap().id, "result-tabs");
+                    assert_eq!(panel.sections.last().unwrap().id, "result-navigation");
+                    let notices = panel
+                        .controls
+                        .iter()
+                        .map(|control| match &control.content {
+                            GameUiControlContent::Status { value, .. } => {
+                                value.matches(&platform.notification).count()
+                            }
+                            _ => 0,
+                        })
+                        .sum::<usize>();
+                    assert_eq!(notices, 1);
+                    for (id, command) in [
+                        ("game-result-replay", SessionCommand::EnterReplay {}),
+                        ("game-result-retry", SessionCommand::Retry {}),
+                        ("game-result-setup", SessionCommand::OpenSetup {}),
+                        ("game-result-title", SessionCommand::ReturnToTitle {}),
+                    ] {
+                        let action = GameUiAction::Session { command };
+                        assert!(control(&view, id).enabled);
+                        assert_eq!(control(&view, id).section, "result-navigation");
+                        assert!(update_game_ui(&state, action, &context).is_ok());
+                    }
+                    let visible_logs = panel
+                        .controls
+                        .iter()
+                        .any(|control| control.id == "game-flight-log-json");
+                    assert_eq!(
+                        visible_logs,
+                        tab == GameUiResultTab::Summary && technical_open
+                    );
+                    for next in [GameUiResultTab::Summary, GameUiResultTab::Analysis] {
+                        let update = update_game_ui(
+                            &state,
+                            GameUiAction::SetResultTab { tab: next },
+                            &context,
+                        )
+                        .unwrap();
+                        assert_eq!(update.state.result_tab, next);
+                        assert!(update.effects.is_empty());
+                    }
+                    if tab == GameUiResultTab::Summary {
+                        let toggled =
+                            update_game_ui(&state, GameUiAction::ToggleTechnical {}, &context)
+                                .unwrap();
+                        assert_eq!(toggled.state.technical_open, !technical_open);
+                        let GameUiControlContent::Status { value: primary, .. } =
+                            &control(&view, "game-result-analysis").content
+                        else {
+                            panic!("missing primary result")
+                        };
+                        let GameUiControlContent::Status {
+                            value: secondary, ..
+                        } = &control(&view, "game-result-metrics").content
+                        else {
+                            panic!("missing secondary metrics")
+                        };
+                        assert!(primary.contains("飛行時間") && !primary.contains("最大"));
+                        assert!(
+                            secondary.contains("最大対気速度") && !secondary.contains("飛行時間")
+                        );
+                    }
+                    assert_eq!(view.theme.button_min_height_px, 44.0);
+                    assert_eq!(session.snapshot(), snapshot);
+                }
+            }
         }
     }
 }
@@ -2484,8 +2539,8 @@ fn hud_scene_policy_is_shared_by_full_and_frame_projection_in_screen_and_vr() {
         state.technical_open = true;
         let result = game_ui_view(&state, &context(&session, difficulty(), &platform)).unwrap();
         assert!(matches!(
-            &control(&result, "game-result-terminal").content,
-            GameUiControlContent::Status { value, .. } if value == "操作により飛行を終了した"
+            &control(&result, "game-result-analysis").content,
+            GameUiControlContent::Status { value, .. } if value.contains("操作により飛行を終了した")
         ));
         assert!(matches!(
             &control(&result, "game-result-technical-content").content,
@@ -2977,7 +3032,10 @@ fn water_quality_operation_retains_applied_selection_and_original_failure() {
 #[test]
 fn pending_log_download_disables_repeated_io_and_preserves_navigation_and_notification() {
     let mut session = finalized();
-    let state = GameUiState::default();
+    let state = GameUiState {
+        technical_open: true,
+        ..GameUiState::default()
+    };
     let mut platform = platform();
     for replay in [false, true] {
         if replay {
@@ -3019,10 +3077,9 @@ fn pending_log_download_disables_repeated_io_and_preserves_navigation_and_notifi
             platform.notification = notification.to_owned();
             let view = game_ui_view(&state, &context(&session, difficulty(), &platform)).unwrap();
             assert!(control(&view, "game-flight-log-csv").enabled);
-            let GameUiControlContent::Status { value, .. } =
-                &control(&view, "game-flight-log-notice").content
+            let GameUiControlContent::Status { value, .. } = &control(&view, "game-state").content
             else {
-                panic!("missing log notice")
+                panic!("missing shared notification")
             };
             assert!(value.contains(notification));
         }

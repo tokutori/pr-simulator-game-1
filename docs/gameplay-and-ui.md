@@ -18,6 +18,9 @@
 | Replay | 確定記録を時刻指定で再生する。現行記録はResult、保存archiveはTitleへ戻る |
 
 - SummaryとAnalysisはResult内のtabである。
+- 結果画面の上部は「概要 / 分析」tabと通知、下部はReplay・同条件の再試行・設定変更・Titleへの共通操作列とする。
+- 概要は距離・時間・終了理由と副指標を二段に分ける。「詳細・ログ出力」で飛行条件・CSV/JSON・技術情報を展開する。
+- 分析は軌跡・高度・速度のchartと「選択地点の値」を表示する。凡例は色と記号の意味、地点欄は時刻・位置・速度・風の数値を示す。
 - camera種類、解析グラフ、Retry、AttractごとのSceneは追加しない。
 - 描画worldはSceneと独立して保持し、通常遷移では共有assetを再生成しない。
 - world交換、context復旧、終了時の解放は資源所有者が実行する。
@@ -291,7 +294,7 @@ T_{world,view}=T_{world,aircraft}T_{aircraft,pilot}T_{pilot,head}T_{head,eye}
 
 - Directorはlaunch、距離、高度、終端event、record時刻からshotを選び、優先順位、最短継続時間、再発火条件を持つ。
 - 乱数を使用する場合はseedとversionを明示する。
-- Cinematic・Telemetry・Analysisの表示modeを持ち、欠損diagnosticを補完しない。
+- Cinematic・Telemetry・Analysisの表示modeを持つ。再生開始時はCinematicを選択し、技術情報を閉じる。camera選択と分析cursorを保持する。
 
 ## Attract・Credits
 

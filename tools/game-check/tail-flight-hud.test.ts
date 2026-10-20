@@ -144,8 +144,9 @@ describe("tail-aware shared Flight HUD", () => {
       const result = display(source);
       const terminalView = readContract<GameUiView>("view", source.game_ui_view_json(JSON.stringify(sharedGameUiPlatform())));
       expect(terminalView.hud).toBeNull();
-      expect(terminalView.panels.flatMap((panel) => panel.controls).find((control) => control.id === "game-result-terminal")?.content)
-        .toMatchObject({ kind: "status", value: "操作により飛行を終了した" });
+      const summary = terminalView.panels.flatMap((panel) => panel.controls).find((control) => control.id === "game-result-analysis")?.content;
+      if (summary?.kind !== "status") throw new Error("Expected a result summary");
+      expect(summary.value).toContain("操作により飛行を終了した");
       expect(result.phase).toBe("result");
       replay.open_archived_flight_record(source.export_flight_record_json());
       const snapshot = readContract<RecordedPlaybackSample>("record_sample", replay.flight_record_sample_at_seconds(0.005));

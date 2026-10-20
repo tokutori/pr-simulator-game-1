@@ -73,6 +73,57 @@ describe("Phone VR browser sensor adapter", () => {
     const missingScreen = createMockBrowserWindow({ screenOrientationApi: false });
     expect(await createBrowserPhoneVrSensorPort(missingScreen.window).checkAvailability()).toMatchObject({ supported: false });
   });
+
+  it("probes actual absolute readings once and releases its timer and listeners", async () => {
+    vi.useFakeTimers();
+    try {
+      const browser = createMockBrowserWindow({ permissionRequired: false });
+      const sensors = createBrowserPhoneVrSensorPort(browser.window);
+      const first = sensors.checkAvailability();
+      expect(sensors.checkAvailability()).toBe(first);
+      expect(browser.activeOrientationListeners()).toBe(2);
+      browser.emitDeviceOrientation({ ...reading(0, 0, 0), alpha: null });
+      browser.emitDeviceOrientation({ ...reading(0, 0, 0), beta: Number.NaN });
+      browser.emitDeviceOrientation({ ...reading(0, 0, 0), gravityEvidence: { kind: "unavailable" } });
+      expect(browser.activeOrientationListeners()).toBe(2);
+      browser.emitDeviceOrientation(reading(0, 0, 0), "deviceorientationabsolute");
+      expect(await first).toMatchObject({ supported: true });
+      expect(sensors.checkAvailability()).toBe(first);
+      expect(browser.permissionRequests).toEqual([]);
+      expect(browser.activeOrientationListeners()).toBe(0);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it.each(["null", "nonfinite", "relative", "timeout"] as const)("disables Phone VR after %s readings without claiming API presence is support", async (kind) => {
+    vi.useFakeTimers();
+    try {
+      const browser = createMockBrowserWindow({ permissionRequired: false });
+      const sensors = createBrowserPhoneVrSensorPort(browser.window);
+      const available = sensors.checkAvailability();
+      if (kind === "null") browser.emitDeviceOrientation({ ...reading(0, 0, 0), alpha: null, beta: null, gamma: null });
+      if (kind === "nonfinite") browser.emitDeviceOrientation(reading(Number.POSITIVE_INFINITY, 0, 0));
+      if (kind === "relative") browser.emitDeviceOrientation({ ...reading(0, 0, 0), gravityEvidence: { kind: "unavailable" } });
+      await vi.advanceTimersByTimeAsync(1500);
+      expect(await available).toMatchObject({ supported: false });
+      expect(browser.activeOrientationListeners()).toBe(0);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("cancels a pending availability probe when the sensor owner stops", async () => {
+    vi.useFakeTimers();
+    try {
+      const browser = createMockBrowserWindow({ permissionRequired: false });
+      const sensors = createBrowserPhoneVrSensorPort(browser.window);
+      const pending = sensors.checkAvailability();
+      sensors.stopListening();
+      expect(await pending).toMatchObject({ supported: false });
+      browser.emitDeviceOrientation(reading(0, 0, 0));
+      expect(browser.activeOrientationListeners()).toBe(0);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { vi.useRealTimers(); }
+  });
 });
 
 describe("Phone VR gamepad UI", () => {
@@ -861,6 +912,7 @@ function createMockBrowserWindow(options: {
   readonly secure?: boolean;
   readonly orientationApi?: boolean;
   readonly screenOrientationApi?: boolean;
+  readonly permissionRequired?: boolean;
 } = {}) {
   const windowListeners = new Map<string, (event: unknown) => void>();
   const orientationListeners = new Map<string, () => void>();
@@ -870,7 +922,7 @@ function createMockBrowserWindow(options: {
   let screenAngle = 0;
   const orientationConstructor = options.orientationApi === false ? undefined : Object.assign(
     function MockDeviceOrientationEvent() {},
-    {
+    options.permissionRequired === false ? {} : {
       requestPermission: (absolute?: boolean): Promise<"granted" | "denied" | "prompt"> => {
         permissionRequests.push(absolute ?? false);
         return Promise.resolve("granted");
@@ -896,8 +948,9 @@ function createMockBrowserWindow(options: {
     window: fakeWindow as Parameters<typeof createBrowserPhoneVrSensorPort>[0],
     permissionRequests,
     orientationListening,
-    emitDeviceOrientation(value: PhoneVrSensorReading) {
-      windowListeners.get("deviceorientation")?.({
+    activeOrientationListeners() { return windowListeners.size; },
+    emitDeviceOrientation(value: PhoneVrSensorReading, type = "deviceorientation") {
+      windowListeners.get(type)?.({
         alpha: value.alpha, beta: value.beta, gamma: value.gamma, timeStamp: value.timestampMs, absolute: value.gravityEvidence.kind === "earth-z-up"
       });
     },

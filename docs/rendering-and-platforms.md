@@ -392,6 +392,8 @@ T_{eye,object}=T_{R,eye}^{-1}T_{R,object}
 ### Phone VRの重力基準
 
 - secure contextのDevice OrientationとScreen Orientationを使用する。
+- 明示的な権限要求が不要な環境では、起動時の1.5秒以内に有限な絶対姿勢を受信してPhone VRの利用可否を判定する。確認用の購読とtimerは結果確定時に解放する。
+- `requestPermission`を提供する環境は切替操作から権限を要求し、実値の受信を開始条件とする。タッチ対応と姿勢センサーの利用可否は独立して扱う。
 - 開始操作で`requestPermission(true)`を要求し、stereo準備・重力参照・有効な水平較正が揃った時点で開始する。
 - null、非有限値、不正時刻、初回event timeoutは原因付きの追跡エラーとして扱う。
 

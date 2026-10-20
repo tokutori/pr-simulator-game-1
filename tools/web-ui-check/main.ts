@@ -169,6 +169,8 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
     await page.addInitScript({ content: observer.code });
     await page.goto(url.href, { waitUntil: "domcontentloaded" });
     await scene("Title");
+    assert.equal(await control("boot-enter-phone-vr").isDisabled(), true);
+    checks.push("実姿勢センサーのないChromiumではPhone VR切替を無効にする");
     report.build = await page.locator(".build-version").innerText();
     assert.ok(String(report.build).includes(head.slice(0, 8)), "Vite build/source HEAD mismatch");
     assert.ok(moduleUrl !== undefined, "The production WASM module was not observed");
@@ -452,6 +454,43 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
     await click("game-flight-abort");
     await scene("Result");
     checks.push("Countdown to actual flight ticks; five typed HUD kinds; Pause and Resume; Abort to Result");
+    const resultLayout = async () => {
+      const measurements = [];
+      for (const viewport of [{ width: 1280, height: 720 }, { width: 1920, height: 1080 }]) {
+        await page.setViewportSize(viewport);
+        await page.evaluate(() => new Promise<void>(complete => {
+          requestAnimationFrame(() => { requestAnimationFrame(() => { complete(); }); });
+        }));
+        const measured = await page.locator(".screen-ui-shell").evaluate(node => {
+          const sections = [...node.querySelectorAll<HTMLElement>(".screen-ui-section")];
+          const footer = node.querySelector<HTMLElement>('[data-section-id="result-navigation"]');
+          if (footer === null) throw new Error("Missing result navigation");
+          return {
+            viewport: { width: innerWidth, height: innerHeight },
+            firstSection: sections[0]?.dataset.sectionId,
+            lastSection: sections.at(-1)?.dataset.sectionId,
+            footer: [...footer.querySelectorAll<HTMLButtonElement>("button")].map(button => ({
+              id: button.dataset.controlId, label: button.textContent, enabled: !button.disabled
+            })),
+            noticeCount: node.querySelectorAll("#game-state").length,
+            horizontalOverflow: node.scrollWidth - node.clientWidth
+          };
+        });
+        assert.equal(measured.firstSection, "result-tabs");
+        assert.equal(measured.lastSection, "result-navigation");
+        assert.equal(measured.footer.length, 4);
+        assert.ok(measured.footer.every(button => button.enabled));
+        assert.ok(measured.noticeCount <= 1);
+        assert.ok(measured.horizontalOverflow <= 1);
+        measurements.push(measured);
+      }
+      await page.setViewportSize({ width: 1280, height: 720 });
+      return measurements;
+    };
+    assert.equal(await control("game-flight-log-json").count(), 0);
+    const summaryLayout = await resultLayout();
+    await screenshot("04-result-summary");
+    await click("game-result-technical");
     const originalJson = await download("json", "result-record");
     const originalCsv = await download("csv", "result-log");
     const archive: unknown = JSON.parse(originalJson);
@@ -465,6 +504,10 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
     report.downloads = { jsonBytes: Buffer.byteLength(originalJson), csvBytes: Buffer.byteLength(originalCsv),
       jsonSha256: createHash("sha256").update(originalJson).digest("hex"), csvSha256: createHash("sha256").update(originalCsv).digest("hex") };
     await click("game-result-open-analysis");
+    assert.equal(await control("game-flight-log-json").count(), 0);
+    const analysisLayout = await resultLayout();
+    assert.deepEqual(analysisLayout.map(item => item.footer), summaryLayout.map(item => item.footer));
+    report.resultLayout = { summary: summaryLayout, analysis: analysisLayout };
     for (const chart of ["map", "altitude", "speed"]) {
       await click(`game-analysis-${chart}`);
       const plot = page.locator(".screen-ui-chart-viewport svg");
@@ -475,6 +518,7 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
       assert.ok(await page.locator(".screen-ui-chart-legend span").count() > 0, `Missing ${chart} legend`);
     }
     await screenshot("04-result-analysis");
+    checks.push("Result keeps top tabs, one notice and identical reachable footer actions at HD/FHD; logs appear only in expanded Summary details");
     await click("game-result-replay");
     await scene("Replay");
     assert.equal(await control("game-replay-technical").getAttribute("aria-expanded"), "false");

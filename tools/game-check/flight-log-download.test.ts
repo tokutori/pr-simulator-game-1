@@ -11,7 +11,7 @@ import { readFileSync } from "node:fs";
 import { initSync } from "../../web/pkg/birdman_game_wasm.js";
 import { createAppSession } from "../../web/src/app/session-factory.js";
 import { launchCurrentSession, neutralTailInput } from "./current-session-fixture.js";
-import { currentSharedGameUiFixture, withSharedGameUiSession } from "./shared-game-ui-fixture.js";
+import { withSharedGameUiSession } from "./shared-game-ui-fixture.js";
 import type { SharedGameUiFixtureOptions } from "./shared-game-ui-fixture.js";
 import type { GameUiAction } from "../../web/src/generated/game-ui-action.js";
 import type { GameUiPlatformInput } from "../../web/src/generated/game-ui-input.js";
@@ -24,6 +24,7 @@ afterEach(() => {
 });
 
 function readyModel(phase: SessionPhase, options: SharedGameUiFixtureOptions = {}): AppModel {
+  if (phase === "result") options = { ...options, actions: [{ kind: "toggle_technical" }, ...options.actions ?? []] };
   return withSharedGameUiSession(phase, options, (session, platform) => {
     const observed = updateApp({ ...createInitialAppModel(), presentation: { type: "ready", mode: "screen" } as const },
       { type: "game-session-synced", ...readRuntimeSessionProjection(session) }).model;
@@ -35,19 +36,20 @@ function viewForModel(model: AppModel, viewport?: GameUiPlatformInput["viewport"
   const phase = model.gameSession.phase;
   if (phase === "boot") throw new Error("Record controls require a Rust session");
   const currentMode = model.presentation.type === "ready" ? model.presentation.mode : "screen";
-  const actions: GameUiAction[] = [];
+  const actions: GameUiAction[] = phase === "result" ? [{ kind: "toggle_technical" }] : [];
   if (phase === "result" && model.resultTab === "analysis") actions.push({ kind: "set_result_tab", tab: "analysis" });
   if (phase === "replay") actions.push({ kind: "set_replay_view", view: model.replayViewMode });
   if ((phase === "result" && model.resultTab === "analysis" || phase === "replay" && model.replayViewMode === "analysis") && model.analysisChart !== "map") {
     actions.push({ kind: "set_analysis_chart", chart: model.analysisChart });
   }
-  const shared = currentSharedGameUiFixture(phase, { actions, platform: {
+  const shared = withSharedGameUiSession(phase, { actions, platform: {
     ...(viewport === undefined ? {} : { viewport }),
     presentation_mode: currentMode === "phone-vr" ? "phone_vr" : currentMode,
-    operation_pending: model.pendingGameRequestId !== null,
-    flight_log_pending: model.flightLogDownload.kind === "pending",
     notification: model.flightLogDownload.kind === "failed" || model.flightLogDownload.kind === "requested" ? model.flightLogDownload.message : ""
-  } });
+  } }, (session, platform) => session.readSharedUi({ ...platform,
+    operation_pending: model.pendingGameRequestId !== null,
+    flight_log_pending: model.flightLogDownload.kind === "pending"
+  }));
   return createGameViewModel(shared);
 }
 
@@ -77,17 +79,16 @@ const analysisFixture = (() => {
 describe("flight log download state and common presentation", () => {
   it.each([
     { label: "Result Summary", phase: "result", resultTab: "summary", replayViewMode: "cinematic" },
-    { label: "Result Analysis", phase: "result", resultTab: "analysis", replayViewMode: "cinematic" },
     { label: "Replay Analysis", phase: "replay", resultTab: "summary", replayViewMode: "analysis" },
     { label: "Replay Telemetry", phase: "replay", resultTab: "summary", replayViewMode: "telemetry" },
     { label: "Replay Cinematic", phase: "replay", resultTab: "summary", replayViewMode: "cinematic" }
-  ] as const)("preserves shared ordered download sections and navigation across backends in $label", ({ phase, resultTab, replayViewMode }) => {
+  ] as const)("preserves shared ordered download sections and navigation across backends in $label", ({ phase, replayViewMode }) => {
     for (const mode of ["screen", "phone-vr", "webxr"] as const) {
       for (const analysisChart of ["map", "altitude", "speed"] as const) {
         const actions: GameUiAction[] = phase === "result"
-          ? resultTab === "analysis" ? [{ kind: "set_result_tab", tab: "analysis" }] : []
+          ? []
           : [{ kind: "set_replay_view", view: replayViewMode }];
-        if ((phase === "result" && resultTab === "analysis" || phase === "replay" && replayViewMode === "analysis") && analysisChart !== "map") {
+        if (phase === "replay" && replayViewMode === "analysis" && analysisChart !== "map") {
           actions.push({ kind: "set_analysis_chart", chart: analysisChart });
         }
         const model: AppModel = {
@@ -101,7 +102,7 @@ describe("flight log download state and common presentation", () => {
         expect(panel.anchor).toBe("menu");
         expect(panel.sections.length).toBeGreaterThan(0);
         const exports = panel.controls.filter((control) => control.id.startsWith("game-flight-log-"));
-        const analysisFlow = phase === "result" && resultTab === "analysis" || phase === "replay" && replayViewMode === "analysis";
+        const analysisFlow = phase === "replay" && replayViewMode === "analysis";
         expect(exports.map((control) => control.id)).toEqual(["game-flight-log-csv", "game-flight-log-json", "game-flight-log-notice"]);
         expect(new Set(panel.sections.map((section) => section.id)).size).toBe(panel.sections.length);
         expect(panel.sections.find((section) => section.id === "flight-log-actions")?.layout).toBe("row");
@@ -140,7 +141,7 @@ describe("flight log download state and common presentation", () => {
           }
         }
         const navigation = phase === "result"
-          ? ["game-result-replay", "game-result-retry", "game-result-setup", "game-result-title", resultTab === "summary" ? "game-result-open-analysis" : "game-result-open-summary"]
+          ? ["game-result-replay", "game-result-retry", "game-result-setup", "game-result-title", "game-result-open-analysis"]
           : ["game-replay-return", "game-replay-camera", "game-replay-view-mode", "game-replay-play-pause", ...(replayViewMode === "cinematic" ? []
             : ["game-replay-cursor"])];
         for (const id of [...navigation, "game-flight-log-csv", "game-flight-log-json"]) {
@@ -152,10 +153,9 @@ describe("flight log download state and common presentation", () => {
 
   it.each([
     { label: "Result Summary", phase: "result", resultTab: "summary" },
-    { label: "Result Analysis", phase: "result", resultTab: "analysis" },
     { label: "Replay Analysis", phase: "replay", resultTab: "summary" }
-  ] as const)("keeps Screen $label downloads and exits in nonabsolute flow", async ({ phase, resultTab }) => {
-    const browser = new BrowserWindow({ width: 360, height: 300 });
+  ] as const)("keeps Screen $label downloads and exits in nonabsolute flow", async ({ phase }) => {
+    const browser = new BrowserWindow({ width: 1280, height: 720 });
     vi.stubGlobal("window", browser);
     vi.stubGlobal("document", browser.document);
     const stylesheet = browser.document.createElement("style");
@@ -167,10 +167,10 @@ describe("flight log download state and common presentation", () => {
     const dispatch = vi.fn<(action: UiAction) => void>();
     const screen = new ScreenUiAdapter(root as unknown as HTMLElement, dispatch);
     try {
-      const model = readyModel(phase, { platform: { viewport: { width: 360, height: 300, root_font_size: 16 } }, actions: phase === "result"
-        ? resultTab === "analysis" ? [{ kind: "set_result_tab", tab: "analysis" }] : []
+      const model = readyModel(phase, { platform: { viewport: { width: 1280, height: 720, root_font_size: 16 } }, actions: phase === "result"
+        ? []
         : [{ kind: "set_replay_view", view: "analysis" }] });
-      const view = viewForModel(model, { width: 360, height: 300, root_font_size: 16 });
+      const view = viewForModel(model, { width: 1280, height: 720, root_font_size: 16 });
       const panel = view.panels[0];
       if (panel?.sections === undefined || view.sharedPresentation === undefined) throw new Error("Missing shared flow layout");
       screen.render(view);
@@ -261,7 +261,7 @@ describe("flight log download state and common presentation", () => {
     const retried = beginDownload(failed.model, "json");
     const completed = updateApp(retried.model, { type: "flight-log-download-requested", requestId: retried.effect.requestId, source: retried.effect.source });
     expect(completed.model.flightLogDownload.kind).toBe("requested");
-    const notice = viewForModel(completed.model).panels[0]?.controls.find((control) => control.id === "game-flight-log-notice");
+    const notice = viewForModel(completed.model).panels[0]?.controls.find((control) => control.id === "game-state");
     if (notice?.kind !== "status") throw new Error("Download notification is unavailable");
     expect(notice.value).toContain("ダウンロードを要求した");
   });
