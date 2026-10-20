@@ -87,7 +87,9 @@ export function createHeadHudView(model: FlightHudModel | null, viewer: ViewerFr
     let lower = 0;
     let upper = profile.maximumWidthMeters;
     if (!headPlaneFitsViews(viewer, localPose, textHeightMeters, height, profile.clipMargin)) continue;
-    for (let iteration = 0; iteration < 28; iteration++) {
+    const maximumWidthFits = headPlaneFitsViews(viewer, localPose, upper, height, profile.clipMargin);
+    if (maximumWidthFits) lower = upper;
+    else for (let iteration = 0; iteration < 28; iteration++) {
       const candidate = (lower + upper) / 2;
       if (headPlaneFitsViews(viewer, localPose, candidate, height, profile.clipMargin)) lower = candidate;
       else upper = candidate;
@@ -104,7 +106,10 @@ export function createHeadHudView(model: FlightHudModel | null, viewer: ViewerFr
       };
       const fitted = hudJson === null ? { kind: "fitted" as const, nodes: [] }
         : JSON.parse(game_ui_head_hud_fit_json(hudJson, JSON.stringify(space))) as GameUiHeadHudFit;
-      if (fitted.kind === "unavailable") continue;
+      if (fitted.kind === "unavailable") {
+        if (maximumWidthFits) break;
+        continue;
+      }
       const elements: HeadHudElement[] = [];
       if (frameRateLabel !== null) {
         const frameRateWidth = Math.min(cardWidth, (frameRateLabel.length + 2) * textHeightMeters);

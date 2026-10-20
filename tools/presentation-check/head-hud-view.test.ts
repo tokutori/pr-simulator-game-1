@@ -1,10 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import * as sharedHeadFit from "../../web/pkg/birdman_game_wasm.js";
 import { Euler, Matrix4, PerspectiveCamera, Quaternion, StereoCamera, Vector3 } from "three";
 import { currentSharedGameUiFixture, currentSharedHeadHudFixture as currentSharedHudFixture, mapSharedHudNodes, sharedHudNode, sharedHudNodes } from "../game-check/shared-game-ui-fixture.js";
 import { createHeadHudView, DEFAULT_HEAD_HUD_PROFILE, headHudElementValue } from "../../web/src/presentation/head-hud-view.js";
 import { validateHeadHudLayer } from "../../web/src/render/contracts/head-hud.js";
 import { IDENTITY_POSE, pose, quaternion, transformPoint, vec3 } from "../../web/src/render/contracts/math.js";
-import { copyProjectionMatrix, projectHeadPoint, unavailableViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
+import { copyProjectionMatrix, headPlaneFitsViews, projectHeadPoint, unavailableViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
 import type { ViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
 import { captureConfiguredViewerFrame } from "../../web/src/render/engines/three/viewer-frame.js";
 import { convexQuadsOverlap } from "./hud-canvas-fixture.js";
@@ -20,6 +21,29 @@ function configuredViewer(aspect = 1280 / 720, fieldOfView = 60, near = 0.05): V
 }
 
 describe("Pure Head Flight HUD layout", () => {
+  it("ends an impossible maximum-width fit after one shared query", () => {
+    const model = currentSharedHudFixture({ informationCode: 0 });
+    const fit = vi.spyOn(sharedHeadFit, "game_ui_head_hud_fit_json");
+    try {
+      expect(createHeadHudView(model, configuredViewer(), "ja", { ...DEFAULT_HEAD_HUD_PROFILE, maximumWidthMeters: 0.3 }))
+        .toEqual({ kind: "unavailable", reason: "insufficient-view-area" });
+      expect(fit).toHaveBeenCalledTimes(1);
+    } finally { fit.mockRestore(); }
+  });
+
+  it("continues reducing height while the initial portrait plane is optically clipped", () => {
+    const viewer = configuredViewer(720 / 1280);
+    const profile = { ...DEFAULT_HEAD_HUD_PROFILE, maximumHeightMeters: 4 };
+    const initialPose = pose(vec3(0, 0, -profile.distanceMeters), IDENTITY_POSE.orientation);
+    expect(headPlaneFitsViews(viewer, initialPose, profile.maximumWidthMeters, profile.maximumHeightMeters, profile.clipMargin)).toBe(false);
+    const model = currentSharedHudFixture({ informationCode: 0 });
+    const view = createHeadHudView(model, viewer, "ja", profile);
+    if (view.kind !== "visible") throw new Error("Missing shorter portrait plane");
+    expect(view.layer.size.height).toBeLessThan(profile.maximumHeightMeters);
+    expect(view.layer.elements.map(element => element.id)).toEqual(sharedHudNodes(model).map(element => element.id));
+    expect(() => { validateHeadHudLayer(view.layer); }).not.toThrow();
+  });
+
   it("preserves shared row order and places every element below the clear region when it fits", () => {
     const shared = currentSharedHudFixture({ informationCode: 0 });
     const source = sharedHudNodes(shared)[0];
