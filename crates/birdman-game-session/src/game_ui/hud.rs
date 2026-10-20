@@ -621,17 +621,22 @@ fn position_rows(
 
 fn hud_node_width(node: &GameUiHudNode, layout: &GameUiHudLayout, text_width_ratio: f64) -> f64 {
     let font = layout.font_size_px;
+    let mut lines = node.content.value().split('\n').map(UnicodeWidthStr::width);
+    let caption = if node.label.is_empty() {
+        0
+    } else {
+        UnicodeWidthStr::width(node.label.as_str()) + 1
+    };
+    let columns = (caption + lines.next().unwrap_or(0)).max(lines.max().unwrap_or(0));
+    let text_width = columns as f64 * font * text_width_ratio;
     match &node.content {
-        GameUiHudNodeContent::Text { value, tone } => {
+        GameUiHudNodeContent::Text { tone, .. } => {
             if *tone == GameUiHudTone::Warning {
                 return layout.width_px;
             }
-            let columns = UnicodeWidthStr::width(node.label.as_str())
-                + 1
-                + value.lines().map(UnicodeWidthStr::width).max().unwrap_or(0);
-            (columns as f64 * font * text_width_ratio).max(4.0 * font)
+            text_width.max(4.0 * font)
         }
-        _ => 4.0 * font + 2.0 * layout.padding_px[0],
+        _ => text_width.max(4.0 * font) + 2.0 * layout.padding_px[0],
     }
 }
 

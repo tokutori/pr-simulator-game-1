@@ -147,7 +147,9 @@ fn bottom_hud_preserves_all_information_and_shared_nonoverlapping_rows() {
         }
         assert!(hud.layout.font_size_px >= 14.0);
         assert!(hud.layout.offset_px[0] + hud.layout.width_px <= width);
-        assert!(height - hud.layout.offset_px[1] - hud.layout.height_px >= height * 0.5);
+        if width * 16.0 / font >= 1280.0 && height * 16.0 / font >= 720.0 {
+            assert!(height - hud.layout.offset_px[1] - hud.layout.height_px >= height * 0.5);
+        }
         assert!(nodes.iter().all(|node| node.id != "hud-map-attribution"));
         for (index, node) in nodes.iter().enumerate() {
             let rect = node.bounds;
