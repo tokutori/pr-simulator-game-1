@@ -345,6 +345,11 @@
           "type": "string"
         },
         {
+          "const": "mismatched_geometry",
+          "description": "Endpoint lists contain different numbers of corresponding points.",
+          "type": "string"
+        },
+        {
           "const": "non_adjacent_ticks",
           "description": "Nonadjacent physics ticks.",
           "type": "string"
@@ -374,6 +379,11 @@
             "dynamics"
           ],
           "type": "object"
+        },
+        {
+          "const": "unresolved_motion",
+          "description": "Continuous motion exceeded the available numerical precision or capacity.",
+          "type": "string"
         }
       ]
     },

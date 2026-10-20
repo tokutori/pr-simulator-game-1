@@ -193,12 +193,16 @@ pub enum MathFailureDocument {
 pub enum ContactFailureDocument {
     /// Empty structural geometry.
     EmptyGeometry,
+    /// Endpoint lists contain different numbers of corresponding points.
+    MismatchedGeometry,
     /// Nonadjacent physics ticks.
     NonAdjacentTicks,
     /// Original mathematical cause.
     Math(MathFailureDocument),
     /// Original dynamics cause.
     Dynamics(DynamicsFailureDocument),
+    /// Continuous motion exceeded the available numerical precision or capacity.
+    UnresolvedMotion,
 }
 
 /// Original software actuator failure.
@@ -647,20 +651,24 @@ impl ContactFailureDocument {
     fn from_core(value: ContactError) -> Result<Self, FlightRecordFormatError> {
         Ok(match value {
             ContactError::EmptyGeometry => Self::EmptyGeometry,
+            ContactError::MismatchedGeometry => Self::MismatchedGeometry,
             ContactError::NonAdjacentTicks => Self::NonAdjacentTicks,
             ContactError::Math(cause) => Self::Math(cause.into()),
             ContactError::Dynamics(cause) => {
                 Self::Dynamics(DynamicsFailureDocument::from_core(cause)?)
             }
+            ContactError::UnresolvedMotion => Self::UnresolvedMotion,
         })
     }
 
     fn to_core(self) -> Result<ContactError, FlightRecordFormatError> {
         Ok(match self {
             Self::EmptyGeometry => ContactError::EmptyGeometry,
+            Self::MismatchedGeometry => ContactError::MismatchedGeometry,
             Self::NonAdjacentTicks => ContactError::NonAdjacentTicks,
             Self::Math(cause) => ContactError::Math(cause.into()),
             Self::Dynamics(cause) => ContactError::Dynamics(cause.to_core()?),
+            Self::UnresolvedMotion => ContactError::UnresolvedMotion,
         })
     }
 }

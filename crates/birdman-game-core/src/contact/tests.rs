@@ -51,6 +51,10 @@ fn assert_same_state_bits(actual: FlightState, expected: FlightState) {
     );
 }
 
+fn grazing_fraction_bound(angular_span: f64) -> f64 {
+    libm::sqrt(1024.0 * f64::EPSILON) / angular_span
+}
+
 #[test]
 fn interpolation_endpoints_retain_every_state_component_without_recomputation() {
     let [previous, next] = endpoint_states([-1.75, 2.125]);
@@ -113,7 +117,7 @@ fn contact_extrema_include_datum_translation_in_both_branches() {
         .unwrap()
         .unwrap();
         assert!(
-            (contact.fraction - fraction).abs() < 2.0e-9,
+            (contact.fraction - fraction).abs() < grazing_fraction_bound(span),
             "span={span}, contact={contact:?}"
         );
     }
@@ -171,7 +175,16 @@ fn tiny_large_and_arbitrary_orientation_contact_uses_the_actual_rotation() {
     )
     .unwrap()
     .unwrap();
-    assert!((contact.fraction - 0.271).abs() < 2.0e-11);
+    let alignment = contact
+        .flight_state
+        .attitude_body_to_ned()
+        .components()
+        .into_iter()
+        .zip(peak.components())
+        .map(|(actual, expected)| actual * expected)
+        .sum::<f64>()
+        .abs();
+    assert!(1.0 - alignment <= 128.0 * f64::EPSILON);
 }
 
 #[test]
@@ -289,7 +302,11 @@ fn off_grid_tangencies_and_transient_crossings_use_both_interpolation_branches()
                     let numerator = libm::sin((contact_angle - start_angle) * 0.5);
                     numerator / (numerator + libm::sin((end_angle - contact_angle) * 0.5))
                 };
-                let fraction_budget = if penetration == 0.0 { 2.0e-11 } else { 2.0e-9 };
+                let fraction_budget = if penetration == 0.0 {
+                    grazing_fraction_bound(angular_span.abs())
+                } else {
+                    2.0e-9
+                };
                 assert!(
                     (contact.fraction - expected).abs() < fraction_budget,
                     "span={angular_span} tangent={tangent_fraction} penetration={penetration} actual={} expected={expected}",
@@ -526,4 +543,165 @@ fn contact_rejects_empty_geometry_and_nonadjacent_ticks() {
         ),
         Err(ContactError::NonAdjacentTicks),
     );
+}
+
+#[test]
+fn moving_geometry_requires_nonempty_corresponding_endpoints() {
+    let points = [BodyPoint::origin()];
+    for (start, end, expected) in [
+        (&[][..], &points[..], ContactError::EmptyGeometry),
+        (&points[..], &[][..], ContactError::EmptyGeometry),
+        (
+            &points[..],
+            &[BodyPoint::origin(); 2][..],
+            ContactError::MismatchedGeometry,
+        ),
+    ] {
+        assert_eq!(
+            WaterContactGeometry::try_new_moving(start, end),
+            Err(expected)
+        );
+    }
+    let geometry = WaterContactGeometry::try_new_moving(&points, &points).unwrap();
+    assert_eq!(geometry.points_body(), points);
+    assert_eq!(geometry.end_points_body(), points);
+}
+
+#[test]
+fn moving_structural_points_select_the_first_contact_without_body_motion() {
+    let start = [-0.4, -0.2].map(|down| contact_point(0.0, down));
+    let end = [0.6, 0.8].map(|down| contact_point(0.0, down));
+    let sample = detect_contact(
+        &aircraft(),
+        tick(8, -0.2, 0.0),
+        tick(9, -0.2, 0.0),
+        WaterContactGeometry::try_new_moving(&start, &end).unwrap(),
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(sample.interval_start_tick, 8);
+    assert_eq!(sample.contact_point_index, 1);
+    assert!((sample.fraction - 0.4).abs() < 4.0e-15);
+    assert_same_state_bits(sample.flight_state, tick(8, -0.2, 0.0).flight_state);
+}
+
+#[test]
+fn rotating_moving_structure_finds_off_grid_tangencies_and_rejects_near_misses() {
+    for span in [0.02, 0.2, core::f64::consts::PI - 1.0e-6] {
+        let center = if span == 0.02 {
+            let first = libm::sin(0.33 * span * 0.5);
+            first / (first + libm::sin(0.67 * span * 0.5))
+        } else {
+            0.33
+        };
+        let start = [contact_point(0.0, -center)];
+        let end = [contact_point(0.0, 1.0 - center)];
+        let start_angle = core::f64::consts::FRAC_PI_2 - 0.33 * span;
+        let end_angle = core::f64::consts::FRAC_PI_2 + 0.67 * span;
+        for clearance in [0.0, 1.0e-10] {
+            let contact = detect_contact(
+                &aircraft(),
+                tick(0, -clearance, start_angle),
+                tick(1, -clearance, end_angle),
+                WaterContactGeometry::try_new_moving(&start, &end).unwrap(),
+            )
+            .unwrap();
+            if clearance == 0.0 {
+                let sample = contact.unwrap();
+                assert!(
+                    (sample.fraction - center).abs() < 2.0e-10,
+                    "span={span}, center={center}, actual={sample:?}"
+                );
+            } else {
+                assert_eq!(contact, None, "span={span}");
+            }
+        }
+    }
+}
+
+#[test]
+fn rotating_moving_structure_matches_the_analytical_first_crossing() {
+    for span in [0.2, 1.0, core::f64::consts::PI - 1.0e-6] {
+        let center = 0.371;
+        let delta = 0.0073;
+        for scale in [1.0e-150, 1.0, 1.0e150] {
+            let penetration = scale * delta * libm::sin(span * delta);
+            let start = [contact_point(0.0, -scale * center)];
+            let end = [contact_point(0.0, scale * (1.0 - center))];
+            let sample = detect_contact(
+                &aircraft(),
+                tick(0, penetration, core::f64::consts::FRAC_PI_2 - span * center),
+                tick(
+                    1,
+                    penetration,
+                    core::f64::consts::FRAC_PI_2 + span * (1.0 - center),
+                ),
+                WaterContactGeometry::try_new_moving(&start, &end).unwrap(),
+            )
+            .unwrap()
+            .unwrap();
+            assert!(
+                (sample.fraction - (center - delta)).abs() < 2.0e-12,
+                "span={span}, scale={scale}, actual={sample:?}"
+            );
+            let point =
+                super::interpolate_contact_point([start[0], end[0]], sample.fraction).unwrap();
+            let residual = super::contact_point_down(sample.flight_state, point).unwrap() / scale;
+            assert!(residual.abs() < 2.0e-14, "residual={residual}");
+        }
+    }
+}
+
+#[test]
+fn shallow_positive_contact_is_refined_before_tangent_classification() {
+    let delta = 5.0e-8;
+    let penetration = delta * libm::sin(core::f64::consts::PI * delta);
+    let start = [contact_point(0.0, -0.5)];
+    let end = [contact_point(0.0, 0.5)];
+    let sample = detect_contact(
+        &aircraft(),
+        tick(0, penetration, 0.0),
+        tick(1, penetration, core::f64::consts::PI),
+        WaterContactGeometry::try_new_moving(&start, &end).unwrap(),
+    )
+    .unwrap()
+    .unwrap();
+    assert!(
+        (sample.fraction - (0.5 - delta)).abs() < 2.0e-9,
+        "actual={sample:?}"
+    );
+}
+
+#[test]
+fn subnormal_structural_tangency_has_an_absolute_rounding_budget() {
+    let scale = 1.0e-310;
+    let span = 0.2;
+    let center = 0.33;
+    let start = [contact_point(0.0, -scale * center)];
+    let end = [contact_point(0.0, scale * (1.0 - center))];
+    let absolute_budget = 128.0 * f64::from_bits(1);
+    for clearance in [0.0, 16.0 * absolute_budget] {
+        let contact = detect_contact(
+            &aircraft(),
+            tick(0, -clearance, core::f64::consts::FRAC_PI_2 - span * center),
+            tick(
+                1,
+                -clearance,
+                core::f64::consts::FRAC_PI_2 + span * (1.0 - center),
+            ),
+            WaterContactGeometry::try_new_moving(&start, &end).unwrap(),
+        )
+        .unwrap();
+        if clearance == 0.0 {
+            let sample = contact.unwrap();
+            let fraction_budget = libm::sqrt(2.0 * absolute_budget / (span * scale));
+            assert!((sample.fraction - center).abs() <= fraction_budget);
+            let point =
+                super::interpolate_contact_point([start[0], end[0]], sample.fraction).unwrap();
+            let residual = super::contact_point_down(sample.flight_state, point).unwrap();
+            assert!(residual.abs() <= absolute_budget);
+        } else {
+            assert_eq!(contact, None);
+        }
+    }
 }

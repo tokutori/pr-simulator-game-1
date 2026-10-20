@@ -83,11 +83,11 @@ export type AerodynamicFailureDocument = {
 /**
  * Original contact search or interpolation failure.
  */
-export type ContactFailureDocument = "empty_geometry" | "non_adjacent_ticks" | {
+export type ContactFailureDocument = "empty_geometry" | "mismatched_geometry" | "non_adjacent_ticks" | {
     readonly math: MathFailureDocument;
 } | {
     readonly dynamics: DynamicsFailureDocument;
-};
+} | "unresolved_motion";
 /**
  * Registered wind query and its exact saved record context.
  */

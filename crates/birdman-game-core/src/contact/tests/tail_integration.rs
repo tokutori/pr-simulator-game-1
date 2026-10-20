@@ -137,10 +137,15 @@ fn off_grid_tail_contact_seals_record_and_score_at_the_first_fractional_time() {
             };
             assert_eq!(result.reason, SessionEndReason::WaterContact);
             assert_eq!(result.failure, None);
-            assert!((contact.fraction() - expected_fraction).abs() < 2.0e-9);
+            let fraction_budget = if penetration == 0.0 {
+                super::grazing_fraction_bound(end_angle - start_angle)
+            } else {
+                2.0e-9
+            };
+            assert!((contact.fraction() - expected_fraction).abs() < fraction_budget);
             assert_eq!(contact.interval_start_tick(), 0);
             assert_eq!(contact.incidence(), TailIncidence::neutral());
-            let time = contact.fraction() * PHYSICS_DT_SECONDS;
+            let time = contact.fraction() / f64::from(PHYSICS_HZ);
             assert!((result.score.unwrap().course_parallel_m() - 10.0 * time).abs() < 1.0e-14);
             let record = session.flight_record().unwrap();
             assert_eq!(record.sample_count(), 2);

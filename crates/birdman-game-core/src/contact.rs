@@ -9,33 +9,57 @@ mod curve;
 pub enum ContactError {
     /// At least one structural contact point is required.
     EmptyGeometry,
+    /// The interval endpoints contain different numbers of corresponding points.
+    MismatchedGeometry,
     /// The supplied states do not form one adjacent physics-tick interval.
     NonAdjacentTicks,
     /// Flight-state or contact-point arithmetic produced an invalid value.
     Math(MathError),
     /// The interpolated flight state is invalid for the aircraft model.
     Dynamics(DynamicsError),
+    /// Continuous motion could not be resolved within the bounded numerical precision.
+    UnresolvedMotion,
 }
 
-/// A non-empty list of fixed contact points in aircraft-datum body coordinates.
+/// Corresponding structural points, linearly interpolated in body coordinates over one tick.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub struct WaterContactGeometry<'a> {
     points_body: &'a [BodyPoint],
+    end_points_body: &'a [BodyPoint],
 }
 
 impl<'a> WaterContactGeometry<'a> {
     /// Creates geometry from structural contact points relative to datum O.
     pub fn try_new(points_body: &'a [BodyPoint]) -> Result<Self, ContactError> {
-        if points_body.is_empty() {
-            return Err(ContactError::EmptyGeometry);
-        }
-        Ok(Self { points_body })
+        Self::try_new_moving(points_body, points_body)
     }
 
-    /// Returns the fixed structural contact points.
+    /// Borrows non-empty, equally sized endpoint lists with stable point identity/order.
+    pub fn try_new_moving(
+        start_points_body: &'a [BodyPoint],
+        end_points_body: &'a [BodyPoint],
+    ) -> Result<Self, ContactError> {
+        if start_points_body.is_empty() || end_points_body.is_empty() {
+            return Err(ContactError::EmptyGeometry);
+        }
+        if start_points_body.len() != end_points_body.len() {
+            return Err(ContactError::MismatchedGeometry);
+        }
+        Ok(Self {
+            points_body: start_points_body,
+            end_points_body,
+        })
+    }
+
+    /// Returns the exact structural points at the start of the interval.
     pub const fn points_body(self) -> &'a [BodyPoint] {
         self.points_body
+    }
+
+    /// Returns the exact corresponding structural points at the end of the interval.
+    pub const fn end_points_body(self) -> &'a [BodyPoint] {
+        self.end_points_body
     }
 }
 
@@ -60,8 +84,13 @@ pub(crate) fn detect_flight_state_water_contact(
     }
 
     let mut earliest: Option<(f64, usize)> = None;
-    for (contact_point_index, contact_point) in geometry.points_body.iter().copied().enumerate() {
-        let fraction = find_contact_fraction(previous, next, contact_point)?;
+    for (contact_point_index, (start, end)) in geometry
+        .points_body
+        .iter()
+        .zip(geometry.end_points_body)
+        .enumerate()
+    {
+        let fraction = find_contact_fraction(previous, next, [*start, *end])?;
         if let Some(fraction) = fraction
             && earliest.is_none_or(|(earliest_fraction, _)| fraction < earliest_fraction)
         {
@@ -85,32 +114,26 @@ pub(crate) fn detect_flight_state_water_contact(
 fn find_contact_fraction(
     previous: FlightState,
     next: FlightState,
-    contact_point: BodyPoint,
+    points: [BodyPoint; 2],
 ) -> Result<Option<f64>, ContactError> {
-    let start_down = contact_point_down(previous, contact_point)?;
+    let start_down = contact_point_down(previous, points[0])?;
     if start_down >= 0.0 {
         return Ok(Some(0.0));
     }
-    let partition = curve::contact_partitions(previous, next, contact_point)?;
+    let partition = curve::contact_partitions(previous, next, points)?;
     let mut above_fraction = 0.0;
     for fraction in partition.fractions {
         if fraction == above_fraction {
             continue;
         }
         let interpolated = interpolate_flight_state(previous, next, fraction)?;
-        let down = contact_point_down(interpolated, contact_point)?;
+        let down = contact_point_down(interpolated, interpolate_contact_point(points, fraction)?)?;
+        if down >= 0.0 {
+            return refine_contact_fraction(previous, next, points, above_fraction, fraction)
+                .map(Some);
+        }
         if fraction < 1.0 && down.abs() <= partition.rounding_distance_m {
             return Ok(Some(fraction));
-        }
-        if down >= 0.0 {
-            return refine_contact_fraction(
-                previous,
-                next,
-                contact_point,
-                above_fraction,
-                fraction,
-            )
-            .map(Some);
         }
         above_fraction = fraction;
     }
@@ -120,7 +143,7 @@ fn find_contact_fraction(
 fn refine_contact_fraction(
     previous: FlightState,
     next: FlightState,
-    contact_point: BodyPoint,
+    points: [BodyPoint; 2],
     mut above: f64,
     mut at_or_below: f64,
 ) -> Result<f64, ContactError> {
@@ -130,7 +153,7 @@ fn refine_contact_fraction(
             break;
         }
         let interpolated = interpolate_flight_state(previous, next, midpoint)?;
-        let down = contact_point_down(interpolated, contact_point)?;
+        let down = contact_point_down(interpolated, interpolate_contact_point(points, midpoint)?)?;
         if down >= 0.0 {
             at_or_below = midpoint;
         } else {
@@ -138,6 +161,21 @@ fn refine_contact_fraction(
         }
     }
     Ok(at_or_below)
+}
+
+fn interpolate_contact_point(
+    points: [BodyPoint; 2],
+    fraction: f64,
+) -> Result<BodyPoint, ContactError> {
+    if fraction == 0.0 {
+        return Ok(points[0]);
+    }
+    if fraction == 1.0 {
+        return Ok(points[1]);
+    }
+    let [forward, right, down] =
+        interpolate_components(points[0].components(), points[1].components(), fraction)?;
+    BodyPoint::try_new(forward, right, down).map_err(ContactError::Math)
 }
 
 fn interpolate_flight_state(

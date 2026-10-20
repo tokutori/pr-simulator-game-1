@@ -58,7 +58,11 @@ fn every_nested_failure_preserves_its_typed_leaf() {
         round_trip(TailFlightTickError::Contact(ContactError::Dynamics(cause)));
     }
     round_trip(TailFlightTickError::Contact(ContactError::EmptyGeometry));
+    round_trip(TailFlightTickError::Contact(
+        ContactError::MismatchedGeometry,
+    ));
     round_trip(TailFlightTickError::Contact(ContactError::NonAdjacentTicks));
+    round_trip(TailFlightTickError::Contact(ContactError::UnresolvedMotion));
     for cause in [
         AeroError::NonFinite,
         AeroError::InvalidMathValue(MathError::InvalidQuaternion),
