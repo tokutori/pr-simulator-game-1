@@ -3505,7 +3505,10 @@ mod tests {
                     assert!(
                         shell_bounds.min.y >= -1.0 && shell_bounds.max.y <= height as f32 + 1.0
                     );
-                    assert!(hud_bounds.min.y >= -1.0 && hud_bounds.max.y <= height as f32 + 1.0);
+                    assert!(
+                        hud_bounds.min.y >= -1.0 && hud_bounds.max.y <= height as f32 + 1.0,
+                        "{width}x{height} {information:?}/{overlay:?}: hud={hud_bounds:?}"
+                    );
                     let buttons = retained
                         .widgets
                         .values()

@@ -960,6 +960,7 @@ mod tests {
             value: "共有値".to_owned(),
             rotation_degrees: Some(17.0),
         };
+        node.instrument_height_em = 3.0;
         project_hud(app.world_mut(), &mut retained.hud, Some(&hud), &theme).unwrap();
         assert!(
             old_tree
@@ -1052,7 +1053,11 @@ mod tests {
             unreachable!()
         };
         value.push_str("\n姿勢 PITCH wording is opaque");
-        let expected = value.clone();
+        let expected = if node.label.is_empty() {
+            value.clone()
+        } else {
+            format!("{} {value}", node.label)
+        };
         project_hud(app.world_mut(), &mut retained.hud, Some(&hud), &theme).unwrap();
         assert_eq!(app.world().get::<Text>(value_entity).unwrap().0, expected);
         assert_eq!(retained.hud.structure_projections, structure_count);
