@@ -97,42 +97,45 @@ function widget(node: FlightHudNode, model: FlightHudModel, clipPrefix: string):
           ...horizon.pitch_ticks.flatMap((tick) => {
             const half = tick.half_width_ratio * 240;
             return [shape("path", { d: `M ${String(120 - half)} ${String(tick.offset_ratio * 180)} H ${String(120 + half)}`, stroke: model.theme.text, "stroke-width": 2 }),
-              ...(tick.label_degrees === null ? [] : [shape("text", { x: 138 + half, y: tick.offset_ratio * 180 + 4, fill: model.theme.text, "text-anchor": "middle", "font-size": 180 / node.instrument_height_em }, String(tick.label_degrees))])];
+              ...(tick.label_degrees === null ? [] : [shape("text", { x: 138 + half, y: tick.offset_ratio * 180 + 4, fill: model.theme.text, "text-anchor": "middle", "font-size": "var(--hud-instrument-font-size)" }, String(tick.label_degrees))])];
           })
         ])
       ]));
       shapes.push(shape("rect", { x: 26, y: 18, width: 188, height: 144, rx: 72, fill: "none", stroke: model.theme.text, "stroke-width": 3 }),
         shape("path", { d: "M 72 91 H 108 L 113 82 H 127 L 132 91 H 168 M 120 86 V 96", fill: "none", stroke: model.theme.focus_outline, "stroke-width": 5 }));
       if (flightPath !== null) shapes.push(shape("circle", { cx: 120, cy: flightPath * 180, r: 5, fill: "none", stroke: "#7df4c5", "stroke-width": 3 }));
-      return [gauge(node, "0 0 240 180", shapes)];
+      return [gauge(node, model, [240, 180], shapes)];
     }
-    case "heading_tape": return [gauge(node, "0 0 220 50", [
+    case "heading_tape": return [gauge(node, model, [220, 50], [
       ...content.ticks.map((tick, index) => h("g", { key: index }, [
         shape("path", { d: `M ${String(tick.position_ratio * 220)} ${tick.major ? "28" : "33"} V 40`, stroke: model.theme.text, "stroke-width": tick.major ? 1.5 : 1 }),
-        shape("text", { x: tick.position_ratio * 220, y: 22, "text-anchor": "middle", fill: model.theme.text, "font-size": 50 / node.instrument_height_em }, tick.label)
+        shape("text", { x: tick.position_ratio * 220, y: 22, "text-anchor": "middle", fill: model.theme.text, "font-size": "var(--hud-instrument-font-size)" }, tick.label)
       ])), shape("path", { d: "M 110 28 L 104 38 H 116 Z", fill: model.theme.focus_outline })
     ])];
-    case "direction": return [gauge(node, "0 0 72 72", [
+    case "direction": return [gauge(node, model, [72, 72], [
       shape("circle", { cx: 36, cy: 36, r: 27, fill: "none", stroke: model.theme.muted_text, "stroke-width": 1.5 }),
       shape("path", { d: "M 36 9 V 63 M 9 36 H 63", stroke: model.theme.muted_text }),
-      shape("text", { x: 36, y: 12, "text-anchor": "middle", fill: model.theme.text, "font-size": 72 / node.instrument_height_em }, "N"),
+      shape("text", { x: 36, y: 20, "text-anchor": "middle", fill: model.theme.text, "font-size": "var(--hud-instrument-font-size)" }, "N"),
       ...(content.rotation_degrees === null ? [] : [h("g", { attrs: { transform: `rotate(${String(content.rotation_degrees)} 36 36)` } }, [
         shape("path", { d: "M 36 15 L 31 38 L 36 34 L 41 38 Z", fill: model.theme.focus_outline })
       ])])
     ])];
-    case "linear_gauge": return [gauge(node, "0 0 200 42", [
+    case "linear_gauge": return [gauge(node, model, [200, 42], [
       shape("path", { d: "M 10 16 H 190", stroke: model.theme.muted_text, "stroke-width": 3 }),
       ...Array.from({ length: 7 }, (_, index) => shape("path", { d: `M ${String(10 + index * 30)} 12 V 21`, stroke: model.theme.muted_text })),
-      shape("text", { x: 10, y: 39, fill: model.theme.text, "font-size": 42 / node.instrument_height_em }, content.minimum_label),
-      shape("text", { x: 190, y: 39, "text-anchor": "end", fill: model.theme.text, "font-size": 42 / node.instrument_height_em }, content.maximum_label),
+      shape("text", { x: 10, y: 39, fill: model.theme.text, "font-size": "var(--hud-instrument-font-size)" }, content.minimum_label),
+      shape("text", { x: 190, y: 39, "text-anchor": "end", fill: model.theme.text, "font-size": "var(--hud-instrument-font-size)" }, content.maximum_label),
       ...(content.position_ratio === null ? [] : [shape("polygon", { points: `${String(10 + content.position_ratio * 180)},5 ${String(4 + content.position_ratio * 180)},1 ${String(16 + content.position_ratio * 180)},1`, fill: model.theme.focus_outline })])
     ])];
   }
 }
 
-function gauge(node: FlightHudNode, viewBox: string, children: VNode[]): VNode {
-  return h("svg", { attrs: { viewBox, role: "img", "aria-label": node.label || node.content.value, "data-instrument": node.content.kind,
-    style: `height: ${String(node.instrument_height_em)}em` } }, children);
+function gauge(node: FlightHudNode, model: FlightHudModel, [width, height]: readonly [number, number], children: VNode[]): VNode {
+  const drawingWidth = node.bounds.width * model.layout.width_px - model.layout.padding_px[0] * 2;
+  const drawingHeight = node.instrument_height_em * model.layout.font_size_px;
+  const scale = Math.min(drawingWidth / width, drawingHeight / height);
+  return h("svg", { attrs: { viewBox: `0 0 ${String(width)} ${String(height)}`, role: "img", "aria-label": node.label || node.content.value, "data-instrument": node.content.kind,
+    style: `height: ${String(node.instrument_height_em)}em; --hud-instrument-font-size: ${String(model.layout.font_size_px / scale)}px` } }, children);
 }
 
 function shape(tag: string, attributes: Record<string, string | number>, text = ""): VNode {

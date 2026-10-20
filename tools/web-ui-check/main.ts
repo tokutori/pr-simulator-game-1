@@ -52,25 +52,28 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
       const root = document.querySelector<HTMLElement>('.flight-hud[aria-hidden="false"]');
       const menu = document.querySelector<HTMLElement>(".screen-ui-shell");
       if (root === null || menu === null) throw new Error("The live HUD/menu is unavailable");
-      const rect = (node: Element) => {
-        const bounds = node.getBoundingClientRect();
-        return { left: bounds.left, top: bounds.top, right: bounds.right, bottom: bounds.bottom, width: bounds.width, height: bounds.height };
+      const geometry = {
+        rect(node: Element) {
+          const bounds = node.getBoundingClientRect();
+          return { left: bounds.left, top: bounds.top, right: bounds.right, bottom: bounds.bottom, width: bounds.width, height: bounds.height };
+        },
+        overlap(first: Pick<DOMRect, "left" | "right" | "top" | "bottom">, second: Pick<DOMRect, "left" | "right" | "top" | "bottom">) {
+          return first.left < second.right - 1 && second.left < first.right - 1 && first.top < second.bottom - 1 && second.top < first.bottom - 1;
+        }
       };
       const issues: string[] = [];
-      const rootBounds = rect(root);
+      const rootBounds = geometry.rect(root);
       const style = getComputedStyle(root);
-      const menuBounds = rect(menu);
-      const overlap = (first: ReturnType<typeof rect>, second: ReturnType<typeof rect>) => first.left < second.right - 1
-        && second.left < first.right - 1 && first.top < second.bottom - 1 && second.top < first.bottom - 1;
+      const menuBounds = geometry.rect(menu);
       if (rootBounds.left < -1 || rootBounds.right > innerWidth + 1 || rootBounds.top < -1 || rootBounds.bottom > innerHeight + 1) issues.push("HUD outside viewport");
       if (clear && rootBounds.top < innerHeight * 0.5) issues.push("HUD enters the forward upper half");
       if (style.backgroundColor !== "rgba(0, 0, 0, 0)" || style.overflowX !== "visible" || style.overflowY !== "visible") issues.push("HUD background/scroll");
       const nodes = [...root.querySelectorAll<HTMLElement>("[data-node]")].map(node => {
-        const bounds = rect(node);
+        const bounds = geometry.rect(node);
         const nodeStyle = getComputedStyle(node);
         const id = node.dataset.node ?? "unknown";
         if (node.scrollWidth > node.clientWidth + 1 || node.scrollHeight > node.clientHeight + 1) issues.push(`${id}: content overflow`);
-        if (overlap(bounds, menuBounds)) issues.push(`${id}: overlaps the menu`);
+        if (geometry.overlap(bounds, menuBounds)) issues.push(`${id}: overlaps the menu`);
         const range = document.createRange();
         const header = node.querySelector(".flight-hud-header");
         if (header === null) throw new Error("Missing HUD header");
@@ -82,7 +85,7 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
       });
       for (let index = 0; index < nodes.length; index++) for (const other of nodes.slice(0, index)) {
         const node = nodes[index];
-        if (node !== undefined && overlap(node.bounds, other.bounds)) issues.push(`${node.id}: overlaps ${other.id}`);
+        if (node !== undefined && geometry.overlap(node.bounds, other.bounds)) issues.push(`${node.id}: overlaps ${other.id}`);
       }
       const glyphs = [...root.querySelectorAll<SVGTextElement>("svg text")].filter(node => node.textContent !== "").map(node => {
         const matrix = node.getScreenCTM();
@@ -96,6 +99,7 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
       return { viewport: { width: innerWidth, height: innerHeight, rootFontSize: getComputedStyle(document.documentElement).fontSize },
         bounds: rootBounds, nodes, glyphs, issues };
     }, forwardClear);
+    if (measured.issues.length > 0) report.hudFailure = measured;
     assert.deepEqual(measured.issues, []);
     return measured;
   };
