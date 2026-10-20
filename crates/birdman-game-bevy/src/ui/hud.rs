@@ -721,7 +721,7 @@ fn project_widget(
                 });
                 retained_node(world, label).set_if_neq(Node {
                     position_type: PositionType::Absolute,
-                    display: if tick.major {
+                    display: if !tick.label.is_empty() {
                         Display::Flex
                     } else {
                         Display::None
@@ -1106,7 +1106,7 @@ mod tests {
                     *ticks = (0..21)
                         .map(|index| GameUiHudHeadingTick {
                             position_ratio: index as f64 / 20.0,
-                            major: true,
+                            major: index % 2 == 0,
                             label: format!("共有 {index}"),
                         })
                         .collect();
@@ -1184,6 +1184,10 @@ mod tests {
                             percent(tick.position_ratio * 100.0)
                         );
                         assert_eq!(app.world().get::<Text>(*label).unwrap().0, tick.label);
+                        assert_eq!(
+                            app.world().get::<Node>(*label).unwrap().display,
+                            Display::Flex
+                        );
                     }
                     retired_ticks.extend(entities.iter().flat_map(|(line, label)| [*line, *label]));
                 }
