@@ -703,7 +703,7 @@ pub enum GameUiHudPlacement {
 pub struct GameUiHudNode {
     /// Stable identity used only to retain this element.
     pub id: String,
-    /// Shared heading, independent of the widget type.
+    /// Caption preceding the value in one formatted paragraph, independent of widget type.
     pub label: String,
     /// Shared normalized rectangle within the bottom HUD rail.
     pub bounds: GameUiRect,

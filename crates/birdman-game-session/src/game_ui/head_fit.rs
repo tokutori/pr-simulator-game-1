@@ -46,9 +46,23 @@ pub enum GameUiHeadHudFit {
 /// Packs the shared nodes below the forward view, with whole-row upper fallback.
 pub fn fit_game_ui_head_hud(hud: &GameUiHud, space: GameUiHeadHudSpace) -> GameUiHeadHudFit {
     let [width, height] = space.size_m;
+    let layout = &hud.layout;
     if ![width, height, space.text_height_m, hud.layout.font_size_px]
         .into_iter()
         .all(|value| value.is_finite() && value > 0.0)
+        || width > 100.0
+        || height > 100.0
+        || space.text_height_m > height
+        || !(1.0..=256.0).contains(&layout.font_size_px)
+        || !layout
+            .padding_px
+            .into_iter()
+            .chain(layout.gap_px)
+            .all(|value| value.is_finite() && (0.0..=1_024.0).contains(&value))
+        || !layout
+            .attitude_size_px
+            .into_iter()
+            .all(|value| value.is_finite() && (1.0..=8_192.0).contains(&value))
         || ![space.top_band_m, space.bottom_band_m]
             .into_iter()
             .all(|[top, band_height]| {
@@ -69,6 +83,28 @@ pub fn fit_game_ui_head_hud(hud: &GameUiHud, space: GameUiHeadHudSpace) -> GameU
         return GameUiHeadHudFit::Unavailable;
     }
     let scale = space.text_height_m / hud.layout.font_size_px;
+    let projected_width = width / scale;
+    if !scale.is_finite()
+        || scale <= 0.0
+        || !projected_width.is_finite()
+        || !(1.0..=65_536.0).contains(&projected_width)
+    {
+        return GameUiHeadHudFit::Unavailable;
+    }
+    let source_nodes = hud
+        .groups
+        .iter()
+        .flat_map(|group| &group.nodes)
+        .collect::<Vec<_>>();
+    if source_nodes.iter().enumerate().any(|(index, node)| {
+        node.id.is_empty()
+            || node.id.len() > 128
+            || source_nodes[..index]
+                .iter()
+                .any(|previous| previous.id == node.id)
+    }) {
+        return GameUiHeadHudFit::Unavailable;
+    }
     let readouts = hud
         .groups
         .iter()
@@ -82,12 +118,12 @@ pub fn fit_game_ui_head_hud(hud: &GameUiHud, space: GameUiHeadHudSpace) -> GameU
         .flat_map(|group| group.nodes.iter().cloned())
         .collect::<Vec<_>>();
     let mut layout = hud.layout.clone();
-    layout.width_px = width / scale;
+    layout.width_px = projected_width;
     let mut groups =
         super::hud::position_hud(&mut layout, readouts.clone(), instruments.clone(), true);
     if layout.height_px * scale <= space.bottom_band_m[1] + 1.0e-9 {
-        return GameUiHeadHudFit::Fitted {
-            nodes: groups
+        return fitted_nodes(
+            groups
                 .into_iter()
                 .flat_map(|group| group.nodes)
                 .map(|node| GameUiHeadHudNode {
@@ -102,7 +138,7 @@ pub fn fit_game_ui_head_hud(hud: &GameUiHud, space: GameUiHeadHudSpace) -> GameU
                     instrument_height_em: node.instrument_height_em,
                 })
                 .collect(),
-        };
+        );
     }
     groups = super::hud::position_hud(&mut layout, readouts, instruments, false);
     let gap = layout.gap_px[1] * scale;
@@ -145,6 +181,34 @@ pub fn fit_game_ui_head_hud(hud: &GameUiHud, space: GameUiHeadHudSpace) -> GameU
             });
         }
         row_top += row_heights[row_index] + gap;
+    }
+    fitted_nodes(nodes)
+}
+
+fn fitted_nodes(mut nodes: Vec<GameUiHeadHudNode>) -> GameUiHeadHudFit {
+    for node in &mut nodes {
+        let bounds = &mut node.bounds;
+        if ![
+            bounds.x,
+            bounds.y,
+            bounds.width,
+            bounds.height,
+            node.instrument_height_em,
+        ]
+        .into_iter()
+        .all(f64::is_finite)
+            || bounds.x < 0.0
+            || bounds.y < 0.0
+            || bounds.width <= 0.0
+            || bounds.height <= 0.0
+            || bounds.x + bounds.width > 1.0 + 1.0e-12
+            || bounds.y + bounds.height > 1.0 + 1.0e-12
+            || node.instrument_height_em < 0.0
+        {
+            return GameUiHeadHudFit::Unavailable;
+        }
+        bounds.width = bounds.width.min(1.0 - bounds.x);
+        bounds.height = bounds.height.min(1.0 - bounds.y);
     }
     GameUiHeadHudFit::Fitted { nodes }
 }
