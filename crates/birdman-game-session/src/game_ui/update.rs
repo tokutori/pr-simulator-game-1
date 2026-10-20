@@ -65,6 +65,7 @@ pub fn update_game_ui(
             }
             if entering_replay {
                 next.replay_view = GameUiReplayView::Cinematic;
+                next.technical_open = false;
                 if !context
                     .platform
                     .supported_replay_cameras

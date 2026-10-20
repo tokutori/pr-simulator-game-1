@@ -5189,9 +5189,16 @@ mod tests {
         );
         assert!(
             app.world_mut()
-                .query::<&bevy::prelude::Text>()
+                .query::<(&Name, &bevy::prelude::Children)>()
                 .iter(app.world())
-                .any(|text| text.0.starts_with("技術情報: ") && text.0.contains(&expected))
+                .any(|(name, children)| {
+                    name.as_str() == "game-result-technical-content"
+                        && children.iter().any(|entity| {
+                            app.world()
+                                .get::<bevy::prelude::Text>(*entity)
+                                .is_some_and(|text| text.0.contains(&expected))
+                        })
+                })
         );
         let replay = app
             .world_mut()

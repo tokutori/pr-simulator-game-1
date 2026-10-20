@@ -1869,13 +1869,14 @@ fn replay_entry_selects_the_first_supported_camera_and_preserves_supported_choic
 }
 
 #[test]
-fn entering_replay_resets_only_its_ui_view_to_the_web_default() {
+fn entering_replay_resets_its_view_and_disclosure_while_retaining_camera_and_cursor() {
     let session = finalized();
     let platform = platform();
     let state = GameUiState {
         replay_view: GameUiReplayView::Analysis,
         replay_camera: GameUiReplayCamera::Chase,
         analysis_time_seconds: 0.015,
+        technical_open: true,
         ..GameUiState::default()
     };
     let update = update_game_ui(
@@ -1887,6 +1888,7 @@ fn entering_replay_resets_only_its_ui_view_to_the_web_default() {
     )
     .unwrap();
     assert_eq!(update.state.replay_view, GameUiReplayView::Cinematic);
+    assert!(!update.state.technical_open);
     assert_eq!(update.state.replay_camera, state.replay_camera);
     assert_eq!(
         update.state.analysis_time_seconds,

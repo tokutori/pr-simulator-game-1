@@ -458,6 +458,9 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
       const measurements = [];
       for (const viewport of [{ width: 1280, height: 720 }, { width: 1920, height: 1080 }]) {
         await page.setViewportSize(viewport);
+        await page.evaluate(() => new Promise<void>(complete => {
+          requestAnimationFrame(() => { requestAnimationFrame(() => { complete(); }); });
+        }));
         const measured = await page.locator(".screen-ui-shell").evaluate(node => {
           const sections = [...node.querySelectorAll<HTMLElement>(".screen-ui-section")];
           const footer = node.querySelector<HTMLElement>('[data-section-id="result-navigation"]');
