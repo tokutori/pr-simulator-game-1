@@ -2,7 +2,7 @@ use super::super::NativeFont;
 use super::{color, retained_node, retained_ui_transform, set_text, spawn_text};
 use bevy::{picking::Pickable, prelude::*};
 use birdman_game_session::game_ui::{
-    GameUiHud, GameUiHudNode, GameUiHudNodeContent, GameUiHudPlacement, GameUiHudTone, GameUiTheme,
+    GameUiHud, GameUiHudNode, GameUiHudNodeContent, GameUiHudTone, GameUiTheme,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -246,10 +246,7 @@ fn project_structure(
                 .entry(node.id.clone())
                 .or_insert_with(|| spawn_node(world, entity, node, font));
             world.entity_mut(retained_node.card).insert(ChildOf(entity));
-            let boxed = match group.placement {
-                GameUiHudPlacement::Instruments => true,
-                GameUiHudPlacement::Readouts => false,
-            };
+            let boxed = !matches!(node.content, GameUiHudNodeContent::Text { .. });
             world
                 .get_mut::<Node>(retained_node.card)
                 .expect("HUD card exists")
@@ -1067,6 +1064,20 @@ mod tests {
                 .0,
             Color::NONE
         );
+        for node in hud.groups.iter().flat_map(|group| &group.nodes) {
+            let expected = if matches!(node.content, GameUiHudNodeContent::Text { .. }) {
+                Color::NONE
+            } else {
+                color(&theme.panel_background, 0.123).unwrap()
+            };
+            assert_eq!(
+                app.world()
+                    .get::<BackgroundColor>(retained.hud.nodes[&node.id].card)
+                    .unwrap()
+                    .0,
+                expected
+            );
+        }
         project_hud(app.world_mut(), &mut retained.hud, None, &theme).unwrap();
         assert_eq!(
             app.world().get::<Node>(retained.hud.shell).unwrap().display,
