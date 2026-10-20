@@ -24,19 +24,19 @@ use bevy::{
     prelude::*,
     render::render_resource::{Extent3d, PrimitiveTopology, TextureDimension, TextureFormat},
 };
+use birdman_game_app::{LaunchPlatform, launch_venue};
 #[cfg(test)]
-use birdman_game_core::{HybridMockDefinition, HybridSurfaceRole};
-use birdman_game_session::cockpit_geometry::{CockpitGeometry, CockpitMaterial};
-use birdman_game_session::lake_sky::LAKE_SCENE_LIGHTING;
-use birdman_game_session::tail_geometry::{TailGeometry, TailMaterial};
-use birdman_game_session::venue_structures::{ShoreStructureMesh, registered_structures};
-use birdman_game_session::venue_terrain::{VenueTerrainMaterial, registered_terrain};
-use birdman_game_session::wing_geometry::{
-    CARBON_COLOR, MAIN_BEAM_RADIUS, RIB_COLOR, RIB_RADIUS, WingFrame, WingGeometry, WingMaterial,
-    WingRodKind, WingSurface,
+use birdman_game_core::HybridSurfaceRole;
+use birdman_game_scene::cockpit_geometry::{CockpitGeometry, CockpitMaterial};
+use birdman_game_scene::lake_sky::LAKE_SCENE_LIGHTING;
+use birdman_game_scene::tail_geometry::{TailGeometry, TailMaterial};
+use birdman_game_scene::venue_structures::{ShoreStructureMesh, registered_structures};
+use birdman_game_scene::venue_terrain::{VenueTerrainMaterial, registered_terrain};
+use birdman_game_scene::wing_geometry::{
+    CARBON_COLOR, RIB_COLOR, RIB_RADIUS, WingFrame, WingGeometry, WingMaterial, WingRodKind,
+    WingSurface,
 };
-use birdman_game_session::wing_texture;
-use birdman_game_session::{LaunchPlatform, launch_venue};
+use birdman_game_scene::wing_texture;
 
 pub(super) const SCENE_SUN_ILLUMINANCE_LUX: f32 = 18_000.0;
 const SCENE_EXPOSURE_SCALE: f32 =
@@ -131,7 +131,7 @@ impl RenderHistory {
     }
 }
 
-fn venue_terrain_mesh(source: &birdman_game_session::venue_terrain::VenueTerrainMesh) -> Mesh {
+fn venue_terrain_mesh(source: &birdman_game_scene::venue_terrain::VenueTerrainMesh) -> Mesh {
     Mesh::new(
         PrimitiveTopology::TriangleList,
         RenderAssetUsages::default(),
@@ -391,7 +391,6 @@ pub(crate) fn setup_world(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut water: ResMut<Assets<WaterMaterial>>,
     mut images: ResMut<Assets<Image>>,
-    mut clouds: ResMut<Assets<super::clouds::CloudMaterial>>,
     mut terrain_materials: ResMut<Assets<TerrainMaterial>>,
 ) {
     commands.init_resource::<RenderHistory>();
@@ -407,7 +406,6 @@ pub(crate) fn setup_world(
         .expect("登録環境が欠損")
         .sky;
     commands.insert_resource(environment);
-    super::clouds::spawn(&mut commands, &mut meshes, &mut images, &mut clouds, sky);
     let land_materials = std::array::from_fn::<_, 3, _>(|_| {
         terrain_materials.add(TerrainMaterial {
             base: StandardMaterial {
@@ -622,7 +620,10 @@ pub(crate) fn setup_world(
                 Name::new("single-carbon-main-beam"),
                 Mesh3d(rod_mesh.clone()),
                 MeshMaterial3d(frame.clone()),
-                wing_rod_transform(wing_geometry.main_beam_endpoints(), MAIN_BEAM_RADIUS as f32),
+                wing_rod_transform(
+                    wing_geometry.main_beam_endpoints(),
+                    wing_geometry.main_beam_radius() as f32,
+                ),
                 RenderLayers::layer(0).with(1),
             ));
             for (rod, endpoints) in wing_geometry.rods().iter().zip(wing_frame.rod_endpoints()) {
@@ -833,7 +834,8 @@ pub(crate) fn setup_world(
         scene_exposure(),
         Projection::Perspective(PerspectiveProjection {
             far: 200_000.0,
-            fov: birdman_game_session::SCREEN_VERTICAL_FIELD_OF_VIEW_DEGREES.to_radians() as f32,
+            fov: birdman_game_presentation::SCREEN_VERTICAL_FIELD_OF_VIEW_DEGREES.to_radians()
+                as f32,
             ..default()
         }),
         Transform::from_xyz(15.0, 14.0, 22.0).looking_at(Vec3::new(0.0, 8.0, 0.0), Vec3::Y),
@@ -881,12 +883,12 @@ pub(crate) fn project_world(
             .playback_record()
             .zip(session.game.core_session().playback_clock())
             .map(|(record, clock)| {
-                birdman_game_session::replay_camera::replay_camera_view(
+                birdman_game_presentation::replay_camera::replay_camera_view(
                     record,
                     session.game.display_control_identity(),
                     clock.time_seconds(),
                     session.ui.replay_camera,
-                    birdman_game_session::game_ui::GameUiPresentationMode::Screen,
+                    birdman_game_presentation::game_ui::GameUiPresentationMode::Screen,
                     session.game.core_session().snapshot().phase()
                         == birdman_game_core::SessionPhase::Attract,
                 )
@@ -905,7 +907,7 @@ pub(crate) fn project_world(
         .as_ref()
         .and_then(|view| view.cinematic())
         .map_or(
-            birdman_game_session::SCREEN_VERTICAL_FIELD_OF_VIEW_DEGREES,
+            birdman_game_presentation::SCREEN_VERTICAL_FIELD_OF_VIEW_DEGREES,
             |view| view.vertical_field_of_view_degrees(),
         )
         .to_radians() as f32;
@@ -979,7 +981,7 @@ fn exhibition_aircraft_transform(platform: LaunchPlatform) -> Transform {
 mod tests {
     use super::super::native_session::{FlightInput, MenuAction};
     use super::*;
-    use birdman_game_session::application::SessionCommand;
+    use birdman_game_app::application::SessionCommand;
 
     #[test]
     fn wing_textures_decode_the_registered_decal_and_upload_srgb_mips() {
@@ -987,7 +989,6 @@ mod tests {
         app.init_resource::<Assets<Mesh>>()
             .init_resource::<Assets<StandardMaterial>>()
             .init_resource::<Assets<TerrainMaterial>>()
-            .init_resource::<Assets<super::super::clouds::CloudMaterial>>()
             .init_resource::<Assets<Image>>()
             .init_resource::<Assets<WaterMaterial>>()
             .init_resource::<NativeSession>()
@@ -1251,7 +1252,7 @@ mod tests {
 
     #[test]
     fn replay_rigs_project_shared_pose_and_lens_then_restore_screen_fov() {
-        use birdman_game_session::{
+        use birdman_game_presentation::{
             game_ui::{GameUiPresentationMode, GameUiReplayCamera},
             replay_camera::replay_camera_view,
         };
@@ -1299,7 +1300,7 @@ mod tests {
                 session.ui.replay_camera = rig;
                 session
                     .execute_ui_record_action(
-                        birdman_game_session::application::RecordCommand::SeekReplay {
+                        birdman_game_app::application::RecordCommand::SeekReplay {
                             time_seconds: 0.015,
                         },
                     )
@@ -1344,7 +1345,7 @@ mod tests {
                 panic!("Perspective projection required")
             };
             let expected_fov = expected.cinematic().map_or(
-                birdman_game_session::SCREEN_VERTICAL_FIELD_OF_VIEW_DEGREES,
+                birdman_game_presentation::SCREEN_VERTICAL_FIELD_OF_VIEW_DEGREES,
                 |view| view.vertical_field_of_view_degrees(),
             );
             assert_eq!(lens.fov, expected_fov.to_radians() as f32);
@@ -1363,7 +1364,7 @@ mod tests {
         };
         assert_eq!(
             lens.fov,
-            birdman_game_session::SCREEN_VERTICAL_FIELD_OF_VIEW_DEGREES.to_radians() as f32
+            birdman_game_presentation::SCREEN_VERTICAL_FIELD_OF_VIEW_DEGREES.to_radians() as f32
         );
     }
 
@@ -1775,7 +1776,7 @@ mod tests {
                 session.presentation_frame(1.0);
             }
         }
-        for _step in 0..birdman_game_session::DEFAULT_MAXIMUM_FLIGHT_TICKS {
+        for _step in 0..birdman_game_app::DEFAULT_MAXIMUM_FLIGHT_TICKS {
             if app
                 .world()
                 .resource::<NativeSession>()
@@ -1850,7 +1851,6 @@ mod tests {
         app.init_resource::<Assets<Mesh>>()
             .init_resource::<Assets<StandardMaterial>>()
             .init_resource::<Assets<TerrainMaterial>>()
-            .init_resource::<Assets<super::super::clouds::CloudMaterial>>()
             .init_resource::<Assets<Image>>()
             .init_resource::<Assets<WaterMaterial>>()
             .init_resource::<NativeSession>()
@@ -1901,7 +1901,7 @@ mod tests {
         };
         assert_eq!(
             projection.fov,
-            birdman_game_session::SCREEN_VERTICAL_FIELD_OF_VIEW_DEGREES.to_radians() as f32
+            birdman_game_presentation::SCREEN_VERTICAL_FIELD_OF_VIEW_DEGREES.to_radians() as f32
         );
         use bevy::camera::CameraProjection;
         for (width, height) in [(1280.0, 720.0), (360.0, 300.0)] {
@@ -1968,7 +1968,6 @@ mod tests {
         app.init_resource::<Assets<Mesh>>()
             .init_resource::<Assets<StandardMaterial>>()
             .init_resource::<Assets<TerrainMaterial>>()
-            .init_resource::<Assets<super::super::clouds::CloudMaterial>>()
             .init_resource::<Assets<Image>>()
             .init_resource::<Assets<WaterMaterial>>()
             .add_systems(Startup, setup_world);
@@ -2038,13 +2037,11 @@ mod tests {
     }
 
     #[test]
-    fn reflection_layer_contains_airframe_clouds_and_sun_but_excludes_water_terrain_and_structures()
-    {
+    fn reflection_layer_contains_only_airframe_meshes_and_sunlight() {
         let mut app = App::new();
         app.init_resource::<Assets<Mesh>>()
             .init_resource::<Assets<StandardMaterial>>()
             .init_resource::<Assets<TerrainMaterial>>()
-            .init_resource::<Assets<super::super::clouds::CloudMaterial>>()
             .init_resource::<Assets<Image>>()
             .init_resource::<Assets<WaterMaterial>>()
             .add_systems(Startup, setup_world);
@@ -2060,7 +2057,6 @@ mod tests {
             Option<&MeshMaterial3d<TerrainMaterial>>,
             Option<&Name>,
             &Transform,
-            Option<&super::super::clouds::CloudLayer>,
             Option<&RegisteredVenue>,
         )>();
         let mut reflected_meshes = 0;
@@ -2071,7 +2067,6 @@ mod tests {
         let mut transparent_films = 0;
         let mut excluded_meshes = 0;
         let mut terrain_meshes = 0;
-        let mut cloud_layers = 0;
         let mut structures = 0;
         let materials = world.resource::<Assets<StandardMaterial>>();
         let terrain_materials = world.resource::<Assets<TerrainMaterial>>();
@@ -2086,18 +2081,11 @@ mod tests {
             terrain_material,
             name,
             transform,
-            cloud,
             structure,
         ) in meshes.iter(world)
         {
             if layers.is_some_and(|layers| layers.intersects(&RenderLayers::layer(1))) {
                 assert!(water.is_none());
-                if cloud.is_some() {
-                    assert!(material.is_none());
-                    assert_eq!(*layers.unwrap(), RenderLayers::layer(0).with(1));
-                    cloud_layers += 1;
-                    continue;
-                }
                 let material = materials.get(&material.unwrap().0).unwrap();
                 if material.alpha_mode == AlphaMode::Blend {
                     assert!(shadow_exclusion.is_some());
@@ -2237,7 +2225,6 @@ mod tests {
         assert_eq!(reflected_internals, 180);
         assert_eq!(main_beams, 1);
         assert_eq!(transparent_films, 5);
-        assert_eq!(cloud_layers, 1);
         assert!(excluded_meshes >= 5);
         let mut lights = world.query_filtered::<&RenderLayers, With<EnvironmentSun>>();
         assert_eq!(
@@ -2393,28 +2380,32 @@ mod tests {
     }
     #[test]
     fn native_tail_presentation_selects_the_shared_default_model_identity() {
-        let preparation = birdman_game_session::HybridSessionPreparation::try_default().unwrap();
+        let preparation = birdman_game_app::HybridSessionPreparation::try_default().unwrap();
         let (configuration, record_identity) = preparation.into_parts();
+        let definition = birdman_game_app::registered_aircraft().unwrap();
         assert_eq!(
             configuration.identity().aircraft_model_version,
-            HybridMockDefinition::MODEL_VERSION
+            definition.document().model_version
         );
         assert_eq!(
             record_identity.aircraft_configuration_id,
-            HybridMockDefinition::CONFIGURATION_ID
+            definition.document().configuration_id
         );
     }
 
     #[test]
     fn tail_surface_projection_uses_versioned_core_geometry_without_changing_incidence() {
-        let definition = HybridMockDefinition::try_new().unwrap();
+        let definition = birdman_game_app::registered_aircraft().unwrap();
         for surface in definition.surfaces().unwrap() {
             let geometry = surface.geometry();
             if geometry.role() == HybridSurfaceRole::MainWing {
-                assert!(TailGeometry::from_surface(geometry).is_err());
+                assert!(
+                    TailGeometry::from_shape(definition.shape().surface(geometry.role())).is_err()
+                );
                 continue;
             }
-            let projected = TailGeometry::from_surface(geometry).unwrap();
+            let projected =
+                TailGeometry::from_shape(definition.shape().surface(geometry.role())).unwrap();
             let expected = match geometry.role() {
                 HybridSurfaceRole::HorizontalTail => Vec3::new(0.0, -0.1, 3.6),
                 HybridSurfaceRole::VerticalTail => Vec3::new(0.0, 0.1, 1.8),
@@ -2455,7 +2446,6 @@ mod tests {
         app.init_resource::<Assets<Mesh>>()
             .init_resource::<Assets<StandardMaterial>>()
             .init_resource::<Assets<TerrainMaterial>>()
-            .init_resource::<Assets<super::super::clouds::CloudMaterial>>()
             .init_resource::<Assets<Image>>()
             .init_resource::<Assets<WaterMaterial>>()
             .add_systems(Startup, setup_world);

@@ -42,7 +42,6 @@ export function sharedGameUiPlatform(overrides: Partial<GameUiPlatformInput> = {
     supported_replay_cameras: Object.freeze(["auto", "pilot", "chase", "orbit", "platform", "shore", "overhead", "side", "front", "telephoto"] as const),
     stored_records_available: true,
     flight_log_available: true,
-    flight_log_pending: false,
     water_quality: "high",
     water_quality_operation: Object.freeze({ kind: "idle" }),
     screen_render_scale: sharedScreenRenderSnapshot(),

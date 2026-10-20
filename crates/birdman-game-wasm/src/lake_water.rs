@@ -1,8 +1,9 @@
-use birdman_game_session::lake_water::{
+use birdman_game_format::WaterQuality;
+use birdman_game_scene::lake_water::{
     LAKE_DETAIL_IMAGE_SIZE, LakeBroaderWavelets, LakeDetailConfig, LakeDetailImage,
-    LakeMeshSpacingDomain, LakeVisualCondition, LakeWaterQuality, LakeWaveProjection,
-    MAX_LAKE_DETAIL_WAVELETS, generate_lake_detail, lake_grid_spacing_gradient,
-    lake_wave_displacement_derivative_bound, lake_wave_visibility, production_lake_detail_configs,
+    LakeMeshSpacingDomain, LakeVisualCondition, LakeWaveProjection, MAX_LAKE_DETAIL_WAVELETS,
+    generate_lake_detail, lake_grid_spacing_gradient, lake_wave_displacement_derivative_bound,
+    lake_wave_visibility, production_lake_detail_configs, water_quality_profile,
 };
 use wasm_bindgen::prelude::*;
 
@@ -18,11 +19,11 @@ fn integer(value: f64, maximum: f64) -> Result<u64, JsValue> {
     }
 }
 
-fn quality(code: u32) -> Result<LakeWaterQuality, JsValue> {
+fn quality(code: u32) -> Result<WaterQuality, JsValue> {
     match code {
-        0 => Ok(LakeWaterQuality::Low),
-        1 => Ok(LakeWaterQuality::Medium),
-        2 => Ok(LakeWaterQuality::High),
+        0 => Ok(WaterQuality::Low),
+        1 => Ok(WaterQuality::Medium),
+        2 => Ok(WaterQuality::High),
         _ => Err(model_error("quality code must be in [0, 2]")),
     }
 }
@@ -32,8 +33,8 @@ fn quality(code: u32) -> Result<LakeWaterQuality, JsValue> {
 pub fn lake_water_quality_profile(code: u32) -> Result<Vec<u32>, JsValue> {
     let quality = quality(code)?;
     Ok(vec![
-        quality.component_count() as u32,
-        quality.mesh_segments(),
+        water_quality_profile(quality).component_count() as u32,
+        water_quality_profile(quality).mesh_segments(),
     ])
 }
 

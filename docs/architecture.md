@@ -17,19 +17,22 @@
 ## crateと依存方向
 
 ```text
-Web application ── WASM adapter ─┐
-CLI ────────────────────────────┼─ session ── format ── core
-Bevy native adapter ────────────┘       └──────────────── core
+Web / Native ── presentation ── app ── content ── format ── core
+      └──────── scene ──────────┘
+CLI ────────────────────────── app
+CLI --features schema ──────── presentation
 ```
 
-adapterからcore・formatへの直接参照も許可する。逆方向の依存と循環依存は禁止する。
+adapter・presentation・scene・app・contentは責務に応じて下位のcore・format・contentを直接参照し、依存DAGを形成する。CLIはschema出力時だけoptionalなpresentation依存を有効にする。
 
 | 層 | 所有する責務 |
 | --- | --- |
-| `birdman-game-core` | 座標・数学、運動方程式、空力、風場、制御、固定tick、接触、GameSession、FlightRecord、集計・補間query |
-| `birdman-game-format` | 外部設定・環境・記録のcodecと検証、解決済み設定、比較identity、Personal Best選定 |
-| `birdman-game-content` | 登録機体JSON、検証済みの質量・空力storageと中立構造形状。sectionとstrip境界から荷重モデル、外皮と構造から接触支持点を準備する |
-| `birdman-game-session` | ApplicationSession、共有command実行、scenario準備・資源所有、archive生成、共有UI・camera・描画用モデル |
+| `birdman-game-core` | 座標・数学、運動方程式、空力、風場、制御、固定tick、接触、有限な曲げ係数と補間、GameSession、FlightRecord、集計・補間query |
+| `birdman-game-format` | 外部設定・環境・地物・記録のcodecと検証、解決済み設定・水面品質の共通型、比較identity、Personal Best選定 |
+| `birdman-game-content` | 登録機体・地物の原文JSON、検証済みの質量・空力storageと構造形状。sectionとstrip境界から荷重モデルと接触支持点を準備し、対気速度・物理尾翼角から固定順の変形点群を生成する |
+| `birdman-game-app` | ApplicationSession、共有command実行、scenario準備・資源所有、実行状態・入力profile・環境観測、会場・地物の登録整合と共有storage、archive・記録query・ビルド来歴の生成 |
+| `birdman-game-presentation` | 共有UI・camera・XR layout・適応画質の方針と、appの観測からの描画pose・live/prepared表示snapshotの導出 |
+| `birdman-game-scene` | contentから導出する機体・地形mesh、水面・天空・画像の描画資産生成 |
 | `birdman-game-wasm` | JavaScript ABI、入力のdecode、共有処理の呼出し、DTOのencode |
 | `birdman-game-cli` | CLI/WASIのI/O、offline検査・出力・計測入口 |
 | `birdman-game-bevy` | nativeウィンドウ、ECS・入力・時刻、共有Viewの投影、GPU資源 |
@@ -37,13 +40,15 @@ adapterからcore・formatへの直接参照も許可する。逆方向の依存
 | `tools` | offline asset処理、schema生成、境界検査、再現可能な検証コマンド |
 
 - core・format・contentは`no_std + alloc`を維持する。
+- appとsceneは登録storageの一度限りの初期化に`std::sync::OnceLock`を使う。sceneは`image`・`earcut`による画像処理・地形三角化を所有し、presentationは日時組版等に`std`を利用する。
+- CLIの通常実行とschema出力はapp・presentationの利用範囲に対応する。cameraと機体形状の整合はpresentationからsceneへのdev-dependencyで検査する。
 - coreにfilesystem、network、OS時計、乱数取得、GIS、serde、WASM ABI、描画engineを持ち込まない。
 - 乱数seed、環境、入力、時刻観測は外部から明示的に渡す。
 - モデル構築と記録容量の予約は準備段階で行い、固定tickのheap allocationを発生させない設計を要求する。
 - 達成状態は対応するallocation検査で確認する。
 
 - 依存の版とfeatureは`Cargo.toml`・`Cargo.lock`を正本とする。
-- coreの数値依存は`libm`と`polycool`であり、`nalgebra`はdesktopの検証用dev-dependencyに限定する。
+- coreの数値依存は`libm`と`polycool`である。登録機体の局所線型化試験はcontentに置き、`nalgebra`をdesktopの検証用dev-dependencyに限定する。
 - 証明用`vstd`とschema生成用`schemars`は明示的な非default featureとし、通常のnative/WASM実行経路へ有効化しない。
 - Parleyのlocal patchはnative日本語組版に限定し、`vendor/parley`を独立したworkspace memberへ追加しない。
 
@@ -56,7 +61,7 @@ adapterからcore・formatへの直接参照も許可する。逆方向の依存
 ### GameSessionとApplicationSession
 
 - `GameSession`はdomain phase、停止理由、封印済みconfiguration、飛行状態、終了理由、score、確定record、RetryとReplayを所有する。
-- 公開snapshotはこの状態から導出する観測値である。
+- appのsession_snapshotがphase・lifecycle・入力profile・状態/telemetry/progressの観測型を所有する。presentationは同じ状態からFlightRenderPoseとlive/prepared表示snapshotを導出し、WASMは共有結果をJSONへencodeする。
 - Bevyの`Transform`、DOM、TypeScriptのScene名を飛行状態の正本にしない。
 
 - `SessionLifecycle`と`ConfiguredPhase`は、設定済み・飛行中・結果・再生に必要なpayloadをvariantへ結合する。
@@ -64,6 +69,8 @@ adapterからcore・formatへの直接参照も許可する。逆方向の依存
 - Title用demoのようにphaseをまたいで存続する資源は独立した所有領域に置く。
 
 - `ApplicationSession`はprivateなGameSessionと、難易度、seed、tick上限、準備metadata、archive原文、記録の制御identityを所有する。
+- appの記録queryが状態・telemetry・舵角の共通投影とcursorの時間範囲を定義し、Replay cameraと各adapterが参照する。
+- 準備・Retry・Briefing再準備・archive交換・初回demo登録はapplication単位の記録source識別子を更新する。tick・seek・再生速度の変更は同じsourceを保持する。
 - `HybridSessionPreparation`は機体・環境の共有storageを組み立て、Webとnativeへ同じconfigurationを渡す。
 - 準備をWASM専有処理やUI表示処理にしない。
 
@@ -112,7 +119,8 @@ adapterからcore・formatへの直接参照も許可する。逆方向の依存
 - 異なるcompiler/targetに無条件のbitwise一致を要求しない。
 - 物理一致と、表示補間・視点・入力割当の一致を個別に検査する。
 
-- 共有`airframe_shape`はf64の構造形状を所有し、表示meshと固定物理polytopeを別々に導出する。
+- contentの`AircraftDefinition`が検証済みJSONとf64の`AircraftShape`を所有する。空力sectionと中立の表示mesh・接触polytopeは同じ断面・翼型・cockpit・桁定義から導出し、共通の弦方向格子と周方向格子を使用する。
+- 共有準備層が登録機体と借用する荷重viewを一度初期化し、発進・live session・表示へ同じ所有者を渡す。
 - 全polytope頂点による静水面支持と、連続曲面・変形機体への近似は別の契約である。
 
 - 湖面の波・空・地形は描画用モデルとして共有する。
@@ -141,6 +149,7 @@ GameUiView / GameUiFrame → platform renderer → DOM / VR panel / Bevy entity
 - IDは差分追跡に用い、計器項目の個別再実装に用いない。
 
 - chartの軸、series、segment、風、marker、cursorはRustのrecord queryから導出する。
+- 記録queryが保存sampleの状態・telemetry・物理舵角のwire投影を所有し、Replay cameraは同じsample投影を利用して視点を導出する。
 - TypeScriptやBevy UIで飛行物理・scoreを再計算しない。
 - 未提供の警報producerは利用不可として表示し、Custom設定値の保持と実装済み警報の提供を区別する。
 - 致命的なcontroller失敗は通常の情報量設定にかかわらず通知する。
@@ -149,6 +158,7 @@ GameUiView / GameUiFrame → platform renderer → DOM / VR panel / Bevy entity
 
 - 構造Viewと高頻度の動的Frameを分離する。
 - 構造revisionと依存keyの意味は共有側が所有し、adapterは変更時だけ構造を再投影する。
+- `GameUiStructureCache`は表示側がapplication ownerと同じ寿命で所有し、構造keyと記録source識別子からrevisionを導出する。ApplicationSessionは記録所有を識別し、UIのcacheは表示側へ置く。
 - 数値更新ごとにNode・grid・背景・DOM全体を再構築しない。
 - DOMはrenderer境界で反映し、focus・caret・scrollの保持を検査する。
 
@@ -167,6 +177,9 @@ GameUiView / GameUiFrame → platform renderer → DOM / VR panel / Bevy entity
 - 生成型のreadonlyとtuple制約はTypeScript compilerで検査する。schema生成用featureとAjvによるschema検査は開発ツールの経路へ限定する。
 - 同一buildのWASM出力は、instanceを所有するfacadeの内部でJSONをparseし、生成DTOへ直接接続する。phase、profile、環境、描画poseの正本は共有Rustに置く。
 - WebはDTOを保持し、DOM・engine APIに必要な投影だけを行う。readonlyは静的な変更制約とし、時刻・score・quaternion等の数値契約はRustのproducerとcoreで検査する。
+- Analysisのchart・cursorは共有Rust UIから投影し、Replay cameraと時計操作は同期呼出しで現在の観測を反映する。遅延tickはsession所有者とtimer世代で管理し、停止・seek・速度変更・復帰で旧callbackを退役させる。
+- 共有session commandは同期で実行し、観測したRust phaseを即時採用する。保存記録の読込みは専用の待機状態で管理し、I/O応答を要求ID・session所有者・source tokenで照合する。
+- ログ出力は現在の記録原文を同期で取得してdownloadを要求し、成功・失敗の通知を保持する。Blob URLはbrowser adapterが所有し、遅延解放と破棄を管理する。
 - 外部の保存JSONはformatのcodecで受理する。内部出力の受渡しと、外部原文のdecodeを独立した境界として扱う。
 - Web入力はown fieldとgetterの値を一度捕捉し、prototype由来の値を送信内容から分離する。捕捉後にownerの生存を確認し、サイズ制限とRustの受理規則を適用する。
 - 非同期要求、record source、Countdownのtokenはadapterの実際の待機と資源寿命を管理する。構造・数値・所有権の接続試験は[検証](verification.md)に定める。
@@ -236,9 +249,12 @@ GameUiView / GameUiFrame → platform renderer → DOM / VR panel / Bevy entity
 - GPU mesh、material、shader、render target、entity/DOMはadapterが所有する。
 - 共有モデルはenvironmentから波スペクトル・空・cloud・地形・機体形状を生成し、adapterが成分選択・uniform・GLSL/WGSL・engine座標へ変換する。
 - 変更のたびに巨大なsceneを再送しない。
+- 地物の原文はcontent、形式と座標検証はformat、登録原点との整合と一度限りの初期化はappが所有する。UIの地図投影と地形・構造物meshは同じ登録済みcatalogを借用する。
+- 尾翼の表示用arm metadataはrender_poseが登録機体の物理pivotから導出し、liveとReplayへ共用する。
+- 水面品質はformatのWaterQualityを正本とする。波成分・mesh分割数はlake_waterの単一profile、Autoの探索順は画質policyが所有する。
 
 - 資源交換は候補の準備成功後にcommitし、旧資源だけを解放する。
-- 空のCloudLayerは型でmesh不在を表現し、頂点・indexが空のmeshをGPU資源として登録しない。
+- 上空の雲は共有天空画像へ合成し、背景と水面反射で同じWorld方向のradianceを参照する。
 - 失敗時は有効な旧資源と元原因を保持する。
 
 詳細な描画・空間・品質契約は[描画とplatform](rendering-and-platforms.md)に定める。

@@ -1,3 +1,4 @@
+use birdman_game_format::WaterQuality;
 #[path = "verification/options.rs"]
 mod options;
 pub(crate) use options::Options;
@@ -15,7 +16,7 @@ use super::{
     },
     ui::{MenuButton, UiPanel, UiText},
     water::{NearWaterSurface, WaterMaterial, verification::WaterShaderVerification},
-    water_quality::{WaterQuality, WaterQualitySelection},
+    water_quality::WaterQualitySelection,
     water_reflection::LakeReflectionCamera,
     world::WorldProjection,
 };
@@ -39,14 +40,14 @@ use bevy::{
     tasks::{AsyncComputeTaskPool, Task, futures::check_ready},
     ui::{OverrideClip, clip_check_recursive},
 };
+use birdman_game_app::application::SessionCommand;
 use birdman_game_core::{
     FlightRecordControls, FlightRecordFinalization, FlightRecordHeader, FlightRecordSample,
     PHYSICS_HZ, PauseReason, PauseReasons, SessionEndReason, SessionPhase, SessionResult,
     SessionSnapshot, TailFlightTickState,
 };
 use birdman_game_format::WeatherClass;
-use birdman_game_session::{
-    application::SessionCommand,
+use birdman_game_presentation::{
     game_ui::{
         GameUiAction, GameUiAnalysisChart, GameUiControlContent, GameUiPresentationMode,
         GameUiReplayCamera, GameUiReplayView, GameUiResultTab,
@@ -423,15 +424,7 @@ struct SourceTimingSummary {
     duplicate_frames: usize,
     unassigned_arrivals: usize,
     history_incomplete: bool,
-    groups: BTreeMap<
-        (
-            u32,
-            u32,
-            u32,
-            birdman_game_session::lake_water::LakeWaterQuality,
-        ),
-        TimingSummary,
-    >,
+    groups: BTreeMap<(u32, u32, u32, WaterQuality), TimingSummary>,
 }
 
 fn summarize_source_timing(
@@ -893,16 +886,14 @@ enum VerificationStage {
     Title,
     Start,
     Setup,
-    CloudPrepare(u8),
-    CloudCalm {
+    SkyPrepare(u8),
+    SkyCalm {
         cycle: u8,
-        layer: Entity,
-        retired_mesh: bevy::asset::AssetId<Mesh>,
+        retired_image: bevy::asset::AssetId<Image>,
     },
-    CloudTypical {
+    SkyTypical {
         cycle: u8,
-        layer: Entity,
-        retired_mesh: bevy::asset::AssetId<Mesh>,
+        retired_image: bevy::asset::AssetId<Image>,
     },
     Prepare,
     Briefing,
@@ -1642,13 +1633,6 @@ fn within_ancestor_clip(entity: Entity, bounds: Rect, hierarchy: &VerificationUi
     .all(|point| clip_check_recursive(point, entity, &hierarchy.clipping, &hierarchy.parents))
 }
 
-type VerificationCloudLayer = (
-    Entity,
-    Option<&'static Mesh3d>,
-    &'static Visibility,
-    &'static ViewVisibility,
-);
-
 #[derive(SystemParam)]
 pub(crate) struct VerificationPresentation<'w, 's> {
     camera: ResMut<'w, CameraMode>,
@@ -1656,8 +1640,6 @@ pub(crate) struct VerificationPresentation<'w, 's> {
     quality: ResMut<'w, WaterQualitySelection>,
     environment: Res<'w, NativeEnvironment>,
     materials: Res<'w, Assets<WaterMaterial>>,
-    meshes: Res<'w, Assets<Mesh>>,
-    cloud_layers: Query<'w, 's, VerificationCloudLayer, With<super::clouds::CloudLayer>>,
     rendering: Res<'w, NativeScreenRender>,
     timing_readout: Res<'w, timing::TimingReadout>,
     frame: Res<'w, FrameCount>,
@@ -1692,23 +1674,29 @@ pub(crate) struct VerificationPresentation<'w, 's> {
 }
 
 impl VerificationPresentation<'_, '_> {
-    fn cloud_mesh(&self) -> Result<(Entity, Option<bevy::asset::AssetId<Mesh>>), String> {
-        let (layer, mesh, visibility, view_visibility) = self
-            .cloud_layers
-            .single()
-            .map_err(|cause| format!("Cloud layer is unavailable: {cause}"))?;
-        let expected_visibility = if mesh.is_some() {
-            Visibility::Inherited
-        } else {
-            Visibility::Hidden
-        };
-        if *visibility != expected_visibility || view_visibility.get() != mesh.is_some() {
-            return Err(format!(
-                "Cloud mesh/visibility disagree: layer={layer:?}, mesh={}, visibility={visibility:?}, view_visibility={view_visibility:?}",
-                mesh.is_some()
-            ));
+    fn sky_image(&self) -> Result<bevy::asset::AssetId<Image>, String> {
+        let mut image = None;
+        let mut count = 0;
+        for (_, handle) in &self.surfaces {
+            let material = self
+                .materials
+                .get(handle.0.id())
+                .ok_or("Sky surface material is missing")?;
+            let current = material
+                .sky_texture
+                .as_ref()
+                .ok_or("Sky image is missing")?
+                .id();
+            if image.is_some_and(|image| image != current) || !self.images.contains(current) {
+                return Err("Environment surfaces must share one available sky image".into());
+            }
+            image = Some(current);
+            count += 1;
         }
-        Ok((layer, mesh.map(|mesh| mesh.0.id())))
+        if count != EnvironmentSurface::ALL.len() {
+            return Err("Environment sky surfaces are incomplete".into());
+        }
+        image.ok_or_else(|| "Sky image is unavailable".into())
     }
 
     fn verify_replay_camera(
@@ -1762,7 +1750,7 @@ impl VerificationPresentation<'_, '_> {
             return Err("Replay camera requires a perspective lens".into());
         };
         let expected_fov = view.cinematic().map_or(
-            birdman_game_session::SCREEN_VERTICAL_FIELD_OF_VIEW_DEGREES,
+            birdman_game_presentation::SCREEN_VERTICAL_FIELD_OF_VIEW_DEGREES,
             |view| view.vertical_field_of_view_degrees(),
         );
         if *actual != expected || lens.fov != expected_fov.to_radians() as f32 {
@@ -1877,7 +1865,8 @@ impl VerificationPresentation<'_, '_> {
             || (projection.aspect_ratio - window_extent.x as f32 / window_extent.y as f32).abs()
                 > 1.0e-6
             || projection.fov
-                != birdman_game_session::SCREEN_VERTICAL_FIELD_OF_VIEW_DEGREES.to_radians() as f32
+                != birdman_game_presentation::SCREEN_VERTICAL_FIELD_OF_VIEW_DEGREES.to_radians()
+                    as f32
             || self
                 .ui_cameras
                 .single()
@@ -2122,7 +2111,7 @@ fn advance_step(
             let next = match verification.stage {
                 VerificationStage::Title => VerificationStage::Start,
                 VerificationStage::Setup if verification.water_case.is_none() => {
-                    VerificationStage::CloudPrepare(0)
+                    VerificationStage::SkyPrepare(0)
                 }
                 VerificationStage::Setup => VerificationStage::Prepare,
                 VerificationStage::Briefing => VerificationStage::Launch,
@@ -2339,17 +2328,17 @@ fn advance_step(
                     }
                     if quality.pending().is_none() {
                         let rendering = presentation.rendering.snapshot();
-                        let applied = quality.applied().shared();
+                        let applied = quality.applied();
                         let valid_quality = applied == rendering.water_quality
                             && match rendering.selection {
                                 ScreenRenderSelection::Auto {
                                     manual_water_quality,
                                     ..
                                 } if case.auto => {
-                                    manual_water_quality == case.quality.shared()
+                                    manual_water_quality == case.quality
                                         && applied <= manual_water_quality
                                 }
-                                _ => applied == case.quality.shared(),
+                                _ => applied == case.quality,
                             };
                         if !valid_quality {
                             return Err(format!("Setup water quality failed: {quality:?}"));
@@ -2400,24 +2389,21 @@ fn advance_step(
                 }
             }
         }
-        VerificationStage::CloudPrepare(cycle) => {
+        VerificationStage::SkyPrepare(cycle) => {
             require_phase(phase, SessionPhase::FlightSetup)?;
-            let (layer, mesh) = presentation.cloud_mesh()?;
-            let retired_mesh = mesh.ok_or("Typical exhibition cloud mesh is missing")?;
+            let retired_image = presentation.sky_image()?;
             session.execute_ui_command(SessionCommand::SelectWeather {
                 weather: WeatherClass::Calm,
             })?;
             session.action(MenuAction::Prepare)?;
-            verification.next(VerificationStage::CloudCalm {
+            verification.next(VerificationStage::SkyCalm {
                 cycle,
-                layer,
-                retired_mesh,
+                retired_image,
             });
         }
-        VerificationStage::CloudCalm {
+        VerificationStage::SkyCalm {
             cycle,
-            layer,
-            retired_mesh,
+            retired_image,
         } => {
             require_phase(phase, SessionPhase::BriefingReady)?;
             if !verification.readiness.can_capture()
@@ -2432,31 +2418,28 @@ fn advance_step(
             let condition = presentation
                 .environment
                 .condition_for(target)
-                .map_err(|cause| format!("Calm cloud environment is unavailable: {cause:?}"))?;
-            let (actual_layer, mesh) = presentation.cloud_mesh()?;
+                .map_err(|cause| format!("Calm sky environment is unavailable: {cause:?}"))?;
+            let current = presentation.sky_image()?;
             if condition.weather != WeatherClass::Calm
                 || condition.sky.is_some()
-                || actual_layer != layer
-                || mesh.is_some()
-                || presentation.meshes.contains(retired_mesh)
+                || current == retired_image
+                || presentation.images.contains(retired_image)
             {
-                return Err("Calm exchange did not retire the previous cloud mesh".into());
+                return Err("Calm exchange did not retire the previous sky image".into());
             }
             println!(
-                "Cloud environment cycle {}: Calm rendered without Mesh3d; previous mesh retired",
+                "Sky environment cycle {}: Calm uses a shared neutral image",
                 cycle + 1
             );
             session.execute_ui_command(SessionCommand::CancelBriefing {})?;
-            verification.next(VerificationStage::CloudTypical {
+            verification.next(VerificationStage::SkyTypical {
                 cycle,
-                layer,
-                retired_mesh,
+                retired_image: current,
             });
         }
-        VerificationStage::CloudTypical {
+        VerificationStage::SkyTypical {
             cycle,
-            layer,
-            retired_mesh,
+            retired_image,
         } => {
             require_phase(phase, SessionPhase::FlightSetup)?;
             if !verification.readiness.can_capture()
@@ -2467,32 +2450,29 @@ fn advance_step(
             let condition = presentation
                 .environment
                 .condition_for(EnvironmentTarget::DefaultExhibition)
-                .map_err(|cause| format!("Typical cloud environment is unavailable: {cause:?}"))?;
-            let (actual_layer, mesh) = presentation.cloud_mesh()?;
-            let mesh = mesh.ok_or("Typical exchange did not restore the cloud mesh")?;
+                .map_err(|cause| format!("Typical sky environment is unavailable: {cause:?}"))?;
+            let current = presentation.sky_image()?;
             if condition.weather != WeatherClass::Typical
                 || condition.sky.is_none()
-                || actual_layer != layer
-                || mesh == retired_mesh
-                || !presentation.meshes.contains(mesh)
-                || presentation.meshes.contains(retired_mesh)
+                || current == retired_image
+                || presentation.images.contains(retired_image)
             {
-                return Err("Typical exchange did not restore a new cloud mesh".into());
+                return Err("Typical exchange did not replace the shared sky image".into());
             }
             println!(
-                "Cloud environment cycle {}: Typical rendered with a replacement cloud mesh",
+                "Sky environment cycle {}: Typical restores the shared cloud panorama",
                 cycle + 1
             );
             session.execute_ui_command(SessionCommand::SelectWeather {
-                weather: birdman_game_session::DEFAULT_WEATHER,
+                weather: birdman_game_app::DEFAULT_WEATHER,
             })?;
             if cycle + 1 < 3 {
-                verification.next(VerificationStage::CloudPrepare(cycle + 1));
+                verification.next(VerificationStage::SkyPrepare(cycle + 1));
             } else {
                 if session.game.difficulty()
-                    != birdman_game_session::application::ApplicationSession::default().difficulty()
+                    != birdman_game_app::application::ApplicationSession::default().difficulty()
                 {
-                    return Err("Cloud verification changed the default flight settings".into());
+                    return Err("Sky verification changed the default flight settings".into());
                 }
                 verification.next(VerificationStage::Prepare);
             }
@@ -2806,7 +2786,7 @@ fn advance_step(
                 println!(
                     "Paused water quality: {} / {} cells",
                     expected.label(),
-                    expected.profile().near_cells
+                    birdman_game_scene::lake_water::water_quality_profile(expected).mesh_segments()
                 );
                 verification.capture(commands, filename);
             }
@@ -2851,8 +2831,7 @@ fn advance_step(
                     ScreenRenderSelection::Auto {
                         manual_scale: ScreenRenderScale::Half,
                         manual_shadow: ScreenShadowMap::Full,
-                        manual_water_quality:
-                            birdman_game_session::lake_water::LakeWaterQuality::High
+                        manual_water_quality: WaterQuality::High
                     }
                 ) || snapshot.applied != ScreenRenderScale::Half
                 {
@@ -2902,8 +2881,7 @@ fn advance_step(
                     ScreenRenderSelection::Auto {
                         manual_scale: ScreenRenderScale::Full,
                         manual_shadow: ScreenShadowMap::Full,
-                        manual_water_quality:
-                            birdman_game_session::lake_water::LakeWaterQuality::High
+                        manual_water_quality: WaterQuality::High
                     }
                 ) {
                     return Err("Auto verification did not execute the shared Auto control".into());
@@ -2957,7 +2935,7 @@ fn advance_step(
                     != (ScreenRenderSelection::Manual {
                         scale: ScreenRenderScale::Full,
                         shadow: ScreenShadowMap::Full,
-                        water_quality: birdman_game_session::lake_water::LakeWaterQuality::High,
+                        water_quality: WaterQuality::High,
                     })
                     || presentation.rendering.snapshot().shadow != ScreenShadowMap::Full)
                 {
@@ -3764,12 +3742,13 @@ mod tests {
     };
     use bevy::shader::ShaderCacheError;
     use bevy::tasks::TaskPoolBuilder;
+    use birdman_game_app::application::ExternalPauseReason;
     use birdman_game_core::{PauseReason, SessionPhase};
-    use birdman_game_session::application::ExternalPauseReason;
-    use birdman_game_session::game_ui::{
+    use birdman_game_format::WaterQuality;
+    use birdman_game_presentation::game_ui::{
         GameUiAnalysisChart, GameUiReplayCamera, GameUiReplayView, GameUiResultTab,
     };
-    use birdman_game_session::screen_render_auto::{ScreenRenderSelection, ScreenShadowMap};
+    use birdman_game_presentation::screen_render_auto::{ScreenRenderSelection, ScreenShadowMap};
     use std::time::Duration;
 
     fn countdown_driver_app() -> App {
@@ -4860,7 +4839,7 @@ mod tests {
             Assets, Camera3d, IsDefaultUiCamera, PerspectiveProjection, Projection,
         };
         use bevy::window::PrimaryWindow;
-        use birdman_game_session::screen_render_scale::ScreenRenderScale;
+        use birdman_game_presentation::screen_render_scale::ScreenRenderScale;
 
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)
@@ -5022,12 +5001,12 @@ mod tests {
             ScreenRenderSelection::Auto {
                 manual_scale: ScreenRenderScale::Full,
                 manual_shadow: ScreenShadowMap::Full,
-                manual_water_quality: birdman_game_session::lake_water::LakeWaterQuality::High,
+                manual_water_quality: WaterQuality::High,
             },
             ScreenRenderSelection::Manual {
                 scale: ScreenRenderScale::Full,
                 shadow: ScreenShadowMap::Full,
-                water_quality: birdman_game_session::lake_water::LakeWaterQuality::High,
+                water_quality: WaterQuality::High,
             },
         ] {
             queue_ui_control(
@@ -5628,7 +5607,7 @@ mod tests {
             (
                 super::ScreenRenderScale::Half,
                 ScreenShadowMap::Quarter,
-                birdman_game_session::lake_water::LakeWaterQuality::Low,
+                WaterQuality::Low,
             ),
         );
         packet_quality(
@@ -5641,7 +5620,7 @@ mod tests {
             (
                 super::ScreenRenderScale::Half,
                 ScreenShadowMap::Quarter,
-                birdman_game_session::lake_water::LakeWaterQuality::Low,
+                WaterQuality::Low,
             ),
         );
         packet(
@@ -5668,23 +5647,11 @@ mod tests {
         assert_eq!(summary.duplicate_frames, 1);
         assert_eq!(summary.groups.len(), 2);
         assert_eq!(
-            summary.groups[&(
-                1,
-                100,
-                2048,
-                birdman_game_session::lake_water::LakeWaterQuality::High
-            )]
-                .mean_ms,
+            summary.groups[&(1, 100, 2048, WaterQuality::High)].mean_ms,
             Some(20.0)
         );
         assert_eq!(
-            summary.groups[&(
-                2,
-                50,
-                512,
-                birdman_game_session::lake_water::LakeWaterQuality::Low
-            )]
-                .mean_ms,
+            summary.groups[&(2, 50, 512, WaterQuality::Low)].mean_ms,
             Some(10.0)
         );
         store

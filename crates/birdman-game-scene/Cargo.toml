@@ -1,0 +1,23 @@
+[package]
+name = "birdman-game-scene"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+birdman-game-app.workspace = true
+birdman-game-content.workspace = true
+birdman-game-core.workspace = true
+birdman-game-format.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+image = { version = "=0.25.10", default-features = false }
+earcut = "=0.4.10"
+
+[dev-dependencies]
+sha2.workspace = true
+
+[lints]
+workspace = true

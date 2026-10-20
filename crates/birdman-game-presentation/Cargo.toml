@@ -1,0 +1,27 @@
+[package]
+name = "birdman-game-presentation"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+schema = ["dep:schemars", "birdman-game-app/schema", "birdman-game-format/schema"]
+
+[dependencies]
+birdman-game-app.workspace = true
+birdman-game-core.workspace = true
+birdman-game-format.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+ryu-js = { version = "=1.0.3", default-features = false }
+schemars = { workspace = true, optional = true }
+time = { version = "=0.3.55", default-features = false, features = ["formatting", "parsing"] }
+unicode-width = { version = "=0.2.2", default-features = false }
+
+[dev-dependencies]
+birdman-game-scene.workspace = true
+
+[lints]
+workspace = true

@@ -1,4 +1,4 @@
-/* Generated from birdman-game-session::game_ui. Edit the Rust contract and regenerate. */
+/* Generated from birdman-game-presentation::game_ui. Edit the Rust contract and regenerate. */
 /**
  * Wire representation of one logical input interval before core validation.
  */

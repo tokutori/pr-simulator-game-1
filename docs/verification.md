@@ -52,6 +52,7 @@ python -m unittest discover -s tools/native-release -v
 ~~~
 
 - 依存検査はcoreの `no_std`・I/O分離、crateのDAG、engine型の境界、TypeScriptの型依存を含む循環を検査する。
+- CLI通常経路は`cargo tree -p birdman-game-cli --edges normal --locked`でapp・content・format・coreへの依存を確認する。schema featureは表示側の契約exportを有効にし、通常経路と分けて検査する。
 - 資産検査はmanifestの存在・hash・重複・登録漏れ、利用条件とViteの取込経路を検査する。
 - 生成契約はRust DTOからのfreshness、compilerによるreadonly型とtuple制約、toolsのschema検査による実WASM出力の構造と不正fixtureの拒否を確認する。
 - 表示テストは必要な操作・相対順・到達可能性・非重複・表示先の意味を検査する。説明文や無関係なsectionの全列挙を仕様として固定しない。
@@ -140,8 +141,9 @@ C_{n_{\widehat r}}=-2a_F\frac{S_f}{S}\left(\frac{l_f}{b}\right)^2
 
 ### 動的割当の計測
 
-- `tools/allocation-check/main.py` はnative debug専用harnessを実行する。
+- `tools/allocation-check/main.py` はnative debug専用harnessを実行する。登録形状の経路では係数の導出・補間と固定順点群の更新をまとめて計測する。
 - 本番provider評価・RK4・実tickの成功とGlobalBetaの型付き失敗を各10,000回計測し、 `alloc`・`alloc_zeroed`・`realloc` の各計数0を要求する。
+- 同梱機体の準備済み点群をcaller所有sliceへ変形する経路を100回計測する。速度0・基準近傍・高荷重と正負の尾翼角を切り替え、同じ3種の割当計数0を要求する。
 - 校正では各1回を検出し、warmup・assert・出力は計測窓の外に置く。
 - failureではdatum site・元cause・失敗stage・非commitも確認する。
 
@@ -224,23 +226,23 @@ gradientの行は風N/E/D、列は位置N/E/D、単位はs⁻¹である。
 
 ## 5. 局所離散線型化
 
-`crates/birdman-game-core/tests/hybrid_linearization.rs` は公開100 Hz tick mapを検査する。
+`crates/birdman-game-content/tests/hybrid_linearization.rs` は登録機体を使って公開100 Hz tick mapを検査する。
 
 ~~~sh
-cargo test -p birdman-game-core --test hybrid_linearization --locked -- --nocapture
+cargo test -p birdman-game-content --test hybrid_linearization --locked -- --nocapture
 ~~~
 
 ### 基準と座標
 
-- 現行 `HybridMockDefinition` とtrimから基準を生成し、値や右辺を試験へ転記しない。
-- 密度1.225 kg/m³、重力9.80665 m/s²、対気速度9.7 m/s、零風、heading 0、CG位置 $(0,0,-100)$ mとする。
+- 登録JSONから準備した`AircraftDefinition`のpolar・trim・接触点を使い、trimを含む区分線型区間を全RK stageで保持する。
+- 密度・重力・基準対気速度は登録JSONのtrim条件から取得する。零風、heading 0、CG位置 $(0,0,-100)$ mとする。
 - ManualとAutomaticを分け、後者はq/r gain 0.2 s・slew 1 rad/sを使う。
 - 入力はneutral/Holdである。
 - 静止pilotの位置・速度・target保持を全stageで確認する。
 
 | 11座標 | 正規化scale |
 |---|---|
-| datum ground velocityのN/E/D差 | 各9.7 m/s |
+| datum ground velocityのN/E/D差 | 各trim対気速度 |
 | 基準bodyに対する局所回転vector x/y/z | 各1 rad |
 | body rate p/q/r差 | 各1 rad/s |
 | 水平・垂直尾翼incidence差 | 各0.2 rad |
@@ -307,6 +309,9 @@ L(t)-z(t)=\frac{g(t-a)(b-t)}2\le\frac{g\,dt^2}8,
 ### 回転接触の隔離と丸め
 
 - 接触APIは固定点と、同じ順序の対応点をbody座標で線型移動させる区間を受け取る。scenarioの固定proxyもこのAPIを使う。
+- 最短符号のquaternion差を $\delta=\lVert q_1-q_0\rVert_1$、点の最大L1半径を $r$ とすると、全区間のdownを $\max(d_0,d_1)+\min(2,2\delta)r$ で上から抑える。丸め予算を加えた上界が負の点は、端点と差分の検証後に空中と判定する。
+- geometry構築時に両端点のbody AABBを準備し、各8角の最大downと最大L1半径から全点の上界を導く。全体の上界が負なら一定量の評価で空中と判定し、水面付近では各対応点の探索へ移る。
+- 早期判定は全state成分と点座標が $\mathrm{MAX}_{f64}/2^{20}$ 以下の数値域へ限定する。大きい入力は区間内の全座標・state評価を行い、途中のoverflow原因を保持する。
 - nlerpは正の二次normで分母を払うと接触関数が高々三次となり、導関数（二次式）の根で符号区間を隔離する。
 - slerpは最終正規化の正のnormで分母を払い、$F(t)=a+bt+(c+dt)\cos(\omega t)+(e+ft)\sin(\omega t)$ の符号を調べる。最短物理角は $0<\omega\le\pi$ である。
 - $F''$ の線型cos/sin係数が作るphaseの単調区間から、$F''$、$F'$、$F$ の順に根を隔離する。phaseの極値は係数vectorの最近接点から求め、近接した2極値を保持する。
@@ -405,7 +410,11 @@ npm run measure:web-auto -- http://127.0.0.1:4202/pr-simulator-game-1/ target/we
 - Setup/Briefing/Countdown/HUD/Pause/Resume/Result、Analysis3図・凡例、Replay・技術情報、 実CSV/JSON出力、同条件Retryを操作する。
 - browser・page・console・HTTP・WebGLのエラーを保持し、非同期body取得とcleanupを有界化する。
 - JSON原文、CSV、条件、画像、実WASM hashを結果へ保存する。
+- 統合前のローカル差分は`test:web-ui`へ`--allow-dirty`を指定し、基準HEAD・repository全体の`source.patch`・差分SHA-256を保存する。新規sourceはindexへ認識させ、検査前後のHEAD・差分・新規source集合を照合する。出力先はrepository外またはignored directoryを使用する。
 - 水面はLow/Medium/Highを実操作で切り替え、4方位と左右眼で4×4のchunkをカリングする。同じ時刻・camera・materialの単一meshとのRGBA差を各channelで1/255以内とし、可視draw数・送信頂点数・WebGL診断を記録する。
+- 上空の雲は雲量0/25/100%と太陽高度5°/55°/90°を含む5条件について、4方位・天頂・左右眼のHD画像を35枚保存する。並進による画素差は1/255以内とする。
+- 背景・近景/遠景水面の天空texture共用、同値条件でのtexture再利用、検査後の元条件復元、雲専用geometryの撤去を確認する。
+- `--allow-dirty`はsource差分とSHA-256を保存し、CUI検査中のHEAD・差分の一致を確認する。
 - Screenの配置はUI倍率適用後の1280×720以上で検査し、1920×1080以上を推奨する。全Scene・overlay・Information・Customの64種類のcueと文字拡大で、要素の保持、最低文字高、非重複、前方中央の空きを確認する。
 - HUDは下端へ配置し、全体背景とスクロールを使用しない。VRの視角・両眼への収まりはScreenの解像度とは別に検査する。
 
@@ -459,8 +468,7 @@ cargo run -p birdman-game-bevy --features verify-harness --locked -- --verify ta
 
 ### 標準フロー・資源寿命・shader
 
-- Title/SetupのAuto表示、同一processのCalm↔Typical往復、空cloudのMesh3d不在、
-  旧mesh handleの退役と新handleの復元を検査する。
+- Title/SetupのAuto表示、同一processのCalm↔Typical往復、背景・水面の天空画像共用、旧画像の退役を検査する。
 - Manual比較の前提を公開UI操作で確定し、Pause中のLow/Medium/High・描画倍率・shadow交換と復元を検査する。
   適用ACKと実GPU resourceを照合し、pause中のstate・record・波時刻保持を確認する。
 - 開始→Pilot/Chase→Pause/Resume→Result→Map/Altitude/Speed→Replay/Analysis→Result→Retryを通す。

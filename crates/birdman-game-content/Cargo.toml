@@ -11,5 +11,8 @@ birdman-game-core.workspace = true
 birdman-game-format.workspace = true
 libm.workspace = true
 
+[target.'cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))'.dev-dependencies]
+nalgebra = { version = "=0.35.0", default-features = false, features = ["std"] }
+
 [lints]
 workspace = true

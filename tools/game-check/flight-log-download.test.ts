@@ -1,16 +1,13 @@
 import { Window as BrowserWindow } from "happy-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BrowserFlightLogDownload, sanitizeFlightLogFilename } from "../../web/src/app/browser-flight-log-download.js";
-import { createInitialAppModel, isCurrentFlightLogDownload, updateApp } from "../../web/src/app/app-state.js";
+import { createInitialAppModel, flightLogDownloadNotice, updateApp } from "../../web/src/app/app-state.js";
 import type { SessionPhase } from "../../web/src/app/session-snapshot.js";
 import type { AppModel } from "../../web/src/app/app-state.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
 import { actionForControl } from "../../web/src/presentation/panel-interaction.js";
-import { readFlightLog } from "../../web/src/game/flight-log-export.js";
 import { readFileSync } from "node:fs";
 import { initSync } from "../../web/pkg/birdman_game_wasm.js";
-import { createAppSession } from "../../web/src/app/session-factory.js";
-import { launchCurrentSession, neutralTailInput } from "./current-session-fixture.js";
 import { withSharedGameUiSession } from "./shared-game-ui-fixture.js";
 import type { SharedGameUiFixtureOptions } from "./shared-game-ui-fixture.js";
 import type { GameUiAction } from "../../web/src/generated/game-ui-action.js";
@@ -45,10 +42,9 @@ function viewForModel(model: AppModel, viewport?: GameUiPlatformInput["viewport"
   const shared = withSharedGameUiSession(phase, { actions, platform: {
     ...(viewport === undefined ? {} : { viewport }),
     presentation_mode: currentMode === "phone-vr" ? "phone_vr" : currentMode,
-    notification: model.flightLogDownload.kind === "failed" || model.flightLogDownload.kind === "requested" ? model.flightLogDownload.message : ""
+    notification: flightLogDownloadNotice(model.flightLogDownload)
   } }, (session, platform) => session.readSharedUi({ ...platform,
-    operation_pending: model.pendingGameRequestId !== null,
-    flight_log_pending: model.flightLogDownload.kind === "pending"
+    operation_pending: model.recordOpen.kind === "loading"
   }));
   return createGameViewModel(shared);
 }
@@ -66,16 +62,6 @@ function beginDownload(model: AppModel, format: "csv" | "json" = "csv") {
 
 initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url))) });
 
-const analysisFixture = (() => {
-  const session = createAppSession({ controlModeCode: 0, seedLow: 21, seedHigh: 22 });
-  try {
-    launchCurrentSession(session);
-    session.flightPort.advanceTick(neutralTailInput);
-    session.executeSharedSessionCommand({ kind: "abort" });
-    return session.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
-  } finally { session.dispose(); }
-})();
-
 describe("flight log download state and common presentation", () => {
   it.each([
     { label: "Result Summary", phase: "result", resultTab: "summary", replayViewMode: "cinematic" },
@@ -92,10 +78,7 @@ describe("flight log download state and common presentation", () => {
           actions.push({ kind: "set_analysis_chart", chart: analysisChart });
         }
         const model: AppModel = {
-          ...readyModel(phase, { actions }), presentation: { type: "ready", mode },
-          analysis: { kind: "ready", data: analysisFixture, nextRequestId: 1 },
-          analysisCursor: analysisFixture.samples[1] === undefined ? { kind: "idle", nextRequestId: 1 }
-            : { kind: "ready", nextRequestId: 1, sample: { ...analysisFixture.samples[1], kind: "named_record", context: analysisFixture.context } }
+          ...readyModel(phase, { actions }), presentation: { type: "ready", mode }
         };
         const panel = viewForModel(model).panels[0];
         if (panel?.sections === undefined) throw new Error("Shared download panel sections are unavailable");
@@ -253,46 +236,39 @@ describe("flight log download state and common presentation", () => {
     expect(viewForModel(model).panels.flatMap((panel) => panel.controls).some((control) => control.id === "game-flight-log-json")).toBe(false);
   });
 
-  it("retains typed failure and clears it on a successful request without claiming saved completion", () => {
-    const pending = beginDownload(readyModel("result"));
-    expect(updateApp(pending.model, { type: "shared-game-ui-effect", effect: { kind: "platform", command: { kind: "download_record_json" } } }).effects).toEqual([]);
-    const failed = updateApp(pending.model, { type: "flight-log-download-failed", requestId: pending.effect.requestId, source: pending.effect.source, message: "Injected export failure" });
-    expect(failed.model.flightLogDownload).toEqual({ kind: "failed", message: "飛行ログのダウンロード要求に失敗した: Injected export failure" });
+  it("reports synchronous output failures and allows another command immediately", () => {
+    const initial = readyModel("result");
+    const requested = beginDownload(initial);
+    expect(requested.model).toBe(initial);
+    expect(requested.effect).toEqual({ type: "download-flight-log", format: "csv" });
+    const failed = updateApp(requested.model, { type: "flight-log-download-failed", message: "Injected export failure" });
+    expect(failed.model.flightLogDownload).toEqual({ kind: "failed", message: "Injected export failure" });
+    expect(flightLogDownloadNotice(failed.model.flightLogDownload)).toContain("Injected export failure");
     const retried = beginDownload(failed.model, "json");
-    const completed = updateApp(retried.model, { type: "flight-log-download-requested", requestId: retried.effect.requestId, source: retried.effect.source });
-    expect(completed.model.flightLogDownload.kind).toBe("requested");
-    const notice = viewForModel(completed.model).panels[0]?.controls.find((control) => control.id === "game-state");
-    if (notice?.kind !== "status") throw new Error("Download notification is unavailable");
-    expect(notice.value).toContain("ダウンロードを要求した");
+    expect(retried.effect).toEqual({ type: "download-flight-log", format: "json" });
+    const completed = updateApp(retried.model, { type: "flight-log-download-requested" });
+    expect(completed.model.flightLogDownload).toEqual({ kind: "requested" });
+    expect(viewForModel(completed.model).panels[0]?.controls.find(control => control.id === "game-flight-log-csv")?.enabled).toBe(true);
+    expect(flightLogDownloadNotice(completed.model.flightLogDownload)).toContain("ダウンロードを要求した");
   });
 
-  it("rejects prior request and same-phase source-operation completions", () => {
-    const pending = beginDownload(readyModel("result"));
-    const changed = updateApp(pending.model, { type: "shared-game-ui-effect", effect: { kind: "session", command: { kind: "retry" } } });
-    expect(changed.model.flightRecordSourceRevision).toBeGreaterThan(pending.effect.source.revision);
-    expect(isCurrentFlightLogDownload(changed.model, pending.effect.requestId, pending.effect.source)).toBe(false);
-    expect(updateApp(changed.model, { type: "flight-log-download-requested", requestId: pending.effect.requestId, source: pending.effect.source }).model).toBe(changed.model);
-    expect(updateApp(pending.model, { type: "flight-log-download-failed", requestId: pending.effect.requestId + 1, source: pending.effect.source, message: "old request" }).model).toBe(pending.model);
+  it("clears output feedback when leaving or replacing the record context", () => {
+    const requested = updateApp(readyModel("result"), { type: "flight-log-download-requested" }).model;
+    const retry = updateApp(requested, { type: "shared-game-ui-effect", effect: { kind: "session", command: { kind: "retry" } } });
+    expect(retry.model.flightLogDownload).toEqual({ kind: "idle" });
+    const hidden = updateApp(requested, { type: "page-hidden" });
+    expect(hidden.model.flightLogDownload).toEqual({ kind: "idle" });
+    expect(updateApp(readyModel("title"), { type: "flight-log-download-requested" }).model.flightLogDownload).toEqual({ kind: "idle" });
   });
 
-  it("invalidates pending download on page teardown and disables buttons during source operations", () => {
-    const pending = beginDownload(readyModel("replay"));
-    const hidden = updateApp(pending.model, { type: "page-hidden" });
-    expect(isCurrentFlightLogDownload(hidden.model, pending.effect.requestId, pending.effect.source)).toBe(false);
-    const busy = { ...readyModel("result"), pendingGameRequestId: 4 };
-    expect(viewForModel(busy).panels[0]?.controls.find((control) => control.id === "game-flight-log-csv")).toMatchObject({ enabled: false });
+  it("disables output while an actual record read is pending", () => {
+    const busy: AppModel = { ...readyModel("result"), recordOpen: { kind: "loading", requestId: 4, id: 1 } };
+    expect(updateApp(busy, { type: "shared-game-ui-effect", effect: { kind: "platform", command: { kind: "download_record_json" } } }).effects).toEqual([]);
+    expect(viewForModel(busy).panels[0]?.controls.find(control => control.id === "game-flight-log-csv")?.enabled).toBe(false);
   });
 });
 
 describe("browser download side-effect boundary", () => {
-  it("passes original query text without numeric or JSON reconstruction", () => {
-    const port = { export_flight_log_csv: vi.fn(() => "raw,csv\r\n1,2"), export_current_flight_record_json: vi.fn(() => '{ "original": true }') };
-    expect(readFlightLog(port, "csv")).toBe("raw,csv\r\n1,2");
-    expect(readFlightLog(port, "json")).toBe('{ "original": true }');
-    expect(port.export_flight_log_csv).toHaveBeenCalledTimes(1);
-    expect(port.export_current_flight_record_json).toHaveBeenCalledTimes(1);
-  });
-
   it("retains successful UTF-8 Blob URLs through later requests until teardown and removes download anchors", async () => {
     const browser = new BrowserWindow();
     const blobs: Blob[] = [];

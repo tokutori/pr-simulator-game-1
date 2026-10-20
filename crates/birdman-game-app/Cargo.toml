@@ -1,0 +1,27 @@
+[package]
+name = "birdman-game-app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+schema = ["dep:schemars", "birdman-game-format/schema"]
+
+[dependencies]
+birdman-game-content.workspace = true
+birdman-game-core.workspace = true
+birdman-game-format.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+schemars = { workspace = true, optional = true }
+
+[build-dependencies]
+sha2.workspace = true
+
+[dev-dependencies]
+sha2.workspace = true
+
+[lints]
+workspace = true

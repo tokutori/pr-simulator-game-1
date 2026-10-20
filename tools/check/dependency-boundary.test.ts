@@ -36,11 +36,16 @@ const chartNumberDependency = {
   rename: null, optional: false, uses_default_features: false, features: []
 };
 
+function schemaFeatures(name: "birdman-game-format" | "birdman-game-app" | "birdman-game-presentation"): readonly string[] {
+  return name === "birdman-game-format" ? ["dep:schemars"]
+    : name === "birdman-game-app" ? ["dep:schemars", "birdman-game-format/schema"]
+    : ["dep:schemars", "birdman-game-app/schema", "birdman-game-format/schema"];
+}
+
 function schemaProvider(
-  name: "birdman-game-format" | "birdman-game-session",
+  name: "birdman-game-format" | "birdman-game-app" | "birdman-game-presentation",
   dependency: unknown = schemaDependency,
-  features: unknown = { schema: name === "birdman-game-format"
-    ? ["dep:schemars"] : ["dep:schemars", "birdman-game-format/schema"] }
+  features: unknown = { schema: schemaFeatures(name) }
 ): unknown[] {
   return [{ name, dependencies: [dependency], features }];
 }
@@ -49,9 +54,10 @@ function core(dependency: unknown): unknown[] {
   return [{ name: "birdman-game-core", dependencies: [dependency] }];
 }
 
-it("keeps the registered presentation triangulator in the shared session layer", () => {
+it("keeps the registered triangulator in the shared scene layer", () => {
   const earcut = { name: "earcut" };
-  expect(() => { assertDependencyBoundary([{ name: "birdman-game-session", dependencies: [earcut] }]); }).not.toThrow();
+  expect(() => { assertDependencyBoundary([{ name: "birdman-game-scene", dependencies: [earcut] }]); }).not.toThrow();
+  expect(() => { assertDependencyBoundary([{ name: "birdman-game-presentation", dependencies: [earcut] }]); }).toThrow("Forbidden dependency");
   expect(() => { assertDependencyBoundary(core(earcut)); }).toThrow("Forbidden dependency");
   expect(() => { assertDependencyBoundary([{ name: "birdman-game-wasm", dependencies: [earcut] }]); }).toThrow("Forbidden dependency");
   expect(() => { assertDependencyBoundary([{ name: "birdman-game-bevy", dependencies: [earcut] }]); }).toThrow("Forbidden dependency");
@@ -94,7 +100,7 @@ describe("core polynomial roots boundary", () => {
   const polynomial = { ...chartNumberDependency, name: "polycool", req: "=0.4.0", features: ["libm"] };
   it("allows the pinned no_std root solver only in core", () => {
     expect(() => { assertDependencyBoundary(core(polynomial)); }).not.toThrow();
-    expect(() => { assertDependencyBoundary([{ name: "birdman-game-session", dependencies: [polynomial] }]); })
+    expect(() => { assertDependencyBoundary([{ name: "birdman-game-presentation", dependencies: [polynomial] }]); })
       .toThrow("Forbidden dependency");
   });
   it.each([{ uses_default_features: true }, { features: ["std"] }, { features: ["libm", "arbitrary"] }])(
@@ -107,13 +113,14 @@ describe("core polynomial roots boundary", () => {
 
 describe("shared image operations boundary", () => {
   const image = { ...chartNumberDependency, name: "image", req: "=0.25.10" };
-  it("allows codec-free operations only in the presentation session crate", () => {
-    expect(() => { assertDependencyBoundary([{ name: "birdman-game-session", dependencies: [image] }]); }).not.toThrow();
+  it("allows codec-free operations only in the scene crate", () => {
+    expect(() => { assertDependencyBoundary([{ name: "birdman-game-scene", dependencies: [image] }]); }).not.toThrow();
+    expect(() => { assertDependencyBoundary([{ name: "birdman-game-presentation", dependencies: [image] }]); }).toThrow("Forbidden dependency");
     expect(() => { assertDependencyBoundary(core(image)); }).toThrow("Forbidden dependency");
   });
   it.each([{ uses_default_features: true }, { features: ["png"] }, { features: ["rayon"] }])(
     "rejects codec/default/threading activation %j", (difference) => {
-      expect(() => { assertDependencyBoundary([{ name: "birdman-game-session", dependencies: [{ ...image, ...difference }] }]); })
+      expect(() => { assertDependencyBoundary([{ name: "birdman-game-scene", dependencies: [{ ...image, ...difference }] }]); })
         .toThrow("Forbidden dependency");
     }
   );
@@ -121,11 +128,12 @@ describe("shared image operations boundary", () => {
 
 function versionedPackages(difference: Readonly<Record<string, unknown>>): unknown[] {
   return [
-    ...core({ ...numericalDependency, ...difference }),
-    { name: "birdman-game-session", dependencies: [{ ...chartNumberDependency, ...difference }] },
+    { name: "birdman-game-content", dependencies: [{ ...numericalDependency, ...difference }] },
+    { name: "birdman-game-presentation", dependencies: [{ ...chartNumberDependency, ...difference }] },
     { name: "birdman-game-bevy", dependencies: [{ ...nativeEngineDependency, ...difference }] },
     ...schemaProvider("birdman-game-format", { ...schemaDependency, ...difference }),
-    ...schemaProvider("birdman-game-session", { ...schemaDependency, ...difference })
+    ...schemaProvider("birdman-game-app", { ...schemaDependency, ...difference }),
+    ...schemaProvider("birdman-game-presentation", { ...schemaDependency, ...difference })
   ];
 }
 
@@ -164,7 +172,7 @@ describe("Cargo dependency boundary", () => {
   });
 
   it("allows the fixed ECMAScript number formatter only in shared session", () => {
-    expect(() => { assertDependencyBoundary([{ name: "birdman-game-session", dependencies: [chartNumberDependency] }]); }).not.toThrow();
+    expect(() => { assertDependencyBoundary([{ name: "birdman-game-presentation", dependencies: [chartNumberDependency] }]); }).not.toThrow();
   });
 
   it.each(["birdman-game-core", "birdman-game-format", "birdman-game-cli", "birdman-game-wasm", "birdman-game-bevy"])(
@@ -177,7 +185,7 @@ describe("Cargo dependency boundary", () => {
     { target: 'cfg(target_arch = "wasm32")' }, { features: ["no-panic"] }, { uses_default_features: true },
     { optional: true }, { rename: "formatter" }, { source: "git+https://example.invalid/ryu-js" }, { path: "../ryu-js" }])(
     "rejects broader chart-number dependencies %j", (difference) => {
-      expect(() => { assertDependencyBoundary([{ name: "birdman-game-session", dependencies: [{ ...chartNumberDependency, ...difference }] }]); }).toThrow("Forbidden dependency");
+      expect(() => { assertDependencyBoundary([{ name: "birdman-game-presentation", dependencies: [{ ...chartNumberDependency, ...difference }] }]); }).toThrow("Forbidden dependency");
     }
   );
   it("limits the native text patch to its excluded vendor directory", () => {
@@ -214,10 +222,12 @@ describe("Cargo dependency boundary", () => {
   });
 
   it("allows only the pinned host numerical dev dependency", () => {
-    expect(() => { assertDependencyBoundary(core(numericalDependency)); }).not.toThrow();
+    expect(() => { assertDependencyBoundary([
+      { name: "birdman-game-content", dependencies: [numericalDependency] }
+    ]); }).not.toThrow();
   });
 
-  it.each(["birdman-game-format", "birdman-game-session"] as const)(
+  it.each(["birdman-game-format", "birdman-game-app", "birdman-game-presentation"] as const)(
     "allows only the optional pinned schema generator in %s", (name) => {
       expect(() => { assertDependencyBoundary(schemaProvider(name)); }).not.toThrow();
     }
@@ -230,7 +240,7 @@ describe("Cargo dependency boundary", () => {
     { path: "../schemars" }, { rename: "other" }, { features: [] }, { features: ["std"] },
     { features: ["derive", "std"] }, { name: "other-generator" }
   ])("rejects a broader schema generator %j", (difference) => {
-    for (const name of ["birdman-game-format", "birdman-game-session"] as const) {
+    for (const name of ["birdman-game-format", "birdman-game-app", "birdman-game-presentation"] as const) {
       expect(() => { assertDependencyBoundary(schemaProvider(name, { ...schemaDependency, ...difference })); })
         .toThrow("Forbidden dependency");
     }
@@ -243,7 +253,7 @@ describe("Cargo dependency boundary", () => {
     { schema: ["dep:schemars"], runtime: ["schema"] },
     { schema: ["dep:schemars", "birdman-game-format/schema"], runtime: ["schema"] }
   ])("rejects broader schema activation wiring %j", (features) => {
-    for (const name of ["birdman-game-format", "birdman-game-session"] as const) {
+    for (const name of ["birdman-game-format", "birdman-game-app", "birdman-game-presentation"] as const) {
       expect(() => { assertDependencyBoundary(schemaProvider(name, schemaDependency, features)); })
         .toThrow("Forbidden dependency");
     }
@@ -258,36 +268,37 @@ describe("Cargo dependency boundary", () => {
 
   it("allows schema activation only through the CLI exporter feature", () => {
     expect(() => { assertDependencyBoundary([{
-      name: "birdman-game-cli", dependencies: [{ name: "birdman-game-session", features: [] }],
-      features: { schema: ["birdman-game-session/schema"] }
+      name: "birdman-game-cli", dependencies: [{ name: "birdman-game-presentation", optional: true, features: [] }],
+      features: { schema: ["dep:birdman-game-presentation", "birdman-game-presentation/schema"] }
     }]); }).not.toThrow();
   });
 
   it("allows unrelated features without duplicating the entire manifest feature table", () => {
-    for (const name of ["birdman-game-format", "birdman-game-session"] as const) {
+    for (const name of ["birdman-game-format", "birdman-game-app", "birdman-game-presentation"] as const) {
       expect(() => { assertDependencyBoundary(schemaProvider(name, schemaDependency, {
-        schema: name === "birdman-game-format" ? ["dep:schemars"] : ["dep:schemars", "birdman-game-format/schema"],
+        schema: schemaFeatures(name),
         default: [], audit: []
       })); }).not.toThrow();
     }
     for (const name of ["birdman-game-cli", "birdman-game-wasm", "birdman-game-bevy"]) {
       expect(() => { assertDependencyBoundary([{ name, dependencies: [], features: {
-        ...(name === "birdman-game-cli" ? { schema: ["birdman-game-session/schema"] } : {}), default: [], audit: []
+        ...(name === "birdman-game-cli" ? { schema: ["dep:birdman-game-presentation", "birdman-game-presentation/schema"] } : {}), default: [], audit: []
       } }]); }).not.toThrow();
     }
   });
 
   it.each(["schema", "schemars", "dep:schemars", "schemars/derive", "schemars?/derive",
-    "birdman-game-format/schema", "birdman-game-format?/schema", "birdman-game-session/schema"])(
+    "birdman-game-format/schema", "birdman-game-format?/schema", "birdman-game-app/schema", "birdman-game-presentation/schema",
+    "dep:birdman-game-presentation", "birdman-game-presentation"])(
     "rejects schema generation through another feature (%s)", (feature) => {
-      for (const name of ["birdman-game-format", "birdman-game-session"] as const) {
+      for (const name of ["birdman-game-format", "birdman-game-app", "birdman-game-presentation"] as const) {
         expect(() => { assertDependencyBoundary(schemaProvider(name, schemaDependency, {
-          schema: name === "birdman-game-format" ? ["dep:schemars"] : ["dep:schemars", "birdman-game-format/schema"],
+          schema: schemaFeatures(name),
           audit: [feature]
         })); }).toThrow("Forbidden dependency");
       }
       expect(() => { assertDependencyBoundary([{ name: "birdman-game-cli", dependencies: [], features: {
-        schema: ["birdman-game-session/schema"], audit: [feature]
+        schema: ["dep:birdman-game-presentation", "birdman-game-presentation/schema"], audit: [feature]
       } }]); }).toThrow("Forbidden schema feature boundary");
       for (const name of ["birdman-game-wasm", "birdman-game-bevy"]) {
         expect(() => { assertDependencyBoundary([{ name, dependencies: [], features: { audit: [feature] } }]); })
@@ -298,16 +309,16 @@ describe("Cargo dependency boundary", () => {
 
   it.each([
     { schema: [] }, { schema: ["birdman-game-format/schema"] },
-    { schema: ["birdman-game-session/schema"], default: ["schema"] },
-    { schema: ["birdman-game-session/schema"], runtime: ["schema"] }
+    { schema: ["birdman-game-presentation/schema"], default: ["schema"] },
+    { schema: ["birdman-game-presentation/schema"], runtime: ["schema"] }
   ])("rejects broader CLI schema activation %j", (features) => {
     expect(() => { assertDependencyBoundary([{ name: "birdman-game-cli", dependencies: [], features }]); })
       .toThrow("Forbidden schema feature boundary");
   });
 
   it.each([
-    { schema: [] }, { default: ["schema"] }, { runtime: ["birdman-game-session/schema"] },
-    { default: ["birdman-game-format/schema"] }, { runtime: ["birdman-game-session?/schema"] }
+    { schema: [] }, { default: ["schema"] }, { runtime: ["birdman-game-presentation/schema"] },
+    { default: ["birdman-game-format/schema"] }, { runtime: ["birdman-game-presentation?/schema"] }
   ])("rejects runtime schema feature forwarding %j", (features) => {
     for (const name of ["birdman-game-wasm", "birdman-game-bevy"]) {
       expect(() => { assertDependencyBoundary([{ name, dependencies: [], features }]); })
@@ -317,7 +328,7 @@ describe("Cargo dependency boundary", () => {
 
   it.each(["birdman-game-cli", "birdman-game-wasm", "birdman-game-bevy"])(
     "rejects schema requested by normal shared dependencies in %s", (name) => {
-      for (const dependency of ["birdman-game-format", "birdman-game-session"]) {
+      for (const dependency of ["birdman-game-format", "birdman-game-app", "birdman-game-presentation"]) {
         expect(() => { assertDependencyBoundary([{
           name, dependencies: [{ name: dependency, kind: null, features: ["schema"] }]
         }]); }).toThrow("Forbidden normal schema activation");
@@ -327,13 +338,13 @@ describe("Cargo dependency boundary", () => {
 
   it("keeps native engine and shared session dependencies outside core and format", () => {
     expect(() => { assertDependencyBoundary([
-      { name: "birdman-game-session", dependencies: [{ name: "birdman-game-core" }, { name: "birdman-game-format" }] },
-      { name: "birdman-game-wasm", dependencies: [{ name: "birdman-game-session" }] },
-      { name: "birdman-game-bevy", dependencies: [nativeEngineDependency, { name: "birdman-game-session" }] }
+      { name: "birdman-game-presentation", dependencies: [{ name: "birdman-game-core" }, { name: "birdman-game-format" }] },
+      { name: "birdman-game-wasm", dependencies: [{ name: "birdman-game-presentation" }] },
+      { name: "birdman-game-bevy", dependencies: [nativeEngineDependency, { name: "birdman-game-presentation" }] }
     ]); }).not.toThrow();
   });
 
-  it.each(["birdman-game-core", "birdman-game-format", "birdman-game-session", "birdman-game-wasm"])(
+  it.each(["birdman-game-core", "birdman-game-format", "birdman-game-presentation", "birdman-game-scene", "birdman-game-wasm"])(
     "rejects the native engine in %s", (name) => {
       expect(() => { assertDependencyBoundary([{ name, dependencies: [nativeEngineDependency] }]); }).toThrow();
     }
@@ -359,7 +370,7 @@ describe("Cargo dependency boundary", () => {
     ]) expect(() => { check(difference); }).toThrow("Forbidden native engine dependency");
   });
 
-  it.each(["birdman-game-core", "birdman-game-format", "birdman-game-session", "birdman-game-wasm"])(
+  it.each(["birdman-game-core", "birdman-game-format", "birdman-game-presentation", "birdman-game-scene", "birdman-game-wasm"])(
     "rejects the native text engine in %s", (name) => {
       expect(() => { assertDependencyBoundary([{ name, dependencies: [nativeTextDependency] }]); }).toThrow();
     }
@@ -395,7 +406,7 @@ describe("Cargo dependency boundary", () => {
     ]); }).toThrow("Forbidden native engine dependency");
   });
 
-  it.each(["birdman-game-core", "birdman-game-format", "birdman-game-session", "birdman-game-cli", "birdman-game-wasm"])(
+  it.each(["birdman-game-core", "birdman-game-format", "birdman-game-presentation", "birdman-game-cli", "birdman-game-wasm"])(
     "rejects the native test font in %s", (name) => {
       expect(() => { assertDependencyBoundary([{ name, dependencies: [nativeTestFontDependency] }]); }).toThrow();
     }
@@ -410,10 +421,12 @@ describe("Cargo dependency boundary", () => {
     { uses_default_features: true }, { features: [] }, { features: ["std", "macros"] },
     { name: "num-complex" }
   ])("rejects a broader or different numerical dependency %j", (difference) => {
-    expect(() => { assertDependencyBoundary(core({ ...numericalDependency, ...difference })); }).toThrow("Forbidden dependency");
+    expect(() => { assertDependencyBoundary([
+      { name: "birdman-game-content", dependencies: [{ ...numericalDependency, ...difference }] }
+    ]); }).toThrow("Forbidden dependency");
   });
 
-  it.each(["birdman-game-format", "birdman-game-cli", "birdman-game-wasm", "unexpected-crate"])(
+  it.each(["birdman-game-core", "birdman-game-format", "birdman-game-presentation", "birdman-game-cli", "birdman-game-wasm", "birdman-game-bevy", "unexpected-crate"])(
     "rejects nalgebra in %s", (name) => {
       expect(() => { assertDependencyBoundary([{ name, dependencies: [numericalDependency] }]); }).toThrow();
     }
@@ -422,4 +435,31 @@ describe("Cargo dependency boundary", () => {
   it("rejects unexpected crates even without dependencies", () => {
     expect(() => { assertDependencyBoundary([{ name: "unexpected-crate", dependencies: [] }]); }).toThrow("Unexpected crate");
   });
+});
+
+it.each(["birdman-game-scene", "birdman-game-presentation", "image", "earcut", "ryu-js", "time", "unicode-width", "bevy", "wasm-bindgen"])(
+  "keeps presentation and platform dependencies outside the application crate (%s)", (name) => {
+    expect(() => { assertDependencyBoundary([{ name: "birdman-game-app", dependencies: [{ name }] }]); }).toThrow();
+  }
+);
+
+it("keeps the CLI presentation dependency optional", () => {
+  const dependency = { name: "birdman-game-presentation", features: [] };
+  const features = { schema: ["dep:birdman-game-presentation", "birdman-game-presentation/schema"] };
+  expect(() => { assertDependencyBoundary([{ name: "birdman-game-cli", features, dependencies: [dependency] }]); })
+    .toThrow("Forbidden normal presentation dependency");
+  expect(() => { assertDependencyBoundary([{ name: "birdman-game-cli", features, dependencies: [{ ...dependency, optional: true }] }]); })
+    .not.toThrow();
+});
+
+it("limits scene access from presentation to camera/geometry tests", () => {
+  const dependency = { name: "birdman-game-scene", kind: "dev", target: null, optional: false, rename: null, features: [] };
+  expect(() => { assertDependencyBoundary([{ name: "birdman-game-presentation", dependencies: [dependency] }]); }).not.toThrow();
+  for (const difference of [{ kind: null }, { kind: "build" }, { target: HOST_NUMERICAL_TEST_TARGET }]) {
+    expect(() => { assertDependencyBoundary([{ name: "birdman-game-presentation", dependencies: [{ ...dependency, ...difference }] }]); }).toThrow("Forbidden dependency");
+  }
+  for (const name of ["birdman-game-cli", "birdman-game-app", "birdman-game-scene"]) {
+    const dependencyName = name === "birdman-game-scene" ? "birdman-game-presentation" : "birdman-game-scene";
+    expect(() => { assertDependencyBoundary([{ name, dependencies: [{ name: dependencyName, kind: null }] }]); }).toThrow("Forbidden dependency");
+  }
 });

@@ -68,9 +68,18 @@ fn named_terminal_and_saved_query_share_exact_controls_and_terminal_metadata() {
     assert_eq!(named["sample_count"], TICK_LIMIT + 1);
     assert_eq!(named["controls"]["layout"], "tail_incidence");
     assert!(named["controls"].get("roll_rad").is_none());
+    let expected_identity = HybridSessionPreparation::try_new_for_weather(
+        ControlMode::Manual,
+        TICK_LIMIT,
+        0,
+        WeatherClass::Calm,
+    )
+    .unwrap()
+    .into_parts()
+    .1;
     assert_eq!(
-        named["control_identity"]["controller_profile_id"],
-        CONTROLLER_ID
+        named["control_identity"],
+        serde_json::to_value(expected_identity).unwrap()
     );
     assert_eq!(
         named["finalization"],

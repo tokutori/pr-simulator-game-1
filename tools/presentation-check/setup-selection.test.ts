@@ -31,12 +31,13 @@ describe("Direct flight setup selection", () => {
       if (effect?.kind !== "session") throw new Error("Missing Rust difficulty command");
       const pending = updateApp(next.model, { type: "shared-game-ui-effect", effect });
       expect(pending.model.gameSession).toBe(model.gameSession);
-      expect(pending.effects).toEqual([{ type: "shared-game-session-command", command: effect.command, requestId: 1 }]);
+      expect(pending.effects).toEqual([{ type: "shared-game-session-command", command: effect.command, }]);
+      session.executeSharedSessionCommand(effect.command);
       const observed = updateApp(pending.model, { type: "shared-game-ui-observed",
-        view: session.readSharedUi({ ...platform, operation_pending: true }) }).model;
+        view: session.readSharedUi(platform) }).model;
       const repeated = updateApp(observed, { type: "ui-action", action: { type: "activate", controlId: "game-setup-select-weather-4" } });
-      expect(repeated.model).toBe(observed);
-      expect(repeated.effects).toEqual([]);
+      expect(repeated.effects).toHaveLength(1);
+      expect(repeated.effects[0]?.type).toBe("update-shared-game-ui");
     });
   });
 

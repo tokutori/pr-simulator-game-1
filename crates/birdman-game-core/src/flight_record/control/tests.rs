@@ -1,9 +1,9 @@
 use super::*;
 use crate::{
     BodyPoint, BodyVector, ControlMode, FbwAuthority, FlightState, Gravity, HybridAerodynamicLoad,
-    HybridMockDefinition, HybridModel, NedPoint, NedVector, TailControlProfile,
-    TailFlightTickConfig, TailFlightTickInput, TailPilotPositionIntent, WaterContactGeometry,
-    WindField, advance_tail_flight_tick_with_contact_report,
+    HybridModel, NedPoint, NedVector, TailControlProfile, TailFlightTickConfig,
+    TailFlightTickInput, TailPilotPositionIntent, TestAircraft, WaterContactGeometry, WindField,
+    advance_tail_flight_tick_with_contact_report,
 };
 
 fn input(command: TailPilotPositionCommand) -> TailFlightTickInput {
@@ -15,7 +15,7 @@ fn input(command: TailPilotPositionCommand) -> TailFlightTickInput {
 }
 
 fn report(mode: ControlMode, down: f64) -> TailFlightTickReport {
-    let definition = HybridMockDefinition::try_new().unwrap();
+    let definition = TestAircraft::try_new().unwrap();
     let aircraft = definition.aircraft();
     let trim = definition.trim().unwrap();
     let launch = trim
@@ -40,7 +40,7 @@ fn report(mode: ControlMode, down: f64) -> TailFlightTickReport {
     let surfaces = definition.surfaces().unwrap();
     let load = HybridAerodynamicLoad::try_new(
         HybridModel::try_new(definition.polar().unwrap(), &surfaces).unwrap(),
-        HybridMockDefinition::TRIM_AIR_DENSITY_KG_M3,
+        TestAircraft::TRIM_AIR_DENSITY_KG_M3,
         WindField::uniform(NedVector::zero()),
     )
     .unwrap();
@@ -52,7 +52,7 @@ fn report(mode: ControlMode, down: f64) -> TailFlightTickReport {
             mode,
             TailControlProfile::try_new(0.2, 0.3, 1.0).unwrap(),
             trim.pilot_mapping().unwrap(),
-            Gravity::try_new(HybridMockDefinition::TRIM_GRAVITY_MPS2).unwrap(),
+            Gravity::try_new(TestAircraft::TRIM_GRAVITY_MPS2).unwrap(),
         ),
         input(TailPilotPositionCommand::Hold),
         &load,
@@ -62,7 +62,7 @@ fn report(mode: ControlMode, down: f64) -> TailFlightTickReport {
 }
 
 fn initial(down: f64) -> TailFlightTickState {
-    let definition = HybridMockDefinition::try_new().unwrap();
+    let definition = TestAircraft::try_new().unwrap();
     let aircraft = definition.aircraft();
     let trim = definition.trim().unwrap();
     let launch = trim

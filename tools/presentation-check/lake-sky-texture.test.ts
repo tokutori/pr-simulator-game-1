@@ -57,7 +57,7 @@ describe("shared lake sky", () => {
   });
 
   it("keeps the reflected horizon and equirectangular seam continuous", () => {
-    const texture = createLakeSkyTexture(condition);
+    const texture = createLakeSkyTexture({ ...condition, cloudFraction: 0 });
     try {
       expect(texture.mapping).toBe(EquirectangularReflectionMapping);
       expect(texture.colorSpace).toBe(SRGBColorSpace);
@@ -90,13 +90,13 @@ describe("shared lake sky", () => {
     }
   });
 
-  it("keeps the shared panorama clear so the finite cloud layer is not duplicated", () => {
+  it("projects cloud fraction into the same deterministic sky panorama", () => {
     const clear = createLakeSkyTexture({ ...condition, cloudFraction: 0 });
     const repeated = createLakeSkyTexture({ ...condition, cloudFraction: 0 });
     const cloudy = createLakeSkyTexture({ ...condition, cloudFraction: 0.5 });
     try {
       expect(fingerprint(clear)).toBe(fingerprint(repeated));
-      expect(fingerprint(cloudy)).toBe(fingerprint(clear));
+      expect(fingerprint(cloudy)).not.toBe(fingerprint(clear));
     } finally { clear.dispose(); repeated.dispose(); cloudy.dispose(); }
   });
 

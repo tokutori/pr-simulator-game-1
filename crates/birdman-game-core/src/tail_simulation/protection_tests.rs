@@ -1,15 +1,15 @@
 use super::*;
 use crate::{
-    AerodynamicStage, BodyPoint, BodyVector, FbwAuthority, HybridError, HybridMockDefinition,
-    HybridModel, HybridSite, HybridSurface, HybridSurfaceRole, NedPoint, NedVector,
-    TailAngleOfAttackGuard, TailPilotPositionIntent, UnitQuaternion, WindError, WindField,
+    AerodynamicStage, BodyPoint, BodyVector, FbwAuthority, HybridError, HybridModel, HybridSite,
+    HybridSurface, HybridSurfaceRole, NedPoint, NedVector, TailAngleOfAttackGuard,
+    TailPilotPositionIntent, TestAircraft, UnitQuaternion, WindError, WindField,
     advance_tail_control,
 };
 use core::cell::Cell;
 
 #[test]
 fn evaluated_report_transfers_controls_and_normalizes_only_zero_contact() {
-    let definition = HybridMockDefinition::try_new().unwrap();
+    let definition = TestAircraft::try_new().unwrap();
     let aircraft = definition.aircraft();
     let previous = state(
         &aircraft,
@@ -69,7 +69,7 @@ fn evaluated_report_transfers_controls_and_normalizes_only_zero_contact() {
 
 #[test]
 fn alpha_guard_applies_effective_pilot_targets_without_clamping_state_or_losing_hold_set_reports() {
-    let definition = HybridMockDefinition::try_new().unwrap();
+    let definition = TestAircraft::try_new().unwrap();
     let surfaces = definition.surfaces().unwrap();
     let loads = HybridAerodynamicLoad::try_new(
         HybridModel::try_new(definition.polar().unwrap(), &surfaces).unwrap(),
@@ -168,7 +168,7 @@ fn alpha_guard_applies_effective_pilot_targets_without_clamping_state_or_losing_
 
 #[test]
 fn undefined_or_unavailable_datum_alpha_keeps_original_physics_and_first_stage_failure() {
-    let definition = HybridMockDefinition::try_new().unwrap();
+    let definition = TestAircraft::try_new().unwrap();
     let surfaces = definition.surfaces().unwrap();
     let model = HybridModel::try_new(definition.polar().unwrap(), &surfaces).unwrap();
     let aircraft = definition.aircraft();
@@ -375,7 +375,7 @@ impl ExternalLoadProvider for ObservedStages<'_, '_> {
 
 #[test]
 fn full_inputs_protect_both_signed_tails_without_changing_authority_requests_or_slew() {
-    let definition = HybridMockDefinition::try_new().unwrap();
+    let definition = TestAircraft::try_new().unwrap();
     let surfaces = definition.surfaces().unwrap();
     let tails = [surfaces[1], surfaces[2]];
     let loads = HybridAerodynamicLoad::try_new(
@@ -480,7 +480,7 @@ fn full_inputs_protect_both_signed_tails_without_changing_authority_requests_or_
 
 #[test]
 fn current_valid_request_is_protected_at_later_stages_but_not_beyond_slew_reach() {
-    let definition = HybridMockDefinition::try_new().unwrap();
+    let definition = TestAircraft::try_new().unwrap();
     let surfaces = definition.surfaces().unwrap();
     let loads = HybridAerodynamicLoad::try_new(
         HybridModel::try_new(definition.polar().unwrap(), &surfaces).unwrap(),
@@ -560,7 +560,7 @@ fn current_valid_request_is_protected_at_later_stages_but_not_beyond_slew_reach(
 
 #[test]
 fn failed_neutral_scan_preserves_original_requested_tail_failure() {
-    let definition = HybridMockDefinition::try_new().unwrap();
+    let definition = TestAircraft::try_new().unwrap();
     let surfaces = definition.surfaces().unwrap();
     let tails = [surfaces[1], surfaces[2]];
     let tail_loads = HybridAerodynamicLoad::try_new(
@@ -631,7 +631,7 @@ fn failed_neutral_scan_preserves_original_requested_tail_failure() {
 
 #[test]
 fn empty_reachable_intersection_returns_nominal_error_without_clamping_panic() {
-    let definition = HybridMockDefinition::try_new().unwrap();
+    let definition = TestAircraft::try_new().unwrap();
     let surfaces = definition.surfaces().unwrap();
     let tails = [surfaces[1], surfaces[2]];
     let loads = HybridAerodynamicLoad::try_new(
@@ -677,7 +677,7 @@ fn empty_reachable_intersection_returns_nominal_error_without_clamping_panic() {
 
 #[test]
 fn weighted_endpoint_failure_is_not_fourth_stage_or_a_post_contact_rejection() {
-    let definition = HybridMockDefinition::try_new().unwrap();
+    let definition = TestAircraft::try_new().unwrap();
     let surfaces = definition.surfaces().unwrap();
     let horizontal_tail = [surfaces[1]];
     let model = HybridModel::try_new(definition.polar().unwrap(), &horizontal_tail).unwrap();

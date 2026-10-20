@@ -1,12 +1,12 @@
 use bevy::ecs as bevy_ecs;
 use bevy::prelude::{AssetId, Component, Image, Resource, Shader};
+use birdman_game_app::{
+    DEFAULT_SESSION_SEED, DEFAULT_WEATHER, HybridSessionPreparation, HybridSessionPreparationError,
+    bundled_environment, identity_for_selection, preset_environment_for_version,
+};
 use birdman_game_core::{SessionPhase, SessionScenarioIdentity};
 use birdman_game_format::{
     EnvironmentFormatError, SkyStateDocument, WaveStateDocument, WeatherClass,
-};
-use birdman_game_session::{
-    DEFAULT_SESSION_SEED, DEFAULT_WEATHER, HybridSessionPreparation, HybridSessionPreparationError,
-    bundled_environment, identity_for_selection, preset_environment_for_version,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

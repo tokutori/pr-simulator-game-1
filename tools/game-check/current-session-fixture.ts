@@ -1,12 +1,9 @@
 import { readFileSync } from "node:fs";
 import { initSync } from "../../web/pkg/birdman_game_wasm.js";
-import type { NamedAnalysisCursor, NamedAnalysisDataset } from "../../web/src/game/flight-analysis-view.js";
 import type { PlaybackSessionSnapshot, LiveSessionSnapshot } from "../../web/src/app/session-snapshot.js";
 import type { TailResultSnapshot } from "../../web/src/game/tail-flight-controller.js";
 import type { TailLogicalInput } from "../../web/src/game/tail-input.js";
 import type { FlightRenderPose } from "../../web/src/render/contracts/runtime.js";
-import type { SummaryDocument } from "../../web/src/generated/record-summary.js";
-import type { RecordedPlaybackSample } from "../../web/src/generated/record-sample.js";
 import { createAppSession } from "../../web/src/app/session-factory.js";
 import type { AppSessionFacade } from "../../web/src/app/session-facade.js";
 
@@ -90,32 +87,4 @@ export function currentRecordedSnapshotFixture(): PlaybackSessionSnapshot {
     session.executeSharedSessionCommand({ kind: "enter_replay" });
     return session.queryRecordDisplay(0);
   } finally { session.dispose(); }
-}
-
-export interface CurrentNamedAnalysisFixtureOptions {
-  readonly phase?: "result" | "replay" | "attract";
-  readonly ticks?: number;
-  readonly samples?: readonly RecordedPlaybackSample[];
-  readonly summary?: Partial<SummaryDocument>;
-}
-
-export function currentNamedAnalysisFixture(options: CurrentNamedAnalysisFixtureOptions = {}): NamedAnalysisDataset {
-  const session = createAppSession({ controlModeCode: 0, seedLow: 21, seedHigh: 22 });
-  try {
-    if (options.phase === "attract") session.executeSharedSessionCommand({ kind: "enter_attract" });
-    else {
-      launchCurrentSession(session);
-      for (let index = 0; index < (options.ticks ?? 200); index += 1) session.flightPort.advanceTick(neutralTailInput);
-      session.executeSharedSessionCommand({ kind: "abort" });
-      if (options.phase === "replay") session.executeSharedSessionCommand({ kind: "enter_replay" });
-    }
-    const data = session.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
-    return { ...data, samples: options.samples ?? data.samples, summary: { ...data.summary, ...options.summary } };
-  } finally { session.dispose(); }
-}
-
-export function currentNamedCursorFixture(data: NamedAnalysisDataset, index = 0): NamedAnalysisCursor {
-  const sample = data.samples[index];
-  if (sample === undefined) throw new Error("Missing current Analysis cursor sample");
-  return { ...sample, kind: "named_record", context: data.context };
 }

@@ -1,7 +1,5 @@
 #![doc = "Native Screen presentation using the existing authoritative Rust game session."]
 
-#[path = "clouds.rs"]
-mod clouds;
 #[path = "environment.rs"]
 mod environment;
 #[path = "flight_log.rs"]
@@ -54,7 +52,7 @@ use native_session::{FlightInput, NativeSession};
 use std::{error::Error, path::PathBuf};
 
 const MAX_FRAME_DELTA: std::time::Duration = std::time::Duration::from_millis(
-    birdman_game_session::MAXIMUM_FLIGHT_FRAME_GAP_MILLISECONDS as u64,
+    birdman_game_app::MAXIMUM_FLIGHT_FRAME_GAP_MILLISECONDS as u64,
 );
 
 #[derive(Resource)]
@@ -171,7 +169,6 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
     app.add_plugins(plugins)
         .add_plugins((
             MaterialPlugin::<water::WaterMaterial>::default(),
-            MaterialPlugin::<clouds::CloudMaterial>::default(),
             MaterialPlugin::<terrain_haze::TerrainMaterial>::default(),
             bevy::input_focus::tab_navigation::TabNavigationPlugin,
             screen_render::timing::ScreenTimingPlugin {
@@ -1039,8 +1036,8 @@ mod tests {
     #[test]
     fn retry_and_new_flight_clear_previous_camera_look_and_control_holds() {
         for return_action in [
-            birdman_game_session::application::SessionCommand::Retry {},
-            birdman_game_session::application::SessionCommand::ReturnToTitle {},
+            birdman_game_app::application::SessionCommand::Retry {},
+            birdman_game_app::application::SessionCommand::ReturnToTitle {},
         ] {
             let (mut app, window) = flight_input_app();
             let initial = app.world().resource::<NativeSession>().physical_state();
@@ -1089,7 +1086,7 @@ mod tests {
             {
                 let mut session = app.world_mut().resource_mut::<NativeSession>();
                 if return_action
-                    == (birdman_game_session::application::SessionCommand::ReturnToTitle {})
+                    == (birdman_game_app::application::SessionCommand::ReturnToTitle {})
                 {
                     session.action(native_session::MenuAction::Start).unwrap();
                     session.action(native_session::MenuAction::Prepare).unwrap();

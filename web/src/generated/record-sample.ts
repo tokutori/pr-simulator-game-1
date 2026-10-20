@@ -1,4 +1,4 @@
-/* Generated from birdman-game-session::game_ui. Edit the Rust contract and regenerate. */
+/* Generated from birdman-game-presentation::game_ui. Edit the Rust contract and regenerate. */
 export type PhysicalControlsDocument = {
     readonly layout: "tail_incidence";
     readonly physical_incidence: TailIncidenceDocument;

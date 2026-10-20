@@ -9,7 +9,7 @@ import { PerspectiveCamera, StereoCamera } from "three";
 import type { Browser } from "playwright-core";
 import type { GameUiView } from "../../web/src/generated/game-ui-view.js";
 import { captureConfiguredViewerFrame } from "../../web/src/render/engines/three/viewer-frame.js";
-import { observeWaterRenderer, verifyWaterRenderer } from "./water.js";
+import { observeWaterRenderer, verifySkyRenderer, verifyWaterRenderer } from "./water.js";
 
 declare global {
   interface Window {
@@ -18,15 +18,23 @@ declare global {
   }
 }
 
-const [address, destination] = process.argv.slice(2);
+const [address, destination, ...options] = process.argv.slice(2);
 assert.ok(address !== undefined && destination !== undefined, "Usage: npm run test:web-ui -- VITE_URL OUTPUT_DIRECTORY");
+assert.ok(options.every(option => option === "--allow-dirty"), "Unknown Web UI check option");
 const url = new URL(address);
 assert.ok(["127.0.0.1", "localhost", "[::1]"].includes(url.hostname), "Use the local Vite development server");
 const output = resolve(destination);
 await mkdir(output, { recursive: true });
+await writeFile(resolve(output, "result.json"), `${JSON.stringify({ status: "failed", failure: "Web UI verification did not complete" })}\n`, "utf8");
 const root = resolve(import.meta.dirname, "../..");
-const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
-execFileSync("git", ["diff", "--exit-code", "HEAD", "--", "web", "crates", "assets"], { cwd: root, stdio: "inherit" });
+const gitOptions = { cwd: root, encoding: "utf8" as const, maxBuffer: 16 * 1024 * 1024 };
+const head = execFileSync("git", ["rev-parse", "HEAD"], gitOptions).trim();
+const sourceArguments = ["diff", "--no-ext-diff", "--no-textconv", "--binary", "HEAD"];
+const untrackedArguments = ["ls-files", "--others", "--exclude-standard"];
+const sourcePatch = execFileSync("git", sourceArguments, gitOptions);
+assert.equal(execFileSync("git", untrackedArguments, gitOptions), "", "Add new source files to the index before verification");
+if (!options.includes("--allow-dirty")) assert.ok(sourcePatch.length === 0, "Commit source changes or use --allow-dirty to record the local patch");
+if (sourcePatch.length > 0) await writeFile(resolve(output, "source.patch"), sourcePatch, "utf8");
 let browser: Browser | undefined;
 let closing = false;
 const errors: string[] = [];
@@ -37,6 +45,7 @@ const wasm: { url: string; sha256: string; status: number }[] = [];
 const responses: Promise<void>[] = [];
 let moduleUrl: string | undefined;
 const report: Record<string, unknown> = { sourceHead: head, execution: "Local Vite; production Rust/WASM, DOM and WebGL2; isolated browser context",
+  sourceDiffSha256: sourcePatch.length === 0 ? null : createHash("sha256").update(sourcePatch).digest("hex"),
   viewport: { width: 1280, height: 720, dpr: 1 }, errors, warnings, checks, findings, wasm,
   limits: "Screen UI smoke only. No HMD, Phone VR, physical keyboard or 80 FPS acceptance; no performance budget is inferred." };
 
@@ -283,6 +292,14 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
     await screenshot("01-setup-portrait");
     await page.setViewportSize({ width: 1280, height: 720 });
     await screenshot("01-setup");
+    await click("game-setup-select-weather-2");
+    await click("game-setup-start");
+    await scene("Briefing");
+    report.sky = await verifySkyRenderer(page, output);
+    await screenshot("sky-briefing");
+    checks.push("生成した天空を背景と水面で共用し、4方位・天頂・左右眼で遠景雲と並進不変性を確認する");
+    await click("game-briefing-cancel");
+    await click("game-setup-select-weather-0");
     await click("game-setup-start");
     await scene("Briefing");
     const briefingConditions = await page.locator("#game-briefing-conditions").innerText();
@@ -593,6 +610,19 @@ try {
     process.exitCode = 1;
   }
   if (errors.length > 0) {
+    report.status = "failed";
+    process.exitCode = 1;
+  }
+  try {
+    if (execFileSync("git", sourceArguments, gitOptions) !== sourcePatch
+        || execFileSync("git", untrackedArguments, gitOptions) !== ""
+        || execFileSync("git", ["rev-parse", "HEAD"], gitOptions).trim() !== head) {
+      errors.push("Source changed during Web UI verification");
+      report.status = "failed";
+      process.exitCode = 1;
+    }
+  } catch (cause) {
+    errors.push(`Source verification failed: ${cause instanceof Error ? cause.message : String(cause)}`);
     report.status = "failed";
     process.exitCode = 1;
   }

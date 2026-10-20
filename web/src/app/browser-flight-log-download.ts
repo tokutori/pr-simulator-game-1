@@ -1,4 +1,8 @@
-import type { FlightLogDownload, FlightLogDownloadPort } from "../game/flight-log-export.js";
+export interface FlightLogDownload {
+  readonly text: string;
+  readonly format: "csv" | "json";
+  readonly filename: string;
+}
 
 export interface ObjectUrlPort {
   createObjectURL(blob: Blob): string;
@@ -20,7 +24,7 @@ type DownloadResource =
   | { readonly kind: "active"; readonly urls: Map<string, () => void> }
   | { readonly kind: "disposed" };
 
-export class BrowserFlightLogDownload implements FlightLogDownloadPort {
+export class BrowserFlightLogDownload {
   private resource: DownloadResource = { kind: "active", urls: new Map() };
 
   constructor(

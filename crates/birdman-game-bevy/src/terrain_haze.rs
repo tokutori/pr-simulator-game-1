@@ -5,7 +5,7 @@ use bevy::{
     render::render_resource::AsBindGroup,
     shader::ShaderRef,
 };
-use birdman_game_session::lake_sky::LakeSceneHaze;
+use birdman_game_scene::lake_sky::LakeSceneHaze;
 
 pub(crate) type TerrainMaterial = ExtendedMaterial<StandardMaterial, TerrainHazeExtension>;
 

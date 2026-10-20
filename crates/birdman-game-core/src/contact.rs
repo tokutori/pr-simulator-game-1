@@ -3,6 +3,8 @@ use crate::math::{BodyPoint, BodyVector, MathError, NedPoint, NedVector};
 
 mod curve;
 
+const AIRBORNE_MAX_COMPONENT: f64 = f64::MAX / 1_048_576.0;
+
 /// Failures while identifying or interpolating a water-contact event.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(verus_only, vstd::prelude::verus_verify)]
@@ -21,12 +23,109 @@ pub enum ContactError {
     UnresolvedMotion,
 }
 
+/// Finite signed multiplier of a prepared reference wing-bending displacement.
+///
+/// The aircraft definition owns the load law and operating range. This value
+/// retains the accepted displacement coefficient independently of airspeed.
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
+pub struct WingBendingFactor {
+    value: f64,
+}
+
+impl WingBendingFactor {
+    /// Creates a finite multiplier; a negative value reverses the reference bending.
+    pub fn try_new(value: f64) -> Result<Self, MathError> {
+        if !value.is_finite() {
+            return Err(MathError::NonFinite);
+        }
+        Ok(Self { value })
+    }
+
+    /// Returns the accepted dimensionless coefficient.
+    pub const fn value(self) -> f64 {
+        self.value
+    }
+
+    /// Interpolates accepted coefficients over a finite closed-unit fraction.
+    pub fn interpolate(self, other: Self, fraction: f64) -> Result<Self, MathError> {
+        if !fraction.is_finite() {
+            return Err(MathError::NonFinite);
+        }
+        if !(0.0..=1.0).contains(&fraction) {
+            return Err(MathError::InvalidInterpolationFraction);
+        }
+        if fraction == 0.0 {
+            return Ok(self);
+        }
+        if fraction == 1.0 {
+            return Ok(other);
+        }
+        if self == other {
+            return Ok(self);
+        }
+        Self::try_new(interpolate_scalar(self.value, other.value, fraction))
+    }
+}
+
 /// Corresponding structural points, linearly interpolated in body coordinates over one tick.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub struct WaterContactGeometry<'a> {
     points_body: &'a [BodyPoint],
     end_points_body: &'a [BodyPoint],
+    bounds: Option<[ContactBounds; 2]>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
+struct ContactBounds {
+    minimum: [f64; 3],
+    maximum: [f64; 3],
+}
+
+impl ContactBounds {
+    fn from_points(points: &[BodyPoint]) -> Option<Self> {
+        let mut bounds = Self {
+            minimum: [f64::INFINITY; 3],
+            maximum: [f64::NEG_INFINITY; 3],
+        };
+        for point in points {
+            for (axis, component) in point.components().into_iter().enumerate() {
+                if component.abs() > AIRBORNE_MAX_COMPONENT {
+                    return None;
+                }
+                bounds.minimum[axis] = bounds.minimum[axis].min(component);
+                bounds.maximum[axis] = bounds.maximum[axis].max(component);
+            }
+        }
+        Some(bounds)
+    }
+
+    fn radius(self) -> f64 {
+        self.minimum
+            .into_iter()
+            .zip(self.maximum)
+            .map(|(minimum, maximum)| minimum.abs().max(maximum.abs()))
+            .sum()
+    }
+
+    fn maximum_down(self, state: FlightState) -> Result<f64, ContactError> {
+        let mut maximum = f64::NEG_INFINITY;
+        for corner in 0..8 {
+            let coordinates = core::array::from_fn::<_, 3, _>(|axis| {
+                if corner & (1 << axis) == 0 {
+                    self.minimum[axis]
+                } else {
+                    self.maximum[axis]
+                }
+            });
+            let point = BodyPoint::try_new(coordinates[0], coordinates[1], coordinates[2])
+                .map_err(ContactError::Math)?;
+            maximum = maximum.max(contact_point_down(state, point)?);
+        }
+        Ok(maximum)
+    }
 }
 
 impl<'a> WaterContactGeometry<'a> {
@@ -46,9 +145,18 @@ impl<'a> WaterContactGeometry<'a> {
         if start_points_body.len() != end_points_body.len() {
             return Err(ContactError::MismatchedGeometry);
         }
+        let start_bounds = ContactBounds::from_points(start_points_body);
+        let end_bounds = if core::ptr::eq(start_points_body, end_points_body) {
+            start_bounds
+        } else {
+            ContactBounds::from_points(end_points_body)
+        };
         Ok(Self {
             points_body: start_points_body,
             end_points_body,
+            bounds: start_bounds
+                .zip(end_bounds)
+                .map(|(start, end)| [start, end]),
         })
     }
 
@@ -83,6 +191,13 @@ pub(crate) fn detect_flight_state_water_contact(
         return Err(ContactError::NonAdjacentTicks);
     }
 
+    let rotation_displacement = rotation_displacement_bound(previous, next);
+    let state_scale_safe = airborne_state_scale_is_safe(previous, next);
+    if state_scale_safe
+        && geometry_remains_above_water(previous, next, geometry, rotation_displacement)
+    {
+        return Ok(None);
+    }
     let mut earliest: Option<(f64, usize)> = None;
     for (contact_point_index, (start, end)) in geometry
         .points_body
@@ -90,7 +205,13 @@ pub(crate) fn detect_flight_state_water_contact(
         .zip(geometry.end_points_body)
         .enumerate()
     {
-        let fraction = find_contact_fraction(previous, next, [*start, *end])?;
+        let fraction = find_contact_fraction(
+            previous,
+            next,
+            [*start, *end],
+            rotation_displacement,
+            state_scale_safe,
+        )?;
         if let Some(fraction) = fraction
             && earliest.is_none_or(|(earliest_fraction, _)| fraction < earliest_fraction)
         {
@@ -115,10 +236,17 @@ fn find_contact_fraction(
     previous: FlightState,
     next: FlightState,
     points: [BodyPoint; 2],
+    rotation_displacement: f64,
+    state_scale_safe: bool,
 ) -> Result<Option<f64>, ContactError> {
     let start_down = contact_point_down(previous, points[0])?;
     if start_down >= 0.0 {
         return Ok(Some(0.0));
+    }
+    if state_scale_safe
+        && interval_remains_above_water(previous, next, points, start_down, rotation_displacement)?
+    {
+        return Ok(None);
     }
     let partition = curve::contact_partitions(previous, next, points)?;
     let mut above_fraction = 0.0;
@@ -138,6 +266,105 @@ fn find_contact_fraction(
         above_fraction = fraction;
     }
     Ok(None)
+}
+
+fn rotation_displacement_bound(previous: FlightState, next: FlightState) -> f64 {
+    let start = previous.attitude_body_to_ned().components();
+    let end = next.attitude_body_to_ned().components();
+    let dot = start
+        .into_iter()
+        .zip(end)
+        .map(|(first, second)| first * second)
+        .sum::<f64>();
+    let sign = if dot < 0.0 { -1.0 } else { 1.0 };
+    (2.0 * start
+        .into_iter()
+        .zip(end)
+        .map(|(first, second)| (sign * second - first).abs())
+        .sum::<f64>())
+    .min(2.0)
+}
+
+fn airborne_state_scale_is_safe(previous: FlightState, next: FlightState) -> bool {
+    let components = |state: FlightState| {
+        state
+            .datum_position_ned()
+            .components()
+            .into_iter()
+            .chain(state.datum_velocity_ned().components())
+            .chain(state.angular_velocity_body().components())
+            .chain([state.pilot_position_m(), state.pilot_velocity_mps()])
+    };
+    components(previous)
+        .chain(components(next))
+        .all(|component| component.abs() <= AIRBORNE_MAX_COMPONENT)
+}
+
+fn airborne_margin(
+    previous: FlightState,
+    next: FlightState,
+    radius: f64,
+    rotation_displacement: f64,
+) -> f64 {
+    let start_datum = previous.datum_position_ned().components()[2];
+    let end_datum = next.datum_position_ned().components()[2];
+    let scale = start_datum.abs().max(end_datum.abs()) + radius;
+    let rounding = 128.0 * f64::EPSILON * scale + 128.0 * f64::from_bits(1);
+    rotation_displacement * radius + rounding
+}
+
+fn geometry_remains_above_water(
+    previous: FlightState,
+    next: FlightState,
+    geometry: WaterContactGeometry<'_>,
+    rotation_displacement: f64,
+) -> bool {
+    let Some([start_bounds, end_bounds]) = geometry.bounds else {
+        return false;
+    };
+    let Ok(start_down) = start_bounds.maximum_down(previous) else {
+        return false;
+    };
+    let Ok(end_down) = end_bounds.maximum_down(next) else {
+        return false;
+    };
+    let radius = start_bounds.radius().max(end_bounds.radius());
+    start_down.max(end_down) < -airborne_margin(previous, next, radius, rotation_displacement)
+}
+
+fn interval_remains_above_water(
+    previous: FlightState,
+    next: FlightState,
+    points: [BodyPoint; 2],
+    start_down: f64,
+    rotation_displacement: f64,
+) -> Result<bool, ContactError> {
+    if points
+        .into_iter()
+        .flat_map(BodyPoint::components)
+        .any(|component| component.abs() > AIRBORNE_MAX_COMPONENT)
+    {
+        return Ok(false);
+    }
+    let end_down = contact_point_down(next, points[1])?;
+    let [start_point, end_point] = points.map(BodyPoint::components);
+    let delta = core::array::from_fn::<_, 3, _>(|axis| end_point[axis] - start_point[axis]);
+    let radius = [start_point, end_point]
+        .map(|point| point.into_iter().map(f64::abs).sum::<f64>())
+        .into_iter()
+        .fold(0.0, f64::max);
+    let start_datum = previous.datum_position_ned().components()[2];
+    let end_datum = next.datum_position_ned().components()[2];
+    let scale = start_datum.abs().max(end_datum.abs()) + radius;
+    if delta
+        .into_iter()
+        .chain([end_datum - start_datum, radius, scale])
+        .any(|value| !value.is_finite())
+    {
+        return Err(ContactError::Math(MathError::NonFinite));
+    }
+    let margin = airborne_margin(previous, next, radius, rotation_displacement);
+    Ok(start_down.max(end_down) < -margin)
 }
 
 fn refine_contact_fraction(

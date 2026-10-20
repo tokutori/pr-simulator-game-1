@@ -21,7 +21,6 @@ mod flight_control;
 mod flight_execution;
 mod flight_record;
 mod game_session;
-mod hybrid_mock;
 mod math;
 mod pause_reasons;
 mod personal_best;
@@ -46,7 +45,7 @@ pub use aerodynamics_contract::{
     AeroError, AerodynamicEvaluationError, AerodynamicStage, HybridError, HybridFlowKind,
     HybridLimit, HybridSite, HybridSurfaceRole,
 };
-pub use contact::{ContactError, WaterContactGeometry};
+pub use contact::{ContactError, WaterContactGeometry, WingBendingFactor};
 pub use flight_control::{ActuatorConfig, ActuatorError, ControlMode, FbwAuthority};
 pub use flight_record::{
     FlightRecord, FlightRecordControlCapture, FlightRecordControlError, FlightRecordControls,
@@ -59,7 +58,6 @@ pub use game_session::{
     PauseReason, PauseReasons, SessionPhase, SessionReplaySource, SessionResult, SessionSnapshot,
     SessionTerminalState,
 };
-pub use hybrid_mock::{HybridMockDefinition, HybridMockError};
 pub use scenario::{
     CompositeCgLaunchConditions, FlightScenarioError, FlightTelemetry, FlightTelemetryError,
     flight_state_from_composite_cg_launch,
@@ -115,6 +113,11 @@ pub const PHYSICS_MODEL_VERSION: u32 = 3;
 
 /// Fixed simulation timestep in seconds.
 pub const PHYSICS_DT_SECONDS: f64 = 1.0 / PHYSICS_HZ as f64;
+
+#[cfg(test)]
+mod test_aircraft;
+#[cfg(test)]
+use test_aircraft::TestAircraft;
 
 #[cfg(test)]
 mod tests;

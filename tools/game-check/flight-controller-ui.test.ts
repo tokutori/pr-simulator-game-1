@@ -126,12 +126,10 @@ describe("Flight controller shared stop diagnosis", () => {
     const diagnosis = trial.model().flightExecution;
     trial.update({ type: "ui-action", action: { type: "activate", controlId: "game-flight-abort" } });
     expect(trial.effects()).toEqual([expect.objectContaining({ type: "shared-game-session-command", command: { kind: "abort" } })]);
-    const requestId = trial.model().pendingGameRequestId;
-    if (requestId === null) throw new Error("Missing Abort request");
     expect(retained.phase).toBe("flight_running");
     trial.facade.executeSharedSessionCommand({ kind: "abort" });
     trial.controller.reset(trial.session.readSnapshot());
-    trial.update({ type: "game-operation-completed", requestId, ...trial.facade.readGameSessionProjection() });
+    trial.update({ type: "session-command-completed", ...trial.facade.readGameSessionProjection() });
     expect(trial.model().gameSession.phase).toBe("result");
     expect(trial.model().flightExecution).toBe(diagnosis);
     expect(trial.controller.currentSnapshot.phase).toBe("result");

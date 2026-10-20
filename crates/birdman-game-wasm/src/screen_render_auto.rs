@@ -1,10 +1,10 @@
-use birdman_game_session::game_ui::GameUiScene;
-use birdman_game_session::lake_water::LakeWaterQuality;
-use birdman_game_session::screen_render_auto::{
+use birdman_game_format::WaterQuality;
+use birdman_game_presentation::game_ui::GameUiScene;
+use birdman_game_presentation::screen_render_auto::{
     ScreenGpuSample, ScreenRenderAutoController, ScreenRenderAutoError, ScreenRenderInvalidation,
     ScreenRenderResourceRequest, ScreenShadowMap,
 };
-use birdman_game_session::screen_render_scale::ScreenRenderScale;
+use birdman_game_presentation::screen_render_scale::ScreenRenderScale;
 use wasm_bindgen::{JsValue, prelude::*};
 
 /// One rendering lifetime's shared GPU-work controller, independent of GameSession.
@@ -22,7 +22,7 @@ impl ScreenRenderAutoBridge {
             controller: ScreenRenderAutoController::new(
                 ScreenRenderScale::default(),
                 ScreenShadowMap::Full,
-                LakeWaterQuality::High,
+                WaterQuality::High,
             ),
         }
     }
@@ -72,9 +72,9 @@ impl ScreenRenderAutoBridge {
     pub fn requested_water_quality(&self) -> Option<String> {
         self.controller.requested().map(|request| {
             match request.water_quality {
-                LakeWaterQuality::Low => "low",
-                LakeWaterQuality::Medium => "medium",
-                LakeWaterQuality::High => "high",
+                WaterQuality::Low => "low",
+                WaterQuality::Medium => "medium",
+                WaterQuality::High => "high",
             }
             .to_owned()
         })
@@ -234,11 +234,11 @@ fn shadow(size: u32) -> Result<ScreenShadowMap, JsValue> {
         .ok_or_else(|| JsValue::from_str("unsupported Screen shadow map size"))
 }
 
-fn quality(value: &str) -> Result<LakeWaterQuality, JsValue> {
+fn quality(value: &str) -> Result<WaterQuality, JsValue> {
     match value {
-        "low" => Ok(LakeWaterQuality::Low),
-        "medium" => Ok(LakeWaterQuality::Medium),
-        "high" => Ok(LakeWaterQuality::High),
+        "low" => Ok(WaterQuality::Low),
+        "medium" => Ok(WaterQuality::Medium),
+        "high" => Ok(WaterQuality::High),
         _ => Err(JsValue::from_str("unsupported water quality")),
     }
 }

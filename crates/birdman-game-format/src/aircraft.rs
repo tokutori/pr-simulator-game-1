@@ -254,7 +254,7 @@ pub struct AircraftTrimDocument {
 }
 
 /// Classified failures while admitting an external aircraft definition.
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AircraftFormatError {
     /// Source JSON exceeds the bounded input contract.
     InputTooLarge,

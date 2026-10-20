@@ -89,10 +89,9 @@ describe("same-build Rust/WASM generated DTO connections", () => {
       expect(queriedWind.projection.kind).toBe("available");
       if (queriedWind.projection.kind === "available") expect(queriedWind.projection.samples).toHaveLength(25);
       session.executeSharedSessionCommand({ kind: "enter_replay" });
-      const dataset = session.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
       const before = session.readPlaybackClock();
       const camera = readContract<ReplayCameraView>("replay_camera", bridge.playback_camera_view_json(0.005, "auto", true));
-      const pose = session.queryReplayCamera(0.005, "auto", true, dataset);
+      const pose = session.queryReplayCamera(0.005, "auto", true);
       expect(pose).toMatchObject(camera.render_pose);
       expect(camera.sample).not.toHaveProperty("render_pose");
       expect(session.readPlaybackClock()).toEqual(before);

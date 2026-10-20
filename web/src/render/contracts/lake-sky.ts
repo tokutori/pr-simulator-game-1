@@ -18,9 +18,9 @@ export function createLakeSkyCondition(condition: LakeSkyCondition): LakeSkyCond
     cloudFraction: condition.cloudFraction, cloudBaseMeters: condition.cloudBaseMeters, visibilityMeters: condition.visibilityMeters });
 }
 
-export function sameLakeSkyCondition(first: LakeSkyCondition, second: LakeSkyCondition): boolean {
+export function sameLakeSkyRenderCondition(first: LakeSkyCondition, second: LakeSkyCondition): boolean {
   return first.sunAzimuthDegrees === second.sunAzimuthDegrees && first.sunElevationDegrees === second.sunElevationDegrees &&
-    first.cloudFraction === second.cloudFraction && first.cloudBaseMeters === second.cloudBaseMeters && first.visibilityMeters === second.visibilityMeters;
+    first.cloudFraction === second.cloudFraction && first.visibilityMeters === second.visibilityMeters;
 }
 
 export function lakeSkySunDirectionNed(condition: LakeSkyCondition): Readonly<{ north: number; east: number; down: number }> {

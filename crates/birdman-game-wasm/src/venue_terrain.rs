@@ -1,4 +1,4 @@
-use birdman_game_session::venue_terrain::{VenueTerrainMesh, registered_terrain};
+use birdman_game_scene::venue_terrain::{VenueTerrainMesh, registered_terrain};
 use wasm_bindgen::prelude::*;
 
 #[doc = "Copies the immutable registered Web-reference terrain, shoreline and island collection."]

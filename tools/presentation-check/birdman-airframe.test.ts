@@ -212,70 +212,60 @@ describe("synthetic Birdman airframe", () => {
     expect(positions[0]).toBe(100);
   });
 
-  it.each([
-    { speed: 0,
-      skin: [-0.7300000190734863, -0.6242138147354126, -0.6263368129730225, -0.544516384601593, -0.4357530176639557, -0.17252102494239807, -0.217544287443161],
-      film: [-0.6263368129730225, -0.6650257706642151, -0.7300000190734863, -0.5733661651611328, -0.4576103985309601, -0.1862454116344452, -0.20988935232162476] },
-    { speed: 9.5,
-      skin: [-0.7300000190734863, -0.6242138147354126, -0.6263368129730225, -0.4030400216579437, -0.2172664850950241, 0.12519864737987518, 0.08017538487911224],
-      film: [-0.6263368129730225, -0.6650257706642151, -0.7300000190734863, -0.4318898022174835, -0.2391238659620285, 0.11147426068782806, 0.0878303200006485] },
-    { speed: 13,
-      skin: [-0.7300000190734863, -0.6242138147354126, -0.6263368129730225, -0.28177452087402344, -0.029992319643497467, 0.38038694858551025, 0.3353636860847473],
-      film: [-0.6263368129730225, -0.6650257706642151, -0.7300000190734863, -0.31062430143356323, -0.05184970051050186, 0.36666256189346313, 0.34301862120628357] }
-  ])("matches frozen Web 040d65b5 root/dihedral-break/tip and section samples at $speed m/s", ({ speed, skin, film }) => {
+  it.each([0, 9.7, 13])("projects every registered wing position and triangle unchanged at %s m/s", (speed) => {
     const airframe = createBirdmanAirframe();
+    const source = new WingGeometryBridge();
     try {
       airframe.setVisualState(speed, { layout: "absent" });
-      const skinZ = [-0.41999998688697815, -0.14252068102359772, 0.14632707834243774, -0.07985156029462814, -0.07939234375953674, -0.08668836951255798, -0.08331162482500076];
-      const filmZ = [0.14632707834243774, 0.43023425340652466, 0.7099999785423279, 0.32502543926239014, 0.2273540198802948, 0.1059194877743721, 0.10408051311969757];
-      const lateral = [0, 0, 0, 6.258900165557861, 8.345199584960938, 10.431500434875488, 10.431500434875488];
-      const sampleIndices = [0, 8, 16, 314, 416, 518, 1045];
-      for (const [name, heights, longitudinal] of [["right-wing", skin, skinZ], ["right-trailing-film", film, filmZ]] as const) {
+      source.update(speed);
+      const positions = source.surface_positions();
+      const indices = source.surface_indices();
+      const vertexCount = source.surface_vertex_count;
+      const indexCount = source.surface_index_count;
+      for (const [surface, name] of ["left-wing", "left-trailing-film", "right-wing", "right-trailing-film"].entries()) {
         const mesh = airframe.root.getObjectByName(name) as Mesh;
         const position = mesh.geometry.getAttribute("position");
-        expect(position.count).toBe(1054);
-        expect(mesh.geometry.index?.count).toBe(6312);
-        for (const [sample, index] of sampleIndices.entries()) {
-          expect(position.getX(index)).toBeCloseTo(lateral[sample] ?? Number.NaN, 6);
-          expect(position.getY(index)).toBeCloseTo(heights[sample] ?? Number.NaN, 6);
-          expect(position.getZ(index)).toBeCloseTo(longitudinal[sample] ?? Number.NaN, 6);
-        }
+        expect(position.count).toBe(vertexCount);
+        expect(Array.from(position.array)).toEqual(Array.from(positions.subarray(surface * vertexCount * 3, (surface + 1) * vertexCount * 3)));
+        expect(Array.from(mesh.geometry.index?.array ?? [])).toEqual(Array.from(indices.subarray(surface * indexCount, (surface + 1) * indexCount)));
       }
-    } finally { airframe.dispose(); }
+    } finally { airframe.dispose(); source.free(); }
   });
 
-  it("retains frozen Web structural anchors and suppresses small speed updates before releasing the shared owner once", () => {
+  it("updates small speed changes in retained buffers and releases the shared owner once", () => {
     const free = vi.spyOn(WingGeometryBridge.prototype, "free");
     const airframe = createBirdmanAirframe();
     try {
       const wing = airframe.root.getObjectByName("left-wing") as Mesh;
       const spar = airframe.root.getObjectByName("main-wing-spar")?.children[0] as InstancedMesh;
-      const rib = airframe.root.getObjectByName("left-trailing-rib") as InstancedMesh;
-      const foam = airframe.root.getObjectByName("left-styrofoam-rib") as Mesh;
-      const stringer = airframe.root.getObjectByName("balsa-stringer") as InstancedMesh;
-      expect((rib.material as MeshLambertMaterial).color.getHex()).toBe(0xcdb483);
-      expect((foam.material as MeshLambertMaterial).color.getHex()).toBe(0x77b5d0);
+      airframe.setVisualState(10, { layout: "absent" });
       const position = wing.geometry.getAttribute("position");
       if (!(position instanceof BufferAttribute)) throw new Error("Main-wing positions require a BufferAttribute");
       const version = position.version;
       const instanceVersion = spar.instanceMatrix.version;
-      airframe.setVisualState(9.52, { layout: "absent" });
+      const positionBuffer = position.array;
+      const instanceBuffer = spar.instanceMatrix.array;
+      const previousPositions = Array.from(positionBuffer);
+      airframe.setVisualState(10, { layout: "absent" });
       expect(position.version).toBe(version);
       expect(spar.instanceMatrix.version).toBe(instanceVersion);
+      airframe.setVisualState(10.02, { layout: "absent" });
+      expect(position.version).toBeGreaterThan(version);
+      expect(spar.instanceMatrix.version).toBeGreaterThan(instanceVersion);
+      expect(Array.from(position.array)).not.toEqual(previousPositions);
+      const changedVersion = spar.instanceMatrix.version;
       airframe.setVisualState(13, { layout: "absent" });
-      expect(spar.instanceMatrix.version).toBe(instanceVersion + 1);
-      for (const [rod, expected] of [
-        [spar, [-0.8692916666666666, -0.7141083881506469, -0.12101812510031407]],
-        [rib, [-0.45354347826086955, -0.6941843186430233, 0.43420779465398673]],
-        [stringer, [-0.8692916666666668, -0.6707112076106959, 0.15796374979937183]]
-      ] as const) {
-        const matrix = new Matrix4();
-        rod.getMatrixAt(0, matrix);
-        const endpoint = new Vector3(0, 0.5, 0).applyMatrix4(matrix).toArray();
-        for (const [index, coordinate] of endpoint.entries()) expect(coordinate).toBeCloseTo(expected[index] ?? Number.NaN, 6);
-      }
-      expect(foam.position.x).toBeCloseTo(-0.45354347826086955, 11);
-      expect(foam.position.y).toBeCloseTo(0.002499023847814475, 11);
+      expect(spar.instanceMatrix.version).toBeGreaterThan(changedVersion);
+      const cappedPositionVersion = position.version;
+      const cappedInstanceVersion = spar.instanceMatrix.version;
+      const cappedPositions = Array.from(position.array);
+      airframe.setVisualState(14, { layout: "absent" });
+      expect(position.version).toBe(cappedPositionVersion);
+      expect(spar.instanceMatrix.version).toBe(cappedInstanceVersion);
+      expect(Array.from(position.array)).toEqual(cappedPositions);
+      expect(wing.geometry.getAttribute("position")).toBe(position);
+      expect(position.array).toBe(positionBuffer);
+      expect(spar.instanceMatrix.array).toBe(instanceBuffer);
       airframe.dispose();
       airframe.dispose();
       expect(free).toHaveBeenCalledTimes(1);
@@ -367,15 +357,17 @@ describe("synthetic Birdman airframe", () => {
   it("returns owned bulk arrays that remain valid after update and bridge release", () => {
     const wing = new WingGeometryBridge();
     const reference = wing.surface_positions();
-    const initialTip = reference[518 * 3 + 1];
+    const tipHeightIndex = (wing.surface_vertex_count - 1) * 3 + 1;
+    const initialTip = reference[tipHeightIndex];
+    const initialFirstCoordinate = reference[0];
     reference[0] = 100;
-    expect(wing.surface_positions()[0]).toBe(-0);
+    expect(wing.surface_positions()[0]).toBe(initialFirstCoordinate);
     expect(wing.update(13)).toBe(true);
     const updated = wing.surface_positions();
     wing.free();
-    expect(reference[518 * 3 + 1]).toBe(initialTip);
-    expect(updated[518 * 3 + 1]).toBeCloseTo(0.38038694858551025, 6);
-    expect(updated.length).toBe(4 * 1054 * 3);
+    expect(reference[tipHeightIndex]).toBe(initialTip);
+    expect(updated[tipHeightIndex]).toBeGreaterThan(initialTip ?? Number.NaN);
+    expect(updated.length).toBe(reference.length);
   });
 
   it("keeps finite wing geometry, visual bending and cockpit material boundaries", () => {

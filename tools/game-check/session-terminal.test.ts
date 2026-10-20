@@ -109,8 +109,7 @@ describe("authoritative Result synchronization across tail adapter failures", ()
     expect(trial.model().flightExecution.kind).toBe("ready");
     expect(trial.model().status).toContain(primary.message);
     if (site === "pose-and-cleanup") expect(trial.model().status).toContain("Injected cleanup failure");
-    expect(trial.effects).toEqual([{ type: "persist-flight-record" }, { type: "load-flight-analysis", requestId: 1 }]);
-    expect(trial.model().analysis).toMatchObject({ kind: "loading", requestId: 1, nextRequestId: 2 });
+    expect(trial.effects).toEqual([{ type: "persist-flight-record" }]);
     const archive: unknown = JSON.parse(trial.facade.exportRecordJson());
     expect(archive).toMatchObject({ schema_version: 6, finalization: { reason: "manual_abort", terminal_tick: 0, failure: null } });
     const snapshot = trial.controller.currentSnapshot;

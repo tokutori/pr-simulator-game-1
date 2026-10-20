@@ -1,6 +1,6 @@
 use super::*;
-use birdman_game_session::application::RecordCommand;
-use birdman_game_session::game_ui::{
+use birdman_game_app::application::RecordCommand;
+use birdman_game_presentation::game_ui::{
     GameUiAction, GameUiContext, GameUiPlatformInput, GameUiStructureKey, game_ui_frame,
     game_ui_view, update_game_ui,
 };
@@ -43,7 +43,7 @@ impl HybridGameSessionBridge {
         let context = self.ui_context(&platform, &environment)?;
         if retained.view_revision != expected_revision {
             return Err(ui_error(
-                birdman_game_session::game_ui::GameUiError::StaleView,
+                birdman_game_presentation::game_ui::GameUiError::StaleView,
             ));
         }
         let frame = game_ui_frame(&self.ui, &context, retained, revision).map_err(ui_error)?;
@@ -89,7 +89,9 @@ impl HybridGameSessionBridge {
         environment: &str,
     ) -> Result<u32, JsValue> {
         let key = GameUiStructureKey::new(&self.ui, &self.ui_context(platform, environment)?);
-        self.session.observe_ui_structure(key).map_err(ui_error)
+        self.ui_structure
+            .observe(key, self.session.record_source_id())
+            .map_err(ui_error)
     }
 
     fn ui_context<'view>(
@@ -107,7 +109,7 @@ impl HybridGameSessionBridge {
         };
         let identity =
             if self.session.core_session().snapshot().phase() == SessionPhase::FlightSetup {
-                Some(birdman_game_session::identity_for_selection(
+                Some(birdman_game_app::identity_for_selection(
                     HybridSessionPreparation::select_scenario(
                         difficulty.weather(),
                         self.session.seed(),
@@ -135,7 +137,7 @@ impl HybridGameSessionBridge {
     fn ui_environment_readout(&self) -> Result<String, JsValue> {
         let platform = self.session.core_session().snapshot().phase();
         let identity = if platform == SessionPhase::FlightSetup {
-            Some(birdman_game_session::identity_for_selection(
+            Some(birdman_game_app::identity_for_selection(
                 HybridSessionPreparation::select_scenario(
                     self.session.difficulty().weather(),
                     self.session.seed(),
@@ -145,12 +147,12 @@ impl HybridGameSessionBridge {
         } else {
             self.session.core_session().configuration_identity()
         };
-        birdman_game_session::game_ui::game_ui_environment_readout(identity).map_err(ui_error)
+        birdman_game_presentation::game_ui::game_ui_environment_readout(identity).map_err(ui_error)
     }
 }
 
 fn decode<T: serde::de::DeserializeOwned>(json: &str) -> Result<T, JsValue> {
-    if json.len() > birdman_game_session::game_ui::GAME_UI_MAX_INPUT_BYTES {
+    if json.len() > birdman_game_presentation::game_ui::GAME_UI_MAX_INPUT_BYTES {
         return Err(JsValue::from_str(
             "shared UI input exceeds the boundary limit",
         ));

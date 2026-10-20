@@ -45,7 +45,7 @@ impl WindCase {
         }
     }
 
-    fn profile(self, definition: &HybridMockDefinition) -> TestProfile {
+    fn profile(self, definition: &TestAircraft) -> TestProfile {
         match self {
             Self::Uniform | Self::SpatialShear => TestProfile::baseline(InputCase::SmoothChanged),
             Self::UpperStaticAlpha => {
@@ -64,7 +64,7 @@ impl WindCase {
 }
 
 fn state_at_static_alpha(
-    definition: &HybridMockDefinition,
+    definition: &TestAircraft,
     trim: SteadyGlideTrim,
     alpha: f64,
 ) -> TailFlightTickState {
@@ -100,7 +100,7 @@ fn state_at_static_alpha(
 }
 
 fn check_wind_step_halving(cadence: Cadence) {
-    let definition = HybridMockDefinition::try_new().unwrap();
+    let definition = TestAircraft::try_new().unwrap();
     let surfaces = definition.surfaces().unwrap();
     let trim = definition.trim().unwrap();
     let aircraft = definition.aircraft();
@@ -111,7 +111,7 @@ fn check_wind_step_halving(cadence: Cadence) {
     ] {
         let loads = HybridAerodynamicLoad::try_new(
             HybridModel::try_new(definition.polar().unwrap(), &surfaces).unwrap(),
-            HybridMockDefinition::TRIM_AIR_DENSITY_KG_M3,
+            TestAircraft::TRIM_AIR_DENSITY_KG_M3,
             wind_case.wind(),
         )
         .unwrap();
@@ -125,7 +125,7 @@ fn check_wind_step_halving(cadence: Cadence) {
                 mode,
                 wind_case.control_profile(),
                 trim.pilot_mapping().unwrap(),
-                Gravity::try_new(HybridMockDefinition::TRIM_GRAVITY_MPS2).unwrap(),
+                Gravity::try_new(TestAircraft::TRIM_GRAVITY_MPS2).unwrap(),
             );
             let initial = match wind_case {
                 WindCase::Uniform | WindCase::SpatialShear => {
@@ -157,12 +157,12 @@ fn uniform_shear_and_upper_alpha_use_coupled_step_halving_gates() {
 
 #[test]
 fn outside_static_alpha_is_a_typed_atomic_first_stage_refusal() {
-    let definition = HybridMockDefinition::try_new().unwrap();
+    let definition = TestAircraft::try_new().unwrap();
     let surfaces = definition.surfaces().unwrap();
     let trim = definition.trim().unwrap();
     let loads = HybridAerodynamicLoad::try_new(
         HybridModel::try_new(definition.polar().unwrap(), &surfaces).unwrap(),
-        HybridMockDefinition::TRIM_AIR_DENSITY_KG_M3,
+        TestAircraft::TRIM_AIR_DENSITY_KG_M3,
         WindField::uniform(NedVector::zero()),
     )
     .unwrap();
@@ -181,7 +181,7 @@ fn outside_static_alpha_is_a_typed_atomic_first_stage_refusal() {
             mode,
             TailControlProfile::try_new(0.2, 0.2, 1.0).unwrap(),
             trim.pilot_mapping().unwrap(),
-            Gravity::try_new(HybridMockDefinition::TRIM_GRAVITY_MPS2).unwrap(),
+            Gravity::try_new(TestAircraft::TRIM_GRAVITY_MPS2).unwrap(),
         );
         let error = advance_tail_flight_tick(
             &definition.aircraft(),

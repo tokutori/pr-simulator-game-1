@@ -2,6 +2,338 @@ use super::*;
 use crate::{AircraftDefinition, playable_aircraft};
 
 #[test]
+fn accepted_bending_coefficients_preserve_corresponding_points_at_fractional_times() {
+    let aircraft = playable_aircraft().unwrap();
+    let shape = aircraft.shape();
+    let start = shape.wing_bending_factor(0.0).unwrap();
+    let end = shape.wing_bending_factor(13.0).unwrap();
+    let incidence = TailIncidence::try_new(0.1, -0.2).unwrap();
+    let mut first = aircraft.contact_points().to_vec();
+    let mut last = first.clone();
+    let mut output = first.clone();
+    aircraft
+        .write_deformed_contact_points_with_factor(start, incidence, &mut first)
+        .unwrap();
+    aircraft
+        .write_deformed_contact_points_with_factor(end, incidence, &mut last)
+        .unwrap();
+    let terminal_fraction = 0.25;
+    let terminal = start.interpolate(end, terminal_fraction).unwrap();
+    for fraction in [0.0, 0.25, 0.5, 1.0] {
+        let factor = start.interpolate(terminal, fraction).unwrap();
+        aircraft
+            .write_deformed_contact_points_with_factor(factor, incidence, &mut output)
+            .unwrap();
+        let full_fraction = terminal_fraction * fraction;
+        for ((first, last), actual) in first.iter().zip(&last).zip(&output) {
+            for ((first, last), actual) in first
+                .components()
+                .into_iter()
+                .zip(last.components())
+                .zip(actual.components())
+            {
+                let expected = first * (1.0 - full_fraction) + last * full_fraction;
+                assert!((actual - expected).abs() < 8.0 * f64::EPSILON * expected.abs().max(1.0));
+            }
+        }
+    }
+    let interpolated = start.interpolate(end, 0.5).unwrap();
+    assert!((interpolated.value() - shape.wing_bending_factor(6.5).unwrap().value()).abs() > 0.4);
+    let mut from_speed = output.clone();
+    aircraft
+        .write_deformed_contact_points(13.0, incidence, &mut from_speed)
+        .unwrap();
+    assert_eq!(from_speed, last);
+}
+
+fn rotate_about_axis(point: [f64; 3], pivot: [f64; 3], axis: [f64; 3], angle: f64) -> [f64; 3] {
+    let offset: [f64; 3] = core::array::from_fn(|component| point[component] - pivot[component]);
+    let cross = [
+        axis[1] * offset[2] - axis[2] * offset[1],
+        axis[2] * offset[0] - axis[0] * offset[2],
+        axis[0] * offset[1] - axis[1] * offset[0],
+    ];
+    let dot = axis
+        .into_iter()
+        .zip(offset)
+        .map(|(axis, value)| axis * value)
+        .sum::<f64>();
+    core::array::from_fn(|component| {
+        pivot[component]
+            + offset[component] * angle.cos()
+            + cross[component] * angle.sin()
+            + axis[component] * dot * (1.0 - angle.cos())
+    })
+}
+
+#[test]
+fn tail_actuation_uses_the_shared_pivot_body_axes_and_physical_angles() {
+    let mut document = playable_aircraft().unwrap().document().clone();
+    for surface in &mut document.surfaces {
+        if surface.role.core_role() != HybridSurfaceRole::MainWing {
+            for section in &mut surface.sections {
+                section.quarter_chord_frd_m[0] += 0.7;
+                section.quarter_chord_frd_m[2] += 0.2;
+            }
+        }
+    }
+    let aircraft = AircraftDefinition::from_document(document).unwrap();
+    for (role, axis) in [
+        (HybridSurfaceRole::HorizontalTail, [0.0, 1.0, 0.0]),
+        (HybridSurfaceRole::VerticalTail, [0.0, 0.0, 1.0]),
+    ] {
+        let surface = aircraft.shape().surface(role);
+        let pivot = surface.incidence_pivot().unwrap();
+        for angle in [-0.2, 0.0, 0.2] {
+            let incidence = TailIncidence::try_new(angle, angle).unwrap();
+            assert_eq!(surface.actuated_point(pivot, incidence).unwrap(), pivot);
+            for span in surface.span_stations_m() {
+                for chord in [0.0, 0.25, 1.0] {
+                    let point = surface.point(span, chord, AirfoilFace::Upper).unwrap();
+                    let actual = surface
+                        .actuated_point(point, incidence)
+                        .unwrap()
+                        .components();
+                    let expected =
+                        rotate_about_axis(point.components(), pivot.components(), axis, angle);
+                    for (actual, expected) in actual.into_iter().zip(expected) {
+                        assert!((actual - expected).abs() < 2.0e-15);
+                    }
+                    let distance_squared = |position: [f64; 3]| {
+                        position
+                            .into_iter()
+                            .zip(pivot.components())
+                            .map(|(position, pivot)| (position - pivot).powi(2))
+                            .sum::<f64>()
+                    };
+                    assert!(
+                        (distance_squared(actual) - distance_squared(point.components())).abs()
+                            < 2.0e-15
+                    );
+                }
+            }
+        }
+        let [minimum, maximum] = surface.span_bounds_m();
+        let leading = surface
+            .point((minimum + maximum) * 0.5, 0.0, AirfoilFace::Upper)
+            .unwrap();
+        let positive = surface
+            .actuated_point(leading, TailIncidence::try_new(0.2, 0.2).unwrap())
+            .unwrap()
+            .components();
+        match role {
+            HybridSurfaceRole::HorizontalTail => assert!(positive[2] < pivot.components()[2]),
+            HybridSurfaceRole::VerticalTail => assert!(positive[1] > pivot.components()[1]),
+            HybridSurfaceRole::MainWing => unreachable!(),
+        }
+        let extreme = if role == HybridSurfaceRole::HorizontalTail {
+            [f64::MAX, 0.0, f64::MAX]
+        } else {
+            [f64::MAX, -f64::MAX, 0.0]
+        };
+        assert_eq!(
+            surface.actuated_point(
+                body_point(extreme).unwrap(),
+                TailIncidence::try_new(0.2, 0.2).unwrap()
+            ),
+            Err(ShapeError::Math(MathError::NonFinite))
+        );
+    }
+}
+
+#[test]
+fn deformation_preserves_prepared_point_identity_and_reuses_the_callers_buffer() {
+    let mut document = playable_aircraft().unwrap().document().clone();
+    for surface in &mut document.surfaces {
+        let stations = match surface.role.core_role() {
+            HybridSurfaceRole::MainWing => continue,
+            HybridSurfaceRole::HorizontalTail => [[-4.0, -1.0, 0.0], [-4.0, 1.0, 0.0]],
+            HybridSurfaceRole::VerticalTail => [[-5.0, 1.0, 0.0], [-5.0, 1.0, 1.0]],
+        };
+        surface.sections = stations
+            .into_iter()
+            .map(|quarter_chord_frd_m| AircraftSectionDocument {
+                quarter_chord_frd_m,
+                chord_m: 1.0,
+            })
+            .collect();
+    }
+    let aircraft = AircraftDefinition::from_document(document).unwrap();
+    let shape = aircraft.shape();
+    let samples = shape.contact_samples(ContactSampling::DEFAULT).unwrap();
+    let [main_end, horizontal_end, vertical_end] = samples.surface_ends;
+    assert_eq!(samples.points, aircraft.contact_points());
+    assert_eq!(
+        samples.points[horizontal_end - 1].components(),
+        [-4.75, 1.0, 0.0]
+    );
+    assert_eq!(
+        samples.points[horizontal_end - 1],
+        samples.points[horizontal_end]
+    );
+    let mut output = samples.points.clone();
+    let pointer = output.as_ptr();
+    let capacity = output.capacity();
+    for (speed, elevator, rudder) in [(0.0, 0.2, -0.1), (9.7, -0.1, 0.2), (13.0, 0.0, 0.0)] {
+        let incidence = TailIncidence::try_new(elevator, rudder).unwrap();
+        aircraft
+            .write_deformed_contact_points(speed, incidence, &mut output)
+            .unwrap();
+        let expected: Vec<_> = samples
+            .points
+            .iter()
+            .enumerate()
+            .map(|(index, point)| {
+                let coordinates = point.components();
+                if index < main_end {
+                    let displacement = shape
+                        .wing_displacement(coordinates[1], speed)
+                        .unwrap()
+                        .components();
+                    core::array::from_fn(|axis| coordinates[axis] + displacement[axis])
+                } else if index < vertical_end {
+                    let (role, axis, angle) = if index < horizontal_end {
+                        (HybridSurfaceRole::HorizontalTail, [0.0, 1.0, 0.0], elevator)
+                    } else {
+                        (HybridSurfaceRole::VerticalTail, [0.0, 0.0, 1.0], rudder)
+                    };
+                    rotate_about_axis(
+                        coordinates,
+                        shape.surface(role).incidence_pivot().unwrap().components(),
+                        axis,
+                        angle,
+                    )
+                } else {
+                    coordinates
+                }
+            })
+            .collect();
+        for (actual, expected) in output.iter().zip(&expected) {
+            for (actual, expected) in actual.components().into_iter().zip(expected) {
+                assert!((actual - expected).abs() < 4.0e-15);
+            }
+        }
+        for normal in [[0.0, 0.0, 1.0], [0.1, -0.3, 0.9], [-0.4, 0.8, 0.2]] {
+            let down = |point: [f64; 3]| {
+                point
+                    .into_iter()
+                    .zip(normal)
+                    .map(|(value, weight)| value * weight)
+                    .sum::<f64>()
+            };
+            let expected_support = expected
+                .iter()
+                .copied()
+                .map(down)
+                .fold(f64::NEG_INFINITY, f64::max);
+            let actual_support = output
+                .iter()
+                .map(|point| down(point.components()))
+                .fold(f64::NEG_INFINITY, f64::max);
+            assert!((actual_support - expected_support).abs() < 4.0e-15);
+        }
+        if elevator != 0.0 && rudder != 0.0 {
+            assert_ne!(output[horizontal_end - 1], output[horizontal_end]);
+        }
+        assert_eq!(output.as_ptr(), pointer);
+        assert_eq!(output.capacity(), capacity);
+        assert_eq!(&output[vertical_end..], &samples.points[vertical_end..]);
+        assert_eq!(aircraft.contact_points(), samples.points);
+    }
+    let before = output.clone();
+    for speed in [f64::NAN, f64::INFINITY, -0.01] {
+        assert!(
+            aircraft
+                .write_deformed_contact_points(speed, TailIncidence::neutral(), &mut output)
+                .is_err()
+        );
+        assert_eq!(output, before);
+    }
+    assert_eq!(
+        aircraft.write_deformed_contact_points(9.7, TailIncidence::neutral(), &mut output[..1]),
+        Err(ShapeError::MismatchedContactPointCount)
+    );
+    assert_eq!(output, before);
+}
+
+#[test]
+fn wing_displacement_matches_the_tip_solution_and_source_stiffness() {
+    let aircraft = playable_aircraft().unwrap();
+    let source = aircraft.document();
+    let half_span = aircraft
+        .shape()
+        .surface(HybridSurfaceRole::MainWing)
+        .span_bounds_m()[1];
+    let tip = (source.mass.airframe_kg + source.pilot.mass_kg)
+        * source.trim.gravity_mps2
+        * half_span
+        * half_span
+        * half_span
+        / (16.0 * source.structure.wing_flexural_rigidity_nm2);
+    for (speed, factor) in [(0.0, 0.3), (source.trim.airspeed_mps, 1.0), (f64::MAX, 1.6)] {
+        for span in [-half_span, 0.0, half_span] {
+            let displacement = aircraft
+                .shape()
+                .wing_displacement(span, speed)
+                .unwrap()
+                .components();
+            assert_eq!(displacement[..2], [0.0, 0.0]);
+            let expected = if span == 0.0 { 0.0 } else { -tip * factor };
+            assert!((displacement[2] - expected).abs() < 1.0e-14);
+        }
+    }
+    let mut stiffer = source.clone();
+    stiffer.structure.wing_flexural_rigidity_nm2 *= 2.0;
+    let stiffer = AircraftDefinition::from_document(stiffer).unwrap();
+    assert!(
+        (stiffer
+            .shape()
+            .wing_displacement(half_span, source.trim.airspeed_mps)
+            .unwrap()
+            .components()[2]
+            + tip / 2.0)
+            .abs()
+            < 1.0e-14
+    );
+    let mut stiffest = source.clone();
+    stiffest.structure.wing_flexural_rigidity_nm2 = f64::MAX;
+    let stiffest = AircraftDefinition::from_document(stiffest).unwrap();
+    let actual = -stiffest
+        .shape()
+        .wing_displacement(half_span, source.trim.airspeed_mps)
+        .unwrap()
+        .components()[2];
+    let expected = tip * source.structure.wing_flexural_rigidity_nm2 / f64::MAX;
+    assert!(actual > 0.0 && actual.is_finite());
+    assert!((actual / expected - 1.0).abs() < 1.0e-14);
+}
+
+#[test]
+fn wing_displacement_rejects_invalid_queries_and_unrepresentable_bending() {
+    let aircraft = playable_aircraft().unwrap();
+    for (span, speed, error) in [
+        (f64::NAN, 9.7, ShapeError::NonFinite),
+        (0.0, f64::INFINITY, ShapeError::NonFinite),
+        (0.0, -1.0, ShapeError::InvalidAirspeed),
+        (
+            20.0,
+            9.7,
+            ShapeError::OutsideSurface(HybridSurfaceRole::MainWing),
+        ),
+    ] {
+        assert_eq!(aircraft.shape().wing_displacement(span, speed), Err(error));
+    }
+    let mut source = aircraft.document().clone();
+    source.structure.wing_flexural_rigidity_nm2 = f64::MIN_POSITIVE;
+    assert!(matches!(
+        AircraftDefinition::from_document(source),
+        Err(crate::AircraftDefinitionError::Shape(ShapeError::Math(
+            MathError::NonFinite
+        )))
+    ));
+}
+
+#[test]
 fn structural_sections_are_the_same_knots_and_piecewise_planform_as_the_load_model() {
     let aircraft = playable_aircraft().unwrap();
     let shape = aircraft.shape();
@@ -131,7 +463,7 @@ fn cockpit_and_beam_use_custom_source_coordinates_and_dimensions() {
     assert!((point[1]).abs() < 1.0e-15);
     assert!((point[2] - 0.8).abs() < 1.0e-15);
     let mut beam = Vec::new();
-    shape.append_beam_points(&mut beam, 24).unwrap();
+    shape.append_beam_points(&mut beam, 24, 0).unwrap();
     let endpoints = aircraft.document().structure.main_beam_endpoints_frd_m;
     let direction = core::array::from_fn::<_, 3, _>(|axis| endpoints[1][axis] - endpoints[0][axis]);
     assert_eq!(beam.len(), 48);

@@ -1,24 +1,25 @@
 use bevy::ecs as bevy_ecs;
 use bevy::prelude::*;
+use birdman_game_app::application::{
+    ApplicationSession, BackendReadiness, ExternalPauseReason, RecordCommand, SessionCommand,
+};
+use birdman_game_app::{HybridSessionPreparation, identity_for_selection};
 use birdman_game_core::{
     FlightState, GameSessionError, SessionPhase, SessionSnapshot, SessionTerminalState,
     TailFlightTickInput, TailIncidence, TailPilotIntent, TailPilotPositionCommand,
     TailPilotPositionIntent, TailRateTarget,
 };
-use birdman_game_session::application::{
-    ApplicationSession, BackendReadiness, ExternalPauseReason, RecordCommand, SessionCommand,
+use birdman_game_presentation::game_ui::{
+    GameUiAction, GameUiContext, GameUiFrame, GameUiPlatformInput, GameUiState,
+    GameUiStructureCache, GameUiStructureKey, GameUiUpdate, GameUiView,
+    game_ui_environment_readout, game_ui_frame, game_ui_view, update_game_ui,
 };
-use birdman_game_session::game_ui::{
-    GameUiAction, GameUiContext, GameUiFrame, GameUiPlatformInput, GameUiState, GameUiStructureKey,
-    GameUiUpdate, GameUiView, game_ui_environment_readout, game_ui_frame, game_ui_view,
-    update_game_ui,
-};
-use birdman_game_session::{HybridSessionPreparation, identity_for_selection};
 
 #[derive(Resource)]
 pub(crate) struct NativeSession {
     pub(crate) game: ApplicationSession,
     pub(crate) ui: GameUiState,
+    ui_structure: GameUiStructureCache,
     pub(crate) notice: Option<String>,
     pub(crate) initial_pilot_position_m: f64,
     frame_available: bool,
@@ -30,6 +31,7 @@ impl Default for NativeSession {
         Self {
             game: ApplicationSession::default(),
             ui: GameUiState::default(),
+            ui_structure: GameUiStructureCache::default(),
             notice: None,
             initial_pilot_position_m: 0.0,
             frame_available: true,
@@ -111,8 +113,8 @@ impl NativeSession {
         let environment = game_ui_environment_readout(self.ui_identity())
             .map_err(|error| format!("環境情報を取得できない: {error:?}"))?;
         let key = GameUiStructureKey::new(&self.ui, &self.ui_context(platform, &environment));
-        self.game
-            .observe_ui_structure(key)
+        self.ui_structure
+            .observe(key, self.game.record_source_id())
             .map_err(|error| format!("表示revisionを取得できない: {error:?}"))
     }
 
@@ -437,9 +439,9 @@ mod tests {
         assert!(session.prepared_display_state().is_none());
     }
     use super::*;
+    use birdman_game_app::{DEFAULT_MAXIMUM_FLIGHT_TICKS, DEFAULT_SESSION_SEED};
     use birdman_game_core::PauseReason;
     use birdman_game_format::AssistanceLevel;
-    use birdman_game_session::{DEFAULT_MAXIMUM_FLIGHT_TICKS, DEFAULT_SESSION_SEED};
 
     #[test]
     fn unfocused_countdown_returns_to_briefing_and_requires_explicit_restart() {

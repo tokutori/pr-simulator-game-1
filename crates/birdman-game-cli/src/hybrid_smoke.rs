@@ -1,3 +1,4 @@
+use birdman_game_app::HybridSessionPreparation;
 use birdman_game_core::{
     ControlMode, FbwAuthority, GameSession, GameSessionConfiguration, GameSessionError,
     SessionPhase, TailFlightTickInput, TailPilotIntent, TailPilotPositionCommand,
@@ -8,12 +9,9 @@ use birdman_game_format::{
     FlightRecordTailIdentityDocument, InformationLevel, TailFlightRecordControlsDocument,
     TailFlightRecordDocument, TailFlightRecordFinalizationDocument, WeatherClass,
 };
-use birdman_game_session::HybridSessionPreparation;
 use serde::Serialize;
 
 const TICK_LIMIT: u64 = 8;
-#[cfg(test)]
-const CONTROLLER_ID: &str = "bpg040-tail-rate-feedback";
 
 pub(super) fn run_verification(requested_mode: &str) -> Result<(), String> {
     let modes = [
@@ -169,12 +167,11 @@ fn verify_mode_at_speed(
 ) -> Result<TailFlightRecordDocument, String> {
     use birdman_game_core::{
         BodyPoint, BodyVector, CompositeCgLaunchConditions, CourseAxis, Gravity,
-        HybridAerodynamicLoad, HybridMockDefinition, HybridModel, NedPoint, NedVector,
-        SessionScenarioIdentity, TailControlProfile, TailFlightScenario,
-        TailFlightScenarioParameters, TailIncidence, WindField,
+        HybridAerodynamicLoad, HybridModel, NedPoint, NedVector, TailControlProfile,
+        TailFlightScenario, TailFlightScenarioParameters, TailIncidence, WindField,
     };
     const CONTACT_POINTS: [BodyPoint; 1] = [BodyPoint::origin()];
-    let definition = HybridMockDefinition::try_new().map_err(super::display_error)?;
+    let definition = birdman_game_app::registered_aircraft().map_err(super::display_error)?;
     let surfaces = definition.surfaces().map_err(super::display_error)?;
     let trim = definition.trim().map_err(super::display_error)?;
     let cg_position = NedPoint::try_new(0.0, 0.0, -10.5).map_err(super::display_error)?;
@@ -185,7 +182,7 @@ fn verify_mode_at_speed(
         cg_position,
         initial
             .datum_velocity_ned()
-            .scaled(speed_mps / HybridMockDefinition::TRIM_AIRSPEED_MPS)
+            .scaled(speed_mps / definition.document().trim.airspeed_mps)
             .map_err(super::display_error)?,
         initial.attitude_body_to_ned(),
         BodyVector::zero(),
@@ -197,7 +194,7 @@ fn verify_mode_at_speed(
         definition.aircraft(),
         launch,
         TailIncidence::neutral(),
-        Gravity::try_new(HybridMockDefinition::TRIM_GRAVITY_MPS2).map_err(super::display_error)?,
+        Gravity::try_new(definition.document().trim.gravity_mps2).map_err(super::display_error)?,
         &CONTACT_POINTS,
         CourseAxis::try_new(1.0, 0.0).map_err(super::display_error)?,
     )
@@ -205,7 +202,7 @@ fn verify_mode_at_speed(
     let load = HybridAerodynamicLoad::try_new(
         HybridModel::try_new(definition.polar().map_err(super::display_error)?, &surfaces)
             .map_err(super::display_error)?,
-        HybridMockDefinition::TRIM_AIR_DENSITY_KG_M3,
+        definition.document().trim.air_density_kg_m3,
         WindField::uniform(NedVector::zero()),
     )
     .map_err(super::display_error)?;
@@ -215,15 +212,9 @@ fn verify_mode_at_speed(
         TailControlProfile::try_new(0.2, 0.2, 1.0).map_err(super::display_error)?,
     )
     .map_err(super::display_error)?;
-    let identity = SessionScenarioIdentity {
-        catalog_version: 3,
-        scenario_id: 1,
-        scenario_version: 3,
-        aircraft_model_version: HybridMockDefinition::MODEL_VERSION,
-        environment_version: 1,
-        controller_profile_version: 3,
-        seed: 0,
-    };
+    let selection = HybridSessionPreparation::select_scenario(WeatherClass::Calm, 0)
+        .map_err(super::display_error)?;
+    let identity = birdman_game_app::identity_for_selection(selection);
     let configuration =
         GameSessionConfiguration::try_new_tail(scenario, mode, TICK_LIMIT, identity)
             .map_err(super::display_error)?;
@@ -231,8 +222,8 @@ fn verify_mode_at_speed(
         mode,
         configuration,
         FlightRecordTailIdentityDocument {
-            aircraft_configuration_id: HybridMockDefinition::CONFIGURATION_ID.to_owned(),
-            controller_profile_id: CONTROLLER_ID.to_owned(),
+            aircraft_configuration_id: definition.document().configuration_id.clone(),
+            controller_profile_id: "cli-low-speed-fixture".to_owned(),
         },
     )
 }

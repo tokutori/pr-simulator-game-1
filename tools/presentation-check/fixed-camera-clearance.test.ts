@@ -61,11 +61,11 @@ describe("registered fixed camera terrain clearance", () => {
       for (let tick = 0; tick < physics_hz() * 60 && session.readSnapshot().phase === "flight_running"; tick++) session.flightPort.advanceTick(neutralTailInput);
       expect(session.readSnapshot().phase).toBe("result");
       session.executeSharedSessionCommand({ kind: "enter_replay" });
-      const dataset = session.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
+      const dataset = { samples: session.readAnalysisSamples(), summary: session.readRecordSummary() };
       expect(dataset.summary.summary.duration_seconds).toBeGreaterThan(10);
       for (const time of [0, dataset.summary.summary.duration_seconds / 2, dataset.summary.summary.duration_seconds]) {
         for (const camera of ["shore", "telephoto"] as const) {
-          const pose = session.queryReplayCamera(time, camera, true, dataset);
+          const pose = session.queryReplayCamera(time, camera, true);
           const cinematic = pose.replayCamera.cinematic;
           if (cinematic === null) throw new Error(`Missing ${camera} shared camera`);
           const position = cinematic.pose.position;

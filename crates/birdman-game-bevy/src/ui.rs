@@ -5,7 +5,7 @@ use super::{
     frame_rate::FrameRate,
     native_session::NativeSession,
     screen_render::{self, NativeScreenRender},
-    water_quality::{WaterQuality, WaterQualitySelection},
+    water_quality::WaterQualitySelection,
 };
 use bevy::ecs as bevy_ecs;
 use bevy::{
@@ -20,12 +20,14 @@ use bevy::{
     ui::ColorStop,
     ui::RelativeCursorPosition,
 };
-use birdman_game_session::game_ui::{
+#[cfg(test)]
+use birdman_game_format::WaterQuality;
+use birdman_game_presentation::game_ui::{
     GameUiAction, GameUiButtonPresentation, GameUiChart, GameUiChartCursor, GameUiChartExtent,
     GameUiChartPoint, GameUiChartText, GameUiChartTextAnchor, GameUiControl, GameUiControlContent,
     GameUiEffect, GameUiEmphasis, GameUiFrame, GameUiLayout, GameUiPlatformCommand,
     GameUiPlatformInput, GameUiPresentationMode, GameUiRangeTarget, GameUiReplayCamera,
-    GameUiSectionLayout, GameUiShell, GameUiTheme, GameUiView, GameUiViewport, GameUiWaterQuality,
+    GameUiSectionLayout, GameUiShell, GameUiTheme, GameUiView, GameUiViewport,
     GameUiWaterQualityOperation,
 };
 use std::collections::BTreeMap;
@@ -247,20 +249,17 @@ pub(crate) fn platform_input(world: &mut World) -> GameUiPlatformInput {
         flight_log_available: flight_log_export.is_some(),
         supported_replay_cameras: GameUiReplayCamera::ALL.to_vec(),
         screen_render_scale: world.resource::<NativeScreenRender>().snapshot(),
-        water_quality: shared_quality(quality.applied()),
+        water_quality: quality.applied(),
         water_quality_operation: if let Some(requested) = quality.pending() {
-            GameUiWaterQualityOperation::Applying {
-                requested: shared_quality(requested),
-            }
+            GameUiWaterQualityOperation::Applying { requested }
         } else if let Some((requested, cause)) = quality.failure() {
             GameUiWaterQualityOperation::Failed {
-                requested: shared_quality(requested),
+                requested,
                 cause: format!("{cause:?}"),
             }
         } else {
             GameUiWaterQualityOperation::Idle {}
         },
-        flight_log_pending: false,
         flight_controller_failure: None,
         head_hud_failure: None,
         notification: notifications.join("\n"),
@@ -410,7 +409,7 @@ pub(crate) fn button_actions(world: &mut World) {
                         if !world.resource::<WaterQualitySelection>().can_select(phase) {
                             return Err("湖面画質の変更を受理できない".to_owned());
                         }
-                        screen_render::select_water_quality(world, native_quality(quality))
+                        screen_render::select_water_quality(world, quality)
                             .map_err(|cause| format!("水面画質を適用できない: {cause:?}"))?;
                     }
                     GameUiEffect::Platform {
@@ -975,7 +974,7 @@ fn project_control(
                 MenuButton {
                     enabled: control.enabled,
                     action: GameUiAction::Session {
-                        command: birdman_game_session::application::SessionCommand::SetCue {
+                        command: birdman_game_app::application::SessionCommand::SetCue {
                             cue: *cue,
                             visible: !value,
                         },
@@ -1669,22 +1668,6 @@ fn color(value: &str, alpha: f64) -> Result<Color, String> {
     Ok(Color::Srgba(parsed))
 }
 
-fn native_quality(quality: GameUiWaterQuality) -> WaterQuality {
-    match quality {
-        GameUiWaterQuality::Low => WaterQuality::Low,
-        GameUiWaterQuality::Medium => WaterQuality::Medium,
-        GameUiWaterQuality::High => WaterQuality::High,
-    }
-}
-
-fn shared_quality(quality: WaterQuality) -> GameUiWaterQuality {
-    match quality {
-        WaterQuality::Low => GameUiWaterQuality::Low,
-        WaterQuality::Medium => GameUiWaterQuality::Medium,
-        WaterQuality::High => GameUiWaterQuality::High,
-    }
-}
-
 fn scroll_content(
     mut on_scroll: On<Pointer<Scroll>>,
     mut panels: Query<(&mut ScrollPosition, &ComputedNode)>,
@@ -1710,8 +1693,8 @@ fn scroll_content(
 mod tests {
     use super::super::native_session::MenuAction;
     use super::*;
-    use birdman_game_session::application::{RecordCommand, SessionCommand};
-    use birdman_game_session::game_ui::{GameUiPauseOverlay, GameUiResultTab};
+    use birdman_game_app::application::{RecordCommand, SessionCommand};
+    use birdman_game_presentation::game_ui::{GameUiPauseOverlay, GameUiResultTab};
 
     pub(super) fn app(width: f32, height: f32) -> App {
         let mut app = App::new();
@@ -1878,8 +1861,10 @@ mod tests {
     #[test]
     fn shared_render_scale_controls_apply_the_native_target_and_report_selected_value() {
         use super::super::world::WorldProjection;
-        use birdman_game_session::screen_render_auto::{ScreenRenderSelection, ScreenShadowMap};
-        use birdman_game_session::screen_render_scale::ScreenRenderScale;
+        use birdman_game_presentation::screen_render_auto::{
+            ScreenRenderSelection, ScreenShadowMap,
+        };
+        use birdman_game_presentation::screen_render_scale::ScreenRenderScale;
 
         let mut app = app(1280.0, 720.0);
         app.init_resource::<Assets<Image>>();
@@ -1959,7 +1944,7 @@ mod tests {
             ScreenRenderSelection::Auto {
                 manual_scale: ScreenRenderScale::Full,
                 manual_shadow: ScreenShadowMap::Full,
-                manual_water_quality: birdman_game_session::lake_water::LakeWaterQuality::High,
+                manual_water_quality: WaterQuality::High,
             }
         );
         press(&mut app, "presentation-render-scale-auto");
@@ -1970,7 +1955,7 @@ mod tests {
             ScreenRenderSelection::Manual {
                 scale: ScreenRenderScale::Full,
                 shadow: ScreenShadowMap::Full,
-                water_quality: birdman_game_session::lake_water::LakeWaterQuality::High,
+                water_quality: WaterQuality::High,
             }
         );
         press(&mut app, "presentation-render-scale-auto");
@@ -1982,7 +1967,7 @@ mod tests {
             ScreenRenderSelection::Manual {
                 scale: ScreenRenderScale::ThreeQuarters,
                 shadow: ScreenShadowMap::Full,
-                water_quality: birdman_game_session::lake_water::LakeWaterQuality::High,
+                water_quality: WaterQuality::High,
             }
         );
         assert_eq!(
@@ -1996,14 +1981,7 @@ mod tests {
     }
 
     #[test]
-    fn native_quality_mapping_and_theme_colors_preserve_shared_contract() {
-        for quality in [
-            GameUiWaterQuality::Low,
-            GameUiWaterQuality::Medium,
-            GameUiWaterQuality::High,
-        ] {
-            assert_eq!(shared_quality(native_quality(quality)), quality);
-        }
+    fn theme_colors_preserve_shared_contract() {
         assert_eq!(
             color("#f3f4e8", 1.0).unwrap(),
             Color::srgba_u8(243, 244, 232, 255)
@@ -2059,11 +2037,11 @@ mod tests {
             *app.world_mut().resource_mut::<WaterQualitySelection>() = failed;
             let platform = platform_input(app.world_mut());
             let raw_cause = format!("{cause:?}");
-            assert_eq!(platform.water_quality, GameUiWaterQuality::High);
+            assert_eq!(platform.water_quality, WaterQuality::High);
             assert_eq!(
                 platform.water_quality_operation,
                 GameUiWaterQualityOperation::Failed {
-                    requested: GameUiWaterQuality::Low,
+                    requested: WaterQuality::Low,
                     cause: raw_cause.clone(),
                 }
             );
@@ -3443,7 +3421,7 @@ mod tests {
                 let mut session = app.world_mut().resource_mut::<NativeSession>();
                 session
                     .execute_ui_command(
-                        birdman_game_session::application::SessionCommand::SelectInformation {
+                        birdman_game_app::application::SessionCommand::SelectInformation {
                             information,
                         },
                     )

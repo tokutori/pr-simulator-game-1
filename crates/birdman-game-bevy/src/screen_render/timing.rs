@@ -27,8 +27,8 @@ use bevy::{
     shader::ShaderCacheError,
     window::PrimaryWindow,
 };
-use birdman_game_session::{
-    lake_water::LakeWaterQuality,
+use birdman_game_format::WaterQuality;
+use birdman_game_presentation::{
     screen_render_auto::{ScreenGpuSample, ScreenShadowMap},
     screen_render_scale::ScreenRenderScale,
 };
@@ -179,7 +179,7 @@ struct TimingPacket {
     source_ms: u64,
     scale: ScreenRenderScale,
     shadow: ScreenShadowMap,
-    water_quality: LakeWaterQuality,
+    water_quality: WaterQuality,
     preparation: PipelinePreparation,
     #[cfg(feature = "verify-harness")]
     eligible: bool,
@@ -299,7 +299,8 @@ fn begin_work(world: &mut World) {
         (packet.source_ms >> 32) as u32,
         packet.scale.percent(),
         packet.shadow.size(),
-        packet.water_quality.component_count() as u32,
+        birdman_game_scene::lake_water::water_quality_profile(packet.water_quality)
+            .component_count() as u32,
     ];
     let mut bytes = [0_u8; METADATA_WORDS * 4];
     for (chunk, word) in bytes.chunks_exact_mut(4).zip(words) {
@@ -476,7 +477,7 @@ pub(crate) struct SourceWork {
     pub(crate) sample: ScreenGpuSample,
     pub(crate) scale: ScreenRenderScale,
     pub(crate) shadow: ScreenShadowMap,
-    pub(crate) water_quality: LakeWaterQuality,
+    pub(crate) water_quality: WaterQuality,
 }
 
 #[cfg(any(test, feature = "verify-harness"))]
@@ -559,9 +560,12 @@ fn decode_work(
         .find(|value| value.size() == shadow)
         .ok_or(TimingFailure::InvalidMetadata)?;
     let source_ms = u64::from(low) | (u64::from(high) << 32);
-    let water_quality = LakeWaterQuality::ALL
+    let water_quality = WaterQuality::ALL
         .into_iter()
-        .find(|quality| quality.component_count() == water as usize)
+        .find(|quality| {
+            birdman_game_scene::lake_water::water_quality_profile(*quality).component_count()
+                == water as usize
+        })
         .ok_or(TimingFailure::InvalidMetadata)?;
     if source_ms > (1_u64 << 53) {
         return Err(TimingFailure::SourceOverflow);
@@ -706,7 +710,7 @@ pub(crate) mod tests {
             (
                 ScreenRenderScale::Full,
                 ScreenShadowMap::Full,
-                LakeWaterQuality::High,
+                WaterQuality::High,
             ),
         );
     }
@@ -718,7 +722,7 @@ pub(crate) mod tests {
         frame: u32,
         source: u64,
         work: f64,
-        quality: (ScreenRenderScale, ScreenShadowMap, LakeWaterQuality),
+        quality: (ScreenRenderScale, ScreenShadowMap, WaterQuality),
     ) {
         for (path, value) in std::iter::once((GPU_WORK, work)).chain(
             METADATA
@@ -730,7 +734,8 @@ pub(crate) mod tests {
                     (source >> 32) as u32,
                     quality.0.percent(),
                     quality.1.size(),
-                    quality.2.component_count() as u32,
+                    birdman_game_scene::lake_water::water_quality_profile(quality.2)
+                        .component_count() as u32,
                 ])
                 .map(|(path, word)| (path, f64::from(word))),
         ) {
@@ -763,7 +768,7 @@ pub(crate) mod tests {
             (
                 ScreenRenderScale::Half,
                 ScreenShadowMap::Quarter,
-                LakeWaterQuality::Low,
+                WaterQuality::Low,
             ),
         );
         let old = source_history(&store)
@@ -777,7 +782,7 @@ pub(crate) mod tests {
                 7,
                 ScreenRenderScale::Full,
                 ScreenShadowMap::Full,
-                LakeWaterQuality::High
+                WaterQuality::High
             )
         );
         let latest = source_history(&store).last().unwrap().1.unwrap();
@@ -792,7 +797,7 @@ pub(crate) mod tests {
                 8,
                 ScreenRenderScale::Half,
                 ScreenShadowMap::Quarter,
-                LakeWaterQuality::Low
+                WaterQuality::Low
             )
         );
         assert_eq!(
@@ -1129,7 +1134,7 @@ pub(crate) mod tests {
                     source_ms: (1_u64 << 32) + 123,
                     scale: ScreenRenderScale::Full,
                     shadow: ScreenShadowMap::Full,
-                    water_quality: LakeWaterQuality::High,
+                    water_quality: WaterQuality::High,
                     preparation: PipelinePreparation::Pending,
                     #[cfg(feature = "verify-harness")]
                     eligible: active,

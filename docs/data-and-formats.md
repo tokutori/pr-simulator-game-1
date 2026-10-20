@@ -1,8 +1,15 @@
 # データと形式
 
+## 登録地物と局所原点
+
+- 原文: contentが同梱する地物JSONには出典・加工metadataとOSM feature属性を保持する。
+- 受理: formatのVenueFeaturesDocumentは1 MiB以下のJSONから共通のfeature pathを読み、schemaと有限なN/E座標、WGS84緯度・経度の範囲を検査する。
+- 原点: Wgs84OriginはcamelCaseの緯度・経度を表す。環境文書のLocalNedFrameDocumentは既存の保存形式を使用する。
+- 登録: appが発進会場・環境frameとの原点一致を確認してcatalogを保持し、2D地図・地形・構造物の各投影へ同じstorageを提供する。
+
 ## 正本と版管理
 
-外部データのcodecは`birdman-game-format`、実行環境・archiveの準備は`birdman-game-session`、filesystem・IndexedDB・ダウンロードはplatform adapterが所有する。runtimeで気象APIやGISサービスへ接続しない。
+外部データのcodecは`birdman-game-format`、実行環境・archiveの準備は`birdman-game-app`、filesystem・IndexedDB・ダウンロードはplatform adapterが所有する。runtimeで気象APIやGISサービスへ接続しない。
 
 | 対象 | 現行契約 |
 | --- | --- |

@@ -1,7 +1,5 @@
 use super::*;
-use birdman_game_format::{
-    DifficultyPreset, HudCue, TailControlAxesDocument, TailControlProfileDocument,
-};
+use birdman_game_format::{DifficultyPreset, HudCue};
 
 #[wasm_bindgen]
 impl HybridGameSessionBridge {
@@ -199,29 +197,9 @@ impl HybridGameSessionBridge {
 
 impl HybridGameSessionBridge {
     pub(super) fn control_profile_internal(&self) -> Result<String, BoundaryError> {
-        let configuration = self
-            .sealed_record_configuration()
-            .ok_or(BoundaryError::Session(GameSessionError::InvalidTransition))?;
-        let limits = TailRateTarget::limits_rad_per_second();
-        let gains = configuration.controller_profile.gains_seconds();
-        serde_json::to_string(&TailControlProfileDocument {
-            schema_version: SCHEMA_VERSION,
-            control_layout: ControlLayout::TailIncidence,
-            controller_profile_id: &configuration.identity.controller_profile_id,
-            controller_profile_version: configuration.scenario.controller_profile_version,
-            desired_body_rate_limit_rad_s: TailControlAxesDocument {
-                pitch: limits[0],
-                yaw: limits[1],
-            },
-            feedback_gain_seconds: TailControlAxesDocument {
-                pitch: gains[0],
-                yaw: gains[1],
-            },
-            maximum_slew_rad_s: configuration
-                .controller_profile
-                .maximum_slew_rad_per_second(),
-        })
-        .map_err(BoundaryError::Json)
+        let profile = birdman_game_app::session_snapshot::control_profile(&self.session)
+            .map_err(BoundaryError::Session)?;
+        serde_json::to_string(&profile).map_err(BoundaryError::Json)
     }
 
     pub(super) fn environment_internal(

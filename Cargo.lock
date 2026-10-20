@@ -1455,13 +1455,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "birdman-game-app"
+version = "0.1.0"
+dependencies = [
+ "birdman-game-content",
+ "birdman-game-core",
+ "birdman-game-format",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "birdman-game-bevy"
 version = "0.1.0"
 dependencies = [
  "bevy",
+ "birdman-game-app",
  "birdman-game-core",
  "birdman-game-format",
- "birdman-game-session",
+ "birdman-game-presentation",
+ "birdman-game-scene",
  "parley",
  "serde",
  "serde_json",
@@ -1471,9 +1486,10 @@ dependencies = [
 name = "birdman-game-cli"
 version = "0.1.0"
 dependencies = [
+ "birdman-game-app",
  "birdman-game-core",
  "birdman-game-format",
- "birdman-game-session",
+ "birdman-game-presentation",
  "serde",
  "serde_json",
 ]
@@ -1485,6 +1501,7 @@ dependencies = [
  "birdman-game-core",
  "birdman-game-format",
  "libm",
+ "nalgebra",
 ]
 
 [[package]]
@@ -1492,7 +1509,6 @@ name = "birdman-game-core"
 version = "0.1.0"
 dependencies = [
  "libm",
- "nalgebra",
  "polycool",
  "vstd",
 ]
@@ -1509,29 +1525,45 @@ dependencies = [
 ]
 
 [[package]]
-name = "birdman-game-session"
+name = "birdman-game-presentation"
 version = "0.1.0"
 dependencies = [
+ "birdman-game-app",
  "birdman-game-core",
  "birdman-game-format",
- "earcut",
- "image",
+ "birdman-game-scene",
  "ryu-js",
  "schemars",
  "serde",
  "serde_json",
- "sha2",
  "time",
  "unicode-width",
+]
+
+[[package]]
+name = "birdman-game-scene"
+version = "0.1.0"
+dependencies = [
+ "birdman-game-app",
+ "birdman-game-content",
+ "birdman-game-core",
+ "birdman-game-format",
+ "earcut",
+ "image",
+ "serde",
+ "serde_json",
+ "sha2",
 ]
 
 [[package]]
 name = "birdman-game-wasm"
 version = "0.1.0"
 dependencies = [
+ "birdman-game-app",
  "birdman-game-core",
  "birdman-game-format",
- "birdman-game-session",
+ "birdman-game-presentation",
+ "birdman-game-scene",
  "serde",
  "serde_json",
  "wasm-bindgen",

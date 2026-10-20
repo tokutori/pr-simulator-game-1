@@ -352,22 +352,22 @@ M_O^B=M_{O,static}^B+\sum_i r_i^B\times\Delta F_i^B
 
 ## 公開Playableモデル
 
-- 公開既定は`bpg041-playable-hybrid-mock`のmodel 3、catalog 5 / scenario 5、`bpg040-tail-rate-feedback`のcontroller 3である。
-- geometry、strip、anchor、全機polarは`HybridMockDefinition`が所有・検証し、固定サイズの値と借用viewで提供する。
+- 公開既定は`bpg041-playable-hybrid-mock`のmodel 4、catalog 6 / scenario 6、`bpg040-tail-rate-feedback`のcontroller 3である。
+- `assets/aircraft/playable-glider-v4.json`が質量・慣性・section・strip・anchor・全機polar・構造外形・視点mountを定義する。contentの`AircraftDefinition`が検証済みdocumentと借用viewのstorageを所有する。
 - 定常滑空は汎用の`SteadyGlideTrim`が、質量モデル・全機polar・`SteadyGlideConditions`から求める。指定した迎角区間で力の釣合を解き、合成重心まわりのモーメントを満たすパイロット位置を求める。
 - 現行catalog・scenario・controllerの組合せを登録する。保存snapshotは記録時のデータから閲覧する。
 
 | 面 | 投影面積 / span / MAC [SI] | strip | body quarter-chordとframe |
 |---|---|---|---|
-| 主翼 | 18 / 18 / 1 | 左右各8 | root=O、$z=-\lvert y\rvert\tan5^\circ$、左 $R_x(+5^\circ)$、右 $R_x(-5^\circ)$ |
+| 主翼 | 約17.5551 / 20.863 / 0.90170 | 全sectionとstrip境界で分割 | 69断面のテーパー翼・二段折れ上反角 |
 | 水平尾翼 | 2.5 / 3.4 / 2.5/3.4 | 8 | $(-3.6,y,0.1)$、body frame |
 | 垂直尾翼 | 0.5 / 0.7 / 0.5/0.7 | 4 | $(-1.8,0,z)$、$z\in[-0.45,0.25]$、$R_x(\pi/2)$ |
 
-- 作用点は各矩形stripのmidpointとする。
-- 主翼の実面積weightは投影weightを $\cos5^\circ$ で除した値である。
+- 作用点は各区間の面積重心とし、線型に変化する翼弦・sweep・上反角から求める。
+- 投影面積、実面積、MAC、局所frameを同じsectionから導出する。
 - body alpha=0・正の前進流を各frameへ変換した幾何alphaをanchorへ保持する。
 - anchor CLは主翼0.70、水平尾翼-0.225、垂直尾翼0とし、面全体の $AR=b^2/S$ から有限翼slopeを求める。
-- 全機参照は $S=18$ m²、$b=18$ m、$c=1$ m、$P=O$、`WindAtBetaZero`である。
+- 全機参照の $S,b,c$ は主翼の投影面積・span・MACから導出し、参照点は $P=O$、moment軸は`WindAtBetaZero`とする。
 
 - 機体40 kg、パイロット60 kg、datum慣性 $\operatorname{diag}(900,1000,980)$ kg m²を合成入力とする。
 - パイロットの $y=z=0$、前後範囲±0.4 m、最大速度0.3 m/s、最大加速度0.8 m/s²を使用する。
@@ -375,46 +375,8 @@ M_O^B=M_{O,static}^B+\sum_i r_i^B\times\Delta F_i^B
 - datum alphaの閉区間は[-0.18,+0.18] rad、約±10.31°とする。
 - finの参照span角、各proxyのactual local flow、control込み迎角差を、汎用hybridの閉境界に照らして個別に検査する。
 
-| datum alpha [rad] | 主翼CL |
-|---:|---:|
-| -0.18 | -0.20 |
-| -0.15 | -0.05 |
-| -0.12 | 0.10 |
-| -0.06 | 0.36 |
-| 0 | 0.70 |
-| 0.06 | 1.00 |
-| 0.12 | 1.18 |
-| 0.15 | 1.24 |
-| 0.18 | 1.26 |
-
-この9節点のCLは合成入力である。水平尾翼は $AR_t=4.624$、$a_t=2\pi/(1+2/AR_t)$ rad⁻¹とし、各節点で次の係数を一度生成する。
-
-```math
-C_{L,t}=-0.225+a_t\alpha,\quad C_{Di,t}=\frac{C_{L,t}^2}{\pi AR_t},\quad
-C_L=C_{L,w}+\frac{2.5}{18}C_{L,t}
-```
-
-```math
-C_{Di}=\frac{C_{L,w}^2}{18\pi}+\frac{2.5}{18}C_{Di,t},\quad
-C_{Dv}=0.03+1.5\max(|\alpha|-0.06,0)^2
-```
-
-- profile drag増加係数1.5の単位はrad⁻²であり、生成した全節点のdragは正となる。
-- 理想 $e=1$ と主翼固有 $C_m=-0.02$ はソフトウェア上の仮定である。
-- 尾翼の静的荷重とモーメントにも同じ3.6 mの腕を使う。
-
-```math
-F_{t,x}^{*}=2.5(-C_{Di,t}\cos\alpha+C_{L,t}\sin\alpha),\quad
-F_{t,z}^{*}=2.5(-C_{Di,t}\sin\alpha-C_{L,t}\cos\alpha)
-```
-
-```math
-C_m=-0.02+\frac{0.1F_{t,x}^{*}+3.6F_{t,z}^{*}}{18\cdot1}-2.0(\alpha-0.04)
-```
-
-- 最後の項は基準alpha 0.04 radに対する合成復元項であり、係数2.0の単位はrad⁻¹である。
-- $C_Y,C_l,C_n$ は0とする。
-- 実行時は生成済み7列のPWL補間と局所荷重差を評価し、定義域外は元の型付きエラーで拒否する。
+- 全機の9節点・7係数列をJSONに保持し、迎角順序、有限値、抗力等の物理境界を検証する。
+- 実行時は保存された全機係数のPWL補間と局所荷重差を評価する。範囲外の入力は元の型付きエラーを返す。
 
 - trimは生成済みPWL列に対して求める。
 - $V=9.7$ m/s、$\rho=1.225$ kg/m³、$g=9.80665$ m/s²、alpha探索区間[0,0.06] radを使用する。
@@ -458,26 +420,31 @@ C_m=-0.02+\frac{0.1F_{t,x}^{*}+3.6F_{t,z}^{*}}{18\cdot1}-2.0(\alpha-0.04)
 固定接触外形は共有`f64`構造形状から作る有限polytopeであり、次の頂点を一度構築してbody-fixed proxyへ登録する。
 
 - cockpitは10断面の24角輪郭を使用する。
-- 主翼は左右のroot・dihedralの二つの折点・tipにおける閉翼型輪郭を使用する。全chordをcosine分布の32区間で分割する。
-- 尾翼はcoreのneutral sectionの各四隅を使用する。
+- 主翼と尾翼はJSONの全sectionで閉翼型輪郭を使用する。全chordを共通のcosine分布32区間で分割する。
+- 桁はJSONの両端と半径から3D軸・直交frameを導出し、各端面を24角の輪郭として登録する。
 
 - 各部分の凸包の全候補頂点を、物理用の共有`f64`構造形状から導出する。
 - cockpit frameは同じshell内へ収める。
-- 表示用の主翼たわみ、尾翼角による可動外形、細い構造材の半径は固定接触外形の対象外である。
+- 現在の登録contactは中立外形の固定支持点を用い、cockpitのframeとrimは半径を含めて外皮へ内包させる。
+- 主翼の曲げ変形はcontentの共通producerが所有する。JSONの全質量・重力・EI・左右の半spanから等分布荷重の片持ち梁解を求め、基準対気速度に対する二乗荷重倍率を0.3〜1.6へ制限する。機体準備時に最大倍率の両翼端変位の有限性を検証し、表示mesh・桁・ribへ同じFRD変位を投影する。
+- coreの`WingBendingFactor`は有限な符号付きの基準変位倍率と、閉区間内の線型補間を提供する。速度からの導出則と運用範囲はcontentが所有する。
+- `AircraftDefinition::write_deformed_contact_points_with_factor`は準備済みの点順と可動群を保持し、明示係数と物理尾翼角からcaller所有のsliceへFRD点群を書く。速度入口は係数を一度導出して同じ処理へ委譲する。
+- 水平尾翼はbody +Y、垂直尾翼はbody +Zを回転軸とし、両端の四分の一翼弦点の中央を回転中心とする。共有表示も同じ中心を使う。
+- 同じ群の連続同一点を準備時に整理し、異なる可動群の境界点は別々に保持する。呼出側は成功した点群を採用し、演算失敗時の出力を再利用buffer内へ留める。
+- 主翼表示は同値係数でframeを再利用する。明示係数からmesh・桁・ribを更新し、全bufferの更新成功後に係数を確定する。演算失敗後は次の更新で全bufferを再構築する。
 
 - polytope内の点と回転後の鉛直座標は頂点の凸結合である。
 - したがって全姿勢の静水面に対する支持量は全頂点の最大値と一致する。
 - この有限形状に対する頂点省略誤差は0であり、`f64`の丸めと連続翼型・表示たわみの形状近似を別に扱う。
 - 有限姿勢gridの表示頂点比較を、連続外形の全姿勢誤差上限として扱わない。
-- 接触geometryはcatalog/scenario versionで区別し、質量・空力・制御対象を維持する限りaircraft model versionを変更しない。
-- 既存記録とPersonal Bestのkeyを書き換えない。
+- 形状・荷重・trimの変更をaircraft modelとcatalog/scenarioの意味versionへ反映し、保存済みのidentityとJSON原文を保持する。
 
 - 接触点はdatumからの固定offsetを持つ。
 - 隣接する成功tick間の状態を補間し、各点の到達fractionから最早eventを選ぶ。
 - 位置・速度・角速度・身体状態は線型補間し、姿勢は短経路slerp、近角は既存nlerpを使う。
-- 通常slerpでは線型項とsin/cosからdown座標の内部極値を列挙する。
+- 通常slerpでは線型項とsin/cosからdown座標の内部極値を隔離する。
 - nlerpでは正の二次分母を払った三次式の導関数から区間を隔離する。
-- 各点の内部候補は高々二つであり、固定節点に一致しない接線と短い侵入・離脱も調べる。
+- 固定節点に一致しない接線と短い侵入・離脱も調べる。線型移動する対応点を含む隔離と丸めの契約は[検証仕様](verification.md#回転接触の隔離と丸め)に従う。
 - 最初の到達区間を同じ補間状態上で二分探索して確定する。
 
 - 終端の位置・姿勢・actuator・身体状態は同一時刻へ揃える。
@@ -498,7 +465,7 @@ C_m=-0.02+\frac{0.1F_{t,x}^{*}+3.6F_{t,z}^{*}}{18\cdot1}-2.0(\alpha-0.04)
 - 失速域を使用する場合は、その範囲を含む係数モデルを別途検証する。
 - native/WASM比較はscenario・tick入力列・許容差を事前に固定し、失敗結果へ許容差を事後適合させない。
 
-- `probe_hybrid_playability`とsession回帰はTypical環境・既定seed・最大4000tickを使用する。
+- CLIの`probe_hybrid_playability` exampleとapp回帰はTypical環境・既定seed・最大4000tickを使用する。
 - 通常列はNeutral、小pitch±0.05保持、100..109tickのfull nose-up pulse、pilot normalized±0.1への10tick移動とする。
 - Manual・Shared（authority 0.5）・Automaticの18列でWaterContact/TimeLimitによる自然終端を検査する。
 - 追加列はfull pitch±1保持、pilot±1への100tick移動、1秒full nose-up pulseとする。

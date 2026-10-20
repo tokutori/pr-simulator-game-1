@@ -25,7 +25,7 @@ describe("manual lake water quality ownership", () => {
     expect(Object.isFrozen(requested.model.lakeWaterQuality)).toBe(true);
     expect(requested.model.gameSession).toBe(initial.gameSession);
     expect(requested.model.status).toBe(initial.status);
-    expect(requested.model.pendingGameRequestId).toBeNull();
+    expect(requested.model.recordOpen).toEqual({ kind: "idle" });
     expect(select(requested.model, "medium").model).toBe(requested.model);
   });
 
@@ -68,7 +68,7 @@ describe("manual lake water quality ownership", () => {
         overlay === "menu" ? {} : { actions: [{ kind: "set_pause_overlay", overlay }] }) };
       expect(select(model, "low").model).toBe(model);
     }
-    const pending: AppModel = { ...setup, pendingGameRequestId: 9 };
+    const pending: AppModel = { ...setup, recordOpen: { kind: "loading" as const, requestId: 9, id: 1 } };
     expect(select(pending, "low").model).toBe(pending);
     const exhausted: AppModel = { ...setup, nextRequestId: Number.MAX_SAFE_INTEGER };
     expect(select(exhausted, "low").model).toBe(exhausted);
@@ -110,7 +110,6 @@ describe("manual lake water quality ownership", () => {
     expect(observed.model.lakeWaterQuality.applied).toBe("low");
     expect(observed.model.screenRenderScale?.selection).toMatchObject({ manual_water_quality: "high" });
     expect(observed.model.gameSession).toBe(initial.gameSession);
-    expect(observed.model.flightRecordSourceRevision).toBe(initial.flightRecordSourceRevision);
     expect(observed.effects).toEqual([]);
     const paused = { ...observed.model, gameSession: readyModel("flight_paused").gameSession, sharedGameUi: readyModel("flight_paused").sharedGameUi };
     const requested = select(paused, "low");
@@ -208,7 +207,6 @@ describe("Screen render scale preference", () => {
       expect(updated.effects).toEqual([{ type: "select-screen-render-scale", scale }]);
       expect(updated.model.gameSession).toBe(initial.gameSession);
       expect(updated.model.lakeWaterQuality).toBe(initial.lakeWaterQuality);
-      expect(updated.model.flightRecordSourceRevision).toBe(initial.flightRecordSourceRevision);
       selected = updateApp(updated.model, { type: "screen-render-observed", snapshot: sharedScreenRenderSnapshot(scale) }).model;
     }
     expect(selectScale(readyModel("flight_paused"), "50").effects).toEqual([{ type: "select-screen-render-scale", scale: "50" }]);
@@ -268,7 +266,7 @@ function qualityOptions(model: AppModel): SharedGameUiFixtureOptions {
     : { kind: "idle" as const };
   return { ...(phase === "flight_paused" && overlay !== "menu" ? { actions: [{ kind: "set_pause_overlay", overlay }] } : {}),
     platform: { presentation_mode: mode === "phone-vr" ? "phone_vr" : mode,
-      operation_pending: model.pendingGameRequestId !== null,
+      operation_pending: model.recordOpen.kind === "loading",
       ...(model.screenRenderScale === null ? {} : { screen_render_scale: model.screenRenderScale }),
       water_quality: quality.applied, water_quality_operation: operation } };
 }

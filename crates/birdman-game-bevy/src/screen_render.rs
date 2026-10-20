@@ -10,11 +10,12 @@ use bevy::{
     render::render_resource::TextureFormat,
     window::PrimaryWindow,
 };
-use birdman_game_session::screen_render_auto::{
+use birdman_game_format::WaterQuality;
+use birdman_game_presentation::screen_render_auto::{
     ScreenRenderAutoController, ScreenRenderAutoError, ScreenRenderAutoSnapshot,
     ScreenRenderInvalidation, ScreenRenderResourceRequest, ScreenRenderSelection, ScreenShadowMap,
 };
-use birdman_game_session::screen_render_scale::ScreenRenderScale;
+use birdman_game_presentation::screen_render_scale::ScreenRenderScale;
 
 #[path = "screen_render/timing.rs"]
 pub(crate) mod timing;
@@ -48,7 +49,7 @@ impl Default for NativeScreenRender {
             controller: ScreenRenderAutoController::new(
                 ScreenRenderScale::Full,
                 ScreenShadowMap::Full,
-                birdman_game_session::lake_water::LakeWaterQuality::High,
+                WaterQuality::High,
             ),
         }
     }
@@ -145,13 +146,13 @@ pub(crate) fn select_auto(world: &mut World, enabled: bool) -> Result<(), Screen
 
 pub(crate) fn select_water_quality(
     world: &mut World,
-    quality: super::water_quality::WaterQuality,
+    quality: WaterQuality,
 ) -> Result<(), ScreenRenderFailure> {
     let now_ms = now_ms(world);
     let request = world
         .resource_mut::<NativeScreenRender>()
         .controller
-        .select_water_quality(quality.shared(), now_ms)
+        .select_water_quality(quality, now_ms)
         .map_err(ScreenRenderFailure::Policy)?;
     apply_request(world, request, now_ms)
 }
@@ -202,17 +203,7 @@ fn exchange_resources(
     world
         .get_resource::<DirectionalLightShadowMap>()
         .ok_or(ScreenRenderFailure::ShadowMapUnavailable)?;
-    let quality = match request.water_quality {
-        birdman_game_session::lake_water::LakeWaterQuality::Low => {
-            super::water_quality::WaterQuality::Low
-        }
-        birdman_game_session::lake_water::LakeWaterQuality::Medium => {
-            super::water_quality::WaterQuality::Medium
-        }
-        birdman_game_session::lake_water::LakeWaterQuality::High => {
-            super::water_quality::WaterQuality::High
-        }
-    };
+    let quality = request.water_quality;
     let prepared_water = if world
         .resource::<super::water_quality::WaterQualitySelection>()
         .applied()
@@ -420,7 +411,7 @@ pub(crate) fn observe_auto(world: &mut World) {
     let support = world
         .get_resource::<bevy::render::renderer::RenderDevice>()
         .map(|device| timing::supported(device.features()));
-    let scene = birdman_game_session::game_ui::game_ui_scene(
+    let scene = birdman_game_presentation::game_ui::game_ui_scene(
         world
             .resource::<NativeSession>()
             .game
@@ -497,7 +488,7 @@ pub(crate) fn observe_auto(world: &mut World) {
                 }
                 let epoch = rendering.controller.epoch();
                 let request = rendering.controller.observe(
-                    birdman_game_session::screen_render_auto::ScreenGpuSample {
+                    birdman_game_presentation::screen_render_auto::ScreenGpuSample {
                         epoch,
                         frame,
                         source_ms: now_ms,
@@ -568,7 +559,7 @@ mod tests {
         render::{camera::camera_system, texture::ManualTextureViews},
         window::{WindowCreated, WindowResized, WindowScaleFactorChanged},
     };
-    use birdman_game_session::screen_render_auto::ScreenRenderAutoStatus;
+    use birdman_game_presentation::screen_render_auto::ScreenRenderAutoStatus;
 
     fn app() -> (App, Entity, Entity, Handle<WaterMaterial>) {
         let mut app = App::new();
@@ -617,8 +608,8 @@ mod tests {
                 transform,
                 GlobalTransform::from(transform),
                 Projection::Perspective(PerspectiveProjection {
-                    fov: birdman_game_session::SCREEN_VERTICAL_FIELD_OF_VIEW_DEGREES.to_radians()
-                        as f32,
+                    fov: birdman_game_presentation::SCREEN_VERTICAL_FIELD_OF_VIEW_DEGREES
+                        .to_radians() as f32,
                     far: 200_000.0,
                     ..default()
                 }),
@@ -674,8 +665,8 @@ mod tests {
             .resource_mut::<NativeSession>()
             .game
             .execute(
-                birdman_game_session::application::SessionCommand::OpenSetup {},
-                birdman_game_session::application::BackendReadiness::Ready,
+                birdman_game_app::application::SessionCommand::OpenSetup {},
+                birdman_game_app::application::BackendReadiness::Ready,
             )
             .unwrap();
         observe_auto(app.world_mut());
@@ -707,7 +698,7 @@ mod tests {
                 .unwrap();
             rendering
                 .controller
-                .select_water_quality(birdman_game_session::lake_water::LakeWaterQuality::Low, 0.0)
+                .select_water_quality(WaterQuality::Low, 0.0)
                 .unwrap()
                 .unwrap()
         };
@@ -723,7 +714,7 @@ mod tests {
             (
                 ScreenRenderScale::Full,
                 ScreenShadowMap::Full,
-                birdman_game_session::lake_water::LakeWaterQuality::High
+                WaterQuality::High
             )
         );
         assert!(matches!(
@@ -741,7 +732,7 @@ mod tests {
 
     #[test]
     fn initial_observation_requires_actual_ack_current_pipeline_epoch_and_fresh_gpu_source() {
-        use birdman_game_session::screen_render_auto::ScreenGpuSample;
+        use birdman_game_presentation::screen_render_auto::ScreenGpuSample;
         let (mut app, _, _, _) = app();
         select_auto(app.world_mut(), true).unwrap();
         let initial_epoch = app
@@ -848,7 +839,7 @@ mod tests {
 
     #[test]
     fn auto_observations_apply_real_resources_and_manual_selection_wins() {
-        use birdman_game_session::screen_render_auto::ScreenGpuSample;
+        use birdman_game_presentation::screen_render_auto::ScreenGpuSample;
         let (mut app, window, _, _) = app();
         let before = app
             .world()
@@ -900,7 +891,7 @@ mod tests {
             ScreenRenderSelection::Manual {
                 scale: ScreenRenderScale::ThreeQuarters,
                 shadow: ScreenShadowMap::Full,
-                water_quality: birdman_game_session::lake_water::LakeWaterQuality::High
+                water_quality: WaterQuality::High
             }
         );
         select_auto(app.world_mut(), true).unwrap();
@@ -930,7 +921,7 @@ mod tests {
             ScreenRenderSelection::Manual {
                 scale: ScreenRenderScale::Full,
                 shadow: ScreenShadowMap::Full,
-                water_quality: birdman_game_session::lake_water::LakeWaterQuality::High
+                water_quality: WaterQuality::High
             }
         );
         assert_eq!(
@@ -945,7 +936,7 @@ mod tests {
 
     #[test]
     fn shadow_steps_keep_the_resolution_target_and_manual_restore_commits_both_resources() {
-        use birdman_game_session::screen_render_auto::ScreenGpuSample;
+        use birdman_game_presentation::screen_render_auto::ScreenGpuSample;
         let (mut app, _, _, _) = app();
         let before = app
             .world()
@@ -999,10 +990,7 @@ mod tests {
         let snapshot = app.world().resource::<NativeScreenRender>().snapshot();
         assert_eq!(snapshot.applied, ScreenRenderScale::Half);
         assert_eq!(snapshot.shadow, ScreenShadowMap::Quarter);
-        assert_eq!(
-            snapshot.water_quality,
-            birdman_game_session::lake_water::LakeWaterQuality::High
-        );
+        assert_eq!(snapshot.water_quality, WaterQuality::High);
         select_auto(app.world_mut(), false).unwrap();
         let snapshot = app.world().resource::<NativeScreenRender>().snapshot();
         assert_eq!(snapshot.applied, ScreenRenderScale::ThreeQuarters);
@@ -1036,7 +1024,7 @@ mod tests {
         assert_eq!(rendering.snapshot().shadow, ScreenShadowMap::Full);
         assert_eq!(
             rendering.snapshot().status,
-            birdman_game_session::screen_render_auto::ScreenRenderAutoStatus::Failed {
+            birdman_game_presentation::screen_render_auto::ScreenRenderAutoStatus::Failed {
                 cause: "ShadowMapUnavailable".to_owned(),
             }
         );
@@ -1446,7 +1434,7 @@ mod tests {
         assert_eq!(perspective.aspect_ratio, 1919.0 / 1079.0);
         assert_eq!(
             perspective.fov,
-            birdman_game_session::SCREEN_VERTICAL_FIELD_OF_VIEW_DEGREES.to_radians() as f32
+            birdman_game_presentation::SCREEN_VERTICAL_FIELD_OF_VIEW_DEGREES.to_radians() as f32
         );
         assert!(
             world

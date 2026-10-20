@@ -1,15 +1,13 @@
 use super::native_session::NativeSession;
 use bevy::ecs as bevy_ecs;
 use bevy::prelude::Resource;
+use birdman_game_app::record_archive::RecordExportError;
 use birdman_game_core::SessionSnapshot;
 use birdman_game_format::{
     FlightRecordFormatError, MAX_FLIGHT_RECORD_JSON_BYTES, TailFlightRecordDocument,
     TailPersonalBestSelection,
 };
-use birdman_game_session::{
-    game_ui::{GameUiStoredRecord, game_ui_saved_record_timestamp},
-    record_archive::RecordExportError,
-};
+use birdman_game_presentation::game_ui::{GameUiStoredRecord, game_ui_saved_record_timestamp};
 use std::{
     error::Error,
     fmt,
@@ -372,18 +370,22 @@ fn write_new(path: &Path, bytes: &[u8]) -> Result<(), FlightLogError> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_TEST_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
     pub(crate) struct TestDirectory(pub(crate) PathBuf);
 
     impl TestDirectory {
         pub(crate) fn new() -> Self {
             let path = std::env::temp_dir().join(format!(
-                "birdman-flight-log-{}-{}",
+                "birdman-flight-log-{}-{}-{}",
                 std::process::id(),
                 SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .unwrap()
-                    .as_nanos()
+                    .as_nanos(),
+                NEXT_TEST_DIRECTORY.fetch_add(1, Ordering::Relaxed)
             ));
             fs::create_dir(&path).unwrap();
             Self(path)
@@ -397,12 +399,10 @@ pub(crate) mod tests {
     }
 
     fn record_json() -> String {
+        use birdman_game_app::application::{ApplicationSession, BackendReadiness, SessionCommand};
         use birdman_game_core::{
             ControlMode, TailFlightTickInput, TailPilotIntent, TailPilotPositionCommand,
             TailRateTarget,
-        };
-        use birdman_game_session::application::{
-            ApplicationSession, BackendReadiness, SessionCommand,
         };
         let mut game = ApplicationSession::new(ControlMode::Manual, 2, 42);
         for command in [
@@ -658,11 +658,11 @@ pub(crate) mod tests {
 
     #[test]
     fn native_contact_save_uses_the_shared_key_and_keeps_archive_reexport_verbatim() {
+        use birdman_game_app::application::{BackendReadiness, SessionCommand};
         use birdman_game_core::{
             SessionPhase, TailFlightTickInput, TailPilotIntent, TailPilotPositionCommand,
             TailRateTarget,
         };
-        use birdman_game_session::application::{BackendReadiness, SessionCommand};
         let directory = TestDirectory::new();
         let mut session = NativeSession::default();
         for command in [

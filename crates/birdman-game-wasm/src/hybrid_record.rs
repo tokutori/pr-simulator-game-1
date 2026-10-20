@@ -1,11 +1,11 @@
+use birdman_game_app::{
+    record_archive::RecordExportError,
+    record_query::{AnalysisDocument, RecordedPlaybackSample as PlaybackDocument},
+};
 use birdman_game_core::{
     FlightRecord, FlightRecordPlaybackSample, FlightRecordQueryError, GameSession, GameSessionError,
 };
 use birdman_game_format::FlightRecordFormatError;
-use birdman_game_session::{
-    record_archive::RecordExportError, record_query::AnalysisDocument,
-    replay_camera::RecordedPlaybackSample as PlaybackDocument,
-};
 
 #[derive(Debug)]
 pub(crate) enum HybridRecordError {

@@ -20,7 +20,7 @@ fn run_command() -> Result<(), String> {
             }
             println!(
                 "{}",
-                birdman_game_session::game_ui::export_game_ui_schema(&schema)?
+                birdman_game_presentation::game_ui::export_game_ui_schema(&schema)?
             );
             Ok(())
         }

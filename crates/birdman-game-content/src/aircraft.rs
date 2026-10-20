@@ -4,15 +4,24 @@ use birdman_game_core::{
     HybridAnchor, HybridError, HybridModel, HybridProxy, HybridSection, HybridSurface,
     HybridSurfaceGeometry, HybridSurfaceRole, MathError, PlanformSymmetry, PolarAnalysisMethod,
     PolarMomentAxes, StaticPolar, StaticPolarMetadata, StaticPolarRow, SteadyGlideError,
-    SteadyGlideTrim,
+    SteadyGlideTrim, TailIncidence, WingBendingFactor,
 };
 use birdman_game_format::aircraft::{
     AircraftDocument, AircraftFormatError, AircraftPolarAxes, AircraftPolarMethod,
     AircraftSurfaceDocument,
 };
 
+/// Complete source of the registered fictional glider, in body FRD coordinates and SI units.
+pub const PLAYABLE_AIRCRAFT_JSON: &[u8] =
+    include_bytes!("../../../assets/aircraft/playable-glider-v4.json");
+
+/// Decodes and prepares the bundled aircraft into owned immutable storage.
+pub fn playable_aircraft() -> Result<AircraftDefinition, AircraftDefinitionError> {
+    AircraftDefinition::decode_json(PLAYABLE_AIRCRAFT_JSON)
+}
+
 /// Original admission or preparation failure for an aircraft definition.
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AircraftDefinitionError {
     /// External document or physical parameter validation failed.
     Format(AircraftFormatError),
@@ -35,7 +44,7 @@ pub struct AircraftDefinition {
     surfaces: Vec<SurfaceStorage>,
     rows: Vec<StaticPolarRow>,
     reference: ElementReference,
-    contact_points: Vec<BodyPoint>,
+    contact: crate::shape::ContactSamples,
 }
 
 struct SurfaceStorage {
@@ -85,8 +94,8 @@ impl AircraftDefinition {
             wing.projected_mac_m(),
         )
         .map_err(AircraftDefinitionError::Aerodynamics)?;
-        let contact_points = crate::AircraftShape::new(&document)
-            .contact_points(crate::ContactSampling::default())
+        let contact = crate::AircraftShape::new(&document)
+            .contact_samples(crate::ContactSampling::default())
             .map_err(AircraftDefinitionError::Shape)?;
         let definition = Self {
             document,
@@ -94,8 +103,18 @@ impl AircraftDefinition {
             surfaces,
             rows,
             reference,
-            contact_points,
+            contact,
         };
+        for tip in definition
+            .shape()
+            .surface(HybridSurfaceRole::MainWing)
+            .span_bounds_m()
+        {
+            definition
+                .shape()
+                .wing_displacement(tip, f64::MAX)
+                .map_err(AircraftDefinitionError::Shape)?;
+        }
         HybridModel::try_new(definition.polar()?, &definition.surfaces()?)
             .map_err(AircraftDefinitionError::Hybrid)?;
         Ok(definition)
@@ -113,7 +132,33 @@ impl AircraftDefinition {
 
     /// Borrows the prepared neutral structural polytope used by physical contact generation.
     pub fn contact_points(&self) -> &[BodyPoint] {
-        &self.contact_points
+        &self.contact.points
+    }
+
+    /// Writes FRD support points with stable neutral identity into caller-owned storage.
+    ///
+    /// The caller publishes the output after success; arithmetic failure may leave a prefix written.
+    pub fn write_deformed_contact_points(
+        &self,
+        airspeed_mps: f64,
+        incidence: TailIncidence,
+        output: &mut [BodyPoint],
+    ) -> Result<(), crate::ShapeError> {
+        let factor = self.shape().wing_bending_factor(airspeed_mps)?;
+        self.write_deformed_contact_points_with_factor(factor, incidence, output)
+    }
+
+    /// Writes corresponding points from an accepted coefficient and held tail incidence.
+    ///
+    /// The caller publishes the output after success; arithmetic failure may leave a prefix written.
+    pub fn write_deformed_contact_points_with_factor(
+        &self,
+        factor: WingBendingFactor,
+        incidence: TailIncidence,
+        output: &mut [BodyPoint],
+    ) -> Result<(), crate::ShapeError> {
+        self.contact
+            .write_with_factor(self.shape(), factor, incidence, output)
     }
 
     /// Returns the mass and pilot model prepared from the same source.

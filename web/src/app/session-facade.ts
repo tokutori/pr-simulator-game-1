@@ -1,12 +1,9 @@
 import { projectTailGameSession } from "./session-snapshot.js";
 import type { PlaybackSessionSnapshot, ReplayReturnTarget, SessionLifecycleProjection, TailGameSessionProjection } from "./session-snapshot.js";
-import { readFlightLog } from "../game/flight-log-export.js";
-import type { FlightLogExportPort, FlightLogFormat } from "../game/flight-log-export.js";
-import type { NamedAnalysisCursor, NamedAnalysisDataset } from "../game/flight-analysis-view.js";
 import type { TailResultSnapshot, TailSessionPort } from "../game/tail-flight-controller.js";
 import { encodeTailLogicalInput } from "../game/tail-input.js";
 import { captureJsonInput } from "../game/tail-boundary-values.js";
-import type { DisplayAvailability, FlightRenderPose, RecordedFlightRenderPose } from "../render/contracts/runtime.js";
+import type { FlightRenderPose, RecordedFlightRenderPose } from "../render/contracts/runtime.js";
 import { projectReplayCamera } from "../render/camera/replay-camera.js";
 import { encodeGameUiAction, encodeGameUiPlatformInput } from "./game-ui-codec.js";
 import type { GameUiPlatformObservation } from "./game-ui-codec.js";
@@ -29,8 +26,6 @@ import { mergeGameUiFrame } from "./game-ui-frame.js";
 
 const queryOwner = Symbol("session query owner");
 const queryGeneration = Symbol("session query generation");
-const recordSourceGeneration = Symbol("record source generation");
-const analysisObservation = Symbol("saved analysis observation");
 export interface SessionQueryToken {
   readonly [queryOwner]: symbol;
   readonly [queryGeneration]: symbol;
@@ -42,20 +37,15 @@ export interface CountdownObservationToken {
 }
 export type CountdownProgress = Readonly<{ kind: "ignored" }> | Readonly<{ kind: "cancelled" }>
   | Readonly<{ kind: "waiting"; remainingSeconds: number }> | Readonly<{ kind: "launched" }>;
-interface RecordSourceToken {
-  readonly [queryOwner]: symbol;
-  readonly [recordSourceGeneration]: symbol;
-}
-export interface ObservedNamedAnalysisDataset extends NamedAnalysisDataset {
-  readonly [analysisObservation]: RecordSourceToken;
-}
 export type WindGridRequest = Pick<GridRequest, "north_min_m" | "east_min_m" | "altitude_m" | "spacing_m">;
 export interface PlaybackClock {
   readonly timeSeconds: number;
   readonly rateCode: 0 | 1 | 2;
   readonly kind: "paused" | "playing";
 }
-export interface SessionResourcePort extends FlightLogExportPort {
+export interface SessionResourcePort {
+  export_flight_log_csv(): string;
+  export_current_flight_record_json(): string;
   lifecycle_snapshot_json(): string;
   countdown_remaining_seconds(): number;
   countdown_token(): number;
@@ -98,7 +88,6 @@ export type TailAppOperationResult = CompletedOperation | Readonly<{ kind: "abor
 abstract class SessionResourceOwner {
   private readonly owner = Symbol("session owner");
   private generation = Symbol("session generation");
-  private sourceGeneration = Symbol("record source generation");
   private resourceState: "alive" | "disposed" = "alive";
 
   protected constructor(private readonly resource: SessionResourcePort, readonly physicsHz: number) {
@@ -114,14 +103,6 @@ abstract class SessionResourceOwner {
   acceptQuery<Value>(token: SessionQueryToken, value: Value): SessionQueryAcceptance<Value> {
     return this.resourceState === "alive" && token[queryOwner] === this.owner && token[queryGeneration] === this.generation
       ? { kind: "accepted", value } : { kind: "stale" };
-  }
-
-  protected captureRecordSourceToken(): RecordSourceToken {
-    return this.observe(() => ({ [queryOwner]: this.owner, [recordSourceGeneration]: this.sourceGeneration }));
-  }
-
-  protected recordSourceIsCurrent(token: RecordSourceToken): boolean {
-    return this.resourceState === "alive" && token[queryOwner] === this.owner && token[recordSourceGeneration] === this.sourceGeneration;
   }
 
   readLifecycle(): SessionLifecycleProjection {
@@ -164,8 +145,8 @@ abstract class SessionResourceOwner {
     return this.observe(() => this.resource.export_flight_record_json());
   }
 
-  readFlightLog(format: FlightLogFormat): string {
-    return this.observe(() => readFlightLog(this.resource, format));
+  readFlightLog(format: "csv" | "json"): string {
+    return this.observe(() => format === "csv" ? this.resource.export_flight_log_csv() : this.resource.export_current_flight_record_json());
   }
 
   openArchive(json: string): void {
@@ -176,7 +157,6 @@ abstract class SessionResourceOwner {
     if (this.resourceState === "disposed") return;
     this.resourceState = "disposed";
     this.generation = Symbol("disposed session generation");
-    this.sourceGeneration = Symbol("disposed record source generation");
     this.resource.free();
   }
 
@@ -185,10 +165,9 @@ abstract class SessionResourceOwner {
     return read();
   }
 
-  protected change<Value>(operation: () => Value, recordPolicy: "replace_record" | "retain_record" = "replace_record"): Value {
+  protected change<Value>(operation: () => Value): Value {
     return this.observe(() => {
       this.generation = Symbol("session generation");
-      if (recordPolicy === "replace_record") this.sourceGeneration = Symbol("record source generation");
       return operation();
     });
   }
@@ -211,7 +190,7 @@ export class TailAppSessionFacade extends SessionResourceOwner {
         const json = encodeTailLogicalInput(input);
         return this.change(() => this.readOutput<TailSnapshotDocument>(() => port.advance_tick_json(json)));
       },
-      pause: (reason) => { this.change(() => { port.pause(reason); }, "retain_record"); },
+      pause: (reason) => { this.change(() => { port.pause(reason); }); },
       clear_pause_reason: (reason) => { this.clearPauseReason(reason); },
       free: () => { this.dispose(); }
     };
@@ -231,7 +210,7 @@ export class TailAppSessionFacade extends SessionResourceOwner {
   updateSharedUi(action: GameUiAction, platform: GameUiPlatformObservation): GameUiUpdate {
     const actionJson = encodeGameUiAction(action);
     const platformJson = encodeGameUiPlatformInput(platform);
-    return this.change(() => this.readOutput(() => this.port.game_ui_action_json(actionJson, platformJson)), "retain_record");
+    return this.change(() => this.readOutput(() => this.port.game_ui_action_json(actionJson, platformJson)));
   }
 
   executeSharedSessionCommand(command: SessionCommand): TailAppOperationResult {
@@ -247,7 +226,7 @@ export class TailAppSessionFacade extends SessionResourceOwner {
 
   executeSharedRecordAction(action: Extract<GameUiEffect, { kind: "record" }>["action"]): void {
     const json = encodeGameUiAction(action);
-    this.change(() => { this.port.apply_game_ui_record_action_json(json); }, "retain_record");
+    this.change(() => { this.port.apply_game_ui_record_action_json(json); });
   }
 
   pauseForReason(reason: "page_hidden" | "presentation_transition"): void {
@@ -275,24 +254,6 @@ export class TailAppSessionFacade extends SessionResourceOwner {
     return this.readOutput<AnalysisDocument>(() => this.port.flight_analysis_samples_json()).samples;
   }
 
-  readAnalysisDataset(wind: DisplayAvailability<WindGridRequest, "not_requested">): ObservedNamedAnalysisDataset {
-    const source = this.captureRecordSourceToken();
-    const summary = this.readRecordSummary();
-    return { kind: "named_record", context: summary.context, summary, samples: this.readAnalysisSamples(),
-      windGrid: wind.kind === "unavailable" ? wind : { kind: "available", value: this.queryWindGrid(wind.value) },
-      [analysisObservation]: source };
-  }
-
-  isAnalysisDatasetCurrent(dataset: NamedAnalysisDataset): boolean {
-    return analysisObservation in dataset && isRecordSourceToken(dataset[analysisObservation])
-      && this.recordSourceIsCurrent(dataset[analysisObservation]);
-  }
-
-  queryAnalysisCursor(seconds: number, expectedDataset: NamedAnalysisDataset): NamedAnalysisCursor {
-    if (!this.isAnalysisDatasetCurrent(expectedDataset)) throw new RangeError("Analysis dataset owner or generation is stale");
-    return { ...this.queryRecordSample(seconds), kind: "named_record", context: expectedDataset.context };
-  }
-
   readRecordSummary(): SummaryDocument {
     return this.readOutput(() => this.port.flight_record_summary_json());
   }
@@ -311,8 +272,7 @@ export class TailAppSessionFacade extends SessionResourceOwner {
     return { ...this.queryRecordSample(seconds), context };
   }
 
-  queryReplayCamera(seconds: number, selection: GameUiReplayCamera, screen: boolean, dataset: NamedAnalysisDataset): RecordedFlightRenderPose {
-    if (!this.isAnalysisDatasetCurrent(dataset)) throw new RangeError("Camera analysis record owner or generation is stale");
+  queryReplayCamera(seconds: number, selection: GameUiReplayCamera, screen: boolean): RecordedFlightRenderPose {
     const view = this.readOutput<ReplayCameraView>(() => this.port.playback_camera_view_json(seconds, selection, screen));
     return { ...view.render_pose, replayCamera: projectReplayCamera(view) };
   }
@@ -322,19 +282,19 @@ export class TailAppSessionFacade extends SessionResourceOwner {
   }
 
   seekPlayback(seconds: number): PlaybackClock {
-    return this.change(() => playbackClock(this.port.seek_playback(seconds)), "retain_record");
+    return this.change(() => playbackClock(this.port.seek_playback(seconds)));
   }
 
   setPlaybackRate(code: 0 | 1 | 2): PlaybackClock {
-    return this.change(() => playbackClock(this.port.set_playback_rate_code(code)), "retain_record");
+    return this.change(() => playbackClock(this.port.set_playback_rate_code(code)));
   }
 
   setPlaybackPlaying(playing: boolean): PlaybackClock {
-    return this.change(() => playbackClock(this.port.set_playback_playing(playing)), "retain_record");
+    return this.change(() => playbackClock(this.port.set_playback_playing(playing)));
   }
 
   advancePlayback(elapsedSeconds: number): PlaybackClock {
-    return this.change(() => playbackClock(this.port.advance_playback(elapsedSeconds)), "retain_record");
+    return this.change(() => playbackClock(this.port.advance_playback(elapsedSeconds)));
   }
 }
 
@@ -342,9 +302,4 @@ export type AppSessionFacade = TailAppSessionFacade;
 
 function playbackClock(values: ArrayLike<number>): PlaybackClock {
   return { timeSeconds: values[0] as number, rateCode: values[1] as 0 | 1 | 2, kind: values[2] === 0 ? "paused" : "playing" };
-}
-
-function isRecordSourceToken(value: unknown): value is RecordSourceToken {
-  return typeof value === "object" && value !== null && queryOwner in value && recordSourceGeneration in value
-    && typeof value[queryOwner] === "symbol" && typeof value[recordSourceGeneration] === "symbol";
 }

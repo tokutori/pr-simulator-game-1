@@ -1,3 +1,4 @@
+import type { GameUiPlatformInput } from "../../generated/game-ui-input.js";
 import { lake_water_quality_profile } from "../../../pkg/birdman_game_wasm.js";
 
 export interface LakeVisualCondition {
@@ -16,7 +17,7 @@ export const DEFAULT_LAKE_VISUAL_CONDITION: LakeVisualCondition = Object.freeze(
   patternSeed: 0
 });
 
-export type LakeWaterQuality = "low" | "medium" | "high";
+export type LakeWaterQuality = GameUiPlatformInput["water_quality"];
 
 export interface LakeWaterQualityProfile {
   readonly componentCount: number;

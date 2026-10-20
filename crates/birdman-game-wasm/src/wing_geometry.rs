@@ -1,5 +1,5 @@
-use birdman_game_session::wing_geometry::{
-    CARBON_COLOR, FOAM_COLOR, MAIN_BEAM_RADIUS, RIB_COLOR, WingFrame, WingGeometry, WingRodKind,
+use birdman_game_scene::wing_geometry::{
+    CARBON_COLOR, FOAM_COLOR, RIB_COLOR, WingFrame, WingGeometry, WingRodKind,
 };
 use wasm_bindgen::prelude::*;
 
@@ -26,7 +26,7 @@ impl WingGeometryBridge {
         Self { geometry, frame }
     }
 
-    #[doc = "Updates every surface and structural anchor; returns false when the shared 0.03 m/s update threshold suppresses work. Non-finite input selects the reference load."]
+    #[doc = "Updates every surface and structural anchor; equal bending coefficients reuse the current frame. Non-finite input selects the reference load."]
     pub fn update(&mut self, speed: f64) -> bool {
         self.geometry.update_frame(&mut self.frame, speed)
     }
@@ -128,7 +128,7 @@ impl WingGeometryBridge {
     #[doc = "Existing Web longitudinal beam radius in metres."]
     #[wasm_bindgen(getter)]
     pub fn main_beam_radius(&self) -> f64 {
-        MAIN_BEAM_RADIUS
+        self.geometry.main_beam_radius()
     }
 
     #[doc = "Existing Web sRGB 0xRRGGBB colour of both main carbon members."]

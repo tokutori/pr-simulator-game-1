@@ -1,10 +1,9 @@
 import { currentGameSessionProjectionFixture, currentSharedGameUiFixture, withSharedGameUiSession } from "../game-check/shared-game-ui-fixture.js";
 import type { SharedGameUiFixtureOptions } from "../game-check/shared-game-ui-fixture.js";
-import { currentNamedAnalysisFixture, currentNamedCursorFixture } from "../game-check/current-session-fixture.js";
 import { describe, expect, it } from "vitest";
 import { createBootViewModel } from "../../web/src/app/boot-view.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
-import { analysisCursorData, createInitialAppModel, flightAnalysisData, isGameFlowActivation, isStaleGameFlowActivation, recordListEntries, recordListNotice, replayClockObservation, replayPoseData, updateApp } from "../../web/src/app/app-state.js";
+import { createInitialAppModel, isGameFlowActivation, isStaleGameFlowActivation, recordListEntries, recordListNotice, replayPoseData, updateApp } from "../../web/src/app/app-state.js";
 import type { AppMessage, AppModel } from "../../web/src/app/app-state.js";
 import type { MenuScrollContext, MenuScrollIntent, MenuScrollScope, MenuScrollState } from "../../web/src/render/contracts/menu-layout.js";
 import { currentFlightPoseFixture, currentFlightSnapshotFixture } from "../game-check/current-session-fixture.js";
@@ -22,6 +21,39 @@ const fullHudProfile = Object.freeze({
 });
 
 describe("Boot application state", () => {
+  it("observes synchronous poses and refreshes the current camera without a query request state", () => {
+    const initial = readyModel("replay");
+    expect(initial.replayPose).toEqual({ kind: "idle" });
+    const pose = { ...currentFlightPoseFixture(), replayCamera: { mode: "pilot" as const, cinematic: null } };
+    const observed = updateApp(initial, { type: "flight-replay-pose-loaded", pose });
+    expect(replayPoseData(observed.model.replayPose)).toBe(pose);
+    const changed = updateApp(observed.model, { type: "shared-game-ui-observed",
+      view: currentSharedGameUiFixture("replay", { actions: [{ kind: "cycle_replay_camera" }] }) });
+    expect(changed.effects).toEqual([{ type: "synchronize-replay-pose" }]);
+    expect(replayPoseData(changed.model.replayPose)).toBeNull();
+    const failed = updateApp(changed.model, { type: "flight-replay-pose-failed", message: "camera unavailable" });
+    expect(failed.model.replayPose).toEqual({ kind: "failed", message: "camera unavailable" });
+    expect(updateApp(readyModel("title"), { type: "flight-replay-pose-loaded", pose }).model.gameSession.phase).toBe("title");
+  });
+
+  it("starts Attract playback from the Rust clock and invalidates only deferred timer generations", () => {
+    const requested = updateApp(readyModel(), { type: "shared-game-ui-effect",
+      effect: { kind: "session", command: { kind: "enter_attract" } } });
+    const entered = updateApp(requested.model, { ...currentGameSessionProjectionFixture("attract"),
+      type: "session-command-completed", });
+    expect(entered.effects).toEqual([{ type: "control-replay-clock", generation: 1,
+      command: { kind: "synchronize", seekTimeSeconds: null } }]);
+    const observed = updateApp(entered.model, { type: "replay-clock-observed",
+      state: { timeSeconds: 0, rateCode: 1, playing: true } });
+    expect(observed.effects).toEqual([{ type: "synchronize-replay-pose" },
+      { type: "schedule-replay-clock-tick", generation: 1, delayMilliseconds: 50 }]);
+    const tick = updateApp(observed.model, { type: "replay-clock-tick", generation: 1, elapsedSeconds: 0.05 });
+    expect(tick.effects).toEqual([{ type: "control-replay-clock", generation: 1,
+      command: { kind: "advance", elapsedSeconds: 0.05 } }]);
+    const suspended = updateApp(observed.model, { type: "page-suspended" });
+    expect(updateApp(suspended.model, { type: "replay-clock-tick", generation: 1, elapsedSeconds: 0.05 }).model).toBe(suspended.model);
+  });
+
   it("drops stale game-flow activations after synchronizing a changed Rust phase", () => {
     expect(isStaleGameFlowActivation(
       { type: "activate", controlId: "game-flight-pause" },
@@ -227,72 +259,18 @@ describe("Boot application state", () => {
       type: "shared-game-ui-effect", effect: { kind: "platform", command: { kind: "open_stored_record", id: 4 } }
     });
     expect(opening.effects).toEqual([{ type: "open-stored-flight-record", id: 4, requestId: 2 }]);
-    const entered = updateApp(opening.model, { ...currentGameSessionProjectionFixture("replay"), can_resume: false, type: "game-operation-completed", requestId: 2, returnTarget: "title", countdown_remaining_seconds: 0, display: { kind: "unavailable", reason: "record_not_loaded" } });
+    const entered = updateApp(opening.model, { type: "stored-record-opened", requestId: 2, currentSession: { ...currentGameSessionProjectionFixture("replay"), returnTarget: "title" } });
     expect(entered.effects).toEqual([
       {
-        type: "control-replay-clock", requestId: 1, generation: 1,
+        type: "control-replay-clock", generation: 1,
         command: { kind: "synchronize", seekTimeSeconds: null }
-      },
-      { type: "load-flight-analysis", requestId: 1 }
+      }
     ]);
     expect(entered.model.gameSession.phase).toBe("replay");
-    expect(entered.model.replayClock).toMatchObject({ kind: "requesting", requestId: 1 });
+    expect(entered.model.replayClock).toMatchObject({ kind: "ready" });
     expect(updateApp(opening.model, {
       type: "shared-game-ui-effect", effect: { kind: "platform", command: { kind: "open_stored_record", id: 4 } }
     }).model).toBe(opening.model);
-  });
-
-  it("loads and loops the independent Title Attract record", () => {
-    const title = readyModel("title");
-    const requested = updateApp(title, {
-      type: "shared-game-ui-effect", effect: { kind: "session", command: { kind: "enter_attract" } }
-    });
-    expect(requested.effects).toEqual([
-      { type: "shared-game-session-command", command: { kind: "enter_attract" }, requestId: 2 }
-    ]);
-    const entered = updateApp(requested.model, { ...currentGameSessionProjectionFixture("attract"), can_resume: false, type: "game-operation-completed", requestId: 2, countdown_remaining_seconds: 0, display: { kind: "unavailable", reason: "record_not_loaded" } });
-    expect(entered.model.gameSession.phase).toBe("attract");
-    expect(entered.model.replayClock.observation.playing).toBe(false);
-    expect(entered.effects).toEqual([
-      {
-        type: "control-replay-clock", requestId: 1, generation: 1,
-        command: { kind: "synchronize", seekTimeSeconds: null }
-      },
-      { type: "load-flight-analysis", requestId: 1 }
-    ]);
-    const synchronized = updateApp(entered.model, {
-      type: "replay-clock-command-completed", requestId: 1, generation: 1,
-      state: { timeSeconds: 0, rateCode: 1, playing: true }
-    });
-    expect(synchronized.model.replayClock.observation.playing).toBe(true);
-
-    const analysis = currentNamedAnalysisFixture({ phase: "attract" });
-    const loaded = updateApp(synchronized.model, { type: "flight-analysis-loaded", requestId: 1, data: analysis });
-    expect(loaded.effects).toContainEqual({ type: "schedule-replay-clock-tick", generation: 1, delayMilliseconds: 50 });
-    const advancing = updateApp(loaded.model, { type: "replay-clock-tick", generation: 1, elapsedSeconds: 2.1 });
-    expect(advancing.effects).toEqual([{
-      type: "control-replay-clock", requestId: 2, generation: 1,
-      command: { kind: "advance", elapsedSeconds: 2.1 }
-    }]);
-    const looped = updateApp(advancing.model, {
-      type: "replay-clock-command-completed", requestId: 2, generation: 1,
-      state: { timeSeconds: 0.1, rateCode: 1, playing: true }
-    });
-    expect(looped.model.analysisCursorTimeSeconds).toBeCloseTo(0.1);
-    expect(looped.model.replayClock.observation.playing).toBe(true);
-    expect(looped.effects).toContainEqual({ type: "load-flight-replay-pose", requestId: 2, timeSeconds: 0.1 });
-    expect(looped.effects).toContainEqual({ type: "schedule-replay-clock-tick", generation: 1, delayMilliseconds: 50 });
-
-    const returning = updateApp(looped.model, {
-      type: "shared-game-ui-effect", effect: { kind: "session", command: { kind: "leave_attract" } }
-    });
-    expect(returning.effects).toEqual([
-      { type: "shared-game-session-command", command: { kind: "leave_attract" }, requestId: 3 }
-    ]);
-    const returned = updateApp(returning.model, { ...currentGameSessionProjectionFixture("title"), can_resume: false, type: "game-operation-completed", requestId: 3, countdown_remaining_seconds: 0, display: { kind: "unavailable", reason: "menu_phase" } });
-    expect(returned.model.gameSession.phase).toBe("title");
-    expect(returned.model.replayClock.observation.playing).toBe(false);
-    expect(returned.model.replayClock.generation).toBe(2);
   });
 
   it("serializes permission requests and backend changes", () => {
@@ -369,11 +347,11 @@ describe("Boot application state", () => {
     expect(recovery.model.replayClock.observation.playing).toBe(false);
     expect(recovery.model.replayClock.generation).toBe(8);
     expect(recovery.effects).toEqual([
-      { type: "control-replay-clock", requestId: 1, generation: 8, command: { kind: "pause" } },
+      { type: "control-replay-clock", generation: 8, command: { kind: "pause" } },
       { type: "switch-backend", mode: "screen", requestId: 2 }
     ]);
     expect(updateApp(recovery.model, { type: "replay-clock-tick", generation: 7, elapsedSeconds: 1 }).model).toBe(recovery.model);
-    const paused = updateApp(recovery.model, { type: "replay-clock-command-completed", requestId: 1, generation: 8,
+    const paused = updateApp(recovery.model, { type: "replay-clock-observed",
       state: { timeSeconds: 0, rateCode: 1, playing: false } });
     expect(paused.effects.some((effect) => effect.type === "schedule-replay-clock-tick")).toBe(false);
   });
@@ -622,13 +600,13 @@ describe("Boot application state", () => {
     expect(cached.model.replayClock.observation.playing).toBe(false);
     expect(cached.model.replayClock.generation).toBe(8);
     expect(cached.effects).toContainEqual({
-      type: "control-replay-clock", requestId: 1, generation: 8, command: { kind: "pause" }
+      type: "control-replay-clock", generation: 8, command: { kind: "pause" }
     });
     const paused = updateApp(cached.model, {
-      type: "replay-clock-command-completed", requestId: 1, generation: 8,
+      type: "replay-clock-observed",
       state: { timeSeconds: 0, rateCode: 1, playing: false }
     });
-    expect(paused.model.replayClock.kind).toBe("settled");
+    expect(paused.model.replayClock.kind).toBe("ready");
     expect(paused.model.replayClock.observation.playing).toBe(false);
     expect(paused.model.presentation.type).toBe("cached");
     expect(paused.effects.some((effect) => effect.type === "schedule-replay-clock-tick")).toBe(false);
@@ -640,9 +618,9 @@ describe("Boot application state", () => {
     expect(restored.replayClock.observation.playing).toBe(false);
     const play = restoration.effects.find((effect) => effect.type === "control-replay-clock");
     if (phase === "attract") {
-      expect(play).toEqual({ type: "control-replay-clock", requestId: 2, generation: 9, command: { kind: "play" } });
+      expect(play).toEqual({ type: "control-replay-clock", generation: 9, command: { kind: "play" } });
       const playingAgain = updateApp(restored, {
-        type: "replay-clock-command-completed", requestId: 2, generation: 9,
+        type: "replay-clock-observed",
         state: { timeSeconds: 0, rateCode: 1, playing: true }
       });
       expect(playingAgain.model.replayClock.observation.playing).toBe(true);
@@ -658,23 +636,39 @@ describe("Boot application state", () => {
     const cached = updateApp(original, { type: "page-suspended" }).model;
     const restored = updateApp(cached, { type: "page-restored" }).model;
     expect(restored.gameSession).toBe(original.gameSession);
-    expect(restored.analysis).toBe(original.analysis);
     expect(restored.presentation).toMatchObject({ type: "transitioning", to: "screen" });
   });
 
-  it("serializes game operations and ignores stale completions", () => {
+  it("applies synchronous session commands without creating a pending request", () => {
     const title = readyModel("title");
     const setup = updateApp(title, { type: "shared-game-ui-effect", effect: { kind: "session", command: { kind: "open_setup" } } });
-    expect(setup.model.pendingGameRequestId).toBe(2);
-    expect(setup.effects).toEqual([{ type: "shared-game-session-command", command: { kind: "open_setup" }, requestId: 2 }]);
-    const competing = updateApp(setup.model, { type: "shared-game-ui-effect", effect: { kind: "session", command: { kind: "open_setup" } } });
-    expect(competing.model).toBe(setup.model);
-
-    const completed = updateApp(setup.model, { ...currentGameSessionProjectionFixture("flight_setup"), can_resume: false, type: "game-operation-completed", requestId: 2, countdown_remaining_seconds: 0, display: { kind: "unavailable", reason: "menu_phase" } });
+    expect(setup.model.recordOpen).toEqual({ kind: "idle" });
+    expect(setup.model.nextRequestId).toBe(title.nextRequestId);
+    expect(setup.effects).toEqual([{ type: "shared-game-session-command", command: { kind: "open_setup" } }]);
+    const completed = updateApp(setup.model, { type: "session-command-completed", ...currentGameSessionProjectionFixture("flight_setup") });
     expect(completed.model.gameSession.phase).toBe("flight_setup");
-    expect(completed.model.pendingGameRequestId).toBeNull();
-    const stale = updateApp(completed.model, { ...currentGameSessionProjectionFixture("result"), can_resume: false, type: "game-operation-completed", requestId: 2, countdown_remaining_seconds: 0, display: { kind: "unavailable", reason: "record_not_loaded" } });
-    expect(stale.model).toBe(completed.model);
+    expect(completed.model.recordOpen).toEqual({ kind: "idle" });
+  });
+
+  it("keeps request identities for stored-record I/O and cancels obsolete responses", () => {
+    const start = (model: AppModel) => updateApp(model, { type: "shared-game-ui-effect",
+      effect: { kind: "platform", command: { kind: "open_stored_record", id: 4 } } });
+    const first = start(readyModel("title"));
+    expect(first.model.recordOpen).toEqual({ kind: "loading", requestId: 2, id: 4 });
+    expect(updateApp(first.model, { type: "shared-game-ui-effect",
+      effect: { kind: "session", command: { kind: "open_setup" } } }).model).toBe(first.model);
+    const cancelled = updateApp(first.model, { type: "stored-record-open-cancelled", requestId: 2 });
+    const diagnosed = updateApp(first.model, { type: "game-session-status", message: "Current presentation failure" });
+    expect(updateApp(diagnosed.model, { type: "stored-record-open-cancelled", requestId: 2 }).model.status).toBe("Current presentation failure");
+    const second = start(cancelled.model);
+    expect(second.model.recordOpen).toEqual({ kind: "loading", requestId: 3, id: 4 });
+    expect(updateApp(second.model, { type: "stored-record-opened", requestId: 2,
+      currentSession: { ...currentGameSessionProjectionFixture("replay"), returnTarget: "title" } }).model).toBe(second.model);
+    expect(updateApp(second.model, { type: "stored-record-open-failed", requestId: 2, message: "old I/O failure" }).model).toBe(second.model);
+    const suspended = updateApp(second.model, { type: "page-suspended" }).model;
+    expect(suspended.recordOpen).toEqual({ kind: "idle" });
+    expect(updateApp(suspended, { type: "stored-record-opened", requestId: 3,
+      currentSession: { ...currentGameSessionProjectionFixture("replay"), returnTarget: "title" } }).model.gameSession.phase).toBe("title");
   });
 
   it("retains Rust pause eligibility in the paused-flight state", () => {
@@ -726,7 +720,6 @@ describe("Boot application state", () => {
     expect(requested.effects).toEqual([{
       type: "shared-game-session-command",
       command: { kind: "set_cue", cue: "wind", visible: false },
-      requestId: 2
     }]);
   });
 
@@ -734,516 +727,75 @@ describe("Boot application state", () => {
     const flight = readyModel("flight_running");
     const terminal = updateApp(flight, { ...currentGameSessionProjectionFixture("result"), can_resume: false, type: "game-session-synced", countdown_remaining_seconds: 0, display: { kind: "unavailable", reason: "record_not_loaded" } });
     expect(terminal.effects).toEqual([
-      { type: "persist-flight-record" },
-      { type: "load-flight-analysis", requestId: 1 }
+      { type: "persist-flight-record" }
     ]);
-    expect(terminal.model.analysis).toMatchObject({ kind: "loading", requestId: 1, nextRequestId: 2 });
     const duplicate = updateApp(terminal.model, { ...currentGameSessionProjectionFixture("result"), can_resume: false, type: "game-session-synced", countdown_remaining_seconds: 0, display: { kind: "unavailable", reason: "record_not_loaded" } });
     expect(duplicate.effects).toEqual([]);
   });
 
-  it("keeps initial Analysis idle and ignores unsolicited dataset and cursor completions", () => {
-    const model = createInitialAppModel();
-    const data = currentNamedAnalysisFixture();
-    expect(model.analysis).toEqual({ kind: "idle", nextRequestId: 1 });
-    expect(model.analysisCursor).toEqual({ kind: "idle", nextRequestId: 1 });
-    expect(flightAnalysisData(model.analysis)).toBeNull();
-    expect(analysisCursorData(model.analysisCursor)).toBeNull();
-    for (const message of [
-      { type: "flight-analysis-loaded", requestId: 1, data },
-      { type: "flight-analysis-failed", requestId: 1, message: "not requested" },
-      { type: "flight-analysis-cursor-loaded", requestId: 1, sample: currentNamedCursorFixture(data) },
-      { type: "flight-analysis-cursor-failed", requestId: 1, message: "not requested" }
-    ] satisfies AppMessage[]) {
-      expect(updateApp(model, message)).toEqual({ model, effects: [] });
-      expect(updateApp(model, message).model).toBe(model);
-    }
-  });
-
-  it("admits the latest Analysis dataset once and distinguishes invalid data from query failure", () => {
-    const data = currentNamedAnalysisFixture();
-    const retained = currentNamedAnalysisFixture();
-    const sample = currentNamedCursorFixture(retained);
-    const loading: AppModel = { ...readyModel("result"),
-      analysis: { kind: "loading", requestId: 4, nextRequestId: 5, retained },
-      analysisCursor: { kind: "loading", requestId: 8, nextRequestId: 9, retained: sample } };
-    for (const message of [
-      { type: "flight-analysis-loaded", requestId: 3, data },
-      { type: "flight-analysis-failed", requestId: 3, message: "stale failure" }
-    ] satisfies AppMessage[]) expect(updateApp(loading, message).model).toBe(loading);
-    const loaded = updateApp(loading, { type: "flight-analysis-loaded", requestId: 4, data });
-    expect(loaded.model.analysis).toEqual({ kind: "ready", nextRequestId: 5, data });
-    expect(flightAnalysisData(loaded.model.analysis)).toBe(data);
-    expect(loaded.model.analysisCursor).toEqual({ kind: "loading", requestId: 9, nextRequestId: 10, retained: null });
-    expect(loaded.effects).toEqual([{ type: "load-flight-analysis-cursor", requestId: 9, timeSeconds: 0 }]);
-    expect(updateApp(loaded.model, { type: "flight-analysis-loaded", requestId: 4, data }).model).toBe(loaded.model);
-    expect(updateApp(loaded.model, { type: "flight-analysis-failed", requestId: 4, message: "late failure" }).model).toBe(loaded.model);
-    const invalid = updateApp(loading, { type: "flight-analysis-loaded", requestId: 4,
-      data: currentNamedAnalysisFixture({ phase: "replay" }) });
-    expect(invalid.model.analysis).toMatchObject({ kind: "failed", nextRequestId: 5, retained });
-    expect(flightAnalysisData(invalid.model.analysis)).toBe(retained);
-    expect(invalid.model.analysisCursor).toBe(loading.analysisCursor);
-    expect(invalid.effects).toEqual([]);
-    const failed = updateApp(loading, { type: "flight-analysis-failed", requestId: 4, message: "query failed" });
-    expect(failed.model.analysis).toEqual({ kind: "failed", nextRequestId: 5, message: "query failed", retained: null });
-    expect(failed.model.analysisCursor).toEqual({ kind: "ready", nextRequestId: 9, sample });
-    expect(analysisCursorData(failed.model.analysisCursor)).toBe(sample);
-    expect(failed.effects).toEqual([]);
-    expect(updateApp(failed.model, { type: "flight-analysis-loaded", requestId: 4, data }).model).toBe(failed.model);
-  });
-
-  it("clears Result cursor samples on seek and admits only the latest cursor completion", () => {
-    const data = currentNamedAnalysisFixture();
-    const initial: AppModel = { ...selectedModel("result", { ticks: 200, actions: [{ kind: "set_result_tab", tab: "analysis" }] }),
-      analysis: { kind: "ready", data, nextRequestId: 2 },
-      analysisCursor: { kind: "ready", sample: currentNamedCursorFixture(data), nextRequestId: 2 } };
-    const seek: AppMessage = { type: "shared-game-ui-effect", effect: { kind: "record", action: { kind: "seek_analysis", time_seconds: 2 } } };
-    const first = updateApp(initial, seek);
-    const latest = updateApp(first.model, seek);
-    expect(first.model.analysisCursor).toEqual({ kind: "loading", requestId: 2, nextRequestId: 3, retained: null });
-    expect(latest.model.analysisCursor).toEqual({ kind: "loading", requestId: 3, nextRequestId: 4, retained: null });
-    expect(latest.effects).toEqual([{ type: "shared-record-action", action: { kind: "seek_analysis", time_seconds: 2 } },
-      { type: "load-flight-analysis-cursor", requestId: 3, timeSeconds: 2 }]);
-    const sample = currentNamedCursorFixture(data, 1);
-    expect(updateApp(latest.model, { type: "flight-analysis-cursor-loaded", requestId: 2, sample }).model).toBe(latest.model);
-    expect(updateApp(latest.model, { type: "flight-analysis-cursor-failed", requestId: 2, message: "stale" }).model).toBe(latest.model);
-    const loaded = updateApp(latest.model, { type: "flight-analysis-cursor-loaded", requestId: 3, sample });
-    expect(loaded.model.analysisCursor).toEqual({ kind: "ready", nextRequestId: 4, sample });
-    expect(analysisCursorData(loaded.model.analysisCursor)).toBe(sample);
-    expect(updateApp(loaded.model, { type: "flight-analysis-cursor-loaded", requestId: 3, sample }).model).toBe(loaded.model);
-    expect(updateApp(loaded.model, { type: "flight-analysis-cursor-failed", requestId: 3, message: "late" }).model).toBe(loaded.model);
-    const failed = updateApp(latest.model, { type: "flight-analysis-cursor-failed", requestId: 3, message: "cursor failed" });
-    expect(failed.model.analysisCursor).toEqual({ kind: "failed", nextRequestId: 4, message: "cursor failed", retained: null });
-    expect(updateApp(failed.model, { type: "flight-analysis-cursor-loaded", requestId: 3, sample }).model).toBe(failed.model);
-  });
-
-  it("retains the previous Replay cursor while querying and on invalid context but discards it on query failure", () => {
-    const data = currentNamedAnalysisFixture({ phase: "replay" });
-    const sample = currentNamedCursorFixture(data);
-    const initial: AppModel = { ...readyModel("replay"),
-      analysis: { kind: "ready", data, nextRequestId: 2 },
-      analysisCursor: { kind: "ready", sample, nextRequestId: 2 },
-      replayClock: { kind: "requesting", requestId: 4, nextRequestId: 5, generation: 3,
-        observation: { timeSeconds: 0, speed: 1, playing: false } } };
-    const queried = updateApp(initial, { type: "replay-clock-command-completed", requestId: 4, generation: 3,
-      state: { timeSeconds: 2, rateCode: 1, playing: false } });
-    expect(queried.model.analysisCursor).toEqual({ kind: "loading", requestId: 2, nextRequestId: 3, retained: sample });
-    expect(analysisCursorData(queried.model.analysisCursor)).toBe(sample);
-    const invalid = updateApp(queried.model, { type: "flight-analysis-cursor-loaded", requestId: 2,
-      sample: currentNamedCursorFixture(currentNamedAnalysisFixture()) });
-    expect(invalid.model.analysisCursor).toMatchObject({ kind: "failed", nextRequestId: 3, retained: sample });
-    expect(analysisCursorData(invalid.model.analysisCursor)).toBe(sample);
-    expect(invalid.effects).toEqual([]);
-    const failed = updateApp(queried.model, { type: "flight-analysis-cursor-failed", requestId: 2, message: "query failed" });
-    expect(failed.model.analysisCursor).toEqual({ kind: "failed", nextRequestId: 3, message: "query failed", retained: null });
-    expect(analysisCursorData(failed.model.analysisCursor)).toBeNull();
-  });
-
-  it.each(["loaded", "failed"] as const)("accepts Analysis and cursor %s completions while cached without changing lifecycle ownership", (result) => {
-    const data = currentNamedAnalysisFixture();
-    const sample = currentNamedCursorFixture(data);
-    const initial: AppModel = { ...readyModel("result"), analysis: { kind: "loading", requestId: 4, nextRequestId: 5, retained: null } };
-    const cached = updateApp(initial, { type: "page-suspended" }).model;
-    const completion: AppMessage = result === "loaded" ? { type: "flight-analysis-loaded", requestId: 4, data }
-      : { type: "flight-analysis-failed", requestId: 4, message: "cached failure" };
-    const completed = updateApp(cached, completion).model;
-    expect(completed.presentation).toEqual(cached.presentation);
-    expect(completed.gameSession).toBe(initial.gameSession);
-    expect(completed.analysis.kind).toBe(result === "loaded" ? "ready" : "failed");
-    let cursorCompleted: AppModel;
-    if (result === "loaded") {
-      if (completed.analysisCursor.kind !== "loading") throw new Error("Expected cached cursor request");
-      cursorCompleted = updateApp(completed, { type: "flight-analysis-cursor-loaded", requestId: completed.analysisCursor.requestId, sample }).model;
-    } else {
-      const pending: AppModel = { ...completed, analysisCursor: { kind: "loading", requestId: 8, nextRequestId: 9, retained: sample } };
-      cursorCompleted = updateApp(pending, { type: "flight-analysis-cursor-failed", requestId: 8, message: "cached cursor failure" }).model;
-    }
-    expect(cursorCompleted.presentation).toEqual(cached.presentation);
-    expect(cursorCompleted.analysisCursor.kind).toBe(result === "loaded" ? "ready" : "failed");
-    const restored = updateApp(cursorCompleted, { type: "page-restored" }).model;
-    expect(restored.analysis).toBe(cursorCompleted.analysis);
-    expect(restored.analysisCursor).toBe(cursorCompleted.analysisCursor);
-    expect(restored.analysis.nextRequestId).toBe(5);
-    expect(restored.analysisCursor.nextRequestId).toBe(result === "loaded" ? 2 : 9);
-  });
-
-  it("invalidates Analysis and cursor requests on phase exit without resetting request sequences", () => {
-    const data = currentNamedAnalysisFixture();
-    const initial: AppModel = { ...readyModel("result"),
-      analysis: { kind: "loading", requestId: 4, nextRequestId: 5, retained: data },
-      analysisCursor: { kind: "loading", requestId: 8, nextRequestId: 9, retained: currentNamedCursorFixture(data) } };
-    const exited = updateApp(initial, { ...currentGameSessionProjectionFixture("flight_setup"), type: "game-session-synced", countdown_remaining_seconds: 0, can_resume: false, display: { kind: "unavailable", reason: "menu_phase" } }).model;
-    expect(exited.analysis).toEqual({ kind: "idle", nextRequestId: 5 });
-    expect(exited.analysisCursor).toEqual({ kind: "idle", nextRequestId: 9 });
-    expect(updateApp(exited, { type: "flight-analysis-loaded", requestId: 4, data }).model).toBe(exited);
-    expect(updateApp(exited, { type: "flight-analysis-cursor-loaded", requestId: 8, sample: currentNamedCursorFixture(data) }).model).toBe(exited);
-  });
-
-  it("enters read-only Replay and rejects stale pose responses after seeking", () => {
-    const flightAnalysis = currentNamedAnalysisFixture();
-    const result: AppModel = {
-      ...selectedModel("result", { ticks: 200, actions: [{ kind: "set_result_tab", tab: "analysis" }, { kind: "seek_analysis", time_seconds: 0.5 }] }),
-      analysis: { kind: "ready", data: flightAnalysis, nextRequestId: 1 },
-      pendingGameRequestId: null,
-      nextRequestId: 2
-    };
-    const requested = updateApp(result, {
-      type: "shared-game-ui-effect", effect: { kind: "session", command: { kind: "enter_replay" } }
-    });
-    expect(requested.effects).toEqual([{ type: "shared-game-session-command", command: { kind: "enter_replay" }, requestId: 2 }]);
-    const entered = updateApp(requested.model, { ...currentGameSessionProjectionFixture("replay"), can_resume: false, type: "game-operation-completed", requestId: 2, returnTarget: "result", countdown_remaining_seconds: 0, display: { kind: "unavailable", reason: "record_not_loaded" } });
-    expect(entered.model.gameSession.phase).toBe("replay");
-    expect(entered.model.resultTab).toBe("analysis");
-    expect(entered.effects).toEqual([{
-      type: "control-replay-clock", requestId: 1, generation: 1,
-      command: { kind: "synchronize", seekTimeSeconds: 0.5 }
-    }, { type: "load-flight-analysis", requestId: 1 }]);
-    const replayAnalysis = currentNamedAnalysisFixture({ phase: "replay" });
-    const loaded = updateApp(entered.model, { type: "flight-analysis-loaded", requestId: 1, data: replayAnalysis });
-    const synchronized = updateApp(loaded.model, {
-      type: "replay-clock-command-completed", requestId: 1, generation: 1,
-      state: { timeSeconds: 0.5, rateCode: 1, playing: false }
-    });
-    expect(synchronized.effects).toEqual([
-      { type: "load-flight-replay-pose", requestId: 2, timeSeconds: 0.5 },
-      { type: "load-flight-analysis-cursor", requestId: 2, timeSeconds: 0.5 }
-    ]);
-    const sought = updateApp(synchronized.model, {
-      type: "shared-game-ui-effect", effect: { kind: "record", action: { kind: "seek_replay", time_seconds: 1.25 } }
-    });
-    expect(sought.model.analysisCursorTimeSeconds).toBe(0.5);
-    expect(sought.effects).toEqual([{
-      type: "shared-replay-action", requestId: 2, generation: 2,
-      action: { kind: "seek_replay", time_seconds: 1.25 }
-    }]);
-    const seekCompleted = updateApp(sought.model, {
-      type: "replay-clock-command-completed", requestId: 2, generation: 2,
-      state: { timeSeconds: 1.25, rateCode: 1, playing: false }
-    });
-    const stale = updateApp(seekCompleted.model, {
-      type: "flight-replay-pose-loaded", requestId: 2,
-      pose: { ...currentFlightPoseFixture(),
-        datumPositionNed: { north: 0, east: 0, down: 0 },
-        attitudeBodyToNed: { w: 1, x: 0, y: 0, z: 0 },
-        pilotPositionMeters: 0, initialPilotPositionMeters: 0, replayCamera: { mode: "pilot", cinematic: null }
-      }
-    });
-    expect(replayPoseData(stale.model.replayPose)).toBeNull();
-    expect(stale.model.replayPose).toMatchObject({ kind: "loading", requestId: 3 });
-    const currentPose = updateApp(seekCompleted.model, {
-      type: "flight-replay-pose-loaded", requestId: 3,
-      pose: { ...currentFlightPoseFixture(),
-        datumPositionNed: { north: 12, east: 3, down: -8 },
-        attitudeBodyToNed: { w: 1, x: 0, y: 0, z: 0 },
-        pilotPositionMeters: 0.2, initialPilotPositionMeters: 0.15, replayCamera: { mode: "pilot", cinematic: null }
-      }
-    });
-    const leave = updateApp(currentPose.model, {
-      type: "shared-game-ui-effect", effect: { kind: "session", command: { kind: "leave_replay" } }
-    });
-    expect(leave.effects).toEqual([{ type: "shared-game-session-command", command: { kind: "leave_replay" }, requestId: 3 }]);
-    const returnedTransition = updateApp(leave.model, { ...currentGameSessionProjectionFixture("result"), can_resume: false, type: "game-operation-completed", requestId: 3, countdown_remaining_seconds: 0, display: { kind: "unavailable", reason: "record_not_loaded" } });
-    const freshResult = withSharedGameUiSession("result", { ticks: 200, actions: [
-      { kind: "set_result_tab", tab: "analysis" }, { kind: "seek_analysis", time_seconds: 0.5 }
-    ] }, (session, platform) => {
-      const entry = session.updateSharedUi({ kind: "session", command: { kind: "enter_replay" } }, platform);
-      expect(entry.effects[0]).toEqual({ kind: "session", command: { kind: "enter_replay" } });
-      session.executeSharedSessionCommand({ kind: "enter_replay" });
-      session.updateSharedUi({ kind: "set_replay_view", view: "telemetry" }, platform);
-      session.updateSharedUi({ kind: "seek_replay", time_seconds: 1.25 }, platform);
-      session.executeSharedRecordAction({ kind: "seek_replay", time_seconds: 1.25 });
-      const exit = session.updateSharedUi({ kind: "session", command: { kind: "leave_replay" } }, platform);
-      expect(exit.effects).toEqual([{ kind: "session", command: { kind: "leave_replay" } }]);
-      session.executeSharedSessionCommand({ kind: "leave_replay" });
-      return session.readSharedUi(platform);
-    });
-    const returned = { ...returnedTransition, model: observeSharedUi(returnedTransition.model, freshResult) };
-    expect(returned.model.gameSession.phase).toBe("result");
-    expect(returned.model.resultTab).toBe("analysis");
-    expect(returned.model.analysisCursorTimeSeconds).toBe(1.25);
-    expect(replayPoseData(returned.model.replayPose)).toBeNull();
-    expect(returned.effects).toEqual([{ type: "load-flight-analysis", requestId: 2 }]);
-  });
-
-  it("plays the immutable record at selected speed and ignores invalidated clock ticks", () => {
-    const flightAnalysis = currentNamedAnalysisFixture({ phase: "replay" });
-    const replay: AppModel = {
-      ...readyModel(),
-      gameSession: currentGameSessionProjectionFixture("replay"),
-      analysis: { kind: "ready", data: flightAnalysis, nextRequestId: 1 },
-      replayClock: { kind: "settled", nextRequestId: 1, generation: 0,
-        observation: { timeSeconds: 0.5, speed: 1, playing: false } },
-      pendingGameRequestId: null
-    };
-    const speed = updateApp(replay, {
-      type: "shared-game-ui-effect", effect: { kind: "record", action: { kind: "set_replay_rate", code: 2 } }
-    });
-    expect(speed.model.replayClock.observation.speed).toBe(1);
-    expect(speed.effects).toEqual([{
-      type: "shared-replay-action", requestId: 1, generation: 1,
-      action: { kind: "set_replay_rate", code: 2 }
-    }]);
-    const rateSet = updateApp(speed.model, {
-      type: "replay-clock-command-completed", requestId: 1, generation: 1,
-      state: { timeSeconds: 0.5, rateCode: 2, playing: false }
-    });
-    expect(rateSet.model.replayClock.observation.speed).toBe(2);
-    const play = updateApp(rateSet.model, {
-      type: "shared-game-ui-effect", effect: { kind: "record", action: { kind: "toggle_replay_playing" } }
-    });
-    expect(play.model.replayClock.observation.playing).toBe(false);
-    expect(play.effects).toEqual([{
-      type: "shared-replay-action", requestId: 2, generation: 2,
-      action: { kind: "toggle_replay_playing" }
-    }]);
-    const playing = updateApp(play.model, {
-      type: "replay-clock-command-completed", requestId: 2, generation: 2,
-      state: { timeSeconds: 0.5, rateCode: 2, playing: true }
-    });
-    expect(playing.model.replayClock.observation.playing).toBe(true);
-    expect(playing.effects).toEqual([
-      { type: "load-flight-replay-pose", requestId: 2, timeSeconds: 0.5 },
-      { type: "load-flight-analysis-cursor", requestId: 2, timeSeconds: 0.5 },
-      { type: "schedule-replay-clock-tick", generation: 2, delayMilliseconds: 50 }
-    ]);
-    const tick = updateApp(playing.model, { type: "replay-clock-tick", generation: 2, elapsedSeconds: 0.25 });
-    expect(tick.model.analysisCursorTimeSeconds).toBe(0.5);
-    expect(tick.effects).toEqual([{
-      type: "control-replay-clock", requestId: 3, generation: 2,
-      command: { kind: "advance", elapsedSeconds: 0.25 }
-    }]);
-    const advanced = updateApp(tick.model, {
-      type: "replay-clock-command-completed", requestId: 3, generation: 2,
-      state: { timeSeconds: 1, rateCode: 2, playing: true }
-    });
-    expect(advanced.model.analysisCursorTimeSeconds).toBe(1);
-    expect(advanced.effects).toEqual([
-      { type: "load-flight-replay-pose", requestId: 3, timeSeconds: 1 },
-      { type: "load-flight-analysis-cursor", requestId: 3, timeSeconds: 1 },
-      { type: "schedule-replay-clock-tick", generation: 2, delayMilliseconds: 50 }
-    ]);
-    const pause = updateApp(advanced.model, {
-      type: "shared-game-ui-effect", effect: { kind: "record", action: { kind: "toggle_replay_playing" } }
-    });
-    expect(pause.model.replayClock.observation.playing).toBe(true);
-    expect(pause.effects).toEqual([{
-      type: "shared-replay-action", requestId: 4, generation: 3,
-      action: { kind: "toggle_replay_playing" }
-    }]);
-    const paused = updateApp(pause.model, {
-      type: "replay-clock-command-completed", requestId: 4, generation: 3,
-      state: { timeSeconds: 1, rateCode: 2, playing: false }
-    });
-    expect(paused.model.replayClock.observation.playing).toBe(false);
-    const staleTick = updateApp(paused.model, { type: "replay-clock-tick", generation: 2, elapsedSeconds: 1 });
-    expect(staleTick.model).toBe(paused.model);
-  });
-
   it("stops playback exactly at record end", () => {
-    const flightAnalysis = currentNamedAnalysisFixture();
     const replay: AppModel = {
-      ...readyModel("replay"), analysis: { kind: "ready", data: flightAnalysis, nextRequestId: 1 },
-      replayClock: { kind: "settled", nextRequestId: 1, generation: 4,
+      ...readyModel("replay"),
+      replayClock: { kind: "ready", generation: 4,
         observation: { timeSeconds: 1.9, speed: 2, playing: true } }
     };
     const advancing = updateApp(replay, { type: "replay-clock-tick", generation: 4, elapsedSeconds: 0.1 });
     expect(advancing.effects).toEqual([{
-      type: "control-replay-clock", requestId: 1, generation: 4,
+      type: "control-replay-clock", generation: 4,
       command: { kind: "advance", elapsedSeconds: 0.1 }
     }]);
     const ended = updateApp(advancing.model, {
-      type: "replay-clock-command-completed", requestId: 1, generation: 4,
+      type: "replay-clock-observed",
       state: { timeSeconds: 2, rateCode: 2, playing: false }
     });
     expect(ended.model.analysisCursorTimeSeconds).toBe(2);
     expect(ended.model.replayClock.observation.playing).toBe(false);
     expect(ended.model.replayClock.generation).toBe(4);
-    expect(ended.effects).toHaveLength(2);
+    expect(ended.effects).toEqual([{ type: "synchronize-replay-pose" }]);
   });
 
-  it("ignores stale clock responses and stops after a failed Rust clock command", () => {
-    const pending: AppModel = {
-      ...readyModel("replay"),
-      replayClock: { kind: "requesting", requestId: 3, nextRequestId: 4, generation: 5,
-        observation: { timeSeconds: 0, speed: 1, playing: true } }
-    };
-    const stale = updateApp(pending, {
-      type: "replay-clock-command-completed", requestId: 2, generation: 5,
-      state: { timeSeconds: 1, rateCode: 1, playing: true }
-    });
-    expect(stale.model).toBe(pending);
-
-    const failed = updateApp(pending, {
-      type: "replay-clock-command-failed", requestId: 3, generation: 5,
-      message: "record cursor is outside the retained interval",
-      state: { timeSeconds: 0.5, rateCode: 2, playing: false }
-    });
-    expect(failed.model.replayClock.kind).toBe("failed");
-    expect(failed.model.analysisCursorTimeSeconds).toBe(0.5);
-    expect(failed.model.replayClock.observation.speed).toBe(2);
-    expect(failed.model.replayClock.observation.playing).toBe(false);
-    expect(failed.model.replayClock.generation).toBe(6);
-    expect(failed.model.status).toContain("record cursor is outside");
-  });
-
-  it("starts without a pose request and exposes the immutable clock observation by reference", () => {
-    const initial = createInitialAppModel();
-    expect(initial.replayPose).toEqual({ kind: "idle", nextRequestId: 1 });
-    expect(replayPoseData(initial.replayPose)).toBeNull();
-    expect(initial.replayClock).toEqual({ kind: "settled", nextRequestId: 1, generation: 0,
-      observation: { timeSeconds: 0, speed: 1, playing: false } });
-    expect(replayClockObservation(initial.replayClock)).toBe(initial.replayClock.observation);
-    expect(Object.isFrozen(initial.replayPose)).toBe(true);
-    expect(Object.isFrozen(initial.replayClock)).toBe(true);
-    expect(Object.isFrozen(initial.replayClock.observation)).toBe(true);
-  });
-
-  it("retains a pose through replacement queries and rejects stale, duplicate and contradictory completions", () => {
-    const pose = { ...currentFlightPoseFixture(),  datumPositionNed: { north: 1, east: 2, down: -3 },
-      attitudeBodyToNed: { w: 1, x: 0, y: 0, z: 0 }, pilotPositionMeters: 0.1, initialPilotPositionMeters: 0,
-      replayCamera: { mode: "pilot" as const, cinematic: null } };
-    const initial: AppModel = { ...readyModel("replay"),
-      analysis: { kind: "ready", nextRequestId: 1, data: currentNamedAnalysisFixture({ phase: "replay" }) },
-      replayPose: { kind: "ready", nextRequestId: 1, pose } };
-    const first = updateApp(initial, { type: "shared-game-ui-effect",
-      effect: { kind: "record", action: { kind: "seek_replay", time_seconds: 0.25 } } });
-    const queried = updateApp(first.model, { type: "replay-clock-command-completed", requestId: 1, generation: 1,
-      state: { timeSeconds: 0.25, rateCode: 1, playing: false } });
-    expect(queried.model.replayPose).toEqual({ kind: "loading", requestId: 1, nextRequestId: 2, retained: pose });
-    expect(replayPoseData(queried.model.replayPose)).toBe(pose);
-    const second = updateApp(queried.model, { type: "shared-game-ui-effect",
-      effect: { kind: "record", action: { kind: "seek_replay", time_seconds: 0.5 } } });
-    const latest = updateApp(second.model, { type: "replay-clock-command-completed", requestId: 2, generation: 2,
-      state: { timeSeconds: 0.5, rateCode: 1, playing: false } });
-    expect(latest.model.replayPose).toEqual({ kind: "loading", requestId: 2, nextRequestId: 3, retained: pose });
-    const stale = updateApp(latest.model, { type: "flight-replay-pose-loaded", requestId: 1, pose });
-    expect(stale.model).toBe(latest.model);
-    expect(stale.effects).toEqual([]);
-    const replacement = { ...pose, pilotPositionMeters: 0.2 };
-    const loaded = updateApp(latest.model, { type: "flight-replay-pose-loaded", requestId: 2, pose: replacement });
-    expect(loaded.model.replayPose).toEqual({ kind: "ready", nextRequestId: 3, pose: replacement });
-    expect(replayPoseData(loaded.model.replayPose)).toBe(replacement);
-    for (const message of [
-      { type: "flight-replay-pose-loaded", requestId: 2, pose },
-      { type: "flight-replay-pose-failed", requestId: 2, message: "late failure" },
-      { type: "replay-clock-command-completed", requestId: 2, generation: 2,
-        state: { timeSeconds: 0.75, rateCode: 1, playing: true } }
-    ] satisfies readonly AppMessage[]) {
-      const duplicate = updateApp(loaded.model, message);
-      expect(duplicate.model).toBe(loaded.model);
-      expect(duplicate.effects).toEqual([]);
-    }
-    const third = updateApp(loaded.model, { type: "shared-game-ui-effect",
-      effect: { kind: "record", action: { kind: "seek_replay", time_seconds: 0.75 } } });
-    const pending = updateApp(third.model, { type: "replay-clock-command-completed", requestId: 3, generation: 3,
-      state: { timeSeconds: 0.75, rateCode: 1, playing: false } });
-    expect(replayPoseData(pending.model.replayPose)).toBe(replacement);
-    const failed = updateApp(pending.model, { type: "flight-replay-pose-failed", requestId: 3, message: "pose unavailable" });
-    expect(failed.model.replayPose).toEqual({ kind: "failed", nextRequestId: 4, message: "pose unavailable" });
-    expect(replayPoseData(failed.model.replayPose)).toBeNull();
-    expect(updateApp(failed.model, { type: "flight-replay-pose-loaded", requestId: 3, pose }).model).toBe(failed.model);
-  });
-
-  it("invalidates camera responses on rig and backend changes while retaining one pose/camera pair on seek", () => {
-    const view = currentSharedGameUiFixture("replay");
-    const pose = { ...currentFlightPoseFixture(),  datumPositionNed: { north: 1, east: 2, down: -3 },
-      attitudeBodyToNed: { w: 1, x: 0, y: 0, z: 0 }, pilotPositionMeters: 0.1, initialPilotPositionMeters: 0,
-      replayCamera: { mode: "pilot" as const, cinematic: null } };
-    const model: AppModel = { ...readyModel("replay"), sharedGameUi: view,
-      replayPose: { kind: "loading", requestId: 1, nextRequestId: 2, retained: pose } };
-    const changed = updateApp(model, { type: "shared-game-ui-observed", view: { ...view, selections: { ...view.selections, replay_camera: "side" } } });
-    expect(changed.model.replayPose).toEqual({ kind: "loading", requestId: 2, nextRequestId: 3, retained: null });
-    expect(changed.effects).toEqual([{ type: "load-flight-replay-pose", requestId: 2, timeSeconds: changed.model.analysisCursorTimeSeconds }]);
-    expect(updateApp(changed.model, { type: "flight-replay-pose-loaded", requestId: 1, pose }).model).toBe(changed.model);
-    const switching: AppModel = { ...changed.model, presentation: { type: "transitioning", origin: "user-request",
-      from: "screen", to: "webxr", phase: "starting", requestId: 4 } };
-    const switched = updateApp(switching, { type: "backend-transition-completed", requestId: 4,
-      requestedMode: "webxr", activeMode: "webxr", ok: true, message: "", successStatus: "VR" });
-    expect(switched.model.replayPose).toEqual({ kind: "loading", requestId: 3, nextRequestId: 4, retained: null });
-    expect(updateApp(switched.model, { type: "flight-replay-pose-loaded", requestId: 2, pose }).model).toBe(switched.model);
-    const loaded = updateApp(switched.model, { type: "flight-replay-pose-loaded", requestId: 3, pose });
-    expect(replayPoseData(loaded.model.replayPose)).toBe(pose);
-    expect(replayPoseData(loaded.model.replayPose)?.replayCamera).toBe(pose.replayCamera);
-  });
-
-  it.each(["loaded", "failed"] as const)("accepts pose %s while cached without changing playback ownership", (result) => {
-    const pose = { ...currentFlightPoseFixture(),  datumPositionNed: { north: 1, east: 2, down: -3 },
-      attitudeBodyToNed: { w: 1, x: 0, y: 0, z: 0 }, pilotPositionMeters: 0.1, initialPilotPositionMeters: 0,
-      replayCamera: { mode: "pilot" as const, cinematic: null } };
-    const initial: AppModel = { ...readyModel("replay"), replayPose: { kind: "loading", requestId: 7, nextRequestId: 8, retained: null } };
-    const cached = updateApp(initial, { type: "page-suspended" }).model;
-    const completed = updateApp(cached, result === "loaded"
-      ? { type: "flight-replay-pose-loaded", requestId: 7, pose }
-      : { type: "flight-replay-pose-failed", requestId: 7, message: "pose unavailable" });
-    expect(completed.model.presentation.type).toBe("cached");
-    expect(completed.model.gameSession).toBe(cached.gameSession);
-    expect(completed.model.replayClock).toBe(cached.replayClock);
-    expect(completed.model.replayPose.nextRequestId).toBe(8);
-    expect(replayPoseData(completed.model.replayPose)).toBe(result === "loaded" ? pose : null);
-    expect(completed.effects).toEqual([]);
-    expect(updateApp(completed.model, { type: "page-restored" }).model.replayPose).toBe(completed.model.replayPose);
+  it("accepts synchronous clock observations only while displaying playback", () => {
+    const title = readyModel("title");
+    expect(updateApp(title, { type: "replay-clock-observed",
+      state: { timeSeconds: 1, rateCode: 1, playing: true } }).model).toBe(title);
+    expect(updateApp(title, { type: "replay-clock-failed", message: "clock unavailable" }).model).toBe(title);
   });
 
   it.each([false, true])("separates clock failure admission from the observed Rust playing value (actual state %s)", (actualState) => {
-    const pending: AppModel = { ...readyModel("replay"), replayClock: { kind: "requesting", requestId: 4, nextRequestId: 5, generation: 5,
+    const pending: AppModel = { ...readyModel("replay"), replayClock: { kind: "ready", generation: 5,
       observation: { timeSeconds: 1.25, speed: 0.5, playing: true } } };
-    const failure: AppMessage = { type: "replay-clock-command-failed", requestId: 4, generation: 5, message: "clock unavailable",
+    const failure: AppMessage = { type: "replay-clock-failed", message: "clock unavailable",
       ...(actualState ? { state: { timeSeconds: 1.5, rateCode: 2 as const, playing: true } } : {}) };
     const failed = updateApp(pending, failure);
-    expect(failed.model.replayClock).toEqual({ kind: "failed", message: "clock unavailable", nextRequestId: 5, generation: 6,
+    expect(failed.model.replayClock).toEqual({ kind: "failed", message: "clock unavailable", generation: 6,
       observation: actualState ? { timeSeconds: 1.5, speed: 2, playing: true } : { timeSeconds: 1.25, speed: 0.5, playing: false } });
     expect(failed.effects).toEqual([]);
-    expect(updateApp(failed.model, failure).model).toBe(failed.model);
     expect(updateApp(failed.model, { type: "replay-clock-tick", generation: 5, elapsedSeconds: 1 }).model).toBe(failed.model);
     const retried = updateApp(failed.model, { type: "shared-game-ui-effect",
       effect: { kind: "record", action: { kind: "toggle_replay_playing" } } });
-    expect(retried.model.replayClock).toMatchObject({ kind: "requesting", requestId: 5, nextRequestId: 6, generation: 7 });
+    expect(retried.model.replayClock).toMatchObject({ kind: "ready", generation: 7 });
     expect(retried.model.replayClock.observation).toBe(failed.model.replayClock.observation);
-    expect(updateApp(retried.model, { type: "shared-game-ui-effect",
-      effect: { kind: "record", action: { kind: "toggle_replay_playing" } } }).model).toBe(retried.model);
+    expect(retried.effects).toEqual([{ type: "control-replay-clock", generation: 7,
+      command: { kind: "record", action: { kind: "toggle_replay_playing" } } }]);
+    expect(updateApp(failed.model, { type: "replay-clock-tick", generation: 6, elapsedSeconds: 1 }).model).toBe(failed.model);
   });
 
   it.each([NaN, -1])("rejects invalid clock time %s while retaining the last valid time and rate", (timeSeconds) => {
-    const pending: AppModel = { ...readyModel("replay"), replayClock: { kind: "requesting", requestId: 4, nextRequestId: 5, generation: 5,
+    const pending: AppModel = { ...readyModel("replay"), replayClock: { kind: "ready", generation: 5,
       observation: { timeSeconds: 1.25, speed: 0.5, playing: true } } };
-    const failed = updateApp(pending, { type: "replay-clock-command-completed", requestId: 4, generation: 5,
+    const failed = updateApp(pending, { type: "replay-clock-observed",
       state: { timeSeconds, rateCode: 2, playing: true } });
     expect(failed.model.replayClock).toEqual({ kind: "failed", message: "Rust Replay clock returned an invalid state",
-      nextRequestId: 5, generation: 6, observation: { timeSeconds: 1.25, speed: 0.5, playing: false } });
+      generation: 6, observation: { timeSeconds: 1.25, speed: 0.5, playing: false } });
     expect(failed.effects).toEqual([]);
   });
 
-  it.each(["title", "result"] as const)("cancels playback requests on phase %s exit and preserves IDs when opening the next record", (phase) => {
-    const initial: AppModel = { ...readyModel("replay"), pendingGameRequestId: 8,
-      replayPose: { kind: "loading", requestId: 7, nextRequestId: 8, retained: null },
-      replayClock: { kind: "requesting", requestId: 4, nextRequestId: 5, generation: 5,
+  it.each(["replay", "attract"] as const)("retains clock observations and stops Attract timers after a pose failure in phase %s", (phase) => {
+    const initial: AppModel = { ...readyModel(phase), replayPose: { kind: "idle" },
+      replayClock: { kind: "ready", generation: 5,
         observation: { timeSeconds: 1.25, speed: 0.5, playing: true } } };
-    const exited = updateApp(initial, { type: "game-operation-completed", requestId: 8, ...currentGameSessionProjectionFixture(phase) });
-    expect(exited.model.replayPose).toEqual({ kind: "idle", nextRequestId: 8 });
-    expect(exited.model.replayClock).toEqual({ kind: "settled", nextRequestId: 5, generation: 6,
-      observation: { timeSeconds: 1.25, speed: 0.5, playing: false } });
-    const reopened = updateApp({ ...exited.model, pendingGameRequestId: 9 }, { ...currentGameSessionProjectionFixture("replay"), type: "game-operation-completed", requestId: 9, returnTarget: phase === "title" ? "title" : "result", countdown_remaining_seconds: 0, can_resume: false, display: { kind: "unavailable", reason: "record_not_loaded" } });
-    expect(reopened.model.replayPose).toEqual({ kind: "idle", nextRequestId: 8 });
-    expect(reopened.model.replayClock).toMatchObject({ kind: "requesting", requestId: 5, nextRequestId: 6, generation: 7 });
-    for (const message of [
-      { type: "flight-replay-pose-loaded", requestId: 7, pose: { ...currentFlightPoseFixture(),  datumPositionNed: { north: 1, east: 2, down: -3 },
-        attitudeBodyToNed: { w: 1, x: 0, y: 0, z: 0 }, pilotPositionMeters: 0.1, initialPilotPositionMeters: 0,
-        replayCamera: { mode: "pilot", cinematic: null } } },
-      { type: "replay-clock-command-completed", requestId: 4, generation: 5,
-        state: { timeSeconds: 1.5, rateCode: 2, playing: true } }
-    ] satisfies readonly AppMessage[]) {
-      const stale = updateApp(reopened.model, message);
-      expect(stale.model).toBe(reopened.model);
-      expect(stale.effects).toEqual([]);
-    }
-  });
-
-  it.each(["replay", "attract"] as const)("preserves the existing pending clock semantics after a pose failure in phase %s", (phase) => {
-    const initial: AppModel = { ...readyModel(phase), replayPose: { kind: "loading", requestId: 7, nextRequestId: 8, retained: null },
-      replayClock: { kind: "requesting", requestId: 4, nextRequestId: 5, generation: 5,
-        observation: { timeSeconds: 1.25, speed: 0.5, playing: true } } };
-    const failed = updateApp(initial, { type: "flight-replay-pose-failed", requestId: 7, message: "pose unavailable" });
-    expect(failed.model.replayClock).toEqual({ kind: "requesting", requestId: 4, nextRequestId: 5,
+    const failed = updateApp(initial, { type: "flight-replay-pose-failed", message: "pose unavailable" });
+    expect(failed.model.replayClock).toEqual({ kind: "ready",
       generation: phase === "attract" ? 6 : 5, observation: { timeSeconds: 1.25, speed: 0.5, playing: phase !== "attract" } });
     expect(failed.effects).toEqual([]);
   });
@@ -1269,22 +821,10 @@ describe("Boot application state", () => {
     const requested = updateApp(paused, {
       type: "shared-game-ui-effect", effect: { kind: "session", command: { kind: "abort" } }
     });
-    const completed = updateApp(requested.model, { ...currentGameSessionProjectionFixture("result"), can_resume: false, type: "game-operation-completed", requestId: 2, countdown_remaining_seconds: 0, display: { kind: "unavailable", reason: "record_not_loaded" } });
+    const completed = updateApp(requested.model, { ...currentGameSessionProjectionFixture("result"), can_resume: false, type: "session-command-completed", countdown_remaining_seconds: 0, display: { kind: "unavailable", reason: "record_not_loaded" } });
     expect(completed.effects).toEqual([
-      { type: "persist-flight-record" },
-      { type: "load-flight-analysis", requestId: 1 }
+      { type: "persist-flight-record" }
     ]);
-  });
-
-  it("rejects stale Analysis responses after leaving Result", () => {
-    const flight = readyModel("flight_running");
-    const terminal = updateApp(flight, { ...currentGameSessionProjectionFixture("result"), can_resume: false, type: "game-session-synced", countdown_remaining_seconds: 0, display: { kind: "unavailable", reason: "record_not_loaded" } });
-    const setup = updateApp(terminal.model, { ...currentGameSessionProjectionFixture("flight_setup"), can_resume: false, type: "game-session-synced", countdown_remaining_seconds: 0, display: { kind: "unavailable", reason: "menu_phase" } });
-    const stale = updateApp(setup.model, {
-      type: "flight-analysis-failed", requestId: 1, message: "stale"
-    });
-    expect(stale.model.gameSession.phase).toBe("flight_setup");
-    expect(stale.model.status).not.toContain("stale");
   });
 
   it("reconciles a rejected UI operation to the current Rust phase", () => {
@@ -1292,13 +832,12 @@ describe("Boot application state", () => {
       type: "shared-game-ui-effect", effect: { kind: "session", command: { kind: "open_setup" } }
     });
     const rejected = updateApp(requested.model, {
-      type: "game-operation-failed",
-      requestId: requested.model.pendingGameRequestId as number,
+      type: "session-command-failed",
       message: "InvalidTransition",
       currentSession: { ...currentGameSessionProjectionFixture("flight_setup"), countdown_remaining_seconds: 0, display: { kind: "unavailable", reason: "menu_phase" }, can_resume: false }
     });
 
-    expect(rejected.model.pendingGameRequestId).toBeNull();
+    expect(rejected.model.recordOpen).toEqual({ kind: "idle" });
     expect(rejected.model.gameSession.phase).toBe("flight_setup");
     expect(rejected.model.status).toBe("InvalidTransition");
   });
@@ -1313,32 +852,28 @@ describe("Boot application state", () => {
   });
 
   it("preserves Result analysis and allows Retry again after a record allocation failure", () => {
-    const analysis = currentNamedAnalysisFixture();
     const result: AppModel = {
       ...selectedModel("result", { ticks: 200, actions: [{ kind: "set_result_tab", tab: "analysis" }, { kind: "seek_analysis", time_seconds: 1 }] }),
-      analysis: { kind: "ready", data: analysis, nextRequestId: 1 }
     };
     const requested = updateApp(result, {
       type: "shared-game-ui-effect", effect: { kind: "session", command: { kind: "retry" } }
     });
     const rejected = updateApp(requested.model, {
-      type: "game-operation-failed",
-      requestId: requested.model.pendingGameRequestId as number,
+      type: "session-command-failed",
       message: "Record(AllocationFailed)",
       currentSession: { ...currentGameSessionProjectionFixture("result"), countdown_remaining_seconds: 0, display: { kind: "available", value: terminalFlightSnapshot }, can_resume: false }
     });
 
     expect(rejected.model.gameSession).toMatchObject({ ...currentGameSessionProjectionFixture("result"), display: { kind: "available", value: terminalFlightSnapshot } });
-    expect(flightAnalysisData(rejected.model.analysis)).toBe(analysis);
     expect(rejected.model.resultTab).toBe("analysis");
     expect(rejected.model.analysisCursorTimeSeconds).toBe(1);
-    expect(rejected.model.pendingGameRequestId).toBeNull();
+    expect(rejected.model.recordOpen).toEqual({ kind: "idle" });
     expect(rejected.effects).toEqual([]);
     const retryAgain = updateApp(rejected.model, {
       type: "shared-game-ui-effect", effect: { kind: "session", command: { kind: "retry" } }
     });
     expect(retryAgain.effects).toEqual([{
-      type: "shared-game-session-command", command: { kind: "retry" }, requestId: retryAgain.model.pendingGameRequestId
+      type: "shared-game-session-command", command: { kind: "retry" },
     }]);
   });
 });
@@ -1614,11 +1149,9 @@ describe("Single Menu scroll state", () => {
     } });
     expect(overlay.effects).toEqual([]);
     expect(overlay.model.gameSession).toBe(initial.gameSession);
-    expect(overlay.model.analysis).toBe(initial.analysis);
     expect(overlay.model.analysisCursorTimeSeconds).toBe(initial.analysisCursorTimeSeconds);
-    expect(overlay.model.analysisCursor).toBe(initial.analysisCursor);
     expect(overlay.model.replayClock).toBe(initial.replayClock);
-    expect(overlay.model.pendingGameRequestId).toBe(initial.pendingGameRequestId);
+    expect(overlay.model.recordOpen).toBe(initial.recordOpen);
   });
 
   it("rejects empty scope identities and generation overflow without effects", () => {

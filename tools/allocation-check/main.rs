@@ -90,15 +90,19 @@ fn calibrate() {
     println!("calibration: alloc=1 alloc_zeroed=1 realloc=1");
 }
 
-fn measure<T>(name: &str, mut operation: impl FnMut() -> T) -> T {
+fn measure<T>(name: &str, operation: impl FnMut() -> T) -> T {
+    measure_iterations(name, ITERATIONS, operation)
+}
+
+fn measure_iterations<T>(name: &str, iterations: usize, mut operation: impl FnMut() -> T) -> T {
     let mut result = black_box(operation());
     begin();
-    for _ in 0..ITERATIONS {
+    for _ in 0..iterations {
         result = black_box(operation());
     }
     let counts = end();
     assert_eq!(counts, [0; 3], "{name} allocated in the measured window");
-    println!("{name}: iterations={ITERATIONS} alloc=0 alloc_zeroed=0 realloc=0");
+    println!("{name}: iterations={iterations} alloc=0 alloc_zeroed=0 realloc=0");
     result
 }
 
@@ -250,6 +254,31 @@ fn outside_dynamics(error: DynamicsError) {
 
 fn main() {
     calibrate();
+    let definition = birdman_game_content::playable_aircraft().unwrap();
+    let mut points = definition.contact_points().to_vec();
+    let mut deformation_case = 0;
+    measure_iterations("registered airframe deformation", 100, || {
+        let (speed, elevator, rudder) = match deformation_case % 3 {
+            0 => (0.0, 0.2, -0.1),
+            1 => (9.7, -0.1, 0.2),
+            _ => (13.0, 0.0, 0.0),
+        };
+        deformation_case += 1;
+        let factor = definition
+            .shape()
+            .wing_bending_factor(black_box(speed))
+            .unwrap()
+            .interpolate(definition.shape().wing_bending_factor(13.0).unwrap(), 0.25)
+            .unwrap();
+        definition
+            .write_deformed_contact_points_with_factor(
+                black_box(factor),
+                black_box(TailIncidence::try_new(elevator, rudder).unwrap()),
+                black_box(&mut points),
+            )
+            .unwrap();
+        black_box(points.last().copied())
+    });
     let fixture = Fixture::new();
     let surfaces = fixture.surfaces();
     let wind = WindField::linear_gradient(

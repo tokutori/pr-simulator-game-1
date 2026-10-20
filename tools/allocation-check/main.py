@@ -5,6 +5,44 @@ from pathlib import Path
 import subprocess
 
 
+def native_library(build_output, root, target, package):
+    artifacts = [
+        artifact
+        for line in build_output.splitlines()
+        for artifact in [json.loads(line)]
+        if artifact.get("reason") == "compiler-artifact"
+        and artifact["target"]["name"] == package.replace("-", "_")
+    ]
+    if len(artifacts) != 1:
+        raise RuntimeError(f"Expected exactly one native {package} compiler artifact")
+    artifact = artifacts[0]
+    manifest = Path(artifact["manifest_path"]).resolve(strict=True)
+    if manifest != (root / "crates" / package / "Cargo.toml").resolve():
+        raise RuntimeError(f"Compiler artifact does not belong to this {package} manifest")
+    profile = artifact["profile"]
+    if profile["opt_level"] != "0" or not profile["debug_assertions"] or profile["test"]:
+        raise RuntimeError("Allocation probe requires unoptimized native debug libraries")
+    libraries = [Path(filename) for filename in artifact["filenames"] if filename.endswith(".rlib")]
+    if len(libraries) != 1:
+        raise RuntimeError(f"Expected exactly one freshly reported {package} rlib")
+    library = libraries[0].resolve(strict=True)
+    if not library.is_relative_to(target.resolve()):
+        raise RuntimeError("Compiler artifact is outside the dedicated probe target")
+    print(
+        json.dumps(
+            {
+                "manifest": str(manifest),
+                "profile": profile,
+                "rlib": str(library),
+                "rlib_sha256": hashlib.sha256(library.read_bytes()).hexdigest(),
+                "fresh": artifact["fresh"],
+            }
+        ),
+        flush=True,
+    )
+    return library
+
+
 def main():
     root = Path(__file__).resolve().parents[2]
     probe = root / "tools" / "allocation-check" / "main.rs"
@@ -28,6 +66,8 @@ def main():
             "build",
             "-p",
             "birdman-game-core",
+            "-p",
+            "birdman-game-content",
             "--locked",
             "--target",
             host,
@@ -41,41 +81,8 @@ def main():
     )
     print(build.stderr, end="")
     build.check_returncode()
-    artifacts = [
-        artifact
-        for line in build.stdout.splitlines()
-        for artifact in [json.loads(line)]
-        if artifact.get("reason") == "compiler-artifact"
-        and artifact["target"]["name"] == "birdman_game_core"
-    ]
-    if len(artifacts) != 1:
-        raise RuntimeError("Expected exactly one native core compiler artifact")
-    artifact = artifacts[0]
-    manifest = Path(artifact["manifest_path"]).resolve(strict=True)
-    if manifest != (root / "crates" / "birdman-game-core" / "Cargo.toml").resolve():
-        raise RuntimeError("Compiler artifact does not belong to this core manifest")
-    profile = artifact["profile"]
-    if profile["opt_level"] != "0" or not profile["debug_assertions"] or profile["test"]:
-        raise RuntimeError("Allocation probe requires the unoptimized native debug library")
-    libraries = [Path(filename) for filename in artifact["filenames"] if filename.endswith(".rlib")]
-    if len(libraries) != 1:
-        raise RuntimeError("Expected exactly one freshly reported core rlib")
-    library = libraries[0].resolve(strict=True)
-    if not library.is_relative_to(target.resolve()):
-        raise RuntimeError("Compiler artifact is outside the dedicated probe target")
-    print(
-        json.dumps(
-            {
-                "host": host,
-                "manifest": str(manifest),
-                "profile": profile,
-                "rlib": str(library),
-                "rlib_sha256": hashlib.sha256(library.read_bytes()).hexdigest(),
-                "fresh": artifact["fresh"],
-            }
-        ),
-        flush=True,
-    )
+    library = native_library(build.stdout, root, target, "birdman-game-core")
+    content = native_library(build.stdout, root, target, "birdman-game-content")
     executable = "hybrid-allocation-probe.exe" if os.name == "nt" else "hybrid-allocation-probe"
     binary = target / host / "debug" / executable
     subprocess.run(
@@ -87,8 +94,12 @@ def main():
             "-Cdebuginfo=2",
             "--extern",
             f"birdman_game_core={library}",
+            "--extern",
+            f"birdman_game_content={content}",
             "-L",
             f"dependency={library.parent / 'deps'}",
+            "-L",
+            f"dependency={target / 'debug' / 'deps'}",
             str(probe),
             "-o",
             str(binary),

@@ -1,5 +1,6 @@
 use super::{
-    ContactError, FlightStateContactSample, WaterContactGeometry, detect_flight_state_water_contact,
+    ContactError, FlightStateContactSample, WaterContactGeometry, WingBendingFactor,
+    detect_flight_state_water_contact,
 };
 use crate::dynamics::{AircraftModel, FlightState};
 use crate::math::{BodyPoint, BodyVector, InertiaTensor, NedPoint, NedVector, UnitQuaternion};
@@ -9,6 +10,69 @@ mod numerical;
 
 #[path = "tests/tail_integration.rs"]
 mod tail_integration;
+
+#[test]
+fn bending_factor_preserves_accepted_coefficients_through_a_shortened_interval() {
+    let start = WingBendingFactor::try_new(0.3).unwrap();
+    let end = WingBendingFactor::try_new(1.6).unwrap();
+    let middle = start.interpolate(end, 0.5).unwrap();
+    assert!((middle.value() - 0.95).abs() < f64::EPSILON);
+    let terminal = start.interpolate(end, 0.25).unwrap();
+    assert!((terminal.value() - 0.625).abs() < f64::EPSILON);
+    let replay = start.interpolate(terminal, 0.5).unwrap();
+    assert!((replay.value() - 0.4625).abs() < f64::EPSILON);
+    assert_eq!(replay, start.interpolate(end, 0.125).unwrap());
+    let negative_zero = WingBendingFactor::try_new(-0.0).unwrap();
+    assert_eq!(
+        negative_zero
+            .interpolate(end, 0.0)
+            .unwrap()
+            .value()
+            .to_bits(),
+        (-0.0_f64).to_bits()
+    );
+    assert_eq!(
+        start
+            .interpolate(negative_zero, 1.0)
+            .unwrap()
+            .value()
+            .to_bits(),
+        (-0.0_f64).to_bits()
+    );
+    let negative = WingBendingFactor::try_new(-f64::MAX).unwrap();
+    let positive = WingBendingFactor::try_new(f64::MAX).unwrap();
+    assert_eq!(negative.interpolate(positive, 0.5).unwrap().value(), 0.0);
+    assert_eq!(positive.interpolate(positive, 0.5).unwrap(), positive);
+    for value in [0.3, 1.0, 1.6, -1.6, f64::MAX] {
+        let constant = WingBendingFactor::try_new(value).unwrap();
+        for fraction in [0.0002, 0.0013, 0.0016, 0.25, 0.5, 0.9] {
+            assert_eq!(constant.interpolate(constant, fraction).unwrap(), constant);
+        }
+    }
+}
+
+#[test]
+fn bending_factor_rejects_nonfinite_values_and_outside_interval_fractions() {
+    for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        assert_eq!(
+            WingBendingFactor::try_new(value),
+            Err(super::MathError::NonFinite)
+        );
+    }
+    let factor = WingBendingFactor::try_new(-1.0).unwrap();
+    for fraction in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        assert_eq!(
+            factor.interpolate(factor, fraction),
+            Err(super::MathError::NonFinite)
+        );
+    }
+    for fraction in [-f64::EPSILON, 1.0 + f64::EPSILON] {
+        assert_eq!(
+            factor.interpolate(factor, fraction),
+            Err(super::MathError::InvalidInterpolationFraction)
+        );
+    }
+}
 
 fn endpoint_states(down: [f64; 2]) -> [FlightState; 2] {
     [
@@ -703,5 +767,83 @@ fn subnormal_structural_tangency_has_an_absolute_rounding_budget() {
         } else {
             assert_eq!(contact, None);
         }
+    }
+}
+
+#[test]
+fn airborne_optimization_preserves_intermediate_world_coordinate_overflow() {
+    let inverse_sqrt_two = 1.0 / libm::sqrt(2.0);
+    let endpoint = |angle: f64| {
+        FlightState::try_new(
+            NedPoint::try_new(1.74e308, 0.0, -1.0e308).unwrap(),
+            NedVector::zero(),
+            UnitQuaternion::try_new(
+                libm::cos(angle * 0.5),
+                inverse_sqrt_two * libm::sin(angle * 0.5),
+                0.0,
+                inverse_sqrt_two * libm::sin(angle * 0.5),
+            )
+            .unwrap(),
+            BodyVector::zero(),
+            0.0,
+            0.0,
+        )
+        .unwrap()
+    };
+    let point = contact_point(1.0e307 * inverse_sqrt_two, -1.0e307 * inverse_sqrt_two);
+    assert_eq!(
+        detect_flight_state_water_contact(
+            &aircraft(),
+            0,
+            endpoint(-core::f64::consts::FRAC_PI_3),
+            1,
+            endpoint(core::f64::consts::FRAC_PI_3),
+            geometry(&[point]),
+        ),
+        Err(ContactError::Math(crate::MathError::NonFinite))
+    );
+}
+
+#[test]
+fn prepared_geometry_bounds_preserve_pointwise_contact_and_conservative_fallback() {
+    let start = [
+        BodyPoint::try_new(1.0, 0.0, 0.0).unwrap(),
+        BodyPoint::try_new(0.0, 0.0, 1.0).unwrap(),
+    ];
+    let end = [
+        BodyPoint::try_new(1.2, -0.1, 0.0).unwrap(),
+        BodyPoint::try_new(0.0, 0.2, 0.9).unwrap(),
+    ];
+    for (down, angles, moved, airborne) in [
+        ([-20.0, -19.0], [-0.1, 0.2], true, true),
+        (
+            [-1.0, -1.0],
+            [-core::f64::consts::FRAC_PI_4; 2],
+            false,
+            false,
+        ),
+        ([-0.5, -0.5], [0.0, 0.0], true, false),
+        ([-1.0, -1.0], [-0.033, 0.067], false, false),
+    ] {
+        let previous = tick(0, down[0], angles[0]);
+        let next = tick(1, down[1], angles[1]);
+        let cached =
+            WaterContactGeometry::try_new_moving(&start, if moved { &end } else { &start })
+                .unwrap();
+        assert_eq!(
+            super::geometry_remains_above_water(
+                previous.flight_state,
+                next.flight_state,
+                cached,
+                super::rotation_displacement_bound(previous.flight_state, next.flight_state),
+            ),
+            airborne,
+        );
+        let mut pointwise = cached;
+        pointwise.bounds = None;
+        assert_eq!(
+            detect_contact(&aircraft(), previous, next, cached),
+            detect_contact(&aircraft(), previous, next, pointwise),
+        );
     }
 }

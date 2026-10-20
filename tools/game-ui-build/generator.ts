@@ -37,7 +37,7 @@ const schemaGroups = ["serialize", "deserialize"] as const;
 export type GameUiSchemas = Readonly<Record<typeof schemaGroups[number], Readonly<Record<string, unknown>>>>;
 export type GeneratedFile = Readonly<{ path: string; content: string }>;
 
-const generatedBanner = "Generated from birdman-game-session::game_ui. Edit the Rust contract and regenerate.";
+const generatedBanner = "Generated from birdman-game-presentation::game_ui. Edit the Rust contract and regenerate.";
 
 export function parseSchemaBundle(text: string): GameUiSchemas {
   const document: unknown = JSON.parse(text);

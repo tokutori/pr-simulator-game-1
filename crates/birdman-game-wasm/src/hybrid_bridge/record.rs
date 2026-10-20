@@ -1,7 +1,7 @@
 use super::*;
 use crate::hybrid_record::HybridRecordError;
+use birdman_game_app::record_query::{PlaybackContext, PlaybackFinalization, RecordQueryPhase};
 use birdman_game_format::{TailFlightRecordDocument, TailPersonalBestSelection};
-use birdman_game_session::record_query::{PlaybackContext, PlaybackFinalization, RecordQueryPhase};
 
 #[wasm_bindgen]
 impl HybridGameSessionBridge {
@@ -129,7 +129,7 @@ impl HybridGameSessionBridge {
         selection: &str,
         screen: bool,
     ) -> Result<String, BoundaryError> {
-        use birdman_game_session::{
+        use birdman_game_presentation::{
             game_ui::GameUiPresentationMode, replay_camera::replay_camera_view,
         };
         let phase = self.session.core_session().snapshot().phase();
@@ -208,10 +208,10 @@ impl HybridGameSessionBridge {
         self.session
             .open_archived_record_json(json)
             .map_err(|error| match error {
-                birdman_game_session::application::ArchiveError::Format(error) => {
+                birdman_game_app::application::ArchiveError::Format(error) => {
                     BoundaryError::Format(error)
                 }
-                birdman_game_session::application::ArchiveError::Session(error) => {
+                birdman_game_app::application::ArchiveError::Session(error) => {
                     BoundaryError::Session(error)
                 }
             })

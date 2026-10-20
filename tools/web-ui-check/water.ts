@@ -3,10 +3,12 @@ import { writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { Page } from "playwright-core";
 import type { Group, Scene, ShaderMaterial, WebGLRenderer } from "three";
+import type { LakeSkyCondition } from "../../web/src/render/contracts/lake-sky.js";
 
 declare global {
   interface Window {
-    __waterCheck: { renderer: WebGLRenderer; scene: Scene; water: Group; waterMaterial: ShaderMaterial; threeModuleUrl: string };
+    __waterCheck: { renderer: WebGLRenderer; scene: Scene; water: Group; waterMaterial: ShaderMaterial; threeModuleUrl: string;
+      skyCondition: () => LakeSkyCondition | null; setSky: (condition: LakeSkyCondition | null) => void };
   }
 }
 
@@ -19,8 +21,137 @@ export async function observeWaterRenderer(page: Page): Promise<void> {
     const threeModuleUrl = /from\s*["']([^"']*\/three\.js(?:\?[^"']*)?)["']/.exec(source)?.[1];
     assert.ok(threeModuleUrl !== undefined, "Missing Vite Three.js module URL");
     await route.fulfill({ response, body: source.replace(anchor,
-      `${anchor}\nwindow.__waterCheck = { renderer, scene, water, waterMaterial, threeModuleUrl: ${JSON.stringify(threeModuleUrl)} };`) });
+      `${anchor}\nwindow.__waterCheck = { renderer, scene, water, waterMaterial, threeModuleUrl: ${JSON.stringify(threeModuleUrl)}, skyCondition: () => activeSkyCondition, setSky: (condition) => rendererAdapter.setLakeSkyCondition(condition) };`) });
   });
+}
+
+export async function verifySkyRenderer(page: Page, output: string): Promise<unknown> {
+  const result = await page.evaluate(async () => {
+    const { renderer, scene, waterMaterial, threeModuleUrl, skyCondition, setSky } = window.__waterCheck;
+    const three = await import(threeModuleUrl) as typeof import("three");
+    const originalCondition = skyCondition();
+    if (originalCondition === null) throw new Error("Sky verification requires a registered condition");
+    const texture = scene.background;
+    if (!(texture instanceof three.DataTexture) || waterMaterial.uniforms.uSkyTexture?.value !== texture) throw new Error("Background and water must share the sky image");
+    if (!(texture.image.data instanceof Uint8Array)) throw new Error("Sky image upload is unavailable");
+    let longitudeVariation = 0;
+    for (let row = texture.image.height / 2; row < texture.image.height; row++) {
+      let minimum = 255;
+      let maximum = 0;
+      for (let column = 0; column < texture.image.width; column++) {
+        const red = texture.image.data[(row * texture.image.width + column) * 4] ?? 0;
+        minimum = Math.min(minimum, red);
+        maximum = Math.max(maximum, red);
+      }
+      longitudeVariation = Math.max(longitudeVariation, maximum - minimum);
+    }
+    if (longitudeVariation <= 20) throw new Error("Sky verification requires visible cloud detail");
+    const farWater = scene.getObjectByName("lake-biwa-distant-water-backing");
+    if (!(farWater instanceof three.Mesh) || !(farWater.material instanceof three.ShaderMaterial)
+        || farWater.material.uniforms.uSkyTexture?.value !== texture) throw new Error("Far water must share the sky image");
+    if (scene.getObjectByName("world-clouds") !== undefined) throw new Error("Cloud geometry is still present");
+    const previousTarget = renderer.getRenderTarget();
+    const previousViewport = renderer.getViewport(new three.Vector4());
+    const previousScissor = renderer.getScissor(new three.Vector4());
+    const previousScissorTest = renderer.getScissorTest();
+    const target = new three.WebGLRenderTarget(1280, 720);
+    target.texture.colorSpace = three.SRGBColorSpace;
+    const sky = new three.Scene();
+    sky.background = texture;
+    const camera = new three.PerspectiveCamera(60, 1280 / 720, 0.05, 100_000);
+    const views: { name: string; camera: import("three").Camera }[] = [];
+    for (const degrees of [0, 90, 180, 270]) {
+      const heading = degrees * Math.PI / 180;
+      camera.up.set(0, 1, 0);
+      camera.lookAt(Math.sin(heading), 0.6, -Math.cos(heading));
+      camera.updateMatrixWorld(true);
+      views.push({ name: `heading-${String(degrees)}`, camera: camera.clone() });
+    }
+    camera.up.set(0, 0, -1);
+    camera.lookAt(0, 1, 0);
+    camera.updateMatrixWorld(true);
+    views.push({ name: "zenith", camera: camera.clone() });
+    const stereo = new three.StereoCamera();
+    camera.up.set(0, 1, 0);
+    camera.lookAt(0, 0.6, -1);
+    camera.rotateZ(0.15);
+    camera.updateMatrixWorld(true);
+    stereo.aspect = 0.5;
+    stereo.update(camera);
+    views.push({ name: "left-eye", camera: stereo.cameraL }, { name: "right-eye", camera: stereo.cameraR });
+    const conditions = [
+      { name: "registered", value: originalCondition },
+      { name: "clear", value: { ...originalCondition, cloudFraction: 0, sunElevationDegrees: 55 } },
+      { name: "overcast", value: { ...originalCondition, cloudFraction: 1, sunElevationDegrees: 55 } },
+      { name: "low-sun", value: { ...originalCondition, cloudFraction: 1, sunElevationDegrees: 5 } },
+      { name: "zenith-sun", value: { ...originalCondition, cloudFraction: 1, sunElevationDegrees: 90 } }
+    ];
+    const images: { name: string; condition: string; view: string; data: string; meanRed: number; maximumTranslationError: number; translation: number[]; drawCalls: number }[] = [];
+    try {
+      renderer.setScissorTest(false);
+      for (const condition of conditions) {
+        setSky(condition.value);
+        const conditionTexture = scene.background;
+        if (!(conditionTexture instanceof three.DataTexture) || waterMaterial.uniforms.uSkyTexture.value !== conditionTexture
+            || farWater.material.uniforms.uSkyTexture.value !== conditionTexture) throw new Error("Changed sky must be shared by all surfaces");
+        setSky({ ...condition.value });
+        if (scene.background !== conditionTexture) throw new Error("An unchanged sky condition regenerated its texture");
+        sky.background = conditionTexture;
+        for (const view of views) {
+          renderer.setRenderTarget(target);
+          renderer.render(sky, view.camera);
+          const pixels = new Uint8Array(1280 * 720 * 4);
+          renderer.readRenderTargetPixels(target, 0, 0, 1280, 720, pixels);
+          const shifted = view.camera.clone();
+          shifted.matrixAutoUpdate = false;
+          shifted.matrix.premultiply(new three.Matrix4().makeTranslation(1000, 20, -500));
+          shifted.updateMatrixWorld(true);
+          const translation = new three.Vector3().setFromMatrixPosition(shifted.matrixWorld)
+            .sub(new three.Vector3().setFromMatrixPosition(view.camera.matrixWorld)).toArray();
+          if (translation.some((value, index) => Math.abs(value - ([1000, 20, -500][index] ?? 0)) > 1e-8)) throw new Error("Sky camera translation was not applied");
+          renderer.render(sky, shifted);
+          const translated = new Uint8Array(pixels.length);
+          renderer.readRenderTargetPixels(target, 0, 0, 1280, 720, translated);
+          let maximumTranslationError = 0;
+          for (let index = 0; index < pixels.length; index++) maximumTranslationError = Math.max(maximumTranslationError, Math.abs((pixels[index] ?? 0) - (translated[index] ?? 0)));
+          let redSum = 0;
+          for (let index = 0; index < pixels.length; index += 4) redSum += pixels[index] ?? 0;
+          const canvas = document.createElement("canvas");
+          canvas.width = 1280; canvas.height = 720;
+          const drawing = canvas.getContext("2d");
+          if (drawing === null) throw new Error("Missing sky capture Canvas");
+          const image = drawing.createImageData(1280, 720);
+          for (let row = 0; row < 720; row++) image.data.set(pixels.subarray(row * 1280 * 4, (row + 1) * 1280 * 4), (719 - row) * 1280 * 4);
+          drawing.putImageData(image, 0, 0);
+          images.push({ name: condition.name === "registered" ? view.name : `${condition.name}-${view.name}`,
+            condition: condition.name, view: view.name, data: canvas.toDataURL("image/png"), meanRed: redSum / (1280 * 720), maximumTranslationError, translation, drawCalls: renderer.info.render.calls });
+        }
+      }
+      const gl = renderer.getContext();
+      return { image: { width: texture.image.width, height: texture.image.height, longitudeVariation }, conditions, images, error: gl.getError(), contextLost: gl.isContextLost() };
+    } finally {
+      try { setSky(originalCondition); }
+      finally {
+        renderer.setRenderTarget(previousTarget);
+        renderer.setViewport(previousViewport);
+        renderer.setScissor(previousScissor);
+        renderer.setScissorTest(previousScissorTest);
+        target.dispose();
+      }
+    }
+  });
+  for (const image of result.images) {
+    await writeFile(resolve(output, `sky-${image.name}.png`), Buffer.from(image.data.split(",")[1] ?? "", "base64"));
+    assert.ok(image.maximumTranslationError <= 1, `${image.name}: distant sky changed under translation`);
+  }
+  assert.equal(result.error, 0);
+  assert.equal(result.contextLost, false);
+  for (const clear of result.images.filter(image => image.condition === "clear")) {
+    const overcast = result.images.find(image => image.condition === "overcast" && image.view === clear.view);
+    assert.ok(overcast !== undefined && overcast.meanRed > clear.meanRed, `${clear.view}: overcast clouds must brighten the clear sky`);
+  }
+  return { ...result, images: result.images.map(image => ({ name: image.name, condition: image.condition, view: image.view, meanRed: image.meanRed,
+    maximumTranslationError: image.maximumTranslationError, translation: image.translation, drawCalls: image.drawCalls })) };
 }
 
 export async function verifyWaterRenderer(page: Page, geometryUrl: string, output: string, quality: "low" | "medium" | "high"): Promise<unknown> {

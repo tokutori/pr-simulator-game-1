@@ -14,8 +14,7 @@ describe("shared recorded cinematic camera projection", () => {
   it("projects complete recorded aircraft controls and absolute camera axes from one Rust query", () => {
     const session = recordedCameraFixture();
     try {
-      const dataset = session.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
-      const frame = session.queryReplayCamera(0.015, "side", true, dataset);
+      const frame = session.queryReplayCamera(0.015, "side", true);
       const sample = session.queryRecordSample(0.015);
       expect(frame.simulationTimeSeconds).toBe(sample.flight_time_s);
       expect(frame.controls).toEqual({ layout: sample.controls.layout, physicalIncidence: {

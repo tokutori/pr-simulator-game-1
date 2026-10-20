@@ -2,47 +2,7 @@ use super::environment::EnvironmentFailure;
 use bevy::ecs as bevy_ecs;
 use bevy::prelude::Resource;
 use birdman_game_core::SessionPhase;
-use birdman_game_session::lake_water::LakeWaterQuality;
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) enum WaterQuality {
-    Low,
-    Medium,
-    #[default]
-    High,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct WaterQualityProfile {
-    pub(crate) near_cells: u32,
-}
-
-impl WaterQuality {
-    pub(crate) const ALL: [Self; 3] = [Self::Low, Self::Medium, Self::High];
-
-    #[cfg(any(test, feature = "verify-harness"))]
-    pub(crate) const fn label(self) -> &'static str {
-        match self {
-            Self::Low => "Low",
-            Self::Medium => "Medium",
-            Self::High => "High",
-        }
-    }
-
-    pub(crate) const fn profile(self) -> WaterQualityProfile {
-        WaterQualityProfile {
-            near_cells: self.shared().mesh_segments(),
-        }
-    }
-
-    pub(crate) const fn shared(self) -> LakeWaterQuality {
-        match self {
-            Self::Low => LakeWaterQuality::Low,
-            Self::Medium => LakeWaterQuality::Medium,
-            Self::High => LakeWaterQuality::High,
-        }
-    }
-}
+use birdman_game_format::WaterQuality;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum WaterQualityFailure {
@@ -174,7 +134,9 @@ mod tests {
     fn profiles_preserve_high_and_have_distinct_mesh_budgets() {
         assert_eq!(WaterQuality::default(), WaterQuality::High);
         assert_eq!(
-            WaterQuality::ALL.map(|quality| quality.profile().near_cells),
+            WaterQuality::ALL.map(|quality| {
+                birdman_game_scene::lake_water::water_quality_profile(quality).mesh_segments()
+            }),
             [96, 144, 224]
         );
         assert_eq!(

@@ -3,6 +3,10 @@
 #[path = "../src/hybrid_record.rs"]
 mod hybrid_record;
 
+use birdman_game_app::HybridSessionPreparation;
+use birdman_game_app::record_archive::{
+    RecordExportError, RecordExportMetadata, export_record_document,
+};
 use birdman_game_core::{
     ControlMode, CourseAxis, FlightRecord, FlightRecordDisposition, GameSession, GameSessionError,
     SessionEndReason, SessionPhase, TailControlProfile, TailFlightTickError, TailFlightTickInput,
@@ -13,10 +17,6 @@ use birdman_game_format::{
     InformationLevel, TailFlightRecordDocument, TailPersonalBestConfiguration,
     TailPersonalBestSelection, WeatherClass,
 };
-use birdman_game_session::record_archive::{
-    RecordExportError, RecordExportMetadata, export_record_document,
-};
-use birdman_game_wasm::HybridSessionPreparation;
 use hybrid_record::{HybridRecordError, analysis_samples_json, playback_sample_json};
 use serde_json::{Value, json};
 
@@ -69,7 +69,7 @@ fn metadata<'identity>(
             controller_profile: TailControlProfile::try_new(0.2, 0.2, 1.0).unwrap(),
         },
         course_axis: CourseAxis::try_new(1.0, 0.0).unwrap(),
-        build_provenance: birdman_game_session::record_archive::record_build_provenance(),
+        build_provenance: birdman_game_app::record_archive::record_build_provenance(),
     }
 }
 

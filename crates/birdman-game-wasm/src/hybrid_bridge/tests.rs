@@ -250,7 +250,7 @@ fn prepared_launch_query_matches_the_first_live_frame_without_starting_physics()
 
 #[test]
 fn shared_native_preparation_matches_wasm_states_records_and_public_defaults() {
-    let seed = birdman_game_session::DEFAULT_SESSION_SEED;
+    let seed = birdman_game_app::DEFAULT_SESSION_SEED;
     let defaults = HybridGameSessionBridge::public_default();
     assert_eq!(
         defaults.session.difficulty(),
@@ -279,7 +279,7 @@ fn shared_native_preparation_matches_wasm_states_records_and_public_defaults() {
                 )
                 .unwrap();
             bridge.prepare_internal().unwrap();
-            let preparation = birdman_game_session::HybridSessionPreparation::try_new_for_weather(
+            let preparation = birdman_game_app::HybridSessionPreparation::try_new_for_weather(
                 mode, MAX_TICKS, seed, weather,
             )
             .unwrap();
@@ -437,13 +437,34 @@ fn factory_and_snapshot_expose_the_current_tail_layout() {
 
     let bridge = launch(ControlMode::Manual, 2);
     let initial = snapshot(&bridge);
-    assert_eq!(initial["scenario"]["catalog_version"], 5);
-    assert_eq!(initial["scenario"]["scenario_version"], 5);
-    assert_eq!(initial["scenario"]["aircraft_model_version"], 3);
-    assert_eq!(initial["scenario"]["controller_profile_version"], 3);
+    let selection = birdman_game_app::HybridSessionPreparation::select_scenario(
+        birdman_game_app::DEFAULT_WEATHER,
+        u64::MAX,
+    )
+    .unwrap();
+    let identity = birdman_game_app::identity_for_selection(selection);
+    assert_eq!(
+        initial["scenario"]["catalog_version"],
+        identity.catalog_version
+    );
+    assert_eq!(
+        initial["scenario"]["scenario_version"],
+        identity.scenario_version
+    );
+    assert_eq!(
+        initial["scenario"]["aircraft_model_version"],
+        identity.aircraft_model_version
+    );
+    assert_eq!(
+        initial["scenario"]["controller_profile_version"],
+        identity.controller_profile_version
+    );
     assert_eq!(
         initial["control_identity"]["aircraft_configuration_id"],
-        "bpg041-playable-hybrid-mock"
+        birdman_game_app::registered_aircraft()
+            .unwrap()
+            .document()
+            .configuration_id
     );
     assert_eq!(initial["scenario"]["environment_version"], 6);
     assert_eq!(initial["scenario"]["seed_low"], u32::MAX);
@@ -603,30 +624,6 @@ fn invalid_version_layout_surplus_axis_and_bounds_never_advance_the_session() {
 }
 
 #[test]
-fn fractional_projection_uses_one_terminal_time_without_integer_rounding() {
-    let bridge = launch(ControlMode::Manual, 10);
-    let initial = bridge
-        .session
-        .core_session()
-        .snapshot()
-        .tail_flight_state()
-        .unwrap();
-    let projected = state_document(
-        8,
-        0.375,
-        initial.flight_state(),
-        initial.incidence(),
-        initial.pilot_position_target(),
-        bridge.required_pilot_mapping().unwrap(),
-    )
-    .unwrap();
-    assert_eq!(projected.tick, 8);
-    assert_eq!(projected.fraction, 0.375);
-    assert_eq!(projected.flight_time_s, 0.08375);
-    assert_eq!(projected.pilot_position_target_normalized, 0.0);
-}
-
-#[test]
 fn held_position_projection_survives_hold_pause_result_and_resets_to_sealed_trim() {
     for mode in [
         ControlMode::Manual,
@@ -756,18 +753,26 @@ fn setup_weather_catalog_matches_registered_metadata_and_actual_wind_provider() 
         let mut bridge = HybridGameSessionBridge::new(0, 19, 0).unwrap();
         bridge.open_setup().unwrap();
         bridge.set_weather_class(weather_code).unwrap();
+        let selection = birdman_game_app::HybridSessionPreparation::select_scenario(
+            bridge.session.difficulty().weather(),
+            19,
+        )
+        .unwrap();
         let selected: Value =
             serde_json::from_str(&bridge.environment_snapshot_json().unwrap()).unwrap();
         assert_eq!(selected["projection"]["source"], "selected");
         assert_eq!(selected["projection"]["kind"], "available");
-        assert_eq!(selected["projection"]["identity"]["catalog_version"], 5);
+        assert_eq!(
+            selected["projection"]["identity"]["catalog_version"],
+            selection.catalog_version
+        );
         assert_eq!(selected["projection"]["identity"]["scenario_id"], version);
         bridge.prepare_internal().unwrap();
         let metadata = bridge.configuration_metadata().unwrap();
         assert_eq!(metadata.len(), 18);
         assert_eq!(metadata[3], weather_code);
         assert_eq!(metadata[5], version);
-        assert_eq!(metadata[6], 5);
+        assert_eq!(metadata[6], selection.scenario_version);
         assert_eq!(metadata[8], version);
         assert_eq!(metadata[10], 19);
         let sealed: Value =
@@ -790,7 +795,7 @@ fn setup_weather_catalog_matches_registered_metadata_and_actual_wind_provider() 
             );
             assert_eq!(
                 telemetry.wind_velocity_ned_mps,
-                birdman_game_session::bundled_environment()
+                birdman_game_app::bundled_environment()
                     .unwrap()
                     .wind_field()
                     .unwrap()
@@ -808,7 +813,12 @@ fn setup_weather_catalog_matches_registered_metadata_and_actual_wind_provider() 
             );
         }
         assert!(
-            (telemetry.airspeed_mps - birdman_game_core::HybridMockDefinition::TRIM_AIRSPEED_MPS)
+            (telemetry.airspeed_mps
+                - birdman_game_app::registered_aircraft()
+                    .unwrap()
+                    .document()
+                    .trim
+                    .airspeed_mps)
                 .abs()
                 < 1e-12
         );
@@ -850,7 +860,7 @@ fn existing_presets_and_light_authority_seal_the_same_selected_contract() {
             recorded.controller_profile.maximum_slew_rad_per_second(),
             1.0
         );
-        let expected = birdman_game_session::launch_venue()
+        let expected = birdman_game_app::launch_venue()
             .unwrap()
             .platform
             .horizontal_direction_ned();

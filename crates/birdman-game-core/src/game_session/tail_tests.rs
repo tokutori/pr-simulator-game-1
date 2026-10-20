@@ -2,10 +2,9 @@ use super::*;
 use crate::{
     AeroError, AerodynamicEvaluationError, AerodynamicStage, BodyPoint, BodyVector,
     CompositeCgLaunchConditions, CourseAxis, DynamicsError, FbwAuthority, Gravity,
-    HybridAerodynamicLoad, HybridError, HybridMockDefinition, HybridModel, HybridSite,
-    HybridSurface, LoadError, NedPoint, NedVector, TailControlProfile,
-    TailFlightScenarioParameters, TailIncidence, TailPilotIntent, TailPilotPositionCommand,
-    TailRateTarget, WindField,
+    HybridAerodynamicLoad, HybridError, HybridModel, HybridSite, HybridSurface, LoadError,
+    NedPoint, NedVector, TailControlProfile, TailFlightScenarioParameters, TailIncidence,
+    TailPilotIntent, TailPilotPositionCommand, TailRateTarget, TestAircraft, WindField,
 };
 
 const CONTACT_POINTS: [BodyPoint; 1] = [BodyPoint::origin()];
@@ -23,7 +22,7 @@ fn identity() -> SessionScenarioIdentity {
 }
 
 fn configuration<'a>(
-    definition: &'a HybridMockDefinition,
+    definition: &'a TestAircraft,
     surfaces: &'a [HybridSurface<'a>],
     wind: WindField<'a>,
     cg_down: f64,
@@ -42,7 +41,7 @@ fn configuration<'a>(
 }
 
 fn configuration_for_heading<'a>(
-    definition: &'a HybridMockDefinition,
+    definition: &'a TestAircraft,
     surfaces: &'a [HybridSurface<'a>],
     wind: WindField<'a>,
     cg_down: f64,
@@ -57,13 +56,9 @@ fn configuration_for_heading<'a>(
     let launch = CompositeCgLaunchConditions::try_new(
         NedPoint::try_new(0.0, 0.0, cg_down).unwrap(),
         NedVector::try_new(
-            HybridMockDefinition::TRIM_AIRSPEED_MPS
-                * libm::cos(trim.gamma_rad())
-                * libm::cos(heading_rad),
-            HybridMockDefinition::TRIM_AIRSPEED_MPS
-                * libm::cos(trim.gamma_rad())
-                * libm::sin(heading_rad),
-            -HybridMockDefinition::TRIM_AIRSPEED_MPS * libm::sin(trim.gamma_rad()),
+            TestAircraft::TRIM_AIRSPEED_MPS * libm::cos(trim.gamma_rad()) * libm::cos(heading_rad),
+            TestAircraft::TRIM_AIRSPEED_MPS * libm::cos(trim.gamma_rad()) * libm::sin(heading_rad),
+            -TestAircraft::TRIM_AIRSPEED_MPS * libm::sin(trim.gamma_rad()),
         )
         .unwrap(),
         ground.attitude_body_to_ned(),
@@ -76,14 +71,14 @@ fn configuration_for_heading<'a>(
         definition.aircraft(),
         launch,
         TailIncidence::neutral(),
-        Gravity::try_new(HybridMockDefinition::TRIM_GRAVITY_MPS2).unwrap(),
+        Gravity::try_new(TestAircraft::TRIM_GRAVITY_MPS2).unwrap(),
         &CONTACT_POINTS,
         CourseAxis::try_new(libm::cos(heading_rad), libm::sin(heading_rad)).unwrap(),
     )
     .unwrap();
     let load = HybridAerodynamicLoad::try_new(
         HybridModel::try_new(definition.polar().unwrap(), surfaces).unwrap(),
-        HybridMockDefinition::TRIM_AIR_DENSITY_KG_M3,
+        TestAircraft::TRIM_AIR_DENSITY_KG_M3,
         wind,
     )
     .unwrap();
@@ -118,7 +113,7 @@ fn input() -> TailFlightTickInput {
 
 #[test]
 fn flight_progress_uses_signed_sealed_course_and_datum_despite_pilot_motion() {
-    let definition = HybridMockDefinition::try_new().unwrap();
+    let definition = TestAircraft::try_new().unwrap();
     let surfaces = definition.surfaces().unwrap();
     let heading_rad = 0.37;
     let mut session = launch(configuration_for_heading(
@@ -189,7 +184,7 @@ fn flight_progress_uses_signed_sealed_course_and_datum_despite_pilot_motion() {
 
 #[test]
 fn accepted_running_ticks_retain_the_latest_record_physical_payload() {
-    let definition = HybridMockDefinition::try_new().unwrap();
+    let definition = TestAircraft::try_new().unwrap();
     let surfaces = definition.surfaces().unwrap();
     let mut session = launch(configuration(
         &definition,
@@ -237,7 +232,7 @@ fn accepted_running_ticks_retain_the_latest_record_physical_payload() {
 
 #[test]
 fn tail_session_shares_lifecycle_pause_retry_and_record_contract() {
-    let definition = HybridMockDefinition::try_new().unwrap();
+    let definition = TestAircraft::try_new().unwrap();
     let surfaces = definition.surfaces().unwrap();
     let mut session = launch(configuration(
         &definition,
@@ -288,7 +283,7 @@ fn tail_session_shares_lifecycle_pause_retry_and_record_contract() {
 
 #[test]
 fn tail_session_water_contact_record_score_and_playback_share_one_terminal_time() {
-    let definition = HybridMockDefinition::try_new().unwrap();
+    let definition = TestAircraft::try_new().unwrap();
     let surfaces = definition.surfaces().unwrap();
     for mode in [
         ControlMode::Manual,
@@ -346,7 +341,7 @@ fn tail_session_water_contact_record_score_and_playback_share_one_terminal_time(
 
 #[test]
 fn tail_session_failed_stage_retains_last_successful_state_record_and_original_cause() {
-    let definition = HybridMockDefinition::try_new().unwrap();
+    let definition = TestAircraft::try_new().unwrap();
     let surfaces = definition.surfaces().unwrap();
     let winds = [NedVector::zero(); 8];
     let wind = WindField::grid(
@@ -396,7 +391,7 @@ fn tail_session_failed_stage_retains_last_successful_state_record_and_original_c
 
 #[test]
 fn tail_session_contact_at_start_does_not_record_unelapsed_input() {
-    let definition = HybridMockDefinition::try_new().unwrap();
+    let definition = TestAircraft::try_new().unwrap();
     let surfaces = definition.surfaces().unwrap();
     let trim = definition.trim().unwrap();
     let probe = trim
@@ -483,7 +478,7 @@ fn envelope_classification_preserves_numerical_failure_distinction() {
 
 #[test]
 fn terminal_owner_commits_record_and_result_for_score_success_and_failure() {
-    let definition = HybridMockDefinition::try_new().unwrap();
+    let definition = TestAircraft::try_new().unwrap();
     let surfaces = definition.surfaces().unwrap();
     let failure = TailFlightTickError::Dynamics(DynamicsError::Load(LoadError::Aerodynamic(
         AerodynamicEvaluationError::Hybrid(HybridError::new(
@@ -549,7 +544,7 @@ fn terminal_owner_commits_record_and_result_for_score_success_and_failure() {
 
 #[test]
 fn terminal_record_rejection_preserves_running_and_existing_result() {
-    let definition = HybridMockDefinition::try_new().unwrap();
+    let definition = TestAircraft::try_new().unwrap();
     let surfaces = definition.surfaces().unwrap();
     let mut session = launch(configuration(
         &definition,
@@ -604,7 +599,7 @@ fn terminal_record_rejection_preserves_running_and_existing_result() {
 
 #[test]
 fn running_owner_rejects_non_running_phases_before_evaluation() {
-    let definition = HybridMockDefinition::try_new().unwrap();
+    let definition = TestAircraft::try_new().unwrap();
     let surfaces = definition.surfaces().unwrap();
     let mut session = launch(configuration(
         &definition,
@@ -669,7 +664,7 @@ fn running_owner_preserves_callback_order_and_stage_failure_priority() {
         Append,
         Limit,
     }
-    let definition = HybridMockDefinition::try_new().unwrap();
+    let definition = TestAircraft::try_new().unwrap();
     let surfaces = definition.surfaces().unwrap();
     for stage in [
         Stage::Advanced,
@@ -836,7 +831,7 @@ fn running_owner_preserves_callback_order_and_stage_failure_priority() {
 
 #[test]
 fn running_owner_finalization_rejection_retains_the_previous_owner() {
-    let definition = HybridMockDefinition::try_new().unwrap();
+    let definition = TestAircraft::try_new().unwrap();
     let surfaces = definition.surfaces().unwrap();
     let mut session = launch(configuration(
         &definition,

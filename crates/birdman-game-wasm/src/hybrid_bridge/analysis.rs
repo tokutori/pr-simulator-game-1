@@ -2,7 +2,7 @@ use super::*;
 use crate::environment_snapshot::{EnvironmentProjection, EnvironmentSource};
 use birdman_game_core::{NedPoint, NedVector, WindError, WindField};
 
-use birdman_game_session::record_query::{
+use birdman_game_app::record_query::{
     GridRequest, RecordWindSource, SummaryDocument, WIND_GRID_SIZE as GRID_SIZE, WindDocument,
     WindProjection, WindSample, WindUnavailableReason,
 };
@@ -114,7 +114,7 @@ impl HybridGameSessionBridge {
             },
             EnvironmentProjection::Available { .. } => {
                 let wind = if identity.environment_version == 6 {
-                    birdman_game_session::bundled_environment()
+                    birdman_game_app::bundled_environment()
                         .map_err(|error| {
                             BoundaryError::Environment(
                                 crate::environment_snapshot::EnvironmentSnapshotError::Environment(
@@ -131,12 +131,11 @@ impl HybridGameSessionBridge {
                             )
                         })?
                 } else {
-                    let components = birdman_game_session::preset_wind_for_version(
-                        identity.environment_version,
-                    )
-                    .ok_or(BoundaryError::Environment(
-                        crate::environment_snapshot::EnvironmentSnapshotError::InvalidIdentity,
-                    ))?;
+                    let components =
+                        birdman_game_app::preset_wind_for_version(identity.environment_version)
+                            .ok_or(BoundaryError::Environment(
+                            crate::environment_snapshot::EnvironmentSnapshotError::InvalidIdentity,
+                        ))?;
                     WindField::uniform(
                         NedVector::try_new(components[0], components[1], components[2])
                             .map_err(BoundaryError::Coordinate)?,

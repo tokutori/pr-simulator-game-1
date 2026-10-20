@@ -3790,7 +3790,7 @@
               "type": "string"
             },
             "quality": {
-              "$ref": "#/$defs/GameUiWaterQuality",
+              "$ref": "#/$defs/WaterQuality",
               "description": "Requested quality."
             }
           },
@@ -4493,26 +4493,6 @@
       ],
       "type": "object"
     },
-    "GameUiWaterQuality": {
-      "description": "Rendering quality has no effect on physics or record identity.",
-      "oneOf": [
-        {
-          "const": "low",
-          "description": "Reduced mesh density.",
-          "type": "string"
-        },
-        {
-          "const": "medium",
-          "description": "Balanced mesh density.",
-          "type": "string"
-        },
-        {
-          "const": "high",
-          "description": "Detailed mesh density.",
-          "type": "string"
-        }
-      ]
-    },
     "GridRequest": {
       "additionalProperties": false,
       "description": "Echo of a validated five-by-five wind grid request.",
@@ -4901,26 +4881,6 @@
         {
           "const": "custom",
           "description": "Independently configured flight information cues.",
-          "type": "string"
-        }
-      ]
-    },
-    "LakeWaterQuality": {
-      "description": "Existing Web component and mesh budgets, without GPU types.",
-      "oneOf": [
-        {
-          "const": "low",
-          "description": "Six representative components and a 96-segment mesh.",
-          "type": "string"
-        },
-        {
-          "const": "medium",
-          "description": "Ten representative components and a 144-segment mesh.",
-          "type": "string"
-        },
-        {
-          "const": "high",
-          "description": "All 18 canonical components and a 224-segment mesh.",
           "type": "string"
         }
       ]
@@ -5549,7 +5509,7 @@
           "description": "Stable measurement or resource state."
         },
         "water_quality": {
-          "$ref": "#/$defs/LakeWaterQuality",
+          "$ref": "#/$defs/WaterQuality",
           "description": "Last successfully applied water quality."
         }
       },
@@ -5671,7 +5631,7 @@
               "description": "Requested shadow map, distinct from the applied value."
             },
             "water_quality": {
-              "$ref": "#/$defs/LakeWaterQuality",
+              "$ref": "#/$defs/WaterQuality",
               "description": "Requested water quality, distinct from the applied value."
             }
           },
@@ -5744,7 +5704,7 @@
               "description": "Retained manual shadow-map resolution."
             },
             "water_quality": {
-              "$ref": "#/$defs/LakeWaterQuality",
+              "$ref": "#/$defs/WaterQuality",
               "description": "Retained manual water quality."
             }
           },
@@ -5773,7 +5733,7 @@
               "description": "Restored with the retained manual resolution."
             },
             "manual_water_quality": {
-              "$ref": "#/$defs/LakeWaterQuality",
+              "$ref": "#/$defs/WaterQuality",
               "description": "Upper bound while automatic, restored when Auto is disabled."
             }
           },
@@ -7057,6 +7017,26 @@
             "contact"
           ],
           "type": "object"
+        }
+      ]
+    },
+    "WaterQuality": {
+      "description": "Shared non-physical water-detail selection.",
+      "oneOf": [
+        {
+          "const": "low",
+          "description": "Reduced water detail.",
+          "type": "string"
+        },
+        {
+          "const": "medium",
+          "description": "Balanced water detail.",
+          "type": "string"
+        },
+        {
+          "const": "high",
+          "description": "Detailed water rendering.",
+          "type": "string"
         }
       ]
     },

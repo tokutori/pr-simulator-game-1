@@ -1,4 +1,4 @@
-use birdman_game_session::venue_structures::{
+use birdman_game_scene::venue_structures::{
     ShoreStructureKind, ShoreStructureMesh, registered_structures,
 };
 use wasm_bindgen::prelude::*;

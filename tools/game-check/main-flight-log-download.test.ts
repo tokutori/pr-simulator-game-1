@@ -36,7 +36,10 @@ async function fixture(archive = false) {
     return `blob:flight-log-${String(blobs.length)}`;
   });
   const revokeUrl = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
-  const click = vi.spyOn(browser.HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+  const filenames: string[] = [];
+  const click = vi.spyOn(browser.HTMLAnchorElement.prototype, "click").mockImplementation(function(this: HTMLAnchorElement) {
+    filenames.push(this.download);
+  });
   const renderer = {
     startLoop: vi.fn(), beginViewFrame: vi.fn(), stopLoop: vi.fn(), render: vi.fn(), setFlightPose: vi.fn(), setPreparedFlightPose: vi.fn(),
     setLakeVisualCondition: vi.fn(), setLakeSkyCondition: vi.fn(), setLakeVenueVisible: vi.fn(), setFlightCameraMode: vi.fn(), setCinematicCameraView: vi.fn(),
@@ -89,7 +92,7 @@ async function fixture(archive = false) {
     button("game-result-technical").click();
   }
   await vi.waitFor(() => { expect(browser.document.querySelector('[data-control-id="game-flight-log-csv"]')).not.toBeNull(); });
-  return { browser, renderer, session, facade, original, blobs, createUrl, revokeUrl, click, button, pageHide, free,
+  return { browser, renderer, session, facade, original, blobs, createUrl, revokeUrl, click, filenames, button, pageHide, free,
     pageRestore: () => { pageEvent("pageshow", true); } };
 }
 
@@ -104,6 +107,7 @@ describe("actual Tail main, facade and generated WASM flight log download", () =
     trial.button("game-flight-log-json").click();
     expect(csv).toHaveBeenCalledTimes(1);
     expect(json).toHaveBeenCalledTimes(1);
+    expect(trial.filenames).toEqual(["flight-log-result.csv", "flight-log-result.json"]);
     expect(await trial.blobs[0]?.text()).toBe(expectedCsv);
     expect(await trial.blobs[1]?.text()).toBe(before);
     expect(trial.facade.readLifecycle().phase).toBe("result");
@@ -131,6 +135,7 @@ describe("actual Tail main, facade and generated WASM flight log download", () =
     const clock = trial.session.playback_clock_state();
     trial.button("game-flight-log-json").click();
     trial.button("game-flight-log-csv").click();
+    expect(trial.filenames).toEqual(["flight-log-replay.json", "flight-log-replay.csv"]);
     expect(await trial.blobs[0]?.text()).toBe(trial.original);
     expect(trial.session.playback_clock_state()).toEqual(clock);
     expect(trial.facade.readLifecycle().phase).toBe("replay");
@@ -152,22 +157,32 @@ describe("actual Tail main, facade and generated WASM flight log download", () =
     trial.click.mockImplementationOnce(() => { throw new Error("Injected browser download failure"); });
     trial.button("game-flight-log-json").click();
     expect(trial.browser.document.body.textContent).toContain("Injected browser download failure");
+    expect(trial.button("game-flight-log-json").disabled).toBe(false);
     expect(trial.revokeUrl).toHaveBeenCalledExactlyOnceWith("blob:flight-log-1");
     expect(trial.browser.document.querySelector("a[download]")).toBeNull();
     trial.button("game-flight-log-json").click();
     expect(trial.browser.document.body.textContent).toContain("ダウンロードを要求した");
   });
 
-  it("rejects a read whose source changes through Retry before browser activation", async () => {
+  it("releases the URL and owner once when browser activation hides the page", async () => {
     const trial = await fixture();
-    vi.spyOn(trial.session, "export_flight_log_csv").mockImplementationOnce(() => {
-      trial.button("game-result-retry").click();
-      return "stale source";
-    });
-    trial.button("game-flight-log-csv").click();
-    expect(trial.createUrl).not.toHaveBeenCalled();
-    expect(trial.facade.readLifecycle().phase).toBe("briefing_ready");
+    const original = trial.session.export_current_flight_record_json();
+    const json = vi.spyOn(trial.session, "export_current_flight_record_json");
+    trial.click.mockImplementationOnce(() => { trial.pageHide(false); });
+    trial.button("game-flight-log-json").click();
+    expect(json).toHaveBeenCalledTimes(1);
+    expect(trial.createUrl).toHaveBeenCalledTimes(1);
+    expect(await trial.blobs[0]?.text()).toBe(original);
+    expect(trial.revokeUrl).toHaveBeenCalledExactlyOnceWith("blob:flight-log-1");
+    expect(trial.free).toHaveBeenCalledTimes(1);
+    expect(trial.browser.document.querySelector("a[download]")).toBeNull();
     expect(trial.browser.document.body.textContent).not.toContain("ダウンロードを要求した");
+    trial.button("game-flight-log-json").click();
+    trial.pageHide(false);
+    expect(json).toHaveBeenCalledTimes(1);
+    expect(trial.createUrl).toHaveBeenCalledTimes(1);
+    expect(trial.revokeUrl).toHaveBeenCalledTimes(1);
+    expect(trial.free).toHaveBeenCalledTimes(1);
   });
 
   it.each([2, 3])("delivers one export effect and preserves presentation exception on render %s", async (failedRender) => {

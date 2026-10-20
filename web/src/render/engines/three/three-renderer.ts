@@ -43,12 +43,11 @@ import { pilotEyePoseThree, poseFrdToThree, syntheticPilotEyePoint } from "../..
 import { replayCameraPoseFrd } from "../../camera/replay-camera.js";
 import { DEFAULT_LAKE_VISUAL_CONDITION, lakeWaterQualityProfile } from "../../contracts/lake-water.js";
 import type { LakeVisualCondition, LakeWaterQuality } from "../../contracts/lake-water.js";
-import { createLakeSkyCondition, lakeSkySunDirectionNed, sameLakeSkyCondition } from "../../contracts/lake-sky.js";
+import { createLakeSkyCondition, lakeSkySunDirectionNed, sameLakeSkyRenderCondition } from "../../contracts/lake-sky.js";
 import type { LakeSkyCondition } from "../../contracts/lake-sky.js";
 import { createProductionLakeDetailLayer } from "./lake-detail-texture.js";
 import type { LakeDetailLayer } from "./lake-detail-texture.js";
 import { createLakeSkyTexture, lakeSkyHaze } from "./lake-sky-texture.js";
-import { createLakeClouds, disposeLakeClouds } from "./lake-clouds.js";
 import { lake_scene_ambient_color_srgb, lake_scene_ambient_irradiance,
   lake_scene_sunlight_color_srgb, lake_scene_sunlight_irradiance } from "../../../../pkg/birdman_game_wasm.js";
 import { createLakeChunks, disposeLakeChunks, lakeWaterDisplacementBounds, updateLakeChunkBounds } from "./lake-water-geometry.js";
@@ -186,8 +185,6 @@ export function createThreeRenderer(
   const scene = new Scene();
   let activeSkyCondition: LakeSkyCondition | null = null;
   let skyTexture = createLakeSkyTexture(activeSkyCondition);
-  let clouds = createLakeClouds(activeSkyCondition);
-  scene.add(clouds);
   scene.background = skyTexture;
   const lakeFog = new Fog(...lakeSkyHaze(undefined));
   scene.fog = lakeFog;
@@ -860,7 +857,6 @@ export function createThreeRenderer(
       farWaterMaterial.dispose();
       reflectionTarget.dispose();
       skyTexture.dispose();
-      disposeLakeClouds(clouds);
       lakeResources.near.texture.dispose();
       lakeResources.far.texture.dispose();
       airframe.dispose();
@@ -923,12 +919,9 @@ export function createThreeRenderer(
       ensureActive(disposed);
       const nextCondition = condition === null ? null : createLakeSkyCondition(condition);
       if (framePhase === "view" || pendingViewInputs !== null) { stageViewInputs({ sky: nextCondition }); return; }
-      if (activeSkyCondition === null ? nextCondition === null : nextCondition !== null && sameLakeSkyCondition(activeSkyCondition, nextCondition)) return;
+      if (activeSkyCondition === null ? nextCondition === null : nextCondition !== null && sameLakeSkyRenderCondition(activeSkyCondition, nextCondition)) return;
       const [, hazeNear, hazeFar] = lakeSkyHaze(nextCondition?.visibilityMeters);
       const nextTexture = createLakeSkyTexture(nextCondition);
-      let nextClouds;
-      try { nextClouds = createLakeClouds(nextCondition); }
-      catch (cause) { nextTexture.dispose(); throw cause; }
       const direction = nextCondition === null ? null : lakeSkySunDirectionNed(nextCondition);
       const daylight = nextCondition !== null && nextCondition.sunElevationDegrees >= 0 ? 1 : 0;
       const north = direction?.north ?? 0;
@@ -942,21 +935,13 @@ export function createThreeRenderer(
       lakeFog.far = hazeFar;
       lakeFog.near = hazeNear;
       lakeUniforms.hazeRange.value.set(lakeFog.near, lakeFog.far, 0, 0);
-      const previousClouds = clouds;
       const previousTexture = skyTexture;
       scene.background = nextTexture;
-      scene.remove(previousClouds);
-      scene.add(nextClouds);
-      clouds = nextClouds;
       lakeUniforms.skyTexture.value = nextTexture;
       skyTexture = nextTexture;
       activeSkyCondition = nextCondition;
       screenAuto?.invalidate("quality_changed");
-      const failures: unknown[] = [];
-      for (const release of [() => { disposeLakeClouds(previousClouds); }, () => { previousTexture.dispose(); }]) {
-        try { release(); } catch (cause) { failures.push(cause); }
-      }
-      if (failures.length > 0) throw new AggregateError(failures, "Previous sky projection cleanup failed");
+      previousTexture.dispose();
     },
     setLakeVenueVisible(visible: boolean) {
       ensureActive(disposed);

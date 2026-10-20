@@ -1,8 +1,8 @@
 //! Browser adapter; no clock or browser state enters the simulation core.
 
+use birdman_game_app::{application::ExternalPauseReason, environment_snapshot};
 use birdman_game_core::{BriefingFailure, ControlMode, FbwAuthority};
 use birdman_game_format::{AssistanceLevel, DifficultyPreset, InformationLevel, WeatherClass};
-use birdman_game_session::{application::ExternalPauseReason, environment_snapshot};
 use wasm_bindgen::{JsValue, prelude::*};
 
 mod cockpit_geometry;
@@ -18,14 +18,12 @@ mod venue_terrain;
 mod wing_geometry;
 mod wing_texture;
 
-pub use birdman_game_session::{HybridSessionPreparation, HybridSessionPreparationError};
 pub use cockpit_geometry::CockpitGeometryBridge;
 pub use head_hud::game_ui_head_hud_fit_json;
 pub use hybrid_bridge::{HybridGameSessionBridge, TailPersonalBestSelectionBridge};
 pub use lake_sky::{
-    LakeCloudsBridge, LakeSkyImageBridge, lake_scene_ambient_color_srgb,
-    lake_scene_ambient_irradiance, lake_scene_haze, lake_scene_sunlight_color_srgb,
-    lake_scene_sunlight_irradiance,
+    LakeSkyImageBridge, lake_scene_ambient_color_srgb, lake_scene_ambient_irradiance,
+    lake_scene_haze, lake_scene_sunlight_color_srgb, lake_scene_sunlight_irradiance,
 };
 pub use lake_water::{LakeDetailImageBridge, LakeWaveProjectionBridge};
 pub use screen_render_auto::ScreenRenderAutoBridge;
@@ -35,7 +33,7 @@ pub use venue_terrain::VenueTerrainGeometryBridge;
 pub use wing_geometry::WingGeometryBridge;
 pub use wing_texture::{apply_indigo_wing_decal, indigo_wing_texture_size, indigo_wing_textures};
 
-const MAX_TICKS: u64 = birdman_game_session::DEFAULT_MAXIMUM_FLIGHT_TICKS;
+const MAX_TICKS: u64 = birdman_game_app::DEFAULT_MAXIMUM_FLIGHT_TICKS;
 
 /// Exposes the fixed simulation frequency to platform callers.
 #[wasm_bindgen]
@@ -46,19 +44,19 @@ pub fn physics_hz() -> u32 {
 #[wasm_bindgen]
 #[doc = "Exposes the shared ProcessingDelay frame interval limit in milliseconds."]
 pub fn maximum_flight_frame_gap_milliseconds() -> u32 {
-    birdman_game_session::MAXIMUM_FLIGHT_FRAME_GAP_MILLISECONDS
+    birdman_game_app::MAXIMUM_FLIGHT_FRAME_GAP_MILLISECONDS
 }
 
 #[wasm_bindgen]
 #[doc = "Exposes the shared ordinary Screen vertical field of view in degrees."]
 pub fn screen_vertical_field_of_view_degrees() -> f64 {
-    birdman_game_session::SCREEN_VERTICAL_FIELD_OF_VIEW_DEGREES
+    birdman_game_presentation::SCREEN_VERTICAL_FIELD_OF_VIEW_DEGREES
 }
 
 #[wasm_bindgen]
 #[doc = "Copies the shared display-only pilot eye mount in FRD metres; load once after WASM initialization."]
 pub fn pilot_eye_offset_frd() -> Vec<f64> {
-    birdman_game_session::cockpit_geometry::CockpitGeometry::pilot_eye_offset_frd().to_vec()
+    birdman_game_scene::cockpit_geometry::CockpitGeometry::pilot_eye_offset_frd().to_vec()
 }
 
 /// Queries immutable environment metadata by a strict JSON-encoded complete identity.

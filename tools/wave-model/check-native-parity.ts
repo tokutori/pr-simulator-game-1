@@ -15,7 +15,7 @@ interface DetailConfiguration {
 
 const output = process.argv[2];
 if (output === undefined) throw new Error("Provide the native parity-output directory");
-const reference: unknown = JSON.parse(readFileSync(new URL("../../crates/birdman-game-session/src/lake_water/web-reference.json", import.meta.url), "utf8"));
+const reference: unknown = JSON.parse(readFileSync(new URL("../../crates/birdman-game-scene/src/lake_water/web-reference.json", import.meta.url), "utf8"));
 if (typeof reference !== "object" || reference === null || !("details" in reference) || !Array.isArray(reference.details)) throw new Error("Invalid trusted Web parity fixture");
 for (const [index, detail] of reference.details.entries()) {
   const configuration = (detail as { configuration: DetailConfiguration }).configuration;

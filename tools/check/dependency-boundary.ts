@@ -6,12 +6,14 @@ export const NATIVE_LINUX_WINDOW_TARGET = 'cfg(target_os = "linux")';
 
 const allowed = new Map<string, readonly string[]>([
   ["birdman-game-core", ["libm"]],
+  ["birdman-game-app", ["birdman-game-content", "birdman-game-core", "birdman-game-format", "serde", "serde_json", "sha2"]],
   ["birdman-game-content", ["birdman-game-core", "birdman-game-format", "libm"]],
   ["birdman-game-format", ["birdman-game-core", "serde", "serde_json", "sha2"]],
-  ["birdman-game-cli", ["birdman-game-core", "birdman-game-format", "birdman-game-session", "serde", "serde_json"]],
-  ["birdman-game-wasm", ["birdman-game-core", "birdman-game-format", "birdman-game-session", "serde", "serde_json", "sha2", "wasm-bindgen"]],
-  ["birdman-game-session", ["birdman-game-core", "birdman-game-format", "serde", "serde_json", "sha2", "earcut", "time", "unicode-width"]],
-  ["birdman-game-bevy", ["birdman-game-core", "birdman-game-format", "birdman-game-session", "bevy", "serde", "serde_json"]]
+  ["birdman-game-cli", ["birdman-game-app", "birdman-game-core", "birdman-game-format", "birdman-game-presentation", "serde", "serde_json"]],
+  ["birdman-game-wasm", ["birdman-game-app", "birdman-game-core", "birdman-game-format", "birdman-game-presentation", "birdman-game-scene", "serde", "serde_json", "sha2", "wasm-bindgen"]],
+  ["birdman-game-presentation", ["birdman-game-app", "birdman-game-core", "birdman-game-format", "serde", "serde_json", "time", "unicode-width"]],
+  ["birdman-game-scene", ["birdman-game-app", "birdman-game-content", "birdman-game-core", "birdman-game-format", "serde", "serde_json", "sha2", "earcut"]],
+  ["birdman-game-bevy", ["birdman-game-app", "birdman-game-core", "birdman-game-format", "birdman-game-presentation", "birdman-game-scene", "bevy", "serde", "serde_json"]]
 ]);
 
 const excludedNativeFeatures = new Set([
@@ -73,7 +75,7 @@ function isNativeTextDependency(crate: string, dependency: Record<string, unknow
 }
 
 function isSharedChartNumberDependency(crate: string, dependency: Record<string, unknown>): boolean {
-  return crate === "birdman-game-session"
+  return crate === "birdman-game-presentation"
     && dependency.name === "ryu-js"
     && dependency.kind === null
     && dependency.target === null
@@ -88,7 +90,7 @@ function isSharedChartNumberDependency(crate: string, dependency: Record<string,
 }
 
 function isSharedImageOperationsDependency(crate: string, dependency: Record<string, unknown>): boolean {
-  return crate === "birdman-game-session"
+  return crate === "birdman-game-scene"
     && dependency.name === "image"
     && dependency.kind === null
     && dependency.target === null
@@ -102,8 +104,15 @@ function isSharedImageOperationsDependency(crate: string, dependency: Record<str
     && dependency.features.length === 0;
 }
 
+function isPresentationSceneTestDependency(crate: string, dependency: Record<string, unknown>): boolean {
+  return crate === "birdman-game-presentation" && dependency.name === "birdman-game-scene"
+    && dependency.kind === "dev" && dependency.target === null
+    && dependency.optional === false && dependency.rename === null
+    && Array.isArray(dependency.features) && dependency.features.length === 0;
+}
+
 function isHostNumericalTestDependency(crate: string, dependency: Record<string, unknown>): boolean {
-  return crate === "birdman-game-core"
+  return crate === "birdman-game-content"
     && dependency.name === "nalgebra"
     && dependency.kind === "dev"
     && dependency.target === HOST_NUMERICAL_TEST_TARGET
@@ -150,7 +159,7 @@ function isCoreProofDependency(crate: string, dependency: Record<string, unknown
 }
 
 function activatesSchema(feature: unknown): boolean {
-  return typeof feature === "string" && (feature === "schema" || feature === "schemars" || feature === "dep:schemars"
+  return typeof feature === "string" && (feature === "dep:birdman-game-presentation" || feature === "birdman-game-presentation" || feature === "schema" || feature === "schemars" || feature === "dep:schemars"
     || feature.startsWith("schemars/") || feature.startsWith("schemars?/") || feature.endsWith("/schema"));
 }
 
@@ -167,7 +176,8 @@ function hasSchemaFeature(features: unknown, expected: readonly string[]): boole
 
 function isSchemaGenerationDependency(crate: string, dependency: Record<string, unknown>, features: unknown): boolean {
   const expected = crate === "birdman-game-format" ? ["dep:schemars"]
-    : crate === "birdman-game-session" ? ["dep:schemars", "birdman-game-format/schema"] : undefined;
+    : crate === "birdman-game-app" ? ["dep:schemars", "birdman-game-format/schema"]
+    : crate === "birdman-game-presentation" ? ["dep:schemars", "birdman-game-app/schema", "birdman-game-format/schema"] : undefined;
   return expected !== undefined
     && hasSchemaFeature(features, expected)
     && dependency.name === "schemars"
@@ -187,7 +197,7 @@ function isSchemaGenerationDependency(crate: string, dependency: Record<string, 
 function assertSchemaFeatureBoundary(crate: string, features: unknown): void {
   if (features === undefined) return;
   if (crate === "birdman-game-cli"
-    && !hasSchemaFeature(features, ["birdman-game-session/schema"])) {
+    && !hasSchemaFeature(features, ["dep:birdman-game-presentation", "birdman-game-presentation/schema"])) {
     throw new Error(`Forbidden schema feature boundary in ${crate}`);
   }
   if (crate !== "birdman-game-wasm" && crate !== "birdman-game-bevy") return;
@@ -216,9 +226,12 @@ export function assertDependencyBoundary(packages: readonly unknown[]): void {
       if (dependencyName === "bevy" && !isNativeEngineDependency(name, dependency)) {
         throw new Error(`Forbidden native engine dependency in ${name}`);
       }
-      if (["birdman-game-format", "birdman-game-session"].includes(dependencyName)
+      if (["birdman-game-format", "birdman-game-app", "birdman-game-presentation"].includes(dependencyName)
         && Array.isArray(dependency.features) && dependency.features.includes("schema")) {
         throw new Error(`Forbidden normal schema activation in ${name}: ${dependencyName}`);
+      }
+      if (name === "birdman-game-cli" && dependencyName === "birdman-game-presentation" && dependency.optional !== true) {
+        throw new Error(`Forbidden normal presentation dependency in ${name}`);
       }
       if (Array.isArray(dependency.features) && dependency.features.includes("verus-proof")) {
         throw new Error(`Forbidden normal proof activation in ${name}: ${dependencyName}`);
@@ -227,6 +240,7 @@ export function assertDependencyBoundary(packages: readonly unknown[]): void {
         && !isNativeTextDependency(name, dependency)
         && !isSharedChartNumberDependency(name, dependency)
         && !isSharedImageOperationsDependency(name, dependency)
+        && !isPresentationSceneTestDependency(name, dependency)
         && !isHostNumericalTestDependency(name, dependency)
         && !isCorePolynomialDependency(name, dependency)
         && !isCoreProofDependency(name, dependency, pkg.features)

@@ -65,7 +65,7 @@ pub enum MathError {
     NonFinite,
     /// A quaternion is zero or outside the permitted unit-length tolerance.
     InvalidQuaternion,
-    /// A quaternion interpolation fraction is outside the inclusive unit interval.
+    /// An interpolation fraction is outside the inclusive unit interval.
     InvalidInterpolationFraction,
     /// A matrix is not exactly symmetric.
     AsymmetricTensor,

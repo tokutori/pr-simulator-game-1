@@ -1,5 +1,7 @@
 use alloc::vec::Vec;
-use birdman_game_core::{BodyPoint, BodyVector, HybridSurfaceRole, MathError};
+use birdman_game_core::{
+    BodyPoint, BodyVector, HybridSurfaceRole, MathError, TailIncidence, WingBendingFactor,
+};
 use birdman_game_format::aircraft::{
     AircraftAirfoilDocument, AircraftCockpitStationDocument, AircraftDocument,
     AircraftSectionDocument, AircraftSurfaceDocument,
@@ -10,6 +12,8 @@ use birdman_game_format::aircraft::{
 pub enum ShapeError {
     /// A sampling coordinate is non-finite.
     NonFinite,
+    /// Airspeed is negative rather than a speed magnitude.
+    InvalidAirspeed,
     /// A chord fraction lies outside the closed unit interval.
     InvalidChordFraction,
     /// A span coordinate lies outside the named surface.
@@ -18,6 +22,8 @@ pub enum ShapeError {
     OutsideCockpit,
     /// A resolution lies outside the bounded structural sampling contract.
     InvalidSampling,
+    /// The caller's output slice differs from the prepared contact-point count.
+    MismatchedContactPointCount,
     /// A derived point or frame cannot be represented by finite coordinates.
     Math(MathError),
 }
@@ -39,6 +45,36 @@ pub struct ContactSampling {
 }
 
 impl ContactSampling {
+    /// Registered neutral-polytope resolution shared with presentation tessellation.
+    pub const DEFAULT: Self = Self {
+        chord_steps: 32,
+        circumference_steps: 24,
+    };
+
+    /// Number of cosine-spaced intervals along each structural chord.
+    pub const fn chord_steps(self) -> u32 {
+        self.chord_steps
+    }
+
+    /// Number of vertices around each closed cockpit or beam ring.
+    pub const fn circumference_steps(self) -> u32 {
+        self.circumference_steps
+    }
+
+    /// Canonical closed cosine grid, including the exact endpoints and middle station.
+    pub fn chord_fractions(self) -> impl Iterator<Item = f64> {
+        (0..=self.chord_steps).map(move |step| match step {
+            0 => 0.0,
+            step if step == self.chord_steps => 1.0,
+            step if step * 2 == self.chord_steps => 0.5,
+            step => {
+                (1.0 - libm::cos(
+                    core::f64::consts::PI * f64::from(step) / f64::from(self.chord_steps),
+                )) * 0.5
+            }
+        })
+    }
+
     /// Samples cosine-spaced chord fractions and closed cockpit/beam rings.
     pub fn try_new(chord_steps: u32, circumference_steps: u32) -> Result<Self, ShapeError> {
         if !(2..=128).contains(&chord_steps) || !(4..=128).contains(&circumference_steps) {
@@ -53,10 +89,7 @@ impl ContactSampling {
 
 impl Default for ContactSampling {
     fn default() -> Self {
-        Self {
-            chord_steps: 32,
-            circumference_steps: 24,
-        }
+        Self::DEFAULT
     }
 }
 
@@ -80,6 +113,55 @@ impl<'a> AircraftShape<'a> {
             .find(|surface| surface.role.core_role() == role)
             .expect("validated aircraft contains every unique surface role");
         SurfaceShape { source, role }
+    }
+
+    /// Derives the registered speed-squared bending coefficient, bounded to 0.3..=1.6.
+    pub fn wing_bending_factor(self, airspeed_mps: f64) -> Result<WingBendingFactor, ShapeError> {
+        validate_airspeed(airspeed_mps)?;
+        let ratio = airspeed_mps / self.document.trim.airspeed_mps;
+        WingBendingFactor::try_new((ratio * ratio).clamp(0.3, 1.6)).map_err(ShapeError::Math)
+    }
+
+    /// Body-FRD displacement of the main-wing cantilever rooted at body y = 0.
+    ///
+    /// A uniform line load supports the registered total weight over the complete
+    /// span. Its speed-squared load factor is bounded to 0.3..=1.6; the source EI
+    /// and each half-wing length determine the closed-form bending displacement.
+    pub fn wing_displacement(
+        self,
+        lateral_position_m: f64,
+        airspeed_mps: f64,
+    ) -> Result<BodyVector, ShapeError> {
+        let factor = self.wing_bending_factor(airspeed_mps)?;
+        self.wing_displacement_with_factor(lateral_position_m, factor)
+    }
+
+    /// Evaluates the registered cantilever with an explicit accepted bending coefficient.
+    pub fn wing_displacement_with_factor(
+        self,
+        lateral_position_m: f64,
+        factor: WingBendingFactor,
+    ) -> Result<BodyVector, ShapeError> {
+        if !lateral_position_m.is_finite() {
+            return Err(ShapeError::NonFinite);
+        }
+        let [minimum, maximum] = self.surface(HybridSurfaceRole::MainWing).span_bounds_m();
+        if minimum > 0.0 || maximum < 0.0 || !(minimum..=maximum).contains(&lateral_position_m) {
+            return Err(ShapeError::OutsideSurface(HybridSurfaceRole::MainWing));
+        }
+        let span = lateral_position_m.abs();
+        let length = if lateral_position_m < 0.0 {
+            -minimum
+        } else {
+            maximum
+        };
+        let mass = self.document.mass.airframe_kg + self.document.pilot.mass_kg;
+        let load = mass * self.document.trim.gravity_mps2 * factor.value() / (maximum - minimum);
+        let displacement =
+            load * span * span * (6.0 * length * length - 4.0 * length * span + span * span)
+                / self.document.structure.wing_flexural_rigidity_nm2
+                / 24.0;
+        BodyVector::try_new(0.0, 0.0, -displacement).map_err(ShapeError::Math)
     }
 
     /// Interpolates cockpit dimensions at a closed forward-axis coordinate.
@@ -132,45 +214,60 @@ impl<'a> AircraftShape<'a> {
 
     /// Builds the neutral outer polytope from all section knots, cockpit stations and beam ends.
     pub fn contact_points(self, sampling: ContactSampling) -> Result<Vec<BodyPoint>, ShapeError> {
+        self.contact_samples(sampling).map(|samples| samples.points)
+    }
+
+    pub(crate) fn contact_samples(
+        self,
+        sampling: ContactSampling,
+    ) -> Result<ContactSamples, ShapeError> {
         let mut points = Vec::new();
-        for role in [
+        let mut surface_ends = [0; 3];
+        for (index, role) in [
             HybridSurfaceRole::MainWing,
             HybridSurfaceRole::HorizontalTail,
             HybridSurfaceRole::VerticalTail,
-        ] {
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let group_start = points.len();
             let surface = self.surface(role);
             for span in surface.span_stations_m() {
-                for step in 0..=sampling.chord_steps {
-                    let fraction = match step {
-                        0 => 0.0,
-                        step if step == sampling.chord_steps => 1.0,
-                        step => {
-                            (1.0 - libm::cos(
-                                core::f64::consts::PI * f64::from(step)
-                                    / f64::from(sampling.chord_steps),
-                            )) * 0.5
-                        }
-                    };
+                for fraction in sampling.chord_fractions() {
                     for face in [AirfoilFace::Upper, AirfoilFace::Lower] {
-                        push_distinct(&mut points, surface.point(span, fraction, face)?);
+                        push_distinct(
+                            &mut points,
+                            surface.point(span, fraction, face)?,
+                            group_start,
+                        );
                     }
                 }
             }
+            surface_ends[index] = points.len();
         }
+        let rigid_start = points.len();
         for station in &self.document.structure.cockpit_stations {
             for step in 0..sampling.circumference_steps {
                 let angle = core::f64::consts::TAU * f64::from(step)
                     / f64::from(sampling.circumference_steps);
-                push_distinct(&mut points, self.cockpit_point(station.forward_m, angle)?);
+                push_distinct(
+                    &mut points,
+                    self.cockpit_point(station.forward_m, angle)?,
+                    rigid_start,
+                );
             }
         }
-        self.append_beam_points(&mut points, sampling.circumference_steps)?;
-        Ok(points)
+        self.append_beam_points(&mut points, sampling.circumference_steps, rigid_start)?;
+        Ok(ContactSamples {
+            points,
+            surface_ends,
+        })
     }
 
-    fn append_beam_points(self, points: &mut Vec<BodyPoint>, steps: u32) -> Result<(), ShapeError> {
-        let structure = &self.document.structure;
-        let [first, second] = structure.main_beam_endpoints_frd_m;
+    /// Returns the unit beam axis and two orthogonal radial axes in body FRD.
+    pub fn beam_frame(self) -> Result<[BodyVector; 3], ShapeError> {
+        let [first, second] = self.document.structure.main_beam_endpoints_frd_m;
         let delta = core::array::from_fn::<_, 3, _>(|axis| second[axis] - first[axis]);
         let direction = body_vector(delta)?;
         let length = direction.norm().map_err(ShapeError::Math)?;
@@ -190,6 +287,18 @@ impl<'a> AircraftShape<'a> {
         let norm = right.norm().map_err(ShapeError::Math)?;
         let right = right.scaled(1.0 / norm).map_err(ShapeError::Math)?;
         let down = direction.cross(right).map_err(ShapeError::Math)?;
+        Ok([direction, right, down])
+    }
+
+    fn append_beam_points(
+        self,
+        points: &mut Vec<BodyPoint>,
+        steps: u32,
+        group_start: usize,
+    ) -> Result<(), ShapeError> {
+        let structure = &self.document.structure;
+        let [first, second] = structure.main_beam_endpoints_frd_m;
+        let [_, right, down] = self.beam_frame()?;
         for center in [first, second] {
             for step in 0..steps {
                 let angle = core::f64::consts::TAU * f64::from(step) / f64::from(steps);
@@ -204,10 +313,83 @@ impl<'a> AircraftShape<'a> {
                     body_point(center)?
                         .translated(offset)
                         .map_err(ShapeError::Math)?,
+                    group_start,
                 );
             }
         }
         Ok(())
+    }
+}
+
+pub(crate) struct ContactSamples {
+    pub(crate) points: Vec<BodyPoint>,
+    surface_ends: [usize; 3],
+}
+
+impl ContactSamples {
+    pub(crate) fn write_with_factor(
+        &self,
+        shape: AircraftShape<'_>,
+        factor: WingBendingFactor,
+        incidence: TailIncidence,
+        output: &mut [BodyPoint],
+    ) -> Result<(), ShapeError> {
+        if output.len() != self.points.len() {
+            return Err(ShapeError::MismatchedContactPointCount);
+        }
+        let horizontal = shape
+            .surface(HybridSurfaceRole::HorizontalTail)
+            .actuation(incidence)?;
+        let vertical = shape
+            .surface(HybridSurfaceRole::VerticalTail)
+            .actuation(incidence)?;
+        for (index, (point, target)) in self.points.iter().zip(output).enumerate() {
+            *target = if index < self.surface_ends[0] {
+                point
+                    .translated(shape.wing_displacement_with_factor(point.components()[1], factor)?)
+                    .map_err(ShapeError::Math)?
+            } else if index < self.surface_ends[1] {
+                horizontal.apply(*point)?
+            } else if index < self.surface_ends[2] {
+                vertical.apply(*point)?
+            } else {
+                *point
+            };
+        }
+        Ok(())
+    }
+}
+
+struct SurfaceActuation {
+    pivot: [f64; 3],
+    role: HybridSurfaceRole,
+    sine: f64,
+    cosine: f64,
+}
+
+impl SurfaceActuation {
+    fn apply(&self, point: BodyPoint) -> Result<BodyPoint, ShapeError> {
+        if self.sine == 0.0 && self.cosine == 1.0 {
+            return Ok(point);
+        }
+        let coordinates = point.components();
+        let relative: [f64; 3] = core::array::from_fn(|axis| coordinates[axis] - self.pivot[axis]);
+        let rotated = match self.role {
+            HybridSurfaceRole::MainWing => relative,
+            HybridSurfaceRole::HorizontalTail => [
+                self.cosine * relative[0] + self.sine * relative[2],
+                relative[1],
+                -self.sine * relative[0] + self.cosine * relative[2],
+            ],
+            HybridSurfaceRole::VerticalTail => [
+                self.cosine * relative[0] - self.sine * relative[1],
+                self.sine * relative[0] + self.cosine * relative[1],
+                relative[2],
+            ],
+        };
+        body_point(core::array::from_fn(|axis| {
+            self.pivot[axis] + rotated[axis]
+        }))
     }
 }
 
@@ -219,6 +401,49 @@ pub struct SurfaceShape<'a> {
 }
 
 impl<'a> SurfaceShape<'a> {
+    /// Physical role of this validated surface.
+    pub const fn role(self) -> HybridSurfaceRole {
+        self.role
+    }
+
+    /// Normalized camber and thickness parameters of the source profile.
+    pub const fn airfoil(self) -> AircraftAirfoilDocument {
+        self.source.airfoil
+    }
+
+    /// Body-FRD midpoint of the first and last quarter-chord stations.
+    pub fn incidence_pivot(self) -> Result<BodyPoint, ShapeError> {
+        let sections = &self.source.sections;
+        let first = sections[0].quarter_chord_frd_m;
+        let last = sections[sections.len() - 1].quarter_chord_frd_m;
+        body_point(core::array::from_fn(|axis| {
+            first[axis] * 0.5 + last[axis] * 0.5
+        }))
+    }
+
+    /// Rotates a neutral point about body y for the horizontal tail or body z for the fin.
+    pub fn actuated_point(
+        self,
+        point: BodyPoint,
+        incidence: TailIncidence,
+    ) -> Result<BodyPoint, ShapeError> {
+        self.actuation(incidence)?.apply(point)
+    }
+
+    fn actuation(self, incidence: TailIncidence) -> Result<SurfaceActuation, ShapeError> {
+        let angle = match self.role {
+            HybridSurfaceRole::MainWing => 0.0,
+            HybridSurfaceRole::HorizontalTail => incidence.elevator_rad(),
+            HybridSurfaceRole::VerticalTail => incidence.rudder_rad(),
+        };
+        Ok(SurfaceActuation {
+            pivot: self.incidence_pivot()?.components(),
+            role: self.role,
+            sine: libm::sin(angle),
+            cosine: libm::cos(angle),
+        })
+    }
+
     /// Complete closed span range along body y, or body z for the fin.
     pub fn span_bounds_m(self) -> [f64; 2] {
         let sections = &self.source.sections;
@@ -366,8 +591,18 @@ fn body_vector([forward, right, down]: [f64; 3]) -> Result<BodyVector, ShapeErro
     BodyVector::try_new(forward, right, down).map_err(ShapeError::Math)
 }
 
-fn push_distinct(points: &mut Vec<BodyPoint>, point: BodyPoint) {
-    if points.last() != Some(&point) {
+fn validate_airspeed(airspeed_mps: f64) -> Result<(), ShapeError> {
+    if !airspeed_mps.is_finite() {
+        return Err(ShapeError::NonFinite);
+    }
+    if airspeed_mps < 0.0 {
+        return Err(ShapeError::InvalidAirspeed);
+    }
+    Ok(())
+}
+
+fn push_distinct(points: &mut Vec<BodyPoint>, point: BodyPoint, group_start: usize) {
+    if points.len() == group_start || points.last() != Some(&point) {
         points.push(point);
     }
 }

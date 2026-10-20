@@ -1,4 +1,4 @@
-use birdman_game_session::cockpit_geometry::{CockpitGeometry, CockpitMaterial};
+use birdman_game_scene::cockpit_geometry::{CockpitGeometry, CockpitMaterial};
 use wasm_bindgen::prelude::*;
 
 #[doc = "Copies the fixed cockpit into JavaScript-owned bulk arrays; release after mesh construction."]

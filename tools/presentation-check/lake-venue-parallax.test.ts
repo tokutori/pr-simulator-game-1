@@ -55,8 +55,7 @@ function cameraForVenueView(mode: "platform" | "shore" | "telephoto"): Perspecti
   const session = recordedCameraFixture();
   let view;
   try {
-    const dataset = session.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
-    view = session.queryReplayCamera(0, mode, true, dataset).replayCamera.cinematic;
+    view = session.queryReplayCamera(0, mode, true).replayCamera.cinematic;
   } finally { session.dispose(); }
   if (view === null) throw new TypeError(`Missing ${mode} venue camera`);
   const camera = new PerspectiveCamera(view.verticalFieldOfViewDegrees, 16 / 9, 0.05, 100_000);

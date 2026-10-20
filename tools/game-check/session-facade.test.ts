@@ -2,7 +2,6 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { HybridGameSessionBridge, initSync, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
 import { TailAppSessionFacade } from "../../web/src/app/session-facade.js";
-import { createInitialAppModel, flightAnalysisData, updateApp } from "../../web/src/app/app-state.js";
 import type { AppSessionFacade } from "../../web/src/app/session-facade.js";
 import { sharedGameUiPlatform } from "./shared-game-ui-fixture.js";
 import type { GameUiUpdate } from "../../web/src/generated/game-ui-effects.js";
@@ -51,123 +50,6 @@ describe("layout-discriminated application session facade", () => {
       expect(reads).toBe(1);
       expect(call).not.toHaveBeenCalled();
       expect(free).toHaveBeenCalledTimes(1);
-    } finally { facade.dispose(); }
-  });
-
-  it("preserves its observation through the raw Model and rejects plain or foreign datasets before a cursor read", () => {
-    const bridge = new HybridGameSessionBridge(0, 21, 22);
-    const facade = new TailAppSessionFacade(bridge, physics_hz());
-    const other = new TailAppSessionFacade(new HybridGameSessionBridge(0, 21, 22), physics_hz());
-    try {
-      for (const owner of [facade, other]) {
-        launch(owner);
-        advance(owner);
-        owner.executeSharedSessionCommand({ kind: "abort" });
-      }
-      const dataset = facade.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
-      const current = updateApp(createInitialAppModel(), { type: "game-session-synced", ...facade.readGameSessionProjection() }).model;
-      const model = updateApp({ ...current, analysis: { kind: "loading", requestId: 4, nextRequestId: 5, retained: flightAnalysisData(current.analysis) } }, { type: "flight-analysis-loaded", requestId: 4, data: dataset }).model;
-      const raw = flightAnalysisData(model.analysis);
-      if (raw === null || !("kind" in raw)) throw new Error("Expected the original named Model dataset");
-      expect(raw).toBe(dataset);
-      expect(facade.isAnalysisDatasetCurrent(raw)).toBe(true);
-      expect(facade.queryAnalysisCursor(0.005, raw).context).toBe(dataset.context);
-      const foreign = other.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
-      expect(foreign.context).toEqual(dataset.context);
-      expect(facade.isAnalysisDatasetCurrent(foreign)).toBe(false);
-      const read = vi.spyOn(bridge, "flight_record_sample_at_seconds");
-      expect(() => facade.queryAnalysisCursor(0.005, foreign)).toThrow("stale");
-      const plain = Object.freeze({ kind: "named_record" as const, context: dataset.context, summary: dataset.summary,
-        samples: dataset.samples, windGrid: dataset.windGrid });
-      expect(facade.isAnalysisDatasetCurrent(plain)).toBe(false);
-      expect(() => facade.queryAnalysisCursor(0.005, plain)).toThrow("stale");
-      expect(read).not.toHaveBeenCalled();
-    } finally { facade.dispose(); other.dispose(); }
-  });
-
-  it.each(["replace", "retry", "dispose"] as const)("rejects the old dataset between bundle and cursor observation (%s)", (operation) => {
-    const bridge = new HybridGameSessionBridge(0, 21, 22);
-    const facade = new TailAppSessionFacade(bridge, physics_hz());
-    try {
-      launch(facade);
-      advance(facade);
-      facade.executeSharedSessionCommand({ kind: "abort" });
-      const saved = facade.exportRecordJson();
-      if (operation === "replace") facade.openArchive(saved);
-      const observed = facade.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
-      const read = vi.spyOn(bridge, "flight_record_sample_at_seconds");
-      if (operation === "replace") {
-        facade.executeSharedSessionCommand({ kind: "leave_replay" });
-        facade.openArchive(saved);
-        expect(facade.readRecordSummary().context).toEqual(observed.context);
-      } else if (operation === "retry") facade.executeSharedSessionCommand({ kind: "retry" });
-      else facade.dispose();
-      expect(facade.isAnalysisDatasetCurrent(observed)).toBe(false);
-      expect(() => facade.queryAnalysisCursor(0.005, observed)).toThrow("stale");
-      expect(read).not.toHaveBeenCalled();
-    } finally { facade.dispose(); }
-  });
-
-  it.each(["replay", "attract"] as const)("reuses the same immutable %s dataset after clock operations without a full record reload", (phase) => {
-    const bridge = new HybridGameSessionBridge(0, 21, 22);
-    const facade = new TailAppSessionFacade(bridge, physics_hz());
-    try {
-      if (phase === "replay") {
-        launch(facade);
-        advance(facade);
-        facade.executeSharedSessionCommand({ kind: "abort" });
-        facade.executeSharedSessionCommand({ kind: "enter_replay" });
-      } else facade.executeSharedSessionCommand({ kind: "enter_attract" });
-      const samples = vi.spyOn(bridge, "flight_analysis_samples_json");
-      const summary = vi.spyOn(bridge, "flight_record_summary_json");
-      const wind = vi.spyOn(bridge, "flight_wind_grid_json");
-      const observed = facade.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
-      const summaryReads = summary.mock.calls.length;
-      const operations = [
-        () => facade.setPlaybackPlaying(false), () => facade.seekPlayback(0.005), () => facade.setPlaybackRate(2),
-        () => facade.setPlaybackPlaying(true), () => facade.advancePlayback(0.005), () => facade.setPlaybackRate(0)
-      ];
-      if (phase === "replay") operations.push(() => facade.seekPlayback(0.005));
-      for (const operation of operations) {
-        const pending = facade.captureQueryToken();
-        const clock = operation();
-        expect(facade.acceptQuery(pending, "old clock").kind).toBe("stale");
-        expect(facade.isAnalysisDatasetCurrent(observed)).toBe(true);
-        expect(facade.queryAnalysisCursor(clock.timeSeconds, observed).context).toBe(observed.context);
-      }
-      expect(samples).toHaveBeenCalledTimes(1);
-      expect(summary).toHaveBeenCalledTimes(summaryReads);
-      expect(wind).not.toHaveBeenCalled();
-    } finally { facade.dispose(); }
-  });
-
-  it("bundles original samples, Summary and optional wind under one record context without changing the Rust clock", () => {
-    const bridge = new HybridGameSessionBridge(0, 21, 22);
-    const facade = new TailAppSessionFacade(bridge, physics_hz());
-    const wind = vi.spyOn(bridge, "flight_wind_grid_json");
-    try {
-      launch(facade);
-      advance(facade);
-      facade.executeSharedSessionCommand({ kind: "abort" });
-      const dataset = facade.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
-      expect(dataset.windGrid).toEqual({ kind: "unavailable", reason: "not_requested" });
-      expect(dataset.context).toBe(dataset.summary.context);
-      expect(dataset.samples).toHaveLength(dataset.summary.summary.sample_count);
-      expect(wind).not.toHaveBeenCalled();
-      const sample = facade.queryAnalysisCursor(0.005, dataset);
-      expect(sample.context).toBe(dataset.context);
-      expect(sample.controls.layout).toBe(dataset.context.control_layout);
-      facade.executeSharedSessionCommand({ kind: "enter_replay" });
-      const clock = facade.readPlaybackClock();
-      expect(() => facade.queryAnalysisCursor(0.005, dataset)).toThrow("stale");
-      const playback = facade.readAnalysisDataset({ kind: "available", value: windRequest });
-      expect(playback.context.phase).toBe("replay");
-      expect(playback.windGrid.kind).toBe("available");
-      if (playback.windGrid.kind !== "available") throw new Error("Expected the requested Rust wind query");
-      expect(playback.windGrid.value.context).toEqual(playback.context);
-      expect(facade.queryAnalysisCursor(0.005, playback).flight_time_s).toBe(0.005);
-      expect(facade.readPlaybackClock()).toEqual(clock);
-      expect(wind).toHaveBeenCalledTimes(1);
     } finally { facade.dispose(); }
   });
 
@@ -430,7 +312,9 @@ describe("layout-discriminated application session facade", () => {
   });
 
   it("rebuilds a same-header replacement even when intermediate archive phases were not observed", () => {
-    const facade = new TailAppSessionFacade(new HybridGameSessionBridge(0, 21, 22), physics_hz());
+    const bridge = new HybridGameSessionBridge(0, 21, 22);
+    const facade = new TailAppSessionFacade(bridge, physics_hz());
+    const full = vi.spyOn(bridge, "game_ui_view_json");
     const other = new TailAppSessionFacade(new HybridGameSessionBridge(0, 21, 22), physics_hz());
     const platform = sharedGameUiPlatform();
     try {
@@ -442,14 +326,13 @@ describe("layout-discriminated application session facade", () => {
       expect(first).not.toBe(second);
       facade.openArchive(first);
       const retained = facade.readSharedUi(platform);
-      const dataset = facade.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
       facade.executeSharedSessionCommand({ kind: "leave_replay" });
       facade.openArchive(second);
       const replaced = facade.readSharedUi(platform);
       expect(replaced.view_revision).toBeGreaterThan(retained.view_revision);
-      expect(facade.isAnalysisDatasetCurrent(dataset)).toBe(false);
       expect(() => facade.executeSharedSessionCommand({ kind: "retry" })).toThrow();
-      expect(facade.readSharedUi(platform).view_revision).toBeGreaterThan(replaced.view_revision);
+      expect(facade.readSharedUi(platform).view_revision).toBe(replaced.view_revision);
+      expect(full).toHaveBeenCalledTimes(2);
     } finally { facade.dispose(); other.dispose(); }
   });
 
@@ -464,7 +347,6 @@ describe("layout-discriminated application session facade", () => {
       advance(facade);
       facade.executeSharedSessionCommand({ kind: "abort" });
       const record = facade.exportRecordJson();
-      const dataset = facade.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
       facade.updateSharedUi({ kind: "set_result_tab", tab: "analysis" }, platform);
       const retained = facade.readSharedUi(platform);
       const originalChart = retained.panels.flatMap((panel) => panel.controls).find((control) => control.content.kind === "chart");
@@ -481,7 +363,7 @@ describe("layout-discriminated application session facade", () => {
       expect(full).toHaveBeenCalledTimes(1);
       expect(frame).toHaveBeenCalledTimes(1);
       expect(facade.acceptQuery(query, observed).kind).toBe("stale");
-      expect(facade.queryAnalysisCursor(0.005, dataset).flight_time_s).toBe(0.005);
+      expect(facade.queryRecordSample(0.005).flight_time_s).toBe(0.005);
       expect(facade.exportRecordJson()).toBe(record);
     } finally { facade.dispose(); }
   });

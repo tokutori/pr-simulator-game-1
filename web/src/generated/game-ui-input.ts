@@ -1,4 +1,4 @@
-/* Generated from birdman-game-session::game_ui. Edit the Rust contract and regenerate. */
+/* Generated from birdman-game-presentation::game_ui. Edit the Rust contract and regenerate. */
 /**
  * Bounded newest-record preview; the persistence index and PB search remain separate.
  *
@@ -39,10 +39,6 @@ export interface GameUiPlatformInput {
      * Platform supports record downloads.
      */
     readonly flight_log_available: boolean;
-    /**
-     * A download request for the current resource owner remains pending.
-     */
-    readonly flight_log_pending: boolean;
     /**
      * Captured head-HUD resource failure, separate from the domain and physical state.
      */

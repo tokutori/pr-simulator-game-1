@@ -15,7 +15,7 @@
 - 飛行記録の保存、条件別Personal Best、軌跡・高度・速度チャート、JSON/CSV出力に対応する。
 - WebはScreen / WebXR / Phone VR、NativeはデスクトップのScreen表示を提供する。
 
-- 共通基盤: `birdman-game-core` が物理と進行、`birdman-game-format` が記録形式、`birdman-game-session` が共有アプリケーション処理を担う。
+- 共通基盤: Rustの物理・進行・記録を共用し、UI・cameraの導出と描画資産の生成を独立した層で担う。
 - プラットフォーム: 各adapterが表示・入力・保存I/Oを担当する。
 - 検証状況: 対象環境ごとの確認範囲は[検証仕様](docs/verification.md)と各Issueで管理する。
 

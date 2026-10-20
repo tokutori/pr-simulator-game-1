@@ -6,14 +6,10 @@ extern crate alloc;
 mod aircraft;
 mod shape;
 
-pub use aircraft::{AircraftDefinition, AircraftDefinitionError};
+pub use aircraft::{
+    AircraftDefinition, AircraftDefinitionError, PLAYABLE_AIRCRAFT_JSON, playable_aircraft,
+};
 pub use shape::{AircraftShape, AirfoilFace, ContactSampling, ShapeError, SurfaceShape};
 
-/// Complete source of the registered fictional glider, in body FRD coordinates and SI units.
-pub const PLAYABLE_AIRCRAFT_JSON: &[u8] =
-    include_bytes!("../../../assets/aircraft/playable-glider-v4.json");
-
-/// Decodes and prepares the bundled aircraft into owned immutable storage.
-pub fn playable_aircraft() -> Result<AircraftDefinition, AircraftDefinitionError> {
-    AircraftDefinition::decode_json(PLAYABLE_AIRCRAFT_JSON)
-}
+/// Original registered geographic features and their source metadata.
+pub const VENUE_FEATURES_JSON: &[u8] = include_bytes!("../../../assets/biwa-venue-features.json");

@@ -66,11 +66,10 @@ describe("application runtime session projection", () => {
       else { session.executeSharedSessionCommand({ kind: "cancel_briefing" }); session.executeSharedSessionCommand({ kind: "return_to_title" }); session.executeSharedSessionCommand({ kind: "enter_attract" }); }
       const projection = readRuntimeSessionProjection(session);
       expect(projection).toMatchObject({ phase, display: { value: { controls: { layout: "tail_incidence" } } } });
-      const dataset = session.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
       const clock = session.setPlaybackPlaying(false);
-      const cursor = session.queryAnalysisCursor(clock.timeSeconds, dataset);
+      const cursor = session.queryRecordSample(clock.timeSeconds);
       expect(cursor.flight_time_s).toBe(clock.timeSeconds);
-      expect(session.queryReplayCamera(clock.timeSeconds, "auto", true, dataset).controls.layout).toBe("tail_incidence");
+      expect(session.queryReplayCamera(clock.timeSeconds, "auto", true).controls.layout).toBe("tail_incidence");
       expect(projectRuntimePlaybackClock(clock)).toEqual({ timeSeconds: clock.timeSeconds, rateCode: clock.rateCode, playing: false });
     } finally { session.dispose(); }
   });
@@ -90,18 +89,18 @@ describe("application runtime session projection", () => {
       session.openArchive(saved);
       expect(sessionVenue(session).venue).toEqual({ kind: "visible", basis: "recorded_origin" });
       expect(readRuntimeSessionProjection(session)).toMatchObject({ phase: "replay", display: { value: { controls: { layout: "tail_incidence" } } } });
-      const dataset = session.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
+      const samples = session.readAnalysisSamples();
       const clock = session.readPlaybackClock();
-      const cursor = session.queryAnalysisCursor(0.005, dataset);
-      const pose = session.queryReplayCamera(0.005, "auto", true, dataset);
-      const terminalSample = dataset.samples.at(-1);
+      const cursor = session.queryRecordSample(0.005);
+      const pose = session.queryReplayCamera(0.005, "auto", true);
+      const terminalSample = samples.at(-1);
       if (terminalSample === undefined) throw new Error("Expected the saved terminal control sample");
       expect(terminalSample.controls.physical_incidence.horizontal_tail_rad).not.toBe(0);
       expect(cursor.controls).toEqual(terminalSample.controls);
       expect(pose.controls.physicalIncidence.horizontalTailRadians).toBe(terminalSample.controls.physical_incidence.horizontal_tail_rad);
       expect(cursor).not.toHaveProperty("pilot_position_target_normalized");
       expect(session.readPlaybackClock()).toEqual(clock);
-      expect(session.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" }).samples).toEqual(dataset.samples);
+      expect(session.readAnalysisSamples()).toEqual(samples);
       expect(archived.export_flight_record_json()).toBe(saved);
       session.executeSharedSessionCommand({ kind: "leave_replay" });
       expect(sessionVenue(session).venue).toEqual({ kind: "visible", basis: "title_exhibition" });

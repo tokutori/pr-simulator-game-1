@@ -66,7 +66,7 @@ describe("actual current WASM fractional record time", () => {
       const stored = archive.readFlightLog("json");
       const clock = archive.readPlaybackClock();
       const phase = archive.readLifecycle().phase;
-      const analysis = archive.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
+      const analysis = { samples: archive.readAnalysisSamples(), summary: archive.readRecordSummary() };
       expect(analysis.samples).toHaveLength(6);
       expect(analysis.samples.at(-1)?.state.datum_position_ned_m[0]).toBe(100);
       if (fraction < 1) expect(analysis.samples[4]?.flight_time_s).toBe(analysis.samples[5]?.flight_time_s);
@@ -75,7 +75,7 @@ describe("actual current WASM fractional record time", () => {
       expect(terminal.state.datum_position_ned_m).toEqual([100, -2, -1]);
       expect(terminal.tick_index).toBe(fraction === 1 ? 5 : 4);
       expect(terminal.fraction).toBe(fraction === 1 ? 0 : fraction);
-      const cursor = archive.queryAnalysisCursor(duration, analysis);
+      const cursor = archive.queryRecordSample(duration);
       expect(cursor.state.datum_position_ned_m[0]).toBe(100);
       expect(archive.queryRecordDisplay(duration).state.datum_position_ned_m).toEqual([100, -2, -1]);
       expect(() => archive.queryRecordSample(duration + 1e-12)).toThrow(/OutsideRecordedRange/);
@@ -89,7 +89,7 @@ describe("actual current WASM fractional record time", () => {
     const archive = createAppSession({ controlModeCode: 0, seedLow: 0, seedHigh: 0 });
     try {
       archive.openArchive(fractionalRecordJson(0, Number.MIN_VALUE));
-      const analysis = archive.readAnalysisDataset({ kind: "unavailable", reason: "not_requested" });
+      const analysis = { samples: archive.readAnalysisSamples(), summary: archive.readRecordSummary() };
       expect(analysis.samples).toHaveLength(2);
       expect(analysis.summary.summary.duration_seconds).toBe(0);
       expect(archive.queryRecordSample(0).state.datum_position_ned_m[0]).toBe(100);

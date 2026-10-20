@@ -1,4 +1,4 @@
-use super::{NearWaterSurface, WaterMaterial, WaterQuality};
+use super::{NearWaterSurface, WaterMaterial};
 use bevy::{asset as bevy_asset, ecs as bevy_ecs, reflect as bevy_reflect, render as bevy_render};
 use bevy::{
     camera::{RenderTarget, ScalingMode, visibility::RenderLayers},
@@ -15,6 +15,7 @@ use bevy::{
     },
     shader::ShaderDefVal,
 };
+use birdman_game_format::WaterQuality;
 
 const SIDE: u32 = 16;
 const CASES: [(&str, WaterQuality, bool, bool, bool); 6] = [

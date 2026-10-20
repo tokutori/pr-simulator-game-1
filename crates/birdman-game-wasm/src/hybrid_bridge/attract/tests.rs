@@ -1,4 +1,5 @@
 use super::*;
+use birdman_game_format::WeatherClass;
 use serde_json::{Value, json};
 
 fn context(bridge: &HybridGameSessionBridge) -> Value {
@@ -24,7 +25,12 @@ fn independent_demo_metadata_and_exit_preserve_player_selection() {
     ));
     assert_eq!(projected["phase"], "attract");
     assert_eq!(projected["control_layout"], "tail_incidence");
-    assert_eq!(projected["scenario"]["catalog_version"], 5);
+    assert_eq!(
+        projected["scenario"]["catalog_version"],
+        birdman_game_app::HybridSessionPreparation::select_scenario(WeatherClass::Calm, 0xD3A0)
+            .unwrap()
+            .catalog_version
+    );
     assert_eq!(projected["scenario"]["scenario_id"], 1);
     assert_eq!(projected["scenario"]["environment_version"], 1);
     assert_eq!(projected["scenario"]["seed_low"], 0xD3A0);
@@ -157,11 +163,9 @@ fn invalid_enter_keeps_the_selected_setup_and_does_not_generate_a_demo() {
         bridge
             .session
             .execute(SessionCommand::EnterAttract {}, BackendReadiness::Preparing),
-        Err(
-            birdman_game_session::application::ApplicationError::Session(
-                GameSessionError::InvalidTransition
-            )
-        )
+        Err(birdman_game_app::application::ApplicationError::Session(
+            GameSessionError::InvalidTransition
+        ))
     ));
     assert_eq!(bridge.snapshot_internal().unwrap(), before);
     assert!(bridge.session.attract().is_none());

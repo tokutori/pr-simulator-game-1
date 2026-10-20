@@ -12,8 +12,10 @@ default = []
 verify-harness = []
 
 [dependencies]
+birdman-game-app.workspace = true
 birdman-game-core.workspace = true
-birdman-game-session = { path = "../birdman-game-session" }
+birdman-game-presentation.workspace = true
+birdman-game-scene.workspace = true
 
 [target.'cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))'.dependencies]
 birdman-game-format.workspace = true

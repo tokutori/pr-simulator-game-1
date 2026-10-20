@@ -8,21 +8,12 @@ mod environment;
 mod flight_record;
 mod personal_best;
 mod personal_best_metadata;
-mod render_pose;
 mod tail_input;
-mod tail_snapshot;
+mod venue;
 
-pub use render_pose::{
-    FlightRenderPose, RenderAttitude, RenderGeometryUnavailable, RenderNedVector,
-    RenderTailControls, RenderTailGeometry, RenderTailGeometryValue, RenderTailIncidence,
-};
-
-pub use tail_input::{TAIL_INPUT_SCHEMA_VERSION, TailControlLayoutDocument, TailInputDocument};
-pub use tail_snapshot::{
-    EnvironmentIdentity, SessionLifecycleDocument, SessionPhaseDocument, TailControlAxesDocument,
-    TailControlProfileDocument, TailFrameDocument, TailPreparedLaunchDocument,
-    TailPreparedLaunchFrame, TailProgressDocument, TailSnapshotDocument, TailStateDocument,
-    TailTelemetryDocument,
+pub use venue::{
+    MAX_VENUE_FEATURES_JSON_BYTES, VenueFeatureDocument, VenueFeaturesDocument, VenueFormatError,
+    Wgs84Origin,
 };
 
 pub use environment::{
@@ -33,6 +24,7 @@ pub use environment::{
     MAX_ENVIRONMENT_TEXT_BYTES, MAX_ENVIRONMENT_WIND_SAMPLES, SkyStateDocument, WaveStateDocument,
     WindGridDocument,
 };
+pub use tail_input::{TAIL_INPUT_SCHEMA_VERSION, TailControlLayoutDocument, TailInputDocument};
 
 pub use flight_record::{
     ActuatorFailureDocument, AeroFailureDocument, AerodynamicFailureDocument,
@@ -638,5 +630,44 @@ mod tests {
             ScenarioCatalog::try_new(1, &invalid_version).err(),
             Some(ConfigurationError::InvalidVersion)
         );
+    }
+}
+
+/// Shared non-physical water-detail selection.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    Eq,
+    Ord,
+    PartialEq,
+    PartialOrd,
+    serde::Serialize,
+    serde::Deserialize,
+)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "lowercase")]
+pub enum WaterQuality {
+    /// Reduced water detail.
+    Low,
+    /// Balanced water detail.
+    Medium,
+    /// Detailed water rendering.
+    #[default]
+    High,
+}
+
+impl WaterQuality {
+    /// Stable selection order from reduced to detailed.
+    pub const ALL: [Self; 3] = [Self::Low, Self::Medium, Self::High];
+
+    /// Shared configuration label.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Low => "Low",
+            Self::Medium => "Medium",
+            Self::High => "High",
+        }
     }
 }

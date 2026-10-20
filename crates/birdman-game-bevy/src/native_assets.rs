@@ -5,7 +5,6 @@ use bevy::{
 
 pub(crate) fn register(app: &mut App) {
     embedded_asset!(app, "../assets/native_water.wgsl");
-    embedded_asset!(app, "../assets/native_clouds.wgsl");
     embedded_asset!(app, "../assets/native_terrain_haze.wgsl");
 }
 
@@ -17,10 +16,6 @@ pub(crate) fn water_shader_path() -> AssetPath<'static> {
     AssetPath::from_path_buf(embedded_path!("../assets/native_water.wgsl")).with_source("embedded")
 }
 
-pub(crate) fn cloud_shader_path() -> AssetPath<'static> {
-    AssetPath::from_path_buf(embedded_path!("../assets/native_clouds.wgsl")).with_source("embedded")
-}
-
 pub(crate) fn terrain_shader_path() -> AssetPath<'static> {
     AssetPath::from_path_buf(embedded_path!("../assets/native_terrain_haze.wgsl"))
         .with_source("embedded")
@@ -30,8 +25,7 @@ pub(crate) fn terrain_shader_path() -> AssetPath<'static> {
 mod tests {
     use super::*;
     use crate::app::{
-        clouds::CloudMaterial, flight_log::tests::TestDirectory,
-        terrain_haze::TerrainHazeExtension, water::WaterMaterial,
+        flight_log::tests::TestDirectory, terrain_haze::TerrainHazeExtension, water::WaterMaterial,
     };
     use bevy::{
         asset::{AssetApp, AssetPlugin, AssetServer, Assets, LoadState},
@@ -65,15 +59,11 @@ mod tests {
         let references = [
             WaterMaterial::vertex_shader(),
             WaterMaterial::fragment_shader(),
-            CloudMaterial::vertex_shader(),
-            CloudMaterial::fragment_shader(),
             TerrainHazeExtension::fragment_shader(),
         ];
         let expected = [
             include_str!("../assets/native_water.wgsl"),
             include_str!("../assets/native_water.wgsl"),
-            include_str!("../assets/native_clouds.wgsl"),
-            include_str!("../assets/native_clouds.wgsl"),
             include_str!("../assets/native_terrain_haze.wgsl"),
         ];
         let server = app.world().resource::<AssetServer>();
@@ -114,7 +104,6 @@ mod tests {
             assert!(shader.path.starts_with("embedded://"));
         }
         assert_eq!(handles[0], handles[1]);
-        assert_eq!(handles[2], handles[3]);
         let LoadState::Failed(cause) = app
             .world()
             .resource::<AssetServer>()

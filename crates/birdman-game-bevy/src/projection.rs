@@ -2,8 +2,8 @@
 use bevy::ecs as bevy_ecs;
 use bevy::prelude::*;
 use birdman_game_core::{FlightState, UnitQuaternion};
-use birdman_game_session::cockpit_geometry::CockpitGeometry;
-use birdman_game_session::{game_ui::GameUiReplayCamera, replay_camera::ReplayCameraView};
+use birdman_game_presentation::{game_ui::GameUiReplayCamera, replay_camera::ReplayCameraView};
+use birdman_game_scene::cockpit_geometry::CockpitGeometry;
 
 #[cfg(feature = "verify-harness")]
 #[derive(Resource)]
@@ -237,10 +237,10 @@ mod tests {
     fn pilot_mount_keeps_real_nose_frame_and_forward_direction_inside_screen_projection() {
         use bevy::camera::CameraProjection;
         use birdman_game_core::{
-            HybridMockDefinition, PilotPositionTarget, TailPilotPositionCommand,
-            TailPilotPositionIntent, TailPilotPositionMapping,
+            PilotPositionTarget, TailPilotPositionCommand, TailPilotPositionIntent,
+            TailPilotPositionMapping,
         };
-        let definition = HybridMockDefinition::try_new().unwrap();
+        let definition = birdman_game_app::registered_aircraft().unwrap();
         let aircraft_model = definition.aircraft();
         let initial = definition.trim().unwrap().pilot_position_m();
         let trim = PilotPositionTarget::try_new(&aircraft_model, initial).unwrap();
@@ -278,8 +278,8 @@ mod tests {
                 let camera = camera_transform(aircraft, current, initial, false, Vec2::ZERO);
                 assert!(camera.forward().distance(aircraft.forward().as_vec3()) < 1.0e-6);
                 let projection = PerspectiveProjection {
-                    fov: birdman_game_session::SCREEN_VERTICAL_FIELD_OF_VIEW_DEGREES.to_radians()
-                        as f32,
+                    fov: birdman_game_presentation::SCREEN_VERTICAL_FIELD_OF_VIEW_DEGREES
+                        .to_radians() as f32,
                     aspect_ratio: aspect,
                     ..default()
                 }

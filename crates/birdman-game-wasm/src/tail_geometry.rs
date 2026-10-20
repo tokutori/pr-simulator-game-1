@@ -1,5 +1,5 @@
-use birdman_game_session::tail_geometry::{TailGeometry, TailMaterial};
-use birdman_game_session::wing_geometry::RIB_RADIUS;
+use birdman_game_scene::tail_geometry::{TailGeometry, TailMaterial};
+use birdman_game_scene::wing_geometry::RIB_RADIUS;
 use wasm_bindgen::prelude::*;
 
 #[doc = "Owns registered static tail geometry until its JavaScript bulk copies are constructed."]

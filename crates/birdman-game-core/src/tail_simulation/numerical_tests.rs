@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
-    BodyVector, FbwAuthority, HybridMockDefinition, HybridModel, NedPoint, NedVector,
-    SteadyGlideTrim, TailPilotPositionIntent, UnitQuaternion, WindField, advance_tail_control,
+    BodyVector, FbwAuthority, HybridModel, NedPoint, NedVector, SteadyGlideTrim,
+    TailPilotPositionIntent, TestAircraft, UnitQuaternion, WindField, advance_tail_control,
 };
 
 mod wind_tests;
@@ -147,7 +147,7 @@ impl ExternalLoadProvider for InEnvelopeLoad<'_, '_> {
 }
 
 fn initial_state(
-    definition: &HybridMockDefinition,
+    definition: &TestAircraft,
     trim: SteadyGlideTrim,
     config: TailFlightTickConfig,
 ) -> TailFlightTickState {
@@ -415,11 +415,11 @@ fn verify_step_halving(
 }
 
 fn check_step_halving(cadence: Cadence) {
-    let definition = HybridMockDefinition::try_new().unwrap();
+    let definition = TestAircraft::try_new().unwrap();
     let surfaces = definition.surfaces().unwrap();
     let loads = HybridAerodynamicLoad::try_new(
         HybridModel::try_new(definition.polar().unwrap(), &surfaces).unwrap(),
-        HybridMockDefinition::TRIM_AIR_DENSITY_KG_M3,
+        TestAircraft::TRIM_AIR_DENSITY_KG_M3,
         WindField::uniform(NedVector::zero()),
     )
     .unwrap();
@@ -434,7 +434,7 @@ fn check_step_halving(cadence: Cadence) {
             mode,
             TailControlProfile::try_new(0.2, 0.2, 1.0).unwrap(),
             trim.pilot_mapping().unwrap(),
-            Gravity::try_new(HybridMockDefinition::TRIM_GRAVITY_MPS2).unwrap(),
+            Gravity::try_new(TestAircraft::TRIM_GRAVITY_MPS2).unwrap(),
         );
         let initial = initial_state(&definition, trim, config);
         for input_case in [

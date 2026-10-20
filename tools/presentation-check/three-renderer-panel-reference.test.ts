@@ -31,7 +31,7 @@ import { headHudCanvasSize, prepareHeadHudPaint, validateHeadHudPaint } from "..
 import { PresentationRuntime } from "../../web/src/presentation/runtime.js";
 import { HudCanvasFixture } from "./hud-canvas-fixture.js";
 import { gpuTimerFixture } from "./gpu-timer-fixture.js";
-import { ScreenRenderAutoBridge, lake_scene_ambient_color_srgb, lake_scene_ambient_irradiance,
+import { LakeSkyImageBridge, ScreenRenderAutoBridge, lake_scene_ambient_color_srgb, lake_scene_ambient_irradiance,
   lake_scene_sunlight_color_srgb, lake_scene_sunlight_irradiance } from "../../web/pkg/birdman_game_wasm.js";
 
 import { initSync } from "../../web/pkg/birdman_game_wasm.js";
@@ -222,7 +222,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
         bundle.renderer.render(frame());
         expect(driver.renderCalls).toHaveLength(2);
         expect(driver.renderCalls[0]).toMatchObject({ reflection: true, autoUpdate: false,
-          needsUpdate: false, receivers: 0, clouds: true });
+          needsUpdate: false, receivers: 0, clouds: false });
         expect(driver.renderCalls[0]?.casters).toBeGreaterThan(0);
         expect(driver.renderCalls[1]).toMatchObject({ reflection: false, autoUpdate, needsUpdate });
         expect(driver.renderCalls[1]?.receivers).toBeGreaterThan(0);
@@ -796,26 +796,44 @@ describe("Three adapter panel reference with real StereoEffect", () => {
     expect(solar.castShadow).toBe(true);
   });
 
-  it("retains the committed sky and cloud ownership after old atlas cleanup fails", () => {
+  it("retains the committed panorama after old texture cleanup fails", () => {
     const condition = { sunAzimuthDegrees: 135, sunElevationDegrees: 55, cloudFraction: 0.25, cloudBaseMeters: 1500, visibilityMeters: 25_000 };
     bundle.renderer.setLakeSkyCondition(condition);
     bundle.renderer.render(frame());
-    const previousCloud = driver.scene?.getObjectByName("world-clouds");
     const previousTexture = driver.scene?.background;
-    if (!(previousCloud instanceof Mesh) || !(previousCloud.material instanceof ShaderMaterial) || !(previousTexture instanceof DataTexture)) throw new Error("Missing previous sky projection");
-    const atlas: unknown = previousCloud.material.uniforms.cloudAtlas?.value;
-    if (!(atlas instanceof DataTexture)) throw new Error("Missing cloud atlas");
-    atlas.addEventListener("dispose", () => { throw new Error("atlas cleanup"); });
+    if (!(previousTexture instanceof DataTexture)) throw new Error("Missing previous sky projection");
+    previousTexture.addEventListener("dispose", () => { throw new Error("panorama cleanup"); });
     const oldTextureCleanup = vi.spyOn(previousTexture, "dispose");
-    const next = { ...condition, cloudBaseMeters: 3000 };
-    expect(() => { bundle.renderer.setLakeSkyCondition(next); }).toThrow(AggregateError);
-    const committed = driver.scene?.getObjectByName("world-clouds");
-    expect(Object.is(committed, previousCloud)).toBe(false);
+    const next = { ...condition, cloudFraction: 0.5 };
+    expect(() => { bundle.renderer.setLakeSkyCondition(next); }).toThrow("panorama cleanup");
+    const committed = driver.scene?.background;
     expect(Object.is(driver.scene?.background, previousTexture)).toBe(false);
     expect(oldTextureCleanup).toHaveBeenCalledTimes(1);
     expect(() => { bundle.renderer.setLakeSkyCondition(next); }).not.toThrow();
-    expect(Object.is(driver.scene?.getObjectByName("world-clouds"), committed)).toBe(true);
+    expect(driver.scene?.background).toBe(committed);
     expect(() => { bundle.renderer.setLakeSkyCondition(null); }).not.toThrow();
+  });
+
+  it("reuses the generated panorama across frames, camera movement and recorded cloud-base changes", () => {
+    const condition = { sunAzimuthDegrees: 135, sunElevationDegrees: 55, cloudFraction: 0.25, cloudBaseMeters: 1500, visibilityMeters: 25_000 };
+    const generated = vi.spyOn(LakeSkyImageBridge.prototype, "rgba");
+    try {
+      bundle.renderer.setLakeSkyCondition(condition);
+      bundle.renderer.render(frame());
+      const texture = driver.scene?.background;
+      expect(texture).toBeInstanceOf(DataTexture);
+      expect(generated).toHaveBeenCalledTimes(1);
+      expect(driver.scene?.getObjectByName("world-clouds")).toBeUndefined();
+      for (const [index, cameraPose] of [IDENTITY_POSE, turnedHead, pose(vec3(100, 20, -50), turnedHead.orientation)].entries()) {
+        bundle.renderer.setLakeSkyCondition({ ...condition, cloudBaseMeters: 6000 });
+        bundle.renderer.render(frame({ timestampMs: index + 1, cameraPose }));
+        expect(driver.scene?.background).toBe(texture);
+        expect(generated).toHaveBeenCalledTimes(1);
+      }
+      bundle.renderer.setLakeSkyCondition({ ...condition, cloudFraction: 0.5 });
+      expect(driver.scene?.background).not.toBe(texture);
+      expect(generated).toHaveBeenCalledTimes(2);
+    } finally { generated.mockRestore(); }
   });
 
   it("defers a view-phase sky change and explicit unavailable reset until the next frame", () => {

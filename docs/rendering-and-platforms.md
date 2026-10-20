@@ -84,11 +84,11 @@
 
 ## 共有水面モデル
 
-- `birdman-game-session::lake_water`は環境条件から波スペクトル、品質別投影、周期画像を純粋に生成する。
+- `birdman-game-scene::lake_water`は環境条件から波スペクトル、品質別投影、周期画像を純粋に生成する。
 - Web移植基準の式と成分順を使用し、`lake_sky`の全天画像も共用する。
 - 波は描画モデルであり、位相の進行には共有セッションのsimulation timeを使用する。
 
-- 基準spectrumは18成分で、Low・Medium・Highは6・10・18成分を使用する。
+- 品質選択はformatのWaterQualityを共用し、lake_waterのprofileが波数・mesh予算を定める。基準spectrumは18成分で、Low・Medium・Highは6・10・18成分を使用する。
 - fetch、JONSWAP重み、方向分散、正規化、steepness上限0.52を保持する。
 - quality投影はFloat32 upload、帯域energy補償、実mesh spacing、解析的微分上界、choppiness reserveを使用する。
 - geometryの位相と方向jitterは固定hash、`patternSeed`はdetail画像だけへ作用する。
@@ -201,26 +201,16 @@ Nativeは既存DirectionalLightの2048 texel・30〜600 mの3段cascadeから、
 
 - `LakeSceneHaze`はsRGB`0x9aafb1`とvisibility由来のnear/farを所有する。
 - 未記録時は14 km/80 km、visibilityがある場合の開始距離は0.175倍という表示近似を使用する。
-- 地形はview-depth、水面/cloudはradial距離をsmoothstepへ渡す。
+- 地形はview-depth、水面はradial距離をsmoothstepへ渡す。
 - Native地形はPBR照明後にWeb通常Screen基準のsRGB hazeを混合してlinearへ戻す。
 - Web縮小targetのworking-linear fogとの差をpixel一致と扱わない。
 
-- 共有cloud packetは固定seed`0x4f5a2c91`、lobe、noise、上下面の陰影から最大24 cluster・48 triangleを生成する。
-- 色atlas最大1024×768と法線RG8 atlasを共用し、合計最大4.5 MiB、追加drawは各pass1件とする。
-- cloud fractionから個数への写像は表示用の近似とする。
-
-- cloud baseは固定水面からの高さmである。
-- world-upと下端を維持し、各眼と反射viewでは水平billboard方向だけを変更する。
-- camera pitch/rollで上下を回転させない。
-- 同じworld太陽方向をright/up/front基底へ写し、ambient/sunlightの陰影色を補間する。
-- 色atlasだけをsRGBとして扱う。
-- panoramaへの二重cloud描画やframeごとのatlas生成を行わない。
-
-- availabilityはUnrecorded・Clear・GroundLevelUnsupported・Elevatedを区別する。
-- cloud fraction正・base0の地表cloudは積雲で表さず、記録値とhazeを保持する。
-- 空cloudは`Option<Mesh>::None`として表し、面を持つmeshだけをAssetsへ登録する。
-- 環境往復では同じCloudLayerを保持し、必要なときだけMesh3dとowned資源を交換する。
-- Nativeでは雲なしのlayerをHiddenとし、meshの復帰時にInheritedへ戻す。可視性の変化を通じてmaterialを描画へ再抽出する。
+- 上空の薄い雲層を無限遠の遠景として近似し、World方向固定の1024×512・sRGB RGBA天空画像へ合成する。
+- 固定seed`0x4f5a2c91`の球面方向noiseから、帯状の分布・細かい雲片・柔らかな縁・白灰の陰影を導出する。雲量は被覆と透明度へ対応する。
+- 雲量0と天空metadata欠損は晴天gradientを使用する。下半球のhazeと、地平線・経度継ぎ目・天頂の連続性を保持する。
+- 背景・水面sky sampler・Web/Native・左右眼で同じ画像を参照する。雲専用のmesh・atlas・material・drawは持たない。
+- 天球用テクスチャは初回描画準備時に生成して保持し、通常frameで再利用する。気象変更時は再生成し、交換後に旧画像だけを退役させる。
+- 記録のcloud baseは気象metadataとして保持する。描画は遠景近似を使用する。
 
 - Nativeの照明は共通のWeb基準色・irradianceを使用する。
 - Directの18,000 lux換算基準と`Exposure = 2^(-EV100)/1.2`、Ambientの`E = πL`を使用し、主cameraと反射cameraへ同じExposureを与える。
@@ -313,7 +303,7 @@ Nativeは既存DirectionalLightの2048 texel・30〜600 mの3段cascadeから、
 | Menu | 開いたときのtracking reference内に固定し、頭部運動で視野内位置が変わる |
 | Head | 現在head poseと固定offsetに追従し、視野内位置を維持する |
 
-- 湖面・地形・cloudはWorld、無限遠skyは方向をWorldへ固定する。
+- 湖面・地形はWorld、天空と上空の雲は方向をWorldへ固定する。
 - sky geometryは眼位置への平行移動とworld基準の回転を組み合わせる。
 - 実機相当計器とCountdownはCockpit、全SceneとPause等の操作panelはMenu、非modal Flight情報板はHeadとする。
 

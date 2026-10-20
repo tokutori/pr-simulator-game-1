@@ -1,4 +1,4 @@
-use birdman_game_session::game_ui::{GameUiHeadHudSpace, GameUiHud, fit_game_ui_head_hud};
+use birdman_game_presentation::game_ui::{GameUiHeadHudSpace, GameUiHud, fit_game_ui_head_hud};
 use wasm_bindgen::{JsValue, prelude::*};
 
 /// Projects the same shared HUD rows into measured head-fixed clear-region bands.

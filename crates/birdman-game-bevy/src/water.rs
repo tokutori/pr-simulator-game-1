@@ -6,7 +6,7 @@ use super::{
     native_session::NativeSession,
     projection::{sky_sun_direction, sunlight_transform},
     terrain_haze::{TerrainHazeExtension, TerrainMaterial},
-    water_quality::{WaterQuality, WaterQualityFailure, WaterQualitySelection},
+    water_quality::{WaterQualityFailure, WaterQualitySelection},
 };
 use bevy::{
     asset as bevy_asset, ecs as bevy_ecs, image as bevy_image, reflect as bevy_reflect,
@@ -38,8 +38,9 @@ use bevy::{
     },
     shader::{ShaderCacheError, ShaderDefVal, ShaderRef},
 };
-use birdman_game_session::lake_sky::{LakeSceneHaze, LakeSkyRenderCondition, generate_lake_sky};
-use birdman_game_session::lake_water::{
+use birdman_game_format::WaterQuality;
+use birdman_game_scene::lake_sky::{LakeSceneHaze, LakeSkyRenderCondition, generate_lake_sky};
+use birdman_game_scene::lake_water::{
     LakeVisualCondition, LakeWaveProjection, MAX_LAKE_WAVE_COMPONENTS, generate_lake_detail,
     production_lake_detail_configs,
 };
@@ -81,7 +82,7 @@ pub(crate) struct WaterMaterial {
     haze_parameters: Vec4,
     #[texture(13)]
     #[sampler(14)]
-    sky_texture: Option<Handle<Image>>,
+    pub(crate) sky_texture: Option<Handle<Image>>,
     #[texture(15)]
     #[sampler(16)]
     pub(crate) reflection_texture: Option<Handle<Image>>,
@@ -157,7 +158,7 @@ impl WaterMaterial {
         );
         let mut displacement_bounds = Vec2::ZERO;
         for quality in WaterQuality::ALL {
-            let projection = LakeWaveProjection::try_new(visual_condition, quality.shared())
+            let projection = LakeWaveProjection::try_new(visual_condition, quality)
                 .map_err(|cause| format!("共有波投影を準備できない: {cause}"))?;
             let amplitude = projection
                 .wave_k_amplitude()
@@ -221,7 +222,7 @@ impl WaterMaterial {
     }
 
     fn apply_profile(&mut self, quality: WaterQuality) -> Result<(), String> {
-        let projection = LakeWaveProjection::try_new(self.visual_condition, quality.shared())
+        let projection = LakeWaveProjection::try_new(self.visual_condition, quality)
             .map_err(|cause| format!("共有波投影を準備できない: {cause}"))?;
         self.geometry_waves = projection.wave_k_amplitude().map(Vec4::from_array);
         self.geometry_motion = projection.wave_omega_phase().map(Vec4::from_array);
@@ -540,7 +541,7 @@ pub(crate) fn near_mesh() -> Mesh {
 }
 
 pub(crate) fn near_mesh_for_quality(quality: WaterQuality) -> Mesh {
-    let cells = quality.profile().near_cells;
+    let cells = birdman_game_scene::lake_water::water_quality_profile(quality).mesh_segments();
     let mut mesh = Plane3d::default()
         .mesh()
         .size(NEAR_WIDTH_M, NEAR_WIDTH_M)
@@ -585,21 +586,12 @@ pub(crate) struct NearWaterSurface;
 
 #[derive(SystemParam)]
 pub(crate) struct EnvironmentAssets<'w, 's> {
-    commands: Commands<'w, 's>,
     materials: ResMut<'w, Assets<WaterMaterial>>,
     images: ResMut<'w, Assets<Image>>,
-    cloud_materials: ResMut<'w, Assets<super::clouds::CloudMaterial>>,
-    meshes: ResMut<'w, Assets<Mesh>>,
     terrain_materials: ResMut<'w, Assets<TerrainMaterial>>,
     terrain: Query<'w, 's, &'static MeshMaterial3d<TerrainMaterial>>,
     venue: Query<'w, 's, &'static mut Visibility, With<super::world::RegisteredVenue>>,
 }
-
-type CloudSurface = (
-    Entity,
-    Option<&'static Mesh3d>,
-    &'static MeshMaterial3d<super::clouds::CloudMaterial>,
-);
 
 pub(crate) fn apply_environment(
     session: Res<NativeSession>,
@@ -612,7 +604,6 @@ pub(crate) fn apply_environment(
         Option<&mut Aabb>,
     )>,
     mut sun: Query<(&mut DirectionalLight, &mut Transform), With<EnvironmentSun>>,
-    clouds: Query<CloudSurface, With<super::clouds::CloudLayer>>,
 ) {
     let target = EnvironmentTarget::project(
         session.game.core_session().snapshot().phase(),
@@ -624,11 +615,8 @@ pub(crate) fn apply_environment(
         return;
     }
     let EnvironmentAssets {
-        mut commands,
         mut materials,
         mut images,
-        mut cloud_materials,
-        mut meshes,
         mut terrain_materials,
         terrain,
         mut venue,
@@ -722,16 +710,6 @@ pub(crate) fn apply_environment(
             .map_err(EnvironmentFailure::WavePreparation)?;
         let sky_image =
             prepare_sky_image(high.sky_condition).map_err(EnvironmentFailure::WavePreparation)?;
-        let cloud_packet =
-            super::clouds::prepare(condition.sky).map_err(EnvironmentFailure::WavePreparation)?;
-        let (cloud_entity, cloud_mesh, cloud_handle) = clouds.single().map_err(|_| {
-            EnvironmentFailure::WavePreparation("有限cloud layerが欠損または重複した".into())
-        })?;
-        let mut cloud_material = cloud_materials
-            .get_mut(cloud_handle.0.id())
-            .ok_or_else(|| {
-                EnvironmentFailure::WavePreparation("有限cloud materialが欠損した".into())
-            })?;
         let direction = prepared[EnvironmentSurface::Sky.index()]
             .sun_cloud
             .truncate();
@@ -765,15 +743,6 @@ pub(crate) fn apply_environment(
         for image in previous_images {
             images.remove(image);
         }
-        super::clouds::replace(
-            &mut commands,
-            cloud_entity,
-            &mut meshes,
-            &mut images,
-            cloud_mesh,
-            &mut cloud_material,
-            cloud_packet,
-        );
         *transform = sunlight;
         light.illuminance = if condition
             .sky
@@ -972,10 +941,9 @@ mod tests {
     use super::*;
     use bevy::ecs::system::RunSystemOnce;
     use bevy::mesh::VertexAttributeValues;
+    use birdman_game_app::{application::SessionCommand, bundled_environment};
     use birdman_game_format::WeatherClass;
-    use birdman_game_session::{
-        application::SessionCommand, bundled_environment, game_ui::GameUiControlContent,
-    };
+    use birdman_game_presentation::game_ui::GameUiControlContent;
 
     fn environment_app() -> App {
         let mut app = App::new();
@@ -988,7 +956,6 @@ mod tests {
             .init_resource::<Assets<Mesh>>()
             .init_resource::<Assets<StandardMaterial>>()
             .init_resource::<Assets<TerrainMaterial>>()
-            .init_resource::<Assets<super::super::clouds::CloudMaterial>>()
             .init_resource::<Assets<Image>>()
             .init_resource::<Assets<WaterMaterial>>()
             .insert_resource(Time::<Fixed>::from_hz(f64::from(
@@ -1015,63 +982,48 @@ mod tests {
     }
 
     #[test]
-    fn cloud_environment_cycles_never_register_empty_meshes_and_release_retired_meshes() {
-        fn cloud_mesh(app: &mut App) -> Option<AssetId<Mesh>> {
-            let world = app.world_mut();
-            world
-                .query_filtered::<Option<&Mesh3d>, With<super::super::clouds::CloudLayer>>()
-                .single(world)
-                .unwrap()
-                .map(|mesh| mesh.0.id())
-        }
-
-        fn assert_uploaded_meshes_are_nonempty(app: &App) {
-            for (_, mesh) in app.world().resource::<Assets<Mesh>>().iter() {
-                assert!(mesh.count_vertices() > 0);
-                assert!(mesh.indices().is_none_or(|indices| !indices.is_empty()));
-            }
-        }
-
+    fn sky_environment_cycles_share_one_image_and_retire_previous_uploads() {
         let mut app = environment_app();
-        let original_mesh_count = app.world().resource::<Assets<Mesh>>().len();
-        let original_image_count = app.world().resource::<Assets<Image>>().len();
-        let mut previous_cloud = cloud_mesh(&mut app).unwrap();
-        assert_uploaded_meshes_are_nonempty(&app);
+        let mesh_count = app.world().resource::<Assets<Mesh>>().len();
+        let image_count = app.world().resource::<Assets<Image>>().len();
+        let clear_pixels = prepare_sky_image(None).unwrap().data.unwrap();
         for _cycle in 0..3 {
+            let previous = environment_image_ids(&mut app);
             prepare_calm(&mut app);
             app.update();
-            assert!(cloud_mesh(&mut app).is_none());
-            assert_uploaded_meshes_are_nonempty(&app);
+            assert_eq!(app.world().resource::<Assets<Mesh>>().len(), mesh_count);
             assert!(
-                !app.world()
-                    .resource::<Assets<Mesh>>()
-                    .contains(previous_cloud)
+                previous
+                    .iter()
+                    .all(|image| !app.world().resource::<Assets<Image>>().contains(*image))
             );
-            assert_eq!(
-                app.world().resource::<Assets<Mesh>>().len(),
-                original_mesh_count - 1
+            assert_eq!(app.world().resource::<Assets<Image>>().len(), image_count);
+            let clear = environment_materials(&mut app)[0]
+                .sky_texture
+                .clone()
+                .unwrap();
+            assert!(
+                environment_materials(&mut app)
+                    .iter()
+                    .all(|material| material.sky_texture.as_ref() == Some(&clear))
             );
-            assert_eq!(
-                app.world().resource::<Assets<Image>>().len(),
-                original_image_count
-            );
+            let image = app.world().resource::<Assets<Image>>().get(&clear).unwrap();
+            assert_eq!(image.data.as_deref().unwrap(), clear_pixels);
             app.world_mut()
                 .resource_mut::<NativeSession>()
                 .execute_ui_command(SessionCommand::CancelBriefing {})
                 .unwrap();
             app.update();
-            let current_cloud = cloud_mesh(&mut app).unwrap();
-            assert_ne!(current_cloud, previous_cloud);
-            assert_uploaded_meshes_are_nonempty(&app);
-            assert_eq!(
-                app.world().resource::<Assets<Mesh>>().len(),
-                original_mesh_count
-            );
-            assert_eq!(
-                app.world().resource::<Assets<Image>>().len(),
-                original_image_count
-            );
-            previous_cloud = current_cloud;
+            assert_eq!(app.world().resource::<Assets<Mesh>>().len(), mesh_count);
+            assert!(!app.world().resource::<Assets<Image>>().contains(clear.id()));
+            assert_eq!(app.world().resource::<Assets<Image>>().len(), image_count);
+            let material = &environment_materials(&mut app)[0];
+            let image = app
+                .world()
+                .resource::<Assets<Image>>()
+                .get(material.sky_texture.as_ref().unwrap())
+                .unwrap();
+            assert_ne!(image.data.as_deref().unwrap(), clear_pixels);
             app.world_mut()
                 .resource_mut::<NativeSession>()
                 .execute_ui_command(SessionCommand::ReturnToTitle {})
@@ -1219,7 +1171,7 @@ mod tests {
                 .resource::<screen_render::NativeScreenRender>()
                 .snapshot()
                 .water_quality,
-            birdman_game_session::lake_water::LakeWaterQuality::Low
+            WaterQuality::Low
         );
         app.world_mut()
             .resource_mut::<Assets<WaterMaterial>>()
@@ -1295,23 +1247,12 @@ mod tests {
         })
     }
 
-    fn environment_image_ids(app: &mut App) -> [AssetId<Image>; 5] {
+    fn environment_image_ids(app: &mut App) -> [AssetId<Image>; 3] {
         let material = &environment_materials(app)[EnvironmentSurface::Near.index()];
-        let world = app.world_mut();
-        let cloud = world.query_filtered::<
-            &MeshMaterial3d<super::super::clouds::CloudMaterial>,
-            With<super::super::clouds::CloudLayer>,
-        >().single(world).unwrap().0.id();
-        let cloud_material = world
-            .resource::<Assets<super::super::clouds::CloudMaterial>>()
-            .get(cloud)
-            .unwrap();
         [
             material.detail_near.as_ref().unwrap().id(),
             material.detail_far.as_ref().unwrap().id(),
             material.sky_texture.as_ref().unwrap().id(),
-            cloud_material.atlas.id(),
-            cloud_material.normals.id(),
         ]
     }
 
@@ -1676,9 +1617,7 @@ mod tests {
         );
         app.world_mut()
             .resource_mut::<NativeSession>()
-            .execute_ui_command(
-                birdman_game_session::application::SessionCommand::CancelBriefing {},
-            )
+            .execute_ui_command(birdman_game_app::application::SessionCommand::CancelBriefing {})
             .unwrap();
         app.update();
         let default = EnvironmentTarget::DefaultExhibition
@@ -1693,7 +1632,7 @@ mod tests {
         );
         app.world_mut()
             .resource_mut::<NativeSession>()
-            .execute_ui_command(birdman_game_session::application::SessionCommand::ReturnToTitle {})
+            .execute_ui_command(birdman_game_app::application::SessionCommand::ReturnToTitle {})
             .unwrap();
         app.update();
         assert_eq!(
@@ -2041,8 +1980,7 @@ mod tests {
         let high_bounds = high.near_bounds();
         for quality in WaterQuality::ALL {
             let material = WaterMaterial::registered_for_quality(quality).unwrap();
-            let shared =
-                LakeWaveProjection::try_new(material.visual_condition, quality.shared()).unwrap();
+            let shared = LakeWaveProjection::try_new(material.visual_condition, quality).unwrap();
             assert_eq!(
                 material.geometry_waves,
                 shared.wave_k_amplitude().map(Vec4::from_array)
@@ -2062,7 +2000,8 @@ mod tests {
             assert_eq!(material.sun_cloud, high.sun_cloud);
             assert_eq!(material.waves_sky, high.waves_sky);
             let mesh = near_mesh_for_quality(quality);
-            let cells = quality.profile().near_cells as usize;
+            let cells = birdman_game_scene::lake_water::water_quality_profile(quality)
+                .mesh_segments() as usize;
             assert_eq!(mesh.count_vertices(), (cells + 1).pow(2));
             let Some(VertexAttributeValues::Float32x2(spacing)) =
                 mesh.attribute(Mesh::ATTRIBUTE_UV_1)
@@ -2073,7 +2012,7 @@ mod tests {
                 .geometry_waves
                 .iter()
                 .map(|wave| {
-                    birdman_game_session::lake_water::lake_wave_displacement_derivative_bound(
+                    birdman_game_scene::lake_water::lake_wave_displacement_derivative_bound(
                         wave.to_array(),
                         shared.spacing(),
                     )
@@ -2168,7 +2107,8 @@ mod tests {
             assert!(meshes.get(previous).is_none());
             assert!(meshes.get(far_mesh.id()).is_some());
             assert_eq!(meshes.len(), 2);
-            let cells = quality.profile().near_cells as usize;
+            let cells = birdman_game_scene::lake_water::water_quality_profile(quality)
+                .mesh_segments() as usize;
             assert_eq!(
                 meshes.get(current).unwrap().count_vertices(),
                 (cells + 1).pow(2)

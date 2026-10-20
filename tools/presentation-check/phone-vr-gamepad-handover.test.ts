@@ -432,7 +432,7 @@ async function createFixture(browser: GamepadBrowser, options: { readonly autoSt
           if (command.type !== "shared-game-session-command") continue;
           if (command.command.kind === "start_countdown") operations.push(command.command);
           session.executeSharedSessionCommand(command.command);
-          model = updateApp(model, { type: "game-operation-completed", requestId: command.requestId, ...projection() }).model;
+          model = updateApp(model, { type: "session-command-completed", ...projection() }).model;
         }
       }
       observe();

@@ -140,6 +140,8 @@ async function fixture(failInitialization = false, seedCurrentArchive = false, d
   const free = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "free");
   const exportRecord = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "export_flight_record_json");
   const summary = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "flight_record_summary_json");
+  const analysis = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "flight_analysis_samples_json");
+  const wind = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "flight_wind_grid_json");
   const sharedCommand = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "apply_game_ui_session_command_json");
   const observeCountdown = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "observe_countdown");
   const pause = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "pause");
@@ -148,6 +150,7 @@ async function fixture(failInitialization = false, seedCurrentArchive = false, d
   const tick = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "advance_tick_json");
   const advancePlayback = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "advance_playback");
   const playbackClock = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "playback_clock_state");
+  const playbackCamera = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "playback_camera_view_json");
   const { PresentationRuntime } = await import("../../web/src/presentation/runtime.js");
   const runtimeDispose = vi.spyOn(PresentationRuntime.prototype, "dispose");
   let releaseInitialization: () => void = () => undefined;
@@ -196,7 +199,7 @@ async function fixture(failInitialization = false, seedCurrentArchive = false, d
     } else nowMilliseconds = nextMilliseconds;
     callback?.();
   };
-  return { browser, documentRef, renderer, scene, click, launch, page, free, exportRecord, summary, sharedCommand, sharedView, pause, clearPauseReason, tick, advancePlayback, playbackClock, replayTicks, observeCountdown,
+  return { browser, documentRef, renderer, scene, click, launch, page, free, exportRecord, summary, analysis, wind, sharedCommand, sharedView, pause, clearPauseReason, tick, advancePlayback, playbackClock, playbackCamera, replayTicks, observeCountdown,
     countdownTick, countdown, acknowledgeWaterQuality,
     advanceClock: (elapsedMilliseconds: number) => { nowMilliseconds += elapsedMilliseconds; },
     sessionOwner: () => {
@@ -256,6 +259,18 @@ async function manualReplayFixture() {
 }
 
 describe("public main entrypoint with actual two-tail Rust WASM", () => {
+  it("pauses the Rust Attract clock after camera failure before scheduling another timer", async () => {
+    const trial = await fixture(false, false, false, true);
+    await vi.waitFor(() => { expect(trial.scene()).toBe("Title"); });
+    trial.playbackCamera.mockImplementationOnce(() => { throw new Error("camera unavailable"); });
+    trial.click("game-title-demo");
+    const owner = await trial.sessionOwner();
+    expect(owner.readLifecycle().phase).toBe("attract");
+    expect(owner.readPlaybackClock().kind).toBe("paused");
+    expect(trial.replayTicks).toHaveLength(0);
+    expect(trial.documentRef.querySelector(".screen-ui-shell")?.textContent).toContain("camera unavailable");
+  });
+
   it("cancels the actual Rust Countdown on WebXR end delivery before UI phase synchronization", async () => {
     const trial = await fixture(false, false, false, false, "normal", true);
     await vi.waitFor(() => { expect(trial.scene()).toBe("Title"); });
@@ -502,6 +517,22 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     assertNoListFeedback();
   });
 
+  it("stops the Rust clock after an advance failure and resumes once through the shared action", async () => {
+    const trial = await manualReplayFixture();
+    const owner = await trial.sessionOwner();
+    trial.advancePlayback.mockImplementationOnce(() => { throw new Error("clock advance unavailable"); });
+    trial.tickReplay();
+    expect(owner.readPlaybackClock().kind).toBe("paused");
+    expect(trial.replayTicks).toHaveLength(0);
+    expect(trial.documentRef.querySelector(".screen-ui-shell")?.textContent).toContain("clock advance unavailable");
+    trial.click("game-replay-play-pause");
+    expect(owner.readPlaybackClock().kind).toBe("playing");
+    expect(trial.replayTicks).toHaveLength(1);
+    trial.tickReplay();
+    expect(trial.replayTime()).toBeGreaterThan(0);
+    expect(trial.replayTicks).toHaveLength(1);
+  });
+
   it("continues the same Rust Replay clock after display and camera changes", async () => {
     const trial = await manualReplayFixture();
     trial.tickReplay();
@@ -519,10 +550,12 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
       expect(trial.documentRef.querySelector('[data-control-id="game-replay-play-pause"]')?.textContent).toBe("Pause");
     }
     expect(trial.advancePlayback).toHaveBeenCalledTimes(5);
+    expect(trial.analysis).not.toHaveBeenCalled();
+    expect(trial.wind).not.toHaveBeenCalled();
     expect(trial.free).not.toHaveBeenCalled();
   });
 
-  it.each(["pause", "return", "retry", "pagehide"] as const)("rejects the obsolete Replay timer after %s", async (operation) => {
+  it.each(["pause", "seek", "rate", "return", "retry", "pagehide"] as const)("rejects the obsolete Replay timer after %s", async (operation) => {
     const trial = await manualReplayFixture();
     const obsoleteTick = trial.replayTicks.shift();
     if (obsoleteTick === undefined) throw new Error("Replay timer is missing");
@@ -532,6 +565,16 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     } else if (operation === "pause") {
       trial.click("game-replay-play-pause");
       trial.click("game-replay-play-pause");
+    } else if (operation === "seek" || operation === "rate") {
+      trial.click("game-replay-view-mode");
+      if (operation === "rate") trial.click("game-replay-speed-2");
+      else {
+        const cursor = trial.documentRef.querySelector<HTMLInputElement>('input[data-control-id="game-replay-cursor"]');
+        if (cursor === null) throw new Error("Replay cursor is missing");
+        cursor.value = "0.2";
+        cursor.dispatchEvent(new trial.browser.Event("input", { bubbles: true }) as unknown as Event);
+        expect(trial.replayTime()).toBeCloseTo(0.2);
+      }
     } else {
       trial.click("game-replay-return");
       if (operation === "retry") {
@@ -799,7 +842,9 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     expect(trial.scene()).toBe("Result");
     expect(trial.browser.document.body.textContent).toContain("Injected terminal snapshot rendering failure");
     expect(trial.exportRecord).toHaveBeenCalledTimes(1);
-    expect(trial.summary).toHaveBeenCalled();
+    expect(trial.documentRef.querySelector('[data-control-id="game-result-retry"]')).not.toBeNull();
+    expect(trial.analysis).not.toHaveBeenCalled();
+    expect(trial.wind).not.toHaveBeenCalled();
     expect(JSON.parse(trial.exportRecord.mock.results[0]?.value as string)).toMatchObject({ finalization: { reason: "manual_abort" } });
     trial.frame(1_000);
     expect(trial.pause).not.toHaveBeenCalled();
@@ -827,6 +872,61 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     expect(trial.renderer.dispose).toHaveBeenCalledTimes(1);
     expect(trial.free).toHaveBeenCalledTimes(1);
     expect(trial.browser.document.body.textContent).toContain("Page hidden");
+  });
+
+  it.each(["success", "failure", "suspend", "dispose", "stale-success", "stale-failure"] as const)("handles deferred stored-record %s through the actual owner", async (outcome) => {
+    const trial = await fixture(false, true);
+    await vi.waitFor(() => { expect(trial.documentRef.querySelector('[data-control-id="game-title-open-record-1"]')).not.toBeNull(); });
+    const owner = await trial.sessionOwner();
+    const open = vi.spyOn(owner, "openArchive");
+    const { FlightRecordRepository } = await import("../../web/src/game/flight-record-store.js");
+    let waiting = false;
+    let release: () => void = () => { throw new Error("Stored read has not started"); };
+    const load = vi.spyOn(FlightRecordRepository.prototype, "load");
+    load.mockImplementationOnce(async function(this: InstanceType<typeof FlightRecordRepository>, id) {
+      const json = await load.call(this, id);
+      return new Promise<string | null>((resolve, reject) => {
+        release = () => {
+          if (outcome === "failure" || outcome === "stale-failure") reject(new Error("Injected storage read failure"));
+          else resolve(json);
+        };
+        waiting = true;
+      });
+    });
+    trial.click("game-title-open-record-1");
+    await vi.waitFor(() => { expect(waiting).toBe(true); });
+    expect(trial.documentRef.querySelector<HTMLButtonElement>('[data-control-id="game-title-start"]')?.disabled).toBe(true);
+    if (outcome === "suspend") trial.page("pagehide", true);
+    else if (outcome === "dispose") trial.page("pagehide", false);
+    else if (outcome.startsWith("stale-")) owner.executeSharedSessionCommand({ kind: "open_setup" });
+    const pending = load.mock.results[0];
+    if (pending?.type !== "return") throw new Error("Missing stored-record I/O");
+    release();
+    await pending.value.catch(() => undefined);
+    await Promise.resolve();
+    if (outcome === "success") {
+      await vi.waitFor(() => { expect(trial.scene()).toBe("Replay"); });
+      expect(open).toHaveBeenCalledTimes(1);
+    } else if (outcome === "failure") {
+      expect(trial.documentRef.body.textContent).toContain("Injected storage read failure");
+      trial.click("game-title-open-record-1");
+      await vi.waitFor(() => { expect(trial.scene()).toBe("Replay"); });
+      expect(open).toHaveBeenCalledTimes(1);
+    } else {
+      expect(open).not.toHaveBeenCalled();
+      expect(trial.documentRef.body.textContent).not.toContain("Injected storage read failure");
+      if (outcome === "dispose") expect(trial.free).toHaveBeenCalledTimes(1);
+      else if (outcome === "suspend") {
+        trial.page("pageshow", true);
+        await vi.waitFor(() => { expect(trial.documentRef.querySelector<HTMLButtonElement>('[data-control-id="game-title-start"]')?.disabled).toBe(false); });
+        trial.click("game-title-start");
+        expect(trial.scene()).toBe("FlightSetup");
+      } else {
+        expect(owner.readLifecycle().phase).toBe("flight_setup");
+        trial.click("game-setup-start");
+        expect(trial.scene()).toBe("Briefing");
+      }
+    }
   });
 
   it("opens a current saved snapshot through the Tail owner with its registered venue and two-tail controls", async () => {
@@ -898,7 +998,9 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     expect(trial.scene()).toBe("Result");
     expect(trial.browser.document.body.textContent).toContain("Injected committed Result view failure");
     expect(trial.exportRecord).toHaveBeenCalledTimes(1);
-    expect(trial.summary).toHaveBeenCalled();
+    expect(trial.documentRef.querySelector('[data-control-id="game-result-retry"]')).not.toBeNull();
+    expect(trial.analysis).not.toHaveBeenCalled();
+    expect(trial.wind).not.toHaveBeenCalled();
     expect(JSON.parse(trial.exportRecord.mock.results[0]?.value as string)).toMatchObject({ schema_version: 6, finalization: { reason } });
     await vi.waitFor(() => { expect(trial.browser.document.getElementById("game-state")?.textContent).toContain("飛行記録 1を保存した"); });
     trial.click("game-result-replay");

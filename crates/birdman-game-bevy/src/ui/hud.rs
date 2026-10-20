@@ -1,7 +1,7 @@
 use super::super::NativeFont;
 use super::{color, retained_node, retained_ui_transform, set_text, spawn_text};
 use bevy::{picking::Pickable, prelude::*};
-use birdman_game_session::game_ui::{
+use birdman_game_presentation::game_ui::{
     GameUiHud, GameUiHudNode, GameUiHudNodeContent, GameUiHudTone, GameUiTheme,
 };
 use std::collections::{BTreeMap, BTreeSet};
@@ -808,7 +808,7 @@ mod tests {
         tests::{add_ui_layout, app, press},
     };
     use super::*;
-    use birdman_game_session::game_ui::{GameUiHudAdiGeometry, GameUiHudHeadingTick};
+    use birdman_game_presentation::game_ui::{GameUiHudAdiGeometry, GameUiHudHeadingTick};
 
     fn flying_app() -> App {
         let mut app = app(1280.0, 720.0);
