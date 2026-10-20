@@ -9,6 +9,7 @@ import { PerspectiveCamera, StereoCamera } from "three";
 import type { Browser } from "playwright-core";
 import type { GameUiView } from "../../web/src/generated/game-ui-view.js";
 import { captureConfiguredViewerFrame } from "../../web/src/render/engines/three/viewer-frame.js";
+import { observeWaterRenderer, verifyWaterRenderer } from "./water.js";
 
 declare global {
   interface Window {
@@ -163,6 +164,7 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
     if (response.status() >= 400 && !response.url().endsWith("/favicon.ico")) errors.push(`HTTP ${String(response.status())} ${response.url()}`);
   });
   try {
+    await observeWaterRenderer(page);
     const observer = await transform(await readFile(resolve(root, "tools/web-auto-check/browser-observer.ts"), "utf8"), { loader: "ts", format: "iife", target: "es2023" });
     await page.addInitScript({ content: observer.code });
     await page.goto(url.href, { waitUntil: "domcontentloaded" });
@@ -321,6 +323,19 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
     await click("game-flight-pause");
     await page.waitForFunction(() => window.__liveAuto.phase === "flight_paused");
     await screenshot("03-paused-hud");
+    await click("game-pause-open-settings");
+    const waterMeasurements = [];
+    for (const quality of ["low", "medium", "high"] as const) {
+      await click(`presentation-water-quality-${quality}`);
+      await page.waitForFunction(expected => window.__waterCheck.water.children.length === 16 &&
+        window.__waterCheck.water.children.every(node => "geometry" in node &&
+          (node.geometry as import("three").BufferGeometry).getAttribute("position").count === (expected / 4 + 1) ** 2),
+      { low: 96, medium: 144, high: 224 }[quality]);
+      waterMeasurements.push(await verifyWaterRenderer(page, new URL("../src/render/engines/three/lake-water-geometry.ts", moduleUrl).href, output, quality));
+    }
+    report.water = waterMeasurements;
+    await click("game-pause-settings-back");
+    checks.push("全水面品質・4方位・左右眼でchunk cullingと単一meshの画素一致を検査する");
     const hudMeasurements = [];
     for (const [width, height, font] of [[1280, 720, 16], [1920, 1080, 16], [1600, 900, 20], [1920, 1080, 24]] as const) {
       await page.setViewportSize({ width, height });

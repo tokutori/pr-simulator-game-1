@@ -100,7 +100,8 @@
 
 ### Geometryとdetail
 
-- 近景meshは6 km四方の非一様gridで、Low・Medium・Highを96・144・224分割とする。
+- 近景meshは6 km四方の非一様gridで、Low・Medium・Highを96・144・224分割とする。Webは元の頂点属性と三角形を保った4×4のchunkに分け、視錐台カリングを適用する。
+- chunkの境界球はshaderのXZ座標に合わせ、全波成分・detail画像による水平/鉛直変位とFloat32丸めの余裕を含める。Highの各chunkは最大3,249頂点で、境界共有により全chunkの頂点総数は51,984となる。
 - camera水平位置を1 m格子へsnapして追従し、波はworld-spaceで評価する。
 - 遠景ringは18万m四方を覆い、近景領域を除外する。
 - meshの範囲と波浪生成のfetchを区別する。
@@ -109,6 +110,7 @@
 - 解析勾配はpacketとLOD visibilityの両方を含む。
 - local XZからの頂点間隔は$s=s_0+(14.4/N)\max(|x|,|z|)$とし、中心勾配0、同率の軸は両側勾配の平均とする。
 - fragmentの補間間隔は微小法線の表示配分にだけ使用する。
+- Webの頂点出力はcrest・compression・spacingをvec3、基準XZ・表現済み勾配をvec4にまとめる。反射投影座標は補間後のworld座標からfragment側で算出する。
 
 - CPUは実Float32係数とmeshの間隔域から水平変位の微分上界$B_i$を計算する。
 - 方向norm、noise、LOD境界とstationary pointを含め、全域非表示成分は0とする。

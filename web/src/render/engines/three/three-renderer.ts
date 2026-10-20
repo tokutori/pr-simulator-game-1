@@ -51,7 +51,8 @@ import { createLakeSkyTexture, lakeSkyHaze } from "./lake-sky-texture.js";
 import { createLakeClouds, disposeLakeClouds } from "./lake-clouds.js";
 import { lake_scene_ambient_color_srgb, lake_scene_ambient_irradiance,
   lake_scene_sunlight_color_srgb, lake_scene_sunlight_irradiance } from "../../../../pkg/birdman_game_wasm.js";
-import { createLakeGeometry } from "./lake-water-geometry.js";
+import { createLakeChunks, disposeLakeChunks, lakeWaterDisplacementBounds, updateLakeChunkBounds } from "./lake-water-geometry.js";
+import type { LakeWaterDisplacement } from "./lake-water-geometry.js";
 import { createLakeWaveProjection, LAKE_WAVE_PACKET_GLSL, LAKE_WAVE_PROJECTION_GLSL } from "./lake-wave-projection.js";
 import { createBirdmanAirframe, NO_AIRFRAME_CONTROLS } from "./birdman-airframe.js";
 import { createLakeVenue } from "./lake-venue-mesh.js";
@@ -111,6 +112,7 @@ function titleCameraPoseForViewport(width: number, height: number, pitchHalfRadi
   );
 }
 interface LakeWaveResources {
+  readonly displacement: LakeWaterDisplacement;
   readonly waveKAmplitude: readonly Vector4[];
   readonly waveOmegaPhase: readonly Vector4[];
   readonly waveCount: number;
@@ -128,6 +130,7 @@ interface LakeVisualResources extends LakeWaveResources {
 function createLakeWaveResources(condition: LakeVisualCondition, quality: LakeWaterQuality): LakeWaveResources {
   const projection = createLakeWaveProjection(condition, quality);
   return {
+    displacement: lakeWaterDisplacementBounds(projection),
     waveKAmplitude: projection.waveKAmplitude.map((wave) => new Vector4(...wave)),
     waveOmegaPhase: projection.waveOmegaPhase.map((wave) => new Vector4(...wave)),
     waveCount: projection.waveCount, visualWaveHeight: projection.visualWaveHeight,
@@ -212,9 +215,9 @@ export function createThreeRenderer(
 
   let activeLakeQuality = lakeQuality;
   const waterQuality = lakeWaterQualityProfile(activeLakeQuality);
-  let waterGeometry = createLakeGeometry(waterQuality.meshSegments);
   let activeLakeCondition = DEFAULT_LAKE_VISUAL_CONDITION;
   let lakeResources = createLakeVisualResources(activeLakeCondition, lakeQuality);
+  let waterGeometry = createLakeChunks(waterQuality.meshSegments, lakeResources.displacement);
   const waterMaterial = new ShaderMaterial({
     lights: true,
     uniforms: {
@@ -320,9 +323,15 @@ export function createThreeRenderer(
   farWater.position.y = 0;
   farWater.frustumCulled = false;
   scene.add(farWater);
-  const water = new Mesh(waterGeometry, waterMaterial);
-  water.frustumCulled = false;
-  water.receiveShadow = true;
+  const water = new Group();
+  water.name = "lake-biwa-animated-water";
+  const waterMeshes = waterGeometry.map((geometry, index) => {
+    const mesh = new Mesh(geometry, waterMaterial);
+    mesh.name = `lake-biwa-water-chunk-${String(index)}`;
+    mesh.receiveShadow = true;
+    water.add(mesh);
+    return mesh;
+  });
   scene.add(water);
   const venue = createLakeVenue();
   venue.group.visible = false;
@@ -412,7 +421,7 @@ export function createThreeRenderer(
     resolve: (cleanup: LakeWaterQualityCleanupResult) => void;
     reject: (reason: unknown) => void;
   }>;
-  type PreparedLakeQuality = Readonly<{ quality: LakeWaterQuality; waves: LakeWaveResources; geometry: PlaneGeometry }>;
+  type PreparedLakeQuality = Readonly<{ quality: LakeWaterQuality; waves: LakeWaveResources; geometry: ReturnType<typeof createLakeChunks> }>;
   let manualLakeQualityRequest: LakeQualityRequest | null = null;
   type PendingViewInputs = Readonly<{
     flightPose?: FlightRenderPose | null;
@@ -460,7 +469,7 @@ export function createThreeRenderer(
         if (result === false) {
           const unused = next;
           next = null;
-          unused?.geometry.dispose();
+          if (unused !== null) disposeLakeChunks(unused.geometry);
           return false;
         }
         const request = manualLakeQualityRequest;
@@ -469,7 +478,7 @@ export function createThreeRenderer(
         return result;
       } catch (cause: unknown) {
         let failure = cause;
-        try { next?.geometry.dispose(); }
+        try { if (next !== null) disposeLakeChunks(next.geometry); }
         catch (cleanup: unknown) { failure = new AggregateError([cause, cleanup], "Screen water preparation cleanup failed", { cause }); }
         const request = manualLakeQualityRequest;
         manualLakeQualityRequest = null;
@@ -486,11 +495,14 @@ export function createThreeRenderer(
   const stageViewInputs = (inputs: PendingViewInputs): void => {
     pendingViewInputs = Object.freeze({ ...pendingViewInputs, ...inputs });
   };
-  const prepareLakeQuality = (quality: LakeWaterQuality): PreparedLakeQuality | null => quality === activeLakeQuality ? null
-    : { quality, waves: createLakeWaveResources(activeLakeCondition, quality),
-      geometry: createLakeGeometry(lakeWaterQualityProfile(quality).meshSegments) };
+  const prepareLakeQuality = (quality: LakeWaterQuality): PreparedLakeQuality | null => {
+    if (quality === activeLakeQuality) return null;
+    const waves = createLakeWaveResources(activeLakeCondition, quality);
+    return { quality, waves, geometry: createLakeChunks(lakeWaterQualityProfile(quality).meshSegments, waves.displacement) };
+  };
   const commitLakeQuality = (next: PreparedLakeQuality | null): LakeWaterQualityCleanupResult => {
     if (next === null) return { kind: "complete" };
+    if (next.geometry.length !== waterMeshes.length) throw new Error("Water chunk count changed during quality preparation");
     const previousGeometry = waterGeometry;
     lakeUniforms.waveKAmplitude.value = next.waves.waveKAmplitude;
     lakeUniforms.waveOmegaPhase.value = next.waves.waveOmegaPhase;
@@ -499,11 +511,15 @@ export function createThreeRenderer(
     lakeUniforms.spacingGradient.value = next.waves.spacingGradientMagnitude;
     lakeUniforms.visualWaveHeight.value = next.waves.visualWaveHeight;
     lakeResources = { ...lakeResources, ...next.waves };
-    water.geometry = next.geometry;
+    for (const [index, geometry] of next.geometry.entries()) {
+      const mesh = waterMeshes[index];
+      if (mesh === undefined) throw new Error("Missing retained water chunk");
+      mesh.geometry = geometry;
+    }
     waterGeometry = next.geometry;
     activeLakeQuality = next.quality;
     try {
-      previousGeometry.dispose();
+      disposeLakeChunks(previousGeometry);
       return { kind: "complete" };
     } catch (cause: unknown) {
       return { kind: "failed", message: errorMessage(cause) };
@@ -838,7 +854,7 @@ export function createThreeRenderer(
       gazeCursorMaterial.dispose();
       panelGeometry.dispose();
       panelMaterial.dispose();
-      waterGeometry.dispose();
+      disposeLakeChunks(waterGeometry);
       waterMaterial.dispose();
       farWaterGeometry.dispose();
       farWaterMaterial.dispose();
@@ -875,6 +891,7 @@ export function createThreeRenderer(
       if (framePhase === "view" || pendingViewInputs !== null) { stageViewInputs({ lake: condition }); return; }
       if (sameLakeVisualCondition(activeLakeCondition, condition)) return;
       const next = createLakeVisualResources(condition, activeLakeQuality);
+      updateLakeChunkBounds(waterGeometry, next.displacement);
       lakeUniforms.windSpeed.value = next.windSpeed;
       lakeUniforms.windVelocity.value.set(condition.windEastMetersPerSecond, -condition.windNorthMetersPerSecond, 0, 0);
       lakeUniforms.detailScale.value = condition.detailAmplitudeScale;
@@ -1190,7 +1207,6 @@ function sessionFromState(state: ThreeWebXrState): XRSession | null {
 }
 
 const lakeWaterVertexShader = /* glsl */ `
-uniform mat4 uReflectionMatrix;
 uniform float uTimeSeconds;
 uniform vec4 uWindVelocity;
 uniform float uDetailScale;
@@ -1202,12 +1218,8 @@ uniform float uGridSpacingGradient;
 attribute float aGridSpacing;
 varying vec3 vWorldPosition;
 varying vec3 vWorldNormal;
-varying float vCrest;
-varying float vCompression;
-varying float vGridSpacing;
-varying vec2 vBaseXZ;
-varying vec2 vRepresentedSlope;
-varying vec4 vReflectionCoord;
+varying vec3 vSurfaceState;
+varying vec4 vSurfaceGradient;
 #include <shadowmap_pars_vertex>
 ${LAKE_WAVE_PROJECTION_GLSL}
 
@@ -1216,7 +1228,7 @@ void main() {
   // mapping to world XZ keeps the resulting top face wound toward +Y.
   vec3 p = vec3(position.x, 0.0, -position.y);
   vec2 waveXZ = (modelMatrix * vec4(p, 1.0)).xz;
-  vBaseXZ = waveXZ;
+  vSurfaceGradient.xy = waveXZ;
   vec2 detailDrift = uWindVelocity.xy * uTimeSeconds;
   vec4 nearDetail = texture2D(uDetailNear, (waveXZ - detailDrift * 0.42) / uDetailExtents.x);
   vec4 farDetail = texture2D(uDetailFar, (waveXZ - detailDrift * 0.89) / uDetailExtents.y);
@@ -1240,7 +1252,7 @@ void main() {
   float horizontalDeterminant = dxx * dzz - dxz * dzx;
   // The geometric normal is measured after Gerstner horizontal displacement.
   // Convert the represented detail slope into that same coordinate system.
-  vRepresentedSlope = vec2(
+  vSurfaceGradient.zw = vec2(
     dzz * resolvedDetailSlope.x - dzx * resolvedDetailSlope.y,
     -dxz * resolvedDetailSlope.x + dxx * resolvedDetailSlope.y
   ) / max(horizontalDeterminant, 0.01);
@@ -1250,40 +1262,29 @@ void main() {
   vec4 worldPosition = modelMatrix * vec4(p, 1.0);
   vWorldPosition = worldPosition.xyz;
   vWorldNormal = normalize(mat3(modelMatrix) * localNormal);
-  vReflectionCoord = uReflectionMatrix * worldPosition;
   #if defined( USE_SHADOWMAP ) && NUM_DIR_LIGHT_SHADOWS > 0
     vDirectionalShadowCoord[0] = directionalShadowMatrix[0] *
       (worldPosition + vec4(vWorldNormal * directionalLightShadows[0].shadowNormalBias, 0.0));
   #endif
-  vCrest = projected.crest / max(projected.slopeEnergy, 0.001);
-  vCompression = clamp(1.0 - horizontalDeterminant, 0.0, 1.0);
-  vGridSpacing = aGridSpacing;
+  vSurfaceState = vec3(projected.crest / max(projected.slopeEnergy, 0.001),
+    clamp(1.0 - horizontalDeterminant, 0.0, 1.0), aGridSpacing);
   gl_Position = projectionMatrix * viewMatrix * worldPosition;
 }
 `;
 
 const lakeFilteredWaterVertexShader = /* glsl */ `
-uniform mat4 uReflectionMatrix;
 attribute float aGridSpacing;
 varying vec3 vWorldPosition;
 varying vec3 vWorldNormal;
-varying float vCrest;
-varying float vCompression;
-varying float vGridSpacing;
-varying vec2 vBaseXZ;
-varying vec2 vRepresentedSlope;
-varying vec4 vReflectionCoord;
+varying vec3 vSurfaceState;
+varying vec4 vSurfaceGradient;
 #include <shadowmap_pars_vertex>
 void main() {
   vec4 worldPosition = modelMatrix * vec4(position.x, 0.0, -position.y, 1.0);
   vWorldPosition = worldPosition.xyz;
   vWorldNormal = normalize(mat3(modelMatrix) * vec3(0.0, 1.0, 0.0));
-  vCrest = 0.0;
-  vCompression = 0.0;
-  vGridSpacing = aGridSpacing;
-  vBaseXZ = worldPosition.xz;
-  vRepresentedSlope = vec2(0.0);
-  vReflectionCoord = uReflectionMatrix * worldPosition;
+  vSurfaceState = vec3(0.0, 0.0, aGridSpacing);
+  vSurfaceGradient = vec4(worldPosition.xz, 0.0, 0.0);
   #if defined( USE_SHADOWMAP ) && NUM_DIR_LIGHT_SHADOWS > 0
     vDirectionalShadowCoord[0] = directionalShadowMatrix[0] *
       (worldPosition + vec4(vWorldNormal * directionalLightShadows[0].shadowNormalBias, 0.0));
@@ -1309,6 +1310,7 @@ uniform vec4 uHazeRange;
 uniform vec4 uSunDirection;
 uniform sampler2D uReflectionTexture;
 uniform float uReflectionEnabled;
+uniform mat4 uReflectionMatrix;
 uniform sampler2D uDetailNear;
 uniform sampler2D uDetailFar;
 uniform sampler2D uSkyTexture;
@@ -1318,12 +1320,8 @@ uniform vec4 uWaterBackingCenter;
 uniform float uWaterBackingInnerExtent;
 varying vec3 vWorldPosition;
 varying vec3 vWorldNormal;
-varying float vCrest;
-varying float vCompression;
-varying float vGridSpacing;
-varying vec2 vBaseXZ;
-varying vec2 vRepresentedSlope;
-varying vec4 vReflectionCoord;
+varying vec3 vSurfaceState;
+varying vec4 vSurfaceGradient;
 #include <common>
 #include <shadowmap_pars_fragment>
 ${LAKE_WAVE_PACKET_GLSL}
@@ -1362,7 +1360,7 @@ vec2 lakeWaveSlope(vec2 worldXZ) {
       vec3 warp = modulation[1];
       float phase = k * dot(direction, worldXZ) + warp.x - op.x * uTimeSeconds + op.y;
       vec2 phaseGradient = k * direction + warp.yz;
-      float geometricVisibility = 1.0 - smoothstep(1.3, 2.5, k * vGridSpacing);
+      float geometricVisibility = 1.0 - smoothstep(1.3, 2.5, k * vSurfaceState.z);
       float pixelVisibility = 1.0 - smoothstep(2.0, 5.0, fwidth(phase));
       // Transfer waves that outgrow the mesh to the pixel normal. A weak
       // transfer creates an empty band wherever geometric detail ends.
@@ -1444,7 +1442,7 @@ vec3 sampleLakeColor(vec2 worldXZ, vec2 waveSlope, vec3 microDetail, float sunVi
   // Subtract the exact vertex slope already represented by the geometric
   // normal; vertex LOD0 and filtered fragment samples need not be identical.
   vec2 geometricSlope = -geometricNormal.xz / max(geometricNormal.y, 0.01);
-  vec2 totalSlope = geometricSlope + waveSlope + microSlope - vRepresentedSlope;
+  vec2 totalSlope = geometricSlope + waveSlope + microSlope - vSurfaceGradient.zw;
   vec3 normal = normalize(vec3(-totalSlope.x, 1.0, -totalSlope.y));
   vec3 viewDirection = normalize(cameraPosition - vec3(worldXZ.x, vWorldPosition.y, worldXZ.y));
   float ndv = max(dot(geometricNormal, viewDirection), 0.0);
@@ -1463,27 +1461,30 @@ vec3 sampleLakeColor(vec2 worldXZ, vec2 waveSlope, vec3 microDetail, float sunVi
   float glitterNoise = 0.35 + 0.65 * clamp(sqrt(microDetail.z) * 3.0, 0.0, 1.0);
   float glitter = glitterLobe * glitterNoise * smoothstep(0.35, 2.0, uWindSpeed) * sunVisibility * uSunDirection.w;
   float diffuse = 0.58 + 0.42 * sunVisibility * max(dot(normal, normalize(uSunDirection.xyz)), 0.0) * uSunDirection.w;
-  float sharpCrest = smoothstep(0.42, 0.76, vCompression);
-  float crestLight = smoothstep(0.05, 1.05, vCrest) * sharpCrest * mix(0.35, 1.0, patches);
+  float sharpCrest = smoothstep(0.42, 0.76, vSurfaceState.y);
+  float crestLight = smoothstep(0.05, 1.05, vSurfaceState.x) * sharpCrest * mix(0.35, 1.0, patches);
   vec3 base = mix(uWaterDark, uWaterMid, diffuse * 0.72);
   base = mix(base, uWaterLight, crestLight * 0.16 + patches * 0.07);
   base *= mix(0.82, 1.0, sunVisibility);
   // Existing wave groups may remain steep after the local wind weakens.
-  float whitecap = smoothstep(0.68, 0.84, vCompression) * smoothstep(0.7, 0.98, vCrest) * 0.12;
+  float whitecap = smoothstep(0.68, 0.84, vSurfaceState.y) * smoothstep(0.7, 0.98, vSurfaceState.x) * 0.12;
   // Dark water absorption must not also darken the reflected sky.
   base *= vec3(0.29, 0.34, 0.37);
   // Art-directed reflection strength for the dark reference water. This is
   // not a rough-surface BRDF and leaves a visible sky/water boundary.
   vec3 color = mix(base, reflection, fresnel * 0.45);
-  if (uReflectionEnabled > 0.5 && vReflectionCoord.w > 0.0) {
-    vec2 reflectedUv = vReflectionCoord.xy / vReflectionCoord.w * 0.5 + 0.5;
+  if (uReflectionEnabled > 0.5) {
+    vec4 reflectionCoord = uReflectionMatrix * vec4(vWorldPosition, 1.0);
+    if (reflectionCoord.w > 0.0) {
+      vec2 reflectedUv = reflectionCoord.xy / reflectionCoord.w * 0.5 + 0.5;
     // Small surface-slope offsets break up the image along moving wave facets.
-    reflectedUv += totalSlope * 0.006;
-    if (all(greaterThanEqual(reflectedUv, vec2(0.0))) &&
-        all(lessThanEqual(reflectedUv, vec2(1.0)))) {
-      vec4 aircraftReflection = texture2D(uReflectionTexture, reflectedUv);
-      color = mix(color, aircraftReflection.rgb,
-        aircraftReflection.a * clamp(0.16 + fresnel * 0.7, 0.0, 0.72));
+      reflectedUv += totalSlope * 0.006;
+      if (all(greaterThanEqual(reflectedUv, vec2(0.0))) &&
+          all(lessThanEqual(reflectedUv, vec2(1.0)))) {
+        vec4 aircraftReflection = texture2D(uReflectionTexture, reflectedUv);
+        color = mix(color, aircraftReflection.rgb,
+          aircraftReflection.a * clamp(0.16 + fresnel * 0.7, 0.0, 0.72));
+      }
     }
   }
   float depthTint = clamp(uVisualWaveHeight / 0.35, 0.0, 1.0);
@@ -1503,10 +1504,10 @@ void main() {
   // plane. Clipping its center prevents coplanar overlap from flattening wave
   // troughs or creating a visible square transition.
   if (uWaterBackingClip > 0.5 &&
-      all(lessThan(abs(vBaseXZ - uWaterBackingCenter.xy), vec2(uWaterBackingInnerExtent)))) discard;
-  vec2 footprintX = dFdx(vBaseXZ) * 0.25;
-  vec2 footprintY = dFdy(vBaseXZ) * 0.25;
-  vec2 center = vBaseXZ;
+      all(lessThan(abs(vSurfaceGradient.xy - uWaterBackingCenter.xy), vec2(uWaterBackingInnerExtent)))) discard;
+  vec2 footprintX = dFdx(vSurfaceGradient.xy) * 0.25;
+  vec2 footprintY = dFdy(vSurfaceGradient.xy) * 0.25;
+  vec2 center = vSurfaceGradient.xy;
   vec2 waveSlope = lakeWaveSlope(center);
   // Supersample subpixel normal detail, then shade the filtered normal once.
   vec3 microDetail = (
