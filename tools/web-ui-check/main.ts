@@ -62,6 +62,7 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
         }
       };
       const issues: string[] = [];
+      const minimumFontSize = Math.max(14, Number.parseFloat(getComputedStyle(document.documentElement).fontSize) * 0.875);
       const rootBounds = geometry.rect(root);
       const style = getComputedStyle(root);
       const menuBounds = geometry.rect(menu);
@@ -80,7 +81,7 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
         range.selectNodeContents(header);
         const textBounds = range.getBoundingClientRect();
         const fontSize = Number.parseFloat(nodeStyle.fontSize);
-        if (fontSize < 14 || textBounds.left < bounds.left - 1 || textBounds.right > bounds.right + 1 || textBounds.bottom > bounds.bottom + 1) issues.push(`${id}: text size/bounds`);
+        if (fontSize < minimumFontSize - 0.01 || textBounds.left < bounds.left - 1 || textBounds.right > bounds.right + 1 || textBounds.bottom > bounds.bottom + 1) issues.push(`${id}: text size/bounds`);
         return { id, bounds, fontSize, contentWidth: node.scrollWidth, contentHeight: node.scrollHeight };
       });
       for (let index = 0; index < nodes.length; index++) for (const other of nodes.slice(0, index)) {
@@ -90,7 +91,7 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
       const glyphs = [...root.querySelectorAll<SVGTextElement>("svg text")].filter(node => node.textContent !== "").map(node => {
         const matrix = node.getScreenCTM();
         const pixels = Number.parseFloat(getComputedStyle(node).fontSize) * (matrix === null ? 0 : Math.hypot(matrix.a, matrix.b));
-        if (pixels < 13.9) issues.push(`Instrument label below 14px: ${node.textContent}`);
+        if (pixels < minimumFontSize - 0.1) issues.push(`Instrument label below the shared font size: ${node.textContent}`);
         return { text: node.textContent, fontSize: pixels };
       });
       const opaqueAdi = [...root.querySelectorAll<SVGElement>('[data-instrument="attitude"] rect, [data-instrument="attitude"] path')]
@@ -324,13 +325,20 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
     for (const [width, height, font] of [[1280, 720, 16], [1920, 1080, 16], [1600, 900, 20], [1920, 1080, 24]] as const) {
       await page.setViewportSize({ width, height });
       await page.evaluate(size => { document.documentElement.style.fontSize = `${String(size)}px`; }, font);
-      await page.evaluate(() => new Promise<void>(complete => { requestAnimationFrame(() => { requestAnimationFrame(() => { complete(); }); }); }));
+      await page.waitForFunction(size => {
+        const hud = document.querySelector<HTMLElement>('.flight-hud[aria-hidden="false"]');
+        return hud !== null && Math.abs(Number.parseFloat(getComputedStyle(hud).fontSize) - size * 0.875) < 0.01;
+      }, font);
       hudMeasurements.push(await measureHud(false));
       await screenshot(`03-hud-${String(width)}x${String(height)}-font${String(font)}`);
     }
     report.hudMeasurements = hudMeasurements;
     await page.evaluate(() => { document.documentElement.style.removeProperty("font-size"); });
     await page.setViewportSize({ width: 1280, height: 720 });
+    await page.waitForFunction(() => {
+      const hud = document.querySelector<HTMLElement>('.flight-hud[aria-hidden="false"]');
+      return hud !== null && Math.abs(Number.parseFloat(getComputedStyle(hud).fontSize) - 14) < 0.01;
+    });
     for (const [open, back, name] of [["game-pause-open-settings", "game-pause-settings-back", "settings"], ["game-pause-open-help", "game-pause-help-back", "help"]] as const) {
       await click(open);
       await control(back).waitFor({ state: "visible" });
