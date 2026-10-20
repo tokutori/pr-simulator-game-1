@@ -587,7 +587,13 @@ function runReplayClockCommand(
   }
 }
 
+function isCurrentPresentationInitialization(requestId: number): boolean {
+  const presentation = model.presentation.type === "cached" ? model.presentation.retained : model.presentation;
+  return presentation.type === "initializing" && presentation.requestId === requestId;
+}
+
 async function initializePresentation(requestId: number): Promise<void> {
+  let ownedSession: TailAppSessionFacade | null = null;
   let presentationOwner:
     | { readonly kind: "uncreated" }
     | { readonly kind: "policy"; readonly policy: ScreenRenderAutoBridge }
@@ -596,7 +602,7 @@ async function initializePresentation(requestId: number): Promise<void> {
   try {
     await initializeWasmRuntime();
     const { createThreeRenderer } = await import("./render/engines/three/three-renderer.js");
-    if (model.presentation.type === "hidden") return;
+    if (!isCurrentPresentationInitialization(requestId)) return;
     if (isPageHidden()) return;
     const retainedSelection = model.screenRenderScale?.selection;
     const policy = new ScreenRenderAutoBridge();
@@ -624,10 +630,19 @@ async function initializePresentation(requestId: number): Promise<void> {
     presentationOwner = { kind: "renderer", renderer: bundle.renderer };
     const initializedSession = await initializeAppSession();
     const session = initializedSession;
+    ownedSession = session;
+    if (isPageHidden() || !isCurrentPresentationInitialization(requestId)) {
+      throw new Error("Renderer initialization expired during session preparation");
+    }
     gameSession = session;
     if (isPageHidden()) throw new Error("Page became hidden during initialization");
     physicsHz = initializedSession.physicsHz;
     flightRenderer = bundle.renderer;
+    renderModel();
+    bundle.renderer.resize(currentViewport());
+    await bundle.prepare();
+    if (isPageHidden() || !isCurrentPresentationInitialization(requestId)
+        || gameSession !== session || flightRenderer !== bundle.renderer) throw new Error("Renderer initialization expired during preparation");
     const screenBackend = new ScreenPresentationBackend(currentViewport);
     webXrBackend = new WebXrPresentationBackend(
       bundle.webxr,
@@ -680,15 +695,22 @@ async function initializePresentation(requestId: number): Promise<void> {
     });
     syncGameSession();
   } catch (error) {
-    window.removeEventListener("resize", onResize);
-    window.removeEventListener("blur", cancelUnavailableCountdown);
     const ownedPresentation = presentationOwner;
-    const controller = flightController;
-    const session = gameSession;
-    runtime = null;
-    flightController = null;
-    gameSession = null;
-    flightRenderer = null;
+    const ownsSession = ownedSession !== null && gameSession === ownedSession;
+    const controller = ownsSession ? flightController : null;
+    const session = ownedSession;
+    if (ownsSession) {
+      flightController = null;
+      gameSession = null;
+    }
+    const ownsRuntime = ownedPresentation.kind === "runtime" && runtime === ownedPresentation.runtime;
+    const ownsRenderer = ownedPresentation.kind === "renderer" && flightRenderer === ownedPresentation.renderer;
+    if (ownsRuntime || ownsRenderer) {
+      window.removeEventListener("resize", onResize);
+      window.removeEventListener("blur", cancelUnavailableCountdown);
+      flightRenderer = null;
+      if (ownsRuntime) runtime = null;
+    }
     const cleanupFailures: string[] = [];
     const cleanups = [
       { name: "presentation", run: () => {
@@ -780,10 +802,18 @@ function sharedGameUiPlatformInput(): GameUiPlatformObservation {
 function synchronizeSharedGameUi(): void {
   const session = gameSession;
   if (session === null || gameSessionPhase(model.gameSession) === "boot") return;
+  const previousRevision = model.sharedGameUi?.view_revision;
   const view = session.readSharedUi(sharedGameUiPlatformInput());
   const transition = updateApp(model, { type: "shared-game-ui-observed", view });
   model = transition.model;
   for (const effect of transition.effects) runEffect(effect);
+  if (previousRevision !== view.view_revision) {
+    const visible = screenUiVisible(model.presentation);
+    const hud = createFlightUiHudModel(model);
+    flightHud.render(hud);
+    flightHud.setVisible(visible && hud !== null);
+    screenUi.render(currentViewModel(), visible);
+  }
 }
 
 function runSharedGameSessionCommand(command: SessionCommand, requestId: number): void {

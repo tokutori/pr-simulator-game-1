@@ -46,6 +46,8 @@ export class ScreenAutoRenderer {
     this.lastFrame = now;
     if (eligible && this.binding.policy.measurement_enabled()) {
       try {
+        const unavailable = this.timer.availability();
+        if (unavailable !== null) this.receive(unavailable, now);
         for (const observation of this.timer.poll()) this.receive(observation, now);
         this.binding.policy.pending(now);
       } catch (error: unknown) { this.unavailable(error, now); }

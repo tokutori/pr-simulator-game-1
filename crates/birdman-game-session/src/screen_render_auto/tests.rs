@@ -684,6 +684,10 @@ fn stale_duplicate_regressive_and_unavailable_observations_cannot_raise_quality(
         .unwrap();
     assert_eq!(controller.epoch(), epoch);
     assert_eq!(controller.snapshot().applied, ScreenRenderScale::Half);
+    let request = controller.requested().unwrap();
+    assert_eq!(request.shadow, ScreenShadowMap::Quarter);
+    assert_eq!(request.water_quality, LakeWaterQuality::Low);
+    controller.applied(request, 1_002.0, None).unwrap();
     assert!(matches!(
         controller.snapshot().status,
         ScreenRenderAutoStatus::Unsupported { .. }
@@ -694,6 +698,133 @@ fn stale_duplicate_regressive_and_unavailable_observations_cannot_raise_quality(
     assert_eq!(
         controller.snapshot().status,
         ScreenRenderAutoStatus::Measuring
+    );
+}
+
+#[test]
+fn unsupported_auto_applies_the_lightweight_profile_and_restores_manual_resources() {
+    let mut controller = ScreenRenderAutoController::new(
+        ScreenRenderScale::Full,
+        ScreenShadowMap::Full,
+        LakeWaterQuality::High,
+    );
+    let selection = controller.snapshot().selection;
+    controller
+        .unsupported("GPU timer unavailable".into(), 0.0)
+        .unwrap();
+    let request = controller.requested().unwrap();
+    assert_eq!(request.scale, ScreenRenderScale::Half);
+    assert_eq!(request.shadow, ScreenShadowMap::Quarter);
+    assert_eq!(request.water_quality, LakeWaterQuality::Low);
+    assert_eq!(controller.snapshot().applied, ScreenRenderScale::Full);
+    controller
+        .unsupported("GPU timer unavailable".into(), 1.0)
+        .unwrap();
+    assert_eq!(controller.requested(), Some(request));
+    controller.applied(request, 2.0, None).unwrap();
+    let snapshot = controller.snapshot();
+    assert_eq!(snapshot.selection, selection);
+    assert_eq!(snapshot.applied, ScreenRenderScale::Half);
+    assert_eq!(snapshot.shadow, ScreenShadowMap::Quarter);
+    assert_eq!(snapshot.water_quality, LakeWaterQuality::Low);
+    assert_eq!(
+        snapshot.status,
+        ScreenRenderAutoStatus::Unsupported {
+            cause: "GPU timer unavailable".into()
+        }
+    );
+    assert!(!controller.measurement_enabled());
+    assert_eq!(controller.initial_observation_epoch(), None);
+    let manual = controller.select_auto(false, 3.0).unwrap().unwrap();
+    assert_eq!(manual.scale, ScreenRenderScale::Full);
+    assert_eq!(manual.shadow, ScreenShadowMap::Full);
+    assert_eq!(manual.water_quality, LakeWaterQuality::High);
+    controller.applied(manual, 4.0, None).unwrap();
+    assert_eq!(controller.snapshot().status, ScreenRenderAutoStatus::Manual);
+}
+
+#[test]
+fn unsupported_scope_change_replaces_the_request_and_preserves_manual_flight_choice() {
+    let mut controller = ScreenRenderAutoController::new(
+        ScreenRenderScale::ThreeQuarters,
+        ScreenShadowMap::Half,
+        LakeWaterQuality::Medium,
+    );
+    controller.select_auto(false, 0.0).unwrap();
+    let selection = controller.snapshot().selection;
+    controller
+        .unsupported("GPU timer unavailable".into(), 1.0)
+        .unwrap();
+    assert_eq!(controller.requested(), None);
+    let background = controller
+        .set_scope(ScreenRenderScope::Background, 2.0)
+        .unwrap()
+        .unwrap();
+    let restored = controller
+        .set_scope(ScreenRenderScope::FlightSettings, 3.0)
+        .unwrap();
+    assert_eq!(restored, None);
+    assert_eq!(
+        controller.applied(background, 4.0, None),
+        Err(ScreenRenderAutoError::StaleRequest)
+    );
+    assert_eq!(controller.snapshot().selection, selection);
+    let background = controller
+        .set_scope(ScreenRenderScope::Background, 5.0)
+        .unwrap()
+        .unwrap();
+    controller.applied(background, 6.0, None).unwrap();
+    let manual = controller
+        .set_scope(ScreenRenderScope::FlightSettings, 7.0)
+        .unwrap()
+        .unwrap();
+    assert_eq!(manual.scale, ScreenRenderScale::ThreeQuarters);
+    assert_eq!(manual.shadow, ScreenShadowMap::Half);
+    assert_eq!(manual.water_quality, LakeWaterQuality::Medium);
+}
+
+#[test]
+fn capability_loss_during_resource_exchange_applies_the_fallback_after_acknowledgment() {
+    let mut controller = ScreenRenderAutoController::new(
+        ScreenRenderScale::Full,
+        ScreenShadowMap::Full,
+        LakeWaterQuality::High,
+    );
+    let pending = controller
+        .select_water_quality(LakeWaterQuality::Medium, 0.0)
+        .unwrap()
+        .unwrap();
+    controller
+        .unsupported("GPU timer unavailable".into(), 1.0)
+        .unwrap();
+    assert_eq!(controller.requested(), Some(pending));
+    controller.applied(pending, 2.0, None).unwrap();
+    assert_eq!(
+        controller.snapshot().water_quality,
+        LakeWaterQuality::Medium
+    );
+    let fallback = controller.requested().unwrap();
+    assert_ne!(fallback.epoch, pending.epoch);
+    assert_eq!(fallback.scale, ScreenRenderScale::Half);
+    assert_eq!(fallback.shadow, ScreenShadowMap::Quarter);
+    assert_eq!(fallback.water_quality, LakeWaterQuality::Low);
+    controller
+        .failed(fallback, "texture allocation failed".into(), 3.0)
+        .unwrap();
+    controller
+        .unsupported("GPU timer unavailable".into(), 4.0)
+        .unwrap();
+    assert_eq!(controller.requested(), None);
+    assert_eq!(
+        controller.snapshot().status,
+        ScreenRenderAutoStatus::Failed {
+            cause: "texture allocation failed".into()
+        }
+    );
+    assert_eq!(controller.snapshot().applied, ScreenRenderScale::Full);
+    assert_eq!(
+        controller.snapshot().water_quality,
+        LakeWaterQuality::Medium
     );
 }
 

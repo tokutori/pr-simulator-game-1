@@ -45,7 +45,7 @@ async function fixture(archive = false) {
     resize: vi.fn(), setStereoPresentation: vi.fn(), setScreenRenderScale: vi.fn(), setScreenRenderAuto: vi.fn(), setSelectRayHandler: vi.fn(), dispose: vi.fn()
   } satisfies RendererAdapter;
   vi.doMock("../../web/src/render/engines/three/three-renderer.js", () => ({
-    createThreeRenderer: () => ({ renderer, webxr: { checkAvailability: () => Promise.resolve({ supported: false, message: "Headless WebXR is unavailable" }) } })
+    createThreeRenderer: () => ({ renderer, prepare: () => Promise.resolve(), webxr: { checkAvailability: () => Promise.resolve({ supported: false, message: "Headless WebXR is unavailable" }) } })
   }));
   const wasm = await import("../../web/pkg/birdman_game_wasm.js");
   wasm.initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url))) });

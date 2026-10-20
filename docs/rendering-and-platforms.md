@@ -67,7 +67,9 @@
 - NativeはBevyのRecorderでsource frame・source時刻・epochが一致するspanを受け取る。
 - GPU upload、screenshot/readback、present待機、CPU全体の時間と区別する。
 - 使用するpipelineの準備が完了したframeを有効sampleとする。Auto用queryはAuto選択中に発行する。
-- 未対応は原因付きで表示する。
+- Webは最初の描画前にGPU計測能力を確認する。GPU計測非対応のAutoは解像度50%・shadow 512・水面Lowの軽量固定profileを要求し、交換ACK後に原因付きで表示する。Manualへ戻すと保持した三値を復元する。
+- Webの初期化は実環境・viewport・Auto資源を適用し、現在のtextureと反射targetを初期化してから主描画・反射のmaterialを順に`compileAsync`で準備する。完了後にframe loopを開始する。
+- 背景内部program・shadow pass・後着decalのuploadは初回描画のCPU/GPU観測へ含める。
 
 - WebのCSS寸法は保持し、元のDPRと選択倍率の積をThree.jsの公開`setPixelRatio`へ渡す。
 - Nativeは整数物理寸法へ共有`physical_size`を適用する。
@@ -132,6 +134,7 @@ visibilityと実空間勾配の両channelがすべて厳密0の成分は、packe
 - 帯域別の移流は深水重力波の$c\propto\sqrt{\lambda}$に近づけた視覚近似であり、帯域内の分散・水深変化を表さない。
 
 - near/farと回転・縮尺を変えたfine/rippleの4層micro-normalを4点でsubpixel filteringする。
+- Fragmentの波loopは実成分数を上限とし、各成分の画素微分を全laneで評価する。法線寄与が0の画素では、その後のcrestとgradientの演算を省略する。
 - 回転は移動方向、texture勾配、法線勾配へ一貫して適用する。
 - mipmapに平均勾配と二次モーメントを保持し、頂点法線が表現した勾配を差し引いて二重計上を避ける。
 - 未解像varianceからroughnessを導出する。

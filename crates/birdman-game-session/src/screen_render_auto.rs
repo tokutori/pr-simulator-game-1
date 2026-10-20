@@ -521,7 +521,9 @@ impl ScreenRenderAutoController {
         if !matches!(self.measurement, MeasurementState::Unsupported(_)) {
             self.measurement = MeasurementState::Measuring;
         }
-        if scope == ScreenRenderScope::FlightSettings {
+        if self.automatic() && matches!(self.measurement, MeasurementState::Unsupported(_)) {
+            self.request_unsupported_quality()
+        } else if scope == ScreenRenderScope::FlightSettings {
             self.request(self.selection.desired(self.applied))
         } else {
             Ok(None)
@@ -685,7 +687,7 @@ impl ScreenRenderAutoController {
         Ok(())
     }
 
-    /// Retains an explicit capability failure without treating it as zero work.
+    /// Requests a conservative Auto profile while retaining the capability failure and manual choice.
     pub fn unsupported(&mut self, cause: String, now_ms: f64) -> Result<(), ScreenRenderAutoError> {
         self.check_time(now_ms)?;
         self.initial_observation_epoch = None;
@@ -693,7 +695,24 @@ impl ScreenRenderAutoController {
             self.reset_window(now_ms)?;
         }
         self.measurement = MeasurementState::Unsupported(cause);
+        self.request_unsupported_quality()?;
         Ok(())
+    }
+
+    fn request_unsupported_quality(
+        &mut self,
+    ) -> Result<Option<ScreenRenderResourceRequest>, ScreenRenderAutoError> {
+        if !self.automatic()
+            || !matches!(self.resource, ResourceState::Ready)
+            || self.epoch.checked_add(2).is_none()
+        {
+            return Ok(self.requested());
+        }
+        self.request(RenderQuality {
+            scale: ScreenRenderScale::Half,
+            shadow: ScreenShadowMap::Quarter,
+            water_quality: LakeWaterQuality::Low,
+        })
     }
 
     /// Commits the still-owned request, retaining any retired-resource cleanup failure.
@@ -728,6 +747,9 @@ impl ScreenRenderAutoController {
             self.measurement = MeasurementState::Measuring;
         }
         self.cooldown_until_ms = now_ms + COOLDOWN_MS;
+        if matches!(self.measurement, MeasurementState::Unsupported(_)) {
+            self.request_unsupported_quality()?;
+        }
         Ok(())
     }
 

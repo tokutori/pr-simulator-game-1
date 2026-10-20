@@ -61,11 +61,33 @@ describe("Screen renderer with the production Rust GPU policy", () => {
       trial.gl.getExtension.mockReturnValue(null);
       for (let repetition = 0; repetition < 2; repetition++) {
         trial.renderer.selectAuto(true);
-        trial.renderer.boundary(true); trial.renderer.begin(); trial.renderer.end(true);
-        trial.renderer.boundary(true); trial.renderer.begin(); trial.renderer.end(true);
+        for (let frame = 0; frame < 3; frame++) {
+          trial.renderer.boundary(true); trial.renderer.begin(); trial.renderer.end(true);
+        }
         expect(trial.state().status.kind).toBe("unsupported");
         trial.renderer.selectAuto(false);
       }
+    } finally { trial.renderer.dispose(); }
+  });
+
+  it.each(["missing-extension", "zero-counter"])("applies the shared lightweight Auto profile with %s and restores Manual", capability => {
+    const trial = fixture();
+    try {
+      if (capability === "missing-extension") trial.gl.getExtension.mockReturnValue(null);
+      else trial.gl.getQuery.mockReturnValue(0);
+      trial.renderer.boundary(true);
+      expect(trial.applied).toHaveBeenCalledExactlyOnceWith(0.5, 512, "low", true);
+      for (let frame = 0; frame < 4; frame++) {
+        trial.renderer.boundary(true); trial.renderer.begin(); trial.renderer.end(true);
+      }
+      expect(trial.applied).toHaveBeenCalledExactlyOnceWith(0.5, 512, "low", true);
+      expect(trial.state()).toMatchObject({ selection: { kind: "auto", manual_scale: "100", manual_water_quality: "high" },
+        applied: "50", shadow: "quarter", water_quality: "low", status: { kind: "unsupported" } });
+      expect(trial.gl.beginQuery).not.toHaveBeenCalled();
+      trial.renderer.selectAuto(false);
+      trial.renderer.boundary(true);
+      expect(trial.applied).toHaveBeenLastCalledWith(1, 2048, "high", true);
+      expect(trial.state()).toMatchObject({ selection: { kind: "manual" }, applied: "100", water_quality: "high", status: { kind: "manual" } });
     } finally { trial.renderer.dispose(); }
   });
 

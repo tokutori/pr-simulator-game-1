@@ -19,7 +19,7 @@ afterEach(async () => {
 });
 
 async function fixture(failInitialization = false, seedCurrentArchive = false, deferScreenStart = false, captureReplayTicks = false,
-  recordListMode: "normal" | "loading" | "failed" = "normal", webXrAvailable = false) {
+  recordListMode: "normal" | "loading" | "failed" = "normal", webXrAvailable = false, deferRendererPreparation = false) {
   vi.resetModules();
   const browser = new BrowserWindow({ url: "http://localhost/" });
   const documentRef = browser.document as unknown as Document;
@@ -104,10 +104,13 @@ async function fixture(failInitialization = false, seedCurrentArchive = false, d
     setSessionEndHandler: (handler) => { sessionEndHandler = handler; },
     setReferenceSpaceResetHandler: () => undefined
   };
+  let releasePreparation: () => void = () => undefined;
+  const preparation = deferRendererPreparation ? new Promise<void>(resolve => { releasePreparation = resolve; }) : Promise.resolve();
+  const prepareRenderer = vi.fn(() => preparation);
   vi.doMock("../../web/src/render/engines/three/three-renderer.js", () => ({
     createThreeRenderer: (...args: Parameters<typeof import("../../web/src/render/engines/three/three-renderer.js")["createThreeRenderer"]>) => {
       screenBinding = args[6];
-      return { renderer, webxr };
+      return { renderer, webxr, prepare: prepareRenderer };
     }
   }));
   const wasm = await import("../../web/pkg/birdman_game_wasm.js");
@@ -208,7 +211,7 @@ async function fixture(failInitialization = false, seedCurrentArchive = false, d
       if (sessionEndHandler === null) throw new Error("WebXR session end handler is unavailable");
       sessionEndHandler();
     },
-    runtimeDispose, releaseInitialization, initializationPaused: () => initializationPaused,
+    runtimeDispose, releaseInitialization, initializationPaused: () => initializationPaused, prepareRenderer, releasePreparation,
     frame: (timestamp: number, elapsedMilliseconds = previousDeliveredFrameMilliseconds === null ? 0 : timestamp - previousDeliveredFrameMilliseconds) => {
       nowMilliseconds += elapsedMilliseconds;
       previousDeliveredFrameMilliseconds = timestamp;
@@ -813,6 +816,47 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     expect(trial.browser.document.body.textContent).toContain("Injected renderer cleanup failure");
     expect(trial.free).toHaveBeenCalledTimes(1);
     expect(trial.renderer.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it("prepares the actual environment and viewport before starting the renderer loop", async () => {
+    const trial = await fixture(false, false, false, false, "normal", false, true);
+    await vi.waitFor(() => { expect(trial.prepareRenderer).toHaveBeenCalledTimes(1); });
+    expect(trial.renderer.setLakeVisualCondition).toHaveBeenCalled();
+    expect(trial.renderer.setLakeSkyCondition).toHaveBeenCalled();
+    expect(trial.renderer.resize).toHaveBeenCalled();
+    expect(trial.renderer.startLoop).not.toHaveBeenCalled();
+    trial.releasePreparation();
+    await vi.waitFor(() => { expect(trial.scene()).toBe("Title"); });
+    expect(trial.renderer.startLoop).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([false, true])("retains initial preparation across BFCache when restoration precedes completion: %s", async restoreBeforeCompletion => {
+    const trial = await fixture(false, false, false, false, "normal", false, true);
+    await vi.waitFor(() => { expect(trial.prepareRenderer).toHaveBeenCalledTimes(1); });
+    trial.page("pagehide", true);
+    if (restoreBeforeCompletion) trial.page("pageshow", true);
+    trial.releasePreparation();
+    await vi.waitFor(() => { expect(trial.renderer.startLoop).toHaveBeenCalledTimes(1); });
+    if (!restoreBeforeCompletion) trial.page("pageshow", true);
+    await vi.waitFor(() => { expect(trial.scene()).toBe("Title"); });
+    expect(trial.prepareRenderer).toHaveBeenCalledTimes(1);
+    expect(trial.renderer.dispose).not.toHaveBeenCalled();
+    expect(trial.free).not.toHaveBeenCalled();
+    await vi.waitFor(() => { expect(trial.documentRef.querySelector<HTMLButtonElement>('[data-control-id="game-title-start"]')?.disabled).toBe(false); });
+    trial.click("game-title-start");
+    expect(trial.scene()).toBe("FlightSetup");
+  });
+
+  it("releases the prepared renderer when pagehide expires initialization before the loop starts", async () => {
+    const trial = await fixture(false, false, false, false, "normal", false, true);
+    await vi.waitFor(() => { expect(trial.prepareRenderer).toHaveBeenCalledTimes(1); });
+    trial.page("pagehide", false);
+    expect(trial.free).toHaveBeenCalledTimes(1);
+    trial.releasePreparation();
+    await vi.waitFor(() => { expect(trial.renderer.dispose).toHaveBeenCalledTimes(1); });
+    expect(trial.renderer.startLoop).not.toHaveBeenCalled();
+    expect(trial.free).toHaveBeenCalledTimes(1);
+    expect(trial.browser.document.body.textContent).toContain("Page hidden");
   });
 
   it("disposes the initialized runtime owner once when pagehide races with deferred backend start", async () => {
