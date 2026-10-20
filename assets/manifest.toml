@@ -1,6 +1,16 @@
 schema_version = 1
 
 [[assets]]
+path = "assets/aircraft/playable-glider-v4.json"
+sha256 = "43808c6fa6d7491e9be9d88d92f74d7412531e8d3eeb9a11947d86bc4ea6f198"
+source = "Original fictional glider parameters and procedural structural definition"
+source_version = "Aircraft document schema 1; physical model 4"
+license = "MIT"
+license_url = "../LICENSE"
+attribution = "pr-simulator-game contributors"
+processing = "FRD SI data; one piecewise-linear wing planform for aerodynamic sections, structural contact and mesh generation; explicit full-aircraft polar coefficients normalized by the same projected geometry"
+
+[[assets]]
 path = "assets/time.LICENSE.txt"
 sha256 = "c20f392f0c1ef200b711dfc0d4604b16063e5f32414464df23bce4fd94c5ca73"
 source = "https://github.com/time-rs/time; https://github.com/jhpratt/deranged; https://github.com/jhpratt/num-conv; https://github.com/jhpratt/powerfmt"

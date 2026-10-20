@@ -28,6 +28,7 @@ adapterからcore・formatへの直接参照も許可する。逆方向の依存
 | --- | --- |
 | `birdman-game-core` | 座標・数学、運動方程式、空力、風場、制御、固定tick、接触、GameSession、FlightRecord、集計・補間query |
 | `birdman-game-format` | 外部設定・環境・記録のcodecと検証、解決済み設定、比較identity、Personal Best選定 |
+| `birdman-game-content` | 登録機体JSONと検証済みの質量・空力storage。sectionとstrip境界から借用可能な荷重モデルを準備する |
 | `birdman-game-session` | ApplicationSession、共有command実行、scenario準備・資源所有、archive生成、共有UI・camera・描画用モデル |
 | `birdman-game-wasm` | JavaScript ABI、入力のdecode、共有処理の呼出し、DTOのencode |
 | `birdman-game-cli` | CLI/WASIのI/O、offline検査・出力・計測入口 |
@@ -35,7 +36,7 @@ adapterからcore・formatへの直接参照も許可する。逆方向の依存
 | `web/src` | browser資源・権限・focus・保存、presentation、共有契約のDOM/VR/Three.jsへの投影 |
 | `tools` | offline asset処理、schema生成、境界検査、再現可能な検証コマンド |
 
-- coreとformatは`no_std`を維持する。
+- core・format・contentは`no_std + alloc`を維持する。
 - coreにfilesystem、network、OS時計、乱数取得、GIS、serde、WASM ABI、描画engineを持ち込まない。
 - 乱数seed、環境、入力、時刻観測は外部から明示的に渡す。
 - モデル構築と記録容量の予約は準備段階で行い、固定tickのheap allocationを発生させない設計を要求する。

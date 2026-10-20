@@ -1,0 +1,244 @@
+use alloc::vec::Vec;
+use birdman_game_core::{
+    AeroError, AircraftModel, BodyPoint, BodyVector, ElementOrientation, ElementReference,
+    HybridAnchor, HybridError, HybridModel, HybridProxy, HybridSection, HybridSurface,
+    HybridSurfaceGeometry, HybridSurfaceRole, MathError, PlanformSymmetry, PolarAnalysisMethod,
+    PolarMomentAxes, StaticPolar, StaticPolarMetadata, StaticPolarRow, SteadyGlideError,
+    SteadyGlideTrim,
+};
+use birdman_game_format::aircraft::{
+    AircraftDocument, AircraftFormatError, AircraftPolarAxes, AircraftPolarMethod,
+    AircraftSurfaceDocument,
+};
+
+/// Original admission or preparation failure for an aircraft definition.
+#[derive(Debug, PartialEq)]
+pub enum AircraftDefinitionError {
+    /// External document or physical parameter validation failed.
+    Format(AircraftFormatError),
+    /// A derived coordinate or frame was invalid.
+    Math(MathError),
+    /// Static aerodynamic metadata or a local frame was invalid.
+    Aerodynamics(AeroError),
+    /// A derived strip partition or complete hybrid model was invalid.
+    Hybrid(HybridError),
+    /// The requested operating point could not form a steady-glide equilibrium.
+    Trim(SteadyGlideError),
+}
+
+/// Owned physical parameters and aerodynamic storage derived from one validated document.
+pub struct AircraftDefinition {
+    document: AircraftDocument,
+    aircraft: AircraftModel,
+    surfaces: Vec<SurfaceStorage>,
+    rows: Vec<StaticPolarRow>,
+    reference: ElementReference,
+}
+
+struct SurfaceStorage {
+    role: HybridSurfaceRole,
+    symmetry: PlanformSymmetry,
+    sections: Vec<HybridSection>,
+    proxies: Vec<HybridProxy>,
+}
+
+impl AircraftDefinition {
+    /// Decodes bounded external JSON and prepares its complete physical load definition.
+    pub fn decode_json(input: &[u8]) -> Result<Self, AircraftDefinitionError> {
+        Self::prepare_validated(
+            AircraftDocument::decode_json(input).map_err(AircraftDefinitionError::Format)?,
+        )
+    }
+
+    /// Takes ownership of the source and prepares every lifting surface and static row.
+    pub fn from_document(document: AircraftDocument) -> Result<Self, AircraftDefinitionError> {
+        document
+            .validate()
+            .map_err(AircraftDefinitionError::Format)?;
+        Self::prepare_validated(document)
+    }
+
+    fn prepare_validated(document: AircraftDocument) -> Result<Self, AircraftDefinitionError> {
+        let aircraft = document
+            .aircraft_model()
+            .map_err(AircraftDefinitionError::Format)?;
+        let surfaces = document
+            .surfaces
+            .iter()
+            .map(prepare_surface)
+            .collect::<Result<Vec<_>, _>>()?;
+        let rows = document
+            .polar
+            .core_rows()
+            .map_err(AircraftDefinitionError::Format)?;
+        let wing = surfaces
+            .iter()
+            .find(|surface| surface.role == HybridSurfaceRole::MainWing)
+            .expect("document validation requires exactly one main wing")
+            .geometry()?;
+        let reference = ElementReference::try_new(
+            wing.projected_area_m2(),
+            wing.projected_span_m(),
+            wing.projected_mac_m(),
+        )
+        .map_err(AircraftDefinitionError::Aerodynamics)?;
+        let definition = Self {
+            document,
+            aircraft,
+            surfaces,
+            rows,
+            reference,
+        };
+        HybridModel::try_new(definition.polar()?, &definition.surfaces()?)
+            .map_err(AircraftDefinitionError::Hybrid)?;
+        Ok(definition)
+    }
+
+    /// Borrows the validated source of the physical, structural and camera parameters.
+    pub fn document(&self) -> &AircraftDocument {
+        &self.document
+    }
+
+    /// Returns the mass and pilot model prepared from the same source.
+    pub const fn aircraft(&self) -> AircraftModel {
+        self.aircraft
+    }
+
+    /// Borrows the complete-aircraft static table with geometry-derived reference dimensions.
+    pub fn polar(&self) -> Result<StaticPolar<'_>, AircraftDefinitionError> {
+        let source = &self.document.polar;
+        StaticPolar::try_new(
+            &self.rows,
+            self.reference,
+            BodyPoint::try_new(
+                source.reference_point_frd_m[0],
+                source.reference_point_frd_m[1],
+                source.reference_point_frd_m[2],
+            )
+            .map_err(AircraftDefinitionError::Math)?,
+            match source.moment_axes {
+                AircraftPolarAxes::BodyFrd => PolarMomentAxes::BodyFrd,
+                AircraftPolarAxes::WindAtBetaZero => PolarMomentAxes::WindAtBetaZero,
+            },
+            StaticPolarMetadata::try_new(
+                match source.method {
+                    AircraftPolarMethod::VortexLattice => PolarAnalysisMethod::VortexLattice,
+                    AircraftPolarMethod::LiftingLine => PolarAnalysisMethod::LiftingLine,
+                    AircraftPolarMethod::Panel => PolarAnalysisMethod::Panel,
+                    AircraftPolarMethod::SoftwareFixture => PolarAnalysisMethod::SoftwareFixture,
+                },
+                &self.document.configuration_id,
+                self.document.model_version,
+            )
+            .map_err(AircraftDefinitionError::Aerodynamics)?,
+        )
+        .map_err(AircraftDefinitionError::Aerodynamics)
+    }
+
+    /// Borrows the prepared wing, horizontal tail and fin in canonical order.
+    pub fn surfaces(&self) -> Result<[HybridSurface<'_>; 3], AircraftDefinitionError> {
+        let surface = |role| {
+            let storage = self
+                .surfaces
+                .iter()
+                .find(|surface| surface.role == role)
+                .expect("document validation requires every unique surface role");
+            HybridSurface::try_new(storage.geometry()?, &storage.proxies)
+                .map_err(AircraftDefinitionError::Hybrid)
+        };
+        Ok([
+            surface(HybridSurfaceRole::MainWing)?,
+            surface(HybridSurfaceRole::HorizontalTail)?,
+            surface(HybridSurfaceRole::VerticalTail)?,
+        ])
+    }
+
+    /// Solves the document's explicit still-air operating point through the generic core.
+    pub fn trim(&self) -> Result<SteadyGlideTrim, AircraftDefinitionError> {
+        SteadyGlideTrim::try_new(
+            self.aircraft,
+            self.polar()?,
+            self.document
+                .trim
+                .core_conditions()
+                .map_err(AircraftDefinitionError::Format)?,
+        )
+        .map_err(AircraftDefinitionError::Trim)
+    }
+}
+
+impl SurfaceStorage {
+    fn geometry(&self) -> Result<HybridSurfaceGeometry<'_>, AircraftDefinitionError> {
+        HybridSurfaceGeometry::try_new(self.role, &self.sections, self.symmetry)
+            .map_err(AircraftDefinitionError::Hybrid)
+    }
+}
+
+fn prepare_surface(
+    source: &AircraftSurfaceDocument,
+) -> Result<SurfaceStorage, AircraftDefinitionError> {
+    let mut storage = SurfaceStorage {
+        role: source.role.core_role(),
+        symmetry: if source.mirror_span {
+            PlanformSymmetry::MirrorSpan
+        } else {
+            PlanformSymmetry::Unrestricted
+        },
+        sections: source
+            .core_sections()
+            .map_err(AircraftDefinitionError::Format)?,
+        proxies: Vec::new(),
+    };
+    let geometry = storage.geometry()?;
+    let axis = if storage.role == HybridSurfaceRole::VerticalTail {
+        2
+    } else {
+        1
+    };
+    let first_span = storage.sections[0].quarter_chord().components()[axis];
+    let last_span = storage.sections[storage.sections.len() - 1]
+        .quarter_chord()
+        .components()[axis];
+    let span = last_span - first_span;
+    let anchor = HybridAnchor::try_new(source.lift_anchor[0], source.lift_anchor[1])
+        .map_err(AircraftDefinitionError::Aerodynamics)?;
+    let mut proxies = Vec::new();
+    for pair in storage.sections.windows(2) {
+        let first = pair[0].quarter_chord().components();
+        let second = pair[1].quarter_chord().components();
+        let direction_y = second[1] - first[1];
+        let direction_z = second[2] - first[2];
+        let length = libm::hypot(direction_y, direction_z);
+        let orientation = ElementOrientation::try_new(
+            BodyVector::try_new(1.0, 0.0, 0.0).map_err(AircraftDefinitionError::Math)?,
+            BodyVector::try_new(0.0, direction_y / length, direction_z / length)
+                .map_err(AircraftDefinitionError::Math)?,
+            BodyVector::try_new(0.0, -direction_z / length, direction_y / length)
+                .map_err(AircraftDefinitionError::Math)?,
+        )
+        .map_err(AircraftDefinitionError::Aerodynamics)?;
+        let mut start = first[axis];
+        for end in source
+            .strip_fractions
+            .iter()
+            .map(|fraction| match *fraction {
+                0.0 => first_span,
+                1.0 => last_span,
+                fraction => first_span + span * fraction,
+            })
+            .filter(|boundary| *boundary > first[axis] && *boundary < second[axis])
+            .chain(core::iter::once(second[axis]))
+        {
+            proxies.push(
+                HybridProxy::try_new(geometry, [start, end], orientation, anchor)
+                    .map_err(AircraftDefinitionError::Hybrid)?,
+            );
+            start = end;
+        }
+    }
+    storage.proxies = proxies;
+    Ok(storage)
+}
+
+#[cfg(test)]
+mod tests;

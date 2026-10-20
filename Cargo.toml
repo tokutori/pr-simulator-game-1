@@ -15,6 +15,7 @@ repository = "https://github.com/tokutori/pr-simulator-game-1"
 
 [workspace.dependencies]
 birdman-game-core = { path = "crates/birdman-game-core" }
+birdman-game-content = { path = "crates/birdman-game-content" }
 birdman-game-format = { path = "crates/birdman-game-format" }
 birdman-game-session = { path = "crates/birdman-game-session" }
 libm = "=0.2.16"

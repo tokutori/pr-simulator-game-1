@@ -1,0 +1,15 @@
+[package]
+name = "birdman-game-content"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+birdman-game-core.workspace = true
+birdman-game-format.workspace = true
+libm.workspace = true
+
+[lints]
+workspace = true

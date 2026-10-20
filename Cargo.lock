@@ -1479,6 +1479,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "birdman-game-content"
+version = "0.1.0"
+dependencies = [
+ "birdman-game-core",
+ "birdman-game-format",
+ "libm",
+]
+
+[[package]]
 name = "birdman-game-core"
 version = "0.1.0"
 dependencies = [
