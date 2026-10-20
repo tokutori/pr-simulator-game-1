@@ -552,7 +552,7 @@ fn spawn_node(
             );
             let minimum = text(world, surface, font, 8.0);
             let maximum = text(world, surface, font, 8.0);
-            for (entity, left) in [(minimum, 5), (maximum, 95)] {
+            for (entity, left, anchor) in [(minimum, 5, 0), (maximum, 95, -100)] {
                 retained_node(world, entity).set_if_neq(Node {
                     position_type: PositionType::Absolute,
                     left: percent(left),
@@ -561,7 +561,7 @@ fn spawn_node(
                 });
                 world
                     .entity_mut(entity)
-                    .insert(UiTransform::from_translation(Val2::percent(-50, 0)));
+                    .insert(UiTransform::from_translation(Val2::percent(anchor, 0)));
             }
             let indicator = shape(
                 world,
@@ -699,12 +699,7 @@ fn project_widget(
             }
             while entities.len() < ticks.len() {
                 let line = shape(world, *surface, Node::default(), ink);
-                let label = text(
-                    world,
-                    *surface,
-                    font,
-                    (hud.layout.font_size_px * 2.0 / 3.0) as f32,
-                );
+                let label = text(world, *surface, font, hud.layout.font_size_px as f32);
                 world
                     .entity_mut(label)
                     .insert(UiTransform::from_translation(Val2::percent(-50, 0)));
@@ -739,7 +734,7 @@ fn project_widget(
                     .get_mut::<TextFont>(label)
                     .expect("heading label font exists")
                     .map_unchanged(|font| &mut font.font_size)
-                    .set_if_neq(FontSize::Px((hud.layout.font_size_px * 2.0 / 3.0) as f32));
+                    .set_if_neq(FontSize::Px(hud.layout.font_size_px as f32));
                 world
                     .get_mut::<BackgroundColor>(line)
                     .expect("heading tick color exists")
@@ -789,7 +784,7 @@ fn project_widget(
                     .get_mut::<TextFont>(label)
                     .expect("gauge label font exists")
                     .map_unchanged(|font| &mut font.font_size)
-                    .set_if_neq(FontSize::Px((hud.layout.font_size_px * 2.0 / 3.0) as f32));
+                    .set_if_neq(FontSize::Px(hud.layout.font_size_px as f32));
             }
             retained_node(world, indicator)
                 .map_unchanged(|node| &mut node.display)
@@ -879,6 +874,17 @@ mod tests {
                         world.get::<Node>(surface).unwrap().height,
                         px(node.instrument_height_em * hud.layout.font_size_px)
                     );
+                }
+                for entity in descendants(world, projected.card) {
+                    if world
+                        .get::<Text>(entity)
+                        .is_some_and(|text| !text.0.is_empty())
+                    {
+                        assert_eq!(
+                            world.get::<TextFont>(entity).unwrap().font_size,
+                            FontSize::Px(hud.layout.font_size_px as f32)
+                        );
+                    }
                 }
             }
         }
@@ -1210,6 +1216,20 @@ mod tests {
                     );
                     assert_eq!(app.world().get::<Text>(*minimum).unwrap().0, *minimum_label);
                     assert_eq!(app.world().get::<Text>(*maximum).unwrap().0, *maximum_label);
+                    assert_eq!(
+                        app.world()
+                            .get::<UiTransform>(*minimum)
+                            .unwrap()
+                            .translation,
+                        Val2::percent(0, 0)
+                    );
+                    assert_eq!(
+                        app.world()
+                            .get::<UiTransform>(*maximum)
+                            .unwrap()
+                            .translation,
+                        Val2::percent(-100, 0)
+                    );
                 }
                 _ => {}
             }
