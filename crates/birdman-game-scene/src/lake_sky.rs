@@ -185,25 +185,55 @@ fn sky_direction(longitude: f64, latitude: f64) -> [f64; 3] {
     ]
 }
 
+const HIGH_CLOUD_ALTITUDE_M: f64 = 6_000.0;
+const HIGH_CLOUD_PATCH_SCALE_M: f64 = 1_800.0;
+
+struct CloudLayerProjection {
+    position_m: [f64; 2],
+    footprint_m: f64,
+}
+
+fn project_cloud_layer(direction: [f64; 3]) -> Option<CloudLayerProjection> {
+    let up = direction[1];
+    if up <= 0.0 {
+        return None;
+    }
+    let distance = HIGH_CLOUD_ALTITUDE_M / up;
+    let angular_pixel = core::f64::consts::PI / f64::from(LAKE_SKY_IMAGE_HEIGHT);
+    Some(CloudLayerProjection {
+        position_m: [direction[0] * distance, direction[2] * distance],
+        footprint_m: HIGH_CLOUD_ALTITUDE_M * angular_pixel / (up * up),
+    })
+}
+
+fn cloud_plane_noise(position_m: [f64; 2], scale_m: f64, footprint_m: f64, seed: f64) -> f64 {
+    let resolved = 1.0 - smoothstep((footprint_m / scale_m - 0.25) / 0.75);
+    if resolved == 0.0 {
+        return 0.5;
+    }
+    let point = [position_m[0] / scale_m, seed, position_m[1] / scale_m];
+    0.5 + (cloud_noise(point) - 0.5) * resolved
+}
+
 fn high_cloud_layer(direction: [f64; 3], fraction: f64) -> (f64, f64) {
-    if fraction == 0.0 || direction[1] <= 0.0 {
+    if fraction == 0.0 {
         return (0.0, 0.0);
     }
-    let sheet = cloud_noise([
-        direction[0] * 7.0 + direction[2] * 3.0,
-        direction[1] * 5.0 + 17.0,
-        direction[2] * 11.0 - direction[0] * 2.0,
-    ]);
-    let point = [
-        direction[0] * 52.0 + direction[2] * 18.0 + sheet * 2.0,
-        direction[1] * 36.0 + 31.0,
-        direction[2] * 64.0 - direction[0] * 12.0,
-    ];
-    let cloudlets = cloud_noise(point);
-    let edges = cloud_noise(point.map(|value| value * 2.7 + 13.0));
-    let density = sheet * 0.35 + cloudlets * 0.5 + edges * 0.15;
+    let Some(layer) = project_cloud_layer(direction) else {
+        return (0.0, 0.0);
+    };
+    let sheet = cloud_plane_noise(layer.position_m, 12_000.0, layer.footprint_m, 17.0);
+    let cloudlets = cloud_plane_noise(
+        layer.position_m,
+        HIGH_CLOUD_PATCH_SCALE_M,
+        layer.footprint_m,
+        31.0,
+    );
+    let edges = cloud_plane_noise(layer.position_m, 600.0, layer.footprint_m, 47.0);
+    let density = sheet * 0.2 + cloudlets * 0.65 + edges * 0.15;
     let threshold = 0.74 - fraction * 0.6;
-    let opacity = smoothstep((density - threshold) / 0.15) * smoothstep(direction[1] / 0.08) * 0.92;
+    let opacity =
+        smoothstep((density - threshold) / 0.15) * smoothstep(direction[1] / 0.035) * 0.92;
     (opacity, 0.5 * sheet + 0.5 * cloudlets)
 }
 
@@ -449,6 +479,66 @@ mod tests {
             sky.cloud_base_m = cloud_base;
             assert_eq!(LakeSkyRenderCondition::try_from(sky), Ok(expected));
         }
+    }
+
+    #[test]
+    fn clouds_project_onto_one_horizontal_layer_with_perspective_compression() {
+        let zenith = project_cloud_layer([0.0, 1.0, 0.0]).unwrap();
+        assert_eq!(zenith.position_m, [0.0, 0.0]);
+        assert_eq!(
+            project_cloud_layer([0.6, 0.8, 0.0]).unwrap().position_m,
+            [4_500.0, 0.0]
+        );
+        assert_eq!(
+            project_cloud_layer([0.0, 0.8, 0.6]).unwrap().position_m,
+            [0.0, 4_500.0]
+        );
+        for elevation_degrees in [15.0_f64, 30.0, 60.0, 90.0] {
+            let elevation = elevation_degrees.to_radians();
+            let direction = [elevation.cos(), elevation.sin(), 0.0];
+            let projected = project_cloud_layer(direction).unwrap();
+            let mapped_ray = [
+                projected.position_m[0],
+                HIGH_CLOUD_ALTITUDE_M,
+                projected.position_m[1],
+            ];
+            let norm = mapped_ray
+                .iter()
+                .map(|value| value * value)
+                .sum::<f64>()
+                .sqrt();
+            for (mapped, expected) in mapped_ray.into_iter().zip(direction) {
+                assert!((mapped / norm - expected).abs() < 1.0e-12);
+            }
+            assert_eq!(projected.position_m[1], 0.0);
+            let angular_width = ((projected.position_m[0] + HIGH_CLOUD_PATCH_SCALE_M)
+                / HIGH_CLOUD_ALTITUDE_M)
+                .atan()
+                - (projected.position_m[0] / HIGH_CLOUD_ALTITUDE_M).atan();
+            let zenith_width = (HIGH_CLOUD_PATCH_SCALE_M / HIGH_CLOUD_ALTITUDE_M).atan();
+            assert!(angular_width <= zenith_width + 1.0e-12);
+            if elevation_degrees == 15.0 {
+                assert!(angular_width < zenith_width * 0.1);
+            }
+        }
+        assert!(project_cloud_layer([1.0, 0.0, 0.0]).is_none());
+        assert!(project_cloud_layer([0.0, -1.0, 0.0]).is_none());
+        assert!(
+            (HIGH_CLOUD_PATCH_SCALE_M / HIGH_CLOUD_ALTITUDE_M)
+                .atan()
+                .to_degrees()
+                > 15.0
+        );
+    }
+
+    #[test]
+    fn unresolved_horizontal_cloud_detail_converges_to_its_mean() {
+        for position in [[0.0, 0.0], [100_000.0, -100_000.0], [f64::MAX; 2]] {
+            assert_eq!(cloud_plane_noise(position, 600.0, 600.0, 47.0), 0.5);
+        }
+        let high = project_cloud_layer([0.0, 1.0, 0.0]).unwrap();
+        let low = project_cloud_layer([0.995, 0.1, 0.0]).unwrap();
+        assert!(low.footprint_m > high.footprint_m * 99.0);
     }
 
     #[test]
