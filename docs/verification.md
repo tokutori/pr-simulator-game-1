@@ -540,6 +540,7 @@ CASEは `calm-low` / `calm-medium` / `calm-high` / `typical-low` / `typical-medi
 - `npm run test:xr -- target/xr-comparison`は同一観測のMenu・Head HUD・実測glyph、Stationary/Pilot/Externalのcamera・World/Cockpit/Head anchor・両眼pose・連続resetを直接Rustと実WASMへ渡し、構造一致と数値誤差`1e-10 × max(1, |Rust値|, |WASM値|)`を検査する。観測・双方の結果・source patch・source/WASM hashを出力し、検査前後のHEADとsourceの一致を確認する。
 - WebのCUI描画では本番`xr_head_hud_projection_json`の呼出しを計測し、光学探索を含む共有queryが1 frame 1回であることを確認する。
 - pointerは直接Rustと実WASMへ同じ観測・triggerを渡し、交点・focus・dwell・発火の一致を検査する。実WebXRManagerの結合試験では左右sourceの順序交換・切断、非等方panel scale、focus喪失を挟むrAF停止、予測表示時刻と受信時計の差を検査する。
+- `npm run test:web-ui -- VITE_URL OUTPUT_DIRECTORY --pointer-only`は共有pointerと実Three/WebGLを使い、左右controllerの選択先・両眼4箇所の照準pixel・非等方scaleを検査し、画像とWASM/source hashを保存する。
 - 全Sceneとoverlayでanchor、左右眼、視線/controllerのhit、focus・scroll・退出・中断復帰を確認する。
   WebXRの実pose/projection/IPD/reference reset、Phone VRの重力基準pitch/roll・yaw-only recenter・権限/不正sample・非表示時input破棄を含める。
 - 実機確認はHTTPS、HMD/browser、スマートフォン/viewerの組合せを明記する。模擬sensorや合成backendと分ける。

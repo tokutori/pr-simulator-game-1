@@ -17,12 +17,13 @@ declare global {
   interface Window {
     __uiPauseEvents: readonly { at: number; reason: number }[];
     __uiViewJson: string | null;
+    __pointerProbeCleanup?: () => void;
   }
 }
 
 const [address, destination, ...options] = process.argv.slice(2);
 assert.ok(address !== undefined && destination !== undefined, "Usage: npm run test:web-ui -- VITE_URL OUTPUT_DIRECTORY");
-assert.ok(options.every(option => option === "--without-gpu-timer" || option === "--allow-dirty" || option.startsWith("--water-reference=")), "Unknown Web UI check option");
+assert.ok(options.every(option => option === "--without-gpu-timer" || option === "--allow-dirty" || option === "--pointer-only" || option.startsWith("--water-reference=")), "Unknown Web UI check option");
 const withoutGpuTimer = options.includes("--without-gpu-timer");
 const url = new URL(address);
 assert.ok(["127.0.0.1", "localhost", "[::1]"].includes(url.hostname), "Use the local Vite development server");
@@ -62,11 +63,11 @@ const findings: string[] = [];
 const wasm: { url: string; sha256: string; status: number }[] = [];
 const responses: Promise<void>[] = [];
 let moduleUrl: string | undefined;
-const report: Record<string, unknown> = { sourceHead: head, execution: "Local Vite; production Rust/WASM, DOM and WebGL2; isolated browser context",
+const report: Record<string, unknown> = { sourceHead: head, execution: "Local Vite; production Rust/WASM, DOM/WebGL2 and synthetic stereo; isolated browser context",
   sourceDiffSha256: sourcePatch.length === 0 ? null : createHash("sha256").update(sourcePatch).digest("hex"), withoutGpuTimer,
   waterReference: waterReference === undefined ? null : { sourceHead: waterReference.sourceHead, sha256: waterReferenceSha256 },
   viewport: { width: 1280, height: 720, dpr: 1 }, errors, warnings, checks, findings, wasm,
-  limits: "Screen UI smoke only. No HMD, Phone VR, physical keyboard or 80 FPS acceptance; no performance budget is inferred." };
+  limits: "CUI Screen/synthetic stereo rendering. Hardware HMD/phone, physical input and 80 FPS acceptance are tracked separately." };
 
 async function verifyScreen(activeBrowser: Browser): Promise<void> {
   const context = await activeBrowser.newContext({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1, acceptDownloads: true });
@@ -637,10 +638,104 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
   }
 }
 
+async function verifyPointers(activeBrowser: Browser): Promise<void> {
+  const context = await activeBrowser.newContext({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1 });
+  const page = await context.newPage();
+  page.on("pageerror", error => { errors.push(error.message); });
+  page.on("response", response => {
+    if (!/birdman_game_wasm_bg\.wasm(?:\?|$)/.test(response.url())) return;
+    responses.push(response.body().then(buffer => { wasm.push({ url: response.url(), status: response.status(), sha256: createHash("sha256").update(buffer).digest("hex") }); }));
+  });
+  const address = new URL("pointer-check.html", url).href;
+  await page.route(address, async route => { await route.fulfill({ contentType: "text/html", body:
+    '<!doctype html><html><head><style>html,body{margin:0;background:#000}canvas{display:block;width:1280px;height:720px}</style></head><body><canvas width="1280" height="720"></canvas></body></html>' }); });
+  try {
+    await page.goto(address);
+    const result = await page.evaluate(async modules => {
+      const wasm = await import(modules.wasm) as typeof import("../../web/pkg/birdman_game_wasm.js");
+      await wasm.default();
+      const { createThreeRenderer } = await import(modules.renderer) as typeof import("../../web/src/render/engines/three/three-renderer.js");
+      const { XrPointerSession } = await import(modules.pointer) as typeof import("../../web/src/presentation/xr-pointer-session.js");
+      const { IDENTITY_POSE, composePose, rotateVec3, pose, vec3 } = await import(modules.math) as typeof import("../../web/src/render/contracts/math.js");
+      const canvas = document.querySelector("canvas");
+      if (canvas === null) throw new Error("Missing projection canvas");
+      const texture = document.createElement("canvas");
+      texture.width = 1200;
+      texture.height = 900;
+      const drawing = texture.getContext("2d");
+      if (drawing === null) throw new Error("Missing panel canvas");
+      drawing.fillStyle = "#12314b";
+      drawing.fillRect(0, 0, texture.width, texture.height);
+      drawing.fillStyle = "#266782";
+      drawing.fillRect(120, 90, 420, 720);
+      drawing.fillRect(660, 90, 420, 720);
+      drawing.fillStyle = "white";
+      drawing.font = "48px sans-serif";
+      drawing.fillText("Left target", 150, 180);
+      drawing.fillText("Right target", 690, 180);
+      const bundle = createThreeRenderer(canvas, texture, null, 60, "low");
+      const actions: import("../../web/src/render/contracts/ui.js").UiAction[] = [];
+      const owner = new XrPointerSession(action => { actions.push(action); });
+      window.__pointerProbeCleanup = () => { owner.reset(); bundle.renderer.dispose(); };
+      const viewport = { x: 1280, y: 720, pixelRatio: 1 };
+      bundle.renderer.resize(viewport);
+      bundle.renderer.setLakeVenueVisible(false);
+      await bundle.prepare();
+      bundle.renderer.setStereoPresentation({ eyeSeparationMeters: 0.064, verticalFieldOfViewDegrees: 60, focusDistanceMeters: 2.4, distortion: "disabled" });
+      const reference = bundle.renderer.projectTrackingFrame(IDENTITY_POSE);
+      const panelPose = composePose(reference.head, pose(vec3(0, 0, -2.4), IDENTITY_POSE.orientation));
+      const panel: import("../../web/src/render/contracts/ui.js").UiPanel = {
+        id: "pointer-check", anchor: "head", localPose: IDENTITY_POSE, size: { width: 1.4, height: 0.8 }, title: "Pointer check",
+        controls: [{ id: "left", kind: "button", label: "Left", enabled: true, rect: { x: 0.1, y: 0.1, width: 0.35, height: 0.8 } },
+          { id: "right", kind: "button", label: "Right", enabled: true, rect: { x: 0.55, y: 0.1, width: 0.35, height: 0.8 } }]
+      };
+      const rays = [-0.25, 0.25].map((horizontal, index) => ({ source: { kind: "controller" as const, id: index + 1 }, timestampMs: 100,
+        origin: composePose(reference.head, pose(vec3(horizontal, 0, 0), IDENTITY_POSE.orientation)).position,
+        direction: rotateVec3(reference.head.orientation, vec3(0, 0, -1)) }));
+      const cursors = owner.observe("projection", panel, panelPose, { kind: "absent" }, rays, true, 100);
+      const right = rays[1];
+      if (right === undefined) throw new Error("Missing right controller");
+      owner.select({ ...right, timestampMs: 101 });
+      bundle.renderer.render({ timestampMs: 100, cameraPose: IDENTITY_POSE, headHud: { kind: "absent" },
+        viewport, panel: { kind: "visible", panel, pose: panelPose, ...cursors } });
+      const graphics = canvas.getContext("webgl2");
+      if (graphics === null) throw new Error("Missing WebGL2 readback");
+      const scale = 720 / (2 * Math.tan(Math.PI / 6) * 2.4);
+      const pixels = [0, 1].flatMap(eye => [-0.25, 0.25].map(horizontal => {
+        const horizontalPixel = Math.round((eye + 0.5) * 640 + horizontal * scale);
+        const foreground = new Uint8Array(4);
+        const background = new Uint8Array(4);
+        graphics.readPixels(horizontalPixel, 360, 1, 1, graphics.RGBA, graphics.UNSIGNED_BYTE, foreground);
+        graphics.readPixels(horizontalPixel + Math.ceil(0.035 * scale * 2.5), 360, 1, 1, graphics.RGBA, graphics.UNSIGNED_BYTE, background);
+        return { eye, horizontalPixel, foreground: [...foreground], background: [...background] };
+      }));
+      return { cursors, actions, pixels };
+    }, { wasm: new URL("pkg/birdman_game_wasm.js", url).href, renderer: new URL("src/render/engines/three/three-renderer.ts", url).href,
+      pointer: new URL("src/presentation/xr-pointer-session.ts", url).href, math: new URL("src/render/contracts/math.ts", url).href });
+    assert.ok(result.cursors.cursor !== null);
+    assert.equal(result.cursors.secondaryCursors.length, 1);
+    assert.ok(Math.abs(result.cursors.cursor.point.x + 0.25) < 1e-10);
+    assert.ok(Math.abs((result.cursors.secondaryCursors[0]?.point.x ?? Number.NaN) - 0.25) < 1e-10);
+    assert.deepEqual(result.actions.filter(action => action.type === "activate"), [{ type: "activate", controlId: "right" }]);
+    for (const pixel of result.pixels) {
+      const contrast = Math.hypot(...pixel.foreground.slice(0, 3).map((value, index) => value - (pixel.background[index] ?? 0)));
+      assert.ok(contrast > 80, `Missing visible pointer in eye ${String(pixel.eye)} at pixel ${String(pixel.horizontalPixel)}`);
+    }
+    report.pointerProjection = result;
+    await page.screenshot({ path: resolve(output, "xr-controller-pointers.png") });
+    checks.push("共有Rustの左右controller交点とtriggerを実Three/WebGLの両眼描画へ接続する");
+    if (report.status !== "failed") report.status = "passed";
+  } finally {
+    await page.evaluate(() => { window.__pointerProbeCleanup?.(); });
+    await context.close();
+  }
+}
+
 try {
   browser = await chromium.launch({ headless: true, channel: "chromium" });
   report.browser = browser.version();
-  await verifyScreen(browser);
+  if (!options.includes("--pointer-only")) await verifyScreen(browser);
+  await verifyPointers(browser);
 } catch (cause) {
   report.status = "failed";
   report.failure = cause instanceof Error ? { message: cause.message, stack: cause.stack } : String(cause);
