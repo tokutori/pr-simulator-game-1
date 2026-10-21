@@ -8,6 +8,9 @@ import { chromium } from "playwright-core";
 import { PerspectiveCamera, StereoCamera } from "three";
 import type { Browser } from "playwright-core";
 import type { GameUiView } from "../../web/src/generated/game-ui-view.js";
+import type { EnvironmentSnapshot } from "../../web/src/generated/runtime-environment.js";
+import { projectRuntimeEnvironment, readExhibitionEnvironment } from "../../web/src/game/runtime-environment.js";
+import { HybridGameSessionBridge } from "../../web/pkg/birdman_game_wasm.js";
 import { captureConfiguredViewerFrame } from "../../web/src/render/engines/three/viewer-frame.js";
 import { initializeWasmFixture } from "../game-check/wasm-fixture.js";
 import { observeLiveSky, observeWaterRenderer, verifySkyRenderer, verifyWaterRenderer } from "./water.js";
@@ -48,6 +51,16 @@ const root = resolve(import.meta.dirname, "../..");
 const localWasmPath = resolve(root, "web/pkg/birdman_game_wasm_bg.wasm");
 const localWasmSha256 = createHash("sha256").update(await readFile(localWasmPath)).digest("hex");
 initializeWasmFixture();
+const exhibition = readExhibitionEnvironment();
+const selection = new HybridGameSessionBridge(0, exhibition.identity.seed_low, exhibition.identity.seed_high);
+let calm;
+try {
+  selection.open_setup();
+  selection.set_weather_class(0);
+  calm = projectRuntimeEnvironment(JSON.parse(selection.environment_snapshot_json()) as EnvironmentSnapshot);
+} finally { selection.free(); }
+assert.equal(calm.kind, "available");
+const calmEnvironment = calm.value;
 const gitOptions = { cwd: root, encoding: "utf8" as const, maxBuffer: 16 * 1024 * 1024 };
 const head = execFileSync("git", ["rev-parse", "HEAD"], gitOptions).trim();
 const sourceArguments = ["diff", "--no-ext-diff", "--no-textconv", "--binary", "HEAD"];
@@ -79,6 +92,15 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
   const click = async (id: string) => { await control(id).scrollIntoViewIfNeeded(); await control(id).click(); };
   const scene = async (name: string) => page.waitForFunction(expected => document.querySelector(".screen-ui-shell")?.getAttribute("data-scene") === expected, name);
   const screenshot = async (name: string) => page.screenshot({ path: resolve(output, `${name}.png`) });
+  const observeEnvironment = async () => page.evaluate(() => {
+    const { scene, waterMaterial, skyCondition, lakeCondition } = window.__waterCheck;
+    const sun: unknown = waterMaterial.uniforms.uSunDirection?.value;
+    if (typeof sun !== "object" || sun === null || !("x" in sun) || !("y" in sun) || !("z" in sun) || !("w" in sun)) {
+      throw new Error("Production sunlight direction is unavailable");
+    }
+    return { sky: skyCondition(), waves: lakeCondition(), sun: [sun.x, sun.y, sun.z, sun.w],
+      venueVisible: scene.getObjectByName("lake-biwa-launch-venue")?.visible };
+  });
   const measureHud = async (forwardClear: boolean) => {
     const measured = await page.evaluate(clear => {
       const root = document.querySelector<HTMLElement>('.flight-hud[aria-hidden="false"]');
@@ -259,6 +281,18 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
       if (typeof renderer !== "string") throw new Error("WebGL renderer identity is unavailable");
       return { renderer, userAgent: navigator.userAgent, focused: document.hasFocus(), visibility: document.visibilityState };
     });
+    const titleEnvironment = await observeEnvironment();
+    assert.equal(exhibition.source, "exhibition");
+    assert.equal(exhibition.sky.kind, "available");
+    assert.deepEqual(titleEnvironment.sky, exhibition.sky.value.condition);
+    assert.deepEqual(titleEnvironment.waves, exhibition.waves);
+    assert.equal(titleEnvironment.venueVisible, true);
+    const azimuth = exhibition.sky.value.condition.sunAzimuthDegrees * Math.PI / 180;
+    const elevation = exhibition.sky.value.condition.sunElevationDegrees * Math.PI / 180;
+    const sunlight = [Math.cos(elevation) * Math.sin(azimuth), Math.sin(elevation), -Math.cos(elevation) * Math.cos(azimuth), 1];
+    titleEnvironment.sun.forEach((actual, index) => {
+      assert.ok(typeof actual === "number" && Math.abs(actual - (sunlight[index] ?? NaN)) < 1e-12);
+    });
     await screenshot("00-title");
     report.creditsScroll = [await creditsScroll("title", "00-credits")];
     await page.setViewportSize({ width: 1280, height: 720 });
@@ -274,6 +308,10 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
     await click("game-setup-select-information-0");
     await click("game-setup-select-assistance-2");
     await click("game-setup-select-weather-0");
+    await page.waitForFunction(() => window.__waterCheck.skyCondition() === null);
+    const setupEnvironment = await observeEnvironment();
+    assert.deepEqual(setupEnvironment.waves, calmEnvironment.waves);
+    assert.equal(setupEnvironment.venueVisible, true);
     for (const id of ["game-setup-select-information-0", "game-setup-select-assistance-2", "game-setup-select-weather-0"]) {
       assert.equal(await control(id).getAttribute("aria-pressed"), "true");
     }
@@ -618,6 +656,11 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
     await click("game-briefing-cancel");
     await click("game-setup-back");
     await scene("Title");
+    await page.waitForFunction(() => window.__waterCheck.skyCondition() !== null);
+    const returnedEnvironment = await observeEnvironment();
+    assert.deepEqual(returnedEnvironment, titleEnvironment);
+    report.exhibitionEnvironment = { title: titleEnvironment, setupCalm: setupEnvironment, returned: returnedEnvironment };
+    checks.push("初回TitleとSetupからの復帰で共有展示の波・天空・太陽・会場が一致し、Setupの気象選択を即時反映する");
     const saved = page.locator('[data-control-id^="game-title-open-record-"]').first();
     await saved.waitFor({ state: "visible" });
     report.savedRecordLabel = await saved.innerText();

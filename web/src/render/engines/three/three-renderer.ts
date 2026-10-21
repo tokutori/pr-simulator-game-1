@@ -41,7 +41,8 @@ import { unavailableViewerFrame } from "../../contracts/viewer-frame.js";
 import { flightRelativePose, pilotEyePoseRender, poseFrdToRender, registeredPilotEyePoint,
   chaseCameraPoseFrd, XrCameraOrigin, projectXrPanelCameraPoses, projectXrReferenceFrame } from "../../camera/xr-spatial.js";
 import type { XrCameraRig } from "../../../generated/xr-camera-rig.js";
-import { DEFAULT_LAKE_VISUAL_CONDITION, lakeWaterQualityProfile } from "../../contracts/lake-water.js";
+import { lakeWaterQualityProfile } from "../../contracts/lake-water.js";
+import { readExhibitionEnvironment } from "../../../game/runtime-environment.js";
 import type { LakeVisualCondition, LakeWaterQuality } from "../../contracts/lake-water.js";
 import { createLakeSkyCondition, lakeSkySunDirectionNed, sameLakeSkyRenderCondition } from "../../contracts/lake-sky.js";
 import type { LakeSkyCondition } from "../../contracts/lake-sky.js";
@@ -173,6 +174,7 @@ export function createThreeRenderer(
   headHudCanvas?: HTMLCanvasElement,
   screenAutoBinding?: ScreenRenderAutoBinding
 ): ThreeRendererBundle {
+  const exhibition = readExhibitionEnvironment();
   let titleCameraPose = titleScreenCameraPoseForViewport(1, 1, screenVerticalFieldOfViewDegrees);
   let titlePhoneCameraPose = titleCameraPoseForViewport(1, 1, 0, screenVerticalFieldOfViewDegrees);
   const renderer = new WebGLRenderer({ canvas, antialias: true, alpha: false });
@@ -184,10 +186,10 @@ export function createThreeRenderer(
   renderer.setClearColor(0x9fb0ad, 1);
 
   const scene = new Scene();
-  let activeSkyCondition: LakeSkyCondition | null = null;
+  let activeSkyCondition: LakeSkyCondition | null = exhibition.sky.kind === "available" ? exhibition.sky.value.condition : null;
   let skyTexture = createLakeSkyTexture(activeSkyCondition);
   scene.background = skyTexture;
-  const lakeFog = new Fog(...lakeSkyHaze(undefined));
+  const lakeFog = new Fog(...lakeSkyHaze(activeSkyCondition?.visibilityMeters));
   scene.fog = lakeFog;
   const ambient = new AmbientLight(lake_scene_ambient_color_srgb(), lake_scene_ambient_irradiance());
   ambient.layers.enable(1);
@@ -213,7 +215,7 @@ export function createThreeRenderer(
 
   let activeLakeQuality = lakeQuality;
   const waterQuality = lakeWaterQualityProfile(activeLakeQuality);
-  let activeLakeCondition = DEFAULT_LAKE_VISUAL_CONDITION;
+  let activeLakeCondition = exhibition.waves;
   let lakeResources = createLakeVisualResources(activeLakeCondition, lakeQuality);
   let waterGeometry = createLakeChunks(waterQuality.meshSegments, lakeResources.displacement);
   const waterMaterial = new ShaderMaterial({
@@ -978,21 +980,8 @@ export function createThreeRenderer(
       const nextCondition = condition === null ? null : createLakeSkyCondition(condition);
       if (framePhase === "view" || pendingViewInputs !== null) { stageViewInputs({ sky: nextCondition }); return; }
       if (activeSkyCondition === null ? nextCondition === null : nextCondition !== null && sameLakeSkyRenderCondition(activeSkyCondition, nextCondition)) return;
-      const [, hazeNear, hazeFar] = lakeSkyHaze(nextCondition?.visibilityMeters);
       const nextTexture = createLakeSkyTexture(nextCondition);
-      const direction = nextCondition === null ? null : lakeSkySunDirectionNed(nextCondition);
-      const daylight = nextCondition !== null && nextCondition.sunElevationDegrees >= 0 ? 1 : 0;
-      const north = direction?.north ?? 0;
-      const east = direction?.east ?? 0;
-      const up = direction === null ? 1 : -direction.down;
-      sunOffset.set(east, up, -north).multiplyScalar(sunDistanceMeters);
-      sun.position.copy(sun.target.position).add(sunOffset);
-      sun.intensity = lake_scene_sunlight_irradiance() * daylight;
-      sun.castShadow = daylight === 1;
-      lakeUniforms.sunDirection.value.set(east, up, -north, daylight);
-      lakeFog.far = hazeFar;
-      lakeFog.near = hazeNear;
-      lakeUniforms.hazeRange.value.set(lakeFog.near, lakeFog.far, 0, 0);
+      applySkyLighting(nextCondition);
       const previousTexture = skyTexture;
       scene.background = nextTexture;
       lakeUniforms.skyTexture.value = nextTexture;
@@ -1130,6 +1119,7 @@ export function createThreeRenderer(
     }
   };
 
+  applySkyLighting(activeSkyCondition);
   return Object.freeze({
     renderer: rendererAdapter,
     webxr,
@@ -1213,6 +1203,23 @@ export function createThreeRenderer(
     if (fixedCamera.fov === fieldOfView) return;
     fixedCamera.fov = fieldOfView;
     fixedCamera.updateProjectionMatrix();
+  }
+
+  function applySkyLighting(condition: LakeSkyCondition | null): void {
+    const [, hazeNear, hazeFar] = lakeSkyHaze(condition?.visibilityMeters);
+    const direction = condition === null ? null : lakeSkySunDirectionNed(condition);
+    const daylight = condition !== null && condition.sunElevationDegrees >= 0 ? 1 : 0;
+    const north = direction?.north ?? 0;
+    const east = direction?.east ?? 0;
+    const up = direction === null ? 1 : -direction.down;
+    sunOffset.set(east, up, -north).multiplyScalar(sunDistanceMeters);
+    sun.position.copy(sun.target.position).add(sunOffset);
+    sun.intensity = lake_scene_sunlight_irradiance() * daylight;
+    sun.castShadow = daylight === 1;
+    lakeUniforms.sunDirection.value.set(east, up, -north, daylight);
+    lakeFog.far = hazeFar;
+    lakeFog.near = hazeNear;
+    lakeUniforms.hazeRange.value.set(lakeFog.near, lakeFog.far, 0, 0);
   }
 
   function hasScreenRenderArea(factor: number): boolean {

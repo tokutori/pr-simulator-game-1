@@ -927,20 +927,6 @@
       "oneOf": [
         {
           "additionalProperties": false,
-          "description": "The current phase has no environment selection.",
-          "properties": {
-            "kind": {
-              "const": "no_selection",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
           "description": "The requested identity is not registered.",
           "properties": {
             "identity": {
@@ -982,13 +968,18 @@
             "source": {
               "$ref": "#/$defs/EnvironmentSource",
               "description": "Owner of the resolved identity."
+            },
+            "venue": {
+              "$ref": "#/$defs/EnvironmentVenueProjection",
+              "description": "Registered venue availability for this environment owner."
             }
           },
           "required": [
             "kind",
             "source",
             "identity",
-            "metadata"
+            "metadata",
+            "venue"
           ],
           "type": "object"
         }
@@ -1052,6 +1043,11 @@
     "EnvironmentSource": {
       "description": "Owner whose selected environment is being observed.",
       "oneOf": [
+        {
+          "const": "exhibition",
+          "description": "Immutable title exhibition, independent of flight selection.",
+          "type": "string"
+        },
         {
           "const": "selected",
           "description": "Current Flight Setup selection.",
@@ -1127,6 +1123,67 @@
         "attribution"
       ],
       "type": "object"
+    },
+    "EnvironmentVenueProjection": {
+      "description": "Shared admission of the launch venue, independent of display resources.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "The selected scenario uses the shared launch venue.",
+          "properties": {
+            "kind": {
+              "const": "shared_launch",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The archive identity resolves an origin matching the registered venue.",
+          "properties": {
+            "kind": {
+              "const": "registered_origin",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The registered environment carries no geographic origin.",
+          "properties": {
+            "kind": {
+              "const": "origin_not_recorded",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The geographic origin or water datum differs from the registered venue.",
+          "properties": {
+            "kind": {
+              "const": "unregistered_origin",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        }
+      ]
     },
     "FlightRecordAssistanceDocument": {
       "description": "Stable assistance-level names in the external record format.",

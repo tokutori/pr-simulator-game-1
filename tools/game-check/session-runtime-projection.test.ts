@@ -38,7 +38,7 @@ function nested(parent: Record<string, unknown>, key: string): Record<string, un
 
 function sessionVenue(session: TailAppSessionFacade) {
   const environment = projectRuntimeEnvironment(session.readEnvironment());
-  return { environment, venue: projectRuntimeVenue(environment, session.readLifecycle().phase) };
+  return { environment, venue: projectRuntimeVenue(environment) };
 }
 
 describe("application runtime session projection", () => {
@@ -87,7 +87,7 @@ describe("application runtime session projection", () => {
       session.executeSharedSessionCommand({ kind: "cancel_briefing" }); session.executeSharedSessionCommand({ kind: "return_to_title" });
       const saved = archived.export_flight_record_json();
       session.openArchive(saved);
-      expect(sessionVenue(session).venue).toEqual({ kind: "visible", basis: "recorded_origin" });
+      expect(sessionVenue(session).venue).toEqual({ kind: "visible", basis: "registered_origin" });
       expect(readRuntimeSessionProjection(session)).toMatchObject({ phase: "replay", display: { value: { controls: { layout: "tail_incidence" } } } });
       const samples = session.readAnalysisSamples();
       const clock = session.readPlaybackClock();
@@ -170,19 +170,24 @@ describe("registered environment and venue projection", () => {
         session.openArchive(JSON.stringify(saved));
         const environment = projectRuntimeEnvironment(session.readEnvironment());
         expect(environment.kind).toBe(unknown ? "unavailable" : "available");
-        if (unknown) expect(environment).toEqual({ kind: "unavailable", reason: "unregistered_environment_identity" });
+        if (unknown) expect(environment).toMatchObject({ kind: "unavailable", reason: "unregistered_environment_identity", source: "archive", identity: { environment_version: 99 } });
         else expect(environment).toMatchObject({ kind: "available", value: { sky: { kind: "available", value: {
           condition: { sunAzimuthDegrees: 135, sunElevationDegrees: 55, cloudFraction: 0.25, visibilityMeters: 25_000 }
         } } } });
         const venue = venueMapForEnvironment(environment);
         expect(venue.kind).toBe(unknown ? "unavailable" : "available");
-        expect(projectRuntimeVenue(environment, "replay")).toEqual(unknown ? { kind: "unavailable", reason: "environment_unavailable" }
-          : { kind: "visible", basis: "recorded_origin" });
+        expect(projectRuntimeVenue(environment)).toEqual(unknown ? { kind: "unavailable", reason: "environment_unavailable" }
+          : { kind: "visible", basis: "registered_origin" });
         const platform = sharedGameUiPlatform();
         selectSharedReplayView(session, platform, "analysis");
         for (const mode of ["screen", "phone-vr", "webxr"] as const) {
           const view = createGameViewModel(session.readSharedUi({ ...platform,
             presentation_mode: mode === "phone-vr" ? "phone_vr" : mode }));
+          const notice = view.panels.flatMap((panel) => panel.controls).find((control) => control.id === "game-state");
+          if (unknown) {
+            if (notice?.kind !== "status") throw new Error("Expected the environment notice");
+            expect(notice.value).toContain("直前の背景");
+          }
           const chart = view.panels.flatMap((panel) => panel.controls).find((control) => control.kind === "chart");
           if (chart?.kind !== "chart") throw new Error("Expected the recorded trajectory chart");
           if (unknown) expect(chart.series).toHaveLength(1);
@@ -203,18 +208,14 @@ describe("registered environment and venue projection", () => {
     } finally { session.dispose(); }
   });
 
-  it.each(["origin", "datum", "missing-origin"] as const)("requires the imported record's registered %s", (change) => {
+  it.each(["origin_not_recorded", "unregistered_origin"] as const)("projects shared venue rejection %s", (reason) => {
     const session = prepared();
     try {
       launch(session); session.executeSharedSessionCommand({ kind: "abort" }); session.openArchive(session.exportRecordJson());
       const document = session.readEnvironment();
-      const metadata = nested(nested(document as unknown as Record<string, unknown>, "projection"), "metadata");
-      if (change === "origin") nested(nested(metadata, "local_frame"), "value").longitude_degrees = 137;
-      if (change === "datum") nested(nested(metadata, "local_frame"), "value").water_level_datum = "another datum";
-      if (change === "missing-origin") metadata.local_frame = { kind: "unavailable" };
-      const environment = projectRuntimeEnvironment(document);
-      expect(projectRuntimeVenue(environment, "replay")).toEqual({ kind: "unavailable", reason: change === "missing-origin" ? "origin_not_recorded" : "unregistered_origin" });
-      expect(projectRuntimeVenue(environment, "result")).toEqual({ kind: "unavailable", reason: "context_mismatch" });
+      if (document.projection.kind !== "available") throw new Error("Expected the registered environment");
+      const environment = projectRuntimeEnvironment({ ...document, projection: { ...document.projection, venue: { kind: reason } } });
+      expect(projectRuntimeVenue(environment)).toEqual({ kind: "unavailable", reason });
     } finally { session.dispose(); }
   });
 

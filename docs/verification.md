@@ -371,6 +371,7 @@ Countdownはcoreだけでなく、実WASM/facade/Web frame列とNative Update/Fi
 
 - 登録環境は観測値、湖上外挿、風の空間勾配、鉛直流、波、天空の仮定を分ける。
 - offline生成の欠測、exact-byte hash、方位変換、全N-fast格子・閉境界、 Rust codecとWeb/Nativeの同じ環境identityへの接続を検査する。
+- Title展示と保持中Setupの気象・seedを分離し、初回の波・天空・太陽・会場が同じ共有projectionに対応することを確認する。archiveは登録origin・水面datum・未登録identityの会場可用性を検査する。
 - 未知の保存環境や原点未記録のarchiveへ、現在の地図・風を補完しない。
 
 ### 湖岸・島・視差

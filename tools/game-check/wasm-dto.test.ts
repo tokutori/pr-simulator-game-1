@@ -138,7 +138,8 @@ describe("same-build Rust/WASM generated DTO connections", () => {
       expect(viewer.session.queryWindGrid(wind).projection).toMatchObject({ kind: "unavailable", reason: "unregistered_environment_identity" });
       const environment = readContract<EnvironmentSnapshot>("runtime_environment", viewer.bridge.environment_snapshot_json());
       expect(viewer.session.readEnvironment()).toEqual(environment);
-      expect(projectRuntimeEnvironment(environment)).toEqual({ kind: "unavailable", reason: "unregistered_environment_identity" });
+      if (environment.projection.kind !== "unavailable") throw new Error("Expected the original unknown identity");
+      expect(projectRuntimeEnvironment(environment)).toEqual({ ...environment.projection, reason: "unregistered_environment_identity" });
     } finally { source.session.dispose(); viewer.session.dispose(); }
   });
 });

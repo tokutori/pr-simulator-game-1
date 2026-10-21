@@ -1777,10 +1777,7 @@ impl VerificationPresentation<'_, '_> {
         session: &NativeSession,
         case: Option<WaterVerificationCase>,
     ) -> Result<f32, String> {
-        let target = EnvironmentTarget::project(
-            session.game.core_session().snapshot().phase(),
-            session.game.core_session().configuration_identity(),
-        );
+        let target = EnvironmentTarget::project(&session.game);
         let condition = self
             .environment
             .condition_for(target)
@@ -2411,10 +2408,7 @@ fn advance_step(
             {
                 return Ok(());
             }
-            let target = EnvironmentTarget::project(
-                phase,
-                session.game.core_session().configuration_identity(),
-            );
+            let target = EnvironmentTarget::project(&session.game);
             let condition = presentation
                 .environment
                 .condition_for(target)
@@ -2432,6 +2426,9 @@ fn advance_step(
                 cycle + 1
             );
             session.execute_ui_command(SessionCommand::CancelBriefing {})?;
+            session.execute_ui_command(SessionCommand::SelectWeather {
+                weather: birdman_game_app::DEFAULT_WEATHER,
+            })?;
             verification.next(VerificationStage::SkyTypical {
                 cycle,
                 retired_image: current,
@@ -2449,7 +2446,7 @@ fn advance_step(
             }
             let condition = presentation
                 .environment
-                .condition_for(EnvironmentTarget::DefaultExhibition)
+                .condition_for(EnvironmentTarget::project(&session.game))
                 .map_err(|cause| format!("Typical sky environment is unavailable: {cause:?}"))?;
             let current = presentation.sky_image()?;
             if condition.weather != WeatherClass::Typical
@@ -2463,9 +2460,6 @@ fn advance_step(
                 "Sky environment cycle {}: Typical restores the shared cloud panorama",
                 cycle + 1
             );
-            session.execute_ui_command(SessionCommand::SelectWeather {
-                weather: birdman_game_app::DEFAULT_WEATHER,
-            })?;
             if cycle + 1 < 3 {
                 verification.next(VerificationStage::SkyPrepare(cycle + 1));
             } else {

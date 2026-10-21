@@ -1185,9 +1185,25 @@ fn configuration(context: &GameUiContext<'_, '_>) -> String {
 }
 
 fn notification(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
-    if !context.platform.notification.is_empty() {
+    let mut message = context.platform.notification.clone();
+    if context.session.snapshot().phase() == SessionPhase::Replay
+        && context.identity.is_some_and(|identity| {
+            matches!(
+                birdman_game_app::HybridSessionPreparation::weather_for_environment_identity(
+                    identity.into()
+                ),
+                Ok(None)
+            )
+        })
+    {
+        if !message.is_empty() {
+            message.push('\n');
+        }
+        message.push_str("この記録の環境は未登録のため、直前の背景を表示している。環境の識別情報は技術情報で確認できる。");
+    }
+    if !message.is_empty() {
         menu.section("record-notification", "", GameUiSectionLayout::Column);
-        menu.status("game-state", "", &context.platform.notification);
+        menu.status("game-state", "", &message);
     }
 }
 

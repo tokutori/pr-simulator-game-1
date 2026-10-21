@@ -663,10 +663,10 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
   it("uses selected and sealed sky through Retry and Replay and resolves the recorded current environment", async () => {
     const trial = await fixture(false, true);
     await vi.waitFor(() => { expect(trial.documentRef.querySelector('[data-control-id="game-title-open-record-1"]')).not.toBeNull(); });
-    expect(trial.renderer.setLakeSkyCondition.mock.lastCall?.[0]).toBeNull();
+    const condition = { sunAzimuthDegrees: 135, sunElevationDegrees: 55, cloudFraction: 0.25, cloudBaseMeters: 1500, visibilityMeters: 25_000 };
+    expect(trial.renderer.setLakeSkyCondition.mock.lastCall?.[0]).toEqual(condition);
     trial.click("game-title-start");
     trial.click("game-setup-select-weather-2");
-    const condition = { sunAzimuthDegrees: 135, sunElevationDegrees: 55, cloudFraction: 0.25, cloudBaseMeters: 1500, visibilityMeters: 25_000 };
     expect(trial.renderer.setLakeSkyCondition.mock.lastCall?.[0]).toEqual(condition);
     trial.click("game-setup-start");
     expect(trial.renderer.setLakeSkyCondition.mock.lastCall?.[0]).toEqual(condition);
