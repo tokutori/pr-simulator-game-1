@@ -1251,7 +1251,8 @@ mod tests {
             for _ in 0..3 {
                 session.presentation_frame(1.0);
             }
-            session.observe_frame(true, false);
+            session.observe_frame(true);
+            session.advance_frame(161.0, &[]);
             session.tick(FlightInput::default());
             session.action(MenuAction::Pause).unwrap();
         }

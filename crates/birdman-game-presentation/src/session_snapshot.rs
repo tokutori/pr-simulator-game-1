@@ -76,45 +76,66 @@ pub fn flight_frame_snapshot(
     } else {
         None
     };
-    let render_pose =
-        match snapshot.as_ref().and_then(|value| value.render_pose) {
-            Some(_) if session.flight_interpolation_ready() => {
-                let record = session.core_session().flight_record().ok_or(
-                    SnapshotProjectionError::Session(GameSessionError::InvalidTransition),
-                )?;
-                let current = record
-                    .samples()
-                    .last()
-                    .ok_or(SnapshotProjectionError::Session(
-                        GameSessionError::InvalidTransition,
-                    ))?;
-                let tick =
-                    current
-                        .tick_index
-                        .checked_sub(1)
-                        .ok_or(SnapshotProjectionError::Session(
-                            GameSessionError::InvalidTransition,
-                        ))?;
-                let fraction = session.flight_interpolation_fraction();
-                let sample = record
-                    .sample_at_time(tick, fraction)
-                    .map_err(SnapshotProjectionError::Interpolation)?;
-                Some(Projection { session }.render_pose_internal(
-                    sample.flight_state,
-                    sample.actuators,
-                    (tick as f64 + fraction) / f64::from(birdman_game_core::PHYSICS_HZ),
-                    Some(sample.telemetry),
-                    sample.wing_bending_factor,
-                )?)
-            }
-            exact => exact,
-        };
+    let render_pose = interpolate_live_pose(
+        session,
+        snapshot.as_ref().and_then(|value| value.render_pose),
+    )?;
     Ok(FlightFrameDocument {
         phase_changed: report.phase_changed,
         advance: report.advance,
         gamepad: session.flight_gamepad_acquisition(),
         snapshot,
         render_pose,
+    })
+}
+
+/// Projects the live or terminal display pose using the application's physical-time remainder.
+pub fn live_render_pose(
+    session: &ApplicationSession,
+) -> Result<Option<FlightRenderPose>, SnapshotProjectionError> {
+    let exact = session_snapshot(session)?.render_pose;
+    interpolate_live_pose(session, exact)
+}
+
+fn interpolate_live_pose(
+    session: &ApplicationSession,
+    exact: Option<FlightRenderPose>,
+) -> Result<Option<FlightRenderPose>, SnapshotProjectionError> {
+    Ok(match exact {
+        Some(_) if session.flight_interpolation_ready() => {
+            let record =
+                session
+                    .core_session()
+                    .flight_record()
+                    .ok_or(SnapshotProjectionError::Session(
+                        GameSessionError::InvalidTransition,
+                    ))?;
+            let current = record
+                .samples()
+                .last()
+                .ok_or(SnapshotProjectionError::Session(
+                    GameSessionError::InvalidTransition,
+                ))?;
+            let tick =
+                current
+                    .tick_index
+                    .checked_sub(1)
+                    .ok_or(SnapshotProjectionError::Session(
+                        GameSessionError::InvalidTransition,
+                    ))?;
+            let fraction = session.flight_interpolation_fraction();
+            let sample = record
+                .sample_at_time(tick, fraction)
+                .map_err(SnapshotProjectionError::Interpolation)?;
+            Some(Projection { session }.render_pose_internal(
+                sample.flight_state,
+                sample.actuators,
+                (tick as f64 + fraction) / f64::from(birdman_game_core::PHYSICS_HZ),
+                Some(sample.telemetry),
+                sample.wing_bending_factor,
+            )?)
+        }
+        exact => exact,
     })
 }
 

@@ -1,6 +1,7 @@
 #[cfg(feature = "verify-harness")]
 use bevy::ecs as bevy_ecs;
 use bevy::prelude::*;
+#[cfg(any(test, feature = "verify-harness"))]
 use birdman_game_core::{FlightState, UnitQuaternion};
 use birdman_game_presentation::{game_ui::GameUiReplayCamera, replay_camera::ReplayCameraView};
 use birdman_game_scene::cockpit_geometry::CockpitGeometry;
@@ -31,14 +32,34 @@ pub(crate) fn sunlight_transform(sun_direction: Vec3) -> Transform {
     Transform::IDENTITY.looking_to(-sun_direction, Vec3::Y)
 }
 
+#[cfg(any(test, feature = "verify-harness"))]
 pub(crate) fn attitude_to_engine(attitude: UnitQuaternion) -> Quat {
-    let [scalar, forward, right, down] = attitude.components();
+    orientation_to_engine(attitude.components())
+}
+
+fn orientation_to_engine([scalar, forward, right, down]: [f64; 4]) -> Quat {
     let basis = Quat::from_xyzw(0.5, 0.5, -0.5, 0.5);
     basis
         * Quat::from_xyzw(forward as f32, right as f32, down as f32, scalar as f32)
         * basis.inverse()
 }
 
+pub(crate) fn render_aircraft_transform(
+    pose: &birdman_game_presentation::render_pose::FlightRenderPose,
+) -> Transform {
+    let position = pose.datum_position_ned;
+    let attitude = pose.attitude_body_to_ned;
+    Transform::from_translation(ned_to_engine([
+        position.north,
+        position.east,
+        position.down,
+    ]))
+    .with_rotation(orientation_to_engine([
+        attitude.w, attitude.x, attitude.y, attitude.z,
+    ]))
+}
+
+#[cfg(any(test, feature = "verify-harness"))]
 pub(crate) fn aircraft_transform(state: FlightState) -> Transform {
     Transform::from_translation(ned_to_engine(state.datum_position_ned().components()))
         .with_rotation(attitude_to_engine(state.attitude_body_to_ned()))

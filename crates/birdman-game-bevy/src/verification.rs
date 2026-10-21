@@ -3,10 +3,12 @@ use birdman_game_format::WaterQuality;
 mod options;
 pub(crate) use options::Options;
 
+#[cfg(test)]
+use super::native_session::FlightInput;
 use super::{
     CameraMode, MAX_FRAME_DELTA,
     environment::{EnvironmentSurface, EnvironmentTarget, NativeEnvironment},
-    native_session::{FlightInput, MenuAction, NativeSession},
+    native_session::{MenuAction, NativeSession},
     projection::{
         VerificationObserver, aircraft_transform, camera_transform, replay_camera_transform,
     },
@@ -1371,19 +1373,26 @@ impl Verification {
     }
 }
 
-pub(crate) fn supply_input(verification: Res<Verification>, mut input: ResMut<FlightInput>) {
-    *input = match verification.stage {
-        VerificationStage::Pilot => FlightInput {
-            nose_up: 0.1,
-            turn_right: 0.1,
-            pilot: Some(0.25),
+pub(crate) fn supply_input(
+    verification: Res<Verification>,
+    session: Res<NativeSession>,
+    mut devices: ResMut<super::flight_devices::FlightDevices>,
+) {
+    use birdman_game_app::flight_input::FlightGamepadAcquisition;
+    let axes = match session.game.flight_gamepad_acquisition() {
+        FlightGamepadAcquisition::Unselected | FlightGamepadAcquisition::WaitingNeutral { .. } => {
+            [0.0; 3]
+        }
+        FlightGamepadAcquisition::WaitingPilot {
+            previous_target, ..
+        } => [0.0, 0.0, if previous_target <= 0.0 { 1.0 } else { -1.0 }],
+        FlightGamepadAcquisition::Active { .. } => match verification.stage {
+            VerificationStage::Pilot => [0.172, 0.172, 0.31],
+            VerificationStage::InputTrialFlight => [1.0, 0.0, 0.0],
+            _ => [0.0; 3],
         },
-        VerificationStage::InputTrialFlight => FlightInput {
-            nose_up: 1.0,
-            ..default()
-        },
-        _ => FlightInput::default(),
     };
+    devices.verification_axes(axes);
 }
 
 type VerificationUiLabel = (
@@ -1731,14 +1740,12 @@ impl VerificationPresentation<'_, '_> {
             false,
         )
         .map_err(|cause| format!("Replay camera query failed: {cause:?}"))?;
-        let display = session
-            .display_state()
-            .ok_or("Replay display state is missing")?;
+        let pose = view.render_pose();
         let expected = replay_camera_transform(
             &view,
-            aircraft_transform(display.state),
-            display.state.pilot_position_m(),
-            session.initial_pilot_position_m,
+            super::projection::render_aircraft_transform(&pose),
+            pose.pilot_position_meters,
+            pose.initial_pilot_position_meters,
             Vec2::ZERO,
         );
         let (_, _, _, Projection::Perspective(lens), actual) = self
@@ -2538,7 +2545,11 @@ fn advance_step(
                         verification.observer_base = Some(camera_transform(
                             aircraft_transform(flight),
                             flight.pilot_position_m(),
-                            session.initial_pilot_position_m,
+                            session
+                                .render_pose()
+                                .unwrap()
+                                .unwrap()
+                                .initial_pilot_position_meters,
                             true,
                             Vec2::ZERO,
                         ));
@@ -3756,9 +3767,7 @@ mod tests {
         .init_asset::<Shader>()
         .init_asset_loader::<bevy::shader::ShaderLoader>()
         .init_resource::<NativeSession>()
-        .init_resource::<super::FlightInput>()
         .init_resource::<super::CameraMode>()
-        .init_resource::<super::super::world::RenderHistory>()
         .init_resource::<WaterQualitySelection>()
         .init_resource::<super::super::screen_render::NativeScreenRender>()
         .init_resource::<super::timing::TimingReadout>()
@@ -3768,15 +3777,15 @@ mod tests {
         .init_resource::<Assets<Image>>()
         .init_resource::<InputFocus>()
         .insert_resource(super::NativeEnvironment::try_default().unwrap())
-        .insert_resource(Time::<Fixed>::from_hz(f64::from(
-            birdman_game_core::PHYSICS_HZ,
-        )))
         .insert_resource(Time::<Virtual>::from_max_delta(super::MAX_FRAME_DELTA))
         .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
             Duration::from_secs_f64(1.0 / f64::from(birdman_game_core::PHYSICS_HZ)),
         ))
         .add_message::<AppExit>()
-        .add_systems(FixedUpdate, super::super::advance_physics)
+        .add_systems(
+            Update,
+            super::super::advance_flight_frame.before(super::super::advance_presentation),
+        )
         .add_systems(
             Update,
             (super::super::advance_presentation, super::advance).chain(),
@@ -3904,7 +3913,11 @@ mod tests {
             super::camera_transform(
                 aircraft,
                 flight.pilot_position_m(),
-                session.initial_pilot_position_m,
+                session
+                    .render_pose()
+                    .unwrap()
+                    .unwrap()
+                    .initial_pilot_position_meters,
                 chase,
                 Vec2::ZERO,
             )
@@ -4636,6 +4649,8 @@ mod tests {
             session.game.core_session().snapshot().phase(),
             SessionPhase::FlightRunning
         );
+        app.update();
+        let session = app.world().resource::<NativeSession>();
         let state = session
             .game
             .core_session()
@@ -5893,7 +5908,9 @@ mod tests {
             .sample_count();
         let mut observed = false;
         let mut readiness = RenderReadiness::default();
-        session.observe_frame(true, true);
+        session.observe_frame(true);
+        session.advance_frame(0.0, &[]);
+        session.advance_frame(151.0, &[]);
         assert!(
             recover_processing_delay(
                 &mut observed,
@@ -5905,7 +5922,8 @@ mod tests {
             .unwrap()
         );
         assert!(observed);
-        session.observe_frame(true, false);
+        session.observe_frame(true);
+        session.advance_frame(161.0, &[]);
         assert!(matches!(
             session.game.core_session().snapshot().phase(),
             SessionPhase::FlightPaused { reasons } if reasons.is_empty()
@@ -6012,10 +6030,8 @@ mod tests {
             for _ in 0..3 {
                 session.presentation_frame(1.0);
             }
-            session
-                .game
-                .observe_availability(ExternalPauseReason::ProcessingDelay, false)
-                .unwrap();
+            session.advance_frame(0.0, &[]);
+            session.advance_frame(151.0, &[]);
             let mut observed = additional.is_some();
             if let Some(reason) = additional {
                 if reason == PauseReason::Manual {
@@ -6030,7 +6046,8 @@ mod tests {
                     session.game.observe_availability(reason, false).unwrap();
                 }
             } else {
-                session.observe_frame(true, false);
+                session.observe_frame(true);
+                session.advance_frame(161.0, &[]);
             }
             let before = session.game.core_session().snapshot();
             let sample_count = session
@@ -6074,7 +6091,9 @@ mod tests {
         }
         let mut observed = false;
         let readiness = RenderReadiness::default();
-        session.observe_frame(true, true);
+        session.observe_frame(true);
+        session.advance_frame(0.0, &[]);
+        session.advance_frame(151.0, &[]);
         recover_processing_delay(
             &mut observed,
             VerificationStage::Pilot,
@@ -6084,7 +6103,8 @@ mod tests {
         )
         .unwrap();
         assert!(observed);
-        session.observe_frame(true, false);
+        session.observe_frame(true);
+        session.advance_frame(161.0, &[]);
         session.action(MenuAction::Resume).unwrap();
         assert!(
             !recover_processing_delay(
