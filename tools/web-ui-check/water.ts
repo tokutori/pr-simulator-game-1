@@ -4,12 +4,14 @@ import { resolve } from "node:path";
 import type { Page } from "playwright-core";
 import type { Group, Scene, ShaderMaterial, WebGLRenderer } from "three";
 import type { LakeSkyCondition } from "../../web/src/render/contracts/lake-sky.js";
+import type { LakeVisualCondition } from "../../web/src/render/contracts/lake-water.js";
 import type { ScreenRenderAutoSnapshot } from "../../web/src/generated/screen-render-auto.js";
 
 declare global {
   interface Window {
     __waterCheck: { renderer: WebGLRenderer; scene: Scene; water: Group; waterMaterial: ShaderMaterial; threeModuleUrl: string; auto?: ScreenRenderAutoSnapshot; suspendLoop: boolean;
-      preparation: { stage: string; milliseconds: number }[]; skyCondition: () => LakeSkyCondition | null; setSky: (condition: LakeSkyCondition | null) => void };
+      preparation: { stage: string; milliseconds: number }[]; skyCondition: () => LakeSkyCondition | null;
+      lakeCondition: () => LakeVisualCondition; setSky: (condition: LakeSkyCondition | null) => void };
   }
 }
 
@@ -45,7 +47,7 @@ export async function observeWaterRenderer(page: Page): Promise<void> {
         const started = performance.now();
         try { return run(); } finally { preparationTimings.push({ stage, milliseconds: performance.now() - started }); }
       }\n` + observed.replace(anchor,
-      `${anchor}\nwindow.__waterCheck = { renderer, scene, water, waterMaterial, threeModuleUrl: ${JSON.stringify(threeModuleUrl)}, skyCondition: () => activeSkyCondition, setSky: condition => rendererAdapter.setLakeSkyCondition(condition), suspendLoop: false, preparation: preparationTimings };
+      `${anchor}\nwindow.__waterCheck = { renderer, scene, water, waterMaterial, threeModuleUrl: ${JSON.stringify(threeModuleUrl)}, skyCondition: () => activeSkyCondition, lakeCondition: () => activeLakeCondition, setSky: condition => rendererAdapter.setLakeSkyCondition(condition), suspendLoop: false, preparation: preparationTimings };
       const observedSetAnimationLoop = renderer.setAnimationLoop.bind(renderer);
       renderer.setAnimationLoop = callback => observedSetAnimationLoop(callback === null ? null : (...args) => {
         if (!window.__waterCheck.suspendLoop) callback(...args);
