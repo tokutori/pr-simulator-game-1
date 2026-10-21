@@ -750,10 +750,24 @@ mod tests {
             .iter_mut()
             .find(|surface| surface.role.core_role() == HybridSurfaceRole::MainWing)
             .unwrap();
+        let mean_chord_m = source
+            .sections
+            .windows(2)
+            .map(|sections| {
+                (sections[0].chord_m + sections[1].chord_m)
+                    * 0.5
+                    * (sections[1].quarter_chord_frd_m[1] - sections[0].quarter_chord_frd_m[1])
+            })
+            .sum::<f64>()
+            / (source.sections.last().unwrap().quarter_chord_frd_m[1]
+                - source.sections[0].quarter_chord_frd_m[1]);
         source.sections = vec![
             source.sections[0],
             source.sections[source.sections.len() - 1],
         ];
+        for section in &mut source.sections {
+            section.chord_m = mean_chord_m;
+        }
         let source = AircraftDefinition::from_document(document).unwrap();
         let surface = source.shape().surface(HybridSurfaceRole::MainWing);
         for side in [-1.0, 1.0] {
