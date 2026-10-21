@@ -1,12 +1,10 @@
-import { composePose, IDENTITY_POSE, inversePose, rotateVec3, vec3 } from "../render/contracts/math.js";
+import { IDENTITY_POSE, rotateVec3, vec3 } from "../render/contracts/math.js";
 import type { Pose } from "../render/contracts/math.js";
 import type { BackendFrame, MenuPresentation, PresentationBackendAdapter, RendererAdapter, SelectRay, ViewportSize } from "../render/contracts/runtime.js";
 import { NO_HEAD_HUD, resolveHeadHudFrame } from "../render/contracts/head-hud.js";
 import type { ViewerFrame } from "../render/contracts/viewer-frame.js";
 import type { UiActionDispatcher, UiViewModel } from "../render/contracts/ui.js";
-import { placeMenuPanel, resolveAnchorPose } from "../render/anchors.js";
-import { CLOSED_MENU_PLACEMENT, openMenuPlacement, recenterMenuPlacement, transformMenuPlacement } from "./menu-placement.js";
-import type { MenuPlacementModel } from "./menu-placement.js";
+import { XrSpatialSession } from "./xr-spatial-session.js";
 import { GazeDwellSelector } from "./gaze-dwell.js";
 import { actionForControl, hitTestControl, intersectPanel, rangeAction } from "./panel-interaction.js";
 import { menuActionAt, menuFocusAction, menuHitIdentity } from "./menu-interaction.js";
@@ -29,8 +27,7 @@ export class WebXrPresentationBackend implements PresentationBackendAdapter {
   private lastPanel: UiViewModel["panels"][number] | null = null;
   private lastPanelPose: Pose | null = null;
   private lastMenu: MenuPresentation = Object.freeze({ kind: "absent" });
-  private referenceFromWorld: Pose = IDENTITY_POSE;
-  private menuPlacement: MenuPlacementModel = CLOSED_MENU_PLACEMENT;
+  private readonly spatial = new XrSpatialSession();
   private readonly gazeDwell: GazeDwellSelector;
   private readonly selectRayHandler = (ray: SelectRay): void => { this.handleSelectRay(ray); };
 
@@ -80,8 +77,7 @@ export class WebXrPresentationBackend implements PresentationBackendAdapter {
   async start(): Promise<void> {
     if (this.state.type !== "requested") throw new Error("WebXR session must be requested by an explicit user action");
     this.state = { type: "starting" };
-    this.menuPlacement = CLOSED_MENU_PLACEMENT;
-    this.referenceFromWorld = IDENTITY_POSE;
+    this.spatial.reset();
     this.xrRenderer.setSessionEndHandler(() => { this.handleUnexpectedEnd(); });
     this.xrRenderer.setReferenceSpaceResetHandler((transform) => { this.handleReferenceSpaceReset(transform); });
     this.renderer.setSelectRayHandler(this.selectRayHandler);
@@ -117,7 +113,7 @@ export class WebXrPresentationBackend implements PresentationBackendAdapter {
       this.lastViewerPose = null;
       this.lastPanel = null;
       this.lastPanelPose = null;
-      this.referenceFromWorld = IDENTITY_POSE;
+      this.spatial.reset();
       this.gazeDwell.reset();
     }
   }
@@ -136,11 +132,12 @@ export class WebXrPresentationBackend implements PresentationBackendAdapter {
 
   currentFrame(timestampMs: number, viewModel: UiViewModel, viewer: ViewerFrame, menu: MenuPresentation): BackendFrame {
     const viewerPose = viewer.trackingFromHead;
-    const presentationViewerPose = viewerPose === null ? null : this.xrRenderer.transformTrackingPose(viewerPose);
+    const reference = viewerPose === null ? null : this.xrRenderer.projectTrackingFrame(viewerPose);
+    const presentationViewerPose = reference?.head ?? null;
     this.lastViewerPose = presentationViewerPose;
     const semanticPanel = viewModel.panels[0] ?? null;
     const panel = menu.kind === "ready" ? menu.panel : semanticPanel;
-    if (panel?.anchor !== "menu" || menu.kind === "absent") this.menuPlacement = CLOSED_MENU_PLACEMENT;
+    if (panel?.anchor !== "menu" || menu.kind === "absent") this.spatial.closeMenu();
     this.lastMenu = menu;
     if (panel?.anchor === "menu" && menu.kind !== "ready") {
       this.lastPanel = null;
@@ -150,8 +147,6 @@ export class WebXrPresentationBackend implements PresentationBackendAdapter {
         cameraPose: IDENTITY_POSE, viewport: this.viewport(), panel: menu.kind === "unavailable"
           ? Object.freeze({ kind: "unavailable", reason: menu.reason }) : Object.freeze({ kind: "absent" }) });
     }
-    const headPose = presentationViewerPose ?? IDENTITY_POSE;
-    let menuPose = this.menuPlacement.kind === "placed" ? this.menuPlacement.referenceFromMenu : placeMenuPanel(headPose, 2.4);
     if (panel !== null && (presentationViewerPose === null || viewer.source === "unavailable")) {
       this.lastPanel = null;
       this.lastPanelPose = null;
@@ -159,23 +154,14 @@ export class WebXrPresentationBackend implements PresentationBackendAdapter {
       return Object.freeze({ timestampMs, headHud: NO_HEAD_HUD, cameraPose: IDENTITY_POSE,
         panel: Object.freeze({ kind: "unavailable", reason: viewer.source === "unavailable" ? viewer.reason : "viewer-unavailable" }), viewport: this.viewport() });
     }
-    if (panel?.anchor === "menu" && presentationViewerPose !== null) {
-      const placement = openMenuPlacement(this.menuPlacement, viewModel, panel, presentationViewerPose, viewer);
-      this.menuPlacement = placement.model;
-      if (placement.result.kind === "unavailable") {
+    const placement = this.spatial.place(viewModel, panel, viewer, reference);
+    if (placement.kind === "unavailable") {
         this.lastPanel = null;
         this.lastPanelPose = null;
         this.gazeDwell.update(null, null, timestampMs);
-        return Object.freeze({ timestampMs, headHud: NO_HEAD_HUD, cameraPose: IDENTITY_POSE, panel: placement.result, viewport: this.viewport() });
-      }
-      menuPose = placement.result.referenceFromMenu;
+        return Object.freeze({ timestampMs, headHud: NO_HEAD_HUD, cameraPose: IDENTITY_POSE, panel: placement, viewport: this.viewport() });
     }
-    const worldFromPanel = panel === null ? menuPose : resolveAnchorPose({ kind: panel.anchor, localPose: panel.localPose }, {
-      world: this.referenceFromWorld,
-      cockpit: this.referenceFromWorld,
-      menu: menuPose,
-      head: headPose
-    });
+    const worldFromPanel = placement.kind === "ready" ? placement.referenceFromPanel : IDENTITY_POSE;
     this.lastPanel = panel;
     this.lastPanelPose = worldFromPanel;
     const gazeCursor = this.updateGaze(panel, worldFromPanel, presentationViewerPose, timestampMs, menu);
@@ -189,7 +175,7 @@ export class WebXrPresentationBackend implements PresentationBackendAdapter {
   }
 
   recenterMenu(): void {
-    if (this.lastViewerPose !== null) this.menuPlacement = recenterMenuPlacement(this.menuPlacement, this.lastViewerPose);
+    if (this.lastViewerPose !== null) this.spatial.recenterMenu(this.lastViewerPose);
   }
 
   private updateGaze(
@@ -236,6 +222,7 @@ export class WebXrPresentationBackend implements PresentationBackendAdapter {
     this.state = { type: "idle" };
     this.renderer.setSelectRayHandler(null);
     queueMicrotask(() => {
+      this.spatial.reset();
       this.gazeDwell.reset();
       this.onSessionEnd();
     });
@@ -249,9 +236,6 @@ export class WebXrPresentationBackend implements PresentationBackendAdapter {
       this.onReferenceSpaceResetUnavailable();
       return;
     }
-    const transform = inversePose(previousReferenceFromNew);
-    this.referenceFromWorld = composePose(transform, this.referenceFromWorld);
-    this.menuPlacement = transformMenuPlacement(this.menuPlacement, transform);
     this.lastViewerPose = null;
     this.lastPanelPose = null;
     this.gazeDwell.reset();

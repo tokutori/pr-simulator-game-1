@@ -196,19 +196,19 @@ describe("Phone VR browser orientation through the Three adapter and StereoEffec
     const { browser, backend } = await start(orientation.screen, orientation.neutral);
     try {
       const opening = render(backend);
-      const openingRelativeToHead = poseMatrix(bundle.renderer.transformTrackingPose(opening.frame.cameraPose)).invert()
+      const openingRelativeToHead = poseMatrix(bundle.renderer.projectTrackingFrame(opening.frame.cameraPose).head).invert()
         .multiply(poseMatrix(visiblePanelFrame(opening.frame).pose));
       browser.emit(orientation.right);
       const turned = render(backend);
       backend.recenterMenu();
       const movedMenu = render(backend);
       expectMatrix(centerCamera(movedMenu.eyes), centerCamera(turned.eyes));
-      const menuRelativeToHead = poseMatrix(bundle.renderer.transformTrackingPose(movedMenu.frame.cameraPose)).invert().multiply(poseMatrix(visiblePanelFrame(movedMenu.frame).pose));
+      const menuRelativeToHead = poseMatrix(bundle.renderer.projectTrackingFrame(movedMenu.frame.cameraPose).head).invert().multiply(poseMatrix(visiblePanelFrame(movedMenu.frame).pose));
       expectMatrix(menuRelativeToHead, openingRelativeToHead);
       backend.recenterTracking();
       const reset = render(backend);
       expectMatrix(poseMatrix(reset.frame.cameraPose), new Matrix4());
-      expectMatrix(poseMatrix(bundle.renderer.transformTrackingPose(reset.frame.cameraPose)).invert().multiply(poseMatrix(visiblePanelFrame(reset.frame).pose)), menuRelativeToHead);
+      expectMatrix(poseMatrix(bundle.renderer.projectTrackingFrame(reset.frame.cameraPose).head).invert().multiply(poseMatrix(visiblePanelFrame(reset.frame).pose)), menuRelativeToHead);
       browser.emit(orientation.left);
       const later = render(backend);
       expectMatrix(centerCamera(reset.eyes).invert().multiply(centerCamera(later.eyes)), new Matrix4().makeRotationY(Math.PI / 9));

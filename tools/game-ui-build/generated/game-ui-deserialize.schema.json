@@ -316,6 +316,31 @@
         }
       ]
     },
+    "GameUiAnchor": {
+      "description": "Engine-independent anchor.",
+      "oneOf": [
+        {
+          "const": "menu",
+          "description": "Retained, recenterable menu frame.",
+          "type": "string"
+        },
+        {
+          "const": "head",
+          "description": "Camera-relative smart-glasses display.",
+          "type": "string"
+        },
+        {
+          "const": "cockpit",
+          "description": "Aircraft-relative physical instrumentation.",
+          "type": "string"
+        },
+        {
+          "const": "world",
+          "description": "Fixed world frame.",
+          "type": "string"
+        }
+      ]
+    },
     "GameUiChartExtent": {
       "additionalProperties": false,
       "description": "Measured or initially assumed chart content dimensions in logical pixels.",
@@ -1716,6 +1741,98 @@
         }
       ]
     },
+    "XrCameraMount": {
+      "description": "Camera mounting policy, separate from the runtime's head and eye tracking.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Menu/exhibition camera with a fixed world-to-reference basis.",
+          "properties": {
+            "kind": {
+              "const": "stationary",
+              "type": "string"
+            },
+            "worldFromTracking": {
+              "$ref": "#/$defs/XrPose",
+              "description": "Render-world camera base."
+            }
+          },
+          "required": [
+            "kind",
+            "worldFromTracking"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Cockpit camera; pilot displacement is already resolved in this mount.",
+          "properties": {
+            "aircraftFromTracking": {
+              "$ref": "#/$defs/XrPose",
+              "description": "Aircraft-to-tracking mount."
+            },
+            "kind": {
+              "const": "aircraft",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "aircraftFromTracking"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Absolute Chase or cinematic camera independent of the aircraft hierarchy.",
+          "properties": {
+            "kind": {
+              "const": "external",
+              "type": "string"
+            },
+            "worldFromTracking": {
+              "$ref": "#/$defs/XrPose",
+              "description": "Render-world camera base."
+            }
+          },
+          "required": [
+            "kind",
+            "worldFromTracking"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "XrFitReason": {
+      "description": "Optical rejection reason shared by layout and measured text checks.",
+      "oneOf": [
+        {
+          "const": "not-stereo",
+          "description": "No stereo observation.",
+          "type": "string"
+        },
+        {
+          "const": "viewer-unavailable",
+          "description": "No current viewer pose.",
+          "type": "string"
+        },
+        {
+          "const": "unsupported-view-configuration",
+          "description": "Unsupported primary eye arrangement.",
+          "type": "string"
+        },
+        {
+          "const": "invalid-view-geometry",
+          "description": "Invalid pose, matrix or intermediate arithmetic.",
+          "type": "string"
+        },
+        {
+          "const": "insufficient-view-area",
+          "description": "The requested geometry cannot fit in both views.",
+          "type": "string"
+        }
+      ]
+    },
     "XrInkSegment": {
       "additionalProperties": false,
       "description": "One measured vertical glyph segment in its drawing surface's local metres.",
@@ -1732,6 +1849,190 @@
       "required": [
         "start",
         "end"
+      ],
+      "type": "object"
+    },
+    "XrMenuScope": {
+      "additionalProperties": false,
+      "description": "Identity of one menu opening; all strings are opaque identity components.",
+      "properties": {
+        "overlay": {
+          "description": "Overlay identity, including credits.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "panelId": {
+          "description": "Semantic panel identity.",
+          "type": "string"
+        },
+        "scene": {
+          "description": "Scene identity from the shared view projection.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "scene",
+        "panelId"
+      ],
+      "type": "object"
+    },
+    "XrPanelGeometry": {
+      "additionalProperties": false,
+      "description": "Measured panel geometry in metres, independent of its drawing backend.",
+      "properties": {
+        "anchor": {
+          "$ref": "#/$defs/GameUiAnchor",
+          "description": "Explicit UI anchor."
+        },
+        "localPose": {
+          "$ref": "#/$defs/XrPose",
+          "description": "Panel transform within that anchor."
+        },
+        "scope": {
+          "$ref": "#/$defs/XrMenuScope",
+          "description": "Placement/selection identity."
+        },
+        "sizeM": {
+          "description": "Physical width and height in metres.",
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        }
+      },
+      "required": [
+        "scope",
+        "anchor",
+        "localPose",
+        "sizeM"
+      ],
+      "type": "object"
+    },
+    "XrPanelObservation": {
+      "description": "Availability of the current panel's measured geometry.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "The view has no active panel.",
+          "properties": {
+            "kind": {
+              "const": "absent",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Font/measurement is pending; retain the opening for its owner.",
+          "properties": {
+            "kind": {
+              "const": "pending",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The current optical/measurement observation is unavailable.",
+          "properties": {
+            "kind": {
+              "const": "unavailable",
+              "type": "string"
+            },
+            "reason": {
+              "$ref": "#/$defs/XrFitReason",
+              "description": "Same-frame failure classification."
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Complete semantic and measured panel observation.",
+          "properties": {
+            "geometry": {
+              "$ref": "#/$defs/XrPanelGeometry",
+              "description": "Physical panel geometry."
+            },
+            "kind": {
+              "const": "ready",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "geometry"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "XrPose": {
+      "additionalProperties": false,
+      "description": "Rigid child-to-parent transform; the caller names both reference spaces.",
+      "properties": {
+        "orientation": {
+          "$ref": "#/$defs/XrQuaternion",
+          "description": "Child-to-parent orientation."
+        },
+        "position": {
+          "$ref": "#/$defs/XrVector",
+          "description": "Child origin expressed in parent coordinates, in metres."
+        }
+      },
+      "required": [
+        "position",
+        "orientation"
+      ],
+      "type": "object"
+    },
+    "XrQuaternion": {
+      "additionalProperties": false,
+      "description": "Scalar-first unit quaternion in a right-handed reference space.",
+      "properties": {
+        "w": {
+          "description": "Scalar component.",
+          "format": "double",
+          "type": "number"
+        },
+        "x": {
+          "description": "Right-axis component.",
+          "format": "double",
+          "type": "number"
+        },
+        "y": {
+          "description": "Up-axis component.",
+          "format": "double",
+          "type": "number"
+        },
+        "z": {
+          "description": "Back-axis component.",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "w",
+        "x",
+        "y",
+        "z"
       ],
       "type": "object"
     },

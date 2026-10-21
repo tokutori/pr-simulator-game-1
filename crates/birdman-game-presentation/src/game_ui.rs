@@ -39,6 +39,12 @@ pub fn export_game_ui_schema(name: &str) -> Result<String, String> {
     output.subschema_for::<crate::xr::XrHeadHudProjection>();
     output.subschema_for::<crate::xr::XrMenuViewFit>();
     output.subschema_for::<crate::xr::XrInkFit>();
+    output.subschema_for::<crate::xr::XrCameraRig>();
+    output.subschema_for::<crate::xr::XrPilotEyePose>();
+    output.subschema_for::<crate::xr::XrFrdPose>();
+    output.subschema_for::<crate::xr::XrPanelPlacement>();
+    output.subschema_for::<crate::xr::XrPanelCameraPoses>();
+    output.subschema_for::<crate::xr::XrReferenceFrame>();
     output.subschema_for::<crate::screen_render_auto::ScreenRenderAutoSnapshot>();
     output.subschema_for::<crate::replay_camera::ReplayCameraView>();
     output.subschema_for::<birdman_game_app::record_query::PlaybackContext<'_>>();
@@ -58,6 +64,8 @@ pub fn export_game_ui_schema(name: &str) -> Result<String, String> {
     input.subschema_for::<GameUiAction>();
     input.subschema_for::<GameUiPlatformInput>();
     input.subschema_for::<crate::xr::XrInkSegment>();
+    input.subschema_for::<crate::xr::XrCameraMount>();
+    input.subschema_for::<crate::xr::XrPanelObservation>();
     input.subschema_for::<birdman_game_format::TailInputDocument>();
     let mut output_definitions = output.take_definitions(true);
     for (name, value) in [

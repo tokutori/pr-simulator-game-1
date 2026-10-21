@@ -1,8 +1,9 @@
-import type { AnchorKind } from "../anchors.js";
 import type { Pose } from "./math.js";
 import { validateHeadHudLayer } from "./head-hud.js";
 import type { HeadHudLayer } from "./head-hud.js";
 import type { GameUiView } from "../../generated/game-ui-view.js";
+
+export type AnchorKind = GameUiView["panels"][number]["anchor"];
 
 export const GAME_SCENES = ["Boot", "Title", "FlightSetup", "Briefing", "Countdown", "Flight", "Result", "Replay"] as const;
 export type GameScene = typeof GAME_SCENES[number];

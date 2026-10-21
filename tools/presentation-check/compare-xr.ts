@@ -9,7 +9,12 @@ import { DEFAULT_XR_HEAD_HUD_PROFILE } from "../../web/src/generated/xr-head-hud
 import type { FlightRecordHudProfileDocument } from "../../web/src/generated/record-context.js";
 import type { ViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
 import { IDENTITY_POSE, pose, quaternion, vec3 } from "../../web/src/render/contracts/math.js";
-import { xr_head_hud_projection_json, xr_menu_view_fit_json, xr_text_ink_fit_json } from "../../web/pkg/birdman_game_wasm.js";
+import { xr_head_hud_projection_json, xr_menu_view_fit_json, xr_text_ink_fit_json, XrCameraBridge, XrSpatialBridge,
+  xr_reference_frame_json, xr_pose_chain_json, xr_inverse_pose_json, xr_panel_camera_poses_json } from "../../web/pkg/birdman_game_wasm.js";
+import type { Pose } from "../../web/src/render/contracts/math.js";
+import type { XrCameraMount } from "../../web/src/generated/xr-camera-mount.js";
+import type { XrCameraRig } from "../../web/src/generated/xr-camera-rig.js";
+import type { XrReferenceFrame } from "../../web/src/generated/xr-reference-frame.js";
 
 const root = resolve(import.meta.dirname, "../..");
 const output = resolve(process.argv[2] ?? resolve(root, "target/xr-comparison"));
@@ -56,7 +61,8 @@ try {
   const actual = cases.map(({ observation: candidate }) => ({
     menu: JSON.parse(xr_menu_view_fit_json(JSON.stringify(candidate.viewer), JSON.stringify(candidate.panel_pose), ...candidate.panel_size, 2.4, 0.035)) as unknown,
     head: JSON.parse(xr_head_hud_projection_json(JSON.stringify(candidate.hud), JSON.stringify(candidate.viewer), JSON.stringify(candidate.profile), "FPS 72.0")) as unknown,
-    ink: JSON.parse(xr_text_ink_fit_json(JSON.stringify(candidate.viewer), JSON.stringify(candidate.ink), JSON.stringify(candidate.head_from_surface), 0.35)) as unknown
+    ink: JSON.parse(xr_text_ink_fit_json(JSON.stringify(candidate.viewer), JSON.stringify(candidate.ink), JSON.stringify(candidate.head_from_surface), 0.35)) as unknown,
+    spatial: spatialResults(candidate)
   }));
   await writeFile(resolve(output, "wasm.json"), JSON.stringify(actual), "utf8");
   compare(expected, actual, "cases");
@@ -78,7 +84,47 @@ function observation(viewer: ViewerFrame, model: ReturnType<typeof currentShared
   return { viewer, hud: { layout: model.layout, groups: model.groups }, profile: DEFAULT_XR_HEAD_HUD_PROFILE,
     panel_pose: pose(vec3(0.1, -0.2, 0), IDENTITY_POSE.orientation), panel_size: [2.4, 1.8] as const,
     head_from_surface: pose(vec3(0, -0.2, -2.4), IDENTITY_POSE.orientation),
-    ink: [{ start: vec3(-0.1, 0.025, 0), end: vec3(-0.1, -0.025, 0) }, { start: vec3(0.1, 0.025, 0), end: vec3(0.1, -0.025, 0) }] };
+    ink: [{ start: vec3(-0.1, 0.025, 0), end: vec3(-0.1, -0.025, 0) }, { start: vec3(0.1, 0.025, 0), end: vec3(0.1, -0.025, 0) }],
+    spatial: { aircraft: pose(vec3(10, 20, -30), quaternion(Math.cos(0.2), Math.sin(0.2), 0, 0)),
+      head: pose(vec3(0.1, 0.2, -0.3), quaternion(Math.cos(0.15), 0, Math.sin(0.15), 0)),
+      mounts: [{ kind: "stationary", worldFromTracking: pose(vec3(1, 2, 3), IDENTITY_POSE.orientation) },
+        { kind: "aircraft", aircraftFromTracking: pose(vec3(0.04, 0.15, -0.55), IDENTITY_POSE.orientation) },
+        { kind: "external", worldFromTracking: pose(vec3(2, 4, 6), quaternion(Math.cos(0.1), 0, Math.sin(0.1), 0)) }] satisfies XrCameraMount[],
+      resets: [pose(vec3(-1, 0.2, 0.1), quaternion(Math.cos(0.3), 0, Math.sin(0.3), 0)),
+        pose(vec3(0.3, -0.1, 0.4), quaternion(Math.cos(0.1), Math.sin(0.1), 0, 0))] } };
+}
+
+function spatialResults(candidate: ReturnType<typeof observation>): unknown {
+  return candidate.spatial.mounts.map(mount => {
+    const camera = new XrCameraBridge();
+    const spatial = new XrSpatialBridge();
+    let head = candidate.spatial.head;
+    const frames: unknown[] = [];
+    try {
+      for (let step = 0; step <= candidate.spatial.resets.length; step += 1) {
+        const rig = JSON.parse(camera.camera_rig_json(JSON.stringify(candidate.spatial.aircraft), JSON.stringify(mount))) as XrCameraRig;
+        const reference = JSON.parse(xr_reference_frame_json(JSON.stringify(rig), JSON.stringify(head))) as XrReferenceFrame;
+        const menu = JSON.parse(spatial.place_panel_json(JSON.stringify({ kind: "ready", geometry: {
+          scope: { scene: "Replay", overlay: null, panelId: "main" }, anchor: "menu", localPose: candidate.panel_pose, sizeM: candidate.panel_size
+        } }), JSON.stringify(candidate.viewer), JSON.stringify(reference))) as unknown;
+        const anchors = [reference.world, reference.cockpit, reference.head].map(parent =>
+          JSON.parse(xr_panel_camera_poses_json(JSON.stringify(rig), JSON.stringify(composeSpatial(parent, candidate.panel_pose)))) as unknown);
+        if (candidate.viewer.source === "unavailable") throw new Error("Missing binocular comparison geometry");
+        const eyes = candidate.viewer.eyes.map(eye => composeSpatial(rig.worldFromTracking, head, eye.headFromEye));
+        frames.push({ rig, reference, menu, anchors, eyes });
+        const change = candidate.spatial.resets[step];
+        if (change !== undefined) {
+          camera.reset_reference_json(JSON.stringify(change));
+          head = composeSpatial(JSON.parse(xr_inverse_pose_json(JSON.stringify(change))) as Pose, head);
+        }
+      }
+      return frames;
+    } finally { spatial.free(); camera.free(); }
+  });
+}
+
+function composeSpatial(...poses: readonly Pose[]): Pose {
+  return JSON.parse(xr_pose_chain_json(JSON.stringify(poses))) as Pose;
 }
 
 function opticalViewer(width: number, height: number, convention: "negative-one-to-one" | "zero-to-one" | "reversed-zero-to-one", canted: boolean): ViewerFrame {

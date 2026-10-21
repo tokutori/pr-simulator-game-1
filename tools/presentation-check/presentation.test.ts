@@ -1,12 +1,11 @@
+import { referenceFrameFixture } from "./menu-fixture.js";
 import { describe, expect, it, vi } from "vitest";
 import { fixturePresentation, fixtureSemanticAction } from "./menu-fixture.js";
 import { unavailableViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
 import type { ViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
-import { createPilotEyePoint, pilotEyePoseFrd, pilotEyePoseThree } from "../../web/src/render/camera/pilot-eye-point.js";
-import { replayCameraPoseFrd } from "../../web/src/render/camera/replay-camera.js";
-import { MenuAnchorPlacement, resolveAnchorPose } from "../../web/src/render/anchors.js";
-import type { AnchorFrames } from "../../web/src/render/anchors.js";
-import { IDENTITY_POSE, pose, quaternion, rotateVec3, vec3 } from "../../web/src/render/contracts/math.js";
+import { createPilotEyePoint, pilotEyePoseFrd, pilotEyePoseRender } from "../../web/src/render/camera/xr-spatial.js";
+import { chaseCameraPoseFrd } from "../../web/src/render/camera/xr-spatial.js";
+import { IDENTITY_POSE, pose, rotateVec3, vec3 } from "../../web/src/render/contracts/math.js";
 import type { BackendFrame, MenuPresentation, PresentationBackendAdapter, PresentationMode, RendererAdapter, ViewportSize } from "../../web/src/render/contracts/runtime.js";
 import { GAME_SCENES, validateUiViewModel } from "../../web/src/render/contracts/ui.js";
 import type { UiAction, UiViewModel } from "../../web/src/render/contracts/ui.js";
@@ -95,32 +94,6 @@ describe("same-frame view projection boundary", () => {
 });
 
 describe("anchor and camera transforms", () => {
-  it("keeps Menu fixed while Head changes and lets Cockpit follow the aircraft", () => {
-    const frames: AnchorFrames = {
-      world: IDENTITY_POSE,
-      cockpit: pose(vec3(4, 0, 0), IDENTITY_POSE.orientation),
-      menu: pose(vec3(1, 2, 3), IDENTITY_POSE.orientation),
-      head: pose(vec3(0, 1.6, 0), IDENTITY_POSE.orientation)
-    };
-    const world = resolveAnchorPose({ kind: "world", localPose: IDENTITY_POSE }, frames);
-    const menu = resolveAnchorPose({ kind: "menu", localPose: IDENTITY_POSE }, frames);
-    const cockpit = resolveAnchorPose({ kind: "cockpit", localPose: IDENTITY_POSE }, frames);
-    const headMoved: AnchorFrames = { ...frames, head: pose(vec3(10, 4, 0), IDENTITY_POSE.orientation) };
-    expect(resolveAnchorPose({ kind: "world", localPose: IDENTITY_POSE }, headMoved)).toEqual(world);
-    expect(resolveAnchorPose({ kind: "menu", localPose: IDENTITY_POSE }, headMoved)).toEqual(menu);
-    expect(resolveAnchorPose({ kind: "cockpit", localPose: IDENTITY_POSE }, headMoved)).toEqual(cockpit);
-    expect(resolveAnchorPose({ kind: "head", localPose: IDENTITY_POSE }, headMoved).position.x).toBe(10);
-  });
-
-  it("places a menu once and changes it only after explicit recenter", () => {
-    const placement = new MenuAnchorPlacement();
-    const initialHead = pose(vec3(0, 1.6, 0), IDENTITY_POSE.orientation);
-    const opened = placement.open(initialHead, 2);
-    const laterHead = pose(vec3(1, 1.6, 0), quaternion(Math.cos(Math.PI / 4), 0, Math.sin(Math.PI / 4), 0));
-    expect(placement.open(laterHead, 2)).toEqual(opened);
-    expect(placement.recenter(laterHead, 2)).not.toEqual(opened);
-  });
-
   it("moves PilotEyePoint only by the pilot displacement along FRD x", () => {
     const eyePoint = createPilotEyePoint(vec3(1.2, 0.04, -0.08), 0.35, IDENTITY_POSE.orientation);
     const eye = pilotEyePoseFrd(eyePoint, 0.65);
@@ -130,19 +103,19 @@ describe("anchor and camera transforms", () => {
 
   it("maps the pilot eye point from FRD into the renderer's Three.js axes", () => {
     const eyePoint = createPilotEyePoint(vec3(1.2, 0.04, -0.08), 0.35, IDENTITY_POSE.orientation);
-    const eye = pilotEyePoseThree(eyePoint, 0.65, 0.35);
+    const eye = pilotEyePoseRender(eyePoint, 0.65, 0.35);
 
     expect(eye.position).toEqual(vec3(0.04, 0.08, -1.5));
     expect(eye.orientation).toEqual(IDENTITY_POSE.orientation);
   });
 
   it("defines an engine-independent Chase pose behind and above the aircraft", () => {
-    const chase = replayCameraPoseFrd("chase");
+    const chase = chaseCameraPoseFrd("chase");
     const forward = rotateVec3(chase.orientation, vec3(1, 0, 0));
     expect(chase.position).toEqual(vec3(-12, 0, -4));
     expect(forward.x).toBeGreaterThan(0);
     expect(forward.z / forward.x).toBeCloseTo(1 / 3, 10);
-    expect(replayCameraPoseFrd("pilot")).toEqual(IDENTITY_POSE);
+    expect(chaseCameraPoseFrd("pilot")).toEqual(IDENTITY_POSE);
   });
 
   it("maps binocular rays to the same control hit position", () => {
@@ -513,8 +486,8 @@ class FakeRenderer implements RendererAdapter {
 
   setCinematicCameraView(): void {}
 
-  transformTrackingPose(pose: Parameters<RendererAdapter["transformTrackingPose"]>[0]): typeof pose {
-    return pose;
+  projectTrackingFrame(pose: Parameters<RendererAdapter["projectTrackingFrame"]>[0]) {
+    return referenceFrameFixture(pose);
   }
 
   resize(viewport: ViewportSize): void {

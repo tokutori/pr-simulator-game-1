@@ -33,15 +33,14 @@ import type { CinematicCameraView } from "../../contracts/camera.js";
 import { uiPanelComposition } from "../../contracts/ui.js";
 import { IDENTITY_POSE, multiplyQuaternion, pose, quaternion, rotateVec3, vec3 } from "../../contracts/math.js";
 import type { Pose } from "../../contracts/math.js";
-import { composePose, inversePose } from "../../contracts/math.js";
 import type { WebXrAvailability, WebXrSessionPort, WebXrSessionRequest } from "../../../presentation/webxr-contracts.js";
 import { selectRayFromXrEvent } from "./xr-select-ray.js";
 import { captureConfiguredViewerFrame, captureXrViewerFrame } from "./viewer-frame.js";
 import { createHeadHudSurface } from "./head-hud-surface.js";
 import { unavailableViewerFrame } from "../../contracts/viewer-frame.js";
-import { flightRelativePose } from "./flight-pose.js";
-import { pilotEyePoseThree, poseFrdToThree, syntheticPilotEyePoint } from "../../camera/pilot-eye-point.js";
-import { replayCameraPoseFrd } from "../../camera/replay-camera.js";
+import { flightRelativePose, pilotEyePoseRender, poseFrdToRender, registeredPilotEyePoint,
+  chaseCameraPoseFrd, XrCameraOrigin, projectXrPanelCameraPoses, projectXrReferenceFrame } from "../../camera/xr-spatial.js";
+import type { XrCameraRig } from "../../../generated/xr-camera-rig.js";
 import { DEFAULT_LAKE_VISUAL_CONDITION, lakeWaterQualityProfile } from "../../contracts/lake-water.js";
 import type { LakeVisualCondition, LakeWaterQuality } from "../../contracts/lake-water.js";
 import { createLakeSkyCondition, lakeSkySunDirectionNed, sameLakeSkyRenderCondition } from "../../contracts/lake-sky.js";
@@ -541,13 +540,35 @@ export function createThreeRenderer(
   const currentExternalCameraPose = (): Pose | null => {
     if (flightPose === null || flightCameraMode === "pilot") return null;
     if (flightCameraMode !== "chase" && fixedCameraView !== null) return fixedCameraView.pose;
-    return flightRelativePose(flightPose, poseFrdToThree(replayCameraPoseFrd("chase")));
+    return flightRelativePose(flightPose, poseFrdToRender(chaseCameraPoseFrd("chase")));
   };
-  const pilotEyePoint = syntheticPilotEyePoint();
+  const pilotEyePoint = registeredPilotEyePoint();
   const currentPilotEyePose = (): Pose => flightPose === null
     ? IDENTITY_POSE
-    : pilotEyePoseThree(pilotEyePoint, flightPose.pilotPositionMeters, flightPose.initialPilotPositionMeters);
-  const currentTrackingMountPose = (): Pose => currentExternalCameraPose() ?? currentPilotEyePose();
+    : pilotEyePoseRender(pilotEyePoint, flightPose.pilotPositionMeters, flightPose.initialPilotPositionMeters);
+  const usesExternalCamera = (): boolean => flightPose !== null && flightCameraMode !== "pilot";
+  const cameraOrigin = new XrCameraOrigin();
+  let cameraPlacement: { flight: FlightRenderPose | null; prepared: FlightRenderPose | null; mode: FlightCameraMode;
+    cinematic: CinematicCameraView | null; title: Pose; value: { aircraft: Pose; external: Pose | null; rig: XrCameraRig } } | null = null;
+  const currentCameraPlacement = () => {
+    const title = flightPose === null && !renderer.xr.isPresenting
+      ? stereoPresentation === null ? titleCameraPose : titlePhoneCameraPose : IDENTITY_POSE;
+    if (cameraPlacement !== null && cameraPlacement.flight === flightPose && cameraPlacement.prepared === preparedFlightPose &&
+        cameraPlacement.mode === flightCameraMode && cameraPlacement.cinematic === fixedCameraView && cameraPlacement.title === title) return cameraPlacement.value;
+    const display = flightPose ?? preparedFlightPose;
+    const heading = LAUNCH_PLATFORM.launchBearingDegrees * Math.PI / 180;
+    const aircraft = display === null
+      ? pose(vec3(0, LAUNCH_PLATFORM.frontLipAboveWaterMeters, 0), quaternion(Math.cos(heading / 2), 0, -Math.sin(heading / 2), 0))
+      : flightRelativePose(display, IDENTITY_POSE);
+    const external = currentExternalCameraPose();
+    const mount = external !== null ? { kind: "external" as const, worldFromTracking: external }
+      : flightPose !== null ? { kind: "aircraft" as const, aircraftFromTracking: currentPilotEyePose() }
+        : { kind: "stationary" as const, worldFromTracking: title };
+    const value = { aircraft, external, rig: cameraOrigin.rig(aircraft, mount) };
+    cameraPlacement = { flight: flightPose, prepared: preparedFlightPose, mode: flightCameraMode, cinematic: fixedCameraView, title, value };
+    return value;
+  };
+  const currentTrackingMountPose = (): Pose => currentCameraPlacement().rig.referenceFromTracking;
 
   const onSelect = (event: XRInputSourceEvent): void => {
     if (xrState.type !== "active" && xrState.type !== "attaching") return;
@@ -572,15 +593,20 @@ export function createThreeRenderer(
   };
 
   const onReferenceSpaceReset = (event: XRReferenceSpaceEvent): void => {
-    const transform = event.transform as XRRigidTransform | null | undefined;
-    const previousReferenceFromNew = transform === null || transform === undefined ? null : {
-      position: vec3(transform.position.x, transform.position.y, transform.position.z),
-      orientation: quaternion(transform.orientation.w, transform.orientation.x, transform.orientation.y, transform.orientation.z)
-    };
-    const mount = renderedTrackingMount ?? currentTrackingMountPose();
-    referenceSpaceResetHandler?.(previousReferenceFromNew === null ? null : composePose(
-      composePose(mount, previousReferenceFromNew), inversePose(mount)
-    ));
+    renderedTrackingMount = null;
+    let previousReferenceFromNew: Pose | null = null;
+    try {
+      const transform = event.transform as XRRigidTransform | null | undefined;
+      if (transform !== null && transform !== undefined) {
+        previousReferenceFromNew = {
+          position: { x: transform.position.x, y: transform.position.y, z: transform.position.z },
+          orientation: { w: transform.orientation.w, x: transform.orientation.x, y: transform.orientation.y, z: transform.orientation.z }
+        };
+        cameraOrigin.resetReference(previousReferenceFromNew);
+        cameraPlacement = null;
+      }
+    } catch { referenceSpaceResetHandler?.(null); return; }
+    referenceSpaceResetHandler?.(previousReferenceFromNew);
   };
 
   const rendererAdapter: RendererAdapter = {
@@ -620,7 +646,7 @@ export function createThreeRenderer(
           } else if (stereoPresentation !== null) {
             geometryStereo.eyeSep = stereoPresentation.eyeSeparationMeters;
             updateFixedCameraProjection();
-            callback(timestamp, captureConfiguredViewerFrame(currentExternalCameraPose() === null ? camera : fixedCamera, geometryStereo));
+            callback(timestamp, captureConfiguredViewerFrame(usesExternalCamera() ? fixedCamera : camera, geometryStereo));
           } else {
             callback(timestamp, unavailableViewerFrame("not-stereo"));
           }
@@ -647,32 +673,19 @@ export function createThreeRenderer(
         if (frameViewport !== null && (frame.viewport.x !== frameViewport.x || frame.viewport.y !== frameViewport.y || frame.viewport.pixelRatio !== frameViewport.pixelRatio)) stageViewInputs({ viewport: frame.viewport });
         resizeIfNeeded(frameViewport ?? frame.viewport);
       }
-      const externalCameraPose = currentExternalCameraPose();
+      const placement = currentCameraPlacement();
+      const externalCameraPose = placement.external;
       const useExternalCamera = externalCameraPose !== null;
-      const titlePresentationPose = flightPose === null && !renderer.xr.isPresenting
-        ? stereoPresentation === null ? titleCameraPose : titlePhoneCameraPose
-        : IDENTITY_POSE;
       const displayFlightPose = flightPose ?? preparedFlightPose;
-      const exhibitionHeading = LAUNCH_PLATFORM.launchBearingDegrees * Math.PI / 180;
-      const aircraftPose = displayFlightPose === null
-        ? pose(vec3(0, LAUNCH_PLATFORM.frontLipAboveWaterMeters, 0),
-          quaternion(Math.cos(exhibitionHeading / 2), 0, -Math.sin(exhibitionHeading / 2), 0))
-        : flightRelativePose(displayFlightPose, IDENTITY_POSE);
-      setPose(trackingOrigin, flightPose === null
-        ? composePose(inversePose(aircraftPose), titlePresentationPose)
-        : currentPilotEyePose());
+      const aircraftPose = placement.aircraft;
+      setPose(trackingOrigin, placement.rig.aircraftFromTracking);
       setPose(camera, frame.cameraPose);
-      const externalPose = externalCameraPose ?? IDENTITY_POSE;
+      const externalPose = useExternalCamera ? placement.rig.worldFromTracking : IDENTITY_POSE;
       setPose(externalCameraRig, externalPose);
       setPose(fixedCamera, renderer.xr.isPresenting ? IDENTITY_POSE : frame.cameraPose);
       updateFixedCameraProjection();
       setPose(aircraftRoot, aircraftPose);
-      const worldFromTracking = useExternalCamera
-        ? externalPose
-        : flightPose === null
-          ? titlePresentationPose
-          : flightRelativePose(flightPose, currentTrackingMountPose());
-      headHudSurface?.update(frame.headHud, worldFromTracking);
+      headHudSurface?.update(frame.headHud, placement.rig.worldFromTracking);
       const controls = displayFlightPose?.controls;
       airframe.setVisualState(
         displayFlightPose?.wingDeformation ?? null,
@@ -693,15 +706,13 @@ export function createThreeRenderer(
       const panel = visiblePanel?.panel ?? null;
       const panelPose = visiblePanel?.pose ?? IDENTITY_POSE;
       const panelCursor = visiblePanel?.cursor ?? null;
+      const panelPoses = panel === null ? null : projectXrPanelCameraPoses(placement.rig, panelPose);
       if (useExternalCamera) {
         externalCameraRig.add(panelMesh);
-        setPose(panelMesh, composePose(inversePose(externalPose), panelPose));
+        setPose(panelMesh, panelPoses?.trackingFromPanel ?? IDENTITY_POSE);
       } else {
         scene.add(panelMesh);
-        const titlePanelPose = panel?.anchor === "menu" || panel?.anchor === "head"
-          ? composePose(titlePresentationPose, panelPose)
-          : panelPose;
-        setPose(panelMesh, flightPose === null ? titlePanelPose : flightRelativePose(flightPose, panelPose));
+        setPose(panelMesh, panelPoses?.worldFromPanel ?? IDENTITY_POSE);
       }
       const overlayPanel = panel !== null && uiPanelComposition(panel.anchor) === "overlay";
       if (panelMaterial.transparent !== overlayPanel) {
@@ -845,6 +856,8 @@ export function createThreeRenderer(
       manualLakeQualityRequest = null;
       pendingViewInputs = null;
       framePhase = "idle";
+      cameraOrigin.dispose();
+      cameraPlacement = null;
       frameViewport = null;
       renderedTrackingMount = null;
       panelTexture.dispose();
@@ -958,14 +971,14 @@ export function createThreeRenderer(
       if (framePhase !== "idle" || pendingViewInputs !== null) { stageViewInputs({ cameraView: view }); return; }
       fixedCameraView = view;
     },
-    transformTrackingPose(pose: Pose): Pose {
-      return flightPose === null ? pose : composePose(currentTrackingMountPose(), pose);
+    projectTrackingFrame(pose: Pose) {
+      return projectXrReferenceFrame(currentCameraPlacement().rig, pose);
     }
   };
 
   const webxr: WebXrSessionPort = {
-    transformTrackingPose(value: Pose): Pose {
-      return composePose(currentTrackingMountPose(), value);
+    projectTrackingFrame(value: Pose) {
+      return projectXrReferenceFrame(currentCameraPlacement().rig, value);
     },
     async checkAvailability(): Promise<WebXrAvailability> {
       if (xrSystem === null) return { supported: false, message: "WebXR is unavailable in this browser" };
@@ -1119,6 +1132,8 @@ export function createThreeRenderer(
     }
     activeReferenceSpace?.removeEventListener("reset", onReferenceSpaceReset);
     activeReferenceSpace = null;
+    cameraOrigin.dispose();
+    cameraPlacement = null;
     xrState = { type: "idle" };
     renderer.xr.enabled = false;
     renderedTrackingMount = null;
@@ -1129,7 +1144,7 @@ export function createThreeRenderer(
   }
 
   function updateFixedCameraProjection(): void {
-    const fixedView = currentExternalCameraPose() !== null && flightCameraMode !== "chase" ? fixedCameraView : null;
+    const fixedView = usesExternalCamera() && flightCameraMode !== "chase" ? fixedCameraView : null;
     const fieldOfView = fixedView?.verticalFieldOfViewDegrees ?? screenVerticalFieldOfViewDegrees;
     if (fixedCamera.fov === fieldOfView) return;
     fixedCamera.fov = fieldOfView;

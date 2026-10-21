@@ -1,3 +1,4 @@
+import { referenceFrameFixture } from "./menu-fixture.js";
 import { configuredViewerFixture, visiblePanelFrame } from "./viewer-fixture.js";
 import { fixtureBackendFrame, fixturePresentation } from "./menu-fixture.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -44,7 +45,7 @@ describe("Phone gravity browser/backend connection", () => {
     }
   });
 
-  it.each(SCREEN_ANGLES)("keeps pitch/roll and mounted anchor relationships on yaw-only recenter at screen %s", async (screenAngle) => {
+  it.each(SCREEN_ANGLES)("keeps physical anchors fixed while yaw recenter preserves pitch and roll at screen %s", async (screenAngle) => {
     const mount = pose(vec3(0.3, 1.1, -0.2), quaternion(Math.cos(0.15), 0, 0, Math.sin(0.15)));
     const fixture = createFixture(screenAngle, mount);
     const startup = await begin(fixture.backend);
@@ -52,17 +53,20 @@ describe("Phone gravity browser/backend connection", () => {
     await startup.promise;
     fixture.browser.emit(head(75, 30, 20));
     const before = new Map<string, Matrix4>();
+    const physical = new Map<string, Matrix4>();
     for (const anchor of ["menu", "world", "cockpit", "head"] as const) {
       const frame = fixtureBackendFrame(fixture.backend, 100, { ...title, panels: [createAnchorFixture(anchor)] }, configuredViewerFixture());
       before.set(anchor, matrix(composePose(mount, frame.cameraPose)).invert().multiply(matrix(visiblePanelFrame(frame).pose)));
+      physical.set(anchor, matrix(visiblePanelFrame(frame).pose));
     }
     fixture.backend.recenterTracking();
     for (const anchor of ["menu", "world", "cockpit", "head"] as const) {
       const frame = fixtureBackendFrame(fixture.backend, 100, { ...title, panels: [createAnchorFixture(anchor)] }, configuredViewerFixture());
       expectRotation(frame.cameraPose, head(0, 30, 20));
-      const expected = before.get(anchor);
+      const expected = anchor === "world" || anchor === "cockpit" ? physical.get(anchor) : before.get(anchor);
       if (expected === undefined) throw new Error("Missing anchor relationship");
-      expectMatrix(matrix(composePose(mount, frame.cameraPose)).invert().multiply(matrix(visiblePanelFrame(frame).pose)), expected);
+      const actual = matrix(visiblePanelFrame(frame).pose);
+      expectMatrix(anchor === "world" || anchor === "cockpit" ? actual : matrix(composePose(mount, frame.cameraPose)).invert().multiply(actual), expected);
     }
     const current = fixtureBackendFrame(fixture.backend, 100, title, configuredViewerFixture()).cameraPose;
     fixture.backend.recenterMenu();
@@ -283,7 +287,7 @@ class RecordingRenderer implements RendererAdapter {
   setLakeVenueVisible(): void {}
   setFlightCameraMode(): void {}
   setCinematicCameraView(): void {}
-  transformTrackingPose(value: Pose): Pose { return composePose(this.mount, value); }
+  projectTrackingFrame(value: Pose) { return referenceFrameFixture(composePose(this.mount, value)); }
   resize(): void {}
   setStereoPresentation(value: StereoPresentationProfile | null): void { this.stereo = value; }
   setScreenRenderScale(): void {}

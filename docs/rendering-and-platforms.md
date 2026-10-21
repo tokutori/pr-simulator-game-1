@@ -428,16 +428,17 @@ H=B D R_z(-s)
 - Three.jsのXR cameraはruntime値で更新されるため、機体とEye mountを親tracking originへ保持し、各眼を$A E H_{eye}$として構成する。
 - 外部Replay rigは$C H_{eye}$とする。
 
-- tracking poseとcontroller rayは同じmount$M$を一度適用する。
-- Menu/Headはmounted viewerから、World/Cockpitはphysical frameから配置する。
-- reference-space resetの$R$を新originの旧reference内poseとして扱い、anchorへ逆写像を適用して眼との相対位置を保持する。
+- 共有Rustが機体・pilot・camera mountと累積tracking補正$C$を合成する。head・左右眼・controller rayは同じmount$M C$を一度適用する。
+- 論理referenceのWorld poseを$R$、機体poseを$A$とし、World anchorは$R^{-1}$、Cockpit anchorは$R^{-1}A$、Head anchorは$R^{-1}M C H$で解決する。全panelは$R P$として描画し、選択も同じreferenceで行う。
+- Menuは開いた時のreference内poseを保持し、scene・overlay・実測寸法・両眼光学・camera基底の変更時に再配置する。機体の通常移動は同じ基底として扱う。
+- [reference-space reset](https://www.w3.org/TR/webxr/#dom-xrreferencespaceevent-transform)の$S$は新originの旧tracking内poseである。共有ownerが$C'=C S$を保持し、更新後の$H'=S^{-1}H$と合成してWorldと眼の位置を保つ。
 
 ```math
-(M R^{-1}H)^{-1}(M R^{-1}M^{-1}P)=(M H)^{-1}P
+M C' H'=M C S S^{-1}H=M C H
 ```
 
 - reset変換が得られない場合は選択を停止してScreenへ戻し、再開始を案内する。
-- tracking recenter、panel再配置、reference resetは別eventである。
+- reset直後は次の描画が完了するまでselectを停止する。Phone VRの明示tracking recenterは視線のyawを更新し、保持Menuを専用操作で輸送する。Menuの正面再配置と受動resetは別操作である。
 - 床高・IPD・projectionはXR runtimeの出力を使用する。
 
 ### VR入力と安全

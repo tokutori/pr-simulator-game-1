@@ -1,7 +1,5 @@
 import {
-  composePose,
   IDENTITY_POSE,
-  inversePose,
   rotateVec3,
   vec3
 } from "../render/contracts/math.js";
@@ -10,9 +8,8 @@ import type { BackendFrame, MenuPresentation, PresentationBackendAdapter, Render
 import { NO_HEAD_HUD, resolveHeadHudFrame } from "../render/contracts/head-hud.js";
 import type { ViewerFrame } from "../render/contracts/viewer-frame.js";
 import type { UiActionDispatcher, UiViewModel } from "../render/contracts/ui.js";
-import { placeMenuPanel, resolveAnchorPose } from "../render/anchors.js";
-import { CLOSED_MENU_PLACEMENT, openMenuPlacement, recenterMenuPlacement, transformMenuPlacement } from "./menu-placement.js";
-import type { MenuPlacementModel } from "./menu-placement.js";
+import { xrReferenceChange } from "../render/camera/xr-spatial.js";
+import { XrSpatialSession } from "./xr-spatial-session.js";
 import { GazeDwellSelector } from "./gaze-dwell.js";
 import { intersectPanel } from "./panel-interaction.js";
 import type { PhoneVrAvailability, PhoneVrGamepadInputPort, PhoneVrOpticalProfile, PhoneVrPermissionResult, PhoneVrSensorPort, PhoneVrSensorReading } from "./phone-vr-contracts.js";
@@ -61,8 +58,7 @@ export class PhoneVrPresentationBackend implements PresentationBackendAdapter {
   private calibration: PhoneGravityCalibration | null = null;
   private gravityEvidence: PhoneGravityEvidence | null = null;
   private latestSampleTimestampMs: number | null = null;
-  private referenceFromWorld: Pose = IDENTITY_POSE;
-  private menuPlacement: MenuPlacementModel = CLOSED_MENU_PLACEMENT;
+  private readonly spatial = new XrSpatialSession();
   private gazeDwell: GazeDwellSelector;
   private gamepadSelector: GamepadUiSelector;
   private readonly opticalProfile: PhoneVrOpticalProfile;
@@ -131,7 +127,7 @@ export class PhoneVrPresentationBackend implements PresentationBackendAdapter {
       };
       this.state = { type: "starting", attempt };
       this.resetTracking();
-      this.menuPlacement = CLOSED_MENU_PLACEMENT;
+      this.spatial.reset();
       try {
         this.screenOrientationAngle = this.sensors.getScreenOrientationAngle();
         if (this.screenOrientationAngle === null || !Number.isFinite(this.screenOrientationAngle)) {
@@ -191,10 +187,11 @@ export class PhoneVrPresentationBackend implements PresentationBackendAdapter {
 
   currentFrame(timestampMs: number, viewModel: UiViewModel, viewer: ViewerFrame, menu: MenuPresentation): BackendFrame {
     const cameraPose = this.currentViewerPose(timestampMs);
-    const viewerPose = cameraPose === null ? null : this.renderer.transformTrackingPose(cameraPose);
+    const reference = cameraPose === null ? null : this.renderer.projectTrackingFrame(cameraPose);
+    const viewerPose = reference?.head ?? null;
     const semanticPanel = viewModel.panels[0] ?? null;
     const panel = menu.kind === "ready" ? menu.panel : semanticPanel;
-    if (panel?.anchor !== "menu" || menu.kind === "absent") this.menuPlacement = CLOSED_MENU_PLACEMENT;
+    if (panel?.anchor !== "menu" || menu.kind === "absent") this.spatial.closeMenu();
     if (panel?.anchor === "menu" && menu.kind !== "ready") {
       this.gazeDwell.reset();
       this.gamepadSelector.reset();
@@ -202,31 +199,20 @@ export class PhoneVrPresentationBackend implements PresentationBackendAdapter {
         cameraPose: cameraPose ?? poseAtOrigin(this.latestViewerOrientation), viewport: this.viewport(),
         panel: menu.kind === "unavailable" ? Object.freeze({ kind: "unavailable", reason: menu.reason }) : Object.freeze({ kind: "absent" }) });
     }
-    const headPose = viewerPose ?? poseAtOrigin(this.latestViewerOrientation);
-    let menuPose = this.menuPlacement.kind === "placed" ? this.menuPlacement.referenceFromMenu : placeMenuPanel(headPose, 2.4);
     if (panel !== null && (viewerPose === null || viewer.source === "unavailable")) {
       this.gazeDwell.update(null, null, timestampMs);
       this.gamepadSelector.update(null, null, timestampMs);
       return Object.freeze({ timestampMs, headHud: NO_HEAD_HUD, cameraPose: cameraPose ?? poseAtOrigin(this.latestViewerOrientation),
         panel: Object.freeze({ kind: "unavailable", reason: viewer.source === "unavailable" ? viewer.reason : "viewer-unavailable" }), viewport: this.viewport() });
     }
-    if (panel?.anchor === "menu" && viewerPose !== null) {
-      const placement = openMenuPlacement(this.menuPlacement, viewModel, panel, viewerPose, viewer);
-      this.menuPlacement = placement.model;
-      if (placement.result.kind === "unavailable") {
+    const placement = this.spatial.place(viewModel, panel, viewer, reference);
+    if (placement.kind === "unavailable") {
         this.gazeDwell.update(null, null, timestampMs);
         this.gamepadSelector.update(null, null, timestampMs);
         return Object.freeze({ timestampMs, headHud: NO_HEAD_HUD, cameraPose: cameraPose ?? poseAtOrigin(this.latestViewerOrientation),
-          panel: placement.result, viewport: this.viewport() });
-      }
-      menuPose = placement.result.referenceFromMenu;
+          panel: placement, viewport: this.viewport() });
     }
-    const panelPose = panel === null ? menuPose : resolveAnchorPose({ kind: panel.anchor, localPose: panel.localPose }, {
-      world: this.referenceFromWorld,
-      cockpit: this.referenceFromWorld,
-      menu: menuPose,
-      head: headPose
-    });
+    const panelPose = placement.kind === "ready" ? placement.referenceFromPanel : IDENTITY_POSE;
     const gamepadState = viewerPose === null ? null : this.gamepadInput.readState();
     const gamepadCursor = menu.kind === "ready" && gamepadState !== null
       ? this.gamepadSelector.updateMenu(menu, gamepadState, timestampMs) : this.gamepadSelector.update(panel, gamepadState, timestampMs);
@@ -253,10 +239,8 @@ export class PhoneVrPresentationBackend implements PresentationBackendAdapter {
       return;
     }
     if (result.kind === "retained") return;
-    const mountedOrigin = this.renderer.transformTrackingPose(IDENTITY_POSE);
-    const newFromOld = composePose(composePose(mountedOrigin, poseAtOrigin(result.newTrackingFromOldTracking)), inversePose(mountedOrigin));
-    this.referenceFromWorld = composePose(newFromOld, this.referenceFromWorld);
-    this.menuPlacement = transformMenuPlacement(this.menuPlacement, newFromOld);
+    const mountedOrigin = this.renderer.projectTrackingFrame(IDENTITY_POSE).head;
+    this.spatial.recenterTracking(xrReferenceChange(mountedOrigin, poseAtOrigin(result.newTrackingFromOldTracking)));
     this.calibration = result.calibration;
     this.latestViewerOrientation = result.viewer;
     this.gazeDwell.reset();
@@ -264,7 +248,7 @@ export class PhoneVrPresentationBackend implements PresentationBackendAdapter {
 
   recenterMenu(): void {
     if (this.state.type === "active") {
-      this.menuPlacement = recenterMenuPlacement(this.menuPlacement, this.renderer.transformTrackingPose(poseAtOrigin(this.latestViewerOrientation)));
+      this.spatial.recenterMenu(this.renderer.projectTrackingFrame(poseAtOrigin(this.latestViewerOrientation)).head);
     }
   }
 
@@ -459,7 +443,7 @@ export class PhoneVrPresentationBackend implements PresentationBackendAdapter {
     this.latestViewerOrientation = IDENTITY_POSE.orientation;
     this.calibration = null;
     this.gravityEvidence = null;
-    this.referenceFromWorld = IDENTITY_POSE;
+    this.spatial.reset();
     this.gazeDwell = new GazeDwellSelector(this.dispatch);
     this.gamepadSelector = new GamepadUiSelector(this.dispatch);
   }

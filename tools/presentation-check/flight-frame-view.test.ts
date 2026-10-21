@@ -1,3 +1,4 @@
+import { referenceFrameFixture } from "./menu-fixture.js";
 import { describe, expect, it } from "vitest";
 import { fixturePresentation } from "./menu-fixture.js";
 import { PerspectiveCamera, StereoCamera } from "three";
@@ -143,7 +144,7 @@ describe("Immutable same-frame Flight view finalization", () => {
       beginViewFrame() {}, stopLoop() { evidence.loop = null; }, render() { evidence.frames++; },
       setFlightPose() {}, setPreparedFlightPose() {}, setLakeVisualCondition() {}, setLakeSkyCondition() {}, setLakeVenueVisible() {}, setFlightCameraMode() {}, setCinematicCameraView() {},
       setLakeWaterQuality: () => Promise.resolve({ kind: "complete" }),
-      transformTrackingPose: (value) => value, resize() {}, setStereoPresentation() {}, setScreenRenderScale() {}, setScreenRenderAuto() {}, setSelectRayHandler() {}, dispose() {}
+      projectTrackingFrame: (value) => referenceFrameFixture(value), resize() {}, setStereoPresentation() {}, setScreenRenderScale() {}, setScreenRenderAuto() {}, setSelectRayHandler() {}, dispose() {}
     };
     initSync({ module: new Uint8Array(readFileSync(fileURLToPath(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url)))) });
     const session = createAppSession({ controlModeCode: 0, seedLow: 21, seedHigh: 22 });

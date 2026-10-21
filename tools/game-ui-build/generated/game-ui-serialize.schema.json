@@ -7536,6 +7536,50 @@
         }
       ]
     },
+    "XrCameraRig": {
+      "additionalProperties": false,
+      "description": "Equivalent scene-graph and logical-reference transforms for one camera mount.",
+      "properties": {
+        "aircraftFromTracking": {
+          "$ref": "#/$defs/XrPose",
+          "description": "Tracking origin as a child of the displayed aircraft."
+        },
+        "basis": {
+          "$ref": "#/$defs/XrReferenceBasis",
+          "description": "Logical basis identity for retained panel coordinates."
+        },
+        "referenceFromCockpit": {
+          "$ref": "#/$defs/XrPose",
+          "description": "Physical aircraft origin in the logical reference."
+        },
+        "referenceFromTracking": {
+          "$ref": "#/$defs/XrPose",
+          "description": "Runtime tracking coordinates in the backend's logical panel reference."
+        },
+        "referenceFromWorld": {
+          "$ref": "#/$defs/XrPose",
+          "description": "Geographical world origin in the logical reference."
+        },
+        "worldFromReference": {
+          "$ref": "#/$defs/XrPose",
+          "description": "Logical panel-reference coordinates in render world."
+        },
+        "worldFromTracking": {
+          "$ref": "#/$defs/XrPose",
+          "description": "Runtime tracking coordinates in render world."
+        }
+      },
+      "required": [
+        "basis",
+        "aircraftFromTracking",
+        "worldFromTracking",
+        "worldFromReference",
+        "referenceFromWorld",
+        "referenceFromCockpit",
+        "referenceFromTracking"
+      ],
+      "type": "object"
+    },
     "XrDepthRange": {
       "description": "Homogeneous depth-clip convention of the rendering API's projection matrix.",
       "oneOf": [
@@ -7667,6 +7711,37 @@
         "centerY",
         "width",
         "height"
+      ],
+      "type": "object"
+    },
+    "XrFrdPose": {
+      "additionalProperties": false,
+      "description": "Pose in aircraft FRD coordinates, before the render-axis conversion.",
+      "properties": {
+        "orientationFrdWxyz": {
+          "description": "Scalar-first orientation in the FRD basis.",
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 4,
+          "minItems": 4,
+          "type": "array"
+        },
+        "positionFrdM": {
+          "description": "Forward/right/down position in metres.",
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        }
+      },
+      "required": [
+        "positionFrdM",
+        "orientationFrdWxyz"
       ],
       "type": "object"
     },
@@ -7943,6 +8018,101 @@
         }
       ]
     },
+    "XrPanelCameraPoses": {
+      "additionalProperties": false,
+      "description": "Equivalent panel poses for a scene root or a camera-tracking parent.",
+      "properties": {
+        "trackingFromPanel": {
+          "$ref": "#/$defs/XrPose",
+          "description": "Panel-local to runtime tracking-parent transform."
+        },
+        "worldFromPanel": {
+          "$ref": "#/$defs/XrPose",
+          "description": "Panel-local to render-world transform."
+        }
+      },
+      "required": [
+        "worldFromPanel",
+        "trackingFromPanel"
+      ],
+      "type": "object"
+    },
+    "XrPanelPlacement": {
+      "description": "Spatial placement consumed by a platform renderer.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Current view supplies no drawable panel.",
+          "properties": {
+            "kind": {
+              "const": "absent",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Placement cannot be rendered or selected in this frame.",
+          "properties": {
+            "kind": {
+              "const": "unavailable",
+              "type": "string"
+            },
+            "reason": {
+              "$ref": "#/$defs/XrFitReason",
+              "description": "Same-frame failure classification."
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Complete pose in the active logical presentation reference.",
+          "properties": {
+            "kind": {
+              "const": "ready",
+              "type": "string"
+            },
+            "referenceFromPanel": {
+              "$ref": "#/$defs/XrPose",
+              "description": "Panel-local to presentation-reference pose."
+            }
+          },
+          "required": [
+            "kind",
+            "referenceFromPanel"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "XrPilotEyePose": {
+      "additionalProperties": false,
+      "description": "Pilot eye before and after conversion into render right/up/back axes.",
+      "properties": {
+        "frd": {
+          "$ref": "#/$defs/XrFrdPose",
+          "description": "Physical aircraft FRD pose."
+        },
+        "render": {
+          "$ref": "#/$defs/XrPose",
+          "description": "Equivalent render-local pose."
+        }
+      },
+      "required": [
+        "frd",
+        "render"
+      ],
+      "type": "object"
+    },
     "XrPose": {
       "additionalProperties": false,
       "description": "Rigid child-to-parent transform; the caller names both reference spaces.",
@@ -7992,6 +8162,55 @@
         "x",
         "y",
         "z"
+      ],
+      "type": "object"
+    },
+    "XrReferenceBasis": {
+      "description": "Logical reference basis; changes invalidate retained menu coordinates.",
+      "oneOf": [
+        {
+          "const": "stationary",
+          "description": "A fixed exhibition-camera frame.",
+          "type": "string"
+        },
+        {
+          "const": "aircraft",
+          "description": "The aircraft datum frame.",
+          "type": "string"
+        },
+        {
+          "const": "world",
+          "description": "Render-world coordinates for external cameras.",
+          "type": "string"
+        }
+      ]
+    },
+    "XrReferenceFrame": {
+      "additionalProperties": false,
+      "description": "Current physical and head anchors in one explicitly identified reference frame.",
+      "properties": {
+        "basis": {
+          "$ref": "#/$defs/XrReferenceBasis",
+          "description": "Logical basis identity independent of its moving pose."
+        },
+        "cockpit": {
+          "$ref": "#/$defs/XrPose",
+          "description": "Aircraft origin."
+        },
+        "head": {
+          "$ref": "#/$defs/XrPose",
+          "description": "Mounted runtime head."
+        },
+        "world": {
+          "$ref": "#/$defs/XrPose",
+          "description": "Geographical render-world origin."
+        }
+      },
+      "required": [
+        "basis",
+        "world",
+        "cockpit",
+        "head"
       ],
       "type": "object"
     },

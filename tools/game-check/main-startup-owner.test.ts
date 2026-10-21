@@ -40,7 +40,7 @@ async function fixture(options: { readonly deferScreenStart?: boolean; readonly 
     }), render: vi.fn(), setFlightPose: vi.fn(), setPreparedFlightPose: vi.fn(),
     setLakeVisualCondition: vi.fn(), setLakeSkyCondition: vi.fn(), setLakeVenueVisible: vi.fn(), setFlightCameraMode: vi.fn(), setCinematicCameraView: vi.fn(),
     setLakeWaterQuality: vi.fn<RendererAdapter["setLakeWaterQuality"]>(() => Promise.resolve({ kind: "complete" })),
-    transformTrackingPose: vi.fn<RendererAdapter["transformTrackingPose"]>((pose) => pose),
+    projectTrackingFrame: vi.fn<RendererAdapter["projectTrackingFrame"]>((pose) => referenceFrameFixture(pose)),
     resize: vi.fn(), setStereoPresentation: vi.fn(), setScreenRenderScale: vi.fn(), setScreenRenderAuto: vi.fn(), setSelectRayHandler: vi.fn(),
     dispose: vi.fn(() => {
       if (options.failCleanup === true) throw new Error("Injected renderer cleanup failure");
@@ -175,3 +175,4 @@ describe("Tail main startup resource ownership", () => {
     expect(trial.renderer.dispose).toHaveBeenCalledTimes(1);
   });
 });
+import { referenceFrameFixture } from "../presentation-check/menu-fixture.js";

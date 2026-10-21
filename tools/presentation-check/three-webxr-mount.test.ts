@@ -7,12 +7,11 @@ import type { Camera, Color, Scene, WebGLRenderer } from "three";
 import { WebXRManager } from "three/src/renderers/webxr/WebXRManager.js";
 import { createThreeRenderer, titleScreenCameraPoseForViewport } from "../../web/src/render/engines/three/three-renderer.js";
 import type { ThreeRendererBundle } from "../../web/src/render/engines/three/three-renderer.js";
-import { flightRelativePose } from "../../web/src/render/engines/three/flight-pose.js";
-import { pilotEyePoseThree, syntheticPilotEyePoint } from "../../web/src/render/camera/pilot-eye-point.js";
+import { flightRelativePose } from "../../web/src/render/camera/xr-spatial.js";
+import { pilotEyePoseRender, registeredPilotEyePoint } from "../../web/src/render/camera/xr-spatial.js";
 import { composePose, IDENTITY_POSE, inversePose, pose, quaternion, vec3 } from "../../web/src/render/contracts/math.js";
 import type { Pose } from "../../web/src/render/contracts/math.js";
 import type { BackendFrame, FlightRenderPose } from "../../web/src/render/contracts/runtime.js";
-import type { AnchorKind } from "../../web/src/render/anchors.js";
 import type { UiAction, UiViewModel } from "../../web/src/render/contracts/ui.js";
 import { createSceneFixture } from "../../web/src/presentation/fixtures.js";
 import { WebXrPresentationBackend } from "../../web/src/presentation/webxr-backend.js";
@@ -561,7 +560,7 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
       bundle.renderer.setFlightPose(currentFlight);
       session.run(100, head);
       const mountedHead = composePose(eyePose(currentFlight), head);
-      expectMatrix(poseMatrix(bundle.webxr.transformTrackingPose(head)), poseMatrix(mountedHead));
+      expectMatrix(poseMatrix(bundle.webxr.projectTrackingFrame(head).head), poseMatrix(mountedHead));
       expectEyes(lastDraw(driver), poseMatrix(flightRelativePose(currentFlight, mountedHead)));
     }
     await backend.stop();
@@ -572,7 +571,7 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
 
   it.each(["menu", "head", "cockpit", "world"] as const)("aligns native %s panel, gaze and controller rays in the same mounted frame", (anchor) => {
     const mountedHead = composePose(eyePose(flight), head);
-    view = centeredPanel(anchor, mountedHead);
+    view = centeredPanel(anchor, anchor === "world" ? flightRelativePose(flight, mountedHead) : mountedHead);
     session.run(100, head);
     const expectedPanel = composePose(mountedHead, pose(vec3(0, 0, -2.4), IDENTITY_POSE.orientation));
     const panel = lastDraw(driver).panel;
@@ -588,7 +587,7 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
     expect(actions).toContainEqual({ type: "activate", controlId: "mount-button" });
   });
 
-  it.each(["menu", "cockpit"] as const)("conjugates rotation plus translation resets for mounted %s panels and selectors", (anchor) => {
+  it.each(["menu", "cockpit"] as const)("preserves both eyes and mounted %s panels across runtime origin resets", (anchor) => {
     view = centeredPanel(anchor, composePose(eyePose(flight), head));
     session.run(100, head);
     const before = lastDraw(driver);
@@ -599,6 +598,8 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
     session.run(200, newHead);
     const after = lastDraw(driver);
     if (after.panel === null) throw new Error("Missing panel after reset");
+    expectMatrix(after.camera, before.camera);
+    expectMatrix(after.panel, before.panel);
     const beforeEye = before.eyes[0];
     const afterEye = after.eyes[0];
     if (beforeEye === undefined || afterEye === undefined) throw new Error("Missing native eyes around reset");
@@ -621,6 +622,73 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
     expectMatrix(panel, poseMatrix(composePose(mountedHead, pose(vec3(0, 0, -2.4), IDENTITY_POSE.orientation))));
     session.select(10_000, head);
     expect(actions).toContainEqual({ type: "activate", controlId: "mount-button" });
+    const before = lastDraw(driver);
+    const reset = pose(vec3(-0.3, 0.1, 0.2), quaternion(Math.cos(0.18), 0, Math.sin(0.18), 0));
+    session.reset(reset);
+    actions.length = 0;
+    const nextHead = composePose(inversePose(reset), head);
+    session.select(11_000, nextHead);
+    expect(actions).toHaveLength(0);
+    session.run(11_100, nextHead);
+    const after = lastDraw(driver);
+    expectEyes(after, poseMatrix(mountedHead));
+    if (after.panel === null || before.panel === null) throw new Error("Missing reset panels");
+    expectMatrix(after.panel, before.panel);
+    session.select(20_000, nextHead);
+    expect(actions).toContainEqual({ type: "activate", controlId: "mount-button" });
+  });
+
+  it("keeps geographical World fixed while Cockpit follows moving and rolling aircraft", () => {
+    const mountedHead = composePose(eyePose(flight), head);
+    const local = composePose(mountedHead, pose(vec3(0, 0, -2.4), IDENTITY_POSE.orientation));
+    const geographical = flightRelativePose(flight, local);
+    const moved = { ...flight, datumPositionNed: { north: 170, east: -20, down: -13 },
+      attitudeBodyToNed: { w: Math.cos(0.35), x: Math.sin(0.35), y: 0, z: 0 } };
+    for (const anchor of ["world", "cockpit"] as const) {
+      bundle.renderer.setFlightPose(flight);
+      view = centeredPanel(anchor, anchor === "world" ? flightRelativePose(flight, mountedHead) : mountedHead);
+      session.run(100, head);
+      bundle.renderer.setFlightPose(moved);
+      session.run(200, head);
+      const panel = lastDraw(driver).panel;
+      if (panel === null) throw new Error("Missing physical panel");
+      expectMatrix(panel, poseMatrix(anchor === "world" ? geographical : flightRelativePose(moved, local)));
+    }
+  });
+
+  it("refits the retained menu when Pilot and external Replay use different reference bases", () => {
+    view = centeredPanel("menu", composePose(eyePose(flight), head));
+    session.run(100, head);
+    const external = pose(vec3(50, 20, -130), quaternion(Math.cos(0.23), 0, Math.sin(0.23), 0));
+    bundle.renderer.setFlightCameraMode("platform");
+    bundle.renderer.setCinematicCameraView({ pose: external, verticalFieldOfViewDegrees: 60 });
+    session.run(200, head);
+    expect(panelFrameCursor(currentFrame())?.point.x).toBeCloseTo(0, 8);
+    expect(panelFrameCursor(currentFrame())?.point.y).toBeCloseTo(0, 8);
+    const panel = lastDraw(driver).panel;
+    if (panel === null) throw new Error("Missing external Menu");
+    expectMatrix(panel, poseMatrix(composePose(composePose(external, head), pose(vec3(0, 0, -2.4), IDENTITY_POSE.orientation))));
+    bundle.renderer.setFlightCameraMode("pilot");
+    session.run(300, head);
+    session.select(10_000, head);
+    expect(actions).toContainEqual({ type: "activate", controlId: "mount-button" });
+  });
+
+  it("classifies invalid runtime-origin observations and discards stale selects before drawing", () => {
+    view = centeredPanel("menu", composePose(eyePose(flight), head));
+    const notifications: (Pose | null)[] = [];
+    bundle.webxr.setReferenceSpaceResetHandler(value => { notifications.push(value); });
+    for (const invalid of [{ ...IDENTITY_POSE, position: { x: Number.NaN, y: 0, z: 0 } },
+      { ...IDENTITY_POSE, orientation: { w: 0, x: 0, y: 0, z: 0 } },
+      { ...IDENTITY_POSE, orientation: { w: 2, x: 0, y: 0, z: 0 } }]) {
+      session.run(100, head);
+      actions.length = 0;
+      expect(() => { session.reset(invalid); }).not.toThrow();
+      expect(notifications.at(-1)).toBeNull();
+      session.select(10_000, head);
+      expect(actions).toHaveLength(0);
+    }
+    expect(notifications).toHaveLength(3);
   });
 
   it("preserves XR compositor sizing and restores the retained Screen drawing ratio on exit", async () => {
@@ -648,7 +716,7 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
     view = centeredPanel("head", head);
     session.run(100, head);
     expectEyes(lastDraw(driver), poseMatrix(head));
-    expectMatrix(poseMatrix(bundle.webxr.transformTrackingPose(head)), poseMatrix(head));
+    expectMatrix(poseMatrix(bundle.webxr.projectTrackingFrame(head).head), poseMatrix(head));
     await backend.stop();
     bundle.renderer.render(screenFrame(viewport));
     expectMatrix(lastDraw(driver).camera, poseMatrix(titleScreenCameraPoseForViewport(viewport.x, viewport.y, 60)));
@@ -714,10 +782,10 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
 });
 
 function eyePose(flight: FlightRenderPose): Pose {
-  return pilotEyePoseThree(syntheticPilotEyePoint(), flight.pilotPositionMeters, flight.initialPilotPositionMeters);
+  return pilotEyePoseRender(registeredPilotEyePoint(), flight.pilotPositionMeters, flight.initialPilotPositionMeters);
 }
 
-function centeredPanel(anchor: AnchorKind, mountedHead: Pose): UiViewModel {
+function centeredPanel(anchor: UiViewModel["panels"][number]["anchor"], mountedHead: Pose): UiViewModel {
   const fixture = createSceneFixture("Flight");
   const panel = fixture.panels[0];
   if (panel === undefined) throw new Error("Missing Flight panel");

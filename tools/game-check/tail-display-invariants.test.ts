@@ -98,7 +98,7 @@ async function runInvariantFlight(mode: number, informationCode: number, backend
       stopLoop: () => { evidence.loop = null; }, render: renderFrame,
       setFlightPose, setPreparedFlightPose: vi.fn(), setLakeVisualCondition: vi.fn(), setLakeSkyCondition: vi.fn(), setLakeVenueVisible: vi.fn(),
     setLakeWaterQuality: vi.fn<RendererAdapter["setLakeWaterQuality"]>(() => Promise.resolve({ kind: "complete" })),
-      setFlightCameraMode: vi.fn(), setCinematicCameraView: vi.fn(), transformTrackingPose: (value) => value,
+      setFlightCameraMode: vi.fn(), setCinematicCameraView: vi.fn(), projectTrackingFrame: (value) => referenceFrameFixture(value),
       resize: vi.fn(), setStereoPresentation: vi.fn(), setScreenRenderScale: vi.fn(), setScreenRenderAuto: vi.fn(), setSelectRayHandler: vi.fn(), dispose: vi.fn()
     };
     const failHud = vi.fn<TailFlightHudPort["fail"]>();
@@ -187,3 +187,4 @@ describe.each([0, 1, 2])("same-WASM physical display invariants in control mode 
     if (informationCode !== 0) expect(observed.difficulty).not.toEqual(reference.difficulty);
   });
 });
+import { referenceFrameFixture } from "../presentation-check/menu-fixture.js";

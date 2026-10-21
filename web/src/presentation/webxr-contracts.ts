@@ -1,4 +1,5 @@
 import type { Pose } from "../render/contracts/math.js";
+import type { XrReferenceFrame } from "../generated/xr-reference-frame.js";
 
 export interface WebXrAvailability {
   readonly supported: boolean;
@@ -10,7 +11,7 @@ export type WebXrSessionRequest =
   | { readonly ok: false; readonly message: string };
 
 export interface WebXrSessionPort {
-  transformTrackingPose(pose: Pose): Pose;
+  projectTrackingFrame(pose: Pose): XrReferenceFrame;
   checkAvailability(): Promise<WebXrAvailability>;
   requestSessionFromUserGesture(): Promise<WebXrSessionRequest>;
   startSession(): Promise<void>;

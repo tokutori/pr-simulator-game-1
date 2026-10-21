@@ -1,3 +1,4 @@
+import { referenceFrameFixture } from "./menu-fixture.js";
 import { configuredViewerFixture } from "./viewer-fixture.js";
 import { fixtureBackendFrame, fixtureSemanticAction } from "./menu-fixture.js";
 import { readFileSync } from "node:fs";
@@ -453,7 +454,7 @@ async function createFixture(browser: GamepadBrowser, options: { readonly autoSt
     startLoop: vi.fn(), beginViewFrame: vi.fn(), stopLoop: vi.fn(), render: vi.fn(), resize: vi.fn(), dispose: vi.fn(), setSelectRayHandler: vi.fn(),
     setFlightPose: vi.fn(), setPreparedFlightPose: vi.fn(), setLakeVisualCondition: vi.fn(), setLakeSkyCondition: vi.fn(), setLakeVenueVisible: vi.fn(), setFlightCameraMode: vi.fn(), setCinematicCameraView: vi.fn(), setStereoPresentation: vi.fn(), setScreenRenderScale: vi.fn(), setScreenRenderAuto: vi.fn(),
     setLakeWaterQuality: vi.fn<RendererAdapter["setLakeWaterQuality"]>(() => Promise.resolve({ kind: "complete" })),
-    transformTrackingPose: (pose) => pose
+    projectTrackingFrame: (pose) => referenceFrameFixture(pose)
   } satisfies RendererAdapter;
   const input = createBrowserPhoneVrGamepadInputPort(browser, browser);
   const unavailable = vi.fn<(message: string) => void>();

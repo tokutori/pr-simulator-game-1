@@ -44,7 +44,7 @@ async function fixture(archive = false) {
     startLoop: vi.fn(), beginViewFrame: vi.fn(), stopLoop: vi.fn(), render: vi.fn(), setFlightPose: vi.fn(), setPreparedFlightPose: vi.fn(),
     setLakeVisualCondition: vi.fn(), setLakeSkyCondition: vi.fn(), setLakeVenueVisible: vi.fn(), setFlightCameraMode: vi.fn(), setCinematicCameraView: vi.fn(),
     setLakeWaterQuality: vi.fn<RendererAdapter["setLakeWaterQuality"]>(() => Promise.resolve({ kind: "complete" })),
-    transformTrackingPose: vi.fn<RendererAdapter["transformTrackingPose"]>((pose) => pose),
+    projectTrackingFrame: vi.fn<RendererAdapter["projectTrackingFrame"]>((pose) => referenceFrameFixture(pose)),
     resize: vi.fn(), setStereoPresentation: vi.fn(), setScreenRenderScale: vi.fn(), setScreenRenderAuto: vi.fn(), setSelectRayHandler: vi.fn(), dispose: vi.fn()
   } satisfies RendererAdapter;
   vi.doMock("../../web/src/render/engines/three/three-renderer.js", () => ({
@@ -245,3 +245,4 @@ describe("actual Tail main, facade and generated WASM flight log download", () =
     assertRejected("flight_paused");
   });
 });
+import { referenceFrameFixture } from "../presentation-check/menu-fixture.js";

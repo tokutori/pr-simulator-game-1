@@ -84,7 +84,7 @@ async function fixture(failInitialization = false, seedCurrentArchive = false, d
     setPreparedFlightPose: vi.fn<RendererAdapter["setPreparedFlightPose"]>(),
     setLakeSkyCondition: vi.fn<RendererAdapter["setLakeSkyCondition"]>(),
     setLakeVenueVisible: vi.fn<RendererAdapter["setLakeVenueVisible"]>(),
-    setFlightCameraMode: vi.fn(), setCinematicCameraView: vi.fn(), transformTrackingPose: vi.fn<RendererAdapter["transformTrackingPose"]>((pose) => pose),
+    setFlightCameraMode: vi.fn(), setCinematicCameraView: vi.fn(), projectTrackingFrame: vi.fn<RendererAdapter["projectTrackingFrame"]>((pose) => referenceFrameFixture(pose)),
     resize: vi.fn(), setStereoPresentation: vi.fn(),
     setScreenRenderScale: vi.fn((factor: number) => { screenBinding?.policy.select_manual(factor * 100, nowMilliseconds); acknowledgeScreenScale(); }),
     setScreenRenderAuto: vi.fn((enabled: boolean) => { screenBinding?.policy.select_auto(enabled, nowMilliseconds); acknowledgeScreenScale(); }),
@@ -97,7 +97,7 @@ async function fixture(failInitialization = false, seedCurrentArchive = false, d
   } satisfies RendererAdapter;
   let sessionEndHandler: (() => void) | null = null;
   const webxr: WebXrSessionPort = {
-    transformTrackingPose: (pose) => pose,
+    projectTrackingFrame: (pose) => referenceFrameFixture(pose),
     checkAvailability: () => Promise.resolve({ supported: webXrAvailable, message: "Headless WebXR test port" }),
     requestSessionFromUserGesture: () => Promise.resolve({ ok: true }),
     startSession: () => Promise.resolve(), endSession: () => Promise.resolve(),
@@ -1099,3 +1099,4 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     expect(trial.free).not.toHaveBeenCalled();
   });
 });
+import { referenceFrameFixture } from "../presentation-check/menu-fixture.js";

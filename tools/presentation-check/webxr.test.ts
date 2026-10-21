@@ -1,3 +1,4 @@
+import { referenceFrameFixture } from "./menu-fixture.js";
 import { runtimeViewerFixture, visiblePanelFrame } from "./viewer-fixture.js";
 import { fixtureBackendFrame, fixturePresentation, fixtureSemanticAction, geometryMenuFixture } from "./menu-fixture.js";
 import { describe, expect, it } from "vitest";
@@ -53,7 +54,7 @@ describe("WebXR session backend", () => {
   it("supplies the runtime viewer center to Head HUD independently of the identity user camera and transformed Menu", async () => {
     const adapter = new FakeWebXrAdapter();
     const renderer = new FakeRenderer();
-    renderer.transformTrackingPose = (head) => composePose(pose(vec3(10, 2, 5), IDENTITY_POSE.orientation), head);
+    renderer.projectTrackingFrame = (head) => referenceFrameFixture(composePose(pose(vec3(10, 2, 5), IDENTITY_POSE.orientation), head));
     const backend = new WebXrPresentationBackend(adapter, renderer, viewport, () => undefined, () => undefined);
     const hud = createHeadHudFixture(currentSharedGameUiFixture().theme);
     const view = { ...createSceneFixture("Flight"), headHud: hud };
@@ -133,7 +134,7 @@ describe("WebXR session backend", () => {
     await backend.stop();
   });
 
-  it("remaps world-locked anchors after a reference-space reset", async () => {
+  it("retains logical World and Menu coordinates through a passive reference-space reset", async () => {
     const adapter = new FakeWebXrAdapter();
     const backend = createBackend(adapter);
     await backend.requestSessionFromUserGesture();
@@ -146,8 +147,8 @@ describe("WebXR session backend", () => {
       panels: [createAnchorFixture("world")]
     }, runtimeViewerFixture(pose(vec3(-1, 0, 0), IDENTITY_POSE.orientation)));
     expect(visiblePanelFrame(initial).pose.position.x).toBe(0);
-    expect(visiblePanelFrame(remappedMenu).pose.position.x).toBe(-1);
-    expect(visiblePanelFrame(remapped).pose.position.x).toBe(-1);
+    expect(visiblePanelFrame(remappedMenu).pose.position.x).toBe(0);
+    expect(visiblePanelFrame(remapped).pose.position.x).toBe(0);
     await backend.stop();
   });
 
@@ -266,7 +267,7 @@ class FakeWebXrAdapter implements WebXrSessionPort {
   private endHandler: (() => void) | null = null;
   private referenceSpaceResetHandler: ((previousReferenceFromNew: Pose | null) => void) | null = null;
 
-  transformTrackingPose(value: Pose): Pose { return value; }
+  projectTrackingFrame(value: Pose) { return referenceFrameFixture(value); }
 
   checkAvailability(): Promise<WebXrAvailability> {
     return Promise.resolve(this.availability);
@@ -325,7 +326,7 @@ class FakeRenderer implements RendererAdapter {
   setLakeVenueVisible(): void {}
   setFlightCameraMode(): void {}
   setCinematicCameraView(): void {}
-  transformTrackingPose(pose: Parameters<RendererAdapter["transformTrackingPose"]>[0]): typeof pose { return pose; }
+  projectTrackingFrame(pose: Parameters<RendererAdapter["projectTrackingFrame"]>[0]) { return referenceFrameFixture(pose); }
   resize(): void {}
   setStereoPresentation(): void {}
   setScreenRenderScale(): void {}

@@ -6,17 +6,16 @@ import { AmbientLight, BufferGeometry, DataTexture, DirectionalLight, Fog, Matri
 import type { Camera, Color, Object3D, Scene } from "three";
 import { createThreeRenderer, titleScreenCameraPoseForViewport } from "../../web/src/render/engines/three/three-renderer.js";
 import type { ThreeRendererBundle } from "../../web/src/render/engines/three/three-renderer.js";
-import { flightRelativePose } from "../../web/src/render/engines/three/flight-pose.js";
-import { pilotEyePoseThree, syntheticPilotEyePoint } from "../../web/src/render/camera/pilot-eye-point.js";
+import { flightRelativePose } from "../../web/src/render/camera/xr-spatial.js";
+import { pilotEyePoseRender, registeredPilotEyePoint } from "../../web/src/render/camera/xr-spatial.js";
 import { composePose, IDENTITY_POSE, pose, quaternion, rotateVec3, vec3 } from "../../web/src/render/contracts/math.js";
 import type { Pose } from "../../web/src/render/contracts/math.js";
 import type { BackendFrame, FlightRenderPose, LakeWaterQualityCleanupResult } from "../../web/src/render/contracts/runtime.js";
 import type { ViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
 import { projectHeadPoint } from "../../web/src/render/contracts/viewer-frame.js";
 import type { UiAction, UiViewModel, UiPanel } from "../../web/src/render/contracts/ui.js";
-import type { AnchorKind } from "../../web/src/render/anchors.js";
 import { createSceneFixture } from "../../web/src/presentation/fixtures.js";
-import { placeMenuPanel } from "../../web/src/render/anchors.js";
+import { placeMenuPanel } from "./menu-fixture.js";
 import { PhoneVrPresentationBackend } from "../../web/src/presentation/phone-vr-backend.js";
 import { PHONE_VR_OPTICAL_PROFILE } from "../../web/src/presentation/phone-vr-contracts.js";
 import type { PhoneVrSensorPort, PhoneVrSensorReading } from "../../web/src/presentation/phone-vr-contracts.js";
@@ -1128,7 +1127,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
     if (panel === undefined) throw new Error("Missing Credits panel");
     const panelPose = placeMenuPanel(turnedHead, 2.4);
     const headFrame = frame({ cameraPose: turnedHead, panel: testPanel({ ...panel, anchor: "head" }, panelPose) });
-    expect(bundle.renderer.transformTrackingPose(turnedHead)).toBe(turnedHead);
+    expect(bundle.renderer.projectTrackingFrame(turnedHead).head).toEqual(turnedHead);
     bundle.renderer.render(headFrame);
     const expectedCenter = poseMatrix(titleScreenCameraPoseForViewport(1280, 720, 60)).multiply(new Matrix4().makeRotationX(Math.PI / 30)).multiply(poseMatrix(turnedHead));
     const expectedPanel = poseMatrix(titleScreenCameraPoseForViewport(1280, 720, 60)).multiply(new Matrix4().makeRotationX(Math.PI / 30)).multiply(poseMatrix(panelPose));
@@ -1181,12 +1180,12 @@ describe("Three adapter panel reference with real StereoEffect", () => {
     }
   });
 
-  it.each(["world", "cockpit"] as const)("retains the existing non-flight %s anchor transform", (anchor) => {
+  it("projects a resolved non-flight panel through the common Title reference", () => {
     const panel = createSceneFixture("Title").panels[0];
     if (panel === undefined) throw new Error("Missing panel");
-    const current = frame({ panel: testPanel({ ...panel, anchor }) });
+    const current = frame({ panel: testPanel({ ...panel, anchor: "world" }) });
     bundle.renderer.render(current);
-    expectMatrix(singleDraw(driver).panel, poseMatrix(visiblePanelFrame(current).pose));
+    expectMatrix(singleDraw(driver).panel, poseMatrix(titleScreenCameraPoseForViewport(viewport.x, viewport.y, 60)).multiply(poseMatrix(visiblePanelFrame(current).pose)));
   });
 
   it("preserves Screen composition and the native XR reference", () => {
@@ -1323,7 +1322,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
     bundle.renderer.setFlightPose(flight);
     const current = frame({ cameraPose: turnedHead, panel: testPanel(requiredScenePanel("Flight")) });
     bundle.renderer.render(current);
-    const eye = pilotEyePoseThree(syntheticPilotEyePoint(), 0.15, 0);
+    const eye = pilotEyePoseRender(registeredPilotEyePoint(), 0.15, 0);
     expectMatrix(singleDraw(driver).camera, poseMatrix(flightRelativePose(flight, composePose(eye, turnedHead))));
     expectMatrix(singleDraw(driver).panel, poseMatrix(flightRelativePose(flight, visiblePanelFrame(current).pose)));
     const external = pose(vec3(100, 25, -40), turnedHead.orientation);
@@ -1331,7 +1330,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
     bundle.renderer.setCinematicCameraView({ pose: external, verticalFieldOfViewDegrees: 60 });
     bundle.renderer.setStereoPresentation(PHONE_VR_OPTICAL_PROFILE);
     driver.draws.length = 0;
-    const transformed = bundle.renderer.transformTrackingPose(turnedHead);
+    const transformed = bundle.renderer.projectTrackingFrame(turnedHead).head;
     expectMatrix(poseMatrix(transformed), poseMatrix(composePose(external, turnedHead)));
     const worldPanel = placeMenuPanel(transformed, 2.4);
     bundle.renderer.render(frame({ cameraPose: turnedHead, panel: testPanel(requiredScenePanel("Title"), worldPanel) }));
@@ -1348,7 +1347,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
     const basePanel = createSceneFixture("Result").panels[0];
     if (basePanel === undefined) throw new Error("Missing Result panel fixture");
     const panelPose = placeMenuPanel(IDENTITY_POSE, 2.4);
-    const eye = pilotEyePoseThree(syntheticPilotEyePoint(), 0.15, 0);
+    const eye = pilotEyePoseRender(registeredPilotEyePoint(), 0.15, 0);
     bundle.renderer.setFlightPose(flight);
     bundle.renderer.setStereoPresentation(PHONE_VR_OPTICAL_PROFILE);
     for (const anchor of ["menu", "world", "head", "cockpit", "menu"] as const) {
@@ -1463,8 +1462,8 @@ describe("Three adapter panel reference with real StereoEffect", () => {
       try {
         phone.emit({ alpha: 12, beta: 84, gamma: 0, timestampMs: 10, gravityEvidence: { kind: "earth-z-up" } });
         const rawFrame = fixtureBackendFrame(phone.backend, 10, { ...createSceneFixture("Flight"), panels: [] }, configuredViewerFixture());
-        const mountedHead = composePose(pilotEyePoseThree(syntheticPilotEyePoint(), pilotPositionMeters, 0.1), rawFrame.cameraPose);
-        const view = phonePanel(anchor, mountedHead);
+        const mountedHead = composePose(pilotEyePoseRender(registeredPilotEyePoint(), pilotPositionMeters, 0.1), rawFrame.cameraPose);
+        const view = phonePanel(anchor, anchor === "world" ? flightRelativePose(flight, mountedHead) : mountedHead);
         const current = fixtureBackendFrame(phone.backend, 20, view, configuredViewerFixture());
         driver.draws.length = 0;
         bundle.renderer.render(current);
@@ -1486,7 +1485,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
         await phone.backend.stop();
         driver.draws.length = 0;
         bundle.renderer.render(frame({ panel: { kind: "absent" } }));
-        const eye = pilotEyePoseThree(syntheticPilotEyePoint(), pilotPositionMeters, 0.1);
+        const eye = pilotEyePoseRender(registeredPilotEyePoint(), pilotPositionMeters, 0.1);
         expectMatrix(singleDraw(driver).camera, poseMatrix(flightRelativePose(flight, eye)));
       } finally {
         await phone.backend.stop();
@@ -1504,7 +1503,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
     bundle.renderer.setFlightCameraMode(mode);
     const external = pose(vec3(50, 20, -130), quaternion(Math.cos(0.23), 0, Math.sin(0.23), 0));
     if (mode === "platform") bundle.renderer.setCinematicCameraView({ pose: external, verticalFieldOfViewDegrees: 60 });
-    const mount = mode === "platform" ? external : pilotEyePoseThree(syntheticPilotEyePoint(), 0.35, 0.1);
+    const mount = mode === "platform" ? external : pilotEyePoseRender(registeredPilotEyePoint(), 0.35, 0.1);
     const phone = await startPhone(bundle, viewport);
     try {
       phone.emit({ alpha: 12, beta: 84, gamma: 0, timestampMs: 10, gravityEvidence: { kind: "earth-z-up" } });
@@ -1556,7 +1555,7 @@ async function startPhone(bundle: ThreeRendererBundle, viewport: BackendFrame["v
   } };
 }
 
-function phonePanel(anchor: AnchorKind, mountedHead: Pose): UiViewModel {
+function phonePanel(anchor: UiPanel["anchor"], mountedHead: Pose): UiViewModel {
   const fixture = createSceneFixture("Flight");
   const panel = fixture.panels[0];
   if (panel === undefined) throw new Error("Missing Phone Flight panel");

@@ -2,6 +2,9 @@ use birdman_game_presentation::{game_ui::GameUiHud, xr as shared};
 use serde::de::DeserializeOwned;
 use wasm_bindgen::{JsValue, prelude::*};
 
+mod spatial;
+pub use spatial::*;
+
 /// Checks the browser/runtime's unmodified projection matrix.
 #[wasm_bindgen]
 pub fn xr_projection_matrix_is_valid(values: &[f64]) -> bool {

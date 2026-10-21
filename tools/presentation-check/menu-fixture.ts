@@ -2,12 +2,23 @@ import type { BackendFrame, MenuPresentation, PreparedPresentationView, Presenta
 import type { MenuControlLayout } from "../../web/src/render/contracts/menu-layout.js";
 import type { UiAction, UiViewModel } from "../../web/src/render/contracts/ui.js";
 import type { ViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
+import type { Pose } from "../../web/src/render/contracts/math.js";
+import type { XrReferenceFrame } from "../../web/src/generated/xr-reference-frame.js";
+import { IDENTITY_POSE, composePose, pose, vec3 } from "../../web/src/render/contracts/math.js";
 import { requestMenuLayout, layoutMeasuredMenu, menuViewport } from "../../web/src/presentation/menu-layout.js";
 import { measureMenuLayout, menuCanvasSize } from "../../web/src/presentation/menu-canvas.js";
 import { HudCanvasFixture } from "./hud-canvas-fixture.js";
 import { currentSharedGameUiFixture } from "../game-check/shared-game-ui-fixture.js";
 
 const fixtureTheme = currentSharedGameUiFixture("title").theme;
+
+export function referenceFrameFixture(head: Pose): XrReferenceFrame {
+  return { basis: "world", world: IDENTITY_POSE, cockpit: IDENTITY_POSE, head };
+}
+
+export function placeMenuPanel(head: Pose, distance: number): Pose {
+  return composePose(head, pose(vec3(0, 0, -distance), IDENTITY_POSE.orientation));
+}
 
 export function geometryMenuFixture(view: UiViewModel): MenuPresentation {
   const panel = view.panels[0];

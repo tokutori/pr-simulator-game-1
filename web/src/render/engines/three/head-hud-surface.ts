@@ -1,5 +1,5 @@
 import { CanvasTexture, LinearFilter, Mesh, MeshBasicMaterial, PlaneGeometry, SRGBColorSpace } from "three";
-import { composePose } from "../../contracts/math.js";
+import { composeXrPose } from "../../camera/xr-spatial.js";
 import type { Pose } from "../../contracts/math.js";
 import { validateHeadHudLayer } from "../../contracts/head-hud.js";
 import type { HeadHudFrame, VisibleHeadHud } from "../../contracts/head-hud.js";
@@ -40,7 +40,7 @@ export function createHeadHudSurface(canvas: HTMLCanvasElement) {
         texture.needsUpdate = true;
         currentView = view;
       }
-      const worldFromHud = composePose(composePose(worldFromTracking, frame.trackingFromHead), view.localPose);
+      const worldFromHud = composeXrPose(worldFromTracking, frame.trackingFromHead, view.localPose);
       mesh.position.set(worldFromHud.position.x, worldFromHud.position.y, worldFromHud.position.z);
       mesh.quaternion.set(worldFromHud.orientation.x, worldFromHud.orientation.y, worldFromHud.orientation.z, worldFromHud.orientation.w);
       mesh.scale.set(view.size.width, view.size.height, 1);

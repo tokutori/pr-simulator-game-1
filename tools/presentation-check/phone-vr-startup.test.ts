@@ -1,3 +1,4 @@
+import { referenceFrameFixture } from "./menu-fixture.js";
 import { configuredViewerFixture } from "./viewer-fixture.js";
 import { fixtureBackendFrame, fixturePresentation, fixtureSemanticAction } from "./menu-fixture.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -434,7 +435,7 @@ function createFixture() {
     setLakeVenueVisible: vi.fn<RendererAdapter["setLakeVenueVisible"]>(),
     setFlightCameraMode: vi.fn<RendererAdapter["setFlightCameraMode"]>(),
     setCinematicCameraView: vi.fn<RendererAdapter["setCinematicCameraView"]>(),
-    transformTrackingPose: vi.fn<RendererAdapter["transformTrackingPose"]>((pose) => pose),
+    projectTrackingFrame: vi.fn<RendererAdapter["projectTrackingFrame"]>((pose) => referenceFrameFixture(pose)),
     resize: vi.fn<RendererAdapter["resize"]>(),
     setStereoPresentation: vi.fn<RendererAdapter["setStereoPresentation"]>((value) => { profile = value; }),
     setScreenRenderScale: vi.fn(),

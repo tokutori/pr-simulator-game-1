@@ -240,7 +240,7 @@ GameUiView / GameUiFrame → platform renderer → DOM / VR panel / Bevy entity
 ### cameraとpanel
 
 - Replay/Attractのcamera directorは共有Rustに置く。
-- liveの入力・head trackingはadapterで観測し、aircraft pose、cockpit mount、pilot offset、head poseを合成する。
+- liveの入力・head trackingはadapterで観測する。presentationの共有Rustがaircraft pose、cockpit mount、pilot offset、head pose、reference resetの累積補正を合成し、cameraとWorld/Cockpit/Menu/Head anchorへ同じ参照系を渡す。
 - head trackingで物理状態を変更しない。
 
 - layout、hit test、backend描画は同じimmutableなViewerFrameを使う。

@@ -239,3 +239,332 @@ fn invalid_eye_identity_pose_and_projection_are_classified_before_layout() {
     eyes[0].head_from_eye.orientation.w = 0.1;
     assert!(!xr_head_plane_fits(&frame, plane(2.4), 1.0, 1.0, 0.0));
 }
+
+#[test]
+fn camera_rig_applies_aircraft_pilot_head_and_eye_transforms_once() {
+    let aircraft = XrPose {
+        position: XrVector {
+            x: 12.0,
+            y: 7.0,
+            z: -8.0,
+        },
+        orientation: XrQuaternion {
+            w: (0.3_f64 / 2.0).cos(),
+            x: 0.0,
+            y: (0.3_f64 / 2.0).sin(),
+            z: 0.0,
+        },
+    };
+    let pilot = xr_pilot_eye_pose(
+        XrFrdPose {
+            position_frd_m: [1.2, 0.04, -0.08],
+            orientation_frd_wxyz: [1.0, 0.0, 0.0, 0.0],
+        },
+        0.65,
+        0.35,
+    )
+    .unwrap();
+    assert_eq!(pilot.frd.position_frd_m, [1.5, 0.04, -0.08]);
+    assert_eq!(
+        pilot.render.position,
+        XrVector {
+            x: 0.04,
+            y: 0.08,
+            z: -1.5
+        }
+    );
+    let rig = xr_camera_rig(
+        aircraft,
+        XrCameraMount::Aircraft {
+            aircraft_from_tracking: pilot.render,
+        },
+    )
+    .unwrap();
+    let head = XrPose {
+        position: XrVector {
+            x: 0.1,
+            y: 0.2,
+            z: -0.3,
+        },
+        ..XrPose::IDENTITY
+    };
+    let mounted = compose_xr_pose(rig.world_from_tracking, head).unwrap();
+    let local = [0.14, 0.28, -1.8];
+    assert!(
+        (mounted.position.x - (12.0 + local[0] * 0.3_f64.cos() + local[2] * 0.3_f64.sin())).abs()
+            < 1e-14
+    );
+    assert!((mounted.position.y - 7.28).abs() < 1e-14);
+    assert!(
+        (mounted.position.z - (-8.0 - local[0] * 0.3_f64.sin() + local[2] * 0.3_f64.cos())).abs()
+            < 1e-14
+    );
+    assert_eq!(rig.world_from_reference.position, aircraft.position);
+    assert!((rig.world_from_reference.orientation.w - aircraft.orientation.w).abs() < 1e-14);
+    assert!((rig.world_from_reference.orientation.y - aircraft.orientation.y).abs() < 1e-14);
+    let external = plane(12.0);
+    let rig = xr_camera_rig(
+        aircraft,
+        XrCameraMount::External {
+            world_from_tracking: external,
+        },
+    )
+    .unwrap();
+    assert_eq!(rig.world_from_tracking, external);
+    assert_eq!(rig.reference_from_tracking, external);
+    assert_eq!(rig.world_from_reference, XrPose::IDENTITY);
+    let reconstructed = compose_xr_pose(aircraft, rig.aircraft_from_tracking).unwrap();
+    assert!(reconstructed.position.x.abs() < 1e-14);
+    assert!(reconstructed.position.y.abs() < 1e-14);
+    assert!((reconstructed.position.z + 12.0).abs() < 1e-14);
+}
+
+#[test]
+fn passive_origin_reset_preserves_world_head_and_both_eyes() {
+    let aircraft = XrPose {
+        position: XrVector {
+            x: 12.0,
+            y: 7.0,
+            z: -8.0,
+        },
+        orientation: XrQuaternion {
+            w: 0.3_f64.cos(),
+            x: 0.0,
+            y: 0.3_f64.sin(),
+            z: 0.0,
+        },
+    };
+    let mount = XrCameraMount::Aircraft {
+        aircraft_from_tracking: XrPose {
+            position: XrVector {
+                x: 0.2,
+                y: 0.15,
+                z: -0.55,
+            },
+            ..XrPose::IDENTITY
+        },
+    };
+    let change = XrPose {
+        position: XrVector {
+            x: 0.3,
+            y: -0.1,
+            z: 0.2,
+        },
+        orientation: XrQuaternion {
+            w: 0.2_f64.cos(),
+            x: 0.0,
+            y: 0.2_f64.sin(),
+            z: 0.0,
+        },
+    };
+    let head = XrPose {
+        position: XrVector {
+            x: -0.1,
+            y: 0.2,
+            z: 0.3,
+        },
+        ..XrPose::IDENTITY
+    };
+    let mut origin = XrTrackingOrigin::default();
+    let before = origin.camera_rig(aircraft, mount).unwrap();
+    origin.reset_reference(change).unwrap();
+    let after = origin.camera_rig(aircraft, mount).unwrap();
+    let new_head = compose_xr_pose(inverse_xr_pose(change).unwrap(), head).unwrap();
+    let before_head = compose_xr_pose(before.world_from_tracking, head).unwrap();
+    let after_head = compose_xr_pose(after.world_from_tracking, new_head).unwrap();
+    assert_pose_close(after_head, before_head);
+    for eye_x in [-0.032, 0.032] {
+        let eye = XrPose {
+            position: XrVector {
+                x: eye_x,
+                y: 0.0,
+                z: 0.0,
+            },
+            ..XrPose::IDENTITY
+        };
+        assert_pose_close(
+            compose_xr_pose(after_head, eye).unwrap(),
+            compose_xr_pose(before_head, eye).unwrap(),
+        );
+    }
+    assert_pose_close(after.world_from_reference, before.world_from_reference);
+    assert!(
+        origin
+            .reset_reference(XrPose {
+                position: XrVector {
+                    x: f64::NAN,
+                    y: 0.0,
+                    z: 0.0
+                },
+                ..XrPose::IDENTITY
+            })
+            .is_err()
+    );
+    assert_eq!(origin.camera_rig(aircraft, mount).unwrap(), after);
+}
+
+#[test]
+fn world_cockpit_and_head_keep_their_distinct_physical_owners() {
+    use crate::game_ui::GameUiAnchor;
+    let views = viewer(XrDepthRange::NegativeOneToOne);
+    let local = plane(2.4);
+    let head = XrPose {
+        position: XrVector {
+            x: 0.1,
+            y: 0.2,
+            z: 0.0,
+        },
+        ..XrPose::IDENTITY
+    };
+    let mut session = XrSpatialSession::new();
+    for north in [0.0, 40.0] {
+        let aircraft = XrPose {
+            position: XrVector {
+                x: north,
+                y: 10.0,
+                z: -5.0,
+            },
+            orientation: XrQuaternion {
+                w: 0.2_f64.cos(),
+                x: 0.2_f64.sin(),
+                y: 0.0,
+                z: 0.0,
+            },
+        };
+        for mount in [
+            XrCameraMount::Stationary {
+                world_from_tracking: plane(-5.0),
+            },
+            XrCameraMount::Aircraft {
+                aircraft_from_tracking: XrPose::IDENTITY,
+            },
+            XrCameraMount::External {
+                world_from_tracking: plane(-12.0),
+            },
+        ] {
+            let rig = xr_camera_rig(aircraft, mount).unwrap();
+            let reference = xr_reference_frame(rig, head).unwrap();
+            for (anchor, expected) in [
+                (GameUiAnchor::World, local),
+                (
+                    GameUiAnchor::Cockpit,
+                    compose_xr_pose(aircraft, local).unwrap(),
+                ),
+                (
+                    GameUiAnchor::Head,
+                    compose_xr_pose(
+                        compose_xr_pose(rig.world_from_tracking, head).unwrap(),
+                        local,
+                    )
+                    .unwrap(),
+                ),
+            ] {
+                let mut geometry = menu_geometry();
+                geometry.anchor = anchor;
+                geometry.local_pose = local;
+                let placement = session.place_panel(
+                    XrPanelObservation::Ready { geometry },
+                    &views,
+                    Some(reference),
+                );
+                let XrPanelPlacement::Ready {
+                    reference_from_panel,
+                } = placement
+                else {
+                    panic!("missing panel")
+                };
+                let poses = xr_panel_camera_poses(rig, reference_from_panel).unwrap();
+                assert_pose_close(poses.world_from_panel, expected);
+                assert_pose_close(
+                    compose_xr_pose(rig.world_from_tracking, poses.tracking_from_panel).unwrap(),
+                    expected,
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn menu_opening_retains_motion_and_refits_camera_basis_changes() {
+    let views = viewer(XrDepthRange::NegativeOneToOne);
+    let geometry = menu_geometry();
+    let observation = XrPanelObservation::Ready {
+        geometry: geometry.clone(),
+    };
+    let mut session = XrSpatialSession::new();
+    let reference = XrReferenceFrame {
+        basis: XrReferenceBasis::Aircraft,
+        world: XrPose::IDENTITY,
+        cockpit: XrPose::IDENTITY,
+        head: XrPose::IDENTITY,
+    };
+    let before = session.place_panel(observation.clone(), &views, Some(reference));
+    let moved = XrReferenceFrame {
+        head: plane(-10.0),
+        ..reference
+    };
+    assert_eq!(
+        session.place_panel(observation.clone(), &views, Some(moved)),
+        before
+    );
+    assert_eq!(
+        session.place_panel(XrPanelObservation::Pending, &views, Some(moved)),
+        XrPanelPlacement::Absent
+    );
+    assert!(
+        session
+            .recenter_tracking(XrPose {
+                orientation: XrQuaternion {
+                    w: 0.0,
+                    x: 0.0,
+                    y: 0.0,
+                    z: 0.0
+                },
+                ..XrPose::IDENTITY
+            })
+            .is_err()
+    );
+    assert_eq!(
+        session.place_panel(observation.clone(), &views, Some(moved)),
+        before
+    );
+    let changed_basis = XrReferenceFrame {
+        basis: XrReferenceBasis::World,
+        ..moved
+    };
+    let refitted = session.place_panel(observation.clone(), &views, Some(changed_basis));
+    assert_ne!(refitted, before);
+    session.recenter_menu(plane(-20.0)).unwrap();
+    assert_ne!(
+        session.place_panel(observation, &views, Some(changed_basis)),
+        refitted
+    );
+}
+
+fn menu_geometry() -> XrPanelGeometry {
+    XrPanelGeometry {
+        scope: XrMenuScope {
+            scene: "Title".into(),
+            overlay: None,
+            panel_id: "main".into(),
+        },
+        anchor: crate::game_ui::GameUiAnchor::Menu,
+        local_pose: XrPose::IDENTITY,
+        size_m: [2.4, 1.8],
+    }
+}
+
+fn assert_pose_close(actual: XrPose, expected: XrPose) {
+    for (first, second) in actual
+        .position
+        .array()
+        .into_iter()
+        .zip(expected.position.array())
+    {
+        assert!((first - second).abs() < 1e-12, "{actual:?} {expected:?}");
+    }
+    let first = actual.orientation;
+    let second = expected.orientation;
+    let dot = first.w * second.w + first.x * second.x + first.y * second.y + first.z * second.z;
+    assert!((dot.abs() - 1.0).abs() < 1e-12, "{actual:?} {expected:?}");
+}

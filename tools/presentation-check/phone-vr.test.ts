@@ -1,3 +1,4 @@
+import { referenceFrameFixture } from "./menu-fixture.js";
 import { configuredViewerFixture, panelFrameCursor, visiblePanelFrame } from "./viewer-fixture.js";
 import { fixtureBackendFrame, fixturePresentation, fixtureSemanticAction, geometryMenuFixture } from "./menu-fixture.js";
 import { describe, expect, it, vi } from "vitest";
@@ -187,7 +188,7 @@ describe("Phone VR presentation backend", () => {
     const actions: UiAction[] = [];
     const failures: string[] = [];
     let mount = IDENTITY_POSE;
-    renderer.transformTrackingPose = (head) => composePose(mount, head);
+    renderer.projectTrackingFrame = (head) => referenceFrameFixture(composePose(mount, head));
     const backend = new PhoneVrPresentationBackend(sensors, renderer, viewport, (action) => { actions.push(action); },
       (message) => { throw new Error(message); }, { gamepadInput: gamepad, nowMs: () => sensors.currentTimeMs });
     const view = createSceneFixture("Flight", "Pause");
@@ -225,7 +226,7 @@ describe("Phone VR presentation backend", () => {
     const sensors = new FakePhoneVrSensors();
     const renderer = new FakeRenderer();
     let mount = IDENTITY_POSE;
-    renderer.transformTrackingPose = (head) => composePose(mount, head);
+    renderer.projectTrackingFrame = (head) => referenceFrameFixture(composePose(mount, head));
     const actions: UiAction[] = [];
     const backend = new PhoneVrPresentationBackend(sensors, renderer, viewport, (action) => { actions.push(fixtureSemanticAction(action)); },
       (message) => { throw new Error(message); }, { nowMs: () => sensors.currentTimeMs });
@@ -303,7 +304,7 @@ describe("Phone VR presentation backend", () => {
   it("supplies raw center-head tracking to the non-interactive HUD independently of Menu placement", async () => {
     const sensors = new FakePhoneVrSensors();
     const renderer = new FakeRenderer();
-    renderer.transformTrackingPose = (head) => composePose(pose(vec3(10, 2, 5), IDENTITY_POSE.orientation), head);
+    renderer.projectTrackingFrame = (head) => referenceFrameFixture(composePose(pose(vec3(10, 2, 5), IDENTITY_POSE.orientation), head));
     const backend = createBackend(sensors, renderer);
     const hud = createHeadHudFixture(currentSharedGameUiFixture().theme);
     const view = { ...createSceneFixture("Flight"), headHud: hud };
@@ -824,7 +825,7 @@ class FakeRenderer implements RendererAdapter {
   setLakeVenueVisible(): void {}
   setFlightCameraMode(): void {}
   setCinematicCameraView(): void {}
-  transformTrackingPose(pose: Parameters<RendererAdapter["transformTrackingPose"]>[0]): typeof pose { return pose; }
+  projectTrackingFrame(pose: Parameters<RendererAdapter["projectTrackingFrame"]>[0]) { return referenceFrameFixture(pose); }
   resize(): void {}
   setStereoPresentation(profile: StereoPresentationProfile | null): void { this.stereoProfile = profile; }
   setScreenRenderScale(): void {}

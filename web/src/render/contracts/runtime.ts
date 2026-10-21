@@ -7,6 +7,7 @@ import type { LakeSkyCondition } from "./lake-sky.js";
 import type { HeadHudFrame } from "./head-hud.js";
 import type { ViewerFrame, ViewerGeometryUnavailableReason } from "./viewer-frame.js";
 import type { FlightRenderPose } from "../../generated/flight-render-pose.js";
+import type { XrReferenceFrame } from "../../generated/xr-reference-frame.js";
 export type { FlightRenderPose } from "../../generated/flight-render-pose.js";
 
 export type PresentationMode = "screen" | "webxr" | "phone-vr";
@@ -88,7 +89,7 @@ export interface RendererAdapter {
   setLakeVenueVisible(visible: boolean): void;
   setFlightCameraMode(mode: FlightCameraMode): void;
   setCinematicCameraView(view: CinematicCameraView | null): void;
-  transformTrackingPose(pose: Pose): Pose;
+  projectTrackingFrame(pose: Pose): XrReferenceFrame;
   resize(viewport: ViewportSize): void;
   setStereoPresentation(profile: StereoPresentationProfile | null): void;
   setScreenRenderScale(factor: number): void;

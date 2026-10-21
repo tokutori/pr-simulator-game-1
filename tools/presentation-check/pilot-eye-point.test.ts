@@ -5,14 +5,14 @@ import { AirframeMemberKind, AirframeStructureBridge, screen_vertical_field_of_v
 import { createAppSession } from "../../web/src/app/session-factory.js";
 import { currentFlightPoseFixture, launchCurrentSession } from "../game-check/current-session-fixture.js";
 import {
-  createPilotEyePoint, pilotEyePoseThree, poseFrdToThree, syntheticPilotEyePoint
-} from "../../web/src/render/camera/pilot-eye-point.js";
-import { replayCameraPoseFrd } from "../../web/src/render/camera/replay-camera.js";
+  createPilotEyePoint, pilotEyePoseRender, poseFrdToRender, registeredPilotEyePoint
+} from "../../web/src/render/camera/xr-spatial.js";
+import { chaseCameraPoseFrd } from "../../web/src/render/camera/xr-spatial.js";
 import {
   IDENTITY_POSE, multiplyQuaternion, quaternion, rotateVec3, transformPoint, vec3
 } from "../../web/src/render/contracts/math.js";
 import type { Quaternion, Vec3 } from "../../web/src/render/contracts/math.js";
-import { flightRelativePose } from "../../web/src/render/engines/three/flight-pose.js";
+import { flightRelativePose } from "../../web/src/render/camera/xr-spatial.js";
 
 describe("FRD camera basis", () => {
   it.each([
@@ -26,7 +26,7 @@ describe("FRD camera basis", () => {
     ["combined reverse attitude", -0.46, 0.31, 2.1]
   ] as const)("maps %s using the same axes as position", (_label, roll, pitch, yaw) => {
     const eyePoint = createPilotEyePoint(vec3(1.2, 0.04, -0.08), 0.35, frdEulerQuaternion(roll, pitch, yaw));
-    const eye = pilotEyePoseThree(eyePoint, 0.65);
+    const eye = pilotEyePoseRender(eyePoint, 0.65);
     const eyePositionFrd = vec3(1.5, 0.04, -0.08);
     expectVector(eye.position, rendererVector(eyePositionFrd));
 
@@ -42,12 +42,12 @@ describe("FRD camera basis", () => {
   });
 
   it("preserves the identity Pilot mount and forward view", () => {
-    const eye = pilotEyePoseThree(syntheticPilotEyePoint(), 0, 0);
+    const eye = pilotEyePoseRender(registeredPilotEyePoint(), 0, 0);
     expectVector(eye.position, vec3(0, -1.04, -0.06));
     expect(eye.orientation).toEqual(IDENTITY_POSE.orientation);
     expectVector(rotateVec3(eye.orientation, vec3(0, 0, -1)), vec3(0, 0, -1));
     expectVector(rotateVec3(eye.orientation, vec3(0, 1, 0)), vec3(0, 1, 0));
-    const pilot = poseFrdToThree(replayCameraPoseFrd("pilot"));
+    const pilot = poseFrdToRender(chaseCameraPoseFrd("pilot"));
     expectVector(pilot.position, IDENTITY_POSE.position);
     expect(pilot.orientation).toEqual(IDENTITY_POSE.orientation);
   });
@@ -60,7 +60,7 @@ describe("FRD camera basis", () => {
       attitudeBodyToNed: { ...frdEulerQuaternion(0, 0, heading) },
       pilotPositionMeters: 0,
       initialPilotPositionMeters: 0
-    }, pilotEyePoseThree(syntheticPilotEyePoint(), 0));
+    }, pilotEyePoseRender(registeredPilotEyePoint(), 0));
 
     expectVector(rotateVec3(eye.orientation, vec3(0, 0, -1)), vec3(Math.sin(heading), 0, -Math.cos(heading)));
     expectVector(eye.position, vec3(0.06 * Math.sin(heading), 9.46, -0.06 * Math.cos(heading)));
@@ -78,11 +78,11 @@ describe("FRD camera basis", () => {
     const noseAft = Math.min(...vertices.map((point) => point.z));
     const frontVertices = vertices.filter((point) => point.z <= noseAft + 0.1);
     expect(frontVertices.length).toBeGreaterThan(0);
-    const point = syntheticPilotEyePoint();
+    const point = registeredPilotEyePoint();
     const { initial, positions } = registeredPilotTravel();
     for (const current of positions) {
       for (const aspect of [9 / 16, 16 / 9]) {
-        const eye = pilotEyePoseThree(point, current, initial);
+        const eye = pilotEyePoseRender(point, current, initial);
         const camera = new PerspectiveCamera(screen_vertical_field_of_view_degrees(), aspect, 0.05, 100_000);
         camera.position.set(eye.position.x, eye.position.y, eye.position.z);
         camera.updateMatrixWorld();
@@ -102,7 +102,7 @@ describe("FRD camera basis", () => {
   });
 
   it("aims the converted Chase pose down toward the aircraft datum", () => {
-    const chase = poseFrdToThree(replayCameraPoseFrd("chase"));
+    const chase = poseFrdToRender(chaseCameraPoseFrd("chase"));
     expectVector(chase.position, vec3(0, 4, 12));
     expectVector(rotateVec3(chase.orientation, vec3(0, 0, -1)), unitVector(vec3(0, -4, -12)));
   });
@@ -119,7 +119,7 @@ describe("FRD camera basis", () => {
       attitudeBodyToNed: { ...frdEulerQuaternion(roll, pitch, yaw) },
       pilotPositionMeters: 0,
       initialPilotPositionMeters: 0
-    }, poseFrdToThree(replayCameraPoseFrd("chase")));
+    }, poseFrdToRender(chaseCameraPoseFrd("chase")));
     const datum = rendererVector(vec3(datumPositionNed.north, datumPositionNed.east, datumPositionNed.down));
     const offset = rendererVector(rotateFrdEuler(vec3(-12, 0, -4), roll, pitch, yaw));
     expectVector(chase.position, vec3(datum.x + offset.x, datum.y + offset.y, datum.z + offset.z));

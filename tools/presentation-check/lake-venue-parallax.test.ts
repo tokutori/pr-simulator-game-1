@@ -5,10 +5,10 @@ import terrain from "../../assets/biwa-terrain.json";
 import { recordedCameraFixture } from "./recorded-camera-fixture.js";
 import { currentFlightPoseFixture } from "../game-check/current-session-fixture.js";
 import "./lake-model-fixture.js";
-import { pilotEyePoseThree, syntheticPilotEyePoint } from "../../web/src/render/camera/pilot-eye-point.js";
+import { pilotEyePoseRender, registeredPilotEyePoint } from "../../web/src/render/camera/xr-spatial.js";
 import { IDENTITY_POSE, composePose, multiplyQuaternion, quaternion } from "../../web/src/render/contracts/math.js";
 import type { FlightRenderPose } from "../../web/src/render/contracts/runtime.js";
-import { flightRelativePose } from "../../web/src/render/engines/three/flight-pose.js";
+import { flightRelativePose } from "../../web/src/render/camera/xr-spatial.js";
 
 interface Grid {
   readonly columns: number;
@@ -93,7 +93,7 @@ function pilotCameraForFlight(
     initialPilotPositionMeters: 0
   };
   const aircraftPose = flightRelativePose(flight, IDENTITY_POSE);
-  const eyePose = composePose(aircraftPose, pilotEyePoseThree(syntheticPilotEyePoint(), 0));
+  const eyePose = composePose(aircraftPose, pilotEyePoseRender(registeredPilotEyePoint(), 0));
   const camera = new PerspectiveCamera(60, 16 / 9, 0.05, 100_000);
   camera.position.set(eyePose.position.x, eyePose.position.y, eyePose.position.z);
   camera.quaternion.set(eyePose.orientation.x, eyePose.orientation.y, eyePose.orientation.z, eyePose.orientation.w);
