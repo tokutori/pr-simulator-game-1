@@ -7,6 +7,7 @@ fn advance(clock: &mut FlightFrameClock, timestamp_ms: f64) -> FlightFrameAdvanc
 #[test]
 fn first_and_resumed_frames_start_at_zero_and_keep_a_common_remainder() {
     let mut clock = FlightFrameClock::default();
+    assert!(!clock.interpolation_ready());
     assert_eq!(
         advance(&mut clock, 100.0),
         FlightFrameAdvance::Ticks {
@@ -21,7 +22,9 @@ fn first_and_resumed_frames_start_at_zero_and_keep_a_common_remainder() {
             interpolation_fraction: 0.5,
         }
     );
+    assert!(clock.interpolation_ready());
     clock.suspend();
+    assert!(!clock.interpolation_ready());
     assert_eq!(
         advance(&mut clock, 200.0),
         FlightFrameAdvance::Ticks {

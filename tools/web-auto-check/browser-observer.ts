@@ -169,14 +169,15 @@ declare global {
     const returned: unknown = Reflect.apply(parse, JSON, args);
     const started = performance.now();
     try {
-      if (object(returned) && returned.control_layout === "tail_incidence" && typeof returned.phase === "string" && object(returned.frame)) {
-        observer.snapshotJson = args[0];
-        observer.phase = returned.phase;
-        const state = returned.frame.state;
+      const snapshot = object(returned) && object(returned.snapshot) ? returned.snapshot : returned;
+      if (object(snapshot) && snapshot.control_layout === "tail_incidence" && typeof snapshot.phase === "string" && object(snapshot.frame)) {
+        observer.snapshotJson = snapshot === returned ? args[0] : JSON.stringify(snapshot);
+        observer.phase = snapshot.phase;
+        const state = snapshot.frame.state;
         observer.tick = object(state) && typeof state.tick === "number" ? state.tick : null;
         if (capture.kind === "collecting") {
-          append(capture.observation.phases, { at: started, phase: returned.phase, tick: observer.tick });
-          if (returned.phase !== "flight_running") interrupt?.(`Rust phase changed to ${returned.phase}`);
+          append(capture.observation.phases, { at: started, phase: snapshot.phase, tick: observer.tick });
+          if (snapshot.phase !== "flight_running") interrupt?.(`Rust phase changed to ${snapshot.phase}`);
         }
       }
       if (object(returned) && object(returned.selection) && typeof returned.applied === "string" && object(returned.status)) {

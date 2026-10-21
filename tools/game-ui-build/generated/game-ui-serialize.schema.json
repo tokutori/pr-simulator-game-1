@@ -1276,7 +1276,11 @@
           "$ref": "#/$defs/FlightGamepadAcquisition",
           "description": "Selected connection's neutral and pilot-position takeover state."
         },
-        "previous_pose": {
+        "phase_changed": {
+          "description": "A domain phase or pause-cause transition observed during this frame.",
+          "type": "boolean"
+        },
+        "render_pose": {
           "anyOf": [
             {
               "$ref": "#/$defs/FlightRenderPose"
@@ -1285,7 +1289,7 @@
               "type": "null"
             }
           ],
-          "description": "Start pose of the last attempted physical interval, retained across zero-tick frames by the adapter."
+          "description": "Shared interpolated display pose; paused and terminal frames use their exact committed state."
         },
         "snapshot": {
           "anyOf": [
@@ -1300,10 +1304,11 @@
         }
       },
       "required": [
+        "phase_changed",
         "advance",
         "gamepad",
         "snapshot",
-        "previous_pose"
+        "render_pose"
       ],
       "type": "object"
     },

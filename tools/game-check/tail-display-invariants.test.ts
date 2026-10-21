@@ -1,13 +1,9 @@
 import { readFileSync } from "node:fs";
 import { beforeAll, describe, expect, it, vi } from "vitest";
-import { HybridGameSessionBridge, initSync, maximum_flight_frame_gap_milliseconds, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
+import { HybridGameSessionBridge, initSync, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
 import { TailFlightController } from "../../web/src/game/tail-flight-controller.js";
-import type { TailFlightHudPort, TailPilotInputPort, TailSessionPort } from "../../web/src/game/tail-flight-controller.js";
-import type { TailPilotDemand } from "../../web/src/game/tail-device-input.js";
-import { encodeTailLogicalInput } from "../../web/src/game/tail-input.js";
-import type { TailLogicalInput } from "../../web/src/game/tail-input.js";
+import type { TailFlightHudPort, TailSessionPort } from "../../web/src/game/tail-flight-controller.js";
 import { TailAppSessionFacade } from "../../web/src/app/session-facade.js";
-import type { TailSnapshotDocument } from "../../web/src/generated/tail-snapshot.js";
 import type { AnalysisDocument } from "../../web/src/generated/record-analysis.js";
 import { readContract } from "../game-ui-build/validate.js";
 import { PresentationRuntime } from "../../web/src/presentation/runtime.js";
@@ -25,13 +21,6 @@ const INFORMATION_NAMES = ["full", "standard", "minimal", "realistic", "custom"]
 const BACKENDS: readonly PresentationMode[] = ["screen", "webxr", "phone-vr"];
 const CASES = INFORMATION_NAMES.flatMap((information, informationCode) => BACKENDS.flatMap((backend) =>
   [30, 60, 120].map((fps) => ({ information, informationCode, backend, fps }))));
-type FlightFrame = Extract<TailSnapshotDocument["frame"], { kind: "flight" }>;
-
-function demandAtTick(tick: number): TailPilotDemand {
-  const direction = tick >= 20 && tick < 40 ? 1 : tick >= 40 && tick < 60 ? -1 : 0;
-  return { controlLayout: "tail_incidence", noseUp: direction * 0.03, turnRight: direction * -0.02,
-    pilotPositionCommand: tick === 60 ? { kind: "set", normalized: 0.05 } : { kind: "hold" } };
-}
 
 function mockSpatialBackend(mode: "webxr" | "phone-vr"): PresentationBackendAdapter {
   return {
@@ -73,23 +62,16 @@ async function runInvariantFlight(mode: number, informationCode: number, backend
     expect(initial.scenario).toMatchObject({ catalog_version: 8, scenario_version: 8,
       aircraft_model_version: 5, controller_profile_version: 3, environment_version: 6, seed_low: 11, seed_high: 12 });
     expect(initial.control_identity).toMatchObject({ aircraft_configuration_id: "bpg041-playable-hybrid-mock" });
-    const committed: FlightFrame[] = [];
-    const advanceTick = vi.fn((input: TailLogicalInput) => {
-      const next = facade.flightPort.advanceTick(input);
-      if (next.phase !== "flight_running" || next.frame.kind !== "flight") throw new Error("Invariant sequence must remain airborne before its fixed abort");
-      committed.push(next.frame);
-      expect(next.frame.state.tick).toBe(committed.length);
-      if (next.frame.state.tick !== TERMINAL_TICK) return next;
-      session.abort();
-      return facade.readSnapshot();
-    });
-    const port: TailSessionPort = { ...facade.flightPort, advanceTick, free: () => undefined };
-    let inputTick = 0;
-    const readDemand = vi.fn(() => { const demand = demandAtTick(inputTick); inputTick += 1; return demand; });
-    const input: TailPilotInputPort = {
-      readDemand,
-      reset: vi.fn(), suspend: vi.fn(), resume: vi.fn(), dispose: vi.fn()
+    const port: TailSessionPort = { ...facade.flightPort, free: () => undefined,
+      advanceFrame(timestamp, gamepads, available) {
+        const report = facade.flightPort.advanceFrame(timestamp, gamepads, available);
+        if (timestamp !== 1000) return report;
+        facade.executeSharedSessionCommand({ kind: "abort" });
+        const snapshot = facade.readSnapshot();
+        return { ...report, phase_changed: true, snapshot, render_pose: snapshot.render_pose };
+      }
     };
+    const input = { readGamepads: () => [], dispose: vi.fn() };
     const evidence: { loop: Parameters<RendererAdapter["startLoop"]>[0] | null } = { loop: null };
     const renderFrame = vi.fn<RendererAdapter["render"]>();
     const setFlightPose = vi.fn<RendererAdapter["setFlightPose"]>();
@@ -104,7 +86,7 @@ async function runInvariantFlight(mode: number, informationCode: number, backend
     const failHud = vi.fn<TailFlightHudPort["fail"]>();
     const hud: TailFlightHudPort = { render: vi.fn(), fail: failHud, setVisible: vi.fn() };
     const onTerminal = vi.fn();
-    const activeController = new TailFlightController(port, input, renderer, hud, physics_hz(), maximum_flight_frame_gap_milliseconds(), () => [], onTerminal);
+    const activeController = new TailFlightController(port, input, renderer, hud, onTerminal);
     controller = activeController;
     const activeRuntime = new PresentationRuntime(renderer, [
       new ScreenPresentationBackend(() => ({ x: 1280, y: 720, pixelRatio: 1 })),
@@ -118,17 +100,17 @@ async function runInvariantFlight(mode: number, informationCode: number, backend
     const loop = evidence.loop;
     if (loop === null) throw new Error("Expected a presentation frame loop");
     const viewer = unavailableViewerFrame("not-stereo");
-    for (let frame = 0; frame <= fps; frame += 1) loop(frame * 1_000 / fps, viewer);
+    facade.flightPort.observeFlightKey({ control: "pilot_increase", pressed: true, repeat: false });
+    for (let frame = 0; frame <= fps; frame += 1) {
+      loop(frame * 1_000 / fps, viewer);
+      if (frame === fps / 2) facade.flightPort.observeFlightKey({ control: "pilot_increase", pressed: false, repeat: false });
+    }
     const terminal = activeController.currentSnapshot;
     if (terminal.phase !== "result" || terminal.frame.kind !== "result") throw new Error("Expected fixed-tick ManualAbort");
     expect(terminal.frame.finalization).toMatchObject({ reason: "manual_abort", disposition: "interrupted",
       terminal_tick: TERMINAL_TICK, terminal_fraction: 0, failure: null });
-    expect(terminal.frame.state).toEqual(committed.at(-1)?.state);
-    expect(terminal.frame.telemetry).toEqual(committed.at(-1)?.telemetry);
     expect(terminal.frame.state.datum_position_ned_m).not.toEqual(initial.frame.state.datum_position_ned_m);
     expect(terminal.frame.state.pilot_position_target_m).not.toBe(initial.frame.state.pilot_position_target_m);
-    expect(committed).toHaveLength(TERMINAL_TICK);
-    expect(readDemand).toHaveBeenCalledTimes(TERMINAL_TICK);
     expect(onTerminal).toHaveBeenCalledTimes(1);
     expect(failHud).not.toHaveBeenCalled();
     expect(renderFrame).toHaveBeenCalledTimes(fps + 1);
@@ -154,11 +136,10 @@ async function runInvariantFlight(mode: number, informationCode: number, backend
       controls: { layout: "tail_incidence", physical_incidence: terminal.frame.state.physical_incidence } });
     loop(1_100, viewer);
     loop(1_200, viewer);
-    expect(readDemand).toHaveBeenCalledTimes(TERMINAL_TICK);
     expect(onTerminal).toHaveBeenCalledTimes(1);
     expect(session.export_flight_record_json()).toBe(savedJson);
-    return { initialIdentity: { scenario: initial.scenario, control_identity: initial.control_identity }, initialFrame: initial.frame, committed, terminalFrame: terminal.frame,
-      inputs: advanceTick.mock.calls.map(([input]) => encodeTailLogicalInput(input)), savedSamples, namedSamples,
+    return { initialIdentity: { scenario: initial.scenario, control_identity: initial.control_identity }, initialFrame: initial.frame, terminalFrame: terminal.frame,
+      savedSamples, namedSamples,
       savedFinalization: record.finalization, finalPose, difficulty };
   } finally {
     controller?.dispose();
@@ -175,8 +156,6 @@ describe.each([0, 1, 2])("same-WASM physical display invariants in control mode 
     const observed = await runInvariantFlight(mode, informationCode, backend, fps);
     expect(observed.initialIdentity).toEqual(reference.initialIdentity);
     expect(observed.initialFrame).toEqual(reference.initialFrame);
-    expect(observed.inputs).toEqual(reference.inputs);
-    expect(observed.committed).toEqual(reference.committed);
     expect(observed.terminalFrame).toEqual(reference.terminalFrame);
     expect(observed.savedSamples).toEqual(reference.savedSamples);
     expect(observed.namedSamples).toEqual(reference.namedSamples);

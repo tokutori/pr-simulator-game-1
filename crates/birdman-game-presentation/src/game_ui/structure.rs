@@ -8,6 +8,7 @@ use birdman_game_app::application::RecordSourceId;
 #[derive(Debug, PartialEq)]
 pub struct GameUiStructureKey {
     phase: SessionPhase,
+    resume_available: bool,
     replay_source: Option<SessionReplaySource>,
     selections: GameUiState,
     difficulty: DifficultySettings,
@@ -36,6 +37,7 @@ impl GameUiStructureKey {
         selections.analysis_time_seconds = 0.0;
         Self {
             phase,
+            resume_available: context.resume_available,
             replay_source,
             selections,
             difficulty: context.difficulty,

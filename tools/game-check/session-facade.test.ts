@@ -27,11 +27,37 @@ function advance(facade: AppSessionFacade): void {
 }
 
 describe("layout-discriminated application session facade", () => {
-  it.each(["tick", "action", "platform", "session", "record", "wind"] as const)("checks owner liveness after capturing input getters (%s)", (boundary) => {
+  it("keeps pending query and Countdown tokens across idle frames and invalidates them on physical progress", () => {
+    const facade = new TailAppSessionFacade(new HybridGameSessionBridge(0, 21, 22), physics_hz());
+    try {
+      facade.executeSharedSessionCommand({ kind: "open_setup" });
+      facade.executeSharedSessionCommand({ kind: "prepare" });
+      facade.executeSharedSessionCommand({ kind: "start_countdown" });
+      const countdown = facade.captureCountdownToken();
+      const query = facade.captureQueryToken();
+      facade.advanceFlightFrame(0, []);
+      facade.advanceFlightFrame(10, []);
+      expect(facade.acceptQuery(query, "ready")).toEqual({ kind: "accepted", value: "ready" });
+      expect(facade.observeCountdown(countdown, 3, true)).toEqual({ kind: "launched" });
+      const live = facade.captureQueryToken();
+      facade.advanceFlightFrame(20, []);
+      expect(facade.acceptQuery(live, "ready").kind).toBe("accepted");
+      facade.advanceFlightFrame(30, []);
+      expect(facade.acceptQuery(live, "ready").kind).toBe("stale");
+      facade.executeSharedSessionCommand({ kind: "abort" });
+      const saved = facade.captureQueryToken();
+      facade.advanceFlightFrame(40, []);
+      facade.flightPort.failAdapter();
+      expect(facade.acceptQuery(saved, "saved").kind).toBe("accepted");
+    } finally { facade.dispose(); }
+  });
+
+  it.each(["tick", "action", "platform", "session", "record", "wind", "flight-frame", "flight-key"] as const)("checks owner liveness after capturing input getters (%s)", (boundary) => {
     const bridge = new HybridGameSessionBridge(0, 21, 22);
     const facade = new TailAppSessionFacade(bridge, physics_hz());
     const methods = { tick: "advance_tick_json", action: "game_ui_action_json", platform: "game_ui_view_revision",
-      session: "apply_game_ui_session_command_json", record: "apply_game_ui_record_action_json", wind: "flight_wind_grid_json" } as const;
+      session: "apply_game_ui_session_command_json", record: "apply_game_ui_record_action_json", wind: "flight_wind_grid_json",
+      "flight-frame": "advance_flight_frame_json", "flight-key": "observe_flight_key_json" } as const;
     const call = vi.spyOn(bridge, methods[boundary]);
     const free = vi.spyOn(bridge, "free");
     let reads = 0;
@@ -45,11 +71,31 @@ describe("layout-discriminated application session facade", () => {
           case "session": facade.executeSharedSessionCommand({ get kind() { dispose(); return "open_setup" as const; } }); break;
           case "record": facade.executeSharedRecordAction({ get kind() { dispose(); return "toggle_replay_playing" as const; } }); break;
           case "wind": facade.queryWindGrid({ ...windRequest, get north_min_m() { dispose(); return -10; } }); break;
+          case "flight-frame": facade.advanceFlightFrame(0, [{ get identity() { dispose(); return { slot_low: 1, slot_high: 0, generation: 0 }; }, connected: true, axes: [0, 0, 0] }]); break;
+          case "flight-key": facade.flightPort.observeFlightKey({ get control() { dispose(); return "nose_up" as const; }, pressed: true, repeat: false }); break;
         }
       }).toThrow("disposed");
       expect(reads).toBe(1);
       expect(call).not.toHaveBeenCalled();
       expect(free).toHaveBeenCalledTimes(1);
+    } finally { facade.dispose(); }
+  });
+
+  it("invalidates retained Resume controls when the shared driver fails within the same paused phase", () => {
+    const facade = new TailAppSessionFacade(new HybridGameSessionBridge(0, 21, 22), physics_hz());
+    const platform = sharedGameUiPlatform();
+    const resume = (view: ReturnType<typeof facade.readSharedUi>) => view.panels.flatMap(panel => panel.controls).find(control => control.id === "game-flight-resume");
+    try {
+      launch(facade);
+      facade.executeSharedSessionCommand({ kind: "pause" });
+      const retained = facade.readSharedUi(platform);
+      expect(resume(retained)?.enabled).toBe(true);
+      facade.flightPort.failAdapter();
+      const failed = facade.readSharedUi(platform);
+      expect(facade.readLifecycle()).toMatchObject({ phase: "flight_paused", can_resume: false });
+      expect(failed.view_revision).toBeGreaterThan(retained.view_revision);
+      expect(resume(failed)?.enabled).toBe(false);
+      expect(() => facade.executeSharedSessionCommand({ kind: "resume" })).toThrow();
     } finally { facade.dispose(); }
   });
 

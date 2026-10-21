@@ -472,6 +472,8 @@ pub struct GameUiViewport {
 pub struct GameUiContext<'view, 'session> {
     /// Existing game session owner.
     pub session: &'view GameSession<'session>,
+    /// Resume admission from the application-owned live driver and domain session.
+    pub resume_available: bool,
     /// Existing selected or saved settings.
     pub difficulty: DifficultySettings,
     /// Exact displayed preset retained for archived selections.

@@ -168,6 +168,7 @@ export type AppMessage =
       readonly identity: FlightControllerIdentity;
       readonly message: string;
       readonly snapshot: FlightSnapshotInput;
+      readonly projection: TailGameSessionProjection;
     }
   | { readonly type: "tail-controller-terminal"; readonly identity: FlightControllerIdentity;
       readonly projection: Extract<TailGameSessionProjection, { phase: "result" }> }
@@ -444,8 +445,9 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
           || execution.identity.controllerId !== message.identity.controllerId
           || (model.gameSession.phase !== "flight_running" && model.gameSession.phase !== "flight_paused")) return transition(model);
       const snapshot = message.snapshot;
-      if (!isRetainedLiveSnapshot(snapshot)) return transition(model);
+      if (!isRetainedLiveSnapshot(snapshot) || (message.projection.phase !== "flight_running" && message.projection.phase !== "flight_paused")) return transition(model);
       return transition(withModel(model, {
+        gameSession: Object.freeze(message.projection),
         flightExecution: Object.freeze({ kind: "stopped", identity: execution.identity,
           message: message.message, snapshot })
       }));

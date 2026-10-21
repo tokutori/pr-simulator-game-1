@@ -86,6 +86,9 @@ impl From<SnapshotProjectionError> for BoundaryError {
             SnapshotProjectionError::Progress(error) => Self::Progress(error),
             SnapshotProjectionError::Format(error) => Self::Format(error),
             SnapshotProjectionError::Geometry(error) => Self::Geometry(error),
+            SnapshotProjectionError::Interpolation(error) => {
+                Self::Record(crate::hybrid_record::HybridRecordError::Query(error))
+            }
         }
     }
 }

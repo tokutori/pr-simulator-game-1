@@ -140,9 +140,13 @@ export interface FlightFrameDocument {
         readonly [k: string]: unknown | undefined;
     };
     /**
-     * Start pose of the last attempted physical interval, retained across zero-tick frames by the adapter.
+     * A domain phase or pause-cause transition observed during this frame.
      */
-    readonly previous_pose: FlightRenderPose | null;
+    readonly phase_changed: boolean;
+    /**
+     * Shared interpolated display pose; paused and terminal frames use their exact committed state.
+     */
+    readonly render_pose: FlightRenderPose | null;
     /**
      * Live or terminal projection; menus and recorded playback have their own producer.
      */

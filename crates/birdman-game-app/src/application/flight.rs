@@ -12,6 +12,8 @@ use crate::flight_input::{
 /// Original cause that stops live frame admission until the flight is replaced.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FlightFrameError {
+    /// The adapter reported a fatal input, presentation or feedback failure.
+    AdapterUnavailable,
     /// A presentation timestamp was negative, non-finite or non-monotonic.
     Clock(FlightClockError),
     /// The common input normalizer rejected an intent.
@@ -25,6 +27,8 @@ pub enum FlightFrameError {
 /// Admitted work and the last physical interval's start for render interpolation.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct FlightFrameReport {
+    /// Whether this observation changed the canonical phase or its pause causes.
+    pub phase_changed: bool,
     /// Tick attempts, interpolation remainder or a processing-delay transition.
     pub advance: FlightFrameAdvance,
     /// Start of the final attempted tick; the current state remains owned by the session.
@@ -32,14 +36,21 @@ pub struct FlightFrameReport {
 }
 
 impl ApplicationSession {
-    /// Records a bound key transition in platform event order.
-    pub fn observe_flight_key(&mut self, observation: FlightKeyObservation) {
+    /// Records a bound key transition and returns live admission for platform event routing.
+    pub fn observe_flight_key(&mut self, observation: FlightKeyObservation) -> bool {
         self.flight_input.observe_key(observation);
+        self.session.snapshot().phase() == SessionPhase::FlightRunning
+            && self.flight_failure.is_none()
     }
 
     /// Retires held controls and rearms gamepad takeover after an input-owner reset.
     pub fn invalidate_flight_input(&mut self) {
         self.flight_input.invalidate();
+    }
+
+    /// Stops the current driver after a fatal adapter failure; details stay with its I/O owner.
+    pub fn fail_flight_adapter(&mut self) {
+        self.retain_flight_failure(FlightFrameError::AdapterUnavailable);
     }
 
     /// Reports the selected connection's neutral and pilot-target takeover state.
@@ -50,6 +61,11 @@ impl ApplicationSession {
     /// Returns the shared physical-time remainder for render interpolation.
     pub fn flight_interpolation_fraction(&self) -> f64 {
         self.flight_clock.interpolation_fraction()
+    }
+
+    /// Reports whether the current run has a retained physical interval for display interpolation.
+    pub fn flight_interpolation_ready(&self) -> bool {
+        self.flight_clock.interpolation_ready()
     }
 
     /// Queries frame freshness at a timer observation without consuming a tick budget.
@@ -77,7 +93,9 @@ impl ApplicationSession {
         &mut self,
         timestamp_ms: f64,
         gamepads: &[FlightGamepadObservation],
+        frame_available: bool,
     ) -> Result<FlightFrameReport, FlightFrameError> {
+        let phase_before = self.session.snapshot().phase();
         if let Some(error) = self.flight_failure
             && matches!(
                 self.session.snapshot().phase(),
@@ -85,6 +103,12 @@ impl ApplicationSession {
             )
         {
             return Err(error);
+        }
+        self.observe_external_pause(ExternalPauseReason::DocumentHidden, frame_available)
+            .map_err(FlightFrameError::Session)?;
+        if !frame_available && let Some(token) = self.session.countdown_token() {
+            self.observe_countdown(token, 0.0, false)
+                .map_err(FlightFrameError::Session)?;
         }
         if self.session.snapshot().phase() != SessionPhase::FlightRunning {
             self.flight_clock.suspend();
@@ -149,6 +173,7 @@ impl ApplicationSession {
             self.flight_clock.suspend();
         }
         Ok(FlightFrameReport {
+            phase_changed: phase_before != self.session.snapshot().phase(),
             advance,
             previous_tick,
         })

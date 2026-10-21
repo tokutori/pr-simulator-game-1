@@ -7,10 +7,10 @@ export interface PageFlightSessionPort {
 
 export function suspendPageFlight(
   session: PageFlightSessionPort | null,
-  inputController: { suspend(): void } | null,
+  inputController: { invalidateInput(): void } | null,
   synchronize: () => void
 ): void {
-  inputController?.suspend();
+  inputController?.invalidateInput();
   if (session === null) return;
   const phase = session.phase();
   if (phase === "countdown") {

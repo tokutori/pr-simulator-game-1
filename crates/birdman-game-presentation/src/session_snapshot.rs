@@ -49,14 +49,16 @@ pub struct TailSnapshotDocument<'identity> {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct FlightFrameDocument<'identity> {
+    /// A domain phase or pause-cause transition observed during this frame.
+    pub phase_changed: bool,
     /// Common physical tick budget and interpolation remainder, or delay transition.
     pub advance: birdman_game_app::flight_clock::FlightFrameAdvance,
     /// Selected connection's neutral and pilot-position takeover state.
     pub gamepad: birdman_game_app::flight_input::FlightGamepadAcquisition,
     /// Live or terminal projection; menus and recorded playback have their own producer.
     pub snapshot: Option<TailSnapshotDocument<'identity>>,
-    /// Start pose of the last attempted physical interval, retained across zero-tick frames by the adapter.
-    pub previous_pose: Option<FlightRenderPose>,
+    /// Shared interpolated display pose; paused and terminal frames use their exact committed state.
+    pub render_pose: Option<FlightRenderPose>,
 }
 
 /// Projects a completed frame without introducing another live state owner.
@@ -64,30 +66,6 @@ pub fn flight_frame_snapshot(
     session: &ApplicationSession,
     report: birdman_game_app::application::FlightFrameReport,
 ) -> Result<FlightFrameDocument<'_>, SnapshotProjectionError> {
-    let previous_pose = report
-        .previous_tick
-        .map(|previous| {
-            let telemetry = session
-                .core_session()
-                .flight_record()
-                .and_then(|record| {
-                    record.samples().iter().rev().find(|sample| {
-                        sample.tick_index == previous.tick_index() && sample.fraction == 0.0
-                    })
-                })
-                .map(|sample| sample.telemetry)
-                .ok_or(SnapshotProjectionError::Session(
-                    GameSessionError::InvalidTransition,
-                ))?;
-            Projection { session }.render_pose_internal(
-                previous.flight_state(),
-                previous.incidence(),
-                previous.tick_index() as f64 / f64::from(birdman_game_core::PHYSICS_HZ),
-                Some(telemetry),
-                previous.wing_bending_factor(),
-            )
-        })
-        .transpose()?;
     let snapshot = if matches!(
         session.core_session().snapshot().phase(),
         birdman_game_core::SessionPhase::FlightRunning
@@ -98,11 +76,45 @@ pub fn flight_frame_snapshot(
     } else {
         None
     };
+    let render_pose =
+        match snapshot.as_ref().and_then(|value| value.render_pose) {
+            Some(_) if session.flight_interpolation_ready() => {
+                let record = session.core_session().flight_record().ok_or(
+                    SnapshotProjectionError::Session(GameSessionError::InvalidTransition),
+                )?;
+                let current = record
+                    .samples()
+                    .last()
+                    .ok_or(SnapshotProjectionError::Session(
+                        GameSessionError::InvalidTransition,
+                    ))?;
+                let tick =
+                    current
+                        .tick_index
+                        .checked_sub(1)
+                        .ok_or(SnapshotProjectionError::Session(
+                            GameSessionError::InvalidTransition,
+                        ))?;
+                let fraction = session.flight_interpolation_fraction();
+                let sample = record
+                    .sample_at_time(tick, fraction)
+                    .map_err(SnapshotProjectionError::Interpolation)?;
+                Some(Projection { session }.render_pose_internal(
+                    sample.flight_state,
+                    sample.actuators,
+                    (tick as f64 + fraction) / f64::from(birdman_game_core::PHYSICS_HZ),
+                    Some(sample.telemetry),
+                    sample.wing_bending_factor,
+                )?)
+            }
+            exact => exact,
+        };
     Ok(FlightFrameDocument {
+        phase_changed: report.phase_changed,
         advance: report.advance,
         gamepad: session.flight_gamepad_acquisition(),
         snapshot,
-        previous_pose,
+        render_pose,
     })
 }
 
@@ -157,6 +169,8 @@ pub enum SnapshotProjectionError {
     Format(FlightRecordFormatError),
     /// Registered aircraft presentation metadata is invalid.
     Geometry(&'static str),
+    /// A retained physical interval could not provide a valid display sample.
+    Interpolation(birdman_game_core::FlightRecordQueryError),
 }
 
 /// Projects one live session observation, borrowing its sealed control identity.

@@ -9,18 +9,6 @@ export class FlightControllerUiBindings {
   private nextSessionId = 1;
   private nextControllerId = 1;
 
-  bindDisplay(session: TailSessionPort, display: Pick<TailFlightHudPort, "render" | "setVisible">,
-    readSnapshot: () => FlightSnapshotInput, dispatch: (message: AppMessage) => void
-  ): { readonly identity: FlightControllerIdentity; readonly port: TailFlightHudPort } {
-    const identity = this.identityFor(session);
-    const port: TailFlightHudPort = Object.freeze({
-      render: (snapshot: TailControllerSnapshot): void => { display.render(snapshot); },
-      setVisible: (visible: boolean): void => { display.setVisible(visible); },
-      fail: (message: string): void => { dispatch({ type: "flight-controller-stopped", identity, message, snapshot: readSnapshot() }); }
-    });
-    return Object.freeze({ identity, port });
-  }
-
   bindAppDisplay(session: TailSessionPort, display: Pick<TailFlightHudPort, "render" | "setVisible">,
     readProjection: () => TailGameSessionProjection, readSnapshot: () => FlightSnapshotInput, dispatch: (message: AppMessage) => void
   ): { readonly identity: FlightControllerIdentity; readonly port: TailFlightHudPort; readonly onTerminal: (snapshot: TailResultSnapshot) => void } {
@@ -40,7 +28,7 @@ export class FlightControllerUiBindings {
           dispatch({ type: "flight-controller-result-feedback", identity, message });
           return;
         }
-        dispatch({ type: "flight-controller-stopped", identity, message, snapshot: readSnapshot() });
+        dispatch({ type: "flight-controller-stopped", identity, message, projection, snapshot: readSnapshot() });
       }
     });
     return Object.freeze({ identity, port, onTerminal: publishTerminal });

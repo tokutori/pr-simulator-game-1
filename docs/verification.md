@@ -361,8 +361,8 @@ Countdownはcoreだけでなく、実WASM/facade/Web frame列とNative Update/Fi
 非表示化・blur・frame停止・VR中断で安全取消し、record未開始と発進tick0を確認する。
 
 - 表示不変回帰は同じ実WASMでManual/Shared/Automaticごとに、Information 5種、 Screen/合成WebXR/合成Phone VR、30/60/120 FPSを比較する。
-- 100 Hz入力はtick20–39で $(0.03,-0.02)$、40–59で逆符号、60でpilot Set(0.05)、その他neutral/Holdとする。
-- 100 tickのManualAbortまでの全状態・controls・telemetry・入力・sample・query・finalization・最終poseを比較する。
+- 生キー観測列は発進後にpilot増加を押し、500 msのframe直後に解放する。appの共有driverが各物理tickの確定targetへ積分する。
+- 100 tickのManualAbortまでの保存sample・controls・telemetry・query・finalization・最終poseを比較する。複数tickのframe、0 tickの補間更新、Pause/Resumeとfractional終端も直接Rust・実WASM・本番controllerで検査する。
 - 同じWASM演算列には追加許容差を設けない。
 - 表示/PB metadataは物理列から分離する。
 - この合成backend検査と実XR端末の受入は区別する。

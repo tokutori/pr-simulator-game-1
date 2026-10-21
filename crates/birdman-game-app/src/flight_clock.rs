@@ -38,6 +38,7 @@ pub struct FlightFrameClock {
     accumulated_ms: f64,
     suspended: bool,
     processing_delayed: bool,
+    interpolation_ready: bool,
 }
 
 impl FlightFrameClock {
@@ -72,9 +73,11 @@ impl FlightFrameClock {
         while self.accumulated_ms + 1e-9 >= tick_ms {
             self.accumulated_ms = (self.accumulated_ms - tick_ms).max(0.0);
             count += 1;
+            self.interpolation_ready = true;
             if !advance_tick() {
                 self.suspended = true;
                 self.accumulated_ms = 0.0;
+                self.interpolation_ready = false;
                 break;
             }
         }
@@ -85,6 +88,7 @@ impl FlightFrameClock {
     pub fn suspend(&mut self) {
         self.suspended = true;
         self.accumulated_ms = 0.0;
+        self.interpolation_ready = false;
     }
 
     /// Starts an admitted run at zero elapsed time after processing delay has recovered.
@@ -95,6 +99,7 @@ impl FlightFrameClock {
         self.suspended = false;
         self.previous_timestamp_ms = None;
         self.accumulated_ms = 0.0;
+        self.interpolation_ready = false;
         true
     }
 
@@ -106,6 +111,11 @@ impl FlightFrameClock {
     /// Returns the admitted remainder used by aircraft, pilot and camera interpolation.
     pub fn interpolation_fraction(&self) -> f64 {
         self.accumulated_ms * f64::from(PHYSICS_HZ) / 1000.0
+    }
+
+    /// Reports a committed physical interval admitted since the last suspension or reset.
+    pub fn interpolation_ready(&self) -> bool {
+        self.interpolation_ready && !self.suspended
     }
 
     /// Queries the last accepted frame's freshness without advancing physical time.

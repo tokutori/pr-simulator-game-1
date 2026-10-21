@@ -795,6 +795,21 @@ impl FlightRecord {
         if requested_time == sample_time(last) {
             return self.terminal_playback_sample(tick_index, fraction);
         }
+        if let Some(start) = self.samples.iter().rev().nth(1)
+            && requested_time >= sample_time(start)
+        {
+            if requested_time == sample_time(start) {
+                return playback_sample(start, tick_index, fraction);
+            }
+            return interpolate_samples(
+                start,
+                last,
+                elapsed_ticks(sample_time(start), requested_time)
+                    / elapsed_ticks(sample_time(start), sample_time(last)),
+                tick_index,
+                fraction,
+            );
+        }
         if requested_time == sample_time(first) {
             return playback_sample(first, tick_index, fraction);
         }

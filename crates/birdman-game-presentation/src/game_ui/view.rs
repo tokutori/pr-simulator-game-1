@@ -17,7 +17,7 @@ pub fn game_ui_view(
     let phase = context.session.snapshot().phase();
     let scene = scene(phase);
     let can_resume =
-        context.session.can_resume() && context.platform.flight_controller_failure.is_none();
+        context.resume_available && context.platform.flight_controller_failure.is_none();
     let mut menu = Menu::default();
     let credits_open = state.credits_open
         && matches!(

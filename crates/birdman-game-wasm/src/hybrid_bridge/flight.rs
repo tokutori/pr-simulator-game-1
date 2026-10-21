@@ -14,10 +14,9 @@ fn decode_key(json: &str) -> Result<FlightKeyObservation, BoundaryError> {
 #[wasm_bindgen]
 impl HybridGameSessionBridge {
     /// Supplies one keyboard transition in the same order as application commands.
-    pub fn observe_flight_key_json(&mut self, json: &str) -> Result<(), JsValue> {
+    pub fn observe_flight_key_json(&mut self, json: &str) -> Result<bool, JsValue> {
         let observation = decode_key(json).map_err(BoundaryError::into_js)?;
-        self.session.observe_flight_key(observation);
-        Ok(())
+        Ok(self.session.observe_flight_key(observation))
     }
 
     /// Retires controls after browser input-owner or focus reset.
@@ -25,13 +24,19 @@ impl HybridGameSessionBridge {
         self.session.invalidate_flight_input();
     }
 
+    /// Reports a fatal browser adapter failure to the common execution owner.
+    pub fn fail_flight_adapter(&mut self) {
+        self.session.fail_flight_adapter();
+    }
+
     /// Samples raw devices through the shared input and physical-time owner once per frame.
     pub fn advance_flight_frame_json(
         &mut self,
         timestamp_ms: f64,
         gamepads_json: &str,
+        frame_available: bool,
     ) -> Result<String, JsValue> {
-        self.advance_flight_frame_internal(timestamp_ms, gamepads_json)
+        self.advance_flight_frame_internal(timestamp_ms, gamepads_json, frame_available)
             .map_err(BoundaryError::into_js)
     }
 
@@ -50,6 +55,7 @@ impl HybridGameSessionBridge {
         &mut self,
         timestamp_ms: f64,
         gamepads_json: &str,
+        frame_available: bool,
     ) -> Result<String, BoundaryError> {
         if gamepads_json.len() > MAX_GAMEPAD_JSON_BYTES {
             return Err(BoundaryError::InputTooLarge);
@@ -58,7 +64,7 @@ impl HybridGameSessionBridge {
             serde_json::from_str(gamepads_json).map_err(BoundaryError::Json)?;
         let report = self
             .session
-            .advance_flight_frame(timestamp_ms, &gamepads)
+            .advance_flight_frame(timestamp_ms, &gamepads, frame_available)
             .map_err(BoundaryError::FlightFrame)?;
         let document = birdman_game_presentation::session_snapshot::flight_frame_snapshot(
             &self.session,
@@ -74,7 +80,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn fractional_contact_uses_interval_start_telemetry_for_the_previous_render_pose() {
+    fn fractional_contact_uses_the_exact_terminal_pose_and_telemetry() {
         let mut bridge = HybridGameSessionBridge::from_mode(ControlMode::Manual, 4000, 42);
         bridge.open_setup().unwrap();
         bridge
@@ -92,11 +98,17 @@ mod tests {
         bridge
             .observe_countdown(bridge.countdown_token(), 1.0, true)
             .unwrap();
-        bridge.advance_flight_frame_internal(1000.0, "[]").unwrap();
+        bridge
+            .advance_flight_frame_internal(1000.0, "[]", true)
+            .unwrap();
         for frame_index in 1..=400 {
             let frame: serde_json::Value = serde_json::from_str(
                 &bridge
-                    .advance_flight_frame_internal(1000.0 + f64::from(frame_index) * 100.0, "[]")
+                    .advance_flight_frame_internal(
+                        1000.0 + f64::from(frame_index) * 100.0,
+                        "[]",
+                        true,
+                    )
                     .unwrap(),
             )
             .unwrap();
@@ -106,19 +118,14 @@ mod tests {
             let record = bridge.session.core_session().flight_record().unwrap();
             let terminal = record.samples().last().unwrap();
             assert!(terminal.fraction > 0.0);
-            let previous = record
-                .samples()
-                .iter()
-                .rev()
-                .find(|sample| sample.tick_index == terminal.tick_index && sample.fraction == 0.0)
-                .unwrap();
+            assert_eq!(frame["render_pose"], frame["snapshot"]["render_pose"]);
             assert_eq!(
-                frame["previous_pose"]["airspeedMetersPerSecond"],
-                previous.telemetry.airspeed_mps
+                frame["render_pose"]["airspeedMetersPerSecond"],
+                terminal.telemetry.airspeed_mps
             );
-            let wind = previous.telemetry.wind_velocity_ned_mps.components();
+            let wind = terminal.telemetry.wind_velocity_ned_mps.components();
             assert_eq!(
-                frame["previous_pose"]["windVelocityNedMetersPerSecond"],
+                frame["render_pose"]["windVelocityNedMetersPerSecond"],
                 serde_json::json!({"north": wind[0], "east": wind[1], "down": wind[2]})
             );
             return;
@@ -140,16 +147,25 @@ mod tests {
         bridge
             .observe_countdown(bridge.countdown_token(), 1.0, true)
             .unwrap();
-        bridge.advance_flight_frame_internal(1000.0, "[]").unwrap();
+        bridge
+            .advance_flight_frame_internal(1000.0, "[]", true)
+            .unwrap();
         let before = bridge.snapshot_internal().unwrap();
         assert!(matches!(
-            bridge.advance_flight_frame_internal(6000.0, &" ".repeat(MAX_GAMEPAD_JSON_BYTES + 1)),
+            bridge.advance_flight_frame_internal(
+                6000.0,
+                &" ".repeat(MAX_GAMEPAD_JSON_BYTES + 1),
+                true
+            ),
             Err(BoundaryError::InputTooLarge)
         ));
         assert_eq!(bridge.snapshot_internal().unwrap(), before);
-        let frame: serde_json::Value =
-            serde_json::from_str(&bridge.advance_flight_frame_internal(1010.0, "[]").unwrap())
-                .unwrap();
+        let frame: serde_json::Value = serde_json::from_str(
+            &bridge
+                .advance_flight_frame_internal(1010.0, "[]", true)
+                .unwrap(),
+        )
+        .unwrap();
         assert_eq!(frame["advance"]["count"], 1);
         assert_eq!(frame["gamepad"]["kind"], "unselected");
         assert_eq!(frame["snapshot"]["phase"], "flight_running");

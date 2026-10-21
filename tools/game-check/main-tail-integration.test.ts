@@ -4,6 +4,7 @@ import { Window as BrowserWindow } from "happy-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { readContract } from "../game-ui-build/validate.js";
 import type { GameUiView } from "../../web/src/generated/game-ui-view.js";
+import type { FlightFrameDocument } from "../../web/src/generated/flight-frame.js";
 import type { LakeWaterQualityCleanupResult, RendererAdapter } from "../../web/src/render/contracts/runtime.js";
 import { unavailableViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
 import type { WebXrSessionPort } from "../../web/src/presentation/webxr-contracts.js";
@@ -150,7 +151,12 @@ async function fixture(failInitialization = false, seedCurrentArchive = false, d
   const pause = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "pause");
   const clearPauseReason = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "clear_pause_reason");
   const sharedView = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "game_ui_view_json");
-  const tick = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "advance_tick_json");
+  const flightFrame = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "advance_flight_frame_json");
+  const tickCount = (): number => flightFrame.mock.results.reduce((count, result) => {
+    if (result.type !== "return") return count;
+    const frame = readContract<FlightFrameDocument>("flight_frame", result.value);
+    return count + (frame.advance.kind === "ticks" ? frame.advance.count : 0);
+  }, 0);
   const advancePlayback = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "advance_playback");
   const playbackClock = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "playback_clock_state");
   const playbackCamera = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "playback_camera_view_json");
@@ -202,7 +208,7 @@ async function fixture(failInitialization = false, seedCurrentArchive = false, d
     } else nowMilliseconds = nextMilliseconds;
     callback?.();
   };
-  return { browser, documentRef, renderer, scene, click, launch, page, free, exportRecord, summary, analysis, wind, sharedCommand, sharedView, pause, clearPauseReason, tick, advancePlayback, playbackClock, playbackCamera, replayTicks, observeCountdown,
+  return { browser, documentRef, renderer, scene, click, launch, page, free, exportRecord, summary, analysis, wind, sharedCommand, sharedView, pause, clearPauseReason, tickCount, flightFrame, advancePlayback, playbackClock, playbackCamera, replayTicks, observeCountdown,
     countdownTick, countdown, acknowledgeWaterQuality,
     advanceClock: (elapsedMilliseconds: number) => { nowMilliseconds += elapsedMilliseconds; },
     sessionOwner: () => {
@@ -289,7 +295,7 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     await vi.waitFor(() => { expect(owner.readLifecycle().phase).toBe("briefing_ready"); });
     expect(owner.observeCountdown(obsolete, 3, true)).toEqual({ kind: "ignored" });
     expect(trial.observeCountdown.mock.results.filter((result) => result.type === "return" && result.value === 3)).toHaveLength(0);
-    expect(trial.tick).not.toHaveBeenCalled();
+    expect(trial.tickCount()).toBe(0);
   });
 
   it.each(["ui-update", "rejected-ui-update"] as const)("continues the same Countdown after query invalidation by %s", async (operation) => {
@@ -335,7 +341,7 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     expect(trial.scene()).toBe("Flight");
     completed?.();
     expect(trial.observeCountdown.mock.results.filter((result) => result.type === "return" && result.value === 3)).toHaveLength(1);
-    expect(trial.tick).not.toHaveBeenCalled();
+    expect(trial.tickCount()).toBe(0);
   });
 
   it("rejects an old Countdown callback after cancel and restart", async () => {
@@ -373,7 +379,7 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     trial.countdownTick(3000, undefined, false);
     expect(trial.scene()).toBe("Briefing");
     expect(trial.observeCountdown.mock.results.filter((result) => result.type === "return" && result.value === 3)).toHaveLength(0);
-    expect(trial.tick).not.toHaveBeenCalled();
+    expect(trial.tickCount()).toBe(0);
   });
   it("advances from callback arrivals when the initial RAF timestamp precedes delivery", async () => {
     const trial = await fixture();
@@ -386,18 +392,18 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     trial.advanceClock(95);
     trial.frame(initialFrameTimestamp, 0);
     trial.frame(initialFrameTimestamp + 166.1, 73.9);
-    expect(trial.tick).toHaveBeenCalledTimes(7);
+    expect(trial.tickCount()).toBe(7);
     expect(trial.pause).not.toHaveBeenCalled();
     expect(owner.readGameSessionProjection().phase).toBe("flight_running");
     trial.click("game-flight-abort");
     trial.click("game-result-retry");
     trial.launch();
-    const previousTickCount = trial.tick.mock.calls.length;
+    const previousTickCount = trial.tickCount();
     const retryFrameTimestamp = performance.now();
     trial.frame(retryFrameTimestamp, 95);
-    expect(trial.tick).toHaveBeenCalledTimes(previousTickCount);
+    expect(trial.tickCount()).toBe(previousTickCount);
     trial.frame(retryFrameTimestamp + 166.1, 10);
-    expect(trial.tick).toHaveBeenCalledTimes(previousTickCount + 1);
+    expect(trial.tickCount()).toBe(previousTickCount + 1);
     expect(trial.pause).not.toHaveBeenCalled();
   });
 
@@ -412,12 +418,12 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     trial.frame(initialFrameTimestamp, 0);
     trial.frame(initialFrameTimestamp + 10, gap);
     if (gap > 150) {
-      expect(trial.pause).toHaveBeenCalledExactlyOnceWith(3);
-      expect(trial.tick).not.toHaveBeenCalled();
+      expect(owner.readLifecycle().can_resume).toBe(false);
+      expect(trial.tickCount()).toBe(0);
       expect(owner.readGameSessionProjection().phase).toBe("flight_paused");
     } else {
       expect(trial.pause).not.toHaveBeenCalled();
-      expect(trial.tick).toHaveBeenCalledTimes(Math.floor(gap / 10));
+      expect(trial.tickCount()).toBe(Math.floor(gap / 10));
       expect(owner.readGameSessionProjection().phase).toBe("flight_running");
     }
   });
@@ -430,11 +436,11 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     trial.launch();
     trial.frame(0);
     trial.frame(15);
-    expect(trial.tick).toHaveBeenCalledTimes(1);
+    expect(trial.tickCount()).toBe(1);
     trial.frame(1_015);
-    expect(trial.tick).toHaveBeenCalledTimes(1);
+    expect(trial.tickCount()).toBe(1);
     expect(trial.documentRef.querySelector('.screen-ui-shell')?.textContent).toContain("処理に時間がかかった");
-    expect(trial.pause).toHaveBeenCalledWith(3);
+    expect((await trial.sessionOwner()).readLifecycle().can_resume).toBe(false);
     const resume = (): HTMLButtonElement => {
       const button = trial.documentRef.querySelector<HTMLButtonElement>('button[data-control-id="game-flight-resume"]');
       if (button === null) throw new Error("ProcessingDelay must expose explicit Resume");
@@ -445,13 +451,13 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     expect(resume().disabled).toBe(true);
     trial.frame(2_025);
     expect(resume().disabled).toBe(false);
-    expect(trial.tick).toHaveBeenCalledTimes(1);
+    expect(trial.tickCount()).toBe(1);
     trial.click("game-flight-resume");
     trial.frame(10_000);
     trial.frame(10_005);
-    expect(trial.tick).toHaveBeenCalledTimes(1);
+    expect(trial.tickCount()).toBe(1);
     trial.frame(10_010);
-    expect(trial.tick).toHaveBeenCalledTimes(2);
+    expect(trial.tickCount()).toBe(2);
     trial.click("game-flight-abort");
     expect(trial.scene()).toBe("Result");
     expect(trial.exportRecord).toHaveReturned();
@@ -698,26 +704,26 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
       trial.click(`presentation-render-scale-${scale}`);
       expect(trial.renderer.setScreenRenderScale.mock.lastCall).toEqual([factor]);
       expect(trial.documentRef.querySelector(`[data-control-id="presentation-render-scale-${scale}"]`)?.getAttribute("aria-pressed")).toBe("true");
-      expect(trial.tick).not.toHaveBeenCalled();
+      expect(trial.tickCount()).toBe(0);
     }
     trial.click("presentation-render-scale-auto");
     expect(trial.renderer.setScreenRenderAuto.mock.lastCall).toEqual([true]);
     expect(trial.documentRef.querySelector('[data-control-id="presentation-render-scale-auto"]')?.getAttribute("aria-pressed")).toBe("true");
     trial.click("presentation-render-scale-100");
     expect(trial.documentRef.querySelector('[data-control-id="presentation-render-scale-auto"]')?.getAttribute("aria-pressed")).toBe("false");
-    expect(trial.tick).not.toHaveBeenCalled();
+    expect(trial.tickCount()).toBe(0);
     trial.click("game-setup-start");
     trial.launch();
     trial.frame(0);
     trial.frame(10);
     trial.click("game-flight-pause");
     trial.click("game-pause-open-settings");
-    const before = trial.tick.mock.calls.length;
+    const before = trial.tickCount();
     const back = trial.documentRef.querySelector<HTMLButtonElement>('[data-control-id="game-pause-settings-back"]');
     back?.focus();
     trial.click("presentation-render-scale-50");
     expect(trial.renderer.setScreenRenderScale.mock.lastCall).toEqual([0.5]);
-    expect(trial.tick.mock.calls).toHaveLength(before);
+    expect(trial.tickCount()).toBe(before);
     expect(trial.documentRef.querySelector('[data-control-id="game-pause-settings-back"]')).toBe(back);
     expect(trial.documentRef.activeElement).toBe(back);
     trial.click("game-pause-settings-back");
@@ -743,7 +749,7 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
       expect(trial.scene()).toBe("Countdown");
       trial.frame(step * 10);
       expect(trial.renderer.setPreparedFlightPose.mock.lastCall?.[0]).toEqual(initial);
-      expect(trial.tick).not.toHaveBeenCalled();
+      expect(trial.tickCount()).toBe(0);
       trial.countdownTick();
     }
     expect(trial.scene()).toBe("Flight");
@@ -828,7 +834,7 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     if (phase === "paused") trial.click("game-flight-pause");
     trial.click(phase === "paused" ? "game-paused-abort" : "game-flight-abort");
     expect(trial.scene()).toBe("Result");
-    const ticks = trial.tick.mock.calls.length;
+    const ticks = trial.tickCount();
     await vi.waitFor(() => { expect(trial.exportRecord).toHaveBeenCalledTimes(1); });
     const record = trial.exportRecord.mock.results[0]?.value as string;
     expect(JSON.parse(record)).toMatchObject({ schema_version: 7, finalization: { reason: "manual_abort" } });
@@ -837,7 +843,7 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     trial.frame(5_000);
     expect(trial.pause).not.toHaveBeenCalled();
     expect(trial.clearPauseReason).not.toHaveBeenCalled();
-    expect(trial.tick).toHaveBeenCalledTimes(ticks);
+    expect(trial.tickCount()).toBe(ticks);
     expect(trial.exportRecord).toHaveBeenCalledTimes(1);
     expect(trial.browser.document.body.textContent).not.toContain("InvalidTransition");
     expect(trial.sharedCommand.mock.calls.filter(([json]) => {
@@ -1013,8 +1019,8 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
 
   it("publishes the initial Rust snapshot and Abort when controller creation and input cleanup both fail", async () => {
     const trial = await fixture();
-    const { BrowserTailPilotInput } = await import("../../web/src/game/browser-tail-input.js");
-    vi.spyOn(BrowserTailPilotInput.prototype, "dispose").mockImplementationOnce(() => { throw new Error("Injected input cleanup failure"); });
+    const { BrowserFlightInput } = await import("../../web/src/game/browser-flight-input.js");
+    vi.spyOn(BrowserFlightInput.prototype, "dispose").mockImplementationOnce(() => { throw new Error("Injected input cleanup failure"); });
     await vi.waitFor(() => { expect(trial.scene()).toBe("Title"); });
     trial.click("game-title-start");
     trial.click("game-setup-start");
@@ -1026,9 +1032,15 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     expect(trial.browser.document.body.textContent).toContain("Injected controller creation failure");
     expect(trial.browser.document.body.textContent).toContain("Injected input cleanup failure");
     expect(trial.documentRef.querySelector('[data-node="hud-last-valid-state"] output')?.textContent).toBe("0.00 s");
-    trial.click("game-flight-abort");
+    trial.click("game-paused-abort");
     expect(trial.scene()).toBe("Result");
     expect(trial.free).not.toHaveBeenCalled();
+    trial.click("game-result-retry");
+    trial.launch();
+    trial.frame(0);
+    trial.frame(10);
+    expect((await trial.sessionOwner()).readLifecycle().phase).toBe("flight_running");
+    expect(trial.tickCount()).toBe(1);
   });
 
   it.each(["water_contact", "manual_abort"] as const)("delivers Result persistence and Analysis despite a %s committed-view failure", async (reason) => {
@@ -1043,9 +1055,9 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
         const command = JSON.parse(json) as { readonly kind: string };
         return command.kind === "abort" && trial.sharedCommand.mock.results[index]?.type === "return";
       })
-        : trial.tick.mock.results.some((result) => {
-          const snapshot: unknown = JSON.parse(result.value as string);
-          return typeof snapshot === "object" && snapshot !== null && "phase" in snapshot && snapshot.phase === "result";
+        : trial.flightFrame.mock.results.some((result) => {
+          if (result.type !== "return") return false;
+          return readContract<FlightFrameDocument>("flight_frame", result.value).snapshot?.phase === "result";
         });
       if (terminal && !injected) { injected = true; throw new Error("Injected committed Result view failure"); }
     });
@@ -1090,11 +1102,11 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     expect(trial.browser.document.body.textContent).toContain("Injected Retry reset pose failure");
     expect(trial.documentRef.querySelector('[data-node="hud-last-valid-state"] output')?.textContent).toBe("0.00 s");
     expect(trial.documentRef.querySelector('[data-control-id="game-flight-pause"]')).toBeNull();
-    expect(trial.documentRef.querySelector('[data-control-id="game-flight-resume"]')).toBeNull();
+    expect(trial.documentRef.querySelector<HTMLButtonElement>('[data-control-id="game-flight-resume"]')?.disabled).toBe(true);
     trial.frame(20);
     trial.frame(100);
     expect(trial.documentRef.querySelector('[data-node="hud-last-valid-state"] output')?.textContent).toBe("0.00 s");
-    trial.click("game-flight-abort");
+    trial.click("game-paused-abort");
     expect(trial.scene()).toBe("Result");
     expect(trial.free).not.toHaveBeenCalled();
   });

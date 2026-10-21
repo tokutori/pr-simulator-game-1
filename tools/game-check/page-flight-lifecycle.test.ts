@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { Window as BrowserWindow } from "happy-dom";
 import { describe, expect, it, vi } from "vitest";
-import { HybridGameSessionBridge, initSync, maximum_flight_frame_gap_milliseconds, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
+import { HybridGameSessionBridge, initSync, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
 import { installBrowserPageLifecycle } from "../../web/src/app/browser-page-lifecycle.js";
 import { TailFlightController } from "../../web/src/game/tail-flight-controller.js";
 import { TailAppSessionFacade } from "../../web/src/app/session-facade.js";
@@ -40,12 +40,11 @@ describe("browser cache to Rust session boundary", () => {
       return snapshot.frame.state;
     };
     const input = {
-      readDemand: () => ({ controlLayout: "tail_incidence" as const, noseUp: 0, turnRight: 0, pilotPositionCommand: { kind: "hold" as const } }),
-      reset() {}, suspend() {}, resume() {}, dispose() {}
+      readGamepads: () => [], dispose() {}
     };
     const controller = new TailFlightController(facade.flightPort, input, { setFlightPose() {} }, {
       render() {}, setVisible() {}, fail(message) { throw new Error(message); }
-    }, physics_hz(), maximum_flight_frame_gap_milliseconds(), () => []);
+    });
     const synchronize = vi.fn();
     installBrowserPageLifecycle(window as unknown as Window, {
       suspend: () => { suspendPageFlight(pagePort(session), controller, synchronize); },
@@ -64,7 +63,7 @@ describe("browser cache to Rust session boundary", () => {
         const before = readState();
         event("pagehide", true);
         expect(pagePort(session).phase()).toBe("flight_paused");
-        controller.onFrame(40_000 + roundTrip * 50_000);
+        controller.onFrame(40_000 + roundTrip * 50_000, false);
         event("pageshow", true);
         expect(pagePort(session).phase()).toBe("flight_paused");
         expect(session.can_resume()).toBe(false);
@@ -73,7 +72,7 @@ describe("browser cache to Rust session boundary", () => {
         expect(readState()).toEqual(before);
         expect(free).not.toHaveBeenCalled();
         session.resume();
-        controller.resume();
+        controller.synchronizeSnapshot(facade.readSnapshot());
         const baseline = 40_010 + roundTrip * 50_000;
         controller.onFrame(baseline);
         expect(readState()).toEqual(before);
