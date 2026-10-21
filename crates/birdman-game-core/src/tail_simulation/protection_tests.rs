@@ -68,6 +68,72 @@ fn evaluated_report_transfers_controls_and_normalizes_only_zero_contact() {
 }
 
 #[test]
+fn existing_contact_retains_accepted_state_before_a_future_wind_domain_failure() {
+    let definition = TestAircraft::try_new().unwrap();
+    let surfaces = definition.surfaces().unwrap();
+    let aircraft = definition.aircraft();
+    let previous = state(
+        &aircraft,
+        [10.0, 0.0, 1.0],
+        [0.0; 3],
+        TailIncidence::neutral(),
+        0.0,
+    );
+    let maximum_down = surfaces
+        .iter()
+        .flat_map(|surface| surface.proxies())
+        .map(|proxy| proxy.point().components()[2])
+        .fold(0.0, f64::max);
+    let wind_samples = [NedVector::zero(); 8];
+    let wind = WindField::grid(
+        NedPoint::try_new(-32.0, -32.0, -32.0).unwrap(),
+        NedVector::try_new(64.0, 64.0, 32.0 + maximum_down + 0.001).unwrap(),
+        [2; 3],
+        &wind_samples,
+    )
+    .unwrap();
+    let loads = HybridAerodynamicLoad::try_new(
+        HybridModel::try_new(definition.polar().unwrap(), &surfaces).unwrap(),
+        1.225,
+        wind,
+    )
+    .unwrap();
+    loads
+        .evaluate_hybrid(&previous.flight_state(), previous.incidence())
+        .unwrap();
+    let config = config(&aircraft, ControlMode::Manual, 1.0);
+    let input = input_holding_incidence(TailIncidence::try_new(0.03, -0.04).unwrap());
+    let future_error =
+        advance_tail_flight_tick(&aircraft, previous, config, input, &loads).unwrap_err();
+    let cause = hybrid_error(future_error);
+    assert_eq!(cause.cause(), AeroError::Wind(WindError::OutsideGrid));
+    assert_ne!(cause.stage(), Some(AerodynamicStage::First));
+    let points = [
+        BodyPoint::try_new(0.0, 0.0, -0.1).unwrap(),
+        BodyPoint::origin(),
+        BodyPoint::try_new(0.0, 0.0, 0.1).unwrap(),
+    ];
+    let geometry = WaterContactGeometry::try_new(&points).unwrap();
+    let report = advance_tail_flight_tick_with_contact_report(
+        &aircraft, previous, config, input, &loads, geometry,
+    )
+    .unwrap();
+    let TailFlightTickOutcome::WaterContact(contact) = report.outcome() else {
+        panic!("expected the existing boundary contact");
+    };
+    assert_eq!(contact.interval_start_tick(), previous.tick_index());
+    assert_eq!(contact.fraction(), 0.0);
+    assert_eq!(contact.contact_point_index(), 1);
+    assert_eq!(contact.flight_state(), previous.flight_state());
+    assert_eq!(contact.incidence(), previous.incidence());
+    assert_eq!(
+        contact.pilot_position_target(),
+        previous.pilot_position_target()
+    );
+    assert_eq!(report.applied_controls(), None);
+}
+
+#[test]
 fn alpha_guard_applies_effective_pilot_targets_without_clamping_state_or_losing_hold_set_reports() {
     let definition = TestAircraft::try_new().unwrap();
     let surfaces = definition.surfaces().unwrap();

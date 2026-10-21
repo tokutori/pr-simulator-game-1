@@ -610,10 +610,10 @@ pub fn advance_tail_flight_tick_with_contact(
 
 /// Returns the committed physical outcome and its once-evaluated applied controls atomically.
 ///
-/// No report escapes a failed tick. Contact at fraction zero retains the preceding state and
-/// discards newly evaluated controls because that interval elapsed no simulation time.
-/// Every trial checks all RK stages and the published terminal state, rather than rejecting
-/// a valid fractional contact solely because its unpublished weighted endpoint is invalid.
+/// Existing contact at the interval boundary retains the preceding state and controls
+/// before evaluating a new command or future RK stage. Every elapsed trial checks all
+/// RK stages and the published terminal state, including fractional contact whose
+/// unpublished weighted endpoint lies outside the load domain.
 pub fn advance_tail_flight_tick_with_contact_report(
     aircraft: &AircraftModel,
     previous: TailFlightTickState,
@@ -622,6 +622,12 @@ pub fn advance_tail_flight_tick_with_contact_report(
     loads: &HybridAerodynamicLoad<'_>,
     geometry: WaterContactGeometry<'_>,
 ) -> Result<TailFlightTickReport, TailFlightTickError> {
+    if let Some(index) = geometry
+        .initial_contact_point(previous.flight_state())
+        .map_err(TailFlightTickError::Contact)?
+    {
+        return Ok(contact_at_start_report(previous, 0.0, index));
+    }
     let evaluation =
         evaluate_tail_flight_tick(aircraft, previous, config, input, loads, Some(geometry))?;
     Ok(evaluated_tick_report(

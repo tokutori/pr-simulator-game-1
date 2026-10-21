@@ -323,6 +323,11 @@ fn near_repeated_nlerp_critical_roots_retain_contact_and_spatial_precision() {
 #[test]
 fn contact_coefficients_and_later_point_errors_are_never_suppressed() {
     assert_eq!(
+        geometry(&[contact_point(0.0, 2.0), contact_point(f64::MAX, f64::MAX)])
+            .initial_contact_point(tick(0, -1.0, 0.5).flight_state),
+        Err(ContactError::Math(crate::MathError::NonFinite))
+    );
+    assert_eq!(
         detect_contact(
             &aircraft(),
             tick(0, -f64::MAX, 0.0),

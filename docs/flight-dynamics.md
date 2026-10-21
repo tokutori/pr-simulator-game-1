@@ -448,7 +448,7 @@ M_O^B=M_{O,static}^B+\sum_i r_i^B\times\Delta F_i^B
 - 最初の到達区間を同じ補間状態上で二分探索して確定する。
 
 - 終端の位置・姿勢・actuator・身体状態は同一時刻へ揃える。
-- 正のfractionでは全RK4 stageへ保持した更新incidenceを使い、fraction 0の既存接触では直前snapshotのincidenceを保持する。
+- 区間開始時の既存形状を最初に調べ、接触済みなら直前snapshotの状態・incidence・pilot targetで終了する。正のfractionでは全RK4 stageへ保持した更新incidenceを使う。
 - 内部接触検出はbody stateを補間し、tail tickが同時刻のphysical incidenceとpilot targetを付ける。
 - `advance_tail_flight_tick_with_contact`はfractional terminal sampleだけを返し、接触後のinteger-tick stateを公開・保存しない。
 - Result・graph・Replayは同じ終端sampleを参照する。

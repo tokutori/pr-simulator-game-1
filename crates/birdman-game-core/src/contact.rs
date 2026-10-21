@@ -169,6 +169,26 @@ impl<'a> WaterContactGeometry<'a> {
     pub const fn end_points_body(self) -> &'a [BodyPoint] {
         self.end_points_body
     }
+
+    pub(crate) fn initial_contact_point(
+        self,
+        state: FlightState,
+    ) -> Result<Option<usize>, ContactError> {
+        if airborne_state_scale_is_safe(state, state)
+            && let Some(bounds) = self.bounds
+            && bounds[0].maximum_down(state)?
+                < -airborne_margin(state, state, bounds[0].radius(), 0.0)
+        {
+            return Ok(None);
+        }
+        let mut first_contact = None;
+        for (index, point) in self.points_body.iter().enumerate() {
+            if contact_point_down(state, *point)? >= 0.0 && first_contact.is_none() {
+                first_contact = Some(index);
+            }
+        }
+        Ok(first_contact)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
