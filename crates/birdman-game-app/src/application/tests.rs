@@ -42,6 +42,114 @@ fn neutral() -> TailFlightTickInput {
 }
 
 #[test]
+fn registered_live_records_interval_initial_coefficients_and_restores_them_on_retry_and_replay() {
+    use birdman_game_format::TailFlightRecordDocument;
+    let definition = crate::registered_aircraft().unwrap();
+    for mode in [
+        ControlMode::Manual,
+        ControlMode::Automatic,
+        ControlMode::Shared(birdman_game_core::FbwAuthority::try_new(0.2).unwrap()),
+    ] {
+        let mut application = ApplicationSession::new(mode, 3, 42);
+        execute(&mut application, SessionCommand::OpenSetup {});
+        execute(&mut application, SessionCommand::Prepare {});
+        let initial = application.core_session().prepared_launch_state().unwrap();
+        launch(&mut application);
+        let mut airspeed = application
+            .core_session()
+            .telemetry()
+            .unwrap()
+            .unwrap()
+            .airspeed_mps;
+        assert_eq!(
+            initial.wing_bending_factor(),
+            Some(definition.shape().wing_bending_factor(airspeed).unwrap())
+        );
+        for _ in 0..3 {
+            let expected = definition.shape().wing_bending_factor(airspeed).unwrap();
+            application.advance_tail_flight_tick(neutral()).unwrap();
+            let sample = application
+                .core_session()
+                .flight_record()
+                .unwrap()
+                .samples()
+                .last()
+                .unwrap();
+            assert_eq!(sample.wing_bending_factor, Some(expected));
+            airspeed = sample.telemetry.airspeed_mps;
+        }
+        let record = application.core_session().flight_record().unwrap();
+        let document = TailFlightRecordDocument::from_record(
+            record,
+            application.difficulty(),
+            application.prepared().unwrap().record_identity.clone(),
+        )
+        .unwrap();
+        assert_eq!(document.schema_version, 7);
+        let restored = TailFlightRecordDocument::decode_json(&document.encode_json().unwrap())
+            .unwrap()
+            .to_finalized_core_record()
+            .unwrap();
+        for (saved, original) in restored.samples().iter().zip(record.samples()) {
+            assert_eq!(saved.wing_bending_factor, original.wing_bending_factor);
+            assert_eq!(saved.controls, original.controls);
+            assert_eq!(
+                saved.flight_state.datum_position_ned(),
+                original.flight_state.datum_position_ned()
+            );
+            assert_eq!(saved.telemetry, original.telemetry);
+        }
+        let terminal = record.terminal_sample().unwrap();
+        execute(&mut application, SessionCommand::EnterReplay {});
+        application.seek_playback(3.0 / 100.0).unwrap();
+        assert_eq!(
+            application
+                .core_session()
+                .playback_record()
+                .unwrap()
+                .sample_at_seconds(0.03)
+                .unwrap()
+                .wing_bending_factor,
+            terminal.wing_bending_factor
+        );
+        execute(&mut application, SessionCommand::LeaveReplay {});
+        execute(&mut application, SessionCommand::Retry {});
+        launch(&mut application);
+        assert_eq!(
+            application
+                .core_session()
+                .snapshot()
+                .tail_flight_state()
+                .unwrap(),
+            initial
+        );
+    }
+}
+
+#[test]
+fn deforming_sealed_configuration_rejects_a_fixed_shape_tick() {
+    let mut application = prepared();
+    launch(&mut application);
+    assert!(matches!(
+        application.session.advance_tail_flight_tick(neutral()),
+        Err(GameSessionError::TailTick(
+            birdman_game_core::TailFlightTickError::Contact(
+                birdman_game_core::ContactError::ShapeProjection
+            )
+        ))
+    ));
+    assert_eq!(
+        application
+            .core_session()
+            .flight_record()
+            .unwrap()
+            .samples()
+            .len(),
+        1
+    );
+}
+
+#[test]
 fn fractional_projection_uses_one_terminal_time_without_integer_rounding() {
     let mut application = prepared();
     launch(&mut application);
@@ -609,6 +717,22 @@ fn shared_attract_keeps_player_selection_and_reuses_the_installed_record() {
     let record = application.core_session().playback_record().unwrap();
     let address = record.samples().as_ptr();
     assert!(record.duration_seconds().unwrap() > 0.0);
+    assert!(
+        record
+            .samples()
+            .iter()
+            .all(|sample| sample.wing_bending_factor.is_some())
+    );
+    assert_eq!(
+        birdman_game_format::TailFlightRecordDocument::from_record(
+            record,
+            application.display_difficulty(),
+            application.attract().unwrap().record_identity.clone()
+        )
+        .unwrap()
+        .schema_version,
+        7
+    );
     assert_eq!(
         application.display_difficulty().information(),
         InformationLevel::Minimal

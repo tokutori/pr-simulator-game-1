@@ -2,6 +2,10 @@ export interface FlightRecordExportPort {
   export_flight_record_json(): string;
 }
 
+export function isSupportedFlightRecordSchema(version: unknown): boolean {
+  return version === 6 || version === 7;
+}
+
 export interface StoredFlightRecord {
   readonly id: number;
   readonly savedAt: string;
@@ -71,7 +75,18 @@ export class FlightRecordRepository {
   async recent(limit: number): Promise<readonly StoredFlightRecordSummary[]> {
     if (!Number.isSafeInteger(limit) || limit < 1) throw new RangeError("Record preview limit must be a positive integer");
     const records = await this.persistence.getRecent(limit);
-    return Object.freeze(records.slice(0, limit).map(({ id, savedAt, personalBest }) => Object.freeze({ id, savedAt, personalBest })));
+    return Object.freeze(await Promise.all(records.slice(0, limit).map(async ({ id, savedAt, personalBest }) => {
+      if (personalBest) {
+        const stored = await this.persistence.get(id);
+        personalBest = false;
+        if (stored !== null && isSupportedFlightRecordSchema(recordSchemaVersion(stored.json))) {
+          const selection = this.createSelection(stored.json);
+          try { personalBest = selection.is_eligible(); }
+          finally { selection.free(); }
+        }
+      }
+      return Object.freeze({ id, savedAt, personalBest });
+    })));
   }
 }
 
@@ -131,7 +146,7 @@ export class IndexedDbFlightRecordPersistence implements FlightRecordPersistence
                 return;
               }
               try {
-                if (recordSchemaVersion(value.json) === 6) selection.consider_existing(Number(cursor.primaryKey), value.json);
+                if (isSupportedFlightRecordSchema(recordSchemaVersion(value.json))) selection.consider_existing(Number(cursor.primaryKey), value.json);
               } catch (error: unknown) {
                 abort(error);
                 return;
@@ -162,7 +177,7 @@ export class IndexedDbFlightRecordPersistence implements FlightRecordPersistence
                 return;
               }
               try {
-                if (recordSchemaVersion(existing.json) === 6) selection.consider_existing(indexed.recordId, existing.json);
+                if (isSupportedFlightRecordSchema(recordSchemaVersion(existing.json))) selection.consider_existing(indexed.recordId, existing.json);
               } catch (error: unknown) {
                 abort(error);
                 return;
@@ -361,7 +376,7 @@ function validateFinalizedRecord(json: string): void {
     throw new TypeError("Rust returned invalid flight record JSON");
   }
   if (!isObject(value)) throw new TypeError("Flight record document must be an object");
-  if (value.schema_version !== 6) throw new RangeError("Unsupported flight record schema version");
+  if (!isSupportedFlightRecordSchema(value.schema_version)) throw new RangeError("Unsupported flight record schema version");
   const document = value as { readonly header?: unknown; readonly samples?: unknown; readonly finalization?: unknown };
   if (!isObject(document.header)
       || !Array.isArray(document.samples)

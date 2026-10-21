@@ -300,7 +300,10 @@ impl ApplicationSession {
         &mut self,
         input: TailFlightTickInput,
     ) -> Result<SessionSnapshot, GameSessionError> {
-        self.session.advance_tail_flight_tick(input)
+        self.prepared
+            .as_mut()
+            .ok_or(GameSessionError::InvalidTransition)?
+            .advance(&mut self.session, input)
     }
 
     /// Opens a validated external record and discards the unrelated sealed live metadata.
@@ -404,22 +407,17 @@ impl ApplicationSession {
 
 fn build_demo_record() -> Result<(FlightRecord, AttractMetadata), ApplicationError> {
     use birdman_game_core::{TailPilotIntent, TailPilotPositionCommand, TailRateTarget};
-    let preparation = crate::HybridSessionPreparation::try_new_for_weather(
-        ControlMode::Automatic,
-        crate::DEFAULT_MAXIMUM_FLIGHT_TICKS,
-        0xD3A0,
-        WeatherClass::Calm,
-    )
-    .map_err(ApplicationError::Preparation)?;
-    let (configuration, record_identity) = preparation.into_parts();
     let difficulty = crate::default_difficulty(ControlMode::Automatic)
         .with_information(InformationLevel::Minimal)
         .with_weather(WeatherClass::Calm);
     let mut builder = GameSession::new();
     builder.open_setup().map_err(ApplicationError::Session)?;
-    builder
-        .prepare_flight(configuration)
-        .map_err(ApplicationError::Session)?;
+    let mut prepared = commands::prepare_flight(
+        &mut builder,
+        difficulty,
+        crate::DEFAULT_MAXIMUM_FLIGHT_TICKS,
+        0xD3A0,
+    )?;
     builder
         .mark_briefing_ready()
         .map_err(ApplicationError::Session)?;
@@ -438,7 +436,7 @@ fn build_demo_record() -> Result<(FlightRecord, AttractMetadata), ApplicationErr
         TailPilotPositionCommand::Hold,
     );
     for _tick in 0..crate::DEFAULT_MAXIMUM_FLIGHT_TICKS {
-        if let Err(error) = builder.advance_tail_flight_tick(input)
+        if let Err(error) = prepared.advance(&mut builder, input)
             && builder.snapshot().phase() != SessionPhase::Result
         {
             return Err(ApplicationError::Session(error));
@@ -462,7 +460,7 @@ fn build_demo_record() -> Result<(FlightRecord, AttractMetadata), ApplicationErr
     Ok((
         record,
         AttractMetadata {
-            record_identity,
+            record_identity: prepared.record_identity,
             difficulty,
         },
     ))

@@ -1,5 +1,5 @@
 use super::*;
-use birdman_game_core::{FbwAuthority, GameSession, SessionEndReason};
+use birdman_game_core::{FbwAuthority, SessionEndReason};
 use birdman_game_format::WeatherClass;
 use serde_json::{Value, json};
 
@@ -279,33 +279,38 @@ fn shared_native_preparation_matches_wasm_states_records_and_public_defaults() {
                 )
                 .unwrap();
             bridge.prepare_internal().unwrap();
-            let preparation = birdman_game_app::HybridSessionPreparation::try_new_for_weather(
-                mode, MAX_TICKS, seed, weather,
-            )
-            .unwrap();
-            let (configuration, identity) = preparation.into_parts();
-            assert_eq!(bridge.session.prepared().unwrap().record_identity, identity);
-            let mut native = GameSession::new();
-            native.open_setup().unwrap();
-            native.prepare_flight(configuration).unwrap();
+            let mut native = ApplicationSession::new(mode, MAX_TICKS, seed);
+            for command in [
+                SessionCommand::OpenSetup {},
+                SessionCommand::SelectWeather { weather },
+                SessionCommand::Prepare {},
+            ] {
+                native.execute(command, BackendReadiness::Ready).unwrap();
+            }
+            assert_eq!(
+                bridge.session.prepared().unwrap().record_identity,
+                native.prepared().unwrap().record_identity
+            );
             bridge.mark_briefing_ready().unwrap();
-            native.mark_briefing_ready().unwrap();
             bridge.start_countdown(1).unwrap();
             native.start_countdown(1).unwrap();
             bridge
                 .observe_countdown(bridge.countdown_token(), 1.0, true)
                 .unwrap();
             native
-                .observe_countdown(native.countdown_token().unwrap(), 1.0, true)
+                .observe_countdown(native.core_session().countdown_token().unwrap(), 1.0, true)
                 .unwrap();
             assert_eq!(
                 bridge.session.core_session().configuration_identity(),
-                native.configuration_identity()
+                native.core_session().configuration_identity()
             );
-            assert_eq!(bridge.session.core_session().snapshot(), native.snapshot());
+            assert_eq!(
+                bridge.session.core_session().snapshot(),
+                native.core_session().snapshot()
+            );
             assert_eq!(
                 bridge.session.core_session().telemetry().unwrap(),
-                native.telemetry().unwrap()
+                native.core_session().telemetry().unwrap()
             );
             let json = input(json!({"kind":"hold"}));
             for _tick in 0..10 {
@@ -313,17 +318,25 @@ fn shared_native_preparation_matches_wasm_states_records_and_public_defaults() {
                 native
                     .advance_tail_flight_tick(decode_input(&json).unwrap())
                     .unwrap();
-                assert_eq!(bridge.session.core_session().snapshot(), native.snapshot());
+                assert_eq!(
+                    bridge.session.core_session().snapshot(),
+                    native.core_session().snapshot()
+                );
                 assert_eq!(
                     bridge.session.core_session().telemetry().unwrap(),
-                    native.telemetry().unwrap()
+                    native.core_session().telemetry().unwrap()
                 );
             }
             bridge.abort().unwrap();
-            native.abort_flight().unwrap();
-            assert_eq!(bridge.session.core_session().snapshot(), native.snapshot());
+            native
+                .execute(SessionCommand::Abort {}, BackendReadiness::Ready)
+                .unwrap();
+            assert_eq!(
+                bridge.session.core_session().snapshot(),
+                native.core_session().snapshot()
+            );
             let wasm_record = bridge.session.core_session().flight_record().unwrap();
-            let native_record = native.flight_record().unwrap();
+            let native_record = native.core_session().flight_record().unwrap();
             assert_eq!(wasm_record.samples(), native_record.samples());
             assert_eq!(wasm_record.finalization(), native_record.finalization());
         }

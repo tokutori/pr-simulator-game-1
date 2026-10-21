@@ -1,6 +1,6 @@
 use crate::aerodynamics::{HybridAerodynamicLoad, TailIncidence};
 use crate::aerodynamics_contract::HybridError;
-use crate::contact::WaterContactGeometry;
+use crate::contact::{ContactError, TailContactShapeProvider, WaterContactGeometry};
 use crate::dynamics::{AircraftModel, FlightState, Gravity};
 use crate::flight_control::ControlMode;
 use crate::math::{BodyPoint, NedPoint, NedVector};
@@ -13,7 +13,7 @@ use crate::tail_control::{TailControlProfile, TailPilotPositionMapping};
 use crate::tail_simulation::{
     TailFlightTickConfig, TailFlightTickError, TailFlightTickInput, TailFlightTickOutcome,
     TailFlightTickReport, TailFlightTickState, TailWaterContactSample,
-    advance_tail_flight_tick_with_contact_report,
+    advance_tail_flight_tick_with_contact_report, advance_tail_flight_tick_with_shape_provider,
 };
 use crate::wind_field::WindError;
 
@@ -28,6 +28,8 @@ pub enum TailFlightScenarioError {
     Aerodynamics(HybridError),
     /// The composite-center wind or telemetry cannot be evaluated at launch.
     Telemetry(FlightTelemetryError),
+    /// The prepared structural law or initial contact shape failed validation.
+    Contact(ContactError),
 }
 
 /// Sealed physical launch, initial tail incidence, trim mapping and contact conditions.
@@ -115,6 +117,31 @@ impl<'a> TailFlightScenario<'a> {
         Ok(scenario)
     }
 
+    /// Seals the initial structural coefficient sampled from actual composite-CG airspeed.
+    pub fn with_contact_shape(
+        mut self,
+        provider: &mut dyn TailContactShapeProvider,
+    ) -> Result<Self, TailFlightScenarioError> {
+        let initial = self.initial_state();
+        let telemetry = self
+            .telemetry(initial.flight_state())
+            .map_err(TailFlightScenarioError::Telemetry)?;
+        let factor = provider
+            .wing_bending_factor(telemetry.airspeed_mps)
+            .map_err(TailFlightScenarioError::Contact)?;
+        let points = provider
+            .points(factor, initial.incidence())
+            .map_err(TailFlightScenarioError::Contact)?;
+        if points.len() != self.parameters.contact_geometry.points_body().len() {
+            return Err(TailFlightScenarioError::Contact(
+                ContactError::MismatchedGeometry,
+            ));
+        }
+        WaterContactGeometry::try_new(points).map_err(TailFlightScenarioError::Contact)?;
+        self.parameters.initial_state = initial.with_wing_bending_factor(factor);
+        Ok(self)
+    }
+
     /// Returns the sealed tick-zero body/pilot state, physical incidences and trim target.
     pub const fn initial_state(&self) -> TailFlightTickState {
         self.parameters.initial_state
@@ -164,6 +191,9 @@ impl<'a> TailFlightScenario<'a> {
         mode: ControlMode,
         input: TailFlightTickInput,
     ) -> Result<TailFlightTickReport, TailFlightTickError> {
+        if self.initial_state().wing_bending_factor().is_some() {
+            return Err(TailFlightTickError::Contact(ContactError::ShapeProjection));
+        }
         advance_tail_flight_tick_with_contact_report(
             &self.parameters.aircraft,
             previous,
@@ -171,6 +201,24 @@ impl<'a> TailFlightScenario<'a> {
             input,
             &self.loads,
             self.parameters.contact_geometry,
+        )
+    }
+
+    /// Advances with caller-owned structural storage and the sealed loads and controls.
+    pub fn advance_tick_with_shape_provider(
+        &self,
+        previous: TailFlightTickState,
+        mode: ControlMode,
+        input: TailFlightTickInput,
+        provider: &mut dyn TailContactShapeProvider,
+    ) -> Result<TailFlightTickReport, TailFlightTickError> {
+        advance_tail_flight_tick_with_shape_provider(
+            &self.parameters.aircraft,
+            previous,
+            self.tick_config(mode),
+            input,
+            &self.loads,
+            provider,
         )
     }
 

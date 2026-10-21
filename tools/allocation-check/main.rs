@@ -90,6 +90,56 @@ fn calibrate() {
     println!("calibration: alloc=1 alloc_zeroed=1 realloc=1");
 }
 
+fn registered_application_flight() {
+    use birdman_game_app::application::{ApplicationSession, BackendReadiness, SessionCommand};
+    use birdman_game_core::{SessionEndReason, SessionPhase};
+    let mut application = ApplicationSession::default();
+    for command in [
+        SessionCommand::OpenSetup {},
+        SessionCommand::Prepare {},
+        SessionCommand::StartCountdown {},
+    ] {
+        application
+            .execute(command, BackendReadiness::Ready)
+            .unwrap();
+    }
+    let token = application.core_session().countdown_token().unwrap();
+    application.observe_countdown(token, 3.0, true).unwrap();
+    let input = TailFlightTickInput::new(
+        TailPilotIntent::try_new(0.0, 0.0).unwrap(),
+        TailRateTarget::try_new(0.0, 0.0).unwrap(),
+        TailPilotPositionCommand::Hold,
+    );
+    let mut failure = None;
+    let mut ticks = 0;
+    begin();
+    for _ in 0..birdman_game_app::DEFAULT_MAXIMUM_FLIGHT_TICKS {
+        ticks += 1;
+        if let Err(error) = application.advance_tail_flight_tick(black_box(input)) {
+            failure = Some(error);
+            break;
+        }
+        if application.core_session().snapshot().phase() == SessionPhase::Result {
+            break;
+        }
+    }
+    let counts = end();
+    assert_eq!(failure, None);
+    assert_eq!(counts, [0, 0, 0]);
+    let record = application.core_session().flight_record().unwrap();
+    assert_eq!(
+        record.finalization().unwrap().reason,
+        SessionEndReason::WaterContact
+    );
+    assert!(
+        record
+            .samples()
+            .iter()
+            .all(|sample| sample.wing_bending_factor.is_some())
+    );
+    println!("registered application flight: ticks={ticks} alloc=0 alloc_zeroed=0 realloc=0");
+}
+
 fn measure<T>(name: &str, operation: impl FnMut() -> T) -> T {
     measure_iterations(name, ITERATIONS, operation)
 }
@@ -254,6 +304,7 @@ fn outside_dynamics(error: DynamicsError) {
 
 fn main() {
     calibrate();
+    registered_application_flight();
     let definition = birdman_game_content::playable_aircraft().unwrap();
     let mut points = definition.contact_points().to_vec();
     let mut deformation_case = 0;

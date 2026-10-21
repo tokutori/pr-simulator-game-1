@@ -439,7 +439,8 @@ M_O^B=M_{O,static}^B+\sum_i r_i^B\times\Delta F_i^B
 - 有限姿勢gridの表示頂点比較を、連続外形の全姿勢誤差上限として扱わない。
 - 形状・荷重・trimの変更をaircraft modelとcatalog/scenarioの意味versionへ反映し、保存済みのidentityとJSON原文を保持する。
 
-- 接触点はdatumからの固定offsetを持つ。
+- 登録機体の接触点はdatum基準の固定順structural point群とする。区間開始の合成重心対気速度から準静的主翼係数を求め、尾翼の候補incidenceとともに点群を投影する。
+- 主翼係数は100 Hz区間内で零次保持する。準備時にも同じ実対気速度から初期係数を求め、通常飛行とAttractはcaller所有の準備済みbufferを使用する。
 - 隣接する成功tick間の状態を補間し、各点の到達fractionから最早eventを選ぶ。
 - 位置・速度・角速度・身体状態は線型補間し、姿勢は短経路slerp、近角は既存nlerpを使う。
 - 通常slerpでは線型項とsin/cosからdown座標の内部極値を隔離する。
@@ -448,7 +449,7 @@ M_O^B=M_{O,static}^B+\sum_i r_i^B\times\Delta F_i^B
 - 最初の到達区間を同じ補間状態上で二分探索して確定する。
 
 - 終端の位置・姿勢・actuator・身体状態は同一時刻へ揃える。
-- 区間開始時の既存形状を最初に調べ、接触済みなら直前snapshotの状態・incidence・pilot targetで終了する。正のfractionでは全RK4 stageへ保持した更新incidenceを使う。
+- 区間開始時の既存形状を最初に調べ、接触済みなら直前snapshotの状態・incidence・pilot target・係数で終了する。入力採用直後の同時刻接触では更新後の値を終端境界eventへ保存し、正のfractionでは全RK4 stageへ保持した更新incidenceを使う。
 - 内部接触検出はbody stateを補間し、tail tickが同時刻のphysical incidenceとpilot targetを付ける。
 - `advance_tail_flight_tick_with_contact`はfractional terminal sampleだけを返し、接触後のinteger-tick stateを公開・保存しない。
 - Result・graph・Replayは同じ終端sampleを参照する。
@@ -457,7 +458,7 @@ M_O^B=M_{O,static}^B+\sum_i r_i^B\times\Delta F_i^B
 - Distance score v1は、発進course axisに対するdatumの符号付き水平変位projectionである。
 - 右向きcross-track変位と直線水平変位長を独立metricとし、軌跡長・CG移動・公式競技計測と区別する。
 - WaterContactではfractional terminal sample、TimeLimitでは最後の有効状態から採点して飛行を確定する。
-- 接触面は静止した基準湖面、接触外形は固定proxyとする。
+- 接触面は静止した基準湖面、接触外形は採用した変形・尾翼角を反映した有限点群とする。
 
 ## 検証範囲
 

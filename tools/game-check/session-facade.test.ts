@@ -108,7 +108,7 @@ describe("layout-discriminated application session facade", () => {
       facade.executeSharedSessionCommand({ kind: "resume" });
       expect(facade.executeSharedSessionCommand({ kind: "abort" }).kind).toBe("aborted");
       expect(facade.readLifecycle().phase).toBe("result");
-      expect(facade.exportRecordJson()).toContain('"schema_version":6');
+      expect(facade.exportRecordJson()).toContain('"schema_version":7');
       facade.executeSharedSessionCommand({ kind: "retry" });
       expect(facade.readLifecycle().phase).toBe("briefing_ready");
     } finally {

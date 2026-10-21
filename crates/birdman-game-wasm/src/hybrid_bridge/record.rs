@@ -50,7 +50,7 @@ impl HybridGameSessionBridge {
         self.execute_application(SessionCommand::EnterReplay {}, BackendReadiness::Preparing)
     }
 
-    /// Opens a validated schema-six record without reinterpreting its physical state.
+    /// Opens a validated record while preserving its recorded physical state.
     pub fn open_archived_flight_record(&mut self, json: &str) -> Result<(), JsValue> {
         self.open_archive_internal(json)
             .map_err(BoundaryError::into_js)
@@ -300,7 +300,7 @@ impl HybridGameSessionBridge {
     }
 }
 
-/// Rust-owned schema-six Personal Best selection.
+/// Rust-owned Personal Best selection for supported record formats.
 #[wasm_bindgen]
 pub struct TailPersonalBestSelectionBridge {
     selection: Option<TailPersonalBestSelection>,

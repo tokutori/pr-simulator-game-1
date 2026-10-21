@@ -5,6 +5,7 @@ use vstd::prelude::*;
 
 pub use crate::configured_phase::BriefingFailure;
 use crate::configured_session::RetryError;
+use crate::contact::TailContactShapeProvider;
 use crate::countdown::{CountdownAdvance, CountdownStartError, start_countdown};
 use crate::dynamics::{AircraftModel, FlightState};
 use crate::flight_control::ControlMode;
@@ -19,7 +20,7 @@ use crate::scenario::{FlightTelemetry, FlightTelemetryError};
 use crate::scoring::{DistanceScore, DistanceScoreError, course_distance_score};
 use crate::session_contract::{SessionEndReason, SessionScenarioIdentity};
 use crate::tail_control::TailPilotPositionMapping;
-use crate::tail_scenario::TailFlightScenario;
+use crate::tail_scenario::{TailFlightScenario, TailFlightScenarioError};
 use crate::tail_simulation::{
     TailFlightTickError, TailFlightTickInput, TailFlightTickState, TailWaterContactSample,
 };
@@ -53,6 +54,15 @@ impl<'a> GameSessionConfiguration<'a> {
             maximum_flight_ticks,
             identity,
         })
+    }
+
+    /// Admits structural projection while preserving the sealed aircraft, wind and control policy.
+    pub fn with_contact_shape(
+        mut self,
+        provider: &mut dyn TailContactShapeProvider,
+    ) -> Result<Self, TailFlightScenarioError> {
+        self.scenario = self.scenario.with_contact_shape(provider)?;
+        Ok(self)
     }
 
     /// Returns the validated aircraft used to construct pilot-position inputs.
@@ -1399,6 +1409,36 @@ impl<'a> GameSession<'a> {
                     previous,
                     configuration.control_mode,
                     input,
+                )
+            },
+            |configuration, state| configuration.telemetry(state),
+            |configuration, terminal| {
+                course_distance_score(
+                    configuration
+                        .initial_state()
+                        .flight_state()
+                        .datum_position_ned(),
+                    terminal.flight_state().datum_position_ned(),
+                    configuration.course_axis(),
+                )
+            },
+        )
+    }
+
+    /// Advances the sealed flight using only a prepared structural projection capability.
+    pub fn advance_tail_flight_tick_with_shape_provider(
+        &mut self,
+        input: TailFlightTickInput,
+        provider: &mut dyn TailContactShapeProvider,
+    ) -> Result<SessionSnapshot, GameSessionError> {
+        self.advance_tail_flight_tick_with(
+            input,
+            |configuration, previous, input| {
+                configuration.scenario.advance_tick_with_shape_provider(
+                    previous,
+                    configuration.control_mode,
+                    input,
+                    provider,
                 )
             },
             |configuration, state| configuration.telemetry(state),

@@ -28,7 +28,7 @@ pub struct TailPersonalBestConfiguration<'a> {
     pub controller_profile: TailControlProfile,
 }
 
-/// Deterministic selection among eligible schema-six records of one explicit configuration.
+/// Deterministic selection among eligible records of one explicit configuration.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TailPersonalBestSelection {
     key: PersonalBestKey,
@@ -108,7 +108,13 @@ pub(crate) fn validated_tail_personal_best_candidate(
     {
         return Err(FlightRecordFormatError::InvalidRecord);
     }
-    Ok(key.zip(score))
+    Ok(
+        if record.header.physics_model_version == birdman_game_core::PHYSICS_MODEL_VERSION {
+            key.zip(score)
+        } else {
+            None
+        },
+    )
 }
 
 fn key_for_validated_record(

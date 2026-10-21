@@ -57,7 +57,7 @@ pub enum RecordExportError {
     Format(FlightRecordFormatError),
 }
 
-/// Produces the existing schema-six document and key without recomputing flight outputs.
+/// Produces the current two-tail document and key from the retained physical outputs.
 pub fn export_record_document(
     session: &GameSession<'_>,
     metadata: RecordExportMetadata<'_>,

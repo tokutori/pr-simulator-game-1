@@ -560,12 +560,12 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
     const originalCsv = await download("csv", "result-log");
     const archive: unknown = JSON.parse(originalJson);
     assert.ok(typeof archive === "object" && archive !== null);
-    assert.ok("schema_version" in archive && archive.schema_version === 6);
+    assert.ok("schema_version" in archive && archive.schema_version === 7);
     assert.ok("samples" in archive && Array.isArray(archive.samples) && archive.samples.length > 1);
     assert.ok("finalization" in archive && typeof archive.finalization === "object" && archive.finalization !== null);
     assert.ok("reason" in archive.finalization && archive.finalization.reason === "manual_abort");
     assert.ok("terminal_tick" in archive.finalization && typeof archive.finalization.terminal_tick === "number" && archive.finalization.terminal_tick >= 10);
-    assert.match(originalCsv.split("\n")[1] ?? "", /^3,6,tail_incidence,/);
+    assert.match(originalCsv.split("\n")[1] ?? "", /^4,7,tail_incidence,/);
     report.downloads = { jsonBytes: Buffer.byteLength(originalJson), csvBytes: Buffer.byteLength(originalCsv),
       jsonSha256: createHash("sha256").update(originalJson).digest("hex"), csvSha256: createHash("sha256").update(originalCsv).digest("hex") };
     await click("game-result-open-analysis");

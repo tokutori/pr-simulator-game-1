@@ -147,7 +147,7 @@ describe("current WebAssembly browser binding", () => {
       expect(snapshot.frame.finalization.score_m?.[0]).toBeGreaterThan(150);
       const encoded = session.exportRecordJson();
       const document = JSON.parse(encoded) as { schema_version: number; header: { personal_best_key: number[] } };
-      expect(document.schema_version).toBe(6);
+      expect(document.schema_version).toBe(7);
       expect(document.header.personal_best_key).toHaveLength(32);
       const selection = new TailPersonalBestSelectionBridge(encoded);
       try {
@@ -162,9 +162,15 @@ describe("current WebAssembly browser binding", () => {
     } finally { session.dispose(); }
   });
 
-  it("keeps simulation outcomes independent of 30, 60 and 120 FPS rendering", () => {
-    const results: string[] = [];
-    for (const fps of [30, 60, 120]) {
+  describe("rendering frame-rate independence", () => {
+    let referenceRecord: string;
+    beforeAll(() => { referenceRecord = recordedFlightAtFrameRate(30); });
+
+    it.each([60, 120])("preserves the 30 FPS outcome at %i FPS", (fps) => {
+      expect(recordedFlightAtFrameRate(fps)).toBe(referenceRecord);
+    });
+
+    function recordedFlightAtFrameRate(fps: number): string {
       const session = createAppSession({ controlModeCode: 0, seedLow: 0, seedHigh: 0 });
       launchCurrentSession(session);
       const input = { reset() {}, resume() {}, suspend() {}, dispose() {},
@@ -178,11 +184,9 @@ describe("current WebAssembly browser binding", () => {
           controller.onFrame(frame * 1_000 / fps);
         }
         expect(controller.currentSnapshot.phase).toBe("result");
-        results.push(session.exportRecordJson());
+        return session.exportRecordJson();
       } finally { controller.dispose(); }
     }
-    expect(results[1]).toBe(results[0]);
-    expect(results[2]).toBe(results[0]);
   });
 
   it("routes neutral-confirmed gamepad demand through the current WASM controller", () => {

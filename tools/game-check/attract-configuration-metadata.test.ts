@@ -11,7 +11,7 @@ beforeAll(() => {
   initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url))) });
 });
 
-const demoMetadata = [4, 2, 0, 0, 6, 1, 6, 4, 1, 3, 0xD3A0, 0, 1, 0, 0, 0, 0, 0];
+const demoMetadata = [4, 2, 0, 0, 7, 1, 7, 4, 1, 3, 0xD3A0, 0, 1, 0, 0, 0, 0, 0];
 
 function selection(session: HybridGameSessionBridge) {
   return { preset: session.difficulty_preset_code(), information: session.information_level_code(),
@@ -30,7 +30,7 @@ it("reports the independent Custom/Minimal/Automatic demonstration identity", ()
     expect(Array.from(session.configuration_metadata())).toEqual(demoMetadata);
     const projection = record(record(JSON.parse(session.environment_snapshot_json()) as unknown).projection);
     expect(projection).toMatchObject({ source: "attract", identity: {
-      catalog_version: 6, scenario_id: 1, scenario_version: 6, aircraft_model_version: 4,
+      catalog_version: 7, scenario_id: 1, scenario_version: 7, aircraft_model_version: 4,
       environment_version: 1, controller_profile_version: 3, seed_low: 0xD3A0, seed_high: 0
     } });
     expect(record(projection.metadata).representative_velocity_ned_mps).toEqual([0, 0, 0]);

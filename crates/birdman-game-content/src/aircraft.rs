@@ -237,10 +237,32 @@ impl SurfaceStorage {
     }
 }
 
-/// Borrowed registered geometry and caller-owned storage for candidate contact shapes.
+/// Registered geometry and retained caller storage for candidate contact shapes.
 pub struct AircraftContactShape<'definition, 'storage> {
     definition: &'definition AircraftDefinition,
-    points: &'storage mut [BodyPoint],
+    points: ContactPointStorage<'storage>,
+    projected: Option<(WingBendingFactor, TailIncidence)>,
+}
+
+enum ContactPointStorage<'storage> {
+    Borrowed(&'storage mut [BodyPoint]),
+    Owned(Vec<BodyPoint>),
+}
+
+impl ContactPointStorage<'_> {
+    fn points(&self) -> &[BodyPoint] {
+        match self {
+            Self::Borrowed(points) => points,
+            Self::Owned(points) => points,
+        }
+    }
+
+    fn points_mut(&mut self) -> &mut [BodyPoint] {
+        match self {
+            Self::Borrowed(points) => points,
+            Self::Owned(points) => points,
+        }
+    }
 }
 
 impl<'definition, 'storage> AircraftContactShape<'definition, 'storage> {
@@ -252,7 +274,26 @@ impl<'definition, 'storage> AircraftContactShape<'definition, 'storage> {
         if points.len() != definition.contact_points().len() {
             return Err(crate::ShapeError::MismatchedContactPointCount);
         }
-        Ok(Self { definition, points })
+        Ok(Self {
+            definition,
+            points: ContactPointStorage::Borrowed(points),
+            projected: None,
+        })
+    }
+
+    /// Retains a prepared allocation and its last successful structural projection.
+    pub fn try_from_owned(
+        definition: &'definition AircraftDefinition,
+        points: Vec<BodyPoint>,
+    ) -> Result<Self, crate::ShapeError> {
+        if points.len() != definition.contact_points().len() {
+            return Err(crate::ShapeError::MismatchedContactPointCount);
+        }
+        Ok(Self {
+            definition,
+            points: ContactPointStorage::Owned(points),
+            projected: None,
+        })
     }
 }
 
@@ -272,10 +313,18 @@ impl birdman_game_core::TailContactShapeProvider for AircraftContactShape<'_, '_
         factor: WingBendingFactor,
         incidence: TailIncidence,
     ) -> Result<&[BodyPoint], birdman_game_core::ContactError> {
-        self.definition
-            .write_deformed_contact_points_with_factor(factor, incidence, self.points)
-            .map_err(contact_shape_error)?;
-        Ok(self.points)
+        if self.projected != Some((factor, incidence)) {
+            self.projected = None;
+            self.definition
+                .write_deformed_contact_points_with_factor(
+                    factor,
+                    incidence,
+                    self.points.points_mut(),
+                )
+                .map_err(contact_shape_error)?;
+            self.projected = Some((factor, incidence));
+        }
+        Ok(self.points.points())
     }
 }
 

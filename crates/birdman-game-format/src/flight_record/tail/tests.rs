@@ -981,7 +981,9 @@ fn personal_best_does_not_mix_distinct_model_controller_identity() {
 
 #[test]
 fn personal_best_initial_shape_separates_schema_seven_and_preserves_schema_six_key() {
-    let legacy = keyed(document());
+    let mut legacy = document();
+    legacy.header.physics_model_version = 3;
+    let legacy = keyed(legacy);
     assert_eq!(legacy.schema_version, 6);
     assert_eq!(
         legacy.header.personal_best_key,
@@ -1005,8 +1007,29 @@ fn personal_best_initial_shape_separates_schema_seven_and_preserves_schema_six_k
     );
     assert_eq!(
         compare_tail_personal_best_records(&legacy, &current).unwrap(),
-        Some(PersonalBestComparison::DifferentConfiguration)
+        None
     );
+    let original = legacy.encode_json().unwrap();
+    let restored = TailFlightRecordDocument::decode_json(&original).unwrap();
+    assert_eq!(restored.encode_json().unwrap(), original);
+    assert_eq!(
+        restored.header.personal_best_key,
+        legacy.header.personal_best_key
+    );
+    assert!(
+        restored
+            .to_finalized_core_record()
+            .unwrap()
+            .samples()
+            .iter()
+            .all(|sample| sample.wing_bending_factor.is_none())
+    );
+    assert!(
+        crate::TailPersonalBestSelection::try_new(&restored)
+            .unwrap()
+            .is_none()
+    );
+    assert!(restored.personal_best_candidate_score().unwrap().is_none());
 }
 
 fn tail_key(
@@ -1157,7 +1180,7 @@ fn tail_canonical_key_tracks_two_axis_profile_content_and_initial_snapshot() {
         );
     }
     let mut incompatible = source.clone();
-    incompatible.header.physics_model_version = birdman_game_core::PHYSICS_MODEL_VERSION - 1;
+    incompatible.header.physics_model_version = birdman_game_core::PHYSICS_MODEL_VERSION + 1;
     assert_eq!(
         tail_key(&incompatible, profile, ControlMode::Manual, hashes),
         Err(FlightRecordFormatError::InvalidRecord)

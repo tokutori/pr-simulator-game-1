@@ -42,6 +42,35 @@ fn contact_provider_rejects_mismatched_storage_and_invalid_load_law_inputs() {
 }
 
 #[test]
+fn retained_contact_projection_reuses_storage_and_recovers_after_a_failed_update() {
+    let aircraft = playable_aircraft().unwrap();
+    let output = aircraft.contact_points().to_vec();
+    let pointer = output.as_ptr();
+    let mut expected = output.clone();
+    let mut provider = crate::AircraftContactShape::try_from_owned(&aircraft, output).unwrap();
+    let factor = WingBendingFactor::try_new(0.7).unwrap();
+    for incidence in [
+        TailIncidence::neutral(),
+        TailIncidence::try_new(0.03, -0.02).unwrap(),
+    ] {
+        aircraft
+            .write_deformed_contact_points_with_factor(factor, incidence, &mut expected)
+            .unwrap();
+        for _repeat in 0..2 {
+            let actual = provider.points(factor, incidence).unwrap();
+            assert_eq!(actual.as_ptr(), pointer);
+            assert_eq!(actual, expected);
+        }
+        assert!(
+            provider
+                .points(WingBendingFactor::try_new(f64::MAX).unwrap(), incidence)
+                .is_err()
+        );
+        assert_eq!(provider.points(factor, incidence).unwrap(), expected);
+    }
+}
+
+#[test]
 fn accepted_bending_coefficients_preserve_corresponding_points_at_fractional_times() {
     let aircraft = playable_aircraft().unwrap();
     let shape = aircraft.shape();

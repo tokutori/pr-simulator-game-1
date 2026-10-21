@@ -111,7 +111,7 @@ describe("authoritative Result synchronization across tail adapter failures", ()
     if (site === "pose-and-cleanup") expect(trial.model().status).toContain("Injected cleanup failure");
     expect(trial.effects).toEqual([{ type: "persist-flight-record" }]);
     const archive: unknown = JSON.parse(trial.facade.exportRecordJson());
-    expect(archive).toMatchObject({ schema_version: 6, finalization: { reason: "manual_abort", terminal_tick: 0, failure: null } });
+    expect(archive).toMatchObject({ schema_version: 7, finalization: { reason: "manual_abort", terminal_tick: 0, failure: null } });
     const snapshot = trial.controller.currentSnapshot;
     expect(snapshot.phase).toBe("result");
     trial.controller.onFrame(2_000);

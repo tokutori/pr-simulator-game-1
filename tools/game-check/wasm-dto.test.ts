@@ -109,7 +109,7 @@ describe("same-build Rust/WASM generated DTO connections", () => {
       const original = source.session.exportRecordJson();
       viewer.session.openArchive(original);
       const document = JSON.parse(original) as { schema_version: number; samples: readonly unknown[]; finalization: { terminal_tick: number } };
-      expect(document.schema_version).toBe(6);
+      expect(document.schema_version).toBe(7);
       expect(document.samples).toHaveLength(ticks + 1);
       expect(viewer.session.readRecordSummary().summary.sample_count).toBe(ticks + 1);
       expect(viewer.session.queryRecordSample(ticks / 200).flight_time_s).toBe(ticks / 200);

@@ -22,8 +22,8 @@ use crate::{
 
 const CONTROLLER_PROFILE_ID: &str = "bpg040-tail-rate-feedback";
 const CONTROLLER_PROFILE_VERSION: u32 = 3;
-const CATALOG_VERSION: u32 = 6;
-const SCENARIO_VERSION: u32 = 6;
+const CATALOG_VERSION: u32 = 7;
+const SCENARIO_VERSION: u32 = 7;
 const SCENARIOS: [(u32, WeatherClass); 5] = [
     (1, WeatherClass::Calm),
     (2, WeatherClass::Mild),
@@ -63,6 +63,8 @@ pub enum HybridSessionPreparationError {
     Scenario(TailFlightScenarioError),
     /// The session tick limit or versioned identity failed validation.
     Session(GameSessionError),
+    /// Structural storage could not be reserved before preparing flight.
+    AllocationFailed,
 }
 
 /// Platform-independent preparation with stable owned model and environment resources.

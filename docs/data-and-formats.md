@@ -246,6 +246,7 @@ Analysis用の発進台・湖岸・望遠camera点はOSMとAW3D30に基づく試
 - 現行codecはschema 6と7を受理する。
 - schema 7は全sampleの有限な`wing_bending_factor`を要求し、同時刻の採用値は任意の終端`boundary_event`に保持する。
 - schema 6は曲げ係数の未記録状態を保持する。共有producerは全係数を持つrecordをschema 7、全係数が未記録のrecordをschema 6として出力する。
+- 現行の登録機体による通常飛行とAttractはschema 7を生成する。schema 6・physics model 3の記録は既存keyと原文を検証・保持して閲覧し、PB順位の対象は現行physics modelとする。
 - 未対応データを通知して元の保存内容を保持する。
 - 破損、未知field、非有限値、非単位quaternion、時刻・header不整合と、schemaに対応しない係数・eventの組合せを拒否する。
 - 任意のidentity metadataには後述の未知raw保持規則を適用する。
@@ -322,7 +323,7 @@ keyは次の条件をSHA-256へ入力する。
 - WebのIndexedDBはversion 4を用い、record・metadata・PB更新を同一transactionで確定する。
 - 旧DB version 1–3は内容を保持して明示的に拒否する。
 - 旧DB移行、metadata backfill、互換index再構築を行わない。
-- PB indexはRust由来の方式revisionを新規entryへ保存し、読取りで欠落・未知revisionを未順位へ分類する。
+- PB indexはRust由来の方式revisionを新規entryへ保存する。一覧に含まれるPB候補だけをRust selectorで再判定し、現行physics・方式で適格な記録へバッジを付ける。旧索引と記録原文を保持する。
 
 - Title previewは最大3件である。
 - PB探索は保存された全候補をcursorで処理し、preview件数へ制限しない。

@@ -64,7 +64,7 @@ fn named_terminal_and_saved_query_share_exact_controls_and_terminal_metadata() {
     let named: Value =
         serde_json::from_str(&named_terminal_json("manual", &document).unwrap()).unwrap();
     assert_eq!(named["kind"], "native_hybrid_smoke");
-    assert_eq!(named["record_schema_version"], 6);
+    assert_eq!(named["record_schema_version"], 7);
     assert_eq!(named["sample_count"], TICK_LIMIT + 1);
     assert_eq!(named["controls"]["layout"], "tail_incidence");
     assert!(named["controls"].get("roll_rad").is_none());

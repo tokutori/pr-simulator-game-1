@@ -144,6 +144,7 @@ C_{n_{\widehat r}}=-2a_F\frac{S_f}{S}\left(\frac{l_f}{b}\right)^2
 - `tools/allocation-check/main.py` はnative debug専用harnessを実行する。登録形状の経路では係数の導出・補間と固定順点群の更新をまとめて計測する。
 - 本番provider評価・RK4・実tickの成功とGlobalBetaの型付き失敗を各10,000回計測し、 `alloc`・`alloc_zeroed`・`realloc` の各計数0を要求する。
 - 同梱機体の準備済み点群をcaller所有sliceへ変形する経路を100回計測する。速度0・基準近傍・高荷重と正負の尾翼角を切り替え、同じ3種の割当計数0を要求する。
+- 実`ApplicationSession`の準備を終えてから計測を開始し、発進後の全tickから自然着水まで、採用係数を持つ記録と3種の割当計数0を検査する。
 - 校正では各1回を検出し、warmup・assert・出力は計測窓の外に置く。
 - failureではdatum site・元cause・失敗stage・非commitも確認する。
 

@@ -246,7 +246,7 @@ describe("two-tail controller through the Rust WASM port", () => {
     expect(trial.port.advance_tick_json).toHaveBeenCalledTimes(1);
     const saved = trial.session.export_flight_record_json();
     const archive: unknown = JSON.parse(saved);
-    expect(archive).toMatchObject({ schema_version: 6, finalization: { reason: "manual_abort", terminal_tick: 0 } });
+    expect(archive).toMatchObject({ schema_version: 7, finalization: { reason: "manual_abort", terminal_tick: 0 } });
     trial.session.retry();
     trial.session.start_countdown(1);
     trial.session.observe_countdown(trial.session.countdown_token(), 1, true);

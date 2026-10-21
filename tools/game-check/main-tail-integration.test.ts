@@ -781,7 +781,7 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     expect(trial.scene()).toBe("Result");
     await vi.waitFor(() => { expect(trial.exportRecord).toHaveBeenCalledTimes(1); });
     const stored: unknown = JSON.parse(trial.exportRecord.mock.results[0]?.value as string);
-    expect(stored).toMatchObject({ schema_version: 6, finalization: { reason: "manual_abort" } });
+    expect(stored).toMatchObject({ schema_version: 7, finalization: { reason: "manual_abort" } });
     trial.click("game-result-replay");
     expect(trial.scene()).toBe("Replay");
     trial.click("game-replay-return");
@@ -792,7 +792,7 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     runFlightToResult(trial, 20, 199_990);
     expect(trial.scene()).toBe("Result");
     expect(trial.exportRecord).toHaveBeenCalledTimes(2);
-    expect(JSON.parse(trial.exportRecord.mock.results[1]?.value as string)).toMatchObject({ schema_version: 6, finalization: { reason: "water_contact" } });
+    expect(JSON.parse(trial.exportRecord.mock.results[1]?.value as string)).toMatchObject({ schema_version: 7, finalization: { reason: "water_contact" } });
     await vi.waitFor(() => { expect(trial.browser.document.getElementById("game-state")?.textContent).toContain("飛行記録 3を保存した"); });
     expect(trial.free).not.toHaveBeenCalled();
     trial.click("game-result-title");
@@ -817,7 +817,7 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     const ticks = trial.tick.mock.calls.length;
     await vi.waitFor(() => { expect(trial.exportRecord).toHaveBeenCalledTimes(1); });
     const record = trial.exportRecord.mock.results[0]?.value as string;
-    expect(JSON.parse(record)).toMatchObject({ schema_version: 6, finalization: { reason: "manual_abort" } });
+    expect(JSON.parse(record)).toMatchObject({ schema_version: 7, finalization: { reason: "manual_abort" } });
     trial.frame(1_000);
     trial.frame(1_010);
     trial.frame(5_000);
@@ -1045,7 +1045,7 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     expect(trial.documentRef.querySelector('[data-control-id="game-result-retry"]')).not.toBeNull();
     expect(trial.analysis).not.toHaveBeenCalled();
     expect(trial.wind).not.toHaveBeenCalled();
-    expect(JSON.parse(trial.exportRecord.mock.results[0]?.value as string)).toMatchObject({ schema_version: 6, finalization: { reason } });
+    expect(JSON.parse(trial.exportRecord.mock.results[0]?.value as string)).toMatchObject({ schema_version: 7, finalization: { reason } });
     await vi.waitFor(() => { expect(trial.browser.document.getElementById("game-state")?.textContent).toContain("飛行記録 1を保存した"); });
     trial.click("game-result-replay");
     expect(trial.scene()).toBe("Replay");

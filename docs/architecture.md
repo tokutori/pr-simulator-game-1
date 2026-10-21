@@ -72,6 +72,8 @@ adapter・presentation・scene・app・contentは責務に応じて下位のcore
 - appの記録queryが状態・telemetry・舵角の共通投影とcursorの時間範囲を定義し、Replay cameraと各adapterが参照する。
 - 準備・Retry・Briefing再準備・archive交換・初回demo登録はapplication単位の記録source識別子を更新する。tick・seek・再生速度の変更は同じsourceを保持する。
 - `HybridSessionPreparation`は機体・環境の共有storageを組み立て、Webとnativeへ同じconfigurationを渡す。
+- `PreparedFlight`は登録機体と準備時に確保した固定長の接触点bufferを所有する。通常飛行とAttractは同じprovider入口で、封印済み機体・荷重・接触設定を評価し、同じ係数・尾翼角の成功投影を再利用する。
+- 初期状態へ実際の合成重心対気速度から求めた主翼係数を封印し、Retryはその初期値と準備済みbufferを再利用する。
 - 準備をWASM専有処理やUI表示処理にしない。
 
 - 共有command executorが、設定、準備、Countdown、Pause、Resume、Retry、Replayの呼出し規則を所有する。

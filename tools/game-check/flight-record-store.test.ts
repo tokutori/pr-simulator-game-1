@@ -327,6 +327,25 @@ describe("Current FlightRecord persistence", () => {
     expect(persistence.records).toEqual([]);
   });
 
+  it("preserves legacy bytes and indexes while ranking only current eligible records", async () => {
+    const json = ` \n${readFileSync(new URL("./fixtures/legacy-physics-three-record.json", import.meta.url), "utf8")}\n `;
+    const legacy = JSON.parse(json) as { header: { personal_best_key: number[] } };
+    const key = Buffer.from(legacy.header.personal_best_key).toString("hex");
+    const index = { key, recordId: 1, comparisonVersion: personalBestComparisonVersion() };
+    const fixture = await databaseFixture([{ id: 1, savedAt: "legacy", json }], [{ id: 1, savedAt: "legacy" }], [index]);
+    try {
+      const repository = new FlightRecordRepository(fixture.persistence, undefined, createArchivedPersonalBestSelection);
+      expect(await repository.recent(3)).toEqual([{ id: 1, savedAt: "legacy", personalBest: false }]);
+      const saved = await repository.saveFrom({ export_flight_record_json: () => currentRecordFixture() });
+      expect(saved.personalBest.kind).toBe("candidate");
+      expect((await repository.recent(3)).map(({ id, personalBest }) => ({ id, personalBest }))).toEqual([
+        { id: 2, personalBest: true }, { id: 1, personalBest: false }
+      ]);
+      expect(await repository.load(1)).toBe(json);
+      expect(await fixture.rows("personalBests")).toEqual(expect.arrayContaining([index]));
+    } finally { await fixture.dispose(); }
+  });
+
   it("rejects oversized documents and invalid identifiers", async () => {
     const repository = new FlightRecordRepository(new MemoryFlightRecordPersistence(), undefined, ineligibleSelection);
     const oversized = currentRecordFixture(false) + " ".repeat(16 * 1024 * 1024);

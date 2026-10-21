@@ -2513,7 +2513,7 @@ mod tests {
             let session = app.world().resource::<NativeSession>();
             session.game.flight_record_document().unwrap()
         };
-        assert_eq!(expected.schema_version, 6);
+        assert_eq!(expected.schema_version, 7);
         assert!(expected.header.personal_best_key.is_none());
         assert!(expected.samples.len() > 1);
         let export_directory = directory.0.join("flight-logs");

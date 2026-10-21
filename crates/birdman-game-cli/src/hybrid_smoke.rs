@@ -1,13 +1,18 @@
+#[cfg(test)]
 use birdman_game_app::HybridSessionPreparation;
+use birdman_game_app::application::{ApplicationSession, BackendReadiness, SessionCommand};
 use birdman_game_core::{
-    ControlMode, FbwAuthority, GameSession, GameSessionConfiguration, GameSessionError,
-    SessionPhase, TailFlightTickInput, TailPilotIntent, TailPilotPositionCommand,
-    TailPilotPositionIntent, TailRateTarget,
+    ControlMode, FbwAuthority, FlightRecord, GameSessionError, SessionPhase, TailFlightTickInput,
+    TailPilotIntent, TailPilotPositionCommand, TailPilotPositionIntent, TailRateTarget,
 };
+#[cfg(test)]
+use birdman_game_core::{GameSession, GameSessionConfiguration};
+#[cfg(test)]
+use birdman_game_format::{AssistanceLevel, DifficultySettings, InformationLevel};
 use birdman_game_format::{
-    AssistanceLevel, DifficultySettings, FlightRecordHeaderDocument, FlightRecordStateDocument,
-    FlightRecordTailIdentityDocument, InformationLevel, TailFlightRecordControlsDocument,
-    TailFlightRecordDocument, TailFlightRecordFinalizationDocument, WeatherClass,
+    FlightRecordHeaderDocument, FlightRecordStateDocument, FlightRecordTailIdentityDocument,
+    TailFlightRecordControlsDocument, TailFlightRecordDocument,
+    TailFlightRecordFinalizationDocument, WeatherClass,
 };
 use serde::Serialize;
 
@@ -54,13 +59,54 @@ fn input(tick: u64) -> Result<TailFlightTickInput, String> {
 }
 
 fn verify_mode(mode: ControlMode) -> Result<TailFlightRecordDocument, String> {
-    let preparation =
-        HybridSessionPreparation::try_new_for_weather(mode, TICK_LIMIT, 0, WeatherClass::Calm)
+    let mut application = ApplicationSession::new(mode, TICK_LIMIT, 0);
+    for command in [
+        SessionCommand::OpenSetup {},
+        SessionCommand::SelectWeather {
+            weather: WeatherClass::Calm,
+        },
+        SessionCommand::Prepare {},
+        SessionCommand::StartCountdown {},
+    ] {
+        application
+            .execute(command, BackendReadiness::Ready)
             .map_err(super::display_error)?;
-    let (configuration, identity) = preparation.into_parts();
-    run_configuration(mode, configuration, identity)
+    }
+    let token = application
+        .core_session()
+        .countdown_token()
+        .ok_or("hybrid smoke countdown is missing")?;
+    application
+        .observe_countdown(token, 3.0, true)
+        .map_err(super::display_error)?;
+    for tick in 0..TICK_LIMIT {
+        match application.advance_tail_flight_tick(input(tick)?) {
+            Ok(_) => {}
+            Err(GameSessionError::TailTick(_))
+                if application.core_session().snapshot().phase() == SessionPhase::Result =>
+            {
+                break;
+            }
+            Err(error) => return Err(super::display_error(error)),
+        }
+        if application.core_session().snapshot().phase() == SessionPhase::Result {
+            break;
+        }
+    }
+    if application.core_session().snapshot().phase() != SessionPhase::Result {
+        return Err("hybrid smoke did not finalize the configured tick sequence".to_owned());
+    }
+    let document = application
+        .flight_record_document()
+        .map_err(super::display_error)?;
+    let record = application
+        .core_session()
+        .flight_record()
+        .ok_or("hybrid smoke record is missing")?;
+    verify_roundtrip(document, record)
 }
 
+#[cfg(test)]
 fn run_configuration(
     mode: ControlMode,
     configuration: GameSessionConfiguration<'_>,
@@ -106,6 +152,13 @@ fn run_configuration(
     );
     let document = TailFlightRecordDocument::from_record(record, settings, record_identity)
         .map_err(super::display_error)?;
+    verify_roundtrip(document, record)
+}
+
+fn verify_roundtrip(
+    document: TailFlightRecordDocument,
+    record: &FlightRecord,
+) -> Result<TailFlightRecordDocument, String> {
     let archive = TailFlightRecordDocument::decode_json(
         &document.encode_json().map_err(super::display_error)?,
     )
@@ -119,7 +172,9 @@ fn run_configuration(
             .iter()
             .zip(record.samples())
             .any(|(saved, original)| {
-                saved.controls != original.controls || saved.telemetry != original.telemetry
+                saved.controls != original.controls
+                    || saved.telemetry != original.telemetry
+                    || saved.wing_bending_factor != original.wing_bending_factor
             })
     {
         return Err(

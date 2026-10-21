@@ -70,7 +70,7 @@ async function runInvariantFlight(mode: number, informationCode: number, backend
     const facade = new TailAppSessionFacade(session, physics_hz());
     const initial = facade.readSnapshot();
     if (initial.phase !== "flight_running" || initial.frame.kind !== "flight") throw new Error("Expected a prepared flight");
-    expect(initial.scenario).toMatchObject({ catalog_version: 6, scenario_version: 6,
+    expect(initial.scenario).toMatchObject({ catalog_version: 7, scenario_version: 7,
       aircraft_model_version: 4, controller_profile_version: 3, environment_version: 6, seed_low: 11, seed_high: 12 });
     expect(initial.control_identity).toMatchObject({ aircraft_configuration_id: "bpg041-playable-hybrid-mock" });
     const committed: FlightFrame[] = [];

@@ -64,7 +64,7 @@ fn current_log_exports_share_result_replay_state_without_changing_saved_queries(
         csv.lines()
             .nth(1)
             .unwrap()
-            .starts_with("3,6,tail_incidence,")
+            .starts_with("4,7,tail_incidence,")
     );
     assert_eq!(bridge.snapshot_internal().unwrap(), result);
     bridge.enter_replay().unwrap();
@@ -216,7 +216,7 @@ fn export_analysis_and_replay_share_saved_incidence_and_the_core_cursor() {
     let before = bridge.snapshot_internal().unwrap();
     let encoded = bridge.export_flight_record_json().unwrap();
     let document = tail_document(&encoded);
-    assert_eq!(document.schema_version, 6);
+    assert_eq!(document.schema_version, 7);
     assert_eq!(document.finalization.terminal_tick, 2);
     assert_eq!(document.finalization.failure, None);
     assert_eq!(

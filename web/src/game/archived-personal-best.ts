@@ -1,5 +1,5 @@
 import { TailPersonalBestSelectionBridge } from "../../pkg/birdman_game_wasm.js";
-import type { PersonalBestSelectionPort } from "./flight-record-store.js";
+import { isSupportedFlightRecordSchema, type PersonalBestSelectionPort } from "./flight-record-store.js";
 import { boundaryInteger } from "./tail-boundary-values.js";
 
 const maximumRecordBytes = 16 * 1024 * 1024;
@@ -42,5 +42,5 @@ function requireCurrentRecord(json: string): void {
   if (typeof document !== "object" || document === null || Array.isArray(document) || !("schema_version" in document)) {
     throw new TypeError("Personal Best candidate must contain a flight record schema version");
   }
-  if (document.schema_version !== 6) throw new RangeError("Unsupported flight record schema version");
+  if (!isSupportedFlightRecordSchema(document.schema_version)) throw new RangeError("Unsupported flight record schema version");
 }

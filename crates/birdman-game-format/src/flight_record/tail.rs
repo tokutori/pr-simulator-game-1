@@ -388,7 +388,8 @@ impl TailFlightRecordDocument {
             || self.header.physics_hz != birdman_game_core::PHYSICS_HZ
             || self.header.score_definition_version
                 != birdman_game_core::COURSE_DISTANCE_SCORE_VERSION
-            || self.header.physics_model_version != birdman_game_core::PHYSICS_MODEL_VERSION
+            || !(self.header.physics_model_version == birdman_game_core::PHYSICS_MODEL_VERSION
+                || (self.schema_version == 6 && self.header.physics_model_version == 3))
             || matches!(
                 self.header.difficulty.information,
                 FlightRecordInformationDocument::Custom
@@ -482,10 +483,16 @@ impl TailFlightRecordDocument {
         &self,
     ) -> Result<Option<DistanceScore>, FlightRecordFormatError> {
         let record = self.to_finalized_core_record()?;
-        Ok(record.personal_best_candidate_score())
+        Ok(
+            if self.header.physics_model_version == birdman_game_core::PHYSICS_MODEL_VERSION {
+                record.personal_best_candidate_score()
+            } else {
+                None
+            },
+        )
     }
 
-    /// Encodes this validated v6 archive within the bounded JSON size.
+    /// Encodes the validated archive within the bounded JSON size.
     pub fn encode_json(&self) -> Result<Vec<u8>, FlightRecordFormatError> {
         self.validate()?;
         let encoded =

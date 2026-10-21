@@ -68,6 +68,8 @@ def main():
             "birdman-game-core",
             "-p",
             "birdman-game-content",
+            "-p",
+            "birdman-game-app",
             "--locked",
             "--target",
             host,
@@ -83,6 +85,7 @@ def main():
     build.check_returncode()
     library = native_library(build.stdout, root, target, "birdman-game-core")
     content = native_library(build.stdout, root, target, "birdman-game-content")
+    application = native_library(build.stdout, root, target, "birdman-game-app")
     executable = "hybrid-allocation-probe.exe" if os.name == "nt" else "hybrid-allocation-probe"
     binary = target / host / "debug" / executable
     subprocess.run(
@@ -96,6 +99,8 @@ def main():
             f"birdman_game_core={library}",
             "--extern",
             f"birdman_game_content={content}",
+            "--extern",
+            f"birdman_game_app={application}",
             "-L",
             f"dependency={library.parent / 'deps'}",
             "-L",
