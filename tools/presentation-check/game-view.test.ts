@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { currentSharedGameUiFixture } from "../game-check/shared-game-ui-fixture.js";
+import { currentSharedGameUiFixture, sharedGameUiPlatform, withSharedGameUiSession } from "../game-check/shared-game-ui-fixture.js";
 import { createGameViewModel, sharedGameUiAction } from "../../web/src/app/game-view.js";
 import { validateUiViewModel } from "../../web/src/render/contracts/ui.js";
 import { NO_HEAD_HUD } from "../../web/src/render/contracts/head-hud.js";
@@ -33,38 +33,40 @@ describe("Shared Rust game View projection", () => {
   });
 
   it.each(["title", "flight_setup", "briefing_preparing", "briefing_ready", "countdown", "flight_running", "flight_paused", "result", "briefing_failed", "replay", "attract"] as const)("preserves every published field and control in phase %s", (phase) => {
-    for (const presentation_mode of ["screen", "phone_vr", "webxr"] as const) {
-      const shared = currentSharedGameUiFixture(phase, { platform: { presentation_mode } });
-      const before = JSON.stringify(shared);
-      const view = createGameViewModel(shared);
-      validateUiViewModel(view);
-      expect(view).toMatchObject({ scene: shared.scene, title: shared.title, description: shared.description, activeOverlay: shared.active_overlay });
-      expect(view.sharedPresentation?.layout).toBe(shared.layout);
-      expect(view.sharedPresentation?.theme).toBe(shared.theme);
-      expect(view.headHud).toBe(NO_HEAD_HUD);
-      expect(view.panels.map((panel) => panel.id)).toEqual(shared.panels.map((panel) => panel.id));
-      shared.panels.forEach((panel, index) => {
-        const projected = view.panels[index];
-        if (projected === undefined) throw new Error("Missing projected panel");
-        expect(projected.anchor).toBe(panel.anchor);
-        expect(projected.sections).toBe(panel.sections);
-        expect(projected.size).toEqual({ width: panel.size[0], height: panel.size[1] });
-        expect(projected.localPose.position).toEqual({ x: panel.local_position[0], y: panel.local_position[1], z: panel.local_position[2] });
-        expect(projected.controls.map((control) => [control.id, control.label, control.enabled, control.section]))
-          .toEqual(panel.controls.map((control) => [control.id, control.label, control.enabled, control.section]));
-        panel.controls.forEach((control, controlIndex) => {
-          const output = projected.controls[controlIndex];
-          expect(output?.kind).toBe(control.content.kind);
-          expect(output?.rect).toEqual(control.rect);
-          if (output?.kind === "status" && control.content.kind === "status") expect(output.value).toBe(control.content.value);
-          if (output?.kind === "range" && control.content.kind === "range") {
-            expect(output.value).toBe(control.content.value);
-            expect(output.displayValue).toBe(control.content.display_value);
-          }
+    withSharedGameUiSession(phase, {}, session => {
+      for (const presentation_mode of ["screen", "phone_vr", "webxr"] as const) {
+        const shared = session.readSharedUi(sharedGameUiPlatform({ presentation_mode }));
+        const before = JSON.stringify(shared);
+        const view = createGameViewModel(shared);
+        validateUiViewModel(view);
+        expect(view).toMatchObject({ scene: shared.scene, title: shared.title, description: shared.description, activeOverlay: shared.active_overlay });
+        expect(view.sharedPresentation?.layout).toBe(shared.layout);
+        expect(view.sharedPresentation?.theme).toBe(shared.theme);
+        expect(view.headHud).toBe(NO_HEAD_HUD);
+        expect(view.panels.map((panel) => panel.id)).toEqual(shared.panels.map((panel) => panel.id));
+        shared.panels.forEach((panel, index) => {
+          const projected = view.panels[index];
+          if (projected === undefined) throw new Error("Missing projected panel");
+          expect(projected.anchor).toBe(panel.anchor);
+          expect(projected.sections).toBe(panel.sections);
+          expect(projected.size).toEqual({ width: panel.size[0], height: panel.size[1] });
+          expect(projected.localPose.position).toEqual({ x: panel.local_position[0], y: panel.local_position[1], z: panel.local_position[2] });
+          expect(projected.controls.map((control) => [control.id, control.label, control.enabled, control.section]))
+            .toEqual(panel.controls.map((control) => [control.id, control.label, control.enabled, control.section]));
+          panel.controls.forEach((control, controlIndex) => {
+            const output = projected.controls[controlIndex];
+            expect(output?.kind).toBe(control.content.kind);
+            expect(output?.rect).toEqual(control.rect);
+            if (output?.kind === "status" && control.content.kind === "status") expect(output.value).toBe(control.content.value);
+            if (output?.kind === "range" && control.content.kind === "range") {
+              expect(output.value).toBe(control.content.value);
+              expect(output.displayValue).toBe(control.content.display_value);
+            }
+          });
         });
-      });
-      expect(JSON.stringify(shared)).toBe(before);
-    }
+        expect(JSON.stringify(shared)).toBe(before);
+      }
+    });
   });
 
   it("keeps Flight information outside the menu and projects the VR pause action exactly", () => {

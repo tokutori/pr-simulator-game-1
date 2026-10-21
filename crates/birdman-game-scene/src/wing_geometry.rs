@@ -15,9 +15,6 @@ pub const CARBON_COLOR: u32 = 0x303b3a;
 #[doc = "Existing Web sRGB colour of balsa trailing ribs and stringers."]
 pub const RIB_COLOR: u32 = 0xcdb483;
 
-#[doc = "Existing Web radius of the display-only trailing rib rods, in metres."]
-pub const RIB_RADIUS: f64 = 0.012;
-
 #[doc = "Existing Web sRGB colour of extruded trailing foam ribs."]
 pub const FOAM_COLOR: u32 = 0x77b5d0;
 
@@ -73,60 +70,9 @@ impl WingSurface {
     }
 }
 
-#[doc = "Main-wing structural rod meaning, retaining the original sample locations and radii."]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum WingRodKind {
-    #[doc = "Carbon main spar segment."]
-    Spar,
-    #[doc = "Trailing rib segment."]
-    Rib,
-    #[doc = "Balsa spanwise stringer segment."]
-    Stringer,
-}
-
-#[doc = "Static structural rod definition; endpoints are projected in WingFrame."]
-pub struct WingRod {
-    kind: WingRodKind,
-    radius: f64,
-    endpoints: [[f64; 3]; 2],
-}
-
-impl WingRod {
-    #[doc = "Rod material and placement meaning."]
-    pub fn kind(&self) -> WingRodKind {
-        self.kind
-    }
-
-    #[doc = "Original Web radius in metres."]
-    pub fn radius(&self) -> f64 {
-        self.radius
-    }
-}
-
-#[doc = "Extruded trailing foam rib with static vertices and triangle indices."]
-pub struct WingFoam {
-    vertices: Vec<[f32; 3]>,
-    indices: Vec<u32>,
-    lateral_position: f64,
-}
-
-impl WingFoam {
-    #[doc = "Rib-local positions, with spanwise translation supplied by WingFrame."]
-    pub fn vertices(&self) -> &[[f32; 3]] {
-        &self.vertices
-    }
-
-    #[doc = "Rib-local triangle indices."]
-    pub fn indices(&self) -> &[u32] {
-        &self.indices
-    }
-}
-
 #[doc = "Fixed Web main-wing definition. Construction allocates topology once and accesses no I/O or flight state."]
 pub struct WingGeometry {
     surfaces: [WingSurface; 4],
-    rods: Vec<WingRod>,
-    foam: Vec<WingFoam>,
 }
 
 impl Default for WingGeometry {
@@ -136,91 +82,20 @@ impl Default for WingGeometry {
 }
 
 impl WingGeometry {
-    #[doc = "Builds the left skin/film, right skin/film, all rods and foam from the fixed Web definition."]
+    #[doc = "Builds the left skin/film and right skin/film from the registered profile."]
     pub fn new() -> Self {
-        let half_span = half_span();
         let surfaces = [
             surface(-1.0, 0.0, COVERED_FRACTION),
             surface(-1.0, COVERED_FRACTION, 1.0),
             surface(1.0, 0.0, COVERED_FRACTION),
             surface(1.0, COVERED_FRACTION, 1.0),
         ];
-        let mut rods = Vec::new();
-        let mut foam = Vec::new();
-        for side in [-1.0, 1.0] {
-            for section in 0..12 {
-                let from = half_span * section as f64 / 12.0;
-                let to = half_span * (section + 1) as f64 / 12.0;
-                rods.push(WingRod {
-                    kind: WingRodKind::Spar,
-                    radius: 0.055 + (0.018 - 0.055) * (section as f64 + 0.5) / 12.0,
-                    endpoints: [spar_point(side, from), spar_point(side, to)],
-                });
-            }
-            for rib in 1..=22 {
-                let span = half_span * rib as f64 / 23.0;
-                foam.push(foam_rib(side, span));
-                for [from, to] in [[COVERED_FRACTION, 0.75], [0.75, 1.0]] {
-                    rods.push(WingRod {
-                        kind: WingRodKind::Rib,
-                        radius: RIB_RADIUS,
-                        endpoints: [rib_point(side, span, from), rib_point(side, span, to)],
-                    });
-                }
-            }
-            for chord_fraction in [COVERED_FRACTION, 0.995] {
-                for section in 0..12 {
-                    let from = half_span * section as f64 / 12.0;
-                    let to = half_span * (section + 1) as f64 / 12.0;
-                    rods.push(WingRod {
-                        kind: WingRodKind::Stringer,
-                        radius: 0.006,
-                        endpoints: [
-                            rib_point(side, from, chord_fraction),
-                            rib_point(side, to, chord_fraction),
-                        ],
-                    });
-                }
-            }
-        }
-        Self {
-            surfaces,
-            rods,
-            foam,
-        }
+        Self { surfaces }
     }
 
     #[doc = "Left skin, left film, right skin and right film, in that fixed order."]
     pub fn surfaces(&self) -> &[WingSurface; 4] {
         &self.surfaces
-    }
-
-    #[doc = "All rod definitions in the same order as WingFrame rod endpoints."]
-    pub fn rods(&self) -> &[WingRod] {
-        &self.rods
-    }
-
-    #[doc = "Fixed longitudinal beam from the shared spar root to the Web tail endpoint, in right/up/aft metres."]
-    pub fn main_beam_endpoints(&self) -> [[f64; 3]; 2] {
-        Self::registered_main_beam_endpoints()
-    }
-
-    pub(crate) fn registered_main_beam_endpoints() -> [[f64; 3]; 2] {
-        definition()
-            .document()
-            .structure
-            .main_beam_endpoints_frd_m
-            .map(|[forward, right, down]| [right, -down, -forward])
-    }
-
-    #[doc = "Registered longitudinal main-beam radius in metres."]
-    pub fn main_beam_radius(&self) -> f64 {
-        definition().document().structure.main_beam_radius_m
-    }
-
-    #[doc = "All foam definitions in the same order as WingFrame foam translations."]
-    pub fn foam(&self) -> &[WingFoam] {
-        &self.foam
     }
 
     #[doc = "Allocates reusable deformation buffers and applies the registered reference load."]
@@ -230,12 +105,6 @@ impl WingGeometry {
                 .surfaces
                 .each_ref()
                 .map(|surface| surface.positions.clone()),
-            rod_endpoints: self.rods.iter().map(|rod| rod.endpoints).collect(),
-            foam_positions: self
-                .foam
-                .iter()
-                .map(|foam| [foam.lateral_position, 0.0, 0.0])
-                .collect(),
             bending_factor: None,
         };
         self.update_frame_with_factor(&mut frame, WingBendingFactor::try_new(1.0).unwrap())
@@ -250,7 +119,7 @@ impl WingGeometry {
             .expect("registered wing deformation must remain representable")
     }
 
-    #[doc = "Writes an accepted bending coefficient into retained mesh and structural buffers; equal coefficients reuse the frame."]
+    #[doc = "Writes an accepted bending coefficient into retained skin buffers; equal coefficients reuse the frame."]
     #[doc = "Publish buffers after success. An arithmetic error clears the valid coefficient until a complete update succeeds."]
     pub fn update_frame_with_factor(
         &self,
@@ -272,28 +141,14 @@ impl WingGeometry {
                 position[1] = height;
             }
         }
-        for (rod, endpoints) in self.rods.iter().zip(&mut frame.rod_endpoints) {
-            for (base, endpoint) in rod.endpoints.iter().zip(endpoints) {
-                let height = base[1] + deflection_with_factor(base[0], factor)?;
-                if !height.is_finite() {
-                    return Err(ShapeError::Math(MathError::NonFinite));
-                }
-                endpoint[1] = height;
-            }
-        }
-        for (foam, position) in self.foam.iter().zip(&mut frame.foam_positions) {
-            position[1] = deflection_with_factor(foam.lateral_position, factor)?;
-        }
         frame.bending_factor = Some(factor);
         Ok(true)
     }
 }
 
-#[doc = "Reusable Float32 skin/film upload and double-precision structural anchors for one visual load."]
+#[doc = "Reusable Float32 skin/film upload buffers for one visual load."]
 pub struct WingFrame {
     surface_positions: [Vec<[f32; 3]>; 4],
-    rod_endpoints: Vec<[[f64; 3]; 2]>,
-    foam_positions: Vec<[f64; 3]>,
     bending_factor: Option<WingBendingFactor>,
 }
 
@@ -306,16 +161,6 @@ impl WingFrame {
     #[doc = "Deformed positions in WingGeometry surface order, with the original Float32 base/span rounding."]
     pub fn surface_positions(&self) -> &[Vec<[f32; 3]>; 4] {
         &self.surface_positions
-    }
-
-    #[doc = "Deformed from/to anchors for every spar, rib and stringer in definition order."]
-    pub fn rod_endpoints(&self) -> &[[[f64; 3]; 2]] {
-        &self.rod_endpoints
-    }
-
-    #[doc = "Lateral and bending translations for every foam rib."]
-    pub fn foam_positions(&self) -> &[[f64; 3]] {
-        &self.foam_positions
     }
 }
 
@@ -367,20 +212,6 @@ fn deflection_with_factor(span: f64, factor: WingBendingFactor) -> Result<f64, S
 fn deflection(span: f64, speed: f64) -> f64 {
     deflection_with_factor(span, display_bending_factor(speed))
         .expect("registered wing deformation must remain finite")
-}
-
-fn rib_point(side: f64, span: f64, fraction: f64) -> [f64; 3] {
-    let upper = wing_point(side * span, fraction, true);
-    let lower = wing_point(side * span, fraction, false);
-    core::array::from_fn(|axis| (upper[axis] + lower[axis]) * 0.5)
-}
-
-fn spar_point(side: f64, span: f64) -> [f64; 3] {
-    let [forward, right, down] = wing()
-        .section(side * span)
-        .expect("spar stations lie inside the admitted main wing")
-        .quarter_chord_frd_m;
-    [right, -down, -forward]
 }
 
 fn wing_point(span: f64, chord: f64, upper: bool) -> [f64; 3] {
@@ -513,46 +344,6 @@ fn surface(side: f64, chord_start: f64, chord_end: f64) -> WingSurface {
     }
 }
 
-fn foam_rib(side: f64, span: f64) -> WingFoam {
-    let mut outline = Vec::new();
-    for (layer, stations) in [
-        (0, [COVERED_FRACTION, 0.75, 0.995]),
-        (1, [0.995, 0.75, COVERED_FRACTION]),
-    ] {
-        for station in stations {
-            let [_, up, aft] = wing_point(side * span, station, layer == 0);
-            outline.push([up, aft]);
-        }
-    }
-    let mut vertices = Vec::new();
-    for lateral in [-0.013, 0.013] {
-        for [height, longitudinal] in &outline {
-            vertices.push([lateral as f32, *height as f32, *longitudinal as f32]);
-        }
-    }
-    let count = outline.len() as u32;
-    let mut indices = Vec::new();
-    for index in 1..count - 1 {
-        indices.extend([0, index + 1, index, count, count + index, count + index + 1]);
-    }
-    for index in 0..count {
-        let next = (index + 1) % count;
-        indices.extend([
-            index,
-            next,
-            count + index,
-            next,
-            count + next,
-            count + index,
-        ]);
-    }
-    WingFoam {
-        vertices,
-        indices,
-        lateral_position: side * span,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -563,8 +354,6 @@ mod tests {
         let mut frame = geometry.frame();
         let reference = frame.bending_factor().unwrap();
         let positions = frame.surface_positions[0].as_ptr();
-        let rods = frame.rod_endpoints.as_ptr();
-        let foam = frame.foam_positions.as_ptr();
         assert!(
             !geometry
                 .update_frame_with_factor(&mut frame, reference)
@@ -584,41 +373,7 @@ mod tests {
         assert_eq!(frame.bending_factor(), Some(reference));
         let expected = geometry.frame();
         assert_eq!(frame.surface_positions, expected.surface_positions);
-        assert_eq!(frame.rod_endpoints, expected.rod_endpoints);
-        assert_eq!(frame.foam_positions, expected.foam_positions);
         assert_eq!(positions, frame.surface_positions[0].as_ptr());
-        assert_eq!(rods, frame.rod_endpoints.as_ptr());
-        assert_eq!(foam, frame.foam_positions.as_ptr());
-    }
-
-    #[test]
-    fn fixed_web_carbon_structure_meets_the_shared_spar_root() {
-        let geometry = WingGeometry::new();
-        let mut frame = geometry.frame();
-        let endpoints = geometry.main_beam_endpoints();
-        for (point, expected) in endpoints
-            .into_iter()
-            .zip([[0.0, -0.73, -0.1375], [0.0, -0.57, 4.75]])
-        {
-            for (actual, expected) in point.into_iter().zip(expected) {
-                assert!((actual - expected).abs() < 1e-14);
-            }
-        }
-        assert_eq!(geometry.main_beam_radius(), 0.075);
-        assert_eq!(CARBON_COLOR, 0x303b3a);
-        assert_eq!(
-            geometry
-                .rods()
-                .iter()
-                .filter(|rod| rod.kind() == WingRodKind::Spar)
-                .count(),
-            24
-        );
-        for speed in [0.0, 9.5, 13.0] {
-            geometry.update_frame(&mut frame, speed);
-            assert_eq!(endpoints[0], frame.rod_endpoints()[0][0]);
-            assert_eq!(geometry.main_beam_endpoints(), endpoints);
-        }
     }
 
     #[test]
@@ -658,8 +413,6 @@ mod tests {
     fn all_meshes_and_anchors_are_finite_symmetric_and_follow_one_load() {
         let geometry = WingGeometry::new();
         let mut frame = geometry.frame();
-        assert_eq!(geometry.rods.len(), 160);
-        assert_eq!(geometry.foam.len(), 44);
         for speed in [0.0, 9.5, 13.0] {
             geometry.update_frame(&mut frame, speed);
             for surface in &geometry.surfaces {
@@ -711,37 +464,13 @@ mod tests {
                     assert_eq!(skin, film);
                 }
             }
-            for (rod, endpoints) in geometry.rods.iter().zip(&frame.rod_endpoints) {
-                for (base, endpoint) in rod.endpoints.iter().zip(endpoints) {
-                    assert_eq!(base[0], endpoint[0]);
-                    assert_eq!(base[2], endpoint[2]);
-                    assert!(
-                        (endpoint[1] - base[1] - deflection(base[0].abs(), speed)).abs() < 1e-15
-                    );
-                    assert!(endpoint.iter().all(|value| value.is_finite()));
-                }
-            }
-            for (foam, position) in geometry.foam.iter().zip(&frame.foam_positions) {
-                assert!(
-                    foam.vertices
-                        .iter()
-                        .flatten()
-                        .all(|value| value.is_finite())
-                );
-                assert!(
-                    foam.indices
-                        .iter()
-                        .all(|index| (*index as usize) < foam.vertices.len())
-                );
-                assert_eq!(position[1], deflection(position[0].abs(), speed));
-            }
         }
         let positions = frame.surface_positions[0].as_ptr();
         assert!(!geometry.update_frame(&mut frame, 13.0));
         assert!(geometry.update_frame(&mut frame, 9.5));
-        let previous_tip = frame.rod_endpoints[0];
+        let previous_tip = *frame.surface_positions[0].last().unwrap();
         assert!(geometry.update_frame(&mut frame, 9.52));
-        assert_ne!(previous_tip, frame.rod_endpoints[0]);
+        assert_ne!(previous_tip, *frame.surface_positions[0].last().unwrap());
         assert!(!geometry.update_frame(&mut frame, 9.52));
         assert_eq!(positions, frame.surface_positions[0].as_ptr());
     }

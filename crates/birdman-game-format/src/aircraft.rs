@@ -10,13 +10,15 @@ use birdman_game_core::{
 use serde::{Deserialize, Serialize};
 
 /// External document version, separate from the physical model version.
-pub const AIRCRAFT_SCHEMA_VERSION: u32 = 1;
+pub const AIRCRAFT_SCHEMA_VERSION: u32 = 2;
 /// Maximum source JSON size accepted before deserialization.
 pub const MAX_AIRCRAFT_JSON_BYTES: usize = 256 * 1024;
 /// Maximum section or strip-edge count in each lifting surface.
 pub const MAX_AIRCRAFT_STATIONS: usize = 128;
 /// Maximum full-aircraft polar row count.
 pub const MAX_AIRCRAFT_POLAR_ROWS: usize = 128;
+/// Maximum total number of structural tubes and foam parts derived from one document.
+pub const MAX_AIRCRAFT_MEMBERS: usize = 512;
 
 /// One aircraft's physical parameters and shared structural definition.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -236,6 +238,94 @@ pub struct AircraftStructureDocument {
     pub cockpit_frame_radius_m: f64,
     /// Neutral pilot eye mount in body FRD metres, before longitudinal pilot travel.
     pub pilot_eye_offset_frd_m: [f64; 3],
+    /// Structural members whose complete outer surfaces participate in contact and display.
+    pub members: AircraftMembersDocument,
+}
+
+/// Bounded member layouts derived from the admitted aerodynamic surfaces and cockpit shell.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct AircraftMembersDocument {
+    /// Main-wing spars, ribs, stringers and foam profiles.
+    pub wing: AircraftWingMembersDocument,
+    /// Horizontal-tail ribs and foam patches.
+    pub horizontal_tail: AircraftTailMembersDocument,
+    /// Vertical-tail ribs and foam patches.
+    pub vertical_tail: AircraftTailMembersDocument,
+    /// Frame, beam attachments and canopy-opening rim.
+    pub cockpit: AircraftCockpitMembersDocument,
+}
+
+/// Structural layout on both halves of the main wing, independent of skin materials.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct AircraftWingMembersDocument {
+    /// Equal span intervals per half-wing for spar and stringer segments.
+    pub span_segments: u32,
+    /// Positive root and tip spar radii; each segment uses its midpoint radius.
+    pub spar_radii_m: [f64; 2],
+    /// Number of internal ribs per half-wing, evenly spaced between root and tip.
+    pub rib_count: u32,
+    /// Positive radius of the rib tubes.
+    pub rib_radius_m: f64,
+    /// Increasing chord fractions defining each rib's consecutive tube segments.
+    pub rib_chord_knots: Vec<f64>,
+    /// Chord fractions of spanwise stringers, in increasing order.
+    pub stringer_chord_fractions: Vec<f64>,
+    /// Positive stringer radius.
+    pub stringer_radius_m: f64,
+    /// Increasing chord fractions along both faces of the extruded foam profile.
+    pub foam_chord_fractions: Vec<f64>,
+    /// Positive half-width of each foam rib along the body-right axis.
+    pub foam_half_width_m: f64,
+}
+
+/// Structural ribs and raised foam on one tail surface.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct AircraftTailMembersDocument {
+    /// Equal span intervals; one rib occupies each internal station.
+    pub rib_intervals: u32,
+    /// Positive rib-tube radius.
+    pub rib_radius_m: f64,
+    /// Increasing chord endpoints of each rib tube.
+    pub rib_chord_bounds: [f64; 2],
+    /// Increasing chord endpoints of each foam patch.
+    pub foam_chord_bounds: [f64; 2],
+    /// Positive half-width of a foam patch along the surface span.
+    pub foam_half_width_m: f64,
+    /// Nonnegative displacement toward the upper face from the airfoil skin.
+    pub foam_normal_offset_m: f64,
+}
+
+/// Frame layout relative to cockpit stations and the longitudinal beam.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct AircraftCockpitMembersDocument {
+    /// Source shell station carrying the forward frame junction.
+    pub nose_station: u32,
+    /// Increasing nose-to-aft fractions for the upper frame endpoints.
+    pub upper_station_fractions: [f64; 2],
+    /// Increasing nose-to-aft fractions for the lower frame endpoints.
+    pub lower_station_fractions: [f64; 2],
+    /// Increasing front-to-aft beam fractions for the attachment tubes.
+    pub beam_attachment_fractions: [f64; 2],
+    /// Positive radius of upright and cross-frame tubes.
+    pub cross_radius_m: f64,
+    /// Positive radius of diagonal braces.
+    pub diagonal_radius_m: f64,
+    /// Positive radius of beam attachment tubes.
+    pub attachment_radius_m: f64,
+    /// Source shell station carrying the canopy-opening rim.
+    pub rim_station: u32,
+    /// Number of straight segments around the canopy rim.
+    pub rim_segments: u32,
+    /// Positive radius of the rim tubes.
+    pub rim_radius_m: f64,
 }
 
 /// Explicit steady-glide operating conditions, separate from structural data.
@@ -517,6 +607,70 @@ impl AircraftStructureDocument {
                 .any(|pair| pair[0].forward_m <= pair[1].forward_m)
         {
             return Err(AircraftFormatError::InvalidStructure);
+        }
+        self.members.validate(self.cockpit_stations.len())?;
+        Ok(())
+    }
+}
+
+impl AircraftMembersDocument {
+    fn validate(&self, cockpit_stations: usize) -> Result<(), AircraftFormatError> {
+        let wing = &self.wing;
+        let cockpit = &self.cockpit;
+        let count = |value| value <= MAX_AIRCRAFT_STATIONS as u32;
+        let chords = |values: &[f64], minimum| {
+            (minimum..=MAX_AIRCRAFT_STATIONS).contains(&values.len())
+                && values.iter().all(|value| (0.0..=1.0).contains(value))
+                && values.windows(2).all(|pair| pair[0] < pair[1])
+        };
+        let valid_tail = |tail: &AircraftTailMembersDocument| {
+            tail.rib_intervals > 0
+                && count(tail.rib_intervals)
+                && positive(tail.rib_radius_m)
+                && chords(&tail.rib_chord_bounds, 2)
+                && chords(&tail.foam_chord_bounds, 2)
+                && positive(tail.foam_half_width_m)
+                && tail.foam_normal_offset_m.is_finite()
+                && tail.foam_normal_offset_m >= 0.0
+        };
+        if wing.span_segments == 0
+            || !count(wing.span_segments)
+            || !count(wing.rib_count)
+            || !wing.spar_radii_m.into_iter().all(positive)
+            || !positive(wing.rib_radius_m)
+            || !positive(wing.stringer_radius_m)
+            || !positive(wing.foam_half_width_m)
+            || !chords(&wing.rib_chord_knots, 2)
+            || !chords(&wing.stringer_chord_fractions, 0)
+            || !chords(&wing.foam_chord_fractions, 2)
+            || !valid_tail(&self.horizontal_tail)
+            || !valid_tail(&self.vertical_tail)
+            || cockpit.nose_station as usize >= cockpit_stations
+            || cockpit.rim_station as usize >= cockpit_stations
+            || !(4..=MAX_AIRCRAFT_STATIONS as u32).contains(&cockpit.rim_segments)
+            || !chords(&cockpit.upper_station_fractions, 2)
+            || !chords(&cockpit.lower_station_fractions, 2)
+            || !chords(&cockpit.beam_attachment_fractions, 2)
+            || ![
+                cockpit.cross_radius_m,
+                cockpit.diagonal_radius_m,
+                cockpit.attachment_radius_m,
+                cockpit.rim_radius_m,
+            ]
+            .into_iter()
+            .all(positive)
+        {
+            return Err(AircraftFormatError::InvalidStructure);
+        }
+        let wing_parts = 2
+            * (wing.span_segments as usize * (1 + wing.stringer_chord_fractions.len())
+                + wing.rib_count as usize * wing.rib_chord_knots.len());
+        let tail_parts = 2
+            * (self.horizontal_tail.rib_intervals as usize
+                + self.vertical_tail.rib_intervals as usize
+                - 2);
+        if wing_parts + tail_parts + 19 + cockpit.rim_segments as usize > MAX_AIRCRAFT_MEMBERS {
+            return Err(AircraftFormatError::InvalidCount);
         }
         Ok(())
     }

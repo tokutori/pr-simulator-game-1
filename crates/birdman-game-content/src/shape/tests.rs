@@ -71,7 +71,7 @@ fn retained_contact_projection_reuses_storage_and_recovers_after_a_failed_update
 }
 
 #[test]
-fn accepted_bending_coefficients_preserve_corresponding_points_at_fractional_times() {
+fn accepted_bending_coefficients_preserve_skin_points_at_fractional_times() {
     let aircraft = playable_aircraft().unwrap();
     let shape = aircraft.shape();
     let start = shape.wing_bending_factor(0.0).unwrap();
@@ -94,7 +94,9 @@ fn accepted_bending_coefficients_preserve_corresponding_points_at_fractional_tim
             .write_deformed_contact_points_with_factor(factor, incidence, &mut output)
             .unwrap();
         let full_fraction = terminal_fraction * fraction;
-        for ((first, last), actual) in first.iter().zip(&last).zip(&output) {
+        let skin_count = aircraft.contact_points().len()
+            - aircraft.structural_geometry().neutral_vertices().len();
+        for ((first, last), actual) in first.iter().zip(&last).zip(&output).take(skin_count) {
             for ((first, last), actual) in first
                 .components()
                 .into_iter()
@@ -229,7 +231,9 @@ fn deformation_preserves_prepared_point_identity_and_reuses_the_callers_buffer()
     }
     let aircraft = AircraftDefinition::from_document(document).unwrap();
     let shape = aircraft.shape();
-    let samples = shape.contact_samples(ContactSampling::DEFAULT).unwrap();
+    let samples = shape
+        .contact_samples(ContactSampling::DEFAULT, aircraft.structural_geometry())
+        .unwrap();
     let [main_end, horizontal_end, vertical_end] = samples.surface_ends;
     assert_eq!(samples.points, aircraft.contact_points());
     assert_eq!(
@@ -251,6 +255,7 @@ fn deformation_preserves_prepared_point_identity_and_reuses_the_callers_buffer()
         let expected: Vec<_> = samples
             .points
             .iter()
+            .take(samples.structural_start)
             .enumerate()
             .map(|(index, point)| {
                 let coordinates = point.components();
@@ -297,6 +302,7 @@ fn deformation_preserves_prepared_point_identity_and_reuses_the_callers_buffer()
                 .fold(f64::NEG_INFINITY, f64::max);
             let actual_support = output
                 .iter()
+                .take(samples.structural_start)
                 .map(|point| down(point.components()))
                 .fold(f64::NEG_INFINITY, f64::max);
             assert!((actual_support - expected_support).abs() < 4.0e-15);
@@ -306,7 +312,10 @@ fn deformation_preserves_prepared_point_identity_and_reuses_the_callers_buffer()
         }
         assert_eq!(output.as_ptr(), pointer);
         assert_eq!(output.capacity(), capacity);
-        assert_eq!(&output[vertical_end..], &samples.points[vertical_end..]);
+        assert_eq!(
+            &output[vertical_end..samples.structural_start],
+            &samples.points[vertical_end..samples.structural_start]
+        );
         assert_eq!(aircraft.contact_points(), samples.points);
     }
     let before = output.clone();
@@ -517,6 +526,8 @@ fn cockpit_and_beam_use_custom_source_coordinates_and_dimensions() {
         },
     ];
     document.structure.cockpit_rounding_exponent = 1.0;
+    document.structure.members.cockpit.nose_station = 0;
+    document.structure.members.cockpit.rim_station = 1;
     document.structure.main_beam_endpoints_frd_m = [[3.0, 0.2, -0.5], [-2.0, -0.4, 0.7]];
     document.structure.main_beam_radius_m = 0.17;
     let aircraft = AircraftDefinition::from_document(document).unwrap();
@@ -531,8 +542,13 @@ fn cockpit_and_beam_use_custom_source_coordinates_and_dimensions() {
         .components();
     assert!((point[1]).abs() < 1.0e-15);
     assert!((point[2] - 0.8).abs() < 1.0e-15);
-    let mut beam = Vec::new();
-    shape.append_beam_points(&mut beam, 24, 0).unwrap();
+    let structure = aircraft.structural_geometry();
+    let beam_part = structure
+        .parts()
+        .iter()
+        .find(|part| part.kind() == crate::StructuralPartKind::MainBeam)
+        .unwrap();
+    let beam = &structure.neutral_vertices()[beam_part.vertex_range()];
     let endpoints = aircraft.document().structure.main_beam_endpoints_frd_m;
     let direction = core::array::from_fn::<_, 3, _>(|axis| endpoints[1][axis] - endpoints[0][axis]);
     assert_eq!(beam.len(), 48);
@@ -674,9 +690,15 @@ fn very_small_camber_positions_and_large_cockpit_intervals_keep_finite_profiles(
             half_height_m: 0.9
         },
     ];
-    let aircraft = AircraftDefinition::from_document(document).unwrap();
-    let station = aircraft.shape().cockpit_station(0.0).unwrap();
+    document.structure.members.cockpit.nose_station = 0;
+    document.structure.members.cockpit.rim_station = 1;
+    document.validate().unwrap();
+    let station = AircraftShape::new(&document).cockpit_station(0.0).unwrap();
     assert_eq!(station.half_width_m, 0.5);
     assert!((station.half_height_m - 0.6).abs() < 1.0e-15);
     assert_eq!(station.center_down_m, 0.2);
+    assert!(matches!(
+        AircraftDefinition::from_document(document),
+        Err(crate::AircraftDefinitionError::Shape(_))
+    ));
 }

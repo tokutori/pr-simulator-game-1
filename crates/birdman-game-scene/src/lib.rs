@@ -1,5 +1,6 @@
 //! Engine-independent procedural geometry, textures, water and sky resources.
 
+pub mod airframe_structure;
 pub mod cockpit_geometry;
 pub mod lake_sky;
 pub mod lake_water;

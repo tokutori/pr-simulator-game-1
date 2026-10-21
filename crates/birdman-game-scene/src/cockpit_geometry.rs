@@ -1,8 +1,8 @@
 #![doc = "Cockpit presentation from the registered aircraft document; local metres use right/up/aft axes."]
 
-use birdman_game_content::{AircraftDefinition, ContactSampling};
-
-const ATTACHMENT_RADIUS: f64 = 0.008;
+use birdman_game_content::AircraftDefinition;
+#[cfg(test)]
+use birdman_game_content::ContactSampling;
 
 #[doc = "Material meanings and the existing Web palette, independent of the rendering engine."]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -42,16 +42,6 @@ impl CockpitMaterial {
     }
 }
 
-#[doc = "Fixed tube endpoints, radius and material in cockpit-local metres."]
-pub struct CockpitRod {
-    #[doc = "From and to coordinates in right/up/aft order."]
-    pub endpoints: [[f64; 3]; 2],
-    #[doc = "Cylinder radius in metres."]
-    pub radius: f64,
-    #[doc = "Shared material meaning."]
-    pub material: CockpitMaterial,
-}
-
 #[doc = "Indexed canopy or fairing surface; adapters compute normals with their existing mesh API."]
 pub struct CockpitSurface {
     #[doc = "Float32 right/up/aft positions."]
@@ -64,8 +54,6 @@ pub struct CockpitSurface {
 
 #[doc = "Static cockpit definition, built once without flight state or I/O."]
 pub struct CockpitGeometry {
-    #[doc = "Eighteen shell-contained frame and beam-attachment tubes, followed by sixteen canopy rim segments."]
-    pub rods: Vec<CockpitRod>,
     #[doc = "Nose canopy followed by rear fairing."]
     pub surfaces: [CockpitSurface; 2],
 }
@@ -82,84 +70,18 @@ impl CockpitGeometry {
         definition().document().structure.pilot_eye_offset_frd_m
     }
 
-    #[doc = "Constructs the existing cockpit shell and fits its frame to the shell and registered main beam."]
+    #[doc = "Constructs the canopy and fairing from the registered shell stations and opening split."]
     pub fn new() -> Self {
         let stations = cockpit_stations();
-        let structure = &definition().document().structure;
-        let frame_radius = structure.cockpit_frame_radius_m;
-        let fraction_aft = |fraction: f64| {
-            stations[0][0] + fraction * (stations[stations.len() - 1][0] - stations[0][0])
-        };
-        let mut rods = Vec::with_capacity(34);
-        let nose = inset_shell_point(stations[1][0], [0.0, -1.0], frame_radius);
-        let attachment_points = beam_attachments(definition());
-        let lower_points = [-1.0, 1.0].map(|side| {
-            [
-                inset_shell_point(fraction_aft(0.2), [side, -1.0], frame_radius),
-                inset_shell_point(fraction_aft(0.68), [side, -1.0], frame_radius),
-            ]
-        });
-        for (side_index, side) in [-1.0, 1.0].into_iter().enumerate() {
-            let upper_front = inset_shell_point(fraction_aft(0.15), [side, 1.0], frame_radius);
-            let upper_rear = inset_shell_point(fraction_aft(0.75), [side, 1.0], frame_radius);
-            let [lower_front, lower_rear] = lower_points[side_index];
-            for (from, to, radius) in [
-                (nose, upper_front, frame_radius),
-                (upper_front, upper_rear, frame_radius),
-                (lower_front, lower_rear, frame_radius),
-                (upper_front, lower_front, 0.008),
-                (upper_rear, lower_rear, 0.008),
-                (lower_front, upper_rear, 0.007),
-            ] {
-                rods.push(CockpitRod {
-                    endpoints: [from, to],
-                    radius,
-                    material: CockpitMaterial::Frame,
-                });
-            }
-            for attachment in attachment_points {
-                let fraction = (attachment[2] - upper_front[2]) / (upper_rear[2] - upper_front[2]);
-                rods.push(CockpitRod {
-                    endpoints: [
-                        attachment,
-                        core::array::from_fn(|axis| {
-                            upper_front[axis] + fraction * (upper_rear[axis] - upper_front[axis])
-                        }),
-                    ],
-                    radius: ATTACHMENT_RADIUS,
-                    material: CockpitMaterial::Frame,
-                });
-            }
-        }
-        for (left, right) in lower_points[0].into_iter().zip(lower_points[1]) {
-            rods.push(CockpitRod {
-                endpoints: [left, right],
-                radius: 0.008,
-                material: CockpitMaterial::Frame,
-            });
-        }
-        let split = stations.len() / 2;
+        let split = definition()
+            .document()
+            .structure
+            .members
+            .cockpit
+            .rim_station as usize;
         let canopy = &stations[..=split];
         let fairing = &stations[split..];
-        let rim_radius = 0.009;
-        let rim_point = |step| {
-            let station = stations[split];
-            let point = canopy_point(station[0], step, 16);
-            inset_shell_point(
-                station[0],
-                [point[0] / station[2], (point[1] - station[1]) / station[3]],
-                rim_radius,
-            )
-        };
-        for step in 0..16 {
-            rods.push(CockpitRod {
-                endpoints: [rim_point(step), rim_point(step + 1)],
-                radius: rim_radius,
-                material: CockpitMaterial::Rim,
-            });
-        }
         Self {
-            rods,
             surfaces: [
                 surface(canopy, CockpitMaterial::Canopy),
                 surface(fairing, CockpitMaterial::Fairing),
@@ -171,34 +93,6 @@ impl CockpitGeometry {
 fn definition() -> &'static AircraftDefinition {
     birdman_game_app::registered_aircraft()
         .expect("registered cockpit source must pass aircraft admission")
-}
-
-fn beam_attachments(source: &AircraftDefinition) -> [[f64; 3]; 2] {
-    let structure = &source.document().structure;
-    let [first, second] = structure.main_beam_endpoints_frd_m;
-    let [_, radial_first, radial_second] = source
-        .shape()
-        .beam_frame()
-        .expect("registered beam frame passed aircraft admission");
-    let radial_first = radial_first.components();
-    let radial_second = radial_second.components();
-    let mut underside = core::array::from_fn::<_, 3, _>(|axis| {
-        radial_first[axis] * radial_first[2] + radial_second[axis] * radial_second[2]
-    });
-    let length = underside[0].hypot(underside[1]).hypot(underside[2]);
-    if length <= f64::EPSILON {
-        underside = radial_first;
-    } else {
-        underside = underside.map(|component| component / length);
-    }
-    [0.0, 0.09].map(|fraction| {
-        let [forward, right, down] = core::array::from_fn(|axis| {
-            first[axis]
-                + fraction * (second[axis] - first[axis])
-                + structure.main_beam_radius_m * underside[axis]
-        });
-        [right, -down, -forward]
-    })
 }
 
 fn cockpit_stations() -> Vec<[f64; 4]> {
@@ -227,48 +121,6 @@ fn canopy_point(aft: f64, step: u32, steps: u32) -> [f64; 3] {
         .expect("cockpit samples use admitted structural stations")
         .components();
     [right, -down, -forward]
-}
-
-fn shell_section(aft: f64) -> [f64; 4] {
-    let station = definition()
-        .shape()
-        .cockpit_station(-aft)
-        .expect("frame point lies within cockpit shell");
-    [
-        -station.forward_m,
-        -station.center_down_m,
-        station.half_width_m,
-        station.half_height_m,
-    ]
-}
-
-fn inset_shell_point(aft: f64, direction: [f64; 2], radius: f64) -> [f64; 3] {
-    let section = shell_section(aft);
-    let maximum_slope = cockpit_stations()
-        .windows(2)
-        .map(|sections| {
-            let [first, last] = [sections[0], sections[1]];
-            (last[2] - first[2]).hypot((last[1] - first[1]).abs() + (last[3] - first[3]).abs())
-                / (last[0] - first[0])
-        })
-        .fold(0.0, f64::max);
-    let inset = radius * (1.0 + maximum_slope);
-    let desired = [direction[0] * section[2], direction[1] * section[3]];
-    let mut scale: f64 = 1.0;
-    let steps = ContactSampling::default().circumference_steps();
-    for step in 0..steps {
-        let first = canopy_point(aft, step, steps);
-        let last = canopy_point(aft, step + 1, steps);
-        let edge = [last[0] - first[0], last[1] - first[1]];
-        let length = edge[0].hypot(edge[1]);
-        let normal = [edge[1] / length, -edge[0] / length];
-        let projection = normal[0] * desired[0] + normal[1] * desired[1];
-        if projection > 0.0 {
-            let distance = normal[0] * first[0] + normal[1] * (first[1] - section[1]);
-            scale = scale.min((distance - inset) / projection);
-        }
-    }
-    [desired[0] * scale, section[1] + desired[1] * scale, aft]
 }
 
 fn surface(stations: &[[f64; 4]], material: CockpitMaterial) -> CockpitSurface {
@@ -376,24 +228,48 @@ mod tests {
                 assert!((-down - height) * sign < 0.0);
             }
         }
+        let structural = definition.structural_geometry();
+        let frames: Vec<_> = structural
+            .parts()
+            .iter()
+            .filter(|part| part.kind() == birdman_game_content::StructuralPartKind::CockpitFrame)
+            .map(|part| {
+                let vertices = &structural.neutral_vertices()[part.vertex_range()];
+                let half = vertices.len() / 2;
+                let ends: [[f64; 3]; 2] = core::array::from_fn(|ring| {
+                    core::array::from_fn(|axis| {
+                        vertices[ring * half..(ring + 1) * half]
+                            .iter()
+                            .map(|point| point.components()[axis])
+                            .sum::<f64>()
+                            / half as f64
+                    })
+                });
+                let radius_squared = vertices[0]
+                    .components()
+                    .into_iter()
+                    .zip(ends[0])
+                    .map(|(vertex, center)| (vertex - center).powi(2))
+                    .sum::<f64>();
+                (ends, radius_squared)
+            })
+            .collect();
         for step in 0..=64 {
             let aft = minimum_aft + (maximum_aft - minimum_aft) * f64::from(step) / 64.0;
-            let eye = [right, -down, aft];
-            for rod in &geometry.rods[..18] {
+            let eye = [-aft, right, down];
+            for (ends, radius_squared) in &frames {
                 let direction: [f64; 3] =
-                    core::array::from_fn(|axis| rod.endpoints[1][axis] - rod.endpoints[0][axis]);
+                    core::array::from_fn(|axis| ends[1][axis] - ends[0][axis]);
                 let length_squared = direction.iter().map(|value| value * value).sum::<f64>();
                 let fraction = ((0..3)
-                    .map(|axis| (eye[axis] - rod.endpoints[0][axis]) * direction[axis])
+                    .map(|axis| (eye[axis] - ends[0][axis]) * direction[axis])
                     .sum::<f64>()
                     / length_squared)
                     .clamp(0.0, 1.0);
                 let distance_squared = (0..3)
-                    .map(|axis| {
-                        (eye[axis] - rod.endpoints[0][axis] - fraction * direction[axis]).powi(2)
-                    })
+                    .map(|axis| (eye[axis] - ends[0][axis] - fraction * direction[axis]).powi(2))
                     .sum::<f64>();
-                assert!(distance_squared > rod.radius * rod.radius);
+                assert!(distance_squared > *radius_squared);
             }
         }
     }
@@ -401,7 +277,6 @@ mod tests {
     #[test]
     fn frozen_web_cockpit_stations_topology_and_structure_are_preserved() {
         let geometry = CockpitGeometry::new();
-        assert_eq!(geometry.rods.len(), 34);
         assert_eq!(geometry.surfaces[0].positions.len(), 150);
         assert_eq!(geometry.surfaces[0].indices.len(), 720);
         assert_eq!(geometry.surfaces[1].positions.len(), 125);
@@ -438,16 +313,6 @@ mod tests {
             );
             assert_eq!(&surface.indices[..6], &[0, 1, 25, 1, 26, 25]);
         }
-        assert!(
-            geometry.rods[..18]
-                .iter()
-                .all(|rod| rod.material == CockpitMaterial::Frame)
-        );
-        assert!(
-            geometry.rods[18..]
-                .iter()
-                .all(|rod| rod.material == CockpitMaterial::Rim)
-        );
         assert_eq!(
             &geometry.surfaces[0].positions[125..],
             &geometry.surfaces[1].positions[..25]
@@ -469,89 +334,25 @@ mod tests {
                 }
             }
         }
-        for (index, rod) in geometry.rods[18..].iter().enumerate() {
-            assert!(
-                rod.endpoints
-                    .iter()
-                    .flatten()
-                    .all(|value| value.is_finite())
-            );
-            assert_eq!(rod.radius, 0.009);
-            let next = &geometry.rods[18 + (index + 1) % 16];
-            for (actual, expected) in rod.endpoints[1].iter().zip(next.endpoints[0]) {
-                assert!((*actual - expected).abs() < 1.0e-12);
-            }
-        }
     }
 
     #[test]
-    fn frame_tube_radii_remain_inside_the_existing_shell() {
+    fn structural_frame_and_rim_vertices_stay_inside_the_shared_shell() {
         let geometry = CockpitGeometry::new();
-        for (rod_index, rod) in geometry.rods.iter().enumerate() {
-            for step in 0..=96 {
-                let fraction = f64::from(step) / 96.0;
-                let center: [f64; 3] = core::array::from_fn(|axis| {
-                    rod.endpoints[0][axis]
-                        + fraction * (rod.endpoints[1][axis] - rod.endpoints[0][axis])
-                });
-                for right in -1..=1 {
-                    for up in -1..=1 {
-                        for aft in -1..=1 {
-                            let direction = [f64::from(right), f64::from(up), f64::from(aft)];
-                            let length = direction
-                                .iter()
-                                .map(|value| value * value)
-                                .sum::<f64>()
-                                .sqrt();
-                            if length == 0.0 {
-                                continue;
-                            }
-                            let point = core::array::from_fn(|axis| {
-                                center[axis] + rod.radius * direction[axis] / length
-                            });
-                            assert!(
-                                shell_contains(&geometry.surfaces, point),
-                                "frame rod {rod_index}, fraction {fraction}, point {point:?} escapes shell"
-                            );
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn beam_attachments_preserve_three_dimensional_sweep_offsets_and_radius() {
-        for endpoints in [
-            [[0.1375, 0.25, 0.73], [-4.75, 0.9, 0.57]],
-            [[0.1375, 0.25, -0.7], [0.1374999999999998, 0.25, 2.0]],
-        ] {
-            let mut document = definition().document().clone();
-            document.structure.main_beam_endpoints_frd_m = endpoints;
-            let source = AircraftDefinition::from_document(document).unwrap();
-            let direction =
-                core::array::from_fn::<_, 3, _>(|axis| endpoints[1][axis] - endpoints[0][axis]);
-            for (point, fraction) in beam_attachments(&source).into_iter().zip([0.0, 0.09]) {
-                let [right, up, aft] = point;
-                let point = [-aft, right, -up];
-                let offset = core::array::from_fn::<_, 3, _>(|axis| {
-                    point[axis] - endpoints[0][axis] - fraction * direction[axis]
-                });
-                assert!(point[1] > 0.1);
-                let squared_radius = offset
-                    .into_iter()
-                    .map(|component| component * component)
-                    .sum::<f64>();
-                let axial = offset
-                    .into_iter()
-                    .zip(direction)
-                    .map(|(offset, direction)| offset * direction)
-                    .sum::<f64>();
+        let structure = crate::airframe_structure::AirframeStructure::new(definition()).unwrap();
+        for mesh in structure.meshes().iter().filter(|mesh| {
+            matches!(
+                mesh.kind(),
+                birdman_game_content::StructuralPartKind::CockpitFrame
+                    | birdman_game_content::StructuralPartKind::CanopyRim
+            )
+        }) {
+            for point in mesh.positions() {
                 assert!(
-                    (squared_radius - source.document().structure.main_beam_radius_m.powi(2)).abs()
-                        < 1.0e-15
+                    shell_contains(&geometry.surfaces, point.map(f64::from)),
+                    "{:?}: {point:?}",
+                    mesh.kind()
                 );
-                assert!(axial.abs() < 1.0e-14);
             }
         }
     }

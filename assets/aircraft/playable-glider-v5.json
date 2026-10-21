@@ -1,7 +1,7 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "configuration_id": "bpg041-playable-hybrid-mock",
-  "model_version": 4,
+  "model_version": 5,
   "mass": {
     "airframe_kg": 40,
     "inertia_about_datum_kg_m2": [
@@ -884,7 +884,48 @@
       0.06,
       0,
       1.04
-    ]
+    ],
+    "members": {
+      "wing": {
+        "span_segments": 12,
+        "spar_radii_m": [0.055, 0.018],
+        "rib_count": 22,
+        "rib_radius_m": 0.012,
+        "rib_chord_knots": [0.5, 0.75, 1.0],
+        "stringer_chord_fractions": [0.5, 0.995],
+        "stringer_radius_m": 0.006,
+        "foam_chord_fractions": [0.5, 0.75, 0.995],
+        "foam_half_width_m": 0.013
+      },
+      "horizontal_tail": {
+        "rib_intervals": 8,
+        "rib_radius_m": 0.012,
+        "rib_chord_bounds": [0.5, 1.0],
+        "foam_chord_bounds": [0.5, 0.75],
+        "foam_half_width_m": 0.012,
+        "foam_normal_offset_m": 0.003
+      },
+      "vertical_tail": {
+        "rib_intervals": 4,
+        "rib_radius_m": 0.012,
+        "rib_chord_bounds": [0.5, 1.0],
+        "foam_chord_bounds": [0.5, 0.75],
+        "foam_half_width_m": 0.012,
+        "foam_normal_offset_m": 0.003
+      },
+      "cockpit": {
+        "nose_station": 1,
+        "upper_station_fractions": [0.15, 0.75],
+        "lower_station_fractions": [0.2, 0.68],
+        "beam_attachment_fractions": [0.0, 0.09],
+        "cross_radius_m": 0.008,
+        "diagonal_radius_m": 0.007,
+        "attachment_radius_m": 0.008,
+        "rim_station": 5,
+        "rim_segments": 16,
+        "rim_radius_m": 0.009
+      }
+    }
   },
   "trim": {
     "airspeed_mps": 9.7,

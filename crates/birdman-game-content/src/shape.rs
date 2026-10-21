@@ -24,6 +24,10 @@ pub enum ShapeError {
     InvalidSampling,
     /// The caller's output slice differs from the prepared contact-point count.
     MismatchedContactPointCount,
+    /// The output slice differs from the prepared structural vertex count.
+    MismatchedVertexCount,
+    /// A member has zero length or cannot retain a numerically defined radial frame.
+    DegenerateMember,
     /// A derived point or frame cannot be represented by finite coordinates.
     Math(MathError),
 }
@@ -102,6 +106,12 @@ pub struct AircraftShape<'a> {
 impl<'a> AircraftShape<'a> {
     pub(crate) const fn new(document: &'a AircraftDocument) -> Self {
         Self { document }
+    }
+
+    pub(crate) const fn structure(
+        self,
+    ) -> &'a birdman_game_format::aircraft::AircraftStructureDocument {
+        &self.document.structure
     }
 
     /// Borrows one validated surface, including its complete piecewise-linear section knots.
@@ -214,12 +224,15 @@ impl<'a> AircraftShape<'a> {
 
     /// Builds the neutral outer polytope from all section knots, cockpit stations and beam ends.
     pub fn contact_points(self, sampling: ContactSampling) -> Result<Vec<BodyPoint>, ShapeError> {
-        self.contact_samples(sampling).map(|samples| samples.points)
+        let structure = crate::StructuralGeometry::from_shape(self, sampling)?;
+        self.contact_samples(sampling, &structure)
+            .map(|samples| samples.points)
     }
 
     pub(crate) fn contact_samples(
         self,
         sampling: ContactSampling,
+        structure: &crate::StructuralGeometry,
     ) -> Result<ContactSamples, ShapeError> {
         let mut points = Vec::new();
         let mut surface_ends = [0; 3];
@@ -258,10 +271,12 @@ impl<'a> AircraftShape<'a> {
                 );
             }
         }
-        self.append_beam_points(&mut points, sampling.circumference_steps, rigid_start)?;
+        let structural_start = points.len();
+        points.extend_from_slice(structure.neutral_vertices());
         Ok(ContactSamples {
             points,
             surface_ends,
+            structural_start,
         })
     }
 
@@ -289,47 +304,19 @@ impl<'a> AircraftShape<'a> {
         let down = direction.cross(right).map_err(ShapeError::Math)?;
         Ok([direction, right, down])
     }
-
-    fn append_beam_points(
-        self,
-        points: &mut Vec<BodyPoint>,
-        steps: u32,
-        group_start: usize,
-    ) -> Result<(), ShapeError> {
-        let structure = &self.document.structure;
-        let [first, second] = structure.main_beam_endpoints_frd_m;
-        let [_, right, down] = self.beam_frame()?;
-        for center in [first, second] {
-            for step in 0..steps {
-                let angle = core::f64::consts::TAU * f64::from(step) / f64::from(steps);
-                let offset = right
-                    .scaled(structure.main_beam_radius_m * libm::cos(angle))
-                    .and_then(|right| {
-                        right.plus(down.scaled(structure.main_beam_radius_m * libm::sin(angle))?)
-                    })
-                    .map_err(ShapeError::Math)?;
-                push_distinct(
-                    points,
-                    body_point(center)?
-                        .translated(offset)
-                        .map_err(ShapeError::Math)?,
-                    group_start,
-                );
-            }
-        }
-        Ok(())
-    }
 }
 
 pub(crate) struct ContactSamples {
     pub(crate) points: Vec<BodyPoint>,
     surface_ends: [usize; 3],
+    structural_start: usize,
 }
 
 impl ContactSamples {
     pub(crate) fn write_with_factor(
         &self,
         shape: AircraftShape<'_>,
+        structure: &crate::StructuralGeometry,
         factor: WingBendingFactor,
         incidence: TailIncidence,
         output: &mut [BodyPoint],
@@ -343,7 +330,13 @@ impl ContactSamples {
         let vertical = shape
             .surface(HybridSurfaceRole::VerticalTail)
             .actuation(incidence)?;
-        for (index, (point, target)) in self.points.iter().zip(output).enumerate() {
+        for (index, (point, target)) in self
+            .points
+            .iter()
+            .zip(output.iter_mut())
+            .take(self.structural_start)
+            .enumerate()
+        {
             *target = if index < self.surface_ends[0] {
                 point
                     .translated(shape.wing_displacement_with_factor(point.components()[1], factor)?)
@@ -356,11 +349,17 @@ impl ContactSamples {
                 *point
             };
         }
+        structure.write_vertices(
+            shape,
+            factor,
+            incidence,
+            &mut output[self.structural_start..],
+        )?;
         Ok(())
     }
 }
 
-struct SurfaceActuation {
+pub(crate) struct SurfaceActuation {
     pivot: [f64; 3],
     role: HybridSurfaceRole,
     sine: f64,
@@ -368,7 +367,7 @@ struct SurfaceActuation {
 }
 
 impl SurfaceActuation {
-    fn apply(&self, point: BodyPoint) -> Result<BodyPoint, ShapeError> {
+    pub(crate) fn apply(&self, point: BodyPoint) -> Result<BodyPoint, ShapeError> {
         if self.sine == 0.0 && self.cosine == 1.0 {
             return Ok(point);
         }
@@ -430,7 +429,10 @@ impl<'a> SurfaceShape<'a> {
         self.actuation(incidence)?.apply(point)
     }
 
-    fn actuation(self, incidence: TailIncidence) -> Result<SurfaceActuation, ShapeError> {
+    pub(crate) fn actuation(
+        self,
+        incidence: TailIncidence,
+    ) -> Result<SurfaceActuation, ShapeError> {
         let angle = match self.role {
             HybridSurfaceRole::MainWing => 0.0,
             HybridSurfaceRole::HorizontalTail => incidence.elevator_rad(),

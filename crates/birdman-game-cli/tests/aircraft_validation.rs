@@ -6,7 +6,7 @@ use std::{fs, io::Write, process::Command, time::SystemTime};
 #[test]
 fn aircraft_command_admits_only_prepared_geometry_and_a_feasible_trim() {
     let valid = AircraftDocument::decode_json(include_bytes!(
-        "../../../assets/aircraft/playable-glider-v4.json"
+        "../../../assets/aircraft/playable-glider-v5.json"
     ))
     .unwrap();
     let mut asymmetric = valid.clone();

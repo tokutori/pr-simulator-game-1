@@ -3,9 +3,9 @@
 use birdman_game_content::{AirfoilFace, ContactSampling, SurfaceShape};
 use birdman_game_core::HybridSurfaceRole;
 
-use crate::wing_geometry::{COVERED_FRACTION, FOAM_COLOR, RIB_COLOR, RIB_RADIUS};
+use crate::wing_geometry::COVERED_FRACTION;
 
-#[doc = "Tail palette, reusing the Web indigo and film and shared wing structural colours."]
+#[doc = "Engine-independent palette for the tail's indigo cover and transparent film."]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u32)]
 pub enum TailMaterial {
@@ -13,23 +13,17 @@ pub enum TailMaterial {
     Cover,
     #[doc = "Transparent trailing film."]
     Film,
-    #[doc = "Light-blue foam over the forward part of each exposed rib."]
-    Foam,
-    #[doc = "Pale balsa rib."]
-    Rib,
 }
 
 impl TailMaterial {
     #[doc = "Stable bulk palette order."]
-    pub const ALL: [Self; 4] = [Self::Cover, Self::Film, Self::Foam, Self::Rib];
+    pub const ALL: [Self; 2] = [Self::Cover, Self::Film];
 
     #[doc = "sRGB 0xRRGGBB colour from the existing airframe palette."]
     pub const fn color(self) -> u32 {
         match self {
             Self::Cover => 0x304c6b,
             Self::Film => 0xd5ddd9,
-            Self::Foam => FOAM_COLOR,
-            Self::Rib => RIB_COLOR,
         }
     }
 
@@ -51,14 +45,12 @@ pub struct TailPatch {
     pub material: TailMaterial,
 }
 
-#[doc = "Registered tail outline, fixed material patches and exposed structural anchors."]
+#[doc = "Registered neutral tail skin and fixed material patches around the physical pivot."]
 pub struct TailGeometry {
     #[doc = "Physical quarter-chord midpoint in aircraft right/up/aft coordinates."]
     pub origin: [f64; 3],
-    #[doc = "Opaque cover, trailing film and the visible foam strips, in that order."]
+    #[doc = "Opaque cover and trailing film."]
     pub patches: Vec<TailPatch>,
-    #[doc = "Rib endpoints, relative to the same physical pivot as every patch."]
-    pub ribs: Vec<[[f64; 3]; 2]>,
 }
 
 impl TailGeometry {
@@ -75,30 +67,20 @@ impl TailGeometry {
 
     #[doc = "Projects the common neutral airfoil, every source section and its incidence pivot."]
     pub fn from_shape(shape: SurfaceShape<'_>) -> Result<Self, &'static str> {
-        let intervals = match shape.role() {
-            HybridSurfaceRole::HorizontalTail => 8,
-            HybridSurfaceRole::VerticalTail => 4,
-            HybridSurfaceRole::MainWing => return Err("Tail geometry requires a tail surface"),
-        };
+        if shape.role() == HybridSurfaceRole::MainWing {
+            return Err("Tail geometry requires a tail surface");
+        }
         let [first_span, last_span] = shape.span_bounds_m();
         let center = shape
             .incidence_pivot()
             .map_err(|_| "Invalid tail pivot")?
             .components();
-        let total_span = last_span - first_span;
         let point = |span: f64, chord: f64, face| -> Result<[f64; 3], &'static str> {
             let [forward, right, down] = shape
                 .point(span, chord, face)
                 .map_err(|_| "Invalid tail profile point")?
                 .components();
             Ok([right - center[1], center[2] - down, center[0] - forward])
-        };
-        let mean = |span: f64, chord: f64| -> Result<[f64; 3], &'static str> {
-            let upper = point(span, chord, AirfoilFace::Upper)?;
-            let lower = point(span, chord, AirfoilFace::Lower)?;
-            Ok(core::array::from_fn(|axis| {
-                (upper[axis] + lower[axis]) * 0.5
-            }))
         };
         let profile = shape.airfoil();
         let chords = if profile.camber_ratio == 0.0 && profile.thickness_ratio == 0.0 {
@@ -145,45 +127,9 @@ impl TailGeometry {
                 }
             }
         }
-        let normal_axis = if shape.role() == HybridSurfaceRole::HorizontalTail {
-            1
-        } else {
-            0
-        };
-        let mut ribs = Vec::with_capacity(intervals - 1);
-        for index in 1..intervals {
-            let span = first_span + total_span * index as f64 / intervals as f64;
-            ribs.push([mean(span, COVERED_FRACTION)?, mean(span, 1.0)?]);
-            let mut vertices = [
-                point(
-                    (span - RIB_RADIUS).max(first_span),
-                    COVERED_FRACTION,
-                    AirfoilFace::Upper,
-                )?,
-                point(
-                    (span + RIB_RADIUS).min(last_span),
-                    COVERED_FRACTION,
-                    AirfoilFace::Upper,
-                )?,
-                point((span + RIB_RADIUS).min(last_span), 0.75, AirfoilFace::Upper)?,
-                point(
-                    (span - RIB_RADIUS).max(first_span),
-                    0.75,
-                    AirfoilFace::Upper,
-                )?,
-            ];
-            for vertex in &mut vertices {
-                vertex[normal_axis] += RIB_RADIUS / 4.0;
-            }
-            patches.push(TailPatch {
-                vertices: vertices.map(|vertex| vertex.map(|value| value as f32)),
-                material: TailMaterial::Foam,
-            });
-        }
         Ok(Self {
             origin: [center[1], -center[2], -center[0]],
             patches,
-            ribs,
         })
     }
 }
@@ -214,19 +160,17 @@ mod tests {
     #[test]
     fn registered_tails_preserve_physical_outline_and_join_cover_to_film() {
         let [horizontal, vertical] = TailGeometry::registered().unwrap();
-        for (tail, origin, ribs, span, chord) in [
-            (horizontal, [0.0, -0.1, 3.6], 7, 3.4, 2.5 / 3.4),
-            (vertical, [0.0, 0.1, 1.8], 3, 0.7, 0.5 / 0.7),
+        for (tail, origin, span_axis, span, chord) in [
+            (horizontal, [0.0, -0.1, 3.6], 0, 3.4, 2.5 / 3.4),
+            (vertical, [0.0, 0.1, 1.8], 1, 0.7, 0.5 / 0.7),
         ] {
             for (actual, expected) in tail.origin.into_iter().zip(origin) {
                 assert!((actual - expected).abs() < 1.0e-12);
             }
-            assert_eq!(tail.ribs.len(), ribs);
-            assert_eq!(tail.patches.len(), 2 + ribs);
+            assert_eq!(tail.patches.len(), 2);
             let cover = &tail.patches[0].vertices;
             let film = &tail.patches[1].vertices;
             assert_eq!([cover[3], cover[2]], [film[0], film[1]]);
-            let span_axis = if ribs == 7 { 0 } else { 1 };
             assert!(
                 (f64::from(cover[1][span_axis] - cover[0][span_axis]).abs() - span).abs() < 1.0e-6
             );
@@ -239,15 +183,8 @@ mod tests {
                         .flatten()
                         .all(|value| value.is_finite())
                 );
-                assert_ne!(patch.material, TailMaterial::Rib);
-            }
-            for endpoints in tail.ribs {
-                assert!(endpoints[0][2] < endpoints[1][2]);
-                assert!(endpoints.iter().flatten().all(|value| value.is_finite()));
             }
         }
-        assert_eq!(TailMaterial::Rib.color(), RIB_COLOR);
-        assert_eq!(TailMaterial::Foam.color(), FOAM_COLOR);
         assert_eq!(TailMaterial::Film.opacity(), 0.22);
     }
 
@@ -330,11 +267,7 @@ mod tests {
         ] {
             let shape = definition.shape().surface(role);
             let tail = TailGeometry::from_shape(shape).unwrap();
-            let skin: Vec<_> = tail
-                .patches
-                .iter()
-                .filter(|patch| patch.material != TailMaterial::Foam)
-                .collect();
+            let skin = &tail.patches;
             for span in shape.span_stations_m() {
                 for chord in ContactSampling::DEFAULT.chord_fractions() {
                     for face in [AirfoilFace::Upper, AirfoilFace::Lower] {

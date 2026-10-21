@@ -13,7 +13,7 @@ use birdman_game_format::aircraft::{
 
 /// Complete source of the registered fictional glider, in body FRD coordinates and SI units.
 pub const PLAYABLE_AIRCRAFT_JSON: &[u8] =
-    include_bytes!("../../../assets/aircraft/playable-glider-v4.json");
+    include_bytes!("../../../assets/aircraft/playable-glider-v5.json");
 
 /// Decodes and prepares the bundled aircraft into owned immutable storage.
 pub fn playable_aircraft() -> Result<AircraftDefinition, AircraftDefinitionError> {
@@ -45,6 +45,7 @@ pub struct AircraftDefinition {
     rows: Vec<StaticPolarRow>,
     reference: ElementReference,
     contact: crate::shape::ContactSamples,
+    structure: crate::StructuralGeometry,
 }
 
 struct SurfaceStorage {
@@ -94,8 +95,12 @@ impl AircraftDefinition {
             wing.projected_mac_m(),
         )
         .map_err(AircraftDefinitionError::Aerodynamics)?;
-        let contact = crate::AircraftShape::new(&document)
-            .contact_samples(crate::ContactSampling::default())
+        let shape = crate::AircraftShape::new(&document);
+        let sampling = crate::ContactSampling::default();
+        let structure = crate::StructuralGeometry::from_shape(shape, sampling)
+            .map_err(AircraftDefinitionError::Shape)?;
+        let contact = shape
+            .contact_samples(sampling, &structure)
             .map_err(AircraftDefinitionError::Shape)?;
         let definition = Self {
             document,
@@ -104,6 +109,7 @@ impl AircraftDefinition {
             rows,
             reference,
             contact,
+            structure,
         };
         for tip in definition
             .shape()
@@ -136,6 +142,23 @@ impl AircraftDefinition {
         &self.contact.points
     }
 
+    /// Borrows every prepared physical structural member and its neutral FRD topology.
+    pub const fn structural_geometry(&self) -> &crate::StructuralGeometry {
+        &self.structure
+    }
+
+    /// Writes the structural member vertices shared by rendering and contact.
+    /// Callers publish the complete buffer after success.
+    pub fn write_structural_vertices(
+        &self,
+        factor: WingBendingFactor,
+        incidence: TailIncidence,
+        output: &mut [BodyPoint],
+    ) -> Result<(), crate::ShapeError> {
+        self.structure
+            .write_vertices(self.shape(), factor, incidence, output)
+    }
+
     /// Writes FRD support points with stable neutral identity into caller-owned storage.
     ///
     /// The caller publishes the output after success; arithmetic failure may leave a prefix written.
@@ -159,7 +182,7 @@ impl AircraftDefinition {
         output: &mut [BodyPoint],
     ) -> Result<(), crate::ShapeError> {
         self.contact
-            .write_with_factor(self.shape(), factor, incidence, output)
+            .write_with_factor(self.shape(), &self.structure, factor, incidence, output)
     }
 
     /// Returns the mass and pilot model prepared from the same source.
@@ -338,7 +361,9 @@ fn contact_shape_error(error: crate::ShapeError) -> birdman_game_core::ContactEr
         | crate::ShapeError::InvalidChordFraction
         | crate::ShapeError::OutsideSurface(_)
         | crate::ShapeError::OutsideCockpit
-        | crate::ShapeError::InvalidSampling => ContactError::ShapeProjection,
+        | crate::ShapeError::InvalidSampling
+        | crate::ShapeError::MismatchedVertexCount
+        | crate::ShapeError::DegenerateMember => ContactError::ShapeProjection,
     }
 }
 

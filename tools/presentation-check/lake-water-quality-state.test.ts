@@ -6,6 +6,7 @@ import type { AppModel, AppTransition } from "../../web/src/app/app-state.js";
 import { createGameViewModel, sharedGameUiAction } from "../../web/src/app/game-view.js";
 import type { TailAppSessionFacade } from "../../web/src/app/session-facade.js";
 import type { SessionPhase } from "../../web/src/app/session-snapshot.js";
+import { readRuntimeSessionProjection } from "../../web/src/app/session-runtime-projection.js";
 import type { LakeWaterQuality } from "../../web/src/render/contracts/lake-water.js";
 import type { PresentationMode } from "../../web/src/render/contracts/runtime.js";
 import { validateUiViewModel } from "../../web/src/render/contracts/ui.js";
@@ -291,8 +292,9 @@ function readyModel(phase: SessionPhase = "flight_setup", mode: PresentationMode
     type: "presentation-initialized", requestId: 1, activeMode: mode,
     webXrAvailable: true, phoneVrAvailable: true, status: "Ready"
   }).model;
-  const session = currentGameSessionProjectionFixture(phase);
-  return { ...ready, screenRenderScale: sharedScreenRenderSnapshot(), gameSession: session, sharedGameUi: currentSharedGameUiFixture(phase, {
+  return withSharedGameUiSession(phase, {
     ...(phase === "flight_paused" ? { actions: [{ kind: "set_pause_overlay", overlay: "settings" }] } : {}),
-    platform: { presentation_mode: mode === "phone-vr" ? "phone_vr" : mode } }) };
+    platform: { presentation_mode: mode === "phone-vr" ? "phone_vr" : mode } }, (session, platform) => ({
+    ...ready, screenRenderScale: sharedScreenRenderSnapshot(), gameSession: readRuntimeSessionProjection(session),
+    sharedGameUi: session.readSharedUi(platform) }));
 }

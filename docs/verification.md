@@ -312,7 +312,7 @@ L(t)-z(t)=\frac{g(t-a)(b-t)}2\le\frac{g\,dt^2}8,
 
 ### 回転接触の隔離と丸め
 
-- 登録機体の採用形状: 速度5 / 9.7 / 13 m/sと左右roll・前後pitchを組み合わせた9条件で、1 mmと1 mの水面離隔から実providerを評価する。独立したquaternion回転・最短経路slerp・二分探索を参照とし、正の区間内接触は時刻差2 ns、支持高さ残差2 nm、Float32主翼meshの水面侵入2 µm以内とする。
+- 登録機体の採用形状: 速度5 / 9.7 / 13 m/sと左右roll・前後pitchを組み合わせた9条件で、1 mmと1 mの水面離隔から実providerを評価する。独立したquaternion回転・最短経路slerp・二分探索を参照とし、正の区間内接触は時刻差2 ns、支持高さ残差2 nm、全構造材・外皮を含むFloat32全機meshの支持高さ差2 µm以内とする。
 - 同時刻接触: 左右rollの既存形状・入力採用後の計4条件でbody・採用係数・尾翼角と記録queryを照合する。整数sampleを保持し、終端境界eventの採用値を同時刻のcanonical queryへ投影する。
 - 上記の数値予算は登録有限形状の指定条件に対する参照一致を検査する。連続翼面と実機の精度は、それぞれの形状近似・適合性検証で評価する。
 - 接触APIは固定点と、同じ順序の対応点をbody座標で線型移動させる区間を受け取る。scenarioの固定proxyもこのAPIを使う。
@@ -352,7 +352,7 @@ L(t)-z(t)=\frac{g(t-a)(b-t)}2\le\frac{g\,dt^2}8,
 
 - Web入力: own enumerable fieldsを捕捉したwire値へ投影し、Rustで受理する。prototype・toJSONの混入、getterの再読、getter内dispose後のRust呼出しを回帰試験で検出する。
 - 内部出力: 所有WASM instanceの出力とfacadeが返す生成DTOの一致を確認する。Analysis列のmetadata非重複と、live/prepared/Replayに接続する共有描画poseも検査する。
-- 構造変形: 保存時刻・区間内部・同時刻終端で採用曲げ係数と尾翼角を照合し、WebとNativeのmesh・構造anchorが同じ入力を消費することを検査する。Replayのパイロット目標位置は同じcanonical queryへ照合する。
+- 構造変形: 保存時刻・区間内部・同時刻終端で採用曲げ係数と尾翼角を照合する。全259部材の共有頂点・三角形・管周方向位相を接触点へ照合し、Web/Nativeの11 batchが同じ頂点と物理pivotを消費することを検査する。Replayのパイロット目標位置は同じcanonical queryへ照合する。
 - 描画可用性: 未記録係数と未知機体を区別し、対応する主翼・尾翼の非表示を検査する。極端な有限係数はGPU公開前に座標・Transform・法線を検査し、有効係数への復帰で表示と保持bufferの更新を確認する。
 - 数値・保存契約: 時刻、stamp、quaternion、終端、score、request echoの整合はRustのproducer/core/formatで検査し、Webはその出力を転送する。
 - 資源寿命: 実非同期のquery・record-source・Countdown世代とcleanupを検査し、表示DTOの静的readonly制約と分ける。

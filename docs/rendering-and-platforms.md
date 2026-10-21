@@ -241,16 +241,16 @@ Nativeは既存DirectionalLightの2048 texel・30〜600 mの3段cascadeから、
 - 機体は公開synthetic構造から、藍色被覆、透明film、水色foam、薄茶rib/縁材、白いcockpit frame、透明nose、白い後部fairing、T字の黒い桁・胴体管を描く。
 - 外観と物理接触は同じ構造形状と採用済み曲げ係数・尾翼角からそれぞれ導出する。材質、UV、表示samplingは描画層が所有する。
 
-- 主翼のsurface、rib/spar/foam/stringerは同じ共有WingFrameを使用する。
-- live・prepared・Result・Replayは共有poseの採用済み曲げ係数を主翼へ渡す。係数が変化した場合だけpositionとanchorを更新し、topologyを保持する。
+- 主翼のsurfaceは`WingFrame`、全構造材はcontentの固定頂点・三角形を投影する`AirframeStructure`を使用し、同じ採用係数を消費する。
+- live・prepared・Result・Replayは共有poseの採用済み曲げ係数を主翼へ渡す。係数が変化した場合だけ保持position bufferを更新し、topologyを保持する。
 - 描画補間では身体位置・姿勢を補間し、尾翼角と曲げ係数は記録queryと同じ区間保持を用いる。
-- schema 6の未記録係数と未登録機体形状は可用性として区別し、対応する主翼を非表示にする。表現範囲を超える変形は失敗として通知し、次の有効な採用係数で表示を復元する。
-- surfaceのFloat32丸めと倍精度構造anchorを保持する。
+- 未記録係数は主翼の表示、未登録形状はcockpitと桁を含む機体全体の表示を利用不可にする。表現範囲を超える変形は失敗として通知し、次の有効な採用係数で表示を復元する。
+- 全構造材は共通のf64頂点からFloat32へ投影し、尾翼batchは物理pivotを原点とするlocal座標を保持する。
 - 法線は完全な半翼topologyにarea-weighted計算を適用し、材質分割後も共有する。
 - 表示たわみの定数と実機諸元の区分はデータ文書へ集約する。
 
-- Webの160 rodは4群のInstancedMeshと8角unit cylinderを共有し、変形時のinstance matrixとaggregate boundsを更新する。
-- Nativeもrodと左右同形foamのmeshを共有する。
+- 259部材をattachmentとmaterialの11 batchへまとめ、Web/Nativeは同じ管周方向24分割・輪郭・三角形を描画する。構造材の接触点と表示頂点は同じproducerから得る。
+- 管の変形は中立frameからの最小回転で周方向位相を保ち、foamは中央stationの曲げ変位を共有する。
 - 主翼被覆は非光沢Lambertを基準とし、Nativeのreflectanceを0として不適切なspecularの持上げを抑える。
 - linear-light mipを生成してsRGB textureへ格納する。
 - PBR/Lambertの明度差や縮小時の細部は実描画で評価する。
@@ -258,7 +258,7 @@ Nativeは既存DirectionalLightの2048 texel・30〜600 mの3段cascadeから、
 - 尾翼は登録physical geometryのquarter-chordと全surfaceを共有し、水平・垂直それぞれ独立した親でphysical incidenceに従う。
 - FRD変換後は水平+X、垂直−Yの回転を用いる。
 - geometryは登録されたmodel identityから解決し、未知のidentityは明示的な未対応として扱う。
-- 被覆・rib配置は描画モデル、採用曲げ係数・空力・慣性・操縦応答は飛行モデルが所有する。
+- 被覆・材質は描画モデル、部材寸法・配置・変形則はcontent、採用曲げ係数・空力・慣性・操縦応答は飛行モデルが所有する。
 
 ## Presentation backend
 

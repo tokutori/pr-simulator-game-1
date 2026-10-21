@@ -13,13 +13,13 @@
 
 | 対象 | 現行契約 |
 | --- | --- |
-| 機体JSON | `AircraftDocument`、schema 1、最大256 KiB |
+| 機体JSON | `AircraftDocument`、schema 2、最大256 KiB |
 | 環境JSON | `EnvironmentDocument`、schema 1、最大8 MiB |
 | 飛行記録JSON | `TailFlightRecordDocument`、schema 6/7、最大16 MiB |
 | 飛行ログCSV | schema 6はexport version 3、schema 7はversion 4 |
 | Personal Best | 比較方式v2、Rustによるkey再生成・選定 |
 | 物理・積分・接触 | physics model 5 |
-| 既定機体・scenario | aircraft model 4、catalog 7、scenario 7、controller profile 3 |
+| 既定機体・scenario | aircraft model 5、catalog 8、scenario 8、controller profile 3 |
 
 - 版の正本は実装の公開定義・登録catalogとする。
 - JSON schema、物理model、機体、controller、環境、score、比較方式、build来歴は異なる概念であり、独立して保持する。
@@ -124,22 +124,24 @@ Analysis用の発進台・湖岸・望遠camera点はOSMとAW3D30に基づく試
 
 - 主翼span 20.863 mは提供図面の値である。root chord 1.13 m、tip chord 0.38 mや輪郭の一部は図面比率からの推定である。
 - 構造形状は機体JSONのFRD座標・SI単位を正本とし、共有f64形状から表示meshと物理polytopeを導出する。材質と描画用samplingは表示側で扱う。
-- 現行の物理接触は中立polytopeの全頂点から静水面に対する支持量を求める。連続翼型・細径材の形状近似と、可動尾翼・曲げ変形の時間離散化は別の評価対象である。
-- 描画の主翼たわみは、機体JSONの全質量・重力・曲げ剛性・基準対気速度を用いる重量支持の片持ち梁モデルである。基準変位へ対気速度二乗の倍率0.3〜1.6を適用する。
+- 物理接触は採用した曲げ係数・尾翼角によるpolytopeの全頂点から静水面に対する支持量を求める。連続翼型・細径材の形状近似と、可動尾翼・曲げ変形の時間離散化は別の評価対象である。
+- 主翼たわみは機体JSONの全質量・重力・曲げ剛性・基準対気速度を用いる重量支持の片持ち梁モデルである。区間開始時の対気速度から0.3〜1.6の係数を採用し、接触・表示・記録へ同じ値を渡す。
 - 空力・質量・慣性・制御の実行規則は[飛行力学](flight-dynamics.md)と[飛行制御](flight-control.md)に定める。
 
 ## 機体JSON
 
 - `AircraftDocument`は機体ID・モデル版、機体質量と慣性、パイロット質量と移動制限、主翼・水平尾翼・垂直尾翼、全機静特性、構造外形、トリム条件を保持する。
 - 座標は機体固定のFRD、寸法はSI単位とする。各翼の四分の一翼弦点・翼弦長から平面形と上反角を表し、空力の参照面積・スパン・平均空力翼弦を同じ主翼から導出する。
-- 構造定義は主桁の端点・半径・曲げ剛性、コックピット断面、フレーム半径、パイロット視点の取付位置を保持する。
+- 構造定義は主桁の端点・半径・曲げ剛性、コックピット断面、パイロット視点と、`members`の主翼・尾翼rib/foam・stringer・cockpit frame・rimの寸法と配置を保持する。
 - `format::AircraftDocument`は文書の構造・有限値・物理値域を検証する。`content::AircraftDefinition`は空力stripの対称性・構造支持点の生成・主翼たわみの定義域・トリム解の成立まで検証し、準備済みstorageを公開する。
 - `content::AircraftDefinition`は文書と変換済みの質量・section・strip・静特性・中立構造支持点を所有する。借用した荷重モデルと構造形状の寿命はこのstorageと結び付く。
-- `content::playable_aircraft()`は`assets/aircraft/playable-glider-v4.json`を読み込む。主翼の69断面は20.863 mのスパン、テーパー、二つの上反角変化点を持ち、同じ区分線型形状から参照寸法を求める。
+- `content::playable_aircraft()`は`assets/aircraft/playable-glider-v5.json`を読み込む。主翼の69断面は20.863 mのスパン、テーパー、二つの上反角変化点を持ち、同じ区分線型形状から参照寸法を求める。
 - stripの指定境界とsection境界の和集合で荷重評価点を生成する。各点の面積・作用位置・局所フレームは、その区間の幾何から導出する。
 - `AircraftShape`は同じsectionの四分の一翼弦点と翼弦長を区分線型補間する。翼・水平尾翼の翼型はbody XZ、垂直尾翼はbody XYで閉じた前縁・後縁を持つ。コックピットは断面間の区分線型補間と指定指数の超楕円、主桁は指定端点・半径を使う。
-- 中立構造支持点は全section knotの翼型、全コックピット断面、主桁の両端円から導出する。既定は翼弦方向32分割・周方向24分割で、材料の被覆率と空力stripの分割から独立する。舵面駆動・弾性変形は、この中立形状へ同一時刻の状態を適用する別の入力である。
-- 全階層で未知fieldを拒否する。各翼の断面・strip境界、静特性の行、コックピット断面はそれぞれ128件を上限とし、有限値、物理量、順序、対称性、静特性の補間範囲を検証する。
+- 中立支持点は全section knotの翼型、全コックピット断面、全構造材の共有頂点から導出する。既定は翼弦方向32分割・管周方向24分割で、材料の被覆率と空力stripの分割から独立する。sceneは同じ管の周方向位相と三角形を描画する。
+- 円管の連続円周に対する24角形の支持高さ近似誤差は半径$r$に対し$r(1-\cos(\pi/24))$以下であり、半径75 mmの主桁では約0.642 mmとなる。接触と表示の有限polytope一致は、この連続形状への近似と分けて評価する。
+- 主翼管は端点の曲げと中立frameからの最小回転、主翼foamは中央stationの変位、尾翼部材は物理pivotまわりの剛体回転を使用する。固定順bufferに同じ採用入力を適用する。
+- 全階層で未知fieldを拒否する。断面・strip境界・静特性行・各部材の分割は最大128、導出部材は合計512件を上限とし、有限値、正の寸法、順序、対称性、補間範囲を検証する。
 - `cargo run -p birdman-game-cli --locked -- validate-aircraft <path>`は外部ファイルを`AircraftDefinition`として準備し、実行時と同じ形状・空力・トリムの検査を行う。
 - 定常滑空の成立性は`SteadyGlideTrim`が質量モデル・静特性・指定条件から解く。パイロットの上下位置と静特性の参照点を含め、合成重心まわりの力・モーメントの釣合を確認する。
 

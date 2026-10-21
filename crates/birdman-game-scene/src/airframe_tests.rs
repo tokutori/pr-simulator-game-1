@@ -14,7 +14,9 @@ use birdman_game_core::{
 use birdman_game_format::{TailFlightRecordDocument, TailPersonalBestConfiguration, WeatherClass};
 
 use crate::{
+    airframe_structure::{AirframeStructure, StructuralAttachment},
     cockpit_geometry::{CockpitGeometry, cockpit_shell_vertices},
+    tail_geometry::TailGeometry,
     wing_geometry::WingGeometry,
 };
 use birdman_game_app::{DEFAULT_MAXIMUM_FLIGHT_TICKS, HybridSessionPreparation};
@@ -119,6 +121,53 @@ fn wing_outline_vertices() -> impl Iterator<Item = [f64; 3]> {
         .flat_map(|surface| surface.positions().iter().map(|point| point.map(f64::from)))
         .collect::<Vec<_>>()
         .into_iter()
+}
+
+fn rendered_airframe_points(factor: WingBendingFactor, incidence: TailIncidence) -> Vec<BodyPoint> {
+    let mut points = Vec::new();
+    let mut append = |local: [f32; 3], origin: [f64; 3], attachment| {
+        let [right, up, aft] = local.map(f64::from);
+        let rotated = match attachment {
+            StructuralAttachment::HorizontalTail => {
+                let (sine, cosine) = incidence.elevator_rad().sin_cos();
+                [right, up * cosine - aft * sine, up * sine + aft * cosine]
+            }
+            StructuralAttachment::VerticalTail => {
+                let (sine, cosine) = incidence.rudder_rad().sin_cos();
+                [right * cosine - aft * sine, up, right * sine + aft * cosine]
+            }
+            _ => [right, up, aft],
+        };
+        let [right, up, aft] = core::array::from_fn(|axis| rotated[axis] + origin[axis]);
+        points.push(BodyPoint::try_new(-aft, right, -up).unwrap());
+    };
+    let wing = WingGeometry::new();
+    let mut frame = wing.frame();
+    wing.update_frame_with_factor(&mut frame, factor).unwrap();
+    for point in frame.surface_positions().iter().flatten() {
+        append(*point, [0.0; 3], StructuralAttachment::MainWing);
+    }
+    for surface in CockpitGeometry::new().surfaces {
+        for point in surface.positions {
+            append(point, [0.0; 3], StructuralAttachment::Rigid);
+        }
+    }
+    for (tail, attachment) in TailGeometry::registered().unwrap().into_iter().zip([
+        StructuralAttachment::HorizontalTail,
+        StructuralAttachment::VerticalTail,
+    ]) {
+        for point in tail.patches.iter().flat_map(|patch| patch.vertices) {
+            append(point, tail.origin, attachment);
+        }
+    }
+    let mut structure = AirframeStructure::new(registered_aircraft().unwrap()).unwrap();
+    structure.update_with_factor(factor).unwrap();
+    for mesh in structure.meshes() {
+        for point in mesh.positions() {
+            append(*point, mesh.origin(), mesh.attachment());
+        }
+    }
+    points
 }
 
 #[test]
@@ -381,12 +430,10 @@ fn adopted_shape_contact_matches_independent_rotated_support_and_record_query() 
         TailRateTarget::try_new(0.0, 0.0).unwrap(),
         TailPilotPositionCommand::Hold,
     );
-    let wing = WingGeometry::new();
-    let mut wing_frame = wing.frame();
     let initial_incidence = TailIncidence::try_new(0.01, -0.01).unwrap();
     let mut maximum_time_error_seconds = 0.0_f64;
     let mut maximum_support_error_m = 0.0_f64;
-    let mut maximum_wing_penetration_m = 0.0_f64;
+    let mut maximum_mesh_penetration_m = 0.0_f64;
     for (roll, pitch, speed) in [
         (0.0, 0.0, 5.0),
         (0.0, 0.0, 9.7),
@@ -518,22 +565,16 @@ fn adopted_shape_contact_matches_independent_rotated_support_and_record_query() 
                 .abs()
                     <= 2.0e-9
             );
-            wing.update_frame_with_factor(&mut wing_frame, factor)
-                .unwrap();
-            let mesh_support = wing_frame
-                .surface_positions()
+            let rendered = rendered_airframe_points(factor, contact.incidence());
+            let mesh_support = rendered
                 .iter()
-                .flatten()
                 .map(|point| {
-                    let [right, up, aft] = point.map(f64::from);
-                    reference_rotated_down(
-                        state.attitude_body_to_ned().components(),
-                        BodyPoint::try_new(-aft, right, -up).unwrap(),
-                    )
+                    reference_rotated_down(state.attitude_body_to_ned().components(), *point)
                 })
                 .fold(f64::NEG_INFINITY, f64::max);
             assert!(down + mesh_support <= 2.0e-6);
-            maximum_wing_penetration_m = maximum_wing_penetration_m.max(down + mesh_support);
+            assert!((down + mesh_support).abs() <= 2.0e-6);
+            maximum_mesh_penetration_m = maximum_mesh_penetration_m.max(down + mesh_support);
             let record = record_contact(previous, report);
             for fraction in [contact.fraction() * 0.5, contact.fraction()] {
                 let sample = record.sample_at_time(0, fraction).unwrap();
@@ -622,7 +663,7 @@ fn adopted_shape_contact_matches_independent_rotated_support_and_record_query() 
     println!(
         "registered shape: maximum time error {maximum_time_error_seconds:.6e} s, \
          support residual {maximum_support_error_m:.6e} m, \
-         Float32 wing penetration {maximum_wing_penetration_m:.6e} m"
+         Float32 whole-airframe penetration {maximum_mesh_penetration_m:.6e} m"
     );
 }
 
@@ -703,7 +744,7 @@ fn registered_flight_finishes_at_the_airframe_and_keeps_record_score_and_revisio
             document.header.catalog_version,
             document.header.scenario_version
         ),
-        (7, 7)
+        (8, 8)
     );
     assert_eq!(
         document.header.aircraft_model_version,

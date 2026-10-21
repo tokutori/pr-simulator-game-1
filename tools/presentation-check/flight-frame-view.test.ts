@@ -4,8 +4,8 @@ import { PerspectiveCamera, StereoCamera } from "three";
 import { createInitialAppModel, updateApp } from "../../web/src/app/app-state.js";
 import type { AppModel } from "../../web/src/app/app-state.js";
 import { createFlightFrameViewDraft, createFlightUiHudModel, finalizeFlightFrameView, menuFrameFailureRecovery } from "../../web/src/app/flight-frame-view.js";
-import { currentSharedGameUiFixture } from "../game-check/shared-game-ui-fixture.js";
-import { currentGameSessionProjectionFixture } from "../game-check/shared-game-ui-fixture.js";
+import { currentSharedGameUiFixture, withSharedGameUiSession } from "../game-check/shared-game-ui-fixture.js";
+import { readRuntimeSessionProjection } from "../../web/src/app/session-runtime-projection.js";
 import type { SessionPhase } from "../../web/src/app/session-snapshot.js";
 import { headHudCanvasSize, prepareHeadHudPaint } from "../../web/src/presentation/head-hud-canvas.js";
 import { unavailableViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
@@ -27,9 +27,10 @@ import { validateUiViewModel, viewExposesAction } from "../../web/src/render/con
 
 function flightModel(mode: "screen" | "phone-vr" | "webxr", phase: SessionPhase = "flight_running", headFailure: string | null = null,
   replayView?: "cinematic" | "telemetry" | "analysis"): AppModel {
-  return { ...createInitialAppModel(), presentation: { type: "ready", mode }, gameSession: currentGameSessionProjectionFixture(phase),
-    sharedGameUi: currentSharedGameUiFixture(phase, { platform: { presentation_mode: mode === "phone-vr" ? "phone_vr" : mode,
-      head_hud_failure: headFailure }, actions: replayView === undefined ? [] : [{ kind: "set_replay_view", view: replayView }] }) };
+  return withSharedGameUiSession(phase, { platform: { presentation_mode: mode === "phone-vr" ? "phone_vr" : mode,
+    head_hud_failure: headFailure }, actions: replayView === undefined ? [] : [{ kind: "set_replay_view", view: replayView }] },
+  (session, platform) => ({ ...createInitialAppModel(), presentation: { type: "ready", mode },
+    gameSession: readRuntimeSessionProjection(session), sharedGameUi: session.readSharedUi(platform) }));
 }
 
 function configuredViewer() {

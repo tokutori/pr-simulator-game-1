@@ -760,7 +760,7 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     expect(trial.scene()).toBe("FlightSetup");
     expect(trial.renderer.setPreparedFlightPose.mock.lastCall?.[0]).toBeNull();
   });
-  it("connects explicit Setup, flight, Result, Retry, named Replay and Attract without disposing the Rust owner", async () => {
+  it("connects Setup, flight, Result, Retry and Replay with the same Rust owner", async () => {
     const trial = await fixture(false, true);
     await vi.waitFor(() => { expect(trial.scene()).toBe("Title"); });
     trial.click("game-title-start");
@@ -795,6 +795,20 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     expect(JSON.parse(trial.exportRecord.mock.results[1]?.value as string)).toMatchObject({ schema_version: 7, finalization: { reason: "water_contact" } });
     await vi.waitFor(() => { expect(trial.browser.document.getElementById("game-state")?.textContent).toContain("飛行記録 3を保存した"); });
     expect(trial.free).not.toHaveBeenCalled();
+    trial.click("game-result-title");
+    expect(trial.scene()).toBe("Title");
+  });
+
+  it("enters Attract from Result with the same Rust owner", async () => {
+    const trial = await fixture();
+    await vi.waitFor(() => { expect(trial.scene()).toBe("Title"); });
+    trial.click("game-title-start");
+    trial.click("game-setup-start");
+    trial.launch();
+    trial.frame(0);
+    trial.frame(10);
+    trial.click("game-flight-abort");
+    expect(trial.scene()).toBe("Result");
     trial.click("game-result-title");
     trial.click("game-title-demo");
     expect(trial.scene()).toBe("Title");

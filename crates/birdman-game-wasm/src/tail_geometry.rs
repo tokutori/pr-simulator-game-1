@@ -1,5 +1,4 @@
 use birdman_game_scene::tail_geometry::{TailGeometry, TailMaterial};
-use birdman_game_scene::wing_geometry::RIB_RADIUS;
 use wasm_bindgen::prelude::*;
 
 #[doc = "Owns registered static tail geometry until its JavaScript bulk copies are constructed."]
@@ -23,7 +22,7 @@ impl TailGeometryBridge {
         self.geometry.iter().flat_map(|tail| tail.origin).collect()
     }
 
-    #[doc = "Copies four vertices per static cover/film/foam patch for the selected tail."]
+    #[doc = "Copies four vertices per static cover/film patch for the selected tail."]
     pub fn surface_positions(&self, tail: u32) -> Result<Vec<f32>, JsValue> {
         Ok(self
             .tail(tail)?
@@ -43,25 +42,7 @@ impl TailGeometryBridge {
             .collect())
     }
 
-    #[doc = "Copies six right/up/aft coordinates for each exposed balsa rib."]
-    pub fn rib_endpoints(&self, tail: u32) -> Result<Vec<f64>, JsValue> {
-        Ok(self
-            .tail(tail)?
-            .ribs
-            .iter()
-            .flatten()
-            .flatten()
-            .copied()
-            .collect())
-    }
-
-    #[doc = "Shared display-only trailing rib radius in metres."]
-    #[wasm_bindgen(getter)]
-    pub fn rib_radius(&self) -> f64 {
-        RIB_RADIUS
-    }
-
-    #[doc = "Copies the shared cover/film/foam/rib sRGB palette."]
+    #[doc = "Copies the shared cover/film sRGB palette."]
     pub fn material_colors(&self) -> Vec<u32> {
         TailMaterial::ALL.map(TailMaterial::color).to_vec()
     }

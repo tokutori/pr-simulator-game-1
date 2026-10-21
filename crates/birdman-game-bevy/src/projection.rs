@@ -257,19 +257,25 @@ mod tests {
                 .unwrap()
                 .position_m()
         });
-        let geometry = CockpitGeometry::new();
-        let nose_aft = geometry
-            .rods
+        use birdman_game_scene::airframe_structure::{AirframeStructure, StructuralPartKind};
+        let structure = AirframeStructure::new(definition).unwrap();
+        let frame = structure
+            .meshes()
             .iter()
-            .map(|rod| rod.endpoints[0][2])
-            .min_by(f64::total_cmp)
+            .find(|mesh| mesh.kind() == StructuralPartKind::CockpitFrame)
             .unwrap();
-        let front_rods: Vec<_> = geometry
-            .rods
+        let nose_aft = frame
+            .positions()
             .iter()
-            .filter(|rod| rod.endpoints[0][2] == nose_aft)
+            .map(|point| point[2])
+            .min_by(f32::total_cmp)
+            .unwrap();
+        let front_vertices: Vec<_> = frame
+            .positions()
+            .iter()
+            .filter(|point| point[2] <= nose_aft + 0.1)
             .collect();
-        assert_eq!(front_rods.len(), 2);
+        assert!(!front_vertices.is_empty());
         for step in 0..=64 {
             let current = endpoints[0] + (endpoints[1] - endpoints[0]) * f64::from(step) / 64.0;
             for aspect in [9.0 / 16.0, 16.0 / 9.0] {
@@ -285,16 +291,12 @@ mod tests {
                 }
                 .get_clip_from_view();
                 let view = camera.to_matrix().inverse();
-                for rod in &front_rods {
-                    let nose = Vec3::from_array(rod.endpoints[0].map(|value| value as f32));
-                    let front = Vec3::from_array(rod.endpoints[1].map(|value| value as f32));
-                    for fraction in [0.0, 0.1] {
-                        let point = aircraft.transform_point(nose.lerp(front, fraction));
-                        let clip = projection * view * point.extend(1.0);
-                        assert!(clip.w > 0.0);
-                        assert!((clip.x / clip.w).abs() < 1.0);
-                        assert!((clip.y / clip.w).abs() < 1.0);
-                    }
+                for vertex in &front_vertices {
+                    let point = aircraft.transform_point(Vec3::from_array(**vertex));
+                    let clip = projection * view * point.extend(1.0);
+                    assert!(clip.w > 0.0);
+                    assert!((clip.x / clip.w).abs() < 1.0);
+                    assert!((clip.y / clip.w).abs() < 1.0);
                 }
             }
         }

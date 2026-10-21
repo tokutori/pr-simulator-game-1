@@ -537,8 +537,9 @@ fn queries_are_readonly_and_handle_vertical_coincident_and_invalid_targets() {
 
 #[test]
 fn frame_attaches_to_the_registered_beam_without_entering_the_pilot_view() {
+    use birdman_game_scene::airframe_structure::StructuralPartKind;
     let definition = birdman_game_app::registered_aircraft().unwrap();
-    let geometry = CockpitGeometry::new();
+    let geometry = definition.structural_geometry();
     let [beam_front, beam_rear] = definition
         .document()
         .structure
@@ -551,9 +552,32 @@ fn frame_attaches_to_the_registered_beam_without_entering_the_pilot_view() {
         .sum::<f64>();
     let [forward, right, down] = CockpitGeometry::pilot_eye_offset_frd();
     let eye = [right, -down, -forward];
-    for index in [6, 7, 14, 15] {
-        let rod = &geometry.rods[index];
-        let attachment = rod.endpoints[0];
+    let mut attachments = 0;
+    for part in geometry
+        .parts()
+        .iter()
+        .filter(|part| part.kind() == StructuralPartKind::CockpitFrame)
+    {
+        let vertices = &geometry.neutral_vertices()[part.vertex_range()];
+        let half = vertices.len() / 2;
+        let endpoints: [[f64; 3]; 2] = core::array::from_fn(|ring| {
+            let [forward, right, down] = core::array::from_fn(|axis| {
+                vertices[ring * half..(ring + 1) * half]
+                    .iter()
+                    .map(|point| point.components()[axis])
+                    .sum::<f64>()
+                    / half as f64
+            });
+            [right, -down, -forward]
+        });
+        let radius = vertices[0]
+            .components()
+            .into_iter()
+            .zip([-endpoints[0][2], endpoints[0][0], -endpoints[0][1]])
+            .map(|(vertex, center)| (vertex - center).powi(2))
+            .sum::<f64>()
+            .sqrt();
+        let attachment = endpoints[0];
         let relative: [f64; 3] = core::array::from_fn(|axis| attachment[axis] - beam_front[axis]);
         let fraction = relative
             .iter()
@@ -561,21 +585,23 @@ fn frame_attaches_to_the_registered_beam_without_entering_the_pilot_view() {
             .map(|(first, second)| first * second)
             .sum::<f64>()
             / beam_length_squared;
-        assert!((-f64::EPSILON..=1.0 + f64::EPSILON).contains(&fraction));
         let distance = (0..3)
             .map(|axis| (relative[axis] - fraction * beam_direction[axis]).powi(2))
             .sum::<f64>()
             .sqrt();
-        assert!((distance - definition.document().structure.main_beam_radius_m).abs() < 1.0e-12);
+        if (distance - definition.document().structure.main_beam_radius_m).abs() >= 1.0e-12 {
+            continue;
+        }
+        assert!((-f64::EPSILON..=1.0 + f64::EPSILON).contains(&fraction));
+        attachments += 1;
         for step in 0..=32 {
             let fraction = f64::from(step) / 32.0;
             let point: [f64; 3] = core::array::from_fn(|axis| {
-                rod.endpoints[0][axis]
-                    + fraction * (rod.endpoints[1][axis] - rod.endpoints[0][axis])
+                endpoints[0][axis] + fraction * (endpoints[1][axis] - endpoints[0][axis])
             });
             if point[2] < eye[2] {
-                let above = point[1] - eye[1] - rod.radius;
-                let forward = eye[2] - point[2] + rod.radius;
+                let above = point[1] - eye[1] - radius;
+                let forward = eye[2] - point[2] + radius;
                 assert!(
                     above.atan2(forward)
                         > crate::SCREEN_VERTICAL_FIELD_OF_VIEW_DEGREES.to_radians() / 2.0
@@ -585,7 +611,8 @@ fn frame_attaches_to_the_registered_beam_without_entering_the_pilot_view() {
                 .map(|axis| (point[axis] - eye[axis]).powi(2))
                 .sum::<f64>()
                 .sqrt();
-            assert!(distance_to_eye > rod.radius);
+            assert!(distance_to_eye > radius);
         }
     }
+    assert_eq!(attachments, 4);
 }

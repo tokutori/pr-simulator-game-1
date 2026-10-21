@@ -5,6 +5,7 @@ use birdman_game_core::{BriefingFailure, ControlMode, FbwAuthority};
 use birdman_game_format::{AssistanceLevel, DifficultyPreset, InformationLevel, WeatherClass};
 use wasm_bindgen::{JsValue, prelude::*};
 
+mod airframe_structure;
 mod cockpit_geometry;
 mod head_hud;
 mod hybrid_bridge;
@@ -18,6 +19,7 @@ mod venue_terrain;
 mod wing_geometry;
 mod wing_texture;
 
+pub use airframe_structure::{AirframeAttachment, AirframeMemberKind, AirframeStructureBridge};
 pub use cockpit_geometry::CockpitGeometryBridge;
 pub use head_hud::game_ui_head_hud_fit_json;
 pub use hybrid_bridge::{HybridGameSessionBridge, TailPersonalBestSelectionBridge};

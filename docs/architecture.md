@@ -121,7 +121,7 @@ adapter・presentation・scene・app・contentは責務に応じて下位のcore
 - 異なるcompiler/targetに無条件のbitwise一致を要求しない。
 - 物理一致と、表示補間・視点・入力割当の一致を個別に検査する。
 
-- contentの`AircraftDefinition`が検証済みJSONとf64の`AircraftShape`を所有する。空力sectionと中立の表示mesh・接触polytopeは同じ断面・翼型・cockpit・桁定義から導出し、共通の弦方向格子と周方向格子を使用する。
+- contentの`AircraftDefinition`が検証済みJSON、f64の`AircraftShape`と全構造材の固定頂点・三角形を所有する。空力sectionと表示mesh・接触polytopeは同じ断面・翼型・部材寸法から導出し、管の周方向位相と変形則を共有する。sceneは材質・座標変換・batch化を所有する。
 - 共有準備層が登録機体と借用する荷重viewを一度初期化し、発進・live session・表示へ同じ所有者を渡す。
 - 全polytope頂点による静水面支持と、連続曲面・変形機体への近似は別の契約である。
 

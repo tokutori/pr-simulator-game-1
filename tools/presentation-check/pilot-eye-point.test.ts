@@ -1,7 +1,7 @@
 import "./lake-model-fixture.js";
 import { describe, expect, it } from "vitest";
 import { PerspectiveCamera, Vector3 } from "three";
-import { CockpitGeometryBridge, screen_vertical_field_of_view_degrees } from "../../web/pkg/birdman_game_wasm.js";
+import { AirframeMemberKind, AirframeStructureBridge, screen_vertical_field_of_view_degrees } from "../../web/pkg/birdman_game_wasm.js";
 import { createAppSession } from "../../web/src/app/session-factory.js";
 import { currentFlightPoseFixture, launchCurrentSession } from "../game-check/current-session-fixture.js";
 import {
@@ -67,16 +67,17 @@ describe("FRD camera basis", () => {
   });
 
   it("projects the actual nose and both front frame segments with the horizon throughout body travel", () => {
-    const bridge = new CockpitGeometryBridge();
-    const endpoints = bridge.rod_endpoints();
+    const bridge = new AirframeStructureBridge();
+    const frame = Array.from({ length: bridge.mesh_count }, (_, index) => index)
+      .find((index) => bridge.member_kind(index) === AirframeMemberKind.CockpitFrame);
+    if (frame === undefined) throw new Error("Missing physical cockpit frame");
+    const framePositions = bridge.positions(frame);
     bridge.free();
-    const frontRods = [0, 8].map((rod) => ({
-      nose: new Vector3().fromArray(endpoints, rod * 6),
-      front: new Vector3().fromArray(endpoints, rod * 6 + 3)
-    }));
-    expect(frontRods[0]?.nose).toEqual(frontRods[1]?.nose);
-    expect(frontRods[0]?.front.x).toBeLessThan(0);
-    expect(frontRods[1]?.front.x).toBeGreaterThan(0);
+    const vertices = Array.from({ length: framePositions.length / 3 }, (_, index) =>
+      new Vector3().fromArray(framePositions, index * 3));
+    const noseAft = Math.min(...vertices.map((point) => point.z));
+    const frontVertices = vertices.filter((point) => point.z <= noseAft + 0.1);
+    expect(frontVertices.length).toBeGreaterThan(0);
     const point = syntheticPilotEyePoint();
     const { initial, positions } = registeredPilotTravel();
     for (const current of positions) {
@@ -85,14 +86,12 @@ describe("FRD camera basis", () => {
         const camera = new PerspectiveCamera(screen_vertical_field_of_view_degrees(), aspect, 0.05, 100_000);
         camera.position.set(eye.position.x, eye.position.y, eye.position.z);
         camera.updateMatrixWorld();
-        for (const { nose, front } of frontRods) {
-          for (const fraction of [0, 0.1]) {
-            const projected = nose.clone().lerp(front, fraction).project(camera);
-            expect(Math.abs(projected.x)).toBeLessThan(1);
-            expect(Math.abs(projected.y)).toBeLessThan(1);
-            expect(projected.z).toBeGreaterThan(-1);
-            expect(projected.z).toBeLessThan(1);
-          }
+        for (const point of frontVertices) {
+          const projected = point.clone().project(camera);
+          expect(Math.abs(projected.x)).toBeLessThan(1);
+          expect(Math.abs(projected.y)).toBeLessThan(1);
+          expect(projected.z).toBeGreaterThan(-1);
+          expect(projected.z).toBeLessThan(1);
         }
         const horizon = camera.position.clone().add(new Vector3(0, 0, -1000)).project(camera);
         expect(horizon.x).toBeCloseTo(0, 12);

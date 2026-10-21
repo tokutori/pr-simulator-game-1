@@ -70,30 +70,6 @@ impl CockpitGeometryBridge {
             .collect()
     }
 
-    #[doc = "Copies thirty from/to endpoints, six right/up/aft coordinates per rod."]
-    pub fn rod_endpoints(&self) -> Vec<f64> {
-        self.geometry
-            .rods
-            .iter()
-            .flat_map(|rod| rod.endpoints.iter().flatten())
-            .copied()
-            .collect()
-    }
-
-    #[doc = "Copies rod radii in metres."]
-    pub fn rod_radii(&self) -> Vec<f64> {
-        self.geometry.rods.iter().map(|rod| rod.radius).collect()
-    }
-
-    #[doc = "Copies rod palette codes in the fixed palette order."]
-    pub fn rod_materials(&self) -> Vec<u32> {
-        self.geometry
-            .rods
-            .iter()
-            .map(|rod| rod.material as u32)
-            .collect()
-    }
-
     #[doc = "Copies sRGB 0xRRGGBB colours for frame, rim, canopy and fairing."]
     pub fn material_colors(&self) -> Vec<u32> {
         CockpitMaterial::ALL.map(CockpitMaterial::color).to_vec()

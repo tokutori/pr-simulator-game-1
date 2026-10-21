@@ -1,25 +1,22 @@
 import {
   BufferAttribute,
   BufferGeometry,
-  CylinderGeometry,
   DataTexture,
   DoubleSide,
   Float32BufferAttribute,
   Group,
-  InstancedMesh,
   LinearFilter,
   LinearMipmapLinearFilter,
   Mesh,
   MeshBasicMaterial,
   MeshLambertMaterial,
-  Object3D,
   RGBAFormat,
   SRGBColorSpace,
-  UnsignedByteType,
-  Vector3
+  UnsignedByteType
 } from "three";
 import type { PhysicalFlightControls, TailPresentationGeometryAvailability, WingDeformationAvailability } from "../../contracts/flight-controls.js";
-import { CockpitGeometryBridge, TailGeometryBridge, WingGeometryBridge, apply_indigo_wing_decal,
+import { AirframeAttachment, AirframeMemberKind, AirframeStructureBridge,
+  CockpitGeometryBridge, TailGeometryBridge, WingGeometryBridge, apply_indigo_wing_decal,
   indigo_wing_texture_size, indigo_wing_textures } from "../../../../pkg/birdman_game_wasm.js";
 
 function indigoWingTextures(onVisualReady?: () => void): Readonly<{
@@ -91,48 +88,22 @@ function bulkNumber(values: Float32Array | Float64Array | Uint32Array, index: nu
   return value;
 }
 
-function pointRod(rod: Object3D, from: Vector3, to: Vector3): void {
-  const vector = to.clone().sub(from);
-  rod.position.copy(from).add(to).multiplyScalar(0.5);
-  rod.scale.y = vector.length();
-  rod.quaternion.setFromUnitVectors(new Vector3(0, 1, 0), vector.normalize());
-}
-
-function addRod(parent: Group, from: Vector3, to: Vector3, radius: number, material: MeshLambertMaterial): Mesh {
-  const rod = new Mesh(new CylinderGeometry(radius, radius, 1, 8), material);
-  pointRod(rod, from, to);
-  parent.add(rod);
-  return rod;
-}
-
 function addCockpit(root: Group): void {
   const shared = new CockpitGeometryBridge();
   try {
     const colors = shared.material_colors();
     const opacities = shared.material_opacities();
-    const materials = Array.from(colors, (color, index) => {
-      const opacity = bulkNumber(opacities, index);
-      return new MeshLambertMaterial({ color, opacity, transparent: opacity < 1,
-        depthWrite: opacity === 1, ...(index >= 2 ? { side: DoubleSide } : {}) });
-    });
+    const materials = new Map<number, MeshLambertMaterial>();
     const materialFor = (code: number): MeshLambertMaterial => {
-      const material = materials[code];
-      if (material === undefined) throw new RangeError("Incomplete shared cockpit palette");
+      let material = materials.get(code);
+      if (material === undefined) {
+        const opacity = bulkNumber(opacities, code);
+        material = new MeshLambertMaterial({ color: bulkNumber(colors, code), opacity,
+          transparent: opacity < 1, depthWrite: opacity === 1, side: DoubleSide });
+        materials.set(code, material);
+      }
       return material;
     };
-    const frame = new Group();
-    frame.name = "open-cockpit-frame";
-    root.add(frame);
-    const endpoints = shared.rod_endpoints();
-    const radii = shared.rod_radii();
-    const rodMaterials = shared.rod_materials();
-    for (let index = 0; index < radii.length; index++) {
-      const code = bulkNumber(rodMaterials, index);
-      const rod = addRod(code === 0 ? frame : root,
-        new Vector3().fromArray(endpoints, index * 6),
-        new Vector3().fromArray(endpoints, index * 6 + 3), bulkNumber(radii, index), materialFor(code));
-      if (code === 1) rod.name = "canopy-rim-segment";
-    }
     const positions = shared.surface_positions();
     const indices = shared.surface_indices();
     const vertexCounts = shared.surface_vertex_counts();
@@ -157,8 +128,7 @@ function addCockpit(root: Group): void {
   } finally { shared.free(); }
 }
 
-function addTails(root: Group): Readonly<{ horizontal: Group; vertical: Group;
-  film: MeshLambertMaterial; rib: MeshLambertMaterial; foam: MeshLambertMaterial }> {
+function addTails(root: Group): Readonly<{ horizontal: Group; vertical: Group; film: MeshLambertMaterial }> {
   const shared = new TailGeometryBridge();
   try {
     const colors = shared.material_colors();
@@ -190,20 +160,69 @@ function addTails(root: Group): Readonly<{ horizontal: Group; vertical: Group;
         mesh.name = code === 0 ? "physical-tail-cover" : code === 1 ? "physical-tail-film" : "tail-foam";
         tail.add(mesh);
       }
-      const endpoints = shared.rib_endpoints(index);
-      for (let rib = 0; rib < endpoints.length / 6; rib++) {
-        const rod = addRod(tail, new Vector3().fromArray(endpoints, rib * 6),
-          new Vector3().fromArray(endpoints, rib * 6 + 3), shared.rib_radius, materialFor(3));
-        rod.name = "tail-rib";
-      }
       root.add(tail);
       return tail;
     });
     const horizontal = tails[0];
     const vertical = tails[1];
     if (horizontal === undefined || vertical === undefined) throw new RangeError("Incomplete shared tails");
-    return { horizontal, vertical, film: materialFor(1), foam: materialFor(2), rib: materialFor(3) };
+    return { horizontal, vertical, film: materialFor(1) };
   } finally { shared.free(); }
+}
+
+const memberNames: Readonly<Record<AirframeMemberKind, string>> = {
+  [AirframeMemberKind.Spar]: "spar",
+  [AirframeMemberKind.Rib]: "rib",
+  [AirframeMemberKind.Stringer]: "stringer",
+  [AirframeMemberKind.Foam]: "foam",
+  [AirframeMemberKind.MainBeam]: "single-carbon-main-beam",
+  [AirframeMemberKind.CockpitFrame]: "open-cockpit-frame",
+  [AirframeMemberKind.CanopyRim]: "canopy-rim"
+};
+
+function addStructure(root: Group, horizontal: Group, vertical: Group): Readonly<{
+  source: AirframeStructureBridge;
+  meshes: readonly Readonly<{ index: number; mesh: Mesh; attachment: AirframeAttachment }>[];
+}> {
+  const source = new AirframeStructureBridge();
+  const materials = new Map<number, MeshLambertMaterial>();
+  const meshes = Array.from({ length: source.mesh_count }, (_, index) => {
+    const attachment = source.attachment(index);
+    const kind = source.member_kind(index);
+    const color = source.color(index);
+    let material = materials.get(color);
+    if (material === undefined) {
+      material = new MeshLambertMaterial({ color, side: DoubleSide });
+      materials.set(color, material);
+    }
+    const geometry = new BufferGeometry();
+    geometry.setAttribute("position", new Float32BufferAttribute(source.positions(index), 3));
+    geometry.setIndex(new BufferAttribute(source.indices(index), 1));
+    geometry.computeVertexNormals();
+    const mesh = new Mesh(geometry, material);
+    mesh.frustumCulled = false;
+    const name = memberNames[kind];
+    switch (attachment) {
+      case AirframeAttachment.Rigid:
+        mesh.name = name;
+        root.add(mesh);
+        break;
+      case AirframeAttachment.MainWing:
+        mesh.name = `main-wing-${name}`;
+        root.add(mesh);
+        break;
+      case AirframeAttachment.HorizontalTail:
+        mesh.name = `horizontal-tail-${name}`;
+        horizontal.add(mesh);
+        break;
+      case AirframeAttachment.VerticalTail:
+        mesh.name = `vertical-tail-${name}`;
+        vertical.add(mesh);
+        break;
+    }
+    return { index, mesh, attachment };
+  });
+  return { source, meshes };
 }
 
 export function createBirdmanAirframe(onVisualReady?: () => void): BirdmanAirframe {
@@ -218,9 +237,7 @@ export function createBirdmanAirframe(onVisualReady?: () => void): BirdmanAirfra
   const tails = addTails(root);
   const trailingFilm = tails.film;
   const sharedWing = new WingGeometryBridge();
-  const ribMaterial = tails.rib;
-  const styrofoam = tails.foam;
-  const carbon = new MeshLambertMaterial({ color: sharedWing.carbon_color });
+  const structure = addStructure(root, tails.horizontal, tails.vertical);
   const positions = sharedWing.surface_positions();
   const uvs = sharedWing.surface_uvs();
   const indices = sharedWing.surface_indices();
@@ -228,9 +245,6 @@ export function createBirdmanAirframe(onVisualReady?: () => void): BirdmanAirfra
   const indexCount = sharedWing.surface_index_count;
   const skinRanges = sharedWing.skin_material_ranges();
   const wings: Mesh<BufferGeometry, MeshLambertMaterial | MeshLambertMaterial[]>[] = [];
-  const wingSpar = new Group();
-  wingSpar.name = "main-wing-spar";
-  root.add(wingSpar);
   for (let surface = 0; surface < 4; surface++) {
     const geometry = new BufferGeometry();
     geometry.setAttribute("position", new Float32BufferAttribute(
@@ -252,70 +266,6 @@ export function createBirdmanAirframe(onVisualReady?: () => void): BirdmanAirfra
     root.add(mesh);
     wings.push(mesh);
   }
-  const rodKinds = sharedWing.rod_kinds();
-  const rodRadii = sharedWing.rod_radii();
-  const rodEndpoints = sharedWing.rod_endpoints();
-  const rodGroups = [
-    { name: "main-wing-spar-segment", parent: wingSpar, material: carbon, indices: [] as number[] },
-    { name: "balsa-stringer", parent: root, material: ribMaterial, indices: [] as number[] },
-    { name: "left-trailing-rib", parent: root, material: ribMaterial, indices: [] as number[] },
-    { name: "right-trailing-rib", parent: root, material: ribMaterial, indices: [] as number[] }
-  ];
-  for (let index = 0; index < rodKinds.length; index++) {
-    const kind = bulkNumber(rodKinds, index);
-    const group = rodGroups[kind === 0 ? 0 : kind === 2 ? 1 : kind === 1
-      ? bulkNumber(rodEndpoints, index * 6 + 3) < 0 ? 2 : 3 : -1];
-    if (group === undefined) throw new RangeError("Unknown shared wing rod kind");
-    group.indices.push(index);
-  }
-  const rodGeometry = new CylinderGeometry(1, 1, 1, 8);
-  const rods = rodGroups.map((group) => {
-    const mesh = new InstancedMesh(rodGeometry, group.material, group.indices.length);
-    mesh.name = group.name;
-    group.parent.add(mesh);
-    return { mesh, indices: group.indices };
-  });
-  const rodTransform = new Object3D();
-  const rodFrom = new Vector3();
-  const rodTo = new Vector3();
-  const updateRods = (endpoints: Float64Array): void => {
-    for (const group of rods) {
-      for (const [instance, index] of group.indices.entries()) {
-        const radius = bulkNumber(rodRadii, index);
-        rodTransform.scale.set(radius, 1, radius);
-        pointRod(rodTransform, rodFrom.fromArray(endpoints, index * 6), rodTo.fromArray(endpoints, index * 6 + 3));
-        rodTransform.updateMatrix();
-        group.mesh.setMatrixAt(instance, rodTransform.matrix);
-      }
-      group.mesh.instanceMatrix.needsUpdate = true;
-      group.mesh.computeBoundingSphere();
-    }
-  };
-  updateRods(rodEndpoints);
-  const foamVertices = sharedWing.foam_vertices();
-  const foamIndices = sharedWing.foam_indices();
-  const foamPositions = sharedWing.foam_positions();
-  const foamCount = foamPositions.length / 3;
-  const foamStride = foamVertices.length / foamCount;
-  const foamRibs: Mesh[] = [];
-  for (let index = 0; index < foamCount; index++) {
-    const geometry = new BufferGeometry();
-    geometry.setAttribute("position", new Float32BufferAttribute(
-      foamVertices.subarray(index * foamStride, (index + 1) * foamStride), 3));
-    geometry.setIndex(new BufferAttribute(foamIndices.slice(), 1));
-    geometry.computeVertexNormals();
-    const foam = new Mesh(geometry, styrofoam);
-    foam.position.fromArray(foamPositions, index * 3);
-    foam.name = `${foam.position.x < 0 ? "left" : "right"}-styrofoam-rib`;
-    root.add(foam);
-    foamRibs.push(foam);
-  }
-
-  const beamEndpoints = sharedWing.main_beam_endpoints();
-  const mainBeam = addRod(root,
-    new Vector3().fromArray(beamEndpoints, 0), new Vector3().fromArray(beamEndpoints, 3),
-    sharedWing.main_beam_radius, carbon);
-  mainBeam.name = "single-carbon-main-beam";
   addCockpit(root);
 
   const horizontalIncidence = tails.horizontal;
@@ -323,10 +273,12 @@ export function createBirdmanAirframe(onVisualReady?: () => void): BirdmanAirfra
   const registeredHorizontalArm = horizontalIncidence.position.z;
 
   let disposed = false;
+  let projectionFailed = false;
   const setWingVisible = (visible: boolean): void => {
     for (const wing of wings) wing.visible = visible;
-    for (const group of rods) group.mesh.visible = visible;
-    for (const foam of foamRibs) foam.visible = visible;
+    for (const part of structure.meshes) {
+      if (part.attachment === AirframeAttachment.MainWing) part.mesh.visible = visible;
+    }
   };
   const setVisualState = (deformation: WingDeformationAvailability | null, controls: AirframeVisualControls, tailGeometry?: TailPresentationGeometryAvailability): void => {
     if (controls.layout === "tail_incidence" &&
@@ -342,28 +294,41 @@ export function createBirdmanAirframe(onVisualReady?: () => void): BirdmanAirfra
       }
       if (tailGeometry.kind === "available") horizontalTailArmMeters = tailGeometry.value.horizontalTailArmMeters;
     }
-    let updated = false;
+    root.visible = !(deformation?.kind === "unavailable" && deformation.reason === "unregistered_aircraft_geometry") &&
+      tailGeometry?.kind !== "unavailable";
+    if (!root.visible) {
+      setWingVisible(false);
+      horizontalIncidence.visible = false;
+      verticalIncidence.visible = false;
+      return;
+    }
     try {
-      if (deformation?.kind !== "unavailable") updated = sharedWing.update_factor(deformation?.factor ?? 1);
+      if (deformation?.kind !== "unavailable") {
+        const updated = sharedWing.update_factor(deformation?.factor ?? 1);
+        const structureUpdated = structure.source.update_factor(deformation?.factor ?? 1);
+        if (updated || projectionFailed) {
+          const nextPositions = sharedWing.surface_positions();
+          for (let surface = 0; surface < wings.length; surface++) {
+            const wing = wings[surface];
+            if (wing === undefined) throw new RangeError("Incomplete main-wing surface projection");
+            updateMeshPositions(wing, nextPositions.subarray(surface * vertexCount * 3, (surface + 1) * vertexCount * 3));
+          }
+        }
+        if (structureUpdated || projectionFailed) {
+          for (const part of structure.meshes) {
+            if (part.attachment === AirframeAttachment.MainWing) {
+              updateMeshPositions(part.mesh, structure.source.positions(part.index));
+            }
+          }
+        }
+        projectionFailed = false;
+      }
     } catch (cause) {
+      projectionFailed = true;
       setWingVisible(false);
       throw cause;
     }
     setWingVisible(deformation?.kind !== "unavailable");
-    if (updated) {
-      const nextPositions = sharedWing.surface_positions();
-      for (let surface = 0; surface < wings.length; surface++) {
-        const wing = wings[surface];
-        if (wing === undefined) throw new RangeError("Incomplete main-wing surface projection");
-        const position = wing.geometry.getAttribute("position");
-        position.array.set(nextPositions.subarray(surface * vertexCount * 3, (surface + 1) * vertexCount * 3));
-        position.needsUpdate = true;
-        wing.geometry.computeVertexNormals();
-      }
-      updateRods(sharedWing.rod_endpoints());
-      const translations = sharedWing.foam_positions();
-      for (const [index, foam] of foamRibs.entries()) foam.position.fromArray(translations, index * 3);
-    }
 
     horizontalIncidence.position.z = horizontalTailArmMeters;
     const tailVisible = (controls.layout === "tail_incidence" && tailGeometry?.kind === "available") || controls.layout === "registered_preview";
@@ -388,12 +353,10 @@ export function createBirdmanAirframe(onVisualReady?: () => void): BirdmanAirfra
     dispose() {
       if (disposed) return;
       disposed = true;
-      const instances: InstancedMesh[] = [];
       const geometries = new Set<BufferGeometry>();
       const materials = new Set<MeshLambertMaterial | MeshBasicMaterial>();
       root.traverse((part) => {
         if (part instanceof Mesh) {
-          if (part instanceof InstancedMesh) instances.push(part as InstancedMesh);
           geometries.add(part.geometry as BufferGeometry);
           for (const material of Array.isArray(part.material) ? part.material : [part.material]) {
             materials.add(material as MeshLambertMaterial | MeshBasicMaterial);
@@ -402,13 +365,25 @@ export function createBirdmanAirframe(onVisualReady?: () => void): BirdmanAirfra
       });
       disposeResources([
         () => { sharedWing.free(); },
-        ...instances.map((part) => () => { part.dispose(); }),
+        () => { structure.source.free(); },
         ...Array.from(geometries, (geometry) => () => { geometry.dispose(); }),
         ...Array.from(materials, (material) => () => { material.dispose(); }),
         () => { wingPatterns.dispose(); }
       ]);
     }
   };
+}
+
+function updateMeshPositions(mesh: Mesh, values: Float32Array): void {
+  const position = mesh.geometry.getAttribute("position");
+  position.array.set(values);
+  mesh.geometry.computeVertexNormals();
+  const normals = mesh.geometry.getAttribute("normal");
+  for (let index = 0; index < normals.count; index++) {
+    const length = Math.hypot(normals.getX(index), normals.getY(index), normals.getZ(index));
+    if (!Number.isFinite(length) || length < 0.5) throw new RangeError("Wing normals are unrepresentable");
+  }
+  position.needsUpdate = true;
 }
 
 function disposeResources(releases: readonly (() => void)[]): void {

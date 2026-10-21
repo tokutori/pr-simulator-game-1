@@ -1,6 +1,4 @@
-use birdman_game_scene::wing_geometry::{
-    CARBON_COLOR, FOAM_COLOR, RIB_COLOR, WingFrame, WingGeometry, WingRodKind,
-};
+use birdman_game_scene::wing_geometry::{WingFrame, WingGeometry};
 use wasm_bindgen::prelude::*;
 
 #[doc = "Owns fixed main-wing topology and reusable deformation until the renderer releases it. Bulk arrays are copied into JavaScript-owned storage."]
@@ -86,97 +84,6 @@ impl WingGeometryBridge {
             .material_ranges()
             .iter()
             .flat_map(|range| [range.start as u32, range.count as u32])
-            .collect()
-    }
-
-    #[doc = "Copies spar/rib/stringer codes 0/1/2 in structural anchor order."]
-    pub fn rod_kinds(&self) -> Vec<u32> {
-        self.geometry
-            .rods()
-            .iter()
-            .map(|rod| match rod.kind() {
-                WingRodKind::Spar => 0,
-                WingRodKind::Rib => 1,
-                WingRodKind::Stringer => 2,
-            })
-            .collect()
-    }
-
-    #[doc = "Copies rod radii in metres in structural anchor order."]
-    pub fn rod_radii(&self) -> Vec<f64> {
-        self.geometry
-            .rods()
-            .iter()
-            .map(|rod| rod.radius())
-            .collect()
-    }
-
-    #[doc = "Copies all from/to structural anchors as six double-precision coordinates per rod."]
-    pub fn rod_endpoints(&self) -> Vec<f64> {
-        self.frame
-            .rod_endpoints()
-            .iter()
-            .flatten()
-            .flatten()
-            .copied()
-            .collect()
-    }
-
-    #[doc = "Copies from/to coordinates for the fixed longitudinal beam, six right/up/aft values."]
-    pub fn main_beam_endpoints(&self) -> Vec<f64> {
-        self.geometry
-            .main_beam_endpoints()
-            .into_iter()
-            .flatten()
-            .collect()
-    }
-
-    #[doc = "Existing Web longitudinal beam radius in metres."]
-    #[wasm_bindgen(getter)]
-    pub fn main_beam_radius(&self) -> f64 {
-        self.geometry.main_beam_radius()
-    }
-
-    #[doc = "Existing Web sRGB 0xRRGGBB colour of both main carbon members."]
-    #[wasm_bindgen(getter)]
-    pub fn carbon_color(&self) -> u32 {
-        CARBON_COLOR
-    }
-
-    #[doc = "Existing Web sRGB colour of balsa ribs and stringers."]
-    #[wasm_bindgen(getter)]
-    pub fn rib_color(&self) -> u32 {
-        RIB_COLOR
-    }
-
-    #[doc = "Existing Web sRGB colour of trailing foam ribs."]
-    #[wasm_bindgen(getter)]
-    pub fn foam_color(&self) -> u32 {
-        FOAM_COLOR
-    }
-
-    #[doc = "Copies all static extruded foam vertices, twelve right/up/aft positions per rib."]
-    pub fn foam_vertices(&self) -> Vec<f32> {
-        self.geometry
-            .foam()
-            .iter()
-            .flat_map(|foam| foam.vertices().iter().flatten())
-            .copied()
-            .collect()
-    }
-
-    #[doc = "Copies the common foam-local triangle topology."]
-    pub fn foam_indices(&self) -> Vec<u32> {
-        self.geometry.foam()[0].indices().to_vec()
-    }
-
-    #[doc = "Copies all foam lateral/bending translations, three coordinates per rib."]
-    pub fn foam_positions(&self) -> Vec<f64> {
-        self.frame
-            .foam_positions()
-            .iter()
-            .flatten()
-            .copied()
             .collect()
     }
 }
