@@ -5,9 +5,7 @@ import { NO_HEAD_HUD, resolveHeadHudFrame } from "../render/contracts/head-hud.j
 import type { ViewerFrame } from "../render/contracts/viewer-frame.js";
 import type { UiActionDispatcher, UiViewModel } from "../render/contracts/ui.js";
 import { XrSpatialSession } from "./xr-spatial-session.js";
-import { GazeDwellSelector } from "./gaze-dwell.js";
-import { actionForControl, hitTestControl, intersectPanel, rangeAction } from "./panel-interaction.js";
-import { menuActionAt, menuFocusAction, menuHitIdentity } from "./menu-interaction.js";
+import { XrPointerSession } from "./xr-pointer-session.js";
 import type { WebXrAvailability, WebXrSessionPort, WebXrSessionRequest } from "./webxr-contracts.js";
 
 type WebXrBackendState =
@@ -26,20 +24,19 @@ export class WebXrPresentationBackend implements PresentationBackendAdapter {
   private lastViewerPose: Pose | null = null;
   private lastPanel: UiViewModel["panels"][number] | null = null;
   private lastPanelPose: Pose | null = null;
-  private lastMenu: MenuPresentation = Object.freeze({ kind: "absent" });
   private readonly spatial = new XrSpatialSession();
-  private readonly gazeDwell: GazeDwellSelector;
+  private readonly pointers: XrPointerSession;
   private readonly selectRayHandler = (ray: SelectRay): void => { this.handleSelectRay(ray); };
 
   constructor(
     private readonly xrRenderer: WebXrSessionPort,
     private readonly renderer: RendererAdapter,
     private readonly viewport: () => ViewportSize,
-    private readonly dispatch: UiActionDispatcher,
+    dispatch: UiActionDispatcher,
     private readonly onSessionEnd: () => void,
     private readonly onReferenceSpaceResetUnavailable: () => void = () => undefined
   ) {
-    this.gazeDwell = new GazeDwellSelector(dispatch);
+    this.pointers = new XrPointerSession(dispatch);
   }
 
   async checkAvailability(): Promise<WebXrAvailability> {
@@ -80,6 +77,11 @@ export class WebXrPresentationBackend implements PresentationBackendAdapter {
     this.spatial.reset();
     this.xrRenderer.setSessionEndHandler(() => { this.handleUnexpectedEnd(); });
     this.xrRenderer.setReferenceSpaceResetHandler((transform) => { this.handleReferenceSpaceReset(transform); });
+    this.xrRenderer.setInputFocusHandler?.((focused) => {
+      if (focused) return;
+      this.lastPanelPose = null;
+      this.pointers.reset();
+    });
     this.renderer.setSelectRayHandler(this.selectRayHandler);
     try {
       await this.xrRenderer.startSession();
@@ -95,6 +97,7 @@ export class WebXrPresentationBackend implements PresentationBackendAdapter {
       } finally {
         this.xrRenderer.setSessionEndHandler(null);
         this.xrRenderer.setReferenceSpaceResetHandler(null);
+        this.xrRenderer.setInputFocusHandler?.(null);
       }
       throw error;
     }
@@ -106,6 +109,7 @@ export class WebXrPresentationBackend implements PresentationBackendAdapter {
     this.renderer.setSelectRayHandler(null);
     this.xrRenderer.setSessionEndHandler(null);
     this.xrRenderer.setReferenceSpaceResetHandler(null);
+    this.xrRenderer.setInputFocusHandler?.(null);
     try {
       await this.xrRenderer.endSession();
     } finally {
@@ -114,7 +118,7 @@ export class WebXrPresentationBackend implements PresentationBackendAdapter {
       this.lastPanel = null;
       this.lastPanelPose = null;
       this.spatial.reset();
-      this.gazeDwell.reset();
+      this.pointers.reset();
     }
   }
 
@@ -138,11 +142,10 @@ export class WebXrPresentationBackend implements PresentationBackendAdapter {
     const semanticPanel = viewModel.panels[0] ?? null;
     const panel = menu.kind === "ready" ? menu.panel : semanticPanel;
     if (panel?.anchor !== "menu" || menu.kind === "absent") this.spatial.closeMenu();
-    this.lastMenu = menu;
     if (panel?.anchor === "menu" && menu.kind !== "ready") {
       this.lastPanel = null;
       this.lastPanelPose = null;
-      this.gazeDwell.reset();
+      this.pointers.reset();
       return Object.freeze({ timestampMs, headHud: menu.kind === "unavailable" ? NO_HEAD_HUD : resolveHeadHudFrame(viewModel.headHud, viewerPose),
         cameraPose: IDENTITY_POSE, viewport: this.viewport(), panel: menu.kind === "unavailable"
           ? Object.freeze({ kind: "unavailable", reason: menu.reason }) : Object.freeze({ kind: "absent" }) });
@@ -150,7 +153,7 @@ export class WebXrPresentationBackend implements PresentationBackendAdapter {
     if (panel !== null && (presentationViewerPose === null || viewer.source === "unavailable")) {
       this.lastPanel = null;
       this.lastPanelPose = null;
-      this.gazeDwell.update(null, null, timestampMs);
+      this.pointers.reset();
       return Object.freeze({ timestampMs, headHud: NO_HEAD_HUD, cameraPose: IDENTITY_POSE,
         panel: Object.freeze({ kind: "unavailable", reason: viewer.source === "unavailable" ? viewer.reason : "viewer-unavailable" }), viewport: this.viewport() });
     }
@@ -158,18 +161,22 @@ export class WebXrPresentationBackend implements PresentationBackendAdapter {
     if (placement.kind === "unavailable") {
         this.lastPanel = null;
         this.lastPanelPose = null;
-        this.gazeDwell.update(null, null, timestampMs);
+        this.pointers.reset();
         return Object.freeze({ timestampMs, headHud: NO_HEAD_HUD, cameraPose: IDENTITY_POSE, panel: placement, viewport: this.viewport() });
     }
     const worldFromPanel = placement.kind === "ready" ? placement.referenceFromPanel : IDENTITY_POSE;
     this.lastPanel = panel;
     this.lastPanelPose = worldFromPanel;
-    const gazeCursor = this.updateGaze(panel, worldFromPanel, presentationViewerPose, timestampMs, menu);
+    const input = this.xrRenderer.readPointerFrame?.() ?? { focused: true, rays: [] };
+    const gaze: readonly SelectRay[] = presentationViewerPose === null ? [] : [{ source: { kind: "gaze" },
+      origin: presentationViewerPose.position, direction: rotateVec3(presentationViewerPose.orientation, vec3(0, 0, -1)), timestampMs }];
+    const cursors = this.pointers.observe(JSON.stringify([viewModel.scene, viewModel.activeOverlay, panel?.id]), panel,
+      worldFromPanel, menu, [...input.rays, ...gaze], input.focused, timestampMs);
     return Object.freeze({
       timestampMs,
       headHud: resolveHeadHudFrame(viewModel.headHud, viewerPose),
       cameraPose: IDENTITY_POSE,
-      panel: panel === null ? Object.freeze({ kind: "absent" }) : Object.freeze({ kind: "visible", panel, pose: worldFromPanel, cursor: gazeCursor }),
+      panel: panel === null ? Object.freeze({ kind: "absent" }) : Object.freeze({ kind: "visible", panel, pose: worldFromPanel, ...cursors }),
       viewport: this.viewport()
     });
   }
@@ -178,52 +185,19 @@ export class WebXrPresentationBackend implements PresentationBackendAdapter {
     if (this.lastViewerPose !== null) this.spatial.recenterMenu(this.lastViewerPose);
   }
 
-  private updateGaze(
-    panel: UiViewModel["panels"][number] | null,
-    worldFromPanel: Pose,
-    viewerPose: Pose | null,
-    timestampMs: number,
-    menu: MenuPresentation
-  ) {
-    if (panel === null || viewerPose === null) return this.gazeDwell.update(null, null, timestampMs);
-    const point = intersectPanel({
-      origin: viewerPose.position,
-      direction: rotateVec3(viewerPose.orientation, vec3(0, 0, -1))
-    }, worldFromPanel);
-    return menu.kind === "ready" ? this.gazeDwell.updateMenu(menu, point, timestampMs) : this.gazeDwell.update(panel, point, timestampMs);
-  }
-
   private handleSelectRay(ray: SelectRay): void {
-    const panel = this.lastPanel;
-    const panelPose = this.lastPanelPose;
-    if (panel === null || panelPose === null) return;
-    const point = intersectPanel(ray, panelPose);
-    if (point === null) return;
-    const menu = this.lastMenu;
-    if (menu.kind === "ready") {
-      const identity = menuHitIdentity(menu, point);
-      if (this.gazeDwell.wasActivatedRecently(identity, ray)) return;
-      const action = menuActionAt(menu, point);
-      if (action.kind === "action") {
-        this.dispatch(menuFocusAction(menu, point));
-        this.dispatch(action.action);
-      }
-      return;
-    }
-    const control = hitTestControl(panel, point);
-    if (control === null || this.gazeDwell.wasActivatedRecently(control.id, ray)) return;
-    this.dispatch({ type: "focus", controlId: control.id });
-    const action = control.kind === "range" ? rangeAction(control, panel, point) : actionForControl(control);
-    if (action !== null) this.dispatch(action);
+    if (this.lastPanel === null || this.lastPanelPose === null) return;
+    this.pointers.select(ray);
   }
 
   private handleUnexpectedEnd(): void {
     if (this.state.type !== "active" && this.state.type !== "starting") return;
     this.state = { type: "idle" };
     this.renderer.setSelectRayHandler(null);
+    this.xrRenderer.setInputFocusHandler?.(null);
     queueMicrotask(() => {
       this.spatial.reset();
-      this.gazeDwell.reset();
+      this.pointers.reset();
       this.onSessionEnd();
     });
   }
@@ -238,7 +212,7 @@ export class WebXrPresentationBackend implements PresentationBackendAdapter {
     }
     this.lastViewerPose = null;
     this.lastPanelPose = null;
-    this.gazeDwell.reset();
+    this.pointers.reset();
   }
 
   private isStarting(): boolean {

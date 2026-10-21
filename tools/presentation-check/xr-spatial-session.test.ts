@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PerspectiveCamera, StereoCamera } from "three";
-import { XrSpatialBridge, XrCameraBridge } from "../../web/pkg/birdman_game_wasm.js";
+import { XrSpatialBridge, XrCameraBridge, XrPointerBridge } from "../../web/pkg/birdman_game_wasm.js";
+import { XrPointerSession } from "../../web/src/presentation/xr-pointer-session.js";
+import type { UiAction } from "../../web/src/render/contracts/ui.js";
 import { initializeWasmFixture } from "../game-check/wasm-fixture.js";
 import { XrSpatialSession } from "../../web/src/presentation/xr-spatial-session.js";
 import { XrCameraOrigin, projectXrReferenceFrame } from "../../web/src/render/camera/xr-spatial.js";
@@ -9,10 +11,70 @@ import type { Pose } from "../../web/src/render/contracts/math.js";
 import { headPlaneFitsViews, unavailableViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
 import { captureConfiguredViewerFrame } from "../../web/src/render/engines/three/viewer-frame.js";
 import { createSceneFixture } from "../../web/src/presentation/fixtures.js";
-import { referenceFrameFixture } from "./menu-fixture.js";
+import { geometryMenuFixture, referenceFrameFixture } from "./menu-fixture.js";
 
 initializeWasmFixture();
 afterEach(() => { vi.restoreAllMocks(); });
+
+describe("shared pointer adapter", () => {
+  const panelPose = pose(vec3(0, 0, -2), IDENTITY_POSE.orientation);
+  const ray = { source: { kind: "controller" as const, id: 5 }, origin: vec3(0.3, 0.3, 0), direction: vec3(0, 0, -1), timestampMs: 100 };
+
+  it("uses clipped measured menu regions for range selection and ignores disabled controls", () => {
+    const fixture = createSceneFixture("Title");
+    const original = fixture.panels[0];
+    if (original === undefined) throw new Error("Missing panel");
+    const panel = { ...original, size: { width: 2, height: 1 }, controls: [
+      { kind: "button" as const, id: "disabled", label: "Disabled", enabled: false, rect: { x: 0, y: 0, width: 1, height: 1 } },
+      { kind: "range" as const, id: "range", label: "Range", enabled: true, rect: { x: 0.1, y: 0.2, width: 0.8, height: 0.4 },
+        minimum: 0, maximum: 10, step: 1, value: 0, displayValue: "0" }
+    ] };
+    const measured = geometryMenuFixture({ ...fixture, panels: [panel] });
+    if (measured.kind !== "ready") throw new Error("Missing menu");
+    const menu = { ...measured, viewport: { ...measured.viewport, offsetMeters: 0.2, maximumOffsetMeters: 1,
+      contentClip: { x: 0, y: 0, width: 2, height: 0.8 }, previousBounds: { x: 0, y: 0.9, width: 0.9, height: 0.1 },
+      nextBounds: { x: 1.1, y: 0.9, width: 0.9, height: 0.1 } } };
+    const actions: UiAction[] = [];
+    const owner = new XrPointerSession((action) => actions.push(action));
+    try {
+      const cursors = owner.observe("title", panel, panelPose, menu, [ray], true, 100);
+      expect(cursors.cursor?.point).toEqual({ x: 0.3, y: 0.3 });
+      owner.select({ ...ray, timestampMs: 101 });
+      expect(actions).toContainEqual({ type: "menu-control", context: menu.context,
+        action: { type: "set-range", controlId: "range", value: 7 } });
+      expect(actions.some((action) => action.type === "activate" && action.controlId === "disabled")).toBe(false);
+    } finally { owner.reset(); }
+  });
+
+  it("frees the Rust owner once even when focus cleanup throws", () => {
+    const panel = createSceneFixture("Flight").panels[0];
+    if (panel === undefined) throw new Error("Missing panel");
+    const release = vi.spyOn(XrPointerBridge.prototype, "free");
+    const owner = new XrPointerSession((action) => { if (action.type === "focus" && action.controlId === null) throw new Error("focus cleanup"); });
+    owner.observe("flight", panel, panelPose, { kind: "absent" }, [ray], true, 100);
+    expect(() => { owner.reset(); }).toThrow("focus cleanup");
+    owner.reset();
+    expect(release).toHaveBeenCalledTimes(1);
+  });
+
+  it("retires activation when a focus callback synchronously resets its owner", () => {
+    const original = createSceneFixture("Flight").panels[0];
+    if (original === undefined) throw new Error("Missing panel");
+    const panel = { ...original, controls: [{ kind: "button" as const, id: "start", label: "Start", enabled: true,
+      rect: { x: 0, y: 0, width: 1, height: 1 } }] };
+    const release = vi.spyOn(XrPointerBridge.prototype, "free");
+    const actions: UiAction[] = [];
+    const owner = new XrPointerSession((action) => {
+      actions.push(action);
+      if (action.type === "focus" && action.controlId !== null) owner.reset();
+    });
+    expect(owner.observe("flight", panel, panelPose, { kind: "absent" }, [ray], true, 100).cursor).toBeNull();
+    owner.select({ ...ray, timestampMs: 200 });
+    owner.reset();
+    expect(actions.some((action) => action.type === "activate")).toBe(false);
+    expect(release).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe("shared spatial session", () => {
   it("retains the opening during head motion and refits scene, credits and optical changes", () => {

@@ -445,6 +445,9 @@ M C' H'=M C S S^{-1}H=M C H
 ### VR入力と安全
 
 - Screenはkeyboard/pointer/touch、VRはhead-gaze dwellまたは標準mappingのgamepadを用いる。
+- WebXRは同じframe・参照空間の`tracked-pointer` rayを観測する。共有Rustのpointer ownerが、実測・clip済み矩形への交差、入力源の優先保持、focus、1秒dwellとtriggerの重複抑止を扱う。左右controllerの照準を同時に描画し、triggerは同じ交差判定へ接続する。
+- panelへ向いたcontrollerをfocus所有者とし、追跡喪失・退出後は新たなgaze dwellを開始する。`visibilitychange`・reference reset・scene/overlay/layout交換は入力ownerを失効させる。
+- dwellとtriggerの時刻は同じ単調な受信時計へ揃える。XR rAFの現在時刻とselect配送時の`performance.now()`を使用し、予測表示時刻はpose観測に限定する。照準はpanelの非等方scaleを相殺して実寸座標へ配置する。
 - gamepadの左stickはpanel cursor、button0は選択、button1は戻る、右stickはscrollへ接続する。
 - 標準gamepadが有効な場合は操作元をgamepadへ切り替え、それ以外はgazeを使用する。
 

@@ -51,7 +51,7 @@ export interface PreparedPresentationView {
 
 export type PanelFrame =
   | { readonly kind: "absent" }
-  | { readonly kind: "visible"; readonly panel: UiPanel; readonly pose: Pose; readonly cursor: PanelCursor | null }
+  | { readonly kind: "visible"; readonly panel: UiPanel; readonly pose: Pose; readonly cursor: PanelCursor | null; readonly secondaryCursors?: readonly PanelCursor[] }
   | { readonly kind: "unavailable"; readonly reason: PanelUnavailableReason };
 
 
@@ -67,6 +67,7 @@ export interface PanelCursor {
 }
 
 export interface SelectRay {
+  readonly source?: import("../../generated/xr-pointer-observation.js").XrPointerObservation["pointers"][number]["source"];
   readonly origin: Vec3;
   readonly direction: Vec3;
   readonly timestampMs: number;

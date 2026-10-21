@@ -8,9 +8,11 @@ import { configuredViewerFixture } from "./viewer-fixture.js";
 import { DEFAULT_XR_HEAD_HUD_PROFILE } from "../../web/src/generated/xr-head-hud-profile.js";
 import type { FlightRecordHudProfileDocument } from "../../web/src/generated/record-context.js";
 import type { ViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
-import { IDENTITY_POSE, pose, quaternion, vec3 } from "../../web/src/render/contracts/math.js";
+import { IDENTITY_POSE, composePose, rotateVec3, pose, quaternion, vec3 } from "../../web/src/render/contracts/math.js";
 import { xr_head_hud_projection_json, xr_menu_view_fit_json, xr_text_ink_fit_json, XrCameraBridge, XrSpatialBridge,
-  xr_reference_frame_json, xr_pose_chain_json, xr_inverse_pose_json, xr_panel_camera_poses_json } from "../../web/pkg/birdman_game_wasm.js";
+  xr_reference_frame_json, xr_pose_chain_json, xr_inverse_pose_json, xr_panel_camera_poses_json, XrPointerBridge } from "../../web/pkg/birdman_game_wasm.js";
+import type { XrPointerObservation } from "../../web/src/generated/xr-pointer-observation.js";
+import type { XrPointerSurface } from "../../web/src/generated/xr-pointer-surface.js";
 import type { Pose } from "../../web/src/render/contracts/math.js";
 import type { XrCameraMount } from "../../web/src/generated/xr-camera-mount.js";
 import type { XrCameraRig } from "../../web/src/generated/xr-camera-rig.js";
@@ -62,7 +64,8 @@ try {
     menu: JSON.parse(xr_menu_view_fit_json(JSON.stringify(candidate.viewer), JSON.stringify(candidate.panel_pose), ...candidate.panel_size, 2.4, 0.035)) as unknown,
     head: JSON.parse(xr_head_hud_projection_json(JSON.stringify(candidate.hud), JSON.stringify(candidate.viewer), JSON.stringify(candidate.profile), "FPS 72.0")) as unknown,
     ink: JSON.parse(xr_text_ink_fit_json(JSON.stringify(candidate.viewer), JSON.stringify(candidate.ink), JSON.stringify(candidate.head_from_surface), 0.35)) as unknown,
-    spatial: spatialResults(candidate)
+    spatial: spatialResults(candidate),
+    interaction: pointerResults(candidate.interaction)
   }));
   await writeFile(resolve(output, "wasm.json"), JSON.stringify(actual), "utf8");
   compare(expected, actual, "cases");
@@ -80,8 +83,43 @@ try {
   throw cause;
 }
 
+function pointerScenario() {
+  const panelPose = pose(vec3(20, 10, -30), quaternion(Math.cos(0.3), 0, Math.sin(0.3), 0));
+  const sourceRay = (source: XrPointerObservation["pointers"][number]["source"], horizontal: number) => {
+    const reference = composePose(panelPose, pose(vec3(horizontal, 0.1, 2), IDENTITY_POSE.orientation));
+    return { source, origin: reference.position, direction: rotateVec3(reference.orientation, vec3(0, 0, -1)) };
+  };
+  const gaze = sourceRay({ kind: "gaze" }, 0);
+  const left = sourceRay({ kind: "controller", id: 7 }, -0.2);
+  const right = sourceRay({ kind: "controller", id: 11 }, 0.2);
+  const surface: XrPointerSurface = { scope: "comparison", sizeM: [2, 1], regions: [
+    { target: { kind: "control", id: "start" }, bounds: [0, 0, 2, 1] }
+  ] };
+  const steps = [
+    [0, true, [gaze], null], [900, true, [gaze], null],
+    [950, true, [gaze, left, right], [right, 951]], [960, true, [gaze, right, left], [left, 961]],
+    [2000, false, [gaze, right], [right, 2001]], [2100, true, [gaze], [right, 2101]],
+    [3100, true, [gaze], null], [4200, true, [gaze], [gaze, 4201]]
+  ] as const;
+  return { surface, steps: steps.map(([timestampMs, focused, pointers, select]) => ({
+    observation: { timestampMs, focused, panelPose, pointers } satisfies XrPointerObservation, select
+  })) };
+}
+
+function pointerResults(scenario: ReturnType<typeof pointerScenario>): unknown[] {
+  const owner = new XrPointerBridge();
+  try {
+    owner.set_surface_json(JSON.stringify(scenario.surface));
+    return scenario.steps.map((step) => ({
+      frame: JSON.parse(owner.observe_json(JSON.stringify(step.observation))) as unknown,
+      select: step.select === null ? null : JSON.parse(owner.select_json(JSON.stringify(step.select[0]), step.select[1])) as unknown
+    }));
+  } finally { owner.free(); }
+}
+
 function observation(viewer: ViewerFrame, model: ReturnType<typeof currentSharedHeadHudFixture>) {
   return { viewer, hud: { layout: model.layout, groups: model.groups }, profile: DEFAULT_XR_HEAD_HUD_PROFILE,
+    interaction: pointerScenario(),
     panel_pose: pose(vec3(0.1, -0.2, 0), IDENTITY_POSE.orientation), panel_size: [2.4, 1.8] as const,
     head_from_surface: pose(vec3(0, -0.2, -2.4), IDENTITY_POSE.orientation),
     ink: [{ start: vec3(-0.1, 0.025, 0), end: vec3(-0.1, -0.025, 0) }, { start: vec3(0.1, 0.025, 0), end: vec3(0.1, -0.025, 0) }],

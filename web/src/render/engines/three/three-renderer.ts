@@ -370,6 +370,7 @@ export function createThreeRenderer(
   gazeCursor.position.z = 0.015;
   gazeCursor.visible = false;
   panelMesh.add(gazeCursor);
+  const pointerCursors = [gazeCursor];
 
   const aircraftRoot = new Group();
   aircraftRoot.name = "aircraft-presentation-root";
@@ -407,6 +408,10 @@ export function createThreeRenderer(
   let referenceSpaceResetHandler: ((previousReferenceFromNew: Pose | null) => void) | null = null;
   let activeReferenceSpace: XRReferenceSpace | null = null;
   let selectRayHandler: ((ray: SelectRay) => void) | null = null;
+  let pointerSources = new WeakMap<XRInputSource, number>();
+  let nextPointerSource = 1;
+  let framePointerRays: readonly SelectRay[] = [];
+  let inputFocusHandler: ((focused: boolean) => void) | null = null;
   let flightPose: FlightRenderPose | null = null;
   let preparedFlightPose: FlightRenderPose | null = null;
   let flightCameraMode: FlightCameraMode = "pilot";
@@ -572,19 +577,30 @@ export function createThreeRenderer(
 
   const onSelect = (event: XRInputSourceEvent): void => {
     if (xrState.type !== "active" && xrState.type !== "attaching") return;
+    if (!hasXrInputFocus()) return;
+    const session = sessionFromState(xrState);
+    if (event.inputSource.targetRayMode === "tracked-pointer" && (session === null || !Array.from(session.inputSources).includes(event.inputSource))) return;
     const referenceSpace = renderer.xr.getReferenceSpace();
     if (referenceSpace === null || selectRayHandler === null || renderedTrackingMount === null) return;
     const ray = selectRayFromXrEvent(event.frame, event.inputSource, referenceSpace);
-    if (ray !== null) selectRayHandler(transformRay(ray, renderedTrackingMount));
+    if (ray !== null) selectRayHandler(transformRay({ ...ray, timestampMs: performance.now(), source: pointerSource(event.inputSource) }, renderedTrackingMount));
+  };
+
+  const onInputFocusChange = (): void => {
+    const focused = hasXrInputFocus();
+    if (!focused) { framePointerRays = []; renderedTrackingMount = null; }
+    inputFocusHandler?.(focused);
   };
 
   const onSessionEnd = (): void => {
     const session = sessionFromState(xrState);
     if (session === null) return;
     session.removeEventListener("select", onSelect);
+    session.removeEventListener("visibilitychange", onInputFocusChange);
     const expected = xrState.type === "stopping";
     xrState = { type: "idle" };
     renderedTrackingMount = null;
+    framePointerRays = [];
     if (expected) return;
     queueMicrotask(() => {
       clearSession(session);
@@ -594,6 +610,7 @@ export function createThreeRenderer(
 
   const onReferenceSpaceReset = (event: XRReferenceSpaceEvent): void => {
     renderedTrackingMount = null;
+    framePointerRays = [];
     let previousReferenceFromNew: Pose | null = null;
     try {
       const transform = event.transform as XRRigidTransform | null | undefined;
@@ -641,6 +658,19 @@ export function createThreeRenderer(
         try {
           const referenceSpace = renderer.xr.getReferenceSpace();
           if (renderer.xr.isPresenting) {
+            framePointerRays = [];
+            const session = sessionFromState(xrState);
+            if (xrFrame != null && referenceSpace !== null && session !== null && hasXrInputFocus()) {
+              const rays: SelectRay[] = [];
+              for (const inputSource of session.inputSources) {
+                if (inputSource.targetRayMode !== "tracked-pointer") continue;
+                try {
+                  const ray = selectRayFromXrEvent(xrFrame, inputSource, referenceSpace);
+                  if (ray !== null) rays.push({ ...ray, source: pointerSource(inputSource) });
+                } catch { continue; }
+              }
+              framePointerRays = rays;
+            }
             const viewer = xrFrame !== undefined && xrFrame !== null && referenceSpace !== null ? xrFrame.getViewerPose(referenceSpace) : null;
             callback(timestamp, captureXrViewerFrame(viewer ?? null));
           } else if (stereoPresentation !== null) {
@@ -723,7 +753,7 @@ export function createThreeRenderer(
       panelMaterial.depthWrite = !overlayPanel;
       panelMesh.renderOrder = overlayPanel ? PANEL_OVERLAY_RENDER_ORDER : 0;
       gazeCursorMaterial.depthTest = !overlayPanel;
-      gazeCursor.renderOrder = overlayPanel ? PANEL_OVERLAY_RENDER_ORDER + 1 : 0;
+      for (const cursor of pointerCursors) cursor.renderOrder = overlayPanel ? PANEL_OVERLAY_RENDER_ORDER + 1 : 0;
       panelMesh.visible = visiblePanel !== null;
       if (panel !== currentPanel) {
         panelTexture.needsUpdate = true;
@@ -732,10 +762,23 @@ export function createThreeRenderer(
       const panelWidth = panel?.size.width ?? 2.4;
       const panelHeight = panel?.size.height ?? 1.8;
       panelMesh.scale.set(panelWidth / 2.4, panelHeight / 1.8, 1);
-      gazeCursor.visible = panelCursor !== null && visiblePanel !== null;
-      if (panelCursor !== null) {
-        gazeCursor.position.set(panelCursor.point.x, panelCursor.point.y, 0.015);
-        gazeCursor.scale.setScalar(Math.max(0.05, panelCursor.progress));
+      const cursors = panelCursor === null ? [] : [panelCursor, ...(visiblePanel?.secondaryCursors ?? [])];
+      while (pointerCursors.length < cursors.length) {
+        const cursor = new Mesh(gazeCursorGeometry, gazeCursorMaterial);
+        panelMesh.add(cursor);
+        pointerCursors.push(cursor);
+      }
+      for (const [index, mesh] of pointerCursors.entries()) {
+        const cursor = cursors[index];
+        mesh.visible = cursor !== undefined && visiblePanel !== null;
+        mesh.renderOrder = overlayPanel ? PANEL_OVERLAY_RENDER_ORDER + 1 : 0;
+        if (cursor !== undefined) {
+          const horizontalScale = panelWidth / 2.4;
+          const verticalScale = panelHeight / 1.8;
+          const scale = 0.5 + 0.5 * cursor.progress;
+          mesh.position.set(cursor.point.x / horizontalScale, cursor.point.y / verticalScale, 0.015);
+          mesh.scale.set(scale / horizontalScale, scale / verticalScale, 1);
+        }
       }
       scene.updateMatrixWorld(true);
       const viewCamera = useExternalCamera ? fixedCamera : camera;
@@ -977,6 +1020,10 @@ export function createThreeRenderer(
   };
 
   const webxr: WebXrSessionPort = {
+    setInputFocusHandler(handler) { inputFocusHandler = handler; },
+    readPointerFrame() {
+      return { focused: hasXrInputFocus(), rays: framePointerRays.map((ray) => transformRay(ray, currentTrackingMountPose())) };
+    },
     projectTrackingFrame(value: Pose) {
       return projectXrReferenceFrame(currentCameraPlacement().rig, value);
     },
@@ -1029,6 +1076,7 @@ export function createThreeRenderer(
       xrState = { type: "attaching", session };
       session.addEventListener("end", onSessionEnd);
       session.addEventListener("select", onSelect);
+      session.addEventListener("visibilitychange", onInputFocusChange);
       renderer.xr.enabled = true;
       renderer.xr.setReferenceSpaceType("local");
       try {
@@ -1128,6 +1176,7 @@ export function createThreeRenderer(
   function clearSession(session = sessionFromState(xrState)): void {
     if (session !== null) {
       session.removeEventListener("select", onSelect);
+      session.removeEventListener("visibilitychange", onInputFocusChange);
       session.removeEventListener("end", onSessionEnd);
     }
     activeReferenceSpace?.removeEventListener("reset", onReferenceSpaceReset);
@@ -1137,6 +1186,21 @@ export function createThreeRenderer(
     xrState = { type: "idle" };
     renderer.xr.enabled = false;
     renderedTrackingMount = null;
+    framePointerRays = [];
+    pointerSources = new WeakMap();
+    nextPointerSource = 1;
+  }
+
+  function hasXrInputFocus(): boolean {
+    const session = sessionFromState(xrState);
+    return session !== null && session.visibilityState !== "hidden" && session.visibilityState !== "visible-blurred";
+  }
+
+  function pointerSource(source: XRInputSource): NonNullable<SelectRay["source"]> {
+    if (source.targetRayMode !== "tracked-pointer") return { kind: "gaze" };
+    let identifier = pointerSources.get(source);
+    if (identifier === undefined) { identifier = nextPointerSource++; pointerSources.set(source, identifier); }
+    return { kind: "controller", id: identifier };
   }
 
   function isAttaching(): boolean {
@@ -1211,6 +1275,7 @@ function transformRay(ray: SelectRay, worldFromTracking: Pose | null): SelectRay
   if (worldFromTracking === null) return ray;
   const offset = rotateVec3(worldFromTracking.orientation, ray.origin);
   return Object.freeze({
+    ...(ray.source === undefined ? {} : { source: ray.source }),
     origin: vec3(offset.x + worldFromTracking.position.x, offset.y + worldFromTracking.position.y, offset.z + worldFromTracking.position.z),
     direction: rotateVec3(worldFromTracking.orientation, ray.direction),
     timestampMs: ray.timestampMs

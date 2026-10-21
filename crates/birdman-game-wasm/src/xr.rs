@@ -4,6 +4,8 @@ use wasm_bindgen::{JsValue, prelude::*};
 
 mod spatial;
 pub use spatial::*;
+mod interaction;
+pub use interaction::*;
 
 /// Checks the browser/runtime's unmodified projection matrix.
 #[wasm_bindgen]

@@ -18,6 +18,21 @@ struct Observation {
     head_from_surface: XrPose,
     ink: Vec<XrInkSegment>,
     spatial: SpatialObservation,
+    interaction: PointerScenario,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PointerScenario {
+    surface: XrPointerSurface,
+    steps: Vec<PointerStep>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PointerStep {
+    observation: XrPointerObservation,
+    select: Option<(XrPointerRay, f64)>,
 }
 
 #[derive(Deserialize)]
@@ -43,6 +58,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "ink": fit_xr_text_ink(&observation.viewer, &observation.ink,
                 observation.head_from_surface, 0.35),
             "spatial": spatial_results(&observation)?,
+            "interaction": pointer_results(&observation.interaction)?,
         }));
     }
     let output = serde_json::to_vec(&results)?;
@@ -50,6 +66,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     stdout.write_all(&output)?;
     stdout.write_all(b"\n")?;
     Ok(())
+}
+
+fn pointer_results(
+    scenario: &PointerScenario,
+) -> Result<Vec<serde_json::Value>, Box<dyn std::error::Error>> {
+    let mut owner = XrPointerSession::default();
+    owner.set_surface(Some(scenario.surface.clone()))?;
+    scenario
+        .steps
+        .iter()
+        .map(|step| {
+            let frame = owner.observe(step.observation.clone())?;
+            let select = step
+                .select
+                .and_then(|(pointer, timestamp)| owner.select(pointer, timestamp));
+            Ok(serde_json::json!({ "frame": frame, "select": select }))
+        })
+        .collect()
 }
 
 fn spatial_results(

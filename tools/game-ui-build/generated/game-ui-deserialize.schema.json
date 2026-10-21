@@ -1984,6 +1984,208 @@
         }
       ]
     },
+    "XrPointerObservation": {
+      "additionalProperties": false,
+      "description": "One same-frame input observation.",
+      "properties": {
+        "focused": {
+          "description": "Runtime grants input focus.",
+          "type": "boolean"
+        },
+        "panelPose": {
+          "$ref": "#/$defs/XrPose",
+          "description": "Reference-from-panel pose from this rendered frame."
+        },
+        "pointers": {
+          "description": "Tracked controllers and head gaze observed in the same frame.",
+          "items": {
+            "$ref": "#/$defs/XrPointerRay"
+          },
+          "type": "array"
+        },
+        "timestampMs": {
+          "description": "Monotonic presentation timestamp in milliseconds.",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "timestampMs",
+        "focused",
+        "panelPose",
+        "pointers"
+      ],
+      "type": "object"
+    },
+    "XrPointerRay": {
+      "additionalProperties": false,
+      "description": "Pointing ray in the same reference frame as the panel.",
+      "properties": {
+        "direction": {
+          "$ref": "#/$defs/XrVector",
+          "description": "Unit pointing direction in reference coordinates."
+        },
+        "origin": {
+          "$ref": "#/$defs/XrVector",
+          "description": "Ray origin in reference coordinates, in metres."
+        },
+        "source": {
+          "$ref": "#/$defs/XrPointerSource",
+          "description": "Stable input source."
+        }
+      },
+      "required": [
+        "source",
+        "origin",
+        "direction"
+      ],
+      "type": "object"
+    },
+    "XrPointerRect": {
+      "description": "Rectangle in surface coordinates: left, top, width and height, in metres.",
+      "items": {
+        "format": "double",
+        "type": "number"
+      },
+      "maxItems": 4,
+      "minItems": 4,
+      "type": "array"
+    },
+    "XrPointerRegion": {
+      "additionalProperties": false,
+      "description": "One enabled control or page rectangle after measurement and clipping.",
+      "properties": {
+        "bounds": {
+          "$ref": "#/$defs/XrPointerRect",
+          "description": "Visible hit rectangle in surface coordinates."
+        },
+        "target": {
+          "$ref": "#/$defs/XrPointerTarget",
+          "description": "Typed control or page target."
+        }
+      },
+      "required": [
+        "target",
+        "bounds"
+      ],
+      "type": "object"
+    },
+    "XrPointerSource": {
+      "description": "Runtime input identity, stable for one presentation session.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Head-directed dwell input.",
+          "properties": {
+            "kind": {
+              "const": "gaze",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Runtime-assigned controller identity.",
+          "properties": {
+            "id": {
+              "description": "Session-local runtime source identifier.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "controller",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "XrPointerSurface": {
+      "additionalProperties": false,
+      "description": "Measured surface geometry owned until its scope or layout changes.",
+      "properties": {
+        "regions": {
+          "description": "Enabled rectangles in drawing/hit priority order.",
+          "items": {
+            "$ref": "#/$defs/XrPointerRegion"
+          },
+          "type": "array"
+        },
+        "scope": {
+          "description": "Adapter's exact scene, overlay, panel and scroll context identity.",
+          "type": "string"
+        },
+        "sizeM": {
+          "description": "Surface width and height in metres.",
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        }
+      },
+      "required": [
+        "scope",
+        "sizeM",
+        "regions"
+      ],
+      "type": "object"
+    },
+    "XrPointerTarget": {
+      "description": "Semantic target of a measured interactive rectangle.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Shared UI control identifier.",
+          "properties": {
+            "id": {
+              "description": "Identifier from the shared UI control.",
+              "type": "string"
+            },
+            "kind": {
+              "const": "control",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Previous or next measured menu page.",
+          "properties": {
+            "kind": {
+              "const": "page",
+              "type": "string"
+            },
+            "next": {
+              "description": "True advances to the next page.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "kind",
+            "next"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "XrPose": {
       "additionalProperties": false,
       "description": "Rigid child-to-parent transform; the caller names both reference spaces.",

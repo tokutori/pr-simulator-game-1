@@ -8113,6 +8113,176 @@
       ],
       "type": "object"
     },
+    "XrPointerHit": {
+      "description": "Visible metric cursor and its typed target.",
+      "properties": {
+        "point": {
+          "description": "Panel-local right/up metric coordinates.",
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "source": {
+          "$ref": "#/$defs/XrPointerSource",
+          "description": "Input source producing this cursor."
+        },
+        "target": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/XrPointerTarget"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Enabled control or page under the cursor."
+        }
+      },
+      "required": [
+        "source",
+        "point",
+        "target"
+      ],
+      "type": "object"
+    },
+    "XrPointerProjection": {
+      "description": "Cursor, focus and activation projected by the shared owner.",
+      "properties": {
+        "activation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/XrPointerHit"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "At most one accepted action for this observation."
+        },
+        "focusChanged": {
+          "description": "Focus changed because the target or source changed.",
+          "type": "boolean"
+        },
+        "primary": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/XrPointerHit"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Primary focus owner, preferring a controller aimed at the panel."
+        },
+        "progress": {
+          "description": "Gaze dwell completion; controllers use an explicit trigger.",
+          "format": "double",
+          "type": "number"
+        },
+        "secondary": {
+          "description": "Other controllers with visible panel intersections.",
+          "items": {
+            "$ref": "#/$defs/XrPointerHit"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "primary",
+        "secondary",
+        "progress",
+        "focusChanged",
+        "activation"
+      ],
+      "type": "object"
+    },
+    "XrPointerSource": {
+      "description": "Runtime input identity, stable for one presentation session.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Head-directed dwell input.",
+          "properties": {
+            "kind": {
+              "const": "gaze",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Runtime-assigned controller identity.",
+          "properties": {
+            "id": {
+              "description": "Session-local runtime source identifier.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "controller",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "XrPointerTarget": {
+      "description": "Semantic target of a measured interactive rectangle.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Shared UI control identifier.",
+          "properties": {
+            "id": {
+              "description": "Identifier from the shared UI control.",
+              "type": "string"
+            },
+            "kind": {
+              "const": "control",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Previous or next measured menu page.",
+          "properties": {
+            "kind": {
+              "const": "page",
+              "type": "string"
+            },
+            "next": {
+              "description": "True advances to the next page.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "kind",
+            "next"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "XrPose": {
       "additionalProperties": false,
       "description": "Rigid child-to-parent transform; the caller names both reference spaces.",

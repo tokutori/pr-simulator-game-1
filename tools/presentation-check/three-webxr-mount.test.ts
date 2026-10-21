@@ -28,6 +28,7 @@ import { HudCanvasFixture } from "./hud-canvas-fixture.js";
 import { ScreenPresentationBackend } from "../../web/src/presentation/screen-backend.js";
 
 interface RecordedDraw {
+  readonly pointers: readonly Matrix4[];
   readonly eyes: readonly Matrix4[];
   readonly camera: Matrix4;
   readonly panel: Matrix4 | null;
@@ -115,7 +116,9 @@ vi.mock("three", async (importOriginal) => {
       let panel: Matrix4 | null = null;
       let headHud: Matrix4 | null = null;
       let headDepth: readonly boolean[] = [];
+      const pointers: Matrix4[] = [];
       scene.traverse((object) => {
+        if (object instanceof actual.Mesh && object.geometry instanceof actual.CircleGeometry && object.visible && object.parent?.visible) pointers.push(object.matrixWorld.clone());
         if (object instanceof actual.Mesh && object.material instanceof actual.MeshBasicMaterial &&
             object.material.map instanceof actual.CanvasTexture && object.visible) {
           if (object.name === "head-hud") {
@@ -128,7 +131,7 @@ vi.mock("three", async (importOriginal) => {
       this.draws.push({
         eyes: presenting ? this.xr.getCamera().cameras.map((eye) => eye.matrixWorld.clone()) : [],
         projections: presenting ? this.xr.getCamera().cameras.map((eye) => eye.projectionMatrix.clone()) : [],
-        camera: camera.matrixWorld.clone(), panel, headHud, headDepth
+        camera: camera.matrixWorld.clone(), panel, headHud, headDepth, pointers
       });
     }
   }
@@ -162,13 +165,16 @@ class BrowserWindowFrames {
 
 class BrowserXrSession extends EventTarget {
   readonly referenceSpace = new EventTarget();
-  readonly inputSources: readonly XRInputSource[] = [];
+  readonly inputSources: XRInputSource[] = [];
+  visibilityState: XRVisibilityState = "visible";
+  readonly targetPoses = new Map<XRSpace, Pose | null>();
   readonly enabledFeatures: readonly string[] = [];
   readonly environmentBlendMode = "opaque";
   readonly renderState: XRRenderStateInit = {};
   private callback: XRFrameRequestCallback | null = null;
   private requestId = 0;
   poseQueries = 0;
+  predictionLeadMs = 0;
   eyeGeometry: readonly { readonly pose: Pose; readonly projection: Matrix4 }[] | null = null;
 
   requestAnimationFrame(callback: XRFrameRequestCallback): number { this.callback = callback; return ++this.requestId; }
@@ -182,7 +188,7 @@ class BrowserXrSession extends EventTarget {
       projection: new Matrix4().makePerspective(-0.05, 0.05, 0.05, -0.05, 0.05, 100_000)
     }));
     return {
-      predictedDisplayTime: timestamp,
+      predictedDisplayTime: timestamp + this.predictionLeadMs,
       getViewerPose: () => head === null ? null : {
         transform: rigidTransform(head),
         views: geometry.map((eye, index) => ({
@@ -190,7 +196,11 @@ class BrowserXrSession extends EventTarget {
           transform: rigidTransform(composePose(head, eye.pose))
         }))
       },
-      getPose: () => { this.poseQueries++; return target === null ? null : { transform: rigidTransform(target) }; }
+      getPose: (space: XRSpace) => {
+        this.poseQueries++;
+        const selected = this.targetPoses.has(space) ? this.targetPoses.get(space) ?? null : target;
+        return selected === null ? null : { transform: rigidTransform(selected) };
+      }
     } as unknown as XRFrame;
   }
   run(timestamp: number, head: Pose | null): void {
@@ -198,10 +208,11 @@ class BrowserXrSession extends EventTarget {
     if (callback === null) throw new Error("XR frame callback was not scheduled");
     callback(timestamp, this.frame(timestamp, head));
   }
-  select(timestamp: number, target: Pose | null): void {
+  select(timestamp: number, target: Pose | null, source?: XRInputSource): void {
     const event = new Event("select");
-    Object.assign(event, { frame: this.frame(timestamp, target), inputSource: { targetRaySpace: {} } });
-    this.dispatchEvent(event);
+    Object.assign(event, { frame: this.frame(timestamp, target), inputSource: source ?? { targetRaySpace: {}, targetRayMode: "gaze" } });
+    const clock = vi.spyOn(performance, "now").mockReturnValue(timestamp);
+    try { this.dispatchEvent(event); } finally { clock.mockRestore(); }
   }
   reset(previousReferenceFromNew: Pose): void {
     const event = new Event("reset");
@@ -783,6 +794,102 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
     }
   });
 
+  it("draws both tracked controllers at the same metric hit used by trigger under a nonuniform panel scale", () => {
+    view = centeredPanel("menu", composePose(eyePose(flight), head));
+    const initial = view.panels[0];
+    if (initial === undefined) throw new Error("Missing panel");
+    view = { ...view, panels: [{ ...initial, size: { width: 1.4, height: 0.8 } }] };
+    const left = controllerSource("left");
+    const right = controllerSource("right");
+    session.inputSources.push(left, right);
+    session.targetPoses.set(left.targetRaySpace, composePose(head, pose(vec3(-0.1, 0, 0), IDENTITY_POSE.orientation)));
+    session.targetPoses.set(right.targetRaySpace, composePose(head, pose(vec3(0.1, 0, 0), IDENTITY_POSE.orientation)));
+    session.run(100, head);
+    const panelFrame = currentFrame().panel;
+    const draw = lastDraw(driver);
+    if (panelFrame.kind !== "visible" || panelFrame.cursor === null || draw.panel === null) throw new Error("Missing pointer frame");
+    const points = [panelFrame.cursor, ...(panelFrame.secondaryCursors ?? [])];
+    expect(points).toHaveLength(2);
+    expect(draw.pointers).toHaveLength(2);
+    for (const [index, pointer] of draw.pointers.entries()) {
+      const point = points[index];
+      if (point === undefined) throw new Error("Missing pointer");
+      const local = new Vector3().setFromMatrixPosition(pointer).applyMatrix4(draw.panel.clone().invert());
+      expect(local.x).toBeCloseTo(point.point.x * 2.4 / 1.4, 6);
+      expect(local.y).toBeCloseTo(point.point.y * 1.8 / 0.8, 6);
+    }
+    session.run(2100, head);
+    expect(actions.some((action) => action.type === "activate")).toBe(false);
+    actions.length = 0;
+    session.select(2200, null, right);
+    expect(actions.filter((action) => action.type === "activate")).toEqual([{ type: "activate", controlId: "mount-button" }]);
+    session.select(2200, null, left);
+    expect(actions.filter((action) => action.type === "activate")).toHaveLength(1);
+    session.inputSources.reverse();
+    session.run(2300, head);
+    const switched = panelFrameCursor(currentFrame());
+    expect(switched?.point.x).toBeGreaterThan(0);
+    session.inputSources.length = 0;
+    actions.length = 0;
+    session.select(2400, null, right);
+    expect(actions).toHaveLength(0);
+    session.run(2500, head);
+    expect(currentFrame().panel.kind === "visible" && currentFrame().panel).toMatchObject({ secondaryCursors: [], cursor: { progress: 0 } });
+    session.run(3500, head);
+    expect(actions.filter((action) => action.type === "activate")).toHaveLength(1);
+  });
+
+  it("clears controller cursors on focus or pose loss and requires a fresh gaze dwell after restoration", () => {
+    view = centeredPanel("menu", composePose(eyePose(flight), head));
+    const controller = controllerSource("right");
+    session.inputSources.push(controller);
+    session.targetPoses.set(controller.targetRaySpace, head);
+    session.run(100, head);
+    expect(panelFrameCursor(currentFrame())?.progress).toBe(1);
+    session.visibilityState = "visible-blurred";
+    session.select(200, head, controller);
+    expect(actions.some((action) => action.type === "activate")).toBe(false);
+    session.run(300, head);
+    expect(panelFrameCursor(currentFrame())).toBeNull();
+    expect(lastDraw(driver).pointers).toHaveLength(0);
+    session.targetPoses.set(controller.targetRaySpace, null);
+    session.visibilityState = "visible";
+    session.run(400, head);
+    expect(panelFrameCursor(currentFrame())?.progress).toBe(0);
+    session.select(500, null, controller);
+    expect(actions.some((action) => action.type === "activate")).toBe(false);
+    session.run(1400, head);
+    expect(actions.filter((action) => action.type === "activate")).toHaveLength(1);
+  });
+
+  it("restarts gaze dwell when input focus is lost and restored between XR animation frames", () => {
+    view = centeredPanel("menu", composePose(eyePose(flight), head));
+    session.run(100, head);
+    session.run(900, head);
+    expect(panelFrameCursor(currentFrame())?.progress).toBeCloseTo(0.8);
+    session.visibilityState = "visible-blurred";
+    session.dispatchEvent(new Event("visibilitychange"));
+    session.visibilityState = "visible";
+    session.dispatchEvent(new Event("visibilitychange"));
+    session.select(2000, head);
+    expect(actions.some((action) => action.type === "activate")).toBe(false);
+    session.run(2100, head);
+    expect(panelFrameCursor(currentFrame())?.progress).toBe(0);
+    session.run(3100, head);
+    expect(actions.filter((action) => action.type === "activate")).toHaveLength(1);
+  });
+
+  it("uses input receipt time instead of predicted display time for explicit gaze selection and dwell", () => {
+    view = centeredPanel("menu", composePose(eyePose(flight), head));
+    session.predictionLeadMs = 50;
+    session.run(100, head);
+    session.select(110, head);
+    session.run(120, head);
+    session.run(1200, head);
+    session.run(2400, head);
+    expect(actions.filter((action) => action.type === "activate")).toHaveLength(1);
+  });
+
   it("does not synthesize a valid gaze or controller pose when browser XR reports null", () => {
     view = centeredPanel("menu", composePose(eyePose(flight), head));
     session.run(100, head);
@@ -805,6 +912,10 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
 
 function eyePose(flight: FlightRenderPose): Pose {
   return pilotEyePoseRender(registeredPilotEyePoint(), flight.pilotPositionMeters, flight.initialPilotPositionMeters);
+}
+
+function controllerSource(handedness: XRHandedness): XRInputSource {
+  return { handedness, targetRayMode: "tracked-pointer", targetRaySpace: {}, gripSpace: null, profiles: [] } as unknown as XRInputSource;
 }
 
 function centeredPanel(anchor: UiViewModel["panels"][number]["anchor"], mountedHead: Pose): UiViewModel {

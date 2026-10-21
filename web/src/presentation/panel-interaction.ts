@@ -1,6 +1,6 @@
 import { inversePose, rotateVec3, transformPoint, vec3 } from "../render/contracts/math.js";
 import type { Pose, Vec3 } from "../render/contracts/math.js";
-import type { MenuControlAction, UiAction, UiControl, UiPanel } from "../render/contracts/ui.js";
+import type { MenuControlAction, UiControl, UiPanel } from "../render/contracts/ui.js";
 
 export interface Ray {
   readonly origin: Vec3;
@@ -55,7 +55,7 @@ export function actionForControl(control: UiControl): MenuControlAction | null {
   }
 }
 
-export function rangeAction(control: UiControl, panel: UiPanel, point: PanelPoint): UiAction | null {
+export function rangeAction(control: UiControl, panel: UiPanel, point: PanelPoint): MenuControlAction | null {
   if (!control.enabled || control.kind !== "range") return null;
   const normalized = panelCoordinates(point, panel);
   if (normalized === null) return null;
