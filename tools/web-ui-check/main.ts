@@ -45,6 +45,8 @@ if (referenceOptions[0] !== undefined) {
   await writeFile(resolve(output, "water-reference.json"), source, "utf8");
 }
 const root = resolve(import.meta.dirname, "../..");
+const localWasmPath = resolve(root, "web/pkg/birdman_game_wasm_bg.wasm");
+const localWasmSha256 = createHash("sha256").update(await readFile(localWasmPath)).digest("hex");
 initializeWasmFixture();
 const gitOptions = { cwd: root, encoding: "utf8" as const, maxBuffer: 16 * 1024 * 1024 };
 const head = execFileSync("git", ["rev-parse", "HEAD"], gitOptions).trim();
@@ -64,7 +66,7 @@ const wasm: { url: string; sha256: string; status: number }[] = [];
 const responses: Promise<void>[] = [];
 let moduleUrl: string | undefined;
 const report: Record<string, unknown> = { sourceHead: head, execution: "Local Vite; production Rust/WASM, DOM/WebGL2 and synthetic stereo; isolated browser context",
-  sourceDiffSha256: sourcePatch.length === 0 ? null : createHash("sha256").update(sourcePatch).digest("hex"), withoutGpuTimer,
+  sourceDiffSha256: sourcePatch.length === 0 ? null : createHash("sha256").update(sourcePatch).digest("hex"), localWasmSha256, withoutGpuTimer,
   waterReference: waterReference === undefined ? null : { sourceHead: waterReference.sourceHead, sha256: waterReferenceSha256 },
   viewport: { width: 1280, height: 720, dpr: 1 }, errors, warnings, checks, findings, wasm,
   limits: "CUI Screen/synthetic stereo rendering. Hardware HMD/phone, physical input and 80 FPS acceptance are tracked separately." };
@@ -694,8 +696,10 @@ async function verifyPointers(activeBrowser: Browser): Promise<void> {
         direction: rotateVec3(reference.head.orientation, vec3(0, 0, -1)) }));
       const cursors = owner.observe("projection", panel, panelPose, { kind: "absent" }, rays, true, 100);
       const right = rays[1];
-      if (right === undefined) throw new Error("Missing right controller");
+      const left = rays[0];
+      if (right === undefined || left === undefined) throw new Error("Missing controller observation");
       owner.select({ ...right, timestampMs: 101 });
+      owner.select({ ...left, timestampMs: 102 });
       bundle.renderer.render({ timestampMs: 100, cameraPose: IDENTITY_POSE, headHud: { kind: "absent" },
         viewport, panel: { kind: "visible", panel, pose: panelPose, ...cursors } });
       const graphics = canvas.getContext("webgl2");
@@ -716,7 +720,9 @@ async function verifyPointers(activeBrowser: Browser): Promise<void> {
     assert.equal(result.cursors.secondaryCursors.length, 1);
     assert.ok(Math.abs(result.cursors.cursor.point.x + 0.25) < 1e-10);
     assert.ok(Math.abs((result.cursors.secondaryCursors[0]?.point.x ?? Number.NaN) - 0.25) < 1e-10);
-    assert.deepEqual(result.actions.filter(action => action.type === "activate"), [{ type: "activate", controlId: "right" }]);
+    assert.deepEqual(result.actions.filter(action => action.type === "activate"), [
+      { type: "activate", controlId: "right" }, { type: "activate", controlId: "left" }
+    ]);
     for (const pixel of result.pixels) {
       const contrast = Math.hypot(...pixel.foreground.slice(0, 3).map((value, index) => value - (pixel.background[index] ?? 0)));
       assert.ok(contrast > 80, `Missing visible pointer in eye ${String(pixel.eye)} at pixel ${String(pixel.horizontalPixel)}`);
@@ -726,8 +732,8 @@ async function verifyPointers(activeBrowser: Browser): Promise<void> {
     checks.push("共有Rustの左右controller交点とtriggerを実Three/WebGLの両眼描画へ接続する");
     if (report.status !== "failed") report.status = "passed";
   } finally {
-    await page.evaluate(() => { window.__pointerProbeCleanup?.(); });
-    await context.close();
+    try { await page.evaluate(() => { window.__pointerProbeCleanup?.(); }); }
+    finally { await context.close(); }
   }
 }
 
@@ -749,6 +755,11 @@ try {
     report.status = "failed";
     process.exitCode = 1;
   }
+  if (wasm.some(response => response.status !== 200 || response.sha256 !== localWasmSha256)) {
+    errors.push("Served WASM differs from the local worktree artifact");
+    report.status = "failed";
+    process.exitCode = 1;
+  }
   closing = true;
   try { await browser?.close(); }
   catch (cause) {
@@ -765,6 +776,11 @@ try {
         || execFileSync("git", untrackedArguments, gitOptions) !== ""
         || execFileSync("git", ["rev-parse", "HEAD"], gitOptions).trim() !== head) {
       errors.push("Source changed during Web UI verification");
+      report.status = "failed";
+      process.exitCode = 1;
+    }
+    if (createHash("sha256").update(await readFile(localWasmPath)).digest("hex") !== localWasmSha256) {
+      errors.push("Local WASM changed during Web UI verification");
       report.status = "failed";
       process.exitCode = 1;
     }
