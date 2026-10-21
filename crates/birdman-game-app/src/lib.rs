@@ -6,6 +6,8 @@ use birdman_game_format::{AssistanceLevel, DifficultySettings, InformationLevel,
 pub mod application;
 mod environment;
 pub mod environment_snapshot;
+pub mod flight_clock;
+pub mod flight_input;
 mod hybrid_session;
 pub mod record_archive;
 pub mod record_query;
