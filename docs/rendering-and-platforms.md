@@ -209,7 +209,8 @@ Nativeは既存DirectionalLightの2048 texel・30〜600 mの3段cascadeから、
 - Web縮小targetのworking-linear fogとの差をpixel一致と扱わない。
 
 - 上空の薄い雲層を無限遠の遠景として近似し、World方向固定の1024×512・sRGB RGBA天空画像へ合成する。
-- 固定seed`0x4f5a2c91`の球面方向noiseから、帯状の分布・細かい雲片・柔らかな縁・白灰の陰影を導出する。雲量は被覆と透明度へ対応する。
+- 初回投影の基準高さ6 kmに水平雲層を置き、視線rayとの交点のXZ座標で固定seed`0x4f5a2c91`のnoiseを評価する。代表1.8 kmの大きい雲片と12 kmのまとまりを作り、地平線ほど細かく扁平に投影する。雲量は被覆と透明度へ対応する。
+- 天空画像のtexelが雲層上で覆う範囲から微細noiseを平均化し、地平線側の圧縮によるaliasを抑える。
 - 雲量0と天空metadata欠損は晴天gradientを使用する。下半球のhazeと、地平線・経度継ぎ目・天頂の連続性を保持する。
 - 背景・水面sky sampler・Web/Native・左右眼で同じ画像を参照する。雲専用のmesh・atlas・material・drawは持たない。
 - 天球用テクスチャは初回描画準備時に生成して保持し、通常frameで再利用する。気象変更時は再生成し、交換後に旧画像だけを退役させる。
