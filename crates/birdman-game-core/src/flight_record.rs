@@ -2,7 +2,7 @@ use crate::math::{BodyVector, NedPoint, NedVector};
 use crate::scenario::FlightTelemetry;
 use crate::scoring::DistanceScore;
 use crate::session_contract::{SessionEndReason, SessionScenarioIdentity};
-use crate::{FlightState, TailFlightTickError, TailIncidence};
+use crate::{FlightState, TailFlightTickError, TailIncidence, WingBendingFactor};
 use alloc::vec::Vec;
 
 #[cfg(verus_only)]
@@ -15,8 +15,8 @@ use storage::FlightRecordStorage;
 
 mod control;
 pub use control::{
-    FlightRecordControlCapture, FlightRecordControlError, FlightRecordControls,
-    FlightRecordTailInput,
+    FlightRecordBoundaryEvent, FlightRecordControlCapture, FlightRecordControlError,
+    FlightRecordControls, FlightRecordTailInput,
 };
 
 /// Maximum configured physical flight ticks in the initial record implementation.
@@ -93,6 +93,8 @@ pub struct FlightRecordSample {
     /// Paired physical actuator and transition input in one semantic control layout.
     /// The initial `(0, 0)` sample retains configured physical values without an input.
     pub controls: FlightRecordControls,
+    /// Accepted coefficient held over the preceding interval; absent in unrecorded archives.
+    pub wing_bending_factor: Option<WingBendingFactor>,
     /// Composite-center ambient wind in NED axes.
     pub wind_at_cg_ned_mps: NedVector,
     /// Derived telemetry retained for presentation and analysis.
@@ -127,6 +129,8 @@ pub struct FlightRecordFinalization {
     pub score: Option<DistanceScore>,
     /// Original simulation failure at the first unsuccessful interval, if present.
     pub failure: Option<TailFlightTickError>,
+    /// Right-side values accepted at the same terminal integer time.
+    pub boundary_event: Option<FlightRecordBoundaryEvent>,
 }
 
 /// Interpolated recorded state at a requested fixed-tick time.
@@ -141,6 +145,10 @@ pub struct FlightRecordPlaybackSample {
     /// Physical actuator state, held from the interval's ending sample.
     /// An exact recorded time retains that recorded sample's state.
     pub actuators: TailIncidence,
+    /// Accepted input held over this interval or applied at the exact terminal boundary.
+    pub input: Option<FlightRecordTailInput>,
+    /// Accepted structural coefficient, held with the physical actuators.
+    pub wing_bending_factor: Option<WingBendingFactor>,
     /// Interpolated wind and telemetry values.
     pub telemetry: FlightTelemetry,
 }
@@ -211,6 +219,12 @@ verus! {
             self.samples@
         }
 
+        pub open spec fn terminal_projection(self) -> Option<FlightRecordSample> {
+            if self.recorded_samples().len() == 0 { None } else {
+                Some(self.recorded_samples().last().project_terminal(self.finalization()))
+            }
+        }
+
         /// Returns the logical sample limit stored by the actual record owner.
         pub closed spec fn sample_limit(self) -> usize {
             self.sample_capacity
@@ -222,6 +236,7 @@ verus! {
                 && self.recorded_samples().last().fraction == 0.0f64
                 && self.recorded_samples().last().flight_state == state.flight_state()
                 && self.recorded_samples().last().controls.incidence == state.incidence()
+                && self.recorded_samples().last().wing_bending_factor == state.wing_bending_factor()
         }
 
         /// States that finalization retained the header, sample sequence, and reserved capacity.
@@ -328,6 +343,14 @@ impl FlightRecord {
             )
             .map_err(|_| FlightRecordError::InvalidArchive)?;
         }
+        validate_boundary_event(
+            latest,
+            header.maximum_flight_ticks,
+            finalization.reason,
+            finalization.failure,
+            finalization.boundary_event,
+        )
+        .map_err(|_| FlightRecordError::InvalidArchive)?;
         Ok(Self {
             header,
             samples,
@@ -355,6 +378,7 @@ impl FlightRecord {
                             fraction: 0.0,
                             flight_state: initial.flight_state(),
                             controls: FlightRecordControls::initial_tail(initial),
+                            wing_bending_factor: initial.wing_bending_factor(),
                             wind_at_cg_ned_mps: telemetry.wind_velocity_ned_mps,
                             telemetry,
                         }),
@@ -386,13 +410,14 @@ impl FlightRecord {
             fraction: 0.0,
             flight_state: initial.flight_state(),
             controls: FlightRecordControls::initial_tail(initial),
+            wing_bending_factor: initial.wing_bending_factor(),
             wind_at_cg_ned_mps: telemetry.wind_velocity_ned_mps,
             telemetry,
         })
     }
 
     /// Appends the committed tail tick/contact report without reevaluating any control.
-    /// Fraction-zero contact retains the existing sample and adds no transition input.
+    /// Same-time contact retains the existing sample; finalization owns its boundary event.
     #[cfg_attr(verus_only, verus_spec(outcome =>
         ensures
             outcome.is_err() ==> *final(self) == *old(self),
@@ -415,7 +440,8 @@ impl FlightRecord {
                     && final(self).finalization() == old(self).finalization()
                     && final(self).sample_limit() == old(self).sample_limit()
                     && match FlightRecordControls::from_tail_report(report) {
-                        FlightRecordControlCapture::NoElapsedInterval => *final(self) == *old(self),
+                        FlightRecordControlCapture::NoElapsedInterval
+                            | FlightRecordControlCapture::AppliedBoundary(_) => *final(self) == *old(self),
                         FlightRecordControlCapture::Applied(controls) => {
                             let (tick_index, fraction, flight_state) = match report.outcome() {
                                 crate::TailFlightTickOutcome::Advanced(state) =>
@@ -429,6 +455,10 @@ impl FlightRecord {
                                     fraction,
                                     flight_state,
                                     controls,
+                                    wing_bending_factor: match report.outcome() {
+                                        crate::TailFlightTickOutcome::Advanced(state) => state.wing_bending_factor(),
+                                        crate::TailFlightTickOutcome::WaterContact(sample) => sample.wing_bending_factor(),
+                                    },
                                     wind_at_cg_ned_mps: telemetry.wind_velocity_ned_mps,
                                     telemetry,
                                 })
@@ -444,6 +474,7 @@ impl FlightRecord {
                     error == FlightRecordError::InvalidTime
                         || error == FlightRecordError::InvalidTelemetry
                         || error == FlightRecordError::CapacityExceeded
+                        || error == FlightRecordError::FinalizationMismatch
                 },
             },
     ))]
@@ -482,16 +513,32 @@ impl FlightRecord {
             }
         };
         validate_telemetry(telemetry)?;
-        let FlightRecordControlCapture::Applied(controls) =
-            FlightRecordControls::from_tail_report(report)
-        else {
-            return Ok(());
+        let controls = match FlightRecordControls::from_tail_report(report) {
+            FlightRecordControlCapture::NoElapsedInterval => return Ok(()),
+            FlightRecordControlCapture::AppliedBoundary(_) => {
+                if fraction != 0.0
+                    || flight_state != previous.flight_state
+                    || previous.wing_bending_factor.is_none()
+                {
+                    return Err(FlightRecordError::FinalizationMismatch);
+                }
+                if telemetry != previous.telemetry {
+                    return Err(FlightRecordError::InvalidTelemetry);
+                }
+                FlightRecordBoundaryEvent::from_tail_report(report)?;
+                return Ok(());
+            }
+            FlightRecordControlCapture::Applied(controls) => controls,
         };
         self.push(FlightRecordSample {
             tick_index,
             fraction,
             flight_state,
             controls,
+            wing_bending_factor: match report.outcome() {
+                crate::TailFlightTickOutcome::Advanced(state) => state.wing_bending_factor(),
+                crate::TailFlightTickOutcome::WaterContact(sample) => sample.wing_bending_factor(),
+            },
             wind_at_cg_ned_mps: telemetry.wind_velocity_ned_mps,
             telemetry,
         })
@@ -512,7 +559,7 @@ impl FlightRecord {
                     && old(self).recorded_samples().len() > 0
                     && metadata.terminal_tick == old(self).recorded_samples().last().tick_index
                     && metadata.terminal_fraction == terminal_fraction && metadata.score == score
-                    && metadata.failure.is_none(),
+                    && metadata.failure.is_none() && metadata.boundary_event.is_none(),
                 Err(_) => true,
             },
     ))]
@@ -523,7 +570,7 @@ impl FlightRecord {
         terminal_fraction: f64,
         score: Option<DistanceScore>,
     ) -> Result<FlightRecordFinalization, FlightRecordError> {
-        self.finalize_record(reason, terminal_tick, terminal_fraction, score, None)
+        self.finalize_record(reason, terminal_tick, terminal_fraction, score, None, None)
     }
 
     /// Finalizes at the last successful sample while preserving the original simulation failure.
@@ -541,7 +588,7 @@ impl FlightRecord {
                     && old(self).recorded_samples().len() > 0
                     && metadata.terminal_tick == old(self).recorded_samples().last().tick_index
                     && metadata.terminal_fraction == terminal_fraction && metadata.score == score
-                    && metadata.failure == Some(failure),
+                    && metadata.failure == Some(failure) && metadata.boundary_event.is_none(),
                 Err(_) => true,
             },
     ))]
@@ -559,6 +606,44 @@ impl FlightRecord {
             terminal_fraction,
             score,
             Some(failure),
+            None,
+        )
+    }
+
+    /// Finalizes same-time contact without replacing the previous integer sample.
+    #[cfg_attr(verus_only, verus_spec(outcome =>
+        ensures
+            outcome.is_err() ==> *final(self) == *old(self),
+            final(self).recorded_samples() == old(self).recorded_samples(),
+            final(self).sample_limit() == old(self).sample_limit(),
+            match outcome {
+                Ok(metadata) => final(self).finalized_from(*old(self), metadata)
+                    && metadata.reason == reason && metadata.terminal_tick == terminal_tick
+                    && metadata.terminal_fraction == terminal_fraction && metadata.score == score
+                    && metadata.failure.is_none() && metadata.boundary_event == Some(boundary_event)
+                    && final(self).finalization() == Some(metadata)
+                    && final(self).header() == old(self).header()
+                    && final(self).sample_count() == old(self).sample_count()
+                    && old(self).recorded_samples().len() > 0
+                    && metadata.terminal_tick == old(self).recorded_samples().last().tick_index,
+                Err(_) => true,
+            },
+    ))]
+    pub fn finalize_with_boundary_event(
+        &mut self,
+        reason: SessionEndReason,
+        terminal_tick: u64,
+        terminal_fraction: f64,
+        score: Option<DistanceScore>,
+        boundary_event: FlightRecordBoundaryEvent,
+    ) -> Result<FlightRecordFinalization, FlightRecordError> {
+        self.finalize_record(
+            reason,
+            terminal_tick,
+            terminal_fraction,
+            score,
+            None,
+            Some(boundary_event),
         )
     }
 
@@ -574,7 +659,7 @@ impl FlightRecord {
                     && old(self).samples@.len() > 0
                     && metadata.terminal_tick == old(self).samples@.last().tick_index
                     && metadata.terminal_fraction == terminal_fraction && metadata.score == score
-                    && metadata.failure == failure,
+                    && metadata.failure == failure && metadata.boundary_event == boundary_event,
                 Err(_) => true,
             },
     ))]
@@ -585,18 +670,21 @@ impl FlightRecord {
         terminal_fraction: f64,
         score: Option<DistanceScore>,
         failure: Option<TailFlightTickError>,
+        boundary_event: Option<FlightRecordBoundaryEvent>,
     ) -> Result<FlightRecordFinalization, FlightRecordError> {
+        let maximum_flight_ticks = self.header.maximum_flight_ticks;
         self.finalize_with(
             #[cfg_attr(verus_only, verus_spec(metadata =>
                 ensures match metadata {
                     Ok(metadata) => metadata.reason == reason && metadata.terminal_tick == terminal_tick
                         && metadata.terminal_tick == latest.tick_index
                         && metadata.terminal_fraction == terminal_fraction && metadata.score == score
-                        && metadata.failure == failure,
+                        && metadata.failure == failure && metadata.boundary_event == boundary_event,
                     Err(_) => true,
                 },
             ))]
             |latest: &FlightRecordSample| -> Result<FlightRecordFinalization, FlightRecordError> {
+                validate_boundary_event(latest, maximum_flight_ticks, reason, failure, boundary_event)?;
                 validate_finalization(
                     latest,
                     reason,
@@ -604,6 +692,7 @@ impl FlightRecord {
                     terminal_fraction,
                     score,
                     failure,
+                    boundary_event,
                 )
             },
         )
@@ -631,6 +720,28 @@ impl FlightRecord {
     /// Returns all retained samples in chronological order.
     pub fn samples(&self) -> &[FlightRecordSample] {
         &self.samples
+    }
+
+    /// Projects the canonical terminal state, including a same-time accepted event.
+    #[cfg_attr(verus_only, verus_spec(outcome => ensures outcome == self.terminal_projection()))]
+    pub fn terminal_sample(&self) -> Option<FlightRecordSample> {
+        self.latest().map(
+            #[cfg_attr(verus_only, verus_spec(sample =>
+                ensures sample == latest.project_terminal(self.finalization()),
+            ))]
+            |latest: &FlightRecordSample| -> FlightRecordSample {
+                latest.project_terminal(self.finalization)
+            },
+        )
+    }
+
+    /// Iterates chronological observations with the canonical right-side terminal payload.
+    pub fn query_samples(&self) -> impl Iterator<Item = FlightRecordSample> + '_ {
+        self.samples
+            .iter()
+            .take(self.samples.len().saturating_sub(1))
+            .copied()
+            .chain(self.terminal_sample())
     }
 
     /// Returns immutable terminal metadata after finalization.
@@ -680,6 +791,9 @@ impl FlightRecord {
             .ok_or(FlightRecordQueryError::EmptyRecord)?;
         if requested_time < sample_time(first) || requested_time > sample_time(last) {
             return Err(FlightRecordQueryError::OutsideRecordedRange);
+        }
+        if requested_time == sample_time(last) {
+            return self.terminal_playback_sample(tick_index, fraction);
         }
         if requested_time == sample_time(first) {
             return playback_sample(first, tick_index, fraction);
@@ -740,7 +854,7 @@ impl FlightRecord {
         }
         if time_seconds == duration_seconds {
             let (tick_index, fraction) = sample_time(last);
-            return playback_sample(last, tick_index as u64, fraction);
+            return self.terminal_playback_sample(tick_index as u64, fraction);
         }
         let physics_hz = f64::from(self.header.physics_hz);
         for pair in self.samples.windows(2) {
@@ -818,6 +932,46 @@ impl FlightRecord {
     fn latest(&self) -> Option<&FlightRecordSample> {
         self.samples.last()
     }
+
+    fn terminal_playback_sample(
+        &self,
+        tick_index: u64,
+        fraction: f64,
+    ) -> Result<FlightRecordPlaybackSample, FlightRecordQueryError> {
+        let sample = self
+            .terminal_sample()
+            .ok_or(FlightRecordQueryError::EmptyRecord)?;
+        playback_sample(&sample, tick_index, fraction)
+    }
+}
+
+impl FlightRecordSample {
+    /// Projects this final stored sample through its validated terminal metadata.
+    #[cfg_attr(verus_only, verus_verify(dual_spec, open))]
+    #[cfg_attr(verus_only, verus_spec(returns self.project_terminal(metadata)))]
+    pub fn project_terminal(self, metadata: Option<FlightRecordFinalization>) -> Self {
+        match metadata {
+            Some(metadata) => {
+                let sample = Self {
+                    tick_index: metadata.terminal_tick,
+                    fraction: metadata.terminal_fraction,
+                    ..self
+                };
+                match metadata.boundary_event {
+                    Some(event) => Self {
+                        controls: FlightRecordControls {
+                            incidence: event.incidence,
+                            input_from_previous: Some(event.input),
+                        },
+                        wing_bending_factor: Some(event.wing_bending_factor),
+                        ..sample
+                    },
+                    None => sample,
+                }
+            }
+            None => self,
+        }
+    }
 }
 
 #[cfg_attr(verus_only, verus_spec(outcome =>
@@ -825,7 +979,7 @@ impl FlightRecord {
         Ok(metadata) => metadata.reason == reason && metadata.terminal_tick == terminal_tick
             && metadata.terminal_tick == latest.tick_index
             && metadata.terminal_fraction == terminal_fraction && metadata.score == score
-            && metadata.failure == failure,
+            && metadata.failure == failure && metadata.boundary_event == boundary_event,
         Err(_) => true,
     },
 ))]
@@ -836,6 +990,7 @@ fn validate_finalization(
     terminal_fraction: f64,
     score: Option<DistanceScore>,
     failure: Option<TailFlightTickError>,
+    boundary_event: Option<FlightRecordBoundaryEvent>,
 ) -> Result<FlightRecordFinalization, FlightRecordError> {
     if !failure_matches(failure, reason) {
         return Err(FlightRecordError::IncompatibleFailure);
@@ -862,7 +1017,31 @@ fn validate_finalization(
         terminal_fraction,
         score,
         failure,
+        boundary_event,
     })
+}
+
+#[cfg_attr(verus_only, verus_verify)]
+fn validate_boundary_event(
+    latest: &FlightRecordSample,
+    maximum_flight_ticks: u64,
+    reason: SessionEndReason,
+    failure: Option<TailFlightTickError>,
+    boundary_event: Option<FlightRecordBoundaryEvent>,
+) -> Result<(), FlightRecordError> {
+    if boundary_event.is_some()
+        && (latest.tick_index >= maximum_flight_ticks
+            || latest.fraction != 0.0
+            || latest.wing_bending_factor.is_none()
+            || failure.is_some()
+            || !matches!(
+                reason,
+                SessionEndReason::WaterContact | SessionEndReason::FatalSimulationError
+            ))
+    {
+        return Err(FlightRecordError::FinalizationMismatch);
+    }
+    Ok(())
 }
 
 #[cfg_attr(verus_only, verus_verify)]
@@ -911,6 +1090,8 @@ fn playback_sample(
         fraction,
         flight_state: sample.flight_state,
         actuators: sample.controls.actuators(),
+        input: sample.controls.input_from_previous,
+        wing_bending_factor: sample.wing_bending_factor,
         telemetry: sample.telemetry,
     })
 }
@@ -975,6 +1156,8 @@ fn interpolate_samples(
         fraction: tick_fraction,
         flight_state,
         actuators,
+        input: end.controls.input_from_previous,
+        wing_bending_factor: end.wing_bending_factor,
         telemetry,
     })
 }

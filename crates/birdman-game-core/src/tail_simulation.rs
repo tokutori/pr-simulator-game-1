@@ -92,6 +92,8 @@ impl TailFlightTickState {
     }
 
     /// Returns the accepted coefficient, absent when structural deformation was unrecorded.
+    #[cfg_attr(verus_only, verus_verify(dual_spec))]
+    #[cfg_attr(verus_only, verus_spec(returns self.wing_bending_factor()))]
     pub const fn wing_bending_factor(self) -> Option<WingBendingFactor> {
         self.wing_bending_factor
     }
@@ -224,11 +226,15 @@ impl TailWaterContactSample {
     }
 
     /// Returns which side of the interval boundary supplied the accepted shape and input.
+    #[cfg_attr(verus_only, verus_verify(dual_spec))]
+    #[cfg_attr(verus_only, verus_spec(returns self.moment()))]
     pub const fn moment(self) -> TailWaterContactMoment {
         self.moment
     }
 
     /// Returns the structural coefficient accepted at the contact time.
+    #[cfg_attr(verus_only, verus_verify(dual_spec))]
+    #[cfg_attr(verus_only, verus_spec(returns self.wing_bending_factor()))]
     pub const fn wing_bending_factor(self) -> Option<WingBendingFactor> {
         self.wing_bending_factor
     }
@@ -315,15 +321,23 @@ pub struct TailFlightTickReport {
 impl TailFlightTickReport {
     #[cfg(verus_only)]
     verus! {
-        /// A report without newly accepted controls retains its preceding physical payload.
+        /// Boundary reports retain preceding motion and preserve controls on the left side.
         pub open spec fn unelapsed_retains(self, previous: TailFlightTickState) -> bool {
-            self.applied_controls().is_none() ==> match self.outcome() {
+            (self.applied_controls().is_none() ==> match self.outcome() {
                 TailFlightTickOutcome::WaterContact(sample) =>
                     sample.interval_start_tick() == previous.tick_index()
                         && sample.flight_state() == previous.flight_state()
                         && sample.incidence() == previous.incidence()
+                        && sample.wing_bending_factor() == previous.wing_bending_factor()
                         && sample.pilot_position_target() == previous.pilot_position_target(),
                 _ => false,
+            }) && match self.outcome() {
+                TailFlightTickOutcome::WaterContact(sample)
+                    if sample.moment() == TailWaterContactMoment::AppliedBoundary =>
+                        sample.interval_start_tick() == previous.tick_index()
+                            && sample.fraction() == 0.0f64
+                            && sample.flight_state() == previous.flight_state(),
+                _ => true,
             }
         }
     }
@@ -760,7 +774,20 @@ pub fn advance_tail_flight_tick_with_contact_report(
                 && report.applied_controls() == Some(controls),
             Some(sample) => match report.applied_controls() {
                 Some(applied) => applied == controls
-                    && report.outcome() == TailFlightTickOutcome::WaterContact(sample),
+                    && match report.outcome() {
+                        TailFlightTickOutcome::WaterContact(published) =>
+                            published.incidence() == sample.incidence()
+                                && published.pilot_position_target() == sample.pilot_position_target()
+                                && published.wing_bending_factor() == sample.wing_bending_factor()
+                                && published.contact_point_index() == sample.contact_point_index()
+                                && published.moment() == sample.moment()
+                                && if sample.moment() == TailWaterContactMoment::AppliedBoundary {
+                                    published.interval_start_tick() == previous.tick_index()
+                                        && published.fraction() == 0.0f64
+                                        && published.flight_state() == previous.flight_state()
+                                } else { published == sample },
+                        _ => false,
+                    },
                 None => match report.outcome() {
                     TailFlightTickOutcome::WaterContact(published) =>
                         published.fraction() == sample.fraction()
@@ -786,9 +813,15 @@ pub(crate) fn evaluated_tick_report(
                     contact.contact_point_index,
                 );
             }
-            TailWaterContactMoment::AppliedBoundary => {
-                TailReportedOutcome::AppliedBoundary(contact, controls)
-            }
+            TailWaterContactMoment::AppliedBoundary => TailReportedOutcome::AppliedBoundary(
+                TailWaterContactSample {
+                    interval_start_tick: previous.tick_index(),
+                    fraction: 0.0,
+                    flight_state: previous.flight_state(),
+                    ..contact
+                },
+                controls,
+            ),
             TailWaterContactMoment::WithinInterval => {
                 TailReportedOutcome::ContactWithinInterval(contact, controls)
             }
@@ -802,10 +835,12 @@ pub(crate) fn evaluated_tick_report(
         match report.outcome() {
             TailFlightTickOutcome::WaterContact(sample) =>
                 sample.interval_start_tick() == previous.tick_index()
+                    && sample.moment() == TailWaterContactMoment::ExistingBoundary
                     && sample.fraction() == fraction
                     && sample.contact_point_index() == contact_point_index
                     && sample.flight_state() == previous.flight_state()
                     && sample.incidence() == previous.incidence()
+                    && sample.wing_bending_factor() == previous.wing_bending_factor()
                     && sample.pilot_position_target() == previous.pilot_position_target(),
             _ => false,
         },

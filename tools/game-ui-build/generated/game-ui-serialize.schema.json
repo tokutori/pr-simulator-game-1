@@ -5246,6 +5246,13 @@
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
+        },
+        "wing_bending_factor": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
         }
       },
       "required": [
@@ -5254,7 +5261,8 @@
         "fraction",
         "flight_time_s",
         "state",
-        "controls"
+        "controls",
+        "wing_bending_factor"
       ],
       "type": "object"
     },
@@ -6457,10 +6465,46 @@
       ],
       "type": "object"
     },
+    "TailFlightRecordBoundaryEventDocument": {
+      "additionalProperties": false,
+      "description": "Accepted control and structural values at one terminal integer boundary.",
+      "properties": {
+        "input": {
+          "$ref": "#/$defs/TailFlightRecordInputDocument",
+          "description": "Applied input and the resolved pilot target at the same time."
+        },
+        "physical_incidence": {
+          "$ref": "#/$defs/TailIncidenceDocument",
+          "description": "Physical two-tail incidence after the boundary update."
+        },
+        "wing_bending_factor": {
+          "description": "Finite accepted displacement coefficient.",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "physical_incidence",
+        "input",
+        "wing_bending_factor"
+      ],
+      "type": "object"
+    },
     "TailFlightRecordFinalizationDocument": {
       "additionalProperties": false,
-      "description": "Schema-six terminal metadata with the original typed simulation cause.",
+      "description": "Terminal metadata with the original cause and an optional same-time accepted event.",
       "properties": {
+        "boundary_event": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TailFlightRecordBoundaryEventDocument"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Accepted right-side values at the final integer sample's time and body state."
+        },
         "disposition": {
           "$ref": "#/$defs/FlightRecordDispositionDocument",
           "description": "Complete, interrupted or failed classification."
@@ -6514,6 +6558,65 @@
         "terminal_fraction",
         "score_m",
         "failure"
+      ],
+      "type": "object"
+    },
+    "TailFlightRecordInputDocument": {
+      "additionalProperties": false,
+      "description": "One saved interval's distinct intent, resolved target and already computed command values.",
+      "properties": {
+        "desired_pitch_rate_rad_s": {
+          "description": "Desired body-positive pitch rate q in rad/s.",
+          "format": "double",
+          "type": "number"
+        },
+        "desired_yaw_rate_rad_s": {
+          "description": "Desired body-positive yaw rate r in rad/s.",
+          "format": "double",
+          "type": "number"
+        },
+        "fbw_incidence_target": {
+          "$ref": "#/$defs/TailIncidenceDocument",
+          "description": "Core feedback output before authority mixing."
+        },
+        "manual_incidence_target": {
+          "$ref": "#/$defs/TailIncidenceDocument",
+          "description": "Manual intent mapped to physical incidence before authority mixing."
+        },
+        "mixed_incidence_target": {
+          "$ref": "#/$defs/TailIncidenceDocument",
+          "description": "Mixed target before the software actuator slew step."
+        },
+        "nose_up": {
+          "description": "Normalized positive nose-up intent, independent of physical incidence sign.",
+          "format": "double",
+          "type": "number"
+        },
+        "pilot_position_command": {
+          "$ref": "#/$defs/TailPilotPositionCommandDocument",
+          "description": "Original Hold/Set command, distinct from the resolved physical target."
+        },
+        "resolved_pilot_position_target_m": {
+          "description": "Authoritative retained or newly resolved pilot target in metres.",
+          "format": "double",
+          "type": "number"
+        },
+        "turn_right": {
+          "description": "Normalized positive right-turn intent, independent of physical incidence sign.",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "nose_up",
+        "turn_right",
+        "desired_pitch_rate_rad_s",
+        "desired_yaw_rate_rad_s",
+        "pilot_position_command",
+        "resolved_pilot_position_target_m",
+        "manual_incidence_target",
+        "fbw_incidence_target",
+        "mixed_incidence_target"
       ],
       "type": "object"
     },
@@ -6618,6 +6721,47 @@
         "vertical_tail_rad"
       ],
       "type": "object"
+    },
+    "TailPilotPositionCommandDocument": {
+      "description": "Saved input absence or a normalized longitudinal-position instruction.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Retain the previously resolved physical target.",
+          "properties": {
+            "kind": {
+              "const": "hold",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Resolve this normalized target through the configured trim mapping.",
+          "properties": {
+            "kind": {
+              "const": "set",
+              "type": "string"
+            },
+            "normalized": {
+              "description": "Normalized position in the inclusive interval [-1, 1].",
+              "format": "double",
+              "maximum": 1,
+              "minimum": -1,
+              "type": "number"
+            }
+          },
+          "required": [
+            "kind",
+            "normalized"
+          ],
+          "type": "object"
+        }
+      ]
     },
     "TailPreparedLaunchDocument": {
       "additionalProperties": false,

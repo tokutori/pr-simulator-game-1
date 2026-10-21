@@ -1455,7 +1455,7 @@ impl<'a> GameSession<'a> {
         let terminal = state.flight_state().datum_position_ned();
         let score_result = course_distance_score(start, terminal, configuration.course_axis());
         let identity = configuration.identity;
-        configured.finalize_terminal(reason, state, identity, failure, score_result)
+        configured.finalize_terminal(reason, state, identity, failure, None, score_result)
     }
 }
 

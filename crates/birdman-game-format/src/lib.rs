@@ -37,8 +37,8 @@ pub use flight_record::{
     HybridFlowDocument, HybridLimitDocument, HybridSiteDocument, HybridSurfaceDocument,
     LoadFailureDocument, MAX_FLIGHT_RECORD_JSON_BYTES, MathFailureDocument,
     TAIL_FLIGHT_RECORD_SCHEMA_VERSION, TailControlFailureDocument,
-    TailFlightRecordControlsDocument, TailFlightRecordDocument,
-    TailFlightRecordFinalizationDocument, TailFlightRecordInputDocument,
+    TailFlightRecordBoundaryEventDocument, TailFlightRecordControlsDocument,
+    TailFlightRecordDocument, TailFlightRecordFinalizationDocument, TailFlightRecordInputDocument,
     TailFlightRecordSampleDocument, TailIncidenceDocument, TailPilotPositionCommandDocument,
     TailTickFailureDocument, WindFailureDocument, compare_tail_personal_best_records,
 };

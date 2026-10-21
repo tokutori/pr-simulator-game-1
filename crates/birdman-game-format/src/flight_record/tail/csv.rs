@@ -138,10 +138,14 @@ pub(super) fn encode(
     document: &TailFlightRecordDocument,
 ) -> Result<Vec<u8>, FlightRecordFormatError> {
     document.validate()?;
-    let columns = COLUMNS;
+    let version_seven = document.schema_version == super::TAIL_FLIGHT_RECORD_SCHEMA_VERSION;
+    let mut columns = COLUMNS.to_vec();
+    if version_seven {
+        columns.extend(["row_kind", "wing_bending_factor"]);
+    }
     let header = &document.header;
     let mut metadata = vec![
-        "3".to_string(),
+        if version_seven { "4" } else { "3" }.to_string(),
         document.schema_version.to_string(),
         "tail_incidence".to_string(),
         header.catalog_version.to_string(),
@@ -257,7 +261,22 @@ pub(super) fn encode(
     ]);
     let mut output = String::new();
     write_row(&mut output, columns.iter().copied());
-    for (index, sample) in document.samples.iter().enumerate() {
+    let boundary = if document.finalization.boundary_event.is_some() {
+        let record = document.to_finalized_core_record()?;
+        Some(TailFlightRecordSampleDocument::from_core(
+            &record
+                .terminal_sample()
+                .ok_or(FlightRecordFormatError::InvalidRecord)?,
+        )?)
+    } else {
+        None
+    };
+    let samples = document
+        .samples
+        .iter()
+        .map(|sample| (sample, false))
+        .chain(boundary.as_ref().map(|sample| (sample, true)));
+    for (index, (sample, is_boundary)) in samples.enumerate() {
         let mut row = metadata.clone();
         row.extend([
             sample.tick_index.to_string(),
@@ -336,7 +355,19 @@ pub(super) fn encode(
             index,
             header.physics_hz,
             motion,
+            is_boundary,
         );
+        if version_seven {
+            row.extend([
+                if is_boundary {
+                    "boundary_event"
+                } else {
+                    "sample"
+                }
+                .to_string(),
+                optional_number(sample.wing_bending_factor),
+            ]);
+        }
         if row.len() != columns.len() {
             return Err(FlightRecordFormatError::EncodingFailed);
         }
@@ -398,8 +429,14 @@ fn append_estimate<Sample>(
     index: usize,
     physics_hz: u32,
     motion: impl Fn(&Sample) -> MotionSample,
+    is_boundary: bool,
 ) {
-    match estimate(samples, index, physics_hz, motion) {
+    let estimated = if is_boundary {
+        AccelerationEstimate::Unavailable("same_time_boundary")
+    } else {
+        estimate(samples, index, physics_hz, motion)
+    };
+    match estimated {
         AccelerationEstimate::Available {
             values,
             start_s,

@@ -148,6 +148,273 @@ fn header() -> crate::FlightRecordHeader {
     .unwrap()
 }
 
+struct BoundaryShape {
+    factor: WingBendingFactor,
+    points: [BodyPoint; 1],
+}
+
+impl crate::TailContactShapeProvider for BoundaryShape {
+    fn wing_bending_factor(&self, _: f64) -> Result<WingBendingFactor, crate::ContactError> {
+        Ok(self.factor)
+    }
+
+    fn points(
+        &mut self,
+        factor: WingBendingFactor,
+        _: TailIncidence,
+    ) -> Result<&[BodyPoint], crate::ContactError> {
+        self.points[0] =
+            BodyPoint::try_new(0.0, 0.0, factor.value()).map_err(crate::ContactError::Math)?;
+        Ok(&self.points)
+    }
+}
+
+fn deforming_report(previous: TailFlightTickState, factor: f64) -> TailFlightTickReport {
+    let definition = TestAircraft::try_new().unwrap();
+    let aircraft = definition.aircraft();
+    let trim = definition.trim().unwrap();
+    let surfaces = definition.surfaces().unwrap();
+    let load = HybridAerodynamicLoad::try_new(
+        HybridModel::try_new(definition.polar().unwrap(), &surfaces).unwrap(),
+        TestAircraft::TRIM_AIR_DENSITY_KG_M3,
+        WindField::uniform(NedVector::zero()),
+    )
+    .unwrap();
+    crate::advance_tail_flight_tick_with_shape_provider(
+        &aircraft,
+        previous,
+        TailFlightTickConfig::new(
+            ControlMode::Manual,
+            TailControlProfile::try_new(0.2, 0.3, 1.0).unwrap(),
+            trim.pilot_mapping().unwrap(),
+            Gravity::try_new(TestAircraft::TRIM_GRAVITY_MPS2).unwrap(),
+        ),
+        input(TailPilotPositionCommand::Set(
+            crate::TailPilotPositionIntent::try_new(1.0).unwrap(),
+        )),
+        &load,
+        &mut BoundaryShape {
+            factor: WingBendingFactor::try_new(factor).unwrap(),
+            points: [BodyPoint::origin()],
+        },
+    )
+    .unwrap()
+}
+
+fn boundary_record(at_initial_time: bool) -> (crate::FlightRecord, crate::TailWaterContactSample) {
+    let initial = initial(if at_initial_time { -0.1 } else { -10.5 })
+        .with_wing_bending_factor(WingBendingFactor::try_new(0.01).unwrap());
+    let mut record = crate::FlightRecord::try_new(header()).unwrap();
+    record
+        .begin_tail(initial, telemetry(initial.flight_state()))
+        .unwrap();
+    let previous = if at_initial_time {
+        initial
+    } else {
+        let report = deforming_report(initial, 1.0);
+        let TailFlightTickOutcome::Advanced(next) = report.outcome() else {
+            panic!("expected an airborne interval");
+        };
+        record
+            .append_tail_report(report, telemetry(next.flight_state()))
+            .unwrap();
+        next
+    };
+    let before = record.samples().to_vec();
+    let report = deforming_report(previous, 20.0);
+    let TailFlightTickOutcome::WaterContact(contact) = report.outcome() else {
+        panic!("expected same-time shape contact");
+    };
+    assert_eq!(contact.moment(), TailWaterContactMoment::AppliedBoundary);
+    assert!(matches!(
+        FlightRecordControls::from_tail_report(report),
+        FlightRecordControlCapture::AppliedBoundary(_)
+    ));
+    record
+        .append_tail_report(report, telemetry(contact.flight_state()))
+        .unwrap();
+    assert_eq!(record.samples(), before);
+    let event = FlightRecordBoundaryEvent::from_tail_report(report)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        event.input.resolved_pilot_position_target_m(),
+        contact.pilot_position_target().position_m()
+    );
+    record
+        .finalize_with_boundary_event(
+            crate::SessionEndReason::WaterContact,
+            contact.interval_start_tick(),
+            contact.fraction(),
+            None,
+            event,
+        )
+        .unwrap();
+    (record, contact)
+}
+
+#[test]
+fn boundary_event_projects_only_at_the_exact_terminal_and_preserves_integer_samples() {
+    for at_initial_time in [true, false] {
+        let (record, contact) = boundary_record(at_initial_time);
+        let latest = *record.samples().last().unwrap();
+        assert_ne!(latest.wing_bending_factor, contact.wing_bending_factor());
+        let expected = record.terminal_sample().unwrap();
+        assert_eq!(expected.flight_state, latest.flight_state);
+        assert_eq!(expected.telemetry, latest.telemetry);
+        assert_eq!(expected.wing_bending_factor, contact.wing_bending_factor());
+        assert_eq!(expected.controls.incidence, contact.incidence());
+        let restored = crate::FlightRecord::try_from_finalized_samples(
+            record.header(),
+            record.samples().to_vec(),
+            record.finalization().unwrap(),
+        )
+        .unwrap();
+        for saved in [&record, &restored] {
+            let duration = saved.duration_seconds().unwrap();
+            for query in [
+                saved
+                    .sample_at_time(contact.interval_start_tick(), 0.0)
+                    .unwrap(),
+                saved.sample_at_seconds(duration).unwrap(),
+            ] {
+                assert_eq!(query.flight_state, expected.flight_state);
+                assert_eq!(query.actuators, expected.controls.incidence);
+                assert_eq!(query.input, expected.controls.input_from_previous);
+                assert_eq!(query.wing_bending_factor, expected.wing_bending_factor);
+            }
+            if !at_initial_time {
+                let before_terminal = saved.sample_at_seconds(duration - 0.001).unwrap();
+                assert_eq!(
+                    before_terminal.wing_bending_factor,
+                    latest.wing_bending_factor
+                );
+                assert_eq!(before_terminal.actuators, latest.controls.incidence);
+                assert_eq!(before_terminal.input, latest.controls.input_from_previous);
+            }
+        }
+    }
+}
+
+#[test]
+fn restored_boundary_events_validate_time_recorded_shape_and_terminal_cause() {
+    let (record, _) = boundary_record(false);
+    let samples = record.samples().to_vec();
+    let metadata = record.finalization().unwrap();
+    let mut scoring_failure = metadata;
+    scoring_failure.reason = crate::SessionEndReason::FatalSimulationError;
+    scoring_failure.disposition = crate::FlightRecordDisposition::Failed;
+    let failed = crate::FlightRecord::try_from_finalized_samples(
+        record.header(),
+        samples.clone(),
+        scoring_failure,
+    )
+    .unwrap();
+    assert_eq!(failed.terminal_sample(), record.terminal_sample());
+    let mut maximum_header = record.header();
+    maximum_header.maximum_flight_ticks = metadata.terminal_tick;
+    assert!(
+        crate::FlightRecord::try_from_finalized_samples(maximum_header, samples.clone(), metadata)
+            .is_err()
+    );
+    let mut maximum_record = crate::FlightRecord::try_new(maximum_header).unwrap();
+    let previous =
+        initial(-10.5).with_wing_bending_factor(WingBendingFactor::try_new(0.01).unwrap());
+    maximum_record
+        .begin_tail(previous, telemetry(previous.flight_state()))
+        .unwrap();
+    let advanced = deforming_report(previous, 1.0);
+    let TailFlightTickOutcome::Advanced(next) = advanced.outcome() else {
+        panic!("expected an airborne interval");
+    };
+    maximum_record
+        .append_tail_report(advanced, telemetry(next.flight_state()))
+        .unwrap();
+    let event = metadata.boundary_event.unwrap();
+    assert_eq!(
+        maximum_record.finalize_with_boundary_event(
+            metadata.reason,
+            metadata.terminal_tick,
+            metadata.terminal_fraction,
+            None,
+            event
+        ),
+        Err(crate::FlightRecordError::FinalizationMismatch)
+    );
+    assert!(maximum_record.finalization().is_none());
+    maximum_record
+        .finalize(
+            crate::SessionEndReason::TimeLimit,
+            next.tick_index(),
+            0.0,
+            None,
+        )
+        .unwrap();
+    assert!(
+        crate::FlightRecord::try_from_finalized_samples(
+            maximum_header,
+            maximum_record.samples().to_vec(),
+            maximum_record.finalization().unwrap()
+        )
+        .is_ok()
+    );
+    let mut unrecorded = samples.clone();
+    unrecorded[1].wing_bending_factor = None;
+    assert!(
+        crate::FlightRecord::try_from_finalized_samples(record.header(), unrecorded, metadata)
+            .is_err()
+    );
+    for invalid in [
+        crate::FlightRecordFinalization {
+            reason: crate::SessionEndReason::ManualAbort,
+            disposition: crate::FlightRecordDisposition::Interrupted,
+            ..metadata
+        },
+        crate::FlightRecordFinalization {
+            failure: Some(crate::TailFlightTickError::Control(
+                crate::TailControlError::NonFinite,
+            )),
+            ..scoring_failure
+        },
+    ] {
+        assert!(
+            crate::FlightRecord::try_from_finalized_samples(
+                record.header(),
+                samples.clone(),
+                invalid
+            )
+            .is_err()
+        );
+    }
+    let mut fractional_samples = samples;
+    fractional_samples[1].tick_index = 0;
+    fractional_samples[1].fraction = 0.5;
+    let fractional = crate::FlightRecordFinalization {
+        terminal_tick: 0,
+        terminal_fraction: 0.5,
+        ..metadata
+    };
+    assert!(
+        crate::FlightRecord::try_from_finalized_samples(
+            record.header(),
+            fractional_samples.clone(),
+            crate::FlightRecordFinalization {
+                boundary_event: None,
+                ..fractional
+            }
+        )
+        .is_ok()
+    );
+    assert!(
+        crate::FlightRecord::try_from_finalized_samples(
+            record.header(),
+            fractional_samples,
+            fractional
+        )
+        .is_err()
+    );
+}
+
 #[test]
 fn tail_record_uses_existing_query_and_restores_without_control_reintegration() {
     let mut record = crate::FlightRecord::try_new(header()).unwrap();

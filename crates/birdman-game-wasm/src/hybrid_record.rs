@@ -57,14 +57,15 @@ pub(crate) fn analysis_samples_json(record: &FlightRecord) -> Result<String, Hyb
         ));
     }
     let samples = record
-        .samples()
-        .iter()
+        .query_samples()
         .map(|sample| {
             PlaybackDocument::from(FlightRecordPlaybackSample {
                 tick_index: sample.tick_index,
                 fraction: sample.fraction,
                 flight_state: sample.flight_state,
                 actuators: sample.controls.actuators(),
+                input: sample.controls.input_from_previous,
+                wing_bending_factor: sample.wing_bending_factor,
                 telemetry: sample.telemetry,
             })
         })

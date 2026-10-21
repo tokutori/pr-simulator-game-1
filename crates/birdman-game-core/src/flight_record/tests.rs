@@ -62,6 +62,7 @@ fn sample(
         tick_index,
         fraction,
         flight_state: state,
+        wing_bending_factor: None,
         controls: FlightRecordControls {
             incidence: TailIncidence::try_new(incidence, -incidence).unwrap(),
             input_from_previous,
@@ -94,6 +95,7 @@ fn finalized(samples: Vec<FlightRecordSample>) -> Result<FlightRecord, FlightRec
             terminal_fraction: terminal.fraction,
             score: None,
             failure: None,
+            boundary_event: None,
         },
     )
 }

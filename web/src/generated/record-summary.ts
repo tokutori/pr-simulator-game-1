@@ -203,9 +203,13 @@ export interface FlightRecordHudProfileDocument {
     readonly wind: boolean;
 }
 /**
- * Schema-six terminal metadata with the original typed simulation cause.
+ * Terminal metadata with the original cause and an optional same-time accepted event.
  */
 export interface TailFlightRecordFinalizationDocument {
+    /**
+     * Accepted right-side values at the final integer sample's time and body state.
+     */
+    readonly boundary_event?: TailFlightRecordBoundaryEventDocument | null;
     /**
      * Complete, interrupted or failed classification.
      */
@@ -237,6 +241,109 @@ export interface TailFlightRecordFinalizationDocument {
      * Integer tick containing the last valid sample.
      */
     readonly terminal_tick: number;
+}
+/**
+ * Accepted control and structural values at one terminal integer boundary.
+ */
+export interface TailFlightRecordBoundaryEventDocument {
+    readonly input: TailFlightRecordInputDocument;
+    readonly physical_incidence: TailIncidenceDocument3;
+    /**
+     * Finite accepted displacement coefficient.
+     */
+    readonly wing_bending_factor: number;
+}
+/**
+ * Applied input and the resolved pilot target at the same time.
+ */
+export interface TailFlightRecordInputDocument {
+    /**
+     * Desired body-positive pitch rate q in rad/s.
+     */
+    readonly desired_pitch_rate_rad_s: number;
+    /**
+     * Desired body-positive yaw rate r in rad/s.
+     */
+    readonly desired_yaw_rate_rad_s: number;
+    readonly fbw_incidence_target: TailIncidenceDocument;
+    readonly manual_incidence_target: TailIncidenceDocument1;
+    readonly mixed_incidence_target: TailIncidenceDocument2;
+    /**
+     * Normalized positive nose-up intent, independent of physical incidence sign.
+     */
+    readonly nose_up: number;
+    /**
+     * Original Hold/Set command, distinct from the resolved physical target.
+     */
+    readonly pilot_position_command: {
+        readonly kind: "hold";
+    } | {
+        readonly kind: "set";
+        /**
+         * Normalized position in the inclusive interval [-1, 1].
+         */
+        readonly normalized: number;
+    };
+    /**
+     * Authoritative retained or newly resolved pilot target in metres.
+     */
+    readonly resolved_pilot_position_target_m: number;
+    /**
+     * Normalized positive right-turn intent, independent of physical incidence sign.
+     */
+    readonly turn_right: number;
+}
+/**
+ * Core feedback output before authority mixing.
+ */
+export interface TailIncidenceDocument {
+    /**
+     * Horizontal-tail effective incidence, positive for negative pitch moment on an aft tail.
+     */
+    readonly horizontal_tail_rad: number;
+    /**
+     * Vertical-tail effective incidence, positive for negative yaw moment with the configured fin.
+     */
+    readonly vertical_tail_rad: number;
+}
+/**
+ * Manual intent mapped to physical incidence before authority mixing.
+ */
+export interface TailIncidenceDocument1 {
+    /**
+     * Horizontal-tail effective incidence, positive for negative pitch moment on an aft tail.
+     */
+    readonly horizontal_tail_rad: number;
+    /**
+     * Vertical-tail effective incidence, positive for negative yaw moment with the configured fin.
+     */
+    readonly vertical_tail_rad: number;
+}
+/**
+ * Mixed target before the software actuator slew step.
+ */
+export interface TailIncidenceDocument2 {
+    /**
+     * Horizontal-tail effective incidence, positive for negative pitch moment on an aft tail.
+     */
+    readonly horizontal_tail_rad: number;
+    /**
+     * Vertical-tail effective incidence, positive for negative yaw moment with the configured fin.
+     */
+    readonly vertical_tail_rad: number;
+}
+/**
+ * Physical two-tail incidence after the boundary update.
+ */
+export interface TailIncidenceDocument3 {
+    /**
+     * Horizontal-tail effective incidence, positive for negative pitch moment on an aft tail.
+     */
+    readonly horizontal_tail_rad: number;
+    /**
+     * Vertical-tail effective incidence, positive for negative yaw moment with the configured fin.
+     */
+    readonly vertical_tail_rad: number;
 }
 /**
  * Original hybrid site, cause, closed-domain limit and optional RK stage.

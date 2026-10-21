@@ -26,6 +26,7 @@ fn fixture_record(duration: f64, reason: SessionEndReason) -> FlightRecord {
             let position = NedPoint::try_new(time * 9.0, 0.0, -altitude).unwrap();
             FlightRecordSample {
                 tick_index: tick,
+                wing_bending_factor: None,
                 fraction: 0.0,
                 flight_state: FlightState::try_new(
                     position,
@@ -80,6 +81,7 @@ fn fixture_record(duration: f64, reason: SessionEndReason) -> FlightRecord {
             terminal_fraction: 0.0,
             score: None,
             failure: None,
+            boundary_event: None,
         },
     )
     .unwrap()

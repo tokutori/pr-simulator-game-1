@@ -11,7 +11,7 @@ use crate::configured_phase::ConfiguredPhase;
 use crate::configured_session::ConfiguredSession;
 use crate::dynamics::FlightState;
 use crate::flight_execution::{ActiveFlight, FlightExecution};
-use crate::flight_record::FlightRecord;
+use crate::flight_record::{FlightRecord, FlightRecordBoundaryEvent};
 #[cfg(verus_only)]
 use crate::flight_record::{FlightRecordControlCapture, FlightRecordControls, FlightRecordSample};
 use crate::scenario::{FlightTelemetry, FlightTelemetryError};
@@ -25,13 +25,20 @@ use crate::tail_simulation::{
 #[cfg(verus_only)]
 verus! {
     pub(super) open spec fn terminal_payload_matches(record: FlightRecord, terminal: SessionTerminalState) -> bool {
-        record.recorded_samples().len() > 0
-            && record.recorded_samples().last().tick_index == terminal.record_time().0
-            && record.recorded_samples().last().flight_state == terminal.flight_state()
-            && record.recorded_samples().last().controls.incidence == match terminal {
+        match record.terminal_projection() {
+            Some(sample) => sample.tick_index == terminal.record_time().0
+            && sample.fraction == terminal.record_time().1
+            && sample.flight_state == terminal.flight_state()
+            && sample.controls.incidence == match terminal {
                 SessionTerminalState::TailTick(state) => state.incidence(),
                 SessionTerminalState::TailWaterContact(sample) => sample.incidence(),
             }
+            && sample.wing_bending_factor == match terminal {
+                SessionTerminalState::TailTick(state) => state.wing_bending_factor(),
+                SessionTerminalState::TailWaterContact(sample) => sample.wing_bending_factor(),
+            },
+            None => false,
+        }
     }
 
     pub open spec fn report_physical_state(report: TailFlightTickReport) -> FlightState {
@@ -71,7 +78,7 @@ verus! {
         telemetry: FlightTelemetry,
     ) -> bool {
         match FlightRecordControls::from_tail_report(report) {
-            FlightRecordControlCapture::NoElapsedInterval =>
+            FlightRecordControlCapture::NoElapsedInterval | FlightRecordControlCapture::AppliedBoundary(_) =>
                 after.recorded_samples() == before.recorded_samples(),
             FlightRecordControlCapture::Applied(controls) => {
                 let (tick_index, fraction, flight_state) = match report.outcome() {
@@ -81,6 +88,10 @@ verus! {
                 };
                 after.recorded_samples() == before.recorded_samples().push(FlightRecordSample {
                     tick_index, fraction, flight_state, controls,
+                    wing_bending_factor: match report.outcome() {
+                        TailFlightTickOutcome::Advanced(state) => state.wing_bending_factor(),
+                        TailFlightTickOutcome::WaterContact(sample) => sample.wing_bending_factor(),
+                    },
                     wind_at_cg_ned_mps: telemetry.wind_velocity_ned_mps, telemetry,
                 })
             },
@@ -471,6 +482,7 @@ impl<Configuration, Clock>
                     terminal,
                     identity,
                     Some(error),
+                    None,
                     score_result,
                 )?;
                 return Err(GameSessionError::TailTick(error));
@@ -494,6 +506,7 @@ impl<Configuration, Clock>
                     terminal,
                     identity,
                     None,
+                    None,
                     score_result,
                 )?;
                 return Err(GameSessionError::Telemetry(error));
@@ -510,6 +523,7 @@ impl<Configuration, Clock>
                 SessionEndReason::FatalSimulationError,
                 terminal,
                 identity,
+                None,
                 None,
                 score_result,
             )?;
@@ -539,6 +553,7 @@ impl<Configuration, Clock>
                         terminal,
                         identity,
                         None,
+                        None,
                         score_result,
                     );
                     #[cfg(verus_only)]
@@ -553,6 +568,10 @@ impl<Configuration, Clock>
                 }
             }
             TailFlightTickOutcome::WaterContact(sample) => {
+                let boundary_event = match FlightRecordBoundaryEvent::from_tail_report(report) {
+                    Ok(event) => event,
+                    Err(error) => return Err(GameSessionError::Record(error)),
+                };
                 let terminal = SessionTerminalState::TailWaterContact(sample);
                 let score_result = score(&self.configuration, terminal);
                 #[cfg(verus_only)]
@@ -564,6 +583,7 @@ impl<Configuration, Clock>
                     terminal,
                     identity,
                     None,
+                    boundary_event,
                     score_result,
                 );
                 #[cfg(verus_only)]

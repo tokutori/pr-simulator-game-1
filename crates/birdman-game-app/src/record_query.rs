@@ -44,6 +44,7 @@ pub struct RecordedPlaybackSample {
     flight_time_s: f64,
     state: FlightRecordStateDocument,
     controls: PhysicalControlsDocument,
+    wing_bending_factor: Option<f64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -76,6 +77,9 @@ impl From<FlightRecordPlaybackSample> for RecordedPlaybackSample {
                 / f64::from(birdman_game_core::PHYSICS_HZ),
             state: saved_state(sample.flight_state, sample.telemetry),
             controls: sample.actuators.into(),
+            wing_bending_factor: sample
+                .wing_bending_factor
+                .map(birdman_game_core::WingBendingFactor::value),
         }
     }
 }

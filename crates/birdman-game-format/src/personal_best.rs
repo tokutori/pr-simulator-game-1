@@ -188,6 +188,9 @@ fn key_for_validated_record(
     } = initial.controls;
     hash_f64(&mut hasher, physical_incidence.horizontal_tail_rad);
     hash_f64(&mut hasher, physical_incidence.vertical_tail_rad);
+    if let Some(factor) = initial.wing_bending_factor {
+        hash_f64(&mut hasher, factor);
+    }
     let digest: [u8; 32] = hasher.finalize().into();
     Ok(Some(PersonalBestKey::from_digest(digest)))
 }

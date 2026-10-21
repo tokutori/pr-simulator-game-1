@@ -1,6 +1,7 @@
 use crate::{
     PilotPositionTarget, TailAppliedControls, TailFlightTickOutcome, TailFlightTickReport,
     TailFlightTickState, TailIncidence, TailPilotIntent, TailPilotPositionCommand, TailRateTarget,
+    TailWaterContactMoment, WingBendingFactor,
 };
 #[cfg(verus_only)]
 use vstd::prelude::*;
@@ -145,18 +146,25 @@ impl FlightRecordControls {
         match report.applied_controls() {
             None => FlightRecordControlCapture::NoElapsedInterval,
             Some(applied) => {
-                let (incidence, target) = match report.outcome() {
+                let (incidence, target, boundary) = match report.outcome() {
                     TailFlightTickOutcome::Advanced(state) => {
-                        (state.incidence(), state.pilot_position_target())
+                        (state.incidence(), state.pilot_position_target(), false)
                     }
-                    TailFlightTickOutcome::WaterContact(sample) => {
-                        (sample.incidence(), sample.pilot_position_target())
-                    }
+                    TailFlightTickOutcome::WaterContact(sample) => (
+                        sample.incidence(),
+                        sample.pilot_position_target(),
+                        matches!(sample.moment(), TailWaterContactMoment::AppliedBoundary),
+                    ),
                 };
-                FlightRecordControlCapture::Applied(Self {
+                let controls = Self {
                     incidence,
                     input_from_previous: Some(FlightRecordTailInput::from_applied(applied, target)),
-                })
+                };
+                if boundary {
+                    FlightRecordControlCapture::AppliedBoundary(controls)
+                } else {
+                    FlightRecordControlCapture::Applied(controls)
+                }
             }
         }
     }
@@ -173,8 +181,50 @@ impl FlightRecordControls {
 pub enum FlightRecordControlCapture {
     /// Existing-shape contact reuses the previous sample and supplies no new input.
     NoElapsedInterval,
+    /// Accepted input and physical incidence at the same integer time.
+    AppliedBoundary(FlightRecordControls),
     /// Newly accepted physical values and evaluated commands.
     Applied(FlightRecordControls),
+}
+
+/// Right-side control and structural state at an integer terminal boundary.
+///
+/// Time, aircraft motion and telemetry belong to the finalization and last sample.
+#[cfg_attr(verus_only, verus_verify)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FlightRecordBoundaryEvent {
+    /// Physical tail incidences accepted immediately before contact.
+    pub incidence: TailIncidence,
+    /// Accepted input and its resolved pilot target.
+    pub input: FlightRecordTailInput,
+    /// Accepted structural coefficient at the same boundary.
+    pub wing_bending_factor: WingBendingFactor,
+}
+
+impl FlightRecordBoundaryEvent {
+    /// Captures a typed applied-boundary report, retaining its accepted values.
+    #[cfg_attr(verus_only, verus_verify(dual_spec, open))]
+    #[cfg_attr(verus_only, verus_spec(returns Self::from_tail_report(report)))]
+    pub fn from_tail_report(
+        report: TailFlightTickReport,
+    ) -> Result<Option<Self>, super::FlightRecordError> {
+        match FlightRecordControls::from_tail_report(report) {
+            FlightRecordControlCapture::AppliedBoundary(controls) => match report.outcome() {
+                TailFlightTickOutcome::WaterContact(sample) => {
+                    match (controls.input_from_previous, sample.wing_bending_factor()) {
+                        (Some(input), Some(wing_bending_factor)) => Ok(Some(Self {
+                            incidence: controls.incidence,
+                            input,
+                            wing_bending_factor,
+                        })),
+                        _ => Err(super::FlightRecordError::FinalizationMismatch),
+                    }
+                }
+                _ => Err(super::FlightRecordError::FinalizationMismatch),
+            },
+            _ => Ok(None),
+        }
+    }
 }
 
 #[cfg(test)]

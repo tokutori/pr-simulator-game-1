@@ -50,10 +50,10 @@ pub use contact::{
 };
 pub use flight_control::{ActuatorConfig, ActuatorError, ControlMode, FbwAuthority};
 pub use flight_record::{
-    FlightRecord, FlightRecordControlCapture, FlightRecordControlError, FlightRecordControls,
-    FlightRecordDisposition, FlightRecordError, FlightRecordFinalization, FlightRecordHeader,
-    FlightRecordPlaybackSample, FlightRecordQueryError, FlightRecordSample, FlightRecordSummary,
-    FlightRecordTailInput, MAX_FLIGHT_RECORD_SAMPLES, MAX_FLIGHT_RECORD_TICKS,
+    FlightRecord, FlightRecordBoundaryEvent, FlightRecordControlCapture, FlightRecordControlError,
+    FlightRecordControls, FlightRecordDisposition, FlightRecordError, FlightRecordFinalization,
+    FlightRecordHeader, FlightRecordPlaybackSample, FlightRecordQueryError, FlightRecordSample,
+    FlightRecordSummary, FlightRecordTailInput, MAX_FLIGHT_RECORD_SAMPLES, MAX_FLIGHT_RECORD_TICKS,
 };
 pub use game_session::{
     BriefingFailure, CountdownProgress, GameSession, GameSessionConfiguration, GameSessionError,

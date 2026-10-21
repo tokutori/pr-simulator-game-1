@@ -7,11 +7,12 @@ use crate::personal_best::validated_tail_personal_best_candidate;
 use crate::{DifficultySettings, FlightRecordIdentityMetadata};
 use alloc::{string::String, vec::Vec};
 use birdman_game_core::{
-    BodyVector, DistanceScore, FlightRecord, FlightRecordControls, FlightRecordFinalization,
-    FlightRecordHeader, FlightRecordSample, FlightRecordTailInput, FlightState, FlightTelemetry,
-    NedPoint, NedVector, PersonalBestComparison, SessionScenarioIdentity, TailFlightTickInput,
-    TailIncidence, TailPilotIntent, TailPilotPositionCommand, TailPilotPositionIntent,
-    TailRateTarget, UnitQuaternion, compare_personal_best,
+    BodyVector, DistanceScore, FlightRecord, FlightRecordBoundaryEvent, FlightRecordControls,
+    FlightRecordFinalization, FlightRecordHeader, FlightRecordSample, FlightRecordTailInput,
+    FlightState, FlightTelemetry, NedPoint, NedVector, PersonalBestComparison,
+    SessionScenarioIdentity, TailFlightTickInput, TailIncidence, TailPilotIntent,
+    TailPilotPositionCommand, TailPilotPositionIntent, TailRateTarget, UnitQuaternion,
+    WingBendingFactor, compare_personal_best,
 };
 use serde::{Deserialize, Serialize};
 
@@ -25,7 +26,7 @@ pub use failure::{
     TailTickFailureDocument, WindFailureDocument,
 };
 
-/// Schema-six terminal metadata with the original typed simulation cause.
+/// Terminal metadata with the original cause and an optional same-time accepted event.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
@@ -44,6 +45,41 @@ pub struct TailFlightRecordFinalizationDocument {
     /// Original failed interval's cause, explicitly null for a non-simulation termination.
     #[serde(deserialize_with = "deserialize_terminal_failure")]
     pub failure: Option<TailTickFailureDocument>,
+    /// Accepted right-side values at the final integer sample's time and body state.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub boundary_event: Option<TailFlightRecordBoundaryEventDocument>,
+}
+
+/// Accepted control and structural values at one terminal integer boundary.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct TailFlightRecordBoundaryEventDocument {
+    /// Physical two-tail incidence after the boundary update.
+    pub physical_incidence: TailIncidenceDocument,
+    /// Applied input and the resolved pilot target at the same time.
+    pub input: TailFlightRecordInputDocument,
+    /// Finite accepted displacement coefficient.
+    pub wing_bending_factor: f64,
+}
+
+impl TailFlightRecordBoundaryEventDocument {
+    fn from_core(event: FlightRecordBoundaryEvent) -> Self {
+        Self {
+            physical_incidence: TailIncidenceDocument::from_core(event.incidence),
+            input: TailFlightRecordInputDocument::from_core(event.input),
+            wing_bending_factor: event.wing_bending_factor.value(),
+        }
+    }
+
+    fn to_core(self) -> Result<FlightRecordBoundaryEvent, FlightRecordFormatError> {
+        Ok(FlightRecordBoundaryEvent {
+            incidence: self.physical_incidence.to_core()?,
+            input: self.input.to_core()?,
+            wing_bending_factor: WingBendingFactor::try_new(self.wing_bending_factor)
+                .map_err(|_| FlightRecordFormatError::InvalidRecord)?,
+        })
+    }
 }
 
 impl TailFlightRecordFinalizationDocument {
@@ -82,6 +118,9 @@ impl TailFlightRecordFinalizationDocument {
                 ]
             }),
             failure,
+            boundary_event: finalization
+                .boundary_event
+                .map(TailFlightRecordBoundaryEventDocument::from_core),
         })
     }
 }
@@ -93,7 +132,7 @@ fn deserialize_terminal_failure<'de, Decoder: serde::Deserializer<'de>>(
 }
 
 /// Current archive schema with named two-tail controls.
-pub const TAIL_FLIGHT_RECORD_SCHEMA_VERSION: u32 = 6;
+pub const TAIL_FLIGHT_RECORD_SCHEMA_VERSION: u32 = 7;
 
 /// Explicit model/controller names; their independent versions remain in the common header.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -149,7 +188,8 @@ pub enum TailPilotPositionCommandDocument {
 }
 
 /// One saved interval's distinct intent, resolved target and already computed command values.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct TailFlightRecordInputDocument {
     /// Normalized positive nose-up intent, independent of physical incidence sign.
@@ -220,6 +260,9 @@ pub struct TailFlightRecordSampleDocument {
     pub state: FlightRecordStateDocument,
     /// Physical controls paired with their own interval input.
     pub controls: TailFlightRecordControlsDocument,
+    /// Accepted structural coefficient; omitted only in schema-six records.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wing_bending_factor: Option<f64>,
 }
 
 /// Finalized current archive with saved two-tail input and physical state.
@@ -257,8 +300,26 @@ impl TailFlightRecordDocument {
         let finalization = TailFlightRecordFinalizationDocument::try_from_core(finalization)?;
         let core_header = record.header();
         let scenario = core_header.scenario;
+        let schema_version = if record
+            .samples()
+            .iter()
+            .all(|sample| sample.wing_bending_factor.is_some())
+        {
+            TAIL_FLIGHT_RECORD_SCHEMA_VERSION
+        } else if record
+            .samples()
+            .iter()
+            .all(|sample| sample.wing_bending_factor.is_none())
+            && record
+                .finalization()
+                .is_some_and(|metadata| metadata.boundary_event.is_none())
+        {
+            6
+        } else {
+            return Err(FlightRecordFormatError::InvalidRecord);
+        };
         let document = Self {
-            schema_version: TAIL_FLIGHT_RECORD_SCHEMA_VERSION,
+            schema_version,
             header: FlightRecordHeaderDocument {
                 catalog_version: scenario.catalog_version,
                 scenario_id: scenario.scenario_id,
@@ -301,8 +362,22 @@ impl TailFlightRecordDocument {
 
     /// Validates schema/identity and restores the same immutable core query representation.
     pub fn to_finalized_core_record(&self) -> Result<FlightRecord, FlightRecordFormatError> {
-        if self.schema_version != TAIL_FLIGHT_RECORD_SCHEMA_VERSION {
+        if !matches!(self.schema_version, 6 | TAIL_FLIGHT_RECORD_SCHEMA_VERSION) {
             return Err(FlightRecordFormatError::UnsupportedSchemaVersion);
+        }
+        if (self.schema_version == 6
+            && (self
+                .samples
+                .iter()
+                .any(|sample| sample.wing_bending_factor.is_some())
+                || self.finalization.boundary_event.is_some()))
+            || (self.schema_version == TAIL_FLIGHT_RECORD_SCHEMA_VERSION
+                && self
+                    .samples
+                    .iter()
+                    .any(|sample| sample.wing_bending_factor.is_none()))
+        {
+            return Err(FlightRecordFormatError::InvalidRecord);
         }
         self.identity_metadata.validate()?;
         let valid_id = |value: &str| {
@@ -375,6 +450,11 @@ impl TailFlightRecordDocument {
                 .failure
                 .map(|cause| cause.to_core())
                 .transpose()?,
+            boundary_event: self
+                .finalization
+                .boundary_event
+                .map(TailFlightRecordBoundaryEventDocument::to_core)
+                .transpose()?,
         };
         if finalization.reason == birdman_game_core::SessionEndReason::OutOfValidEnvelope
             && finalization.failure.is_none()
@@ -434,7 +514,10 @@ impl TailFlightRecordDocument {
         }
         let version: SchemaVersion =
             serde_json::from_slice(input).map_err(|_| FlightRecordFormatError::InvalidJson)?;
-        if version.schema_version != TAIL_FLIGHT_RECORD_SCHEMA_VERSION {
+        if !matches!(
+            version.schema_version,
+            6 | TAIL_FLIGHT_RECORD_SCHEMA_VERSION
+        ) {
             return Err(FlightRecordFormatError::UnsupportedSchemaVersion);
         }
         let document: Self =
@@ -491,6 +574,7 @@ impl TailFlightRecordSampleDocument {
         Ok(Self {
             tick_index: sample.tick_index,
             fraction: sample.fraction,
+            wing_bending_factor: sample.wing_bending_factor.map(WingBendingFactor::value),
             state: FlightRecordStateDocument {
                 datum_position_ned_m: state.datum_position_ned().components(),
                 datum_velocity_ned_mps: state.datum_velocity_ned().components(),
@@ -541,6 +625,13 @@ impl TailFlightRecordSampleDocument {
         Ok(FlightRecordSample {
             tick_index: self.tick_index,
             fraction: self.fraction,
+            wing_bending_factor: self
+                .wing_bending_factor
+                .map(|factor| {
+                    WingBendingFactor::try_new(factor)
+                        .map_err(|_| FlightRecordFormatError::InvalidRecord)
+                })
+                .transpose()?,
             flight_state: FlightState::try_new(
                 point(state.datum_position_ned_m)?,
                 vector(state.datum_velocity_ned_mps)?,
@@ -559,7 +650,6 @@ impl TailFlightRecordSampleDocument {
             controls: FlightRecordControls {
                 incidence: physical_incidence.to_core()?,
                 input_from_previous: input_from_previous
-                    .as_ref()
                     .map(TailFlightRecordInputDocument::to_core)
                     .transpose()?,
             },
@@ -604,7 +694,7 @@ impl TailFlightRecordInputDocument {
         }
     }
 
-    fn to_core(&self) -> Result<FlightRecordTailInput, FlightRecordFormatError> {
+    fn to_core(self) -> Result<FlightRecordTailInput, FlightRecordFormatError> {
         let command = match self.pilot_position_command {
             TailPilotPositionCommandDocument::Hold {} => TailPilotPositionCommand::Hold,
             TailPilotPositionCommandDocument::Set { normalized } => TailPilotPositionCommand::Set(

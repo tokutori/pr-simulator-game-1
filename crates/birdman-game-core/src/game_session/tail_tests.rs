@@ -528,6 +528,7 @@ fn terminal_owner_commits_record_and_result_for_score_success_and_failure() {
                 SessionTerminalState::TailTick(state),
                 identity(),
                 failure,
+                None,
                 score_result,
             );
             let expected = if failure.is_some() {

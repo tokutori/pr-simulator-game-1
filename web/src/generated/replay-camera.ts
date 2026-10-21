@@ -179,6 +179,7 @@ export interface RecordedPlaybackSample {
     readonly schema_version: 2;
     readonly state: FlightRecordStateDocument;
     readonly tick_index: number;
+    readonly wing_bending_factor: number | null;
 }
 /**
  * Named physical angles in radians, preserving the two-tail contract without a roll slot.

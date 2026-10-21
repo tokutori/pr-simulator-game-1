@@ -4,7 +4,7 @@ use vstd::prelude::*;
 use super::{GameSessionError, SessionResult, SessionTerminalState};
 use crate::configured_phase::ConfiguredPhase;
 use crate::configured_session::ConfiguredSession;
-use crate::flight_record::FlightRecord;
+use crate::flight_record::{FlightRecord, FlightRecordBoundaryEvent};
 use crate::scoring::{DistanceScore, DistanceScoreError};
 use crate::session_contract::{SessionEndReason, SessionScenarioIdentity};
 use crate::tail_simulation::{TailFlightTickError, TailFlightTickState};
@@ -34,6 +34,7 @@ impl<Configuration, Clock>
                             Some(metadata) => final(self).record.finalized_from(old(self).record, metadata)
                                 && metadata.reason == result.reason && metadata.score == result.score
                                 && metadata.failure == result.failure
+                                && metadata.boundary_event == boundary_event
                                 && metadata.terminal_tick == state.record_time().0
                                 && metadata.terminal_fraction == state.record_time().1,
                             None => false,
@@ -53,6 +54,7 @@ impl<Configuration, Clock>
         state: SessionTerminalState,
         scenario: SessionScenarioIdentity,
         failure: Option<TailFlightTickError>,
+        boundary_event: Option<FlightRecordBoundaryEvent>,
         score_result: Result<DistanceScore, DistanceScoreError>,
     ) -> Result<(), GameSessionError> {
         let (reason, score) = match score_result {
@@ -61,11 +63,21 @@ impl<Configuration, Clock>
             Err(_) => (SessionEndReason::FatalSimulationError, None),
         };
         let (tick_index, fraction) = state.record_time();
+        if boundary_event.is_some() && (fraction != 0.0 || failure.is_some()) {
+            return Err(GameSessionError::Record(
+                crate::FlightRecordError::FinalizationMismatch,
+            ));
+        }
         let finalized = match failure {
             Some(failure) => self
                 .record
                 .finalize_with_failure(reason, tick_index, fraction, score, failure),
-            None => self.record.finalize(reason, tick_index, fraction, score),
+            None => match boundary_event {
+                Some(event) => self
+                    .record
+                    .finalize_with_boundary_event(reason, tick_index, fraction, score, event),
+                None => self.record.finalize(reason, tick_index, fraction, score),
+            },
         };
         if let Err(error) = finalized {
             return Err(GameSessionError::Record(error));

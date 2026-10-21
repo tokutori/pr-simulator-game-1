@@ -54,6 +54,8 @@ pub(super) fn game_ui_hud(
                     fraction: 0.0,
                     flight_state: state.flight_state(),
                     actuators: state.incidence(),
+                    input: None,
+                    wing_bending_factor: state.wing_bending_factor(),
                     telemetry,
                 },
                 distance,

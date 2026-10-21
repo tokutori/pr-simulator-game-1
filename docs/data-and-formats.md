@@ -15,8 +15,8 @@
 | --- | --- |
 | 機体JSON | `AircraftDocument`、schema 1、最大256 KiB |
 | 環境JSON | `EnvironmentDocument`、schema 1、最大8 MiB |
-| 飛行記録JSON | `TailFlightRecordDocument`、schema 6、最大16 MiB |
-| 飛行ログCSV | export version 3 |
+| 飛行記録JSON | `TailFlightRecordDocument`、schema 6/7、最大16 MiB |
+| 飛行ログCSV | schema 6はexport version 3、schema 7はversion 4 |
 | Personal Best | 比較方式v2、Rustによるkey再生成・選定 |
 | 既定機体・scenario | aircraft model 3、catalog 5、scenario 5、controller profile 3 |
 
@@ -227,7 +227,10 @@ Analysis用の発進台・湖岸・望遠camera点はOSMとAW3D30に基づく試
 
 - 接触は全登録点の最早fractionを採用する。
 - 位置・速度・角速度・pilot状態と最短経路quaternion補間を同じ瞬間へ揃え、record、Result、score、表示へ同じ終端sampleを渡す。
-- 正のfractionでは区間中に保持した尾翼値を使い、fraction 0では既存sampleとcontrolsを保持して新inputや重複sampleを追加しない。
+- 正のfractionでは区間中に保持した尾翼角・曲げ係数・入力を使う。
+- 整数時刻では、既存形状による接触と新しい変形・尾翼角の採用直後の接触を区別する。前者は既存の値を保持し、後者は新しい値をfinalizationの`boundary_event`へ保存する。
+- 同時刻eventは既存sample列を保持し、終端queryで採用済みの尾翼角・入力・曲げ係数だけを投影する。時刻・body状態・telemetryは末尾sampleを正本とする。
+- 境界eventの採用時刻は最大tick未満の整数時刻とする。
 - 失敗tickの未来状態を露出しない。
 
 - tail controlsには保持取付角、直前区間の任意input、pilot目標、正規化操縦要求、Manual/FBW/混合の実適用値を保存する。
@@ -240,10 +243,11 @@ Analysis用の発進台・湖岸・望遠camera点はOSMとAW3D30に基づく試
 
 ### codecとJSON
 
-- 現行codecはschema 6だけを受理する。
-- 旧schemaのdecoder・migrationを追加しない。
+- 現行codecはschema 6と7を受理する。
+- schema 7は全sampleの有限な`wing_bending_factor`を要求し、同時刻の採用値は任意の終端`boundary_event`に保持する。
+- schema 6は曲げ係数の未記録状態を保持する。共有producerは全係数を持つrecordをschema 7、全係数が未記録のrecordをschema 6として出力する。
 - 未対応データを通知して元の保存内容を保持する。
-- schema 6の破損、未知field、非有限値、非単位quaternion、時刻・header不整合を拒否する。
+- 破損、未知field、非有限値、非単位quaternion、時刻・header不整合と、schemaに対応しない係数・eventの組合せを拒否する。
 - 任意のidentity metadataには後述の未知raw保持規則を適用する。
 - 数値のround-tripは`serde_json`の`float_roundtrip`を使用する。
 
@@ -251,16 +255,18 @@ Analysis用の発進台・湖岸・望遠camera点はOSMとAW3D30に基づく試
 - JSON exportは解決済み条件と来歴を含む完全な記録である。
 - 保存されていない情報を現行buildから補完しない。
 
-### CSV version 3
+### CSV version 3/4
 
 - CSVは初期・全成功tick・fractional terminalを省略せず、位置、速度、姿勢、角速度、pilot状態、入力、actuator、風、telemetry、終了情報等を出力する。
 - 列名に単位を明示し、f64のround-trip表現を使う。
 - 未提供値は空欄とし、ID・構造化診断は`_json`列へ格納する。
+- version 4は`row_kind`と`wing_bending_factor`を加える。通常sample列の後に同時刻の採用eventを`boundary_event`行として出力し、version 3は従来の列構成を保持する。
 
 - 加速度は保存済みNED速度、FRD角速度、pilot相対速度の有限差分による派生値である。
 - 内点は不等間隔3点、端点は2点の割線を用い、methodとstencil時刻を出力する。
 - これはspecific force、荷重、合成重心加速度、Euler角の二階微分を表さない。
 - 標本不足・不正間隔・非有限推定は状態名を出し、NaN/∞で埋めない。
+- 同時刻event行の加速度は空欄とし、状態を`same_time_boundary`とする。有限差分は時刻が増加する通常sample列へ適用する。
 
 - 比較metadataは状態・有界な方式番号・既知build来歴のscalar列へ投影する。
 - 未知rawと完全なcontroller条件はJSONに保持し、各sampleへ反復しない。
@@ -292,14 +298,14 @@ keyは次の条件をSHA-256へ入力する。
 - 明示identity、catalog・aircraft・controller・scenario・environment・physics・scoreのversion。
 - seed、tick上限、Hz、解決済みInformation/HUD、Assistance、Weather。
 - 実ControlModeとShared authority、二軸gain、slew、optional alpha guard、course。
-- 初期datum位置・速度、quaternion、角速度、wind、尾翼取付角、pilot位置・速度。
+- 初期datum位置・速度、quaternion、角速度、wind、尾翼取付角、pilot位置・速度、およびschema 7の初期曲げ係数。
 
 - finite f64は負zeroをpositive zeroへ正規化してbig-endian IEEE-754で符号化する。
 - 画質、presentation、build来歴は比較条件へ含めない。
 - 記録自身からkeyを再生成し、保存keyとの一致を検査する。
 - 現在のpresetから過去のcontrollerを再解決しない。
 
-- schema 6の任意`identity_metadata`は、未指定・既知v2・未知rawを排他的に保持する。
+- 任意`identity_metadata`は、未指定・既知v2・未知rawを排他的に保持する。
 - block欠落、未知方式、構造情報不足の記録は未順位で閲覧し、元key・原文を保持する。
 - 既知v2の数値不正・保存key不一致は拒否する。
 - 新旧方式の横断比較、key補完、既存JSONの書換えを行わない。
@@ -347,7 +353,8 @@ keyは次の条件をSHA-256へ入力する。
 - Pause、seek、再生速度は同じRustのclockへ作用し、graph cursorと3Dが同じrecord時刻を参照する。
 - Resultへ戻る際は元の確定状態を表示し、cursor状態へ置換しない。
 
-- 記録queryのwire形式はschema 2であり、保存JSONのschema 6と区別する。
+- 記録queryのwire形式はschema 2であり、保存JSONのschema 6/7と区別する。
+- 厳密な保存時刻はそのsample、区間内部は終点sampleが持つ尾翼角・入力・曲げ係数を用いる。確定終端時刻ではcanonicalなevent投影を使う。
 - Result・Replay・Attractの記録所有phaseだけを受理し、live Flightからの記録queryを拒否する。
 - Summary、Analysis、再生poseは同じsource contextを持ち、元のfinalization・terminal stamp・確定scoreと、cursor位置・時刻の投影値を別fieldとして保持する。
 - 値が存在しない角度・scoreには型付きの不在理由を返す。
