@@ -186,7 +186,9 @@ fn sky_direction(longitude: f64, latitude: f64) -> [f64; 3] {
 }
 
 const HIGH_CLOUD_ALTITUDE_M: f64 = 6_000.0;
-const HIGH_CLOUD_PATCH_SCALE_M: f64 = 1_800.0;
+const HIGH_CLOUD_PATCH_SCALE_M: f64 = 3_600.0;
+const HIGH_CLOUD_SHEET_SCALE_M: f64 = 24_000.0;
+const HIGH_CLOUD_EDGE_SCALE_M: f64 = 1_200.0;
 
 struct CloudLayerProjection {
     position_m: [f64; 2],
@@ -222,14 +224,24 @@ fn high_cloud_layer(direction: [f64; 3], fraction: f64) -> (f64, f64) {
     let Some(layer) = project_cloud_layer(direction) else {
         return (0.0, 0.0);
     };
-    let sheet = cloud_plane_noise(layer.position_m, 12_000.0, layer.footprint_m, 17.0);
+    let sheet = cloud_plane_noise(
+        layer.position_m,
+        HIGH_CLOUD_SHEET_SCALE_M,
+        layer.footprint_m,
+        17.0,
+    );
     let cloudlets = cloud_plane_noise(
         layer.position_m,
         HIGH_CLOUD_PATCH_SCALE_M,
         layer.footprint_m,
         31.0,
     );
-    let edges = cloud_plane_noise(layer.position_m, 600.0, layer.footprint_m, 47.0);
+    let edges = cloud_plane_noise(
+        layer.position_m,
+        HIGH_CLOUD_EDGE_SCALE_M,
+        layer.footprint_m,
+        47.0,
+    );
     let density = sheet * 0.2 + cloudlets * 0.65 + edges * 0.15;
     let threshold = 0.74 - fraction * 0.6;
     let opacity =
@@ -527,7 +539,7 @@ mod tests {
             (HIGH_CLOUD_PATCH_SCALE_M / HIGH_CLOUD_ALTITUDE_M)
                 .atan()
                 .to_degrees()
-                > 15.0
+                > 30.0
         );
     }
 
@@ -569,7 +581,8 @@ mod tests {
             }
         }
         assert!(partial > 100.0 && partial < 1200.0, "{partial}");
-        assert!(overcast > 1800.0, "{overcast}");
+        let overcast_mean_opacity = overcast / (32.0 * 64.0);
+        assert!(overcast_mean_opacity > 0.85, "{overcast_mean_opacity}");
     }
 
     #[test]
