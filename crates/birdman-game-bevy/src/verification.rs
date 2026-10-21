@@ -1395,6 +1395,26 @@ pub(crate) fn supply_input(
     devices.verification_axes(axes);
 }
 
+fn pilot_input_applied(session: &NativeSession) -> bool {
+    use birdman_game_app::flight_input::FlightGamepadAcquisition;
+    use birdman_game_core::TailPilotPositionCommand;
+    matches!(
+        session.game.flight_gamepad_acquisition(),
+        FlightGamepadAcquisition::Active { .. }
+    ) && session
+        .game
+        .core_session()
+        .flight_record()
+        .and_then(|record| record.samples().last())
+        .and_then(|sample| sample.controls.input_from_previous)
+        .is_some_and(|input| {
+            (input.manual_intent().nose_up() - 0.1).abs() <= 1.0e-12
+                && (input.manual_intent().turn_right() - 0.1).abs() <= 1.0e-12
+                && matches!(input.pilot_position_command(), TailPilotPositionCommand::Set(target)
+                    if (target.value() - 0.25).abs() <= 1.0e-12)
+        })
+}
+
 type VerificationUiLabel = (
     Entity,
     &'static Text,
@@ -2569,6 +2589,9 @@ fn advance_step(
         }
         VerificationStage::Pilot => {
             require_phase(phase, SessionPhase::FlightRunning)?;
+            if !pilot_input_applied(session) {
+                return Ok(());
+            }
             let state = session
                 .game
                 .core_session()
@@ -4294,6 +4317,84 @@ mod tests {
         let verification = app.world().resource::<super::Verification>();
         assert!(verification.failure.is_none(), "{:?}", verification.failure);
         assert_eq!(verification.stage, VerificationStage::Pilot);
+    }
+
+    #[test]
+    fn pilot_capture_waits_for_gamepad_acquisition_and_applied_input() {
+        let mut app = countdown_driver_app();
+        let initial = {
+            let mut session = app.world_mut().resource_mut::<NativeSession>();
+            session.action(MenuAction::Launch).unwrap();
+            session.presentation_frame(3.0);
+            session
+                .game
+                .core_session()
+                .snapshot()
+                .tail_flight_state()
+                .unwrap()
+        };
+        {
+            let mut verification = app.world_mut().resource_mut::<super::Verification>();
+            verification.stage = VerificationStage::Pilot;
+            verification.started = Some(std::time::Instant::now());
+            verification.stage_started = std::time::Instant::now() - Duration::from_millis(300);
+            verification.launch_state = Some(initial);
+        }
+        app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+            Duration::from_millis(100),
+        ));
+        app.update();
+        app.update();
+        {
+            let session = app.world().resource::<NativeSession>();
+            let verification = app.world().resource::<super::Verification>();
+            assert!(verification.failure.is_none());
+            assert!(!verification.capture.pending());
+            assert_eq!(
+                session
+                    .game
+                    .core_session()
+                    .snapshot()
+                    .tail_flight_state()
+                    .unwrap()
+                    .tick_index(),
+                10
+            );
+        }
+        let mut acquired_before_pilot_input = false;
+        for _ in 0..4 {
+            let session = app.world().resource::<NativeSession>();
+            if matches!(
+                session.game.flight_gamepad_acquisition(),
+                birdman_game_app::flight_input::FlightGamepadAcquisition::Active { .. }
+            ) && !super::pilot_input_applied(session)
+            {
+                acquired_before_pilot_input = true;
+                let verification = app.world().resource::<super::Verification>();
+                assert!(verification.failure.is_none());
+                assert!(!verification.capture.pending());
+                break;
+            }
+            app.update();
+        }
+        assert!(acquired_before_pilot_input);
+        app.update();
+        let session = app.world().resource::<NativeSession>();
+        let verification = app.world().resource::<super::Verification>();
+        let state = session
+            .game
+            .core_session()
+            .snapshot()
+            .tail_flight_state()
+            .unwrap();
+        assert!(verification.failure.is_none());
+        assert!(super::pilot_input_applied(session));
+        assert_ne!(state.incidence(), initial.incidence());
+        assert_ne!(
+            state.pilot_position_target(),
+            initial.pilot_position_target()
+        );
+        assert!(matches!(verification.capture, CaptureState::Requested(_)));
     }
 
     #[test]
