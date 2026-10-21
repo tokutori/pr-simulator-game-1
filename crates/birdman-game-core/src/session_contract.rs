@@ -27,7 +27,7 @@ pub struct SessionScenarioIdentity {
 pub enum SessionEndReason {
     /// A registered structural point contacted the water plane.
     WaterContact,
-    /// An aerodynamic evaluation exceeded its declared coefficient envelope.
+    /// Flight reached a finite aerodynamic or wind-field operating boundary.
     OutOfValidEnvelope,
     /// The user aborted at an input boundary.
     ManualAbort,
@@ -42,17 +42,18 @@ impl TailFlightTickError {
     #[cfg_attr(verus_only, vstd::prelude::verus_verify(dual_spec))]
     #[cfg_attr(verus_only, verus_spec(returns self.end_reason()))]
     pub const fn end_reason(self) -> SessionEndReason {
-        let dynamics = match self {
-            Self::Dynamics(error) => Some(error),
-            _ => None,
-        };
-        match dynamics {
-            Some(DynamicsError::Load(LoadError::Aerodynamic(error))) => match error.cause() {
-                AeroError::OutsideEnvelope | AeroError::Wind(WindError::OutsideGrid) => {
-                    SessionEndReason::OutOfValidEnvelope
+        match self {
+            Self::Contact(crate::ContactError::Wind(WindError::OutsideGrid)) => {
+                SessionEndReason::OutOfValidEnvelope
+            }
+            Self::Dynamics(DynamicsError::Load(LoadError::Aerodynamic(error))) => {
+                match error.cause() {
+                    AeroError::OutsideEnvelope | AeroError::Wind(WindError::OutsideGrid) => {
+                        SessionEndReason::OutOfValidEnvelope
+                    }
+                    _ => SessionEndReason::FatalSimulationError,
                 }
-                _ => SessionEndReason::FatalSimulationError,
-            },
+            }
             _ => SessionEndReason::FatalSimulationError,
         }
     }

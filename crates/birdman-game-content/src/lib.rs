@@ -7,7 +7,8 @@ mod aircraft;
 mod shape;
 
 pub use aircraft::{
-    AircraftDefinition, AircraftDefinitionError, PLAYABLE_AIRCRAFT_JSON, playable_aircraft,
+    AircraftContactShape, AircraftDefinition, AircraftDefinitionError, PLAYABLE_AIRCRAFT_JSON,
+    playable_aircraft,
 };
 pub use shape::{AircraftShape, AirfoilFace, ContactSampling, ShapeError, SurfaceShape};
 

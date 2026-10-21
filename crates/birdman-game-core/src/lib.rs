@@ -45,7 +45,9 @@ pub use aerodynamics_contract::{
     AeroError, AerodynamicEvaluationError, AerodynamicStage, HybridError, HybridFlowKind,
     HybridLimit, HybridSite, HybridSurfaceRole,
 };
-pub use contact::{ContactError, WaterContactGeometry, WingBendingFactor};
+pub use contact::{
+    ContactError, TailContactShapeProvider, WaterContactGeometry, WingBendingFactor,
+};
 pub use flight_control::{ActuatorConfig, ActuatorError, ControlMode, FbwAuthority};
 pub use flight_record::{
     FlightRecord, FlightRecordControlCapture, FlightRecordControlError, FlightRecordControls,
@@ -79,9 +81,9 @@ pub use tail_scenario::{
 };
 pub use tail_simulation::{
     TailAppliedControls, TailFlightTickConfig, TailFlightTickError, TailFlightTickInput,
-    TailFlightTickOutcome, TailFlightTickReport, TailFlightTickState, TailWaterContactSample,
-    advance_tail_flight_tick, advance_tail_flight_tick_with_contact,
-    advance_tail_flight_tick_with_contact_report,
+    TailFlightTickOutcome, TailFlightTickReport, TailFlightTickState, TailWaterContactMoment,
+    TailWaterContactSample, advance_tail_flight_tick, advance_tail_flight_tick_with_contact,
+    advance_tail_flight_tick_with_contact_report, advance_tail_flight_tick_with_shape_provider,
 };
 pub use wind_field::{WindError, WindField};
 

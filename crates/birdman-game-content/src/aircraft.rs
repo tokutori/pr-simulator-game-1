@@ -237,6 +237,62 @@ impl SurfaceStorage {
     }
 }
 
+/// Borrowed registered geometry and caller-owned storage for candidate contact shapes.
+pub struct AircraftContactShape<'definition, 'storage> {
+    definition: &'definition AircraftDefinition,
+    points: &'storage mut [BodyPoint],
+}
+
+impl<'definition, 'storage> AircraftContactShape<'definition, 'storage> {
+    /// Binds storage with exactly the prepared number of corresponding structural points.
+    pub fn try_new(
+        definition: &'definition AircraftDefinition,
+        points: &'storage mut [BodyPoint],
+    ) -> Result<Self, crate::ShapeError> {
+        if points.len() != definition.contact_points().len() {
+            return Err(crate::ShapeError::MismatchedContactPointCount);
+        }
+        Ok(Self { definition, points })
+    }
+}
+
+impl birdman_game_core::TailContactShapeProvider for AircraftContactShape<'_, '_> {
+    fn wing_bending_factor(
+        &self,
+        airspeed_mps: f64,
+    ) -> Result<WingBendingFactor, birdman_game_core::ContactError> {
+        self.definition
+            .shape()
+            .wing_bending_factor(airspeed_mps)
+            .map_err(contact_shape_error)
+    }
+
+    fn points(
+        &mut self,
+        factor: WingBendingFactor,
+        incidence: TailIncidence,
+    ) -> Result<&[BodyPoint], birdman_game_core::ContactError> {
+        self.definition
+            .write_deformed_contact_points_with_factor(factor, incidence, self.points)
+            .map_err(contact_shape_error)?;
+        Ok(self.points)
+    }
+}
+
+fn contact_shape_error(error: crate::ShapeError) -> birdman_game_core::ContactError {
+    use birdman_game_core::ContactError;
+    match error {
+        crate::ShapeError::Math(cause) => ContactError::Math(cause),
+        crate::ShapeError::NonFinite => ContactError::Math(MathError::NonFinite),
+        crate::ShapeError::MismatchedContactPointCount => ContactError::MismatchedGeometry,
+        crate::ShapeError::InvalidAirspeed
+        | crate::ShapeError::InvalidChordFraction
+        | crate::ShapeError::OutsideSurface(_)
+        | crate::ShapeError::OutsideCockpit
+        | crate::ShapeError::InvalidSampling => ContactError::ShapeProjection,
+    }
+}
+
 fn prepare_surface(
     source: &AircraftSurfaceDocument,
 ) -> Result<SurfaceStorage, AircraftDefinitionError> {

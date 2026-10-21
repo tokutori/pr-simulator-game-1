@@ -21,6 +21,25 @@ pub enum ContactError {
     Dynamics(DynamicsError),
     /// Continuous motion could not be resolved within the bounded numerical precision.
     UnresolvedMotion,
+    /// A deforming flight has no accepted coefficient for its existing shape.
+    MissingWingBendingFactor,
+    /// The structural definition could not project the requested contact shape.
+    ShapeProjection,
+    /// Initial composite-CG wind for the structural load law could not be sampled.
+    Wind(crate::WindError),
+}
+
+/// Borrowed structural projection with storage prepared before flight.
+pub trait TailContactShapeProvider {
+    /// Evaluates the structural load law at the interval's initial composite-CG airspeed.
+    fn wing_bending_factor(&self, airspeed_mps: f64) -> Result<WingBendingFactor, ContactError>;
+
+    /// Writes and borrows corresponding FRD points for one candidate held shape.
+    fn points(
+        &mut self,
+        factor: WingBendingFactor,
+        incidence: crate::TailIncidence,
+    ) -> Result<&[BodyPoint], ContactError>;
 }
 
 /// Finite signed multiplier of a prepared reference wing-bending displacement.

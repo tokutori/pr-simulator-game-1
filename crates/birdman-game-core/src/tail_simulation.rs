@@ -4,7 +4,10 @@ use vstd::prelude::*;
 
 use crate::aerodynamics::{HybridAerodynamicLoad, TailIncidence};
 use crate::aerodynamics_contract::{AeroError, AerodynamicEvaluationError, HybridLimit};
-use crate::contact::{ContactError, WaterContactGeometry, detect_flight_state_water_contact};
+use crate::contact::{
+    ContactError, TailContactShapeProvider, WaterContactGeometry, WingBendingFactor,
+    detect_flight_state_water_contact,
+};
 use crate::dynamics::{
     AircraftModel, DynamicsError, ExternalLoadProvider, FlightState, Gravity, LoadError,
     PilotAcceleration, PilotPositionTarget, Wrench, advance, pilot_target_acceleration,
@@ -17,6 +20,10 @@ use crate::tail_control::{
     advance_tail_control_at_alpha,
 };
 
+mod contact_shape;
+use contact_shape::TailTrialGeometry;
+pub use contact_shape::advance_tail_flight_tick_with_shape_provider;
+
 /// One immutable integer-tick state with exactly two held physical tail incidences.
 #[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -25,10 +32,12 @@ pub struct TailFlightTickState {
     flight_state: FlightState,
     incidence: TailIncidence,
     pilot_position_target: PilotPositionTarget,
+    wing_bending_factor: Option<WingBendingFactor>,
 }
 
 impl TailFlightTickState {
     /// Validates the physical state and held pilot target against the sealed aircraft.
+    /// Structural deformation remains unrecorded until its accepted coefficient is attached.
     pub fn try_new(
         aircraft: &AircraftModel,
         tick_index: u64,
@@ -44,6 +53,7 @@ impl TailFlightTickState {
             flight_state,
             incidence,
             pilot_position_target,
+            wing_bending_factor: None,
         })
     }
 
@@ -73,6 +83,17 @@ impl TailFlightTickState {
     #[cfg_attr(verus_only, verus_spec(returns self.pilot_position_target()))]
     pub const fn pilot_position_target(self) -> PilotPositionTarget {
         self.pilot_position_target
+    }
+
+    /// Attaches the explicitly accepted structural coefficient at this boundary.
+    pub const fn with_wing_bending_factor(mut self, factor: WingBendingFactor) -> Self {
+        self.wing_bending_factor = Some(factor);
+        self
+    }
+
+    /// Returns the accepted coefficient, absent when structural deformation was unrecorded.
+    pub const fn wing_bending_factor(self) -> Option<WingBendingFactor> {
+        self.wing_bending_factor
     }
 }
 
@@ -161,16 +182,30 @@ pub enum TailFlightTickError {
     Contact(ContactError),
 }
 
-/// Consistent physical state and held inputs at the first fractional water-contact time.
+/// Ordering of water contact relative to an interval's shape and control update.
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TailWaterContactMoment {
+    /// The previously accepted shape already touches water before applying new input.
+    ExistingBoundary,
+    /// Applying the new held shape or incidence produces contact at the same time.
+    AppliedBoundary,
+    /// Contact occurs after positive time with the candidate shape held over the interval.
+    WithinInterval,
+}
+
+/// Consistent physical state and held inputs at the first water-contact time.
 #[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TailWaterContactSample {
     interval_start_tick: u64,
     fraction: f64,
+    moment: TailWaterContactMoment,
     contact_point_index: usize,
     flight_state: FlightState,
     incidence: TailIncidence,
     pilot_position_target: PilotPositionTarget,
+    wing_bending_factor: Option<WingBendingFactor>,
 }
 
 impl TailWaterContactSample {
@@ -188,6 +223,16 @@ impl TailWaterContactSample {
         self.fraction
     }
 
+    /// Returns which side of the interval boundary supplied the accepted shape and input.
+    pub const fn moment(self) -> TailWaterContactMoment {
+        self.moment
+    }
+
+    /// Returns the structural coefficient accepted at the contact time.
+    pub const fn wing_bending_factor(self) -> Option<WingBendingFactor> {
+        self.wing_bending_factor
+    }
+
     /// Returns the first structural contact point reaching the water plane.
     #[cfg_attr(verus_only, vstd::prelude::verus_verify(dual_spec))]
     #[cfg_attr(verus_only, verus_spec(returns self.contact_point_index()))]
@@ -202,7 +247,7 @@ impl TailWaterContactSample {
         self.flight_state
     }
 
-    /// Returns the previous incidence at fraction zero and updated held incidence otherwise.
+    /// Returns the incidence accepted on the recorded side of the contact boundary.
     #[cfg_attr(verus_only, verus_verify(dual_spec))]
     #[cfg_attr(verus_only, verus_spec(returns self.incidence()))]
     pub const fn incidence(self) -> TailIncidence {
@@ -227,7 +272,7 @@ pub enum TailFlightTickOutcome {
     WaterContact(TailWaterContactSample),
 }
 
-/// Input and command evaluation applied over a successfully elapsed physics interval.
+/// One accepted input and command evaluation, including a same-time shape update.
 #[cfg_attr(verus_only, verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TailAppliedControls {
@@ -256,10 +301,11 @@ impl TailAppliedControls {
 enum TailReportedOutcome {
     Advanced(TailFlightTickState, TailAppliedControls),
     ContactAtStart(TailWaterContactSample),
+    AppliedBoundary(TailWaterContactSample, TailAppliedControls),
     ContactWithinInterval(TailWaterContactSample, TailAppliedControls),
 }
 
-/// Atomic outcome and applied-control report; an unelapsed contact interval has no new input.
+/// Atomic physical outcome and controls accepted on its side of a contact boundary.
 #[cfg_attr(verus_only, verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TailFlightTickReport {
@@ -269,7 +315,7 @@ pub struct TailFlightTickReport {
 impl TailFlightTickReport {
     #[cfg(verus_only)]
     verus! {
-        /// States that an unelapsed report retains its preceding physical payload.
+        /// A report without newly accepted controls retains its preceding physical payload.
         pub open spec fn unelapsed_retains(self, previous: TailFlightTickState) -> bool {
             self.applied_controls().is_none() ==> match self.outcome() {
                 TailFlightTickOutcome::WaterContact(sample) =>
@@ -295,18 +341,20 @@ impl TailFlightTickReport {
         match self.result {
             TailReportedOutcome::Advanced(state, _) => TailFlightTickOutcome::Advanced(state),
             TailReportedOutcome::ContactAtStart(sample)
+            | TailReportedOutcome::AppliedBoundary(sample, _)
             | TailReportedOutcome::ContactWithinInterval(sample, _) => {
                 TailFlightTickOutcome::WaterContact(sample)
             }
         }
     }
 
-    /// Returns newly applied controls, absent only when water contact occurred at fraction zero.
+    /// Returns newly applied controls, absent only for contact with the existing shape.
     #[cfg_attr(verus_only, verus_verify(dual_spec))]
     #[cfg_attr(verus_only, verus_spec(returns self.applied_controls()))]
     pub const fn applied_controls(self) -> Option<TailAppliedControls> {
         match self.result {
             TailReportedOutcome::Advanced(_, controls)
+            | TailReportedOutcome::AppliedBoundary(_, controls)
             | TailReportedOutcome::ContactWithinInterval(_, controls) => Some(controls),
             TailReportedOutcome::ContactAtStart(_) => None,
         }
@@ -350,15 +398,45 @@ struct TailTickTrial<'provider, 'environment, 'geometry> {
     pilot_acceleration: PilotAcceleration,
     gravity: Gravity,
     loads: &'provider HybridAerodynamicLoad<'environment>,
-    geometry: Option<WaterContactGeometry<'geometry>>,
+    geometry: TailTrialGeometry<'geometry>,
 }
 
 impl TailTickTrial<'_, '_, '_> {
-    fn evaluate(&self, incidence: TailIncidence) -> Result<TailTrialOutcome, TailFlightTickError> {
+    fn evaluate(
+        &mut self,
+        incidence: TailIncidence,
+    ) -> Result<TailTrialOutcome, TailFlightTickError> {
         let held_load = HeldTailLoad {
             loads: self.loads,
             incidence,
         };
+        let wing_bending_factor = self.geometry.factor(self.previous.wing_bending_factor);
+        let applies_shape = self.geometry.applies_shape();
+        let geometry = self
+            .geometry
+            .prepare(incidence)
+            .map_err(TailFlightTickError::Contact)?;
+        if applies_shape
+            && let Some(geometry) = geometry
+            && let Some(contact_point_index) = geometry
+                .initial_contact_point(self.previous.flight_state)
+                .map_err(TailFlightTickError::Contact)?
+        {
+            validate_published_load(self.loads, self.previous.flight_state, incidence)?;
+            return Ok(TailTrialOutcome {
+                flight_state: self.previous.flight_state,
+                contact: Some(TailWaterContactSample {
+                    interval_start_tick: self.previous.tick_index,
+                    fraction: 0.0,
+                    moment: TailWaterContactMoment::AppliedBoundary,
+                    contact_point_index,
+                    flight_state: self.previous.flight_state,
+                    incidence,
+                    pilot_position_target: self.pilot_position_target,
+                    wing_bending_factor,
+                }),
+            });
+        }
         let state = advance(
             self.aircraft,
             &self.previous.flight_state,
@@ -368,7 +446,7 @@ impl TailTickTrial<'_, '_, '_> {
             PHYSICS_DT_SECONDS,
         )
         .map_err(TailFlightTickError::Dynamics)?;
-        let contact = if let Some(geometry) = self.geometry {
+        let contact = if let Some(geometry) = geometry {
             detect_flight_state_water_contact(
                 self.aircraft,
                 self.previous.tick_index,
@@ -379,7 +457,8 @@ impl TailTickTrial<'_, '_, '_> {
             )
             .map_err(TailFlightTickError::Contact)?
             .map(|sample| {
-                let (held_incidence, pilot_position_target) = if sample.fraction == 0.0 {
+                let existing_boundary = sample.fraction == 0.0 && !applies_shape;
+                let (held_incidence, pilot_position_target) = if existing_boundary {
                     (self.previous.incidence, self.previous.pilot_position_target)
                 } else {
                     (incidence, self.pilot_position_target)
@@ -387,10 +466,22 @@ impl TailTickTrial<'_, '_, '_> {
                 TailWaterContactSample {
                     interval_start_tick: sample.interval_start_tick,
                     fraction: sample.fraction,
+                    moment: if existing_boundary {
+                        TailWaterContactMoment::ExistingBoundary
+                    } else if sample.fraction == 0.0 {
+                        TailWaterContactMoment::AppliedBoundary
+                    } else {
+                        TailWaterContactMoment::WithinInterval
+                    },
                     contact_point_index: sample.contact_point_index,
                     flight_state: sample.flight_state,
                     incidence: held_incidence,
                     pilot_position_target,
+                    wing_bending_factor: if existing_boundary {
+                        self.previous.wing_bending_factor
+                    } else {
+                        wing_bending_factor
+                    },
                 }
             })
         } else {
@@ -399,13 +490,7 @@ impl TailTickTrial<'_, '_, '_> {
         let (published_state, published_incidence) = contact.map_or((state, incidence), |sample| {
             (sample.flight_state, sample.incidence)
         });
-        self.loads
-            .evaluate_hybrid(&published_state, published_incidence)
-            .map_err(|error| {
-                TailFlightTickError::Dynamics(DynamicsError::Load(LoadError::Aerodynamic(
-                    AerodynamicEvaluationError::Hybrid(error),
-                )))
-            })?;
+        validate_published_load(self.loads, published_state, published_incidence)?;
         Ok(TailTrialOutcome {
             flight_state: state,
             contact,
@@ -413,7 +498,7 @@ impl TailTickTrial<'_, '_, '_> {
     }
 
     fn protected_incidence(
-        &self,
+        &mut self,
         requested: TailIncidence,
         maximum_step: f64,
     ) -> Result<(TailTrialOutcome, TailIncidence), TailFlightTickError> {
@@ -456,13 +541,28 @@ impl TailTickTrial<'_, '_, '_> {
                 if incidence == requested {
                     continue;
                 }
-                if let Ok(state) = self.evaluate(incidence) {
-                    return Ok((state, incidence));
+                match self.evaluate(incidence) {
+                    Ok(state) => return Ok((state, incidence)),
+                    Err(error @ TailFlightTickError::Contact(_)) => return Err(error),
+                    Err(_) => {}
                 }
             }
         }
         Err(original_error)
     }
+}
+
+fn validate_published_load(
+    loads: &HybridAerodynamicLoad<'_>,
+    state: FlightState,
+    incidence: TailIncidence,
+) -> Result<(), TailFlightTickError> {
+    loads.evaluate_hybrid(&state, incidence).map_err(|error| {
+        TailFlightTickError::Dynamics(DynamicsError::Load(LoadError::Aerodynamic(
+            AerodynamicEvaluationError::Hybrid(error),
+        )))
+    })?;
+    Ok(())
 }
 
 fn controlled_tail_failure(error: TailFlightTickError) -> bool {
@@ -489,8 +589,15 @@ pub fn advance_tail_flight_tick(
     input: TailFlightTickInput,
     loads: &HybridAerodynamicLoad<'_>,
 ) -> Result<TailFlightTickState, TailFlightTickError> {
-    evaluate_tail_flight_tick(aircraft, previous, config, input, loads, None)
-        .map(|evaluation| evaluation.next)
+    evaluate_tail_flight_tick(
+        aircraft,
+        previous,
+        config,
+        input,
+        loads,
+        TailTrialGeometry::None,
+    )
+    .map(|evaluation| evaluation.next)
 }
 
 fn evaluate_tail_flight_tick(
@@ -499,7 +606,7 @@ fn evaluate_tail_flight_tick(
     config: TailFlightTickConfig,
     input: TailFlightTickInput,
     loads: &HybridAerodynamicLoad<'_>,
-    geometry: Option<WaterContactGeometry<'_>>,
+    geometry: TailTrialGeometry<'_>,
 ) -> Result<TailEvaluatedTick, TailFlightTickError> {
     let tick_index = previous
         .tick_index
@@ -551,7 +658,8 @@ fn evaluate_tail_flight_tick(
         PHYSICS_DT_SECONDS,
     )
     .map_err(TailFlightTickError::Dynamics)?;
-    let trial = TailTickTrial {
+    let wing_bending_factor = geometry.factor(previous.wing_bending_factor);
+    let mut trial = TailTickTrial {
         aircraft,
         previous,
         tick_index,
@@ -571,6 +679,7 @@ fn evaluate_tail_flight_tick(
             flight_state: outcome.flight_state,
             incidence,
             pilot_position_target,
+            wing_bending_factor,
         },
         controls: TailAppliedControls {
             input,
@@ -628,8 +737,14 @@ pub fn advance_tail_flight_tick_with_contact_report(
     {
         return Ok(contact_at_start_report(previous, 0.0, index));
     }
-    let evaluation =
-        evaluate_tail_flight_tick(aircraft, previous, config, input, loads, Some(geometry))?;
+    let evaluation = evaluate_tail_flight_tick(
+        aircraft,
+        previous,
+        config,
+        input,
+        loads,
+        TailTrialGeometry::Fixed(geometry),
+    )?;
     Ok(evaluated_tick_report(
         previous,
         evaluation.next,
@@ -663,17 +778,21 @@ pub(crate) fn evaluated_tick_report(
 ) -> TailFlightTickReport {
     let result = match contact {
         None => TailReportedOutcome::Advanced(next, controls),
-        Some(contact) => {
-            if contact.fraction == 0.0 {
+        Some(contact) => match contact.moment {
+            TailWaterContactMoment::ExistingBoundary => {
                 return contact_at_start_report(
                     previous,
                     contact.fraction,
                     contact.contact_point_index,
                 );
-            } else {
+            }
+            TailWaterContactMoment::AppliedBoundary => {
+                TailReportedOutcome::AppliedBoundary(contact, controls)
+            }
+            TailWaterContactMoment::WithinInterval => {
                 TailReportedOutcome::ContactWithinInterval(contact, controls)
             }
-        }
+        },
     };
     TailFlightTickReport { result }
 }
@@ -700,10 +819,12 @@ fn contact_at_start_report(
         result: TailReportedOutcome::ContactAtStart(TailWaterContactSample {
             interval_start_tick: previous.tick_index,
             fraction,
+            moment: TailWaterContactMoment::ExistingBoundary,
             contact_point_index,
             flight_state: previous.flight_state,
             incidence: previous.incidence,
             pilot_position_target: previous.pilot_position_target,
+            wing_bending_factor: previous.wing_bending_factor,
         }),
     }
 }

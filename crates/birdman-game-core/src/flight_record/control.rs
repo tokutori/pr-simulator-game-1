@@ -138,7 +138,7 @@ impl FlightRecordControls {
         }
     }
 
-    /// Captures only controls committed by one successfully elapsed interval.
+    /// Captures the controls accepted by an interval or same-time boundary update.
     #[cfg_attr(verus_only, verus_verify(dual_spec, open))]
     #[cfg_attr(verus_only, verus_spec(returns Self::from_tail_report(report)))]
     pub const fn from_tail_report(report: TailFlightTickReport) -> FlightRecordControlCapture {
@@ -171,9 +171,9 @@ impl FlightRecordControls {
 #[cfg_attr(verus_only, verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum FlightRecordControlCapture {
-    /// Contact at fraction zero reuses the previous sample and supplies no new input.
+    /// Existing-shape contact reuses the previous sample and supplies no new input.
     NoElapsedInterval,
-    /// A positive interval's authoritative physical values and evaluated commands.
+    /// Newly accepted physical values and evaluated commands.
     Applied(FlightRecordControls),
 }
 

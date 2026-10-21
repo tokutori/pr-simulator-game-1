@@ -340,6 +340,29 @@
       "description": "Original contact search or interpolation failure.",
       "oneOf": [
         {
+          "const": "missing_wing_bending_factor",
+          "description": "A deforming flight has no accepted structural coefficient.",
+          "type": "string"
+        },
+        {
+          "const": "shape_projection",
+          "description": "The structural definition could not project its contact shape.",
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Composite-center wind required by the structural load law is unavailable.",
+          "properties": {
+            "wind": {
+              "$ref": "#/$defs/WindFailureDocument"
+            }
+          },
+          "required": [
+            "wind"
+          ],
+          "type": "object"
+        },
+        {
           "const": "empty_geometry",
           "description": "Empty structural geometry.",
           "type": "string"

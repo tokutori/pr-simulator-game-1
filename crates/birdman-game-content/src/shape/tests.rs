@@ -1,5 +1,45 @@
 use super::*;
 use crate::{AircraftDefinition, playable_aircraft};
+use birdman_game_core::TailContactShapeProvider;
+
+#[test]
+fn contact_provider_projects_the_registered_shape_into_its_borrowed_storage() {
+    let aircraft = playable_aircraft().unwrap();
+    let mut output = aircraft.contact_points().to_vec();
+    let pointer = output.as_ptr();
+    let mut expected = output.clone();
+    let incidence = TailIncidence::try_new(0.04, -0.03).unwrap();
+    let mut provider = crate::AircraftContactShape::try_new(&aircraft, &mut output).unwrap();
+    let factor = provider
+        .wing_bending_factor(aircraft.document().trim.airspeed_mps)
+        .unwrap();
+    assert_eq!(factor.value(), 1.0);
+    aircraft
+        .write_deformed_contact_points_with_factor(factor, incidence, &mut expected)
+        .unwrap();
+    let actual = provider.points(factor, incidence).unwrap();
+    assert_eq!(actual, expected);
+    assert_eq!(actual.as_ptr(), pointer);
+}
+
+#[test]
+fn contact_provider_rejects_mismatched_storage_and_invalid_load_law_inputs() {
+    let aircraft = playable_aircraft().unwrap();
+    let mut output = aircraft.contact_points().to_vec();
+    assert!(matches!(
+        crate::AircraftContactShape::try_new(&aircraft, &mut output[..1]),
+        Err(ShapeError::MismatchedContactPointCount)
+    ));
+    let provider = crate::AircraftContactShape::try_new(&aircraft, &mut output).unwrap();
+    assert_eq!(
+        provider.wing_bending_factor(-0.1),
+        Err(birdman_game_core::ContactError::ShapeProjection)
+    );
+    assert_eq!(
+        provider.wing_bending_factor(f64::NAN),
+        Err(birdman_game_core::ContactError::Math(MathError::NonFinite))
+    );
+}
 
 #[test]
 fn accepted_bending_coefficients_preserve_corresponding_points_at_fractional_times() {

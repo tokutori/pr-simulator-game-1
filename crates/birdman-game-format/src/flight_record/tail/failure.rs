@@ -191,6 +191,12 @@ pub enum MathFailureDocument {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum ContactFailureDocument {
+    /// A deforming flight has no accepted structural coefficient.
+    MissingWingBendingFactor,
+    /// The structural definition could not project its contact shape.
+    ShapeProjection,
+    /// Composite-center wind required by the structural load law is unavailable.
+    Wind(WindFailureDocument),
     /// Empty structural geometry.
     EmptyGeometry,
     /// Endpoint lists contain different numbers of corresponding points.
@@ -658,6 +664,9 @@ impl ContactFailureDocument {
                 Self::Dynamics(DynamicsFailureDocument::from_core(cause)?)
             }
             ContactError::UnresolvedMotion => Self::UnresolvedMotion,
+            ContactError::MissingWingBendingFactor => Self::MissingWingBendingFactor,
+            ContactError::ShapeProjection => Self::ShapeProjection,
+            ContactError::Wind(cause) => Self::Wind(cause.into()),
         })
     }
 
@@ -669,6 +678,9 @@ impl ContactFailureDocument {
             Self::Math(cause) => ContactError::Math(cause.into()),
             Self::Dynamics(cause) => ContactError::Dynamics(cause.to_core()?),
             Self::UnresolvedMotion => ContactError::UnresolvedMotion,
+            Self::MissingWingBendingFactor => ContactError::MissingWingBendingFactor,
+            Self::ShapeProjection => ContactError::ShapeProjection,
+            Self::Wind(cause) => ContactError::Wind(cause.into()),
         })
     }
 }

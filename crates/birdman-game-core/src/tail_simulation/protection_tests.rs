@@ -41,10 +41,16 @@ fn evaluated_report_transfers_controls_and_normalizes_only_zero_contact() {
         let contact = TailWaterContactSample {
             interval_start_tick: previous.tick_index,
             fraction,
+            moment: if fraction == 0.0 {
+                TailWaterContactMoment::ExistingBoundary
+            } else {
+                TailWaterContactMoment::WithinInterval
+            },
             contact_point_index: 3,
             flight_state: next.flight_state,
             incidence: next.incidence,
             pilot_position_target: next.pilot_position_target,
+            wing_bending_factor: next.wing_bending_factor,
         };
         let report = evaluated_tick_report(previous, next, controls, Some(contact));
         let TailFlightTickOutcome::WaterContact(published) = report.outcome() else {
@@ -287,7 +293,7 @@ fn undefined_or_unavailable_datum_alpha_keeps_original_physics_and_first_stage_f
     assert_eq!(cause.stage(), Some(AerodynamicStage::First));
 }
 
-fn state(
+pub(super) fn state(
     aircraft: &AircraftModel,
     velocity: [f64; 3],
     rates: [f64; 3],
@@ -314,7 +320,7 @@ fn state(
     .unwrap()
 }
 
-fn config(
+pub(super) fn config(
     aircraft: &AircraftModel,
     mode: ControlMode,
     slew_rad_per_second: f64,
@@ -327,7 +333,7 @@ fn config(
     )
 }
 
-fn tail_boundary_body_rates(
+pub(super) fn tail_boundary_body_rates(
     horizontal_tail: HybridSurface<'_>,
     speed_meters_per_second: f64,
     sign: f64,
@@ -342,7 +348,7 @@ fn tail_boundary_body_rates(
     [0.0, rate, rate]
 }
 
-fn trial<'provider, 'environment>(
+pub(super) fn trial<'provider, 'environment>(
     aircraft: &'provider AircraftModel,
     previous: TailFlightTickState,
     config: TailFlightTickConfig,
@@ -371,11 +377,11 @@ fn trial<'provider, 'environment>(
         .unwrap(),
         gravity: config.gravity,
         loads,
-        geometry: None,
+        geometry: TailTrialGeometry::None,
     }
 }
 
-fn commands(
+pub(super) fn commands(
     previous: TailFlightTickState,
     config: TailFlightTickConfig,
     input: TailFlightTickInput,
@@ -409,7 +415,7 @@ fn rejected_trial(result: Result<TailTrialOutcome, TailFlightTickError>) -> Tail
     }
 }
 
-fn input_holding_incidence(incidence: TailIncidence) -> TailFlightTickInput {
+pub(super) fn input_holding_incidence(incidence: TailIncidence) -> TailFlightTickInput {
     TailFlightTickInput::new(
         TailPilotIntent::try_new(
             -incidence.elevator_rad() / 0.2,

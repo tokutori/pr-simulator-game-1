@@ -83,7 +83,9 @@ export type AerodynamicFailureDocument = {
 /**
  * Original contact search or interpolation failure.
  */
-export type ContactFailureDocument = "empty_geometry" | "mismatched_geometry" | "non_adjacent_ticks" | {
+export type ContactFailureDocument = "missing_wing_bending_factor" | "shape_projection" | {
+    readonly wind: WindFailureDocument;
+} | "empty_geometry" | "mismatched_geometry" | "non_adjacent_ticks" | {
     readonly math: MathFailureDocument;
 } | {
     readonly dynamics: DynamicsFailureDocument;

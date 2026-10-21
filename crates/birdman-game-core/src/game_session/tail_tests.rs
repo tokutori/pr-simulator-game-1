@@ -474,6 +474,26 @@ fn envelope_classification_preserves_numerical_failure_distinction() {
         )));
         assert_eq!(error.end_reason(), reason);
     }
+    for (cause, reason) in [
+        (
+            crate::ContactError::Wind(WindError::OutsideGrid),
+            SessionEndReason::OutOfValidEnvelope,
+        ),
+        (
+            crate::ContactError::Wind(WindError::NonFinite),
+            SessionEndReason::FatalSimulationError,
+        ),
+        (
+            crate::ContactError::ShapeProjection,
+            SessionEndReason::FatalSimulationError,
+        ),
+        (
+            crate::ContactError::MissingWingBendingFactor,
+            SessionEndReason::FatalSimulationError,
+        ),
+    ] {
+        assert_eq!(TailFlightTickError::Contact(cause).end_reason(), reason);
+    }
 }
 
 #[test]
