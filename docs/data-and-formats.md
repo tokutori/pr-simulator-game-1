@@ -18,7 +18,7 @@
 | 飛行記録JSON | `TailFlightRecordDocument`、schema 6/7、最大16 MiB |
 | 飛行ログCSV | schema 6はexport version 3、schema 7はversion 4 |
 | Personal Best | 比較方式v2、Rustによるkey再生成・選定 |
-| 既定機体・scenario | aircraft model 3、catalog 5、scenario 5、controller profile 3 |
+| 既定機体・scenario | aircraft model 4、catalog 7、scenario 7、controller profile 3 |
 
 - 版の正本は実装の公開定義・登録catalogとする。
 - JSON schema、物理model、機体、controller、環境、score、比較方式、build来歴は異なる概念であり、独立して保持する。

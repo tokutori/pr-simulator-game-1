@@ -38,6 +38,8 @@ npm ci
 npm run verify
 ~~~
 
+- cross-target接続は`npm run test:cross-target -- target/cross-target-check`で検査する。新しい出力先でNativeの既存CPU試験を実行し、直接Rustとの全記録一致を確認してから、同じ設定・seed・入力列をfresh WASMへ投入する。4支援×3入力の全sample・終端と、保存原文・CSV・5時点のReplay query/cameraを照合する。
+- cross-targetの浮動小数点値は絶対許容差 $10^{-9}$ と相対許容差 $10^{-10}$ の和で比較する。identity・比較key・source fingerprint・終了分類は完全一致、保存原文とそのCSV再出力はbyte一致とする。実行結果にはsourceとWASMのhashを記録する。
 - Rustdocでは `RUSTDOCFLAGS=-D warnings` を設定する。
 - Windows CIは共有・Web側のworkspace試験とNative単独試験を分離し、Native実行ファイルもビルドする。
 - WASIはビルドと実行の結果を分ける。

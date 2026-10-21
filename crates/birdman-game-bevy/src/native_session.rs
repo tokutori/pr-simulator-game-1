@@ -812,6 +812,7 @@ mod tests {
         for (mode_action, mode_name) in [
             (AssistanceLevel::Manual, "Manual"),
             (AssistanceLevel::Assisted, "Shared 50%"),
+            (AssistanceLevel::Light, "Shared 20%"),
             (AssistanceLevel::Strong, "Automatic"),
         ] {
             for nose_up in [0.0, 1.0, -1.0] {
@@ -890,6 +891,87 @@ mod tests {
                     finalization.terminal_tick as f64 + finalization.terminal_fraction
                 );
                 assert_eq!(last_sample.controls.actuators(), display.incidence);
+                if let Some(directory) = std::env::var_os("BPG_NATIVE_ACCEPTANCE_DIR") {
+                    assert_eq!(input.pilot, None);
+                    let mut reference = ApplicationSession::default();
+                    for command in [
+                        SessionCommand::OpenSetup {},
+                        SessionCommand::SelectAssistance {
+                            assistance: mode_action,
+                        },
+                        SessionCommand::Prepare {},
+                        SessionCommand::StartCountdown {},
+                    ] {
+                        reference.execute(command, BackendReadiness::Ready).unwrap();
+                    }
+                    reference
+                        .observe_countdown(
+                            reference.core_session().countdown_token().unwrap(),
+                            3.0,
+                            true,
+                        )
+                        .unwrap();
+                    while reference.core_session().snapshot().phase() == SessionPhase::FlightRunning
+                    {
+                        let outcome =
+                            reference.advance_tail_flight_tick(input.core_input().unwrap());
+                        assert!(
+                            outcome.is_ok()
+                                || reference.core_session().snapshot().phase()
+                                    == SessionPhase::Result
+                        );
+                    }
+                    assert_eq!(reference.core_session().snapshot(), terminal);
+                    assert_eq!(
+                        reference.core_session().flight_record().unwrap().samples(),
+                        record.samples()
+                    );
+                    let document = session.game.flight_record_document().unwrap();
+                    let json = document.encode_json().unwrap();
+                    assert_eq!(
+                        reference
+                            .flight_record_document()
+                            .unwrap()
+                            .encode_json()
+                            .unwrap(),
+                        json
+                    );
+                    let demand = input.core_input().unwrap();
+                    let duration = record.duration_seconds().unwrap();
+                    let replay = [0.0, 0.25, 0.5, 0.75, 1.0].map(|fraction| {
+                        let time = duration * fraction;
+                        let sample = birdman_game_app::record_query::RecordedPlaybackSample::from(
+                            record.sample_at_seconds(time).unwrap(),
+                        );
+                        let camera = birdman_game_presentation::replay_camera::replay_camera_view(
+                            record,
+                            Some(&document.control_identity),
+                            time,
+                            birdman_game_presentation::game_ui::GameUiReplayCamera::Chase,
+                            birdman_game_presentation::game_ui::GameUiPresentationMode::Screen,
+                            false,
+                        )
+                        .unwrap();
+                        serde_json::json!({ "time": time, "sample": sample, "camera": camera })
+                    });
+                    let artifact = serde_json::json!({
+                        "record_json": String::from_utf8(json).unwrap(),
+                        "csv": String::from_utf8(document.encode_csv().unwrap()).unwrap(),
+                        "replay": replay,
+                        "input": {
+                            "control_layout": "tail_incidence",
+                            "nose_up": demand.manual_intent().nose_up(),
+                            "turn_right": demand.manual_intent().turn_right(),
+                            "desired_pitch_rate_rad_s": demand.desired_body_rate().pitch_rad_per_second(),
+                            "desired_yaw_rate_rad_s": demand.desired_body_rate().yaw_rad_per_second(),
+                            "pilot_position_command": { "kind": "hold" },
+                        },
+                    });
+                    std::fs::create_dir_all(&directory).unwrap();
+                    let path = std::path::Path::new(&directory)
+                        .join(format!("{mode_action:?}-{nose_up}.json"));
+                    std::fs::write(path, serde_json::to_vec(&artifact).unwrap()).unwrap();
+                }
                 if let Some(failure) = result.failure {
                     assert_eq!(result.reason, failure.end_reason());
                     assert_eq!(
