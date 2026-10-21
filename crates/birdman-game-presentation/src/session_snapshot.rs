@@ -10,6 +10,7 @@ use birdman_game_app::{
 use birdman_game_core::{
     DistanceScoreError, DynamicsError, FlightState, FlightTelemetry, GameSessionError,
     SessionSnapshot, SessionTerminalState, TailIncidence, TailPilotPositionMapping,
+    WingBendingFactor,
 };
 use birdman_game_format::{
     FlightRecordFormatError, FlightRecordTailIdentityDocument, TAIL_INPUT_SCHEMA_VERSION,
@@ -145,6 +146,7 @@ impl<'session> Projection<'session> {
                         state.incidence(),
                         0.0,
                         None,
+                        state.wing_bending_factor(),
                     )?),
                 }
             }
@@ -169,6 +171,7 @@ impl<'session> Projection<'session> {
                     state.incidence(),
                     state.tick_index() as f64 / f64::from(birdman_game_core::PHYSICS_HZ),
                     Some(telemetry),
+                    state.wing_bending_factor(),
                 )?;
                 (
                     TailFrameDocument::Flight {
@@ -184,11 +187,12 @@ impl<'session> Projection<'session> {
                 )
             }
             SessionSnapshot::Result(result) => {
-                let (state, incidence) = match result.state {
+                let (state, incidence, wing_bending_factor) = match result.state {
                     SessionTerminalState::TailTick(state) => (
                         TailStateDocument::try_from_tick(state, self.required_pilot_mapping()?)
                             .map_err(SnapshotProjectionError::PilotPosition)?,
                         state.incidence(),
+                        state.wing_bending_factor(),
                     ),
                     SessionTerminalState::TailWaterContact(sample) => (
                         TailStateDocument::try_from_state(
@@ -201,6 +205,7 @@ impl<'session> Projection<'session> {
                         )
                         .map_err(SnapshotProjectionError::PilotPosition)?,
                         sample.incidence(),
+                        sample.wing_bending_factor(),
                     ),
                 };
                 let telemetry = self.required_telemetry()?;
@@ -209,6 +214,7 @@ impl<'session> Projection<'session> {
                     incidence,
                     state.flight_time_s,
                     Some(telemetry),
+                    wing_bending_factor,
                 )?;
                 let finalization = self
                     .session
@@ -284,6 +290,7 @@ impl<'session> Projection<'session> {
         incidence: TailIncidence,
         simulation_time_seconds: f64,
         telemetry: Option<FlightTelemetry>,
+        wing_bending_factor: Option<WingBendingFactor>,
     ) -> Result<FlightRenderPose, SnapshotProjectionError> {
         let core = self.session.core_session();
         let initial_pilot = core
@@ -315,6 +322,7 @@ impl<'session> Projection<'session> {
             simulation_time_seconds,
             telemetry,
             geometry,
+            wing_bending_factor,
         ))
     }
 

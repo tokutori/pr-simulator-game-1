@@ -238,12 +238,14 @@ impl WingGeometry {
                 .collect(),
             bending_factor: None,
         };
-        self.update_frame(&mut frame, reference_speed());
+        self.update_frame_with_factor(&mut frame, WingBendingFactor::try_new(1.0).unwrap())
+            .expect("registered reference geometry must remain representable");
         frame
     }
 
     #[doc = "Derives one shared bending coefficient from speed and updates retained geometry. Non-finite speed uses the reference load."]
-    pub fn update_frame(&self, frame: &mut WingFrame, speed: f64) -> bool {
+    #[cfg(test)]
+    fn update_frame(&self, frame: &mut WingFrame, speed: f64) -> bool {
         self.update_frame_with_factor(frame, display_bending_factor(speed))
             .expect("registered wing deformation must remain representable")
     }
@@ -334,10 +336,12 @@ fn half_span() -> f64 {
         .fold(0.0, f64::max)
 }
 
+#[cfg(test)]
 fn reference_speed() -> f64 {
     definition().document().trim.airspeed_mps
 }
 
+#[cfg(test)]
 fn display_bending_factor(speed: f64) -> WingBendingFactor {
     let speed = if speed.is_finite() {
         speed.max(0.0)

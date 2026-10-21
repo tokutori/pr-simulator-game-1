@@ -74,7 +74,10 @@ pub(super) fn game_ui_hud(
             let sample = record
                 .sample_at_seconds(clock.time_seconds())
                 .map_err(GameUiError::Record)?;
-            (sample, "—".to_owned(), None)
+            let target = sample
+                .input
+                .map(|input| input.resolved_pilot_position_target_m());
+            (sample, "—".to_owned(), target)
         }
         _ => return Ok(None),
     };

@@ -642,7 +642,7 @@ export interface TailTelemetryDocument1 {
  */
 export interface FlightRenderPose {
     /**
-     * Airspeed used by the visual wing-flex model.
+     * Observed airspeed at this physical or recorded state.
      */
     readonly airspeedMetersPerSecond: number | null;
     readonly attitudeBodyToNed: RenderAttitude;
@@ -677,6 +677,22 @@ export interface FlightRenderPose {
      * Ambient wind at the composite centre of gravity.
      */
     readonly windVelocityNedMetersPerSecond: RenderNedVector1 | null;
+    /**
+     * Accepted structural coefficient, distinct from absent legacy data or unknown geometry.
+     */
+    readonly wingDeformation: {
+        /**
+         * Dimensionless bending coefficient held over its physical interval.
+         */
+        readonly factor: number;
+        readonly kind: "accepted";
+    } | {
+        readonly kind: "unavailable";
+        /**
+         * Reason for the missing projection input.
+         */
+        readonly reason: "unrecorded" | "unregistered_aircraft_geometry";
+    };
 }
 /**
  * Scalar-first body-to-NED orientation.

@@ -409,7 +409,7 @@ fn registered_flight_finishes_at_the_airframe_and_keeps_record_score_and_revisio
             document.header.catalog_version,
             document.header.scenario_version
         ),
-        (6, 6)
+        (7, 7)
     );
     assert_eq!(
         document.header.aircraft_model_version,

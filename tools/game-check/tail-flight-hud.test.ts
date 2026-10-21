@@ -134,12 +134,15 @@ describe("tail-aware shared Flight HUD", () => {
     }
   });
 
-  it("keeps archive cursor time separate from terminal score and unavailable held target", () => {
+  it("shows the recorded pilot target at the archive cursor time", () => {
     const source = new HybridGameSessionBridge(0, 21, 22);
     const replay = new HybridGameSessionBridge(0, 31, 32);
     try {
       launch(source);
       advance(source);
+      const live = display(source);
+      if (live.frame.kind !== "flight") throw new Error("Expected the recorded input interval");
+      const target = live.frame.state.pilot_position_target_m;
       source.abort();
       const result = display(source);
       const terminalView = readContract<GameUiView>("view", source.game_ui_view_json(JSON.stringify(sharedGameUiPlatform())));
@@ -155,7 +158,7 @@ describe("tail-aware shared Flight HUD", () => {
       replay.seek_playback(0.005);
       const model = sharedHud(replay);
       expect(sharedHudNode(model, "hud-distance").content.value).toBe("—");
-      expect(sharedHudNode(model, "hud-pilot-position").content.value).toContain("(—) m");
+      expect(sharedHudNode(model, "hud-pilot-position").content.value).toContain(`(${target >= 0 ? "+" : ""}${target.toFixed(2)}) m`);
       expect(sharedHudNode(model, "hud-elapsed").content.value).toBe(`${snapshot.flight_time_s.toFixed(1)} s`);
       expect(snapshot.flight_time_s).toBe(0.005);
     } finally {

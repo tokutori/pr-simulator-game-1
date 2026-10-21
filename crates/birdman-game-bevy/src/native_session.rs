@@ -7,7 +7,7 @@ use birdman_game_app::{HybridSessionPreparation, identity_for_selection};
 use birdman_game_core::{
     FlightState, GameSessionError, SessionPhase, SessionSnapshot, SessionTerminalState,
     TailFlightTickInput, TailIncidence, TailPilotIntent, TailPilotPositionCommand,
-    TailPilotPositionIntent, TailRateTarget,
+    TailPilotPositionIntent, TailRateTarget, WingBendingFactor,
 };
 use birdman_game_presentation::game_ui::{
     GameUiAction, GameUiContext, GameUiFrame, GameUiPlatformInput, GameUiState,
@@ -226,6 +226,7 @@ impl NativeSession {
             state: state.flight_state(),
             incidence: state.incidence(),
             tick: state.tick_index() as f64,
+            wing_bending_factor: state.wing_bending_factor(),
         })
     }
 
@@ -236,17 +237,20 @@ impl NativeSession {
                 state: state.flight_state(),
                 incidence: state.incidence(),
                 tick: state.tick_index() as f64,
+                wing_bending_factor: state.wing_bending_factor(),
             }),
             SessionSnapshot::Result(result) => match result.state {
                 SessionTerminalState::TailTick(state) => Some(TailDisplay {
                     state: state.flight_state(),
                     incidence: state.incidence(),
                     tick: state.tick_index() as f64,
+                    wing_bending_factor: state.wing_bending_factor(),
                 }),
                 SessionTerminalState::TailWaterContact(sample) => Some(TailDisplay {
                     state: sample.flight_state(),
                     incidence: sample.incidence(),
                     tick: sample.interval_start_tick() as f64 + sample.fraction(),
+                    wing_bending_factor: sample.wing_bending_factor(),
                 }),
             },
             SessionSnapshot::Replay { .. } | SessionSnapshot::Attract { .. } => {
@@ -261,6 +265,7 @@ impl NativeSession {
                     state: sample.flight_state,
                     incidence: sample.actuators,
                     tick: position,
+                    wing_bending_factor: sample.wing_bending_factor,
                 })
             }
             _ => None,
@@ -347,6 +352,7 @@ pub(crate) struct TailDisplay {
     pub(crate) state: FlightState,
     pub(crate) incidence: TailIncidence,
     pub(crate) tick: f64,
+    pub(crate) wing_bending_factor: Option<WingBendingFactor>,
 }
 
 #[derive(Resource, Default, Clone, Copy)]

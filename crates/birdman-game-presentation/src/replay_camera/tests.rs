@@ -1,8 +1,9 @@
 use super::*;
 use birdman_game_core::{
-    BodyVector, FlightRecordControls, FlightRecordDisposition, FlightRecordFinalization,
-    FlightRecordHeader, FlightRecordTailInput, FlightState, FlightTelemetry, NedPoint, NedVector,
-    TailFlightTickInput, TailIncidence, TailPilotIntent, TailPilotPositionCommand, TailRateTarget,
+    BodyVector, FlightRecordBoundaryEvent, FlightRecordControls, FlightRecordDisposition,
+    FlightRecordFinalization, FlightRecordHeader, FlightRecordTailInput, FlightState,
+    FlightTelemetry, NedPoint, NedVector, TailFlightTickInput, TailIncidence, TailPilotIntent,
+    TailPilotPositionCommand, TailRateTarget, WingBendingFactor,
 };
 use birdman_game_scene::cockpit_geometry::CockpitGeometry;
 
@@ -162,6 +163,12 @@ fn render_pose_matches_the_same_record_sample_and_retains_unknown_geometry() {
         pose.tail_geometry,
         crate::render_pose::RenderTailGeometry::Available { .. }
     ));
+    assert_eq!(
+        pose.wing_deformation,
+        crate::render_pose::RenderWingDeformation::Unavailable {
+            reason: crate::render_pose::RenderWingDeformationUnavailable::Unrecorded
+        }
+    );
     let document = serde_json::to_value(projection).unwrap();
     assert!(document["sample"].get("render_pose").is_none());
     assert!(document["render_pose"].is_object());
@@ -170,6 +177,86 @@ fn render_pose_matches_the_same_record_sample_and_retains_unknown_geometry() {
         unknown.render_pose.tail_geometry,
         crate::render_pose::RenderTailGeometry::Unavailable { .. }
     ));
+    assert_eq!(
+        unknown.render_pose.wing_deformation,
+        crate::render_pose::RenderWingDeformation::Unavailable {
+            reason:
+                crate::render_pose::RenderWingDeformationUnavailable::UnregisteredAircraftGeometry
+        }
+    );
+}
+
+#[test]
+fn replay_uses_adopted_interval_and_same_time_terminal_deformation() {
+    let fixture = fixture_record(0.02, SessionEndReason::TimeLimit);
+    let mut samples = fixture.samples()[..2].to_vec();
+    for (sample, factor) in samples.iter_mut().zip([0.81, 1.21]) {
+        sample.wing_bending_factor = Some(WingBendingFactor::try_new(factor).unwrap());
+    }
+    let incidence = TailIncidence::try_new(0.05, -0.06).unwrap();
+    let input = FlightRecordTailInput::try_from_recorded(
+        TailFlightTickInput::new(
+            TailPilotIntent::try_new(0.0, 0.0).unwrap(),
+            TailRateTarget::try_new(0.0, 0.0).unwrap(),
+            TailPilotPositionCommand::Set(
+                birdman_game_core::TailPilotPositionIntent::try_new(0.5).unwrap(),
+            ),
+        ),
+        0.2,
+        incidence,
+        incidence,
+        incidence,
+    )
+    .unwrap();
+    let mut finalization = fixture.finalization().unwrap();
+    finalization.reason = SessionEndReason::WaterContact;
+    finalization.terminal_tick = 1;
+    finalization.boundary_event = Some(FlightRecordBoundaryEvent {
+        incidence,
+        input,
+        wing_bending_factor: WingBendingFactor::try_new(1.4).unwrap(),
+    });
+    let record =
+        FlightRecord::try_from_finalized_samples(fixture.header(), samples.clone(), finalization)
+            .unwrap();
+    let definition = birdman_game_app::registered_aircraft().unwrap();
+    let identity = FlightRecordTailIdentityDocument {
+        aircraft_configuration_id: definition.document().configuration_id.clone(),
+        controller_profile_id: "camera-fixture".into(),
+    };
+    for (time, factor) in [(0.0, 0.81), (0.005, 1.21), (0.01, 1.4)] {
+        let projection = replay_camera_view(
+            &record,
+            Some(&identity),
+            time,
+            GameUiReplayCamera::Chase,
+            GameUiPresentationMode::Screen,
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            projection.render_pose.wing_deformation,
+            crate::render_pose::RenderWingDeformation::Accepted { factor }
+        );
+        assert_eq!(projection.render_pose.simulation_time_seconds, time);
+        if time == 0.01 {
+            assert_eq!(
+                projection
+                    .render_pose
+                    .controls
+                    .physical_incidence
+                    .horizontal_tail_radians,
+                incidence.elevator_rad()
+            );
+            let sample = record.sample_at_seconds(time).unwrap();
+            assert_eq!(
+                sample.input.unwrap().resolved_pilot_position_target_m(),
+                0.2
+            );
+            assert_eq!(sample.flight_state, samples[1].flight_state);
+        }
+    }
+    assert_eq!(record.samples(), samples);
 }
 
 #[test]

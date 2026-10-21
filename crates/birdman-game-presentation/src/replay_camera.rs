@@ -144,6 +144,7 @@ pub fn replay_camera_view(
             (sample.tick_index as f64 + sample.fraction) / f64::from(birdman_game_core::PHYSICS_HZ),
             Some(sample.telemetry),
             tail_geometry,
+            sample.wing_bending_factor,
         ),
         camera,
         cinematic: None,

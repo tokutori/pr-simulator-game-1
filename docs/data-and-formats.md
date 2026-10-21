@@ -377,7 +377,7 @@ keyは次の条件をSHA-256へ入力する。
 - 微小fractionを絶対tickへのf64加算で消失させず、隣接sampleの局所時間差から補間率を求める。
 
 - 位置・速度・身体状態は線型補間、quaternionは最短経路slerp、角度はwrap-awareに補間する。
-- actuatorはexact sample時刻で保存値を返し、内点では終端側sampleの保持値を返す。
+- actuator・入力・曲げ係数はexact sample時刻で保存値を返し、内点では終端側sampleの保持値を返す。HUDのパイロット目標位置も同じqueryから取得する。
 - fractional terminalにも同じ規則を適用する。
 - 範囲外queryは拒否し、physics・原recordを変更しない。
 

@@ -1544,7 +1544,7 @@
       "description": "Engine-independent presentation of one committed or recorded aircraft state.",
       "properties": {
         "airspeedMetersPerSecond": {
-          "description": "Airspeed used by the visual wing-flex model.",
+          "description": "Observed airspeed at this physical or recorded state.",
           "format": "double",
           "type": [
             "number",
@@ -1592,6 +1592,10 @@
             }
           ],
           "description": "Ambient wind at the composite centre of gravity."
+        },
+        "wingDeformation": {
+          "$ref": "#/$defs/RenderWingDeformation",
+          "description": "Accepted structural coefficient, distinct from absent legacy data or unknown geometry."
         }
       },
       "required": [
@@ -1601,6 +1605,7 @@
         "initialPilotPositionMeters",
         "simulationTimeSeconds",
         "airspeedMetersPerSecond",
+        "wingDeformation",
         "windVelocityNedMetersPerSecond",
         "controls",
         "tailGeometry"
@@ -5433,6 +5438,65 @@
         "verticalTailRadians"
       ],
       "type": "object"
+    },
+    "RenderWingDeformation": {
+      "description": "Structural input supplied by the owning flight or canonical record query.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Adopted finite coefficient; the scene projection checks representability.",
+          "properties": {
+            "factor": {
+              "description": "Dimensionless bending coefficient held over its physical interval.",
+              "format": "double",
+              "type": "number"
+            },
+            "kind": {
+              "const": "accepted",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "factor"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The source cannot supply the registered structural input.",
+          "properties": {
+            "kind": {
+              "const": "unavailable",
+              "type": "string"
+            },
+            "reason": {
+              "$ref": "#/$defs/RenderWingDeformationUnavailable",
+              "description": "Reason for the missing projection input."
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "RenderWingDeformationUnavailable": {
+      "description": "Structural input availability for saved and live sources.",
+      "oneOf": [
+        {
+          "const": "unrecorded",
+          "description": "The archive predates accepted-coefficient recording.",
+          "type": "string"
+        },
+        {
+          "const": "unregistered_aircraft_geometry",
+          "description": "The aircraft identity has no registered structural geometry.",
+          "type": "string"
+        }
+      ]
     },
     "ReplayCameraView": {
       "additionalProperties": false,

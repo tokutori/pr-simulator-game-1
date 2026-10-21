@@ -149,6 +149,13 @@ describe("current WebAssembly browser binding", () => {
       const document = JSON.parse(encoded) as { schema_version: number; header: { personal_best_key: number[] } };
       expect(document.schema_version).toBe(7);
       expect(document.header.personal_best_key).toHaveLength(32);
+      const pose = snapshot.render_pose;
+      if (pose === null) throw new Error("Result requires an accepted render pose");
+      const terminalSample = session.queryRecordSample(pose.simulationTimeSeconds);
+      expect(pose.wingDeformation).toEqual({ kind: "accepted", factor: terminalSample.wing_bending_factor });
+      session.executeSharedSessionCommand({ kind: "enter_replay" });
+      expect(session.queryReplayCamera(pose.simulationTimeSeconds, "chase", true).wingDeformation).toEqual(pose.wingDeformation);
+      session.executeSharedSessionCommand({ kind: "leave_replay" });
       const selection = new TailPersonalBestSelectionBridge(encoded);
       try {
         expect(selection.is_eligible()).toBe(true);

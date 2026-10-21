@@ -27,6 +27,10 @@ use bevy::{
 use birdman_game_app::{LaunchPlatform, launch_venue};
 #[cfg(test)]
 use birdman_game_core::HybridSurfaceRole;
+use birdman_game_core::WingBendingFactor;
+use birdman_game_presentation::render_pose::{
+    RenderTailGeometry, RenderWingDeformation, render_tail_geometry, render_wing_deformation,
+};
 use birdman_game_scene::cockpit_geometry::{CockpitGeometry, CockpitMaterial};
 use birdman_game_scene::lake_sky::LAKE_SCENE_LIGHTING;
 use birdman_game_scene::tail_geometry::{TailGeometry, TailMaterial};
@@ -73,6 +77,7 @@ struct RenderSample {
     elevator_rad: f64,
     rudder_rad: f64,
     simulation_time_seconds: f64,
+    wing_bending_factor: Option<WingBendingFactor>,
 }
 
 impl RenderSample {
@@ -83,6 +88,7 @@ impl RenderSample {
             elevator_rad: display.incidence.elevator_rad(),
             rudder_rad: display.incidence.rudder_rad(),
             simulation_time_seconds: display.tick / f64::from(birdman_game_core::PHYSICS_HZ),
+            wing_bending_factor: display.wing_bending_factor,
         }
     }
 }
@@ -121,13 +127,40 @@ impl RenderHistory {
                     .slerp(current.aircraft.rotation, fraction as f32),
             ),
             pilot_position_m: interpolate(previous.pilot_position_m, current.pilot_position_m),
-            elevator_rad: interpolate(previous.elevator_rad, current.elevator_rad),
-            rudder_rad: interpolate(previous.rudder_rad, current.rudder_rad),
+            elevator_rad: if fraction == 0.0 {
+                previous.elevator_rad
+            } else {
+                current.elevator_rad
+            },
+            rudder_rad: if fraction == 0.0 {
+                previous.rudder_rad
+            } else {
+                current.rudder_rad
+            },
+            wing_bending_factor: if fraction == 0.0 {
+                previous.wing_bending_factor
+            } else {
+                current.wing_bending_factor
+            },
             simulation_time_seconds: interpolate(
                 previous.simulation_time_seconds,
                 current.simulation_time_seconds,
             ),
         })
+    }
+}
+
+fn project_display_sample(
+    display: &TailDisplay,
+    running: bool,
+    history: &RenderHistory,
+    fraction: f64,
+) -> RenderSample {
+    let exact = RenderSample::from_display(display);
+    if running {
+        history.interpolated(fraction).unwrap_or(exact)
+    } else {
+        exact
     }
 }
 
@@ -200,7 +233,16 @@ pub(crate) struct MainWingProjection {
     surfaces: Vec<MainWingSurface>,
     rods: Vec<Entity>,
     foam: Vec<Entity>,
+    projection_failed: bool,
 }
+
+#[derive(Component)]
+pub(crate) struct MainWingPart;
+
+type MainWingVisibility<'world, 'state> =
+    Query<'world, 'state, &'static mut Visibility, With<MainWingPart>>;
+type TailVisibility<'world, 'state> =
+    Query<'world, 'state, (&'static WorldProjection, &'static mut Visibility)>;
 
 struct MainWingSurface {
     complete_mesh: Mesh,
@@ -270,31 +312,38 @@ fn wing_cover_images() -> [Image; 2] {
     })
 }
 
-fn main_wing_airspeed(session: &NativeSession) -> f64 {
-    let speed = match session.game.core_session().snapshot().phase() {
-        birdman_game_core::SessionPhase::Replay | birdman_game_core::SessionPhase::Attract => {
-            session
-                .game
-                .core_session()
-                .playback_clock()
-                .and_then(|clock| {
-                    session
-                        .game
-                        .core_session()
-                        .playback_sample_at_seconds(clock.time_seconds())
-                        .ok()
-                        .map(|sample| sample.telemetry.airspeed_mps)
-                })
-        }
-        _ => session
-            .game
-            .core_session()
-            .telemetry()
-            .ok()
-            .flatten()
-            .map(|telemetry| telemetry.airspeed_mps),
+fn main_wing_deformation(
+    session: &NativeSession,
+    history: &RenderHistory,
+    fraction: f64,
+) -> RenderWingDeformation {
+    let display = session
+        .display_state()
+        .or_else(|| session.prepared_display_state());
+    let Some(display) = display else {
+        return RenderWingDeformation::Accepted { factor: 1.0 };
     };
-    speed.unwrap_or(f64::NAN)
+    let running = session.game.core_session().snapshot().phase()
+        == birdman_game_core::SessionPhase::FlightRunning;
+    let sample = project_display_sample(&display, running, history, fraction);
+    render_wing_deformation(
+        sample.wing_bending_factor,
+        tail_presentation_geometry(session),
+    )
+}
+
+fn tail_presentation_geometry(session: &NativeSession) -> RenderTailGeometry {
+    let identity = session
+        .game
+        .display_control_identity()
+        .zip(session.game.core_session().configuration_identity())
+        .map(|(identity, scenario)| {
+            (
+                identity.aircraft_configuration_id.as_str(),
+                scenario.aircraft_model_version,
+            )
+        });
+    render_tail_geometry(identity).expect("registered aircraft metadata must remain valid")
 }
 
 pub(crate) fn project_main_wing(
@@ -302,15 +351,72 @@ pub(crate) fn project_main_wing(
     mut wing: ResMut<MainWingProjection>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut transforms: Query<&mut Transform>,
+    history: Res<RenderHistory>,
+    fixed: Res<Time<Fixed>>,
+    mut visibility: ParamSet<(MainWingVisibility, TailVisibility)>,
 ) {
+    let tail_visible = session
+        .display_state()
+        .or_else(|| session.prepared_display_state())
+        .is_none()
+        || matches!(
+            tail_presentation_geometry(&session),
+            RenderTailGeometry::Available { .. }
+        );
+    for (projection, mut visible) in &mut visibility.p1() {
+        if matches!(
+            projection,
+            WorldProjection::HorizontalTail | WorldProjection::VerticalTail
+        ) {
+            *visible = if tail_visible {
+                Visibility::Visible
+            } else {
+                Visibility::Hidden
+            };
+        }
+    }
     let MainWingProjection {
         geometry,
         frame,
         surfaces,
         rods,
         foam,
+        projection_failed,
     } = &mut *wing;
-    if !geometry.update_frame(frame, main_wing_airspeed(&session)) {
+    let update = match main_wing_deformation(&session, &history, fixed.overstep_fraction_f64()) {
+        RenderWingDeformation::Accepted { factor } => {
+            let factor =
+                WingBendingFactor::try_new(factor).expect("shared adopted coefficient is finite");
+            match prepare_main_wing_projection(
+                geometry,
+                frame,
+                surfaces,
+                factor,
+                *projection_failed,
+            ) {
+                Ok(updated) => {
+                    *projection_failed = false;
+                    Some(updated)
+                }
+                Err(cause) => {
+                    if !*projection_failed {
+                        warn!("主翼変形を表示できない: {cause:?}");
+                    }
+                    *projection_failed = true;
+                    None
+                }
+            }
+        }
+        RenderWingDeformation::Unavailable { .. } => None,
+    };
+    for mut visible in &mut visibility.p0() {
+        *visible = if update.is_some() {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
+    }
+    if !update.unwrap_or(false) {
         return;
     }
     for ((entity, rod), endpoints) in rods.iter().zip(geometry.rods()).zip(frame.rod_endpoints()) {
@@ -327,16 +433,7 @@ pub(crate) fn project_main_wing(
                 position.map(|value| value as f32),
             )));
     }
-    for (surface, positions) in surfaces.iter_mut().zip(frame.surface_positions()) {
-        let bevy::mesh::VertexAttributeValues::Float32x3(values) = surface
-            .complete_mesh
-            .attribute_mut(Mesh::ATTRIBUTE_POSITION)
-            .expect("主翼positionsがない")
-        else {
-            panic!("主翼positionsはFloat32x3を要する");
-        };
-        values.copy_from_slice(positions);
-        surface.complete_mesh.compute_area_weighted_normals();
+    for (surface, positions) in surfaces.iter().zip(frame.surface_positions()) {
         let normals = surface
             .complete_mesh
             .attribute(Mesh::ATTRIBUTE_NORMAL)
@@ -355,12 +452,76 @@ pub(crate) fn project_main_wing(
     }
 }
 
+fn prepare_main_wing_projection(
+    geometry: &WingGeometry,
+    frame: &mut WingFrame,
+    surfaces: &mut [MainWingSurface],
+    factor: WingBendingFactor,
+    previously_failed: bool,
+) -> Result<bool, &'static str> {
+    let updated = geometry
+        .update_frame_with_factor(frame, factor)
+        .map_err(|_| "主翼座標を表現できない")?;
+    if !updated {
+        return if previously_failed {
+            Err("主翼のGPU投影を表現できない")
+        } else {
+            Ok(false)
+        };
+    }
+    for (rod, endpoints) in geometry.rods().iter().zip(frame.rod_endpoints()) {
+        let transform = wing_rod_transform(*endpoints, rod.radius() as f32);
+        if !transform.translation.is_finite()
+            || !transform.rotation.is_finite()
+            || !transform.scale.is_finite()
+        {
+            return Err("主翼構造のTransformを表現できない");
+        }
+    }
+    if frame
+        .foam_positions()
+        .iter()
+        .flatten()
+        .any(|value| !(*value as f32).is_finite())
+    {
+        return Err("主翼foamの位置を表現できない");
+    }
+    for (surface, positions) in surfaces.iter_mut().zip(frame.surface_positions()) {
+        let bevy::mesh::VertexAttributeValues::Float32x3(values) = surface
+            .complete_mesh
+            .attribute_mut(Mesh::ATTRIBUTE_POSITION)
+            .unwrap()
+        else {
+            panic!("主翼positionsはFloat32x3を要する");
+        };
+        values.copy_from_slice(positions);
+        surface.complete_mesh.compute_area_weighted_normals();
+        let normals = surface
+            .complete_mesh
+            .attribute(Mesh::ATTRIBUTE_NORMAL)
+            .unwrap()
+            .as_float3()
+            .unwrap();
+        if normals.iter().any(|normal| {
+            let normal = Vec3::from_array(*normal);
+            !normal.is_finite() || normal.length_squared() < 0.5
+        }) {
+            return Err("主翼法線を表現できない");
+        }
+    }
+    Ok(true)
+}
+
 fn wing_rod_transform(endpoints: [[f64; 3]; 2], radius: f32) -> Transform {
-    let [from, to] = endpoints.map(|point| Vec3::from_array(point.map(|value| value as f32)));
+    let [from, to] = endpoints.map(bevy::math::DVec3::from_array);
     let direction = to - from;
-    Transform::from_translation((from + to) * 0.5)
-        .with_rotation(Quat::from_rotation_arc(Vec3::Y, direction.normalize()))
-        .with_scale(Vec3::new(radius, direction.length(), radius))
+    let length = direction.x.hypot(direction.y).hypot(direction.z);
+    Transform::from_translation(((from + to) * 0.5).as_vec3())
+        .with_rotation(Quat::from_rotation_arc(
+            Vec3::Y,
+            (direction / length).as_vec3(),
+        ))
+        .with_scale(Vec3::new(radius, length as f32, radius))
 }
 
 fn wing_color(value: u32) -> Color {
@@ -636,6 +797,8 @@ pub(crate) fn setup_world(
                 let entity = parent
                     .spawn((
                         Name::new(name),
+                        MainWingPart,
+                        Visibility::Visible,
                         Mesh3d(rod_mesh.clone()),
                         MeshMaterial3d(if rod.kind() == WingRodKind::Spar {
                             frame.clone()
@@ -679,6 +842,8 @@ pub(crate) fn setup_world(
                             } else {
                                 "right-styrofoam-rib"
                             }),
+                            MainWingPart,
+                            Visibility::Visible,
                             Mesh3d(handle),
                             MeshMaterial3d(foam_material.clone()),
                             Transform::from_translation(Vec3::from_array(
@@ -761,6 +926,8 @@ pub(crate) fn setup_world(
                         WingMaterial::Film => wing_film.clone(),
                     };
                     let mut child = parent.spawn((
+                        MainWingPart,
+                        Visibility::Visible,
                         Mesh3d(handle),
                         MeshMaterial3d(material),
                         Transform::IDENTITY,
@@ -825,6 +992,7 @@ pub(crate) fn setup_world(
         surfaces: wing_surfaces,
         rods: wing_rods,
         foam: wing_foam,
+        projection_failed: false,
     });
     commands.spawn((
         WorldProjection::FlightCamera,
@@ -860,14 +1028,7 @@ pub(crate) fn project_world(
         history.reset();
     }
     let render_sample = aircraft_display.map(|display| {
-        let exact = RenderSample::from_display(display);
-        if running {
-            history
-                .interpolated(fixed.overstep_fraction_f64())
-                .unwrap_or(exact)
-        } else {
-            exact
-        }
+        project_display_sample(display, running, &history, fixed.overstep_fraction_f64())
     });
     let projected = render_sample.map_or_else(
         || exhibition_aircraft_transform(launch_venue().expect("登録launch venueが不正").platform),
@@ -1634,8 +1795,21 @@ mod tests {
                         .slerp(current.aircraft.rotation, fraction as f32),
                 ),
                 pilot_position_m: blend(initial.pilot_position_m, current.pilot_position_m),
-                elevator_rad: blend(initial.elevator_rad, current.elevator_rad),
-                rudder_rad: blend(initial.rudder_rad, current.rudder_rad),
+                elevator_rad: if fraction == 0.0 {
+                    initial.elevator_rad
+                } else {
+                    current.elevator_rad
+                },
+                rudder_rad: if fraction == 0.0 {
+                    initial.rudder_rad
+                } else {
+                    current.rudder_rad
+                },
+                wing_bending_factor: if fraction == 0.0 {
+                    initial.wing_bending_factor
+                } else {
+                    current.wing_bending_factor
+                },
                 simulation_time_seconds: blend(
                     initial.simulation_time_seconds,
                     current.simulation_time_seconds,
@@ -1845,8 +2019,7 @@ mod tests {
         }
     }
 
-    #[test]
-    fn world_setup_shares_the_registered_sun_with_water_sky_and_pbr_light() {
+    fn wing_projection_app() -> App {
         let mut app = App::new();
         app.init_resource::<Assets<Mesh>>()
             .init_resource::<Assets<StandardMaterial>>()
@@ -1854,9 +2027,169 @@ mod tests {
             .init_resource::<Assets<Image>>()
             .init_resource::<Assets<WaterMaterial>>()
             .init_resource::<NativeSession>()
+            .init_resource::<RenderHistory>()
+            .init_resource::<Time<Fixed>>()
             .add_systems(Startup, setup_world)
             .add_systems(Update, project_main_wing);
         app.update();
+        app
+    }
+
+    #[test]
+    fn main_wing_visibility_tracks_accepted_unrepresentable_and_unrecorded_sources() {
+        let mut app = wing_projection_app();
+        {
+            let mut session = app.world_mut().resource_mut::<NativeSession>();
+            session.action(MenuAction::Start).unwrap();
+            session.action(MenuAction::Prepare).unwrap();
+            session.action(MenuAction::Launch).unwrap();
+            for _ in 0..3 {
+                session.presentation_frame(1.0);
+            }
+        }
+        let display = app
+            .world()
+            .resource::<NativeSession>()
+            .display_state()
+            .unwrap();
+        let initial = RenderSample::from_display(&display);
+        app.world_mut().resource_mut::<RenderHistory>().samples = Some(RenderSamples {
+            previous: initial,
+            current: RenderSample {
+                wing_bending_factor: Some(WingBendingFactor::try_new(f64::MAX).unwrap()),
+                ..initial
+            },
+        });
+        set_render_fraction(&mut app, 0.5);
+        app.update();
+        let assert_visible = |app: &mut App, expected: Visibility| {
+            let wing = app.world().resource::<MainWingProjection>();
+            let expected_count = wing.rods.len()
+                + wing.foam.len()
+                + wing
+                    .surfaces
+                    .iter()
+                    .map(|surface| surface.material_meshes.len())
+                    .sum::<usize>();
+            let mut query = app
+                .world_mut()
+                .query_filtered::<&Visibility, With<MainWingPart>>();
+            assert_eq!(query.iter(app.world()).count(), expected_count);
+            assert!(query.iter(app.world()).all(|value| *value == expected));
+        };
+        assert_visible(&mut app, Visibility::Hidden);
+        assert!(
+            app.world()
+                .resource::<MainWingProjection>()
+                .projection_failed
+        );
+        app.world_mut()
+            .resource_mut::<RenderHistory>()
+            .samples
+            .as_mut()
+            .unwrap()
+            .current
+            .wing_bending_factor = Some(WingBendingFactor::try_new(1.21).unwrap());
+        app.update();
+        assert_visible(&mut app, Visibility::Visible);
+        assert!(
+            !app.world()
+                .resource::<MainWingProjection>()
+                .projection_failed
+        );
+        assert_main_wing_projection(app.world());
+        assert_main_wing_structure_projection(app.world());
+        app.world_mut()
+            .resource_mut::<RenderHistory>()
+            .samples
+            .as_mut()
+            .unwrap()
+            .current
+            .wing_bending_factor = Some(WingBendingFactor::try_new(1.0e30).unwrap());
+        for _ in 0..2 {
+            app.update();
+            assert_visible(&mut app, Visibility::Hidden);
+            assert!(
+                app.world()
+                    .resource::<MainWingProjection>()
+                    .projection_failed
+            );
+            let mut transforms = app
+                .world_mut()
+                .query_filtered::<&Transform, With<MainWingPart>>();
+            assert!(transforms.iter(app.world()).all(
+                |transform| transform.translation.is_finite()
+                    && transform.rotation.is_finite()
+                    && transform.scale.is_finite()
+            ));
+        }
+        app.world_mut()
+            .resource_mut::<RenderHistory>()
+            .samples
+            .as_mut()
+            .unwrap()
+            .current
+            .wing_bending_factor = Some(WingBendingFactor::try_new(1.21).unwrap());
+        app.update();
+        assert_visible(&mut app, Visibility::Visible);
+        app.world_mut()
+            .resource_mut::<NativeSession>()
+            .action(MenuAction::Abort)
+            .unwrap();
+        app.world_mut()
+            .resource_mut::<NativeSession>()
+            .open_stored_record(include_str!(
+                "../../../tools/game-check/fixtures/legacy-physics-three-record.json"
+            ))
+            .unwrap();
+        app.update();
+        assert_visible(&mut app, Visibility::Hidden);
+        assert!(
+            !app.world()
+                .resource::<MainWingProjection>()
+                .projection_failed
+        );
+        let legacy = app
+            .world()
+            .resource::<NativeSession>()
+            .game
+            .core_session()
+            .playback_record()
+            .unwrap();
+        let unknown = birdman_game_core::FlightRecord::try_from_finalized_samples(
+            legacy.header(),
+            legacy.samples().to_vec(),
+            legacy.finalization().unwrap(),
+        )
+        .unwrap();
+        {
+            let mut session = app.world_mut().resource_mut::<NativeSession>();
+            session
+                .game
+                .execute(
+                    birdman_game_app::application::SessionCommand::LeaveReplay {},
+                    birdman_game_app::application::BackendReadiness::Ready,
+                )
+                .unwrap();
+            session.game.open_archived_replay(unknown).unwrap();
+        }
+        app.update();
+        let mut tails = app.world_mut().query::<(&WorldProjection, &Visibility)>();
+        assert_eq!(
+            tails
+                .iter(app.world())
+                .filter(|(projection, visibility)| matches!(
+                    projection,
+                    WorldProjection::HorizontalTail | WorldProjection::VerticalTail
+                ) && **visibility == Visibility::Hidden)
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn world_setup_shares_the_registered_sun_with_water_sky_and_pbr_light() {
+        let mut app = wing_projection_app();
         assert_main_wing_projection(app.world());
         assert_main_wing_structure_projection(app.world());
         let mesh_count = app.world().resource::<Assets<Mesh>>().len();
@@ -1865,20 +2198,31 @@ mod tests {
             let mut session = app.world_mut().resource_mut::<NativeSession>();
             session.action(MenuAction::Start).unwrap();
             session.action(MenuAction::Prepare).unwrap();
-            assert!(main_wing_airspeed(&session).is_nan());
+            let prepared_factor = session
+                .prepared_display_state()
+                .unwrap()
+                .wing_bending_factor
+                .unwrap();
+            assert_eq!(
+                main_wing_deformation(&session, &RenderHistory::default(), 0.0),
+                RenderWingDeformation::Accepted {
+                    factor: prepared_factor.value()
+                }
+            );
             session.action(MenuAction::Launch).unwrap();
             for _ in 0..3 {
                 session.presentation_frame(1.0);
             }
             assert_eq!(
-                main_wing_airspeed(&session),
-                session
-                    .game
-                    .core_session()
-                    .telemetry()
-                    .unwrap()
-                    .unwrap()
-                    .airspeed_mps
+                main_wing_deformation(&session, &RenderHistory::default(), 0.0),
+                RenderWingDeformation::Accepted {
+                    factor: session
+                        .display_state()
+                        .unwrap()
+                        .wing_bending_factor
+                        .unwrap()
+                        .value()
+                }
             );
         }
         app.update();
@@ -2548,6 +2892,7 @@ mod tests {
                     elevator_rad: 0.1,
                     rudder_rad: -0.2,
                     simulation_time_seconds: 0.04,
+                    wing_bending_factor: Some(WingBendingFactor::try_new(0.3).unwrap()),
                 },
                 current: RenderSample {
                     aircraft: Transform::from_xyz(10.0, 0.0, 0.0)
@@ -2556,6 +2901,7 @@ mod tests {
                     elevator_rad: 0.3,
                     rudder_rad: 0.2,
                     simulation_time_seconds: 0.05,
+                    wing_bending_factor: Some(WingBendingFactor::try_new(1.6).unwrap()),
                 },
             }),
         };
@@ -2568,8 +2914,12 @@ mod tests {
             let expected_rotation = Quat::from_rotation_y(0.2 + 0.4 * fraction as f32);
             assert!((sample.aircraft.rotation.dot(expected_rotation).abs() - 1.0).abs() < 1.0e-6);
             assert!((sample.pilot_position_m - (-0.2 + 0.4 * fraction)).abs() < 1.0e-12);
-            assert!((sample.elevator_rad - (0.1 + 0.2 * fraction)).abs() < 1.0e-12);
-            assert!((sample.rudder_rad - (-0.2 + 0.4 * fraction)).abs() < 1.0e-12);
+            assert_eq!(sample.elevator_rad, if fraction == 0.0 { 0.1 } else { 0.3 });
+            assert_eq!(sample.rudder_rad, if fraction == 0.0 { -0.2 } else { 0.2 });
+            assert_eq!(
+                sample.wing_bending_factor.unwrap().value(),
+                if fraction == 0.0 { 0.3 } else { 1.6 }
+            );
             assert!((sample.simulation_time_seconds - (0.04 + 0.01 * fraction)).abs() < 1.0e-12);
         }
     }

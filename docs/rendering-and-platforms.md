@@ -239,10 +239,12 @@ Nativeは既存DirectionalLightの2048 texel・30〜600 mの3段cascadeから、
 - 広い岸線欠損の探索上限は粗格子8セル・最大2.4 kmとする。
 
 - 機体は公開synthetic構造から、藍色被覆、透明film、水色foam、薄茶rib/縁材、白いcockpit frame、透明nose、白い後部fairing、T字の黒い桁・胴体管を描く。
-- 外観と物理接触は同じ構造形状の独立した導出とし、材質、UV、表示sampling、表示たわみを接触点の入力へ流入させない。
+- 外観と物理接触は同じ構造形状と採用済み曲げ係数・尾翼角からそれぞれ導出する。材質、UV、表示samplingは描画層が所有する。
 
 - 主翼のsurface、rib/spar/foam/stringerは同じ共有WingFrameを使用する。
-- 速度変化が0.03 m/sを超えた場合だけpositionとanchorを更新し、topologyを保持する。
+- live・prepared・Result・Replayは共有poseの採用済み曲げ係数を主翼へ渡す。係数が変化した場合だけpositionとanchorを更新し、topologyを保持する。
+- 描画補間では身体位置・姿勢を補間し、尾翼角と曲げ係数は記録queryと同じ区間保持を用いる。
+- schema 6の未記録係数と未登録機体形状は可用性として区別し、対応する主翼を非表示にする。表現範囲を超える変形は失敗として通知し、次の有効な採用係数で表示を復元する。
 - surfaceのFloat32丸めと倍精度構造anchorを保持する。
 - 法線は完全な半翼topologyにarea-weighted計算を適用し、材質分割後も共有する。
 - 表示たわみの定数と実機諸元の区分はデータ文書へ集約する。
@@ -256,7 +258,7 @@ Nativeは既存DirectionalLightの2048 texel・30〜600 mの3段cascadeから、
 - 尾翼は登録physical geometryのquarter-chordと全surfaceを共有し、水平・垂直それぞれ独立した親でphysical incidenceに従う。
 - FRD変換後は水平+X、垂直−Yの回転を用いる。
 - geometryは登録されたmodel identityから解決し、未知のidentityは明示的な未対応として扱う。
-- 被覆・rib配置・曲げは描画モデル、空力・慣性・操縦応答は飛行モデルが所有する。
+- 被覆・rib配置は描画モデル、採用曲げ係数・空力・慣性・操縦応答は飛行モデルが所有する。
 
 ## Presentation backend
 

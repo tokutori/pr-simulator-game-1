@@ -18,7 +18,7 @@ import {
   UnsignedByteType,
   Vector3
 } from "three";
-import type { PhysicalFlightControls, TailPresentationGeometryAvailability } from "../../contracts/flight-controls.js";
+import type { PhysicalFlightControls, TailPresentationGeometryAvailability, WingDeformationAvailability } from "../../contracts/flight-controls.js";
 import { CockpitGeometryBridge, TailGeometryBridge, WingGeometryBridge, apply_indigo_wing_decal,
   indigo_wing_texture_size, indigo_wing_textures } from "../../../../pkg/birdman_game_wasm.js";
 
@@ -78,7 +78,7 @@ function indigoWingTextures(onVisualReady?: () => void): Readonly<{
 
 export interface BirdmanAirframe {
   readonly root: Group;
-  setVisualState(airspeedMetersPerSecond: number | null, controls: AirframeVisualControls, tailGeometry?: TailPresentationGeometryAvailability): void;
+  setVisualState(deformation: WingDeformationAvailability | null, controls: AirframeVisualControls, tailGeometry?: TailPresentationGeometryAvailability): void;
   dispose(): void;
 }
 
@@ -323,18 +323,34 @@ export function createBirdmanAirframe(onVisualReady?: () => void): BirdmanAirfra
   const registeredHorizontalArm = horizontalIncidence.position.z;
 
   let disposed = false;
-  const setVisualState = (airspeedMetersPerSecond: number | null, controls: AirframeVisualControls, tailGeometry?: TailPresentationGeometryAvailability): void => {
+  const setWingVisible = (visible: boolean): void => {
+    for (const wing of wings) wing.visible = visible;
+    for (const group of rods) group.mesh.visible = visible;
+    for (const foam of foamRibs) foam.visible = visible;
+  };
+  const setVisualState = (deformation: WingDeformationAvailability | null, controls: AirframeVisualControls, tailGeometry?: TailPresentationGeometryAvailability): void => {
     if (controls.layout === "tail_incidence" &&
         (!Number.isFinite(controls.physicalIncidence.horizontalTailRadians) || !Number.isFinite(controls.physicalIncidence.verticalTailRadians))) {
+      setWingVisible(false);
       throw new RangeError("Physical tail incidence must be finite");
     }
     let horizontalTailArmMeters = registeredHorizontalArm;
     if (controls.layout === "tail_incidence") {
-      if (tailGeometry?.kind !== "available") throw new RangeError("Tail presentation requires registered aircraft geometry");
-      const geometry = tailGeometry.value;
-      horizontalTailArmMeters = geometry.horizontalTailArmMeters;
+      if (tailGeometry === undefined) {
+        setWingVisible(false);
+        throw new RangeError("Tail presentation requires registered aircraft geometry");
+      }
+      if (tailGeometry.kind === "available") horizontalTailArmMeters = tailGeometry.value.horizontalTailArmMeters;
     }
-    if (sharedWing.update(airspeedMetersPerSecond ?? Number.NaN)) {
+    let updated = false;
+    try {
+      if (deformation?.kind !== "unavailable") updated = sharedWing.update_factor(deformation?.factor ?? 1);
+    } catch (cause) {
+      setWingVisible(false);
+      throw cause;
+    }
+    setWingVisible(deformation?.kind !== "unavailable");
+    if (updated) {
       const nextPositions = sharedWing.surface_positions();
       for (let surface = 0; surface < wings.length; surface++) {
         const wing = wings[surface];
@@ -350,7 +366,7 @@ export function createBirdmanAirframe(onVisualReady?: () => void): BirdmanAirfra
     }
 
     horizontalIncidence.position.z = horizontalTailArmMeters;
-    const tailVisible = controls.layout === "tail_incidence" || controls.layout === "registered_preview";
+    const tailVisible = (controls.layout === "tail_incidence" && tailGeometry?.kind === "available") || controls.layout === "registered_preview";
     horizontalIncidence.visible = tailVisible;
     verticalIncidence.visible = tailVisible;
     switch (controls.layout) {

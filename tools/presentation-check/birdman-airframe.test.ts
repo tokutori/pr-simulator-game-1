@@ -42,7 +42,7 @@ describe("synthetic Birdman airframe", () => {
         }
       } finally { source.free(); }
       const retained = tails.flatMap((tail) => tail.children.map((part) => (part as Mesh).geometry));
-      airframe.setVisualState(13, { layout: "tail_incidence", physicalIncidence: {
+      airframe.setVisualState({ kind: "accepted", factor: 1.6 }, { layout: "tail_incidence", physicalIncidence: {
         horizontalTailRadians: 0.12, verticalTailRadians: -0.08 } },
       { kind: "available", value: { horizontalTailArmMeters: 3.6 } });
       expect(tails[0]?.rotation.x).toBeCloseTo(0.12);
@@ -142,8 +142,8 @@ describe("synthetic Birdman airframe", () => {
       const segments = spar.children[0] as InstancedMesh<CylinderGeometry, MeshLambertMaterial>;
       expect(segments).toBeInstanceOf(InstancedMesh);
       expect(segments.count).toBe(24);
-      for (const speed of [0, 13]) {
-        airframe.setVisualState(speed, { layout: "absent" });
+      for (const factor of [0.3, 1.6]) {
+        airframe.setVisualState({ kind: "accepted", factor }, { layout: "absent" });
         beam.updateMatrix();
         for (const [height, expected] of [[-0.5, [0, -0.73, -0.1375]], [0.5, [0, -0.57, 4.75]]] as const) {
           const actual = new Vector3(0, height, 0).applyMatrix4(beam.matrix).toArray();
@@ -212,12 +212,12 @@ describe("synthetic Birdman airframe", () => {
     expect(positions[0]).toBe(100);
   });
 
-  it.each([0, 9.7, 13])("projects every registered wing position and triangle unchanged at %s m/s", (speed) => {
+  it.each([0.3, 1, 1.6])("projects every registered wing position and triangle unchanged for coefficient %s", (factor) => {
     const airframe = createBirdmanAirframe();
     const source = new WingGeometryBridge();
     try {
-      airframe.setVisualState(speed, { layout: "absent" });
-      source.update(speed);
+      airframe.setVisualState({ kind: "accepted", factor }, { layout: "absent" });
+      source.update_factor(factor);
       const positions = source.surface_positions();
       const indices = source.surface_indices();
       const vertexCount = source.surface_vertex_count;
@@ -232,13 +232,13 @@ describe("synthetic Birdman airframe", () => {
     } finally { airframe.dispose(); source.free(); }
   });
 
-  it("updates small speed changes in retained buffers and releases the shared owner once", () => {
+  it("updates accepted coefficient changes in retained buffers and releases the shared owner once", () => {
     const free = vi.spyOn(WingGeometryBridge.prototype, "free");
     const airframe = createBirdmanAirframe();
     try {
       const wing = airframe.root.getObjectByName("left-wing") as Mesh;
       const spar = airframe.root.getObjectByName("main-wing-spar")?.children[0] as InstancedMesh;
-      airframe.setVisualState(10, { layout: "absent" });
+      airframe.setVisualState({ kind: "accepted", factor: 1 }, { layout: "absent" });
       const position = wing.geometry.getAttribute("position");
       if (!(position instanceof BufferAttribute)) throw new Error("Main-wing positions require a BufferAttribute");
       const version = position.version;
@@ -246,20 +246,20 @@ describe("synthetic Birdman airframe", () => {
       const positionBuffer = position.array;
       const instanceBuffer = spar.instanceMatrix.array;
       const previousPositions = Array.from(positionBuffer);
-      airframe.setVisualState(10, { layout: "absent" });
+      airframe.setVisualState({ kind: "accepted", factor: 1 }, { layout: "absent" });
       expect(position.version).toBe(version);
       expect(spar.instanceMatrix.version).toBe(instanceVersion);
-      airframe.setVisualState(10.02, { layout: "absent" });
+      airframe.setVisualState({ kind: "accepted", factor: 1.004 }, { layout: "absent" });
       expect(position.version).toBeGreaterThan(version);
       expect(spar.instanceMatrix.version).toBeGreaterThan(instanceVersion);
       expect(Array.from(position.array)).not.toEqual(previousPositions);
       const changedVersion = spar.instanceMatrix.version;
-      airframe.setVisualState(13, { layout: "absent" });
+      airframe.setVisualState({ kind: "accepted", factor: 1.6 }, { layout: "absent" });
       expect(spar.instanceMatrix.version).toBeGreaterThan(changedVersion);
       const cappedPositionVersion = position.version;
       const cappedInstanceVersion = spar.instanceMatrix.version;
       const cappedPositions = Array.from(position.array);
-      airframe.setVisualState(14, { layout: "absent" });
+      airframe.setVisualState({ kind: "accepted", factor: 1.6 }, { layout: "absent" });
       expect(position.version).toBe(cappedPositionVersion);
       expect(spar.instanceMatrix.version).toBe(cappedInstanceVersion);
       expect(Array.from(position.array)).toEqual(cappedPositions);
@@ -270,6 +270,45 @@ describe("synthetic Birdman airframe", () => {
       airframe.dispose();
       expect(free).toHaveBeenCalledTimes(1);
     } finally { airframe.dispose(); free.mockRestore(); }
+  });
+
+  it("hides missing or unrepresentable deformation and restores the exact accepted shape", () => {
+    const airframe = createBirdmanAirframe();
+    const source = new WingGeometryBridge();
+    try {
+      const parts = ["left-wing", "right-wing", "left-trailing-film", "right-trailing-film",
+        "main-wing-spar-segment", "balsa-stringer", "left-trailing-rib", "right-trailing-rib",
+        "left-styrofoam-rib", "right-styrofoam-rib"].map((name) => airframe.root.getObjectByName(name));
+      expect(parts.every((part) => part !== undefined)).toBe(true);
+      for (const reason of ["unrecorded", "unregistered_aircraft_geometry"] as const) {
+        airframe.setVisualState({ kind: "unavailable", reason }, { layout: "absent" });
+        expect(parts.every((part) => part?.visible === false)).toBe(true);
+        airframe.setVisualState({ kind: "accepted", factor: 1.21 }, { layout: "absent" });
+        expect(parts.every((part) => part?.visible === true)).toBe(true);
+      }
+      const controls = { layout: "tail_incidence", physicalIncidence: {
+        horizontalTailRadians: 0.12, verticalTailRadians: -0.08 } } as const;
+      expect(() => { airframe.setVisualState(
+        { kind: "unavailable", reason: "unregistered_aircraft_geometry" }, controls,
+        { kind: "unavailable", reason: "unregistered_aircraft_geometry" }
+      ); }).not.toThrow();
+      expect(parts.every((part) => part?.visible === false)).toBe(true);
+      const tails = ["horizontal-tail-incidence", "vertical-tail-incidence"].map((name) => airframe.root.getObjectByName(name));
+      expect(tails.every((tail) => tail?.visible === false)).toBe(true);
+      airframe.setVisualState({ kind: "accepted", factor: 1.21 }, controls,
+        { kind: "available", value: { horizontalTailArmMeters: 3.6 } });
+      expect(tails.every((tail) => tail?.visible === true)).toBe(true);
+      for (const factor of [Number.NaN, Infinity, Number.MAX_VALUE]) {
+        expect(() => { airframe.setVisualState({ kind: "accepted", factor }, { layout: "absent" }); }).toThrow();
+        expect(parts.every((part) => part?.visible === false)).toBe(true);
+        airframe.setVisualState({ kind: "accepted", factor: 2 }, { layout: "absent" });
+        expect(parts.every((part) => part?.visible === true)).toBe(true);
+        source.update_factor(2);
+        const wing = airframe.root.getObjectByName("left-wing") as Mesh;
+        expect(Array.from(wing.geometry.getAttribute("position").array))
+          .toEqual(Array.from(source.surface_positions().subarray(0, source.surface_vertex_count * 3)));
+      }
+    } finally { airframe.dispose(); source.free(); }
   });
 
   it("projects all shared rods into four bounded instance batches with the same radii and endpoints", () => {
@@ -284,9 +323,9 @@ describe("synthetic Birdman airframe", () => {
       expect(groups.map((group) => group.count)).toEqual([24, 48, 44, 44]);
       expect(new Set(groups.map((group) => group.geometry)).size).toBe(1);
       expect(groups[0]?.geometry.parameters).toMatchObject({ radiusTop: 1, radiusBottom: 1, height: 1, radialSegments: 8 });
-      for (const speed of [9.5, 0, 13]) {
-        airframe.setVisualState(speed, { layout: "absent" });
-        source.update(speed);
+      for (const factor of [0.3, 1, 1.6]) {
+        airframe.setVisualState({ kind: "accepted", factor }, { layout: "absent" });
+        source.update_factor(factor);
         const endpoints = source.rod_endpoints();
         for (const [groupIndex, group] of groups.entries()) {
           const indices = Array.from(kinds, (_, index) => index).filter((index) => groupIndex === 0 ? kinds[index] === 0
@@ -362,7 +401,7 @@ describe("synthetic Birdman airframe", () => {
     const initialFirstCoordinate = reference[0];
     reference[0] = 100;
     expect(wing.surface_positions()[0]).toBe(initialFirstCoordinate);
-    expect(wing.update(13)).toBe(true);
+    expect(wing.update_factor(1.6)).toBe(true);
     const updated = wing.surface_positions();
     wing.free();
     expect(reference[tipHeightIndex]).toBe(initialTip);
@@ -395,7 +434,7 @@ describe("synthetic Birdman airframe", () => {
       const tip = leftPosition.count - 1;
       const initialY = leftPosition.getY(tip);
       const initialFoamY = foam.position.y;
-      airframe.setVisualState(13, { layout: "tail_incidence", physicalIncidence: { horizontalTailRadians: 0.12, verticalTailRadians: -0.08 } },
+      airframe.setVisualState({ kind: "accepted", factor: 1.6 }, { layout: "tail_incidence", physicalIncidence: { horizontalTailRadians: 0.12, verticalTailRadians: -0.08 } },
         { kind: "available", value: { horizontalTailArmMeters: 3.6 } });
       expect(leftPosition.getY(tip)).toBeGreaterThan(initialY);
       expect(foam.position.y).toBeGreaterThan(initialFoamY);

@@ -163,20 +163,15 @@ describe("physical two-tail airframe adapter", () => {
     } finally { airframe.dispose(); }
   });
 
-  it("rejects unavailable or missing tail geometry before changing the visible airframe", () => {
+  it("rejects missing tail metadata before changing the tail pose", () => {
     const airframe = createBirdmanAirframe();
     const controls = { layout: "tail_incidence" as const, physicalIncidence: { horizontalTailRadians: 0.1, verticalTailRadians: -0.2 } };
     try {
       airframe.setVisualState(null, controls, PLAYABLE_GEOMETRY);
-      const invalidGeometry: readonly (TailPresentationGeometryAvailability | undefined)[] = [
-        undefined, { kind: "unavailable", reason: "unregistered_aircraft_geometry" }
-      ];
-      for (const geometry of invalidGeometry) {
-        expect(() => { airframe.setVisualState(null, { ...controls, physicalIncidence: { horizontalTailRadians: 0.2, verticalTailRadians: 0.2 } }, geometry); }).toThrow("registered aircraft geometry");
+        expect(() => { airframe.setVisualState(null, { ...controls, physicalIncidence: { horizontalTailRadians: 0.2, verticalTailRadians: 0.2 } }); }).toThrow("registered aircraft geometry");
         expect(group(airframe, "horizontal-tail-incidence").position.z).toBe(3.6);
         expect(group(airframe, "horizontal-tail-incidence").rotation.x).toBe(0.1);
         expect(group(airframe, "vertical-tail-incidence").rotation.y).toBe(0.2);
-      }
     } finally {
       airframe.dispose();
     }

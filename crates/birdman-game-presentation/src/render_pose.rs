@@ -1,6 +1,8 @@
 //! Engine-independent projection of committed and recorded physical states.
 
-use birdman_game_core::{FlightState, FlightTelemetry, HybridSurfaceRole, TailIncidence};
+use birdman_game_core::{
+    FlightState, FlightTelemetry, HybridSurfaceRole, TailIncidence, WingBendingFactor,
+};
 use birdman_game_format::TailControlLayoutDocument;
 
 use std::sync::OnceLock;
@@ -20,8 +22,10 @@ pub struct FlightRenderPose {
     pub initial_pilot_position_meters: f64,
     /// Shared simulation time for environmental animation.
     pub simulation_time_seconds: f64,
-    /// Airspeed used by the visual wing-flex model.
+    /// Observed airspeed at this physical or recorded state.
     pub airspeed_meters_per_second: Option<f64>,
+    /// Accepted structural coefficient, distinct from absent legacy data or unknown geometry.
+    pub wing_deformation: RenderWingDeformation,
     /// Ambient wind at the composite centre of gravity.
     pub wind_velocity_ned_meters_per_second: Option<RenderNedVector>,
     /// Held physical control positions.
@@ -132,6 +136,52 @@ pub enum RenderGeometryUnavailable {
     UnregisteredAircraftGeometry,
 }
 
+/// Structural input supplied by the owning flight or canonical record query.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum RenderWingDeformation {
+    /// Adopted finite coefficient; the scene projection checks representability.
+    Accepted {
+        /// Dimensionless bending coefficient held over its physical interval.
+        factor: f64,
+    },
+    /// The source cannot supply the registered structural input.
+    Unavailable {
+        /// Reason for the missing projection input.
+        reason: RenderWingDeformationUnavailable,
+    },
+}
+
+/// Structural input availability for saved and live sources.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum RenderWingDeformationUnavailable {
+    /// The archive predates accepted-coefficient recording.
+    Unrecorded,
+    /// The aircraft identity has no registered structural geometry.
+    UnregisteredAircraftGeometry,
+}
+
+/// Resolves adopted structural input without deriving it from observed speed.
+pub fn render_wing_deformation(
+    factor: Option<WingBendingFactor>,
+    geometry: RenderTailGeometry,
+) -> RenderWingDeformation {
+    match (geometry, factor) {
+        (RenderTailGeometry::Unavailable { .. }, _) => RenderWingDeformation::Unavailable {
+            reason: RenderWingDeformationUnavailable::UnregisteredAircraftGeometry,
+        },
+        (_, None) => RenderWingDeformation::Unavailable {
+            reason: RenderWingDeformationUnavailable::Unrecorded,
+        },
+        (_, Some(factor)) => RenderWingDeformation::Accepted {
+            factor: factor.value(),
+        },
+    }
+}
+
 static RENDER_TAIL_GEOMETRY: OnceLock<Result<RenderTailGeometryValue, &'static str>> =
     OnceLock::new();
 
@@ -177,6 +227,7 @@ pub fn flight_render_pose(
     simulation_time_seconds: f64,
     telemetry: Option<FlightTelemetry>,
     tail_geometry: RenderTailGeometry,
+    wing_bending_factor: Option<WingBendingFactor>,
 ) -> FlightRenderPose {
     FlightRenderPose {
         datum_position_ned: state.datum_position_ned().components().into(),
@@ -185,6 +236,7 @@ pub fn flight_render_pose(
         initial_pilot_position_meters: initial_pilot_position_m,
         simulation_time_seconds,
         airspeed_meters_per_second: telemetry.map(|value| value.airspeed_mps),
+        wing_deformation: render_wing_deformation(wing_bending_factor, tail_geometry),
         wind_velocity_ned_meters_per_second: telemetry
             .map(|value| value.wind_velocity_ned_mps.components().into()),
         controls: RenderTailControls {

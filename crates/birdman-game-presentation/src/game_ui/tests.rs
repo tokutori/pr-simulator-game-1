@@ -2597,6 +2597,51 @@ fn hud_scene_policy_is_shared_by_full_and_frame_projection_in_screen_and_vr() {
 }
 
 #[test]
+fn replay_hud_uses_the_recorded_pilot_target_for_the_displayed_interval() {
+    let source = finalized();
+    let record = source.flight_record().unwrap();
+    let mut samples = record.samples().to_vec();
+    let last = samples.last_mut().unwrap();
+    last.controls.input_from_previous = Some(
+        birdman_game_core::FlightRecordTailInput::try_from_recorded(
+            TailFlightTickInput::new(
+                TailPilotIntent::try_new(0.0, 0.0).unwrap(),
+                TailRateTarget::try_new(0.0, 0.0).unwrap(),
+                TailPilotPositionCommand::Set(
+                    birdman_game_core::TailPilotPositionIntent::try_new(0.5).unwrap(),
+                ),
+            ),
+            0.2,
+            last.controls.incidence,
+            last.controls.incidence,
+            last.controls.incidence,
+        )
+        .unwrap(),
+    );
+    let record = birdman_game_core::FlightRecord::try_from_finalized_samples(
+        record.header(),
+        samples,
+        record.finalization().unwrap(),
+    )
+    .unwrap();
+    let mut session = GameSession::new();
+    session.open_archived_replay(record).unwrap();
+    session.seek_playback(0.025).unwrap();
+    let state = GameUiState {
+        replay_view: GameUiReplayView::Telemetry,
+        ..GameUiState::default()
+    };
+    let platform = platform();
+    let view = game_ui_view(&state, &context(&session, difficulty(), &platform)).unwrap();
+    assert!(
+        hud_node(&view.hud.unwrap(), "hud-pilot-position")
+            .content
+            .value()
+            .contains("(+0.20)")
+    );
+}
+
+#[test]
 fn hud_uses_the_authoritative_telemetry_and_existing_information_cue_policy() {
     let session = launched();
     let platform = platform();

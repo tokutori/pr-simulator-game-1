@@ -675,7 +675,7 @@ export function createThreeRenderer(
       headHudSurface?.update(frame.headHud, worldFromTracking);
       const controls = displayFlightPose?.controls;
       airframe.setVisualState(
-        displayFlightPose?.airspeedMetersPerSecond ?? null,
+        displayFlightPose?.wingDeformation ?? null,
         controls ?? NO_AIRFRAME_CONTROLS,
         displayFlightPose?.tailGeometry
       );

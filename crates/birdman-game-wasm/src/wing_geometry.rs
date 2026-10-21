@@ -26,9 +26,15 @@ impl WingGeometryBridge {
         Self { geometry, frame }
     }
 
-    #[doc = "Updates every surface and structural anchor; equal bending coefficients reuse the current frame. Non-finite input selects the reference load."]
-    pub fn update(&mut self, speed: f64) -> bool {
-        self.geometry.update_frame(&mut self.frame, speed)
+    #[doc = "Projects a finite accepted coefficient into retained geometry and rejects unrepresentable deformation."]
+    pub fn update_factor(&mut self, factor: f64) -> Result<bool, JsValue> {
+        let factor = birdman_game_core::WingBendingFactor::try_new(factor)
+            .map_err(|error| JsValue::from_str(&format!("Invalid wing coefficient: {error:?}")))?;
+        self.geometry
+            .update_frame_with_factor(&mut self.frame, factor)
+            .map_err(|error| {
+                JsValue::from_str(&format!("Unrepresentable wing deformation: {error:?}"))
+            })
     }
 
     #[doc = "Copies Float32 left skin/film and right skin/film positions in that order."]
