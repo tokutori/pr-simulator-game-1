@@ -1,4 +1,3 @@
-import { inversePose, transformPoint, vec3 } from "../render/contracts/math.js";
 import type { Pose } from "../render/contracts/math.js";
 import { MENU_MINIMUM_INK_HEIGHT_DEGREES } from "../render/contracts/menu-layout.js";
 import type { MenuClippedRect, MenuContentPoint, MenuControlLayout, MenuControlTextRole, MenuDocument, MenuDocumentResult,
@@ -7,7 +6,9 @@ import type { MenuClippedRect, MenuContentPoint, MenuControlLayout, MenuControlT
   MenuRangeResult, MenuTextSlot, MenuViewport } from "../render/contracts/menu-layout.js";
 import { uiButtonLabel } from "../render/contracts/ui.js";
 import type { PanelSize, UiChart, UiPanel } from "../render/contracts/ui.js";
-import { projectHeadPoint } from "../render/contracts/viewer-frame.js";
+import { xr_text_ink_fit_json } from "../../pkg/birdman_game_wasm.js";
+import type { XrInkFit } from "../generated/xr-ink-fit.js";
+import type { XrInkSegment } from "../generated/xr-ink-segment.js";
 import type { ViewerFrame } from "../render/contracts/viewer-frame.js";
 
 export function requestMenuLayout(panel: UiPanel, surfaceSize: PanelSize, style: Readonly<{
@@ -301,45 +302,26 @@ function contains(rectangle: MenuRect, point: MenuPoint): boolean {
 }
 
 export function validateMenuOpeningInk(document: MenuDocument, viewer: ViewerFrame, headFromSurface: Pose): MenuOpeningReadability {
-  if (viewer.source === "unavailable") return Object.freeze({ kind: "unavailable", reason: viewer.reason });
+  if (viewer.source === "unavailable") return { kind: "unavailable", reason: viewer.reason };
   const size = document.request.surfaceSize;
   const lines: readonly MenuMeasuredLine[] = [...document.title.lines, ...document.caption.lines,
     ...document.sectionHeadings.flatMap((heading) => heading.lines),
     ...document.controls.flatMap((control) => control.texts.flatMap((text) => text.lines)), ...document.previous.lines, ...document.next.lines];
-  try {
-    let minimumInkAngleDegrees = Number.POSITIVE_INFINITY;
-    for (const line of lines.filter((value) => value.value.trim() !== "")) {
-      const inkHeight = line.ascentMeters + line.descentMeters;
-      if (inkHeight <= 0 || inkHeight > size.height) return Object.freeze({ kind: "unavailable", reason: "insufficient-ink-angle" });
-      for (const eye of viewer.eyes) for (const horizontal of [-1, 1]) for (const vertical of [-1, 1]) {
-        const edge = vertical * size.height / 2;
-        const first = transformPoint(headFromSurface, vec3(horizontal * size.width / 2, edge, 0));
-        const second = transformPoint(headFromSurface, vec3(horizontal * size.width / 2, edge - vertical * inkHeight, 0));
-        if ([first, second].some((point) => {
-          const projected = projectHeadPoint(eye, point);
-          return projected === null || Math.abs(projected.x) > 1 || Math.abs(projected.y) > 1 || projected.z < -1 || projected.z > 1;
-        })) return Object.freeze({ kind: "unavailable", reason: "insufficient-view-area" });
-        const eyeFromHead = inversePose(eye.headFromEye);
-        const eyeFirst = transformPoint(eyeFromHead, first);
-        const eyeSecond = transformPoint(eyeFromHead, second);
-        const firstLength = Math.hypot(eyeFirst.x, eyeFirst.y, eyeFirst.z);
-        const secondLength = Math.hypot(eyeSecond.x, eyeSecond.y, eyeSecond.z);
-        const firstDirection = { x: eyeFirst.x / firstLength, y: eyeFirst.y / firstLength, z: eyeFirst.z / firstLength };
-        const secondDirection = { x: eyeSecond.x / secondLength, y: eyeSecond.y / secondLength, z: eyeSecond.z / secondLength };
-        const cross = Math.hypot(firstDirection.y * secondDirection.z - firstDirection.z * secondDirection.y,
-          firstDirection.z * secondDirection.x - firstDirection.x * secondDirection.z,
-          firstDirection.x * secondDirection.y - firstDirection.y * secondDirection.x);
-        const dot = firstDirection.x * secondDirection.x + firstDirection.y * secondDirection.y + firstDirection.z * secondDirection.z;
-        const angle = Math.atan2(cross, dot) * 180 / Math.PI;
-        if (!Number.isFinite(angle)) return Object.freeze({ kind: "unavailable", reason: "invalid-view-geometry" });
-        minimumInkAngleDegrees = Math.min(minimumInkAngleDegrees, angle);
-      }
+  const segments: XrInkSegment[] = [];
+  for (const line of lines.filter((line) => line.value.trim() !== "")) {
+    const height = line.ascentMeters + line.descentMeters;
+    if (height <= 0 || height > size.height) return { kind: "unavailable", reason: "insufficient-ink-angle" };
+    for (const horizontal of [-1, 1]) for (const vertical of [-1, 1]) {
+      segments.push({ start: { x: horizontal * size.width / 2, y: vertical * size.height / 2, z: 0 },
+        end: { x: horizontal * size.width / 2, y: vertical * (size.height / 2 - height), z: 0 } });
     }
-    return minimumInkAngleDegrees < MENU_MINIMUM_INK_HEIGHT_DEGREES || !Number.isFinite(minimumInkAngleDegrees)
-      ? Object.freeze({ kind: "unavailable", reason: "insufficient-ink-angle" })
-      : Object.freeze({ kind: "ready", minimumInkAngleDegrees });
-  } catch (error) {
-    if (error instanceof RangeError) return Object.freeze({ kind: "unavailable", reason: "invalid-view-geometry" });
-    throw error;
+  }
+  try {
+    const fit = JSON.parse(xr_text_ink_fit_json(JSON.stringify(viewer), JSON.stringify(segments), JSON.stringify(headFromSurface),
+      MENU_MINIMUM_INK_HEIGHT_DEGREES)) as XrInkFit;
+    return fit.kind === "empty" || fit.kind === "too-small" ? { kind: "unavailable", reason: "insufficient-ink-angle" } : fit;
+  } catch (cause) {
+    if (typeof cause === "string" || cause instanceof RangeError) return { kind: "unavailable", reason: "invalid-view-geometry" };
+    throw cause;
   }
 }

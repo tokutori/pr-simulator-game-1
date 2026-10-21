@@ -339,9 +339,9 @@ T_{eye,object}=T_{R,eye}^{-1}T_{R,object}
 - 順序は前frameのpending入力適用→raw head/眼別geometry取得→physics/機体pose更新→`beginViewFrame()`→View導出/計測/描画/gaze→3D描画とする。
 - 取得後のcamera cut、FOV、viewport、光学profile、明示pose取消、View開始後のpose/lake入力は次frameへ送る。
 
-- `ViewerFrame`はconfigured・runtime-derived・unavailableを区別し、同一frameのraw center-headと各眼のheadFromEye/projectionをコピーして保持する。
+- presentationの`XrViewerFrame`はconfigured・runtime-derived・unavailableを区別し、同一frameのraw center-headと各眼のheadFromEye/projectionを保持する。Webは生成された同じ型へ観測をコピーする。
 - WebXRのcenter-headと両眼は、同じ`getViewerPose()`から取得する。
-- 16要素column-major projectionを保持し、非対称frustum、眼回転、shearをそのまま扱う。
+- 16要素column-major projectionを保持し、非対称frustum、眼回転、shearをそのまま扱う。clip-depthはWebGLの`[-1, 1]`とVulkan等の`[0, 1]`を型で区別し、reversed Zも同じ区間で判定する。
 
 - 初期対応はleft/right各1眼である。
 - 重複・未知の眼編成、非有限値、非単位pose、退化projectionは原因付きで利用不能とする。
@@ -354,7 +354,7 @@ T_{eye,object}=T_{R,eye}^{-1}T_{R,object}
 
 ### MenuとHeadのlayout
 
-- Menuを開いたframeの両眼projectionとhead-to-eyeからpanel全体を収容する距離を導出し、固定anchorへ写す。
+- 共有Rustの`fit_xr_menu_view`が、Menuを開いたframeの両眼projectionとhead-to-eyeからpanel全体を収容する距離を導出する。adapterは返されたhead-local poseを固定anchorへ写す。
 - head motion、telemetry、Attract cut、Replay seekでは移動しない。
 - 「正面へ配置」、再opening、viewport・光学profileの実変更で再fitできる。
 
@@ -372,10 +372,10 @@ T_{eye,object}=T_{R,eye}^{-1}T_{R,object}
 - scope/geometry変更・閉じる/再表示では古い入力を拒否する。
 - 通常head motionやtelemetryでgenerationを更新しない。
 
-- Head情報板は共有group順とplacementを維持する。
+- `project_xr_head_hud`が光学面の探索と共有groupのpackingを一度の呼出しで実行し、Head情報板の順序・placement・FPS領域を返す。既定profileと予約Menu寸法はRustから生成する。
 - 左右眼の前方水平±15°・垂直±10°を保護領域として写像し、cardと予約Menu領域を分離する。
 - 背景alphaとforeground alphaを独立に保持する。
-- 両眼clip内のinkと角高さ0.35°以上を検査する。
+- painterが実測したglyph端をsurface-local metreで共有Rustの`fit_xr_text_ink`へ一括入力し、両眼clipと角高さ0.35°以上を検査する。Canvasの文字計測・描画とGPU資源はadapterが所有する。
 - この閾値はソフトウェア配置の基準とし、実HMDの可読性は端末別の受入で評価する。
 
 - Head surfaceは独立CanvasTextureとmeshを保持し、非表示中も寿命を維持する。

@@ -20,7 +20,7 @@ export function captureXrViewerFrame(viewer: XRViewerPose | null): ViewerFrame {
     const trackingFromEye = copyXrPose(view.transform);
     const projection = copyProjectionMatrix(view.projectionMatrix);
     if (trackingFromEye === null || projection === null) return null;
-    return Object.freeze({ eye, headFromEye: composePose(inversePose(head), trackingFromEye), projection });
+    return Object.freeze({ eye, headFromEye: composePose(inversePose(head), trackingFromEye), projection, depthRange: "negative-one-to-one" });
   };
   const left = captureEye("left");
   const right = captureEye("right");
@@ -41,7 +41,7 @@ export function captureConfiguredViewerFrame(camera: PerspectiveCamera, stereo: 
     const trackingFromEye = pose(vec3(position.x, position.y, position.z), quaternion(orientation.w, orientation.x, orientation.y, orientation.z));
     const projection = copyProjectionMatrix(eyeCamera.projectionMatrix.elements);
     if (projection === null) return null;
-    return Object.freeze({ eye, headFromEye: composePose(inversePose(trackingFromHead), trackingFromEye), projection });
+    return Object.freeze({ eye, headFromEye: composePose(inversePose(trackingFromHead), trackingFromEye), projection, depthRange: "negative-one-to-one" });
   };
   const left = captureEye("left", stereo.cameraL);
   const right = captureEye("right", stereo.cameraR);

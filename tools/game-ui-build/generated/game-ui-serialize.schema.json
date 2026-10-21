@@ -3048,47 +3048,6 @@
       ],
       "type": "object"
     },
-    "GameUiHeadHudFit": {
-      "description": "Exhaustive head-layout result; insufficient space never omits an element.",
-      "oneOf": [
-        {
-          "additionalProperties": false,
-          "description": "Every source element fits at the requested text height.",
-          "properties": {
-            "kind": {
-              "const": "fitted",
-              "type": "string"
-            },
-            "nodes": {
-              "description": "Complete source-node placement in the original shared order.",
-              "items": {
-                "$ref": "#/$defs/GameUiHeadHudNode"
-              },
-              "type": "array"
-            }
-          },
-          "required": [
-            "kind",
-            "nodes"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "The reserved bands cannot contain the complete HUD.",
-          "properties": {
-            "kind": {
-              "const": "unavailable",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind"
-          ],
-          "type": "object"
-        }
-      ]
-    },
     "GameUiHeadHudNode": {
       "additionalProperties": false,
       "description": "Shared placement of one retained element in the head-fixed plane.",
@@ -7573,6 +7532,611 @@
         {
           "const": "outside_registered_domain",
           "description": "At least one sample lies outside the provider domain.",
+          "type": "string"
+        }
+      ]
+    },
+    "XrDepthRange": {
+      "description": "Homogeneous depth-clip convention of the rendering API's projection matrix.",
+      "oneOf": [
+        {
+          "const": "negative-one-to-one",
+          "description": "OpenGL and WebGL depth interval.",
+          "type": "string"
+        },
+        {
+          "const": "zero-to-one",
+          "description": "Vulkan, D3D, Metal and WebGPU depth interval, including reversed Z.",
+          "type": "string"
+        }
+      ]
+    },
+    "XrEye": {
+      "description": "Eye identity within the supported primary stereo view configuration.",
+      "oneOf": [
+        {
+          "const": "left",
+          "description": "Left eye.",
+          "type": "string"
+        },
+        {
+          "const": "right",
+          "description": "Right eye.",
+          "type": "string"
+        }
+      ]
+    },
+    "XrEyeGeometry": {
+      "additionalProperties": false,
+      "description": "One same-frame eye pose and the runtime's column-major projection matrix.",
+      "properties": {
+        "depthRange": {
+          "$ref": "#/$defs/XrDepthRange",
+          "description": "Rendering API's clip-depth interval."
+        },
+        "eye": {
+          "$ref": "#/$defs/XrEye",
+          "description": "Primary eye identity."
+        },
+        "headFromEye": {
+          "$ref": "#/$defs/XrPose",
+          "description": "Eye-to-centre-head transform in metres."
+        },
+        "projection": {
+          "description": "Unmodified column-major 4-by-4 projection matrix.",
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 16,
+          "minItems": 16,
+          "type": "array"
+        }
+      },
+      "required": [
+        "eye",
+        "headFromEye",
+        "projection",
+        "depthRange"
+      ],
+      "type": "object"
+    },
+    "XrFitReason": {
+      "description": "Optical rejection reason shared by layout and measured text checks.",
+      "oneOf": [
+        {
+          "const": "not-stereo",
+          "description": "No stereo observation.",
+          "type": "string"
+        },
+        {
+          "const": "viewer-unavailable",
+          "description": "No current viewer pose.",
+          "type": "string"
+        },
+        {
+          "const": "unsupported-view-configuration",
+          "description": "Unsupported primary eye arrangement.",
+          "type": "string"
+        },
+        {
+          "const": "invalid-view-geometry",
+          "description": "Invalid pose, matrix or intermediate arithmetic.",
+          "type": "string"
+        },
+        {
+          "const": "insufficient-view-area",
+          "description": "The requested geometry cannot fit in both views.",
+          "type": "string"
+        }
+      ]
+    },
+    "XrFlightMenuGeometry": {
+      "additionalProperties": false,
+      "default": {
+        "centerY": -1.12,
+        "distanceMeters": 2.4,
+        "height": 0.25,
+        "width": 0.62
+      },
+      "description": "Shared measured-panel reservation below the forward view.",
+      "properties": {
+        "centerY": {
+          "description": "Plane's head-local centre height in metres.",
+          "format": "double",
+          "type": "number"
+        },
+        "distanceMeters": {
+          "description": "Plane distance in metres.",
+          "format": "double",
+          "type": "number"
+        },
+        "height": {
+          "description": "Plane height in metres.",
+          "format": "double",
+          "type": "number"
+        },
+        "width": {
+          "description": "Plane width in metres.",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "distanceMeters",
+        "centerY",
+        "width",
+        "height"
+      ],
+      "type": "object"
+    },
+    "XrHeadHudProfile": {
+      "additionalProperties": false,
+      "default": {
+        "clearHorizontalHalfAngleDegrees": 15,
+        "clearVerticalHalfAngleDegrees": 10,
+        "clipMargin": 0.035,
+        "distanceMeters": 2.4,
+        "foregroundAlpha": 1,
+        "maximumHeightMeters": 2.4,
+        "maximumWidthMeters": 2.16,
+        "textHeightDegrees": 0.6
+      },
+      "description": "Shared optical limits and appearance of the head-fixed instrument layer.",
+      "properties": {
+        "clearHorizontalHalfAngleDegrees": {
+          "description": "Clear forward region's horizontal half-angle.",
+          "format": "double",
+          "type": "number"
+        },
+        "clearVerticalHalfAngleDegrees": {
+          "description": "Clear forward region's vertical half-angle.",
+          "format": "double",
+          "type": "number"
+        },
+        "clipMargin": {
+          "description": "Normalized clip-space side margin.",
+          "format": "double",
+          "type": "number"
+        },
+        "distanceMeters": {
+          "description": "Head-to-plane distance in metres.",
+          "format": "double",
+          "type": "number"
+        },
+        "foregroundAlpha": {
+          "description": "Foreground alpha used by drawing adapters.",
+          "format": "double",
+          "type": "number"
+        },
+        "maximumHeightMeters": {
+          "description": "Maximum plane height in metres.",
+          "format": "double",
+          "type": "number"
+        },
+        "maximumWidthMeters": {
+          "description": "Maximum plane width in metres.",
+          "format": "double",
+          "type": "number"
+        },
+        "textHeightDegrees": {
+          "description": "Requested text height as a visual angle.",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "distanceMeters",
+        "maximumWidthMeters",
+        "maximumHeightMeters",
+        "clearHorizontalHalfAngleDegrees",
+        "clearVerticalHalfAngleDegrees",
+        "textHeightDegrees",
+        "clipMargin",
+        "foregroundAlpha"
+      ],
+      "type": "object"
+    },
+    "XrHeadHudProjection": {
+      "description": "Complete same-frame optical HUD fit.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Optical or reserved-space rejection.",
+          "properties": {
+            "kind": {
+              "const": "unavailable",
+              "type": "string"
+            },
+            "reason": {
+              "$ref": "#/$defs/XrFitReason",
+              "description": "Exhaustive rejection reason."
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Complete projected source-node layout.",
+          "properties": {
+            "clearRegion": {
+              "$ref": "#/$defs/GameUiRect",
+              "description": "Normalized clear forward region, in left/top coordinates."
+            },
+            "frameRateBounds": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/GameUiRect"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional hardware frame-rate label rectangle."
+            },
+            "kind": {
+              "const": "visible",
+              "type": "string"
+            },
+            "localPose": {
+              "$ref": "#/$defs/XrPose",
+              "description": "Head-to-HUD transform in metres."
+            },
+            "nodes": {
+              "description": "Every unchanged shared source node in its original order.",
+              "items": {
+                "$ref": "#/$defs/GameUiHeadHudNode"
+              },
+              "type": "array"
+            },
+            "sizeM": {
+              "description": "Plane width and height in metres.",
+              "items": {
+                "format": "double",
+                "type": "number"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            },
+            "textHeightMeters": {
+              "description": "Required text height in metres.",
+              "format": "double",
+              "type": "number"
+            }
+          },
+          "required": [
+            "kind",
+            "localPose",
+            "sizeM",
+            "textHeightMeters",
+            "clearRegion",
+            "frameRateBounds",
+            "nodes"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "XrInkFit": {
+      "description": "Actual glyph-boundary fit and angular readability in both eyes.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "The painter reported no non-whitespace glyphs.",
+          "properties": {
+            "kind": {
+              "const": "empty",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Measured text falls below its required angular height.",
+          "properties": {
+            "kind": {
+              "const": "too-small",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Every measured boundary is visible and readable.",
+          "properties": {
+            "kind": {
+              "const": "ready",
+              "type": "string"
+            },
+            "minimumInkAngleDegrees": {
+              "description": "Smallest actual boundary angle in degrees.",
+              "format": "double",
+              "type": "number"
+            }
+          },
+          "required": [
+            "kind",
+            "minimumInkAngleDegrees"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Rejected measured ink.",
+          "properties": {
+            "kind": {
+              "const": "unavailable",
+              "type": "string"
+            },
+            "reason": {
+              "$ref": "#/$defs/XrFitReason",
+              "description": "Optical or readability reason."
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "XrMenuViewFit": {
+      "description": "Binocular menu-placement result, in centre-head coordinates.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Complete plane fit.",
+          "properties": {
+            "distanceMeters": {
+              "description": "Required viewing distance in metres.",
+              "format": "double",
+              "type": "number"
+            },
+            "headFromMenu": {
+              "$ref": "#/$defs/XrPose",
+              "description": "Menu-anchor-to-head transform."
+            },
+            "kind": {
+              "const": "ready",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "headFromMenu",
+            "distanceMeters"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Geometry rejection.",
+          "properties": {
+            "kind": {
+              "const": "unavailable",
+              "type": "string"
+            },
+            "reason": {
+              "$ref": "#/$defs/XrFitReason",
+              "description": "Exhaustive optical reason."
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "XrPose": {
+      "additionalProperties": false,
+      "description": "Rigid child-to-parent transform; the caller names both reference spaces.",
+      "properties": {
+        "orientation": {
+          "$ref": "#/$defs/XrQuaternion",
+          "description": "Child-to-parent orientation."
+        },
+        "position": {
+          "$ref": "#/$defs/XrVector",
+          "description": "Child origin expressed in parent coordinates, in metres."
+        }
+      },
+      "required": [
+        "position",
+        "orientation"
+      ],
+      "type": "object"
+    },
+    "XrQuaternion": {
+      "additionalProperties": false,
+      "description": "Scalar-first unit quaternion in a right-handed reference space.",
+      "properties": {
+        "w": {
+          "description": "Scalar component.",
+          "format": "double",
+          "type": "number"
+        },
+        "x": {
+          "description": "Right-axis component.",
+          "format": "double",
+          "type": "number"
+        },
+        "y": {
+          "description": "Up-axis component.",
+          "format": "double",
+          "type": "number"
+        },
+        "z": {
+          "description": "Back-axis component.",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "w",
+        "x",
+        "y",
+        "z"
+      ],
+      "type": "object"
+    },
+    "XrVector": {
+      "additionalProperties": false,
+      "description": "Metric right/up/back coordinates in the explicitly named reference space.",
+      "properties": {
+        "x": {
+          "description": "Rightward coordinate in metres.",
+          "format": "double",
+          "type": "number"
+        },
+        "y": {
+          "description": "Upward coordinate in metres.",
+          "format": "double",
+          "type": "number"
+        },
+        "z": {
+          "description": "Backward coordinate in metres.",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "z"
+      ],
+      "type": "object"
+    },
+    "XrViewerFrame": {
+      "description": "Same-frame stereo geometry, separate from tracked world-camera placement.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Classified unavailable geometry, optionally retaining valid centre tracking.",
+          "properties": {
+            "reason": {
+              "$ref": "#/$defs/XrViewerUnavailableReason",
+              "description": "Unavailability classification."
+            },
+            "source": {
+              "const": "unavailable",
+              "type": "string"
+            },
+            "trackingFromHead": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/XrPose"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Valid centre tracking, if separately available."
+            }
+          },
+          "required": [
+            "source",
+            "reason",
+            "trackingFromHead"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Configured stereo optics, independent of world tracking.",
+          "properties": {
+            "eyes": {
+              "description": "Left and right eye geometry, in that order.",
+              "items": {
+                "$ref": "#/$defs/XrEyeGeometry"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            },
+            "source": {
+              "const": "configured",
+              "type": "string"
+            },
+            "trackingFromHead": {
+              "description": "Explicit null at the existing wire boundary.",
+              "type": "null"
+            }
+          },
+          "required": [
+            "source",
+            "trackingFromHead",
+            "eyes"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Runtime-provided same-frame centre and eye geometry.",
+          "properties": {
+            "eyes": {
+              "description": "Left and right eye geometry, in that order.",
+              "items": {
+                "$ref": "#/$defs/XrEyeGeometry"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            },
+            "source": {
+              "const": "runtime-derived",
+              "type": "string"
+            },
+            "trackingFromHead": {
+              "$ref": "#/$defs/XrPose",
+              "description": "Tracked centre-head pose in the runtime reference space."
+            }
+          },
+          "required": [
+            "source",
+            "trackingFromHead",
+            "eyes"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "XrViewerUnavailableReason": {
+      "description": "Classified absence of usable stereo observations.",
+      "oneOf": [
+        {
+          "const": "not-stereo",
+          "description": "The presentation mode supplies no stereo views.",
+          "type": "string"
+        },
+        {
+          "const": "viewer-unavailable",
+          "description": "The runtime supplies no viewer pose for this frame.",
+          "type": "string"
+        },
+        {
+          "const": "unsupported-view-configuration",
+          "description": "The runtime's primary eye configuration is unsupported.",
+          "type": "string"
+        },
+        {
+          "const": "invalid-view-geometry",
+          "description": "Pose or projection data is invalid.",
           "type": "string"
         }
       ]

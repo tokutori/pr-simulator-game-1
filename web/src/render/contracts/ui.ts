@@ -7,7 +7,7 @@ import type { GameUiView } from "../../generated/game-ui-view.js";
 export const GAME_SCENES = ["Boot", "Title", "FlightSetup", "Briefing", "Countdown", "Flight", "Result", "Replay"] as const;
 export type GameScene = typeof GAME_SCENES[number];
 
-export const FLIGHT_MENU_GEOMETRY = Object.freeze({ distanceMeters: 2.4, centerY: -1.12, width: 0.62, height: 0.25 });
+export { XR_FLIGHT_MENU_GEOMETRY as FLIGHT_MENU_GEOMETRY } from "../../generated/xr-flight-menu-geometry.js";
 
 export type UiControl = (UiButton | UiToggle | UiRange | UiStatus | UiChart) & Readonly<{ section?: string }>;
 

@@ -247,6 +247,7 @@ GameUiView / GameUiFrame → platform renderer → DOM / VR panel / Bevy entity
 - panelはAbsent・Visible・Unavailableを排他的に表現する。
 - 必須capabilityが失われた際はUnavailableとし、前frameのpanelを残さない。
 - HUDはcamera/head基準のanchor、前方clear region、透明度、stereo可読性を明示する。
+- 両眼pose・projection・clip-depthの契約、Menuの光学fit、Head HUDの探索・配置、実測文字の視角判定はpresentationの`xr`が所有する。Webは観測を生成DTOへ変換し、Rustの結果をCanvasとmeshへ反映する。
 
 - GPU mesh、material、shader、render target、entity/DOMはadapterが所有する。
 - 共有モデルはenvironmentから波スペクトル・空・cloud・地形・機体形状を生成し、adapterが成分選択・uniform・GLSL/WGSL・engine座標へ変換する。

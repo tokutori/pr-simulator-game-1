@@ -10,8 +10,13 @@ export const schemaEntries = [
   { key: "input", name: "GameUiPlatformInput", filename: "game-ui-input", group: "deserialize" },
   { key: "effects", name: "GameUiUpdate", filename: "game-ui-effects", group: "serialize" },
   { key: "frame", name: "GameUiFrame", filename: "game-ui-frame", group: "serialize" },
-  { key: "head_hud_fit", name: "GameUiHeadHudFit", filename: "head-hud-fit", group: "serialize" },
-  { key: "head_hud_space", name: "GameUiHeadHudSpace", filename: "head-hud-space", group: "deserialize" },
+  { key: "xr_viewer_frame", name: "XrViewerFrame", filename: "xr-viewer-frame", group: "serialize" },
+  { key: "xr_head_hud_profile", name: "XrHeadHudProfile", filename: "xr-head-hud-profile", group: "serialize", defaultName: "DEFAULT_XR_HEAD_HUD_PROFILE" },
+  { key: "xr_flight_menu_geometry", name: "XrFlightMenuGeometry", filename: "xr-flight-menu-geometry", group: "serialize", defaultName: "XR_FLIGHT_MENU_GEOMETRY" },
+  { key: "xr_head_hud_projection", name: "XrHeadHudProjection", filename: "xr-head-hud-projection", group: "serialize" },
+  { key: "xr_menu_view_fit", name: "XrMenuViewFit", filename: "xr-menu-view-fit", group: "serialize" },
+  { key: "xr_ink_fit", name: "XrInkFit", filename: "xr-ink-fit", group: "serialize" },
+  { key: "xr_ink_segment", name: "XrInkSegment", filename: "xr-ink-segment", group: "deserialize" },
   { key: "screen_render_auto", name: "ScreenRenderAutoSnapshot", filename: "screen-render-auto", group: "serialize" },
   { key: "replay_camera", name: "ReplayCameraView", filename: "replay-camera", group: "serialize" },
   { key: "tail_input", name: "TailInputDocument", filename: "tail-input", group: "deserialize" },
@@ -99,7 +104,9 @@ export async function generateGameUiFiles(schemas: GameUiSchemas): Promise<reado
       strictIndexSignatures: true,
       style: { singleQuote: false, tabWidth: 2, printWidth: 120, trailingComma: "none", semi: true }
     });
-    files.push({ path: `web/src/generated/${entry.filename}.ts`, content: `/* ${generatedBanner} */\n${readonlyDeclarations(declarations)}` });
+    if ("defaultName" in entry && !isObject(definition["default"])) throw new Error(`Missing shared default for ${entry.name}`);
+    const defaults = "defaultName" in entry ? `\nexport const ${entry.defaultName} = Object.freeze(${JSON.stringify(definition["default"], null, 2)} as const);\n` : "";
+    files.push({ path: `web/src/generated/${entry.filename}.ts`, content: `/* ${generatedBanner} */\n${readonlyDeclarations(declarations)}${defaults}` });
   }
   const generators = Object.fromEntries(await Promise.all(Object.entries({ jsonSchemaToTypescript: "json-schema-to-typescript", typescript: "typescript" })
     .map(async ([key, name]): Promise<readonly [string, string]> => {

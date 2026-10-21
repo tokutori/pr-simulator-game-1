@@ -1,5 +1,5 @@
-import { readFileSync } from "node:fs";
-import { HybridGameSessionBridge, initSync, physics_hz, ScreenRenderAutoBridge } from "../../web/pkg/birdman_game_wasm.js";
+import { HybridGameSessionBridge, physics_hz, ScreenRenderAutoBridge } from "../../web/pkg/birdman_game_wasm.js";
+import { initializeWasmFixture } from "./wasm-fixture.js";
 import type { ScreenRenderAutoSnapshot } from "../../web/src/generated/screen-render-auto.js";
 import { TailAppSessionFacade } from "../../web/src/app/session-facade.js";
 import type { FlightRecordHudProfileDocument } from "../../web/src/generated/record-context.js";
@@ -15,7 +15,7 @@ import { neutralTailInput } from "./current-session-fixture.js";
 import { encodeTailLogicalInput } from "../../web/src/game/tail-input.js";
 import type { LakeWaterQuality } from "../../web/src/render/contracts/lake-water.js";
 
-initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url))) });
+initializeWasmFixture();
 
 export interface SharedGameUiFixtureOptions {
   readonly platform?: Partial<GameUiPlatformInput>;

@@ -1,5 +1,4 @@
-import { readFileSync } from "node:fs";
-import { initSync } from "../../web/pkg/birdman_game_wasm.js";
+import { initializeWasmFixture } from "./wasm-fixture.js";
 import type { PlaybackSessionSnapshot, LiveSessionSnapshot } from "../../web/src/app/session-snapshot.js";
 import type { TailResultSnapshot } from "../../web/src/game/tail-flight-controller.js";
 import type { TailLogicalInput } from "../../web/src/game/tail-input.js";
@@ -7,7 +6,7 @@ import type { FlightRenderPose } from "../../web/src/render/contracts/runtime.js
 import { createAppSession } from "../../web/src/app/session-factory.js";
 import type { AppSessionFacade } from "../../web/src/app/session-facade.js";
 
-initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url))) });
+initializeWasmFixture();
 
 export const neutralTailInput: TailLogicalInput = { controlLayout: "tail_incidence", noseUp: 0, turnRight: 0,
   desiredPitchRateRadiansPerSecond: 0, desiredYawRateRadiansPerSecond: 0, pilotPositionCommand: { kind: "hold" } };

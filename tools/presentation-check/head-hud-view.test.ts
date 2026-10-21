@@ -23,7 +23,7 @@ function configuredViewer(aspect = 1280 / 720, fieldOfView = 60, near = 0.05): V
 describe("Pure Head Flight HUD layout", () => {
   it("ends an impossible maximum-width fit after one shared query", () => {
     const model = currentSharedHudFixture({ informationCode: 0 });
-    const fit = vi.spyOn(sharedHeadFit, "game_ui_head_hud_fit_json");
+    const fit = vi.spyOn(sharedHeadFit, "xr_head_hud_projection_json");
     try {
       expect(createHeadHudView(model, configuredViewer(), "ja", { ...DEFAULT_HEAD_HUD_PROFILE, maximumWidthMeters: 0.3 }))
         .toEqual({ kind: "unavailable", reason: "insufficient-view-area" });
@@ -235,8 +235,8 @@ describe("Pure Head Flight HUD layout", () => {
     const leftRotation = new Quaternion().setFromEuler(new Euler(0.08, 0.05, 0.07));
     const rightRotation = new Quaternion().setFromEuler(new Euler(-0.07, -0.04, -0.08));
     const viewer: ViewerFrame = { source: "runtime-derived", trackingFromHead: IDENTITY_POSE, eyes: [
-      { eye: "left", headFromEye: pose(vec3(-0.034, 0.003, 0.002), quaternion(leftRotation.w, leftRotation.x, leftRotation.y, leftRotation.z)), projection: copiedLeft },
-      { eye: "right", headFromEye: pose(vec3(0.032, -0.003, 0.004), quaternion(rightRotation.w, rightRotation.x, rightRotation.y, rightRotation.z)), projection: copiedRight }
+      { eye: "left", depthRange: "negative-one-to-one", headFromEye: pose(vec3(-0.034, 0.003, 0.002), quaternion(leftRotation.w, leftRotation.x, leftRotation.y, leftRotation.z)), projection: copiedLeft },
+      { eye: "right", depthRange: "negative-one-to-one", headFromEye: pose(vec3(0.032, -0.003, 0.004), quaternion(rightRotation.w, rightRotation.x, rightRotation.y, rightRotation.z)), projection: copiedRight }
     ] };
     const model = currentSharedHudFixture({ informationCode: 0 });
     const view = createHeadHudView(model, viewer, "ja");

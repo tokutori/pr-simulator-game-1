@@ -33,7 +33,12 @@ pub fn export_game_ui_schema(name: &str) -> Result<String, String> {
     output.subschema_for::<GameUiView>();
     output.subschema_for::<GameUiUpdate>();
     output.subschema_for::<GameUiFrame>();
-    output.subschema_for::<GameUiHeadHudFit>();
+    output.subschema_for::<crate::xr::XrViewerFrame>();
+    output.subschema_for::<crate::xr::XrHeadHudProfile>();
+    output.subschema_for::<crate::xr::XrFlightMenuGeometry>();
+    output.subschema_for::<crate::xr::XrHeadHudProjection>();
+    output.subschema_for::<crate::xr::XrMenuViewFit>();
+    output.subschema_for::<crate::xr::XrInkFit>();
     output.subschema_for::<crate::screen_render_auto::ScreenRenderAutoSnapshot>();
     output.subschema_for::<crate::replay_camera::ReplayCameraView>();
     output.subschema_for::<birdman_game_app::record_query::PlaybackContext<'_>>();
@@ -52,12 +57,32 @@ pub fn export_game_ui_schema(name: &str) -> Result<String, String> {
         .into_generator();
     input.subschema_for::<GameUiAction>();
     input.subschema_for::<GameUiPlatformInput>();
-    input.subschema_for::<GameUiHeadHudSpace>();
+    input.subschema_for::<crate::xr::XrInkSegment>();
     input.subschema_for::<birdman_game_format::TailInputDocument>();
+    let mut output_definitions = output.take_definitions(true);
+    for (name, value) in [
+        (
+            "XrHeadHudProfile",
+            serde_json::to_value(crate::xr::XrHeadHudProfile::default()),
+        ),
+        (
+            "XrFlightMenuGeometry",
+            serde_json::to_value(crate::xr::XrFlightMenuGeometry::default()),
+        ),
+    ] {
+        output_definitions
+            .get_mut(name)
+            .and_then(serde_json::Value::as_object_mut)
+            .ok_or_else(|| format!("missing default schema for {name}"))?
+            .insert(
+                "default".to_owned(),
+                value.map_err(|error| error.to_string())?,
+            );
+    }
     let bundle = serde_json::json!({
         "serialize": {
             "$schema": "https://json-schema.org/draft/2020-12/schema",
-            "$defs": output.take_definitions(true),
+            "$defs": output_definitions,
         },
         "deserialize": {
             "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -73,8 +98,13 @@ pub fn export_game_ui_schema(name: &str) -> Result<String, String> {
         "input" => ("deserialize", "GameUiPlatformInput"),
         "effects" => ("serialize", "GameUiUpdate"),
         "frame" => ("serialize", "GameUiFrame"),
-        "head-hud-fit" => ("serialize", "GameUiHeadHudFit"),
-        "head-hud-space" => ("deserialize", "GameUiHeadHudSpace"),
+        "xr-viewer-frame" => ("serialize", "XrViewerFrame"),
+        "xr-head-hud-profile" => ("serialize", "XrHeadHudProfile"),
+        "xr-flight-menu-geometry" => ("serialize", "XrFlightMenuGeometry"),
+        "xr-head-hud-projection" => ("serialize", "XrHeadHudProjection"),
+        "xr-menu-view-fit" => ("serialize", "XrMenuViewFit"),
+        "xr-ink-fit" => ("serialize", "XrInkFit"),
+        "xr-ink-segment" => ("deserialize", "XrInkSegment"),
         "screen-render-auto" => ("serialize", "ScreenRenderAutoSnapshot"),
         "replay-camera" => ("serialize", "ReplayCameraView"),
         "tail-input" => ("deserialize", "TailInputDocument"),

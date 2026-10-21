@@ -1,10 +1,13 @@
 import { PerspectiveCamera, StereoCamera } from "three";
+import { initializeWasmFixture } from "../game-check/wasm-fixture.js";
 import { IDENTITY_POSE } from "../../web/src/render/contracts/math.js";
 import type { Pose } from "../../web/src/render/contracts/math.js";
 import type { BackendFrame, PanelFrame } from "../../web/src/render/contracts/runtime.js";
 import { unavailableViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
 import type { ViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
 import { captureConfiguredViewerFrame } from "../../web/src/render/engines/three/viewer-frame.js";
+
+initializeWasmFixture();
 
 export function configuredViewerFixture(width = 1280, height = 720, near = 0.1, far = 100): ViewerFrame {
   const camera = new PerspectiveCamera(60, width / height, near, far);

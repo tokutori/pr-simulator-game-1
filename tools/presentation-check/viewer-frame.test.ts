@@ -1,8 +1,14 @@
 import { describe, expect, it } from "vitest";
+import { initializeWasmFixture } from "../game-check/wasm-fixture.js";
 import { Matrix4, PerspectiveCamera, Quaternion, StereoCamera, Vector3 } from "three";
 import { captureConfiguredViewerFrame, captureXrViewerFrame } from "../../web/src/render/engines/three/viewer-frame.js";
 import { copyProjectionMatrix, headPlaneFitsViews, projectHeadPoint, unavailableViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
 import { IDENTITY_POSE, pose, vec3 } from "../../web/src/render/contracts/math.js";
+import type { ViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
+import { xr_menu_view_fit_json, xr_text_ink_fit_json } from "../../web/pkg/birdman_game_wasm.js";
+import type { XrInkFit } from "../../web/src/generated/xr-ink-fit.js";
+
+initializeWasmFixture();
 
 describe("Immutable same-frame binocular geometry", () => {
   it("copies and normalizes reordered asymmetric runtime views without changing raw center-head", () => {
@@ -93,6 +99,45 @@ describe("Immutable same-frame binocular geometry", () => {
     expect(headPlaneFitsViews(frame, pose(vec3(0, 0, -0.05), IDENTITY_POSE.orientation), 0.01, 0.01)).toBe(false);
     expect(headPlaneFitsViews(frame, local, 2, 2, Number.NaN)).toBe(false);
     expect(headPlaneFitsViews(unavailableViewerFrame("viewer-unavailable"), local, 1, 1)).toBe(false);
+  });
+
+  it.each(["negative-one-to-one", "zero-to-one", "reversed-zero-to-one"] as const)("uses the runtime %s clip depth in actual WASM", (convention) => {
+    const matrix = new PerspectiveCamera(60, 1, 0.1, 100).projectionMatrix;
+    if (convention !== "negative-one-to-one") {
+      for (const column of [0, 1, 2, 3]) {
+        const depth = column * 4 + 2;
+        const weight = matrix.elements[column * 4 + 3] ?? 0;
+        matrix.elements[depth] = ((matrix.elements[depth] ?? 0) + weight) / 2;
+        if (convention === "reversed-zero-to-one") matrix.elements[depth] = weight - (matrix.elements[depth] ?? 0);
+      }
+    }
+    const projection = copyProjectionMatrix(matrix.elements);
+    if (projection === null) throw new Error("Invalid fixture projection");
+    const eye = { eye: "left" as const, headFromEye: IDENTITY_POSE, projection,
+      depthRange: convention === "negative-one-to-one" ? "negative-one-to-one" as const : "zero-to-one" as const };
+    const frame: ViewerFrame = { source: "configured", trackingFromHead: null, eyes: [eye, { ...eye, eye: "right" }] };
+    const point = vec3(0.1, -0.2, -2.4);
+    const expected = new Vector3(point.x, point.y, point.z).applyMatrix4(matrix);
+    const actual = projectHeadPoint(eye, point);
+    expect(actual?.x).toBeCloseTo(expected.x, 12);
+    expect(actual?.y).toBeCloseTo(expected.y, 12);
+    expect(actual?.z).toBeCloseTo(expected.z, 12);
+    for (const [distance, visible] of [[0.05, false], [2.4, true], [101, false], [-1, false]] as const) {
+      expect(headPlaneFitsViews(frame, pose(vec3(0, 0, -distance), IDENTITY_POSE.orientation), 0.001, 0.001)).toBe(visible);
+    }
+    const surface = pose(vec3(0, 0, -2.4), IDENTITY_POSE.orientation);
+    const result = JSON.parse(xr_text_ink_fit_json(JSON.stringify(frame), JSON.stringify([
+      { start: vec3(0, 0.02, 0), end: vec3(0, -0.02, 0) }
+    ]), JSON.stringify(surface), 0.35)) as XrInkFit;
+    expect(result.kind).toBe("ready");
+    if (result.kind === "ready") expect(result.minimumInkAngleDegrees).toBeCloseTo(2 * Math.atan(0.02 / 2.4) * 180 / Math.PI, 12);
+  });
+
+  it("classifies malformed, oversized and unknown-field runtime observations before fitting", () => {
+    for (const packet of ["{", " ".repeat(16_385), JSON.stringify({ source: "unavailable", reason: "viewer-unavailable", trackingFromHead: null, stale: true })]) {
+      expect(JSON.parse(xr_menu_view_fit_json(packet, JSON.stringify(IDENTITY_POSE), 2.4, 1.8, 2.4, 0.035)))
+        .toEqual({ kind: "unavailable", reason: "invalid-view-geometry" });
+    }
   });
 });
 

@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
+import { initializeWasmFixture } from "../game-check/wasm-fixture.js";
 import { PerspectiveCamera, StereoCamera } from "three";
 import { composePose, IDENTITY_POSE, inversePose, pose, quaternion, vec3 } from "../../web/src/render/contracts/math.js";
 import { headPlaneFitsViews, unavailableViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
 import { captureConfiguredViewerFrame } from "../../web/src/render/engines/three/viewer-frame.js";
 import { createSceneFixture } from "../../web/src/presentation/fixtures.js";
 import { CLOSED_MENU_PLACEMENT, openMenuPlacement, recenterMenuPlacement, transformMenuPlacement } from "../../web/src/presentation/menu-placement.js";
+
+initializeWasmFixture();
 
 describe("Pure Menu opening lifecycle", () => {
   it("retains the fixed opening pose during head motion and telemetry changes", () => {

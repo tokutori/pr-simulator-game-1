@@ -4,8 +4,9 @@ import { browserPanelContext } from "./browser-canvas.js";
 import { HEAD_HUD_CARD_PADDING, HEAD_HUD_LINE_HEIGHT, headHudElementValue, headHudInstrumentHeight } from "./head-hud-view.js";
 import type { HeadHudUnavailableReason, HeadHudView } from "./head-hud-view.js";
 import type { PanelDrawingContext } from "./browser-canvas.js";
-import { inversePose, transformPoint, vec3 } from "../render/contracts/math.js";
-import { projectHeadPoint } from "../render/contracts/viewer-frame.js";
+import { xr_text_ink_fit_json } from "../../pkg/birdman_game_wasm.js";
+import type { XrInkFit } from "../generated/xr-ink-fit.js";
+import type { XrInkSegment } from "../generated/xr-ink-segment.js";
 import type { ViewerFrame } from "../render/contracts/viewer-frame.js";
 
 export const HEAD_HUD_MINIMUM_INK_HEIGHT_DEGREES = 0.35;
@@ -204,31 +205,22 @@ function paintedCardText(card: PreparedCard, lineHeight: number): readonly HeadH
 
 export function validateHeadHudPaint(preparation: HeadHudPaintPreparation, viewer: ViewerFrame): HeadHudPaintPreparation {
   if (preparation.kind !== "ready") return preparation;
-  if (viewer.source === "unavailable") return Object.freeze({ kind: "unavailable", reason: viewer.reason, width: preparation.width, height: preparation.height });
+  if (viewer.source === "unavailable") return { kind: "unavailable", reason: viewer.reason, width: preparation.width, height: preparation.height };
   const layer = preparation.view.layer;
-  const toHeadPoint = (horizontal: number, vertical: number) => transformPoint(layer.localPose, vec3(
-    (horizontal / preparation.width - 0.5) * layer.size.width,
-    (0.5 - vertical / preparation.height) * layer.size.height, 0));
+  const segments: XrInkSegment[] = [];
   for (const glyph of headHudPaintedTextInk(preparation)) {
     if (glyph.value.trim() === "") continue;
-    for (const eye of viewer.eyes) for (const horizontal of [glyph.left, glyph.left + glyph.width]) {
-      const top = toHeadPoint(horizontal, glyph.top);
-      const bottom = toHeadPoint(horizontal, glyph.top + glyph.height);
-      const topProjection = projectHeadPoint(eye, top);
-      const bottomProjection = projectHeadPoint(eye, bottom);
-      const eyeFromHead = inversePose(eye.headFromEye);
-      const eyeTop = transformPoint(eyeFromHead, top);
-      const eyeBottom = transformPoint(eyeFromHead, bottom);
-      const dot = eyeTop.x * eyeBottom.x + eyeTop.y * eyeBottom.y + eyeTop.z * eyeBottom.z;
-      const angle = Math.acos(Math.max(-1, Math.min(1, dot / (Math.hypot(eyeTop.x, eyeTop.y, eyeTop.z) * Math.hypot(eyeBottom.x, eyeBottom.y, eyeBottom.z))))) * 180 / Math.PI;
-      if (topProjection === null || bottomProjection === null || [topProjection, bottomProjection].some((point) =>
-        Math.abs(point.x) > 1 || Math.abs(point.y) > 1 || point.z < -1 || point.z > 1) ||
-        !Number.isFinite(angle) || angle < HEAD_HUD_MINIMUM_INK_HEIGHT_DEGREES) {
-        return Object.freeze({ kind: "unavailable", reason: "text-overflow", width: preparation.width, height: preparation.height });
-      }
+    for (const horizontal of [glyph.left, glyph.left + glyph.width]) {
+      segments.push({ start: { x: (horizontal / preparation.width - 0.5) * layer.size.width,
+        y: (0.5 - glyph.top / preparation.height) * layer.size.height, z: 0 },
+      end: { x: (horizontal / preparation.width - 0.5) * layer.size.width,
+        y: (0.5 - (glyph.top + glyph.height) / preparation.height) * layer.size.height, z: 0 } });
     }
   }
-  return preparation;
+  const fit = JSON.parse(xr_text_ink_fit_json(JSON.stringify(viewer), JSON.stringify(segments), JSON.stringify(layer.localPose),
+    HEAD_HUD_MINIMUM_INK_HEIGHT_DEGREES)) as XrInkFit;
+  return fit.kind === "ready" || fit.kind === "empty" ? preparation
+    : { kind: "unavailable", reason: "text-overflow", width: preparation.width, height: preparation.height };
 }
 
 export function prepareHudTextLines(context: HeadHudDrawingContext, text: string, width: number, lineHeight: number): readonly PaintedLine[] | null {

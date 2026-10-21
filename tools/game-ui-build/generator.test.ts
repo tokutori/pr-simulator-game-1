@@ -18,6 +18,7 @@ function schemaBundle(): string {
       GameUiStoredRecord: { type: "object", properties: { saved_at: { type: "string", maxLength: 256 } } },
       ...Object.fromEntries(schemaEntries.filter((entry) => entry.group === group).map((entry) => [entry.name, {
         type: "object",
+        ...("defaultName" in entry ? { default: { kind: "fixture", coordinates: [1, 2, 3], id: 0 } } : {}),
         "x-boundary-bytes": 131072,
         additionalProperties: false,
         required: ["kind", "coordinates", ...(group === "serialize" ? ["id"] : [])],
@@ -47,6 +48,19 @@ describe("Rust game UI schema generation", () => {
     expect(declaration?.content).not.toContain("[k: string]");
     expect(readonlyDeclarations(nestedDeclaration))
       .toMatch(/readonly values: readonly \{\s*readonly position: readonly number\[\]/);
+  });
+
+  it("exports profile defaults from Rust schemas and requires their presence", async () => {
+    const schemas = parseSchemaBundle(schemaBundle());
+    const files = await generateGameUiFiles(schemas);
+    for (const entry of schemaEntries) {
+      if (!("defaultName" in entry)) continue;
+      const generated = files.find(file => file.path === `web/src/generated/${entry.filename}.ts`);
+      expect(generated?.content).toContain(`export const ${entry.defaultName} = Object.freeze(`);
+      expect(generated?.content).toContain('"coordinates": [\n    1,\n    2,\n    3\n  ]');
+    }
+    const missingDefault = schemaBundle().replaceAll('"default":{"kind":"fixture","coordinates":[1,2,3],"id":0},', "");
+    await expect(generateGameUiFiles(parseSchemaBundle(missingDefault))).rejects.toThrow("Missing shared default");
   });
 
   it("checks generated readonly and tuple contracts with the TypeScript compiler", async () => {

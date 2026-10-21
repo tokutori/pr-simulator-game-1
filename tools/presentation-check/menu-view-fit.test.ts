@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
+import { initializeWasmFixture } from "../game-check/wasm-fixture.js";
 import { PerspectiveCamera, StereoCamera } from "three";
 import { composePose, IDENTITY_POSE, pose, quaternion, transformPoint, vec3 } from "../../web/src/render/contracts/math.js";
 import { headPlaneFitsViews, projectHeadPoint, unavailableViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
 import type { ViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
 import { captureConfiguredViewerFrame } from "../../web/src/render/engines/three/viewer-frame.js";
 import { fitMenuView } from "../../web/src/presentation/menu-view-fit.js";
+
+initializeWasmFixture();
 
 const panelSize = Object.freeze({ width: 2.4, height: 1.8 });
 
@@ -16,8 +19,6 @@ describe("Same-frame binocular Menu fit", () => {
     if (fit.kind !== "ready") throw new Error("Missing Menu fit");
     expect(headPlaneFitsViews(viewer, fit.headFromMenu, 2.4, 1.8, 0.035)).toBe(true);
     expect(fit.distanceMeters).toBeGreaterThanOrEqual(2.4);
-    expect(Object.isFrozen(fit)).toBe(true);
-    expect(Object.isFrozen(fit.headFromMenu)).toBe(true);
     expect(panelSize).toEqual({ width: 2.4, height: 1.8 });
     if (viewer.source === "unavailable") throw new Error("Missing binocular geometry");
     for (const eye of viewer.eyes) for (const horizontal of [-1, 1]) for (const vertical of [-1, 1]) {

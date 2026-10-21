@@ -7,7 +7,6 @@ use wasm_bindgen::{JsValue, prelude::*};
 
 mod airframe_structure;
 mod cockpit_geometry;
-mod head_hud;
 mod hybrid_bridge;
 mod hybrid_record;
 mod lake_sky;
@@ -18,10 +17,10 @@ mod venue_structures;
 mod venue_terrain;
 mod wing_geometry;
 mod wing_texture;
+mod xr;
 
 pub use airframe_structure::{AirframeAttachment, AirframeMemberKind, AirframeStructureBridge};
 pub use cockpit_geometry::CockpitGeometryBridge;
-pub use head_hud::game_ui_head_hud_fit_json;
 pub use hybrid_bridge::{HybridGameSessionBridge, TailPersonalBestSelectionBridge};
 pub use lake_sky::{
     LakeSkyImageBridge, lake_scene_ambient_color_srgb, lake_scene_ambient_irradiance,
@@ -34,6 +33,7 @@ pub use venue_structures::ShoreStructureGeometryBridge;
 pub use venue_terrain::VenueTerrainGeometryBridge;
 pub use wing_geometry::WingGeometryBridge;
 pub use wing_texture::{apply_indigo_wing_decal, indigo_wing_texture_size, indigo_wing_textures};
+pub use xr::*;
 
 const MAX_TICKS: u64 = birdman_game_app::DEFAULT_MAXIMUM_FLIGHT_TICKS;
 

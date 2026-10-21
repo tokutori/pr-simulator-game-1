@@ -9,6 +9,7 @@ import { PerspectiveCamera, StereoCamera } from "three";
 import type { Browser } from "playwright-core";
 import type { GameUiView } from "../../web/src/generated/game-ui-view.js";
 import { captureConfiguredViewerFrame } from "../../web/src/render/engines/three/viewer-frame.js";
+import { initializeWasmFixture } from "../game-check/wasm-fixture.js";
 import { observeLiveSky, observeWaterRenderer, verifySkyRenderer, verifyWaterRenderer } from "./water.js";
 import type { WaterShaderReference } from "./water.js";
 
@@ -43,6 +44,7 @@ if (referenceOptions[0] !== undefined) {
   await writeFile(resolve(output, "water-reference.json"), source, "utf8");
 }
 const root = resolve(import.meta.dirname, "../..");
+initializeWasmFixture();
 const gitOptions = { cwd: root, encoding: "utf8" as const, maxBuffer: 16 * 1024 * 1024 };
 const head = execFileSync("git", ["rev-parse", "HEAD"], gitOptions).trim();
 const sourceArguments = ["diff", "--no-ext-diff", "--no-textconv", "--binary", "HEAD"];
@@ -446,7 +448,7 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
       await profiler.send("Profiler.enable");
       const headResults: { name: string; coverageEnabled: boolean; outcome: string; samples: number; medianMilliseconds: number; p95Milliseconds: number;
         hudBytes: number; wasmCallsPerFrame: number | null; maximumInputBytesPerFrame: number | null }[] = [];
-      report.headHud = { measurements: headResults, measurement: "30 calls per scenario and coverage mode; input bound includes the 1024-byte space limit; not a frame-rate acceptance" };
+      report.headHud = { measurements: headResults, measurement: "30 calls per scenario and coverage mode; query bytes include HUD, viewer and profile; layout-query timing" };
       for (const coverageEnabled of [false, true]) {
       if (coverageEnabled) await profiler.send("Profiler.startPreciseCoverage", { callCount: true, detailed: false });
       for (const scenario of headScenarios) {
@@ -487,19 +489,21 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
             image = canvas.toDataURL("image/png");
           }
         return { measurement: { name: scenario.name, outcome: last.kind, samples: elapsed.length, medianMilliseconds: (lowerMedian + upperMedian) / 2, p95Milliseconds: p95 },
-          image, hudBytes: new TextEncoder().encode(JSON.stringify({ layout: model.layout, groups: model.groups })).length };
+          image, hudBytes: [JSON.stringify({ layout: model.layout, groups: model.groups }), JSON.stringify(scenario.viewer),
+            JSON.stringify({ ...viewModule.DEFAULT_HEAD_HUD_PROFILE, maximumWidthMeters: scenario.maximumWidthMeters })]
+            .reduce((sum, packet) => sum + new TextEncoder().encode(packet).length, 0) };
       }, { scenario, model: new URL("../src/presentation/flight-hud-model.ts", moduleUrl).href,
         view: new URL("../src/presentation/head-hud-view.ts", moduleUrl).href, canvas: new URL("../src/presentation/head-hud-canvas.ts", moduleUrl).href });
       let calls: number | null = null;
       if (coverageEnabled) {
         const coverage = await profiler.send("Profiler.takePreciseCoverage");
-        calls = coverage.result.flatMap(script => script.functions).filter(item => item.functionName === "game_ui_head_hud_fit_json")
+        calls = coverage.result.flatMap(script => script.functions).filter(item => item.functionName === "xr_head_hud_projection_json")
           .reduce((sum, item) => sum + (item.ranges[0]?.count ?? 0), 0) / 30;
         assert.ok(calls > 0, "The production shared Head fit was not profiled");
         if (scenario.name === "narrow-fallback") assert.equal(calls, 1, "An impossible maximum-width fit must not repeat shared queries");
       }
       headResults.push({ ...headMeasurement.measurement, coverageEnabled, hudBytes: headMeasurement.hudBytes, wasmCallsPerFrame: calls,
-        maximumInputBytesPerFrame: calls === null ? null : calls * (headMeasurement.hudBytes + 1024) });
+        maximumInputBytesPerFrame: calls === null ? null : calls * headMeasurement.hudBytes });
       if (headMeasurement.image !== null) {
         const name = scenario.name === "landscape" ? "03-head-hud.png" : `03-head-hud-${scenario.name}.png`;
         await writeFile(resolve(output, name), Buffer.from(headMeasurement.image.slice("data:image/png;base64,".length), "base64"));
