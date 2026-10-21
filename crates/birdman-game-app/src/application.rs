@@ -2,9 +2,11 @@
 
 mod archive;
 pub(crate) mod commands;
+mod flight;
 
 pub use archive::{ArchiveError, ArchiveMetadata};
 pub use commands::{ApplicationError, PreparedFlight, RecordCommand, SessionCommand};
+pub use flight::{FlightFrameError, FlightFrameReport};
 
 use birdman_game_core::{
     BriefingFailure, ControlMode, CountdownProgress, FlightRecord, GameSession, GameSessionError,
@@ -69,6 +71,9 @@ pub struct ApplicationSession {
     attract: Option<AttractMetadata>,
     archived: Option<ArchiveMetadata>,
     record_source_id: Option<RecordSourceId>,
+    flight_clock: crate::flight_clock::FlightFrameClock,
+    flight_input: crate::flight_input::FlightInputState,
+    flight_failure: Option<FlightFrameError>,
 }
 
 impl Default for ApplicationSession {
@@ -99,6 +104,9 @@ impl ApplicationSession {
             attract: None,
             archived: None,
             record_source_id: Some(RecordSourceId(0)),
+            flight_clock: crate::flight_clock::FlightFrameClock::default(),
+            flight_input: crate::flight_input::FlightInputState::default(),
+            flight_failure: None,
         }
     }
 
@@ -182,6 +190,32 @@ impl ApplicationSession {
         command: SessionCommand,
         readiness: BackendReadiness,
     ) -> Result<(), ApplicationError> {
+        let previous = self.session.snapshot().phase();
+        let result = self.execute_inner(command, readiness);
+        self.synchronize_flight_driver(previous);
+        result
+    }
+
+    fn execute_inner(
+        &mut self,
+        command: SessionCommand,
+        readiness: BackendReadiness,
+    ) -> Result<(), ApplicationError> {
+        if matches!(command, SessionCommand::Resume {}) {
+            if let Some(error) = self.flight_failure {
+                return Err(ApplicationError::Flight(error));
+            }
+            if self.flight_clock.processing_delayed()
+                && matches!(
+                    self.session.snapshot().phase(),
+                    SessionPhase::FlightRunning | SessionPhase::FlightPaused { .. }
+                )
+            {
+                self.session
+                    .pause(PauseReason::ProcessingDelay)
+                    .map_err(ApplicationError::Session)?;
+            }
+        }
         let result = match command {
             SessionCommand::OpenSetup {} => self.session.open_setup(),
             SessionCommand::ReturnToTitle {} => self.session.return_to_title(),
@@ -265,18 +299,26 @@ impl ApplicationSession {
         reason: ExternalPauseReason,
         available: bool,
     ) -> Result<(), ApplicationError> {
+        self.observe_external_pause(reason, available)
+            .map_err(ApplicationError::Session)
+    }
+
+    fn observe_external_pause(
+        &mut self,
+        reason: ExternalPauseReason,
+        available: bool,
+    ) -> Result<(), GameSessionError> {
+        let previous = self.session.snapshot().phase();
         let reason = reason.core_reason();
-        match self.session.snapshot().phase() {
-            SessionPhase::FlightRunning | SessionPhase::FlightPaused { .. } if !available => self
-                .session
-                .pause(reason)
-                .map_err(ApplicationError::Session),
-            SessionPhase::FlightPaused { .. } => self
-                .session
-                .clear_pause_reason(reason)
-                .map_err(ApplicationError::Session),
+        let result = match previous {
+            SessionPhase::FlightRunning | SessionPhase::FlightPaused { .. } if !available => {
+                self.session.pause(reason)
+            }
+            SessionPhase::FlightPaused { .. } => self.session.clear_pause_reason(reason),
             _ => Ok(()),
-        }
+        };
+        self.synchronize_flight_driver(previous);
+        result
     }
 
     /// Starts an explicit presentation duration through the canonical core policy.
@@ -291,8 +333,14 @@ impl ApplicationSession {
         elapsed_seconds: f64,
         frame_available: bool,
     ) -> Result<CountdownProgress, GameSessionError> {
-        self.session
-            .observe_countdown(token, elapsed_seconds, frame_available)
+        let previous = self.session.snapshot().phase();
+        let result = self.session.observe_countdown(
+            token,
+            elapsed_seconds,
+            frame_available && !self.flight_clock.processing_delayed(),
+        );
+        self.synchronize_flight_driver(previous);
+        result
     }
 
     /// Advances exactly one existing physical tick without intercepting abnormal finalization.
@@ -300,15 +348,22 @@ impl ApplicationSession {
         &mut self,
         input: TailFlightTickInput,
     ) -> Result<SessionSnapshot, GameSessionError> {
-        self.prepared
+        let previous = self.session.snapshot().phase();
+        let result = self
+            .prepared
             .as_mut()
             .ok_or(GameSessionError::InvalidTransition)?
-            .advance(&mut self.session, input)
+            .advance(&mut self.session, input);
+        self.synchronize_flight_driver(previous);
+        result
     }
 
     /// Opens a validated external record and discards the unrelated sealed live metadata.
     pub fn open_archived_replay(&mut self, record: FlightRecord) -> Result<(), GameSessionError> {
+        let previous = self.session.snapshot().phase();
         self.session.open_archived_replay(record)?;
+        self.flight_failure = None;
+        self.synchronize_flight_driver(previous);
         self.advance_record_source();
         self.prepared = None;
         self.archived = None;

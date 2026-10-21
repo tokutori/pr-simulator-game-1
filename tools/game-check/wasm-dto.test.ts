@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import { HybridGameSessionBridge, initSync, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
 import { TailAppSessionFacade } from "../../web/src/app/session-facade.js";
 import type { TailSnapshotDocument } from "../../web/src/generated/tail-snapshot.js";
+import type { FlightFrameDocument } from "../../web/src/generated/flight-frame.js";
+import type { FlightKeyObservation } from "../../web/src/generated/flight-key.js";
 import type { EnvironmentSnapshot } from "../../web/src/generated/runtime-environment.js";
 import type { RecordedPlaybackSample } from "../../web/src/generated/record-sample.js";
 import type { AnalysisDocument } from "../../web/src/generated/record-analysis.js";
@@ -31,6 +33,40 @@ function launch(session: TailAppSessionFacade): void {
 }
 
 describe("same-build Rust/WASM generated DTO connections", () => {
+  it("connects shared frame admission, final interpolation interval and key events through the actual WASM ABI", () => {
+    const { bridge, session } = fixture();
+    const frame = (timestamp: number): FlightFrameDocument => readContract<FlightFrameDocument>(
+      "flight_frame", bridge.advance_flight_frame_json(timestamp, "[]"));
+    const key = (pressed: boolean, repeat: boolean): void => {
+      const observation: FlightKeyObservation = { control: "pilot_increase", pressed, repeat };
+      bridge.observe_flight_key_json(JSON.stringify(observation));
+    };
+    try {
+      launch(session);
+      key(true, false);
+      expect(frame(1000).advance).toMatchObject({ kind: "ticks", count: 0 });
+      const advanced = frame(1035);
+      expect(advanced.advance).toEqual({ kind: "ticks", count: 3, interpolation_fraction: 0.5 });
+      expect(advanced.previous_pose?.simulationTimeSeconds).toBe(0.02);
+      expect(advanced.previous_pose?.airspeedMetersPerSecond).toEqual(expect.any(Number));
+      const beforePause = session.readSnapshot();
+      if (beforePause.frame.kind !== "flight") throw new Error("Expected a live frame");
+      session.executeSharedSessionCommand({ kind: "pause" });
+      session.executeSharedSessionCommand({ kind: "resume" });
+      key(true, true);
+      expect(frame(9000).advance).toMatchObject({ kind: "ticks", count: 0 });
+      const resumed = frame(9010);
+      if (resumed.snapshot?.frame.kind !== "flight") throw new Error("Expected a resumed live frame");
+      expect(resumed.snapshot.frame.state.pilot_position_target_normalized)
+        .toBe(beforePause.frame.state.pilot_position_target_normalized);
+      expect(frame(9160).advance).toMatchObject({ kind: "ticks", count: 15 });
+      expect(frame(9310.001).advance).toEqual({ kind: "processing_delay", blocked: true });
+      expect(session.readLifecycle()).toMatchObject({ phase: "flight_paused", can_resume: false });
+      expect(frame(9320.001).advance).toEqual({ kind: "processing_delay", blocked: false });
+      expect(session.readLifecycle()).toMatchObject({ phase: "flight_paused", can_resume: true });
+    } finally { session.dispose(); }
+  });
+
   it("keeps named lifecycle phases and the shared elapsed-time countdown", () => {
     const { bridge, session } = fixture();
     try {

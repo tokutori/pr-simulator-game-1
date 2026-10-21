@@ -53,6 +53,7 @@ pub fn export_game_ui_schema(name: &str) -> Result<String, String> {
     output.subschema_for::<birdman_game_app::record_query::SummaryDocument<'_>>();
     output.subschema_for::<birdman_game_app::record_query::WindDocument<'_>>();
     output.subschema_for::<crate::session_snapshot::TailSnapshotDocument<'_>>();
+    output.subschema_for::<crate::session_snapshot::FlightFrameDocument<'_>>();
     output.subschema_for::<crate::session_snapshot::TailPreparedLaunchDocument<'_>>();
     output.subschema_for::<birdman_game_format::FlightRecordDifficultyDocument>();
     output.subschema_for::<birdman_game_app::session_snapshot::SessionLifecycleDocument>();
@@ -70,6 +71,8 @@ pub fn export_game_ui_schema(name: &str) -> Result<String, String> {
     input.subschema_for::<crate::xr::XrPointerSurface>();
     input.subschema_for::<crate::xr::XrPointerObservation>();
     input.subschema_for::<birdman_game_format::TailInputDocument>();
+    input.subschema_for::<birdman_game_app::flight_input::FlightKeyObservation>();
+    input.subschema_for::<birdman_game_app::flight_input::FlightGamepadObservation>();
     let mut output_definitions = output.take_definitions(true);
     for (name, value) in [
         (

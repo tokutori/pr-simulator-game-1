@@ -1185,6 +1185,206 @@
         }
       ]
     },
+    "FlightDeviceIdentity": {
+      "additionalProperties": false,
+      "description": "Exact platform device identity, including entity and reconnection generations.",
+      "properties": {
+        "generation": {
+          "description": "Adapter-observed connection generation for this slot.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "slot_high": {
+          "description": "High word of a native entity identity; zero for browser slots.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "slot_low": {
+          "description": "Low word of a browser slot or native entity identity.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "slot_low",
+        "slot_high",
+        "generation"
+      ],
+      "type": "object"
+    },
+    "FlightFrameAdvance": {
+      "description": "Work performed for one accepted presentation observation.",
+      "oneOf": [
+        {
+          "description": "Tick attempts consumed from this frame's admitted time.",
+          "properties": {
+            "count": {
+              "description": "Number of tick callbacks invoked, including a final stopped attempt.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "interpolation_fraction": {
+              "description": "Remaining time as a fraction of the common physical tick.",
+              "format": "double",
+              "type": "number"
+            },
+            "kind": {
+              "const": "ticks",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "count",
+            "interpolation_fraction"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "An external processing-delay cause changed; recovery requires explicit resume.",
+          "properties": {
+            "blocked": {
+              "description": "Whether the most recent interval exceeds the common frame-gap limit.",
+              "type": "boolean"
+            },
+            "kind": {
+              "const": "processing_delay",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "blocked"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "FlightFrameDocument": {
+      "additionalProperties": false,
+      "description": "One shared frame's admitted work, input takeover and retained live snapshot.",
+      "properties": {
+        "advance": {
+          "$ref": "#/$defs/FlightFrameAdvance",
+          "description": "Common physical tick budget and interpolation remainder, or delay transition."
+        },
+        "gamepad": {
+          "$ref": "#/$defs/FlightGamepadAcquisition",
+          "description": "Selected connection's neutral and pilot-position takeover state."
+        },
+        "previous_pose": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FlightRenderPose"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Start pose of the last attempted physical interval, retained across zero-tick frames by the adapter."
+        },
+        "snapshot": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TailSnapshotDocument"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Live or terminal projection; menus and recorded playback have their own producer."
+        }
+      },
+      "required": [
+        "advance",
+        "gamepad",
+        "snapshot",
+        "previous_pose"
+      ],
+      "type": "object"
+    },
+    "FlightGamepadAcquisition": {
+      "description": "Shared takeover state for the selected gamepad connection.",
+      "oneOf": [
+        {
+          "description": "No connected gamepad is selected.",
+          "properties": {
+            "kind": {
+              "const": "unselected",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "All configured axes must first return to their neutral zone.",
+          "properties": {
+            "identity": {
+              "$ref": "#/$defs/FlightDeviceIdentity",
+              "description": "Selected physical connection."
+            },
+            "kind": {
+              "const": "waiting_neutral",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "identity"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Pilot target stays held until the axis crosses the confirmed target.",
+          "properties": {
+            "identity": {
+              "$ref": "#/$defs/FlightDeviceIdentity",
+              "description": "Selected physical connection."
+            },
+            "kind": {
+              "const": "waiting_pilot",
+              "type": "string"
+            },
+            "previous_target": {
+              "description": "Previous normalized axis position used to detect target crossing.",
+              "format": "double",
+              "type": "number"
+            }
+          },
+          "required": [
+            "kind",
+            "identity",
+            "previous_target"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The selected gamepad owns all three admitted axes.",
+          "properties": {
+            "identity": {
+              "$ref": "#/$defs/FlightDeviceIdentity",
+              "description": "Selected physical connection."
+            },
+            "kind": {
+              "const": "active",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "identity"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "FlightRecordAssistanceDocument": {
       "description": "Stable assistance-level names in the external record format.",
       "oneOf": [

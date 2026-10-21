@@ -49,15 +49,7 @@ impl FlightFrameClock {
         timestamp_ms: f64,
         mut advance_tick: impl FnMut() -> bool,
     ) -> Result<FlightFrameAdvance, FlightClockError> {
-        if !timestamp_ms.is_finite() || timestamp_ms < 0.0 {
-            return Err(FlightClockError::InvalidTimestamp);
-        }
-        if self
-            .previous_timestamp_ms
-            .is_some_and(|previous| timestamp_ms < previous)
-        {
-            return Err(FlightClockError::NonMonotonicTimestamp);
-        }
+        self.validate_timestamp(timestamp_ms)?;
         let elapsed_ms = self
             .previous_timestamp_ms
             .map_or(0.0, |previous| timestamp_ms - previous);
@@ -114,6 +106,33 @@ impl FlightFrameClock {
     /// Returns the admitted remainder used by aircraft, pilot and camera interpolation.
     pub fn interpolation_fraction(&self) -> f64 {
         self.accumulated_ms * f64::from(PHYSICS_HZ) / 1000.0
+    }
+
+    /// Queries the last accepted frame's freshness without advancing physical time.
+    pub fn frame_available_at(&self, timestamp_ms: f64) -> Result<bool, FlightClockError> {
+        self.validate_timestamp(timestamp_ms)?;
+        Ok(!self.processing_delayed
+            && self.previous_timestamp_ms.is_some_and(|previous| {
+                timestamp_ms - previous <= f64::from(crate::MAXIMUM_FLIGHT_FRAME_GAP_MILLISECONDS)
+            }))
+    }
+
+    /// Returns the external delay observation that must clear before explicit resume.
+    pub fn processing_delayed(&self) -> bool {
+        self.processing_delayed
+    }
+
+    fn validate_timestamp(&self, timestamp_ms: f64) -> Result<(), FlightClockError> {
+        if !timestamp_ms.is_finite() || timestamp_ms < 0.0 {
+            return Err(FlightClockError::InvalidTimestamp);
+        }
+        if self
+            .previous_timestamp_ms
+            .is_some_and(|previous| timestamp_ms < previous)
+        {
+            return Err(FlightClockError::NonMonotonicTimestamp);
+        }
+        Ok(())
     }
 
     fn ticks(&self, count: u32) -> FlightFrameAdvance {

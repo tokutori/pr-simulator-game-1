@@ -44,6 +44,68 @@ pub struct TailSnapshotDocument<'identity> {
     pub frame: TailFrameDocument,
 }
 
+/// One shared frame's admitted work, input takeover and retained live snapshot.
+#[derive(serde::Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct FlightFrameDocument<'identity> {
+    /// Common physical tick budget and interpolation remainder, or delay transition.
+    pub advance: birdman_game_app::flight_clock::FlightFrameAdvance,
+    /// Selected connection's neutral and pilot-position takeover state.
+    pub gamepad: birdman_game_app::flight_input::FlightGamepadAcquisition,
+    /// Live or terminal projection; menus and recorded playback have their own producer.
+    pub snapshot: Option<TailSnapshotDocument<'identity>>,
+    /// Start pose of the last attempted physical interval, retained across zero-tick frames by the adapter.
+    pub previous_pose: Option<FlightRenderPose>,
+}
+
+/// Projects a completed frame without introducing another live state owner.
+pub fn flight_frame_snapshot(
+    session: &ApplicationSession,
+    report: birdman_game_app::application::FlightFrameReport,
+) -> Result<FlightFrameDocument<'_>, SnapshotProjectionError> {
+    let previous_pose = report
+        .previous_tick
+        .map(|previous| {
+            let telemetry = session
+                .core_session()
+                .flight_record()
+                .and_then(|record| {
+                    record.samples().iter().rev().find(|sample| {
+                        sample.tick_index == previous.tick_index() && sample.fraction == 0.0
+                    })
+                })
+                .map(|sample| sample.telemetry)
+                .ok_or(SnapshotProjectionError::Session(
+                    GameSessionError::InvalidTransition,
+                ))?;
+            Projection { session }.render_pose_internal(
+                previous.flight_state(),
+                previous.incidence(),
+                previous.tick_index() as f64 / f64::from(birdman_game_core::PHYSICS_HZ),
+                Some(telemetry),
+                previous.wing_bending_factor(),
+            )
+        })
+        .transpose()?;
+    let snapshot = if matches!(
+        session.core_session().snapshot().phase(),
+        birdman_game_core::SessionPhase::FlightRunning
+            | birdman_game_core::SessionPhase::FlightPaused { .. }
+            | birdman_game_core::SessionPhase::Result
+    ) {
+        Some(session_snapshot(session)?)
+    } else {
+        None
+    };
+    Ok(FlightFrameDocument {
+        advance: report.advance,
+        gamepad: session.flight_gamepad_acquisition(),
+        snapshot,
+        previous_pose,
+    })
+}
+
 /// Initial launch projection without advancing the simulation.
 #[derive(serde::Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
