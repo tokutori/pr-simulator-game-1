@@ -1,72 +1,66 @@
 use bevy::ecs as bevy_ecs;
 use bevy::prelude::{AssetId, Component, Image, Resource, Shader};
 use birdman_game_app::{
-    DEFAULT_SESSION_SEED, DEFAULT_WEATHER, HybridSessionPreparation, HybridSessionPreparationError,
-    bundled_environment, identity_for_selection, preset_environment_for_version,
+    HybridSessionPreparation,
+    application::ApplicationSession,
+    environment_snapshot::{
+        Defined, EnvironmentProjection, EnvironmentSelection, EnvironmentSnapshotError,
+        EnvironmentVenueProjection,
+    },
 };
-use birdman_game_core::{SessionPhase, SessionScenarioIdentity};
-use birdman_game_format::{
-    EnvironmentFormatError, SkyStateDocument, WaveStateDocument, WeatherClass,
-};
+use birdman_game_core::SessionScenarioIdentity;
+use birdman_game_format::{SkyStateDocument, WaveStateDocument, WeatherClass};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum EnvironmentTarget {
-    DefaultExhibition,
-    Sealed(SessionScenarioIdentity),
-    MissingIdentity(SessionPhase),
-}
+pub(crate) struct EnvironmentTarget(Result<EnvironmentSelection, EnvironmentSnapshotError>);
 
 impl EnvironmentTarget {
-    pub(crate) fn project(phase: SessionPhase, identity: Option<SessionScenarioIdentity>) -> Self {
-        match phase {
-            SessionPhase::Title => Self::DefaultExhibition,
-            SessionPhase::FlightSetup if identity.is_none() => Self::DefaultExhibition,
-            _ => identity.map_or(Self::MissingIdentity(phase), Self::Sealed),
-        }
+    pub(crate) fn project(session: &ApplicationSession) -> Self {
+        Self(EnvironmentSelection::for_session(session))
+    }
+
+    pub(crate) fn exhibition() -> Self {
+        Self(EnvironmentSelection::exhibition())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn sealed(identity: SessionScenarioIdentity) -> Self {
+        Self(Ok(EnvironmentSelection {
+            source: birdman_game_app::environment_snapshot::EnvironmentSource::Sealed,
+            identity: identity.into(),
+        }))
     }
 
     pub(crate) fn resolve(self) -> Result<ResolvedEnvironment, EnvironmentFailure> {
-        let identity = match self {
-            Self::DefaultExhibition => identity_for_selection(
-                HybridSessionPreparation::select_scenario(DEFAULT_WEATHER, DEFAULT_SESSION_SEED)
-                    .map_err(EnvironmentFailure::Registry)?,
-            ),
-            Self::Sealed(identity) => identity,
-            Self::MissingIdentity(phase) => return Err(EnvironmentFailure::MissingIdentity(phase)),
+        let selection = self.0.map_err(EnvironmentFailure::Projection)?;
+        let identity = selection.identity.into();
+        let EnvironmentProjection::Available {
+            metadata, venue, ..
+        } = selection
+            .resolve()
+            .map_err(EnvironmentFailure::Projection)?
+        else {
+            return Err(EnvironmentFailure::UnknownIdentity(identity));
         };
-        for weather in [
-            WeatherClass::Calm,
-            WeatherClass::Mild,
-            WeatherClass::Typical,
-            WeatherClass::Challenging,
-            WeatherClass::NearLimit,
-        ] {
-            let selection = HybridSessionPreparation::select_scenario(weather, identity.seed)
-                .map_err(EnvironmentFailure::Registry)?;
-            if identity_for_selection(selection) != identity {
-                continue;
-            }
-            let (waves, sky) = if weather == WeatherClass::Typical {
-                let document = bundled_environment()
-                    .map_err(EnvironmentFailure::Metadata)?
-                    .document();
-                (document.waves, Some(document.sky))
-            } else {
-                let environment = preset_environment_for_version(selection.environment_version)
-                    .ok_or(EnvironmentFailure::UnknownIdentity(identity))?;
-                (environment.waves, None)
-            };
-            return Ok(ResolvedEnvironment {
-                target: self,
-                condition: EnvironmentCondition {
-                    identity,
-                    weather,
-                    waves,
-                    sky,
+        let weather =
+            HybridSessionPreparation::weather_for_environment_identity(selection.identity)
+                .map_err(|cause| {
+                    EnvironmentFailure::Projection(EnvironmentSnapshotError::Preparation(cause))
+                })?
+                .ok_or(EnvironmentFailure::UnknownIdentity(identity))?;
+        Ok(ResolvedEnvironment {
+            target: self,
+            condition: EnvironmentCondition {
+                identity,
+                weather,
+                waves: metadata.waves,
+                sky: match metadata.sky {
+                    Defined::Defined(sky) => Some(sky),
+                    Defined::Unavailable => None,
                 },
-            });
-        }
-        Err(EnvironmentFailure::UnknownIdentity(identity))
+                venue,
+            },
+        })
     }
 }
 
@@ -76,6 +70,7 @@ pub(crate) struct EnvironmentCondition {
     pub(crate) weather: WeatherClass,
     pub(crate) waves: WaveStateDocument,
     pub(crate) sky: Option<SkyStateDocument>,
+    pub(crate) venue: EnvironmentVenueProjection,
 }
 
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
@@ -102,9 +97,7 @@ pub(crate) struct EnvironmentSun;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum EnvironmentFailure {
-    Registry(HybridSessionPreparationError),
-    Metadata(EnvironmentFormatError),
-    MissingIdentity(SessionPhase),
+    Projection(EnvironmentSnapshotError),
     UnknownIdentity(SessionScenarioIdentity),
     TargetNotApplied(EnvironmentTarget),
     SurfaceUnavailable(EnvironmentSurface),
@@ -155,7 +148,7 @@ pub(crate) struct DetailMipFailure {
 impl NativeEnvironment {
     pub(crate) fn try_default() -> Result<Self, EnvironmentFailure> {
         Ok(Self {
-            state: EnvironmentState::Applied(EnvironmentTarget::DefaultExhibition.resolve()?),
+            state: EnvironmentState::Applied(EnvironmentTarget::exhibition().resolve()?),
             detail_mip_failure: None,
         })
     }
@@ -234,45 +227,52 @@ impl NativeEnvironment {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use birdman_game_app::application::{BackendReadiness, SessionCommand};
+    use birdman_game_app::{
+        bundled_environment, identity_for_selection, preset_environment_for_version,
+    };
 
     #[test]
-    fn only_title_and_unprepared_setup_use_the_explicit_default_exhibition() {
-        for phase in [SessionPhase::Title, SessionPhase::FlightSetup] {
-            assert_eq!(
-                EnvironmentTarget::project(phase, None),
-                EnvironmentTarget::DefaultExhibition
-            );
-        }
-        let identity = EnvironmentTarget::DefaultExhibition
-            .resolve()
-            .unwrap()
-            .condition()
-            .identity;
+    fn title_exhibition_and_unprepared_setup_follow_the_shared_selection() {
+        let mut session = ApplicationSession::default();
         assert_eq!(
-            EnvironmentTarget::project(SessionPhase::FlightSetup, Some(identity)),
-            EnvironmentTarget::Sealed(identity)
+            EnvironmentTarget::project(&session),
+            EnvironmentTarget::exhibition()
+        );
+        session
+            .execute(SessionCommand::OpenSetup {}, BackendReadiness::Ready)
+            .unwrap();
+        session
+            .execute(
+                SessionCommand::SelectWeather {
+                    weather: WeatherClass::Calm,
+                },
+                BackendReadiness::Ready,
+            )
+            .unwrap();
+        let target = EnvironmentTarget::project(&session);
+        assert_eq!(
+            target.0.unwrap(),
+            EnvironmentSelection::for_session(&session).unwrap()
         );
         assert_eq!(
-            EnvironmentTarget::project(SessionPhase::Title, Some(identity)),
-            EnvironmentTarget::DefaultExhibition
+            target.resolve().unwrap().condition().weather,
+            WeatherClass::Calm
         );
-        for phase in [
-            SessionPhase::BriefingPreparing,
-            SessionPhase::BriefingReady,
-            SessionPhase::Countdown {
-                remaining_seconds: 3,
-            },
-            SessionPhase::FlightRunning,
-            SessionPhase::Result,
-            SessionPhase::Replay,
-            SessionPhase::Attract,
-        ] {
-            let target = EnvironmentTarget::project(phase, None);
-            assert_eq!(
-                target.resolve(),
-                Err(EnvironmentFailure::MissingIdentity(phase))
-            );
-        }
+        session
+            .execute(SessionCommand::ReturnToTitle {}, BackendReadiness::Ready)
+            .unwrap();
+        assert_eq!(
+            EnvironmentTarget::project(&session),
+            EnvironmentTarget::exhibition()
+        );
+        let cause = EnvironmentSnapshotError::Preparation(
+            birdman_game_app::HybridSessionPreparationError::AllocationFailed,
+        );
+        assert_eq!(
+            EnvironmentTarget(Err(cause)).resolve(),
+            Err(EnvironmentFailure::Projection(cause))
+        );
     }
 
     #[test]
@@ -281,7 +281,7 @@ mod tests {
             let identity = identity_for_selection(
                 HybridSessionPreparation::select_scenario(weather, 42).unwrap(),
             );
-            let condition = EnvironmentTarget::Sealed(identity)
+            let condition = EnvironmentTarget::sealed(identity)
                 .resolve()
                 .unwrap()
                 .condition();
@@ -316,7 +316,7 @@ mod tests {
                 5 => identity.controller_profile_version = 99,
                 _ => unreachable!(),
             }
-            let target = EnvironmentTarget::Sealed(identity);
+            let target = EnvironmentTarget::sealed(identity);
             assert_eq!(
                 target.resolve(),
                 Err(EnvironmentFailure::UnknownIdentity(identity))

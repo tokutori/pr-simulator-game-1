@@ -91,7 +91,7 @@ it("uses selected, sealed, record and Attract identities without modifying the c
   initSync({ module: new Uint8Array(readFileSync(wasmPath)) });
   const session = new HybridGameSessionBridge(0, 21, 22);
   try {
-    expect(parse(session.environment_snapshot_json())).toMatchObject({ context: { kind: "session", phase: "title" }, projection: { kind: "no_selection" } });
+    expect(parse(session.environment_snapshot_json())).toMatchObject({ context: { kind: "session", phase: "title" }, projection: { kind: "available", source: "exhibition", identity: { environment_version: 6 }, venue: { kind: "shared_launch" } } });
     session.open_setup();
     session.set_weather_class(2);
     const selected = record(parse(session.environment_snapshot_json()).projection);

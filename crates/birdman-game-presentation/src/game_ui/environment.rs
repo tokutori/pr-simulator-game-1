@@ -6,7 +6,8 @@ use birdman_game_app::{
 };
 
 pub(super) fn registered(identity: SessionScenarioIdentity) -> bool {
-    HybridSessionPreparation::recognizes_environment_identity(identity.into())
+    HybridSessionPreparation::weather_for_environment_identity(identity.into())
+        .is_ok_and(|weather| weather.is_some())
 }
 
 pub(super) fn registered_wind(

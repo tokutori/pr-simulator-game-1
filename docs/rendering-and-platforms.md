@@ -191,6 +191,8 @@ Nativeは既存DirectionalLightの2048 texel・30〜600 mの3段cascadeから、
 - 画像はimmutableとし、環境交換は新AssetIdを使用する。
 
 - 環境交換は必要な全resourceを検証してから画像、material、bounds、太陽を一括更新する。
+- Titleの展示は共有appが選ぶTypical環境の波・天空・太陽・会場を使用する。Setupの選択と展示のidentityを分け、adapterは共有projectionの会場可用性を表示へ写す。
+- 登録環境の解決に失敗した場合は、以前の波・天空資源と元原因を保持し、未登録記録では背景保持の通知と技術情報の元identityを表示する。既知の合成気象で天空が未提供の場合は、雲・太陽光のない中立天空を生成する。
 - 品質交換はnear/farへ同じ波投影を原子的に適用する。
 - 反射resizeは新targetをcameraと全materialへ接続してから旧targetだけを退役させる。
 - 非同期pipeline失敗はCPU準備失敗と区別し、対象shader・entry point・元原因を保持する。

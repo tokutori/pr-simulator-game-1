@@ -19,14 +19,12 @@ export interface EnvironmentSnapshot {
      * Explicit availability of the requested registered environment.
      */
     readonly projection: {
-        readonly kind: "no_selection";
-    } | {
         readonly identity: EnvironmentIdentity;
         readonly kind: "unavailable";
         /**
          * Owner of the requested identity.
          */
-        readonly source: "selected" | "sealed" | "record" | "archive" | "attract" | "registry";
+        readonly source: "exhibition" | "selected" | "sealed" | "record" | "archive" | "attract" | "registry";
     } | {
         readonly identity: EnvironmentIdentity1;
         readonly kind: "available";
@@ -34,7 +32,19 @@ export interface EnvironmentSnapshot {
         /**
          * Owner of the resolved identity.
          */
-        readonly source: "selected" | "sealed" | "record" | "archive" | "attract" | "registry";
+        readonly source: "exhibition" | "selected" | "sealed" | "record" | "archive" | "attract" | "registry";
+        /**
+         * Registered venue availability for this environment owner.
+         */
+        readonly venue: {
+            readonly kind: "shared_launch";
+        } | {
+            readonly kind: "registered_origin";
+        } | {
+            readonly kind: "origin_not_recorded";
+        } | {
+            readonly kind: "unregistered_origin";
+        };
     };
     /**
      * Current environment snapshot wire version.

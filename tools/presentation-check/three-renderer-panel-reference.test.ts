@@ -35,7 +35,7 @@ import { LakeSkyImageBridge, ScreenRenderAutoBridge, lake_scene_ambient_color_sr
 
 import { initSync } from "../../web/pkg/birdman_game_wasm.js";
 import { createAppSession } from "../../web/src/app/session-factory.js";
-import { projectRuntimeEnvironment } from "../../web/src/game/runtime-environment.js";
+import { projectRuntimeEnvironment, readExhibitionEnvironment } from "../../web/src/game/runtime-environment.js";
 import { projectRuntimeVenue } from "../../web/src/game/runtime-venue.js";
 import * as lakeWater from "../../web/src/render/contracts/lake-water.js";
 import * as lakeDetail from "../../web/src/render/engines/three/lake-detail-texture.js";
@@ -576,7 +576,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
         previous.addEventListener("dispose", onDispose);
         await bundle.renderer.setLakeWaterQuality(quality);
         const profile = lakeWater.lakeWaterQualityProfile(quality);
-        const projection = createLakeWaveProjection(lakeWater.DEFAULT_LAKE_VISUAL_CONDITION, quality);
+        const projection = createLakeWaveProjection(readExhibitionEnvironment().waves, quality);
         expect(original.foreground.mesh.geometry.getAttribute("position").count).toBe((profile.meshSegments / 4 + 1) ** 2);
         expect(original.foreground.material.uniforms.uWaveCount?.value).toBe(profile.componentCount);
         expect(original.backing.material.uniforms.uWaveCount?.value).toBe(profile.componentCount);
@@ -729,9 +729,8 @@ describe("Three adapter panel reference with real StereoEffect", () => {
           saved = JSON.stringify(document);
         }
         if (recordKind !== "current-calm") session.openArchive(saved);
-        const phase = session.readLifecycle().phase;
         const environment = projectRuntimeEnvironment(session.readEnvironment());
-        bundle.renderer.setLakeVenueVisible(projectRuntimeVenue(environment, phase).kind === "visible");
+        bundle.renderer.setLakeVenueVisible(projectRuntimeVenue(environment).kind === "visible");
         bundle.renderer.render(frame());
         const scene = driver.scene;
         const venue = scene?.getObjectByName("lake-biwa-launch-venue");
@@ -743,7 +742,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
         if (recordKind !== "current-calm") {
           session.executeSharedSessionCommand({ kind: "leave_replay" });
           const title = projectRuntimeEnvironment(session.readEnvironment());
-          bundle.renderer.setLakeVenueVisible(projectRuntimeVenue(title, "title").kind === "visible");
+          bundle.renderer.setLakeVenueVisible(projectRuntimeVenue(title).kind === "visible");
           bundle.renderer.render(frame());
           expect(venue.visible).toBe(true);
         }

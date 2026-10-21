@@ -582,7 +582,7 @@ pub(crate) fn setup_world(
     });
     let environment = NativeEnvironment::try_default().expect("登録環境が不正");
     let sky = environment
-        .condition_for(EnvironmentTarget::DefaultExhibition)
+        .condition_for(EnvironmentTarget::exhibition())
         .expect("登録環境が欠損")
         .sky;
     commands.insert_resource(environment);

@@ -224,13 +224,17 @@ impl HybridSessionPreparation {
     }
 
     /// Identifies current registered model/scenario conditions from their canonical selection.
-    pub fn recognizes_environment_identity(identity: EnvironmentIdentity) -> bool {
+    pub fn weather_for_environment_identity(
+        identity: EnvironmentIdentity,
+    ) -> Result<Option<WeatherClass>, HybridSessionPreparationError> {
         let seed = u64::from(identity.seed_low) | (u64::from(identity.seed_high) << 32);
-        SCENARIOS.iter().any(|(_, weather)| {
-            Self::select_scenario(*weather, seed).is_ok_and(|selection| {
-                EnvironmentIdentity::from(identity_for_selection(selection)) == identity
-            })
-        })
+        for (_, weather) in SCENARIOS {
+            let selection = Self::select_scenario(weather, seed)?;
+            if EnvironmentIdentity::from(identity_for_selection(selection)) == identity {
+                return Ok(Some(weather));
+            }
+        }
+        Ok(None)
     }
 
     /// Returns the exact software profile used to seal this scenario.

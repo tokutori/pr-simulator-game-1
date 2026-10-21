@@ -69,6 +69,15 @@ pub fn environment_snapshot_for_identity_json(identity_json: &JsValue) -> Result
     })
 }
 
+/// Returns the shared title exhibition without preparing a flight.
+#[wasm_bindgen]
+pub fn exhibition_environment_json() -> Result<String, JsValue> {
+    let snapshot = environment_snapshot::for_exhibition().map_err(environment_snapshot_error)?;
+    serde_json::to_string(&snapshot).map_err(|_| {
+        environment_snapshot_error(environment_snapshot::EnvironmentSnapshotError::EncodingFailed)
+    })
+}
+
 fn preset_code(preset: DifficultyPreset) -> u32 {
     match preset {
         DifficultyPreset::Beginner => 0,

@@ -30,6 +30,8 @@ pub enum EnvironmentSnapshotError {
     InvalidIdentity,
     /// A configured session phase has no retained scenario identity.
     MissingSessionIdentity,
+    /// Registered scenario or aircraft preparation failed with its original cause.
+    Preparation(crate::HybridSessionPreparationError),
     /// The shared environment provider failed with its original cause.
     Environment(EnvironmentFormatError),
     /// The adapter could not encode the projected document.
@@ -79,11 +81,27 @@ impl From<birdman_game_core::SessionScenarioIdentity> for EnvironmentIdentity {
     }
 }
 
+impl From<EnvironmentIdentity> for birdman_game_core::SessionScenarioIdentity {
+    fn from(identity: EnvironmentIdentity) -> Self {
+        Self {
+            catalog_version: identity.catalog_version,
+            scenario_id: identity.scenario_id,
+            scenario_version: identity.scenario_version,
+            aircraft_model_version: identity.aircraft_model_version,
+            environment_version: identity.environment_version,
+            controller_profile_version: identity.controller_profile_version,
+            seed: u64::from(identity.seed_low) | (u64::from(identity.seed_high) << 32),
+        }
+    }
+}
+
 /// Owner whose selected environment is being observed.
-#[derive(Clone, Copy, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum EnvironmentSource {
+    /// Immutable title exhibition, independent of flight selection.
+    Exhibition,
     /// Current Flight Setup selection.
     Selected,
     /// Sealed flight configuration.
@@ -96,6 +114,73 @@ pub enum EnvironmentSource {
     Attract,
     /// Explicit immutable registry query.
     Registry,
+}
+
+/// Lightweight identity key for display-resource synchronization.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct EnvironmentSelection {
+    /// Owner of the displayed environment.
+    pub source: EnvironmentSource,
+    /// Complete registered scenario identity.
+    pub identity: EnvironmentIdentity,
+}
+
+impl EnvironmentSelection {
+    /// Selects the title exhibition without preparing a flight.
+    pub fn exhibition() -> Result<Self, EnvironmentSnapshotError> {
+        Self::selected(
+            EnvironmentSource::Exhibition,
+            crate::DEFAULT_WEATHER,
+            crate::DEFAULT_SESSION_SEED,
+        )
+    }
+
+    fn selected(
+        source: EnvironmentSource,
+        weather: birdman_game_format::WeatherClass,
+        seed: u64,
+    ) -> Result<Self, EnvironmentSnapshotError> {
+        let selection = HybridSessionPreparation::select_scenario(weather, seed)
+            .map_err(EnvironmentSnapshotError::Preparation)?;
+        Ok(Self {
+            source,
+            identity: identity_for_selection(selection).into(),
+        })
+    }
+
+    /// Observes the display owner while retaining independent player selections.
+    pub fn for_session(session: &ApplicationSession) -> Result<Self, EnvironmentSnapshotError> {
+        use birdman_game_core::SessionPhase;
+        let phase = session.core_session().snapshot().phase();
+        match phase {
+            SessionPhase::Title => Self::exhibition(),
+            SessionPhase::FlightSetup => Self::selected(
+                EnvironmentSource::Selected,
+                session.difficulty().weather(),
+                session.seed(),
+            ),
+            _ => Ok(Self {
+                source: match phase {
+                    SessionPhase::Replay if session.archive().is_some() => {
+                        EnvironmentSource::Archive
+                    }
+                    SessionPhase::Replay => EnvironmentSource::Record,
+                    SessionPhase::Attract => EnvironmentSource::Attract,
+                    _ => EnvironmentSource::Sealed,
+                },
+                identity: session
+                    .core_session()
+                    .configuration_identity()
+                    .ok_or(EnvironmentSnapshotError::MissingSessionIdentity)?
+                    .into(),
+            }),
+        }
+    }
+
+    /// Resolves descriptive metadata when display resources require an update.
+    pub fn resolve(self) -> Result<EnvironmentProjection, EnvironmentSnapshotError> {
+        for_identity(self.source, self.identity)
+    }
 }
 
 /// Origin of one environment snapshot.
@@ -130,8 +215,6 @@ pub struct EnvironmentSnapshot {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum EnvironmentProjection {
-    /// The current phase has no environment selection.
-    NoSelection,
     /// The requested identity is not registered.
     Unavailable {
         /// Owner of the requested identity.
@@ -147,7 +230,56 @@ pub enum EnvironmentProjection {
         identity: EnvironmentIdentity,
         /// Bounded descriptive metadata without the full wind grid.
         metadata: Box<EnvironmentMetadata>,
+        /// Registered venue availability for this environment owner.
+        venue: EnvironmentVenueProjection,
     },
+}
+
+/// Shared admission of the launch venue, independent of display resources.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum EnvironmentVenueProjection {
+    /// The selected scenario uses the shared launch venue.
+    SharedLaunch,
+    /// The archive identity resolves an origin matching the registered venue.
+    RegisteredOrigin,
+    /// The registered environment carries no geographic origin.
+    OriginNotRecorded,
+    /// The geographic origin or water datum differs from the registered venue.
+    UnregisteredOrigin,
+}
+
+impl EnvironmentVenueProjection {
+    /// Whether the registered venue can be rendered.
+    pub const fn is_visible(self) -> bool {
+        matches!(self, Self::SharedLaunch | Self::RegisteredOrigin)
+    }
+}
+
+/// Resolves venue admission from the selected owner and registered origin metadata.
+pub fn venue_for_environment(
+    source: EnvironmentSource,
+    frame: &Defined<LocalNedFrameDocument>,
+) -> Result<EnvironmentVenueProjection, EnvironmentSnapshotError> {
+    if !matches!(
+        source,
+        EnvironmentSource::Archive | EnvironmentSource::Registry
+    ) {
+        return Ok(EnvironmentVenueProjection::SharedLaunch);
+    }
+    let Defined::Defined(frame) = frame else {
+        return Ok(EnvironmentVenueProjection::OriginNotRecorded);
+    };
+    let registered = &bundled_environment()
+        .map_err(EnvironmentSnapshotError::Environment)?
+        .document()
+        .local_frame;
+    Ok(if frame == registered {
+        EnvironmentVenueProjection::RegisteredOrigin
+    } else {
+        EnvironmentVenueProjection::UnregisteredOrigin
+    })
 }
 
 /// Explicitly recorded or unavailable metadata.
@@ -274,8 +406,10 @@ pub fn for_identity(
     source: EnvironmentSource,
     identity: EnvironmentIdentity,
 ) -> Result<EnvironmentProjection, EnvironmentSnapshotError> {
-    let registered = HybridSessionPreparation::recognizes_environment_identity(identity);
-    if !registered {
+    if HybridSessionPreparation::weather_for_environment_identity(identity)
+        .map_err(EnvironmentSnapshotError::Preparation)?
+        .is_none()
+    {
         return Ok(EnvironmentProjection::Unavailable { source, identity });
     }
     let metadata = if identity.environment_version == 6 {
@@ -288,6 +422,7 @@ pub fn for_identity(
     Ok(EnvironmentProjection::Available {
         source,
         identity,
+        venue: venue_for_environment(source, &metadata.local_frame)?,
         metadata: Box::new(metadata),
     })
 }
@@ -296,40 +431,23 @@ pub fn for_identity(
 pub fn for_session(
     session: &ApplicationSession,
 ) -> Result<EnvironmentSnapshot, EnvironmentSnapshotError> {
-    use birdman_game_core::SessionPhase;
     let phase = session.core_session().snapshot().phase();
-    let projection = match phase {
-        SessionPhase::Title => EnvironmentProjection::NoSelection,
-        SessionPhase::FlightSetup => {
-            let selection = HybridSessionPreparation::select_scenario(
-                session.difficulty().weather(),
-                session.seed(),
-            )
-            .map_err(|_| EnvironmentSnapshotError::InvalidIdentity)?;
-            for_identity(
-                EnvironmentSource::Selected,
-                identity_for_selection(selection).into(),
-            )?
-        }
-        _ => {
-            let identity = session
-                .core_session()
-                .configuration_identity()
-                .ok_or(EnvironmentSnapshotError::MissingSessionIdentity)?;
-            let source = match phase {
-                SessionPhase::Replay if session.archive().is_some() => EnvironmentSource::Archive,
-                SessionPhase::Replay => EnvironmentSource::Record,
-                SessionPhase::Attract => EnvironmentSource::Attract,
-                _ => EnvironmentSource::Sealed,
-            };
-            for_identity(source, identity.into())?
-        }
-    };
+    let projection = EnvironmentSelection::for_session(session)?.resolve()?;
     Ok(EnvironmentSnapshot::new(
         EnvironmentContext::Session {
             phase: phase.into(),
         },
         projection,
+    ))
+}
+
+/// Projects the immutable title environment before an application session is created.
+pub fn for_exhibition() -> Result<EnvironmentSnapshot, EnvironmentSnapshotError> {
+    Ok(EnvironmentSnapshot::new(
+        EnvironmentContext::Session {
+            phase: SessionPhaseDocument::Title,
+        },
+        EnvironmentSelection::exhibition()?.resolve()?,
     ))
 }
 
@@ -613,13 +731,132 @@ mod tests {
     }
 
     #[test]
+    fn exhibition_is_independent_of_retained_weather_and_seed() {
+        use crate::application::{BackendReadiness, SessionCommand};
+        use birdman_game_format::WeatherClass;
+        let mut session = crate::application::ApplicationSession::new(
+            crate::default_control_mode(),
+            4000,
+            u64::MAX,
+        );
+        let exhibition = super::EnvironmentSelection::exhibition().unwrap();
+        assert_eq!(
+            super::EnvironmentSelection::for_session(&session).unwrap(),
+            exhibition
+        );
+        session
+            .execute(SessionCommand::OpenSetup {}, BackendReadiness::Ready)
+            .unwrap();
+        for weather in [
+            WeatherClass::Calm,
+            WeatherClass::Mild,
+            WeatherClass::Typical,
+            WeatherClass::Challenging,
+            WeatherClass::NearLimit,
+        ] {
+            session
+                .execute(
+                    SessionCommand::SelectWeather { weather },
+                    BackendReadiness::Ready,
+                )
+                .unwrap();
+            let selected = super::EnvironmentSelection::for_session(&session).unwrap();
+            assert_eq!(selected.source, super::EnvironmentSource::Selected);
+            assert_eq!(selected.identity.seed_low, u32::MAX);
+            assert_eq!(selected.identity.seed_high, u32::MAX);
+            assert_eq!(
+                crate::HybridSessionPreparation::weather_for_environment_identity(
+                    selected.identity
+                ),
+                Ok(Some(weather))
+            );
+        }
+        session
+            .execute(SessionCommand::ReturnToTitle {}, BackendReadiness::Ready)
+            .unwrap();
+        assert_eq!(
+            super::EnvironmentSelection::for_session(&session).unwrap(),
+            exhibition
+        );
+        session
+            .execute(SessionCommand::OpenSetup {}, BackendReadiness::Ready)
+            .unwrap();
+        assert_eq!(
+            crate::HybridSessionPreparation::weather_for_environment_identity(
+                super::EnvironmentSelection::for_session(&session)
+                    .unwrap()
+                    .identity
+            ),
+            Ok(Some(WeatherClass::NearLimit))
+        );
+    }
+
+    #[test]
+    fn archive_venue_uses_registered_origin_and_exact_water_datum() {
+        use super::{
+            Defined, EnvironmentSource, EnvironmentVenueProjection, venue_for_environment,
+        };
+        let registered = crate::bundled_environment()
+            .unwrap()
+            .document()
+            .local_frame
+            .clone();
+        assert_eq!(
+            venue_for_environment(
+                EnvironmentSource::Archive,
+                &Defined::Defined(registered.clone())
+            )
+            .unwrap(),
+            EnvironmentVenueProjection::RegisteredOrigin
+        );
+        for change in 0..3 {
+            let mut frame = registered.clone();
+            match change {
+                0 => frame.latitude_degrees += 1.0,
+                1 => frame.longitude_degrees += 1.0,
+                _ => frame.water_level_datum.push_str(" altered"),
+            }
+            assert_eq!(
+                venue_for_environment(EnvironmentSource::Archive, &Defined::Defined(frame))
+                    .unwrap(),
+                EnvironmentVenueProjection::UnregisteredOrigin
+            );
+        }
+        assert_eq!(
+            venue_for_environment(EnvironmentSource::Archive, &Defined::Unavailable).unwrap(),
+            EnvironmentVenueProjection::OriginNotRecorded
+        );
+        for source in [
+            EnvironmentSource::Exhibition,
+            EnvironmentSource::Selected,
+            EnvironmentSource::Sealed,
+            EnvironmentSource::Record,
+            EnvironmentSource::Attract,
+        ] {
+            assert_eq!(
+                venue_for_environment(source, &Defined::Unavailable).unwrap(),
+                EnvironmentVenueProjection::SharedLaunch
+            );
+        }
+    }
+
+    #[test]
     fn shared_session_projection_uses_selected_then_sealed_identity_without_mutation() {
         use crate::application::{ApplicationSession, BackendReadiness, SessionCommand};
         let mut session = ApplicationSession::default();
         let before = session.core_session().snapshot();
         let snapshot = serde_json::to_value(super::for_session(&session).unwrap()).unwrap();
         assert_eq!(snapshot["context"]["phase"], "title");
-        assert_eq!(snapshot["projection"]["kind"], "no_selection");
+        assert_eq!(snapshot["projection"]["kind"], "available");
+        assert_eq!(snapshot["projection"]["source"], "exhibition");
+        assert_eq!(snapshot["projection"]["identity"]["environment_version"], 6);
+        assert_eq!(snapshot["projection"]["metadata"]["sky"]["kind"], "defined");
+        assert!(
+            snapshot["projection"]["metadata"]["sky"]["value"]["cloud_fraction"]
+                .as_f64()
+                .unwrap()
+                > 0.0
+        );
         assert_eq!(session.core_session().snapshot(), before);
         for (command, phase, source) in [
             (SessionCommand::OpenSetup {}, "flight_setup", "selected"),

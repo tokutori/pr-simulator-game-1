@@ -25,10 +25,10 @@ function pointInRing(north: number, east: number, ring: readonly (readonly numbe
 }
 
 describe("Hikone venue map", () => {
-  it("requires the recorded registered origin instead of a scenario-number fallback", () => {
+  it("requires the registered environment origin instead of a scenario-number fallback", () => {
     const environment = currentVenueEnvironmentFixture();
     if (environment.kind !== "available") throw new Error("Missing current environment fixture");
-    expect(venueMapForEnvironment({ kind: "unavailable", reason: "unregistered_environment_identity" }))
+    expect(venueMapForEnvironment({ kind: "unavailable", source: "archive", identity: { ...environment.value.identity, environment_version: 99 }, reason: "unregistered_environment_identity" }))
       .toEqual({ kind: "unavailable", reason: "environment_unavailable" });
     expect(venueMapForEnvironment({ kind: "available", value: { ...environment.value,
       localFrame: { kind: "unavailable" } } }))

@@ -143,11 +143,6 @@ impl HybridGameSessionBridge {
                 };
                 sample_grid(wind, request, source, identity.into())?
             }
-            EnvironmentProjection::NoSelection => {
-                return Err(BoundaryError::Environment(
-                    crate::environment_snapshot::EnvironmentSnapshotError::MissingSessionIdentity,
-                ));
-            }
         };
         serde_json::to_string(&WindDocument {
             schema_version: SCHEMA_VERSION,

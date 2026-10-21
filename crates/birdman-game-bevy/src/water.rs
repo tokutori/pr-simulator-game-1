@@ -127,7 +127,7 @@ fn visual_condition(condition: EnvironmentCondition) -> Result<LakeVisualConditi
 
 impl WaterMaterial {
     pub(crate) fn registered(sky: bool) -> Result<Self, String> {
-        let condition = EnvironmentTarget::DefaultExhibition
+        let condition = EnvironmentTarget::exhibition()
             .resolve()
             .map_err(|error| format!("環境assetを読めない: {error:?}"))?
             .condition();
@@ -605,10 +605,7 @@ pub(crate) fn apply_environment(
     )>,
     mut sun: Query<(&mut DirectionalLight, &mut Transform), With<EnvironmentSun>>,
 ) {
-    let target = EnvironmentTarget::project(
-        session.game.core_session().snapshot().phase(),
-        session.game.core_session().configuration_identity(),
-    );
+    let target = EnvironmentTarget::project(&session.game);
     if !presentation.needs_update(target)
         && (quality.pending().is_none() || presentation.condition_for(target).is_ok())
     {
@@ -623,11 +620,16 @@ pub(crate) fn apply_environment(
     } = assets;
     let resolved = target.resolve();
     for mut visibility in &mut venue {
-        visibility.set_if_neq(if resolved.is_ok() {
-            Visibility::Inherited
-        } else {
-            Visibility::Hidden
-        });
+        visibility.set_if_neq(
+            if resolved
+                .as_ref()
+                .is_ok_and(|environment| environment.condition().venue.is_visible())
+            {
+                Visibility::Inherited
+            } else {
+                Visibility::Hidden
+            },
+        );
     }
     let result = (|| {
         let resolved = resolved?;
@@ -820,10 +822,7 @@ pub(crate) fn prepare_quality(
         .clone();
     let session = world.resource::<NativeSession>();
     let environment = world.resource::<NativeEnvironment>();
-    let target = EnvironmentTarget::project(
-        session.game.core_session().snapshot().phase(),
-        session.game.core_session().configuration_identity(),
-    );
+    let target = EnvironmentTarget::project(&session.game);
     let condition = environment
         .condition_for(target)
         .map_err(WaterQualityFailure::EnvironmentProjection)?;
@@ -1008,7 +1007,7 @@ mod tests {
                     .all(|material| material.sky_texture.as_ref() == Some(&clear))
             );
             let image = app.world().resource::<Assets<Image>>().get(&clear).unwrap();
-            assert_eq!(image.data.as_deref().unwrap(), clear_pixels);
+            assert!(image.data.as_deref().unwrap() == clear_pixels);
             app.world_mut()
                 .resource_mut::<NativeSession>()
                 .execute_ui_command(SessionCommand::CancelBriefing {})
@@ -1023,12 +1022,19 @@ mod tests {
                 .resource::<Assets<Image>>()
                 .get(material.sky_texture.as_ref().unwrap())
                 .unwrap();
-            assert_ne!(image.data.as_deref().unwrap(), clear_pixels);
+            assert!(image.data.as_deref().unwrap() == clear_pixels);
             app.world_mut()
                 .resource_mut::<NativeSession>()
                 .execute_ui_command(SessionCommand::ReturnToTitle {})
                 .unwrap();
             app.update();
+            let material = &environment_materials(&mut app)[0];
+            let image = app
+                .world()
+                .resource::<Assets<Image>>()
+                .get(material.sky_texture.as_ref().unwrap())
+                .unwrap();
+            assert!(image.data.as_deref().unwrap() != clear_pixels);
         }
     }
 
@@ -1101,7 +1107,7 @@ mod tests {
         assert!(
             app.world()
                 .resource::<NativeEnvironment>()
-                .condition_for(EnvironmentTarget::Sealed(header.scenario))
+                .condition_for(EnvironmentTarget::sealed(header.scenario))
                 .is_err()
         );
         app.world_mut()
@@ -1418,7 +1424,7 @@ mod tests {
         assert_eq!(
             app.world()
                 .resource::<NativeEnvironment>()
-                .condition_for(EnvironmentTarget::DefaultExhibition),
+                .condition_for(EnvironmentTarget::exhibition()),
             Err(EnvironmentFailure::SunUnavailable)
         );
         assert_environment_image_exchange(&mut app, &original_images, &retired_images);
@@ -1455,7 +1461,7 @@ mod tests {
             .core_session()
             .configuration_identity()
             .unwrap();
-        let target = EnvironmentTarget::Sealed(identity);
+        let target = EnvironmentTarget::sealed(identity);
         let condition = target.resolve().unwrap().condition();
         let high = WaterMaterial::from_environment(condition, false).unwrap();
         assert_environment_image_exchange(&mut app, &original_images, &retired_images);
@@ -1620,15 +1626,14 @@ mod tests {
             .execute_ui_command(birdman_game_app::application::SessionCommand::CancelBriefing {})
             .unwrap();
         app.update();
-        let default = EnvironmentTarget::DefaultExhibition
-            .resolve()
-            .unwrap()
-            .condition();
+        let target = EnvironmentTarget::project(&app.world().resource::<NativeSession>().game);
+        let selected = target.resolve().unwrap().condition();
+        assert_eq!(selected.weather, birdman_game_format::WeatherClass::Calm);
         assert_eq!(
             app.world()
                 .resource::<NativeEnvironment>()
-                .condition_for(EnvironmentTarget::DefaultExhibition),
-            Ok(default)
+                .condition_for(target),
+            Ok(selected)
         );
         app.world_mut()
             .resource_mut::<NativeSession>()
@@ -1724,7 +1729,7 @@ mod tests {
                     .into_iter()
                     .all(|image| images.get(image).is_some())
             );
-            let target = EnvironmentTarget::Sealed(
+            let target = EnvironmentTarget::sealed(
                 session
                     .game
                     .core_session()
@@ -1828,7 +1833,7 @@ mod tests {
                 assert_eq!(current.sun_cloud, previous.sun_cloud);
             }
             assert!(
-                matches!(app.world().resource::<NativeEnvironment>().condition_for(EnvironmentTarget::Sealed(
+                matches!(app.world().resource::<NativeEnvironment>().condition_for(EnvironmentTarget::sealed(
                 app.world().resource::<NativeSession>().game.core_session().configuration_identity().unwrap()
             )), Err(EnvironmentFailure::WavePreparation(cause)) if cause.contains("terrain haze"))
             );
@@ -1850,7 +1855,7 @@ mod tests {
         prepare_calm(&mut app);
         app.update();
         assert_venue_visibility(&mut app, Visibility::Inherited);
-        let target = EnvironmentTarget::Sealed(
+        let target = EnvironmentTarget::sealed(
             app.world()
                 .resource::<NativeSession>()
                 .game
@@ -2401,7 +2406,7 @@ mod tests {
     #[test]
     fn geometry_phases_are_fixed_and_detail_seed_affects_only_shared_images() {
         let original = WaterMaterial::registered(false).unwrap();
-        let mut condition = EnvironmentTarget::DefaultExhibition
+        let mut condition = EnvironmentTarget::exhibition()
             .resolve()
             .unwrap()
             .condition();
@@ -2424,7 +2429,7 @@ mod tests {
 
     #[test]
     fn invalid_shared_condition_is_rejected_without_renderer_fallback() {
-        let original = EnvironmentTarget::DefaultExhibition
+        let original = EnvironmentTarget::exhibition()
             .resolve()
             .unwrap()
             .condition();
@@ -2736,7 +2741,7 @@ mod tests {
 
     #[test]
     fn haze_and_daylight_follow_sealed_sky_and_preserve_missing_metadata() {
-        let mut condition = EnvironmentTarget::DefaultExhibition
+        let mut condition = EnvironmentTarget::exhibition()
             .resolve()
             .unwrap()
             .condition();

@@ -45,7 +45,6 @@ import { TailFlightController } from "./game/tail-flight-controller.js";
 import { maximum_flight_frame_gap_milliseconds, screen_vertical_field_of_view_degrees, ScreenRenderAutoBridge } from "../pkg/birdman_game_wasm.js";
 import type { ScreenRenderAutoSnapshot } from "./generated/screen-render-auto.js";
 import { suspendPageFlight } from "./game/page-flight-lifecycle.js";
-import { DEFAULT_LAKE_VISUAL_CONDITION } from "./render/contracts/lake-water.js";
 import { createArchivedPersonalBestSelection, personalBestComparisonVersion } from "./game/archived-personal-best.js";
 import { FlightRecordRepository, IndexedDbFlightRecordPersistence } from "./game/flight-record-store.js";
 import { projectRuntimeEnvironment } from "./game/runtime-environment.js";
@@ -144,10 +143,11 @@ function renderModel(): void {
   const domVisible = screenUiVisible(model.presentation);
   frameRateDisplay.render(runtime?.framesPerSecond ?? null, domVisible);
   const environment = currentRuntimeEnvironment();
-  flightRenderer?.setLakeVisualCondition(environment.kind === "available" ? environment.value.waves : DEFAULT_LAKE_VISUAL_CONDITION);
-  flightRenderer?.setLakeSkyCondition(environment.kind === "available" && environment.value.sky.kind === "available"
-    ? environment.value.sky.value.condition : null);
-  flightRenderer?.setLakeVenueVisible(gameSession !== null && projectRuntimeVenue(environment, phase).kind === "visible");
+  if (environment.kind === "available") {
+    flightRenderer?.setLakeVisualCondition(environment.value.waves);
+    flightRenderer?.setLakeSkyCondition(environment.value.sky.kind === "available" ? environment.value.sky.value.condition : null);
+  }
+  flightRenderer?.setLakeVenueVisible(gameSession !== null && projectRuntimeVenue(environment).kind === "visible");
   controllerHudDisplay.render();
   const replay = (phase === "replay" || phase === "attract") ? replayPoseData(model.replayPose) : null;
   const camera = replay?.replayCamera ?? null;
