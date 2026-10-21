@@ -6,6 +6,10 @@ use super::{
 use crate::game_ui::GameUiAnchor;
 use serde::{Deserialize, Serialize};
 
+const EYE_POSITION_TOLERANCE_M: f64 = 1.0e-4;
+const EYE_ANGLE_TOLERANCE_RAD: f64 = 1.0e-4;
+const PROJECTION_RELATIVE_TOLERANCE: f64 = 1.0e-4;
+
 /// Named reference frames used by physical and overlay UI anchors.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -151,9 +155,10 @@ impl XrSpatialSession {
             self.menu = None;
         }
         let unavailable = |reason| XrPanelPlacement::Unavailable { reason };
-        if let Err(reason) = PreparedViews::new(viewer) {
-            return unavailable(reason);
-        }
+        let views = match PreparedViews::new(viewer) {
+            Ok(views) => views,
+            Err(reason) => return unavailable(reason),
+        };
         let Some(reference) = reference else {
             return unavailable(XrFitReason::InvalidViewGeometry);
         };
@@ -183,15 +188,19 @@ impl XrSpatialSession {
                     unreachable!("Prepared views require available geometry")
                 }
             };
-            if let Some(opening) = &self.menu {
-                if opening.basis == reference.basis && same_opening(opening, &geometry, eyes) {
-                    return match compose_xr_pose(opening.reference_from_menu, geometry.local_pose) {
-                        Ok(reference_from_panel) => XrPanelPlacement::Ready {
-                            reference_from_panel,
-                        },
-                        Err(_) => unavailable(XrFitReason::InvalidViewGeometry),
-                    };
-                }
+            if let Some(opening) = &self.menu
+                && opening.basis == reference.basis
+                && same_opening(opening, &geometry, eyes)
+                && compose_xr_pose(opening.head_from_menu, geometry.local_pose).is_ok_and(|pose| {
+                    views.plane_fits(pose, geometry.size_m[0], geometry.size_m[1], 0.0)
+                })
+            {
+                return match compose_xr_pose(opening.reference_from_menu, geometry.local_pose) {
+                    Ok(reference_from_panel) => XrPanelPlacement::Ready {
+                        reference_from_panel,
+                    },
+                    Err(_) => unavailable(XrFitReason::InvalidViewGeometry),
+                };
             }
             let fit =
                 match fit_xr_menu_view(viewer, geometry.size_m, geometry.local_pose, 2.4, 0.035) {
@@ -272,33 +281,53 @@ fn same_opening(
 ) -> bool {
     opening.geometry.scope == geometry.scope
         && opening.geometry.size_m == geometry.size_m
-        && same_pose(opening.geometry.local_pose, geometry.local_pose, 0.0)
+        && same_pose(opening.geometry.local_pose, geometry.local_pose, 0.0, 0.0)
         && opening.eyes.iter().zip(eyes).all(|(previous, current)| {
             previous.eye == current.eye
                 && previous.depth_range == current.depth_range
-                && same_pose(previous.head_from_eye, current.head_from_eye, 1.0e-8)
+                && same_pose(
+                    previous.head_from_eye,
+                    current.head_from_eye,
+                    EYE_POSITION_TOLERANCE_M,
+                    EYE_ANGLE_TOLERANCE_RAD,
+                )
                 && previous
                     .projection
                     .iter()
                     .zip(current.projection)
-                    .all(|(previous, current)| close(*previous, current, 1.0e-8))
+                    .all(|(previous, current)| {
+                        close(*previous, current, PROJECTION_RELATIVE_TOLERANCE)
+                    })
         })
 }
 
-fn same_pose(previous: XrPose, current: XrPose, tolerance: f64) -> bool {
+fn same_pose(
+    previous: XrPose,
+    current: XrPose,
+    position_tolerance_m: f64,
+    angle_tolerance_rad: f64,
+) -> bool {
+    let (Some(previous), Some(current)) = (previous.normalized(), current.normalized()) else {
+        return false;
+    };
     let first = previous.orientation;
     let second = current.orientation;
-    previous
+    let position_error_squared: f64 = previous
         .position
         .array()
         .into_iter()
         .zip(current.position.array())
-        .all(|(first, second)| close(first, second, tolerance))
+        .map(|(first, second)| (first - second).powi(2))
+        .sum();
+    let quaternion_tolerance = 2.0 * (angle_tolerance_rad / 4.0).sin();
+    position_error_squared <= position_tolerance_m.powi(2)
         && [-1.0, 1.0].into_iter().any(|sign| {
             [first.w, first.x, first.y, first.z]
                 .into_iter()
                 .zip([second.w, second.x, second.y, second.z])
-                .all(|(first, second)| close(first, sign * second, tolerance))
+                .map(|(first, second)| (first - sign * second).powi(2))
+                .sum::<f64>()
+                <= quaternion_tolerance.powi(2)
         })
 }
 

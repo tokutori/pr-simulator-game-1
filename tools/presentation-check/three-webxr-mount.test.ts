@@ -656,6 +656,28 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
     }
   });
 
+  it("keeps Menu fixed and permits off-centre gaze selection through float32-scale eye noise", () => {
+    view = centeredPanel("menu", composePose(eyePose(flight), head));
+    session.run(100, head);
+    const initial = lastDraw(driver).panel;
+    if (initial === null) throw new Error("Missing initial Menu");
+    const turned = composePose(head, pose(vec3(0.03, -0.02, 0), quaternion(Math.cos(0.025), 0, Math.sin(0.025), 0)));
+    for (const [index, noise] of [-1e-5, -1e-7, 0, 1e-7, 1e-5].entries()) {
+      session.eyeGeometry = [-0.033, 0.033].map(offset => {
+        const projection = new Matrix4().makePerspective(-0.05, 0.05, 0.05, -0.05, 0.05, 100_000);
+        projection.elements[0] = Math.fround(projection.elements[0] + noise);
+        return { projection, pose: pose(vec3(Math.fround(offset + noise), noise, 0), quaternion(Math.cos(noise / 2), 0, Math.sin(noise / 2), 0)) };
+      });
+      session.run(200 + index * 100, turned);
+      const panel = lastDraw(driver).panel;
+      if (panel === null) throw new Error("Missing noisy Menu");
+      expectMatrix(panel, initial);
+      expect(Math.abs(panelFrameCursor(currentFrame())?.point.x ?? 0)).toBeGreaterThan(0.01);
+    }
+    session.run(2200, turned);
+    expect(actions.filter(action => action.type === "activate" && action.controlId === "mount-button")).toHaveLength(1);
+  });
+
   it("refits the retained menu when Pilot and external Replay use different reference bases", () => {
     view = centeredPanel("menu", composePose(eyePose(flight), head));
     session.run(100, head);

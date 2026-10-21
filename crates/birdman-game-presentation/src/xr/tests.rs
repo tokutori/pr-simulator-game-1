@@ -503,6 +503,26 @@ fn menu_opening_retains_motion_and_refits_camera_basis_changes() {
         head: plane(-10.0),
         ..reference
     };
+    for noise in [-1.0e-5_f64, -1.0e-7, 0.0, 1.0e-7, 1.0e-5] {
+        let mut noisy = views.clone();
+        let XrViewerFrame::Configured { eyes, .. } = &mut noisy else {
+            unreachable!()
+        };
+        eyes[0].head_from_eye.position.x =
+            ((eyes[0].head_from_eye.position.x + noise) as f32).into();
+        eyes[0].head_from_eye.position.y = noise;
+        eyes[0].head_from_eye.orientation = XrQuaternion {
+            w: (noise / 2.0).cos(),
+            x: 0.0,
+            y: (noise / 2.0).sin(),
+            z: 0.0,
+        };
+        eyes[0].projection[0] = ((eyes[0].projection[0] + noise) as f32).into();
+        assert_eq!(
+            session.place_panel(observation.clone(), &noisy, Some(moved)),
+            before
+        );
+    }
     assert_eq!(
         session.place_panel(observation.clone(), &views, Some(moved)),
         before

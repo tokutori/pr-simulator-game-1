@@ -431,6 +431,7 @@ H=B D R_z(-s)
 - 共有Rustが機体・pilot・camera mountと累積tracking補正$C$を合成する。head・左右眼・controller rayは同じmount$M C$を一度適用する。
 - 論理referenceのWorld poseを$R$、機体poseを$A$とし、World anchorは$R^{-1}$、Cockpit anchorは$R^{-1}A$、Head anchorは$R^{-1}M C H$で解決する。全panelは$R P$として描画し、選択も同じreferenceで行う。
 - Menuは開いた時のreference内poseを保持し、scene・overlay・実測寸法・両眼光学・camera基底の変更時に再配置する。機体の通常移動は同じ基底として扱う。
+- Menu開口の光学比較は、眼位置0.1 mm・眼回転0.1 mrad、projection成分の差が`1e-4 × max(1, |前値|, |現在値|)`以内を同値とする。float32相当の観測揺れを吸収し、これらを超えるIPD・視錐台変化で再fitする。
 - [reference-space reset](https://www.w3.org/TR/webxr/#dom-xrreferencespaceevent-transform)の$S$は新originの旧tracking内poseである。共有ownerが$C'=C S$を保持し、更新後の$H'=S^{-1}H$と合成してWorldと眼の位置を保つ。
 
 ```math

@@ -34,7 +34,7 @@ describe("shared spatial session", () => {
     } finally { spatial.reset(); }
   });
 
-  it("retains an opening across unavailable optics and ignores equivalent pose noise", () => {
+  it("retains an opening through float32-scale optical noise and refits meaningful changes", () => {
     const spatial = new XrSpatialSession();
     try {
       const view = createSceneFixture("Title");
@@ -43,11 +43,17 @@ describe("shared spatial session", () => {
       if (viewer.source === "unavailable") throw new Error("Missing views");
       const reference = referenceFrameFixture(IDENTITY_POSE);
       const initial = spatial.place(view, panel, viewer, reference);
-      const noisy = { ...viewer, eyes: [{ ...viewer.eyes[0], headFromEye: pose(vec3(viewer.eyes[0].headFromEye.position.x + 1e-12, 0, 0), quaternion(-1, 0, 0, 0)) }, viewer.eyes[1]] as const };
       const moved = referenceFrameFixture(pose(vec3(10, 0, 0), IDENTITY_POSE.orientation));
-      expect(spatial.place(view, panel, noisy, moved)).toEqual(initial);
+      for (const noise of [-1e-5, -1e-7, 0, 1e-7, 1e-5]) {
+        const projection = viewer.eyes[0].projection.map((value, index) => Math.fround(value + (index === 0 ? noise : 0))) as unknown as (typeof viewer.eyes)[0]["projection"];
+        const noisy = { ...viewer, eyes: [{ ...viewer.eyes[0], projection,
+          headFromEye: pose(vec3(Math.fround(viewer.eyes[0].headFromEye.position.x + noise), noise, 0), quaternion(-Math.cos(noise / 2), 0, -Math.sin(noise / 2), 0)) }, viewer.eyes[1]] as const };
+        expect(spatial.place(view, panel, noisy, moved)).toEqual(initial);
+      }
       expect(spatial.place(view, panel, unavailableViewerFrame("viewer-unavailable"), null)).toEqual({ kind: "unavailable", reason: "viewer-unavailable" });
       expect(spatial.place(view, panel, viewer, moved)).toEqual(initial);
+      const changedIpd = { ...viewer, eyes: [{ ...viewer.eyes[0], headFromEye: pose(vec3(viewer.eyes[0].headFromEye.position.x - 0.002, 0, 0), IDENTITY_POSE.orientation) }, viewer.eyes[1]] as const };
+      expect(spatial.place(view, panel, changedIpd, moved)).not.toEqual(initial);
       expect(spatial.place(view, panel, viewer, { ...moved, basis: "aircraft" })).not.toEqual(initial);
     } finally { spatial.reset(); }
   });
@@ -71,6 +77,23 @@ describe("shared spatial session", () => {
       expectPose(panelPose(spatial.place(view, panel, viewer, referenceFrameFixture(head))), composePose(head, opened));
       spatial.closeMenu();
       expect(spatial.place(view, null, viewer, reference)).toEqual({ kind: "absent" });
+    } finally { spatial.reset(); }
+  });
+
+  it("rejects a retained menu when a sub-tolerance depth change moves its far plane through the panel", () => {
+    const spatial = new XrSpatialSession();
+    try {
+      const view = createSceneFixture("Title");
+      const panel = view.panels[0] ?? null;
+      const reference = referenceFrameFixture(IDENTITY_POSE);
+      const initial = spatial.place(view, panel, configuredViewer(), reference);
+      const distance = -panelPose(initial).position.z;
+      const before = configuredViewer(1280 / 720, distance + 0.0001);
+      const after = configuredViewer(1280 / 720, distance - 0.0001);
+      if (before.source === "unavailable" || after.source === "unavailable") throw new Error("Missing clip geometry");
+      for (const [index, value] of before.eyes[0].projection.entries()) expect(Math.abs(value - (after.eyes[0].projection[index] ?? Number.NaN))).toBeLessThan(1e-4);
+      expect(spatial.place(view, panel, before, reference).kind).toBe("ready");
+      expect(spatial.place(view, panel, after, reference).kind).toBe("unavailable");
     } finally { spatial.reset(); }
   });
 
@@ -114,8 +137,8 @@ describe("shared spatial session", () => {
   });
 });
 
-function configuredViewer(aspect = 1280 / 720) {
-  const camera = new PerspectiveCamera(60, aspect, 0.1, 100);
+function configuredViewer(aspect = 1280 / 720, far = 100) {
+  const camera = new PerspectiveCamera(60, aspect, 0.1, far);
   camera.updateMatrixWorld(true);
   const stereo = new StereoCamera();
   stereo.aspect = 0.5;
