@@ -18,6 +18,7 @@
 | 飛行記録JSON | `TailFlightRecordDocument`、schema 6/7、最大16 MiB |
 | 飛行ログCSV | schema 6はexport version 3、schema 7はversion 4 |
 | Personal Best | 比較方式v2、Rustによるkey再生成・選定 |
+| 物理・積分・接触 | physics model 5 |
 | 既定機体・scenario | aircraft model 4、catalog 7、scenario 7、controller profile 3 |
 
 - 版の正本は実装の公開定義・登録catalogとする。
@@ -246,7 +247,7 @@ Analysis用の発進台・湖岸・望遠camera点はOSMとAW3D30に基づく試
 - 現行codecはschema 6と7を受理する。
 - schema 7は全sampleの有限な`wing_bending_factor`を要求し、同時刻の採用値は任意の終端`boundary_event`に保持する。
 - schema 6は曲げ係数の未記録状態を保持する。共有producerは全係数を持つrecordをschema 7、全係数が未記録のrecordをschema 6として出力する。
-- 現行の登録機体による通常飛行とAttractはschema 7を生成する。schema 6・physics model 3の記録は既存keyと原文を検証・保持して閲覧し、PB順位の対象は現行physics modelとする。
+- 現行の登録機体による通常飛行とAttractはschema 7を生成する。schema 6・physics model 3/4およびschema 7・physics model 4の記録は既存keyと原文を検証・保持して閲覧し、PB順位の対象は現行physics modelとする。
 - 未対応データを通知して元の保存内容を保持する。
 - 破損、未知field、非有限値、非単位quaternion、時刻・header不整合と、schemaに対応しない係数・eventの組合せを拒否する。
 - 任意のidentity metadataには後述の未知raw保持規則を適用する。

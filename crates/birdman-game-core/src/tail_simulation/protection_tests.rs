@@ -291,6 +291,123 @@ fn undefined_or_unavailable_datum_alpha_keeps_original_physics_and_first_stage_f
     assert_eq!(cause.site(), HybridSite::Datum);
     assert_eq!(cause.cause(), AeroError::Wind(WindError::OutsideGrid));
     assert_eq!(cause.stage(), Some(AerodynamicStage::First));
+    let points = [BodyPoint::origin()];
+    assert_eq!(
+        advance_tail_flight_tick_with_contact_report(
+            &aircraft,
+            previous,
+            original_config,
+            input,
+            &loads,
+            WaterContactGeometry::try_new(&points).unwrap(),
+        ),
+        Err(original)
+    );
+}
+
+#[test]
+fn shortened_contact_search_retains_contact_errors_and_elapsed_time() {
+    let definition = TestAircraft::try_new().unwrap();
+    let aircraft = definition.aircraft();
+    let state = state(
+        &aircraft,
+        [10.0, 0.0, 1.0],
+        [0.0; 3],
+        TailIncidence::neutral(),
+        -1.0,
+    )
+    .flight_state();
+    let wind_failure = |stage| {
+        TailFlightTickError::Dynamics(DynamicsError::Load(LoadError::Aerodynamic(
+            AerodynamicEvaluationError::Hybrid(
+                HybridError::new(HybridSite::Datum, AeroError::Wind(WindError::OutsideGrid))
+                    .with_stage(stage),
+            ),
+        )))
+    };
+    let original = wind_failure(AerodynamicStage::Second);
+    assert!(!future_wind_domain_failure(wind_failure(
+        AerodynamicStage::First
+    )));
+    assert!(!future_wind_domain_failure(TailFlightTickError::Dynamics(
+        DynamicsError::NonFinite
+    )));
+    for error in [
+        ContactError::UnresolvedMotion,
+        ContactError::Math(crate::MathError::NonFinite),
+    ] {
+        assert_eq!(
+            contact_before_wind_exit(|_| Err(TailFlightTickError::Contact(error)), original),
+            Err(TailFlightTickError::Contact(error))
+        );
+    }
+    assert_eq!(
+        contact_before_wind_exit(
+            |_| Err(TailFlightTickError::Dynamics(DynamicsError::NonFinite)),
+            original,
+        ),
+        Err(original)
+    );
+    let calls = Cell::new(0);
+    let (_, contact) = contact_before_wind_exit(
+        |fraction| {
+            calls.set(calls.get() + 1);
+            if fraction > 0.1 {
+                return Err(original);
+            }
+            Ok((
+                state,
+                (fraction >= 0.025).then_some(FlightStateContactSample {
+                    interval_start_tick: 7,
+                    fraction: 0.025 / fraction,
+                    contact_point_index: 0,
+                    flight_state: state,
+                }),
+            ))
+        },
+        original,
+    )
+    .unwrap();
+    assert_eq!(contact.fraction, 0.025);
+    assert_eq!(contact.interval_start_tick, 7);
+    assert_eq!(calls.get(), 48);
+    for (failure, expected_calls) in [
+        (TailFlightTickError::Dynamics(DynamicsError::NonFinite), 2),
+        (wind_failure(AerodynamicStage::Fourth), 48),
+    ] {
+        let calls = Cell::new(0);
+        assert_eq!(
+            contact_before_wind_exit(
+                |_| {
+                    calls.set(calls.get() + 1);
+                    if calls.get() > 1 {
+                        return Err(failure);
+                    }
+                    Ok((state, Some(contact)))
+                },
+                original,
+            ),
+            Err(original)
+        );
+        assert_eq!(calls.get(), expected_calls);
+    }
+    assert_eq!(
+        contact_before_wind_exit(
+            |_| {
+                Ok((
+                    state,
+                    Some(FlightStateContactSample {
+                        interval_start_tick: 7,
+                        fraction: f64::from_bits(1),
+                        contact_point_index: 0,
+                        flight_state: state,
+                    }),
+                ))
+            },
+            original,
+        ),
+        Err(TailFlightTickError::Contact(ContactError::UnresolvedMotion))
+    );
 }
 
 pub(super) fn state(

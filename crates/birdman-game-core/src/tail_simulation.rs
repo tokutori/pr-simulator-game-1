@@ -3,10 +3,12 @@ use crate::PHYSICS_DT_SECONDS;
 use vstd::prelude::*;
 
 use crate::aerodynamics::{HybridAerodynamicLoad, TailIncidence};
-use crate::aerodynamics_contract::{AeroError, AerodynamicEvaluationError, HybridLimit};
+use crate::aerodynamics_contract::{
+    AeroError, AerodynamicEvaluationError, AerodynamicStage, HybridLimit,
+};
 use crate::contact::{
-    ContactError, TailContactShapeProvider, WaterContactGeometry, WingBendingFactor,
-    detect_flight_state_water_contact,
+    ContactError, FlightStateContactSample, TailContactShapeProvider, WaterContactGeometry,
+    WingBendingFactor, detect_flight_state_water_contact,
 };
 use crate::dynamics::{
     AircraftModel, DynamicsError, ExternalLoadProvider, FlightState, Gravity, LoadError,
@@ -451,60 +453,76 @@ impl TailTickTrial<'_, '_, '_> {
                 }),
             });
         }
-        let state = advance(
-            self.aircraft,
-            &self.previous.flight_state,
-            self.pilot_acceleration,
-            self.gravity,
-            &held_load,
-            PHYSICS_DT_SECONDS,
-        )
-        .map_err(TailFlightTickError::Dynamics)?;
-        let contact = if let Some(geometry) = geometry {
-            detect_flight_state_water_contact(
+        let evaluate_interval = |fraction| {
+            let state = advance(
                 self.aircraft,
-                self.previous.tick_index,
-                self.previous.flight_state,
-                self.tick_index,
-                state,
-                geometry,
+                &self.previous.flight_state,
+                self.pilot_acceleration,
+                self.gravity,
+                &held_load,
+                PHYSICS_DT_SECONDS * fraction,
             )
-            .map_err(TailFlightTickError::Contact)?
-            .map(|sample| {
-                let existing_boundary = sample.fraction == 0.0 && !applies_shape;
-                let (held_incidence, pilot_position_target) = if existing_boundary {
-                    (self.previous.incidence, self.previous.pilot_position_target)
+            .map_err(TailFlightTickError::Dynamics)?;
+            let contact = geometry
+                .map(|geometry| {
+                    detect_flight_state_water_contact(
+                        self.aircraft,
+                        self.previous.tick_index,
+                        self.previous.flight_state,
+                        self.tick_index,
+                        state,
+                        geometry,
+                    )
+                })
+                .transpose()
+                .map_err(TailFlightTickError::Contact)?
+                .flatten();
+            let published_state = contact.map_or(state, |sample| sample.flight_state);
+            let published_incidence =
+                if contact.is_some_and(|sample| sample.fraction == 0.0) && !applies_shape {
+                    self.previous.incidence
                 } else {
-                    (incidence, self.pilot_position_target)
+                    incidence
                 };
-                TailWaterContactSample {
-                    interval_start_tick: sample.interval_start_tick,
-                    fraction: sample.fraction,
-                    moment: if existing_boundary {
-                        TailWaterContactMoment::ExistingBoundary
-                    } else if sample.fraction == 0.0 {
-                        TailWaterContactMoment::AppliedBoundary
-                    } else {
-                        TailWaterContactMoment::WithinInterval
-                    },
-                    contact_point_index: sample.contact_point_index,
-                    flight_state: sample.flight_state,
-                    incidence: held_incidence,
-                    pilot_position_target,
-                    wing_bending_factor: if existing_boundary {
-                        self.previous.wing_bending_factor
-                    } else {
-                        wing_bending_factor
-                    },
-                }
-            })
-        } else {
-            None
+            validate_published_load(self.loads, published_state, published_incidence)?;
+            Ok((state, contact))
         };
-        let (published_state, published_incidence) = contact.map_or((state, incidence), |sample| {
-            (sample.flight_state, sample.incidence)
+        let (state, contact) = match evaluate_interval(1.0) {
+            Ok(outcome) => outcome,
+            Err(error) if geometry.is_some() && future_wind_domain_failure(error) => {
+                let (state, contact) = contact_before_wind_exit(evaluate_interval, error)?;
+                (state, Some(contact))
+            }
+            Err(error) => return Err(error),
+        };
+        let contact = contact.map(|sample| {
+            let existing_boundary = sample.fraction == 0.0 && !applies_shape;
+            let (held_incidence, pilot_position_target) = if existing_boundary {
+                (self.previous.incidence, self.previous.pilot_position_target)
+            } else {
+                (incidence, self.pilot_position_target)
+            };
+            TailWaterContactSample {
+                interval_start_tick: sample.interval_start_tick,
+                fraction: sample.fraction,
+                moment: if existing_boundary {
+                    TailWaterContactMoment::ExistingBoundary
+                } else if sample.fraction == 0.0 {
+                    TailWaterContactMoment::AppliedBoundary
+                } else {
+                    TailWaterContactMoment::WithinInterval
+                },
+                contact_point_index: sample.contact_point_index,
+                flight_state: sample.flight_state,
+                incidence: held_incidence,
+                pilot_position_target,
+                wing_bending_factor: if existing_boundary {
+                    self.previous.wing_bending_factor
+                } else {
+                    wing_bending_factor
+                },
+            }
         });
-        validate_published_load(self.loads, published_state, published_incidence)?;
         Ok(TailTrialOutcome {
             flight_state: state,
             contact,
@@ -564,6 +582,57 @@ impl TailTickTrial<'_, '_, '_> {
         }
         Err(original_error)
     }
+}
+
+fn future_wind_domain_failure(error: TailFlightTickError) -> bool {
+    matches!(
+        error,
+        TailFlightTickError::Dynamics(DynamicsError::Load(LoadError::Aerodynamic(
+            AerodynamicEvaluationError::Hybrid(error)
+        ))) if error.cause() == AeroError::Wind(crate::WindError::OutsideGrid)
+            && matches!(error.stage(), None | Some(
+                AerodynamicStage::Second | AerodynamicStage::Third | AerodynamicStage::Fourth
+            ))
+    )
+}
+
+fn contact_before_wind_exit(
+    evaluate_interval: impl Fn(
+        f64,
+    ) -> Result<
+        (FlightState, Option<FlightStateContactSample>),
+        TailFlightTickError,
+    >,
+    original_error: TailFlightTickError,
+) -> Result<(FlightState, FlightStateContactSample), TailFlightTickError> {
+    let mut lower = 0.0;
+    let mut upper = 1.0;
+    let mut earliest = None;
+    for _ in 0..48 {
+        let fraction = lower + 0.5 * (upper - lower);
+        if fraction == lower || fraction == upper {
+            break;
+        }
+        match evaluate_interval(fraction) {
+            Ok((state, Some(mut contact))) => {
+                let local_fraction = contact.fraction;
+                contact.fraction *= fraction;
+                if local_fraction > 0.0 && contact.fraction == 0.0 {
+                    return Err(TailFlightTickError::Contact(ContactError::UnresolvedMotion));
+                }
+                earliest = Some((state, contact));
+                upper = fraction;
+            }
+            Ok((_, None)) => lower = fraction,
+            Err(error) if future_wind_domain_failure(error) => {
+                upper = fraction;
+                earliest = None;
+            }
+            Err(error @ TailFlightTickError::Contact(_)) => return Err(error),
+            Err(_) => return Err(original_error),
+        }
+    }
+    earliest.ok_or(original_error)
 }
 
 fn validate_published_load(

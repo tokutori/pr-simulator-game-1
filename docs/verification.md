@@ -307,6 +307,7 @@ L(t)-z(t)=\frac{g(t-a)(b-t)}2\le\frac{g\,dt^2}8,
 - 刻み間差は双方の上限の和で判定する。
 - off-grid phaseが刻みごとに異なるため、単調改善や固定収縮率を要求しない。
 - 水平位置・鉛直速度・姿勢・pilot・接触点を同じfractionへ対応させ、実tail tickの保持incidence・record終端も接続検査する。
+- 風格子のSecond/Third/Fourth stage失敗前の正fraction接触を、同じ実荷重による128分割の参照積分と50 ns以内で照合する。接触なしの場合の元診断、First stage拒否、接触solver失敗の伝播、部分区間fractionの換算を検査する。
 - 200/400 Hzの区間indexを100 Hz保存recordへ変換しない。
 
 ### 回転接触の隔離と丸め

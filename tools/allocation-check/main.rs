@@ -7,9 +7,10 @@ use birdman_game_core::{
     PHYSICS_DT_SECONDS, PilotAcceleration, PilotPositionTarget, PlanformSymmetry,
     PolarAnalysisMethod, PolarMomentAxes, StaticPolar, StaticPolarCoefficients,
     StaticPolarMetadata, StaticPolarRow, TailControlProfile, TailFlightTickConfig,
-    TailFlightTickError, TailFlightTickInput, TailFlightTickState, TailIncidence, TailPilotIntent,
-    TailPilotPositionCommand, TailPilotPositionIntent, TailPilotPositionMapping, TailRateTarget,
-    UnitQuaternion, WindField, advance, advance_tail_flight_tick,
+    TailFlightTickError, TailFlightTickInput, TailFlightTickOutcome, TailFlightTickState,
+    TailIncidence, TailPilotIntent, TailPilotPositionCommand, TailPilotPositionIntent,
+    TailPilotPositionMapping, TailRateTarget, UnitQuaternion, WaterContactGeometry, WindError,
+    WindField, advance, advance_tail_flight_tick, advance_tail_flight_tick_with_contact,
 };
 use std::alloc::{GlobalAlloc, Layout, System, alloc, alloc_zeroed, dealloc, realloc};
 use std::hint::black_box;
@@ -302,6 +303,85 @@ fn outside_dynamics(error: DynamicsError) {
     outside(error, Some(AerodynamicStage::First));
 }
 
+fn wind_boundary_contact(aircraft: &AircraftModel, fixture: &Fixture) {
+    let surfaces = fixture.surfaces();
+    let maximum_down = surfaces
+        .iter()
+        .flat_map(|surface| surface.proxies())
+        .map(|proxy| proxy.point().components()[2])
+        .fold(0.0, f64::max);
+    let velocities = [NedVector::zero(); 8];
+    let wind = WindField::grid(
+        NedPoint::try_new(-32.0, -32.0, -32.0).unwrap(),
+        ned([64.0, 64.0, 32.0 + maximum_down + 0.001]),
+        [2; 3],
+        &velocities,
+    )
+    .unwrap();
+    let loads = HybridAerodynamicLoad::try_new(
+        HybridModel::try_new(fixture.polar(), &surfaces).unwrap(),
+        0.01,
+        wind,
+    )
+    .unwrap();
+    let previous = TailFlightTickState::try_new(
+        aircraft,
+        7,
+        FlightState::try_new(
+            NedPoint::origin(),
+            ned([10.0, 0.0, 1.0]),
+            UnitQuaternion::IDENTITY,
+            BodyVector::zero(),
+            0.0,
+            0.0,
+        )
+        .unwrap(),
+        TailIncidence::neutral(),
+        PilotPositionTarget::try_new(aircraft, 0.0).unwrap(),
+    )
+    .unwrap();
+    let config = TailFlightTickConfig::new(
+        ControlMode::Manual,
+        TailControlProfile::try_new(0.2, 0.2, 1.0).unwrap(),
+        TailPilotPositionMapping::try_new(aircraft, 0.0).unwrap(),
+        Gravity::try_new(9.80665).unwrap(),
+    );
+    let input = TailFlightTickInput::new(
+        TailPilotIntent::try_new(0.0, 0.0).unwrap(),
+        TailRateTarget::try_new(0.0, 0.0).unwrap(),
+        TailPilotPositionCommand::Hold,
+    );
+    let original = advance_tail_flight_tick(aircraft, previous, config, input, &loads).unwrap_err();
+    let TailFlightTickError::Dynamics(DynamicsError::Load(LoadError::Aerodynamic(
+        AerodynamicEvaluationError::Hybrid(cause),
+    ))) = original
+    else {
+        panic!("expected a future wind-domain failure");
+    };
+    assert_eq!(cause.cause(), AeroError::Wind(WindError::OutsideGrid));
+    assert_eq!(cause.stage(), Some(AerodynamicStage::Second));
+    for (name, down, contact_expected) in [
+        ("wind boundary fractional contact", -0.00025, true),
+        ("wind boundary original failure", -0.1, false),
+    ] {
+        let points = [point([0.0, 0.0, down])];
+        let geometry = WaterContactGeometry::try_new(&points).unwrap();
+        let result = measure_iterations(name, 8, || {
+            advance_tail_flight_tick_with_contact(
+                aircraft, previous, config, input, &loads, geometry,
+            )
+        });
+        if contact_expected {
+            let TailFlightTickOutcome::WaterContact(contact) = result.unwrap() else {
+                panic!("expected a terminal partial interval");
+            };
+            assert!(contact.fraction() > 0.0 && contact.fraction() < 1.0);
+        } else {
+            assert_eq!(result, Err(original));
+        }
+    }
+}
+
 fn main() {
     calibrate();
     registered_application_flight();
@@ -356,6 +436,7 @@ fn main() {
         1.0,
     )
     .unwrap();
+    wind_boundary_contact(&aircraft, &fixture);
     let valid = state([11.0, 0.2, 0.4]);
     let invalid = state([11.0, 3.0, 0.4]);
     let gravity = Gravity::try_new(9.80665).unwrap();
