@@ -67,10 +67,12 @@ fn validate_environment(path: &str) -> Result<(), String> {
 }
 
 fn validate_aircraft(path: &str) -> Result<(), String> {
-    use birdman_game_format::aircraft::{AircraftDocument, MAX_AIRCRAFT_JSON_BYTES};
+    use birdman_game_content::AircraftDefinition;
+    use birdman_game_format::aircraft::MAX_AIRCRAFT_JSON_BYTES;
 
     let bytes = read_document(path, MAX_AIRCRAFT_JSON_BYTES)?;
-    let document = AircraftDocument::decode_json(&bytes).map_err(display_error)?;
+    let definition = AircraftDefinition::decode_json(&bytes).map_err(display_error)?;
+    let document = definition.document();
     println!(
         "Valid aircraft model {}: {} (schema {})",
         document.model_version, document.configuration_id, document.schema_version

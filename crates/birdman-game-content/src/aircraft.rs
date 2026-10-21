@@ -117,6 +117,7 @@ impl AircraftDefinition {
         }
         HybridModel::try_new(definition.polar()?, &definition.surfaces()?)
             .map_err(AircraftDefinitionError::Hybrid)?;
+        definition.trim()?;
         Ok(definition)
     }
 

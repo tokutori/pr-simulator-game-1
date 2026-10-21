@@ -11,6 +11,7 @@ schema = ["dep:birdman-game-presentation", "birdman-game-presentation/schema"]
 
 [dependencies]
 birdman-game-app.workspace = true
+birdman-game-content.workspace = true
 birdman-game-core.workspace = true
 birdman-game-format.workspace = true
 birdman-game-presentation = { workspace = true, optional = true }

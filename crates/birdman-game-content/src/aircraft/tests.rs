@@ -85,6 +85,17 @@ fn invalid_source_is_rejected_before_a_definition_is_published() {
 }
 
 #[test]
+fn an_aircraft_without_a_trim_solution_is_rejected_during_preparation() {
+    let mut document = AircraftDocument::decode_json(PLAYABLE_AIRCRAFT_JSON).unwrap();
+    document.trim.airspeed_mps = 1.0;
+    document.validate().unwrap();
+    assert!(matches!(
+        AircraftDefinition::from_document(document),
+        Err(AircraftDefinitionError::Trim(_))
+    ));
+}
+
+#[test]
 fn registered_trim_balances_the_complete_hybrid_load_at_the_actual_dynamics_boundary() {
     use birdman_game_core::{
         HybridAerodynamicLoad, NedPoint, NedVector, PilotAcceleration, WindField, advance,

@@ -9,7 +9,7 @@ const allowed = new Map<string, readonly string[]>([
   ["birdman-game-app", ["birdman-game-content", "birdman-game-core", "birdman-game-format", "serde", "serde_json", "sha2"]],
   ["birdman-game-content", ["birdman-game-core", "birdman-game-format", "libm"]],
   ["birdman-game-format", ["birdman-game-core", "serde", "serde_json", "sha2"]],
-  ["birdman-game-cli", ["birdman-game-app", "birdman-game-core", "birdman-game-format", "birdman-game-presentation", "serde", "serde_json"]],
+  ["birdman-game-cli", ["birdman-game-app", "birdman-game-content", "birdman-game-core", "birdman-game-format", "birdman-game-presentation", "serde", "serde_json"]],
   ["birdman-game-wasm", ["birdman-game-app", "birdman-game-core", "birdman-game-format", "birdman-game-presentation", "birdman-game-scene", "serde", "serde_json", "sha2", "wasm-bindgen"]],
   ["birdman-game-presentation", ["birdman-game-app", "birdman-game-core", "birdman-game-format", "serde", "serde_json", "time", "unicode-width"]],
   ["birdman-game-scene", ["birdman-game-app", "birdman-game-content", "birdman-game-core", "birdman-game-format", "serde", "serde_json", "sha2", "earcut"]],
