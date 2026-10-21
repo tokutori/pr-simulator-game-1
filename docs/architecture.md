@@ -9,7 +9,7 @@
 - 状態の正本、純粋な更新、派生値の導出、副作用境界を分離する。
 - phaseに必須のデータは対応するvariantが所有し、排他的な状態を型で表現する。
 - 同じ規則を複数のplatformに実装しない。adapterは外部イベント・資源・表示APIとの変換を担当する。
-- 現行の二系統尾翼モデルをlive経路と記録形式の対象とする。旧モデル、旧live経路、旧schemaの互換実装を維持しない。
+- live経路は現行の二系統尾翼モデルを使う。保存記録は[データと形式](data-and-formats.md)のschema別契約に従って読み出す。
 - 型・形式証明・数値試験・実GPU・操作性・実機fidelityの保証を区別する。
 
 開発時の運用は[CONTRIBUTING](../CONTRIBUTING.md)、検査方法は[検証](verification.md)に定める。

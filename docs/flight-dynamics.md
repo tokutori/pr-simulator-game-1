@@ -352,7 +352,7 @@ M_O^B=M_{O,static}^B+\sum_i r_i^B\times\Delta F_i^B
 
 ## 公開Playableモデル
 
-- 公開既定は`bpg041-playable-hybrid-mock`のmodel 4、catalog 6 / scenario 6、`bpg040-tail-rate-feedback`のcontroller 3である。
+- 公開既定は`bpg041-playable-hybrid-mock`のmodel 4、catalog 7 / scenario 7、`bpg040-tail-rate-feedback`のcontroller 3である。
 - `assets/aircraft/playable-glider-v4.json`が質量・慣性・section・strip・anchor・全機polar・構造外形・視点mountを定義する。contentの`AircraftDefinition`が検証済みdocumentと借用viewのstorageを所有する。
 - 定常滑空は汎用の`SteadyGlideTrim`が、質量モデル・全機polar・`SteadyGlideConditions`から求める。指定した迎角区間で力の釣合を解き、合成重心まわりのモーメントを満たすパイロット位置を求める。
 - 現行catalog・scenario・controllerの組合せを登録する。保存snapshotは記録時のデータから閲覧する。
@@ -417,7 +417,7 @@ M_O^B=M_{O,static}^B+\sum_i r_i^B\times\Delta F_i^B
 ## 静水面への接触と採点
 
 静水面はNEDの $D=0$ とし、登録した接触点のいずれかが $D\ge0$ へ到達した最初の時刻を使用する。
-固定接触外形は共有`f64`構造形状から作る有限polytopeであり、次の頂点を一度構築してbody-fixed proxyへ登録する。
+接触外形は共有`f64`構造形状から作る有限polytopeであり、次の中立頂点と可動群を準備時に構築し、採用した曲げ係数・尾翼角から各区間のbody座標へ投影する。
 
 - cockpitは10断面の24角輪郭を使用する。
 - 主翼と尾翼はJSONの全sectionで閉翼型輪郭を使用する。全chordを共通のcosine分布32区間で分割する。
@@ -425,7 +425,7 @@ M_O^B=M_{O,static}^B+\sum_i r_i^B\times\Delta F_i^B
 
 - 各部分の凸包の全候補頂点を、物理用の共有`f64`構造形状から導出する。
 - cockpit frameは同じshell内へ収める。
-- 現在の登録contactは中立外形の固定支持点を用い、cockpitのframeとrimは半径を含めて外皮へ内包させる。
+- 登録contactは固定順の構造頂点を使い、cockpitのframeとrimは半径を含めて外皮へ内包させる。
 - 主翼の曲げ変形はcontentの共通producerが所有する。JSONの全質量・重力・EI・左右の半spanから等分布荷重の片持ち梁解を求め、基準対気速度に対する二乗荷重倍率を0.3〜1.6へ制限する。機体準備時に最大倍率の両翼端変位の有限性を検証し、表示mesh・桁・ribへ同じFRD変位を投影する。
 - coreの`WingBendingFactor`は有限な符号付きの基準変位倍率と、閉区間内の線型補間を提供する。速度からの導出則と運用範囲はcontentが所有する。
 - `AircraftDefinition::write_deformed_contact_points_with_factor`は準備済みの点順と可動群を保持し、明示係数と物理尾翼角からcaller所有のsliceへFRD点群を書く。速度入口は係数を一度導出して同じ処理へ委譲する。

@@ -1,17 +1,17 @@
+use birdman_game_app::application::{ApplicationSession, BackendReadiness, SessionCommand};
 use birdman_game_app::registered_aircraft;
 
 use birdman_game_core::{
-    BodyPoint, BodyVector, ControlMode, FlightState, GameSession, Gravity, HybridAerodynamicLoad,
-    HybridModel, HybridSurfaceRole, NedPoint, NedVector, SessionEndReason, SessionPhase,
-    SessionTerminalState, TailFlightTickConfig, TailFlightTickInput, TailFlightTickOutcome,
+    BodyPoint, BodyVector, ControlMode, FlightRecord, FlightRecordBoundaryEvent,
+    FlightRecordHeader, FlightState, Gravity, HybridAerodynamicLoad, HybridModel,
+    HybridSurfaceRole, NedPoint, NedVector, SessionEndReason, SessionPhase, SessionTerminalState,
+    TailFlightTickConfig, TailFlightTickInput, TailFlightTickOutcome, TailFlightTickReport,
     TailFlightTickState, TailIncidence, TailPilotIntent, TailPilotPositionCommand,
-    TailPilotPositionMapping, TailRateTarget, UnitQuaternion, WaterContactGeometry, WindField,
-    advance_tail_flight_tick_with_contact, course_distance_score,
+    TailPilotPositionMapping, TailRateTarget, TailWaterContactMoment, UnitQuaternion, WindField,
+    WingBendingFactor, advance_tail_flight_tick, advance_tail_flight_tick_with_shape_provider,
+    course_distance_score,
 };
-use birdman_game_format::{
-    AssistanceLevel, DifficultySettings, InformationLevel, TailFlightRecordDocument,
-    TailPersonalBestConfiguration, WeatherClass,
-};
+use birdman_game_format::{TailFlightRecordDocument, TailPersonalBestConfiguration, WeatherClass};
 
 use crate::{
     cockpit_geometry::{CockpitGeometry, cockpit_shell_vertices},
@@ -52,6 +52,53 @@ fn maximum_down_offset(attitude: UnitQuaternion, points: &[BodyPoint]) -> f64 {
         .fold(f64::NEG_INFINITY, f64::max)
 }
 
+fn reference_rotated_down([scalar, forward, right, down]: [f64; 4], point: BodyPoint) -> f64 {
+    let [point_forward, point_right, point_down] = point.components();
+    2.0 * (forward * down - scalar * right) * point_forward
+        + 2.0 * (right * down + scalar * forward) * point_right
+        + (1.0 - 2.0 * (forward * forward + right * right)) * point_down
+}
+
+fn reference_water_support(
+    start: FlightState,
+    end: FlightState,
+    points: &[BodyPoint],
+    fraction: f64,
+) -> f64 {
+    let first = start.attitude_body_to_ned().components();
+    let mut last = end.attitude_body_to_ned().components();
+    let mut dot = first
+        .iter()
+        .zip(last)
+        .map(|(first, last)| first * last)
+        .sum::<f64>();
+    if dot < 0.0 {
+        last = last.map(|value| -value);
+        dot = -dot;
+    }
+    let angle = dot.clamp(-1.0, 1.0).acos();
+    let orientation = if angle < 1.0e-8 {
+        core::array::from_fn(|index| first[index] * (1.0 - fraction) + last[index] * fraction)
+    } else {
+        let first_weight = ((1.0 - fraction) * angle).sin() / angle.sin();
+        let last_weight = (fraction * angle).sin() / angle.sin();
+        core::array::from_fn(|index| first[index] * first_weight + last[index] * last_weight)
+    };
+    let norm = orientation
+        .iter()
+        .map(|value| value * value)
+        .sum::<f64>()
+        .sqrt();
+    let orientation = orientation.map(|value| value / norm);
+    let datum_down = start.datum_position_ned().components()[2] * (1.0 - fraction)
+        + end.datum_position_ned().components()[2] * fraction;
+    datum_down
+        + points
+            .iter()
+            .map(|point| reference_rotated_down(orientation, *point))
+            .fold(f64::NEG_INFINITY, f64::max)
+}
+
 fn tail_section_point(
     section: birdman_game_core::HybridSection,
     center: [f64; 3],
@@ -75,7 +122,7 @@ fn wing_outline_vertices() -> impl Iterator<Item = [f64; 3]> {
 }
 
 #[test]
-fn shared_bending_factors_match_the_mesh_and_support_at_fractional_times() {
+fn explicit_bending_factors_match_the_mesh_and_structural_support() {
     let definition = registered_aircraft().unwrap();
     let geometry = WingGeometry::new();
     let mut frame = geometry.frame();
@@ -104,14 +151,13 @@ fn shared_bending_factors_match_the_mesh_and_support_at_fractional_times() {
     let shape = definition.shape();
     let start = shape.wing_bending_factor(0.0).unwrap();
     let end = shape.wing_bending_factor(13.0).unwrap();
-    let terminal = start.interpolate(end, 0.25).unwrap();
     let mut points = neutral.to_vec();
     for factor in [
         start,
         end,
-        start.interpolate(end, 0.5).unwrap(),
-        terminal,
-        start.interpolate(terminal, 0.5).unwrap(),
+        shape
+            .wing_bending_factor(definition.document().trim.airspeed_mps)
+            .unwrap(),
     ] {
         definition
             .write_deformed_contact_points_with_factor(
@@ -261,15 +307,14 @@ fn shell_contact_tracks_the_full_registered_polygon_under_arbitrary_attitude() {
 }
 
 #[test]
-fn actual_core_contact_selects_the_lower_registered_point_at_the_earliest_fraction() {
+fn adopted_shape_contact_matches_independent_rotated_support_and_record_query() {
     let definition = registered_aircraft().unwrap();
     let aircraft = definition.aircraft();
     let surfaces = definition.surfaces().unwrap();
     let trim = definition.trim().unwrap();
     let mapping = TailPilotPositionMapping::try_new(&aircraft, trim.pilot_position_m()).unwrap();
-    let profile = HybridSessionPreparation::try_default()
-        .unwrap()
-        .controller_profile();
+    let preparation = HybridSessionPreparation::try_default().unwrap();
+    let profile = preparation.controller_profile();
     let loads = HybridAerodynamicLoad::try_new(
         HybridModel::try_new(definition.polar().unwrap(), &surfaces).unwrap(),
         definition.document().trim.air_density_kg_m3,
@@ -282,93 +327,336 @@ fn actual_core_contact_selects_the_lower_registered_point_at_the_earliest_fracti
         mapping,
         Gravity::try_new(definition.document().trim.gravity_mps2).unwrap(),
     );
-    let points = definition.contact_points();
-    let geometry = WaterContactGeometry::try_new(points).unwrap();
-    for (roll, pitch) in [
-        (0.0, 0.0),
-        (0.5, 0.0),
-        (-0.5, 0.0),
-        (0.0, 0.07),
-        (0.0, -0.07),
+    let launch = birdman_game_core::CompositeCgLaunchConditions::try_new(
+        NedPoint::try_new(0.0, 0.0, -100.0).unwrap(),
+        NedVector::try_new(definition.document().trim.airspeed_mps, 0.0, 0.5).unwrap(),
+        attitude(0.0, 0.0),
+        BodyVector::zero(),
+        trim.pilot_position_m(),
+        0.0,
+    )
+    .unwrap();
+    let parameters = birdman_game_core::TailFlightScenarioParameters::try_new(
+        aircraft,
+        launch,
+        TailIncidence::neutral(),
+        Gravity::try_new(definition.document().trim.gravity_mps2).unwrap(),
+        definition.contact_points(),
+        preparation.course_axis(),
+    )
+    .unwrap();
+    let scenario =
+        birdman_game_core::TailFlightScenario::try_new(parameters, loads, profile).unwrap();
+    let telemetry = |state| scenario.telemetry(state).unwrap();
+    let selection = HybridSessionPreparation::select_scenario(WeatherClass::Calm, 42).unwrap();
+    let header =
+        FlightRecordHeader::try_new(birdman_game_app::identity_for_selection(selection), 10)
+            .unwrap();
+    let record_contact = |previous: TailFlightTickState, report: TailFlightTickReport| {
+        let TailFlightTickOutcome::WaterContact(contact) = report.outcome() else {
+            panic!("expected contact to record");
+        };
+        let mut record = FlightRecord::try_new(header).unwrap();
+        record
+            .begin_tail(previous, telemetry(previous.flight_state()))
+            .unwrap();
+        record
+            .append_tail_report(report, telemetry(contact.flight_state()))
+            .unwrap();
+        match FlightRecordBoundaryEvent::from_tail_report(report).unwrap() {
+            Some(event) => record.finalize_with_boundary_event(
+                SessionEndReason::WaterContact,
+                0,
+                contact.fraction(),
+                None,
+                event,
+            ),
+            None => record.finalize(SessionEndReason::WaterContact, 0, contact.fraction(), None),
+        }
+        .unwrap();
+        record
+    };
+    let input = TailFlightTickInput::new(
+        TailPilotIntent::try_new(0.2, -0.1).unwrap(),
+        TailRateTarget::try_new(0.0, 0.0).unwrap(),
+        TailPilotPositionCommand::Hold,
+    );
+    let wing = WingGeometry::new();
+    let mut wing_frame = wing.frame();
+    let initial_incidence = TailIncidence::try_new(0.01, -0.01).unwrap();
+    let mut maximum_time_error_seconds = 0.0_f64;
+    let mut maximum_support_error_m = 0.0_f64;
+    let mut maximum_wing_penetration_m = 0.0_f64;
+    for (roll, pitch, speed) in [
+        (0.0, 0.0, 5.0),
+        (0.0, 0.0, 9.7),
+        (0.0, 0.0, 13.0),
+        (0.5, 0.0, 9.7),
+        (-0.5, 0.0, 9.7),
+        (0.0, 0.07, 9.7),
+        (0.0, -0.07, 9.7),
+        (0.25, -0.05, 13.0),
+        (-0.25, 0.05, 5.0),
     ] {
         let orientation = attitude(roll, pitch);
-        let max_down = maximum_down_offset(orientation, points);
-        for clearance in [0.001, 1.0] {
-            let velocity = orientation
-                .body_to_ned(
-                    BodyVector::try_new(definition.document().trim.airspeed_mps, 0.0, 0.0).unwrap(),
-                )
-                .unwrap()
-                .components();
-            let flight = FlightState::try_new(
-                NedPoint::try_new(0.0, 0.0, -max_down - clearance).unwrap(),
+        let velocity = orientation
+            .body_to_ned(BodyVector::try_new(speed, 0.0, 0.0).unwrap())
+            .unwrap()
+            .components();
+        let flight_at_down = |datum_down| {
+            FlightState::try_new(
+                NedPoint::try_new(0.0, 0.0, datum_down).unwrap(),
                 NedVector::try_new(velocity[0], velocity[1], 0.5).unwrap(),
                 orientation,
                 BodyVector::zero(),
                 trim.pilot_position_m(),
                 0.0,
             )
-            .unwrap();
-            let previous = TailFlightTickState::try_new(
+            .unwrap()
+        };
+        let state_at_down = |datum_down| {
+            TailFlightTickState::try_new(
                 &aircraft,
-                7,
-                flight,
-                TailIncidence::neutral(),
+                0,
+                flight_at_down(datum_down),
+                initial_incidence,
                 mapping.trim_target(),
             )
+            .unwrap()
+        };
+        let factor = definition
+            .shape()
+            .wing_bending_factor(telemetry(flight_at_down(-100.0)).airspeed_mps)
             .unwrap();
-            let result = advance_tail_flight_tick_with_contact(
+        let provisional = state_at_down(-100.0).with_wing_bending_factor(factor);
+        let trial =
+            advance_tail_flight_tick(&aircraft, provisional, config, input, &loads).unwrap();
+        let mut start_points = definition.contact_points().to_vec();
+        let mut held_points = start_points.clone();
+        definition
+            .write_deformed_contact_points_with_factor(factor, initial_incidence, &mut start_points)
+            .unwrap();
+        definition
+            .write_deformed_contact_points_with_factor(factor, trial.incidence(), &mut held_points)
+            .unwrap();
+        let max_down = start_points
+            .iter()
+            .chain(&held_points)
+            .map(|point| reference_rotated_down(orientation.components(), *point))
+            .fold(f64::NEG_INFINITY, f64::max);
+        for clearance in [0.001, 1.0] {
+            let previous = state_at_down(-max_down - clearance).with_wing_bending_factor(factor);
+            let free =
+                advance_tail_flight_tick(&aircraft, previous, config, input, &loads).unwrap();
+            assert_eq!(free.incidence(), trial.incidence());
+            let mut storage = definition.contact_points().to_vec();
+            let mut provider =
+                birdman_game_content::AircraftContactShape::try_new(definition, &mut storage)
+                    .unwrap();
+            let report = advance_tail_flight_tick_with_shape_provider(
                 &aircraft,
                 previous,
                 config,
-                neutral_input(),
+                input,
                 &loads,
-                geometry,
+                &mut provider,
             )
             .unwrap();
             if clearance == 1.0 {
-                assert!(matches!(result, TailFlightTickOutcome::Advanced(_)));
+                assert_eq!(report.outcome(), TailFlightTickOutcome::Advanced(free));
                 continue;
             }
-            let TailFlightTickOutcome::WaterContact(contact) = result else {
+            let TailFlightTickOutcome::WaterContact(contact) = report.outcome() else {
                 panic!("expected fractional contact: roll={roll}, pitch={pitch}");
             };
+            assert_eq!(contact.moment(), TailWaterContactMoment::WithinInterval);
+            assert_eq!(contact.wing_bending_factor(), Some(factor));
+            assert_eq!(contact.incidence(), free.incidence());
             assert!(contact.fraction() > 0.0 && contact.fraction() < 1.0);
+            let start = previous.flight_state();
+            let end = free.flight_state();
+            let support = |fraction| reference_water_support(start, end, &held_points, fraction);
+            assert!(support(0.0) < 0.0 && support(1.0) > 0.0);
+            let mut last = support(0.0);
+            for step in 1..=32 {
+                let next = support(f64::from(step) / 32.0);
+                assert!(next > last);
+                last = next;
+            }
+            let (mut lower, mut upper) = (0.0, 1.0);
+            for _ in 0..60 {
+                let middle = (lower + upper) * 0.5;
+                if support(middle) < 0.0 {
+                    lower = middle;
+                } else {
+                    upper = middle;
+                }
+            }
+            assert!(
+                (contact.fraction() - upper).abs() <= 2.0e-7,
+                "{roll}, {pitch}, {speed}: {} vs {upper}",
+                contact.fraction()
+            );
+            maximum_time_error_seconds = maximum_time_error_seconds
+                .max((contact.fraction() - upper).abs() / f64::from(birdman_game_core::PHYSICS_HZ));
             let state = contact.flight_state();
             let down = state.datum_position_ned().components()[2];
-            assert!(down < -0.5);
+            let support_error = (down
+                + held_points
+                    .iter()
+                    .map(|point| {
+                        reference_rotated_down(state.attitude_body_to_ned().components(), *point)
+                    })
+                    .fold(f64::NEG_INFINITY, f64::max))
+            .abs();
+            assert!(support_error <= 2.0e-9);
+            maximum_support_error_m = maximum_support_error_m.max(support_error);
+            let selected = held_points[contact.contact_point_index()];
             assert!(
-                (down + maximum_down_offset(state.attitude_body_to_ned(), points)).abs() < 1.0e-10
+                (down
+                    + reference_rotated_down(state.attitude_body_to_ned().components(), selected))
+                .abs()
+                    <= 2.0e-9
             );
-            let selected = points[contact.contact_point_index()];
-            assert!((down + rotated_down(state.attitude_body_to_ned(), selected)).abs() < 1.0e-10);
+            wing.update_frame_with_factor(&mut wing_frame, factor)
+                .unwrap();
+            let mesh_support = wing_frame
+                .surface_positions()
+                .iter()
+                .flatten()
+                .map(|point| {
+                    let [right, up, aft] = point.map(f64::from);
+                    reference_rotated_down(
+                        state.attitude_body_to_ned().components(),
+                        BodyPoint::try_new(-aft, right, -up).unwrap(),
+                    )
+                })
+                .fold(f64::NEG_INFINITY, f64::max);
+            assert!(down + mesh_support <= 2.0e-6);
+            maximum_wing_penetration_m = maximum_wing_penetration_m.max(down + mesh_support);
+            let record = record_contact(previous, report);
+            for fraction in [contact.fraction() * 0.5, contact.fraction()] {
+                let sample = record.sample_at_time(0, fraction).unwrap();
+                assert_eq!(sample.wing_bending_factor, Some(factor));
+                assert_eq!(sample.actuators, contact.incidence());
+                if fraction == contact.fraction() {
+                    assert_eq!(sample.flight_state, state);
+                }
+            }
+        }
+        if roll.abs() == 0.5 {
+            let previous_factor = WingBendingFactor::try_new(1.6).unwrap();
+            definition
+                .write_deformed_contact_points_with_factor(
+                    previous_factor,
+                    initial_incidence,
+                    &mut start_points,
+                )
+                .unwrap();
+            let support = |points: &[BodyPoint]| {
+                points
+                    .iter()
+                    .map(|point| reference_rotated_down(orientation.components(), *point))
+                    .fold(f64::NEG_INFINITY, f64::max)
+            };
+            let old_support = support(&start_points);
+            let new_support = support(&held_points);
+            assert!(new_support > old_support);
+            for (moment, datum_down, expected_factor, expected_incidence) in [
+                (
+                    TailWaterContactMoment::ExistingBoundary,
+                    -old_support + 1.0e-7,
+                    previous_factor,
+                    initial_incidence,
+                ),
+                (
+                    TailWaterContactMoment::AppliedBoundary,
+                    -(old_support + new_support) * 0.5,
+                    factor,
+                    trial.incidence(),
+                ),
+            ] {
+                let previous = state_at_down(datum_down).with_wing_bending_factor(previous_factor);
+                let mut storage = definition.contact_points().to_vec();
+                let mut provider =
+                    birdman_game_content::AircraftContactShape::try_new(definition, &mut storage)
+                        .unwrap();
+                let report = advance_tail_flight_tick_with_shape_provider(
+                    &aircraft,
+                    previous,
+                    config,
+                    input,
+                    &loads,
+                    &mut provider,
+                )
+                .unwrap();
+                let TailFlightTickOutcome::WaterContact(contact) = report.outcome() else {
+                    panic!("expected boundary contact at roll={roll}");
+                };
+                assert_eq!(contact.moment(), moment);
+                assert_eq!(contact.fraction(), 0.0);
+                assert_eq!(contact.flight_state(), previous.flight_state());
+                assert_eq!(contact.wing_bending_factor(), Some(expected_factor));
+                assert_eq!(contact.incidence(), expected_incidence);
+                assert_eq!(
+                    report.applied_controls().is_some(),
+                    moment == TailWaterContactMoment::AppliedBoundary
+                );
+                let record = record_contact(previous, report);
+                assert_eq!(record.samples().len(), 1);
+                assert_eq!(
+                    record.samples()[0].wing_bending_factor,
+                    Some(previous_factor)
+                );
+                let canonical = record.sample_at_time(0, 0.0).unwrap();
+                assert_eq!(canonical.flight_state, previous.flight_state());
+                assert_eq!(canonical.wing_bending_factor, Some(expected_factor));
+                assert_eq!(canonical.actuators, expected_incidence);
+                assert_eq!(
+                    canonical.input.is_some(),
+                    moment == TailWaterContactMoment::AppliedBoundary
+                );
+            }
         }
     }
+    println!(
+        "registered shape: maximum time error {maximum_time_error_seconds:.6e} s, \
+         support residual {maximum_support_error_m:.6e} m, \
+         Float32 wing penetration {maximum_wing_penetration_m:.6e} m"
+    );
 }
 
 #[test]
 fn registered_flight_finishes_at_the_airframe_and_keeps_record_score_and_revision_consistent() {
-    let preparation = HybridSessionPreparation::try_new_for_weather(
-        ControlMode::Manual,
-        DEFAULT_MAXIMUM_FLIGHT_TICKS,
-        42,
-        WeatherClass::Calm,
-    )
-    .unwrap();
-    let profile = preparation.controller_profile();
-    let course = preparation.course_axis();
-    let (configuration, identity) = preparation.into_parts();
-    let mut session = GameSession::new();
-    session.open_setup().unwrap();
-    session.prepare_flight(configuration).unwrap();
-    session.mark_briefing_ready().unwrap();
-    session.start_countdown(1).unwrap();
-    session
-        .observe_countdown(session.countdown_token().unwrap(), 1.0, true)
-        .unwrap();
-    while session.snapshot().phase() == SessionPhase::FlightRunning {
-        session.advance_tail_flight_tick(neutral_input()).unwrap();
+    let mut application =
+        ApplicationSession::new(ControlMode::Manual, DEFAULT_MAXIMUM_FLIGHT_TICKS, 42);
+    for command in [
+        SessionCommand::OpenSetup {},
+        SessionCommand::SelectWeather {
+            weather: WeatherClass::Calm,
+        },
+        SessionCommand::Prepare {},
+        SessionCommand::StartCountdown {},
+    ] {
+        application
+            .execute(command, BackendReadiness::Ready)
+            .unwrap();
     }
+    let profile = application.prepared().unwrap().controller_profile;
+    let course = application.prepared().unwrap().course_axis;
+    application
+        .observe_countdown(
+            application.core_session().countdown_token().unwrap(),
+            3.0,
+            true,
+        )
+        .unwrap();
+    while application.core_session().snapshot().phase() == SessionPhase::FlightRunning {
+        application
+            .advance_tail_flight_tick(neutral_input())
+            .unwrap();
+    }
+    let session = application.core_session();
     let result = session.snapshot().result().unwrap();
     let SessionTerminalState::TailWaterContact(contact) = result.state else {
         panic!("expected registered airframe water contact: {result:?}");
@@ -376,13 +664,22 @@ fn registered_flight_finishes_at_the_airframe_and_keeps_record_score_and_revisio
     assert_eq!(result.reason, SessionEndReason::WaterContact);
     let state = contact.flight_state();
     let definition = registered_aircraft().unwrap();
-    let points = definition.contact_points();
+    let mut points = definition.contact_points().to_vec();
+    definition
+        .write_deformed_contact_points_with_factor(
+            contact.wing_bending_factor().unwrap(),
+            contact.incidence(),
+            &mut points,
+        )
+        .unwrap();
     let down = state.datum_position_ned().components()[2];
     assert!(down < -1.0);
-    assert!((down + maximum_down_offset(state.attitude_body_to_ned(), points)).abs() < 1.0e-10);
+    assert!((down + maximum_down_offset(state.attitude_body_to_ned(), &points)).abs() < 1.0e-10);
     let record = session.flight_record().unwrap();
-    let last = record.samples().last().unwrap();
+    let last = record.terminal_sample().unwrap();
     assert_eq!(last.flight_state, state);
+    assert_eq!(last.wing_bending_factor, contact.wing_bending_factor());
+    assert_eq!(last.controls.actuators(), contact.incidence());
     assert_eq!(
         (last.tick_index, last.fraction),
         (contact.interval_start_tick(), contact.fraction())
@@ -398,12 +695,9 @@ fn registered_flight_finishes_at_the_airframe_and_keeps_record_score_and_revisio
             .unwrap()
         )
     );
-    let difficulty = DifficultySettings::custom(
-        InformationLevel::Full,
-        AssistanceLevel::Manual,
-        WeatherClass::Calm,
-    );
-    let document = TailFlightRecordDocument::from_record(record, difficulty, identity).unwrap();
+    let difficulty = application.difficulty();
+    let document = application.flight_record_document().unwrap();
+    assert_eq!(document.schema_version, 7);
     assert_eq!(
         (
             document.header.catalog_version,
