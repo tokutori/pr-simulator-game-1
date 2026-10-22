@@ -128,10 +128,11 @@ export interface Vector3 {
     readonly z: number;
 }
 /**
- * Pointing ray in the same reference frame as the panel.
+ * Pointing ray with its observed space-to-panel-reference transform.
  */
 export interface XrPointerRay {
     readonly direction: Vector3;
     readonly origin: Vector3;
+    readonly referenceFromSpace: Pose;
     readonly source: XrPointerSource;
 }

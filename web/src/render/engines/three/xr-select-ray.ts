@@ -1,4 +1,4 @@
-import { quaternion, rotateVec3, vec3 } from "../../contracts/math.js";
+import { IDENTITY_POSE, quaternion, rotateVec3, vec3 } from "../../contracts/math.js";
 import type { SelectRay } from "../../contracts/runtime.js";
 
 interface XrTargetPose {
@@ -27,6 +27,7 @@ export function selectRayFromXrEvent<TargetSpace, ReferenceSpace>(
   const transform = targetPose.transform;
   const orientation = quaternion(transform.orientation.w, transform.orientation.x, transform.orientation.y, transform.orientation.z);
   return Object.freeze({
+    referenceFromSpace: IDENTITY_POSE,
     origin: vec3(transform.position.x, transform.position.y, transform.position.z),
     direction: rotateVec3(orientation, vec3(0, 0, -1)),
     timestampMs: frame.predictedDisplayTime

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { vec3 } from "../../web/src/render/contracts/math.js";
+import { IDENTITY_POSE, vec3 } from "../../web/src/render/contracts/math.js";
 import { selectRayFromXrEvent } from "../../web/src/render/engines/three/xr-select-ray.js";
 
 describe("Three.js WebXR select-ray adapter", () => {
@@ -19,6 +19,7 @@ describe("Three.js WebXR select-ray adapter", () => {
       })
     };
     expect(selectRayFromXrEvent(frame, inputSource(), referenceSpace())).toEqual({
+      referenceFromSpace: IDENTITY_POSE,
       origin: vec3(1, 2, 3),
       direction: vec3(0, 0, -1),
       timestampMs: 25

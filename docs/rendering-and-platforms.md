@@ -328,6 +328,7 @@ T_{eye,object}=T_{R,eye}^{-1}T_{R,object}
 - 機体・PilotEye・head・HUD localを一度ずつ合成する。
 - IPDはstereo projectionで一度だけ適用する。
 - head基準のrayとcontroller基準のrayをそれぞれ同じ描画anchorへ変換する。
+- controller rayは観測空間のorigin・directionと、そのframeのreference-from-space poseを渡す。共有Rustがpanel参照系へ合成し、照準とtriggerに同じ交差判定を使う。triggerには最後に描画したtracking mountを対応付ける。
 - 選択対象は、現在のoverlayに属する可視・有効・clip内のcontrolとする。
 
 - World/Cockpit panelはphysicalな深度判定・書込み、Menu/Headは世界描画後のoverlayとする。

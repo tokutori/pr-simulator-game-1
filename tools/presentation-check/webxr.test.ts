@@ -93,7 +93,7 @@ describe("WebXR session backend", () => {
       renderer.tick(20, runtimeViewerFixture(moved));
       renderer.tick(2020, runtimeViewerFixture(moved));
       expect(requiredRenderedFrame(renderer).panel).toEqual({ kind: "absent" });
-      renderer.selectHandler?.({ origin: vec3(0, -0.5, 0), direction: vec3(0, 0, -1), timestampMs: 2030 });
+      renderer.selectHandler?.({ referenceFromSpace: IDENTITY_POSE, origin: vec3(0, -0.5, 0), direction: vec3(0, 0, -1), timestampMs: 2030 });
       expect(actions.some((action) => action.type === "menu-control" || action.type === "menu-scroll")).toBe(false);
       expect(failures).toEqual([]);
       expect(runtime.currentMode).toBe("webxr");
@@ -179,7 +179,7 @@ describe("WebXR session backend", () => {
     const normalizedX = button.rect.x + button.rect.width / 2;
     const normalizedY = button.rect.y + button.rect.height / 2;
     const localPoint = vec3((normalizedX - 0.5) * panel.size.width, (0.5 - normalizedY) * panel.size.height, 0);
-    renderer.selectHandler?.({
+    renderer.selectHandler?.({ referenceFromSpace: IDENTITY_POSE,
       origin: vec3(visiblePanelFrame(frame).pose.position.x + localPoint.x, visiblePanelFrame(frame).pose.position.y + localPoint.y, visiblePanelFrame(frame).pose.position.z + 2),
       direction: vec3(0, 0, -1),
       timestampMs: 2000
@@ -242,7 +242,7 @@ describe("WebXR session backend", () => {
       const normalizedX = button.rect.x + button.rect.width / 2;
       const normalizedY = button.rect.y + button.rect.height / 2;
       const point = vec3((normalizedX - 0.5) * panel.size.width, (0.5 - normalizedY) * panel.size.height, 0);
-      renderer.selectHandler?.({
+      renderer.selectHandler?.({ referenceFromSpace: IDENTITY_POSE,
         origin: vec3(visiblePanelFrame(frame).pose.position.x + point.x, visiblePanelFrame(frame).pose.position.y + point.y, visiblePanelFrame(frame).pose.position.z + 2),
         direction: vec3(0, 0, -1),
         timestampMs: timestampMs + 1000
@@ -267,7 +267,7 @@ describe("WebXR session backend", () => {
       const missing = fixtureBackendFrame(backend, 20, pause, unavailableViewerFrame("viewer-unavailable"));
       expect(missing.panel).toEqual({ kind: "unavailable", reason: "viewer-unavailable" });
       actions.length = 0;
-      renderer.selectHandler?.({ origin: vec3(0, -0.5, 0), direction: vec3(0, 0, -1), timestampMs: 2000 });
+      renderer.selectHandler?.({ referenceFromSpace: IDENTITY_POSE, origin: vec3(0, -0.5, 0), direction: vec3(0, 0, -1), timestampMs: 2000 });
       expect(actions).toEqual([]);
       expect(visiblePanelFrame(fixtureBackendFrame(backend, 30, pause, runtimeViewerFixture(moved))).pose).toEqual(initial.pose);
       const closed = createSceneFixture("Flight");

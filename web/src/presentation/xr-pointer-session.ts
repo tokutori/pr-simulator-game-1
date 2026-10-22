@@ -27,7 +27,7 @@ export class XrPointerSession {
     }
     this.menu = menu;
     const observation: XrPointerObservation = { timestampMs, focused, panelPose, headPose, gamepad,
-      pointers: rays.map((ray) => ({ source: ray.source ?? { kind: "gaze" }, origin: ray.origin, direction: ray.direction })) };
+      pointers: rays.map((ray) => ({ source: ray.source ?? { kind: "gaze" }, referenceFromSpace: ray.referenceFromSpace, origin: ray.origin, direction: ray.direction })) };
     const projection = JSON.parse(this.owner().observe_json(JSON.stringify(observation))) as XrPointerProjection;
     this.focusDirty ||= geometryChanged || projection.focusChanged;
     if (this.focusDirty) {
@@ -49,7 +49,7 @@ export class XrPointerSession {
   select(ray: SelectRay): void {
     if (this.bridge === null) return;
     const generation = this.generation;
-    const pointer = { source: ray.source ?? { kind: "gaze" as const }, origin: ray.origin, direction: ray.direction };
+    const pointer = { source: ray.source ?? { kind: "gaze" as const }, referenceFromSpace: ray.referenceFromSpace, origin: ray.origin, direction: ray.direction };
     const hit = JSON.parse(this.bridge.select_json(JSON.stringify(pointer), ray.timestampMs)) as XrPointerHit | null;
     if (hit !== null) { this.focus(hit); if (generation === this.generation) this.activate(hit); }
   }

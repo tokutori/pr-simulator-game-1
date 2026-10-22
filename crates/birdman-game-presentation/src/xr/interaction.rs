@@ -194,16 +194,18 @@ impl XrPointerSurface {
     }
 }
 
-/// Pointing ray in the same reference frame as the panel.
+/// Pointing ray with its observed space-to-panel-reference transform.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct XrPointerRay {
     /// Stable input source.
     pub source: XrPointerSource,
-    /// Ray origin in reference coordinates, in metres.
+    /// Reference-from-ray-space pose for this observation.
+    pub reference_from_space: Pose,
+    /// Ray origin in the observed space, in metres.
     pub origin: Vector3,
-    /// Unit pointing direction in reference coordinates.
+    /// Unit pointing direction in the observed space.
     pub direction: Vector3,
 }
 
@@ -357,6 +359,7 @@ impl XrPointerSession {
             let head = head.normalized().ok_or("Invalid XR head pose")?;
             observation.pointers.push(XrPointerRay {
                 source: XrPointerSource::Gaze,
+                reference_from_space: Pose::IDENTITY,
                 origin: head.position,
                 direction: head.rotate(Vector3 {
                     x: 0.0,
@@ -546,7 +549,8 @@ fn pointer_hit(
     panel: Pose,
     pointer: XrPointerRay,
 ) -> Option<XrPointerHit> {
-    let panel = panel.normalized()?.inverse();
+    let panel =
+        super::compose_pose(panel.normalized()?.inverse(), pointer.reference_from_space).ok()?;
     let norm = pointer
         .direction
         .array()

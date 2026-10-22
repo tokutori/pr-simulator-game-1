@@ -13,7 +13,7 @@ import { configuredViewerFixture } from "./viewer-fixture.js";
 import { DEFAULT_XR_HEAD_HUD_PROFILE } from "../../web/src/generated/xr-head-hud-profile.js";
 import type { FlightRecordHudProfileDocument } from "../../web/src/generated/record-difficulty.js";
 import type { ViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
-import { IDENTITY_POSE, composePose, rotateVec3, pose, quaternion, vec3 } from "../../web/src/render/contracts/math.js";
+import { IDENTITY_POSE, composePose, pose, quaternion, vec3 } from "../../web/src/render/contracts/math.js";
 import { xr_head_hud_projection_json, xr_text_ink_fit_json, XrCameraBridge, XrSpatialBridge,
   xr_reference_frame_json, pose_chain_json, inverse_pose_json, xr_panel_camera_poses_json, XrPointerBridge } from "../../web/pkg/birdman_game_wasm.js";
 import type { XrPointerObservation } from "../../web/src/generated/xr-pointer-observation.js";
@@ -144,7 +144,7 @@ function pointerScenario() {
   const panelPose = pose(vec3(20, 10, -30), quaternion(Math.cos(0.3), 0, Math.sin(0.3), 0));
   const sourceRay = (source: XrPointerObservation["pointers"][number]["source"], horizontal: number) => {
     const reference = composePose(panelPose, pose(vec3(horizontal, 0.1, 2), IDENTITY_POSE.orientation));
-    return { source, origin: reference.position, direction: rotateVec3(reference.orientation, vec3(0, 0, -1)) };
+    return { source, referenceFromSpace: reference, origin: vec3(0, 0, 0), direction: vec3(0, 0, -1) };
   };
   const headPose = composePose(panelPose, pose(vec3(0, 0.1, 2), IDENTITY_POSE.orientation));
   const gaze = sourceRay({ kind: "gaze" }, 0);

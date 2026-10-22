@@ -60,7 +60,7 @@ export function menuActionAt(menu: Extract<MenuPresentation, { kind: "ready" }>,
   const actions: UiAction[] = [];
   const owner = new XrPointerSession(action => actions.push(action));
   const ray = { origin: vec3(point.x, point.y, 1), direction: vec3(0, 0, -1),
-    source: { kind: "controller" as const, id: 1 }, timestampMs: 0 };
+    referenceFromSpace: IDENTITY_POSE, source: { kind: "controller" as const, id: 1 }, timestampMs: 0 };
   try {
     owner.observe(IDENTITY_POSE, menu, null, [ray], true, 0);
     owner.select({ ...ray, timestampMs: 1 });
@@ -79,7 +79,7 @@ export function sharedPanelHit(panel: UiPanel, panelPose: Pose, ray: { origin: V
           control.rect.width * panel.size.width, control.rect.height * panel.size.height]
       })) }));
     const projection = JSON.parse(owner.observe_json(JSON.stringify({ timestampMs: 0, focused: true, panelPose, headPose: null,
-      pointers: [{ ...ray, source: { kind: "controller", id: 1 } }], gamepad: null }))) as XrPointerProjection;
+      pointers: [{ ...ray, referenceFromSpace: IDENTITY_POSE, source: { kind: "controller", id: 1 } }], gamepad: null }))) as XrPointerProjection;
     const hit = projection.primary;
     return hit === null ? null : { x: hit.point[0], y: hit.point[1],
       controlId: hit.target?.kind === "control" ? hit.target.id : null };

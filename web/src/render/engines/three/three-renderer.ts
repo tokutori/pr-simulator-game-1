@@ -31,7 +31,7 @@ import type { Object3D } from "three";
 import type { BackendFrame, FlightCameraMode, FlightRenderPose, LakeWaterQualityCleanupResult, RendererAdapter, SelectRay, StereoPresentationProfile, ViewportSize } from "../../contracts/runtime.js";
 import type { CinematicCameraView } from "../../contracts/camera.js";
 import { uiPanelComposition } from "../../contracts/ui.js";
-import { IDENTITY_POSE, multiplyQuaternion, pose, quaternion, rotateVec3, vec3 } from "../../contracts/math.js";
+import { IDENTITY_POSE, multiplyQuaternion, pose, quaternion, vec3 } from "../../contracts/math.js";
 import type { Pose } from "../../contracts/math.js";
 import type { WebXrAvailability, WebXrSessionPort, WebXrSessionRequest } from "../../../presentation/webxr-contracts.js";
 import { selectRayFromXrEvent } from "./xr-select-ray.js";
@@ -585,7 +585,7 @@ export function createThreeRenderer(
     const referenceSpace = renderer.xr.getReferenceSpace();
     if (referenceSpace === null || selectRayHandler === null || renderedTrackingMount === null) return;
     const ray = selectRayFromXrEvent(event.frame, event.inputSource, referenceSpace);
-    if (ray !== null) selectRayHandler(transformRay({ ...ray, timestampMs: performance.now(), source: pointerSource(event.inputSource) }, renderedTrackingMount));
+    if (ray !== null) selectRayHandler({ ...ray, timestampMs: performance.now(), source: pointerSource(event.inputSource), referenceFromSpace: renderedTrackingMount });
   };
 
   const onXrVisibilityChange = (): void => {
@@ -1011,7 +1011,7 @@ export function createThreeRenderer(
   const webxr: WebXrSessionPort = {
     setVisibilityHandler(handler) { visibilityHandler = handler; },
     readPointerFrame() {
-      return { visibility: sessionFromState(xrState)?.visibilityState ?? "hidden", focused: hasXrInputFocus(), rays: framePointerRays.map((ray) => transformRay(ray, currentTrackingMountPose())) };
+      return { visibility: sessionFromState(xrState)?.visibilityState ?? "hidden", focused: hasXrInputFocus(), rays: framePointerRays.map((ray) => ({ ...ray, referenceFromSpace: currentTrackingMountPose() })) };
     },
     projectTrackingFrame(value: Pose) {
       return projectXrReferenceFrame(currentCameraPlacement().rig, value);
@@ -1272,17 +1272,6 @@ export function createThreeRenderer(
 function setPose(object: Object3D, pose: Pose): void {
   object.position.set(pose.position.x, pose.position.y, pose.position.z);
   object.quaternion.set(pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w);
-}
-
-function transformRay(ray: SelectRay, worldFromTracking: Pose | null): SelectRay {
-  if (worldFromTracking === null) return ray;
-  const offset = rotateVec3(worldFromTracking.orientation, ray.origin);
-  return Object.freeze({
-    ...(ray.source === undefined ? {} : { source: ray.source }),
-    origin: vec3(offset.x + worldFromTracking.position.x, offset.y + worldFromTracking.position.y, offset.z + worldFromTracking.position.z),
-    direction: rotateVec3(worldFromTracking.orientation, ray.direction),
-    timestampMs: ray.timestampMs
-  });
 }
 
 function ensureActive(disposed: boolean): void {

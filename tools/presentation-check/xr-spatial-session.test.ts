@@ -25,7 +25,7 @@ afterEach(() => { vi.restoreAllMocks(); });
 
 describe("shared pointer adapter", () => {
   const panelPose = pose(vec3(0, 0, -2), IDENTITY_POSE.orientation);
-  const ray = { source: { kind: "controller" as const, id: 5 }, origin: vec3(0.3, 0.3, 0), direction: vec3(0, 0, -1), timestampMs: 100 };
+  const ray = { referenceFromSpace: IDENTITY_POSE, source: { kind: "controller" as const, id: 5 }, origin: vec3(0.3, 0.3, 0), direction: vec3(0, 0, -1), timestampMs: 100 };
 
   it("retains the gamepad cursor and held-button history across actual scroll generations", () => {
     const view = createSceneFixture("Title");

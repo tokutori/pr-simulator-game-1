@@ -779,7 +779,7 @@ async function verifyPointers(activeBrowser: Browser): Promise<void> {
       bundle.renderer.setStereoPresentation({ eyeSeparationMeters: 0.064, verticalFieldOfViewDegrees: 60, focusDistanceMeters: 2.4, distortion: "disabled" });
       const reference = bundle.renderer.projectTrackingFrame(IDENTITY_POSE);
       const panelPose = composePose(reference.head, pose(vec3(0, 0, -2.4), IDENTITY_POSE.orientation));
-      const rays = targets.map((target, index) => ({ source: { kind: "controller" as const, id: index + 1 }, timestampMs: 100,
+      const rays = targets.map((target, index) => ({ referenceFromSpace: IDENTITY_POSE, source: { kind: "controller" as const, id: index + 1 }, timestampMs: 100,
         origin: composePose(reference.head, pose(vec3(target.x, target.y, 0), IDENTITY_POSE.orientation)).position,
         direction: rotateVec3(reference.head.orientation, vec3(0, 0, -1)) }));
       const cursors = owner.observe(panelPose, menu, null, rays, true, 100);

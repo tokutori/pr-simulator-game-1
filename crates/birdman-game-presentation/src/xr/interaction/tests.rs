@@ -60,6 +60,7 @@ fn surface() -> XrPointerSurface {
 fn pointer(source: XrPointerSource, horizontal: f64) -> XrPointerRay {
     XrPointerRay {
         source,
+        reference_from_space: Pose::IDENTITY,
         origin: Vector3 {
             x: horizontal,
             y: 0.0,
@@ -206,6 +207,29 @@ fn transformed_panel_intersection_and_front_face_admission_match_trigger() {
     let hit = owner.observe(observation.clone()).unwrap().primary.unwrap();
     assert_eq!(hit.source, XrPointerSource::Gaze);
     assert!(hit.point.into_iter().all(|value| value.abs() < 1e-12));
+    let tracked = XrPointerRay {
+        reference_from_space: head,
+        ..pointer(controller.source, 0.25)
+    };
+    let mut tracked_observation = observation.clone();
+    tracked_observation.head_pose = None;
+    tracked_observation.pointers = vec![tracked];
+    let tracked_hit = owner.observe(tracked_observation.clone()).unwrap().primary;
+    assert!((tracked_hit.unwrap().point[0] - 0.25).abs() < 1e-12);
+    tracked_observation.timestamp_ms = 30.75;
+    tracked_observation.pointers[0]
+        .reference_from_space
+        .position
+        .x = f64::NAN;
+    assert!(
+        owner
+            .observe(tracked_observation)
+            .unwrap()
+            .primary
+            .is_none()
+    );
+    observation.timestamp_ms = 30.8;
+    owner.observe(observation.clone()).unwrap();
     observation.timestamp_ms = 31.0;
     observation.head_pose.as_mut().unwrap().orientation.w = f64::NAN;
     assert!(owner.observe(observation).is_err());
@@ -214,6 +238,7 @@ fn transformed_panel_intersection_and_front_face_admission_match_trigger() {
             .select(
                 XrPointerRay {
                     source: XrPointerSource::Gaze,
+                    reference_from_space: Pose::IDENTITY,
                     origin: head.position,
                     direction: Vector3 {
                         x: -1.0,

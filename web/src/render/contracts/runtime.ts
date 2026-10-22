@@ -68,6 +68,7 @@ export interface PanelCursor {
 
 export interface SelectRay {
   readonly source?: import("../../generated/xr-pointer-observation.js").XrPointerObservation["pointers"][number]["source"];
+  readonly referenceFromSpace: Pose;
   readonly origin: Vec3;
   readonly direction: Vec3;
   readonly timestampMs: number;

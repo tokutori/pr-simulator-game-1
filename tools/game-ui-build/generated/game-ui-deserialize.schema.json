@@ -2880,15 +2880,19 @@
     },
     "XrPointerRay": {
       "additionalProperties": false,
-      "description": "Pointing ray in the same reference frame as the panel.",
+      "description": "Pointing ray with its observed space-to-panel-reference transform.",
       "properties": {
         "direction": {
           "$ref": "#/$defs/Vector3",
-          "description": "Unit pointing direction in reference coordinates."
+          "description": "Unit pointing direction in the observed space."
         },
         "origin": {
           "$ref": "#/$defs/Vector3",
-          "description": "Ray origin in reference coordinates, in metres."
+          "description": "Ray origin in the observed space, in metres."
+        },
+        "referenceFromSpace": {
+          "$ref": "#/$defs/Pose",
+          "description": "Reference-from-ray-space pose for this observation."
         },
         "source": {
           "$ref": "#/$defs/XrPointerSource",
@@ -2897,6 +2901,7 @@
       },
       "required": [
         "source",
+        "referenceFromSpace",
         "origin",
         "direction"
       ],
