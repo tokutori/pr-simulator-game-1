@@ -362,10 +362,10 @@ Countdownはcore、実WASM/facade/Web frame列とNative Updateを通す。
 
 - 表示不変回帰は既存controller fixtureと同じ実WASMを使い、Fullを基準にInformation 5種、Manual/Shared/Automatic、30/60/120 FPSの代表組合せを比較する。
 - 生キー観測列は発進後にpilot増加を押し、500 msのframe直後に解放する。appの共有driverが各物理tickの確定targetへ積分する。
-- 100 tickのManualAbortまでの保存sample・controls・telemetry・query・finalization・最終poseを比較する。複数tickのframe、0 tickの補間更新、Pause/Resumeとfractional終端も直接Rust・実WASM・本番controllerで検査する。
+- 100 tickのManualAbortまでの保存sample・controls・telemetry・finalization・最終poseを比較する。記録queryのABI接続はWASM DTO試験、複数tickのframe、0 tickの補間更新、Pause/Resumeとfractional終端は直接Rust・実WASM・本番controllerで検査する。
 - 同じWASM演算列には追加許容差を設けない。
 - 表示/PB metadataは物理列から分離する。
-- backendの接続・切替・単一描画loopと資源解放はpresentation runtimeの試験、実XR端末の操作受入は#15 / #16で確認する。
+- backendの接続・切替・単一描画loopと資源解放はpresentation runtimeの試験、頭部・controllerによる操作は実XR端末で確認する。
 
 ## 8. 環境・地形・視認性
 
