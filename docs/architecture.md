@@ -154,7 +154,7 @@ GameUiView / GameUiFrame → platform renderer → DOM / VR panel / Bevy entity
 - Menu viewportは共有Rustがcontent clip・page操作領域・scroll量を導出する。矩形とpanel/document座標は一括で投影し、描画とpointer入力が同じclipを利用する。rangeの値はclip前のtrackに対応する。
 - フォント観測cacheは既存UI ownerの寿命に従い、最大32組を保持する。計測identityは表示内容・locale・surface・解決済み文字サイズ・font世代を含み、変更時に再計測する。Webは生成DTOを参照し、表示APIへの結合型を所有する。
 - 文字折返しは共有Rustが明示改行・Unicode文字列・符号付きink幅から決める。フォント観測callbackは要求された文字列全体を計測し、advance・bearing・ascent/descentをメートル単位で返す。Webは同期呼出し中だけCanvas観測を提供し、共有処理が行とparagraphを確定する。
-- platformは表示API、フォント計測、safe area、OS/browserのfocus・visibility・機器観測を担当する。XRのcursor積分・押下edge・入力源切替・dwellは共有presentationが所有する。
+- platformは表示API、フォント計測、safe area、OS/browserのfocus・visibility・機器観測を担当する。Native UIは入力とentity寿命の管理、View/Frameのwidget投影、chart描画、HUD描画をmodule境界で分ける。XRのcursor積分・押下edge・入力源切替・dwellは共有presentationが所有する。
 - 共有UIの表示modeはScreen・Hmd・PhoneVrとし、HMDの利用可否とMenuの再配置能力をadapterが観測する。WebはHmdをWebXRへ変換し、共有UIが公開した能力から切替・再配置Actionを認可する。
 - ボタンIDや表示文字列から意味を再推定しない。
 
