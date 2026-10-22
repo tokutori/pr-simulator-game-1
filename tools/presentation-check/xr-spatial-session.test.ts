@@ -11,7 +11,8 @@ import { XrSpatialSession } from "../../web/src/presentation/xr-spatial-session.
 import { XrCameraOrigin, projectXrReferenceFrame } from "../../web/src/render/camera/spatial.js";
 import { composePose, IDENTITY_POSE, inversePose, pose, quaternion, vec3 } from "../../web/src/render/contracts/math.js";
 import type { Pose } from "../../web/src/render/contracts/math.js";
-import { headPlaneFitsViews, unavailableViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
+import { unavailableViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
+import { headPlaneFitsViews } from "./viewer-fixture.js";
 import { captureConfiguredViewerFrame } from "../../web/src/render/engines/three/viewer-frame.js";
 import { createSceneFixture } from "./ui-adapter-fixture.js";
 import { geometryMenuFixture, referenceFrameFixture } from "./menu-fixture.js";

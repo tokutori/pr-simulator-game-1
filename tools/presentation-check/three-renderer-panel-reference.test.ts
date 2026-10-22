@@ -1,4 +1,4 @@
-import { configuredViewerFixture, panelFrameCursor, visiblePanelFrame } from "./viewer-fixture.js";
+import { configuredViewerFixture, panelFrameCursor, visiblePanelFrame, projectHeadPoint } from "./viewer-fixture.js";
 import { readFileSync } from "node:fs";
 import { fixtureBackendFrame, fixturePresentation, fixtureSemanticAction } from "./menu-fixture.js";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -12,7 +12,7 @@ import { composePose, IDENTITY_POSE, pose, quaternion, rotateVec3, vec3 } from "
 import type { Pose } from "../../web/src/render/contracts/math.js";
 import type { BackendFrame, FlightRenderPose, LakeWaterQualityCleanupResult } from "../../web/src/render/contracts/runtime.js";
 import type { ViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
-import { projectHeadPoint } from "../../web/src/render/contracts/viewer-frame.js";
+
 import type { UiAction, UiViewModel, UiPanel } from "../../web/src/render/contracts/ui.js";
 import { createSceneFixture } from "./ui-adapter-fixture.js";
 import { placeMenuPanel } from "./menu-fixture.js";

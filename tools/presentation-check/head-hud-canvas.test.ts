@@ -7,7 +7,7 @@ import { createHeadHudView } from "../../web/src/presentation/head-hud-view.js";
 import type { HeadHudView } from "../../web/src/presentation/head-hud-view.js";
 import type { FlightHudModel } from "../../web/src/presentation/flight-hud-model.js";
 import { captureConfiguredViewerFrame } from "../../web/src/render/engines/three/viewer-frame.js";
-import { projectHeadPoint } from "../../web/src/render/contracts/viewer-frame.js";
+import { projectHeadPoint } from "./viewer-fixture.js";
 import { IDENTITY_POSE, pose, transformPoint, vec3 } from "../../web/src/render/contracts/math.js";
 import { FLIGHT_MENU_GEOMETRY } from "../../web/src/render/contracts/ui.js";
 import { convexQuadsOverlap } from "./hud-canvas-fixture.js";

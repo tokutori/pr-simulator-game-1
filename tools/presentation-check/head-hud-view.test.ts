@@ -5,7 +5,8 @@ import { currentSharedGameUiFixture, currentSharedHeadHudFixture as currentShare
 import { createHeadHudView, DEFAULT_HEAD_HUD_PROFILE, headHudElementValue } from "../../web/src/presentation/head-hud-view.js";
 import { validateHeadHudLayer } from "../../web/src/render/contracts/head-hud.js";
 import { IDENTITY_POSE, pose, quaternion, transformPoint, vec3 } from "../../web/src/render/contracts/math.js";
-import { copyProjectionMatrix, headPlaneFitsViews, projectHeadPoint, unavailableViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
+import { unavailableViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
+import { copyProjectionMatrix, headPlaneFitsViews, projectHeadPoint } from "./viewer-fixture.js";
 import type { ViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
 import { captureConfiguredViewerFrame } from "../../web/src/render/engines/three/viewer-frame.js";
 import { convexQuadsOverlap } from "./hud-canvas-fixture.js";

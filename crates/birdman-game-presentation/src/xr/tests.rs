@@ -78,6 +78,57 @@ fn projection_preserves_runtime_matrix_and_respects_both_depth_conventions() {
         assert!((projected.x - focal * (point.x + 0.032) / 2.4).abs() < 1.0e-14);
         assert!((projected.y - focal * point.y / 2.4).abs() < 1.0e-14);
         assert_eq!(eyes[0].projection, source);
+        let head = Pose {
+            position: Vector3 {
+                x: 2.0,
+                y: 3.0,
+                z: -1.0,
+            },
+            orientation: Quaternion {
+                w: (0.4_f64 / 2.0).cos(),
+                y: (0.4_f64 / 2.0).sin(),
+                x: 0.0,
+                z: 0.0,
+            },
+        };
+        for origin in [XrViewerSource::Configured, XrViewerSource::RuntimeDerived] {
+            let captured = capture_xr_viewer(XrViewerObservation {
+                source: origin,
+                tracking_from_head: Some(head),
+                views: eyes
+                    .iter()
+                    .rev()
+                    .map(|eye| XrViewObservation {
+                        eye: Some(eye.eye),
+                        tracking_from_eye: compose_pose(head, eye.head_from_eye).unwrap(),
+                        projection: eye.projection.to_vec(),
+                        depth_range: eye.depth_range,
+                    })
+                    .collect(),
+            });
+            let captured_eyes = match captured {
+                XrViewerFrame::Configured { eyes, .. } if origin == XrViewerSource::Configured => {
+                    eyes
+                }
+                XrViewerFrame::RuntimeDerived {
+                    eyes,
+                    tracking_from_head,
+                } => {
+                    assert_eq!(tracking_from_head, head);
+                    eyes
+                }
+                _ => panic!("valid view observations were rejected"),
+            };
+            for (expected, actual) in eyes.iter().zip(captured_eyes) {
+                assert_eq!(actual.eye, expected.eye);
+                assert_eq!(actual.projection, expected.projection);
+                let actual = xr_project_head_point(&actual, point).unwrap();
+                let expected = xr_project_head_point(expected, point).unwrap();
+                assert!((actual.x - expected.x).abs() < 1.0e-12);
+                assert!((actual.y - expected.y).abs() < 1.0e-12);
+                assert!((actual.z - expected.z).abs() < 1.0e-12);
+            }
+        }
         assert!(xr_head_plane_fits(&frame, plane(2.4), 2.0, 2.0, 0.035));
         assert!(!xr_head_plane_fits(&frame, plane(0.025), 0.001, 0.001, 0.0));
         assert!(!xr_head_plane_fits(&frame, plane(101.0), 0.001, 0.001, 0.0));
@@ -222,6 +273,33 @@ fn measured_ink_is_checked_in_both_views_with_a_stable_angular_reference() {
 
 #[test]
 fn invalid_eye_identity_pose_and_projection_are_classified_before_layout() {
+    let invalid = |views| {
+        capture_xr_viewer(XrViewerObservation {
+            source: XrViewerSource::RuntimeDerived,
+            tracking_from_head: Some(Pose::IDENTITY),
+            views,
+        })
+    };
+    assert!(matches!(
+        invalid(Vec::new()),
+        XrViewerFrame::Unavailable {
+            reason: XrViewerUnavailableReason::UnsupportedViewConfiguration,
+            tracking_from_head: Some(Pose::IDENTITY),
+        }
+    ));
+    let invalid_views = [XrEye::Left, XrEye::Right].map(|eye| XrViewObservation {
+        eye: Some(eye),
+        tracking_from_eye: Pose::IDENTITY,
+        projection: vec![f64::NAN; 16],
+        depth_range: XrDepthRange::NegativeOneToOne,
+    });
+    assert!(matches!(
+        invalid(invalid_views.to_vec()),
+        XrViewerFrame::Unavailable {
+            reason: XrViewerUnavailableReason::InvalidViewGeometry,
+            tracking_from_head: Some(Pose::IDENTITY),
+        }
+    ));
     let mut frame = viewer(XrDepthRange::NegativeOneToOne);
     let XrViewerFrame::Configured { eyes, .. } = &mut frame else {
         unreachable!()

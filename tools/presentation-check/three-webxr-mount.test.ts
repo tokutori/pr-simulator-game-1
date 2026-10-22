@@ -1,5 +1,5 @@
 import "./lake-model-fixture.js";
-import { panelFrameCursor } from "./viewer-fixture.js";
+import { panelFrameCursor, projectHeadPoint } from "./viewer-fixture.js";
 import { fixtureBackendFrame, fixturePresentation, fixtureSemanticAction } from "./menu-fixture.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Euler, Matrix4, Quaternion, Vector2, Vector3 } from "three";
@@ -20,7 +20,7 @@ import { createInitialAppModel, updateApp } from "../../web/src/app/app-state.js
 import { createFlightFrameViewDraft, finalizeFlightFrameView, menuFrameFailureRecovery } from "../../web/src/app/flight-frame-view.js";
 import { currentFlightPoseFixture } from "../game-check/current-session-fixture.js";
 import { currentGameSessionProjectionFixture, currentSharedGameUiFixture } from "../game-check/shared-game-ui-fixture.js";
-import { projectHeadPoint } from "../../web/src/render/contracts/viewer-frame.js";
+
 import type { ViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
 import { HEAD_HUD_MINIMUM_INK_HEIGHT_DEGREES, headHudCanvasSize, headHudPaintedTextInk, prepareHeadHudPaint, validateHeadHudPaint } from "../../web/src/presentation/head-hud-canvas.js";
 import type { HeadHudPaintPreparation } from "../../web/src/presentation/head-hud-canvas.js";

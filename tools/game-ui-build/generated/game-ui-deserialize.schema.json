@@ -3237,6 +3237,45 @@
         }
       ]
     },
+    "XrViewObservation": {
+      "additionalProperties": false,
+      "description": "One platform view before head-relative geometry has been derived.",
+      "properties": {
+        "depthRange": {
+          "$ref": "#/$defs/XrDepthRange",
+          "description": "Rendering API clip-depth convention."
+        },
+        "eye": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/XrEye"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Primary eye identity; absent for an unsupported platform view."
+        },
+        "projection": {
+          "description": "Unmodified column-major runtime projection values.",
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "type": "array"
+        },
+        "trackingFromEye": {
+          "$ref": "#/$defs/Pose",
+          "description": "Eye pose in the same reference space as the centre head."
+        }
+      },
+      "required": [
+        "trackingFromEye",
+        "projection",
+        "depthRange"
+      ],
+      "type": "object"
+    },
     "XrViewerFrame": {
       "description": "Same-frame stereo geometry, separate from tracked world-camera placement.",
       "oneOf": [
@@ -3327,6 +3366,54 @@
             "eyes"
           ],
           "type": "object"
+        }
+      ]
+    },
+    "XrViewerObservation": {
+      "additionalProperties": false,
+      "description": "Platform observations copied together from one frame and reference space.",
+      "properties": {
+        "source": {
+          "$ref": "#/$defs/XrViewerSource",
+          "description": "Origin of the optical observations."
+        },
+        "trackingFromHead": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Pose"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Centre-head pose, or absent when runtime tracking is unavailable."
+        },
+        "views": {
+          "description": "Platform view order is preserved until shared eye classification.",
+          "items": {
+            "$ref": "#/$defs/XrViewObservation"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "source",
+        "views"
+      ],
+      "type": "object"
+    },
+    "XrViewerSource": {
+      "description": "Origin of the same-frame platform view observations.",
+      "oneOf": [
+        {
+          "const": "configured",
+          "description": "Configured optics, without a tracked head anchor.",
+          "type": "string"
+        },
+        {
+          "const": "runtime-derived",
+          "description": "Runtime tracking and optics in one reference space.",
+          "type": "string"
         }
       ]
     },

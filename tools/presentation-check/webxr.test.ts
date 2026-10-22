@@ -1,12 +1,12 @@
 import { referenceFrameFixture } from "./menu-fixture.js";
-import { runtimeViewerFixture, visiblePanelFrame } from "./viewer-fixture.js";
+import { runtimeViewerFixture, visiblePanelFrame, headPlaneFitsViews } from "./viewer-fixture.js";
 import { fixtureBackendFrame, fixturePresentation, fixtureSemanticAction, geometryMenuFixture } from "./menu-fixture.js";
 import { describe, expect, it } from "vitest";
 import { currentSharedGameUiFixture, sharedGameUiPlatform } from "../game-check/shared-game-ui-fixture.js";
 import { createAppSession } from "../../web/src/app/session-factory.js";
 import { initializeWasmFixture } from "../game-check/wasm-fixture.js";
 import { composePose, IDENTITY_POSE, inversePose, pose, vec3 } from "../../web/src/render/contracts/math.js";
-import { headPlaneFitsViews, unavailableViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
+import { unavailableViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
 import type { Pose } from "../../web/src/render/contracts/math.js";
 import type { BackendFrame, MenuPresentation, RendererAdapter, SelectRay, ViewportSize } from "../../web/src/render/contracts/runtime.js";
 import type { ViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";

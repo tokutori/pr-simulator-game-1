@@ -38,6 +38,111 @@ pub struct XrEyeGeometry {
     pub depth_range: XrDepthRange,
 }
 
+/// Origin of the same-frame platform view observations.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "kebab-case")]
+pub enum XrViewerSource {
+    /// Configured optics, without a tracked head anchor.
+    Configured,
+    /// Runtime tracking and optics in one reference space.
+    RuntimeDerived,
+}
+
+/// One platform view before head-relative geometry has been derived.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct XrViewObservation {
+    /// Primary eye identity; absent for an unsupported platform view.
+    pub eye: Option<XrEye>,
+    /// Eye pose in the same reference space as the centre head.
+    pub tracking_from_eye: Pose,
+    /// Unmodified column-major runtime projection values.
+    pub projection: Vec<f64>,
+    /// Rendering API clip-depth convention.
+    pub depth_range: XrDepthRange,
+}
+
+/// Platform observations copied together from one frame and reference space.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct XrViewerObservation {
+    /// Origin of the optical observations.
+    pub source: XrViewerSource,
+    /// Centre-head pose, or absent when runtime tracking is unavailable.
+    pub tracking_from_head: Option<Pose>,
+    /// Platform view order is preserved until shared eye classification.
+    pub views: Vec<XrViewObservation>,
+}
+
+/// Classifies the observed views and derives both head-relative eye poses.
+pub fn capture_xr_viewer(observation: XrViewerObservation) -> XrViewerFrame {
+    let unavailable = |reason, head| XrViewerFrame::Unavailable {
+        reason,
+        tracking_from_head: head,
+    };
+    let Some(raw_head) = observation.tracking_from_head else {
+        return unavailable(
+            match observation.source {
+                XrViewerSource::RuntimeDerived => XrViewerUnavailableReason::ViewerUnavailable,
+                XrViewerSource::Configured => XrViewerUnavailableReason::InvalidViewGeometry,
+            },
+            None,
+        );
+    };
+    let Some(head) = raw_head.normalized() else {
+        return unavailable(XrViewerUnavailableReason::InvalidViewGeometry, None);
+    };
+    let tracked = (observation.source == XrViewerSource::RuntimeDerived).then_some(head);
+    if observation.views.len() != 2
+        || [XrEye::Left, XrEye::Right].into_iter().any(|eye| {
+            observation
+                .views
+                .iter()
+                .filter(|view| view.eye == Some(eye))
+                .count()
+                != 1
+        })
+    {
+        return unavailable(
+            XrViewerUnavailableReason::UnsupportedViewConfiguration,
+            tracked,
+        );
+    }
+    let capture = |eye| {
+        let view = observation
+            .views
+            .iter()
+            .find(|view| view.eye == Some(eye))?;
+        let projection = view.projection.as_slice().try_into().ok()?;
+        if !xr_projection_matrix_is_valid(&view.projection) {
+            return None;
+        }
+        Some(XrEyeGeometry {
+            eye,
+            head_from_eye: super::compose_pose(head.inverse(), view.tracking_from_eye).ok()?,
+            projection,
+            depth_range: view.depth_range,
+        })
+    };
+    let (Some(left), Some(right)) = (capture(XrEye::Left), capture(XrEye::Right)) else {
+        return unavailable(XrViewerUnavailableReason::InvalidViewGeometry, tracked);
+    };
+    let eyes = [left, right];
+    match observation.source {
+        XrViewerSource::Configured => XrViewerFrame::Configured {
+            tracking_from_head: (),
+            eyes,
+        },
+        XrViewerSource::RuntimeDerived => XrViewerFrame::RuntimeDerived {
+            tracking_from_head: head,
+            eyes,
+        },
+    }
+}
+
 /// Classified absence of usable stereo observations.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]

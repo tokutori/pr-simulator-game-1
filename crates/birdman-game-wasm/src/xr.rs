@@ -62,42 +62,27 @@ pub(crate) fn measure_menu_glyph(
     })
 }
 
-/// Checks the browser/runtime's unmodified projection matrix.
+/// Captures a same-frame runtime/configured viewer through shared geometry.
 #[wasm_bindgen]
-pub fn xr_projection_matrix_is_valid(values: &[f64]) -> bool {
-    shared::xr_projection_matrix_is_valid(values)
-}
-
-/// Projects one point through the shared optical geometry.
-#[wasm_bindgen]
-pub fn xr_project_head_point_json(eye_json: &str, point_json: &str) -> Result<String, JsValue> {
-    let (Some(eye), Some(point)) = (
-        decode_geometry::<shared::XrEyeGeometry>(eye_json, 4_096),
-        decode_geometry::<shared::Vector3>(point_json, 512),
-    ) else {
-        return encode(&Option::<shared::Vector3>::None);
-    };
-    encode(&shared::xr_project_head_point(&eye, point))
-}
-
-/// Checks a complete head-local rectangle against both views.
-#[wasm_bindgen]
-pub fn xr_head_plane_fits_json(
-    viewer_json: &str,
-    pose_json: &str,
-    width: f64,
-    height: f64,
-    margin: f64,
-) -> Result<bool, JsValue> {
-    let (Some(viewer), Some(pose)) = (
-        decode_geometry::<shared::XrViewerFrame>(viewer_json, 16_384),
-        decode_geometry::<shared::Pose>(pose_json, 1_024),
-    ) else {
-        return Ok(false);
-    };
-    Ok(shared::xr_head_plane_fits(
-        &viewer, pose, width, height, margin,
-    ))
+pub fn xr_capture_viewer_frame_json(observation_json: &str) -> Result<String, JsValue> {
+    if let Some(observation) = decode_geometry(observation_json, 16_384) {
+        return encode(&shared::capture_xr_viewer(observation));
+    }
+    let tracking_from_head = (observation_json.len() <= 16_384)
+        .then(|| serde_json::from_str::<serde_json::Value>(observation_json).ok())
+        .flatten()
+        .filter(|value| {
+            value.get("source").and_then(serde_json::Value::as_str) == Some("runtime-derived")
+        })
+        .and_then(|value| value.get("trackingFromHead").cloned())
+        .and_then(|value| serde_json::from_value::<shared::Pose>(value).ok())
+        .and_then(|pose| {
+            birdman_game_presentation::camera::compose_pose(shared::Pose::IDENTITY, pose).ok()
+        });
+    encode(&shared::XrViewerFrame::Unavailable {
+        reason: shared::XrViewerUnavailableReason::InvalidViewGeometry,
+        tracking_from_head,
+    })
 }
 
 /// Performs the complete optical search and shared HUD packing once per frame.

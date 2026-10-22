@@ -1,32 +1,15 @@
 import { PerspectiveCamera, Quaternion, Vector3 } from "three";
 import type { StereoCamera } from "three";
-import { composePose, inversePose, pose, quaternion, vec3 } from "../../contracts/math.js";
+import { xr_capture_viewer_frame_json } from "../../../../pkg/birdman_game_wasm.js";
+import type { XrViewerObservation } from "../../../generated/xr-viewer-observation.js";
 import type { Pose } from "../../contracts/math.js";
-import { copyProjectionMatrix, unavailableViewerFrame } from "../../contracts/viewer-frame.js";
-import type { BinocularGeometry, EyeGeometry, ViewerFrame } from "../../contracts/viewer-frame.js";
+import type { ViewerFrame } from "../../contracts/viewer-frame.js";
 
 export function captureXrViewerFrame(viewer: XRViewerPose | null): ViewerFrame {
-  if (viewer === null) return unavailableViewerFrame("viewer-unavailable");
-  const head = copyXrPose(viewer.transform);
-  if (head === null) return unavailableViewerFrame("invalid-view-geometry");
-  const views = viewer.views;
-  if (views.length !== 2 || views.filter((view) => view.eye === "left").length !== 1 ||
-      views.filter((view) => view.eye === "right").length !== 1) {
-    return unavailableViewerFrame("unsupported-view-configuration", head);
-  }
-  const captureEye = <Eye extends "left" | "right">(eye: Eye): EyeGeometry<Eye> | null => {
-    const view = views.find((entry) => entry.eye === eye);
-    if (view === undefined) return null;
-    const trackingFromEye = copyXrPose(view.transform);
-    const projection = copyProjectionMatrix(view.projectionMatrix);
-    if (trackingFromEye === null || projection === null) return null;
-    return Object.freeze({ eye, headFromEye: composePose(inversePose(head), trackingFromEye), projection, depthRange: "negative-one-to-one" });
-  };
-  const left = captureEye("left");
-  const right = captureEye("right");
-  if (left === null || right === null) return unavailableViewerFrame("invalid-view-geometry", head);
-  const eyes: BinocularGeometry = Object.freeze([left, right]);
-  return Object.freeze({ source: "runtime-derived", trackingFromHead: head, eyes });
+  return capture({ source: "runtime-derived", trackingFromHead: viewer === null ? null : copyXrPose(viewer.transform),
+    views: viewer?.views.map(view => ({ eye: view.eye === "none" ? null : view.eye,
+      trackingFromEye: copyXrPose(view.transform), projection: Array.from(view.projectionMatrix),
+      depthRange: "negative-one-to-one" })) ?? [] });
 }
 
 export function captureConfiguredViewerFrame(camera: PerspectiveCamera, stereo: StereoCamera): ViewerFrame {
@@ -34,26 +17,23 @@ export function captureConfiguredViewerFrame(camera: PerspectiveCamera, stereo: 
   const position = new Vector3();
   const orientation = new Quaternion();
   const scale = new Vector3();
-  camera.matrixWorld.decompose(position, orientation, scale);
-  const trackingFromHead = pose(vec3(position.x, position.y, position.z), quaternion(orientation.w, orientation.x, orientation.y, orientation.z));
-  const captureEye = <Eye extends "left" | "right">(eye: Eye, eyeCamera: PerspectiveCamera): EyeGeometry<Eye> | null => {
-    eyeCamera.matrix.decompose(position, orientation, scale);
-    const trackingFromEye = pose(vec3(position.x, position.y, position.z), quaternion(orientation.w, orientation.x, orientation.y, orientation.z));
-    const projection = copyProjectionMatrix(eyeCamera.projectionMatrix.elements);
-    if (projection === null) return null;
-    return Object.freeze({ eye, headFromEye: composePose(inversePose(trackingFromHead), trackingFromEye), projection, depthRange: "negative-one-to-one" });
+  const readPose = (matrix: PerspectiveCamera["matrix"]): Pose => {
+    matrix.decompose(position, orientation, scale);
+    return { position: { x: position.x, y: position.y, z: position.z },
+      orientation: { w: orientation.w, x: orientation.x, y: orientation.y, z: orientation.z } };
   };
-  const left = captureEye("left", stereo.cameraL);
-  const right = captureEye("right", stereo.cameraR);
-  if (left === null || right === null) return unavailableViewerFrame("invalid-view-geometry");
-  const eyes: BinocularGeometry = Object.freeze([left, right]);
-  return Object.freeze({ source: "configured", trackingFromHead: null, eyes });
+  return capture({ source: "configured", trackingFromHead: readPose(camera.matrixWorld),
+    views: [stereo.cameraL, stereo.cameraR].map((eyeCamera, index) => ({
+      eye: index === 0 ? "left" : "right", trackingFromEye: readPose(eyeCamera.matrix),
+      projection: Array.from(eyeCamera.projectionMatrix.elements), depthRange: "negative-one-to-one"
+    })) });
 }
 
-function copyXrPose(value: XRRigidTransform): Pose | null {
-  const position = value.position;
-  const orientation = value.orientation;
-  if (![position.x, position.y, position.z, orientation.w, orientation.x, orientation.y, orientation.z].every(Number.isFinite) ||
-      Math.abs(Math.hypot(orientation.w, orientation.x, orientation.y, orientation.z) - 1) > 1.0e-5) return null;
-  return pose(vec3(position.x, position.y, position.z), quaternion(orientation.w, orientation.x, orientation.y, orientation.z));
+function capture(observation: XrViewerObservation): ViewerFrame {
+  return JSON.parse(xr_capture_viewer_frame_json(JSON.stringify(observation))) as ViewerFrame;
+}
+
+function copyXrPose(value: XRRigidTransform): Pose {
+  return { position: { x: value.position.x, y: value.position.y, z: value.position.z },
+    orientation: { w: value.orientation.w, x: value.orientation.x, y: value.orientation.y, z: value.orientation.z } };
 }

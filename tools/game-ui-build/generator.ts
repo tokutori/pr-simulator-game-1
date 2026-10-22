@@ -12,6 +12,7 @@ export const schemaEntries = [
   { key: "effects", name: "GameUiUpdate", filename: "game-ui-effects", group: "serialize" },
   { key: "frame", name: "GameUiFrame", filename: "game-ui-frame", group: "serialize" },
   { key: "xr_viewer_frame", name: "XrViewerFrame", filename: "xr-viewer-frame", group: "serialize" },
+  { key: "xr_viewer_observation", name: "XrViewerObservation", filename: "xr-viewer-observation", group: "deserialize" },
   { key: "xr_head_hud_profile", name: "XrHeadHudProfile", filename: "xr-head-hud-profile", group: "serialize", defaultName: "DEFAULT_XR_HEAD_HUD_PROFILE" },
   { key: "xr_flight_menu_geometry", name: "XrFlightMenuGeometry", filename: "xr-flight-menu-geometry", group: "serialize", defaultName: "XR_FLIGHT_MENU_GEOMETRY" },
   { key: "xr_head_hud_projection", name: "XrHeadHudProjection", filename: "xr-head-hud-projection", group: "serialize" },

@@ -68,6 +68,7 @@ pub fn export_game_ui_schema(name: &str) -> Result<String, String> {
     input.subschema_for::<GameUiAction>();
     input.subschema_for::<GameUiPlatformInput>();
     input.subschema_for::<crate::xr::XrInkSegment>();
+    input.subschema_for::<crate::xr::XrViewerObservation>();
     input.subschema_for::<crate::xr::XrCameraMount>();
     input.subschema_for::<crate::xr::XrPanelObservation>();
     input.subschema_for::<crate::xr::XrPointerSurface>();
