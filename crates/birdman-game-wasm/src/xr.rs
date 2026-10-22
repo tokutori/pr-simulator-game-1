@@ -95,30 +95,6 @@ pub fn xr_head_plane_fits_json(
     ))
 }
 
-/// Solves the common menu-distance constraints in one platform call.
-#[wasm_bindgen]
-pub fn xr_menu_view_fit_json(
-    viewer_json: &str,
-    pose_json: &str,
-    width: f64,
-    height: f64,
-    minimum_distance: f64,
-    margin: f64,
-) -> Result<String, JsValue> {
-    let (Some(viewer), Some(pose)) = (
-        decode_geometry(viewer_json, 16_384),
-        decode_geometry(pose_json, 1_024),
-    ) else {
-        return encode(&shared::XrMenuViewFit::Unavailable {
-            reason: shared::XrFitReason::InvalidViewGeometry,
-        });
-    };
-    encode(
-        &shared::fit_xr_menu_view(&viewer, [width, height], pose, minimum_distance, margin)
-            .map_err(error)?,
-    )
-}
-
 /// Performs the complete optical search and shared HUD packing once per frame.
 #[wasm_bindgen]
 pub fn xr_head_hud_projection_json(

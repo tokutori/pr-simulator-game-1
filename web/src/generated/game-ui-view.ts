@@ -5,6 +5,223 @@
 export type GameUiOverlay = "Credits" | "Pause" | "PauseSettings" | "PauseHelp";
 export type GameUiAction = import("./game-ui-action.js").GameUiAction;
 /**
+ * Widget implementations must exhaustively handle each display primitive.
+ */
+export type GameUiHudNodeContent = {
+    readonly kind: "text";
+    readonly tone: GameUiHudTone;
+    /**
+     * Fully formatted text; adapters never parse its wording.
+     */
+    readonly value: string;
+} | {
+    readonly geometry: GameUiHudAdiGeometry;
+    readonly kind: "attitude";
+    /**
+     * Fully formatted pitch, roll, or flight-path reading.
+     */
+    readonly value: string;
+} | {
+    readonly kind: "heading_tape";
+    /**
+     * Ordered normalized marks and labels.
+     */
+    readonly ticks: readonly GameUiHudHeadingTick[];
+    /**
+     * Formatted central reading.
+     */
+    readonly value: string;
+} | {
+    readonly kind: "direction";
+    /**
+     * Clockwise display rotation, absent when no direction is defined.
+     */
+    readonly rotation_degrees: number | null;
+    /**
+     * Formatted direction and magnitude reading.
+     */
+    readonly value: string;
+} | {
+    readonly kind: "linear_gauge";
+    /**
+     * Right endpoint label.
+     */
+    readonly maximum_label: string;
+    /**
+     * Left endpoint label.
+     */
+    readonly minimum_label: string;
+    /**
+     * Normalized marker position, absent when the reading is undefined.
+     */
+    readonly position_ratio: number | null;
+    /**
+     * Formatted reading including its unit.
+     */
+    readonly value: string;
+};
+/**
+ * Shared text priority; mandatory resource failures always use Warning.
+ */
+export type GameUiHudTone = "normal" | "muted" | "warning";
+/**
+ * Visible ADI region with an attitude layer or an independent flight path cue.
+ */
+export type GameUiHudAdiGeometry = {
+    /**
+     * Flight path marker position relative to the ADI height.
+     */
+    readonly flight_path_y_ratio: number | null;
+    readonly horizon: GameUiHudAttitudeGeometry;
+    readonly kind: "attitude";
+} | {
+    readonly kind: "flight_path_only";
+    /**
+     * Flight path marker position relative to the ADI height.
+     */
+    readonly y_ratio: number;
+};
+/**
+ * HUD placement roles consumed identically by all adapters.
+ */
+export type GameUiHudPlacement = "readouts" | "instruments";
+/**
+ * Shared viewport-relative placement.
+ */
+export type GameUiShell = "center" | "flight_bar" | "pause_settings" | "analysis" | "cinematic";
+/**
+ * Engine-independent anchor.
+ */
+export type GameUiAnchor = "menu" | "head" | "cockpit" | "world";
+/**
+ * Exclusive shared control representation.
+ */
+export type GameUiControlContent = {
+    readonly action: GameUiAction;
+    readonly kind: "button";
+    readonly presentation: GameUiButtonPresentation;
+} | {
+    readonly cue: HudCue;
+    readonly kind: "toggle";
+    /**
+     * Current Rust-owned visibility.
+     */
+    readonly value: boolean;
+} | {
+    /**
+     * Shared one-decimal display text.
+     */
+    readonly display_value: string;
+    readonly kind: "range";
+    /**
+     * Last permitted time.
+     */
+    readonly maximum: number;
+    /**
+     * First permitted time.
+     */
+    readonly minimum: number;
+    /**
+     * Logical range step.
+     */
+    readonly step: number;
+    readonly target: GameUiRangeTarget;
+    /**
+     * Current time.
+     */
+    readonly value: number;
+} | {
+    readonly kind: "status";
+    readonly source: GameUiReadoutSource;
+    /**
+     * Shared formatted content.
+     */
+    readonly value: string;
+} | {
+    readonly chart: GameUiAnalysisChart;
+    readonly kind: "chart";
+    readonly plot: GameUiChart;
+};
+/**
+ * Shared button role and selection state.
+ */
+export type GameUiButtonPresentation = {
+    readonly emphasis: GameUiEmphasis;
+    readonly kind: "action";
+} | {
+    /**
+     * Shared option explanation.
+     */
+    readonly description: string;
+    /**
+     * Stable group identifier.
+     */
+    readonly group: string;
+    /**
+     * Group heading.
+     */
+    readonly group_label: string;
+    readonly kind: "choice";
+    /**
+     * Current selected option.
+     */
+    readonly selected: boolean;
+} | {
+    /**
+     * Current disclosure state.
+     */
+    readonly expanded: boolean;
+    readonly kind: "disclosure";
+};
+/**
+ * Shared action emphasis.
+ */
+export type GameUiEmphasis = "primary" | "secondary" | "normal";
+/**
+ * Stable identity for one independently configurable HUD cue.
+ */
+export type HudCue = "telemetry" | "attitude" | "wind" | "flight_path" | "angle_of_attack" | "warnings";
+/**
+ * Range action target.
+ */
+export type GameUiRangeTarget = "analysis" | "replay";
+/**
+ * Shared source for frame-varying readouts, independent of element identity.
+ */
+export type GameUiReadoutSource = "static" | "countdown" | "playback_time" | "playback_summary" | "analysis_cursor";
+/**
+ * Plot generated from the retained record.
+ */
+export type GameUiAnalysisChart = "map" | "altitude" | "speed";
+/**
+ * Horizontal alignment relative to a chart label's baseline anchor.
+ */
+export type GameUiChartTextAnchor = "start" | "middle" | "end";
+/**
+ * Group placement strategy, selected in shared Rust.
+ */
+export type GameUiSectionLayout = "column" | "choice_grid" | "row";
+/**
+ * Shared scene name, preserving current Web spelling.
+ */
+export type GameUiScene = "Boot" | "Title" | "FlightSetup" | "Briefing" | "Countdown" | "Flight" | "Result" | "Replay";
+/**
+ * Exclusive pause overlay.
+ */
+export type GameUiPauseOverlay = "menu" | "settings" | "help";
+/**
+ * Current Web replay camera candidates in their shared selection order.
+ */
+export type GameUiReplayCamera = "auto" | "pilot" | "chase" | "orbit" | "platform" | "shore" | "overhead" | "side" | "front" | "telephoto";
+/**
+ * Replay presentation selection.
+ */
+export type GameUiReplayView = "cinematic" | "telemetry" | "analysis";
+/**
+ * Result presentation mode.
+ */
+export type GameUiResultTab = "summary" | "analysis";
+/**
  * Pure shared scene and menu projection.
  */
 export interface GameUiView {
@@ -29,10 +246,7 @@ export interface GameUiView {
      * Ordered semantic panels.
      */
     readonly panels: readonly GameUiPanel[];
-    /**
-     * Domain-derived scene.
-     */
-    readonly scene: "Boot" | "Title" | "FlightSetup" | "Briefing" | "Countdown" | "Flight" | "Result" | "Replay";
+    readonly scene: GameUiScene;
     /**
      * Boundary version.
      */
@@ -70,91 +284,14 @@ export interface GameUiHudGroup {
      * Complete visible row in its shared left-to-right order.
      */
     readonly nodes: readonly GameUiHudNode[];
-    /**
-     * Shared placement relative to the unobstructed forward view.
-     */
-    readonly placement: "readouts" | "instruments";
+    readonly placement: GameUiHudPlacement;
 }
 /**
  * One existing widget instance; adding an instance requires no adapter-specific field.
  */
 export interface GameUiHudNode {
     readonly bounds: GameUiRect;
-    /**
-     * Exclusive widget geometry and display values.
-     */
-    readonly content: {
-        readonly kind: "text";
-        /**
-         * Shared visual priority.
-         */
-        readonly tone: "normal" | "muted" | "warning";
-        /**
-         * Fully formatted text; adapters never parse its wording.
-         */
-        readonly value: string;
-    } | {
-        /**
-         * Shared horizon and marker geometry.
-         */
-        readonly geometry: {
-            /**
-             * Flight path marker position relative to the ADI height.
-             */
-            readonly flight_path_y_ratio: number | null;
-            readonly horizon: GameUiHudAttitudeGeometry;
-            readonly kind: "attitude";
-        } | {
-            readonly kind: "flight_path_only";
-            /**
-             * Flight path marker position relative to the ADI height.
-             */
-            readonly y_ratio: number;
-        };
-        readonly kind: "attitude";
-        /**
-         * Fully formatted pitch, roll, or flight-path reading.
-         */
-        readonly value: string;
-    } | {
-        readonly kind: "heading_tape";
-        /**
-         * Ordered normalized marks and labels.
-         */
-        readonly ticks: readonly GameUiHudHeadingTick[];
-        /**
-         * Formatted central reading.
-         */
-        readonly value: string;
-    } | {
-        readonly kind: "direction";
-        /**
-         * Clockwise display rotation, absent when no direction is defined.
-         */
-        readonly rotation_degrees: number | null;
-        /**
-         * Formatted direction and magnitude reading.
-         */
-        readonly value: string;
-    } | {
-        readonly kind: "linear_gauge";
-        /**
-         * Right endpoint label.
-         */
-        readonly maximum_label: string;
-        /**
-         * Left endpoint label.
-         */
-        readonly minimum_label: string;
-        /**
-         * Normalized marker position, absent when the reading is undefined.
-         */
-        readonly position_ratio: number | null;
-        /**
-         * Formatted reading including its unit.
-         */
-        readonly value: string;
-    };
+    readonly content: GameUiHudNodeContent;
     /**
      * Stable identity used only to retain this element.
      */
@@ -169,7 +306,7 @@ export interface GameUiHudNode {
     readonly label: string;
 }
 /**
- * Shared normalized rectangle within the bottom HUD rail.
+ * Normalized control position for spatial and chart rendering.
  */
 export interface GameUiRect {
     /**
@@ -190,7 +327,7 @@ export interface GameUiRect {
     readonly y: number;
 }
 /**
- * Horizon rotation and translation.
+ * Web-baseline horizon rotation and translation.
  */
 export interface GameUiHudAttitudeGeometry {
     /**
@@ -252,7 +389,7 @@ export interface GameUiHudHeadingTick {
     readonly position_ratio: number;
 }
 /**
- * Shared Web-baseline instrument placement and responsive dimensions.
+ * Instrument placement in logical pixels with platform safe-area insets applied by adapters.
  */
 export interface GameUiHudLayout {
     /**
@@ -313,7 +450,7 @@ export interface GameUiHudLayout {
     readonly width_px: number;
 }
 /**
- * Shared responsive dimensions and scroll policy.
+ * Responsive shell selected using the Web baseline.
  */
 export interface GameUiLayout {
     /**
@@ -348,10 +485,7 @@ export interface GameUiLayout {
      * Vertical scrolling is admitted for the shell.
      */
     readonly scroll_y: boolean;
-    /**
-     * Shared shell placement.
-     */
-    readonly shell: "center" | "flight_bar" | "pause_settings" | "analysis" | "cinematic";
+    readonly shell: GameUiShell;
     /**
      * Shell width in logical pixels.
      */
@@ -361,10 +495,7 @@ export interface GameUiLayout {
  * Shared ordered menu panel.
  */
 export interface GameUiPanel {
-    /**
-     * Explicit placement anchor.
-     */
-    readonly anchor: "menu" | "head" | "cockpit" | "world";
+    readonly anchor: GameUiAnchor;
     /**
      * Ordered controls and readouts.
      */
@@ -407,103 +538,7 @@ export interface GameUiPanel {
  * Shared control, including data and admitted semantic action.
  */
 export interface GameUiControl {
-    /**
-     * Exclusive control data.
-     */
-    readonly content: {
-        /**
-         * Typed semantic action.
-         */
-        readonly action: import("./game-ui-action.js").GameUiAction;
-        readonly kind: "button";
-        /**
-         * Shared visual hierarchy.
-         */
-        readonly presentation: {
-            /**
-             * Primary or secondary emphasis.
-             */
-            readonly emphasis: "primary" | "secondary" | "normal";
-            readonly kind: "action";
-        } | {
-            /**
-             * Shared option explanation.
-             */
-            readonly description: string;
-            /**
-             * Stable group identifier.
-             */
-            readonly group: string;
-            /**
-             * Group heading.
-             */
-            readonly group_label: string;
-            readonly kind: "choice";
-            /**
-             * Current selected option.
-             */
-            readonly selected: boolean;
-        } | {
-            /**
-             * Current disclosure state.
-             */
-            readonly expanded: boolean;
-            readonly kind: "disclosure";
-        };
-    } | {
-        /**
-         * Cue identifier from the existing format model.
-         */
-        readonly cue: "telemetry" | "attitude" | "wind" | "flight_path" | "angle_of_attack" | "warnings";
-        readonly kind: "toggle";
-        /**
-         * Current Rust-owned visibility.
-         */
-        readonly value: boolean;
-    } | {
-        /**
-         * Shared one-decimal display text.
-         */
-        readonly display_value: string;
-        readonly kind: "range";
-        /**
-         * Last permitted time.
-         */
-        readonly maximum: number;
-        /**
-         * First permitted time.
-         */
-        readonly minimum: number;
-        /**
-         * Logical range step.
-         */
-        readonly step: number;
-        /**
-         * Analysis or playback target.
-         */
-        readonly target: "analysis" | "replay";
-        /**
-         * Current time.
-         */
-        readonly value: number;
-    } | {
-        readonly kind: "status";
-        /**
-         * Typed dynamic-value provider; static values require no frame patch.
-         */
-        readonly source: "static" | "countdown" | "playback_time" | "playback_summary" | "analysis_cursor";
-        /**
-         * Shared formatted content.
-         */
-        readonly value: string;
-    } | {
-        /**
-         * Plot selection.
-         */
-        readonly chart: "map" | "altitude" | "speed";
-        readonly kind: "chart";
-        readonly plot: GameUiChart;
-    };
+    readonly content: GameUiControlContent;
     /**
      * Shared admission flag.
      */
@@ -516,14 +551,14 @@ export interface GameUiControl {
      * Shared visible label.
      */
     readonly label: string;
-    readonly rect: GameUiRect1;
+    readonly rect: GameUiRect;
     /**
      * Section identifier.
      */
     readonly section: string;
 }
 /**
- * Fully derived axes, geometry and cursor; adapters render this value.
+ * Complete engine-independent recorded chart.
  */
 export interface GameUiChart {
     /**
@@ -595,7 +630,7 @@ export interface GameUiChartCursorPoint {
     readonly point: GameUiChartPoint;
 }
 /**
- * Position in the chart axes.
+ * One chart-space point with units defined by the axes.
  */
 export interface GameUiChartPoint {
     /**
@@ -619,23 +654,10 @@ export interface GameUiChartMarker {
      * Shared label.
      */
     readonly label: string;
-    readonly point: GameUiChartPoint1;
+    readonly point: GameUiChartPoint;
 }
 /**
- * Chart coordinates.
- */
-export interface GameUiChartPoint1 {
-    /**
-     * Horizontal component.
-     */
-    readonly x: number;
-    /**
-     * Vertical component.
-     */
-    readonly y: number;
-}
-/**
- * Shared chart layout and labels in logical display pixels.
+ * Shared static plot geometry and Web-baseline typography.
  */
 export interface GameUiChartPresentation {
     /**
@@ -654,8 +676,8 @@ export interface GameUiChartPresentation {
      * Static grid segments in descriptor coordinates.
      */
     readonly grid_lines: readonly (readonly [
-        GameUiChartPoint2,
-        GameUiChartPoint2
+        GameUiChartPoint,
+        GameUiChartPoint
     ])[];
     /**
      * Grid stroke opacity.
@@ -708,7 +730,7 @@ export interface GameUiChartPresentation {
     /**
      * Marker labels in the same order as the chart markers.
      */
-    readonly marker_labels: readonly GameUiChartText2[];
+    readonly marker_labels: readonly GameUiChartText[];
     readonly measurement_minimum: GameUiChartExtent;
     /**
      * Plot rectangle ordered left, top, right, bottom.
@@ -725,7 +747,7 @@ export interface GameUiChartPresentation {
     /**
      * Reference labels in the same order as the reference lines.
      */
-    readonly reference_labels: readonly GameUiChartText2[];
+    readonly reference_labels: readonly GameUiChartText[];
     /**
      * Keeps caption, viewport and legend inside one scrollable chart host.
      */
@@ -737,8 +759,8 @@ export interface GameUiChartPresentation {
     /**
      * Recorded-time labels in the same order as the time markers.
      */
-    readonly time_marker_labels: readonly GameUiChartText2[];
-    readonly viewport: GameUiChartExtent1;
+    readonly time_marker_labels: readonly GameUiChartText[];
+    readonly viewport: GameUiChartExtent;
     /**
      * Minimum viewport width and height in root-font units.
      *
@@ -749,29 +771,16 @@ export interface GameUiChartPresentation {
         number,
         number
     ];
-    readonly x_axis: GameUiChartText3;
+    readonly x_axis: GameUiChartText;
     /**
      * Ordered horizontal ticks.
      */
     readonly x_ticks: readonly GameUiChartTick[];
-    readonly y_axis: GameUiChartText5;
+    readonly y_axis: GameUiChartText;
     /**
      * Ordered vertical ticks.
      */
     readonly y_ticks: readonly GameUiChartTick[];
-}
-/**
- * One chart-space point with units defined by the axes.
- */
-export interface GameUiChartPoint2 {
-    /**
-     * Horizontal component.
-     */
-    readonly x: number;
-    /**
-     * Vertical component.
-     */
-    readonly y: number;
 }
 /**
  * One ordered legend item with an optional progress gradient.
@@ -809,23 +818,23 @@ export interface GameUiChartMapGuides {
      */
     readonly north_segments: readonly [
         readonly [
-            GameUiChartPoint2,
-            GameUiChartPoint2
+            GameUiChartPoint,
+            GameUiChartPoint
         ],
         readonly [
-            GameUiChartPoint2,
-            GameUiChartPoint2
+            GameUiChartPoint,
+            GameUiChartPoint
         ],
         readonly [
-            GameUiChartPoint2,
-            GameUiChartPoint2
+            GameUiChartPoint,
+            GameUiChartPoint
         ]
     ];
     /**
      * Represented distance in metres.
      */
     readonly scale_distance_m: number;
-    readonly scale_label: GameUiChartText1;
+    readonly scale_label: GameUiChartText;
     /**
      * Scale bar and its two end caps.
      *
@@ -834,100 +843,24 @@ export interface GameUiChartMapGuides {
      */
     readonly scale_segments: readonly [
         readonly [
-            GameUiChartPoint2,
-            GameUiChartPoint2
+            GameUiChartPoint,
+            GameUiChartPoint
         ],
         readonly [
-            GameUiChartPoint2,
-            GameUiChartPoint2
+            GameUiChartPoint,
+            GameUiChartPoint
         ],
         readonly [
-            GameUiChartPoint2,
-            GameUiChartPoint2
+            GameUiChartPoint,
+            GameUiChartPoint
         ]
     ];
 }
 /**
- * North label.
- */
-export interface GameUiChartText {
-    /**
-     * Horizontal text anchor.
-     */
-    readonly anchor: "start" | "middle" | "end";
-    /**
-     * Shared text colour.
-     */
-    readonly color: string;
-    /**
-     * Font size in logical pixels.
-     */
-    readonly font_size: number;
-    /**
-     * CSS-compatible font weight.
-     */
-    readonly font_weight: number;
-    /**
-     * Already formatted content.
-     */
-    readonly label: string;
-    readonly position: GameUiChartPoint3;
-    /**
-     * Rotation around the baseline anchor in degrees.
-     */
-    readonly rotation_degrees: number;
-}
-/**
- * One chart-space point with units defined by the axes.
- */
-export interface GameUiChartPoint3 {
-    /**
-     * Horizontal component.
-     */
-    readonly x: number;
-    /**
-     * Vertical component.
-     */
-    readonly y: number;
-}
-/**
- * Metre scale label.
- */
-export interface GameUiChartText1 {
-    /**
-     * Horizontal text anchor.
-     */
-    readonly anchor: "start" | "middle" | "end";
-    /**
-     * Shared text colour.
-     */
-    readonly color: string;
-    /**
-     * Font size in logical pixels.
-     */
-    readonly font_size: number;
-    /**
-     * CSS-compatible font weight.
-     */
-    readonly font_weight: number;
-    /**
-     * Already formatted content.
-     */
-    readonly label: string;
-    readonly position: GameUiChartPoint3;
-    /**
-     * Rotation around the baseline anchor in degrees.
-     */
-    readonly rotation_degrees: number;
-}
-/**
  * Static label placement independent of the rendering engine.
  */
-export interface GameUiChartText2 {
-    /**
-     * Horizontal text anchor.
-     */
-    readonly anchor: "start" | "middle" | "end";
+export interface GameUiChartText {
+    readonly anchor: GameUiChartTextAnchor;
     /**
      * Shared text colour.
      */
@@ -944,14 +877,14 @@ export interface GameUiChartText2 {
      * Already formatted content.
      */
     readonly label: string;
-    readonly position: GameUiChartPoint3;
+    readonly position: GameUiChartPoint;
     /**
      * Rotation around the baseline anchor in degrees.
      */
     readonly rotation_degrees: number;
 }
 /**
- * Minimum usable measured dimensions in logical pixels.
+ * Measured or initially assumed chart content dimensions in logical pixels.
  */
 export interface GameUiChartExtent {
     /**
@@ -964,49 +897,6 @@ export interface GameUiChartExtent {
     readonly width: number;
 }
 /**
- * Coordinate extent of this descriptor.
- */
-export interface GameUiChartExtent1 {
-    /**
-     * Content height.
-     */
-    readonly height: number;
-    /**
-     * Content width.
-     */
-    readonly width: number;
-}
-/**
- * Static label placement independent of the rendering engine.
- */
-export interface GameUiChartText3 {
-    /**
-     * Horizontal text anchor.
-     */
-    readonly anchor: "start" | "middle" | "end";
-    /**
-     * Shared text colour.
-     */
-    readonly color: string;
-    /**
-     * Font size in logical pixels.
-     */
-    readonly font_size: number;
-    /**
-     * CSS-compatible font weight.
-     */
-    readonly font_weight: number;
-    /**
-     * Already formatted content.
-     */
-    readonly label: string;
-    readonly position: GameUiChartPoint3;
-    /**
-     * Rotation around the baseline anchor in degrees.
-     */
-    readonly rotation_degrees: number;
-}
-/**
  * Tick value, placement and already formatted label.
  */
 export interface GameUiChartTick {
@@ -1014,71 +904,11 @@ export interface GameUiChartTick {
      * Increasing-axis fraction between zero and one.
      */
     readonly ratio: number;
-    readonly text: GameUiChartText4;
+    readonly text: GameUiChartText;
     /**
      * Axis coordinate.
      */
     readonly value: number;
-}
-/**
- * Static label placement independent of the rendering engine.
- */
-export interface GameUiChartText4 {
-    /**
-     * Horizontal text anchor.
-     */
-    readonly anchor: "start" | "middle" | "end";
-    /**
-     * Shared text colour.
-     */
-    readonly color: string;
-    /**
-     * Font size in logical pixels.
-     */
-    readonly font_size: number;
-    /**
-     * CSS-compatible font weight.
-     */
-    readonly font_weight: number;
-    /**
-     * Already formatted content.
-     */
-    readonly label: string;
-    readonly position: GameUiChartPoint3;
-    /**
-     * Rotation around the baseline anchor in degrees.
-     */
-    readonly rotation_degrees: number;
-}
-/**
- * Static label placement independent of the rendering engine.
- */
-export interface GameUiChartText5 {
-    /**
-     * Horizontal text anchor.
-     */
-    readonly anchor: "start" | "middle" | "end";
-    /**
-     * Shared text colour.
-     */
-    readonly color: string;
-    /**
-     * Font size in logical pixels.
-     */
-    readonly font_size: number;
-    /**
-     * CSS-compatible font weight.
-     */
-    readonly font_weight: number;
-    /**
-     * Already formatted content.
-     */
-    readonly label: string;
-    readonly position: GameUiChartPoint3;
-    /**
-     * Rotation around the baseline anchor in degrees.
-     */
-    readonly rotation_degrees: number;
 }
 /**
  * One horizontal plot reference.
@@ -1112,7 +942,7 @@ export interface GameUiChartSeries {
     /**
      * Ordered chart coordinates.
      */
-    readonly points: readonly GameUiChartPoint2[];
+    readonly points: readonly GameUiChartPoint[];
     /**
      * Per-segment colours; empty means the base colour.
      */
@@ -1137,30 +967,9 @@ export interface GameUiChartVector {
      * @maxItems 2
      */
     readonly segment: readonly [
-        GameUiChartPoint2,
-        GameUiChartPoint2
+        GameUiChartPoint,
+        GameUiChartPoint
     ] | null;
-}
-/**
- * Shared spatial or normalized position.
- */
-export interface GameUiRect1 {
-    /**
-     * Height.
-     */
-    readonly height: number;
-    /**
-     * Width.
-     */
-    readonly width: number;
-    /**
-     * Left edge.
-     */
-    readonly x: number;
-    /**
-     * Top edge.
-     */
-    readonly y: number;
 }
 /**
  * Shared control group and placement mode.
@@ -1174,19 +983,13 @@ export interface GameUiSection {
      * Optional visible group heading.
      */
     readonly label: string;
-    /**
-     * Shared layout mode.
-     */
-    readonly layout: "column" | "choice_grid" | "row";
+    readonly layout: GameUiSectionLayout;
 }
 /**
- * Readonly observation of the Rust-owned UI selections.
+ * UI-only selections; physical state and domain phase remain in GameSession.
  */
 export interface GameUiState {
-    /**
-     * Selected record plot.
-     */
-    readonly analysis_chart: "map" | "altitude" | "speed";
+    readonly analysis_chart: GameUiAnalysisChart;
     /**
      * Read-only analysis query position in seconds.
      */
@@ -1195,29 +998,17 @@ export interface GameUiState {
      * Shared credits shown without changing the domain phase.
      */
     readonly credits_open: boolean;
-    /**
-     * Paused menu selection.
-     */
-    readonly pause_overlay: "menu" | "settings" | "help";
-    /**
-     * Shared replay camera selection; adapters only apply its geometry.
-     */
-    readonly replay_camera: "auto" | "pilot" | "chase" | "orbit" | "platform" | "shore" | "overhead" | "side" | "front" | "telephoto";
-    /**
-     * Replay presentation selection.
-     */
-    readonly replay_view: "cinematic" | "telemetry" | "analysis";
-    /**
-     * Result presentation selection.
-     */
-    readonly result_tab: "summary" | "analysis";
+    readonly pause_overlay: GameUiPauseOverlay;
+    readonly replay_camera: GameUiReplayCamera;
+    readonly replay_view: GameUiReplayView;
+    readonly result_tab: GameUiResultTab;
     /**
      * Expanded preparation diagnostics.
      */
     readonly technical_open: boolean;
 }
 /**
- * Shared visual hierarchy.
+ * Engine-independent colors, opacity and minimum hit dimensions.
  */
 export interface GameUiTheme {
     /**

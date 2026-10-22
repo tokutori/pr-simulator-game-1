@@ -10,59 +10,7 @@ export type MenuLayoutQuery = {
      */
     readonly observation?: MenuPreparationObservation | null;
     readonly source: MenuLayoutSource;
-    /**
-     * Same-frame stereo optics.
-     */
-    readonly viewer: {
-        /**
-         * Unavailability classification.
-         */
-        readonly reason: "not-stereo" | "viewer-unavailable" | "unsupported-view-configuration" | "invalid-view-geometry";
-        readonly source: "unavailable";
-        /**
-         * Valid centre tracking, if separately available.
-         */
-        readonly trackingFromHead?: Pose1 | null;
-    } | {
-        /**
-         * Left and right eye geometry, in that order.
-         *
-         * @minItems 2
-         * @maxItems 2
-         */
-        readonly eyes: readonly [
-            XrEyeGeometry,
-            XrEyeGeometry
-        ];
-        readonly source: "configured";
-        /**
-         * Explicit null at the existing wire boundary.
-         */
-        readonly trackingFromHead: null;
-    } | {
-        /**
-         * Left and right eye geometry, in that order.
-         *
-         * @minItems 2
-         * @maxItems 2
-         */
-        readonly eyes: readonly [
-            XrEyeGeometry,
-            XrEyeGeometry
-        ];
-        readonly source: "runtime-derived";
-        readonly trackingFromHead: Pose3;
-    };
-} | {
-    readonly kind: "plan";
-    readonly source: MenuLayoutSource1;
-} | {
-    readonly kind: "arrange";
-    /**
-     * Actual adapter text measurements.
-     */
-    readonly measurements: readonly MenuTextMeasurement[];
-    readonly source: MenuLayoutSource2;
+    readonly viewer: XrViewerFrame;
 } | {
     /**
      * Document points to map into center-origin panel coordinates.
@@ -80,14 +28,145 @@ export type MenuLayoutQuery = {
     readonly source: MenuViewportSource;
 };
 /**
- * Physical panel pose relative to the menu anchor.
+ * Widget presentation data used for layout and measurement.
+ */
+export type MenuWidget = {
+    readonly kind: "button";
+    readonly presentation: GameUiButtonPresentation;
+} | {
+    readonly kind: "toggle";
+    /**
+     * Already formatted content or current toggle selection.
+     */
+    readonly value: boolean;
+} | {
+    /**
+     * Formatted range selection.
+     */
+    readonly displayValue: string;
+    readonly kind: "range";
+} | {
+    readonly kind: "status";
+    /**
+     * Already formatted content or current toggle selection.
+     */
+    readonly value: string;
+} | {
+    readonly kind: "chart";
+    readonly layout: MenuChartLayout;
+};
+/**
+ * Shared button role and selection state.
+ */
+export type GameUiButtonPresentation = {
+    readonly emphasis: GameUiEmphasis;
+    readonly kind: "action";
+} | {
+    /**
+     * Shared option explanation.
+     */
+    readonly description: string;
+    /**
+     * Stable group identifier.
+     */
+    readonly group: string;
+    /**
+     * Group heading.
+     */
+    readonly group_label: string;
+    readonly kind: "choice";
+    /**
+     * Current selected option.
+     */
+    readonly selected: boolean;
+} | {
+    /**
+     * Current disclosure state.
+     */
+    readonly expanded: boolean;
+    readonly kind: "disclosure";
+};
+/**
+ * Shared action emphasis.
+ */
+export type GameUiEmphasis = "primary" | "secondary" | "normal";
+/**
+ * Logical role of one measured control text.
+ */
+export type MenuTextRole = "label" | "value" | "x-axis" | "y-axis" | "x-tick" | "y-tick" | "legend" | "annotation" | "north" | "scale";
+/**
+ * Horizontal alignment relative to a chart label's baseline anchor.
+ */
+export type GameUiChartTextAnchor = "start" | "middle" | "end";
+/**
+ * Font slant selected for measurement.
+ */
+export type MenuFontStyle = "normal" | "italic";
+/**
+ * Group placement strategy, selected in shared Rust.
+ */
+export type GameUiSectionLayout = "column" | "choice_grid" | "row";
+/**
+ * Same-frame stereo geometry, separate from tracked world-camera placement.
+ */
+export type XrViewerFrame = {
+    readonly reason: XrViewerUnavailableReason;
+    readonly source: "unavailable";
+    /**
+     * Valid centre tracking, if separately available.
+     */
+    readonly trackingFromHead?: Pose | null;
+} | {
+    /**
+     * Left and right eye geometry, in that order.
+     *
+     * @minItems 2
+     * @maxItems 2
+     */
+    readonly eyes: readonly [
+        XrEyeGeometry,
+        XrEyeGeometry
+    ];
+    readonly source: "configured";
+    /**
+     * Explicit null at the existing wire boundary.
+     */
+    readonly trackingFromHead: null;
+} | {
+    /**
+     * Left and right eye geometry, in that order.
+     *
+     * @minItems 2
+     * @maxItems 2
+     */
+    readonly eyes: readonly [
+        XrEyeGeometry,
+        XrEyeGeometry
+    ];
+    readonly source: "runtime-derived";
+    readonly trackingFromHead: Pose;
+};
+/**
+ * Classified absence of usable stereo observations.
+ */
+export type XrViewerUnavailableReason = "not-stereo" | "viewer-unavailable" | "unsupported-view-configuration" | "invalid-view-geometry";
+/**
+ * Homogeneous depth-clip convention of the rendering API's projection matrix.
+ */
+export type XrDepthRange = "negative-one-to-one" | "zero-to-one";
+/**
+ * Eye identity within the supported primary stereo view configuration.
+ */
+export type XrEye = "left" | "right";
+/**
+ * Rigid child-to-parent transform; the caller names both reference spaces.
  */
 export interface Pose {
     readonly orientation: Quaternion;
     readonly position: Vector3;
 }
 /**
- * Child-to-parent orientation.
+ * Scalar-first unit quaternion in a right-handed reference space.
  */
 export interface Quaternion {
     /**
@@ -108,7 +187,7 @@ export interface Quaternion {
     readonly z: number;
 }
 /**
- * Child origin expressed in parent coordinates, in metres.
+ * Metric right/up/back coordinates in the explicitly named reference space.
  */
 export interface Vector3 {
     /**
@@ -184,7 +263,7 @@ export interface MenuMeasuredLine {
     readonly value: string;
 }
 /**
- * Requested content and initial typography.
+ * Complete source and typography observation for one layout pass.
  */
 export interface MenuLayoutSource {
     /**
@@ -242,70 +321,10 @@ export interface MenuLayoutControl {
      * Published section membership.
      */
     readonly section?: string | null;
-    /**
-     * Widget presentation needed by measurement.
-     */
-    readonly widget: {
-        readonly kind: "button";
-        /**
-         * Shared button presentation.
-         */
-        readonly presentation: {
-            /**
-             * Primary or secondary emphasis.
-             */
-            readonly emphasis: "primary" | "secondary" | "normal";
-            readonly kind: "action";
-        } | {
-            /**
-             * Shared option explanation.
-             */
-            readonly description: string;
-            /**
-             * Stable group identifier.
-             */
-            readonly group: string;
-            /**
-             * Group heading.
-             */
-            readonly group_label: string;
-            readonly kind: "choice";
-            /**
-             * Current selected option.
-             */
-            readonly selected: boolean;
-        } | {
-            /**
-             * Current disclosure state.
-             */
-            readonly expanded: boolean;
-            readonly kind: "disclosure";
-        };
-    } | {
-        readonly kind: "toggle";
-        /**
-         * Already formatted content or current toggle selection.
-         */
-        readonly value: boolean;
-    } | {
-        /**
-         * Formatted range selection.
-         */
-        readonly displayValue: string;
-        readonly kind: "range";
-    } | {
-        readonly kind: "status";
-        /**
-         * Already formatted content or current toggle selection.
-         */
-        readonly value: string;
-    } | {
-        readonly kind: "chart";
-        readonly layout: MenuChartLayout;
-    };
+    readonly widget: MenuWidget;
 }
 /**
- * Static chart layout.
+ * Static chart geometry needed by layout, independent of sample arrays.
  */
 export interface MenuChartLayout {
     /**
@@ -351,20 +370,14 @@ export interface MenuChartLabel {
      * Stable source index.
      */
     readonly index: number;
-    /**
-     * Logical text role.
-     */
-    readonly role: "label" | "value" | "x-axis" | "y-axis" | "x-tick" | "y-tick" | "legend" | "annotation" | "north" | "scale";
+    readonly role: MenuTextRole;
     readonly text: GameUiChartText;
 }
 /**
- * Shared chart label descriptor.
+ * Static label placement independent of the rendering engine.
  */
 export interface GameUiChartText {
-    /**
-     * Horizontal text anchor.
-     */
-    readonly anchor: "start" | "middle" | "end";
+    readonly anchor: GameUiChartTextAnchor;
     /**
      * Shared text colour.
      */
@@ -388,7 +401,7 @@ export interface GameUiChartText {
     readonly rotation_degrees: number;
 }
 /**
- * Alphabetic-baseline position in logical pixels; adapters apply actual font metrics.
+ * One chart-space point with units defined by the axes.
  */
 export interface GameUiChartPoint {
     /**
@@ -424,7 +437,7 @@ export interface GameUiChartLegend {
     ] | null;
 }
 /**
- * Observed font identity.
+ * Font resource observation supplied by the drawing adapter.
  */
 export interface MenuFont {
     /**
@@ -435,10 +448,7 @@ export interface MenuFont {
      * Adapter font resource generation.
      */
     readonly generation: number;
-    /**
-     * Observed font slant.
-     */
-    readonly style: "normal" | "italic";
+    readonly style: MenuFontStyle;
     /**
      * Font weight in the range 1 through 1000.
      */
@@ -456,13 +466,10 @@ export interface GameUiSection {
      * Optional visible group heading.
      */
     readonly label: string;
-    /**
-     * Shared layout mode.
-     */
-    readonly layout: "column" | "choice_grid" | "row";
+    readonly layout: GameUiSectionLayout;
 }
 /**
- * Metric width and height of the menu surface.
+ * Measured surface dimensions in metres.
  */
 export interface MenuSize {
     /**
@@ -475,25 +482,12 @@ export interface MenuSize {
     readonly width: number;
 }
 /**
- * Rigid child-to-parent transform; the caller names both reference spaces.
- */
-export interface Pose1 {
-    readonly orientation: Quaternion;
-    readonly position: Vector3;
-}
-/**
  * One same-frame eye pose and the runtime's column-major projection matrix.
  */
 export interface XrEyeGeometry {
-    /**
-     * Rendering API's clip-depth interval.
-     */
-    readonly depthRange: "negative-one-to-one" | "zero-to-one";
-    /**
-     * Primary eye identity.
-     */
-    readonly eye: "left" | "right";
-    readonly headFromEye: Pose2;
+    readonly depthRange: XrDepthRange;
+    readonly eye: XrEye;
+    readonly headFromEye: Pose;
     /**
      * Unmodified column-major 4-by-4 projection matrix.
      *
@@ -518,106 +512,6 @@ export interface XrEyeGeometry {
         number,
         number
     ];
-}
-/**
- * Rigid child-to-parent transform; the caller names both reference spaces.
- */
-export interface Pose2 {
-    readonly orientation: Quaternion;
-    readonly position: Vector3;
-}
-/**
- * Rigid child-to-parent transform; the caller names both reference spaces.
- */
-export interface Pose3 {
-    readonly orientation: Quaternion;
-    readonly position: Vector3;
-}
-/**
- * Compact source and typography observation.
- */
-export interface MenuLayoutSource1 {
-    /**
-     * Panel description.
-     */
-    readonly caption: string;
-    /**
-     * Ordered source controls or allocated row items.
-     */
-    readonly controls: readonly MenuLayoutControl[];
-    readonly font: MenuFont;
-    /**
-     * Nominal font size in metres.
-     */
-    readonly fontMeters: number;
-    /**
-     * Explicit text measurement locale.
-     */
-    readonly locale: string;
-    /**
-     * Localized next-page label.
-     */
-    readonly nextLabel: string;
-    /**
-     * Published panel identifier.
-     */
-    readonly panelId: string;
-    /**
-     * Localized previous-page label.
-     */
-    readonly previousLabel: string;
-    /**
-     * Declared sections or implicit vertical flow.
-     */
-    readonly sections?: readonly GameUiSection[] | null;
-    readonly surfaceSize: MenuSize;
-    /**
-     * Panel heading.
-     */
-    readonly title: string;
-}
-/**
- * Compact source and typography observation.
- */
-export interface MenuLayoutSource2 {
-    /**
-     * Panel description.
-     */
-    readonly caption: string;
-    /**
-     * Ordered source controls or allocated row items.
-     */
-    readonly controls: readonly MenuLayoutControl[];
-    readonly font: MenuFont;
-    /**
-     * Nominal font size in metres.
-     */
-    readonly fontMeters: number;
-    /**
-     * Explicit text measurement locale.
-     */
-    readonly locale: string;
-    /**
-     * Localized next-page label.
-     */
-    readonly nextLabel: string;
-    /**
-     * Published panel identifier.
-     */
-    readonly panelId: string;
-    /**
-     * Localized previous-page label.
-     */
-    readonly previousLabel: string;
-    /**
-     * Declared sections or implicit vertical flow.
-     */
-    readonly sections?: readonly GameUiSection[] | null;
-    readonly surfaceSize: MenuSize;
-    /**
-     * Panel heading.
-     */
-    readonly title: string;
 }
 /**
  * Metric point in a spatial menu document.
@@ -654,7 +548,7 @@ export interface MenuRect {
     readonly y: number;
 }
 /**
- * Measured document and current scroll observation.
+ * Metric observations required to place a scrollable document on its surface.
  */
 export interface MenuViewportSource {
     /**
@@ -677,18 +571,5 @@ export interface MenuViewportSource {
      * Normalized document scroll position.
      */
     readonly progress: number;
-    readonly surfaceSize: MenuSize1;
-}
-/**
- * Physical panel dimensions.
- */
-export interface MenuSize1 {
-    /**
-     * Height in metres.
-     */
-    readonly height: number;
-    /**
-     * Width in metres.
-     */
-    readonly width: number;
+    readonly surfaceSize: MenuSize;
 }

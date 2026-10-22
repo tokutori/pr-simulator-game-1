@@ -87,7 +87,7 @@ export function measureMenuLayout(context: MenuDrawingContext, request: MenuLayo
 function configureText(context: MenuDrawingContext, text: MenuTextRequest, metersPerPixel: number): void {
   context.setLocale(text.locale);
   context.setFont(`${text.font.style} ${String(text.font.weight)} ${String(text.fontMeters / metersPerPixel)}px ${text.font.family}`);
-  context.setTextBaseline(text.chartText === undefined ? "middle" : "alphabetic");
+  context.setTextBaseline(text.chartText == null ? "middle" : "alphabetic");
   context.setTextAlign("left");
 }
 
@@ -201,7 +201,7 @@ export function drawMeasuredMenu(context: MenuDrawingContext, viewport: MenuView
         if (control.kind === "chart") drawChart(context, control.control, control.plot, viewport, visibleRects.get(control.plot) ?? null, scaleX, scaleY);
         for (const layout of control.texts) {
           const legend = layout.request.legend;
-          if (legend !== undefined) {
+          if (legend != null) {
             const left = (layout.bounds.x + viewport.contentClip.x - request.fontMeters * 2) * scaleX;
             const top = (layout.bounds.y + viewport.contentClip.y - viewport.offsetMeters + request.lineHeightMeters * 0.35) * scaleY;
             const width = request.fontMeters * 1.5 * scaleX;

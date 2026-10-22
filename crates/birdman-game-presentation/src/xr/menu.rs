@@ -3,14 +3,7 @@ use crate::camera::{Pose, Vector3};
 use serde::{Deserialize, Serialize};
 
 /// Binocular menu-placement result, in centre-head coordinates.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(
-    tag = "kind",
-    rename_all = "lowercase",
-    rename_all_fields = "camelCase",
-    deny_unknown_fields
-)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum XrMenuViewFit {
     /// Complete plane fit.
     Ready {

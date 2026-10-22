@@ -3,7 +3,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import ts from "typescript";
-import { generateGameUiFiles, parseSchemaBundle, readonlyDeclarations, schemaEntries } from "./generator.js";
+import { generateGameUiFiles, parseSchemaBundle, readonlyDeclarations, schemaEntries, typeReferenceSchema } from "./generator.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const nestedDeclaration = "export interface Nested { values: { position: number[] }[] }";
@@ -42,7 +42,7 @@ describe("Rust game UI schema generation", () => {
     if (action === undefined || view === undefined) throw new Error("Missing canonical root fixture");
     output["GameUiAction"] = action;
     const properties = view["properties"] as Record<string, unknown>;
-    properties["back_action"] = { $ref: "#/$defs/GameUiAction" };
+    properties["back_action"] = { $ref: "#/$defs/GameUiAction", description: "Back operation at this view." };
     const schemas = parseSchemaBundle(JSON.stringify(document));
     const original = JSON.stringify(schemas);
     const files = await generateGameUiFiles(schemas);
@@ -53,6 +53,35 @@ describe("Rust game UI schema generation", () => {
     const divergent = await generateGameUiFiles(parseSchemaBundle(JSON.stringify(document)));
     expect(divergent.find(file => file.path === "web/src/generated/game-ui-view.ts")?.content)
       .not.toContain('import("./game-ui-action.js").GameUiAction');
+  });
+
+  it("shares described references while preserving constraints and literal data", async () => {
+    const schemas = JSON.parse(schemaBundle()) as Record<"serialize" | "deserialize", { $defs: Record<string, Record<string, unknown>> }>;
+    schemas.serialize.$defs["Point"] = { type: "object", description: "Canonical point.", additionalProperties: false,
+      required: ["position"], properties: { position: { type: "number" } } };
+    schemas.serialize.$defs["GameUiView"] = { type: "object", additionalProperties: false,
+      required: ["left", "right", "bounded", "default", "literal"], properties: {
+        left: { $ref: "#/$defs/Point", description: "Left point." },
+        right: { $ref: "#/$defs/Point", description: "Right point." },
+        bounded: { $ref: "#/$defs/identifier", description: "Constrained identifier.", enum: [1] },
+        default: { $ref: "#/$defs/Point", description: "A property named default." },
+        literal: { const: { $ref: "#/$defs/Point", description: "Literal payload." }, type: "object" }
+      } };
+    const original = JSON.stringify(schemas);
+    const normalized = typeReferenceSchema(schemas.serialize.$defs["GameUiView"]);
+    const properties = normalized["properties"] as Record<string, unknown>;
+    expect(properties["bounded"]).toEqual({ $ref: "#/$defs/identifier", description: "Constrained identifier.", enum: [1] });
+    expect(properties["literal"]).toEqual({ const: { $ref: "#/$defs/Point", description: "Literal payload." }, type: "object" });
+    const files = await generateGameUiFiles(parseSchemaBundle(original));
+    const declaration = files.find(file => file.path === "web/src/generated/game-ui-view.ts")?.content;
+    expect(declaration).toContain("readonly left: Point;");
+    expect(declaration).toContain("readonly right: Point;");
+    expect(declaration).toContain("readonly default: Point;");
+    expect(declaration).toContain("Canonical point.");
+    expect(declaration).toContain("readonly bounded: 1;");
+    expect(declaration?.match(/export interface Point\b/g)).toHaveLength(1);
+    expect(JSON.stringify(schemas)).toBe(original);
+    expect(files.find(file => file.path.endsWith("game-ui-serialize.schema.json"))?.content).toContain("Right point.");
   });
 
   it("rejects mismatched schema roots", () => {

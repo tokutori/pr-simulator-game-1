@@ -1,4 +1,21 @@
 /* Generated from birdman-game-presentation::game_ui. Edit the Rust contract and regenerate. */
+export type TailIncidenceDocument = import("./tail-incidence.js").TailIncidenceDocument;
+/**
+ * Saved input absence or a normalized longitudinal-position instruction.
+ */
+export type TailPilotPositionCommandDocument = {
+    readonly kind: "hold";
+} | {
+    readonly kind: "set";
+    /**
+     * Normalized position in the inclusive interval [-1, 1].
+     */
+    readonly normalized: number;
+};
+/**
+ * Stable external completion classifications.
+ */
+export type FlightRecordDispositionDocument = "complete" | "interrupted" | "failed";
 /**
  * Original two-tail tick failure, preserving each nested cause without string classification.
  */
@@ -22,6 +39,14 @@ export type TailControlFailureDocument = "non_finite" | "invalid_pilot_intent" |
  */
 export type ActuatorFailureDocument = "non_finite" | "invalid_authority" | "invalid_feedback_gain" | "invalid_limit" | "invalid_time_step";
 /**
+ * Original aerodynamic validation or evaluation cause.
+ */
+export type AeroFailureDocument = "non_finite" | {
+    readonly invalid_math_value: MathFailureDocument;
+} | "invalid_air_density" | "invalid_reference_geometry" | "invalid_orientation" | "invalid_envelope" | "negative_drag_coefficient" | "invalid_polar_table" | "invalid_polar_metadata" | "invalid_hybrid_geometry" | "invalid_hybrid_anchor" | "invalid_hybrid_proxy_set" | "unsupported_control" | "undefined_flow_angle" | "outside_envelope" | {
+    readonly wind: WindFailureDocument;
+};
+/**
  * Original mathematical failure.
  */
 export type MathFailureDocument = "non_finite" | "invalid_quaternion" | "invalid_interpolation_fraction" | "asymmetric_tensor" | "non_positive_definite_tensor" | "non_physical_inertia_tensor";
@@ -41,6 +66,20 @@ export type HybridLimitDocument = "static_alpha" | "undefined_reference" | "glob
  * Original actual or reference flow identifier.
  */
 export type HybridFlowDocument = "actual" | "reference";
+/**
+ * Original hybrid evaluation site.
+ */
+export type HybridSiteDocument = "datum" | "static_polar" | {
+    readonly surface: HybridSurfaceDocument;
+} | {
+    readonly proxy: {
+        /**
+         * Original proxy index.
+         */
+        readonly index: number;
+        readonly surface: HybridSurfaceDocument;
+    };
+} | "tail_incidence" | "aggregate";
 /**
  * Original complete hybrid surface identifier.
  */
@@ -70,14 +109,7 @@ export type AerodynamicFailureDocument = {
     readonly hybrid: HybridFailureDocument;
 } | {
     readonly static_polar: {
-        /**
-         * Original cause.
-         */
-        readonly cause: "non_finite" | {
-            readonly invalid_math_value: MathFailureDocument;
-        } | "invalid_air_density" | "invalid_reference_geometry" | "invalid_orientation" | "invalid_envelope" | "negative_drag_coefficient" | "invalid_polar_table" | "invalid_polar_metadata" | "invalid_hybrid_geometry" | "invalid_hybrid_anchor" | "invalid_hybrid_proxy_set" | "unsupported_control" | "undefined_flow_angle" | "outside_envelope" | {
-            readonly wind: WindFailureDocument;
-        };
+        readonly cause: AeroFailureDocument;
     };
 };
 /**
@@ -91,6 +123,10 @@ export type ContactFailureDocument = "missing_wing_bending_factor" | "shape_proj
     readonly dynamics: DynamicsFailureDocument;
 } | "unresolved_motion";
 /**
+ * Stable external end-reason names.
+ */
+export type FlightRecordEndReasonDocument = "water_contact" | "out_of_valid_envelope" | "manual_abort" | "fatal_simulation_error" | "time_limit";
+/**
  * Terminal metadata with the original cause and an optional same-time accepted event.
  */
 export interface TailFlightRecordFinalizationDocument {
@@ -98,18 +134,12 @@ export interface TailFlightRecordFinalizationDocument {
      * Accepted right-side values at the final integer sample's time and body state.
      */
     readonly boundary_event?: TailFlightRecordBoundaryEventDocument | null;
-    /**
-     * Complete, interrupted or failed classification.
-     */
-    readonly disposition: "complete" | "interrupted" | "failed";
+    readonly disposition: FlightRecordDispositionDocument;
     /**
      * Original failed interval's cause, explicitly null for a non-simulation termination.
      */
     readonly failure: TailTickFailureDocument | null;
-    /**
-     * Domain termination reason.
-     */
-    readonly reason: "water_contact" | "out_of_valid_envelope" | "manual_abort" | "fatal_simulation_error" | "time_limit";
+    readonly reason: FlightRecordEndReasonDocument;
     /**
      * Stored course/cross-track/net score when available.
      *
@@ -135,17 +165,14 @@ export interface TailFlightRecordFinalizationDocument {
  */
 export interface TailFlightRecordBoundaryEventDocument {
     readonly input: TailFlightRecordInputDocument;
-    /**
-     * Physical two-tail incidence after the boundary update.
-     */
-    readonly physical_incidence: import("./tail-incidence.js").TailIncidenceDocument;
+    readonly physical_incidence: TailIncidenceDocument;
     /**
      * Finite accepted displacement coefficient.
      */
     readonly wing_bending_factor: number;
 }
 /**
- * Applied input and the resolved pilot target at the same time.
+ * One saved interval's distinct intent, resolved target and already computed command values.
  */
 export interface TailFlightRecordInputDocument {
     /**
@@ -156,34 +183,14 @@ export interface TailFlightRecordInputDocument {
      * Desired body-positive yaw rate r in rad/s.
      */
     readonly desired_yaw_rate_rad_s: number;
-    /**
-     * Core feedback output before authority mixing.
-     */
-    readonly fbw_incidence_target: import("./tail-incidence.js").TailIncidenceDocument;
-    /**
-     * Manual intent mapped to physical incidence before authority mixing.
-     */
-    readonly manual_incidence_target: import("./tail-incidence.js").TailIncidenceDocument;
-    /**
-     * Mixed target before the software actuator slew step.
-     */
-    readonly mixed_incidence_target: import("./tail-incidence.js").TailIncidenceDocument;
+    readonly fbw_incidence_target: TailIncidenceDocument;
+    readonly manual_incidence_target: TailIncidenceDocument;
+    readonly mixed_incidence_target: TailIncidenceDocument;
     /**
      * Normalized positive nose-up intent, independent of physical incidence sign.
      */
     readonly nose_up: number;
-    /**
-     * Original Hold/Set command, distinct from the resolved physical target.
-     */
-    readonly pilot_position_command: {
-        readonly kind: "hold";
-    } | {
-        readonly kind: "set";
-        /**
-         * Normalized position in the inclusive interval [-1, 1].
-         */
-        readonly normalized: number;
-    };
+    readonly pilot_position_command: TailPilotPositionCommandDocument;
     /**
      * Authoritative retained or newly resolved pilot target in metres.
      */
@@ -197,35 +204,12 @@ export interface TailFlightRecordInputDocument {
  * Original hybrid site, cause, closed-domain limit and optional RK stage.
  */
 export interface HybridFailureDocument {
-    /**
-     * Original typed failure.
-     */
-    readonly cause: "non_finite" | {
-        readonly invalid_math_value: MathFailureDocument;
-    } | "invalid_air_density" | "invalid_reference_geometry" | "invalid_orientation" | "invalid_envelope" | "negative_drag_coefficient" | "invalid_polar_table" | "invalid_polar_metadata" | "invalid_hybrid_geometry" | "invalid_hybrid_anchor" | "invalid_hybrid_proxy_set" | "unsupported_control" | "undefined_flow_angle" | "outside_envelope" | {
-        readonly wind: WindFailureDocument;
-    };
+    readonly cause: AeroFailureDocument;
     /**
      * Exceeded software limit, present only for an envelope failure.
      */
     readonly limit: HybridLimitDocument | null;
-    /**
-     * Original datum, polar, surface, proxy, incidence or aggregate site.
-     */
-    readonly site: "datum" | "static_polar" | {
-        readonly surface: HybridSurfaceDocument;
-    } | {
-        readonly proxy: {
-            /**
-             * Original proxy index.
-             */
-            readonly index: number;
-            /**
-             * Original complete hybrid surface identifier.
-             */
-            readonly surface: "main_wing" | "horizontal_tail" | "vertical_tail";
-        };
-    } | "tail_incidence" | "aggregate";
+    readonly site: HybridSiteDocument;
     /**
      * Original load-evaluation stage, absent for direct evaluation or control validation.
      */

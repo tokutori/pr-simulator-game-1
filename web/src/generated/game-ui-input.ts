@@ -1,6 +1,11 @@
 /* Generated from birdman-game-presentation::game_ui. Edit the Rust contract and regenerate. */
 /**
- * Bounded newest-record preview; the persistence index and PB search remain separate.
+ * Presentation mode supported by a platform adapter.
+ */
+export type GameUiPresentationMode = "screen" | "webxr" | "phone_vr";
+export type ScreenRenderAutoSnapshot = import("./screen-render-auto.js").ScreenRenderAutoSnapshot;
+/**
+ * Title's bounded metadata query result, independent of all-record PB selection.
  *
  * @maxItems 3
  */
@@ -19,6 +24,32 @@ export type GameUiStoredRecordPreview = readonly [
  * Current Web replay camera candidates in their shared selection order.
  */
 export type GameUiReplayCamera = "auto" | "pilot" | "chase" | "orbit" | "platform" | "shore" | "overhead" | "side" | "front" | "telephoto";
+/**
+ * Shared non-physical water-detail selection.
+ */
+export type WaterQuality = "low" | "medium" | "high";
+/**
+ * Exclusive observation of a platform-owned water resource operation.
+ */
+export type GameUiWaterQualityOperation = {
+    readonly kind: "idle";
+} | {
+    readonly kind: "applying";
+    readonly requested: WaterQuality;
+} | {
+    /**
+     * Captured resource preparation cause.
+     */
+    readonly cause: string;
+    readonly kind: "failed";
+    readonly requested: WaterQuality;
+} | {
+    /**
+     * Captured superseded-resource cleanup cause.
+     */
+    readonly cause: string;
+    readonly kind: "cleanup_failed";
+};
 /**
  * Browser or OS observations that never own game physics or phase.
  */
@@ -55,18 +86,12 @@ export interface GameUiPlatformInput {
      * Phone sensor headset support.
      */
     readonly phone_vr_available: boolean;
-    /**
-     * Actual active presentation mode.
-     */
-    readonly presentation_mode: "screen" | "webxr" | "phone_vr";
+    readonly presentation_mode: GameUiPresentationMode;
     /**
      * Platform supports recorded scenic playback.
      */
     readonly replay_available: boolean;
-    /**
-     * Confirmed Screen selection, applied resources, and stable measurement state.
-     */
-    readonly screen_render_scale: import("./screen-render-auto.js").ScreenRenderAutoSnapshot;
+    readonly screen_render_scale: ScreenRenderAutoSnapshot;
     readonly stored_records: GameUiStoredRecordPreview;
     /**
      * Platform supports persisted record lookup.
@@ -77,38 +102,8 @@ export interface GameUiPlatformInput {
      */
     readonly supported_replay_cameras: readonly GameUiReplayCamera[];
     readonly viewport: GameUiViewport;
-    /**
-     * Confirmed current render quality.
-     */
-    readonly water_quality: "low" | "medium" | "high";
-    /**
-     * Actual resource preparation, commitment and cleanup observation.
-     */
-    readonly water_quality_operation: {
-        readonly kind: "idle";
-    } | {
-        readonly kind: "applying";
-        /**
-         * Requested replacement quality.
-         */
-        readonly requested: "low" | "medium" | "high";
-    } | {
-        /**
-         * Captured resource preparation cause.
-         */
-        readonly cause: string;
-        readonly kind: "failed";
-        /**
-         * Failed replacement quality.
-         */
-        readonly requested: "low" | "medium" | "high";
-    } | {
-        /**
-         * Captured superseded-resource cleanup cause.
-         */
-        readonly cause: string;
-        readonly kind: "cleanup_failed";
-    };
+    readonly water_quality: WaterQuality;
+    readonly water_quality_operation: GameUiWaterQualityOperation;
     /**
      * Browser WebXR support.
      */
@@ -145,7 +140,7 @@ export interface GameUiStoredRecord {
     readonly saved_at: string;
 }
 /**
- * Current physical display viewport.
+ * Logical pixels and root-font size used by the same responsive calculation.
  */
 export interface GameUiViewport {
     /**

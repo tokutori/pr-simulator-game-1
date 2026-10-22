@@ -3,36 +3,7 @@
  * UI message whose handling is shared by native and browser adapters.
  */
 export type GameUiAction = {
-    /**
-     * Button, toggle or range observation from an adapter.
-     */
-    readonly input: {
-        /**
-         * Published control identifier.
-         */
-        readonly controlId: string;
-        readonly type: "activate";
-    } | {
-        /**
-         * Published control identifier.
-         */
-        readonly controlId: string;
-        readonly type: "set-toggle";
-        /**
-         * Observed selection.
-         */
-        readonly value: boolean;
-    } | {
-        /**
-         * Published control identifier.
-         */
-        readonly controlId: string;
-        readonly type: "set-range";
-        /**
-         * Finite selected value within the published bounds.
-         */
-        readonly value: number;
-    };
+    readonly input: GameUiControlInput;
     readonly kind: "control_input";
 } | {
     readonly kind: "set_credits";
@@ -41,151 +12,25 @@ export type GameUiAction = {
      */
     readonly open: boolean;
 } | {
-    /**
-     * Operation admitted by the current view.
-     */
-    readonly command: {
-        readonly kind: "open_setup";
-    } | {
-        readonly kind: "return_to_title";
-    } | {
-        readonly kind: "prepare";
-    } | {
-        readonly kind: "cancel_briefing";
-    } | {
-        readonly kind: "start_countdown";
-    } | {
-        readonly kind: "cancel_countdown";
-    } | {
-        readonly kind: "pause";
-    } | {
-        readonly kind: "resume";
-    } | {
-        readonly kind: "abort";
-    } | {
-        readonly kind: "retry";
-    } | {
-        readonly kind: "retry_briefing";
-    } | {
-        readonly kind: "enter_replay";
-    } | {
-        readonly kind: "leave_replay";
-    } | {
-        readonly kind: "enter_attract";
-    } | {
-        readonly kind: "leave_attract";
-    } | {
-        readonly kind: "select_preset";
-        /**
-         * Named preset; Custom is not a selectable shortcut.
-         */
-        readonly preset: "beginner" | "standard" | "expert" | "realistic" | "custom";
-    } | {
-        /**
-         * Existing information level.
-         */
-        readonly information: "full" | "standard" | "minimal" | "realistic" | "custom";
-        readonly kind: "select_information";
-    } | {
-        /**
-         * Existing assistance level.
-         */
-        readonly assistance: "strong" | "assisted" | "light" | "manual";
-        readonly kind: "select_assistance";
-    } | {
-        readonly kind: "select_weather";
-        /**
-         * Existing weather class.
-         */
-        readonly weather: "calm" | "mild" | "typical" | "challenging" | "near_limit";
-    } | {
-        /**
-         * Existing cue.
-         */
-        readonly cue: "telemetry" | "attitude" | "wind" | "flight_path" | "angle_of_attack" | "warnings";
-        readonly kind: "set_cue";
-        /**
-         * Requested visibility.
-         */
-        readonly visible: boolean;
-    };
+    readonly command: SessionCommand;
     readonly kind: "session";
 } | {
-    /**
-     * Explicit capability-bound operation.
-     */
-    readonly command: {
-        readonly kind: "set_screen_render_scale";
-        /**
-         * Requested fraction of each physical rendering dimension.
-         */
-        readonly scale: "100" | "75" | "50";
-    } | {
-        /**
-         * Whether GPU-work-based adjustment is selected.
-         */
-        readonly enabled: boolean;
-        readonly kind: "set_screen_render_auto";
-    } | {
-        readonly kind: "set_water_quality";
-        /**
-         * Requested quality.
-         */
-        readonly quality: "low" | "medium" | "high";
-    } | {
-        readonly kind: "set_presentation";
-        /**
-         * Requested mode.
-         */
-        readonly mode: "screen" | "webxr" | "phone_vr";
-    } | {
-        readonly kind: "recenter_phone_tracking";
-    } | {
-        readonly kind: "recenter_menu";
-    } | {
-        readonly kind: "download_record_json";
-    } | {
-        readonly kind: "download_flight_csv";
-    } | {
-        /**
-         * Platform persistence key.
-         */
-        readonly id: number;
-        readonly kind: "open_stored_record";
-    } | {
-        /**
-         * Shared UI selection to apply.
-         */
-        readonly camera: "auto" | "pilot" | "chase" | "orbit" | "platform" | "shore" | "overhead" | "side" | "front" | "telephoto";
-        readonly kind: "set_replay_camera";
-    };
+    readonly command: GameUiPlatformCommand;
     readonly kind: "platform";
 } | {
     readonly kind: "toggle_technical";
 } | {
     readonly kind: "set_result_tab";
-    /**
-     * Requested tab.
-     */
-    readonly tab: "summary" | "analysis";
+    readonly tab: GameUiResultTab;
 } | {
-    /**
-     * Requested plot.
-     */
-    readonly chart: "map" | "altitude" | "speed";
+    readonly chart: GameUiAnalysisChart;
     readonly kind: "set_analysis_chart";
 } | {
     readonly kind: "set_pause_overlay";
-    /**
-     * Requested overlay.
-     */
-    readonly overlay: "menu" | "settings" | "help";
+    readonly overlay: GameUiPauseOverlay;
 } | {
     readonly kind: "set_replay_view";
-    /**
-     * Requested view.
-     */
-    readonly view: "cinematic" | "telemetry" | "analysis";
+    readonly view: GameUiReplayView;
 } | {
     readonly kind: "cycle_replay_camera";
 } | {
@@ -209,3 +54,174 @@ export type GameUiAction = {
     readonly code: number;
     readonly kind: "set_replay_rate";
 };
+/**
+ * Engine-independent widget observation, resolved by the shared UI owner.
+ */
+export type GameUiControlInput = {
+    /**
+     * Published control identifier.
+     */
+    readonly controlId: string;
+    readonly type: "activate";
+} | {
+    /**
+     * Published control identifier.
+     */
+    readonly controlId: string;
+    readonly type: "set-toggle";
+    /**
+     * Observed selection.
+     */
+    readonly value: boolean;
+} | {
+    /**
+     * Published control identifier.
+     */
+    readonly controlId: string;
+    readonly type: "set-range";
+    /**
+     * Finite selected value within the published bounds.
+     */
+    readonly value: number;
+};
+/**
+ * Canonical application operations generated by every game UI.
+ */
+export type SessionCommand = {
+    readonly kind: "open_setup";
+} | {
+    readonly kind: "return_to_title";
+} | {
+    readonly kind: "prepare";
+} | {
+    readonly kind: "cancel_briefing";
+} | {
+    readonly kind: "start_countdown";
+} | {
+    readonly kind: "cancel_countdown";
+} | {
+    readonly kind: "pause";
+} | {
+    readonly kind: "resume";
+} | {
+    readonly kind: "abort";
+} | {
+    readonly kind: "retry";
+} | {
+    readonly kind: "retry_briefing";
+} | {
+    readonly kind: "enter_replay";
+} | {
+    readonly kind: "leave_replay";
+} | {
+    readonly kind: "enter_attract";
+} | {
+    readonly kind: "leave_attract";
+} | {
+    readonly kind: "select_preset";
+    readonly preset: DifficultyPreset;
+} | {
+    readonly information: InformationLevel;
+    readonly kind: "select_information";
+} | {
+    readonly assistance: AssistanceLevel;
+    readonly kind: "select_assistance";
+} | {
+    readonly kind: "select_weather";
+    readonly weather: WeatherClass;
+} | {
+    readonly cue: HudCue;
+    readonly kind: "set_cue";
+    /**
+     * Requested visibility.
+     */
+    readonly visible: boolean;
+};
+/**
+ * Named preset whose axes are resolved independently.
+ */
+export type DifficultyPreset = "beginner" | "standard" | "expert" | "realistic" | "custom";
+/**
+ * Information presentation selected for a session.
+ */
+export type InformationLevel = "full" | "standard" | "minimal" | "realistic" | "custom";
+/**
+ * Controller category resolved from the Assistance axis.
+ */
+export type AssistanceLevel = "strong" | "assisted" | "light" | "manual";
+/**
+ * Weather classification attached to a versioned scenario catalog.
+ */
+export type WeatherClass = "calm" | "mild" | "typical" | "challenging" | "near_limit";
+/**
+ * Stable identity for one independently configurable HUD cue.
+ */
+export type HudCue = "telemetry" | "attitude" | "wind" | "flight_path" | "angle_of_attack" | "warnings";
+/**
+ * Platform-owned operation requested by common UI.
+ */
+export type GameUiPlatformCommand = {
+    readonly kind: "set_screen_render_scale";
+    readonly scale: ScreenRenderScale;
+} | {
+    /**
+     * Whether GPU-work-based adjustment is selected.
+     */
+    readonly enabled: boolean;
+    readonly kind: "set_screen_render_auto";
+} | {
+    readonly kind: "set_water_quality";
+    readonly quality: WaterQuality;
+} | {
+    readonly kind: "set_presentation";
+    readonly mode: GameUiPresentationMode;
+} | {
+    readonly kind: "recenter_phone_tracking";
+} | {
+    readonly kind: "recenter_menu";
+} | {
+    readonly kind: "download_record_json";
+} | {
+    readonly kind: "download_flight_csv";
+} | {
+    /**
+     * Platform persistence key.
+     */
+    readonly id: number;
+    readonly kind: "open_stored_record";
+} | {
+    readonly camera: GameUiReplayCamera;
+    readonly kind: "set_replay_camera";
+};
+/**
+ * Supported manual Screen rendering scales, with full resolution as the default.
+ */
+export type ScreenRenderScale = "100" | "75" | "50";
+/**
+ * Shared non-physical water-detail selection.
+ */
+export type WaterQuality = "low" | "medium" | "high";
+/**
+ * Presentation mode supported by a platform adapter.
+ */
+export type GameUiPresentationMode = "screen" | "webxr" | "phone_vr";
+/**
+ * Current Web replay camera candidates in their shared selection order.
+ */
+export type GameUiReplayCamera = "auto" | "pilot" | "chase" | "orbit" | "platform" | "shore" | "overhead" | "side" | "front" | "telephoto";
+/**
+ * Result presentation mode.
+ */
+export type GameUiResultTab = "summary" | "analysis";
+/**
+ * Plot generated from the retained record.
+ */
+export type GameUiAnalysisChart = "map" | "altitude" | "speed";
+/**
+ * Exclusive pause overlay.
+ */
+export type GameUiPauseOverlay = "menu" | "settings" | "help";
+/**
+ * Replay presentation selection.
+ */
+export type GameUiReplayView = "cinematic" | "telemetry" | "analysis";

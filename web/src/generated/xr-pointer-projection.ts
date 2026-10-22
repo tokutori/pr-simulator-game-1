@@ -30,6 +30,28 @@ export type GameUiControlInput = {
     readonly value: number;
 };
 /**
+ * Runtime input identity, stable for one presentation session.
+ */
+export type XrPointerSource = {
+    readonly kind: "gaze";
+} | {
+    /**
+     * Session-local runtime source identifier.
+     */
+    readonly id: number;
+    readonly kind: "controller";
+} | {
+    /**
+     * Connection generation for this slot.
+     */
+    readonly generation: number;
+    /**
+     * Adapter's device slot.
+     */
+    readonly index: number;
+    readonly kind: "gamepad";
+};
+/**
  * Semantic target of a measured interactive rectangle.
  */
 export type XrPointerTarget = {
@@ -97,28 +119,7 @@ export interface XrPointerHit {
         number,
         number
     ];
-    /**
-     * Input source producing this cursor.
-     */
-    readonly source: {
-        readonly kind: "gaze";
-    } | {
-        /**
-         * Session-local runtime source identifier.
-         */
-        readonly id: number;
-        readonly kind: "controller";
-    } | {
-        /**
-         * Connection generation for this slot.
-         */
-        readonly generation: number;
-        /**
-         * Adapter's device slot.
-         */
-        readonly index: number;
-        readonly kind: "gamepad";
-    };
+    readonly source: XrPointerSource;
     /**
      * Enabled control or page under the cursor.
      */

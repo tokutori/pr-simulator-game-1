@@ -344,7 +344,7 @@ fn preparation_owns_surface_fit_and_measured_font_selection() {
     assert!(central_angle > 0.35);
     assert!(matches!(
         menu_layout(MenuLayoutQuery::Prepare {
-            source: edge_source,
+            source: Box::new(edge_source),
             viewer: Box::new(viewer.clone()),
             menu_from_panel: crate::camera::Pose::IDENTITY,
             observation: Some(MenuPreparationObservation {
@@ -362,7 +362,7 @@ fn preparation_owns_surface_fit_and_measured_font_selection() {
     let mut selected = None;
     for _ in 0..13 {
         match menu_layout(MenuLayoutQuery::Prepare {
-            source: requested.clone(),
+            source: Box::new(requested.clone()),
             viewer: Box::new(viewer.clone()),
             menu_from_panel: crate::camera::Pose::IDENTITY,
             observation: observation.clone(),
@@ -405,7 +405,7 @@ fn preparation_owns_surface_fit_and_measured_font_selection() {
     assert!(selected.unwrap() > requested.font_meters);
     assert!(matches!(
         menu_layout(MenuLayoutQuery::Prepare {
-            source: requested.clone(),
+            source: Box::new(requested.clone()),
             viewer: Box::new(viewer.clone()),
             menu_from_panel: crate::camera::Pose::IDENTITY,
             observation: observation.clone(),
@@ -416,7 +416,7 @@ fn preparation_owns_surface_fit_and_measured_font_selection() {
     mismatched.attempt = if mismatched.attempt == 0 { 1 } else { 0 };
     assert_eq!(
         menu_layout(MenuLayoutQuery::Prepare {
-            source: requested.clone(),
+            source: Box::new(requested.clone()),
             viewer: Box::new(viewer.clone()),
             menu_from_panel: crate::camera::Pose::IDENTITY,
             observation: Some(mismatched),
@@ -429,7 +429,7 @@ fn preparation_owns_surface_fit_and_measured_font_selection() {
     stale.attempt = 12;
     assert_eq!(
         menu_layout(MenuLayoutQuery::Prepare {
-            source: requested,
+            source: Box::new(requested),
             viewer: Box::new(viewer),
             menu_from_panel: crate::camera::Pose::IDENTITY,
             observation: Some(stale),

@@ -18,18 +18,7 @@ pub fn menu_layout(query: MenuLayoutQuery) -> MenuLayoutReply {
             viewer,
             menu_from_panel,
             observation,
-        } => preparation::prepare(source, &viewer, menu_from_panel, observation.as_ref()),
-        MenuLayoutQuery::Plan { source } => match plan(source) {
-            Ok(plan) => MenuLayoutReply::Plan { plan },
-            Err(reason) => MenuLayoutReply::Unavailable { reason },
-        },
-        MenuLayoutQuery::Arrange {
-            source,
-            measurements,
-        } => match plan(source).and_then(|plan| arrange(&plan, &measurements)) {
-            Ok(geometry) => MenuLayoutReply::Ready { geometry },
-            Err(reason) => MenuLayoutReply::Unavailable { reason },
-        },
+        } => preparation::prepare(*source, &viewer, menu_from_panel, observation.as_ref()),
         MenuLayoutQuery::Viewport {
             source,
             rectangles,

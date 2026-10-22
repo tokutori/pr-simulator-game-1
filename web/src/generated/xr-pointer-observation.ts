@@ -1,5 +1,27 @@
 /* Generated from birdman-game-presentation::game_ui. Edit the Rust contract and regenerate. */
 /**
+ * Runtime input identity, stable for one presentation session.
+ */
+export type XrPointerSource = {
+    readonly kind: "gaze";
+} | {
+    /**
+     * Session-local runtime source identifier.
+     */
+    readonly id: number;
+    readonly kind: "controller";
+} | {
+    /**
+     * Connection generation for this slot.
+     */
+    readonly generation: number;
+    /**
+     * Adapter's device slot.
+     */
+    readonly index: number;
+    readonly kind: "gamepad";
+};
+/**
  * One same-frame input observation.
  */
 export interface XrPointerObservation {
@@ -57,14 +79,14 @@ export interface XrGamepadObservation {
     readonly index: number;
 }
 /**
- * Reference-from-panel pose from this rendered frame.
+ * Rigid child-to-parent transform; the caller names both reference spaces.
  */
 export interface Pose {
     readonly orientation: Quaternion;
     readonly position: Vector3;
 }
 /**
- * Child-to-parent orientation.
+ * Scalar-first unit quaternion in a right-handed reference space.
  */
 export interface Quaternion {
     /**
@@ -85,7 +107,7 @@ export interface Quaternion {
     readonly z: number;
 }
 /**
- * Child origin expressed in parent coordinates, in metres.
+ * Metric right/up/back coordinates in the explicitly named reference space.
  */
 export interface Vector3 {
     /**
@@ -105,62 +127,7 @@ export interface Vector3 {
  * Pointing ray in the same reference frame as the panel.
  */
 export interface XrPointerRay {
-    readonly direction: Vector31;
-    readonly origin: Vector32;
-    /**
-     * Stable input source.
-     */
-    readonly source: {
-        readonly kind: "gaze";
-    } | {
-        /**
-         * Session-local runtime source identifier.
-         */
-        readonly id: number;
-        readonly kind: "controller";
-    } | {
-        /**
-         * Connection generation for this slot.
-         */
-        readonly generation: number;
-        /**
-         * Adapter's device slot.
-         */
-        readonly index: number;
-        readonly kind: "gamepad";
-    };
-}
-/**
- * Unit pointing direction in reference coordinates.
- */
-export interface Vector31 {
-    /**
-     * Rightward coordinate in metres.
-     */
-    readonly x: number;
-    /**
-     * Upward coordinate in metres.
-     */
-    readonly y: number;
-    /**
-     * Backward coordinate in metres.
-     */
-    readonly z: number;
-}
-/**
- * Ray origin in reference coordinates, in metres.
- */
-export interface Vector32 {
-    /**
-     * Rightward coordinate in metres.
-     */
-    readonly x: number;
-    /**
-     * Upward coordinate in metres.
-     */
-    readonly y: number;
-    /**
-     * Backward coordinate in metres.
-     */
-    readonly z: number;
+    readonly direction: Vector3;
+    readonly origin: Vector3;
+    readonly source: XrPointerSource;
 }

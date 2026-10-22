@@ -6,23 +6,24 @@ export type XrPanelPlacement = {
     readonly kind: "absent";
 } | {
     readonly kind: "unavailable";
-    /**
-     * Same-frame failure classification.
-     */
-    readonly reason: "not-stereo" | "viewer-unavailable" | "unsupported-view-configuration" | "invalid-view-geometry" | "insufficient-view-area";
+    readonly reason: XrFitReason;
 } | {
     readonly kind: "ready";
     readonly referenceFromPanel: Pose;
 };
 /**
- * Panel-local to presentation-reference pose.
+ * Optical rejection reason shared by layout and measured text checks.
+ */
+export type XrFitReason = "not-stereo" | "viewer-unavailable" | "unsupported-view-configuration" | "invalid-view-geometry" | "insufficient-view-area";
+/**
+ * Rigid child-to-parent transform; the caller names both reference spaces.
  */
 export interface Pose {
     readonly orientation: Quaternion;
     readonly position: Vector3;
 }
 /**
- * Child-to-parent orientation.
+ * Scalar-first unit quaternion in a right-handed reference space.
  */
 export interface Quaternion {
     /**
@@ -43,7 +44,7 @@ export interface Quaternion {
     readonly z: number;
 }
 /**
- * Child origin expressed in parent coordinates, in metres.
+ * Metric right/up/back coordinates in the explicitly named reference space.
  */
 export interface Vector3 {
     /**

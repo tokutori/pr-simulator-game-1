@@ -21,7 +21,7 @@ export interface FlightGamepadObservation {
     readonly identity: FlightDeviceIdentity;
 }
 /**
- * Identity of this physical connection.
+ * Exact platform device identity, including entity and reconnection generations.
  */
 export interface FlightDeviceIdentity {
     /**

@@ -9,8 +9,8 @@ import { captureConfiguredViewerFrame } from "../../web/src/render/engines/three
 
 initializeWasmFixture();
 
-export function configuredViewerFixture(width = 1280, height = 720, near = 0.1, far = 100): ViewerFrame {
-  const camera = new PerspectiveCamera(60, width / height, near, far);
+export function configuredViewerFixture(width = 1280, height = 720, near = 0.1, far = 100, verticalFov = 60): ViewerFrame {
+  const camera = new PerspectiveCamera(verticalFov, width / height, near, far);
   camera.updateMatrixWorld(true);
   const stereo = new StereoCamera();
   stereo.aspect = 0.5;

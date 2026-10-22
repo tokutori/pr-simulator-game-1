@@ -1,5 +1,106 @@
 /* Generated from birdman-game-presentation::game_ui. Edit the Rust contract and regenerate. */
 /**
+ * Widget implementations must exhaustively handle each display primitive.
+ */
+export type GameUiHudNodeContent = {
+    readonly kind: "text";
+    readonly tone: GameUiHudTone;
+    /**
+     * Fully formatted text; adapters never parse its wording.
+     */
+    readonly value: string;
+} | {
+    readonly geometry: GameUiHudAdiGeometry;
+    readonly kind: "attitude";
+    /**
+     * Fully formatted pitch, roll, or flight-path reading.
+     */
+    readonly value: string;
+} | {
+    readonly kind: "heading_tape";
+    /**
+     * Ordered normalized marks and labels.
+     */
+    readonly ticks: readonly GameUiHudHeadingTick[];
+    /**
+     * Formatted central reading.
+     */
+    readonly value: string;
+} | {
+    readonly kind: "direction";
+    /**
+     * Clockwise display rotation, absent when no direction is defined.
+     */
+    readonly rotation_degrees: number | null;
+    /**
+     * Formatted direction and magnitude reading.
+     */
+    readonly value: string;
+} | {
+    readonly kind: "linear_gauge";
+    /**
+     * Right endpoint label.
+     */
+    readonly maximum_label: string;
+    /**
+     * Left endpoint label.
+     */
+    readonly minimum_label: string;
+    /**
+     * Normalized marker position, absent when the reading is undefined.
+     */
+    readonly position_ratio: number | null;
+    /**
+     * Formatted reading including its unit.
+     */
+    readonly value: string;
+};
+/**
+ * Shared text priority; mandatory resource failures always use Warning.
+ */
+export type GameUiHudTone = "normal" | "muted" | "warning";
+/**
+ * Visible ADI region with an attitude layer or an independent flight path cue.
+ */
+export type GameUiHudAdiGeometry = {
+    /**
+     * Flight path marker position relative to the ADI height.
+     */
+    readonly flight_path_y_ratio: number | null;
+    readonly horizon: GameUiHudAttitudeGeometry;
+    readonly kind: "attitude";
+} | {
+    readonly kind: "flight_path_only";
+    /**
+     * Flight path marker position relative to the ADI height.
+     */
+    readonly y_ratio: number;
+};
+/**
+ * HUD placement roles consumed identically by all adapters.
+ */
+export type GameUiHudPlacement = "readouts" | "instruments";
+/**
+ * Plot generated from the retained record.
+ */
+export type GameUiAnalysisChart = "map" | "altitude" | "speed";
+/**
+ * Exclusive pause overlay.
+ */
+export type GameUiPauseOverlay = "menu" | "settings" | "help";
+/**
+ * Current Web replay camera candidates in their shared selection order.
+ */
+export type GameUiReplayCamera = "auto" | "pilot" | "chase" | "orbit" | "platform" | "shore" | "overhead" | "side" | "front" | "telephoto";
+/**
+ * Replay presentation selection.
+ */
+export type GameUiReplayView = "cinematic" | "telemetry" | "analysis";
+/**
+ * Result presentation mode.
+ */
+export type GameUiResultTab = "summary" | "analysis";
+/**
  * Lightweight per-frame UI observation associated with one published structural view.
  */
 export interface GameUiFrame {
@@ -74,7 +175,7 @@ export interface GameUiChartCursorPoint {
     readonly point: GameUiChartPoint;
 }
 /**
- * Position in the chart axes.
+ * One chart-space point with units defined by the axes.
  */
 export interface GameUiChartPoint {
     /**
@@ -105,22 +206,9 @@ export interface GameUiChartVector {
      * @maxItems 2
      */
     readonly segment: readonly [
-        GameUiChartPoint1,
-        GameUiChartPoint1
+        GameUiChartPoint,
+        GameUiChartPoint
     ] | null;
-}
-/**
- * One chart-space point with units defined by the axes.
- */
-export interface GameUiChartPoint1 {
-    /**
-     * Horizontal component.
-     */
-    readonly x: number;
-    /**
-     * Vertical component.
-     */
-    readonly y: number;
 }
 /**
  * Shared Web-baseline HUD model; no adapter rederives flight values or labels.
@@ -144,91 +232,14 @@ export interface GameUiHudGroup {
      * Complete visible row in its shared left-to-right order.
      */
     readonly nodes: readonly GameUiHudNode[];
-    /**
-     * Shared placement relative to the unobstructed forward view.
-     */
-    readonly placement: "readouts" | "instruments";
+    readonly placement: GameUiHudPlacement;
 }
 /**
  * One existing widget instance; adding an instance requires no adapter-specific field.
  */
 export interface GameUiHudNode {
     readonly bounds: GameUiRect;
-    /**
-     * Exclusive widget geometry and display values.
-     */
-    readonly content: {
-        readonly kind: "text";
-        /**
-         * Shared visual priority.
-         */
-        readonly tone: "normal" | "muted" | "warning";
-        /**
-         * Fully formatted text; adapters never parse its wording.
-         */
-        readonly value: string;
-    } | {
-        /**
-         * Shared horizon and marker geometry.
-         */
-        readonly geometry: {
-            /**
-             * Flight path marker position relative to the ADI height.
-             */
-            readonly flight_path_y_ratio: number | null;
-            readonly horizon: GameUiHudAttitudeGeometry;
-            readonly kind: "attitude";
-        } | {
-            readonly kind: "flight_path_only";
-            /**
-             * Flight path marker position relative to the ADI height.
-             */
-            readonly y_ratio: number;
-        };
-        readonly kind: "attitude";
-        /**
-         * Fully formatted pitch, roll, or flight-path reading.
-         */
-        readonly value: string;
-    } | {
-        readonly kind: "heading_tape";
-        /**
-         * Ordered normalized marks and labels.
-         */
-        readonly ticks: readonly GameUiHudHeadingTick[];
-        /**
-         * Formatted central reading.
-         */
-        readonly value: string;
-    } | {
-        readonly kind: "direction";
-        /**
-         * Clockwise display rotation, absent when no direction is defined.
-         */
-        readonly rotation_degrees: number | null;
-        /**
-         * Formatted direction and magnitude reading.
-         */
-        readonly value: string;
-    } | {
-        readonly kind: "linear_gauge";
-        /**
-         * Right endpoint label.
-         */
-        readonly maximum_label: string;
-        /**
-         * Left endpoint label.
-         */
-        readonly minimum_label: string;
-        /**
-         * Normalized marker position, absent when the reading is undefined.
-         */
-        readonly position_ratio: number | null;
-        /**
-         * Formatted reading including its unit.
-         */
-        readonly value: string;
-    };
+    readonly content: GameUiHudNodeContent;
     /**
      * Stable identity used only to retain this element.
      */
@@ -243,7 +254,7 @@ export interface GameUiHudNode {
     readonly label: string;
 }
 /**
- * Shared normalized rectangle within the bottom HUD rail.
+ * Normalized control position for spatial and chart rendering.
  */
 export interface GameUiRect {
     /**
@@ -264,7 +275,7 @@ export interface GameUiRect {
     readonly y: number;
 }
 /**
- * Horizon rotation and translation.
+ * Web-baseline horizon rotation and translation.
  */
 export interface GameUiHudAttitudeGeometry {
     /**
@@ -326,7 +337,7 @@ export interface GameUiHudHeadingTick {
     readonly position_ratio: number;
 }
 /**
- * Shared Web-baseline instrument placement and responsive dimensions.
+ * Instrument placement in logical pixels with platform safe-area insets applied by adapters.
  */
 export interface GameUiHudLayout {
     /**
@@ -417,13 +428,10 @@ export interface GameUiReadoutValue {
     readonly value: string;
 }
 /**
- * Readonly observation of the Rust-owned UI selections.
+ * UI-only selections; physical state and domain phase remain in GameSession.
  */
 export interface GameUiState {
-    /**
-     * Selected record plot.
-     */
-    readonly analysis_chart: "map" | "altitude" | "speed";
+    readonly analysis_chart: GameUiAnalysisChart;
     /**
      * Read-only analysis query position in seconds.
      */
@@ -432,22 +440,10 @@ export interface GameUiState {
      * Shared credits shown without changing the domain phase.
      */
     readonly credits_open: boolean;
-    /**
-     * Paused menu selection.
-     */
-    readonly pause_overlay: "menu" | "settings" | "help";
-    /**
-     * Shared replay camera selection; adapters only apply its geometry.
-     */
-    readonly replay_camera: "auto" | "pilot" | "chase" | "orbit" | "platform" | "shore" | "overhead" | "side" | "front" | "telephoto";
-    /**
-     * Replay presentation selection.
-     */
-    readonly replay_view: "cinematic" | "telemetry" | "analysis";
-    /**
-     * Result presentation selection.
-     */
-    readonly result_tab: "summary" | "analysis";
+    readonly pause_overlay: GameUiPauseOverlay;
+    readonly replay_camera: GameUiReplayCamera;
+    readonly replay_view: GameUiReplayView;
+    readonly result_tab: GameUiResultTab;
     /**
      * Expanded preparation diagnostics.
      */

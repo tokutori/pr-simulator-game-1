@@ -9,18 +9,7 @@ export type MenuSessionState = {
     readonly generation: number;
     readonly kind: "closed";
 } | {
-    /**
-     * Current focus.
-     */
-    readonly focus: {
-        readonly kind: "none";
-    } | {
-        /**
-         * Published control identifier.
-         */
-        readonly controlId: string;
-        readonly kind: "control";
-    };
+    readonly focus: MenuFocus;
     /**
      * Current input/layout revision.
      */
@@ -30,40 +19,51 @@ export type MenuSessionState = {
      * Scroll position in the closed unit interval.
      */
     readonly progress: number;
-    /**
-     * Current semantic identity.
-     */
-    readonly scope: {
-        readonly kind: "scene";
-        /**
-         * Published panel identifier.
-         */
-        readonly panelId: string;
-        /**
-         * Current scene.
-         */
-        readonly scene: "Boot" | "Title" | "FlightSetup" | "Briefing" | "Countdown" | "Flight" | "Result" | "Replay";
-        /**
-         * Current presentation subview.
-         */
-        readonly viewKey: string;
-    } | {
-        readonly kind: "overlay";
-        /**
-         * Current overlay identifier.
-         */
-        readonly overlay: string;
-        /**
-         * Published panel identifier.
-         */
-        readonly panelId: string;
-        /**
-         * Current scene.
-         */
-        readonly scene: "Boot" | "Title" | "FlightSetup" | "Briefing" | "Countdown" | "Flight" | "Result" | "Replay";
-        /**
-         * Current presentation subview.
-         */
-        readonly viewKey: string;
-    };
+    readonly scope: MenuScope;
 };
+/**
+ * Focus within the current menu revision.
+ */
+export type MenuFocus = {
+    readonly kind: "none";
+} | {
+    /**
+     * Published control identifier.
+     */
+    readonly controlId: string;
+    readonly kind: "control";
+};
+/**
+ * Semantic identity of one spatial menu opening.
+ */
+export type MenuScope = {
+    readonly kind: "scene";
+    /**
+     * Published panel identifier.
+     */
+    readonly panelId: string;
+    readonly scene: GameUiScene;
+    /**
+     * Current presentation subview.
+     */
+    readonly viewKey: string;
+} | {
+    readonly kind: "overlay";
+    /**
+     * Current overlay identifier.
+     */
+    readonly overlay: string;
+    /**
+     * Published panel identifier.
+     */
+    readonly panelId: string;
+    readonly scene: GameUiScene;
+    /**
+     * Current presentation subview.
+     */
+    readonly viewKey: string;
+};
+/**
+ * Shared scene name, preserving current Web spelling.
+ */
+export type GameUiScene = "Boot" | "Title" | "FlightSetup" | "Briefing" | "Countdown" | "Flight" | "Result" | "Replay";

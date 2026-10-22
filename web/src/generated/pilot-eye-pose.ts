@@ -1,23 +1,21 @@
 /* Generated from birdman-game-presentation::game_ui. Edit the Rust contract and regenerate. */
+export type FrdPose = import("./frd-pose.js").FrdPose;
 /**
  * Pilot eye before and after conversion into render right/up/back axes.
  */
 export interface PilotEyePose {
-    /**
-     * Physical aircraft FRD pose.
-     */
-    readonly frd: import("./frd-pose.js").FrdPose;
+    readonly frd: FrdPose;
     readonly render: Pose;
 }
 /**
- * Equivalent render-local pose.
+ * Rigid child-to-parent transform; the caller names both reference spaces.
  */
 export interface Pose {
     readonly orientation: Quaternion;
     readonly position: Vector3;
 }
 /**
- * Child-to-parent orientation.
+ * Scalar-first unit quaternion in a right-handed reference space.
  */
 export interface Quaternion {
     /**
@@ -38,7 +36,7 @@ export interface Quaternion {
     readonly z: number;
 }
 /**
- * Child origin expressed in parent coordinates, in metres.
+ * Metric right/up/back coordinates in the explicitly named reference space.
  */
 export interface Vector3 {
     /**

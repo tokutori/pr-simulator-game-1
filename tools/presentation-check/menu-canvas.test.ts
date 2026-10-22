@@ -6,7 +6,7 @@ import { normalizedRect } from "../../web/src/render/contracts/ui.js";
 import { drawMeasuredMenu, measureMenuLayout, menuCanvasSize, menuPaintedTextInk } from "../../web/src/presentation/menu-canvas.js";
 import type { HeadHudTextMetrics } from "../../web/src/presentation/head-hud-canvas.js";
 import type { MenuDrawingContext } from "../../web/src/presentation/menu-canvas.js";
-import { layoutMeasuredMenu, menuViewport, requestMenuLayout } from "../../web/src/presentation/menu-layout.js";
+import { menuViewport } from "../../web/src/presentation/menu-layout.js";
 import { configuredViewerFixture } from "./viewer-fixture.js";
 import { createAllSceneFixtures, createSceneFixture } from "./ui-adapter-fixture.js";
 import { prepareMenuPresentation } from "../../web/src/presentation/menu-preparation.js";
@@ -79,13 +79,11 @@ const style = { theme: currentSharedGameUiFixture("title").theme, fontMeters: 0.
   locale: "ja", previousLabel: "前頁", nextLabel: "次頁", caption: "Build" };
 
 function prepare(context: MenuDrawingContext, source = panel, presentation = style) {
-  const request = requestMenuLayout(source, source.size, presentation);
-  const canvas = menuCanvasSize(source.size);
-  const measurement = measureMenuLayout(context, request, canvas.width, canvas.height);
-  if (measurement.kind !== "ready") throw new Error(measurement.reason);
-  const result = layoutMeasuredMenu(request, measurement.measurements);
-  if (result.kind !== "ready") throw new Error(result.reason);
-  return { request, canvas, measurement, document: result.document };
+  const ready = prepareMenuPresentation(context, source,
+    { scope: { kind: "scene", scene: "Title", panelId: source.id, viewKey: "canvas" }, generation: 1 }, 0,
+    configuredViewerFixture(1280, 1280, 0.1, 100, 120), presentation, new Map());
+  if (ready.kind !== "ready") throw new Error(ready.kind === "unavailable" ? ready.reason : ready.kind);
+  return { document: ready.viewport.document, request: ready.viewport.document.request, canvas: menuCanvasSize(ready.panel.size) };
 }
 
 describe("Canvas measurement boundary and shared Menu painting", () => {
@@ -103,7 +101,7 @@ describe("Canvas measurement boundary and shared Menu painting", () => {
       controls: [{ ...plot, section: "chart", presentation: { ...plot.presentation, legend } }] };
     const context = new RecordingContext();
     const prepared = prepare(context, source);
-    expect(prepared.request.texts.filter((text) => text.legend !== undefined).map((text) => text.legend)).toEqual(legend);
+    expect(prepared.request.texts.filter((text) => text.legend != null).map((text) => text.legend)).toEqual(legend);
     drawMeasuredMenu(context, menuViewport(prepared.document, 0), prepared.canvas.width, prepared.canvas.height);
     expect(context.drawings.some((text) => text.value === "共通の見出し")).toBe(true);
     for (const color of ["#ee1234", "#1234ee"]) expect(context.boxes.some((box) => box.color === color && box.width > 0 && box.height > 0)).toBe(true);
@@ -163,7 +161,8 @@ describe("Canvas measurement boundary and shared Menu painting", () => {
   it("paints page controls using the current shared normal background and enabled or muted text", () => {
     const theme = { ...style.theme, panel_background: "#243546", text: "#daeafb", muted_text: "#9aabbc",
       normal_background: "#526374", panel_opacity: 0.49 };
-    const source = { ...panel, size: { width: 0.5, height: 0.45 } };
+    const source = { ...panel, size: { width: 0.5, height: 0.45 },
+      controls: panel.controls.map(control => control.kind === "status" ? { ...control, value: "A\n".repeat(12) } : control) };
     const prepared = prepare(new RecordingContext(), source, { ...style, theme });
     for (const progress of [0, 1]) {
       const context = new RecordingContext();
@@ -201,7 +200,7 @@ describe("Canvas measurement boundary and shared Menu painting", () => {
       const [left, top, right, bottom] = chart.presentation.plot;
       for (const text of layout.texts) {
         const descriptor = text.request.chartText;
-        if (descriptor === undefined) continue;
+        if (descriptor == null) continue;
         const projection = text.chartProjection;
         if (projection === undefined) throw new Error("Missing shared chart text projection");
         expect(projection.anchor).toBe(descriptor.anchor);
@@ -326,12 +325,12 @@ describe("Canvas measurement boundary and shared Menu painting", () => {
   it("preserves signed ink bearings and converts horizontal and vertical CSS pixels once despite canvas rounding", () => {
     const context = new RecordingContext();
     const prepared = prepare(context);
-    const title = prepared.measurement.measurements[0]?.lines[0];
+    const title = prepared.document.title.lines[0];
     if (title === undefined) throw new Error("Missing title");
-    const fontPixels = style.fontMeters * prepared.canvas.height / panel.size.height;
+    const fontPixels = prepared.request.fontMeters * prepared.canvas.height / panel.size.height;
     expect(title.leftMeters).toBeCloseTo(-fontPixels * 0.1 * panel.size.width / prepared.canvas.width, 12);
-    expect(title.ascentMeters).toBeCloseTo(style.fontMeters * 0.6, 12);
-    expect(title.descentMeters).toBeCloseTo(style.fontMeters * 0.2, 12);
+    expect(title.ascentMeters).toBeCloseTo(prepared.request.fontMeters * 0.6, 12);
+    expect(title.descentMeters).toBeCloseTo(prepared.request.fontMeters * 0.2, 12);
     expect(title.advanceMeters).toBeCloseTo(5 * fontPixels * 0.6 * panel.size.width / prepared.canvas.width, 12);
     expect(context.saves).toBe(context.restores);
   });
@@ -343,7 +342,7 @@ describe("Canvas measurement boundary and shared Menu painting", () => {
     context.read = (value, pixels) => { strings.push(value); return originalRead(value, pixels); };
     const prepared = prepare(context);
     const request = prepared.request.texts.find((text) => text.slot.kind === "control" && text.slot.controlId === "help" && text.slot.role === "value");
-    const measurement = prepared.measurement.measurements.find((entry) => entry.identity === request?.identity);
+    const measurement = prepared.document.controls.flatMap(control => control.texts).find(entry => entry.request.identity === request?.identity);
     expect(measurement?.lines.map((line) => [line.paragraphIndex, line.value])).toEqual([[0, "A"], [1, ""], [2, "B"], [3, ""]]);
     expect(strings.every((value) => !value.includes("\n"))).toBe(true);
   });
@@ -402,7 +401,7 @@ describe("Canvas measurement boundary and shared Menu painting", () => {
   });
 
   it("returns typed invalid/unavailable results and restores drawing state on metrics failure", () => {
-    const request = requestMenuLayout(panel, panel.size, style);
+    const request = prepare(new RecordingContext()).request;
     const context = new RecordingContext();
     context.read = () => ({ width: Number.NaN, left: 0, right: 0, ascent: 0, descent: 0 });
     expect(measureMenuLayout(context, request, 400, 1400)).toEqual({ kind: "unavailable", reason: "invalid-text-metrics" });

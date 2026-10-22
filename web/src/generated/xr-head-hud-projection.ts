@@ -4,16 +4,13 @@
  */
 export type XrHeadHudProjection = {
     readonly kind: "unavailable";
-    /**
-     * Exhaustive rejection reason.
-     */
-    readonly reason: "not-stereo" | "viewer-unavailable" | "unsupported-view-configuration" | "invalid-view-geometry" | "insufficient-view-area";
+    readonly reason: XrFitReason;
 } | {
     readonly clearRegion: GameUiRect;
     /**
      * Optional hardware frame-rate label rectangle.
      */
-    readonly frameRateBounds: GameUiRect1 | null;
+    readonly frameRateBounds: GameUiRect | null;
     readonly kind: "visible";
     readonly localPose: Pose;
     /**
@@ -36,7 +33,11 @@ export type XrHeadHudProjection = {
     readonly textHeightMeters: number;
 };
 /**
- * Normalized clear forward region, in left/top coordinates.
+ * Optical rejection reason shared by layout and measured text checks.
+ */
+export type XrFitReason = "not-stereo" | "viewer-unavailable" | "unsupported-view-configuration" | "invalid-view-geometry" | "insufficient-view-area";
+/**
+ * Normalized control position for spatial and chart rendering.
  */
 export interface GameUiRect {
     /**
@@ -57,35 +58,14 @@ export interface GameUiRect {
     readonly y: number;
 }
 /**
- * Normalized control position for spatial and chart rendering.
- */
-export interface GameUiRect1 {
-    /**
-     * Height.
-     */
-    readonly height: number;
-    /**
-     * Width.
-     */
-    readonly width: number;
-    /**
-     * Left edge.
-     */
-    readonly x: number;
-    /**
-     * Top edge.
-     */
-    readonly y: number;
-}
-/**
- * Head-to-HUD transform in metres.
+ * Rigid child-to-parent transform; the caller names both reference spaces.
  */
 export interface Pose {
     readonly orientation: Quaternion;
     readonly position: Vector3;
 }
 /**
- * Child-to-parent orientation.
+ * Scalar-first unit quaternion in a right-handed reference space.
  */
 export interface Quaternion {
     /**
@@ -106,7 +86,7 @@ export interface Quaternion {
     readonly z: number;
 }
 /**
- * Child origin expressed in parent coordinates, in metres.
+ * Metric right/up/back coordinates in the explicitly named reference space.
  */
 export interface Vector3 {
     /**
@@ -126,7 +106,7 @@ export interface Vector3 {
  * Shared placement of one retained element in the head-fixed plane.
  */
 export interface GameUiHeadHudNode {
-    readonly bounds: GameUiRect2;
+    readonly bounds: GameUiRect;
     /**
      * Identity of the unchanged source node.
      */
@@ -135,25 +115,4 @@ export interface GameUiHeadHudNode {
      * Shared instrument height in multiples of the required text height.
      */
     readonly instrument_height_em: number;
-}
-/**
- * Normalized control position for spatial and chart rendering.
- */
-export interface GameUiRect2 {
-    /**
-     * Height.
-     */
-    readonly height: number;
-    /**
-     * Width.
-     */
-    readonly width: number;
-    /**
-     * Left edge.
-     */
-    readonly x: number;
-    /**
-     * Top edge.
-     */
-    readonly y: number;
 }

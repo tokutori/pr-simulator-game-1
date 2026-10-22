@@ -87,7 +87,7 @@ export interface FlightRecordStateDocument {
     ];
 }
 /**
- * Saved derived telemetry, with undefined angles represented explicitly.
+ * Derived values sampled at the composite center.
  */
 export interface FlightRecordTelemetryDocument {
     /**

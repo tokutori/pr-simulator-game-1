@@ -5,7 +5,7 @@ import { captureConfiguredViewerFrame, captureXrViewerFrame } from "../../web/sr
 import { copyProjectionMatrix, headPlaneFitsViews, projectHeadPoint, unavailableViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
 import { IDENTITY_POSE, pose, vec3 } from "../../web/src/render/contracts/math.js";
 import type { ViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
-import { xr_menu_view_fit_json, xr_text_ink_fit_json } from "../../web/pkg/birdman_game_wasm.js";
+import { xr_text_ink_fit_json } from "../../web/pkg/birdman_game_wasm.js";
 import type { XrInkFit } from "../../web/src/generated/xr-ink-fit.js";
 
 initializeWasmFixture();
@@ -135,7 +135,7 @@ describe("Immutable same-frame binocular geometry", () => {
 
   it("classifies malformed, oversized and unknown-field runtime observations before fitting", () => {
     for (const packet of ["{", " ".repeat(16_385), JSON.stringify({ source: "unavailable", reason: "viewer-unavailable", trackingFromHead: null, stale: true })]) {
-      expect(JSON.parse(xr_menu_view_fit_json(packet, JSON.stringify(IDENTITY_POSE), 2.4, 1.8, 2.4, 0.035)))
+      expect(JSON.parse(xr_text_ink_fit_json(packet, "[]", JSON.stringify(IDENTITY_POSE), 0.35)))
         .toEqual({ kind: "unavailable", reason: "invalid-view-geometry" });
     }
   });

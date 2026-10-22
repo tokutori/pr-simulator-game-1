@@ -3,63 +3,12 @@ import type { MenuLayoutReply } from "../../generated/menu-layout-reply.js";
 import type { GameUiView } from "../../generated/game-ui-view.js";
 export type { MenuScrollScope, MenuScrollContext, MenuScrollState, MenuScrollIntent } from "./ui.js";
 
-export interface MenuPoint {
-  readonly x: number;
-  readonly y: number;
-}
-
-export interface MenuRect extends MenuPoint, PanelSize {}
-
-export type MenuFixedTextRole = "title" | "caption" | "previous" | "next";
-export type MenuControlTextRole = "label" | "value" |
-  "x-axis" | "y-axis" | "x-tick" | "y-tick" | "legend" | "annotation" | "north" | "scale";
-
-export type MenuTextSlot =
-  | { readonly kind: "fixed"; readonly role: MenuFixedTextRole }
-  | { readonly kind: "section"; readonly role: "heading"; readonly sectionId: string }
-  | { readonly kind: "control"; readonly controlId: string; readonly role: MenuControlTextRole; readonly index: number };
-
-export interface MenuFontIdentity {
-  readonly family: string;
-  readonly weight: number;
-  readonly style: "normal" | "italic";
-  readonly generation: number;
-}
-
-export interface MenuTextRequest {
-  readonly identity: string;
-  readonly slot: MenuTextSlot;
-  readonly value: string;
-  readonly locale: string;
-  readonly fontMeters: number;
-  readonly font: MenuFontIdentity;
-  readonly chartText?: UiChart["presentation"]["x_axis"];
-  readonly legend?: UiChart["presentation"]["legend"][number];
-  readonly widthMeters: number;
-}
-
-export interface MenuMeasuredLine {
-  readonly paragraphIndex: number;
-  readonly value: string;
-  readonly advanceMeters: number;
-  readonly leftMeters: number;
-  readonly rightMeters: number;
-  readonly ascentMeters: number;
-  readonly descentMeters: number;
-}
-
-export interface MenuTextMeasurement {
-  readonly identity: string;
-  readonly lines: readonly MenuMeasuredLine[];
-}
-
-export interface MenuLayoutRow {
-  readonly heading: Readonly<{ id: string; label: string }> | null;
-  readonly controls: readonly Readonly<{ control: UiControl; left: number; width: number }>[];
-}
+import type { MenuPoint, MenuRect, MenuFont as MenuFontIdentity, MenuTextRequest, MenuMeasuredLine,
+  MenuTextMeasurement, MenuChartProjection, MenuLineGeometry } from "../../generated/menu-layout-reply.js";
+export type { MenuPoint, MenuRect, MenuFont as MenuFontIdentity, MenuTextRequest, MenuMeasuredLine,
+  MenuTextMeasurement } from "../../generated/menu-layout-reply.js";
 
 export interface MenuLayoutRequest {
-  readonly shared: Extract<MenuLayoutReply, { kind: "plan" }>["plan"];
   readonly panel: UiPanel;
   readonly theme: GameUiView["theme"];
   readonly surfaceSize: PanelSize;
@@ -68,7 +17,6 @@ export interface MenuLayoutRequest {
   readonly lineHeightMeters: number;
   readonly paddingMeters: number;
   readonly gapMeters: number;
-  readonly rows: readonly MenuLayoutRow[];
   readonly texts: readonly MenuTextRequest[];
 }
 
@@ -76,8 +24,8 @@ export interface MenuTextLayout {
   readonly request: MenuTextRequest;
   readonly lines: readonly MenuMeasuredLine[];
   readonly bounds: MenuRect;
-  readonly chartProjection?: Readonly<{ baseline: MenuPoint; rotationDegrees: number; anchor: UiChart["presentation"]["x_axis"]["anchor"] }>;
-  readonly lineGeometry?: readonly Readonly<{ anchor: MenuPoint; bounds: MenuRect }>[];
+  readonly chartProjection?: MenuChartProjection;
+  readonly lineGeometry?: readonly MenuLineGeometry[];
 }
 
 export type MenuControlLayout = Readonly<{ bounds: MenuRect; texts: readonly MenuTextLayout[] }> & (

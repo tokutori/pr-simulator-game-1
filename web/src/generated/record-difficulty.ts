@@ -1,28 +1,32 @@
 /* Generated from birdman-game-presentation::game_ui. Edit the Rust contract and regenerate. */
 /**
+ * Stable assistance-level names in the external record format.
+ */
+export type FlightRecordAssistanceDocument = "strong" | "assisted" | "light" | "manual";
+/**
+ * Stable information-level names in the external record format.
+ */
+export type FlightRecordInformationDocument = "full" | "standard" | "minimal" | "realistic" | "custom";
+/**
+ * Stable preset names in the external record format.
+ */
+export type FlightRecordPresetDocument = "beginner" | "standard" | "expert" | "realistic" | "custom";
+/**
+ * Stable weather-class names in the external record format.
+ */
+export type FlightRecordWeatherDocument = "calm" | "mild" | "typical" | "challenging" | "near_limit";
+/**
  * Resolved setup settings required to interpret a recorded flight.
  */
 export interface FlightRecordDifficultyDocument {
-    /**
-     * FBW assistance axis.
-     */
-    readonly assistance: "strong" | "assisted" | "light" | "manual";
+    readonly assistance: FlightRecordAssistanceDocument;
     /**
      * Explicit cue profile required by Custom information.
      */
     readonly hud_profile?: FlightRecordHudProfileDocument | null;
-    /**
-     * Information display axis.
-     */
-    readonly information: "full" | "standard" | "minimal" | "realistic" | "custom";
-    /**
-     * Preset selected before independent axis edits.
-     */
-    readonly preset: "beginner" | "standard" | "expert" | "realistic" | "custom";
-    /**
-     * Weather scenario axis.
-     */
-    readonly weather: "calm" | "mild" | "typical" | "challenging" | "near_limit";
+    readonly information: FlightRecordInformationDocument;
+    readonly preset: FlightRecordPresetDocument;
+    readonly weather: FlightRecordWeatherDocument;
 }
 /**
  * Independently selected HUD cue visibility persisted with a Custom profile.

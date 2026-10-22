@@ -4,17 +4,17 @@
  */
 export interface XrPanelCameraPoses {
     readonly trackingFromPanel: Pose;
-    readonly worldFromPanel: Pose1;
+    readonly worldFromPanel: Pose;
 }
 /**
- * Panel-local to runtime tracking-parent transform.
+ * Rigid child-to-parent transform; the caller names both reference spaces.
  */
 export interface Pose {
     readonly orientation: Quaternion;
     readonly position: Vector3;
 }
 /**
- * Child-to-parent orientation.
+ * Scalar-first unit quaternion in a right-handed reference space.
  */
 export interface Quaternion {
     /**
@@ -35,7 +35,7 @@ export interface Quaternion {
     readonly z: number;
 }
 /**
- * Child origin expressed in parent coordinates, in metres.
+ * Metric right/up/back coordinates in the explicitly named reference space.
  */
 export interface Vector3 {
     /**
@@ -50,11 +50,4 @@ export interface Vector3 {
      * Backward coordinate in metres.
      */
     readonly z: number;
-}
-/**
- * Panel-local to render-world transform.
- */
-export interface Pose1 {
-    readonly orientation: Quaternion;
-    readonly position: Vector3;
 }

@@ -5898,25 +5898,6 @@
         },
         {
           "additionalProperties": false,
-          "description": "Menu measurement planning phase.",
-          "properties": {
-            "kind": {
-              "const": "plan",
-              "type": "string"
-            },
-            "plan": {
-              "$ref": "#/$defs/MenuLayoutPlan",
-              "description": "Complete measurement contract."
-            }
-          },
-          "required": [
-            "kind",
-            "plan"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
           "description": "Complete resolved document geometry.",
           "properties": {
             "geometry": {
@@ -9915,55 +9896,6 @@
             "reason": {
               "$ref": "#/$defs/XrFitReason",
               "description": "Optical or readability reason."
-            }
-          },
-          "required": [
-            "kind",
-            "reason"
-          ],
-          "type": "object"
-        }
-      ]
-    },
-    "XrMenuViewFit": {
-      "description": "Binocular menu-placement result, in centre-head coordinates.",
-      "oneOf": [
-        {
-          "additionalProperties": false,
-          "description": "Complete plane fit.",
-          "properties": {
-            "distanceMeters": {
-              "description": "Required viewing distance in metres.",
-              "format": "double",
-              "type": "number"
-            },
-            "headFromMenu": {
-              "$ref": "#/$defs/Pose",
-              "description": "Menu-anchor-to-head transform."
-            },
-            "kind": {
-              "const": "ready",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind",
-            "headFromMenu",
-            "distanceMeters"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Geometry rejection.",
-          "properties": {
-            "kind": {
-              "const": "unavailable",
-              "type": "string"
-            },
-            "reason": {
-              "$ref": "#/$defs/XrFitReason",
-              "description": "Exhaustive optical reason."
             }
           },
           "required": [

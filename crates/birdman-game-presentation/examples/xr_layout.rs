@@ -19,9 +19,24 @@ struct Observation {
     head_from_surface: Pose,
     ink: Vec<XrInkSegment>,
     spatial: SpatialObservation,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Batch {
+    optics: Vec<Observation>,
+    custom_hud: CustomHudBatch,
     interaction: PointerScenario,
     layout: Vec<MenuLayoutQuery>,
     text: Vec<TextObservation>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CustomHudBatch {
+    viewer: XrViewerFrame,
+    profile: XrHeadHudProfile,
+    huds: Vec<GameUiHud>,
 }
 
 #[derive(Deserialize)]
@@ -99,23 +114,37 @@ struct SpatialObservation {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut input = String::new();
     std::io::stdin().read_to_string(&mut input)?;
-    let observations: Vec<Observation> = serde_json::from_str(&input)?;
-    let mut results = Vec::with_capacity(observations.len());
-    for observation in observations {
-        results.push(serde_json::json!({
-            "menu": fit_xr_menu_view(&observation.viewer, observation.panel_size,
-                observation.panel_pose, 2.4, 0.035)?,
+    let batch: Batch = serde_json::from_str(&input)?;
+    let mut optics = Vec::with_capacity(batch.optics.len());
+    for observation in batch.optics {
+        optics.push(serde_json::json!({
             "head": project_xr_head_hud(observation.hud.as_ref(), &observation.viewer,
                 observation.profile, Some("FPS 72.0"))?,
             "ink": fit_xr_text_ink(&observation.viewer, &observation.ink,
                 observation.head_from_surface, 0.35),
             "spatial": spatial_results(&observation)?,
-            "interaction": pointer_results(&observation.interaction)?,
-            "layout": observation.layout.iter().cloned().map(menu_layout).collect::<Vec<_>>(),
-            "text": text_results(&observation.text),
         }));
     }
-    let output = serde_json::to_vec(&results)?;
+    let custom_hud = batch
+        .custom_hud
+        .huds
+        .iter()
+        .map(|hud| {
+            project_xr_head_hud(
+                Some(hud),
+                &batch.custom_hud.viewer,
+                batch.custom_hud.profile,
+                Some("FPS 72.0"),
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let output = serde_json::to_vec(&serde_json::json!({
+        "optics": optics,
+        "custom_hud": custom_hud,
+        "interaction": pointer_results(&batch.interaction)?,
+        "layout": batch.layout.into_iter().map(menu_layout).collect::<Vec<_>>(),
+        "text": text_results(&batch.text),
+    }))?;
     let mut stdout = std::io::stdout().lock();
     stdout.write_all(&output)?;
     stdout.write_all(b"\n")?;

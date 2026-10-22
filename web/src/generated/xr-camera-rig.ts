@@ -1,28 +1,29 @@
 /* Generated from birdman-game-presentation::game_ui. Edit the Rust contract and regenerate. */
 /**
+ * Logical reference basis; changes invalidate retained menu coordinates.
+ */
+export type XrReferenceBasis = "stationary" | "aircraft" | "world";
+/**
  * Equivalent scene-graph and logical-reference transforms for one camera mount.
  */
 export interface XrCameraRig {
     readonly aircraftFromTracking: Pose;
-    /**
-     * Logical basis identity for retained panel coordinates.
-     */
-    readonly basis: "stationary" | "aircraft" | "world";
-    readonly referenceFromCockpit: Pose1;
-    readonly referenceFromTracking: Pose2;
-    readonly referenceFromWorld: Pose3;
-    readonly worldFromReference: Pose4;
-    readonly worldFromTracking: Pose5;
+    readonly basis: XrReferenceBasis;
+    readonly referenceFromCockpit: Pose;
+    readonly referenceFromTracking: Pose;
+    readonly referenceFromWorld: Pose;
+    readonly worldFromReference: Pose;
+    readonly worldFromTracking: Pose;
 }
 /**
- * Tracking origin as a child of the displayed aircraft.
+ * Rigid child-to-parent transform; the caller names both reference spaces.
  */
 export interface Pose {
     readonly orientation: Quaternion;
     readonly position: Vector3;
 }
 /**
- * Child-to-parent orientation.
+ * Scalar-first unit quaternion in a right-handed reference space.
  */
 export interface Quaternion {
     /**
@@ -43,7 +44,7 @@ export interface Quaternion {
     readonly z: number;
 }
 /**
- * Child origin expressed in parent coordinates, in metres.
+ * Metric right/up/back coordinates in the explicitly named reference space.
  */
 export interface Vector3 {
     /**
@@ -58,39 +59,4 @@ export interface Vector3 {
      * Backward coordinate in metres.
      */
     readonly z: number;
-}
-/**
- * Physical aircraft origin in the logical reference.
- */
-export interface Pose1 {
-    readonly orientation: Quaternion;
-    readonly position: Vector3;
-}
-/**
- * Runtime tracking coordinates in the backend's logical panel reference.
- */
-export interface Pose2 {
-    readonly orientation: Quaternion;
-    readonly position: Vector3;
-}
-/**
- * Geographical world origin in the logical reference.
- */
-export interface Pose3 {
-    readonly orientation: Quaternion;
-    readonly position: Vector3;
-}
-/**
- * Logical panel-reference coordinates in render world.
- */
-export interface Pose4 {
-    readonly orientation: Quaternion;
-    readonly position: Vector3;
-}
-/**
- * Runtime tracking coordinates in render world.
- */
-export interface Pose5 {
-    readonly orientation: Quaternion;
-    readonly position: Vector3;
 }

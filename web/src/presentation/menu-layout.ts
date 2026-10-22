@@ -7,8 +7,8 @@ import type { MenuLayoutQuery } from "../generated/menu-layout-query.js";
 import type { MenuLayoutReply } from "../generated/menu-layout-reply.js";
 import type { MenuViewport } from "../render/contracts/menu-layout.js";
 
-type Plan = Extract<MenuLayoutReply, { kind: "plan" }>["plan"];
-type Source = Extract<MenuLayoutQuery, { kind: "plan" }>["source"];
+type Plan = Extract<MenuLayoutReply, { kind: "measure" }>["plan"];
+type Source = Extract<MenuLayoutQuery, { kind: "prepare" }>["source"];
 type Geometry = Extract<MenuLayoutReply, { kind: "ready" }>["geometry"];
 function widget(control: UiControl): Source["controls"][number]["widget"] {
   switch (control.kind) {
@@ -50,46 +50,14 @@ export function menuLayoutSource(panel: UiPanel, surfaceSize: PanelSize, style: 
     previousLabel: style.previousLabel, nextLabel: style.nextLabel, caption: style.caption };
 }
 
-export function requestMenuLayout(panel: UiPanel, surfaceSize: PanelSize, style: MenuLayoutStyle): MenuLayoutRequest {
-  const source = menuLayoutSource(panel, surfaceSize, style);
-  let reply: MenuLayoutReply;
-  try { reply = JSON.parse(menu_layout_json(JSON.stringify({ kind: "plan", source } satisfies MenuLayoutQuery))) as MenuLayoutReply; }
-  catch (cause) { throw new RangeError(String(cause), { cause }); }
-  if (reply.kind !== "plan") throw new RangeError("Menu layout source is invalid");
-  return menuLayoutRequest(panel, style.theme, reply.plan);
-}
-
 export function menuLayoutRequest(panel: UiPanel, theme: MenuLayoutRequest["theme"], shared: Plan): MenuLayoutRequest {
-  const rows = shared.rows.map(row => ({ heading: row.heading, controls: row.controls.map(item => {
-    const control = panel.controls[item.index];
-    if (control === undefined) throw new Error("Shared Menu row lost its source control");
-    return { control, left: item.left, width: item.width };
-  }) }));
-  const texts = shared.texts.map(({ chartText, legend, ...text }) => ({ ...text,
-    ...(chartText == null ? {} : { chartText }), ...(legend == null ? {} : { legend }) }));
-  return Object.freeze({ panel, theme, shared, surfaceSize: shared.source.surfaceSize,
+  return Object.freeze({ panel, theme, surfaceSize: shared.source.surfaceSize,
     fontMeters: shared.source.fontMeters, font: shared.source.font, lineHeightMeters: shared.lineHeightMeters,
-    paddingMeters: shared.paddingMeters, gapMeters: shared.gapMeters, rows, texts });
-}
-
-export function layoutMeasuredMenu(request: MenuLayoutRequest, measurements: readonly MenuTextMeasurement[]): MenuDocumentResult {
-  let reply: MenuLayoutReply;
-  try {
-    const query: MenuLayoutQuery = { kind: "arrange", source: request.shared.source, measurements };
-    reply = JSON.parse(menu_layout_json(JSON.stringify(query))) as MenuLayoutReply;
-  } catch { return { kind: "unavailable", reason: "invalid-text-metrics" }; }
-  if (reply.kind === "unavailable") return reply;
-  if (reply.kind !== "ready") throw new Error("Shared Menu arrangement returned an unexpected phase");
-  return menuDocumentFromGeometry(request, measurements, reply.geometry);
-}
-
-function retainMeasurements(measurements: readonly MenuTextMeasurement[]): ReadonlyMap<string, MenuTextMeasurement> {
-  return new Map(measurements.map(measurement => [measurement.identity, { identity: measurement.identity,
-    lines: Object.freeze(measurement.lines.map(line => Object.freeze({ ...line }))) }]));
+    paddingMeters: shared.paddingMeters, gapMeters: shared.gapMeters, texts: shared.texts });
 }
 
 export function menuDocumentFromGeometry(request: MenuLayoutRequest, measurements: readonly MenuTextMeasurement[], geometry: Geometry): MenuDocumentResult {
-  return projectMenuDocument(request, geometry, retainMeasurements(measurements));
+  return projectMenuDocument(request, geometry, new Map(measurements.map(measured => [measured.identity, measured])));
 }
 
 function projectMenuDocument(request: MenuLayoutRequest, geometry: Geometry, retained: ReadonlyMap<string, MenuTextMeasurement>): MenuDocumentResult {

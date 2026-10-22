@@ -1775,52 +1775,6 @@
         },
         {
           "additionalProperties": false,
-          "description": "Menu measurement planning phase.",
-          "properties": {
-            "kind": {
-              "const": "plan",
-              "type": "string"
-            },
-            "source": {
-              "$ref": "#/$defs/MenuLayoutSource",
-              "description": "Compact source and typography observation."
-            }
-          },
-          "required": [
-            "kind",
-            "source"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Measured document arrangement phase.",
-          "properties": {
-            "kind": {
-              "const": "arrange",
-              "type": "string"
-            },
-            "measurements": {
-              "description": "Actual adapter text measurements.",
-              "items": {
-                "$ref": "#/$defs/MenuTextMeasurement"
-              },
-              "type": "array"
-            },
-            "source": {
-              "$ref": "#/$defs/MenuLayoutSource",
-              "description": "Compact source and typography observation."
-            }
-          },
-          "required": [
-            "kind",
-            "source",
-            "measurements"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
           "description": "Batch scroll clipping and panel/document coordinate projection.",
           "properties": {
             "document_points": {

@@ -1,6 +1,6 @@
 /* Generated from birdman-game-presentation::game_ui. Edit the Rust contract and regenerate. */
 /**
- * Visible hit rectangle in surface coordinates.
+ * Rectangle in surface coordinates: left, top, width and height, in metres.
  *
  * @minItems 4
  * @maxItems 4
@@ -34,20 +34,24 @@ export type XrPointerControl = {
      * Positive step size.
      */
     readonly step: number;
-    readonly track: XrPointerRect1;
+    readonly track: XrPointerRect;
 };
 /**
- * Complete slider rectangle in surface coordinates.
- *
- * @minItems 4
- * @maxItems 4
+ * Semantic target of a measured interactive rectangle.
  */
-export type XrPointerRect1 = readonly [
-    number,
-    number,
-    number,
-    number
-];
+export type XrPointerTarget = {
+    /**
+     * Identifier from the shared UI control.
+     */
+    readonly id: string;
+    readonly kind: "control";
+} | {
+    readonly kind: "page";
+    /**
+     * True advances to the next page.
+     */
+    readonly next: boolean;
+};
 /**
  * Measured surface geometry owned until its scope or layout changes.
  */
@@ -84,20 +88,5 @@ export interface XrPointerRegion {
      * Interactive widget data; an omitted descriptor represents a button.
      */
     readonly control?: XrPointerControl | null;
-    /**
-     * Typed control or page target.
-     */
-    readonly target: {
-        /**
-         * Identifier from the shared UI control.
-         */
-        readonly id: string;
-        readonly kind: "control";
-    } | {
-        readonly kind: "page";
-        /**
-         * True advances to the next page.
-         */
-        readonly next: boolean;
-    };
+    readonly target: XrPointerTarget;
 }

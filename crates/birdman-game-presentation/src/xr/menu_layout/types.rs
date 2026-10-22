@@ -458,25 +458,13 @@ pub enum MenuLayoutQuery {
     /// Fits a surface and requests real text observations until readable.
     Prepare {
         /// Requested content and initial typography.
-        source: MenuLayoutSource,
+        source: Box<MenuLayoutSource>,
         /// Same-frame stereo optics.
         viewer: Box<crate::xr::XrViewerFrame>,
         /// Physical panel pose relative to the menu anchor.
         menu_from_panel: crate::camera::Pose,
         /// Reply to the current requested candidate, or absent at opening.
         observation: Option<MenuPreparationObservation>,
-    },
-    /// Menu measurement planning phase.
-    Plan {
-        /// Compact source and typography observation.
-        source: MenuLayoutSource,
-    },
-    /// Measured document arrangement phase.
-    Arrange {
-        /// Compact source and typography observation.
-        source: MenuLayoutSource,
-        /// Actual adapter text measurements.
-        measurements: Vec<MenuTextMeasurement>,
     },
     /// Batch scroll clipping and panel/document coordinate projection.
     Viewport {
@@ -506,11 +494,6 @@ pub enum MenuLayoutReply {
         /// Bounded continuation index to return with the measurements.
         attempt: usize,
         /// Complete fitted measurement contract.
-        plan: MenuLayoutPlan,
-    },
-    /// Menu measurement planning phase.
-    Plan {
-        /// Complete measurement contract.
         plan: MenuLayoutPlan,
     },
     /// Complete resolved document geometry.

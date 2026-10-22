@@ -4,29 +4,12 @@
  */
 export interface XrInkSegment {
     readonly end: Vector3;
-    readonly start: Vector31;
+    readonly start: Vector3;
 }
 /**
- * Opposite glyph boundary.
+ * Metric right/up/back coordinates in the explicitly named reference space.
  */
 export interface Vector3 {
-    /**
-     * Rightward coordinate in metres.
-     */
-    readonly x: number;
-    /**
-     * Upward coordinate in metres.
-     */
-    readonly y: number;
-    /**
-     * Backward coordinate in metres.
-     */
-    readonly z: number;
-}
-/**
- * First glyph boundary.
- */
-export interface Vector31 {
     /**
      * Rightward coordinate in metres.
      */

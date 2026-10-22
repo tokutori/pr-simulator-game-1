@@ -1,12 +1,25 @@
 /* Generated from birdman-game-presentation::game_ui. Edit the Rust contract and regenerate. */
 /**
+ * Control layout accepted by the current live session boundary.
+ */
+export type TailControlLayoutDocument = "tail_incidence";
+/**
+ * Saved input absence or a normalized longitudinal-position instruction.
+ */
+export type TailPilotPositionCommandDocument = {
+    readonly kind: "hold";
+} | {
+    readonly kind: "set";
+    /**
+     * Normalized position in the inclusive interval [-1, 1].
+     */
+    readonly normalized: number;
+};
+/**
  * Wire representation of one logical input interval before core validation.
  */
 export interface TailInputDocument {
-    /**
-     * Current two-tail control layout without a surplus roll axis.
-     */
-    readonly control_layout: "tail_incidence";
+    readonly control_layout: TailControlLayoutDocument;
     /**
      * Desired body-positive pitch rate in rad/s, bounded by the core controller contract.
      */
@@ -19,18 +32,7 @@ export interface TailInputDocument {
      * Normalized positive nose-up intent in the inclusive interval [-1, 1].
      */
     readonly nose_up: number;
-    /**
-     * Preserve the target or resolve a new normalized longitudinal-position target.
-     */
-    readonly pilot_position_command: {
-        readonly kind: "hold";
-    } | {
-        readonly kind: "set";
-        /**
-         * Normalized position in the inclusive interval [-1, 1].
-         */
-        readonly normalized: number;
-    };
+    readonly pilot_position_command: TailPilotPositionCommandDocument;
     /**
      * Wire version checked before advancing the session.
      */

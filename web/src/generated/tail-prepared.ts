@@ -1,44 +1,42 @@
 /* Generated from birdman-game-presentation::game_ui. Edit the Rust contract and regenerate. */
 /**
+ * Control layout accepted by the current live session boundary.
+ */
+export type TailControlLayoutDocument = "tail_incidence";
+/**
+ * Named application phase shared by runtime output documents.
+ */
+export type SessionPhaseDocument = "title" | "flight_setup" | "briefing_preparing" | "briefing_ready" | "countdown" | "flight_running" | "flight_paused" | "result" | "briefing_failed" | "replay" | "attract";
+/**
+ * Exclusive prepared launch payload with borrowed control identity.
+ */
+export type TailPreparedLaunchFrame = {
+    readonly kind: "unavailable";
+} | {
+    readonly control_identity: FlightRecordTailIdentityDocument;
+    readonly kind: "prepared";
+    readonly render_pose: FlightRenderPose;
+    readonly scenario: EnvironmentIdentity;
+    readonly state: TailStateDocument;
+};
+export type FlightRecordTailIdentityDocument = import("./tail-identity.js").FlightRecordTailIdentityDocument;
+export type FlightRenderPose = import("./flight-render-pose.js").FlightRenderPose;
+export type EnvironmentIdentity = import("./tail-scenario.js").EnvironmentIdentity;
+export type TailIncidenceDocument = import("./tail-incidence.js").TailIncidenceDocument;
+/**
  * Initial launch projection without advancing the simulation.
  */
 export interface TailPreparedLaunchDocument {
-    /**
-     * Current two-tail layout.
-     */
-    readonly control_layout: "tail_incidence";
-    /**
-     * Current domain phase, including phases without a prepared projection.
-     */
-    readonly phase: "title" | "flight_setup" | "briefing_preparing" | "briefing_ready" | "countdown" | "flight_running" | "flight_paused" | "result" | "briefing_failed" | "replay" | "attract";
-    /**
-     * Sealed zero-tick state or explicit absence.
-     */
-    readonly preview: {
-        readonly kind: "unavailable";
-    } | {
-        /**
-         * Borrowed model and controller names.
-         */
-        readonly control_identity: import("./tail-identity.js").FlightRecordTailIdentityDocument;
-        readonly kind: "prepared";
-        /**
-         * Renderer-ready sealed initial state.
-         */
-        readonly render_pose: import("./flight-render-pose.js").FlightRenderPose;
-        /**
-         * Sealed scenario identity.
-         */
-        readonly scenario: import("./tail-scenario.js").EnvironmentIdentity;
-        readonly state: TailStateDocument;
-    };
+    readonly control_layout: TailControlLayoutDocument;
+    readonly phase: SessionPhaseDocument;
+    readonly preview: TailPreparedLaunchFrame;
     /**
      * Current live boundary version.
      */
     readonly schema_version: 2;
 }
 /**
- * Zero-tick initial state.
+ * Named physics values in the current live snapshot.
  */
 export interface TailStateDocument {
     /**
@@ -94,10 +92,7 @@ export interface TailStateDocument {
      * Fraction within the terminal interval, zero during live flight.
      */
     readonly fraction: number;
-    /**
-     * Actual horizontal and vertical tail incidences.
-     */
-    readonly physical_incidence: import("./tail-incidence.js").TailIncidenceDocument;
+    readonly physical_incidence: TailIncidenceDocument;
     /**
      * Actual longitudinal pilot position in metres.
      */

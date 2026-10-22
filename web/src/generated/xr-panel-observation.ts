@@ -8,22 +8,24 @@ export type XrPanelObservation = {
     readonly kind: "pending";
 } | {
     readonly kind: "unavailable";
-    /**
-     * Same-frame failure classification.
-     */
-    readonly reason: "not-stereo" | "viewer-unavailable" | "unsupported-view-configuration" | "invalid-view-geometry" | "insufficient-view-area";
+    readonly reason: XrFitReason;
 } | {
     readonly geometry: XrPanelGeometry;
     readonly kind: "ready";
 };
 /**
- * Physical panel geometry.
+ * Optical rejection reason shared by layout and measured text checks.
+ */
+export type XrFitReason = "not-stereo" | "viewer-unavailable" | "unsupported-view-configuration" | "invalid-view-geometry" | "insufficient-view-area";
+/**
+ * Engine-independent anchor.
+ */
+export type GameUiAnchor = "menu" | "head" | "cockpit" | "world";
+/**
+ * Measured panel geometry in metres, independent of its drawing backend.
  */
 export interface XrPanelGeometry {
-    /**
-     * Explicit UI anchor.
-     */
-    readonly anchor: "menu" | "head" | "cockpit" | "world";
+    readonly anchor: GameUiAnchor;
     readonly localPose: Pose;
     readonly scope: XrMenuScope;
     /**
@@ -38,14 +40,14 @@ export interface XrPanelGeometry {
     ];
 }
 /**
- * Panel transform within that anchor.
+ * Rigid child-to-parent transform; the caller names both reference spaces.
  */
 export interface Pose {
     readonly orientation: Quaternion;
     readonly position: Vector3;
 }
 /**
- * Child-to-parent orientation.
+ * Scalar-first unit quaternion in a right-handed reference space.
  */
 export interface Quaternion {
     /**
@@ -66,7 +68,7 @@ export interface Quaternion {
     readonly z: number;
 }
 /**
- * Child origin expressed in parent coordinates, in metres.
+ * Metric right/up/back coordinates in the explicitly named reference space.
  */
 export interface Vector3 {
     /**
@@ -83,7 +85,7 @@ export interface Vector3 {
     readonly z: number;
 }
 /**
- * Placement/selection identity.
+ * Identity of one menu opening; all strings are opaque identity components.
  */
 export interface XrMenuScope {
     /**

@@ -3,8 +3,10 @@ import { describe, expect, it } from "vitest";
 import { currentSharedGameUiFixture, withSharedGameUiSession } from "../game-check/shared-game-ui-fixture.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
 import { controlInputAction } from "../../web/src/render/contracts/ui.js";
-import { requestMenuLayout, layoutMeasuredMenu, menuViewport, menuRectInViewport } from "../../web/src/presentation/menu-layout.js";
-import type { MenuTextMeasurement, MenuTextRequest } from "../../web/src/render/contracts/menu-layout.js";
+import { menuViewport, menuRectInViewport } from "../../web/src/presentation/menu-layout.js";
+import { prepareMenuPresentation } from "../../web/src/presentation/menu-preparation.js";
+import { configuredViewerFixture } from "./viewer-fixture.js";
+import { HudCanvasFixture } from "./hud-canvas-fixture.js";
 import { uiButtonLabel, uiControlBackground, validateUiViewModel } from "../../web/src/render/contracts/ui.js";
 import type { UiViewModel } from "../../web/src/render/contracts/ui.js";
 
@@ -12,21 +14,6 @@ function statusValue(view: UiViewModel, id: string): string {
   const control = view.panels.flatMap((panel) => panel.controls).find((entry) => entry.id === id);
   if (control?.kind !== "status") throw new Error(`Missing status ${id}`);
   return control.value;
-}
-
-function measurementFor(request: MenuTextRequest): MenuTextMeasurement {
-  const characterWidth = request.fontMeters * 0.55;
-  const columns = Math.max(1, Math.floor(request.widthMeters / characterWidth));
-  const lines = request.value.split("\n").flatMap((paragraph, paragraphIndex) => {
-    const characters = Array.from(paragraph);
-    const chunks = characters.length === 0 ? [""] : Array.from({ length: Math.ceil(characters.length / columns) },
-      (_slot, index) => characters.slice(index * columns, (index + 1) * columns).join(""));
-    return chunks.map((value) => ({ value, paragraphIndex, advanceMeters: Array.from(value).length * characterWidth,
-      leftMeters: 0, rightMeters: Array.from(value).length * characterWidth,
-      ascentMeters: value.trim() === "" ? 0 : request.fontMeters * 0.65,
-      descentMeters: value.trim() === "" ? 0 : request.fontMeters * 0.15 }));
-  });
-  return { identity: request.identity, lines };
 }
 
 describe("Shared Flight Setup and Briefing presentation", () => {
@@ -160,21 +147,22 @@ describe("Shared Flight Setup and Briefing presentation", () => {
     const view = createGameViewModel(shared);
     const panel = view.panels[0];
     if (panel === undefined) throw new Error("Missing panel");
-    const request = requestMenuLayout(panel, { width: 0.5, height: 0.6 }, {
-      theme: shared.theme, fontMeters: 0.04, font: { family: "system-ui, sans-serif", weight: 600, style: "normal", generation: 0 },
-      locale: "ja", previousLabel: "前頁", nextLabel: "次頁", caption: view.description
-    });
-    const result = layoutMeasuredMenu(request, request.texts.map(measurementFor));
-    if (result.kind !== "ready") throw new Error(result.reason);
-    const initial = menuViewport(result.document, 0);
+    const ready = prepareMenuPresentation(new HudCanvasFixture(), { ...panel, size: { width: 0.5, height: 0.6 } },
+      { generation: 1, scope: { kind: "scene", scene: view.scene, panelId: panel.id, viewKey: "setup" } }, 0,
+      configuredViewerFixture(720, 1280), { theme: shared.theme,
+        font: { family: "system-ui, sans-serif", weight: 600, style: "normal", generation: 0 },
+        locale: "ja", caption: view.description }, new Map());
+    if (ready.kind !== "ready") throw new Error("Missing prepared Setup");
+    const document = ready.viewport.document;
+    const initial = menuViewport(document, 0);
     expect(initial.maximumOffsetMeters).toBeGreaterThan(0);
     const ids = phase === "flight_setup" ? ["game-setup-start", "game-setup-back"]
       : ["game-briefing-start", "game-briefing-cancel", "game-briefing-technical"];
     for (const id of ids) {
-      const control = result.document.controls.find((control) => control.control.id === id);
+      const control = document.controls.find((control) => control.control.id === id);
       if (control === undefined) throw new Error(`Missing control ${id}`);
       const progress = Math.min(1, Math.max(0, control.bounds.y / initial.maximumOffsetMeters));
-      expect(menuRectInViewport(menuViewport(result.document, progress), control.bounds).kind, id).toBe("visible");
+      expect(menuRectInViewport(menuViewport(document, progress), control.bounds).kind, id).toBe("visible");
     }
   });
 

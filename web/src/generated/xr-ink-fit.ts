@@ -14,8 +14,9 @@ export type XrInkFit = {
     readonly minimumInkAngleDegrees: number;
 } | {
     readonly kind: "unavailable";
-    /**
-     * Optical or readability reason.
-     */
-    readonly reason: "not-stereo" | "viewer-unavailable" | "unsupported-view-configuration" | "invalid-view-geometry" | "insufficient-view-area";
+    readonly reason: XrFitReason;
 };
+/**
+ * Optical rejection reason shared by layout and measured text checks.
+ */
+export type XrFitReason = "not-stereo" | "viewer-unavailable" | "unsupported-view-configuration" | "invalid-view-geometry" | "insufficient-view-area";

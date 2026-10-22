@@ -14,7 +14,6 @@ export const schemaEntries = [
   { key: "xr_head_hud_profile", name: "XrHeadHudProfile", filename: "xr-head-hud-profile", group: "serialize", defaultName: "DEFAULT_XR_HEAD_HUD_PROFILE" },
   { key: "xr_flight_menu_geometry", name: "XrFlightMenuGeometry", filename: "xr-flight-menu-geometry", group: "serialize", defaultName: "XR_FLIGHT_MENU_GEOMETRY" },
   { key: "xr_head_hud_projection", name: "XrHeadHudProjection", filename: "xr-head-hud-projection", group: "serialize" },
-  { key: "xr_menu_view_fit", name: "XrMenuViewFit", filename: "xr-menu-view-fit", group: "serialize" },
   { key: "xr_ink_fit", name: "XrInkFit", filename: "xr-ink-fit", group: "serialize" },
   { key: "xr_ink_segment", name: "XrInkSegment", filename: "xr-ink-segment", group: "deserialize" },
   { key: "xr_camera_rig", name: "XrCameraRig", filename: "xr-camera-rig", group: "serialize" },
@@ -122,7 +121,7 @@ export async function generateGameUiFiles(schemas: GameUiSchemas): Promise<reado
         ? { tsType: `import("./${owner.filename}.js").${owner.name}` } : definition];
     }));
     const schema: Record<string, unknown> = { ...definition, $defs: sharedDefinitions, $schema: group["$schema"], title: entry.name };
-    const declarations = await compile(schema, entry.name, {
+    const declarations = await compile(typeReferenceSchema(schema), entry.name, {
       bannerComment: "",
       unknownAny: true,
       strictIndexSignatures: true,
@@ -140,6 +139,24 @@ export async function generateGameUiFiles(schemas: GameUiSchemas): Promise<reado
     })));
   files.push({ path: "tools/game-ui-build/generated/game-ui-generation.json", content: `${JSON.stringify({ schemaVersion: 2, generators, sources: sourceHashes }, null, 2)}\n` });
   return files;
+}
+
+export function typeReferenceSchema(schema: Record<string, unknown>): Record<string, unknown> {
+  if (typeof schema["$ref"] === "string" && schema["$ref"].startsWith("#/$defs/")
+    && Object.keys(schema).every(key => key === "$ref" || key === "description")) return { $ref: schema["$ref"] };
+  const result = { ...schema };
+  for (const key of ["$defs", "definitions", "properties", "patternProperties", "dependentSchemas"]) {
+    const children = schema[key];
+    if (isObject(children)) result[key] = Object.fromEntries(Object.entries(children)
+      .map(([name, child]) => [name, isObject(child) ? typeReferenceSchema(child) : child]));
+  }
+  for (const key of ["allOf", "anyOf", "oneOf", "prefixItems", "items", "additionalProperties", "additionalItems",
+    "unevaluatedProperties", "unevaluatedItems", "contains", "propertyNames", "not", "if", "then", "else", "contentSchema"]) {
+    const child = schema[key];
+    if (isObject(child)) result[key] = typeReferenceSchema(child);
+    else if (Array.isArray(child)) result[key] = child.map((value: unknown) => isObject(value) ? typeReferenceSchema(value) : value);
+  }
+  return result;
 }
 
 function equivalentDefinition(schemas: GameUiSchemas, source: typeof schemaGroups[number], target: typeof schemaGroups[number], name: string): boolean {

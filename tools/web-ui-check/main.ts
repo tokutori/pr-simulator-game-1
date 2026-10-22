@@ -346,34 +346,13 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
       const shared = JSON.parse(window.__uiViewJson) as GameUiView;
       if (shared.scene !== "FlightSetup") throw new Error("VR text projection requires the current shared Setup View");
       const viewModule = await import(addresses.view) as typeof import("../../web/src/app/game-view.js");
-      const layoutModule = await import(addresses.layout) as typeof import("../../web/src/presentation/menu-layout.js");
       const canvasModule = await import(addresses.canvas) as typeof import("../../web/src/presentation/menu-canvas.js");
       const preparationModule = await import(addresses.preparation) as typeof import("../../web/src/presentation/menu-preparation.js");
       const panel = viewModule.createGameViewModel(shared).panels[0];
       if (panel === undefined) throw new Error("Missing shared Setup panel");
-      const request = layoutModule.requestMenuLayout(panel, panel.size, { theme: shared.theme, fontMeters: 0.04,
-        font: { family: "system-ui, sans-serif", weight: 600, style: "normal", generation: 0 },
-        locale: "ja", previousLabel: "前頁", nextLabel: "次頁", caption: shared.description });
-      const size = canvasModule.menuCanvasSize(panel.size);
       const canvas = document.createElement("canvas");
-      canvas.width = size.width; canvas.height = size.height;
       const context = canvas.getContext("2d");
       if (context === null) throw new Error("Browser Canvas measurement is unavailable");
-      const measured = canvasModule.measureMenuLayout(canvasModule.browserMenuContext(context), request, size.width, size.height);
-      if (measured.kind !== "ready") throw new Error(measured.reason);
-      const layout = layoutModule.layoutMeasuredMenu(request, measured.measurements);
-      if (layout.kind !== "ready") throw new Error(layout.reason);
-      const choices = layout.document.controls.filter(node => node.control.kind === "button"
-        && node.control.presentation?.kind === "choice" && node.control.presentation.description.length === 0);
-      if (choices.length === 0) throw new Error("Missing empty-description choices");
-      for (const choice of choices) {
-        const label = choice.texts.find(text => text.request.slot.kind === "control" && text.request.slot.role === "label");
-        if (label === undefined || label.request.value.endsWith("\n") || label.lines.some(line => line.value.length === 0)) {
-          throw new Error("An empty choice description added a VR label line");
-        }
-        const expected = label.lines.length * request.lineHeightMeters + request.paddingMeters * 2;
-        if (Math.abs(choice.bounds.height - expected) > 1e-10) throw new Error("An empty choice description added VR height");
-      }
       const prepared = addresses.viewers.map(viewer => {
         const spatial = { ...panel, anchor: "menu" as const, size: { width: 2.4, height: 1.8 } };
         const observer = canvasModule.browserMenuContext(context);
@@ -389,15 +368,26 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
         if (document.request.fontMeters < 0.035 || ready.panel.size.width > spatial.size.width || document.controls.length !== panel.controls.length) {
           throw new Error("Shared Menu preparation changed content or rejected its requested typography");
         }
+        const choices = document.controls.filter(node => node.control.kind === "button"
+          && node.control.presentation?.kind === "choice" && node.control.presentation.description.length === 0);
+        if (choices.length === 0) throw new Error("Missing empty-description choices");
+        for (const choice of choices) {
+          const label = choice.texts.find(text => text.request.slot.kind === "control" && text.request.slot.role === "label");
+          if (label === undefined || label.request.value.endsWith("\n") || label.lines.some(line => line.value.length === 0)) {
+            throw new Error("An empty choice description added a VR label line");
+          }
+          const expected = label.lines.length * document.request.lineHeightMeters + document.request.paddingMeters * 2;
+          if (Math.abs(choice.bounds.height - expected) > 1e-10) throw new Error("An empty choice description added VR height");
+        }
         const dimensions = canvasModule.menuCanvasSize(ready.panel.size);
         canvas.width = dimensions.width; canvas.height = dimensions.height;
         canvasModule.drawMeasuredMenu(canvasModule.browserMenuContext(context), ready.viewport, canvas.width, canvas.height);
-        return { widthMeters: ready.panel.size.width, fontMeters: document.request.fontMeters, controls: document.controls.length,
+        return { emptyDescriptions: choices.length, widthMeters: ready.panel.size.width, fontMeters: document.request.fontMeters, controls: document.controls.length,
           fontQueries, preparationMilliseconds: performance.now() - started };
       });
-      return { emptyDescriptions: choices.length, prepared, measuredIn: "production VR Menu layout and browser Canvas" };
+      return { emptyDescriptions: prepared[0]?.emptyDescriptions, prepared, measuredIn: "production VR Menu layout and browser Canvas" };
     }, { view: new URL("../src/app/game-view.ts", moduleUrl).href,
-      layout: new URL("../src/presentation/menu-layout.ts", moduleUrl).href, canvas: new URL("../src/presentation/menu-canvas.ts", moduleUrl).href,
+      canvas: new URL("../src/presentation/menu-canvas.ts", moduleUrl).href,
       preparation: new URL("../src/presentation/menu-preparation.ts", moduleUrl).href, viewers: menuViewers });
     report.portraitViewport = { width: 360, height: 640, selectedDescriptions };
     await screenshot("01-setup-portrait");

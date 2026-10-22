@@ -1,25 +1,26 @@
 /* Generated from birdman-game-presentation::game_ui. Edit the Rust contract and regenerate. */
 /**
+ * Logical reference basis; changes invalidate retained menu coordinates.
+ */
+export type XrReferenceBasis = "stationary" | "aircraft" | "world";
+/**
  * Current physical and head anchors in one explicitly identified reference frame.
  */
 export interface XrReferenceFrame {
-    /**
-     * Logical basis identity independent of its moving pose.
-     */
-    readonly basis: "stationary" | "aircraft" | "world";
+    readonly basis: XrReferenceBasis;
     readonly cockpit: Pose;
-    readonly head: Pose1;
-    readonly world: Pose2;
+    readonly head: Pose;
+    readonly world: Pose;
 }
 /**
- * Aircraft origin.
+ * Rigid child-to-parent transform; the caller names both reference spaces.
  */
 export interface Pose {
     readonly orientation: Quaternion;
     readonly position: Vector3;
 }
 /**
- * Child-to-parent orientation.
+ * Scalar-first unit quaternion in a right-handed reference space.
  */
 export interface Quaternion {
     /**
@@ -40,7 +41,7 @@ export interface Quaternion {
     readonly z: number;
 }
 /**
- * Child origin expressed in parent coordinates, in metres.
+ * Metric right/up/back coordinates in the explicitly named reference space.
  */
 export interface Vector3 {
     /**
@@ -55,18 +56,4 @@ export interface Vector3 {
      * Backward coordinate in metres.
      */
     readonly z: number;
-}
-/**
- * Mounted runtime head.
- */
-export interface Pose1 {
-    readonly orientation: Quaternion;
-    readonly position: Vector3;
-}
-/**
- * Geographical render-world origin.
- */
-export interface Pose2 {
-    readonly orientation: Quaternion;
-    readonly position: Vector3;
 }

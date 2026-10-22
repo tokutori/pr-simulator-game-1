@@ -1,12 +1,13 @@
 /* Generated from birdman-game-presentation::game_ui. Edit the Rust contract and regenerate. */
 /**
+ * Control layout accepted by the current live session boundary.
+ */
+export type TailControlLayoutDocument = "tail_incidence";
+/**
  * Resolved controller limits supplied to input adapters.
  */
 export interface TailControlProfileDocument {
-    /**
-     * Current physical control layout.
-     */
-    readonly control_layout: "tail_incidence";
+    readonly control_layout: TailControlLayoutDocument;
     /**
      * Registered controller identifier.
      */
@@ -16,7 +17,7 @@ export interface TailControlProfileDocument {
      */
     readonly controller_profile_version: number;
     readonly desired_body_rate_limit_rad_s: TailControlAxesDocument;
-    readonly feedback_gain_seconds: TailControlAxesDocument1;
+    readonly feedback_gain_seconds: TailControlAxesDocument;
     /**
      * Maximum physical incidence rate in radians per second.
      */
@@ -27,22 +28,9 @@ export interface TailControlProfileDocument {
     readonly schema_version: number;
 }
 /**
- * Desired angular-rate limits in radians per second.
+ * Pitch and yaw values in the units declared by their containing field.
  */
 export interface TailControlAxesDocument {
-    /**
-     * Horizontal-tail control axis.
-     */
-    readonly pitch: number;
-    /**
-     * Vertical-tail control axis.
-     */
-    readonly yaw: number;
-}
-/**
- * Feedback gains in seconds.
- */
-export interface TailControlAxesDocument1 {
     /**
      * Horizontal-tail control axis.
      */

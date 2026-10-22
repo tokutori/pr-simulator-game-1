@@ -1,95 +1,169 @@
 /* Generated from birdman-game-presentation::game_ui. Edit the Rust contract and regenerate. */
 /**
+ * Origin of one environment snapshot.
+ */
+export type EnvironmentContext = {
+    readonly kind: "session";
+    readonly phase: SessionPhaseDocument;
+} | {
+    readonly kind: "registry";
+};
+/**
+ * Named application phase shared by runtime output documents.
+ */
+export type SessionPhaseDocument = "title" | "flight_setup" | "briefing_preparing" | "briefing_ready" | "countdown" | "flight_running" | "flight_paused" | "result" | "briefing_failed" | "replay" | "attract";
+/**
+ * Registered environment availability without fallback to another identity.
+ */
+export type EnvironmentProjection = {
+    readonly identity: EnvironmentIdentity;
+    readonly kind: "unavailable";
+    readonly source: EnvironmentSource;
+} | {
+    readonly identity: EnvironmentIdentity;
+    readonly kind: "available";
+    readonly metadata: EnvironmentMetadata;
+    readonly source: EnvironmentSource;
+    readonly venue: EnvironmentVenueProjection;
+};
+export type EnvironmentIdentity = import("./tail-scenario.js").EnvironmentIdentity;
+/**
+ * Owner whose selected environment is being observed.
+ */
+export type EnvironmentSource = "exhibition" | "selected" | "sealed" | "record" | "archive" | "attract" | "registry";
+/**
+ * Asset identity or implementation provenance of an environment definition.
+ */
+export type ContentHash = {
+    readonly kind: "asset_bytes";
+    /**
+     * SHA-256 digest of the immutable asset.
+     */
+    readonly sha256: string;
+} | {
+    readonly kind: "source_fingerprint";
+    /**
+     * SHA-256 fingerprint of the provider source.
+     */
+    readonly sha256: string;
+};
+/**
+ * Explicitly recorded or unavailable metadata.
+ */
+export type Defined = {
+    readonly kind: "unavailable";
+} | {
+    readonly kind: "defined";
+    readonly value: LocalNedFrameDocument;
+};
+/**
+ * Evidence attached to a component; assumptions and tuning require explicit reasons.
+ */
+export type EnvironmentBasisDocument = {
+    /**
+     * What was observed, including measurement scope.
+     */
+    readonly description: string;
+    readonly kind: "observed";
+    /**
+     * Index of the source snapshot.
+     */
+    readonly source_index: number;
+} | {
+    readonly kind: "derived";
+    /**
+     * Transformation and applicability limitations.
+     */
+    readonly method: string;
+    /**
+     * Nonempty list of source snapshot indices.
+     */
+    readonly source_indices: readonly number[];
+} | {
+    readonly kind: "assumed";
+    /**
+     * Assumption and its applicable scope.
+     */
+    readonly rationale: string;
+} | {
+    readonly kind: "game_tuned";
+    /**
+     * Purpose and limitations of the tuning.
+     */
+    readonly rationale: string;
+};
+/**
+ * Explicitly recorded or unavailable metadata.
+ */
+export type Defined2 = {
+    readonly kind: "unavailable";
+} | {
+    readonly kind: "defined";
+    readonly value: SkyStateDocument;
+};
+/**
+ * Spatial coverage of the shared physical wind provider.
+ */
+export type WindDomain = {
+    readonly kind: "uniform";
+} | {
+    readonly kind: "grid";
+    /**
+     * Maximum north/east/down coordinate in metres.
+     *
+     * @minItems 3
+     * @maxItems 3
+     */
+    readonly maximum_ned_m: readonly [
+        number,
+        number,
+        number
+    ];
+    /**
+     * Minimum north/east/down coordinate in metres.
+     *
+     * @minItems 3
+     * @maxItems 3
+     */
+    readonly minimum_ned_m: readonly [
+        number,
+        number,
+        number
+    ];
+};
+/**
+ * Shared admission of the launch venue, independent of display resources.
+ */
+export type EnvironmentVenueProjection = {
+    readonly kind: "shared_launch";
+} | {
+    readonly kind: "registered_origin";
+} | {
+    readonly kind: "origin_not_recorded";
+} | {
+    readonly kind: "unregistered_origin";
+};
+/**
  * Versioned environment metadata without the full wind-grid samples.
  */
 export interface EnvironmentSnapshot {
-    /**
-     * Session or registry origin.
-     */
-    readonly context: {
-        readonly kind: "session";
-        /**
-         * Named phase observed with the selected provider identity.
-         */
-        readonly phase: "title" | "flight_setup" | "briefing_preparing" | "briefing_ready" | "countdown" | "flight_running" | "flight_paused" | "result" | "briefing_failed" | "replay" | "attract";
-    } | {
-        readonly kind: "registry";
-    };
-    /**
-     * Explicit availability of the requested registered environment.
-     */
-    readonly projection: {
-        /**
-         * Original identity retained without aliases.
-         */
-        readonly identity: import("./tail-scenario.js").EnvironmentIdentity;
-        readonly kind: "unavailable";
-        /**
-         * Owner of the requested identity.
-         */
-        readonly source: "exhibition" | "selected" | "sealed" | "record" | "archive" | "attract" | "registry";
-    } | {
-        /**
-         * Fully matched registered identity.
-         */
-        readonly identity: import("./tail-scenario.js").EnvironmentIdentity;
-        readonly kind: "available";
-        readonly metadata: EnvironmentMetadata;
-        /**
-         * Owner of the resolved identity.
-         */
-        readonly source: "exhibition" | "selected" | "sealed" | "record" | "archive" | "attract" | "registry";
-        /**
-         * Registered venue availability for this environment owner.
-         */
-        readonly venue: {
-            readonly kind: "shared_launch";
-        } | {
-            readonly kind: "registered_origin";
-        } | {
-            readonly kind: "origin_not_recorded";
-        } | {
-            readonly kind: "unregistered_origin";
-        };
-    };
+    readonly context: EnvironmentContext;
+    readonly projection: EnvironmentProjection;
     /**
      * Current environment snapshot wire version.
      */
     readonly schema_version: number;
 }
 /**
- * Bounded descriptive metadata without the full wind grid.
+ * Representative values, spatial domain and source provenance of one provider.
  */
 export interface EnvironmentMetadata {
-    /**
-     * Exact asset hash or implementation source fingerprint.
-     */
-    readonly content_hash: {
-        readonly kind: "asset_bytes";
-        /**
-         * SHA-256 digest of the immutable asset.
-         */
-        readonly sha256: string;
-    } | {
-        readonly kind: "source_fingerprint";
-        /**
-         * SHA-256 fingerprint of the provider source.
-         */
-        readonly sha256: string;
-    };
+    readonly content_hash: ContentHash;
     /**
      * Recorded ground-wind normal observations.
      */
     readonly ground_wind_normals: readonly GroundWindNormalDocument[];
-    /**
-     * Recorded geographic origin and water reference.
-     */
-    readonly local_frame: {
-        readonly kind: "unavailable";
-    } | {
-        readonly kind: "defined";
-        readonly value: LocalNedFrameDocument;
-    };
+    readonly local_frame: Defined;
     /**
      * Registered human-readable environment name.
      */
@@ -121,50 +195,13 @@ export interface EnvironmentMetadata {
         number,
         number
     ];
-    /**
-     * Recorded sky conditions without renderer fallback values.
-     */
-    readonly sky: {
-        readonly kind: "unavailable";
-    } | {
-        readonly kind: "defined";
-        readonly value: SkyStateDocument;
-    };
+    readonly sky: Defined2;
     /**
      * Registered data sources and notices.
      */
     readonly sources: readonly EnvironmentSourceDocument[];
     readonly waves: WaveStateDocument;
-    /**
-     * Physical wind coverage.
-     */
-    readonly wind_domain: {
-        readonly kind: "uniform";
-    } | {
-        readonly kind: "grid";
-        /**
-         * Maximum north/east/down coordinate in metres.
-         *
-         * @minItems 3
-         * @maxItems 3
-         */
-        readonly maximum_ned_m: readonly [
-            number,
-            number,
-            number
-        ];
-        /**
-         * Minimum north/east/down coordinate in metres.
-         *
-         * @minItems 3
-         * @maxItems 3
-         */
-        readonly minimum_ned_m: readonly [
-            number,
-            number,
-            number
-        ];
-    };
+    readonly wind_domain: WindDomain;
 }
 /**
  * Monthly ground-station evidence, kept separate from a spatial lake-wind estimate.
@@ -221,153 +258,13 @@ export interface LocalNedFrameDocument {
     readonly water_level_datum: string;
 }
 /**
- * Distinction between observed, derived, assumed and game-tuned values.
+ * Required component provenance, with no implicit evidence classification.
  */
 export interface EnvironmentProvenanceDocument {
-    /**
-     * Origin and fixed-water datum basis.
-     */
-    readonly local_frame: {
-        /**
-         * What was observed, including measurement scope.
-         */
-        readonly description: string;
-        readonly kind: "observed";
-        /**
-         * Index of the source snapshot.
-         */
-        readonly source_index: number;
-    } | {
-        readonly kind: "derived";
-        /**
-         * Transformation and applicability limitations.
-         */
-        readonly method: string;
-        /**
-         * Nonempty list of source snapshot indices.
-         */
-        readonly source_indices: readonly number[];
-    } | {
-        readonly kind: "assumed";
-        /**
-         * Assumption and its applicable scope.
-         */
-        readonly rationale: string;
-    } | {
-        readonly kind: "game_tuned";
-        /**
-         * Purpose and limitations of the tuning.
-         */
-        readonly rationale: string;
-    };
-    /**
-     * Sun, cloud and visibility basis.
-     */
-    readonly sky: {
-        /**
-         * What was observed, including measurement scope.
-         */
-        readonly description: string;
-        readonly kind: "observed";
-        /**
-         * Index of the source snapshot.
-         */
-        readonly source_index: number;
-    } | {
-        readonly kind: "derived";
-        /**
-         * Transformation and applicability limitations.
-         */
-        readonly method: string;
-        /**
-         * Nonempty list of source snapshot indices.
-         */
-        readonly source_indices: readonly number[];
-    } | {
-        readonly kind: "assumed";
-        /**
-         * Assumption and its applicable scope.
-         */
-        readonly rationale: string;
-    } | {
-        readonly kind: "game_tuned";
-        /**
-         * Purpose and limitations of the tuning.
-         */
-        readonly rationale: string;
-    };
-    /**
-     * Effective fetch, wind history and visual detail basis.
-     */
-    readonly waves: {
-        /**
-         * What was observed, including measurement scope.
-         */
-        readonly description: string;
-        readonly kind: "observed";
-        /**
-         * Index of the source snapshot.
-         */
-        readonly source_index: number;
-    } | {
-        readonly kind: "derived";
-        /**
-         * Transformation and applicability limitations.
-         */
-        readonly method: string;
-        /**
-         * Nonempty list of source snapshot indices.
-         */
-        readonly source_indices: readonly number[];
-    } | {
-        readonly kind: "assumed";
-        /**
-         * Assumption and its applicable scope.
-         */
-        readonly rationale: string;
-    } | {
-        readonly kind: "game_tuned";
-        /**
-         * Purpose and limitations of the tuning.
-         */
-        readonly rationale: string;
-    };
-    /**
-     * Entire wind grid, including spatial, vertical and temporal assumptions.
-     */
-    readonly wind_grid: {
-        /**
-         * What was observed, including measurement scope.
-         */
-        readonly description: string;
-        readonly kind: "observed";
-        /**
-         * Index of the source snapshot.
-         */
-        readonly source_index: number;
-    } | {
-        readonly kind: "derived";
-        /**
-         * Transformation and applicability limitations.
-         */
-        readonly method: string;
-        /**
-         * Nonempty list of source snapshot indices.
-         */
-        readonly source_indices: readonly number[];
-    } | {
-        readonly kind: "assumed";
-        /**
-         * Assumption and its applicable scope.
-         */
-        readonly rationale: string;
-    } | {
-        readonly kind: "game_tuned";
-        /**
-         * Purpose and limitations of the tuning.
-         */
-        readonly rationale: string;
-    };
+    readonly local_frame: EnvironmentBasisDocument;
+    readonly sky: EnvironmentBasisDocument;
+    readonly waves: EnvironmentBasisDocument;
+    readonly wind_grid: EnvironmentBasisDocument;
 }
 /**
  * Fixed sky inputs in local geographical coordinates, independent of a 3D engine.
@@ -428,7 +325,7 @@ export interface EnvironmentSourceDocument {
     readonly version: string;
 }
 /**
- * Shared display-only wave conditions.
+ * Stable rendering inputs; waves do not change the physics contact surface.
  */
 export interface WaveStateDocument {
     /**

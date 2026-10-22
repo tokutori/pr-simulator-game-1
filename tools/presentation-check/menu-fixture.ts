@@ -9,8 +9,9 @@ import type { ViewerFrame } from "../../web/src/render/contracts/viewer-frame.js
 import type { Pose } from "../../web/src/render/contracts/math.js";
 import type { XrReferenceFrame } from "../../web/src/generated/xr-reference-frame.js";
 import { IDENTITY_POSE, composePose, pose, vec3 } from "../../web/src/render/contracts/math.js";
-import { requestMenuLayout, layoutMeasuredMenu, menuViewport, projectMenuViewport } from "../../web/src/presentation/menu-layout.js";
-import { measureMenuLayout, menuCanvasSize } from "../../web/src/presentation/menu-canvas.js";
+import { menuViewport, projectMenuViewport } from "../../web/src/presentation/menu-layout.js";
+import { prepareMenuPresentation } from "../../web/src/presentation/menu-preparation.js";
+import { configuredViewerFixture } from "./viewer-fixture.js";
 import { HudCanvasFixture } from "./hud-canvas-fixture.js";
 import { currentSharedGameUiFixture } from "../game-check/shared-game-ui-fixture.js";
 
@@ -27,20 +28,19 @@ export function placeMenuPanel(head: Pose, distance: number): Pose {
 export function geometryMenuFixture(view: UiViewModel): MenuPresentation {
   const panel = view.panels[0];
   if (panel === undefined || panel.anchor !== "menu") return { kind: "absent" };
-  const request = requestMenuLayout(panel, panel.size, { theme: view.sharedPresentation?.theme ?? fixtureTheme, fontMeters: 0.025,
-    font: { family: "sans-serif", weight: 600, style: "normal", generation: 0 }, locale: "ja", caption: "", previousLabel: "前頁", nextLabel: "次頁" });
-  const dimensions = menuCanvasSize(panel.size);
-  const measurements = measureMenuLayout(new HudCanvasFixture(), request, dimensions.width, dimensions.height);
-  if (measurements.kind !== "ready") throw new Error("Missing geometry fixture metrics");
-  const layout = layoutMeasuredMenu(request, measurements.measurements);
+  const layout = prepareMenuPresentation(new HudCanvasFixture(), panel,
+    { generation: 1, scope: { kind: "scene", scene: view.scene, panelId: panel.id, viewKey: "geometry-fixture" } }, 0,
+    configuredViewerFixture(1280, 1280, 0.1, 100, 120),
+    { theme: view.sharedPresentation?.theme ?? fixtureTheme,
+      font: { family: "sans-serif", weight: 600, style: "normal", generation: 0 }, locale: "ja", caption: "" }, new Map());
   if (layout.kind !== "ready") throw new Error("Missing geometry fixture document");
   const controls = panel.controls.map((control): MenuControlLayout => {
     const bounds = { x: control.rect.x * panel.size.width, y: control.rect.y * panel.size.height,
       width: control.rect.width * panel.size.width, height: control.rect.height * panel.size.height };
     return control.kind === "chart" ? { kind: "chart", control, bounds, plot: bounds, texts: [] } : { kind: "control", control, bounds, texts: [] };
   });
-  const document = { ...layout.document, controls, contentHeightMeters: panel.size.height, footerHeightMeters: 0,
-    request: { ...layout.document.request, paddingMeters: 0, gapMeters: 0 } };
+  const document = { ...layout.viewport.document, controls, contentHeightMeters: panel.size.height, footerHeightMeters: 0,
+    request: { ...layout.viewport.document.request, paddingMeters: 0, gapMeters: 0 } };
   const viewport = menuViewport(document, 0);
   const context = { generation: 1, scope: view.activeOverlay === null
     ? { kind: "scene" as const, scene: view.scene, panelId: panel.id, viewKey: "geometry-fixture" }

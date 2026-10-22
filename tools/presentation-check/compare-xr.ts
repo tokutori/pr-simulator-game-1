@@ -5,7 +5,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { currentSharedGameUiFixture, currentSharedHeadHudFixture } from "../game-check/shared-game-ui-fixture.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
-import { menuLayoutRequest, requestMenuLayout } from "../../web/src/presentation/menu-layout.js";
+import { menuLayoutRequest, menuLayoutSource } from "../../web/src/presentation/menu-layout.js";
 import { measureMenuLayout, menuCanvasSize } from "../../web/src/presentation/menu-canvas.js";
 import { HudCanvasFixture } from "./hud-canvas-fixture.js";
 import type { MenuLayoutQuery } from "../../web/src/generated/menu-layout-query.js";
@@ -15,7 +15,7 @@ import { DEFAULT_XR_HEAD_HUD_PROFILE } from "../../web/src/generated/xr-head-hud
 import type { FlightRecordHudProfileDocument } from "../../web/src/generated/record-difficulty.js";
 import type { ViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
 import { IDENTITY_POSE, composePose, rotateVec3, pose, quaternion, vec3 } from "../../web/src/render/contracts/math.js";
-import { menu_layout_json, menu_measure_text_json, xr_head_hud_projection_json, xr_menu_view_fit_json, xr_text_ink_fit_json, XrCameraBridge, XrSpatialBridge,
+import { menu_layout_json, menu_measure_text_json, xr_head_hud_projection_json, xr_text_ink_fit_json, XrCameraBridge, XrSpatialBridge,
   xr_reference_frame_json, pose_chain_json, inverse_pose_json, xr_panel_camera_poses_json, XrPointerBridge } from "../../web/pkg/birdman_game_wasm.js";
 import type { XrPointerObservation } from "../../web/src/generated/xr-pointer-observation.js";
 import type { XrPointerSurface } from "../../web/src/generated/xr-pointer-surface.js";
@@ -39,30 +39,33 @@ const patch = execFileSync("git", sourceArguments, gitOptions);
 await writeFile(resolve(output, "source.patch"), patch, "utf8");
 const wasmPath = resolve(root, "web/pkg/birdman_game_wasm_bg.wasm");
 const wasmHash = createHash("sha256").update(await readFile(wasmPath)).digest("hex");
-const cases: { name: string; observation: ReturnType<typeof observation> }[] = [];
+const optics: { name: string; observation: ReturnType<typeof observation> }[] = [];
 type TextProbe = { index: number; value: string; metrics: [number, number, number, number, number] | null };
-type TextObservation = { requests: Extract<MenuLayoutReply, { kind: "plan" }>["plan"]["texts"]; probes: TextProbe[] };
+type TextObservation = { requests: Extract<MenuLayoutReply, { kind: "measure" }>["plan"]["texts"]; probes: TextProbe[] };
 const textObservations: TextObservation[] = [];
 for (const informationCode of [0, 1, 2, 3, 4] as const) {
   const model = currentSharedHeadHudFixture({ informationCode });
   for (const [width, height] of [[1280, 720], [720, 1280]] as const) {
     for (const depth of ["negative-one-to-one", "zero-to-one", "reversed-zero-to-one"] as const) {
       const viewer = opticalViewer(width, height, depth, informationCode === 0);
-      cases.push({ name: `${String(informationCode)}-${String(width)}x${String(height)}-${depth}`, observation: observation(viewer, model) });
+      optics.push({ name: `${String(informationCode)}-${String(width)}x${String(height)}-${depth}`, observation: observation(viewer, model) });
     }
   }
 }
+const customHuds: { name: string; hud: ReturnType<typeof observation>["hud"] }[] = [];
 for (let mask = 0; mask < 64; mask += 1) {
   const cueNames = ["telemetry", "attitude", "wind", "flight_path", "angle_of_attack", "warnings"] as const;
   const hudProfile = Object.fromEntries(cueNames.map((cue, index) => [cue, (mask & 2 ** index) !== 0])) as unknown as FlightRecordHudProfileDocument;
   const model = currentSharedHeadHudFixture({ informationCode: 4, hudProfile });
-  cases.push({ name: `custom-${String(mask)}`, observation: observation(opticalViewer(1280, 720, "negative-one-to-one", false), model) });
+  customHuds.push({ name: `custom-${String(mask)}`, hud: { layout: model.layout, groups: model.groups } });
 }
-const firstCase = cases[0];
-assert.ok(firstCase !== undefined);
-firstCase.observation.layout = menuQueries();
-firstCase.observation.text = textObservations;
-const input = JSON.stringify(cases.map(candidate => candidate.observation));
+const batch = { optics: optics.map(candidate => candidate.observation),
+  custom_hud: { viewer: opticalViewer(1280, 720, "negative-one-to-one", false),
+    profile: DEFAULT_XR_HEAD_HUD_PROFILE, huds: customHuds.map(candidate => candidate.hud) },
+  interaction: pointerScenario(), layout: menuQueries(), text: textObservations };
+assert.equal(optics.length, 30);
+assert.equal(customHuds.length, 64);
+const input = JSON.stringify(batch);
 await writeFile(resolve(output, "observations.json"), input, "utf8");
 let maximumAbsoluteError = 0;
 let comparedNumbers = 0;
@@ -73,25 +76,28 @@ try {
   });
   await writeFile(resolve(output, "native.json"), native, "utf8");
   const expected: unknown = JSON.parse(native);
-  const actual = cases.map(({ observation: candidate }) => ({
-    menu: JSON.parse(xr_menu_view_fit_json(JSON.stringify(candidate.viewer), JSON.stringify(candidate.panel_pose), ...candidate.panel_size, 2.4, 0.035)) as unknown,
-    head: JSON.parse(xr_head_hud_projection_json(JSON.stringify(candidate.hud), JSON.stringify(candidate.viewer), JSON.stringify(candidate.profile), "FPS 72.0")) as unknown,
-    ink: JSON.parse(xr_text_ink_fit_json(JSON.stringify(candidate.viewer), JSON.stringify(candidate.ink), JSON.stringify(candidate.head_from_surface), 0.35)) as unknown,
-    spatial: spatialResults(candidate),
-    interaction: pointerResults(candidate.interaction),
-    layout: candidate.layout.map(query => JSON.parse(menu_layout_json(JSON.stringify(query))) as unknown),
-    text: candidate.text.map(textResult)
-  }));
+  const actual = {
+    optics: batch.optics.map(candidate => ({
+      head: JSON.parse(xr_head_hud_projection_json(JSON.stringify(candidate.hud), JSON.stringify(candidate.viewer), JSON.stringify(candidate.profile), "FPS 72.0")) as unknown,
+      ink: JSON.parse(xr_text_ink_fit_json(JSON.stringify(candidate.viewer), JSON.stringify(candidate.ink), JSON.stringify(candidate.head_from_surface), 0.35)) as unknown,
+      spatial: spatialResults(candidate)
+    })),
+    custom_hud: batch.custom_hud.huds.map(hud => JSON.parse(xr_head_hud_projection_json(JSON.stringify(hud),
+      JSON.stringify(batch.custom_hud.viewer), JSON.stringify(batch.custom_hud.profile), "FPS 72.0")) as unknown),
+    interaction: pointerResults(batch.interaction),
+    layout: batch.layout.map(query => JSON.parse(menu_layout_json(JSON.stringify(query))) as unknown),
+    text: batch.text.map(textResult)
+  };
   await writeFile(resolve(output, "wasm.json"), JSON.stringify(actual), "utf8");
-  compare(expected, actual, "cases");
+  compare(expected, actual, "batch");
   assert.equal(execFileSync("git", ["rev-parse", "HEAD"], gitOptions).trim(), head, "HEAD changed during comparison");
   assert.equal(execFileSync("git", sourceArguments, gitOptions), patch, "Source changed during comparison");
   assert.equal(execFileSync("git", untrackedArguments, gitOptions), "", "New source appeared during comparison");
   assert.equal(createHash("sha256").update(await readFile(wasmPath)).digest("hex"), wasmHash, "WASM changed during comparison");
-  const report = { status: "passed", ...provenance, cases: cases.map(candidate => candidate.name), comparedNumbers, maximumAbsoluteError,
+  const report = { status: "passed", ...provenance, cases: [...optics.map(candidate => candidate.name), ...customHuds.map(candidate => candidate.name)], batches: { optics: optics.length, customHud: customHuds.length, interaction: 1, menuQueries: batch.layout.length, text: batch.text.length }, comparedNumbers, maximumAbsoluteError,
     tolerance: "error <= 1e-10 * max(1, abs(native), abs(wasm))" };
   await writeFile(resolve(output, "result.json"), `${JSON.stringify(report, null, 2)}\n`, "utf8");
-  console.log(JSON.stringify({ status: report.status, cases: cases.length, comparedNumbers, maximumAbsoluteError, output }));
+  console.log(JSON.stringify({ status: report.status, cases: optics.length + customHuds.length, batches: report.batches, comparedNumbers, maximumAbsoluteError, output }));
 } catch (cause) {
   await writeFile(resolve(output, "result.json"), `${JSON.stringify({ status: "failed", ...provenance,
     failure: cause instanceof Error ? { message: cause.message, stack: cause.stack } : String(cause) }, null, 2)}\n`, "utf8");
@@ -103,55 +109,54 @@ function menuQueries(): MenuLayoutQuery[] {
   for (const phase of ["title", "flight_setup", "briefing_ready", "flight_paused", "result", "replay"] as const) {
     const shared = currentSharedGameUiFixture(phase, { ticks: 20, platform: { presentation_mode: "webxr" },
       actions: phase === "result" ? [{ kind: "set_result_tab", tab: "analysis" }] : [] });
-    for (const panel of createGameViewModel(shared).panels) {
-      for (const width of [2.4, 0.5]) {
-        const surface = { width, height: 1.8 };
-        const request = requestMenuLayout(panel, surface, { theme: shared.theme, fontMeters: 0.035,
-          font: { family: "sans-serif", weight: 600, style: "normal", generation: 0 },
-          locale: "ja", caption: "", previousLabel: "前頁", nextLabel: "次頁" });
-        const probes: TextProbe[] = [];
-        const measuredText = JSON.parse(menu_measure_text_json(JSON.stringify(request.shared.texts), (index, value) => {
-          const advance = Array.from(value).length * 0.01;
-          const metrics: TextProbe["metrics"] = [advance, value.length === 0 ? 0 : -0.001,
-            value.length === 0 ? 0 : advance + 0.001, 0.02, 0.005];
-          probes.push({ index, value, metrics });
-          return Float64Array.from(metrics);
-        })) as MenuLayoutReply;
-        assert.equal(measuredText.kind, "measured");
-        textObservations.push({ requests: request.shared.texts, probes });
-        const dimensions = menuCanvasSize(surface);
-        const measured = measureMenuLayout(new HudCanvasFixture(), request, dimensions.width, dimensions.height);
-        assert.equal(measured.kind, "ready");
-        const arrange: MenuLayoutQuery = { kind: "arrange", source: request.shared.source, measurements: measured.measurements };
-        queries.push({ kind: "plan", source: request.shared.source }, arrange);
-        const arranged = JSON.parse(menu_layout_json(JSON.stringify(arrange))) as MenuLayoutReply;
-        assert.equal(arranged.kind, "ready");
-        const geometry = arranged.geometry;
-        const rectangles = geometry.controls.flatMap(control => [control.bounds,
-          ...(control.plot === null ? [] : [control.plot]), ...control.texts.flatMap(text => text.lineGeometry.map(line => line.bounds))]);
-        for (const progress of [0, 0.5, 1]) queries.push({ kind: "viewport", source: {
-          surfaceSize: surface, paddingMeters: request.paddingMeters, gapMeters: request.gapMeters,
-          contentHeightMeters: geometry.contentHeightMeters, footerHeightMeters: geometry.footerHeightMeters, progress },
-          rectangles, panel_points: [{ x: 0, y: 0 }, { x: -width, y: 1.8 }],
-          document_points: [{ x: 0, y: 0 }, { x: 0.2, y: geometry.contentHeightMeters }] });
-        let observation: Extract<MenuLayoutQuery, { kind: "prepare" }>["observation"] = null;
-        const viewer = configuredViewerFixture(width > 1 ? 1280 : 720, width > 1 ? 720 : 1280);
-        let ready = false;
-        for (let attempt = 0; attempt <= 12; attempt++) {
-          const preparation: MenuLayoutQuery = { kind: "prepare", source: request.shared.source,
-            viewer, menu_from_panel: panel.localPose, observation };
-          queries.push(preparation);
-          const reply = JSON.parse(menu_layout_json(JSON.stringify(preparation))) as MenuLayoutReply;
-          if (reply.kind === "ready") { ready = true; break; }
-          assert.equal(reply.kind, "measure");
-          const requested = menuLayoutRequest(panel, shared.theme, reply.plan);
-          const canvas = menuCanvasSize(requested.surfaceSize);
-          const observed = measureMenuLayout(new HudCanvasFixture(), requested, canvas.width, canvas.height);
-          assert.equal(observed.kind, "ready");
-          observation = { attempt: reply.attempt, measurements: observed.measurements };
+    for (const panel of createGameViewModel(shared).panels) for (const width of [2.4, 0.5]) {
+      const source = menuLayoutSource(panel, { width, height: 1.8 }, { theme: shared.theme, fontMeters: 0.035,
+        font: { family: "sans-serif", weight: 600, style: "normal", generation: 0 },
+        locale: "ja", caption: "", previousLabel: "前頁", nextLabel: "次頁" });
+      const viewer = configuredViewerFixture(width > 1 ? 1280 : 720, width > 1 ? 720 : 1280);
+      let observation: Extract<MenuLayoutQuery, { kind: "prepare" }>["observation"] = null;
+      let requested: ReturnType<typeof menuLayoutRequest> | null = null;
+      let ready = false;
+      for (let attempt = 0; attempt <= 12; attempt++) {
+        const preparation: MenuLayoutQuery = { kind: "prepare", source, viewer, menu_from_panel: panel.localPose, observation };
+        queries.push(preparation);
+        const reply = JSON.parse(menu_layout_json(JSON.stringify(preparation))) as MenuLayoutReply;
+        if (reply.kind === "ready") {
+          assert.ok(requested !== null);
+          const geometry = reply.geometry;
+          const rectangles = geometry.controls.flatMap(control => [control.bounds,
+            ...(control.plot === null ? [] : [control.plot]), ...control.texts.flatMap(text => text.lineGeometry.map(line => line.bounds))]);
+          for (const progress of [0, 0.5, 1]) queries.push({ kind: "viewport", source: {
+            surfaceSize: requested.surfaceSize, paddingMeters: requested.paddingMeters, gapMeters: requested.gapMeters,
+            contentHeightMeters: geometry.contentHeightMeters, footerHeightMeters: geometry.footerHeightMeters, progress },
+            rectangles, panel_points: [{ x: 0, y: 0 }, { x: -width, y: 1.8 }],
+            document_points: [{ x: 0, y: 0 }, { x: 0.2, y: geometry.contentHeightMeters }] });
+          ready = true;
+          break;
         }
-        assert.ok(ready, "Menu preparation must reach a readable document");
+        assert.equal(reply.kind, "measure");
+        requested = menuLayoutRequest(panel, shared.theme, reply.plan);
+        const canvas = menuCanvasSize(requested.surfaceSize);
+        const context = new HudCanvasFixture();
+        const read = context.measureText.bind(context);
+        const locale = context.setLocale.bind(context);
+        const probes: TextProbe[] = [];
+        let index = -1;
+        context.setLocale = value => { index++; locale(value); };
+        context.measureText = value => {
+          const metric = read(value);
+          const horizontal = reply.plan.source.surfaceSize.width / canvas.width;
+          const vertical = reply.plan.source.surfaceSize.height / canvas.height;
+          probes.push({ index, value, metrics: [metric.width * horizontal, metric.left * horizontal,
+            metric.right * horizontal, metric.ascent * vertical, metric.descent * vertical] });
+          return metric;
+        };
+        const measured = measureMenuLayout(context, requested, canvas.width, canvas.height);
+        assert.equal(measured.kind, "ready");
+        textObservations.push({ requests: requested.texts, probes });
+        observation = { attempt: reply.attempt, measurements: measured.measurements };
       }
+      assert.ok(ready, "Menu preparation must reach a readable document");
     }
   }
   assert.ok(queries.length > 0);
@@ -220,7 +225,6 @@ function pointerResults(scenario: ReturnType<typeof pointerScenario>): unknown[]
 
 function observation(viewer: ViewerFrame, model: ReturnType<typeof currentSharedHeadHudFixture>) {
   return { viewer, hud: { layout: model.layout, groups: model.groups }, profile: DEFAULT_XR_HEAD_HUD_PROFILE,
-    interaction: pointerScenario(), layout: [] as MenuLayoutQuery[], text: [] as TextObservation[],
     panel_pose: pose(vec3(0.1, -0.2, 0), IDENTITY_POSE.orientation), panel_size: [2.4, 1.8] as const,
     head_from_surface: pose(vec3(0, -0.2, -2.4), IDENTITY_POSE.orientation),
     ink: [{ start: vec3(-0.1, 0.025, 0), end: vec3(-0.1, -0.025, 0) }, { start: vec3(0.1, 0.025, 0), end: vec3(0.1, -0.025, 0) }],

@@ -3,10 +3,7 @@
  * Same-frame stereo geometry, separate from tracked world-camera placement.
  */
 export type XrViewerFrame = {
-    /**
-     * Unavailability classification.
-     */
-    readonly reason: "not-stereo" | "viewer-unavailable" | "unsupported-view-configuration" | "invalid-view-geometry";
+    readonly reason: XrViewerUnavailableReason;
     readonly source: "unavailable";
     /**
      * Valid centre tracking, if separately available.
@@ -40,8 +37,20 @@ export type XrViewerFrame = {
         XrEyeGeometry
     ];
     readonly source: "runtime-derived";
-    readonly trackingFromHead: Pose2;
+    readonly trackingFromHead: Pose;
 };
+/**
+ * Classified absence of usable stereo observations.
+ */
+export type XrViewerUnavailableReason = "not-stereo" | "viewer-unavailable" | "unsupported-view-configuration" | "invalid-view-geometry";
+/**
+ * Homogeneous depth-clip convention of the rendering API's projection matrix.
+ */
+export type XrDepthRange = "negative-one-to-one" | "zero-to-one";
+/**
+ * Eye identity within the supported primary stereo view configuration.
+ */
+export type XrEye = "left" | "right";
 /**
  * Rigid child-to-parent transform; the caller names both reference spaces.
  */
@@ -50,7 +59,7 @@ export interface Pose {
     readonly position: Vector3;
 }
 /**
- * Child-to-parent orientation.
+ * Scalar-first unit quaternion in a right-handed reference space.
  */
 export interface Quaternion {
     /**
@@ -71,7 +80,7 @@ export interface Quaternion {
     readonly z: number;
 }
 /**
- * Child origin expressed in parent coordinates, in metres.
+ * Metric right/up/back coordinates in the explicitly named reference space.
  */
 export interface Vector3 {
     /**
@@ -91,15 +100,9 @@ export interface Vector3 {
  * One same-frame eye pose and the runtime's column-major projection matrix.
  */
 export interface XrEyeGeometry {
-    /**
-     * Rendering API's clip-depth interval.
-     */
-    readonly depthRange: "negative-one-to-one" | "zero-to-one";
-    /**
-     * Primary eye identity.
-     */
-    readonly eye: "left" | "right";
-    readonly headFromEye: Pose1;
+    readonly depthRange: XrDepthRange;
+    readonly eye: XrEye;
+    readonly headFromEye: Pose;
     /**
      * Unmodified column-major 4-by-4 projection matrix.
      *
@@ -124,18 +127,4 @@ export interface XrEyeGeometry {
         number,
         number
     ];
-}
-/**
- * Rigid child-to-parent transform; the caller names both reference spaces.
- */
-export interface Pose1 {
-    readonly orientation: Quaternion;
-    readonly position: Vector3;
-}
-/**
- * Rigid child-to-parent transform; the caller names both reference spaces.
- */
-export interface Pose2 {
-    readonly orientation: Quaternion;
-    readonly position: Vector3;
 }

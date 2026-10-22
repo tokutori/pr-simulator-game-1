@@ -38,7 +38,6 @@ pub fn export_game_ui_schema(name: &str) -> Result<String, String> {
     output.subschema_for::<crate::xr::XrHeadHudProfile>();
     output.subschema_for::<crate::xr::XrFlightMenuGeometry>();
     output.subschema_for::<crate::xr::XrHeadHudProjection>();
-    output.subschema_for::<crate::xr::XrMenuViewFit>();
     output.subschema_for::<crate::xr::XrInkFit>();
     output.subschema_for::<crate::xr::XrCameraRig>();
     output.subschema_for::<crate::camera::PilotEyePose>();
@@ -121,7 +120,6 @@ pub fn export_game_ui_schema(name: &str) -> Result<String, String> {
         "xr-head-hud-profile" => ("serialize", "XrHeadHudProfile"),
         "xr-flight-menu-geometry" => ("serialize", "XrFlightMenuGeometry"),
         "xr-head-hud-projection" => ("serialize", "XrHeadHudProjection"),
-        "xr-menu-view-fit" => ("serialize", "XrMenuViewFit"),
         "xr-ink-fit" => ("serialize", "XrInkFit"),
         "xr-ink-segment" => ("deserialize", "XrInkSegment"),
         "screen-render-auto" => ("serialize", "ScreenRenderAutoSnapshot"),
