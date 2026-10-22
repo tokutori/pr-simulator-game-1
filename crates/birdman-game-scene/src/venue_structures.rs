@@ -2,7 +2,7 @@
 
 use std::{fmt, sync::OnceLock};
 
-use birdman_game_app::VenueFeaturesError;
+use birdman_game_app::VenueCatalogError;
 use birdman_game_format::VenueFeatureDocument;
 
 static STRUCTURES: OnceLock<Result<[ShoreStructureMesh; 3], VenueStructureError>> = OnceLock::new();
@@ -78,7 +78,7 @@ pub struct ShoreStructureMesh {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum VenueStructureError {
     #[doc = "Original source-document or registered-origin failure."]
-    Source(VenueFeaturesError),
+    Source(VenueCatalogError),
     #[doc = "The named structure kind or footprint cannot form the existing raised presentation."]
     InvalidGeometry(String),
 }

@@ -4,7 +4,6 @@ import { HybridGameSessionBridge, initSync } from "../../web/pkg/birdman_game_wa
 import { createAppSession } from "../../web/src/app/session-factory.js";
 import { projectRuntimePlaybackClock, readRuntimeSessionProjection } from "../../web/src/app/session-runtime-projection.js";
 import { projectRuntimeEnvironment } from "../../web/src/game/runtime-environment.js";
-import { venueMapForEnvironment } from "../../web/src/game/biwa-venue-map.js";
 import { projectRuntimeVenue } from "../../web/src/game/runtime-venue.js";
 import type { TailAppSessionFacade } from "../../web/src/app/session-facade.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
@@ -174,8 +173,6 @@ describe("registered environment and venue projection", () => {
         else expect(environment).toMatchObject({ kind: "available", value: { sky: { kind: "available", value: {
           condition: { sunAzimuthDegrees: 135, sunElevationDegrees: 55, cloudFraction: 0.25, visibilityMeters: 25_000 }
         } } } });
-        const venue = venueMapForEnvironment(environment);
-        expect(venue.kind).toBe(unknown ? "unavailable" : "available");
         expect(projectRuntimeVenue(environment)).toEqual(unknown ? { kind: "unavailable", reason: "environment_unavailable" }
           : { kind: "visible", basis: "registered_origin" });
         const platform = sharedGameUiPlatform();
@@ -204,7 +201,7 @@ describe("registered environment and venue projection", () => {
       expect(snapshot.scenario?.scenario_id).toBe(6);
       const projection = projectRuntimeEnvironment(session.readEnvironment());
       expect(projection).toMatchObject({ kind: "available", value: { identity: snapshot.scenario, localFrame: { kind: "defined" } } });
-      expect(venueMapForEnvironment(projection)).toMatchObject({ kind: "available", value: { origin: "launch-origin-wgs84-35.294075-136.254448" } });
+      expect(projectRuntimeVenue(projection)).toEqual({ kind: "visible", basis: "shared_launch" });
     } finally { session.dispose(); }
   });
 

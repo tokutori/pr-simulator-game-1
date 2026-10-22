@@ -1,15 +1,16 @@
 //! Web-baseline recorded camera geometry and history-independent shot selection.
 
-use std::sync::OnceLock;
-
 use crate::render_pose::FlightRenderPose;
 
 use birdman_game_core::{
     FlightRecord, FlightRecordQueryError, FlightRecordSample, MathError, SessionEndReason,
     UnitQuaternion,
 };
-use birdman_game_format::{FlightRecordTailIdentityDocument, LocalNedFrameDocument, WeatherClass};
-use serde::{Deserialize, Serialize};
+use birdman_game_format::{
+    FixedCameraId, FlightRecordTailIdentityDocument, LocalNedFrameDocument, VenueCameraPoint,
+    WeatherClass,
+};
+use serde::Serialize;
 
 use crate::game_ui::{GameUiPresentationMode, GameUiReplayCamera};
 use birdman_game_app::record_query::RecordedPlaybackSample;
@@ -79,24 +80,6 @@ pub enum ReplayCameraError {
     Geometry(&'static str),
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct VenueCameraPoints {
-    origin_wgs84: birdman_game_format::Wgs84Origin,
-    camera_points: Vec<FixedCameraPoint>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct FixedCameraPoint {
-    id: GameUiReplayCamera,
-    north_meters: f64,
-    east_meters: f64,
-    altitude_meters: f64,
-}
-
-static VENUE: OnceLock<Result<VenueCameraPoints, ReplayCameraError>> = OnceLock::new();
-
 /// Projects the Web-baseline camera from one immutable record and one requested time.
 ///
 /// Track samples are borrowed without allocation. Fixed tracking reconstructs its bounded
@@ -164,7 +147,14 @@ pub fn replay_camera_view(
         let Some(points) = registered_points(record)? else {
             return Ok(view);
         };
-        let Some(point) = points.iter().find(|point| point.id == camera) else {
+        let Some(point) = points.iter().find(|point| {
+            matches!(
+                (point.id, camera),
+                (FixedCameraId::Platform, GameUiReplayCamera::Platform)
+                    | (FixedCameraId::Shore, GameUiReplayCamera::Shore)
+                    | (FixedCameraId::Telephoto, GameUiReplayCamera::Telephoto)
+            )
+        }) else {
             return Ok(view);
         };
         (
@@ -288,7 +278,7 @@ fn select_camera(
 
 fn registered_points(
     record: &FlightRecord,
-) -> Result<Option<&'static [FixedCameraPoint]>, ReplayCameraError> {
+) -> Result<Option<&'static [VenueCameraPoint]>, ReplayCameraError> {
     let identity = record.header().scenario;
     let Ok(selection) = birdman_game_app::HybridSessionPreparation::select_scenario(
         WeatherClass::Typical,
@@ -308,50 +298,11 @@ fn registered_points(
 
 fn points_for_frame(
     frame: Option<&LocalNedFrameDocument>,
-) -> Result<Option<&'static [FixedCameraPoint]>, ReplayCameraError> {
+) -> Result<Option<&'static [VenueCameraPoint]>, ReplayCameraError> {
     let Some(frame) = frame else { return Ok(None) };
-    let expected = &birdman_game_app::bundled_environment()
-        .map_err(|_| ReplayCameraError::InvalidVenue)?
-        .document()
-        .local_frame;
-    let venue = VENUE
-        .get_or_init(|| {
-            let venue: VenueCameraPoints =
-                serde_json::from_str(include_str!("../../../assets/biwa-analysis-map.json"))
-                    .map_err(|_| ReplayCameraError::InvalidVenue)?;
-            let fixed = [
-                GameUiReplayCamera::Platform,
-                GameUiReplayCamera::Shore,
-                GameUiReplayCamera::Telephoto,
-            ];
-            if venue.camera_points.len() != fixed.len()
-                || fixed.iter().any(|id| {
-                    venue
-                        .camera_points
-                        .iter()
-                        .filter(|point| point.id == *id)
-                        .count()
-                        != 1
-                })
-                || venue.camera_points.iter().any(|point| {
-                    [point.north_meters, point.east_meters, point.altitude_meters]
-                        .iter()
-                        .any(|value| !value.is_finite())
-                })
-            {
-                return Err(ReplayCameraError::InvalidVenue);
-            }
-            Ok(venue)
-        })
-        .as_ref()
-        .map_err(|error| *error)?;
-    if frame != expected
-        || frame.latitude_degrees != venue.origin_wgs84.latitude_degrees
-        || frame.longitude_degrees != venue.origin_wgs84.longitude_degrees
-    {
-        return Ok(None);
-    }
-    Ok(Some(&venue.camera_points))
+    let venue =
+        birdman_game_app::registered_venue().map_err(|_| ReplayCameraError::InvalidVenue)?;
+    Ok((frame == &venue.local_frame).then_some(venue.analysis.camera_points.as_slice()))
 }
 
 fn sample_seconds(record: &FlightRecord, sample: &FlightRecordSample) -> f64 {

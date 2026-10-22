@@ -1,16 +1,8 @@
-import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { rotateVec3, vec3 } from "../../web/src/render/contracts/math.js";
-import { currentVenueMapFixture } from "./current-venue-fixture.js";
 import { recordedCameraFixture } from "./recorded-camera-fixture.js";
 
 describe("shared recorded cinematic camera projection", () => {
-  it("binds fixed camera points to the versioned registered Lake Biwa venue", () => {
-    const venue = currentVenueMapFixture();
-    if (venue.kind !== "available") throw new Error("Missing registered Lake Biwa venue");
-    expect(venue.value.cameraPointsSha256).toBe(createHash("sha256").update(JSON.stringify(venue.value.cameraPoints)).digest("hex"));
-  });
-
   it("projects complete recorded aircraft controls and absolute camera axes from one Rust query", () => {
     const session = recordedCameraFixture();
     try {

@@ -4,7 +4,6 @@ use birdman_game_core::{
     FlightRecord, FlightRecordPlaybackSample, FlightRecordQueryError, FlightRecordSample, NedPoint,
     SessionEndReason, WindError,
 };
-use serde::Deserialize;
 
 use super::{environment, types::*};
 
@@ -454,43 +453,6 @@ fn scale_bar_distance(span: f64) -> f64 {
     factor * magnitude
 }
 
-#[cfg(test)]
-mod presentation_tests {
-    use super::*;
-
-    #[test]
-    fn tick_labels_preserve_ecmascript_fixed_rounding_and_negative_zero() {
-        for (value, expected) in [
-            (0.0, "0"),
-            (-0.0, "0"),
-            (-0.001, "0"),
-            (0.125, "0.13"),
-            (-0.125, "-0.13"),
-            (2.675, "2.67"),
-            (10.25, "10.3"),
-            (-10.25, "-10.3"),
-            (100.5, "101"),
-            (1.0e21, "1e+21"),
-            (1.2e30, "1.2e+30"),
-        ] {
-            assert_eq!(format_chart_tick(value), expected);
-        }
-    }
-
-    #[test]
-    fn map_scale_uses_the_web_one_two_five_policy() {
-        for (span, expected) in [
-            (4.0, 1.0),
-            (8.0, 2.0),
-            (20.0, 5.0),
-            (100.0, 20.0),
-            (1000.0, 200.0),
-        ] {
-            assert_eq!(scale_bar_distance(span), expected);
-        }
-    }
-}
-
 pub(super) fn chart_cursor(
     id: &str,
     kind: GameUiAnalysisChart,
@@ -701,11 +663,6 @@ fn wind_grid(
     Ok(())
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct VenueMapAsset {
-    shorelines_north_east_meters: Vec<Vec<[f64; 2]>>,
-}
 struct VenueGeometry {
     lines: Vec<GameUiChartSeries>,
     markers: Vec<GameUiChartMarker>,
@@ -768,11 +725,9 @@ fn venue(chart: &mut GameUiChart, bounds: [f64; 4]) -> Result<(), GameUiError> {
 }
 
 fn build_venue() -> Result<VenueGeometry, GameUiError> {
-    let map: VenueMapAsset =
-        serde_json::from_str(include_str!("../../../../assets/biwa-analysis-map.json"))
-            .map_err(|_| GameUiError::InvalidVenueMap)?;
-    let features =
-        birdman_game_app::registered_venue_features().map_err(|_| GameUiError::InvalidVenueMap)?;
+    let catalog = birdman_game_app::registered_venue().map_err(|_| GameUiError::InvalidVenueMap)?;
+    let map = &catalog.analysis;
+    let features = &catalog.features;
     let to_points = |positions: &[[f64; 2]]| {
         positions
             .iter()
@@ -970,4 +925,71 @@ fn progress_color(progress: f64) -> String {
         (lower[index] + (upper[index] - lower[index]) * ratio).round() as u8
     });
     format!("#{:02x}{:02x}{:02x}", channels[0], channels[1], channels[2])
+}
+
+#[cfg(test)]
+mod presentation_tests {
+    use super::*;
+
+    #[test]
+    fn tick_labels_preserve_ecmascript_fixed_rounding_and_negative_zero() {
+        for (value, expected) in [
+            (0.0, "0"),
+            (-0.0, "0"),
+            (-0.001, "0"),
+            (0.125, "0.13"),
+            (-0.125, "-0.13"),
+            (2.675, "2.67"),
+            (10.25, "10.3"),
+            (-10.25, "-10.3"),
+            (100.5, "101"),
+            (1.0e21, "1e+21"),
+            (1.2e30, "1.2e+30"),
+        ] {
+            assert_eq!(format_chart_tick(value), expected);
+        }
+    }
+
+    #[test]
+    fn map_scale_uses_the_web_one_two_five_policy() {
+        for (span, expected) in [
+            (4.0, 1.0),
+            (8.0, 2.0),
+            (20.0, 5.0),
+            (100.0, 20.0),
+            (1000.0, 200.0),
+        ] {
+            assert_eq!(scale_bar_distance(span), expected);
+        }
+    }
+
+    #[test]
+    fn venue_projection_uses_registered_shorelines_features_and_platform_geometry() {
+        let catalog = birdman_game_app::registered_venue().unwrap();
+        let geometry = build_venue().unwrap();
+        let shoreline = &geometry.lines[0].points;
+        for (point, [north, east]) in shoreline
+            .iter()
+            .zip(&catalog.analysis.shorelines_north_east_meters[0])
+        {
+            assert_eq!([point.x, point.y], [*east, *north]);
+        }
+        assert!(
+            geometry
+                .markers
+                .iter()
+                .any(|marker| marker.label == "松原水泳場")
+        );
+        let corners = &geometry.lines.last().unwrap().points;
+        assert_eq!(corners.len(), 5);
+        assert_eq!(corners.first(), corners.last());
+        let platform = birdman_game_app::launch_venue().unwrap().platform;
+        let distance = |first: &GameUiChartPoint, second: &GameUiChartPoint| {
+            (first.x - second.x).hypot(first.y - second.y)
+        };
+        assert!((distance(&corners[0], &corners[1]) - platform.width_meters).abs() < 1e-10);
+        assert!((distance(&corners[1], &corners[2]) - platform.length_meters).abs() < 1e-10);
+        assert!(corners[0].y + corners[1].y > corners[2].y + corners[3].y);
+        assert!(corners[0].x + corners[1].x < corners[2].x + corners[3].x);
+    }
 }

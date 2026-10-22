@@ -1519,6 +1519,7 @@ name = "birdman-game-format"
 version = "0.1.0"
 dependencies = [
  "birdman-game-core",
+ "ryu-js",
  "schemars",
  "serde",
  "serde_json",

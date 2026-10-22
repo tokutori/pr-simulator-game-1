@@ -1,12 +1,12 @@
 use std::sync::OnceLock;
 
 use birdman_game_format::{
-    EnvironmentFormatError, VenueFeaturesDocument, VenueFormatError, Wgs84Origin,
+    EnvironmentFormatError, LocalNedFrameDocument, VenueAnalysisDocument, VenueFeaturesDocument,
+    VenueFormatError, Wgs84Origin,
 };
 use serde::Deserialize;
 
-static VENUE_FEATURES: OnceLock<Result<VenueFeaturesDocument, VenueFeaturesError>> =
-    OnceLock::new();
+static VENUE: OnceLock<Result<VenueCatalog, VenueCatalogError>> = OnceLock::new();
 static LAUNCH_VENUE: OnceLock<Result<LaunchVenue, LaunchVenueError>> = OnceLock::new();
 
 /// Shared geographic origin and approximate launch-platform configuration.
@@ -89,47 +89,76 @@ fn decode(json: &str) -> Result<LaunchVenue, LaunchVenueError> {
     Ok(venue)
 }
 
-/// Rejection of shared geographic features or their registered origin.
+/// Validated geographic sources and the complete local frame registered for them.
+#[derive(Clone, Debug, PartialEq)]
+pub struct VenueCatalog {
+    /// Source features shared by map and mesh projections.
+    pub features: VenueFeaturesDocument,
+    /// Shoreline paths and fixed camera positions shared by Analysis and Replay.
+    pub analysis: VenueAnalysisDocument,
+    /// Registered frame including the water datum used by camera heights.
+    pub local_frame: LocalNedFrameDocument,
+}
+
+/// Rejection of shared geographic sources or their registered origin.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum VenueFeaturesError {
+pub enum VenueCatalogError {
     /// Original source-document validation failure.
     Document(VenueFormatError),
     /// Launch configuration admission failure.
     Launch(LaunchVenueError),
     /// Environment admission failure.
     Environment(EnvironmentFormatError),
-    /// Feature origin differs from the launch or environment frame.
+    /// Source origin differs from the launch or environment frame.
     UnregisteredOrigin,
 }
 
-impl core::fmt::Display for VenueFeaturesError {
+impl core::fmt::Display for VenueCatalogError {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(formatter, "registered venue: {self:?}")
     }
 }
 
-impl std::error::Error for VenueFeaturesError {}
+impl std::error::Error for VenueCatalogError {}
 
-/// Borrows one decoded feature catalog shared by map, terrain and structure projections.
-pub fn registered_venue_features() -> Result<&'static VenueFeaturesDocument, VenueFeaturesError> {
-    VENUE_FEATURES
-        .get_or_init(|| decode_features(birdman_game_content::VENUE_FEATURES_JSON))
+/// Borrows the catalog decoded and registered once for map, scene and camera consumers.
+pub fn registered_venue() -> Result<&'static VenueCatalog, VenueCatalogError> {
+    VENUE
+        .get_or_init(|| {
+            decode_catalog(
+                birdman_game_content::VENUE_FEATURES_JSON,
+                birdman_game_content::VENUE_ANALYSIS_JSON,
+            )
+        })
         .as_ref()
         .map_err(Clone::clone)
 }
 
-fn decode_features(bytes: &[u8]) -> Result<VenueFeaturesDocument, VenueFeaturesError> {
-    let source = VenueFeaturesDocument::decode_json(bytes).map_err(VenueFeaturesError::Document)?;
-    let launch = launch_venue().map_err(VenueFeaturesError::Launch)?;
-    let environment = crate::bundled_environment().map_err(VenueFeaturesError::Environment)?;
+/// Borrows the feature portion used by terrain and structure projections.
+pub fn registered_venue_features() -> Result<&'static VenueFeaturesDocument, VenueCatalogError> {
+    registered_venue().map(|catalog| &catalog.features)
+}
+
+fn decode_catalog(features: &[u8], analysis: &[u8]) -> Result<VenueCatalog, VenueCatalogError> {
+    let features =
+        VenueFeaturesDocument::decode_json(features).map_err(VenueCatalogError::Document)?;
+    let analysis =
+        VenueAnalysisDocument::decode_json(analysis).map_err(VenueCatalogError::Document)?;
+    let launch = launch_venue().map_err(VenueCatalogError::Launch)?;
+    let environment = crate::bundled_environment().map_err(VenueCatalogError::Environment)?;
     let frame = &environment.document().local_frame;
-    if source.origin_wgs84 != launch.origin_wgs84
-        || source.origin_wgs84.latitude_degrees != frame.latitude_degrees
-        || source.origin_wgs84.longitude_degrees != frame.longitude_degrees
+    if features.origin_wgs84 != launch.origin_wgs84
+        || analysis.origin_wgs84 != launch.origin_wgs84
+        || launch.origin_wgs84.latitude_degrees != frame.latitude_degrees
+        || launch.origin_wgs84.longitude_degrees != frame.longitude_degrees
     {
-        return Err(VenueFeaturesError::UnregisteredOrigin);
+        return Err(VenueCatalogError::UnregisteredOrigin);
     }
-    Ok(source)
+    Ok(VenueCatalog {
+        features,
+        analysis,
+        local_frame: frame.clone(),
+    })
 }
 
 #[cfg(test)]
@@ -137,21 +166,41 @@ mod tests {
     use super::*;
 
     #[test]
-    fn registered_features_share_storage_and_require_the_registered_origin() {
+    fn registered_sources_share_storage_and_require_the_registered_origin() {
+        let catalog = registered_venue().unwrap();
+        assert!(std::ptr::eq(catalog, registered_venue().unwrap()));
         let source = registered_venue_features().unwrap();
-        assert!(std::ptr::eq(source, registered_venue_features().unwrap()));
+        assert!(std::ptr::eq(source, &catalog.features));
         assert_eq!(source.origin_wgs84, launch_venue().unwrap().origin_wgs84);
+        assert_eq!(catalog.analysis.origin_wgs84, source.origin_wgs84);
+        assert_eq!(
+            catalog.local_frame,
+            crate::bundled_environment().unwrap().document().local_frame
+        );
+        for analysis in [false, true] {
+            let mut features: serde_json::Value =
+                serde_json::from_slice(birdman_game_content::VENUE_FEATURES_JSON).unwrap();
+            let mut map: serde_json::Value =
+                serde_json::from_slice(birdman_game_content::VENUE_ANALYSIS_JSON).unwrap();
+            let document = if analysis { &mut map } else { &mut features };
+            document["originWgs84"]["latitudeDegrees"] = 0.into();
+            assert_eq!(
+                decode_catalog(
+                    &serde_json::to_vec(&features).unwrap(),
+                    &serde_json::to_vec(&map).unwrap()
+                ),
+                Err(VenueCatalogError::UnregisteredOrigin)
+            );
+        }
         let mut document: serde_json::Value =
             serde_json::from_slice(birdman_game_content::VENUE_FEATURES_JSON).unwrap();
-        document["originWgs84"]["latitudeDegrees"] = 0.into();
-        assert_eq!(
-            decode_features(&serde_json::to_vec(&document).unwrap()),
-            Err(VenueFeaturesError::UnregisteredOrigin)
-        );
         document["schemaVersion"] = 2.into();
         assert_eq!(
-            decode_features(&serde_json::to_vec(&document).unwrap()),
-            Err(VenueFeaturesError::Document(
+            decode_catalog(
+                &serde_json::to_vec(&document).unwrap(),
+                birdman_game_content::VENUE_ANALYSIS_JSON
+            ),
+            Err(VenueCatalogError::Document(
                 VenueFormatError::UnsupportedSchema(2)
             ))
         );

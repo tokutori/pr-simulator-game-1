@@ -16,3 +16,6 @@ pub use structure::{StructuralAttachment, StructuralGeometry, StructuralPart, St
 
 /// Original registered geographic features and their source metadata.
 pub const VENUE_FEATURES_JSON: &[u8] = include_bytes!("../../../assets/biwa-venue-features.json");
+
+/// Original registered Analysis map and fixed-camera source metadata.
+pub const VENUE_ANALYSIS_JSON: &[u8] = include_bytes!("../../../assets/biwa-analysis-map.json");

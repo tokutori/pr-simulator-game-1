@@ -1,10 +1,21 @@
 import { describe, expect, it, vi } from "vitest";
+import venueFeatures from "../../assets/biwa-venue-features.json";
 import { BufferAttribute, DoubleSide } from "three";
 import "./lake-model-fixture.js";
 import { ShoreStructureGeometryBridge } from "../../web/pkg/birdman_game_wasm.js";
 import { shoreStructureMesh } from "../../web/src/render/engines/three/lake-venue-mesh.js";
 
 describe("OSM shoreline structure projection", () => {
+  it("retains attributed OSM source features", () => {
+    expect(venueFeatures.license).toBe("ODbL-1.0");
+    expect(venueFeatures.attribution).toBe("© OpenStreetMap contributors");
+    expect(venueFeatures.sourceSnapshotSha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(venueFeatures.features).toHaveLength(50);
+    expect(venueFeatures.features.map((feature) => feature.kind)).toEqual(expect.arrayContaining([
+      "beach", "woodland", "tree-row", "pier", "quay", "breakwater"
+    ]));
+  });
+
   it.each(["pier", "quay", "breakwater"] as const)("projects the shared raised %s mesh and material", (kind) => {
     const mesh = shoreStructureMesh(kind);
     const geometry = mesh.geometry;

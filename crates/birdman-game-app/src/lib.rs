@@ -21,8 +21,8 @@ pub use hybrid_session::{
     registered_aircraft,
 };
 pub use venue::{
-    LaunchPlatform, LaunchVenue, LaunchVenueError, VenueFeaturesError, launch_venue,
-    registered_venue_features,
+    LaunchPlatform, LaunchVenue, LaunchVenueError, VenueCatalog, VenueCatalogError, launch_venue,
+    registered_venue, registered_venue_features,
 };
 
 /// Default public flight assistance.

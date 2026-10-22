@@ -252,7 +252,7 @@ GameUiView / GameUiFrame → platform renderer → DOM / VR panel / Bevy entity
 - GPU mesh、material、shader、render target、entity/DOMはadapterが所有する。
 - 共有モデルはenvironmentから波スペクトル・空・cloud・地形・機体形状を生成し、adapterが成分選択・uniform・GLSL/WGSL・engine座標へ変換する。
 - 変更のたびに巨大なsceneを再送しない。
-- 地物の原文はcontent、形式と座標検証はformat、登録原点との整合と一度限りの初期化はappが所有する。UIの地図投影と地形・構造物meshは同じ登録済みcatalogを借用する。
+- 地物・Analysis地図・固定camera点の原文はcontent、形式・座標・camera点のhash検証はformat、登録原点と完全なlocal frameの整合および一度限りの初期化はappのVenueCatalogが所有する。地図・Replay camera・地形・構造物は同じcatalogを借用し、presentationは描画用の派生geometryをcacheする。
 - appの`EnvironmentSelection`が表示環境のsourceと完全identityを選ぶ。Titleは既定Typical・展示seed、Setupは保持中の気象・seed、飛行とResultは封印済み条件、ReplayとAttractは各recordの条件を使う。
 - 両adapterは同じ選択keyで環境交換を判定し、共有projectionの波・天空・会場可用性を反映する。Webの初期描画も同じ展示projectionから準備する。
 - archiveの会場原点は保存された完全identityに対応する登録環境から得る。登録原点と水面datumが一致するときに会場を表示する。

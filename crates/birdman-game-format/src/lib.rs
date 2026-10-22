@@ -12,8 +12,8 @@ mod tail_input;
 mod venue;
 
 pub use venue::{
-    MAX_VENUE_FEATURES_JSON_BYTES, VenueFeatureDocument, VenueFeaturesDocument, VenueFormatError,
-    Wgs84Origin,
+    FixedCameraId, MAX_VENUE_JSON_BYTES, VenueAnalysisDocument, VenueCameraPoint,
+    VenueFeatureDocument, VenueFeaturesDocument, VenueFormatError, Wgs84Origin,
 };
 
 pub use environment::{

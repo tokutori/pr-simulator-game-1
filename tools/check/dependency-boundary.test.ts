@@ -30,7 +30,7 @@ const schemaDependency = {
   rename: null, optional: true, uses_default_features: false, features: ["derive"]
 };
 
-const chartNumberDependency = {
+const jsonNumberDependency = {
   name: "ryu-js", kind: null, target: null, req: "=1.0.3",
   source: "registry+https://github.com/rust-lang/crates.io-index", registry: null,
   rename: null, optional: false, uses_default_features: false, features: []
@@ -97,7 +97,7 @@ describe("core proof dependency boundary", () => {
 });
 
 describe("core polynomial roots boundary", () => {
-  const polynomial = { ...chartNumberDependency, name: "polycool", req: "=0.4.0", features: ["libm"] };
+  const polynomial = { ...jsonNumberDependency, name: "polycool", req: "=0.4.0", features: ["libm"] };
   it("allows the pinned no_std root solver only in core", () => {
     expect(() => { assertDependencyBoundary(core(polynomial)); }).not.toThrow();
     expect(() => { assertDependencyBoundary([{ name: "birdman-game-presentation", dependencies: [polynomial] }]); })
@@ -112,7 +112,7 @@ describe("core polynomial roots boundary", () => {
 });
 
 describe("shared image operations boundary", () => {
-  const image = { ...chartNumberDependency, name: "image", req: "=0.25.10" };
+  const image = { ...jsonNumberDependency, name: "image", req: "=0.25.10" };
   it("allows codec-free operations only in the scene crate", () => {
     expect(() => { assertDependencyBoundary([{ name: "birdman-game-scene", dependencies: [image] }]); }).not.toThrow();
     expect(() => { assertDependencyBoundary([{ name: "birdman-game-presentation", dependencies: [image] }]); }).toThrow("Forbidden dependency");
@@ -129,7 +129,7 @@ describe("shared image operations boundary", () => {
 function versionedPackages(difference: Readonly<Record<string, unknown>>): unknown[] {
   return [
     { name: "birdman-game-content", dependencies: [{ ...numericalDependency, ...difference }] },
-    { name: "birdman-game-presentation", dependencies: [{ ...chartNumberDependency, ...difference }] },
+    { name: "birdman-game-presentation", dependencies: [{ ...jsonNumberDependency, ...difference }] },
     { name: "birdman-game-bevy", dependencies: [{ ...nativeEngineDependency, ...difference }] },
     ...schemaProvider("birdman-game-format", { ...schemaDependency, ...difference }),
     ...schemaProvider("birdman-game-app", { ...schemaDependency, ...difference }),
@@ -171,21 +171,23 @@ describe("Cargo dependency boundary", () => {
     expect(() => { assertDependencyBoundary(core({ name: "wasm-bindgen" })); }).toThrow("Forbidden dependency");
   });
 
-  it("allows the fixed ECMAScript number formatter only in shared session", () => {
-    expect(() => { assertDependencyBoundary([{ name: "birdman-game-presentation", dependencies: [chartNumberDependency] }]); }).not.toThrow();
+  it.each(["birdman-game-format", "birdman-game-presentation"])("allows the fixed ECMAScript formatter in the shared JSON producer %s", (name) => {
+    expect(() => { assertDependencyBoundary([{ name, dependencies: [jsonNumberDependency] }]); }).not.toThrow();
   });
 
-  it.each(["birdman-game-core", "birdman-game-format", "birdman-game-cli", "birdman-game-wasm", "birdman-game-bevy"])(
-    "rejects a direct chart-number dependency in %s", (name) => {
-      expect(() => { assertDependencyBoundary([{ name, dependencies: [chartNumberDependency] }]); }).toThrow("Forbidden dependency");
+  it.each(["birdman-game-core", "birdman-game-app", "birdman-game-scene", "birdman-game-cli", "birdman-game-wasm", "birdman-game-bevy"])(
+    "rejects a direct JSON-number dependency in %s", (name) => {
+      expect(() => { assertDependencyBoundary([{ name, dependencies: [jsonNumberDependency] }]); }).toThrow("Forbidden dependency");
     }
   );
 
   it.each([{ req: "^1.0.3" }, { kind: "dev" }, { kind: "build" },
     { target: 'cfg(target_arch = "wasm32")' }, { features: ["no-panic"] }, { uses_default_features: true },
     { optional: true }, { rename: "formatter" }, { source: "git+https://example.invalid/ryu-js" }, { path: "../ryu-js" }])(
-    "rejects broader chart-number dependencies %j", (difference) => {
-      expect(() => { assertDependencyBoundary([{ name: "birdman-game-presentation", dependencies: [{ ...chartNumberDependency, ...difference }] }]); }).toThrow("Forbidden dependency");
+    "rejects broader JSON-number dependencies %j", (difference) => {
+      for (const name of ["birdman-game-format", "birdman-game-presentation"]) {
+        expect(() => { assertDependencyBoundary([{ name, dependencies: [{ ...jsonNumberDependency, ...difference }] }]); }).toThrow("Forbidden dependency");
+      }
     }
   );
   it("limits the native text patch to its excluded vendor directory", () => {

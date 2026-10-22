@@ -5,9 +5,10 @@ use alloc::{
     vec::Vec,
 };
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 
-/// Maximum encoded venue-feature document accepted before deserialization.
-pub const MAX_VENUE_FEATURES_JSON_BYTES: usize = 1024 * 1024;
+/// Maximum encoded geographic source document accepted before deserialization.
+pub const MAX_VENUE_JSON_BYTES: usize = 1024 * 1024;
 
 /// Geographic origin of a local north/east coordinate frame.
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
@@ -45,6 +46,58 @@ pub struct VenueFeaturesDocument {
     pub features: Vec<VenueFeatureDocument>,
 }
 
+/// Registered fixed-shot source identity, independent of UI camera selection.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FixedCameraId {
+    /// Camera beside the launch platform.
+    Platform,
+    /// Camera on the nearby shore.
+    Shore,
+    /// Distant tracking camera.
+    Telephoto,
+}
+
+impl FixedCameraId {
+    fn source_name(self) -> &'static str {
+        match self {
+            Self::Platform => "platform",
+            Self::Shore => "shore",
+            Self::Telephoto => "telephoto",
+        }
+    }
+}
+
+/// Fixed camera position in the registered local north/east frame.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct VenueCameraPoint {
+    /// Source camera identity.
+    pub id: FixedCameraId,
+    /// Position north of the registered origin in metres.
+    pub north_meters: f64,
+    /// Position east of the registered origin in metres.
+    pub east_meters: f64,
+    /// Height above the registered water datum in metres.
+    pub altitude_meters: f64,
+}
+
+/// Shared shoreline and fixed-camera source fields used by Analysis and Replay.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VenueAnalysisDocument {
+    /// Source schema version.
+    pub schema_version: u32,
+    /// Geographic origin used by paths and camera positions.
+    pub origin_wgs84: Wgs84Origin,
+    /// Local north/east shoreline fragments in metres.
+    pub shorelines_north_east_meters: Vec<Vec<[f64; 2]>>,
+    /// One position for each registered fixed camera.
+    pub camera_points: Vec<VenueCameraPoint>,
+    /// SHA-256 of the compact ECMAScript JSON camera-point array.
+    pub camera_points_sha256: String,
+}
+
 /// Rejection of a venue-feature document before registration or projection.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum VenueFormatError {
@@ -58,20 +111,118 @@ pub enum VenueFormatError {
     InvalidOrigin,
     /// A local path contains a non-finite coordinate.
     NonFiniteCoordinate,
+    /// Fixed camera identities are duplicated or incomplete.
+    InvalidCameraPoints,
+    /// Camera-point content differs from its declared digest.
+    CameraPointsHashMismatch,
 }
 
 impl core::fmt::Display for VenueFormatError {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(formatter, "venue features: {self:?}")
+        write!(formatter, "venue source: {self:?}")
     }
 }
 
 impl core::error::Error for VenueFormatError {}
 
+impl Wgs84Origin {
+    fn validate(self) -> Result<(), VenueFormatError> {
+        if !(-90.0..=90.0).contains(&self.latitude_degrees)
+            || !(-180.0..=180.0).contains(&self.longitude_degrees)
+        {
+            return Err(VenueFormatError::InvalidOrigin);
+        }
+        Ok(())
+    }
+}
+
+impl VenueAnalysisDocument {
+    /// Decodes the bounded map source and validates coordinates and camera integrity.
+    pub fn decode_json(bytes: &[u8]) -> Result<Self, VenueFormatError> {
+        if bytes.len() > MAX_VENUE_JSON_BYTES {
+            return Err(VenueFormatError::InputTooLarge);
+        }
+        let document: Self = serde_json::from_slice(bytes)
+            .map_err(|cause| VenueFormatError::InvalidJson(cause.to_string()))?;
+        document.validate()?;
+        Ok(document)
+    }
+
+    /// Validates the shared source contract before catalog registration.
+    pub fn validate(&self) -> Result<(), VenueFormatError> {
+        if self.schema_version != 1 {
+            return Err(VenueFormatError::UnsupportedSchema(self.schema_version));
+        }
+        self.origin_wgs84.validate()?;
+        if self
+            .shorelines_north_east_meters
+            .iter()
+            .flatten()
+            .flatten()
+            .chain(self.camera_points.iter().flat_map(|point| {
+                [
+                    &point.north_meters,
+                    &point.east_meters,
+                    &point.altitude_meters,
+                ]
+            }))
+            .any(|coordinate| !coordinate.is_finite())
+        {
+            return Err(VenueFormatError::NonFiniteCoordinate);
+        }
+        let identities = [
+            FixedCameraId::Platform,
+            FixedCameraId::Shore,
+            FixedCameraId::Telephoto,
+        ];
+        if self.camera_points.len() != identities.len()
+            || identities.iter().any(|id| {
+                self.camera_points
+                    .iter()
+                    .filter(|point| point.id == *id)
+                    .count()
+                    != 1
+            })
+        {
+            return Err(VenueFormatError::InvalidCameraPoints);
+        }
+        if self.camera_points_sha256 != camera_points_hash(&self.camera_points) {
+            return Err(VenueFormatError::CameraPointsHashMismatch);
+        }
+        Ok(())
+    }
+}
+
+fn camera_points_hash(points: &[VenueCameraPoint]) -> String {
+    let mut digest = Sha256::new();
+    let mut number = ryu_js::Buffer::new();
+    digest.update(b"[");
+    for (index, point) in points.iter().enumerate() {
+        if index > 0 {
+            digest.update(b",");
+        }
+        digest.update(b"{\"id\":\"");
+        digest.update(point.id.source_name());
+        digest.update(b"\",\"northMeters\":");
+        digest.update(number.format_finite(point.north_meters));
+        digest.update(b",\"eastMeters\":");
+        digest.update(number.format_finite(point.east_meters));
+        digest.update(b",\"altitudeMeters\":");
+        digest.update(number.format_finite(point.altitude_meters));
+        digest.update(b"}");
+    }
+    digest.update(b"]");
+    digest
+        .finalize()
+        .iter()
+        .map(|byte| alloc::format!("{byte:02x}"))
+        .collect()
+}
+
 impl VenueFeaturesDocument {
     /// Decodes a bounded source document and validates coordinates and schema.
     pub fn decode_json(bytes: &[u8]) -> Result<Self, VenueFormatError> {
-        if bytes.len() > MAX_VENUE_FEATURES_JSON_BYTES {
+        if bytes.len() > MAX_VENUE_JSON_BYTES {
             return Err(VenueFormatError::InputTooLarge);
         }
         let document: Self = serde_json::from_slice(bytes)
@@ -85,11 +236,7 @@ impl VenueFeaturesDocument {
         if self.schema_version != 1 {
             return Err(VenueFormatError::UnsupportedSchema(self.schema_version));
         }
-        if !(-90.0..=90.0).contains(&self.origin_wgs84.latitude_degrees)
-            || !(-180.0..=180.0).contains(&self.origin_wgs84.longitude_degrees)
-        {
-            return Err(VenueFormatError::InvalidOrigin);
-        }
+        self.origin_wgs84.validate()?;
         if self.features.iter().any(|feature| {
             feature
                 .north_east_meters
@@ -109,6 +256,81 @@ mod tests {
     use alloc::vec;
 
     const REGISTERED: &[u8] = include_bytes!("../../../assets/biwa-venue-features.json");
+    const ANALYSIS: &[u8] = include_bytes!("../../../assets/biwa-analysis-map.json");
+
+    #[test]
+    fn camera_digest_matches_ecmascript_integer_fraction_exponent_and_negative_zero_formatting() {
+        let mut source = VenueAnalysisDocument::decode_json(ANALYSIS).unwrap();
+        for (point, [north, east, altitude]) in source.camera_points.iter_mut().zip([
+            [-0.0, 0.000001, 1e21],
+            [1.25, -12.5, 0.0000001],
+            [1.0, 2.0, 3.0],
+        ]) {
+            point.north_meters = north;
+            point.east_meters = east;
+            point.altitude_meters = altitude;
+        }
+        assert_eq!(
+            camera_points_hash(&source.camera_points),
+            "b8ec12ed26646f07f8979baae82e79ff0d7ac5b03fa25ee8b0f92ee6b2289125"
+        );
+    }
+
+    #[test]
+    fn analysis_source_requires_bounded_valid_coordinates_unique_cameras_and_matching_hash() {
+        let original = VenueAnalysisDocument::decode_json(ANALYSIS).unwrap();
+        assert_eq!(original.camera_points.len(), 3);
+        assert!(!original.shorelines_north_east_meters.is_empty());
+        assert_eq!(
+            VenueAnalysisDocument::decode_json(&vec![b' '; MAX_VENUE_JSON_BYTES + 1]),
+            Err(VenueFormatError::InputTooLarge)
+        );
+        assert!(matches!(
+            VenueAnalysisDocument::decode_json(b"{"),
+            Err(VenueFormatError::InvalidJson(_))
+        ));
+        let mut source = original.clone();
+        source.schema_version = 2;
+        assert_eq!(
+            source.validate(),
+            Err(VenueFormatError::UnsupportedSchema(2))
+        );
+        for coordinate in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let mut source = original.clone();
+            source.camera_points[0].altitude_meters = coordinate;
+            assert_eq!(
+                source.validate(),
+                Err(VenueFormatError::NonFiniteCoordinate)
+            );
+            source = original.clone();
+            source.shorelines_north_east_meters[0][0][0] = coordinate;
+            assert_eq!(
+                source.validate(),
+                Err(VenueFormatError::NonFiniteCoordinate)
+            );
+        }
+        let mut source = original.clone();
+        source.camera_points[1].id = source.camera_points[0].id;
+        assert_eq!(
+            source.validate(),
+            Err(VenueFormatError::InvalidCameraPoints)
+        );
+        source = original.clone();
+        source.camera_points.pop();
+        assert_eq!(
+            source.validate(),
+            Err(VenueFormatError::InvalidCameraPoints)
+        );
+        source = original.clone();
+        source.camera_points[0].north_meters += 1.0;
+        assert_eq!(
+            source.validate(),
+            Err(VenueFormatError::CameraPointsHashMismatch)
+        );
+        source = original;
+        source.shorelines_north_east_meters.clear();
+        source.validate().unwrap();
+    }
 
     #[test]
     fn source_metadata_and_shared_feature_paths_are_admitted() {
@@ -123,7 +345,7 @@ mod tests {
     #[test]
     fn bounded_decoder_preserves_json_diagnostics_and_rejects_unknown_schema() {
         assert_eq!(
-            VenueFeaturesDocument::decode_json(&vec![b' '; MAX_VENUE_FEATURES_JSON_BYTES + 1]),
+            VenueFeaturesDocument::decode_json(&vec![b' '; MAX_VENUE_JSON_BYTES + 1]),
             Err(VenueFormatError::InputTooLarge)
         );
         let Err(VenueFormatError::InvalidJson(cause)) = VenueFeaturesDocument::decode_json(b"{")

@@ -74,8 +74,8 @@ function isNativeTextDependency(crate: string, dependency: Record<string, unknow
     && dependency.features.includes("complex-scripts");
 }
 
-function isSharedChartNumberDependency(crate: string, dependency: Record<string, unknown>): boolean {
-  return crate === "birdman-game-presentation"
+function isSharedJsonNumberDependency(crate: string, dependency: Record<string, unknown>): boolean {
+  return ["birdman-game-format", "birdman-game-presentation"].includes(crate)
     && dependency.name === "ryu-js"
     && dependency.kind === null
     && dependency.target === null
@@ -238,7 +238,7 @@ export function assertDependencyBoundary(packages: readonly unknown[]): void {
       }
       if (!permitted.includes(dependencyName)
         && !isNativeTextDependency(name, dependency)
-        && !isSharedChartNumberDependency(name, dependency)
+        && !isSharedJsonNumberDependency(name, dependency)
         && !isSharedImageOperationsDependency(name, dependency)
         && !isPresentationSceneTestDependency(name, dependency)
         && !isHostNumericalTestDependency(name, dependency)
