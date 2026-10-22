@@ -5,7 +5,10 @@ import { composePose, IDENTITY_POSE, pose, quaternion, transformPoint, vec3 } fr
 import { headPlaneFitsViews, projectHeadPoint, unavailableViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
 import type { ViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
 import { captureConfiguredViewerFrame } from "../../web/src/render/engines/three/viewer-frame.js";
-import { fitMenuView } from "../../web/src/presentation/menu-view-fit.js";
+import { xr_menu_view_fit_json } from "../../web/pkg/birdman_game_wasm.js";
+import type { Pose } from "../../web/src/render/contracts/math.js";
+import type { PanelSize } from "../../web/src/render/contracts/ui.js";
+import type { XrMenuViewFit } from "../../web/src/generated/xr-menu-view-fit.js";
 
 initializeWasmFixture();
 
@@ -98,4 +101,14 @@ function configuredViewer(aspect: number, near = 0.1, far = 100): ViewerFrame {
   const stereo = new StereoCamera();
   stereo.aspect = 0.5;
   return captureConfiguredViewerFrame(camera, stereo);
+}
+
+function fitMenuView(viewer: ViewerFrame, size: PanelSize, menuFromPanel: Pose = IDENTITY_POSE,
+  minimumDistanceMeters = 2.4, clipMargin = 0.035): XrMenuViewFit {
+  try {
+    return JSON.parse(xr_menu_view_fit_json(JSON.stringify(viewer), JSON.stringify(menuFromPanel),
+      size.width, size.height, minimumDistanceMeters, clipMargin)) as XrMenuViewFit;
+  } catch (cause) {
+    throw new RangeError(String(cause), { cause });
+  }
 }

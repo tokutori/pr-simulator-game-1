@@ -1,28 +1,15 @@
-import type { Pose } from "../render/contracts/math.js";
-import { MENU_MINIMUM_INK_HEIGHT_DEGREES } from "../render/contracts/menu-layout.js";
 import type { MenuClippedRect, MenuControlLayout, MenuDocumentResult, MenuDocument,
-  MenuFontIdentity, MenuLayoutRequest, MenuMeasuredLine, MenuOpeningReadability, MenuPoint, MenuRect,
+  MenuFontIdentity, MenuLayoutRequest, MenuPoint, MenuRect,
   MenuTextLayout, MenuTextMeasurement } from "../render/contracts/menu-layout.js";
 import type { PanelSize, UiControl, UiPanel } from "../render/contracts/ui.js";
-import { menu_layout_json, xr_text_ink_fit_json } from "../../pkg/birdman_game_wasm.js";
+import { menu_layout_json } from "../../pkg/birdman_game_wasm.js";
 import type { MenuLayoutQuery } from "../generated/menu-layout-query.js";
 import type { MenuLayoutReply } from "../generated/menu-layout-reply.js";
-import type { XrInkFit } from "../generated/xr-ink-fit.js";
-import type { XrInkSegment } from "../generated/xr-ink-segment.js";
-import type { ViewerFrame } from "../render/contracts/viewer-frame.js";
 import type { MenuViewport } from "../render/contracts/menu-layout.js";
 
 type Plan = Extract<MenuLayoutReply, { kind: "plan" }>["plan"];
 type Source = Extract<MenuLayoutQuery, { kind: "plan" }>["source"];
 type Geometry = Extract<MenuLayoutReply, { kind: "ready" }>["geometry"];
-const plans = new Map<string, Plan>();
-interface MeasuredDocument {
-  readonly signature: string;
-  readonly geometry: Geometry;
-  readonly measurements: ReadonlyMap<string, MenuTextMeasurement>;
-}
-const documents = new WeakMap<readonly MenuTextMeasurement[], Map<Plan, MeasuredDocument>>();
-
 function widget(control: UiControl): Source["controls"][number]["widget"] {
   switch (control.kind) {
     case "button": {
@@ -65,18 +52,11 @@ export function menuLayoutSource(panel: UiPanel, surfaceSize: PanelSize, style: 
 
 export function requestMenuLayout(panel: UiPanel, surfaceSize: PanelSize, style: MenuLayoutStyle): MenuLayoutRequest {
   const source = menuLayoutSource(panel, surfaceSize, style);
-  const key = JSON.stringify({ kind: "plan", source } satisfies MenuLayoutQuery);
-  let shared = plans.get(key);
-  if (shared === undefined) {
-    let reply: MenuLayoutReply;
-    try { reply = JSON.parse(menu_layout_json(key)) as MenuLayoutReply; }
-    catch (cause) { throw new RangeError(String(cause), { cause }); }
-    if (reply.kind !== "plan") throw new RangeError("Menu layout source is invalid");
-    shared = reply.plan;
-    if (plans.size >= 32) plans.clear();
-    plans.set(key, shared);
-  }
-  return menuLayoutRequest(panel, style.theme, shared);
+  let reply: MenuLayoutReply;
+  try { reply = JSON.parse(menu_layout_json(JSON.stringify({ kind: "plan", source } satisfies MenuLayoutQuery))) as MenuLayoutReply; }
+  catch (cause) { throw new RangeError(String(cause), { cause }); }
+  if (reply.kind !== "plan") throw new RangeError("Menu layout source is invalid");
+  return menuLayoutRequest(panel, style.theme, reply.plan);
 }
 
 export function menuLayoutRequest(panel: UiPanel, theme: MenuLayoutRequest["theme"], shared: Plan): MenuLayoutRequest {
@@ -93,22 +73,14 @@ export function menuLayoutRequest(panel: UiPanel, theme: MenuLayoutRequest["them
 }
 
 export function layoutMeasuredMenu(request: MenuLayoutRequest, measurements: readonly MenuTextMeasurement[]): MenuDocumentResult {
-  const signature = JSON.stringify(measurements);
-  let observed = documents.get(measurements)?.get(request.shared);
-  if (observed?.signature !== signature) {
-    let reply: MenuLayoutReply;
-    try {
-      const query: MenuLayoutQuery = { kind: "arrange", source: request.shared.source, measurements };
-      reply = JSON.parse(menu_layout_json(JSON.stringify(query))) as MenuLayoutReply;
-    } catch { return { kind: "unavailable", reason: "invalid-text-metrics" }; }
-    if (reply.kind === "unavailable") return reply;
-    if (reply.kind !== "ready") throw new Error("Shared Menu arrangement returned an unexpected phase");
-    observed = { signature, geometry: reply.geometry, measurements: retainMeasurements(measurements) };
-    const cached = documents.get(measurements) ?? new Map<Plan, MeasuredDocument>();
-    cached.set(request.shared, observed);
-    documents.set(measurements, cached);
-  }
-  return projectMenuDocument(request, observed.geometry, observed.measurements);
+  let reply: MenuLayoutReply;
+  try {
+    const query: MenuLayoutQuery = { kind: "arrange", source: request.shared.source, measurements };
+    reply = JSON.parse(menu_layout_json(JSON.stringify(query))) as MenuLayoutReply;
+  } catch { return { kind: "unavailable", reason: "invalid-text-metrics" }; }
+  if (reply.kind === "unavailable") return reply;
+  if (reply.kind !== "ready") throw new Error("Shared Menu arrangement returned an unexpected phase");
+  return menuDocumentFromGeometry(request, measurements, reply.geometry);
 }
 
 function retainMeasurements(measurements: readonly MenuTextMeasurement[]): ReadonlyMap<string, MenuTextMeasurement> {
@@ -178,29 +150,4 @@ export function menuRectInViewport(viewport: MenuViewport, rectangle: MenuRect):
   const projected = projectMenuViewport(viewport, [rectangle]).rectangles[0];
   if (projected === undefined) throw new Error("Menu rectangle lost its projection");
   return projected.visible === null ? { kind: "outside" } : { kind: "visible", rect: projected.visible };
-}
-
-export function validateMenuOpeningInk(document: MenuDocument, viewer: ViewerFrame, headFromSurface: Pose): MenuOpeningReadability {
-  if (viewer.source === "unavailable") return { kind: "unavailable", reason: viewer.reason };
-  const size = document.request.surfaceSize;
-  const lines: readonly MenuMeasuredLine[] = [...document.title.lines, ...document.caption.lines,
-    ...document.sectionHeadings.flatMap((heading) => heading.lines),
-    ...document.controls.flatMap((control) => control.texts.flatMap((text) => text.lines)), ...document.previous.lines, ...document.next.lines];
-  const segments: XrInkSegment[] = [];
-  for (const line of lines.filter((line) => line.value.trim() !== "")) {
-    const height = line.ascentMeters + line.descentMeters;
-    if (height <= 0 || height > size.height) return { kind: "unavailable", reason: "insufficient-ink-angle" };
-    for (const horizontal of [-1, 1]) for (const vertical of [-1, 1]) {
-      segments.push({ start: { x: horizontal * size.width / 2, y: vertical * size.height / 2, z: 0 },
-        end: { x: horizontal * size.width / 2, y: vertical * (size.height / 2 - height), z: 0 } });
-    }
-  }
-  try {
-    const fit = JSON.parse(xr_text_ink_fit_json(JSON.stringify(viewer), JSON.stringify(segments), JSON.stringify(headFromSurface),
-      MENU_MINIMUM_INK_HEIGHT_DEGREES)) as XrInkFit;
-    return fit.kind === "empty" || fit.kind === "too-small" ? { kind: "unavailable", reason: "insufficient-ink-angle" } : fit;
-  } catch (cause) {
-    if (typeof cause === "string" || cause instanceof RangeError) return { kind: "unavailable", reason: "invalid-view-geometry" };
-    throw cause;
-  }
 }

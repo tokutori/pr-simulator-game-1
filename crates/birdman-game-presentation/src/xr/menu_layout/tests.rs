@@ -331,6 +331,29 @@ fn viewport_projects_unclipped_tracks_clipped_ink_and_reversible_points() {
 #[test]
 fn preparation_owns_surface_fit_and_measured_font_selection() {
     let viewer = crate::xr::tests::viewer(crate::xr::XrDepthRange::NegativeOneToOne);
+    let mut edge_source = source();
+    edge_source.font_meters = 0.02;
+    let edge_plan = plan(edge_source.clone()).unwrap();
+    let mut edge_metrics = measurements(&edge_plan);
+    for line in edge_metrics.iter_mut().flat_map(|text| &mut text.lines) {
+        if !line.value.is_empty() {
+            line.ascent_meters = 0.016;
+        }
+    }
+    let central_angle = (2.0 * (0.016 / (2.0 * 2.4_f64.hypot(0.032))).atan()).to_degrees();
+    assert!(central_angle > 0.35);
+    assert!(matches!(
+        menu_layout(MenuLayoutQuery::Prepare {
+            source: edge_source,
+            viewer: Box::new(viewer.clone()),
+            menu_from_panel: crate::camera::Pose::IDENTITY,
+            observation: Some(MenuPreparationObservation {
+                attempt: 0,
+                measurements: edge_metrics,
+            }),
+        }),
+        MenuLayoutReply::Measure { attempt: 1, .. }
+    ));
     let mut requested = source();
     requested.surface_size.width = 8.0;
     requested.font_meters = 0.012;

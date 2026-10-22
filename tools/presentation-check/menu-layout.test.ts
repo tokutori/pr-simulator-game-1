@@ -1,15 +1,13 @@
+import { menu_measure_text_json } from "../../web/pkg/birdman_game_wasm.js";
+import type { MenuLayoutReply } from "../../web/src/generated/menu-layout-reply.js";
 import { describe, expect, it } from "vitest";
 import { menuActionAt, hitMenuViewport, menuDocumentPointToPanel, menuPanelPointToDocument } from "./menu-fixture.js";
-import { IDENTITY_POSE, pose, vec3 } from "../../web/src/render/contracts/math.js";
+import { IDENTITY_POSE } from "../../web/src/render/contracts/math.js";
 import type { MenuDocument, MenuLayoutRequest, MenuTextMeasurement, MenuTextRequest } from "../../web/src/render/contracts/menu-layout.js";
-import { MENU_MINIMUM_INK_HEIGHT_DEGREES } from "../../web/src/render/contracts/menu-layout.js";
 import { normalizedRect } from "../../web/src/render/contracts/ui.js";
 import type { UiChart, UiControl, UiPanel } from "../../web/src/render/contracts/ui.js";
-import { unavailableViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
 import { layoutMeasuredMenu,
-  menuRectInViewport, menuViewport, requestMenuLayout, validateMenuOpeningInk } from "../../web/src/presentation/menu-layout.js";
-import { fitMenuView } from "../../web/src/presentation/menu-view-fit.js";
-import { configuredViewerFixture } from "./viewer-fixture.js";
+  menuRectInViewport, menuViewport, requestMenuLayout } from "../../web/src/presentation/menu-layout.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
 import { currentSharedGameUiFixture } from "../game-check/shared-game-ui-fixture.js";
 
@@ -28,19 +26,13 @@ const panel: UiPanel = Object.freeze({ id: "pause", title: "Pause", anchor: "men
   sections: [{ id: "actions", label: "操作", layout: "row" }, { id: "details", label: "詳細", layout: "column" }] as const });
 
 function measurementFor(request: MenuTextRequest): MenuTextMeasurement {
-  const characterWidth = request.fontMeters * 0.55;
-  const columns = Math.max(1, Math.floor(request.widthMeters / characterWidth));
-  const lines = request.value.split("\n").flatMap((paragraph, paragraphIndex) => {
-    const characters = Array.from(paragraph);
-    if (characters.length === 0) return [{ value: "", paragraphIndex }];
-    const result: string[] = [];
-    for (let offset = 0; offset < characters.length; offset += columns) result.push(characters.slice(offset, offset + columns).join(""));
-    return result.map((value) => ({ value, paragraphIndex }));
-  }).map(({ value, paragraphIndex }) => Object.freeze({ value, paragraphIndex, advanceMeters: Array.from(value).length * characterWidth,
-    leftMeters: 0, rightMeters: Array.from(value).length * characterWidth,
-    ascentMeters: value.trim() === "" ? 0 : request.fontMeters * 0.65,
-    descentMeters: value.trim() === "" ? 0 : request.fontMeters * 0.15 }));
-  return Object.freeze({ identity: request.identity, lines: Object.freeze(lines) });
+  const reply = JSON.parse(menu_measure_text_json(JSON.stringify([request]), (_index, value) => {
+    const width = Array.from(value).length * request.fontMeters * 0.55;
+    return Float64Array.of(width, 0, width, value.trim() === "" ? 0 : request.fontMeters * 0.65,
+      value.trim() === "" ? 0 : request.fontMeters * 0.15);
+  })) as MenuLayoutReply;
+  if (reply.kind !== "measured" || reply.measurements[0] === undefined) throw new Error("Missing shared fixture text");
+  return reply.measurements[0];
 }
 
 function documentFor(request: MenuLayoutRequest): MenuDocument {
@@ -237,36 +229,6 @@ describe("Pure measured Menu document and shared viewport", () => {
       expect(text.bounds.y).toBeGreaterThanOrEqual(layout.bounds.y);
       expect(text.bounds.y + text.bounds.height).toBeLessThanOrEqual(layout.bounds.y + layout.bounds.height);
     }
-  });
-
-  it("includes actual ink at panel edges and both eyes rather than using nominal central font height", () => {
-    const request = requestMenuLayout(panel, panel.size, { ...style, fontMeters: 0.021 });
-    const document = documentFor(request);
-    const viewer = configuredViewerFixture();
-    const fit = fitMenuView(viewer, panel.size);
-    if (fit.kind !== "ready") throw new Error("Missing fit");
-    const nominalCenter = 2 * Math.atan(request.fontMeters * 0.8 / (2 * fit.distanceMeters)) * 180 / Math.PI;
-    expect(nominalCenter).toBeGreaterThan(MENU_MINIMUM_INK_HEIGHT_DEGREES);
-    expect(validateMenuOpeningInk(document, viewer, fit.headFromMenu)).toEqual({ kind: "unavailable", reason: "insufficient-ink-angle" });
-  });
-
-  it.each([[1280, 720, 2.4], [720, 1280, 0.5]])("accepts a readable opening at %i × %i with reflow width %s", (width, height, surfaceWidth) => {
-    const request = requestMenuLayout(panel, { width: surfaceWidth, height: 1.8 }, style);
-    const viewer = configuredViewerFixture(width, height);
-    const fit = fitMenuView(viewer, request.surfaceSize);
-    if (fit.kind !== "ready") throw new Error("Missing fit");
-    const result = validateMenuOpeningInk(documentFor(request), viewer, fit.headFromMenu);
-    expect(result.kind).toBe("ready");
-    if (result.kind !== "ready") throw new Error("Unreadable fixture");
-    expect(result.minimumInkAngleDegrees).toBeGreaterThanOrEqual(0.35);
-  });
-
-  it("keeps missing/invalid viewer and uncontained opening distinct from insufficient ink", () => {
-    const document = documentFor(requestMenuLayout(panel, panel.size, style));
-    expect(validateMenuOpeningInk(document, unavailableViewerFrame("viewer-unavailable"), IDENTITY_POSE))
-      .toEqual({ kind: "unavailable", reason: "viewer-unavailable" });
-    expect(validateMenuOpeningInk(document, configuredViewerFixture(), pose(vec3(0, 0, -0.5), IDENTITY_POSE.orientation)))
-      .toEqual({ kind: "unavailable", reason: "insufficient-view-area" });
   });
 
   it("validates public layout dimensions and normalized scroll values", () => {

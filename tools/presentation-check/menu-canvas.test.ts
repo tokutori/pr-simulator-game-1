@@ -6,8 +6,7 @@ import { normalizedRect } from "../../web/src/render/contracts/ui.js";
 import { drawMeasuredMenu, measureMenuLayout, menuCanvasSize, menuPaintedTextInk } from "../../web/src/presentation/menu-canvas.js";
 import type { HeadHudTextMetrics } from "../../web/src/presentation/head-hud-canvas.js";
 import type { MenuDrawingContext } from "../../web/src/presentation/menu-canvas.js";
-import { layoutMeasuredMenu, menuViewport, requestMenuLayout, validateMenuOpeningInk } from "../../web/src/presentation/menu-layout.js";
-import { fitMenuView } from "../../web/src/presentation/menu-view-fit.js";
+import { layoutMeasuredMenu, menuViewport, requestMenuLayout } from "../../web/src/presentation/menu-layout.js";
 import { configuredViewerFixture } from "./viewer-fixture.js";
 import { createAllSceneFixtures, createSceneFixture } from "./ui-adapter-fixture.js";
 import { prepareMenuPresentation } from "../../web/src/presentation/menu-preparation.js";
@@ -241,9 +240,6 @@ describe("Canvas measurement boundary and shared Menu painting", () => {
         if (ready.kind !== "ready") throw new Error(`${view.scene}/${String(width)}: ${ready.kind === "unavailable" ? ready.reason : ready.kind}`);
         expect(ready.viewport.document.controls).toHaveLength(source.controls.length);
         for (const control of source.controls) expect(ready.viewport.document.controls.find((layout) => layout.control.id === control.id)?.control).toBe(control);
-        const fit = fitMenuView(viewer, ready.panel.size, ready.panel.localPose);
-        if (fit.kind !== "ready") throw new Error("Missing fitted menu");
-        expect(validateMenuOpeningInk(ready.viewport.document, viewer, fit.headFromMenu).kind).toBe("ready");
         const found = new Set<string>();
         for (let pageIndex = 0; pageIndex <= 100; pageIndex++) {
           const viewport = menuViewport(ready.viewport.document, pageIndex / 100);
@@ -389,17 +385,20 @@ describe("Canvas measurement boundary and shared Menu painting", () => {
     expect(context.clips).toBeGreaterThan(0);
   });
 
-  it("checks port-reported actual ink in both eyes without substituting font height", () => {
+  it("prepares actual Canvas ink through the production shared candidate selection", () => {
     const context = new RecordingContext();
-    const prepared = prepare(context);
     const viewer = configuredViewerFixture(720, 1280);
-    const fit = fitMenuView(viewer, panel.size);
-    if (fit.kind !== "ready") throw new Error("Missing fit");
-    expect(validateMenuOpeningInk(prepared.document, viewer, fit.headFromMenu).kind).toBe("ready");
-    context.read = (value, pixels) => ({ width: value.length * pixels * 0.6, left: 0, right: value.length * pixels * 0.6,
-      ascent: value.trim() === "" ? 0 : pixels * 0.03, descent: 0 });
-    const small = prepare(context);
-    expect(validateMenuOpeningInk(small.document, viewer, fit.headFromMenu)).toEqual({ kind: "unavailable", reason: "insufficient-ink-angle" });
+    const prepareOpening = () => prepareMenuPresentation(context, panel,
+      { scope: { kind: "scene", scene: "Flight", panelId: panel.id, viewKey: "main" }, generation: 1 }, 0,
+      viewer, style, new Map());
+    const original = prepareOpening();
+    if (original.kind !== "ready") throw new Error("Missing original opening");
+    context.read = (value, pixels) => ({ width: Array.from(value).length * pixels * 0.6, left: 0,
+      right: Array.from(value).length * pixels * 0.6, ascent: value.trim() === "" ? 0 : pixels * 0.25, descent: 0 });
+    const adjusted = prepareOpening();
+    if (adjusted.kind !== "ready") throw new Error("Missing adjusted opening");
+    expect(adjusted.viewport.document.request.fontMeters).toBeGreaterThan(original.viewport.document.request.fontMeters);
+    expect(adjusted.viewport.document.controls.map(layout => layout.control.id)).toEqual(panel.controls.map(control => control.id));
   });
 
   it("returns typed invalid/unavailable results and restores drawing state on metrics failure", () => {

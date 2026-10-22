@@ -2,9 +2,6 @@ import type { UiChart, UiControl, UiPanel, PanelSize } from "./ui.js";
 import type { MenuLayoutReply } from "../../generated/menu-layout-reply.js";
 import type { GameUiView } from "../../generated/game-ui-view.js";
 export type { MenuScrollScope, MenuScrollContext, MenuScrollState, MenuScrollIntent } from "./ui.js";
-import type { ViewerGeometryUnavailableReason } from "./viewer-frame.js";
-
-export const MENU_MINIMUM_INK_HEIGHT_DEGREES = 0.35;
 
 export interface MenuPoint {
   readonly x: number;
@@ -116,10 +113,6 @@ export type MenuLayoutUnavailableReason = Extract<MenuLayoutReply, { kind: "unav
 export type MenuDocumentResult =
   | { readonly kind: "ready"; readonly document: MenuDocument }
   | { readonly kind: "unavailable"; readonly reason: MenuLayoutUnavailableReason };
-
-export type MenuOpeningReadability =
-  | { readonly kind: "ready"; readonly minimumInkAngleDegrees: number }
-  | { readonly kind: "unavailable"; readonly reason: ViewerGeometryUnavailableReason | "insufficient-view-area" | "insufficient-ink-angle" };
 
 export type MenuHit =
   | { readonly kind: "none" }
