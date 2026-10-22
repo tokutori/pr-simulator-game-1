@@ -20,6 +20,7 @@ struct Observation {
     ink: Vec<XrInkSegment>,
     spatial: SpatialObservation,
     interaction: PointerScenario,
+    layout: Vec<MenuLayoutQuery>,
 }
 
 #[derive(Deserialize)]
@@ -60,6 +61,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 observation.head_from_surface, 0.35),
             "spatial": spatial_results(&observation)?,
             "interaction": pointer_results(&observation.interaction)?,
+            "layout": observation.layout.iter().cloned().map(menu_layout).collect::<Vec<_>>(),
         }));
     }
     let output = serde_json::to_vec(&results)?;

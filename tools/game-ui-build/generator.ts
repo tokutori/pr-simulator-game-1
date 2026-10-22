@@ -30,6 +30,8 @@ export const schemaEntries = [
   { key: "xr_pointer_observation", name: "XrPointerObservation", filename: "xr-pointer-observation", group: "deserialize" },
   { key: "menu_session_input", name: "MenuSessionInput", filename: "menu-session-input", group: "deserialize" },
   { key: "menu_session_state", name: "MenuSessionState", filename: "menu-session-state", group: "serialize" },
+  { key: "menu_layout_query", name: "MenuLayoutQuery", filename: "menu-layout-query", group: "deserialize" },
+  { key: "menu_layout_reply", name: "MenuLayoutReply", filename: "menu-layout-reply", group: "serialize" },
   { key: "screen_render_auto", name: "ScreenRenderAutoSnapshot", filename: "screen-render-auto", group: "serialize" },
   { key: "replay_camera", name: "ReplayCameraView", filename: "replay-camera", group: "serialize" },
   { key: "tail_input", name: "TailInputDocument", filename: "tail-input", group: "deserialize" },

@@ -5358,6 +5358,237 @@
         }
       ]
     },
+    "MenuChartLabel": {
+      "additionalProperties": false,
+      "description": "Shared chart label projected into the menu's text measurement pass.",
+      "properties": {
+        "index": {
+          "description": "Stable source index.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "role": {
+          "$ref": "#/$defs/MenuTextRole",
+          "description": "Logical text role."
+        },
+        "text": {
+          "$ref": "#/$defs/GameUiChartText",
+          "description": "Shared chart label descriptor."
+        }
+      },
+      "required": [
+        "role",
+        "index",
+        "text"
+      ],
+      "type": "object"
+    },
+    "MenuChartLayout": {
+      "additionalProperties": false,
+      "description": "Static chart geometry needed by layout, independent of sample arrays.",
+      "properties": {
+        "labels": {
+          "description": "Ordered chart text descriptors.",
+          "items": {
+            "$ref": "#/$defs/MenuChartLabel"
+          },
+          "type": "array"
+        },
+        "legend": {
+          "description": "Shared legend entries.",
+          "items": {
+            "$ref": "#/$defs/GameUiChartLegend"
+          },
+          "type": "array"
+        },
+        "plot": {
+          "description": "Chart plot rectangle ordered left, top, right and bottom.",
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 4,
+          "minItems": 4,
+          "type": "array"
+        },
+        "size": {
+          "description": "Chart viewport width and height.",
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "tickFontSize": {
+          "description": "Reference font size for chart label scaling.",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "size",
+        "plot",
+        "tickFontSize",
+        "labels",
+        "legend"
+      ],
+      "type": "object"
+    },
+    "MenuChartProjection": {
+      "additionalProperties": false,
+      "description": "Spatial chart text projection around its baseline anchor.",
+      "properties": {
+        "anchor": {
+          "$ref": "#/$defs/GameUiChartTextAnchor",
+          "description": "Horizontal text anchor."
+        },
+        "baseline": {
+          "$ref": "#/$defs/MenuPoint",
+          "description": "Metric alphabetic baseline anchor."
+        },
+        "rotationDegrees": {
+          "description": "Rotation about the baseline in degrees.",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "baseline",
+        "rotationDegrees",
+        "anchor"
+      ],
+      "type": "object"
+    },
+    "MenuControlPlacement": {
+      "additionalProperties": false,
+      "description": "Placement of one control and its measured labels.",
+      "properties": {
+        "bounds": {
+          "$ref": "#/$defs/MenuRect",
+          "description": "Metric document bounds."
+        },
+        "controlIndex": {
+          "description": "Index of the corresponding source control.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "plot": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MenuRect"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Chart plot rectangle ordered left, top, right and bottom."
+        },
+        "texts": {
+          "description": "Ordered measurement requests or placed labels.",
+          "items": {
+            "$ref": "#/$defs/MenuTextPlacement"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "controlIndex",
+        "bounds",
+        "texts",
+        "plot"
+      ],
+      "type": "object"
+    },
+    "MenuDocumentGeometry": {
+      "additionalProperties": false,
+      "description": "Shared document geometry; source objects remain with the adapter.",
+      "properties": {
+        "caption": {
+          "$ref": "#/$defs/MenuTextPlacement",
+          "description": "Panel description."
+        },
+        "contentHeightMeters": {
+          "description": "Full scrollable content height.",
+          "format": "double",
+          "type": "number"
+        },
+        "controls": {
+          "description": "Ordered source controls or allocated row items.",
+          "items": {
+            "$ref": "#/$defs/MenuControlPlacement"
+          },
+          "type": "array"
+        },
+        "footerHeightMeters": {
+          "description": "Measured page-control height.",
+          "format": "double",
+          "type": "number"
+        },
+        "nextIndex": {
+          "description": "Measurement index for the next-page label.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "previousIndex": {
+          "description": "Measurement index for the previous-page label.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sectionHeadings": {
+          "description": "Placed section headings.",
+          "items": {
+            "$ref": "#/$defs/MenuTextPlacement"
+          },
+          "type": "array"
+        },
+        "title": {
+          "$ref": "#/$defs/MenuTextPlacement",
+          "description": "Panel heading."
+        }
+      },
+      "required": [
+        "title",
+        "caption",
+        "sectionHeadings",
+        "controls",
+        "contentHeightMeters",
+        "footerHeightMeters",
+        "previousIndex",
+        "nextIndex"
+      ],
+      "type": "object"
+    },
+    "MenuFixedRole": {
+      "description": "Logical role of one fixed menu text.",
+      "oneOf": [
+        {
+          "const": "title",
+          "description": "Panel title.",
+          "type": "string"
+        },
+        {
+          "const": "caption",
+          "description": "Panel description.",
+          "type": "string"
+        },
+        {
+          "const": "previous",
+          "description": "Previous-page label.",
+          "type": "string"
+        },
+        {
+          "const": "next",
+          "description": "Next-page label.",
+          "type": "string"
+        }
+      ]
+    },
     "MenuFocus": {
       "description": "Focus within the current menu revision.",
       "oneOf": [
@@ -5395,6 +5626,455 @@
           "type": "object"
         }
       ]
+    },
+    "MenuFont": {
+      "additionalProperties": false,
+      "description": "Font resource observation supplied by the drawing adapter.",
+      "properties": {
+        "family": {
+          "description": "Adapter font family identifier.",
+          "type": "string"
+        },
+        "generation": {
+          "description": "Adapter font resource generation.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "style": {
+          "$ref": "#/$defs/MenuFontStyle",
+          "description": "Observed font slant."
+        },
+        "weight": {
+          "description": "Font weight in the range 1 through 1000.",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "family",
+        "weight",
+        "style",
+        "generation"
+      ],
+      "type": "object"
+    },
+    "MenuFontStyle": {
+      "description": "Font slant selected for measurement.",
+      "oneOf": [
+        {
+          "const": "normal",
+          "description": "Upright font.",
+          "type": "string"
+        },
+        {
+          "const": "italic",
+          "description": "Italic font.",
+          "type": "string"
+        }
+      ]
+    },
+    "MenuHeading": {
+      "additionalProperties": false,
+      "description": "One section heading retained in the row plan.",
+      "properties": {
+        "id": {
+          "description": "Published source identifier.",
+          "type": "string"
+        },
+        "label": {
+          "description": "Already localized visible label.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "label"
+      ],
+      "type": "object"
+    },
+    "MenuHeadingRole": {
+      "description": "Section heading marker.",
+      "oneOf": [
+        {
+          "const": "heading",
+          "description": "Section heading marker.",
+          "type": "string"
+        }
+      ]
+    },
+    "MenuLayoutControl": {
+      "additionalProperties": false,
+      "description": "Compact source control, excluding record samples and semantic actions.",
+      "properties": {
+        "id": {
+          "description": "Published source identifier.",
+          "type": "string"
+        },
+        "label": {
+          "description": "Already localized visible label.",
+          "type": "string"
+        },
+        "section": {
+          "description": "Published section membership.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "widget": {
+          "$ref": "#/$defs/MenuWidget",
+          "description": "Widget presentation needed by measurement."
+        }
+      },
+      "required": [
+        "id",
+        "section",
+        "label",
+        "widget"
+      ],
+      "type": "object"
+    },
+    "MenuLayoutFailure": {
+      "description": "Rejection class of a measured menu document.",
+      "oneOf": [
+        {
+          "const": "missing-text-metrics",
+          "description": "A requested measurement is absent.",
+          "type": "string"
+        },
+        {
+          "const": "stale-text-metrics",
+          "description": "A measurement identity is duplicated or belongs to another plan.",
+          "type": "string"
+        },
+        {
+          "const": "invalid-text-metrics",
+          "description": "Measured text or its metric bounds violate the request.",
+          "type": "string"
+        },
+        {
+          "const": "invalid-layout",
+          "description": "Source geometry or typography cannot form a valid layout.",
+          "type": "string"
+        }
+      ]
+    },
+    "MenuLayoutPlan": {
+      "additionalProperties": false,
+      "description": "Prepared layout and its complete measurement contract.",
+      "properties": {
+        "gapMeters": {
+          "description": "Spacing between rows in metres.",
+          "format": "double",
+          "type": "number"
+        },
+        "lineHeightMeters": {
+          "description": "Line spacing in metres.",
+          "format": "double",
+          "type": "number"
+        },
+        "paddingMeters": {
+          "description": "Inner padding in metres.",
+          "format": "double",
+          "type": "number"
+        },
+        "rows": {
+          "description": "Responsive section and control allocation.",
+          "items": {
+            "$ref": "#/$defs/MenuRow"
+          },
+          "type": "array"
+        },
+        "source": {
+          "$ref": "#/$defs/MenuLayoutSource",
+          "description": "Compact source and typography observation."
+        },
+        "texts": {
+          "description": "Ordered measurement requests or placed labels.",
+          "items": {
+            "$ref": "#/$defs/MenuTextRequest"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "source",
+        "lineHeightMeters",
+        "paddingMeters",
+        "gapMeters",
+        "rows",
+        "texts"
+      ],
+      "type": "object"
+    },
+    "MenuLayoutReply": {
+      "description": "Layout result or a precise measurement failure.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Menu measurement planning phase.",
+          "properties": {
+            "kind": {
+              "const": "plan",
+              "type": "string"
+            },
+            "plan": {
+              "$ref": "#/$defs/MenuLayoutPlan",
+              "description": "Complete measurement contract."
+            }
+          },
+          "required": [
+            "kind",
+            "plan"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Complete resolved document geometry.",
+          "properties": {
+            "geometry": {
+              "$ref": "#/$defs/MenuDocumentGeometry",
+              "description": "Resolved document geometry."
+            },
+            "kind": {
+              "const": "ready",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "geometry"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Rejected layout or measurement.",
+          "properties": {
+            "kind": {
+              "const": "unavailable",
+              "type": "string"
+            },
+            "reason": {
+              "$ref": "#/$defs/MenuLayoutFailure",
+              "description": "Reason for rejecting the layout."
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "MenuLayoutSource": {
+      "additionalProperties": false,
+      "description": "Complete source and typography observation for one layout pass.",
+      "properties": {
+        "caption": {
+          "description": "Panel description.",
+          "type": "string"
+        },
+        "controls": {
+          "description": "Ordered source controls or allocated row items.",
+          "items": {
+            "$ref": "#/$defs/MenuLayoutControl"
+          },
+          "type": "array"
+        },
+        "font": {
+          "$ref": "#/$defs/MenuFont",
+          "description": "Observed font identity."
+        },
+        "fontMeters": {
+          "description": "Nominal font size in metres.",
+          "format": "double",
+          "type": "number"
+        },
+        "locale": {
+          "description": "Explicit text measurement locale.",
+          "type": "string"
+        },
+        "nextLabel": {
+          "description": "Localized next-page label.",
+          "type": "string"
+        },
+        "panelId": {
+          "description": "Published panel identifier.",
+          "type": "string"
+        },
+        "previousLabel": {
+          "description": "Localized previous-page label.",
+          "type": "string"
+        },
+        "sections": {
+          "description": "Declared sections or implicit vertical flow.",
+          "items": {
+            "$ref": "#/$defs/GameUiSection"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "surfaceSize": {
+          "$ref": "#/$defs/MenuSize",
+          "description": "Metric width and height of the menu surface."
+        },
+        "title": {
+          "description": "Panel heading.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "panelId",
+        "title",
+        "sections",
+        "controls",
+        "surfaceSize",
+        "fontMeters",
+        "font",
+        "locale",
+        "caption",
+        "previousLabel",
+        "nextLabel"
+      ],
+      "type": "object"
+    },
+    "MenuLineGeometry": {
+      "additionalProperties": false,
+      "description": "Baseline and ink bounds of one already measured line.",
+      "properties": {
+        "anchor": {
+          "$ref": "#/$defs/MenuPoint",
+          "description": "Horizontal text anchor."
+        },
+        "bounds": {
+          "$ref": "#/$defs/MenuRect",
+          "description": "Metric document bounds."
+        }
+      },
+      "required": [
+        "anchor",
+        "bounds"
+      ],
+      "type": "object"
+    },
+    "MenuPoint": {
+      "additionalProperties": false,
+      "description": "Metric point in a spatial menu document.",
+      "properties": {
+        "x": {
+          "description": "Horizontal coordinate in metres.",
+          "format": "double",
+          "type": "number"
+        },
+        "y": {
+          "description": "Vertical coordinate in metres.",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "x",
+        "y"
+      ],
+      "type": "object"
+    },
+    "MenuRect": {
+      "additionalProperties": false,
+      "description": "Metric rectangle in a spatial menu document.",
+      "properties": {
+        "height": {
+          "description": "Height in metres.",
+          "format": "double",
+          "type": "number"
+        },
+        "width": {
+          "description": "Width in metres.",
+          "format": "double",
+          "type": "number"
+        },
+        "x": {
+          "description": "Horizontal coordinate in metres.",
+          "format": "double",
+          "type": "number"
+        },
+        "y": {
+          "description": "Vertical coordinate in metres.",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "width",
+        "height"
+      ],
+      "type": "object"
+    },
+    "MenuRow": {
+      "additionalProperties": false,
+      "description": "One responsive menu row.",
+      "properties": {
+        "controls": {
+          "description": "Ordered source controls or allocated row items.",
+          "items": {
+            "$ref": "#/$defs/MenuRowItem"
+          },
+          "type": "array"
+        },
+        "heading": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MenuHeading"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Optional heading at the start of a section."
+        }
+      },
+      "required": [
+        "heading",
+        "controls"
+      ],
+      "type": "object"
+    },
+    "MenuRowItem": {
+      "additionalProperties": false,
+      "description": "Control reference and its metric column allocation.",
+      "properties": {
+        "index": {
+          "description": "Stable source index.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "left": {
+          "description": "Horizontal column offset in metres.",
+          "format": "double",
+          "type": "number"
+        },
+        "width": {
+          "description": "Width in metres.",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "index",
+        "left",
+        "width"
+      ],
+      "type": "object"
     },
     "MenuScope": {
       "description": "Semantic identity of one spatial menu opening.",
@@ -5522,6 +6202,369 @@
             "generation",
             "progress",
             "focus"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "MenuSize": {
+      "additionalProperties": false,
+      "description": "Measured surface dimensions in metres.",
+      "properties": {
+        "height": {
+          "description": "Height in metres.",
+          "format": "double",
+          "type": "number"
+        },
+        "width": {
+          "description": "Width in metres.",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "width",
+        "height"
+      ],
+      "type": "object"
+    },
+    "MenuTextPlacement": {
+      "additionalProperties": false,
+      "description": "Placement of one measured text within its document.",
+      "properties": {
+        "bounds": {
+          "$ref": "#/$defs/MenuRect",
+          "description": "Metric document bounds."
+        },
+        "chartProjection": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MenuChartProjection"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Optional chart baseline projection."
+        },
+        "lineGeometry": {
+          "description": "Projected line anchors and ink bounds.",
+          "items": {
+            "$ref": "#/$defs/MenuLineGeometry"
+          },
+          "type": "array"
+        },
+        "textIndex": {
+          "description": "Index of the corresponding measurement request.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "textIndex",
+        "bounds",
+        "lineGeometry"
+      ],
+      "type": "object"
+    },
+    "MenuTextRequest": {
+      "additionalProperties": false,
+      "description": "Adapter measurement request derived from the shared row plan.",
+      "properties": {
+        "chartText": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GameUiChartText"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Optional shared chart text descriptor."
+        },
+        "font": {
+          "$ref": "#/$defs/MenuFont",
+          "description": "Observed font identity."
+        },
+        "fontMeters": {
+          "description": "Nominal font size in metres.",
+          "format": "double",
+          "type": "number"
+        },
+        "identity": {
+          "description": "Exact identity of the measurement request.",
+          "type": "string"
+        },
+        "legend": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GameUiChartLegend"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Shared legend entries."
+        },
+        "locale": {
+          "description": "Explicit text measurement locale.",
+          "type": "string"
+        },
+        "slot": {
+          "$ref": "#/$defs/MenuTextSlot",
+          "description": "Text's logical source location."
+        },
+        "value": {
+          "description": "Already formatted content or current toggle selection.",
+          "type": "string"
+        },
+        "widthMeters": {
+          "description": "Maximum measured line width in metres.",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "identity",
+        "slot",
+        "value",
+        "locale",
+        "fontMeters",
+        "font",
+        "widthMeters"
+      ],
+      "type": "object"
+    },
+    "MenuTextRole": {
+      "description": "Logical role of one measured control text.",
+      "oneOf": [
+        {
+          "const": "label",
+          "description": "Control label.",
+          "type": "string"
+        },
+        {
+          "const": "value",
+          "description": "Current control value.",
+          "type": "string"
+        },
+        {
+          "const": "x-axis",
+          "description": "Horizontal axis title.",
+          "type": "string"
+        },
+        {
+          "const": "y-axis",
+          "description": "Vertical axis title.",
+          "type": "string"
+        },
+        {
+          "const": "x-tick",
+          "description": "Horizontal axis tick.",
+          "type": "string"
+        },
+        {
+          "const": "y-tick",
+          "description": "Vertical axis tick.",
+          "type": "string"
+        },
+        {
+          "const": "legend",
+          "description": "Legend entry.",
+          "type": "string"
+        },
+        {
+          "const": "annotation",
+          "description": "Chart annotation.",
+          "type": "string"
+        },
+        {
+          "const": "north",
+          "description": "North reference.",
+          "type": "string"
+        },
+        {
+          "const": "scale",
+          "description": "Map scale reference.",
+          "type": "string"
+        }
+      ]
+    },
+    "MenuTextSlot": {
+      "description": "Stable identity of a measured text within its source panel.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Fixed document text.",
+          "properties": {
+            "kind": {
+              "const": "fixed",
+              "type": "string"
+            },
+            "role": {
+              "$ref": "#/$defs/MenuFixedRole",
+              "description": "Logical text role."
+            }
+          },
+          "required": [
+            "kind",
+            "role"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Section heading.",
+          "properties": {
+            "kind": {
+              "const": "section",
+              "type": "string"
+            },
+            "role": {
+              "$ref": "#/$defs/MenuHeadingRole",
+              "description": "Logical text role."
+            },
+            "sectionId": {
+              "description": "Published section identifier.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "role",
+            "sectionId"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Control-owned text.",
+          "properties": {
+            "controlId": {
+              "description": "Published control identifier.",
+              "type": "string"
+            },
+            "index": {
+              "description": "Stable source index.",
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "control",
+              "type": "string"
+            },
+            "role": {
+              "$ref": "#/$defs/MenuTextRole",
+              "description": "Logical text role."
+            }
+          },
+          "required": [
+            "kind",
+            "controlId",
+            "role",
+            "index"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "MenuWidget": {
+      "description": "Widget presentation data used for layout and measurement.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Action or choice button.",
+          "properties": {
+            "kind": {
+              "const": "button",
+              "type": "string"
+            },
+            "presentation": {
+              "$ref": "#/$defs/GameUiButtonPresentation",
+              "description": "Shared button presentation."
+            }
+          },
+          "required": [
+            "kind",
+            "presentation"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Boolean selection.",
+          "properties": {
+            "kind": {
+              "const": "toggle",
+              "type": "string"
+            },
+            "value": {
+              "description": "Already formatted content or current toggle selection.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Numeric range selection.",
+          "properties": {
+            "displayValue": {
+              "description": "Formatted range selection.",
+              "type": "string"
+            },
+            "kind": {
+              "const": "range",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "displayValue"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Read-only status.",
+          "properties": {
+            "kind": {
+              "const": "status",
+              "type": "string"
+            },
+            "value": {
+              "description": "Already formatted content or current toggle selection.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Static chart layout.",
+          "properties": {
+            "kind": {
+              "const": "chart",
+              "type": "string"
+            },
+            "layout": {
+              "$ref": "#/$defs/MenuChartLayout",
+              "description": "Static chart layout."
+            }
+          },
+          "required": [
+            "kind",
+            "layout"
           ],
           "type": "object"
         }

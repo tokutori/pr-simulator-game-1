@@ -3,13 +3,18 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { currentSharedHeadHudFixture } from "../game-check/shared-game-ui-fixture.js";
+import { currentSharedGameUiFixture, currentSharedHeadHudFixture } from "../game-check/shared-game-ui-fixture.js";
+import { createGameViewModel } from "../../web/src/app/game-view.js";
+import { requestMenuLayout } from "../../web/src/presentation/menu-layout.js";
+import { measureMenuLayout, menuCanvasSize } from "../../web/src/presentation/menu-canvas.js";
+import { HudCanvasFixture } from "./hud-canvas-fixture.js";
+import type { MenuLayoutQuery } from "../../web/src/generated/menu-layout-query.js";
 import { configuredViewerFixture } from "./viewer-fixture.js";
 import { DEFAULT_XR_HEAD_HUD_PROFILE } from "../../web/src/generated/xr-head-hud-profile.js";
 import type { FlightRecordHudProfileDocument } from "../../web/src/generated/record-difficulty.js";
 import type { ViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
 import { IDENTITY_POSE, composePose, rotateVec3, pose, quaternion, vec3 } from "../../web/src/render/contracts/math.js";
-import { xr_head_hud_projection_json, xr_menu_view_fit_json, xr_text_ink_fit_json, XrCameraBridge, XrSpatialBridge,
+import { menu_layout_json, xr_head_hud_projection_json, xr_menu_view_fit_json, xr_text_ink_fit_json, XrCameraBridge, XrSpatialBridge,
   xr_reference_frame_json, pose_chain_json, inverse_pose_json, xr_panel_camera_poses_json, XrPointerBridge } from "../../web/pkg/birdman_game_wasm.js";
 import type { XrPointerObservation } from "../../web/src/generated/xr-pointer-observation.js";
 import type { XrPointerSurface } from "../../web/src/generated/xr-pointer-surface.js";
@@ -49,6 +54,9 @@ for (let mask = 0; mask < 64; mask += 1) {
   const model = currentSharedHeadHudFixture({ informationCode: 4, hudProfile });
   cases.push({ name: `custom-${String(mask)}`, observation: observation(opticalViewer(1280, 720, "negative-one-to-one", false), model) });
 }
+const firstCase = cases[0];
+assert.ok(firstCase !== undefined);
+firstCase.observation.layout = menuQueries();
 const input = JSON.stringify(cases.map(candidate => candidate.observation));
 await writeFile(resolve(output, "observations.json"), input, "utf8");
 let maximumAbsoluteError = 0;
@@ -65,7 +73,8 @@ try {
     head: JSON.parse(xr_head_hud_projection_json(JSON.stringify(candidate.hud), JSON.stringify(candidate.viewer), JSON.stringify(candidate.profile), "FPS 72.0")) as unknown,
     ink: JSON.parse(xr_text_ink_fit_json(JSON.stringify(candidate.viewer), JSON.stringify(candidate.ink), JSON.stringify(candidate.head_from_surface), 0.35)) as unknown,
     spatial: spatialResults(candidate),
-    interaction: pointerResults(candidate.interaction)
+    interaction: pointerResults(candidate.interaction),
+    layout: candidate.layout.map(query => JSON.parse(menu_layout_json(JSON.stringify(query))) as unknown)
   }));
   await writeFile(resolve(output, "wasm.json"), JSON.stringify(actual), "utf8");
   compare(expected, actual, "cases");
@@ -81,6 +90,29 @@ try {
   await writeFile(resolve(output, "result.json"), `${JSON.stringify({ status: "failed", ...provenance,
     failure: cause instanceof Error ? { message: cause.message, stack: cause.stack } : String(cause) }, null, 2)}\n`, "utf8");
   throw cause;
+}
+
+function menuQueries(): MenuLayoutQuery[] {
+  const queries: MenuLayoutQuery[] = [];
+  for (const phase of ["title", "flight_setup", "briefing_ready", "flight_paused", "result", "replay"] as const) {
+    const shared = currentSharedGameUiFixture(phase, { ticks: 20, platform: { presentation_mode: "webxr" },
+      actions: phase === "result" ? [{ kind: "set_result_tab", tab: "analysis" }] : [] });
+    for (const panel of createGameViewModel(shared).panels) {
+      for (const width of [2.4, 0.5]) {
+        const surface = { width, height: 1.8 };
+        const request = requestMenuLayout(panel, surface, { theme: shared.theme, fontMeters: 0.035,
+          font: { family: "sans-serif", weight: 600, style: "normal", generation: 0 },
+          locale: "ja", caption: "", previousLabel: "前頁", nextLabel: "次頁" });
+        const dimensions = menuCanvasSize(surface);
+        const measured = measureMenuLayout(new HudCanvasFixture(), request, dimensions.width, dimensions.height);
+        assert.equal(measured.kind, "ready");
+        queries.push({ kind: "plan", source: request.shared.source },
+          { kind: "arrange", source: request.shared.source, measurements: measured.measurements });
+      }
+    }
+  }
+  assert.ok(queries.length > 0);
+  return queries;
 }
 
 function pointerScenario() {
@@ -131,7 +163,7 @@ function pointerResults(scenario: ReturnType<typeof pointerScenario>): unknown[]
 
 function observation(viewer: ViewerFrame, model: ReturnType<typeof currentSharedHeadHudFixture>) {
   return { viewer, hud: { layout: model.layout, groups: model.groups }, profile: DEFAULT_XR_HEAD_HUD_PROFILE,
-    interaction: pointerScenario(),
+    interaction: pointerScenario(), layout: [] as MenuLayoutQuery[],
     panel_pose: pose(vec3(0.1, -0.2, 0), IDENTITY_POSE.orientation), panel_size: [2.4, 1.8] as const,
     head_from_surface: pose(vec3(0, -0.2, -2.4), IDENTITY_POSE.orientation),
     ink: [{ start: vec3(-0.1, 0.025, 0), end: vec3(-0.1, -0.025, 0) }, { start: vec3(0.1, 0.025, 0), end: vec3(0.1, -0.025, 0) }],

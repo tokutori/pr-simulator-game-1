@@ -48,6 +48,7 @@ pub fn export_game_ui_schema(name: &str) -> Result<String, String> {
     output.subschema_for::<crate::xr::XrReferenceFrame>();
     output.subschema_for::<crate::xr::XrPointerProjection>();
     output.subschema_for::<crate::xr::MenuSessionState>();
+    output.subschema_for::<crate::xr::MenuLayoutReply>();
     output.subschema_for::<crate::screen_render_auto::ScreenRenderAutoSnapshot>();
     output.subschema_for::<crate::replay_camera::ReplayCameraView>();
     output.subschema_for::<birdman_game_app::record_query::PlaybackContext<'_>>();
@@ -73,6 +74,7 @@ pub fn export_game_ui_schema(name: &str) -> Result<String, String> {
     input.subschema_for::<crate::xr::XrPointerSurface>();
     input.subschema_for::<crate::xr::XrPointerObservation>();
     input.subschema_for::<crate::xr::MenuSessionInput>();
+    input.subschema_for::<crate::xr::MenuLayoutQuery>();
     input.subschema_for::<birdman_game_format::TailInputDocument>();
     input.subschema_for::<birdman_game_app::flight_input::FlightKeyObservation>();
     input.subschema_for::<birdman_game_app::flight_input::FlightGamepadObservation>();

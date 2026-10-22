@@ -4,7 +4,7 @@ import { uiControlBackground } from "../render/contracts/ui.js";
 import type { UiChart } from "../render/contracts/ui.js";
 import { browserHeadHudContext } from "./head-hud-canvas.js";
 import type { HeadHudDrawingContext } from "./head-hud-canvas.js";
-import { menuChartTextLineGeometry, menuRectInViewport } from "./menu-layout.js";
+import { menuRectInViewport } from "./menu-layout.js";
 
 export type MenuMeasurementResult =
   | { readonly kind: "ready"; readonly measurements: readonly MenuTextMeasurement[] }
@@ -114,7 +114,9 @@ function paintedText(viewport: MenuViewport, text: MenuTextLayout, surfaceFixed:
   return Object.freeze(text.lines.map((line, index) => {
     const projection = text.chartProjection;
     if (projection !== undefined) {
-      const { anchor, bounds: documentRect } = menuChartTextLineGeometry(projection, line, index, request.lineHeightMeters);
+      const geometry = text.lineGeometry?.[index];
+      if (geometry === undefined) throw new Error("Shared Menu chart line lost its ink geometry");
+      const { anchor, bounds: documentRect } = geometry;
       return Object.freeze({ identity: text.request.identity, value: line.value,
         anchorX: anchor.x + viewport.contentClip.x, baselineY: anchor.y + viewport.contentClip.y - viewport.offsetMeters,
         rotationDegrees: projection.rotationDegrees,

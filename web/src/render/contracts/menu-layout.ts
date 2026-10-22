@@ -1,4 +1,5 @@
 import type { UiChart, UiControl, UiPanel, PanelSize } from "./ui.js";
+import type { MenuLayoutReply } from "../../generated/menu-layout-reply.js";
 import type { GameUiView } from "../../generated/game-ui-view.js";
 export type { MenuScrollScope, MenuScrollContext, MenuScrollState, MenuScrollIntent } from "./ui.js";
 import type { ViewerGeometryUnavailableReason } from "./viewer-frame.js";
@@ -61,6 +62,7 @@ export interface MenuLayoutRow {
 }
 
 export interface MenuLayoutRequest {
+  readonly shared: Extract<MenuLayoutReply, { kind: "plan" }>["plan"];
   readonly panel: UiPanel;
   readonly theme: GameUiView["theme"];
   readonly surfaceSize: PanelSize;
@@ -78,6 +80,7 @@ export interface MenuTextLayout {
   readonly lines: readonly MenuMeasuredLine[];
   readonly bounds: MenuRect;
   readonly chartProjection?: Readonly<{ baseline: MenuPoint; rotationDegrees: number; anchor: UiChart["presentation"]["x_axis"]["anchor"] }>;
+  readonly lineGeometry?: readonly Readonly<{ anchor: MenuPoint; bounds: MenuRect }>[];
 }
 
 export type MenuControlLayout = Readonly<{ bounds: MenuRect; texts: readonly MenuTextLayout[] }> & (

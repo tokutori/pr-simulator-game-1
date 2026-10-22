@@ -1,237 +1,131 @@
 import type { Pose } from "../render/contracts/math.js";
 import { MENU_MINIMUM_INK_HEIGHT_DEGREES } from "../render/contracts/menu-layout.js";
-import type { MenuClippedRect, MenuContentPoint, MenuControlLayout, MenuControlTextRole, MenuDocument, MenuDocumentResult,
-  MenuFixedTextRole, MenuFontIdentity, MenuHit, MenuLayoutRequest,
-  MenuLayoutRow, MenuMeasuredLine, MenuOpeningReadability, MenuPoint, MenuRect, MenuTextLayout, MenuTextMeasurement, MenuTextRequest,
-  MenuTextSlot, MenuViewport } from "../render/contracts/menu-layout.js";
-import { uiButtonLabel } from "../render/contracts/ui.js";
-import type { PanelSize, UiChart, UiPanel } from "../render/contracts/ui.js";
-import { xr_text_ink_fit_json } from "../../pkg/birdman_game_wasm.js";
+import type { MenuClippedRect, MenuContentPoint, MenuControlLayout, MenuDocumentResult, MenuDocument,
+  MenuFontIdentity, MenuHit, MenuLayoutRequest, MenuMeasuredLine, MenuOpeningReadability, MenuPoint, MenuRect,
+  MenuTextLayout, MenuTextMeasurement } from "../render/contracts/menu-layout.js";
+import type { PanelSize, UiControl, UiPanel } from "../render/contracts/ui.js";
+import { menu_layout_json, xr_text_ink_fit_json } from "../../pkg/birdman_game_wasm.js";
+import type { MenuLayoutQuery } from "../generated/menu-layout-query.js";
+import type { MenuLayoutReply } from "../generated/menu-layout-reply.js";
 import type { XrInkFit } from "../generated/xr-ink-fit.js";
 import type { XrInkSegment } from "../generated/xr-ink-segment.js";
 import type { ViewerFrame } from "../render/contracts/viewer-frame.js";
+import type { MenuViewport } from "../render/contracts/menu-layout.js";
+
+type Plan = Extract<MenuLayoutReply, { kind: "plan" }>["plan"];
+type Source = Extract<MenuLayoutQuery, { kind: "plan" }>["source"];
+type Geometry = Extract<MenuLayoutReply, { kind: "ready" }>["geometry"];
+const plans = new Map<string, Plan>();
+interface MeasuredDocument {
+  readonly signature: string;
+  readonly geometry: Geometry;
+  readonly measurements: ReadonlyMap<string, MenuTextMeasurement>;
+}
+const documents = new WeakMap<readonly MenuTextMeasurement[], Map<Plan, MeasuredDocument>>();
+
+function widget(control: UiControl): Source["controls"][number]["widget"] {
+  switch (control.kind) {
+    case "button": {
+      const presentation = control.presentation;
+      return { kind: "button", presentation: presentation?.kind === "choice"
+        ? { kind: "choice", group: presentation.group, group_label: presentation.groupLabel,
+          selected: presentation.selected, description: presentation.description }
+        : presentation ?? { kind: "action", emphasis: "normal" } };
+    }
+    case "toggle": return { kind: "toggle", value: control.value };
+    case "range": return { kind: "range", displayValue: control.displayValue };
+    case "status": return { kind: "status", value: control.value };
+    case "chart": {
+      const chart = control.presentation;
+      const labels: Extract<Source["controls"][number]["widget"], { kind: "chart" }>["layout"]["labels"][number][] = [
+        { role: "x-axis", index: 0, text: chart.x_axis }, { role: "y-axis", index: 0, text: chart.y_axis }
+      ];
+      if (chart.map_guides !== null) labels.push({ role: "north", index: 0, text: chart.map_guides.north_label },
+        { role: "scale", index: 0, text: chart.map_guides.scale_label });
+      chart.x_ticks.forEach((tick, index) => { labels.push({ role: "x-tick", index, text: tick.text }); });
+      chart.y_ticks.forEach((tick, index) => { labels.push({ role: "y-tick", index, text: tick.text }); });
+      [...chart.marker_labels, ...chart.time_marker_labels, ...chart.reference_labels]
+        .forEach((text, index) => { labels.push({ role: "annotation", index, text }); });
+      return { kind: "chart", layout: { size: [chart.viewport.width, chart.viewport.height], plot: chart.plot,
+        tickFontSize: chart.tick_font_size, labels, legend: chart.legend } };
+    }
+  }
+}
 
 export function requestMenuLayout(panel: UiPanel, surfaceSize: PanelSize, style: Readonly<{
   theme: MenuLayoutRequest["theme"]; fontMeters: number; font: MenuFontIdentity; locale: string; previousLabel: string; nextLabel: string; caption: string;
 }>): MenuLayoutRequest {
-  if (![surfaceSize.width, surfaceSize.height, style.fontMeters].every((value) => Number.isFinite(value) && value > 0) ||
-      style.locale.trim() === "" || style.previousLabel.trim() === "" || style.nextLabel.trim() === "" ||
-      style.font.family.trim() === "" || !Number.isInteger(style.font.weight) || style.font.weight < 1 || style.font.weight > 1000 ||
-      !Number.isSafeInteger(style.font.generation) || style.font.generation < 0 ||
-      new Set(panel.controls.map((control) => control.id)).size !== panel.controls.length) {
-    throw new RangeError("Menu layout requires finite dimensions, an explicit locale and unique controls");
+  const source: Source = { panelId: panel.id, title: panel.title, sections: panel.sections ?? null,
+    controls: panel.controls.map(control => ({ id: control.id, label: control.label, section: control.section ?? null, widget: widget(control) })),
+    surfaceSize, fontMeters: style.fontMeters, font: style.font, locale: style.locale,
+    previousLabel: style.previousLabel, nextLabel: style.nextLabel, caption: style.caption };
+  const key = JSON.stringify({ kind: "plan", source } satisfies MenuLayoutQuery);
+  let shared = plans.get(key);
+  if (shared === undefined) {
+    let reply: MenuLayoutReply;
+    try { reply = JSON.parse(menu_layout_json(key)) as MenuLayoutReply; }
+    catch (cause) { throw new RangeError(String(cause), { cause }); }
+    if (reply.kind !== "plan") throw new RangeError("Menu layout source is invalid");
+    shared = reply.plan;
+    if (plans.size >= 32) plans.clear();
+    plans.set(key, shared);
   }
-  const paddingMeters = style.fontMeters * 0.5;
-  const gapMeters = style.fontMeters * 0.35;
-  const contentWidth = surfaceSize.width - paddingMeters * 2;
-  if (contentWidth <= paddingMeters * 2) throw new RangeError("Menu surface is narrower than its text padding");
-  const rows = menuRows(panel, surfaceSize.width < surfaceSize.height, contentWidth, style.fontMeters);
-  const font = Object.freeze({ ...style.font });
-  const texts: MenuTextRequest[] = [];
-  const addText = (slot: MenuTextSlot, value: string, widthMeters: number, chartText?: UiChart["presentation"]["x_axis"], legend?: UiChart["presentation"]["legend"][number]): void => {
-    const chart = slot.kind === "control" ? panel.controls.find((control) => control.id === slot.controlId) : undefined;
-    const fontMeters = chartText === undefined || chart?.kind !== "chart" ? style.fontMeters
-      : style.fontMeters * chartText.font_size / chart.presentation.tick_font_size;
-    const textFont = chartText === undefined ? font : Object.freeze({ ...font, weight: chartText.font_weight });
-    const identity = JSON.stringify([panel.id, surfaceSize.width, surfaceSize.height, style.locale, style.fontMeters,
-      textFont.family, textFont.weight, textFont.style, textFont.generation, slot, value, widthMeters, chartText, legend]);
-    texts.push(Object.freeze({ identity, slot: Object.freeze(slot), value, widthMeters, fontMeters, font: textFont, locale: style.locale,
-      ...(chartText === undefined ? {} : { chartText }), ...(legend === undefined ? {} : { legend }) }));
-  };
-  addText({ kind: "fixed", role: "title" }, panel.title, contentWidth);
-  addText({ kind: "fixed", role: "caption" }, style.caption, contentWidth);
-  const pageWidth = (contentWidth - gapMeters) / 2 - paddingMeters * 2;
-  if (pageWidth <= 0) throw new RangeError("Menu surface has no space for page controls");
-  addText({ kind: "fixed", role: "previous" }, style.previousLabel, pageWidth);
-  addText({ kind: "fixed", role: "next" }, style.nextLabel, pageWidth);
-  for (const row of rows) {
-    if (row.heading !== null && row.heading.label !== "") addText({ kind: "section", role: "heading", sectionId: row.heading.id }, row.heading.label, contentWidth);
-    for (const item of row.controls) {
-    const control = item.control;
-    const width = item.width - paddingMeters * 2;
-    const addControlText = (role: MenuControlTextRole, index: number, value: string, textWidth = width, chartText?: UiChart["presentation"]["x_axis"]): void => {
-      addText({ kind: "control", controlId: control.id, role, index }, value, textWidth, chartText);
-    };
-    addControlText("label", 0, control.kind === "button" ? uiButtonLabel(control) : control.label);
-    switch (control.kind) {
-      case "button": break;
-      case "toggle": addControlText("value", 0, control.value ? "On" : "Off"); break;
-      case "range": addControlText("value", 0, control.displayValue); break;
-      case "status": addControlText("value", 0, control.value); break;
-      case "chart": {
-        const presentation = control.presentation;
-        addControlText("x-axis", 0, presentation.x_axis.label, width, presentation.x_axis);
-        addControlText("y-axis", 0, presentation.y_axis.label, width, presentation.y_axis);
-        if (presentation.map_guides !== null) {
-          addControlText("north", 0, presentation.map_guides.north_label.label, width, presentation.map_guides.north_label);
-          addControlText("scale", 0, presentation.map_guides.scale_label.label, width, presentation.map_guides.scale_label);
-        }
-        presentation.x_ticks.forEach((tick, index) => { addControlText("x-tick", index, tick.text.label, width / presentation.x_ticks.length, tick.text); });
-        presentation.y_ticks.forEach((tick, index) => { addControlText("y-tick", index, tick.text.label, width / presentation.y_ticks.length, tick.text); });
-        presentation.legend.forEach((entry, index) => {
-          addText({ kind: "control", controlId: control.id, role: "legend", index }, entry.label, width - style.fontMeters * 2, undefined, entry);
-        });
-        [...presentation.marker_labels, ...presentation.time_marker_labels, ...presentation.reference_labels]
-          .forEach((annotation, index) => { addControlText("annotation", index, annotation.label, width, annotation); });
-        break;
-      }
-    }
-  }
-  }
-  return Object.freeze({ panel, theme: style.theme, surfaceSize: Object.freeze({ ...surfaceSize }), fontMeters: style.fontMeters, font,
-    lineHeightMeters: style.fontMeters * 1.35, paddingMeters, gapMeters, rows, texts: Object.freeze(texts) });
-}
-
-function menuRows(panel: UiPanel, portrait: boolean, width: number, fontMeters: number): readonly MenuLayoutRow[] {
-  const sections = panel.sections ?? [{ id: "", label: "", layout: "column" as const }];
-  if (new Set(sections.map((section) => section.id)).size !== sections.length ||
-      panel.sections !== undefined && panel.controls.some((control) => !sections.some((section) => section.id === control.section))) {
-    throw new RangeError("Menu controls must belong to unique declared sections");
-  }
-  return Object.freeze(sections.flatMap((section) => {
-    const controls = panel.sections === undefined ? panel.controls : panel.controls.filter((control) => control.section === section.id);
-    const limit = portrait ? 1 : Math.max(1, Math.floor(width / (fontMeters * 8)));
-    let columns: number;
-    switch (section.layout) {
-      case "column": columns = 1; break;
-      case "row": columns = Math.min(limit, Math.max(1, controls.length)); break;
-      case "choice_grid": columns = Math.min(limit, 3); break;
-    }
-    return Array.from({ length: Math.ceil(controls.length / columns) }, (_, row) => Object.freeze({
-      heading: row === 0 ? Object.freeze({ id: section.id, label: section.label }) : null,
-      controls: Object.freeze(controls.slice(row * columns, (row + 1) * columns).map((control, column) =>
-        Object.freeze({ control, left: column * width / columns, width: width / columns })))
-    }));
-  }));
+  const rows = shared.rows.map(row => ({ heading: row.heading, controls: row.controls.map(item => {
+    const control = panel.controls[item.index];
+    if (control === undefined) throw new Error("Shared Menu row lost its source control");
+    return { control, left: item.left, width: item.width };
+  }) }));
+  const texts = shared.texts.map(({ chartText, legend, ...text }) => ({ ...text,
+    ...(chartText == null ? {} : { chartText }), ...(legend == null ? {} : { legend }) }));
+  return Object.freeze({ panel, theme: style.theme, shared, surfaceSize: shared.source.surfaceSize,
+    fontMeters: shared.source.fontMeters, font: shared.source.font, lineHeightMeters: shared.lineHeightMeters,
+    paddingMeters: shared.paddingMeters, gapMeters: shared.gapMeters, rows, texts });
 }
 
 export function layoutMeasuredMenu(request: MenuLayoutRequest, measurements: readonly MenuTextMeasurement[]): MenuDocumentResult {
-  const expected = new Map(request.texts.map((text) => [text.identity, text]));
-  const measured = new Map<string, MenuTextMeasurement>();
-  for (const measurement of measurements) {
-    const specification = expected.get(measurement.identity);
-    if (specification === undefined || measured.has(measurement.identity)) return unavailable("stale-text-metrics");
-    if (!validMeasurement(specification, measurement, request.lineHeightMeters)) return unavailable("invalid-text-metrics");
-    measured.set(measurement.identity, Object.freeze({ identity: measurement.identity,
-      lines: Object.freeze(measurement.lines.map((line) => Object.freeze({ ...line }))) }));
+  const signature = JSON.stringify(measurements);
+  let observed = documents.get(measurements)?.get(request.shared);
+  if (observed?.signature !== signature) {
+    let reply: MenuLayoutReply;
+    try {
+      const query: MenuLayoutQuery = { kind: "arrange", source: request.shared.source, measurements };
+      reply = JSON.parse(menu_layout_json(JSON.stringify(query))) as MenuLayoutReply;
+    } catch { return { kind: "unavailable", reason: "invalid-text-metrics" }; }
+    if (reply.kind === "unavailable") return reply;
+    if (reply.kind !== "ready") throw new Error("Shared Menu arrangement returned an unexpected phase");
+    observed = { signature, geometry: reply.geometry, measurements: new Map(measurements.map(measurement => [
+      measurement.identity, { identity: measurement.identity, lines: Object.freeze(measurement.lines.map(line => Object.freeze({ ...line }))) }
+    ])) };
+    const cached = documents.get(measurements) ?? new Map<Plan, MeasuredDocument>();
+    cached.set(request.shared, observed);
+    documents.set(measurements, cached);
   }
-  if (measured.size !== expected.size) return unavailable("missing-text-metrics");
-  const textLayout = (specification: MenuTextRequest, left: number, top: number): MenuTextLayout => {
-    const measurement = measured.get(specification.identity);
-    if (measurement === undefined) throw new Error("Validated Menu measurement is missing");
-    return Object.freeze({ request: specification, lines: measurement.lines,
-      bounds: Object.freeze({ x: left, y: top, width: specification.widthMeters,
-        height: specification.value === "" ? 0 : measurement.lines.length * request.lineHeightMeters }) });
+  const { geometry, measurements: retained } = observed;
+  const placeText = (placed: Geometry["title"]): MenuTextLayout => {
+    const text = request.texts[placed.textIndex];
+    if (text === undefined) throw new Error("Shared Menu text lost its measurement request");
+    const measured = retained.get(text.identity);
+    if (measured === undefined) throw new Error("Shared Menu text lost its validated measurement");
+    return { request: text, lines: measured.lines, bounds: placed.bounds, lineGeometry: placed.lineGeometry,
+      ...(placed.chartProjection == null ? {} : { chartProjection: placed.chartProjection }) };
   };
-  const required = (role: MenuFixedTextRole): MenuTextRequest => {
-    const specification = request.texts.find((text) => text.slot.kind === "fixed" && text.slot.role === role);
-    if (specification === undefined) throw new Error("Menu layout request is missing fixed text");
-    return specification;
+  const controls = geometry.controls.map((placed): MenuControlLayout => {
+    const control = request.panel.controls[placed.controlIndex];
+    if (control === undefined) throw new Error("Shared Menu placement lost its source control");
+    const base = { bounds: placed.bounds, texts: placed.texts.map(placeText) };
+    if (control.kind !== "chart") return { ...base, kind: "control", control };
+    if (placed.plot === null) throw new Error("Shared Menu chart lost its plot geometry");
+    return { ...base, kind: "chart", control, plot: placed.plot };
+  });
+  const measurementAt = (index: number): MenuTextMeasurement => {
+    const text = request.texts[index];
+    const measurement = text === undefined ? undefined : retained.get(text.identity);
+    if (measurement === undefined) throw new Error("Shared Menu page lost its measurement");
+    return measurement;
   };
-  const title = textLayout(required("title"), 0, 0);
-  let top = title.bounds.height + request.gapMeters;
-  const controls: MenuControlLayout[] = [];
-  const sectionHeadings: MenuTextLayout[] = [];
-  for (const row of request.rows) {
-    if (row.heading !== null && row.heading.label !== "") {
-      const specification = request.texts.find((text) => text.slot.kind === "section" && text.slot.sectionId === row.heading?.id);
-      if (specification === undefined) return unavailable("invalid-layout");
-      const heading = textLayout(specification, 0, top);
-      sectionHeadings.push(heading);
-      top += heading.bounds.height + request.gapMeters;
-    }
-    const layouts = row.controls.map((item): MenuControlLayout => {
-      const specifications = request.texts.filter((text) => text.slot.kind === "control" && text.slot.controlId === item.control.id);
-      const texts: MenuTextLayout[] = [];
-      let textTop = top + request.paddingMeters;
-      const placeText = (specification: MenuTextRequest): void => {
-        const text = textLayout(specification, item.left + request.paddingMeters + (specification.legend === undefined ? 0 : request.fontMeters * 2), textTop);
-        texts.push(text);
-        textTop += text.bounds.height;
-      };
-      specifications.filter((text) => text.slot.role === "label" || text.slot.role === "value").forEach(placeText);
-      if (item.control.kind !== "chart") return Object.freeze({ kind: "control", control: item.control,
-        bounds: Object.freeze({ x: item.left, y: top, width: item.width, height: textTop - top + request.paddingMeters }), texts: Object.freeze(texts) });
-      const presentation = item.control.presentation;
-      const scale = (item.width - request.paddingMeters * 2) / presentation.viewport.width;
-      const [left, chartTop, right, bottom] = presentation.plot;
-      const origin = { x: item.left + request.paddingMeters, y: textTop };
-      const plot = Object.freeze({ x: item.left + request.paddingMeters + left * scale,
-        y: textTop + chartTop * scale, width: (right - left) * scale, height: (bottom - chartTop) * scale });
-      for (const specification of specifications.filter((text) => text.chartText !== undefined)) {
-        const source = specification.chartText;
-        if (source === undefined) throw new Error("Chart label is missing its shared descriptor");
-        const text = textLayout(specification, 0, 0);
-        const baseline = Object.freeze({ x: origin.x + source.position.x * scale, y: origin.y + source.position.y * scale });
-        const chartProjection = Object.freeze({ baseline, rotationDegrees: source.rotation_degrees, anchor: source.anchor });
-        const rectangles = text.lines.map((line, index) => menuChartTextLineGeometry(chartProjection, line, index, request.lineHeightMeters).bounds);
-        const left = Math.min(...rectangles.map((rect) => rect.x));
-        const right = Math.max(...rectangles.map((rect) => rect.x + rect.width));
-        const top = Math.min(...rectangles.map((rect) => rect.y));
-        const bottom = Math.max(...rectangles.map((rect) => rect.y + rect.height));
-        texts.push(Object.freeze({ ...text, bounds: Object.freeze({ x: left, y: top, width: right - left, height: bottom - top }),
-          chartProjection }));
-      }
-      textTop += presentation.viewport.height * scale + request.gapMeters;
-      specifications.filter((text) => text.slot.role === "legend").forEach(placeText);
-      return Object.freeze({ kind: "chart", control: item.control, plot,
-        bounds: Object.freeze({ x: item.left, y: top, width: item.width, height: textTop - top + request.paddingMeters }), texts: Object.freeze(texts) });
-    });
-    controls.push(...layouts);
-    top += Math.max(...layouts.map((layout) => layout.bounds.height)) + request.gapMeters;
-  }
-  const caption = textLayout(required("caption"), 0, top);
-  const previous = measured.get(required("previous").identity);
-  const next = measured.get(required("next").identity);
-  if (previous === undefined || next === undefined) throw new Error("Validated page labels are missing");
-  const footerHeightMeters = Math.max(previous.lines.length, next.lines.length) * request.lineHeightMeters + request.paddingMeters * 2;
-  const contentHeightMeters = top + caption.bounds.height;
-  if (![contentHeightMeters, footerHeightMeters].every(Number.isFinite) ||
-      request.surfaceSize.height - footerHeightMeters - request.paddingMeters * 2 - request.gapMeters <= 0 ||
-      controls.some((control) => !finiteRect(control.bounds) || (control.kind === "chart" && !finiteRect(control.plot)))) return unavailable("invalid-layout");
-  return Object.freeze({ kind: "ready", document: Object.freeze({ request, title, caption, sectionHeadings: Object.freeze(sectionHeadings), controls: Object.freeze(controls),
-    contentHeightMeters, previous, next, footerHeightMeters }) });
-}
-
-export function menuChartTextLineGeometry(projection: NonNullable<MenuTextLayout["chartProjection"]>, line: MenuMeasuredLine,
-  index: number, lineHeightMeters: number): Readonly<{ anchor: MenuPoint; bounds: MenuRect }> {
-  const rotation = projection.rotationDegrees * Math.PI / 180;
-  const shift = projection.anchor === "middle" ? -line.advanceMeters / 2 : projection.anchor === "end" ? -line.advanceMeters : 0;
-  const project = (coordinateX: number, coordinateY: number) => ({ x: projection.baseline.x + coordinateX * Math.cos(rotation) - coordinateY * Math.sin(rotation),
-    y: projection.baseline.y + coordinateX * Math.sin(rotation) + coordinateY * Math.cos(rotation) });
-  const corners = [shift - line.leftMeters, shift + line.rightMeters].flatMap((coordinateX) =>
-    [index * lineHeightMeters - line.ascentMeters, index * lineHeightMeters + line.descentMeters].map((coordinateY) => project(coordinateX, coordinateY)));
-  const left = Math.min(...corners.map((point) => point.x));
-  const top = Math.min(...corners.map((point) => point.y));
-  return Object.freeze({ anchor: Object.freeze(project(shift, index * lineHeightMeters)),
-    bounds: Object.freeze({ x: left, y: top, width: Math.max(...corners.map((point) => point.x)) - left,
-      height: Math.max(...corners.map((point) => point.y)) - top }) });
-}
-
-function validMeasurement(request: MenuTextRequest, measurement: MenuTextMeasurement, lineHeight: number): boolean {
-  const paragraphs = request.value.split("\n");
-  const reconstructed: string[] = [];
-  for (const line of measurement.lines) {
-    if (!Number.isInteger(line.paragraphIndex) || line.paragraphIndex < 0 || line.paragraphIndex >= paragraphs.length ||
-        line.paragraphIndex > reconstructed.length || line.paragraphIndex < reconstructed.length - 1 || line.value.includes("\n")) return false;
-    if (line.value === "" && (paragraphs[line.paragraphIndex] !== "" || line.paragraphIndex < reconstructed.length)) return false;
-    if (line.paragraphIndex === reconstructed.length) reconstructed.push("");
-    reconstructed[line.paragraphIndex] = (reconstructed[line.paragraphIndex] ?? "") + line.value;
-  }
-  return reconstructed.length === paragraphs.length && reconstructed.every((paragraph, index) => paragraph === paragraphs[index]) &&
-    measurement.lines.every((line) => [line.advanceMeters, line.leftMeters, line.rightMeters, line.ascentMeters, line.descentMeters].every(Number.isFinite) &&
-      line.advanceMeters >= 0 && line.leftMeters + line.rightMeters >= 0 &&
-      Math.max(line.advanceMeters, Math.max(0, line.leftMeters) + line.rightMeters) <= request.widthMeters + 1e-10 &&
-      line.ascentMeters + line.descentMeters <= lineHeight &&
-      (line.value.trim() === "" ? line.ascentMeters + line.descentMeters >= 0 : line.ascentMeters + line.descentMeters > 0));
-}
-
-function unavailable(reason: Extract<MenuDocumentResult, { kind: "unavailable" }>["reason"]): MenuDocumentResult {
-  return Object.freeze({ kind: "unavailable", reason });
-}
-
-function finiteRect(rectangle: MenuRect): boolean {
-  return [rectangle.x, rectangle.y, rectangle.width, rectangle.height].every(Number.isFinite) && rectangle.width > 0 && rectangle.height > 0;
+  return { kind: "ready", document: Object.freeze({ request, title: placeText(geometry.title), caption: placeText(geometry.caption),
+    sectionHeadings: geometry.sectionHeadings.map(placeText), controls: Object.freeze(controls), contentHeightMeters: geometry.contentHeightMeters,
+    footerHeightMeters: geometry.footerHeightMeters, previous: measurementAt(geometry.previousIndex), next: measurementAt(geometry.nextIndex) }) };
 }
 
 export function menuViewport(document: MenuDocument, progress: number): MenuViewport {

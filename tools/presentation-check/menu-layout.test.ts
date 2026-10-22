@@ -87,6 +87,14 @@ describe("Pure measured Menu document and shared viewport", () => {
       expect(rangeText?.value).toBe("5.0");
       expect(Object.isFrozen(document)).toBe(true);
       expect(Object.isFrozen(document.controls)).toBe(true);
+      const mutable = request.texts.map(text => ({ ...measurementFor(text), lines: measurementFor(text).lines.map(line => ({ ...line })) }));
+      const observed = layoutMeasuredMenu(request, mutable);
+      if (observed.kind !== "ready") throw new Error("Missing measured document");
+      const line = mutable[0]?.lines[0];
+      if (line === undefined) throw new Error("Missing measured title");
+      line.value = "modified after observation";
+      expect(observed.document.title.lines[0]?.value).toBe(panel.title);
+      expect(layoutMeasuredMenu(request, mutable)).toEqual({ kind: "unavailable", reason: "invalid-text-metrics" });
     }
   });
 
