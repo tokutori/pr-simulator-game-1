@@ -3,17 +3,17 @@ use super::*;
 #[test]
 fn sealed_calm_updates_all_resources_and_quality_retry_preserve_condition_and_clock() {
     let mut app = environment_app();
-    assert_eq!(
-        terrain_haze(&app),
-        [TerrainHazeExtension::try_new(Some(25_000.0)).unwrap(); 6]
-    );
+    let initial_haze = terrain_haze(&app);
+    assert!(!initial_haze.is_empty());
+    let expected_haze = TerrainHazeExtension::try_new(Some(25_000.0)).unwrap();
+    assert!(initial_haze.iter().all(|haze| *haze == expected_haze));
     let original_images: Vec<_> = app.world().resource::<Assets<Image>>().ids().collect();
     let retired_images = environment_image_ids(&mut app);
     prepare_calm(&mut app);
     app.update();
     assert_eq!(
         terrain_haze(&app),
-        [TerrainHazeExtension::try_new(None).unwrap(); 6]
+        vec![TerrainHazeExtension::try_new(None).unwrap(); initial_haze.len()]
     );
     let briefing = shared_ui_text(&mut app);
     assert!(briefing.contains("Calm"));

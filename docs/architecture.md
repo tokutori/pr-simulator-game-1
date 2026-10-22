@@ -245,6 +245,7 @@ GameUiView / GameUiFrame → platform renderer → DOM / VR panel / Bevy entity
 
 - Three.jsの型・importは`web/src/render/engines/three`内部へ限定する。
 - 具体factoryの接続はcomposition rootが行う。
+- Native worldは地形・会場・湖面・天空・光源の静的資源生成と、機体変形・pose/cameraの動的投影を分離する。同じ頂点色・haze契約の地形は一つの材質を共有する。
 - app、presentation、camera、契約層からengine adapterを参照しない。
 - 型専用import、re-export、JSDoc import、`require`、dynamic import、module referenceも同じ境界と依存DAGの対象である。
 
