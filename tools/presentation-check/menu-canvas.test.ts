@@ -85,7 +85,7 @@ function prepare(context: MenuDrawingContext, session: TailAppSessionFacade, pla
 describe("Shared Menu Canvas adapter", () => {
   it.each(["title", "flight_setup", "briefing_ready", "countdown", "flight_running", "flight_paused", "result", "replay", "attract"] as const)(
     "paints the actual %s Menu and keeps controls reachable in both optical orientations", phase => {
-      withSharedGameUiSession(phase, { platform: { presentation_mode: "webxr" } }, (session, platform) => {
+      withSharedGameUiSession(phase, { platform: { presentation_mode: "hmd" } }, (session, platform) => {
         for (const [width, height] of [[1280, 720], [720, 1280]] as const) {
           const context = new RecordingContext();
           const ready = prepare(context, session, platform, 0, configuredViewerFixture(width, height));
@@ -114,7 +114,7 @@ describe("Shared Menu Canvas adapter", () => {
     });
 
   it("retains font observations in the Rust owner and refreshes them for a font generation", () => {
-    withSharedGameUiSession("title", { platform: { presentation_mode: "webxr" } }, (session, platform) => {
+    withSharedGameUiSession("title", { platform: { presentation_mode: "hmd" } }, (session, platform) => {
       const context = new RecordingContext();
       const read = context.read;
       let queries = 0;
@@ -140,7 +140,7 @@ describe("Shared Menu Canvas adapter", () => {
   });
 
   it.each(["invalid", "throw"] as const)("propagates %s font observations and restores Canvas state", failure => {
-    withSharedGameUiSession("title", { platform: { presentation_mode: "webxr" } }, (session, platform) => {
+    withSharedGameUiSession("title", { platform: { presentation_mode: "hmd" } }, (session, platform) => {
       const shared = session.readSharedUi(platform);
       const panel = createGameViewModel(shared).panels[0];
       if (panel === undefined) throw new Error("Missing Title Menu");
@@ -159,7 +159,7 @@ describe("Shared Menu Canvas adapter", () => {
   });
 
   it.each(["map", "speed"] as const)("paints shared %s chart text baselines and the current frame after seeking", chart => {
-    withSharedGameUiSession("result", { ticks: 20, platform: { presentation_mode: "webxr" },
+    withSharedGameUiSession("result", { ticks: 20, platform: { presentation_mode: "hmd" },
       actions: [{ kind: "set_result_tab", tab: "analysis" }, { kind: "set_analysis_chart", chart }] }, (session, platform) => {
       const context = new RecordingContext();
       const first = prepare(context, session, platform);

@@ -2,7 +2,7 @@
 /**
  * Presentation mode supported by a platform adapter.
  */
-export type GameUiPresentationMode = "screen" | "webxr" | "phone_vr";
+export type GameUiPresentationMode = "screen" | "hmd" | "phone_vr";
 export type ScreenRenderAutoSnapshot = import("./screen-render-auto.js").ScreenRenderAutoSnapshot;
 /**
  * Title's bounded metadata query result, independent of all-record PB selection.
@@ -75,6 +75,14 @@ export interface GameUiPlatformInput {
      */
     readonly head_hud_failure?: string | null;
     /**
+     * Platform runtime supports head-mounted stereo display.
+     */
+    readonly hmd_available: boolean;
+    /**
+     * Active spatial backend can reposition the menu in front of the viewer.
+     */
+    readonly menu_recenter_available: boolean;
+    /**
      * Platform operation feedback.
      */
     readonly notification: string;
@@ -104,10 +112,6 @@ export interface GameUiPlatformInput {
     readonly viewport: GameUiViewport;
     readonly water_quality: WaterQuality;
     readonly water_quality_operation: GameUiWaterQualityOperation;
-    /**
-     * Browser WebXR support.
-     */
-    readonly webxr_available: boolean;
 }
 /**
  * Measured or initially assumed chart content dimensions in logical pixels.

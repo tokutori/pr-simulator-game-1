@@ -185,7 +185,7 @@ function fixture(mode: "screen" | "phone-vr" | "webxr", informationCode = 0) {
   const platform = () => {
     const currentMode = model.presentation.type === "ready" ? model.presentation.mode : "screen";
     return sharedGameUiPlatform({
-      presentation_mode: currentMode === "phone-vr" ? "phone_vr" : currentMode,
+      presentation_mode: currentMode === "phone-vr" ? "phone_vr" : currentMode === "webxr" ? "hmd" : currentMode,
       flight_controller_failure: model.flightExecution.kind === "stopped" ? model.flightExecution.message : null
     });
   };

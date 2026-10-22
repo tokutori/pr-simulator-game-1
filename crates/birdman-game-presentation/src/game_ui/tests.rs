@@ -24,8 +24,9 @@ pub(super) fn platform() -> GameUiPlatformInput {
         chart_extent: None,
         presentation_mode: GameUiPresentationMode::Screen,
         operation_pending: false,
-        webxr_available: false,
+        hmd_available: false,
         phone_vr_available: false,
+        menu_recenter_available: false,
         analysis_available: true,
         replay_available: true,
         supported_replay_cameras: GameUiReplayCamera::ALL.to_vec(),
@@ -792,7 +793,7 @@ fn credits_are_reachable_from_title_and_pause_without_advancing_the_session() {
     let mut platform = platform();
     for mode in [
         GameUiPresentationMode::Screen,
-        GameUiPresentationMode::Webxr,
+        GameUiPresentationMode::Hmd,
         GameUiPresentationMode::PhoneVr,
     ] {
         platform.presentation_mode = mode;
@@ -885,6 +886,66 @@ fn title_projects_saved_timestamps_without_rewriting_platform_metadata() {
         }
     ));
     assert_eq!(platform, before);
+}
+
+#[test]
+fn hmd_selection_and_menu_recenter_follow_adapter_capabilities() {
+    let session = GameSession::new();
+    let state = GameUiState::default();
+    let mut platform = platform();
+    let enter = GameUiAction::Platform {
+        command: GameUiPlatformCommand::SetPresentation {
+            mode: GameUiPresentationMode::Hmd,
+        },
+    };
+    assert_eq!(
+        update_game_ui(
+            &state,
+            enter.clone(),
+            &context(&session, difficulty(), &platform)
+        ),
+        Err(GameUiError::ActionUnavailable)
+    );
+    platform.hmd_available = true;
+    assert_eq!(
+        update_game_ui(
+            &state,
+            enter.clone(),
+            &context(&session, difficulty(), &platform)
+        )
+        .unwrap()
+        .effects,
+        vec![GameUiEffect::Platform {
+            command: GameUiPlatformCommand::SetPresentation {
+                mode: GameUiPresentationMode::Hmd
+            }
+        }]
+    );
+    platform.presentation_mode = GameUiPresentationMode::Hmd;
+    let recenter = GameUiAction::Platform {
+        command: GameUiPlatformCommand::RecenterMenu {},
+    };
+    assert_eq!(
+        update_game_ui(
+            &state,
+            recenter.clone(),
+            &context(&session, difficulty(), &platform)
+        ),
+        Err(GameUiError::ActionUnavailable)
+    );
+    platform.menu_recenter_available = true;
+    assert_eq!(
+        update_game_ui(
+            &state,
+            recenter,
+            &context(&session, difficulty(), &platform)
+        )
+        .unwrap()
+        .effects,
+        vec![GameUiEffect::Platform {
+            command: GameUiPlatformCommand::RecenterMenu {}
+        }]
+    );
 }
 
 #[test]
@@ -1376,10 +1437,7 @@ fn analysis_sections_preserve_order_and_typed_values_across_targets() {
                     ..
                 }
             ));
-            for mode in [
-                GameUiPresentationMode::PhoneVr,
-                GameUiPresentationMode::Webxr,
-            ] {
+            for mode in [GameUiPresentationMode::PhoneVr, GameUiPresentationMode::Hmd] {
                 platform.presentation_mode = mode;
                 let spatial =
                     game_ui_view(&state, &context(&session, difficulty(), &platform)).unwrap();
@@ -1834,7 +1892,7 @@ fn range_display_text_matches_initial_and_retained_views_at_rounding_boundaries(
         for mode in [
             GameUiPresentationMode::Screen,
             GameUiPresentationMode::PhoneVr,
-            GameUiPresentationMode::Webxr,
+            GameUiPresentationMode::Hmd,
         ] {
             let mut platform = platform();
             platform.presentation_mode = mode;
@@ -2040,7 +2098,7 @@ fn controller_resource_failure_preserves_last_valid_hud_and_exit_in_both_modes()
     for mode in [
         GameUiPresentationMode::Screen,
         GameUiPresentationMode::PhoneVr,
-        GameUiPresentationMode::Webxr,
+        GameUiPresentationMode::Hmd,
     ] {
         let mut session = launched();
         let before = session.snapshot();
@@ -2156,10 +2214,7 @@ fn head_hud_resource_failure_is_independent_of_controller_and_session() {
 
 #[test]
 fn vr_resource_failure_panels_preserve_all_controls_without_overlap() {
-    for mode in [
-        GameUiPresentationMode::PhoneVr,
-        GameUiPresentationMode::Webxr,
-    ] {
+    for mode in [GameUiPresentationMode::PhoneVr, GameUiPresentationMode::Hmd] {
         for (head_failed, controller_failed, height) in
             [(true, false, 0.50), (false, true, 0.65), (true, true, 0.80)]
         {
@@ -2259,7 +2314,7 @@ fn result_summary_keeps_ordered_navigation_across_targets() {
         for mode in [
             GameUiPresentationMode::Screen,
             GameUiPresentationMode::PhoneVr,
-            GameUiPresentationMode::Webxr,
+            GameUiPresentationMode::Hmd,
         ] {
             let mut platform = platform();
             platform.viewport.width = width;
@@ -2372,7 +2427,7 @@ fn attract_keeps_ordered_sources_and_does_not_mutate_playback_across_targets() {
     for mode in [
         GameUiPresentationMode::Screen,
         GameUiPresentationMode::PhoneVr,
-        GameUiPresentationMode::Webxr,
+        GameUiPresentationMode::Hmd,
     ] {
         let mut platform = platform();
         platform.presentation_mode = mode;
@@ -2424,7 +2479,7 @@ fn replay_sections_keep_typed_controls_and_readout_sources_across_targets() {
         for mode in [
             GameUiPresentationMode::Screen,
             GameUiPresentationMode::PhoneVr,
-            GameUiPresentationMode::Webxr,
+            GameUiPresentationMode::Hmd,
         ] {
             let mut platform = platform();
             platform.viewport.width = width;
@@ -2602,7 +2657,7 @@ fn hud_scene_policy_is_shared_by_full_and_frame_projection_in_screen_and_vr() {
     for mode in [
         GameUiPresentationMode::Screen,
         GameUiPresentationMode::PhoneVr,
-        GameUiPresentationMode::Webxr,
+        GameUiPresentationMode::Hmd,
     ] {
         let mut platform = platform();
         platform.presentation_mode = mode;
@@ -2939,7 +2994,7 @@ fn screen_render_scale_choices_are_shared_and_admitted_only_in_screen_settings()
         let before = session.snapshot();
         for mode in [
             GameUiPresentationMode::Screen,
-            GameUiPresentationMode::Webxr,
+            GameUiPresentationMode::Hmd,
             GameUiPresentationMode::PhoneVr,
         ] {
             for scale in ScreenRenderScale::ALL {
@@ -3054,7 +3109,7 @@ fn screen_render_auto_projects_selection_applied_status_and_admission() {
     platform.water_quality = WaterQuality::Low;
     for mode in [
         GameUiPresentationMode::Screen,
-        GameUiPresentationMode::Webxr,
+        GameUiPresentationMode::Hmd,
         GameUiPresentationMode::PhoneVr,
     ] {
         platform.presentation_mode = mode;

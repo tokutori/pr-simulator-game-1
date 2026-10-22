@@ -414,10 +414,7 @@ fn director_preserves_opening_low_altitude_terminal_attract_and_vr_choices() {
             expected
         );
     }
-    for presentation in [
-        GameUiPresentationMode::Webxr,
-        GameUiPresentationMode::PhoneVr,
-    ] {
+    for presentation in [GameUiPresentationMode::Hmd, GameUiPresentationMode::PhoneVr] {
         assert_eq!(
             replay_camera_view(
                 &record,

@@ -8,7 +8,7 @@ pub use spatial::*;
 mod interaction;
 pub use interaction::*;
 
-/// Resolves complete menu measurement requests or measured document geometry.
+/// Projects menu scrolling, clipping and coordinate batches.
 #[wasm_bindgen]
 pub fn menu_layout_json(query_json: &str) -> Result<String, JsValue> {
     encode(&shared::menu_layout(decode(query_json, 1_048_576)?))

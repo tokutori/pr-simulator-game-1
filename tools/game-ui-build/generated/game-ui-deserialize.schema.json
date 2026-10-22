@@ -810,6 +810,14 @@
             "null"
           ]
         },
+        "hmd_available": {
+          "description": "Platform runtime supports head-mounted stereo display.",
+          "type": "boolean"
+        },
+        "menu_recenter_available": {
+          "description": "Active spatial backend can reposition the menu in front of the viewer.",
+          "type": "boolean"
+        },
         "notification": {
           "description": "Platform operation feedback.",
           "maxLength": 2048,
@@ -861,18 +869,15 @@
         "water_quality_operation": {
           "$ref": "#/$defs/GameUiWaterQualityOperation",
           "description": "Actual resource preparation, commitment and cleanup observation."
-        },
-        "webxr_available": {
-          "description": "Browser WebXR support.",
-          "type": "boolean"
         }
       },
       "required": [
         "viewport",
         "presentation_mode",
         "operation_pending",
-        "webxr_available",
+        "hmd_available",
         "phone_vr_available",
+        "menu_recenter_available",
         "analysis_available",
         "replay_available",
         "supported_replay_cameras",
@@ -896,8 +901,8 @@
           "type": "string"
         },
         {
-          "const": "webxr",
-          "description": "Browser HMD display.",
+          "const": "hmd",
+          "description": "Head-mounted stereo display provided by the platform runtime.",
           "type": "string"
         },
         {
@@ -1359,7 +1364,7 @@
       ]
     },
     "MenuLayoutQuery": {
-      "description": "Aggregate layout protocol spanning preparation and measured arrangement.",
+      "description": "Batch menu viewport and coordinate projection query.",
       "oneOf": [
         {
           "additionalProperties": false,

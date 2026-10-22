@@ -16,7 +16,7 @@ import { HudCanvasFixture } from "./hud-canvas-fixture.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
 import { withSharedGameUiSession } from "../game-check/shared-game-ui-fixture.js";
 
-const geometryLayout = withSharedGameUiSession("title", { platform: { presentation_mode: "webxr" } }, (session, platform) => {
+const geometryLayout = withSharedGameUiSession("title", { platform: { presentation_mode: "hmd" } }, (session, platform) => {
     const shared = session.readSharedUi(platform);
     const source = createGameViewModel(shared).panels[0];
     if (source === undefined) throw new Error("Missing shared Title panel");

@@ -104,7 +104,7 @@ describe("current WebAssembly browser binding", () => {
       expect(terminalRecords).toEqual([session.exportRecordJson()]);
       for (const mode of ["screen", "phone-vr", "webxr"] as const) {
         const view = createGameViewModel(session.readSharedUi(sharedGameUiPlatform({
-          presentation_mode: mode === "phone-vr" ? "phone_vr" : mode
+          presentation_mode: mode === "phone-vr" ? "phone_vr" : mode === "webxr" ? "hmd" : mode
         })));
         expect(view.scene).toBe("Result");
         for (const controlId of ["game-flight-pause", "game-flight-abort", "game-flight-resume", "game-paused-abort"]) {

@@ -33,7 +33,7 @@ function session(): TailAppSessionFacade {
 
 function observeSharedUi(model: AppModel, facade: TailAppSessionFacade, mode: "screen" | "phone-vr" | "webxr" = "screen"): AppModel {
   return updateApp(model, { type: "shared-game-ui-observed", view: facade.readSharedUi(sharedGameUiPlatform({
-    presentation_mode: mode === "phone-vr" ? "phone_vr" : mode,
+    presentation_mode: mode === "phone-vr" ? "phone_vr" : mode === "webxr" ? "hmd" : mode,
     flight_controller_failure: model.flightExecution.kind === "stopped" ? model.flightExecution.message : null
   })) }).model;
 }

@@ -723,7 +723,7 @@ function updateUiAction(model: AppModel, action: UiAction): AppTransition {
   }
   if (action.type !== "activate" || model.gameSession.phase !== "boot") return transition(model);
   switch (action.controlId) {
-    case "boot-enter-webxr": return beginPermissionRequest(model, "webxr");
+    case "boot-enter-hmd": return beginPermissionRequest(model, "webxr");
     case "boot-enter-phone-vr": return beginPermissionRequest(model, "phone-vr");
     case "boot-exit-vr": return beginBackendSwitch(model, "screen", "Ending presentation session");
     case "boot-recenter-phone-tracking":
@@ -768,7 +768,7 @@ function updateSharedUiEffect(model: AppModel, effect: GameUiEffect): AppTransit
         [{ type: "apply-lake-water-quality", requestId, quality: command.quality }]);
     }
     case "set_presentation": {
-      const mode = command.mode === "phone_vr" ? "phone-vr" : command.mode;
+      const mode = command.mode === "phone_vr" ? "phone-vr" : command.mode === "hmd" ? "webxr" : command.mode;
       return mode === "screen" ? beginBackendSwitch(model, mode, "Ending presentation session") : beginPermissionRequest(model, mode);
     }
     case "recenter_phone_tracking": return transition(model, [{ type: "recenter-tracking" }]);

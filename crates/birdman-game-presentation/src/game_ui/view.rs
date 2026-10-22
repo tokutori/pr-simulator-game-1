@@ -72,16 +72,16 @@ pub fn game_ui_view(
             }
             menu.section("presentation-actions", "VR", GameUiSectionLayout::Row);
             menu.platform(
-                "boot-enter-webxr",
-                if context.platform.webxr_available {
+                "boot-enter-hmd",
+                if context.platform.hmd_available {
                     "VRヘッドセットで表示"
                 } else {
                     "VRヘッドセットは利用できない"
                 },
                 GameUiPlatformCommand::SetPresentation {
-                    mode: GameUiPresentationMode::Webxr,
+                    mode: GameUiPresentationMode::Hmd,
                 },
-                context.platform.webxr_available,
+                context.platform.hmd_available,
             );
             menu.platform(
                 "boot-enter-phone-vr",
@@ -100,7 +100,7 @@ pub fn game_ui_view(
                     "boot-recenter-phone-tracking",
                     "頭部追跡を再設定",
                     GameUiPlatformCommand::RecenterPhoneTracking {},
-                    true,
+                    context.platform.phone_vr_available,
                 );
             }
             if context.platform.presentation_mode != GameUiPresentationMode::Screen {
@@ -108,7 +108,7 @@ pub fn game_ui_view(
                     "boot-recenter-menu",
                     "メニューを正面に配置",
                     GameUiPlatformCommand::RecenterMenu {},
-                    true,
+                    context.platform.menu_recenter_available,
                 );
                 menu.platform(
                     "boot-exit-vr",

@@ -51,7 +51,7 @@ describe("Shared Flight Setup and Briefing presentation", () => {
     }
   });
 
-  it.each(["screen", "phone_vr", "webxr"] as const)("opens and closes the same Credits without moving the session in %s", (presentation_mode) => {
+  it.each(["screen", "phone_vr", "hmd"] as const)("opens and closes the same Credits without moving the session in %s", (presentation_mode) => {
     for (const phase of ["title", "flight_paused"] as const) {
       withSharedGameUiSession(phase, { platform: { presentation_mode } }, (session, platform) => {
         const before = session.readGameSessionProjection();
@@ -77,7 +77,7 @@ describe("Shared Flight Setup and Briefing presentation", () => {
     }
   });
 
-  it.each(["screen", "phone_vr", "webxr"] as const)("projects the same direct candidates, groups and Weather in %s", (presentation_mode) => {
+  it.each(["screen", "phone_vr", "hmd"] as const)("projects the same direct candidates, groups and Weather in %s", (presentation_mode) => {
     const shared = currentSharedGameUiFixture("flight_setup", { platform: { presentation_mode } });
     const view = createGameViewModel(shared);
     validateUiViewModel(view);

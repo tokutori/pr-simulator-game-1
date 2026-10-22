@@ -121,9 +121,9 @@ describe("App update to Screen DOM and HUD lifecycle", () => {
 
     for (const mode of ["phone-vr", "webxr"] as const) {
       app.send(phase === "boot" || phase === "title"
-        ? { type: "ui-action", action: { type: "activate", controlId: `boot-enter-${mode}` } }
+        ? { type: "ui-action", action: { type: "activate", controlId: `boot-enter-${mode === "webxr" ? "hmd" : mode}` } }
         : { type: "shared-game-ui-effect", effect: { kind: "platform", command: {
-          kind: "set_presentation", mode: mode === "phone-vr" ? "phone_vr" : mode
+          kind: "set_presentation", mode: mode === "phone-vr" ? "phone_vr" : "hmd"
         } } });
       const request = app.model().presentation;
       if (request.type !== "transitioning") throw new Error("Expected permission request");

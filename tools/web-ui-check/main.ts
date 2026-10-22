@@ -349,12 +349,12 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
     });
     report.vrChoiceLayout = await page.evaluate(async addresses => {
       if (window.__uiViewJson === null) throw new Error("The production shared Setup View was not captured");
-      const platform = JSON.stringify({ ...JSON.parse(window.__uiPlatformJson) as Record<string, unknown>, presentation_mode: "webxr" });
-      const shared = JSON.parse(window.__uiBridge.game_ui_view_json(platform)) as GameUiView;
-      if (shared.scene !== "FlightSetup") throw new Error("VR text projection requires the current shared Setup View");
       const viewModule = await import(addresses.view) as typeof import("../../web/src/app/game-view.js");
       const canvasModule = await import(addresses.canvas) as typeof import("../../web/src/presentation/menu-canvas.js");
       const preparationModule = await import(addresses.preparation) as typeof import("../../web/src/presentation/menu-preparation.js");
+      const platform = JSON.stringify({ ...JSON.parse(window.__uiPlatformJson) as Record<string, unknown>, presentation_mode: "hmd" });
+      const shared = JSON.parse(window.__uiBridge.game_ui_view_json(platform)) as GameUiView;
+      if (shared.scene !== "FlightSetup") throw new Error("VR text projection requires the current shared Setup View");
       const panel = viewModule.createGameViewModel(shared).panels[0];
       if (panel === undefined) throw new Error("Missing shared Setup panel");
       const canvas = document.createElement("canvas");
@@ -370,7 +370,7 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
           { generation: 1, scope: { kind: "scene", scene: shared.scene, panelId: panel.id, viewKey: "canvas-preparation" } },
           0, viewer, { theme: shared.theme, locale: "ja", viewRevision: shared.view_revision,
             font: { family: "system-ui, sans-serif", weight: 600, style: "normal", generation: 0 } }, (input, measure) => JSON.parse(window.__uiBridge.game_ui_menu_json(platform, JSON.stringify(input), measure)) as import("../../web/src/generated/menu-layout-reply.js").MenuLayoutReply);
-        if (ready.kind !== "ready") throw new Error(`Real Canvas Menu preparation failed: ${ready.kind}`);
+        if (ready.kind !== "ready") throw new Error(`Real Canvas Menu preparation failed: ${ready.kind === "unavailable" ? ready.reason : ready.kind}`);
         const document = ready.viewport.document;
         if (document.request.fontMeters < 0.035 || ready.panel.size.width > spatial.size.width || document.controls.length !== panel.controls.length) {
           throw new Error("Shared Menu preparation changed content or rejected its requested typography");

@@ -31,8 +31,8 @@ export function createBootViewModel(model: AppModel): UiViewModel {
         }),
         Object.freeze({
           kind: "button" as const,
-          id: "boot-enter-webxr",
-          label: model.webXrAvailable ? "WebXRで開始" : "WebXRは利用できない",
+          id: "boot-enter-hmd",
+          label: model.webXrAvailable ? "VRヘッドセットで表示" : "VRヘッドセットは利用できない",
           enabled: model.webXrAvailable && canStart,
           rect: normalizedRect(0.08, 0.68, 0.84, 0.08)
         }),

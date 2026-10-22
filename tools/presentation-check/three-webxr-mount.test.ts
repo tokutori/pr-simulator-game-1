@@ -295,7 +295,7 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
           ...(information === "flight-path-only" ? { hudProfile: {
             telemetry: false, attitude: false, wind: false, flight_path: true, angle_of_attack: false, warnings: false
           } } : information === 4 ? { hudProfile: { telemetry: true, attitude: true, wind: true, flight_path: true, angle_of_attack: true, warnings: true } } : {}),
-          platform: { presentation_mode: "webxr" }
+          platform: { presentation_mode: "hmd" }
         }) };
       const draft = createFlightFrameViewDraft(model, viewer, "ja");
       if (draft.headHud.kind !== "visible") throw new Error("Missing Head HUD");
@@ -398,7 +398,7 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
         sharedGameUi: currentSharedGameUiFixture("flight_running", { informationCode: 4, hudProfile: {
           telemetry: (mask & 1) !== 0, attitude: (mask & 2) !== 0, wind: (mask & 4) !== 0,
           flight_path: (mask & 8) !== 0, angle_of_attack: (mask & 16) !== 0, warnings: (mask & 32) !== 0
-        }, platform: { presentation_mode: "webxr" } }) };
+        }, platform: { presentation_mode: "hmd" } }) };
       const draft = createFlightFrameViewDraft(model, viewer, "ja");
       if (mask === 0 || mask === 32) {
         expect(draft.headHud.kind).toBe("absent");

@@ -35,7 +35,7 @@ describe("Shared Rust game View projection", () => {
 
   it.each(["title", "flight_setup", "briefing_preparing", "briefing_ready", "countdown", "flight_running", "flight_paused", "result", "briefing_failed", "replay", "attract"] as const)("preserves every published field and control in phase %s", (phase) => {
     withSharedGameUiSession(phase, {}, session => {
-      for (const presentation_mode of ["screen", "phone_vr", "webxr"] as const) {
+      for (const presentation_mode of ["screen", "phone_vr", "hmd"] as const) {
         const shared = session.readSharedUi(sharedGameUiPlatform({ presentation_mode }));
         const before = JSON.stringify(shared);
         const view = createGameViewModel(shared);

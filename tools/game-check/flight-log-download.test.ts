@@ -40,7 +40,7 @@ function viewForModel(model: AppModel, viewport?: GameUiPlatformInput["viewport"
   }
   const shared = withSharedGameUiSession(phase, { actions, platform: {
     ...(viewport === undefined ? {} : { viewport }),
-    presentation_mode: currentMode === "phone-vr" ? "phone_vr" : currentMode,
+    presentation_mode: currentMode === "phone-vr" ? "phone_vr" : currentMode === "webxr" ? "hmd" : currentMode,
     notification: flightLogDownloadNotice(model.flightLogDownload)
   } }, (session, platform) => session.readSharedUi({ ...platform,
     operation_pending: model.recordOpen.kind === "loading"

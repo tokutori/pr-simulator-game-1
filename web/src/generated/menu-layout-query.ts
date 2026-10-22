@@ -1,6 +1,6 @@
 /* Generated from birdman-game-presentation::game_ui. Edit the Rust contract and regenerate. */
 /**
- * Aggregate layout protocol spanning preparation and measured arrangement.
+ * Batch menu viewport and coordinate projection query.
  */
 export type MenuLayoutQuery = {
     /**

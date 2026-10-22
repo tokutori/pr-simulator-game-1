@@ -271,7 +271,7 @@ function qualityOptions(model: AppModel): SharedGameUiFixtureOptions {
     : quality.cleanup.kind === "failed" ? { kind: "cleanup_failed" as const, cause: quality.cleanup.message }
     : { kind: "idle" as const };
   return { ...(phase === "flight_paused" && overlay !== "menu" ? { actions: [{ kind: "set_pause_overlay", overlay }] } : {}),
-    platform: { presentation_mode: mode === "phone-vr" ? "phone_vr" : mode,
+    platform: { presentation_mode: mode === "phone-vr" ? "phone_vr" : mode === "webxr" ? "hmd" : mode,
       operation_pending: model.recordOpen.kind === "loading",
       ...(model.screenRenderScale === null ? {} : { screen_render_scale: model.screenRenderScale }),
       water_quality: quality.applied, water_quality_operation: operation } };
@@ -299,7 +299,7 @@ function readyModel(phase: SessionPhase = "flight_setup", mode: PresentationMode
   }).model;
   return withSharedGameUiSession(phase, {
     ...(phase === "flight_paused" ? { actions: [{ kind: "set_pause_overlay", overlay: "settings" }] } : {}),
-    platform: { presentation_mode: mode === "phone-vr" ? "phone_vr" : mode } }, (session, platform) => ({
+    platform: { presentation_mode: mode === "phone-vr" ? "phone_vr" : mode === "webxr" ? "hmd" : mode } }, (session, platform) => ({
     ...ready, screenRenderScale: sharedScreenRenderSnapshot(), gameSession: readRuntimeSessionProjection(session),
     sharedGameUi: session.readSharedUi(platform) }));
 }

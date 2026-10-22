@@ -82,7 +82,7 @@ describe("Boot application state", () => {
       "flight_running"
     )).toBe(false);
     expect(isStaleGameFlowActivation(
-      { type: "activate", controlId: "boot-enter-webxr" },
+      { type: "activate", controlId: "boot-enter-hmd" },
       "title",
       "result"
     )).toBe(false);
@@ -90,7 +90,7 @@ describe("Boot application state", () => {
 
   it("identifies game-flow activations for fresh Rust state reads", () => {
     expect(isGameFlowActivation({ type: "activate", controlId: "game-flight-resume" })).toBe(true);
-    expect(isGameFlowActivation({ type: "activate", controlId: "boot-enter-webxr" })).toBe(false);
+    expect(isGameFlowActivation({ type: "activate", controlId: "boot-enter-hmd" })).toBe(false);
     expect(isGameFlowActivation({ type: "focus", controlId: "game-flight-resume" })).toBe(false);
   });
 
@@ -153,7 +153,7 @@ describe("Boot application state", () => {
     });
     expect(completed.model.presentation).toEqual({ type: "ready", mode: "screen" });
     expect(completed.effects).toEqual([{ type: "load-stored-flight-records", requestId: 1 }]);
-    expect(createBootViewModel(completed.model).panels[0]?.controls.find((control) => control.id === "boot-enter-webxr")?.enabled).toBe(true);
+    expect(createBootViewModel(completed.model).panels[0]?.controls.find((control) => control.id === "boot-enter-hmd")?.enabled).toBe(true);
   });
 
   it("distinguishes an unloaded record list from an actual request and a loaded empty list", () => {
@@ -291,7 +291,7 @@ describe("Boot application state", () => {
 
   it("serializes permission requests and backend changes", () => {
     const ready = readyModel();
-    const requested = updateApp(ready, { type: "shared-game-ui-effect", effect: { kind: "platform", command: { kind: "set_presentation", mode: "webxr" } } });
+    const requested = updateApp(ready, { type: "shared-game-ui-effect", effect: { kind: "platform", command: { kind: "set_presentation", mode: "hmd" } } });
     expect(requested.model.presentation).toEqual({ type: "transitioning", origin: "user-request", requestId: 2, from: "screen", to: "webxr", phase: "requesting" });
     expect(requested.effects).toEqual([{ type: "request-permission", mode: "webxr", requestId: 2 }]);
     expect(createBootViewModel(requested.model).panels[0]?.controls.filter((control) => control.kind === "button" && control.id.startsWith("boot-enter-")).every((control) => !control.enabled)).toBe(true);
@@ -316,7 +316,7 @@ describe("Boot application state", () => {
 
   it("cancels a stale successful permission result", () => {
     const ready = readyModel();
-    const transition = updateApp(ready, { type: "shared-game-ui-effect", effect: { kind: "platform", command: { kind: "set_presentation", mode: "webxr" } } });
+    const transition = updateApp(ready, { type: "shared-game-ui-effect", effect: { kind: "platform", command: { kind: "set_presentation", mode: "hmd" } } });
     const stale = updateApp(transition.model, {
       type: "permission-completed", requestId: 1, mode: "webxr", ok: true, message: "granted"
     });
@@ -326,7 +326,7 @@ describe("Boot application state", () => {
 
   it("reports the backend actually active after a failed switch", () => {
     const ready = readyModel();
-    const requested = updateApp(ready, { type: "shared-game-ui-effect", effect: { kind: "platform", command: { kind: "set_presentation", mode: "webxr" } } });
+    const requested = updateApp(ready, { type: "shared-game-ui-effect", effect: { kind: "platform", command: { kind: "set_presentation", mode: "hmd" } } });
     const starting = updateApp(requested.model, {
       type: "permission-completed", requestId: 2, mode: "webxr", ok: true, message: "granted"
     });
@@ -440,7 +440,7 @@ describe("Boot application state", () => {
 
   it.each(["webxr", "phone-vr"] as const)("keeps %s permission, startup fallback and explicit exit separate from faults", (mode) => {
     const requested = updateApp(readyModel(), {
-      type: "shared-game-ui-effect", effect: { kind: "platform", command: { kind: "set_presentation", mode: mode === "phone-vr" ? "phone_vr" : mode } }
+      type: "shared-game-ui-effect", effect: { kind: "platform", command: { kind: "set_presentation", mode: mode === "phone-vr" ? "phone_vr" : "hmd" } }
     });
     expect(requested.model.presentation).toMatchObject({ origin: "user-request", phase: "requesting" });
     const earlyCompletion = updateApp(requested.model, {
@@ -574,7 +574,7 @@ describe("Boot application state", () => {
   });
 
   it("invalidates permission and backend completions across cache restoration", () => {
-    const pending = updateApp(readyModel(), { type: "shared-game-ui-effect", effect: { kind: "platform", command: { kind: "set_presentation", mode: "webxr" } } });
+    const pending = updateApp(readyModel(), { type: "shared-game-ui-effect", effect: { kind: "platform", command: { kind: "set_presentation", mode: "hmd" } } });
     const cached = updateApp(pending.model, { type: "page-suspended" });
     const permission = updateApp(cached.model, {
       type: "permission-completed", requestId: 2, mode: "webxr", ok: true, message: "granted"
@@ -818,7 +818,7 @@ describe("Boot application state", () => {
   });
 
   it("observes Rust camera cycling on every presentation backend without mutating the browser phase", () => {
-    for (const presentation_mode of ["screen", "webxr", "phone_vr"] as const) {
+    for (const presentation_mode of ["screen", "hmd", "phone_vr"] as const) {
       withSharedGameUiSession("replay", { platform: { presentation_mode } }, (session, platform) => {
         let model = readyModel("replay");
         const previous = model.gameSession;

@@ -467,7 +467,7 @@ pub struct MenuPreparationInput {
     pub locale: String,
 }
 
-/// Aggregate layout protocol spanning preparation and measured arrangement.
+/// Batch menu viewport and coordinate projection query.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]

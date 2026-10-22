@@ -28,7 +28,7 @@ import { validateUiViewModel, viewExposesAction } from "../../web/src/render/con
 
 function flightModel(mode: "screen" | "phone-vr" | "webxr", phase: SessionPhase = "flight_running", headFailure: string | null = null,
   replayView?: "cinematic" | "telemetry" | "analysis"): AppModel {
-  return withSharedGameUiSession(phase, { platform: { presentation_mode: mode === "phone-vr" ? "phone_vr" : mode,
+  return withSharedGameUiSession(phase, { platform: { presentation_mode: mode === "phone-vr" ? "phone_vr" : mode === "webxr" ? "hmd" : mode,
     head_hud_failure: headFailure }, actions: replayView === undefined ? [] : [{ kind: "set_replay_view", view: replayView }] },
   (session, platform) => ({ ...createInitialAppModel(), presentation: { type: "ready", mode },
     gameSession: readRuntimeSessionProjection(session), sharedGameUi: session.readSharedUi(platform) }));

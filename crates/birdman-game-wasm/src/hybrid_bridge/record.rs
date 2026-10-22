@@ -151,7 +151,7 @@ impl HybridGameSessionBridge {
             if screen {
                 GameUiPresentationMode::Screen
             } else {
-                GameUiPresentationMode::Webxr
+                GameUiPresentationMode::Hmd
             },
             phase == SessionPhase::Attract,
         )

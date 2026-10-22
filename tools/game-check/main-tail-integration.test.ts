@@ -273,14 +273,14 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
   it.each([false, true])("retains the spatial Menu owner across BFCache and completes final cleanup when download release fails: %s", async failDownloadCleanup => {
     const trial = await fixture(false, false, false, false, "normal", true);
     await vi.waitFor(() => { expect(trial.scene()).toBe("Title"); });
-    trial.click("boot-enter-webxr");
+    trial.click("boot-enter-hmd");
     await vi.waitFor(() => { expect(trial.menuOwnerUpdate).toHaveBeenCalled(); });
     const firstOwner = trial.menuOwnerUpdate.mock.contexts[0];
     trial.page("pagehide", true);
     expect(trial.menuOwnerFree).not.toHaveBeenCalled();
     trial.page("pageshow", true);
-    await vi.waitFor(() => { expect(trial.documentRef.querySelector<HTMLButtonElement>('[data-control-id="boot-enter-webxr"]')?.disabled).toBe(false); });
-    trial.click("boot-enter-webxr");
+    await vi.waitFor(() => { expect(trial.documentRef.querySelector<HTMLButtonElement>('[data-control-id="boot-enter-hmd"]')?.disabled).toBe(false); });
+    trial.click("boot-enter-hmd");
     await vi.waitFor(() => { expect(trial.documentRef.querySelector('[data-control-id="boot-exit-vr"]')).not.toBeNull(); });
     expect(trial.menuOwnerUpdate.mock.contexts.every(owner => owner === firstOwner)).toBe(true);
     expect(trial.menuOwnerFree).not.toHaveBeenCalled();
@@ -315,7 +315,7 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
   it("cancels the actual Rust Countdown on WebXR end delivery before UI phase synchronization", async () => {
     const trial = await fixture(false, false, false, false, "normal", true);
     await vi.waitFor(() => { expect(trial.scene()).toBe("Title"); });
-    trial.click("boot-enter-webxr");
+    trial.click("boot-enter-hmd");
     await vi.waitFor(() => { expect(trial.documentRef.querySelector('[data-control-id="boot-exit-vr"]')).not.toBeNull(); });
     const owner = await trial.sessionOwner();
     owner.executeSharedSessionCommand({ kind: "open_setup" });

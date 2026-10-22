@@ -108,7 +108,7 @@ function menuObservations() {
   const results: { preparation: MenuLayoutReply; viewport: MenuLayoutReply[] }[] = [];
   for (const phase of ["title", "flight_setup", "briefing_ready", "flight_paused", "result", "replay"] as const) {
     for (const [width, height] of [[1280, 720], [720, 1280]] as const) {
-      withSharedGameUiSession(phase, { ticks: 20, platform: { presentation_mode: "webxr" },
+      withSharedGameUiSession(phase, { ticks: 20, platform: { presentation_mode: "hmd" },
         actions: phase === "result" ? [{ kind: "set_result_tab", tab: "analysis" }] : [] }, (session, platform, bridge) => {
         const view = session.readSharedUi(platform);
         const frame = JSON.parse(bridge.game_ui_frame_json(view.view_revision, JSON.stringify(platform))) as import("../../web/src/generated/game-ui-frame.js").GameUiFrame;

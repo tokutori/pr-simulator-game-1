@@ -179,7 +179,7 @@ describe("registered environment and venue projection", () => {
         selectSharedReplayView(session, platform, "analysis");
         for (const mode of ["screen", "phone-vr", "webxr"] as const) {
           const view = createGameViewModel(session.readSharedUi({ ...platform,
-            presentation_mode: mode === "phone-vr" ? "phone_vr" : mode }));
+            presentation_mode: mode === "phone-vr" ? "phone_vr" : mode === "webxr" ? "hmd" : mode }));
           const notice = view.panels.flatMap((panel) => panel.controls).find((control) => control.id === "game-state");
           if (unknown) {
             if (notice?.kind !== "status") throw new Error("Expected the environment notice");

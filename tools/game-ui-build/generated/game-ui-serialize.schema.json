@@ -4298,8 +4298,8 @@
           "type": "string"
         },
         {
-          "const": "webxr",
-          "description": "Browser HMD display.",
+          "const": "hmd",
+          "description": "Head-mounted stereo display provided by the platform runtime.",
           "type": "string"
         },
         {

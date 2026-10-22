@@ -30,7 +30,7 @@ function verifyReturnViews(session: TailAppSessionFacade, expected: ReplayReturn
 function verifyUiReturnViews(session: TailAppSessionFacade, expected: ReplayReturnTarget): void {
   for (const mode of ["screen", "phone-vr", "webxr"] as const) {
     for (const replayViewMode of ["analysis", "cinematic", "telemetry"] as const) {
-      const platform = sharedGameUiPlatform({ presentation_mode: mode === "phone-vr" ? "phone_vr" : mode });
+      const platform = sharedGameUiPlatform({ presentation_mode: mode === "phone-vr" ? "phone_vr" : mode === "webxr" ? "hmd" : mode });
       selectSharedReplayView(session, platform, replayViewMode);
       const shared = session.readSharedUi(platform);
       const model = updateApp({ ...createInitialAppModel(), presentation: { type: "ready", mode } as const },

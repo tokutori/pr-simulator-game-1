@@ -196,8 +196,8 @@ pub enum GameUiWaterQualityOperation {
 pub enum GameUiPresentationMode {
     /// Flat native or browser display.
     Screen,
-    /// Browser HMD display.
-    Webxr,
+    /// Head-mounted stereo display provided by the platform runtime.
+    Hmd,
     /// Browser phone headset display.
     PhoneVr,
 }
@@ -393,10 +393,12 @@ pub struct GameUiPlatformInput {
     pub presentation_mode: GameUiPresentationMode,
     /// Blocks operations while the owning adapter is transitioning.
     pub operation_pending: bool,
-    /// Browser WebXR support.
-    pub webxr_available: bool,
+    /// Platform runtime supports head-mounted stereo display.
+    pub hmd_available: bool,
     /// Phone sensor headset support.
     pub phone_vr_available: bool,
+    /// Active spatial backend can reposition the menu in front of the viewer.
+    pub menu_recenter_available: bool,
     /// Platform supports full record plots.
     pub analysis_available: bool,
     /// Platform supports recorded scenic playback.

@@ -204,7 +204,7 @@ export type WaterQuality = "low" | "medium" | "high";
 /**
  * Presentation mode supported by a platform adapter.
  */
-export type GameUiPresentationMode = "screen" | "webxr" | "phone_vr";
+export type GameUiPresentationMode = "screen" | "hmd" | "phone_vr";
 /**
  * Current Web replay camera candidates in their shared selection order.
  */
