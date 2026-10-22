@@ -1,5 +1,5 @@
 import type { PresentationObservation } from "../generated/presentation-observation.js";
-import { IDENTITY_POSE, rotateVec3, vec3 } from "../render/contracts/math.js";
+import { IDENTITY_POSE } from "../render/contracts/math.js";
 import type { Pose } from "../render/contracts/math.js";
 import type { BackendFrame, MenuPresentation, PresentationBackendAdapter, RendererAdapter, SelectRay, ViewportSize } from "../render/contracts/runtime.js";
 import { NO_HEAD_HUD, resolveHeadHudFrame } from "../render/contracts/head-hud.js";
@@ -26,11 +26,9 @@ export class WebXrPresentationBackend implements PresentationBackendAdapter {
   private requestGeneration = 0;
   private lastViewerPose: Pose | null = null;
   private lastAvailability: XrAvailability | null = null;
-  private lastPanel: UiViewModel["panels"][number] | null = null;
-  private lastPanelPose: Pose | null = null;
   private readonly spatial = new XrSpatialSession();
   private readonly pointers: XrPointerSession;
-  private readonly selectRayHandler = (ray: SelectRay): void => { this.handleSelectRay(ray); };
+  private readonly selectRayHandler = (ray: SelectRay): void => { this.pointers.select(ray); };
 
   constructor(
     private readonly xrRenderer: WebXrSessionPort,
@@ -81,8 +79,6 @@ export class WebXrPresentationBackend implements PresentationBackendAdapter {
     this.state = { type: "starting" };
     this.spatial.reset();
     this.lastViewerPose = null;
-    this.lastPanel = null;
-    this.lastPanelPose = null;
     const generation = this.requestGeneration;
     this.xrRenderer.setSessionEndHandler(() => {
       if (generation === this.requestGeneration) this.handleUnexpectedEnd();
@@ -95,7 +91,6 @@ export class WebXrPresentationBackend implements PresentationBackendAdapter {
       if (this.state.type !== "active" && this.state.type !== "starting") return;
       this.publishAvailability(visibility, visibility === "visible", this.lastViewerPose !== null);
       if (visibility === "visible") return;
-      this.lastPanelPose = null;
       this.pointers.reset();
     });
     this.renderer.setSelectRayHandler(this.selectRayHandler);
@@ -134,8 +129,6 @@ export class WebXrPresentationBackend implements PresentationBackendAdapter {
     } finally {
       this.state = { type: "idle" };
       this.lastViewerPose = null;
-      this.lastPanel = null;
-      this.lastPanelPose = null;
       this.spatial.reset();
       this.pointers.reset();
       this.releaseAvailability();
@@ -169,34 +162,24 @@ export class WebXrPresentationBackend implements PresentationBackendAdapter {
     const panel = menu.kind === "ready" ? menu.panel : semanticPanel;
     if (panel?.anchor !== "menu" || menu.kind === "absent") this.spatial.closeMenu();
     if (panel?.anchor === "menu" && menu.kind !== "ready") {
-      this.lastPanel = null;
-      this.lastPanelPose = null;
       this.pointers.reset();
       return Object.freeze({ timestampMs, headHud: menu.kind === "unavailable" ? NO_HEAD_HUD : resolveHeadHudFrame(viewModel.headHud, viewerPose),
         cameraPose: IDENTITY_POSE, viewport: this.viewport(), panel: menu.kind === "unavailable"
           ? Object.freeze({ kind: "unavailable", reason: menu.reason }) : Object.freeze({ kind: "absent" }) });
     }
     if (panel !== null && (presentationViewerPose === null || viewer.source === "unavailable")) {
-      this.lastPanel = null;
-      this.lastPanelPose = null;
       this.pointers.reset();
       return Object.freeze({ timestampMs, headHud: NO_HEAD_HUD, cameraPose: IDENTITY_POSE,
         panel: Object.freeze({ kind: "unavailable", reason: viewer.source === "unavailable" ? viewer.reason : "viewer-unavailable" }), viewport: this.viewport() });
     }
     const placement = this.spatial.place(viewModel, panel, viewer, reference);
     if (placement.kind === "unavailable") {
-        this.lastPanel = null;
-        this.lastPanelPose = null;
         this.pointers.reset();
         return Object.freeze({ timestampMs, headHud: NO_HEAD_HUD, cameraPose: IDENTITY_POSE, panel: placement, viewport: this.viewport() });
     }
     const worldFromPanel = placement.kind === "ready" ? placement.referenceFromPanel : IDENTITY_POSE;
-    this.lastPanel = panel;
-    this.lastPanelPose = worldFromPanel;
-    const gaze: readonly SelectRay[] = presentationViewerPose === null ? [] : [{ source: { kind: "gaze" },
-      origin: presentationViewerPose.position, direction: rotateVec3(presentationViewerPose.orientation, vec3(0, 0, -1)), timestampMs }];
     const cursors = this.pointers.observe(JSON.stringify([viewModel.scene, viewModel.activeOverlay, panel?.id]), panel,
-      worldFromPanel, menu, [...input.rays, ...gaze], input.focused, timestampMs);
+      worldFromPanel, menu, presentationViewerPose, input.rays, input.focused, timestampMs);
     return Object.freeze({
       timestampMs,
       headHud: resolveHeadHudFrame(viewModel.headHud, viewerPose),
@@ -230,11 +213,6 @@ export class WebXrPresentationBackend implements PresentationBackendAdapter {
     this.onAvailability(null);
   }
 
-  private handleSelectRay(ray: SelectRay): void {
-    if (this.lastPanel === null || this.lastPanelPose === null) return;
-    this.pointers.select(ray);
-  }
-
   private handleUnexpectedEnd(): void {
     if (this.state.type !== "active" && this.state.type !== "starting") return;
     this.publishAvailability("hidden", false, false);
@@ -259,7 +237,6 @@ export class WebXrPresentationBackend implements PresentationBackendAdapter {
       return;
     }
     this.lastViewerPose = null;
-    this.lastPanelPose = null;
     this.pointers.reset();
   }
 

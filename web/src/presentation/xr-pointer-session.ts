@@ -19,7 +19,7 @@ export class XrPointerSession {
   constructor(private readonly dispatch: UiActionDispatcher) {}
 
   observe(scope: string, panel: UiPanel | null, panelPose: Pose, menu: MenuPresentation,
-    rays: readonly SelectRay[], focused: boolean, timestampMs: number, gamepad: XrPointerObservation["gamepad"] = null): Readonly<{ cursor: PanelCursor | null; secondaryCursors: readonly PanelCursor[] }> {
+    headPose: Pose | null, rays: readonly SelectRay[], focused: boolean, timestampMs: number, gamepad: XrPointerObservation["gamepad"] = null): Readonly<{ cursor: PanelCursor | null; secondaryCursors: readonly PanelCursor[] }> {
     const surface = pointerSurface(scope, panel, menu);
     const geometry = JSON.stringify(surface);
     const generation = this.generation;
@@ -30,7 +30,7 @@ export class XrPointerSession {
     }
     this.panel = panel;
     this.menu = menu;
-    const observation: XrPointerObservation = { timestampMs, focused, panelPose, gamepad,
+    const observation: XrPointerObservation = { timestampMs, focused, panelPose, headPose, gamepad,
       pointers: rays.map((ray) => ({ source: ray.source ?? { kind: "gaze" }, origin: ray.origin, direction: ray.direction })) };
     const projection = JSON.parse(this.owner().observe_json(JSON.stringify(observation))) as XrPointerProjection;
     this.focusDirty ||= geometryChanged || projection.focusChanged;

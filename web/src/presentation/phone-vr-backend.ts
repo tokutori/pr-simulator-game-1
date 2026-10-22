@@ -1,6 +1,5 @@
 import {
   IDENTITY_POSE,
-  rotateVec3,
   vec3
 } from "../render/contracts/math.js";
 import type { Pose, Quaternion } from "../render/contracts/math.js";
@@ -215,10 +214,8 @@ export class PhoneVrPresentationBackend implements PresentationBackendAdapter {
       axes: [gamepadState.axes[0] ?? 0, gamepadState.axes[1] ?? 0, gamepadState.axes[2] ?? 0, gamepadState.axes[3] ?? 0] as const,
       buttons: [gamepadState.buttons[0] ?? false, gamepadState.buttons[1] ?? false] as const
     };
-    const rays = viewerPose === null ? [] : [{ source: { kind: "gaze" as const }, origin: viewerPose.position,
-      direction: rotateVec3(viewerPose.orientation, vec3(0, 0, -1)), timestampMs }];
     const cursors = this.pointers.observe(JSON.stringify([viewModel.scene, viewModel.activeOverlay, panel?.id]), panel,
-      panelPose, menu, rays, this.inputAvailable(), timestampMs, gamepad);
+      panelPose, menu, viewerPose, [], this.inputAvailable(), timestampMs, gamepad);
     return Object.freeze({
       timestampMs,
       headHud: resolveHeadHudFrame(viewModel.headHud, cameraPose),

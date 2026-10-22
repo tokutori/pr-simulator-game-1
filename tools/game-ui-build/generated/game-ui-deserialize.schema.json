@@ -2996,12 +2996,23 @@
           "default": null,
           "description": "Connected standard gamepad observed with the rays."
         },
+        "headPose": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Pose"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Reference-from-head pose used to derive the forward gaze ray."
+        },
         "panelPose": {
           "$ref": "#/$defs/Pose",
           "description": "Reference-from-panel pose from this rendered frame."
         },
         "pointers": {
-          "description": "Tracked controllers and head gaze observed in the same frame.",
+          "description": "Tracked controller rays observed in the same frame.",
           "items": {
             "$ref": "#/$defs/XrPointerRay"
           },

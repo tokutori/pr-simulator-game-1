@@ -764,7 +764,7 @@ async function verifyPointers(activeBrowser: Browser): Promise<void> {
       const rays = [-0.25, 0.25].map((horizontal, index) => ({ source: { kind: "controller" as const, id: index + 1 }, timestampMs: 100,
         origin: composePose(reference.head, pose(vec3(horizontal, 0, 0), IDENTITY_POSE.orientation)).position,
         direction: rotateVec3(reference.head.orientation, vec3(0, 0, -1)) }));
-      const cursors = owner.observe("projection", panel, panelPose, { kind: "absent" }, rays, true, 100);
+      const cursors = owner.observe("projection", panel, panelPose, { kind: "absent" }, reference.head, rays, true, 100);
       const right = rays[1];
       const left = rays[0];
       if (right === undefined || left === undefined) throw new Error("Missing controller observation");

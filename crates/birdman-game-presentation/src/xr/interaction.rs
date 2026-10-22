@@ -218,7 +218,9 @@ pub struct XrPointerObservation {
     pub focused: bool,
     /// Reference-from-panel pose from this rendered frame.
     pub panel_pose: Pose,
-    /// Tracked controllers and head gaze observed in the same frame.
+    /// Reference-from-head pose used to derive the forward gaze ray.
+    pub head_pose: Option<Pose>,
+    /// Tracked controller rays observed in the same frame.
     pub pointers: Vec<XrPointerRay>,
     /// Connected standard gamepad observed with the rays.
     #[serde(default)]
@@ -336,16 +338,32 @@ impl XrPointerSession {
     /// Projects all source intersections, focus handover and dwell from one frame.
     pub fn observe(
         &mut self,
-        observation: XrPointerObservation,
+        mut observation: XrPointerObservation,
     ) -> Result<XrPointerProjection, &'static str> {
         if !observation.timestamp_ms.is_finite()
             || observation.timestamp_ms < 0.0
             || observation.pointers.len() > 16
+            || observation
+                .pointers
+                .iter()
+                .any(|pointer| !matches!(pointer.source, XrPointerSource::Controller { .. }))
             || self
                 .last_timestamp_ms
                 .is_some_and(|previous| observation.timestamp_ms < previous)
         {
             return Err("Invalid XR pointer observation");
+        }
+        if let Some(head) = observation.head_pose {
+            let head = head.normalized().ok_or("Invalid XR head pose")?;
+            observation.pointers.push(XrPointerRay {
+                source: XrPointerSource::Gaze,
+                origin: head.position,
+                direction: head.rotate(Vector3 {
+                    x: 0.0,
+                    y: 0.0,
+                    z: -1.0,
+                }),
+            });
         }
         let mut result = XrPointerProjection::default();
         let gamepad = self.observe_gamepad(&observation);

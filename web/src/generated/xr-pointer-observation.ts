@@ -33,9 +33,13 @@ export interface XrPointerObservation {
      * Connected standard gamepad observed with the rays.
      */
     readonly gamepad?: XrGamepadObservation | null;
+    /**
+     * Reference-from-head pose used to derive the forward gaze ray.
+     */
+    readonly headPose?: Pose | null;
     readonly panelPose: Pose;
     /**
-     * Tracked controllers and head gaze observed in the same frame.
+     * Tracked controller rays observed in the same frame.
      */
     readonly pointers: readonly XrPointerRay[];
     /**

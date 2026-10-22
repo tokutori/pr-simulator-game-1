@@ -90,7 +90,17 @@ fn observe(
                 },
                 ..Pose::IDENTITY
             },
-            pointers,
+            head_pose: pointers
+                .iter()
+                .find(|pointer| pointer.source == XrPointerSource::Gaze)
+                .map(|pointer| Pose {
+                    position: pointer.origin,
+                    ..Pose::IDENTITY
+                }),
+            pointers: pointers
+                .into_iter()
+                .filter(|pointer| matches!(pointer.source, XrPointerSource::Controller { .. }))
+                .collect(),
             gamepad: None,
         })
         .unwrap()
@@ -141,7 +151,8 @@ fn focus_loss_scope_exchange_and_stale_sources_invalidate_selection() {
         timestamp_ms: 30.0,
         focused: false,
         panel_pose: Pose::IDENTITY,
-        pointers: vec![gaze],
+        head_pose: Some(Pose::IDENTITY),
+        pointers: vec![],
         gamepad: None,
     };
     assert!(owner.observe(observation).unwrap().primary.is_none());
@@ -168,6 +179,52 @@ fn transformed_panel_intersection_and_front_face_admission_match_trigger() {
     let mut invalid = controller;
     invalid.direction.x = f64::NAN;
     assert!(observe(&mut owner, 20.0, vec![invalid]).primary.is_none());
+
+    let head = Pose {
+        orientation: crate::camera::Quaternion {
+            w: core::f64::consts::FRAC_1_SQRT_2,
+            y: core::f64::consts::FRAC_1_SQRT_2,
+            ..Pose::IDENTITY.orientation
+        },
+        ..Pose::IDENTITY
+    };
+    let mut observation = XrPointerObservation {
+        timestamp_ms: 30.0,
+        focused: true,
+        panel_pose: Pose {
+            position: Vector3 {
+                x: -2.0,
+                y: 0.0,
+                z: 0.0,
+            },
+            ..head
+        },
+        head_pose: Some(head),
+        pointers: vec![],
+        gamepad: None,
+    };
+    let hit = owner.observe(observation.clone()).unwrap().primary.unwrap();
+    assert_eq!(hit.source, XrPointerSource::Gaze);
+    assert!(hit.point.into_iter().all(|value| value.abs() < 1e-12));
+    observation.timestamp_ms = 31.0;
+    observation.head_pose.as_mut().unwrap().orientation.w = f64::NAN;
+    assert!(owner.observe(observation).is_err());
+    assert!(
+        owner
+            .select(
+                XrPointerRay {
+                    source: XrPointerSource::Gaze,
+                    origin: head.position,
+                    direction: Vector3 {
+                        x: -1.0,
+                        y: 0.0,
+                        z: 0.0
+                    },
+                },
+                532.0
+            )
+            .is_some()
+    );
 }
 
 fn gamepad_frame(
@@ -188,7 +245,8 @@ fn gamepad_frame(
                 },
                 ..Pose::IDENTITY
             },
-            pointers: vec![pointer(XrPointerSource::Gaze, 0.0)],
+            head_pose: Some(Pose::IDENTITY),
+            pointers: vec![],
             gamepad,
         })
         .unwrap()
@@ -259,6 +317,7 @@ fn gamepad_connection_cursor_edges_scroll_and_focus_share_one_owner() {
                 timestamp_ms: 5127.0,
                 focused: true,
                 panel_pose: Pose::IDENTITY,
+                head_pose: None,
                 pointers: vec![],
                 gamepad: Some(pad),
             })

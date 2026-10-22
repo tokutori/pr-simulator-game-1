@@ -74,7 +74,7 @@ export function menuActionAt(menu: Extract<MenuPresentation, { kind: "ready" }>,
   const ray = { origin: vec3(point.x, point.y, 1), direction: vec3(0, 0, -1),
     source: { kind: "controller" as const, id: 1 }, timestampMs: 0 };
   try {
-    owner.observe("fixture", menu.panel, IDENTITY_POSE, menu, [ray], true, 0);
+    owner.observe("fixture", menu.panel, IDENTITY_POSE, menu, null, [ray], true, 0);
     owner.select({ ...ray, timestampMs: 1 });
     const action = actions.find(candidate => candidate.type === "menu-control" || candidate.type === "menu-scroll");
     return action === undefined ? { kind: "absent" } : { kind: "action", action };
@@ -90,8 +90,8 @@ export function sharedPanelHit(panel: UiPanel, panelPose: Pose, ray: { origin: V
         target: { kind: "control", id: control.id }, bounds: [control.rect.x * panel.size.width, control.rect.y * panel.size.height,
           control.rect.width * panel.size.width, control.rect.height * panel.size.height]
       })) }));
-    const projection = JSON.parse(owner.observe_json(JSON.stringify({ timestampMs: 0, focused: true, panelPose,
-      pointers: [{ ...ray, source: { kind: "gaze" } }], gamepad: null }))) as XrPointerProjection;
+    const projection = JSON.parse(owner.observe_json(JSON.stringify({ timestampMs: 0, focused: true, panelPose, headPose: null,
+      pointers: [{ ...ray, source: { kind: "controller", id: 1 } }], gamepad: null }))) as XrPointerProjection;
     const hit = projection.primary;
     return hit === null ? null : { x: hit.point[0], y: hit.point[1],
       controlId: hit.target?.kind === "control" ? hit.target.id : null };

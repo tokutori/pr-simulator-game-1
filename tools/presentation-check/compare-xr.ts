@@ -155,6 +155,7 @@ function pointerScenario() {
     const reference = composePose(panelPose, pose(vec3(horizontal, 0.1, 2), IDENTITY_POSE.orientation));
     return { source, origin: reference.position, direction: rotateVec3(reference.orientation, vec3(0, 0, -1)) };
   };
+  const headPose = composePose(panelPose, pose(vec3(0, 0.1, 2), IDENTITY_POSE.orientation));
   const gaze = sourceRay({ kind: "gaze" }, 0);
   const left = sourceRay({ kind: "controller", id: 7 }, -0.2);
   const right = sourceRay({ kind: "controller", id: 11 }, 0.2);
@@ -168,7 +169,7 @@ function pointerScenario() {
     [3100, true, [gaze], null], [4200, true, [gaze], [gaze, 4201]]
   ] as const;
   const gamepad = (timestampMs: number, generation: number, buttons: readonly [boolean, boolean], focused = true): XrPointerObservation => ({
-    timestampMs, focused, panelPose, pointers: [gaze], gamepad: { index: 0, generation, axes: [1, -1, 0, 0.5], buttons }
+    timestampMs, focused, panelPose, headPose, pointers: [], gamepad: { index: 0, generation, axes: [1, -1, 0, 0.5], buttons }
   });
   const gamepadSteps = [
     gamepad(5000, 1, [true, true]), gamepad(5016, 1, [false, false]),
@@ -176,11 +177,11 @@ function pointerScenario() {
     gamepad(5064, 1, [false, false]), gamepad(5080, 1, [true, true], false),
     gamepad(5096, 1, [true, true]), gamepad(5112, 1, [false, false]),
     gamepad(5128, 1, [false, true]), gamepad(5144, 2, [true, true]),
-    { timestampMs: 5160, focused: true, panelPose, pointers: [gaze], gamepad: null },
-    { timestampMs: 6160, focused: true, panelPose, pointers: [gaze], gamepad: null }
+    { timestampMs: 5160, focused: true, panelPose, headPose, pointers: [], gamepad: null },
+    { timestampMs: 6160, focused: true, panelPose, headPose, pointers: [], gamepad: null }
   ];
   return { surface, steps: [...steps.map(([timestampMs, focused, pointers, select]) => ({
-    observation: { timestampMs, focused, panelPose, pointers } satisfies XrPointerObservation, select
+    observation: { timestampMs, focused, panelPose, headPose, pointers: pointers.filter(pointer => pointer.source.kind === "controller") } satisfies XrPointerObservation, select
   })), ...gamepadSteps.map(observation => ({ observation, select: null }))] };
 }
 

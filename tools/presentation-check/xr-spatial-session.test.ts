@@ -49,7 +49,7 @@ describe("shared pointer adapter", () => {
       expect(viewport.pageProgress).toBe(0.8);
       expect(viewport.offsetMeters).toBe(model.menuScroll.progress);
       const menu = { ...measured, context: { scope: model.menuScroll.scope, generation: model.menuScroll.generation }, viewport };
-      return owner.observe("title", panel, panelPose, menu, [], true, timestampMs,
+      return owner.observe("title", panel, panelPose, menu, null, [], true, timestampMs,
         { index: 0, generation: 1, axes: [horizontal, 0, 0, 1], buttons: [pressed, false] });
     };
     try {
@@ -73,12 +73,12 @@ describe("shared pointer adapter", () => {
     const owner = new XrPointerSession(dispatch);
     const sample = (pressed: boolean) => ({ index: 0, generation: 1, axes: [0, 0, 0, 0] as const, buttons: [pressed, false] as const });
     try {
-      owner.observe("title", panel, panelPose, measured, [], true, 0, sample(false));
+      owner.observe("title", panel, panelPose, measured, null, [], true, 0, sample(false));
       const changed = { ...measured, context: { ...measured.context, generation: measured.context.generation + 1 } };
       dispatch.mockImplementationOnce(() => { throw new Error("focus observer failed"); });
-      expect(() => owner.observe("title", panel, panelPose, changed, [], true, 50, sample(true))).toThrow("focus observer failed");
+      expect(() => owner.observe("title", panel, panelPose, changed, null, [], true, 50, sample(true))).toThrow("focus observer failed");
       dispatch.mockClear();
-      owner.observe("title", panel, panelPose, changed, [], true, 100, sample(true));
+      owner.observe("title", panel, panelPose, changed, null, [], true, 100, sample(true));
       expect(dispatch.mock.calls.some(([action]) => action.type === "menu-control")).toBe(false);
     } finally { owner.reset(); }
   });
@@ -104,7 +104,7 @@ describe("shared pointer adapter", () => {
     const actions: UiAction[] = [];
     const owner = new XrPointerSession((action) => actions.push(action));
     try {
-      const cursors = owner.observe("title", panel, panelPose, menu, [ray], true, 100);
+      const cursors = owner.observe("title", panel, panelPose, menu, null, [ray], true, 100);
       expect(cursors.cursor?.point).toEqual({ x: 0.3, y: 0.3 });
       owner.select({ ...ray, timestampMs: 101 });
       expect(actions).toContainEqual({ type: "menu-control", context: menu.context,
@@ -118,7 +118,7 @@ describe("shared pointer adapter", () => {
     if (panel === undefined) throw new Error("Missing panel");
     const release = vi.spyOn(XrPointerBridge.prototype, "free");
     const owner = new XrPointerSession((action) => { if (action.type === "focus" && action.controlId === null) throw new Error("focus cleanup"); });
-    owner.observe("flight", panel, panelPose, { kind: "absent" }, [ray], true, 100);
+    owner.observe("flight", panel, panelPose, { kind: "absent" }, null, [ray], true, 100);
     expect(() => { owner.reset(); }).toThrow("focus cleanup");
     owner.reset();
     expect(release).toHaveBeenCalledTimes(1);
@@ -135,7 +135,7 @@ describe("shared pointer adapter", () => {
       actions.push(action);
       if (action.type === "focus" && action.controlId !== null) owner.reset();
     });
-    expect(owner.observe("flight", panel, panelPose, { kind: "absent" }, [ray], true, 100).cursor).toBeNull();
+    expect(owner.observe("flight", panel, panelPose, { kind: "absent" }, null, [ray], true, 100).cursor).toBeNull();
     owner.select({ ...ray, timestampMs: 200 });
     owner.reset();
     expect(actions.some((action) => action.type === "activate")).toBe(false);
