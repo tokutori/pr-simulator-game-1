@@ -350,7 +350,7 @@ L(t)-z(t)=\frac{g(t-a)(b-t)}2\le\frac{g\,dt^2}8,
 | 所有権/I/O | query世代とrecord-source世代、stale結果破棄、独立cleanup全試行、IndexedDB transaction、ファイル非上書き |
 | UI | Setup/Briefing、typed HUD/availability、共通Action、group順・凡例色、全表示先、focus/scroll/拒否後の回復 |
 
-- Web入力: own enumerable fieldsを捕捉したwire値へ投影し、Rustで受理する。prototype・toJSONの混入、getterの再読、getter内dispose後のRust呼出しを回帰試験で検出する。
+- Web入力: 生成DTOのJSON送信とRustでの受理を接続する。不正なActionの拒否、循環参照の送信エラー、シリアライズ中に破棄されたownerへの呼出し抑止を既存試験で確認する。
 - 内部出力: 所有WASM instanceの出力とfacadeが返す生成DTOの一致を確認する。Analysis列のmetadata非重複と、live/prepared/Replayに接続する共有描画poseも検査する。
 - 構造変形: 保存時刻・区間内部・同時刻終端で採用曲げ係数と尾翼角を照合する。全259部材の共有頂点・三角形・管周方向位相を接触点へ照合し、Web/Nativeの11 batchが同じ頂点と物理pivotを消費することを検査する。Replayのパイロット目標位置は同じcanonical queryへ照合する。
 - 描画可用性: 未記録係数と未知機体を区別し、対応する主翼・尾翼の非表示を検査する。極端な有限係数はGPU公開前に座標・Transform・法線を検査し、有効係数への復帰で表示と保持bufferの更新を確認する。

@@ -175,7 +175,7 @@ async function fixture(failInitialization = false, seedCurrentArchive = false, d
     });
   }
   const factory = await import("../../web/src/app/session-factory.js");
-  const initializeSession = vi.spyOn(factory, "initializeAppSession");
+  const createSession = vi.spyOn(factory, "createAppSession");
   await import("../../web/src/main.js");
   const scene = () => documentRef.querySelector<HTMLElement>(".screen-ui-shell")?.dataset.scene;
   const page = (type: "pagehide" | "pageshow", persisted: boolean): void => {
@@ -214,7 +214,7 @@ async function fixture(failInitialization = false, seedCurrentArchive = false, d
     countdownTick, countdown, acknowledgeWaterQuality,
     advanceClock: (elapsedMilliseconds: number) => { nowMilliseconds += elapsedMilliseconds; },
     sessionOwner: () => {
-      const result = initializeSession.mock.results[0];
+      const result = createSession.mock.results[0];
       if (result?.type !== "return") throw new Error("Main session owner is unavailable");
       return result.value;
     },
@@ -305,7 +305,7 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     await vi.waitFor(() => { expect(trial.scene()).toBe("Title"); });
     trial.playbackCamera.mockImplementationOnce(() => { throw new Error("camera unavailable"); });
     trial.click("game-title-demo");
-    const owner = await trial.sessionOwner();
+    const owner = trial.sessionOwner();
     expect(owner.readLifecycle().phase).toBe("attract");
     expect(owner.readPlaybackClock().kind).toBe("paused");
     expect(trial.replayTicks).toHaveLength(0);
@@ -317,7 +317,7 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     await vi.waitFor(() => { expect(trial.scene()).toBe("Title"); });
     trial.click("boot-enter-hmd");
     await vi.waitFor(() => { expect(trial.documentRef.querySelector('[data-control-id="boot-exit-vr"]')).not.toBeNull(); });
-    const owner = await trial.sessionOwner();
+    const owner = trial.sessionOwner();
     owner.executeSharedSessionCommand({ kind: "open_setup" });
     owner.executeSharedSessionCommand({ kind: "prepare" });
     owner.observePresentation({ kind: "xr", observation: { visibility: "visible", input_focused: true, tracking_valid: true } });
@@ -342,7 +342,7 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     trial.click("game-title-start");
     trial.click("game-setup-start");
     trial.click("game-briefing-start");
-    const owner = await trial.sessionOwner();
+    const owner = trial.sessionOwner();
     const query = owner.captureQueryToken();
     if (operation === "ui-update") {
       const update = owner.updateSharedUi({ kind: "session", command: { kind: "cancel_countdown" } }, sharedGameUiPlatform());
@@ -436,13 +436,13 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     } catch (cause) {
       expect(cause).toBe(failure);
     }
-    const owner = await trial.sessionOwner();
+    const owner = trial.sessionOwner();
     expect(owner.readGameSessionProjection().phase).toBe(phase === "flight" ? "flight_paused" : "briefing_ready");
   });
   it("advances from callback arrivals when the initial RAF timestamp precedes delivery", async () => {
     const trial = await fixture();
     await vi.waitFor(() => { expect(trial.scene()).toBe("Title"); });
-    const owner = await trial.sessionOwner();
+    const owner = trial.sessionOwner();
     trial.click("game-title-start");
     trial.click("game-setup-start");
     trial.launch();
@@ -468,7 +468,7 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
   it.each([149.999, 150, 150.001])("applies the shared delay boundary to callback arrivals (%s ms)", async (gap) => {
     const trial = await fixture();
     await vi.waitFor(() => { expect(trial.scene()).toBe("Title"); });
-    const owner = await trial.sessionOwner();
+    const owner = trial.sessionOwner();
     trial.click("game-title-start");
     trial.click("game-setup-start");
     trial.launch();
@@ -498,7 +498,7 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     trial.frame(1_015);
     expect(trial.tickCount()).toBe(1);
     expect(trial.documentRef.querySelector('.screen-ui-shell')?.textContent).toContain("処理に時間がかかった");
-    expect((await trial.sessionOwner()).readLifecycle().can_resume).toBe(false);
+    expect((trial.sessionOwner()).readLifecycle().can_resume).toBe(false);
     const resume = (): HTMLButtonElement => {
       const button = trial.documentRef.querySelector<HTMLButtonElement>('button[data-control-id="game-flight-resume"]');
       if (button === null) throw new Error("ProcessingDelay must expose explicit Resume");
@@ -586,7 +586,7 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
 
   it("stops the Rust clock after an advance failure and resumes once through the shared action", async () => {
     const trial = await manualReplayFixture();
-    const owner = await trial.sessionOwner();
+    const owner = trial.sessionOwner();
     trial.advancePlayback.mockImplementationOnce(() => { throw new Error("clock advance unavailable"); });
     trial.tickReplay();
     expect(owner.readPlaybackClock().kind).toBe("paused");
@@ -999,7 +999,7 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
   it.each(["success", "failure", "suspend", "dispose", "stale-success", "stale-failure"] as const)("handles deferred stored-record %s through the actual owner", async (outcome) => {
     const trial = await fixture(false, true);
     await vi.waitFor(() => { expect(trial.documentRef.querySelector('[data-control-id="game-title-open-record-1"]')).not.toBeNull(); });
-    const owner = await trial.sessionOwner();
+    const owner = trial.sessionOwner();
     const open = vi.spyOn(owner, "openArchive");
     const { FlightRecordRepository } = await import("../../web/src/game/flight-record-store.js");
     let waiting = false;
@@ -1097,7 +1097,7 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     trial.launch();
     trial.frame(0);
     trial.frame(10);
-    expect((await trial.sessionOwner()).readLifecycle().phase).toBe("flight_running");
+    expect((trial.sessionOwner()).readLifecycle().phase).toBe("flight_running");
     expect(trial.tickCount()).toBe(1);
   });
 

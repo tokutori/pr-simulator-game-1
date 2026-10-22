@@ -2,7 +2,6 @@ import { projectTailGameSession } from "./session-snapshot.js";
 import type { PlaybackSessionSnapshot, ReplayReturnTarget, SessionLifecycleProjection, TailGameSessionProjection } from "./session-snapshot.js";
 import type { TailResultSnapshot, TailSessionPort } from "../game/tail-flight-controller.js";
 import type { PresentationObservation } from "../generated/presentation-observation.js";
-import { captureJsonInput } from "../game/tail-boundary-values.js";
 import type { FlightRenderPose, RecordedFlightRenderPose } from "../render/contracts/runtime.js";
 import { projectReplayCamera } from "../render/camera/replay-camera.js";
 import { encodeGameUiAction, encodeGameUiPlatformInput } from "./game-ui-codec.js";
@@ -221,7 +220,9 @@ export class TailAppSessionFacade extends SessionResourceOwner {
   }
 
   prepareSharedMenu(input: MenuPreparationInput, platform: GameUiPlatformObservation, measure: MenuFontMeasurer): MenuLayoutReply {
-    return this.readOutput(() => this.port.game_ui_menu_json(encodeGameUiPlatformInput(platform), JSON.stringify(input), measure));
+    const platformJson = encodeGameUiPlatformInput(platform);
+    const inputJson = JSON.stringify(input);
+    return this.readOutput(() => this.port.game_ui_menu_json(platformJson, inputJson, measure));
   }
 
   updateSharedUi(action: GameUiAction, platform: GameUiPlatformObservation): GameUiUpdate {
@@ -231,12 +232,12 @@ export class TailAppSessionFacade extends SessionResourceOwner {
   }
 
   executeSharedSessionCommand(command: SessionCommand): TailAppOperationResult {
-    const captured = captureJsonInput(command);
-    const json = JSON.stringify(captured);
+    const kind = command.kind;
+    const json = JSON.stringify(command);
     return this.change(() => {
       this.port.apply_game_ui_session_command_json(json);
-      if (captured.kind === "start_countdown") return { kind: "countdown-started" };
-      if (captured.kind === "abort") return { kind: "aborted", terminalSnapshot: this.readSnapshot() as TailResultSnapshot };
+      if (kind === "start_countdown") return { kind: "countdown-started" };
+      if (kind === "abort") return { kind: "aborted", terminalSnapshot: this.readSnapshot() as TailResultSnapshot };
       return { kind: "completed" };
     });
   }

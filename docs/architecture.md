@@ -198,7 +198,7 @@ GameUiView / GameUiFrame → platform renderer → DOM / VR panel / Bevy entity
 - 共有session commandは同期で実行し、観測したRust phaseを即時採用する。保存記録の読込みは専用の待機状態で管理し、I/O応答を要求ID・session所有者・source tokenで照合する。
 - ログ出力は現在の記録原文を同期で取得してdownloadを要求し、成功・失敗の通知を保持する。Blob URLはbrowser adapterが所有し、遅延解放と破棄を管理する。
 - 外部の保存JSONはformatのcodecで受理する。内部出力の受渡しと、外部原文のdecodeを独立した境界として扱う。
-- Web入力はown fieldとgetterの値を一度捕捉し、prototype由来の値を送信内容から分離する。捕捉後にownerの生存を確認し、サイズ制限とRustの受理規則を適用する。
+- Webが生成する内部入力DTOはJSONへ直接encodeし、Rustが型・値・Actionの受理を検査する。browser由来の表示文字列と転送量は共有の上限へ収め、WASM数値引数はJavaScriptの整数変換前に境界を検査する。
 - 非同期要求、record source、Countdownのtokenはadapterの実際の待機と資源寿命を管理する。構造・数値・所有権の接続試験は[検証](verification.md)に定める。
 - 生成物を手編集しない。hot pathと保存用文書の変更は、転送量・decode費用・入力意味を個別に確認する。
 

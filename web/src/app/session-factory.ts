@@ -1,7 +1,8 @@
-import { HybridGameSessionBridge, physics_hz } from "../../pkg/birdman_game_wasm.js";
+import initializeWasm, { HybridGameSessionBridge, physics_hz } from "../../pkg/birdman_game_wasm.js";
 import { boundaryInteger } from "../game/tail-boundary-values.js";
-import { initializeWasmRuntime } from "../game/wasm-flight.js";
 import { TailAppSessionFacade } from "./session-facade.js";
+
+let wasmInitialization: Promise<unknown> | null = null;
 
 export interface AppSessionConfiguration {
   readonly controlModeCode: 0 | 1 | 2;
@@ -23,7 +24,7 @@ export function createAppSession(configuration?: AppSessionConfiguration): TailA
   }
 }
 
-export async function initializeAppSession(configuration?: AppSessionConfiguration): Promise<TailAppSessionFacade> {
-  await initializeWasmRuntime();
-  return createAppSession(configuration);
+export async function initializeWasmRuntime(): Promise<void> {
+  wasmInitialization ??= initializeWasm();
+  await wasmInitialization;
 }

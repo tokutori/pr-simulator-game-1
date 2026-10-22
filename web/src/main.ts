@@ -7,8 +7,7 @@ import { createGameViewModel } from "./app/game-view.js";
 import { createFlightFrameViewDraft, createFlightUiHudModel, finalizeFlightFrameView, menuFrameFailureRecovery } from "./app/flight-frame-view.js";
 import { FlightControllerUiBindings } from "./app/flight-controller-port.js";
 import { screenUiVisible } from "./app/presentation-visibility.js";
-import { initializeAppSession } from "./app/session-factory.js";
-import { initializeWasmRuntime } from "./game/wasm-flight.js";
+import { createAppSession, initializeWasmRuntime } from "./app/session-factory.js";
 import type { TailAppSessionFacade } from "./app/session-facade.js";
 import { projectRuntimePlaybackClock, readRuntimeSessionProjection } from "./app/session-runtime-projection.js";
 import { createInitialAppModel, flightLogDownloadNotice, gameSessionPhase, isCurrentStoredRecordOpen, isGameFlowActivation, isStaleGameFlowActivation, recordListEntries, recordListNotice, replayPoseData, storedRecordOpenNotice, updateApp } from "./app/app-state.js";
@@ -595,7 +594,7 @@ async function initializePresentation(requestId: number): Promise<void> {
         }
       });
     presentationOwner = { kind: "renderer", renderer: bundle.renderer };
-    const initializedSession = await initializeAppSession();
+    const initializedSession = createAppSession();
     const session = initializedSession;
     ownedSession = session;
     if (isPageHidden() || !isCurrentPresentationInitialization(requestId)) {

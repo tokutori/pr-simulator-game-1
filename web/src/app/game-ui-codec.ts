@@ -1,7 +1,6 @@
 import type { GameUiAction } from "../generated/game-ui-action.js";
 import type { GameUiPlatformInput, GameUiStoredRecord } from "../generated/game-ui-input.js";
 import { gameUiInputQuery } from "../generated/game-ui-input-query.js";
-import { captureJsonInput } from "../game/tail-boundary-values.js";
 
 export type GameUiPlatformObservation = Omit<GameUiPlatformInput, "stored_records"> & {
   readonly stored_records: readonly GameUiStoredRecord[];
@@ -19,7 +18,7 @@ export function encodeGameUiAction(action: GameUiAction): string {
 }
 
 export function encodeGameUiPlatformInput(observation: GameUiPlatformObservation): string {
-  const input = captureJsonInput(observation);
+  const input = observation;
   const water = input.water_quality_operation;
   const status = input.screen_render_scale.status;
   const bounded = { ...input,
@@ -50,7 +49,7 @@ function displayText(value: string, maximumCharacters: number): string {
 
 function encodeBoundary(value: unknown, name: string): string {
   try {
-    const json = JSON.stringify(captureJsonInput(value));
+    const json = JSON.stringify(value);
     return json;
   } catch (cause) {
     throw new GameUiBoundaryError(name, ["Input cannot be represented as JSON data"], { cause });

@@ -7,9 +7,14 @@ import type { AppSessionFacade } from "../../web/src/app/session-facade.js";
 import { sharedGameUiPlatform } from "./shared-game-ui-fixture.js";
 import type { GameUiUpdate } from "../../web/src/generated/game-ui-effects.js";
 import { readContract } from "../game-ui-build/validate.js";
+import type { MenuPreparationInput } from "../../web/src/generated/menu-preparation-input.js";
+import { unavailableViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
 
 initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url))) });
 const windRequest = { north_min_m: -10, east_min_m: -10, altitude_m: 10, spacing_m: 5 };
+const menuInput: MenuPreparationInput = { panelId: "fixture", viewRevision: 0,
+  viewer: unavailableViewerFrame("not-stereo"), locale: "ja", progress: 0, generation: 1,
+  font: { family: "sans-serif", weight: 600, style: "normal", generation: 0 } };
 
 function launch(facade: AppSessionFacade): void {
   facade.executeSharedSessionCommand({ kind: "open_setup" });
@@ -51,16 +56,16 @@ describe("layout-discriminated application session facade", () => {
     } finally { facade.dispose(); }
   });
 
-  it.each(["action", "platform", "session", "record", "wind", "flight-frame", "flight-key"] as const)("checks owner liveness after capturing input getters (%s)", (boundary) => {
+  it.each(["action", "platform", "session", "record", "wind", "flight-frame", "flight-key", "menu-platform", "menu-input"] as const)("checks owner liveness after input serialization (%s)", (boundary) => {
     const bridge = new HybridGameSessionBridge(0, 21, 22);
     const facade = new TailAppSessionFacade(bridge, physics_hz());
     const methods = { action: "game_ui_action_json", platform: "game_ui_view_revision",
       session: "apply_game_ui_session_command_json", record: "apply_game_ui_record_action_json", wind: "flight_wind_grid_json",
-      "flight-frame": "advance_flight_frame_json", "flight-key": "observe_flight_key_json" } as const;
+      "flight-frame": "advance_flight_frame_json", "flight-key": "observe_flight_key_json",
+      "menu-platform": "game_ui_menu_json", "menu-input": "game_ui_menu_json" } as const;
     const call = vi.spyOn(bridge, methods[boundary]);
     const free = vi.spyOn(bridge, "free");
-    let reads = 0;
-    const dispose = (): void => { reads += 1; facade.dispose(); };
+    const dispose = (): void => { facade.dispose(); };
     try {
       expect(() => {
         switch (boundary) {
@@ -71,9 +76,10 @@ describe("layout-discriminated application session facade", () => {
           case "wind": facade.queryWindGrid({ ...windRequest, get north_min_m() { dispose(); return -10; } }); break;
           case "flight-frame": facade.advanceFlightFrame(0, [{ get identity() { dispose(); return { slot_low: 1, slot_high: 0, generation: 0 }; }, connected: true, axes: [0, 0, 0] }]); break;
           case "flight-key": facade.flightPort.observeFlightKey({ get control() { dispose(); return "nose_up" as const; }, pressed: true, repeat: false }); break;
+          case "menu-platform": facade.prepareSharedMenu(menuInput, { ...sharedGameUiPlatform(), get notification() { dispose(); return ""; } }, () => new Float64Array(5)); break;
+          case "menu-input": facade.prepareSharedMenu({ ...menuInput, get panelId() { dispose(); return "fixture"; } }, sharedGameUiPlatform(), () => new Float64Array(5)); break;
         }
       }).toThrow("disposed");
-      expect(reads).toBe(1);
       expect(call).not.toHaveBeenCalled();
       expect(free).toHaveBeenCalledTimes(1);
     } finally { facade.dispose(); }

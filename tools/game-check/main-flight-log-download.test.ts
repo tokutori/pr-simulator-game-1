@@ -69,7 +69,7 @@ async function fixture(archive = false) {
   const { TailAppSessionFacade } = await import("../../web/src/app/session-facade.js");
   const facade = new TailAppSessionFacade(session, wasm.physics_hz());
   const free = vi.spyOn(session, "free");
-  vi.doMock("../../web/src/app/session-factory.js", () => ({ initializeAppSession: () => Promise.resolve(facade) }));
+  vi.doMock("../../web/src/app/session-factory.js", () => ({ initializeWasmRuntime: () => Promise.resolve(), createAppSession: () => facade }));
   const pageEvent = (type: "pagehide" | "pageshow", persisted: boolean): void => {
     const event = new browser.Event(type);
     Object.defineProperty(event, "persisted", { value: persisted });

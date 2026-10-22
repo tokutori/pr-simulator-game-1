@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { IDBFactory } from "fake-indexeddb";
 import { HybridGameSessionBridge, initSync, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
-import { createAppSession, initializeAppSession } from "../../web/src/app/session-factory.js";
+import { createAppSession, initializeWasmRuntime } from "../../web/src/app/session-factory.js";
 import type { AppSessionConfiguration } from "../../web/src/app/session-factory.js";
 import { createArchivedPersonalBestSelection, personalBestComparisonVersion } from "../../web/src/game/archived-personal-best.js";
 import { FlightRecordRepository, IndexedDbFlightRecordPersistence } from "../../web/src/game/flight-record-store.js";
@@ -57,10 +57,11 @@ describe("current application session factory", () => {
   });
 
   it("shares WASM initialization across current sessions", async () => {
-    const sessions = await Promise.all([
-      initializeAppSession({ controlModeCode: 1, seedLow: 31, seedHigh: 32 }),
-      initializeAppSession({ controlModeCode: 2, seedLow: 31, seedHigh: 32 })
-    ]);
+    await Promise.all([initializeWasmRuntime(), initializeWasmRuntime()]);
+    const sessions = [
+      createAppSession({ controlModeCode: 1, seedLow: 31, seedHigh: 32 }),
+      createAppSession({ controlModeCode: 2, seedLow: 31, seedHigh: 32 })
+    ];
     try {
       expect(sessions.map((session) => session.readLifecycle().control_mode_code)).toEqual([1, 2]);
     } finally {
