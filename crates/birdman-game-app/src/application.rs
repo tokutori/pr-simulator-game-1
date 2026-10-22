@@ -310,7 +310,14 @@ impl ApplicationSession {
     ) -> Result<(), GameSessionError> {
         let previous = self.session.snapshot().phase();
         let reason = reason.core_reason();
+        if !available {
+            self.flight_input.invalidate();
+        }
         let result = match previous {
+            SessionPhase::Countdown { .. } if !available => self.session.cancel_countdown(),
+            SessionPhase::Replay | SessionPhase::Attract if !available => {
+                self.session.set_playback_playing(false)
+            }
             SessionPhase::FlightRunning | SessionPhase::FlightPaused { .. } if !available => {
                 self.session.pause(reason)
             }

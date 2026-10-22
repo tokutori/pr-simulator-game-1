@@ -81,6 +81,7 @@ adapter・presentation・scene・app・contentは責務に応じて下位のcore
 - platformごとの再開規則や独立したCountdownを作らない。
 
 - 停止理由はManual、DocumentHidden、TrackingSuspended、ProcessingDelayの集合である。
+- 外部の利用不可観測は共有applicationで入力保持を解除し、Countdownを取り消し、Flightを一時停止し、Replay/Attractの再生時計を停止する。
 - 各外部観測の解消は対応する理由だけを解除する。
 - 理由の解除で自動再開しない。
 - 明示ResumeはManualを除去し、残る外的理由によって認可を判定する。

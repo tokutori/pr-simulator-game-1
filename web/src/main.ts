@@ -44,7 +44,6 @@ import { BrowserFlightInput } from "./game/browser-flight-input.js";
 import { TailFlightController } from "./game/tail-flight-controller.js";
 import { screen_vertical_field_of_view_degrees, ScreenRenderAutoBridge } from "../pkg/birdman_game_wasm.js";
 import type { ScreenRenderAutoSnapshot } from "./generated/screen-render-auto.js";
-import { suspendPageFlight } from "./game/page-flight-lifecycle.js";
 import { createArchivedPersonalBestSelection, personalBestComparisonVersion } from "./game/archived-personal-best.js";
 import { FlightRecordRepository, IndexedDbFlightRecordPersistence } from "./game/flight-record-store.js";
 import { projectRuntimeEnvironment } from "./game/runtime-environment.js";
@@ -1081,24 +1080,11 @@ function onVisibilityChange(): void {
 }
 
 function suspendPageFlightState(): void {
-  try {
-    phoneVrBackend?.invalidateInput();
-  } finally {
-    try {
-      const session = gameSession;
-      const pagePort = session === null ? null : {
-        phase: () => session.readLifecycle().phase,
-        cancel_countdown: () => { session.executeSharedSessionCommand({ kind: "cancel_countdown" }); },
-        pause: (reason: number) => {
-          if (reason !== 1) throw new RangeError("Page suspension requires the page-hidden reason");
-          session.pauseForReason("page_hidden");
-        }
-      };
-      suspendPageFlight(pagePort, flightController, syncGameSession);
-    } catch (error: unknown) {
-      dispatch({ type: "game-session-status", message: `非表示化に伴う停止に失敗した: ${errorMessage(error)}` });
-    }
-  }
+  runSideEffects([
+    () => { phoneVrBackend?.invalidateInput(); },
+    () => { flightController?.invalidateInput(); },
+    () => { pauseSessionForReason("page_hidden"); }
+  ]);
 }
 
 function onUiInputBlur(): void {
@@ -1115,7 +1101,6 @@ function onPageRestore(): void {
 }
 
 function pauseForPresentationTransition(): void {
-  cancelUnavailableCountdown();
   pauseSessionForReason("presentation_transition");
 }
 
@@ -1125,7 +1110,7 @@ function resolvePresentationTransitionPause(): void {
 
 function pauseSessionForReason(reason: "page_hidden" | "presentation_transition"): void {
   const session = gameSession;
-  if (session === null || !["flight_running", "flight_paused"].includes(session.readLifecycle().phase)) return;
+  if (session === null) return;
   try {
     session.pauseForReason(reason);
     syncGameSession();
@@ -1136,7 +1121,7 @@ function pauseSessionForReason(reason: "page_hidden" | "presentation_transition"
 
 function clearSessionPauseReason(reason: number): void {
   const session = gameSession;
-  if (session === null || session.readLifecycle().phase !== "flight_paused") return;
+  if (session === null) return;
   try {
     session.clearPauseReason(reason);
     syncGameSession();

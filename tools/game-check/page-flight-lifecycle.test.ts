@@ -8,13 +8,12 @@ import { TailFlightController } from "../../web/src/game/tail-flight-controller.
 import { TailAppSessionFacade } from "../../web/src/app/session-facade.js";
 import type { SessionLifecycleDocument } from "../../web/src/generated/session-lifecycle.js";
 import { readContract } from "../game-ui-build/validate.js";
-import { suspendPageFlight } from "../../web/src/game/page-flight-lifecycle.js";
 
 const wasmPath = fileURLToPath(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url));
 
 function pagePort(session: HybridGameSessionBridge) {
   return { phase: () => readContract<SessionLifecycleDocument>("lifecycle", session.lifecycle_snapshot_json()).phase,
-    cancel_countdown: () => { session.cancel_countdown(); }, pause: (reason: number) => { session.pause(reason); } };
+    pause: (reason: number) => { session.pause(reason); } };
 }
 
 function preparedSession(): HybridGameSessionBridge {
@@ -47,7 +46,7 @@ describe("browser cache to Rust session boundary", () => {
     });
     const synchronize = vi.fn();
     installBrowserPageLifecycle(window as unknown as Window, {
-      suspend: () => { suspendPageFlight(pagePort(session), controller, synchronize); },
+      suspend: () => { controller.invalidateInput(); session.pause(1); synchronize(); },
       restore: () => { session.clear_pause_reason(1); synchronize(); },
       dispose: () => { controller.dispose(); }
     });
@@ -95,7 +94,7 @@ describe("browser cache to Rust session boundary", () => {
     const token = session.countdown_token();
     const synchronize = vi.fn();
     installBrowserPageLifecycle(window as unknown as Window, {
-      suspend: () => { suspendPageFlight(pagePort(session), null, synchronize); },
+      suspend: () => { session.pause(1); synchronize(); },
       restore: synchronize,
       dispose: () => { session.free(); }
     });

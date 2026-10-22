@@ -585,6 +585,60 @@ fn countdown_retains_elapsed_time_attempt_identity_and_once_only_launch() {
 }
 
 #[test]
+fn unavailable_presentation_cancels_countdown_and_retires_its_attempt() {
+    let mut application = prepared();
+    execute(&mut application, SessionCommand::StartCountdown {});
+    let token = application.core_session().countdown_token().unwrap();
+    application
+        .observe_availability(ExternalPauseReason::TrackingSuspended, false)
+        .unwrap();
+    assert_eq!(
+        application.core_session().snapshot().phase(),
+        SessionPhase::BriefingReady
+    );
+    application
+        .observe_availability(ExternalPauseReason::TrackingSuspended, true)
+        .unwrap();
+    assert_eq!(
+        application.observe_countdown(token, 3.0, true),
+        Ok(CountdownProgress::Ignored)
+    );
+    assert_eq!(application.core_session().countdown_token(), None);
+}
+
+#[test]
+fn unavailable_presentation_stops_replay_until_explicit_playback() {
+    let mut application = prepared();
+    launch(&mut application);
+    application.advance_tail_flight_tick(neutral()).unwrap();
+    execute(&mut application, SessionCommand::Abort {});
+    execute(&mut application, SessionCommand::EnterReplay {});
+    application.set_playback_playing(true).unwrap();
+    let time = application
+        .core_session()
+        .playback_clock()
+        .unwrap()
+        .time_seconds();
+    application
+        .observe_availability(ExternalPauseReason::DocumentHidden, false)
+        .unwrap();
+    application
+        .observe_availability(ExternalPauseReason::DocumentHidden, true)
+        .unwrap();
+    let clock = application.core_session().playback_clock().unwrap();
+    assert_eq!(clock.time_seconds(), time);
+    assert!(!clock.is_playing());
+    application.set_playback_playing(true).unwrap();
+    assert!(
+        application
+            .core_session()
+            .playback_clock()
+            .unwrap()
+            .is_playing()
+    );
+}
+
+#[test]
 fn explicit_resume_clears_manual_only_and_external_recovery_never_auto_resumes() {
     let mut application = prepared();
     launch(&mut application);

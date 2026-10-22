@@ -106,10 +106,6 @@ impl ApplicationSession {
         }
         self.observe_external_pause(ExternalPauseReason::DocumentHidden, frame_available)
             .map_err(FlightFrameError::Session)?;
-        if !frame_available && let Some(token) = self.session.countdown_token() {
-            self.observe_countdown(token, 0.0, false)
-                .map_err(FlightFrameError::Session)?;
-        }
         if self.session.snapshot().phase() != SessionPhase::FlightRunning {
             self.flight_clock.suspend();
             self.flight_input.set_active(false);
