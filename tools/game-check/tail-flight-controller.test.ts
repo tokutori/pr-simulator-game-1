@@ -11,10 +11,15 @@ initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_ga
 const disposals: (() => void)[] = [];
 afterEach(() => { for (const dispose of disposals.splice(0)) dispose(); });
 
-function fixture(mode = 0) {
+function fixture(mode = 0, informationCode = 0) {
   const session = new HybridGameSessionBridge(mode, 11, 12);
   const facade = new TailAppSessionFacade(session, physics_hz());
   facade.executeSharedSessionCommand({ kind: "open_setup" });
+  session.set_information_level(informationCode);
+  if (informationCode === 4) {
+    session.set_information_cue(0, false);
+    session.set_information_cue(3, false);
+  }
   facade.executeSharedSessionCommand({ kind: "prepare" });
   const launch = (): void => {
     facade.executeSharedSessionCommand({ kind: "start_countdown" });
@@ -40,6 +45,45 @@ function fixture(mode = 0) {
 }
 
 describe("shared-owner flight display adapter", () => {
+  it.each([
+    { mode: 0, informationCode: 1, information: "standard", fps: 30 },
+    { mode: 1, informationCode: 2, information: "minimal", fps: 120 },
+    { mode: 2, informationCode: 3, information: "realistic", fps: 30 },
+    { mode: 0, informationCode: 4, information: "custom", fps: 120 }
+  ])("preserves recorded physics with $information at $fps FPS in mode $mode", ({ mode, informationCode, information, fps }) => {
+    const fly = (selectedInformation: number, frameRate: number) => {
+      const trial = fixture(mode, selectedInformation);
+      trial.port.advanceFrame.mockImplementation((timestamp, gamepads, available) => {
+        const report = trial.facade.flightPort.advanceFrame(timestamp, gamepads, available);
+        if (timestamp !== 1000) return report;
+        trial.facade.executeSharedSessionCommand({ kind: "abort" });
+        const snapshot = trial.facade.readSnapshot();
+        return { ...report, phase_changed: true, snapshot, render_pose: snapshot.render_pose };
+      });
+      trial.port.observeFlightKey({ control: "pilot_increase", pressed: true, repeat: false });
+      for (let frame = 0; frame <= frameRate; frame += 1) {
+        trial.controller.onFrame(frame * 1000 / frameRate);
+        if (frame === frameRate / 2) trial.port.observeFlightKey({ control: "pilot_increase", pressed: false, repeat: false });
+      }
+      const snapshot = trial.controller.currentSnapshot;
+      if (snapshot.frame.kind !== "result") throw new Error("Expected an aborted flight");
+      expect(snapshot.frame.finalization).toMatchObject({ reason: "manual_abort", terminal_tick: 100, terminal_fraction: 0 });
+      const record = JSON.parse(trial.session.export_flight_record_json()) as {
+        header: { difficulty: { information: string } }; samples: readonly unknown[]; finalization: unknown;
+      };
+      expect(record.samples).toHaveLength(101);
+      expect(trial.renderer.setFlightPose.mock.lastCall?.[0]).toMatchObject({ simulationTimeSeconds: 1 });
+      return { frame: snapshot.frame, pose: trial.renderer.setFlightPose.mock.lastCall?.[0], record };
+    };
+    const reference = fly(0, 60);
+    const observed = fly(informationCode, fps);
+    expect(observed.frame).toEqual(reference.frame);
+    expect(observed.pose).toEqual(reference.pose);
+    expect(observed.record.samples).toEqual(reference.record.samples);
+    expect(observed.record.finalization).toEqual(reference.record.finalization);
+    expect(observed.record.header.difficulty.information).toBe(information);
+  });
+
   it.each([0, 1, 2])("passes each frame once to Rust and displays the committed two-tail state in mode %s", mode => {
     const trial = fixture(mode);
     trial.port.observeFlightKey({ control: "nose_up", pressed: true, repeat: false });
