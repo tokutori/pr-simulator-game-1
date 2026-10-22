@@ -15,7 +15,8 @@ import type { GameUiView } from "../generated/game-ui-view.js";
 import type { GameUiFrame } from "../generated/game-ui-frame.js";
 import type { TailSnapshotDocument } from "../generated/tail-snapshot.js";
 import type { TailPreparedLaunchDocument } from "../generated/tail-prepared.js";
-import type { TailControlProfileDocument } from "../generated/tail-control-profile.js";
+import type { FlightFrameDocument } from "../generated/flight-frame.js";
+import type { FlightGamepadObservation } from "../generated/flight-gamepad.js";
 import type { EnvironmentSnapshot } from "../generated/runtime-environment.js";
 import type { PlaybackContext } from "../generated/record-context.js";
 import type { AnalysisDocument } from "../generated/record-analysis.js";
@@ -62,6 +63,11 @@ export interface TailAppSessionPort extends SessionResourcePort {
   snapshot_json(): string;
   control_profile_json(): string;
   advance_tick_json(json: string): string;
+  advance_flight_frame_json(timestampMilliseconds: number, gamepadsJson: string, frameAvailable: boolean): string;
+  observe_flight_key_json(json: string): boolean;
+  invalidate_flight_input(): void;
+  fail_flight_adapter(): void;
+  flight_frame_available_at(timestampMilliseconds: number): boolean;
   pause(reason: number): void;
   prepared_launch_snapshot_json(): string;
   game_ui_view_revision(platformJson: string): number;
@@ -185,7 +191,16 @@ export class TailAppSessionFacade extends SessionResourceOwner {
     super(port, physicsHz);
     this.flightPort = {
       readSnapshot: () => this.readSnapshot(),
-      readControlProfile: () => this.readOutput<TailControlProfileDocument>(() => port.control_profile_json()),
+      advanceFrame: (timestamp, gamepads, available) => this.advanceFlightFrame(timestamp, gamepads, available),
+      observeFlightKey: observation => {
+        const json = JSON.stringify(observation);
+        return this.observe(() => port.observe_flight_key_json(json));
+      },
+      invalidateFlightInput: () => { this.observe(() => { port.invalidate_flight_input(); }); },
+      failAdapter: () => {
+        if (this.readLifecycle().phase === "result") this.observe(() => { port.fail_flight_adapter(); });
+        else this.change(() => { port.fail_flight_adapter(); });
+      },
       advanceTick: (input) => {
         const json = encodeTailLogicalInput(input);
         return this.change(() => this.readOutput<TailSnapshotDocument>(() => port.advance_tick_json(json)));
@@ -235,6 +250,26 @@ export class TailAppSessionFacade extends SessionResourceOwner {
 
   readSnapshot(): TailSnapshotDocument {
     return this.readOutput(() => this.port.snapshot_json());
+  }
+
+  advanceFlightFrame(timestampMilliseconds: number, gamepads: readonly FlightGamepadObservation[], available = true): FlightFrameDocument {
+    const json = JSON.stringify(gamepads);
+    return this.observe(() => {
+      let frame: FlightFrameDocument;
+      try {
+        frame = this.readOutput<FlightFrameDocument>(() =>
+          this.port.advance_flight_frame_json(timestampMilliseconds, json, available));
+      } catch (error: unknown) {
+        this.change(() => undefined);
+        throw error;
+      }
+      if (frame.phase_changed || (frame.advance.kind === "ticks" && frame.advance.count > 0)) this.change(() => undefined);
+      return frame;
+    });
+  }
+
+  frameAvailableAt(timestampMilliseconds: number): boolean {
+    return this.observe(() => this.port.flight_frame_available_at(timestampMilliseconds));
   }
 
   readPreparedLaunchPose(): FlightRenderPose | null {

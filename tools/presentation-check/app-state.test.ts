@@ -706,7 +706,8 @@ describe("Boot application state", () => {
     const original = readyModel("flight_paused");
     const identity = { sessionId: 1, controllerId: 1 };
     const ready = updateApp(original, { type: "flight-controller-ready", identity }).model;
-    const stopped = updateApp(ready, { type: "flight-controller-stopped", identity, message: "input failed", snapshot: currentFlightSnapshotFixture("flight_paused") }).model;
+    if (ready.gameSession.phase === "boot") throw new Error("Expected a prepared session");
+    const stopped = updateApp(ready, { type: "flight-controller-stopped", identity, message: "input failed", projection: ready.gameSession, snapshot: currentFlightSnapshotFixture("flight_paused") }).model;
     const rejected = updateApp(stopped, { type: "shared-game-ui-effect", effect: { kind: "session", command: { kind: "resume" } } });
     expect(rejected.model).toBe(stopped);
     expect(rejected.effects).toEqual([]);

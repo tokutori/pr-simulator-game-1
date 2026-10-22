@@ -44,6 +44,101 @@ pub struct TailSnapshotDocument<'identity> {
     pub frame: TailFrameDocument,
 }
 
+/// One shared frame's admitted work, input takeover and retained live snapshot.
+#[derive(serde::Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct FlightFrameDocument<'identity> {
+    /// A domain phase or pause-cause transition observed during this frame.
+    pub phase_changed: bool,
+    /// Common physical tick budget and interpolation remainder, or delay transition.
+    pub advance: birdman_game_app::flight_clock::FlightFrameAdvance,
+    /// Selected connection's neutral and pilot-position takeover state.
+    pub gamepad: birdman_game_app::flight_input::FlightGamepadAcquisition,
+    /// Live or terminal projection; menus and recorded playback have their own producer.
+    pub snapshot: Option<TailSnapshotDocument<'identity>>,
+    /// Shared interpolated display pose; paused and terminal frames use their exact committed state.
+    pub render_pose: Option<FlightRenderPose>,
+}
+
+/// Projects a completed frame without introducing another live state owner.
+pub fn flight_frame_snapshot(
+    session: &ApplicationSession,
+    report: birdman_game_app::application::FlightFrameReport,
+) -> Result<FlightFrameDocument<'_>, SnapshotProjectionError> {
+    let snapshot = if matches!(
+        session.core_session().snapshot().phase(),
+        birdman_game_core::SessionPhase::FlightRunning
+            | birdman_game_core::SessionPhase::FlightPaused { .. }
+            | birdman_game_core::SessionPhase::Result
+    ) {
+        Some(session_snapshot(session)?)
+    } else {
+        None
+    };
+    let render_pose = interpolate_live_pose(
+        session,
+        snapshot.as_ref().and_then(|value| value.render_pose),
+    )?;
+    Ok(FlightFrameDocument {
+        phase_changed: report.phase_changed,
+        advance: report.advance,
+        gamepad: session.flight_gamepad_acquisition(),
+        snapshot,
+        render_pose,
+    })
+}
+
+/// Projects the live or terminal display pose using the application's physical-time remainder.
+pub fn live_render_pose(
+    session: &ApplicationSession,
+) -> Result<Option<FlightRenderPose>, SnapshotProjectionError> {
+    let exact = session_snapshot(session)?.render_pose;
+    interpolate_live_pose(session, exact)
+}
+
+fn interpolate_live_pose(
+    session: &ApplicationSession,
+    exact: Option<FlightRenderPose>,
+) -> Result<Option<FlightRenderPose>, SnapshotProjectionError> {
+    Ok(match exact {
+        Some(_) if session.flight_interpolation_ready() => {
+            let record =
+                session
+                    .core_session()
+                    .flight_record()
+                    .ok_or(SnapshotProjectionError::Session(
+                        GameSessionError::InvalidTransition,
+                    ))?;
+            let current = record
+                .samples()
+                .last()
+                .ok_or(SnapshotProjectionError::Session(
+                    GameSessionError::InvalidTransition,
+                ))?;
+            let tick =
+                current
+                    .tick_index
+                    .checked_sub(1)
+                    .ok_or(SnapshotProjectionError::Session(
+                        GameSessionError::InvalidTransition,
+                    ))?;
+            let fraction = session.flight_interpolation_fraction();
+            let sample = record
+                .sample_at_time(tick, fraction)
+                .map_err(SnapshotProjectionError::Interpolation)?;
+            Some(Projection { session }.render_pose_internal(
+                sample.flight_state,
+                sample.actuators,
+                (tick as f64 + fraction) / f64::from(birdman_game_core::PHYSICS_HZ),
+                Some(sample.telemetry),
+                sample.wing_bending_factor,
+            )?)
+        }
+        exact => exact,
+    })
+}
+
 /// Initial launch projection without advancing the simulation.
 #[derive(serde::Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -95,6 +190,8 @@ pub enum SnapshotProjectionError {
     Format(FlightRecordFormatError),
     /// Registered aircraft presentation metadata is invalid.
     Geometry(&'static str),
+    /// A retained physical interval could not provide a valid display sample.
+    Interpolation(birdman_game_core::FlightRecordQueryError),
 }
 
 /// Projects one live session observation, borrowing its sealed control identity.

@@ -33,6 +33,102 @@ fn snapshot(bridge: &HybridGameSessionBridge) -> Value {
 }
 
 #[test]
+fn frame_boundary_matches_the_direct_owner_for_ticks_delay_and_resume() {
+    use birdman_game_app::flight_input::{FlightControl, FlightKeyObservation};
+    let mut bridge = launch(ControlMode::Manual, 100);
+    let mut direct = launch(ControlMode::Manual, 100);
+    let key = FlightKeyObservation {
+        control: FlightControl::PilotIncrease,
+        pressed: true,
+        repeat: false,
+    };
+    bridge
+        .observe_flight_key_json(&serde_json::to_string(&key).unwrap())
+        .unwrap();
+    direct.session.observe_flight_key(key);
+    for timestamp in [1000.0, 1015.0, 1025.0, 1175.0, 1325.001, 1335.001, 1345.001] {
+        let observed: Value = serde_json::from_str(
+            &bridge
+                .advance_flight_frame_json(timestamp, "[]", true)
+                .unwrap(),
+        )
+        .unwrap();
+        let report = direct
+            .session
+            .advance_flight_frame(timestamp, &[], true)
+            .unwrap();
+        let expected = birdman_game_presentation::session_snapshot::flight_frame_snapshot(
+            &direct.session,
+            report,
+        )
+        .unwrap();
+        assert_eq!(observed, serde_json::to_value(expected).unwrap());
+        if timestamp == 1175.0 {
+            assert_eq!(observed["advance"]["count"], 15);
+            assert_eq!(observed["render_pose"]["simulationTimeSeconds"], 0.165);
+        }
+    }
+    bridge.resume().unwrap();
+    direct
+        .session
+        .execute(SessionCommand::Resume {}, BackendReadiness::Ready)
+        .unwrap();
+    for timestamp in [9000.0, 9010.0] {
+        let observed: Value = serde_json::from_str(
+            &bridge
+                .advance_flight_frame_json(timestamp, "[]", true)
+                .unwrap(),
+        )
+        .unwrap();
+        let report = direct
+            .session
+            .advance_flight_frame(timestamp, &[], true)
+            .unwrap();
+        let expected = birdman_game_presentation::session_snapshot::flight_frame_snapshot(
+            &direct.session,
+            report,
+        )
+        .unwrap();
+        assert_eq!(observed, serde_json::to_value(expected).unwrap());
+    }
+}
+
+#[test]
+fn frame_boundary_keeps_device_words_and_nullable_axes_and_has_no_live_menu_snapshot() {
+    let mut bridge = HybridGameSessionBridge::public_default();
+    let menu: Value = serde_json::from_str(
+        &bridge
+            .advance_flight_frame_json(1000.0, "[]", true)
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(menu["snapshot"], Value::Null);
+    assert_eq!(menu["advance"]["count"], 0);
+    let mut bridge = launch(ControlMode::Manual, 100);
+    let gamepads = json!([{
+        "identity": { "slot_low": u32::MAX, "slot_high": u32::MAX, "generation": 7 },
+        "connected": true,
+        "axes": [0.0, null, 0.0]
+    }])
+    .to_string();
+    bridge
+        .advance_flight_frame_json(1000.0, &gamepads, true)
+        .unwrap();
+    let frame: Value = serde_json::from_str(
+        &bridge
+            .advance_flight_frame_json(1010.0, &gamepads, true)
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(frame["gamepad"]["kind"], "waiting_neutral");
+    assert_eq!(
+        frame["gamepad"]["identity"],
+        json!({ "slot_low": u32::MAX, "slot_high": u32::MAX, "generation": 7 })
+    );
+    assert_eq!(frame["snapshot"]["phase"], "flight_running");
+}
+
+#[test]
 fn lifecycle_output_names_the_phase_and_exposes_resume_admission() {
     let title = HybridGameSessionBridge::from_mode(ControlMode::Manual, 5, 42);
     let lifecycle: Value = serde_json::from_str(&title.lifecycle_snapshot_json().unwrap()).unwrap();

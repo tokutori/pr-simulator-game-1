@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { initSync, maximum_flight_frame_gap_milliseconds, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
+import { initSync } from "../../web/pkg/birdman_game_wasm.js";
 import { createInitialAppModel, gameSessionSnapshot, updateApp } from "../../web/src/app/app-state.js";
 import type { AppEffect, AppMessage } from "../../web/src/app/app-state.js";
 import { FlightControllerUiBindings } from "../../web/src/app/flight-controller-port.js";
@@ -28,24 +28,24 @@ function fixture() {
     model = next.model;
     effects.push(...next.effects);
   };
-  const port = { readSnapshot: () => facade.flightPort.readSnapshot(), readControlProfile: () => facade.flightPort.readControlProfile(),
-    pause: (reason: number) => { facade.flightPort.pause(reason); }, clear_pause_reason: (reason: number) => { facade.flightPort.clear_pause_reason(reason); },
-    advanceTick: vi.fn(facade.flightPort.advanceTick.bind(facade.flightPort)), free: () => { facade.dispose(); } };
-  const input = { readDemand: vi.fn(() => ({ controlLayout: "tail_incidence" as const, noseUp: 0, turnRight: 0,
-    pilotPositionCommand: { kind: "hold" as const } })), reset: vi.fn(), suspend: vi.fn(), resume: vi.fn(), dispose: vi.fn() };
+  let abortNext = false;
+  const port = { ...facade.flightPort, advanceFrame: vi.fn<typeof facade.flightPort.advanceFrame>((timestamp, gamepads, available) => {
+    const report = facade.flightPort.advanceFrame(timestamp, gamepads, available);
+    if (!abortNext || report.advance.kind !== "ticks" || report.advance.count === 0) return report;
+    abortNext = false;
+    facade.executeSharedSessionCommand({ kind: "abort" });
+    const snapshot = facade.readSnapshot();
+    return { ...report, snapshot, render_pose: snapshot.render_pose, phase_changed: true };
+  }) };
+  const input = { readGamepads: () => [], dispose: vi.fn() };
   const renderer = { setFlightPose: vi.fn<(pose: FlightRenderPose | null) => void>() };
   const display = { render: vi.fn<(snapshot: TailControllerSnapshot) => void>(), setVisible: vi.fn<(visible: boolean) => void>() };
   const bindings = new FlightControllerUiBindings();
   const binding = bindings.bindAppDisplay(port, display, () => facade.readGameSessionProjection(), () => controller.currentSnapshot, dispatch);
-  const controller = new TailFlightController(port, input, renderer, binding.port, physics_hz(), maximum_flight_frame_gap_milliseconds(), () => [], binding.onTerminal);
+  const controller = new TailFlightController(port, input, renderer, binding.port, binding.onTerminal);
   dispatch({ type: "flight-controller-ready", identity: binding.identity });
   disposals.push(() => { controller.dispose(); });
-  const abortAtNextTick = (): void => {
-    port.advanceTick.mockImplementationOnce(() => {
-      facade.executeSharedSessionCommand({ kind: "abort" });
-      return facade.flightPort.readSnapshot();
-    });
-  };
+  const abortAtNextTick = (): void => { abortNext = true; };
   return { facade, controller, port, input, renderer, display, bindings, binding, effects, messages, dispatch, abortAtNextTick, model: () => model };
 }
 
@@ -82,7 +82,12 @@ describe("authoritative Result synchronization across tail adapter failures", ()
     const callback = vi.fn();
     const brokenHud = { render: () => { throw new Error("Retry HUD reset failed"); }, fail: vi.fn(), setVisible: vi.fn() };
     expect(() => { trial.controller.reset(trial.port.readSnapshot(), brokenHud, callback); }).toThrow("Retry HUD reset failed");
-    expect(trial.controller.currentSnapshot).toBe(previous);
+    expect(trial.controller.currentSnapshot.frame).toEqual(previous.frame);
+    expect(trial.facade.readLifecycle()).toMatchObject({ phase: "flight_paused", can_resume: false });
+    trial.facade.executeSharedSessionCommand({ kind: "abort" });
+    trial.facade.executeSharedSessionCommand({ kind: "retry" });
+    trial.facade.executeSharedSessionCommand({ kind: "start_countdown" });
+    trial.facade.observeCountdown(trial.facade.captureCountdownToken(), 3, true);
     trial.controller.reset(trial.port.readSnapshot());
     trial.abortAtNextTick();
     trial.controller.onFrame(0);
@@ -92,31 +97,31 @@ describe("authoritative Result synchronization across tail adapter failures", ()
     expect(trial.messages.filter((message) => message.type === "tail-controller-terminal")).toHaveLength(1);
   });
 
-  it.each(["pose", "hud", "input", "pose-and-cleanup"] as const)("retains Rust phase, record and finalization when %s throws", (site) => {
+  it.each(["pose", "hud"] as const)("retains Rust phase, record and finalization when %s throws", (site) => {
     const trial = fixture();
     trial.abortAtNextTick();
     const primary = new Error(`Injected ${site} terminal failure`);
-    if (site === "pose" || site === "pose-and-cleanup") trial.renderer.setFlightPose.mockImplementationOnce(() => { throw primary; });
-    if (site === "hud") trial.display.render.mockImplementationOnce(() => { throw primary; });
-    if (site === "input") trial.input.suspend.mockImplementation(() => { throw primary; });
-    if (site === "pose-and-cleanup") trial.input.suspend.mockImplementation(() => { throw new Error("Injected cleanup failure"); });
+    if (site === "pose") trial.renderer.setFlightPose.mockImplementation(pose => {
+      if (pose !== null && trial.facade.readLifecycle().phase === "result") throw primary;
+    });
+    if (site === "hud") trial.display.render.mockImplementation(snapshot => {
+      if (snapshot.phase === "result") throw primary;
+    });
     trial.controller.onFrame(0);
-    trial.controller.onFrame(100);
+    trial.controller.onFrame(10);
     const result = trial.facade.readGameSessionProjection();
     if (result.phase !== "result" || result.display.kind !== "available") throw new Error("Expected the original Rust Result");
     expect(trial.model().gameSession).toMatchObject({ phase: "result" });
     expect(gameSessionSnapshot(trial.model().gameSession)).toEqual(result.display.value);
     expect(trial.model().flightExecution.kind).toBe("ready");
     expect(trial.model().status).toContain(primary.message);
-    if (site === "pose-and-cleanup") expect(trial.model().status).toContain("Injected cleanup failure");
     expect(trial.effects).toEqual([{ type: "persist-flight-record" }]);
     const archive: unknown = JSON.parse(trial.facade.exportRecordJson());
-    expect(archive).toMatchObject({ schema_version: 7, finalization: { reason: "manual_abort", terminal_tick: 0, failure: null } });
+    expect(archive).toMatchObject({ schema_version: 7, finalization: { reason: "manual_abort", terminal_tick: 1, failure: null } });
     const snapshot = trial.controller.currentSnapshot;
     expect(snapshot.phase).toBe("result");
     trial.controller.onFrame(2_000);
-    trial.controller.resume();
-    expect(trial.port.advanceTick).toHaveBeenCalledTimes(1);
+    expect(trial.port.advanceFrame).toHaveBeenCalledTimes(2);
     expect(trial.messages.filter((message) => message.type === "flight-controller-stopped")).toEqual([]);
     expect(trial.messages.filter((message) => message.type === "tail-controller-terminal")).toHaveLength(2);
   });
@@ -166,7 +171,8 @@ describe("authoritative Result synchronization across tail adapter failures", ()
 
   it("preserves a Rust aerodynamic failure cause when terminal HUD rendering also fails", () => {
     const trial = fixture();
-    trial.input.readDemand.mockReturnValue({ controlLayout: "tail_incidence", noseUp: 1, turnRight: 1, pilotPositionCommand: { kind: "hold" } });
+    trial.port.observeFlightKey({ control: "nose_up", pressed: true, repeat: false });
+    trial.port.observeFlightKey({ control: "turn_right", pressed: true, repeat: false });
     trial.display.render.mockImplementation((snapshot) => {
       if (snapshot.phase === "result") throw new Error("Injected failure Result HUD error");
     });

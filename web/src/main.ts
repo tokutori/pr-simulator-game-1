@@ -40,9 +40,9 @@ import { WebXrPresentationBackend } from "./presentation/webxr-backend.js";
 import { PhoneVrPresentationBackend } from "./presentation/phone-vr-backend.js";
 import { createBrowserPhoneVrSensorPort } from "./presentation/phone-vr-browser.js";
 import { createBrowserPhoneVrGamepadInputPort } from "./presentation/phone-vr-gamepad-browser.js";
-import { BrowserTailPilotInput, DEFAULT_BROWSER_TAIL_INPUT_CONFIGURATION } from "./game/browser-tail-input.js";
+import { BrowserFlightInput } from "./game/browser-flight-input.js";
 import { TailFlightController } from "./game/tail-flight-controller.js";
-import { maximum_flight_frame_gap_milliseconds, screen_vertical_field_of_view_degrees, ScreenRenderAutoBridge } from "../pkg/birdman_game_wasm.js";
+import { screen_vertical_field_of_view_degrees, ScreenRenderAutoBridge } from "../pkg/birdman_game_wasm.js";
 import type { ScreenRenderAutoSnapshot } from "./generated/screen-render-auto.js";
 import { suspendPageFlight } from "./game/page-flight-lifecycle.js";
 import { createArchivedPersonalBestSelection, personalBestComparisonVersion } from "./game/archived-personal-best.js";
@@ -82,9 +82,7 @@ let model: AppModel = createInitialAppModel();
 let runtime: PresentationRuntime | null = null;
 let flightController: TailFlightController | null = null;
 let gameSession: TailAppSessionFacade | null = null;
-let physicsHz = 0;
 let flightRenderer: RendererAdapter | null = null;
-let lastPresentationFrameMilliseconds: number | null = null;
 let webXrBackend: WebXrPresentationBackend | null = null;
 let phoneVrBackend: PhoneVrPresentationBackend | null = null;
 const flightHud = new FlightHudAdapter(flightHudRoot);
@@ -349,7 +347,7 @@ function runEffect(effect: AppEffect): void {
         return;
       }
       pauseForPresentationTransition();
-      flightController?.suspend();
+      flightController?.invalidateInput();
       void presentation.switchTo(effect.mode).then((result) => {
         const current = model.presentation.type === "transitioning" && model.presentation.requestId === effect.requestId;
         dispatchBackendResult(effect.requestId, effect.mode, presentation.currentMode, result);
@@ -603,7 +601,6 @@ async function initializePresentation(requestId: number): Promise<void> {
     }
     gameSession = session;
     if (isPageHidden()) throw new Error("Page became hidden during initialization");
-    physicsHz = initializedSession.physicsHz;
     flightRenderer = bundle.renderer;
     renderModel();
     bundle.renderer.resize(currentViewport());
@@ -796,8 +793,9 @@ function runSharedGameSessionCommand(command: SessionCommand): void {
       scheduleCountdownObservation(session, observedAt);
       return;
     }
-    if (command.kind === "pause") flightController?.suspend();
-    if (command.kind === "resume") flightController?.resume();
+    if (command.kind === "pause" || command.kind === "resume") {
+      flightController?.synchronizeSnapshot(session.readSnapshot());
+    }
     if (result.kind === "aborted") {
       runSideEffects([
         () => { flightController?.synchronizeSnapshot(session.readSnapshot()); },
@@ -864,8 +862,7 @@ function scheduleCountdownObservation(owner: TailAppSessionFacade, previousMilli
       const observedAt = performance.now();
       const frameAvailable = document.visibilityState !== "hidden" && document.hasFocus()
         && model.presentation.type === "ready" && runtime !== null && runtime.currentMode !== null
-        && lastPresentationFrameMilliseconds !== null
-        && observedAt - lastPresentationFrameMilliseconds <= maximum_flight_frame_gap_milliseconds();
+        && owner.frameAvailableAt(observedAt);
       const progress = owner.observeCountdown(currentToken, (observedAt - previousMilliseconds) / 1000, frameAvailable);
       if (progress.kind === "ignored") return;
       syncGameSession();
@@ -883,13 +880,23 @@ function scheduleCountdownObservation(owner: TailAppSessionFacade, previousMilli
 }
 
 function observePresentationFrame(): void {
+  const session = gameSession;
+  if (session === null) return;
   const observedAt = performance.now();
-  const available = document.visibilityState !== "hidden" && document.hasFocus()
-    && (lastPresentationFrameMilliseconds === null
-      || observedAt - lastPresentationFrameMilliseconds <= maximum_flight_frame_gap_milliseconds());
-  lastPresentationFrameMilliseconds = observedAt;
-  if (!available) cancelUnavailableCountdown();
-  flightController?.onFrame(observedAt);
+  const available = document.visibilityState !== "hidden" && document.hasFocus();
+  try {
+    const liveDisplay = model.gameSession.phase === "flight_running" || model.gameSession.phase === "flight_paused" || model.gameSession.phase === "result";
+    if (!liveDisplay || (flightController === null && model.flightExecution.kind !== "stopped")) {
+      if (session.advanceFlightFrame(observedAt, [], available).phase_changed) syncGameSession();
+    } else flightController?.onFrame(observedAt, available);
+    if (!available || !session.frameAvailableAt(observedAt)) {
+      cancelUnavailableCountdown();
+    }
+  } catch (error: unknown) {
+    session.flightPort.failAdapter();
+    syncGameSession();
+    dispatch({ type: "game-session-status", message: `飛行の更新を停止した: ${errorMessage(error)}` });
+  }
 }
 
 function cancelUnavailableCountdown(): void {
@@ -910,16 +917,16 @@ function createFlightController(session: TailAppSessionFacade): void {
   if (renderer === null) throw new Error("Flight renderer is unavailable");
   const binding = flightControllerUi.bindAppDisplay(session.flightPort, controllerHudDisplay,
     () => session.readGameSessionProjection(), () => controller.currentSnapshot, dispatch);
-  const input = new BrowserTailPilotInput(window, { ...DEFAULT_BROWSER_TAIL_INPUT_CONFIGURATION,
-    keyboard: { ...DEFAULT_BROWSER_TAIL_INPUT_CONFIGURATION.keyboard, physicsHz } });
+  let input: BrowserFlightInput | null = null;
   let controller: TailFlightController;
   try {
-    controller = new TailFlightController(session.flightPort, input, renderer, binding.port, physicsHz,
-      maximum_flight_frame_gap_milliseconds(), undefined, binding.onTerminal, syncGameSession);
+    input = new BrowserFlightInput(window, session.flightPort);
+    controller = new TailFlightController(session.flightPort, input, renderer, binding.port, binding.onTerminal, syncGameSession);
   } catch (error: unknown) {
     let failure = error;
-    try { input.dispose(); }
+    try { input?.dispose(); }
     catch (cleanup: unknown) { failure = new AggregateError([error, cleanup], `${errorMessage(error)}; input cleanup failed: ${errorMessage(cleanup)}`, { cause: error }); }
+    session.flightPort.failAdapter();
     publishControllerInitializationFailure(session, binding.identity, failure);
     throw failure;
   }
@@ -946,7 +953,7 @@ function publishControllerInitializationFailure(session: TailAppSessionFacade,
   dispatch({ type: "flight-controller-ready", identity });
   const projection = session.readGameSessionProjection();
   if (projection.phase === "flight_running" || projection.phase === "flight_paused") {
-    dispatch({ type: "flight-controller-stopped", identity, message: errorMessage(error), snapshot: projection.display.value });
+    dispatch({ type: "flight-controller-stopped", identity, message: errorMessage(error), projection, snapshot: projection.display.value });
   }
 }
 

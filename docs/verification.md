@@ -38,7 +38,7 @@ npm ci
 npm run verify
 ~~~
 
-- cross-target接続は`npm run test:cross-target -- target/cross-target-check`で検査する。新しい出力先でNativeの既存CPU試験を実行し、直接Rustとの全記録一致を確認してから、同じ設定・seed・入力列をfresh WASMへ投入する。4支援×3入力の全sample・終端と、保存原文・CSV・5時点のReplay query/cameraを照合する。
+- cross-target接続は`npm run test:cross-target -- target/cross-target-check`で検査する。新しい出力先でNativeの既存CPU試験を実行し、直接Rustとの全記録一致を確認してから、同じ設定・seed・入力列をfresh WASMへ投入する。4支援×3入力の全sample・終端と、保存原文・CSV・5時点のReplay query/cameraを照合する。さらに4支援のNative Updateでraw key・Gamepad接続世代・不規則なframe時刻・遅延回復を観測し、同じ入力列を通したWASMの確定snapshot・補間pose・保存記録を比較する。
 - cross-targetの浮動小数点値は絶対許容差 $10^{-9}$ と相対許容差 $10^{-10}$ の和で比較する。identity・比較key・source fingerprint・終了分類は完全一致、保存原文とそのCSV再出力はbyte一致とする。実行結果にはsourceとWASMのhashを記録する。
 - Rustdocでは `RUSTDOCFLAGS=-D warnings` を設定する。
 - Windows CIは共有・Web側のworkspace試験とNative単独試験を分離し、Native実行ファイルもビルドする。
@@ -361,8 +361,8 @@ Countdownはcoreだけでなく、実WASM/facade/Web frame列とNative Update/Fi
 非表示化・blur・frame停止・VR中断で安全取消し、record未開始と発進tick0を確認する。
 
 - 表示不変回帰は同じ実WASMでManual/Shared/Automaticごとに、Information 5種、 Screen/合成WebXR/合成Phone VR、30/60/120 FPSを比較する。
-- 100 Hz入力はtick20–39で $(0.03,-0.02)$、40–59で逆符号、60でpilot Set(0.05)、その他neutral/Holdとする。
-- 100 tickのManualAbortまでの全状態・controls・telemetry・入力・sample・query・finalization・最終poseを比較する。
+- 生キー観測列は発進後にpilot増加を押し、500 msのframe直後に解放する。appの共有driverが各物理tickの確定targetへ積分する。
+- 100 tickのManualAbortまでの保存sample・controls・telemetry・query・finalization・最終poseを比較する。複数tickのframe、0 tickの補間更新、Pause/Resumeとfractional終端も直接Rust・実WASM・本番controllerで検査する。
 - 同じWASM演算列には追加許容差を設けない。
 - 表示/PB metadataは物理列から分離する。
 - この合成backend検査と実XR端末の受入は区別する。

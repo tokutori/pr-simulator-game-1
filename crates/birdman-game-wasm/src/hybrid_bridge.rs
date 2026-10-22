@@ -23,6 +23,7 @@ const MAX_INPUT_JSON_BYTES: usize = 1_024;
 
 mod analysis;
 mod attract;
+mod flight;
 mod game_ui;
 mod record;
 mod setup;
@@ -71,6 +72,7 @@ enum BoundaryError {
     Format(FlightRecordFormatError),
     Json(serde_json::Error),
     Application(birdman_game_app::application::ApplicationError),
+    FlightFrame(birdman_game_app::application::FlightFrameError),
     Camera(birdman_game_presentation::replay_camera::ReplayCameraError),
     Geometry(&'static str),
 }
@@ -84,6 +86,9 @@ impl From<SnapshotProjectionError> for BoundaryError {
             SnapshotProjectionError::Progress(error) => Self::Progress(error),
             SnapshotProjectionError::Format(error) => Self::Format(error),
             SnapshotProjectionError::Geometry(error) => Self::Geometry(error),
+            SnapshotProjectionError::Interpolation(error) => {
+                Self::Record(crate::hybrid_record::HybridRecordError::Query(error))
+            }
         }
     }
 }
@@ -104,6 +109,7 @@ impl BoundaryError {
             Self::Format(error) => format!("hybrid record projection failed: {error:?}"),
             Self::Json(error) => format!("hybrid boundary JSON failed: {error}"),
             Self::Application(error) => format!("application command failed: {error:?}"),
+            Self::FlightFrame(error) => format!("flight frame failed: {error:?}"),
             Self::Camera(error) => format!("record camera projection failed: {error:?}"),
             Self::Geometry(error) => format!("aircraft presentation geometry failed: {error}"),
             error => format!("hybrid boundary rejected: {error:?}"),
@@ -226,7 +232,7 @@ impl HybridGameSessionBridge {
 
     /// Reports the existing Rust Resume eligibility.
     pub fn can_resume(&self) -> bool {
-        self.session.core_session().can_resume()
+        self.session.can_resume()
     }
 
     /// Finalizes a manual abort at the latest successful state and returns its snapshot.

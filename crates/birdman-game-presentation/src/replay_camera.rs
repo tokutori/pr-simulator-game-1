@@ -27,6 +27,11 @@ pub struct ReplayCameraView {
 }
 
 impl ReplayCameraView {
+    /// Returns the canonical recorded aircraft pose used by all presentation adapters.
+    pub fn render_pose(&self) -> FlightRenderPose {
+        self.render_pose
+    }
+
     /// Returns the manual choice or the director's resolved shot.
     pub fn camera(&self) -> GameUiReplayCamera {
         self.camera

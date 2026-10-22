@@ -18,7 +18,7 @@ const allowed = new Map<string, readonly string[]>([
 
 const excludedNativeFeatures = new Set([
   "default", "default_platform", "default_font", "3d", "ui", "audio", "bevy_audio",
-  "bevy_gilrs", "web", "webgl2", "webgpu"
+  "web", "webgl2", "webgpu"
 ]);
 
 function isCompleteVersionPin(value: unknown): boolean {

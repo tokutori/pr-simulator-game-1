@@ -14,7 +14,7 @@ OSとCPUに一致する配布アーカイブを展開し、実行ファイルを
 
 - Windows: `.\birdman-game-bevy.exe`
 - macOS・Linux: `./birdman-game-bevy`
-- Linuxの実行時パッケージ: `libx11-6`、`libxcursor1`、`libxrandr2`、`libxi6`、`libwayland-client0`、`libxkbcommon0`、`libxkbcommon-x11-0`、`libvulkan1`。
+- Linuxの実行時パッケージ: `libudev1`、`libx11-6`、`libxcursor1`、`libxrandr2`、`libxi6`、`libwayland-client0`、`libxkbcommon0`、`libxkbcommon-x11-0`、`libvulkan1`。
 - ハッシュ照合: PowerShellは `Get-FileHash -Algorithm SHA256 <archive>`、Linuxは `sha256sum -c SHA256SUMS`、macOSは `shasum -a 256 -c SHA256SUMS` を使用する。
 - ビルド来歴: 配布物の `SOURCE.json` とアーカイブ内の `BUILD-INFO.json` に記録する。
 - 画面の最低対応解像度: UI倍率を適用した後の表示領域で1280×720。推奨は1920×1080以上である。
@@ -33,7 +33,7 @@ OSとCPUに一致する配布アーカイブを展開し、実行ファイルを
 - 条件変更: 計器表示・操縦支援・気象は飛行設定で、画質は一時停止中にも変更できる。
 - クレジット: タイトルと一時停止メニューの「クレジット・利用条件」から開く。
 
-## キーボード・マウス操作
+## 操作
 
 | 入力 | 操作 |
 |---|---|
@@ -49,6 +49,7 @@ OSとCPUに一致する配布アーカイブを展開し、実行ファイルを
 | F12 | 作業ディレクトリへスクリーンショットを保存 |
 
 - パイロット移動: キーを離すと目標位置を保持する。
+- ゲームパッド: 左スティックで機首と旋回、右スティック上下でパイロットの目標位置を操作する。接続・再開時は一度中央へ戻し、右スティックを現在の目標位置へ合わせると操作を引き継ぐ。
 - 記録再生の視点: 再生画面の視点選択を使用する。
 - 終了: ウィンドウを閉じる。
 
@@ -64,6 +65,8 @@ OSとCPUに一致する配布アーカイブを展開し、実行ファイルを
 ## ソースからの起動とオプション
 
 固定Rustツールチェーンと[Bevyのビルド環境](https://bevy.org/learn/quick-start/getting-started/setup/)を準備し、リポジトリのルートで実行する。初回のReleaseビルドには時間を要する。
+
+Linuxではウィンドウ関連の開発パッケージに加え、ゲームパッド用の`libudev-dev`を使用する。
 
 ```sh
 cargo run -p birdman-game-bevy --release --locked

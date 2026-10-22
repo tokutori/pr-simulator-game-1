@@ -51,6 +51,7 @@ pub(super) fn context<'view>(
     GameUiContext {
         archived_identity: None,
         session,
+        resume_available: session.can_resume(),
         difficulty,
         preset: difficulty.preset_label(),
         identity: session.configuration_identity(),
@@ -497,14 +498,13 @@ fn revision(
     state: &GameUiState,
     platform: &GameUiPlatformInput,
 ) -> u32 {
-    let key = GameUiStructureKey::new(
-        state,
-        &context(
-            application.core_session(),
-            application.display_difficulty(),
-            platform,
-        ),
+    let mut context = context(
+        application.core_session(),
+        application.display_difficulty(),
+        platform,
     );
+    context.resume_available = application.can_resume();
+    let key = GameUiStructureKey::new(state, &context);
     cache.observe(key, application.record_source_id()).unwrap()
 }
 

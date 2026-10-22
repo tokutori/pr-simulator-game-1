@@ -246,7 +246,7 @@ pub fn lifecycle(session: &ApplicationSession) -> SessionLifecycleDocument {
             birdman_game_core::SessionPhase::Countdown { remaining_seconds } => remaining_seconds,
             _ => 0,
         },
-        can_resume: session.core_session().can_resume(),
+        can_resume: session.can_resume(),
     }
 }
 

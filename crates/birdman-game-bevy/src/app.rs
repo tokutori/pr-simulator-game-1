@@ -2,6 +2,8 @@
 
 #[path = "environment.rs"]
 mod environment;
+#[path = "flight_devices.rs"]
+mod flight_devices;
 #[path = "flight_log.rs"]
 mod flight_log;
 #[path = "frame_rate.rs"]
@@ -47,8 +49,8 @@ use bevy::{
     render::view::screenshot::{Screenshot, save_to_disk},
     window::{PresentMode, PrimaryWindow},
 };
-use birdman_game_core::{PHYSICS_HZ, SessionPhase};
-use native_session::{FlightInput, NativeSession};
+use birdman_game_core::SessionPhase;
+use native_session::NativeSession;
 use std::{error::Error, path::PathBuf};
 
 const MAX_FRAME_DELTA: std::time::Duration = std::time::Duration::from_millis(
@@ -178,11 +180,9 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
                 mode: screen_render::timing::TimingMode::Automatic,
             },
         ))
-        .insert_resource(Time::<Fixed>::from_hz(f64::from(PHYSICS_HZ)))
         .insert_resource(Time::<Virtual>::from_max_delta(MAX_FRAME_DELTA))
         .init_resource::<NativeSession>()
         .insert_resource(flight_log_export)
-        .init_resource::<FlightInput>()
         .init_resource::<water_quality::WaterQualitySelection>()
         .init_resource::<screen_render::NativeScreenRender>()
         .init_resource::<CameraMode>();
@@ -220,12 +220,12 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
             )
                 .chain(),
         )
-        .add_systems(FixedUpdate, advance_physics)
         .add_systems(
             Update,
             (
                 frame_rate::observe_frame,
                 ui::button_actions,
+                advance_flight_frame,
                 screen_render::synchronize
                     .run_if(any_match_filter::<(With<PrimaryWindow>, Changed<Window>)>),
                 water::apply_environment,
@@ -284,7 +284,13 @@ fn primary_window(no_vsync: bool) -> Window {
 }
 
 fn register_input(app: &mut App) {
-    app.add_systems(PreUpdate, read_input.after(bevy::input::InputSystems));
+    app.init_resource::<flight_devices::FlightDevices>()
+        .add_systems(
+            PreUpdate,
+            (flight_devices::observe_devices, read_input)
+                .chain()
+                .after(bevy::input::InputSystems),
+        );
 }
 
 #[derive(SystemParam)]
@@ -294,17 +300,13 @@ struct InputPorts<'w, 's> {
     buttons: Res<'w, ButtonInput<MouseButton>>,
     motion: Res<'w, AccumulatedMouseMotion>,
     windows: Query<'w, 's, &'static Window>,
-    time: Res<'w, Time<Real>>,
 }
 
 fn read_input(
     ports: InputPorts,
     mut session: ResMut<NativeSession>,
-    mut intent: ResMut<FlightInput>,
     mut camera: ResMut<CameraMode>,
     mut commands: Commands,
-    mut held_controls: Local<ButtonInput<KeyCode>>,
-    mut accepted_controls: Local<ButtonInput<KeyCode>>,
 ) {
     let InputPorts {
         keys,
@@ -312,12 +314,26 @@ fn read_input(
         buttons,
         motion,
         windows,
-        time,
     } = ports;
     let focused = windows.iter().all(|window| window.focused);
-    session.observe_frame(focused, time.delta() > MAX_FRAME_DELTA);
-    let controls_were_running =
-        session.game.core_session().snapshot().phase() == SessionPhase::FlightRunning;
+    session.observe_frame(focused);
+    for event in keyboard.read() {
+        use birdman_game_app::flight_input::{FlightControl, FlightKeyObservation};
+        let control = match event.key_code {
+            KeyCode::ArrowUp => FlightControl::NoseUp,
+            KeyCode::ArrowDown => FlightControl::NoseDown,
+            KeyCode::ArrowRight => FlightControl::TurnRight,
+            KeyCode::ArrowLeft => FlightControl::TurnLeft,
+            KeyCode::KeyL => FlightControl::PilotIncrease,
+            KeyCode::KeyJ => FlightControl::PilotDecrease,
+            _ => continue,
+        };
+        session.game.observe_flight_key(FlightKeyObservation {
+            control,
+            pressed: event.state == ButtonState::Pressed,
+            repeat: event.repeat,
+        });
+    }
     if keys.just_pressed(KeyCode::KeyC)
         && !matches!(
             session.game.core_session().snapshot().phase(),
@@ -358,94 +374,14 @@ fn read_input(
         camera.look.x -= motion.delta.x * 0.003;
         camera.look.y = (camera.look.y - motion.delta.y * 0.003).clamp(-1.2, 1.2);
     }
-    let controls_active =
-        focused && session.game.core_session().snapshot().phase() == SessionPhase::FlightRunning;
-    if !controls_active || !controls_were_running {
-        accepted_controls.reset_all();
-    }
-    for event in keyboard.read() {
-        if !matches!(
-            event.key_code,
-            KeyCode::ArrowUp
-                | KeyCode::ArrowDown
-                | KeyCode::ArrowRight
-                | KeyCode::ArrowLeft
-                | KeyCode::KeyJ
-                | KeyCode::KeyL
-        ) {
-            continue;
-        }
-        match event.state {
-            ButtonState::Pressed => {
-                if controls_active
-                    && controls_were_running
-                    && !event.repeat
-                    && !held_controls.pressed(event.key_code)
-                {
-                    accepted_controls.press(event.key_code);
-                }
-                held_controls.press(event.key_code);
-            }
-            ButtonState::Released => {
-                held_controls.release(event.key_code);
-                accepted_controls.release(event.key_code);
-            }
-        }
-    }
-    intent.nose_up = if controls_active {
-        f64::from(accepted_controls.pressed(KeyCode::ArrowUp))
-            - f64::from(accepted_controls.pressed(KeyCode::ArrowDown))
-    } else {
-        0.0
-    };
-    intent.turn_right = if controls_active {
-        f64::from(accepted_controls.pressed(KeyCode::ArrowRight))
-            - f64::from(accepted_controls.pressed(KeyCode::ArrowLeft))
-    } else {
-        0.0
-    };
-    intent.pilot = if controls_active {
-        Some(
-            f64::from(accepted_controls.pressed(KeyCode::KeyL))
-                - f64::from(accepted_controls.pressed(KeyCode::KeyJ)),
-        )
-    } else {
-        None
-    };
 }
 
-fn advance_physics(
+fn advance_flight_frame(
     mut session: ResMut<NativeSession>,
-    intent: Res<FlightInput>,
-    mut history: ResMut<world::RenderHistory>,
+    devices: Res<flight_devices::FlightDevices>,
+    time: Res<Time<Real>>,
 ) {
-    if session.game.core_session().snapshot().phase() != SessionPhase::FlightRunning {
-        history.reset();
-        return;
-    }
-    let mut input = *intent;
-    input.pilot = input
-        .pilot
-        .filter(|movement| *movement != 0.0)
-        .and_then(|movement| {
-            let state = session.game.core_session().snapshot().tail_flight_state()?;
-            let mapping = session.game.core_session().tail_pilot_position_mapping()?;
-            match mapping.normalized_target(state.pilot_position_target()) {
-                Ok(held) => {
-                    Some((held.value() + movement / f64::from(PHYSICS_HZ)).clamp(-1.0, 1.0))
-                }
-                Err(error) => {
-                    session.notice = Some(format!("pilot targetを取得できない: {error:?}"));
-                    None
-                }
-            }
-        });
-    let previous = session.display_state();
-    session.tick(input);
-    match (previous, session.display_state()) {
-        (Some(previous), Some(current)) => history.capture_interval(&previous, &current),
-        _ => history.reset(),
-    }
+    session.advance_frame(time.elapsed_secs_f64() * 1000.0, devices.observations());
 }
 
 fn advance_presentation(
@@ -513,7 +449,6 @@ mod tests {
     fn input_app() -> (App, Entity) {
         let mut app = App::new();
         app.init_resource::<NativeSession>()
-            .init_resource::<FlightInput>()
             .init_resource::<CameraMode>()
             .init_resource::<Time<Real>>();
         register_input(&mut app);
@@ -561,307 +496,32 @@ mod tests {
         );
     }
 
-    #[test]
-    fn raw_keyboard_press_and_release_reach_intent_in_the_same_frame() {
-        let (mut app, window) = flight_input_app();
-        for (keys, direction) in [
-            (
-                [
-                    (KeyCode::ArrowUp, Key::ArrowUp),
-                    (KeyCode::ArrowRight, Key::ArrowRight),
-                    (KeyCode::KeyL, Key::Character("l".into())),
-                ],
-                1.0,
-            ),
-            (
-                [
-                    (KeyCode::ArrowDown, Key::ArrowDown),
-                    (KeyCode::ArrowLeft, Key::ArrowLeft),
-                    (KeyCode::KeyJ, Key::Character("j".into())),
-                ],
-                -1.0,
-            ),
-        ] {
-            for (key_code, logical_key) in &keys {
-                write_keyboard(
-                    &mut app,
-                    window,
-                    *key_code,
-                    logical_key.clone(),
-                    ButtonState::Pressed,
-                );
-            }
-            app.update();
-            let intent = *app.world().resource::<FlightInput>();
-            assert_eq!(intent.nose_up, direction);
-            assert_eq!(intent.turn_right, direction);
-            assert_eq!(intent.pilot, Some(direction));
-            for (key_code, logical_key) in &keys {
-                write_keyboard(
-                    &mut app,
-                    window,
-                    *key_code,
-                    logical_key.clone(),
-                    ButtonState::Released,
-                );
-            }
-            app.update();
-            let intent = *app.world().resource::<FlightInput>();
-            assert_eq!(intent.nose_up, 0.0);
-            assert_eq!(intent.turn_right, 0.0);
-            assert_eq!(intent.pilot, Some(0.0));
-        }
+    fn driver_app() -> (App, Entity) {
+        driver_app_for_assistance(birdman_game_format::AssistanceLevel::Manual)
     }
 
-    #[test]
-    fn launch_and_resume_require_new_control_key_presses() {
-        let cases = [
-            (false, 1.0, true),
-            (true, 1.0, true),
-            (false, -1.0, true),
-            (true, -1.0, true),
-            (true, 1.0, false),
-            (true, -1.0, false),
-        ];
-        let observed = cases.map(|(resume, direction, earlier_press)| {
-            let (mut app, window) = input_app();
-            app.add_plugins(bevy::time::TimePlugin)
-                .insert_resource(Time::<Fixed>::from_hz(f64::from(PHYSICS_HZ)))
-                .insert_resource(Time::<Virtual>::from_max_delta(MAX_FRAME_DELTA))
-                .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
-                    std::time::Duration::from_secs_f64(1.0 / f64::from(PHYSICS_HZ)),
-                ))
-                .init_resource::<world::RenderHistory>()
-                .add_systems(FixedUpdate, advance_physics)
-                .add_systems(Update, advance_presentation);
-            app.update();
-            {
-                let mut session = app.world_mut().resource_mut::<NativeSession>();
-                for action in [
-                    native_session::MenuAction::Start,
-                    native_session::MenuAction::Prepare,
-                    native_session::MenuAction::Launch,
-                ] {
-                    session.action(action).unwrap();
-                }
-                if resume {
-                    for _ in 0..3 {
-                        session.presentation_frame(1.0);
-                    }
-                    session.action(native_session::MenuAction::Pause).unwrap();
-                }
-            }
-            let controls = if direction > 0.0 {
-                [
-                    (KeyCode::ArrowUp, Key::ArrowUp),
-                    (KeyCode::ArrowRight, Key::ArrowRight),
-                    (KeyCode::KeyL, Key::Character("l".into())),
-                ]
-            } else {
-                [
-                    (KeyCode::ArrowDown, Key::ArrowDown),
-                    (KeyCode::ArrowLeft, Key::ArrowLeft),
-                    (KeyCode::KeyJ, Key::Character("j".into())),
-                ]
-            };
-            if earlier_press {
-                for (key_code, logical_key) in &controls {
-                    write_keyboard(
-                        &mut app,
-                        window,
-                        *key_code,
-                        logical_key.clone(),
-                        ButtonState::Pressed,
-                    );
-                }
-            }
-            if resume {
-                app.update();
-                assert!(matches!(
-                    app.world()
-                        .resource::<NativeSession>()
-                        .game
-                        .core_session()
-                        .snapshot()
-                        .phase(),
-                    SessionPhase::FlightPaused { .. }
-                ));
-                write_keyboard(
-                    &mut app,
-                    window,
-                    KeyCode::KeyP,
-                    Key::Character("p".into()),
-                    ButtonState::Pressed,
-                );
-            } else {
-                for _ in 0..=4 * PHYSICS_HZ {
-                    app.update();
-                    if app
-                        .world()
-                        .resource::<NativeSession>()
-                        .game
-                        .core_session()
-                        .snapshot()
-                        .phase()
-                        == SessionPhase::FlightRunning
-                    {
-                        break;
-                    }
-                }
-            }
-            let initial = app
-                .world()
-                .resource::<NativeSession>()
-                .game
-                .core_session()
-                .snapshot()
-                .tail_flight_state()
-                .unwrap();
-            assert_eq!(initial.tick_index(), 0);
-            if !earlier_press {
-                for (key_code, logical_key) in &controls {
-                    write_keyboard(
-                        &mut app,
-                        window,
-                        *key_code,
-                        logical_key.clone(),
-                        ButtonState::Pressed,
-                    );
-                }
-            }
-            app.update();
-            let intent = *app.world().resource::<FlightInput>();
-            let session = app.world().resource::<NativeSession>();
-            let state = session
-                .game
-                .core_session()
-                .snapshot()
-                .tail_flight_state()
-                .unwrap();
-            let record = session.game.core_session().flight_record().unwrap();
-            assert_eq!(state.tick_index(), 1);
-            assert_eq!(record.sample_count(), 2);
-            let sample = record.samples().last().unwrap();
-            let input = sample.controls.input_from_previous.unwrap();
-            assert_eq!(sample.controls.actuators(), state.incidence());
-            assert_eq!((intent.nose_up, intent.turn_right), (0.0, 0.0));
-            assert_eq!(intent.pilot, Some(0.0));
-            assert_eq!(input.manual_intent().turn_right(), 0.0);
-            assert_eq!(
-                input.pilot_position_command(),
-                birdman_game_core::TailPilotPositionCommand::Hold,
-            );
-            let observed = (intent.nose_up, input.manual_intent().nose_up());
-            for (key_code, logical_key) in &controls {
-                app.world_mut().write_message(KeyboardInput {
-                    key_code: *key_code,
-                    logical_key: logical_key.clone(),
-                    state: ButtonState::Pressed,
-                    text: None,
-                    repeat: true,
-                    window,
-                });
-            }
-            app.update();
-            let intent = *app.world().resource::<FlightInput>();
-            assert_eq!((intent.nose_up, intent.turn_right), (0.0, 0.0));
-            assert_eq!(intent.pilot, Some(0.0));
-            for (key_code, logical_key) in &controls {
-                write_keyboard(
-                    &mut app,
-                    window,
-                    *key_code,
-                    logical_key.clone(),
-                    ButtonState::Released,
-                );
-                write_keyboard(
-                    &mut app,
-                    window,
-                    *key_code,
-                    logical_key.clone(),
-                    ButtonState::Pressed,
-                );
-            }
-            app.update();
-            let intent = *app.world().resource::<FlightInput>();
-            assert_eq!((intent.nose_up, intent.turn_right), (direction, direction));
-            assert_eq!(intent.pilot, Some(direction));
-            let session = app.world().resource::<NativeSession>();
-            let state = session
-                .game
-                .core_session()
-                .snapshot()
-                .tail_flight_state()
-                .unwrap();
-            let sample = session
-                .game
-                .core_session()
-                .flight_record()
-                .unwrap()
-                .samples()
-                .last()
-                .unwrap();
-            let input = sample.controls.input_from_previous.unwrap();
-            assert_eq!(sample.controls.actuators(), state.incidence());
-            assert_eq!(input.manual_intent().nose_up(), direction);
-            assert_eq!(input.manual_intent().turn_right(), direction);
-            assert!(matches!(
-                input.pilot_position_command(),
-                birdman_game_core::TailPilotPositionCommand::Set(_),
-            ));
-            observed
-        });
-        assert_eq!(observed, [(0.0, 0.0); 6]);
-    }
-
-    #[test]
-    fn control_holds_are_invalidated_by_focus_loss_and_opposite_keys_cancel() {
-        let (mut app, window) = flight_input_app();
-        let positive = [
-            (KeyCode::ArrowUp, Key::ArrowUp),
-            (KeyCode::ArrowRight, Key::ArrowRight),
-            (KeyCode::KeyL, Key::Character("l".into())),
-        ];
-        let negative = [
-            (KeyCode::ArrowDown, Key::ArrowDown),
-            (KeyCode::ArrowLeft, Key::ArrowLeft),
-            (KeyCode::KeyJ, Key::Character("j".into())),
-        ];
-        for (key_code, logical_key) in &positive {
-            write_keyboard(
-                &mut app,
-                window,
-                *key_code,
-                logical_key.clone(),
-                ButtonState::Pressed,
-            );
-        }
+    fn driver_app_for_assistance(
+        assistance: birdman_game_format::AssistanceLevel,
+    ) -> (App, Entity) {
+        let (mut app, window) = input_app();
+        app.add_plugins(bevy::time::TimePlugin)
+            .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+                std::time::Duration::from_millis(10),
+            ))
+            .add_systems(Update, (advance_flight_frame, advance_presentation).chain());
         app.update();
-        app.world_mut().get_mut::<Window>(window).unwrap().focused = false;
-        app.world_mut()
-            .write_message(bevy::input::keyboard::KeyboardFocusLost);
-        app.update();
-        let intent = *app.world().resource::<FlightInput>();
-        assert_eq!(
-            (intent.nose_up, intent.turn_right, intent.pilot),
-            (0.0, 0.0, None)
-        );
-        app.world_mut().get_mut::<Window>(window).unwrap().focused = true;
-        write_keyboard(
-            &mut app,
-            window,
-            KeyCode::KeyP,
-            Key::Character("p".into()),
-            ButtonState::Pressed,
-        );
-        for (key_code, logical_key) in &positive {
-            write_keyboard(
-                &mut app,
-                window,
-                *key_code,
-                logical_key.clone(),
-                ButtonState::Pressed,
-            );
+        {
+            let mut session = app.world_mut().resource_mut::<NativeSession>();
+            use birdman_game_app::application::SessionCommand;
+            session.action(native_session::MenuAction::Start).unwrap();
+            session
+                .execute_ui_command(SessionCommand::SelectAssistance { assistance })
+                .unwrap();
+            session.action(native_session::MenuAction::Prepare).unwrap();
+            session.action(native_session::MenuAction::Launch).unwrap();
+            for _ in 0..3 {
+                session.presentation_frame(1.0);
+            }
         }
         app.update();
         assert_eq!(
@@ -870,51 +530,395 @@ mod tests {
                 .game
                 .core_session()
                 .snapshot()
-                .phase(),
-            SessionPhase::FlightRunning
+                .tail_flight_state()
+                .unwrap()
+                .tick_index(),
+            0
         );
-        let intent = *app.world().resource::<FlightInput>();
-        assert_eq!(
-            (intent.nose_up, intent.turn_right, intent.pilot),
-            (0.0, 0.0, Some(0.0))
-        );
-        for (key_code, logical_key) in positive.iter().chain(&negative) {
+        (app, window)
+    }
+
+    #[test]
+    fn frame_failure_keeps_cause_and_readable_notice() {
+        use birdman_game_app::{application::FlightFrameError, flight_clock::FlightClockError};
+
+        let (mut app, _) = driver_app();
+        let mut session = app.world_mut().resource_mut::<NativeSession>();
+        session.advance_frame(f64::NAN, &[]);
+        let expected = FlightFrameError::Clock(FlightClockError::InvalidTimestamp);
+        assert_eq!(session.game.flight_failure(), Some(expected));
+        assert!(!session.game.can_resume());
+        let notice = session.notice.as_ref().unwrap();
+        assert!(notice.contains("停止") && notice.contains("再試行"));
+        assert!(!notice.contains("Clock"));
+        session.notice = Some("最初の停止原因".into());
+        session.advance_frame(20.0, &[]);
+        assert_eq!(session.game.flight_failure(), Some(expected));
+        assert_eq!(session.notice.as_deref(), Some("最初の停止原因"));
+    }
+
+    #[test]
+    fn native_update_routes_raw_keys_and_integrates_the_confirmed_target_per_tick() {
+        let (mut app, window) = driver_app();
+        let before = app
+            .world()
+            .resource::<NativeSession>()
+            .game
+            .core_session()
+            .snapshot()
+            .tail_flight_state()
+            .unwrap();
+        let held = app
+            .world()
+            .resource::<NativeSession>()
+            .game
+            .core_session()
+            .tail_pilot_position_mapping()
+            .unwrap()
+            .normalized_target(before.pilot_position_target())
+            .unwrap()
+            .value();
+        for (key_code, logical_key) in [
+            (KeyCode::ArrowUp, Key::ArrowUp),
+            (KeyCode::ArrowRight, Key::ArrowRight),
+            (KeyCode::KeyL, Key::Character("l".into())),
+        ] {
             write_keyboard(
                 &mut app,
                 window,
-                *key_code,
-                logical_key.clone(),
-                ButtonState::Released,
-            );
-            write_keyboard(
-                &mut app,
-                window,
-                *key_code,
-                logical_key.clone(),
+                key_code,
+                logical_key,
                 ButtonState::Pressed,
             );
         }
+        app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+            std::time::Duration::from_millis(35),
+        ));
         app.update();
-        let intent = *app.world().resource::<FlightInput>();
-        assert_eq!(
-            (intent.nose_up, intent.turn_right, intent.pilot),
-            (0.0, 0.0, Some(0.0))
-        );
-        for (key_code, logical_key) in &positive {
+        let session = app.world().resource::<NativeSession>();
+        let samples = session
+            .game
+            .core_session()
+            .flight_record()
+            .unwrap()
+            .samples();
+        assert_eq!(samples.len(), 4);
+        for (offset, sample) in samples[1..].iter().enumerate() {
+            let input = sample.controls.input_from_previous.unwrap();
+            assert_eq!(input.manual_intent().nose_up(), 1.0);
+            assert_eq!(input.manual_intent().turn_right(), 1.0);
+            let birdman_game_core::TailPilotPositionCommand::Set(target) =
+                input.pilot_position_command()
+            else {
+                panic!("pilot target");
+            };
+            assert!((target.value() - (held + 0.01 * (offset + 1) as f64)).abs() < 1.0e-12);
+        }
+        assert!((session.game.flight_interpolation_fraction() - 0.5).abs() < 1.0e-12);
+        for (key_code, logical_key) in [
+            (KeyCode::ArrowUp, Key::ArrowUp),
+            (KeyCode::ArrowRight, Key::ArrowRight),
+            (KeyCode::KeyL, Key::Character("l".into())),
+        ] {
             write_keyboard(
                 &mut app,
                 window,
-                *key_code,
-                logical_key.clone(),
+                key_code,
+                logical_key,
                 ButtonState::Released,
             );
         }
+        app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+            std::time::Duration::from_millis(10),
+        ));
         app.update();
-        let intent = *app.world().resource::<FlightInput>();
+        let session = app.world().resource::<NativeSession>();
+        let input = session
+            .game
+            .core_session()
+            .flight_record()
+            .unwrap()
+            .samples()
+            .last()
+            .unwrap()
+            .controls
+            .input_from_previous
+            .unwrap();
+        assert_eq!(input.manual_intent().nose_up(), 0.0);
         assert_eq!(
-            (intent.nose_up, intent.turn_right, intent.pilot),
-            (-1.0, -1.0, Some(-1.0))
+            input.pilot_position_command(),
+            birdman_game_core::TailPilotPositionCommand::Hold
         );
+    }
+
+    #[test]
+    fn focus_loss_and_delay_recovery_require_resume_and_fresh_control_presses() {
+        for delayed in [false, true] {
+            let (mut app, window) = driver_app();
+            write_keyboard(
+                &mut app,
+                window,
+                KeyCode::ArrowUp,
+                Key::ArrowUp,
+                ButtonState::Pressed,
+            );
+            app.update();
+            let before = app
+                .world()
+                .resource::<NativeSession>()
+                .game
+                .core_session()
+                .snapshot()
+                .tail_flight_state()
+                .unwrap();
+            if delayed {
+                app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+                    std::time::Duration::from_millis(151),
+                ));
+            } else {
+                app.world_mut().get_mut::<Window>(window).unwrap().focused = false;
+            }
+            app.update();
+            assert!(matches!(
+                app.world()
+                    .resource::<NativeSession>()
+                    .game
+                    .core_session()
+                    .snapshot()
+                    .phase(),
+                SessionPhase::FlightPaused { .. }
+            ));
+            if delayed {
+                app.update();
+                let SessionPhase::FlightPaused { reasons } = app
+                    .world()
+                    .resource::<NativeSession>()
+                    .game
+                    .core_session()
+                    .snapshot()
+                    .phase()
+                else {
+                    panic!("paused");
+                };
+                assert!(reasons.contains(birdman_game_core::PauseReason::ProcessingDelay));
+            }
+            app.world_mut().get_mut::<Window>(window).unwrap().focused = true;
+            app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+                std::time::Duration::from_millis(10),
+            ));
+            app.update();
+            assert_eq!(
+                app.world()
+                    .resource::<NativeSession>()
+                    .game
+                    .core_session()
+                    .snapshot()
+                    .tail_flight_state(),
+                Some(before)
+            );
+            app.world_mut()
+                .resource_mut::<NativeSession>()
+                .action(native_session::MenuAction::Resume)
+                .unwrap();
+            app.update();
+            assert_eq!(
+                app.world()
+                    .resource::<NativeSession>()
+                    .game
+                    .core_session()
+                    .snapshot()
+                    .tail_flight_state(),
+                Some(before)
+            );
+            app.update();
+            let session = app.world().resource::<NativeSession>();
+            let input = session
+                .game
+                .core_session()
+                .flight_record()
+                .unwrap()
+                .samples()
+                .last()
+                .unwrap()
+                .controls
+                .input_from_previous
+                .unwrap();
+            assert_eq!(input.manual_intent().nose_up(), 0.0);
+            for state in [ButtonState::Released, ButtonState::Pressed] {
+                write_keyboard(&mut app, window, KeyCode::ArrowUp, Key::ArrowUp, state);
+            }
+            app.update();
+            let session = app.world().resource::<NativeSession>();
+            let input = session
+                .game
+                .core_session()
+                .flight_record()
+                .unwrap()
+                .samples()
+                .last()
+                .unwrap()
+                .controls
+                .input_from_previous
+                .unwrap();
+            assert_eq!(input.manual_intent().nose_up(), 1.0);
+        }
+    }
+
+    #[test]
+    fn native_acceptance_frame_driver_observations_match_the_committed_record() {
+        use bevy::input::gamepad::{
+            GamepadAxis, GamepadConnection, GamepadConnectionEvent, RawGamepadAxisChangedEvent,
+            RawGamepadEvent,
+        };
+        use birdman_game_app::{
+            application::SessionCommand,
+            flight_input::{FlightControl, FlightKeyObservation},
+        };
+        for assistance in [
+            birdman_game_format::AssistanceLevel::Manual,
+            birdman_game_format::AssistanceLevel::Assisted,
+            birdman_game_format::AssistanceLevel::Light,
+            birdman_game_format::AssistanceLevel::Strong,
+        ] {
+            let (mut app, window) = driver_app_for_assistance(assistance);
+            let gamepad = app.world_mut().spawn_empty().id();
+            let mut observations = Vec::new();
+            for step in 0..24 {
+                let mut keys = Vec::new();
+                let mut commands = Vec::new();
+                let elapsed = match step {
+                    0 => 0,
+                    3 => 35,
+                    8 => 151,
+                    _ => 10,
+                };
+                if step == 1 || step == 12 {
+                    keys.push(FlightKeyObservation {
+                        control: FlightControl::NoseUp,
+                        pressed: true,
+                        repeat: false,
+                    });
+                    keys.push(FlightKeyObservation {
+                        control: FlightControl::PilotIncrease,
+                        pressed: true,
+                        repeat: false,
+                    });
+                }
+                if step == 6 || step == 11 || step == 14 {
+                    keys.push(FlightKeyObservation {
+                        control: FlightControl::NoseUp,
+                        pressed: false,
+                        repeat: false,
+                    });
+                    keys.push(FlightKeyObservation {
+                        control: FlightControl::PilotIncrease,
+                        pressed: false,
+                        repeat: false,
+                    });
+                }
+                if step == 10 {
+                    commands.push(SessionCommand::Resume {});
+                }
+                if step == 23 {
+                    commands.push(SessionCommand::Abort {});
+                }
+                if step == 15 || step == 20 {
+                    let connection = GamepadConnectionEvent::new(
+                        gamepad,
+                        GamepadConnection::Connected {
+                            name: "frame acceptance".into(),
+                            vendor_id: None,
+                            product_id: None,
+                        },
+                    );
+                    app.world_mut().write_message(connection.clone());
+                    app.world_mut()
+                        .write_message(RawGamepadEvent::Connection(connection));
+                }
+                if step == 16 || step == 17 || step == 18 {
+                    let value = match step {
+                        16 => 1.0,
+                        17 => -1.0,
+                        _ => 0.5,
+                    };
+                    app.world_mut().write_message(RawGamepadEvent::Axis(
+                        RawGamepadAxisChangedEvent::new(gamepad, GamepadAxis::RightStickY, value),
+                    ));
+                    app.world_mut().write_message(RawGamepadEvent::Axis(
+                        RawGamepadAxisChangedEvent::new(gamepad, GamepadAxis::LeftStickY, 0.5),
+                    ));
+                }
+                if step == 19 {
+                    let connection =
+                        GamepadConnectionEvent::new(gamepad, GamepadConnection::Disconnected);
+                    app.world_mut().write_message(connection.clone());
+                    app.world_mut()
+                        .write_message(RawGamepadEvent::Connection(connection));
+                }
+                for command in &commands {
+                    app.world_mut()
+                        .resource_mut::<NativeSession>()
+                        .execute_ui_command(command.clone())
+                        .unwrap();
+                }
+                for key in &keys {
+                    let (code, logical) = match key.control {
+                        FlightControl::NoseUp => (KeyCode::ArrowUp, Key::ArrowUp),
+                        FlightControl::PilotIncrease => (KeyCode::KeyL, Key::Character("l".into())),
+                        _ => unreachable!(),
+                    };
+                    write_keyboard(
+                        &mut app,
+                        window,
+                        code,
+                        logical,
+                        if key.pressed {
+                            ButtonState::Pressed
+                        } else {
+                            ButtonState::Released
+                        },
+                    );
+                }
+                app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+                    std::time::Duration::from_millis(elapsed),
+                ));
+                app.update();
+                let session = app.world().resource::<NativeSession>();
+                assert!(session.notice.is_none(), "{:?}", session.notice);
+                let snapshot =
+                    birdman_game_presentation::session_snapshot::session_snapshot(&session.game)
+                        .unwrap();
+                observations.push(serde_json::json!({
+                    "timestamp_ms": app.world().resource::<Time<Real>>().elapsed_secs_f64() * 1000.0,
+                    "keys": keys, "commands": commands,
+                    "gamepads": app.world().resource::<flight_devices::FlightDevices>().observations(),
+                    "snapshot": snapshot, "render_pose": session.render_pose().unwrap(),
+                }));
+            }
+            let session = app.world().resource::<NativeSession>();
+            assert_eq!(
+                session.game.core_session().snapshot().phase(),
+                SessionPhase::Result
+            );
+            assert!(
+                session
+                    .game
+                    .core_session()
+                    .flight_record()
+                    .unwrap()
+                    .sample_count()
+                    > 5
+            );
+            if let Some(directory) = std::env::var_os("BPG_NATIVE_ACCEPTANCE_DIR") {
+                std::fs::create_dir_all(&directory).unwrap();
+                let artifact = serde_json::json!({ "assistance": assistance, "observations": observations, "record_json": String::from_utf8(session.game.flight_record_document().unwrap().encode_json().unwrap()).unwrap() });
+                std::fs::write(
+                    std::path::Path::new(&directory).join(format!("frame-{assistance:?}.json")),
+                    serde_json::to_vec(&artifact).unwrap(),
+                )
+                .unwrap();
+            }
+        }
     }
 
     #[test]
@@ -1034,7 +1038,7 @@ mod tests {
     }
 
     #[test]
-    fn retry_and_new_flight_clear_previous_camera_look_and_control_holds() {
+    fn retry_and_new_flight_clear_previous_camera_look() {
         for return_action in [
             birdman_game_app::application::SessionCommand::Retry {},
             birdman_game_app::application::SessionCommand::ReturnToTitle {},
@@ -1115,12 +1119,11 @@ mod tests {
                     .phase(),
                 SessionPhase::FlightRunning
             );
-            assert_eq!(app.world().resource::<FlightInput>().nose_up, 0.0);
+
             for state in [ButtonState::Released, ButtonState::Pressed] {
                 write_keyboard(&mut app, window, KeyCode::ArrowUp, Key::ArrowUp, state);
             }
             app.update();
-            assert_eq!(app.world().resource::<FlightInput>().nose_up, 1.0);
         }
     }
 

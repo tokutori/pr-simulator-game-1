@@ -3,10 +3,12 @@ use birdman_game_format::WaterQuality;
 mod options;
 pub(crate) use options::Options;
 
+#[cfg(test)]
+use super::native_session::FlightInput;
 use super::{
     CameraMode, MAX_FRAME_DELTA,
     environment::{EnvironmentSurface, EnvironmentTarget, NativeEnvironment},
-    native_session::{FlightInput, MenuAction, NativeSession},
+    native_session::{MenuAction, NativeSession},
     projection::{
         VerificationObserver, aircraft_transform, camera_transform, replay_camera_transform,
     },
@@ -1371,19 +1373,72 @@ impl Verification {
     }
 }
 
-pub(crate) fn supply_input(verification: Res<Verification>, mut input: ResMut<FlightInput>) {
-    *input = match verification.stage {
-        VerificationStage::Pilot => FlightInput {
-            nose_up: 0.1,
-            turn_right: 0.1,
-            pilot: Some(0.25),
-        },
-        VerificationStage::InputTrialFlight => FlightInput {
-            nose_up: 1.0,
-            ..default()
-        },
-        _ => FlightInput::default(),
+pub(crate) fn supply_input(
+    verification: Res<Verification>,
+    session: Res<NativeSession>,
+    mut devices: ResMut<super::flight_devices::FlightDevices>,
+) {
+    use birdman_game_app::flight_input::FlightGamepadAcquisition;
+    let mut requested = match verification.stage {
+        VerificationStage::Pilot => [0.172, 0.172, 0.31],
+        VerificationStage::InputTrialFlight => [1.0, 0.0, 0.0],
+        _ => [0.0; 3],
     };
+    let axes = match session.game.flight_gamepad_acquisition() {
+        FlightGamepadAcquisition::Unselected | FlightGamepadAcquisition::WaitingNeutral { .. } => {
+            [0.0; 3]
+        }
+        FlightGamepadAcquisition::WaitingPilot {
+            previous_target, ..
+        } => {
+            requested[2] = pickup_pilot_axis(&session, previous_target);
+            requested
+        }
+        FlightGamepadAcquisition::Active { .. } => requested,
+    };
+    devices.verification_axes(axes);
+}
+
+fn pickup_pilot_axis(session: &NativeSession, previous: f64) -> f64 {
+    use birdman_game_app::flight_input::GAMEPAD_DEAD_ZONE;
+    let core = session.game.core_session();
+    let state = core
+        .snapshot()
+        .tail_flight_state()
+        .expect("Pilot acquisition requires a retained flight state");
+    let held = core
+        .tail_pilot_position_mapping()
+        .expect("Pilot acquisition requires the prepared mapping")
+        .normalized_target(state.pilot_position_target())
+        .expect("The retained pilot target is valid")
+        .value();
+    let margin = 16.0 * f64::EPSILON;
+    let target = if previous <= held {
+        (held + margin).min(1.0)
+    } else {
+        (held - margin).max(-1.0)
+    };
+    target.signum() * (GAMEPAD_DEAD_ZONE + (1.0 - GAMEPAD_DEAD_ZONE) * target.abs())
+}
+
+fn pilot_input_applied(session: &NativeSession) -> bool {
+    use birdman_game_app::flight_input::FlightGamepadAcquisition;
+    use birdman_game_core::TailPilotPositionCommand;
+    matches!(
+        session.game.flight_gamepad_acquisition(),
+        FlightGamepadAcquisition::Active { .. }
+    ) && session
+        .game
+        .core_session()
+        .flight_record()
+        .and_then(|record| record.samples().last())
+        .and_then(|sample| sample.controls.input_from_previous)
+        .is_some_and(|input| {
+            (input.manual_intent().nose_up() - 0.1).abs() <= 1.0e-12
+                && (input.manual_intent().turn_right() - 0.1).abs() <= 1.0e-12
+                && matches!(input.pilot_position_command(), TailPilotPositionCommand::Set(target)
+                    if (target.value() - 0.25).abs() <= 1.0e-12)
+        })
 }
 
 type VerificationUiLabel = (
@@ -1731,14 +1786,12 @@ impl VerificationPresentation<'_, '_> {
             false,
         )
         .map_err(|cause| format!("Replay camera query failed: {cause:?}"))?;
-        let display = session
-            .display_state()
-            .ok_or("Replay display state is missing")?;
+        let pose = view.render_pose();
         let expected = replay_camera_transform(
             &view,
-            aircraft_transform(display.state),
-            display.state.pilot_position_m(),
-            session.initial_pilot_position_m,
+            super::projection::render_aircraft_transform(&pose),
+            pose.pilot_position_meters,
+            pose.initial_pilot_position_meters,
             Vec2::ZERO,
         );
         let (_, _, _, Projection::Perspective(lens), actual) = self
@@ -2538,7 +2591,11 @@ fn advance_step(
                         verification.observer_base = Some(camera_transform(
                             aircraft_transform(flight),
                             flight.pilot_position_m(),
-                            session.initial_pilot_position_m,
+                            session
+                                .render_pose()
+                                .unwrap()
+                                .unwrap()
+                                .initial_pilot_position_meters,
                             true,
                             Vec2::ZERO,
                         ));
@@ -2558,6 +2615,9 @@ fn advance_step(
         }
         VerificationStage::Pilot => {
             require_phase(phase, SessionPhase::FlightRunning)?;
+            if !pilot_input_applied(session) {
+                return Ok(());
+            }
             let state = session
                 .game
                 .core_session()
@@ -3756,9 +3816,7 @@ mod tests {
         .init_asset::<Shader>()
         .init_asset_loader::<bevy::shader::ShaderLoader>()
         .init_resource::<NativeSession>()
-        .init_resource::<super::FlightInput>()
         .init_resource::<super::CameraMode>()
-        .init_resource::<super::super::world::RenderHistory>()
         .init_resource::<WaterQualitySelection>()
         .init_resource::<super::super::screen_render::NativeScreenRender>()
         .init_resource::<super::timing::TimingReadout>()
@@ -3768,15 +3826,15 @@ mod tests {
         .init_resource::<Assets<Image>>()
         .init_resource::<InputFocus>()
         .insert_resource(super::NativeEnvironment::try_default().unwrap())
-        .insert_resource(Time::<Fixed>::from_hz(f64::from(
-            birdman_game_core::PHYSICS_HZ,
-        )))
         .insert_resource(Time::<Virtual>::from_max_delta(super::MAX_FRAME_DELTA))
         .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
             Duration::from_secs_f64(1.0 / f64::from(birdman_game_core::PHYSICS_HZ)),
         ))
         .add_message::<AppExit>()
-        .add_systems(FixedUpdate, super::super::advance_physics)
+        .add_systems(
+            Update,
+            super::super::advance_flight_frame.before(super::super::advance_presentation),
+        )
         .add_systems(
             Update,
             (super::super::advance_presentation, super::advance).chain(),
@@ -3904,7 +3962,11 @@ mod tests {
             super::camera_transform(
                 aircraft,
                 flight.pilot_position_m(),
-                session.initial_pilot_position_m,
+                session
+                    .render_pose()
+                    .unwrap()
+                    .unwrap()
+                    .initial_pilot_position_meters,
                 chase,
                 Vec2::ZERO,
             )
@@ -4284,6 +4346,119 @@ mod tests {
     }
 
     #[test]
+    fn pilot_capture_waits_for_gamepad_acquisition_and_applied_input() {
+        let mut app = countdown_driver_app();
+        let initial = {
+            let mut session = app.world_mut().resource_mut::<NativeSession>();
+            session.action(MenuAction::Launch).unwrap();
+            session.presentation_frame(3.0);
+            session
+                .game
+                .core_session()
+                .snapshot()
+                .tail_flight_state()
+                .unwrap()
+        };
+        {
+            let mut verification = app.world_mut().resource_mut::<super::Verification>();
+            verification.stage = VerificationStage::Pilot;
+            verification.started = Some(std::time::Instant::now());
+            verification.stage_started = std::time::Instant::now() - Duration::from_millis(300);
+            verification.launch_state = Some(initial);
+        }
+        app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+            Duration::from_millis(100),
+        ));
+        app.update();
+        app.update();
+        {
+            let session = app.world().resource::<NativeSession>();
+            let verification = app.world().resource::<super::Verification>();
+            assert!(verification.failure.is_none());
+            assert!(!verification.capture.pending());
+            assert_eq!(
+                session
+                    .game
+                    .core_session()
+                    .snapshot()
+                    .tail_flight_state()
+                    .unwrap()
+                    .tick_index(),
+                10
+            );
+        }
+        let mut acquired_before_pilot_input = false;
+        for _ in 0..4 {
+            let session = app.world().resource::<NativeSession>();
+            if matches!(
+                session.game.flight_gamepad_acquisition(),
+                birdman_game_app::flight_input::FlightGamepadAcquisition::Active { .. }
+            ) && !super::pilot_input_applied(session)
+            {
+                acquired_before_pilot_input = true;
+                let verification = app.world().resource::<super::Verification>();
+                assert!(verification.failure.is_none());
+                assert!(!verification.capture.pending());
+                break;
+            }
+            app.update();
+        }
+        assert!(acquired_before_pilot_input);
+        app.update();
+        let session = app.world().resource::<NativeSession>();
+        let verification = app.world().resource::<super::Verification>();
+        let state = session
+            .game
+            .core_session()
+            .snapshot()
+            .tail_flight_state()
+            .unwrap();
+        assert!(verification.failure.is_none());
+        assert!(super::pilot_input_applied(session));
+        assert_ne!(state.incidence(), initial.incidence());
+        assert_ne!(
+            state.pilot_position_target(),
+            initial.pilot_position_target()
+        );
+        assert!(matches!(verification.capture, CaptureState::Requested(_)));
+        app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+            Duration::from_millis(151),
+        ));
+        app.update();
+        app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+            Duration::from_millis(10),
+        ));
+        app.update();
+        app.update();
+        app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+            Duration::from_millis(100),
+        ));
+        for _ in 0..4 {
+            app.update();
+            let session = app.world().resource::<NativeSession>();
+            let input = session
+                .game
+                .core_session()
+                .flight_record()
+                .unwrap()
+                .samples()
+                .last()
+                .unwrap()
+                .controls
+                .input_from_previous
+                .unwrap();
+            if let birdman_game_core::TailPilotPositionCommand::Set(target) =
+                input.pilot_position_command()
+            {
+                assert!((target.value() - 0.25).abs() < 1.0e-12);
+            }
+        }
+        assert!(super::pilot_input_applied(
+            app.world().resource::<NativeSession>()
+        ));
+    }
+
+    #[test]
     fn countdown_driver_drains_canceled_capture_before_reusing_its_filename() {
         for saving in [false, true] {
             let mut app = countdown_driver_app();
@@ -4636,6 +4811,8 @@ mod tests {
             session.game.core_session().snapshot().phase(),
             SessionPhase::FlightRunning
         );
+        app.update();
+        let session = app.world().resource::<NativeSession>();
         let state = session
             .game
             .core_session()
@@ -5893,7 +6070,9 @@ mod tests {
             .sample_count();
         let mut observed = false;
         let mut readiness = RenderReadiness::default();
-        session.observe_frame(true, true);
+        session.observe_frame(true);
+        session.advance_frame(0.0, &[]);
+        session.advance_frame(151.0, &[]);
         assert!(
             recover_processing_delay(
                 &mut observed,
@@ -5905,7 +6084,8 @@ mod tests {
             .unwrap()
         );
         assert!(observed);
-        session.observe_frame(true, false);
+        session.observe_frame(true);
+        session.advance_frame(161.0, &[]);
         assert!(matches!(
             session.game.core_session().snapshot().phase(),
             SessionPhase::FlightPaused { reasons } if reasons.is_empty()
@@ -6012,10 +6192,8 @@ mod tests {
             for _ in 0..3 {
                 session.presentation_frame(1.0);
             }
-            session
-                .game
-                .observe_availability(ExternalPauseReason::ProcessingDelay, false)
-                .unwrap();
+            session.advance_frame(0.0, &[]);
+            session.advance_frame(151.0, &[]);
             let mut observed = additional.is_some();
             if let Some(reason) = additional {
                 if reason == PauseReason::Manual {
@@ -6030,7 +6208,8 @@ mod tests {
                     session.game.observe_availability(reason, false).unwrap();
                 }
             } else {
-                session.observe_frame(true, false);
+                session.observe_frame(true);
+                session.advance_frame(161.0, &[]);
             }
             let before = session.game.core_session().snapshot();
             let sample_count = session
@@ -6074,7 +6253,9 @@ mod tests {
         }
         let mut observed = false;
         let readiness = RenderReadiness::default();
-        session.observe_frame(true, true);
+        session.observe_frame(true);
+        session.advance_frame(0.0, &[]);
+        session.advance_frame(151.0, &[]);
         recover_processing_delay(
             &mut observed,
             VerificationStage::Pilot,
@@ -6084,7 +6265,8 @@ mod tests {
         )
         .unwrap();
         assert!(observed);
-        session.observe_frame(true, false);
+        session.observe_frame(true);
+        session.advance_frame(161.0, &[]);
         session.action(MenuAction::Resume).unwrap();
         assert!(
             !recover_processing_delay(

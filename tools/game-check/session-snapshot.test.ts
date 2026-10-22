@@ -103,9 +103,9 @@ describe("raw Rust snapshot application observations", () => {
         const next = updateApp(model, message).model;
         if (next !== model) model = observeSharedUi(next, facade);
       };
-      const old = bindings.bindDisplay(facade.flightPort, display, () => current.display.value, dispatch);
+      const old = bindings.bindAppDisplay(facade.flightPort, display, () => projection(facade), () => current.display.value, dispatch);
       dispatch({ type: "flight-controller-ready", identity: old.identity });
-      const replacement = bindings.bindDisplay(facade.flightPort, display, () => current.display.value, dispatch);
+      const replacement = bindings.bindAppDisplay(facade.flightPort, display, () => projection(facade), () => current.display.value, dispatch);
       dispatch({ type: "flight-controller-ready", identity: replacement.identity });
       const ready = model;
       old.port.fail("Late controller callback");
@@ -139,8 +139,8 @@ describe("raw Rust snapshot application observations", () => {
       facade.executeSharedSessionCommand({ kind: "pause" });
       let model = updateApp(createInitialAppModel(), { type: "game-session-synced", ...projection(facade) }).model;
       const bindings = new FlightControllerUiBindings();
-      const binding = bindings.bindDisplay(facade.flightPort, { render: vi.fn(), setVisible: vi.fn() },
-        () => beforePause.display.value, (message) => { model = observeSharedUi(updateApp(model, message).model, facade); });
+      const binding = bindings.bindAppDisplay(facade.flightPort, { render: vi.fn(), setVisible: vi.fn() },
+        () => projection(facade), () => beforePause.display.value, (message) => { model = observeSharedUi(updateApp(model, message).model, facade); });
       model = updateApp(model, { type: "flight-controller-ready", identity: binding.identity }).model;
       binding.port.fail("Pause synchronization failed");
       expect(model.gameSession).toMatchObject({ phase: "flight_paused", display: { value: { phase: "flight_paused" } } });

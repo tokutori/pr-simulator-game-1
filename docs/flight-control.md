@@ -273,12 +273,12 @@ S_h(v)=\frac{v^2}{2A}+\frac{r(Ah-r)}{2A}
 - WASMのschema 2は`control_layout=tail_incidence`を必須とし、二系統intent、body-positiveのq/r目標、`pilot_position_command`の`hold`/`set`を受け取る。
 - 余剰axis、未知field、未対応schemaを拒否する。
 - seedはlow/highの32 bit値で正確に渡す。
-- device adapterはsealed rate上限へnormalized demandを写像し、明示的q/r入力を変更しない。
+- 本番frame入口はキー遷移と生Gamepad軸・接続世代を受け取り、appの共有規則がsealed rate上限への写像と各tick直前の確定targetへの積分を行う。schema 2の明示的tick入力はoffline検査・再現用に利用する。
 - snapshotのphase/frame、physical incidence、身体状態、CG telemetry、terminal stamp/causeの整合は[データ形式](data-and-formats.md)に従う。
 - 保存値を再シミュレーション・再制御して表示しない。
 
 - Webの`TailSessionPort`と`TailFlightController`は単一のfacade ownerのresourceを使う。
-- reset・snapshot同期・描画の失敗時は入力とclockを停止し、再同期の成功前にtickを再開しない。
+- 入力・reset・snapshot同期・描画の失敗は共有driverへ通知し、最後の物理状態を保持する。新しい飛行の準備と表示bindingの再構築で実行を再開する。
 - Scene退出とBFCache退避ではcontrollerを停止し、最終teardownとowner置換でresourceを解放する。
 - 古い非同期結果はowner/query generationで拒否し、同じscenario/seedでも異なるresource世代を混同しない。
 - 同じrecordのclock・seek・再生速度更新と、Retry・設定変更・archive開閉・disposeによるrecord source変更を区別する。
@@ -306,7 +306,7 @@ S_h(v)=\frac{v^2}{2A}+\frac{r(Ah-r)}{2A}
 
 ### ゲームパッドの接続とpickup
 
-- 選択接続は、adapterが接続・切断イベントで更新する`{ index, generation }`で識別する。
+- 選択接続は`{ slot_low, slot_high, generation }`の32 bit整数で識別する。adapterはOS/browserの機器識別子と接続・切断世代をこの型へ写像する。
 - 選択中の接続を維持し、小さいindexの追加で切り替えない。
 - 未選択時と選択接続の消失時だけ、取得配列の先頭から候補を選ぶ。
 - 同じindexの再利用も中立待ちへ戻す。

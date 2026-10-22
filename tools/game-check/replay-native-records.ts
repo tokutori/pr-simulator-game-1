@@ -29,9 +29,9 @@ function run(command: string, arguments_: string[], log: string, environment = p
 
 const execLogs: Promise<void>[] = [];
 const nativeLog = run("cargo", ["test", "-p", "birdman-game-bevy", "--locked",
-  "bounded_native_input_sequences_keep_terminal_record_and_retry_consistent", "--", "--nocapture"],
+  "native_acceptance_", "--", "--nocapture"],
 "native.log", { ...process.env, BPG_NATIVE_ACCEPTANCE_DIR: native });
-assert.match(nativeLog, /^test result: ok\. 1 passed; 0 failed;/m);
+assert.match(nativeLog, /^test result: ok\. 2 passed; 0 failed;/m);
 run(process.execPath, [resolve(root, "node_modules/tsx/dist/cli.mjs"), "tools/wasm-build/main.ts"], "wasm-build.log");
 await Promise.all(execLogs);
 const wasmBytes = await readFile(resolve(root, "web/pkg/birdman_game_wasm_bg.wasm"));
@@ -65,7 +65,8 @@ function compare(actual: unknown, expected: unknown, path: string): void {
   } else assert.equal(actual, expected, path);
 }
 
-const files = (await readdir(native)).filter(file => file.endsWith(".json")).sort();
+const artifactFiles = (await readdir(native)).filter(file => file.endsWith(".json")).sort();
+const files = artifactFiles.filter(file => !file.startsWith("frame-"));
 assert.equal(files.length, 12, "Expected four assistance levels and three longitudinal inputs");
 const covered = new Set<string>();
 for (const file of files) {
@@ -146,6 +147,38 @@ for (const file of files) {
   } finally { archive.dispose(); session.dispose(); }
 }
 assert.equal(covered.size, 12);
+const frameFiles = artifactFiles.filter(file => file.startsWith("frame-"));
+assert.equal(frameFiles.length, 4);
+for (const file of frameFiles) {
+  const artifact = record(JSON.parse(await readFile(resolve(native, file), "utf8")) as unknown);
+  assert.ok(typeof artifact.record_json === "string" && Array.isArray(artifact.observations));
+  const document = record(JSON.parse(artifact.record_json) as unknown);
+  const header = record(document.header);
+  assert.ok(typeof header.seed === "number");
+  const seed = BigInt(header.seed);
+  const bridge = new HybridGameSessionBridge(0, Number(seed & 0xffff_ffffn), Number(seed >> 32n));
+  try {
+    bridge.apply_game_ui_session_command_json(JSON.stringify({ kind: "open_setup" }));
+    bridge.apply_game_ui_session_command_json(JSON.stringify({ kind: "select_assistance", assistance: artifact.assistance }));
+    bridge.apply_game_ui_session_command_json(JSON.stringify({ kind: "prepare" }));
+    bridge.apply_game_ui_session_command_json(JSON.stringify({ kind: "start_countdown" }));
+    bridge.observe_countdown(bridge.countdown_token(), 3, true);
+    for (const value of artifact.observations) {
+      const observation = record(value);
+      assert.ok(Array.isArray(observation.commands) && Array.isArray(observation.keys));
+      assert.ok(typeof observation.timestamp_ms === "number");
+      for (const command of observation.commands) bridge.apply_game_ui_session_command_json(JSON.stringify(command));
+      for (const key of observation.keys) bridge.observe_flight_key_json(JSON.stringify(key));
+      const frame = record(JSON.parse(bridge.advance_flight_frame_json(observation.timestamp_ms, JSON.stringify(observation.gamepads), true)) as unknown);
+      compare(frame.snapshot, observation.snapshot, `${file}.snapshot@${String(observation.timestamp_ms)}`);
+      compare(frame.render_pose, observation.render_pose, `${file}.pose@${String(observation.timestamp_ms)}`);
+    }
+    const actual = record(JSON.parse(bridge.export_current_flight_record_json()) as unknown);
+    compare(actual.samples, document.samples, `${file}.samples`);
+    compare(actual.finalization, document.finalization, `${file}.finalization`);
+    cases.push({ file, frames: artifact.observations.length, samples: Array.isArray(document.samples) ? document.samples.length : 0 });
+  } finally { bridge.free(); }
+}
 assert.equal(execFileSync("git", ["diff", "--binary", "HEAD"], gitOptions), patch);
 assert.equal(execFileSync("git", ["rev-parse", "HEAD"], gitOptions).trim(), head);
 assert.equal(execFileSync("git", ["ls-files", "--others", "--exclude-standard"], gitOptions), "");

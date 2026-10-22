@@ -55,6 +55,128 @@
         }
       ]
     },
+    "FlightControl": {
+      "description": "A control binding observed by a platform keyboard adapter.",
+      "oneOf": [
+        {
+          "const": "nose_up",
+          "description": "Positive nose-up demand.",
+          "type": "string"
+        },
+        {
+          "const": "nose_down",
+          "description": "Negative nose-up demand.",
+          "type": "string"
+        },
+        {
+          "const": "turn_right",
+          "description": "Positive right-turn demand.",
+          "type": "string"
+        },
+        {
+          "const": "turn_left",
+          "description": "Negative right-turn demand.",
+          "type": "string"
+        },
+        {
+          "const": "pilot_increase",
+          "description": "Increase the normalized pilot-position target.",
+          "type": "string"
+        },
+        {
+          "const": "pilot_decrease",
+          "description": "Decrease the normalized pilot-position target.",
+          "type": "string"
+        }
+      ]
+    },
+    "FlightDeviceIdentity": {
+      "additionalProperties": false,
+      "description": "Exact platform device identity, including entity and reconnection generations.",
+      "properties": {
+        "generation": {
+          "description": "Adapter-observed connection generation for this slot.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "slot_high": {
+          "description": "High word of a native entity identity; zero for browser slots.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "slot_low": {
+          "description": "Low word of a browser slot or native entity identity.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "slot_low",
+        "slot_high",
+        "generation"
+      ],
+      "type": "object"
+    },
+    "FlightGamepadObservation": {
+      "additionalProperties": false,
+      "description": "Unfiltered gamepad axes in common nose-up, right-turn and pilot-target directions.",
+      "properties": {
+        "axes": {
+          "description": "Raw normalized axes; an unavailable/non-finite reading is represented by None.",
+          "items": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "connected": {
+          "description": "Whether the platform currently observes the device as connected.",
+          "type": "boolean"
+        },
+        "identity": {
+          "$ref": "#/$defs/FlightDeviceIdentity",
+          "description": "Identity of this physical connection."
+        }
+      },
+      "required": [
+        "identity",
+        "connected",
+        "axes"
+      ],
+      "type": "object"
+    },
+    "FlightKeyObservation": {
+      "additionalProperties": false,
+      "description": "One keyboard transition in platform event order.",
+      "properties": {
+        "control": {
+          "$ref": "#/$defs/FlightControl",
+          "description": "The bound control represented by the key."
+        },
+        "pressed": {
+          "description": "Whether the key is being pressed or released.",
+          "type": "boolean"
+        },
+        "repeat": {
+          "description": "Whether a pressed event repeats an existing physical hold.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "control",
+        "pressed",
+        "repeat"
+      ],
+      "type": "object"
+    },
     "GameUiAction": {
       "description": "UI message whose handling is shared by native and browser adapters.",
       "oneOf": [

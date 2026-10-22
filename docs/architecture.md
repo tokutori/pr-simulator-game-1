@@ -90,7 +90,11 @@ adapter・presentation・scene・app・contentは責務に応じて下位のcore
 
 - 物理周期はcoreの公開`PHYSICS_HZ`を参照する。
 - 現在は100 Hzである。
-- adapterはwall-clock、固定tickへの入力割当、描画補間、表示frameを管理する。
+- `ApplicationSession`が入力状態・frame時計・実行失敗を所有し、各tickの入力割当、100 Hzの実行予算と補間残余を導出する。adapterはOS/browserの時刻・機器・可用性を観測し、共有frame入口を一度呼ぶ。
+- 発進・明示Resume直後のframeは経過0とする。150 msを超えるframe間隔はProcessingDelayを設定し、有効frameへの復帰と明示Resumeを分ける。
+- presentationが最後の物理区間を共有残余で補間し、同じposeと時刻を機体・pilot・cameraへ渡す。0 tickのframeも区間内の表示を更新し、Pause・Resultは確定状態を投影する。
+- Webはanimation frameのtimestamp、Nativeは`Time<Real>`の累積時刻を渡す。NativeのUpdateは共有driverを一度呼び、描画へ共有poseを写す。
+- Gamepadのdeadzone・中立取得・pilot targetの引継ぎはappが所有する。Nativeは順序付きraw eventを保持し、Entityと接続世代からidentityを作る。接続時の標準軸0はBevyの初期状態として扱い、以後のraw値で更新する。
 - 可変dtへの変更、遅延tickの黙示的破棄、独立した二重clockを導入しない。
 - Pause中に物理状態とrecordを進めない。
 

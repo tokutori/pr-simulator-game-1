@@ -1,9 +1,8 @@
-import { FixedTickClock } from "./fixed-tick-clock.js";
 import type { TailSnapshotDocument } from "../generated/tail-snapshot.js";
+import type { FlightFrameDocument } from "../generated/flight-frame.js";
+import type { FlightGamepadObservation } from "../generated/flight-gamepad.js";
+import type { FlightKeyObservation } from "../generated/flight-key.js";
 import type { FlightRenderPose } from "../render/contracts/runtime.js";
-import { tailInputFromControlProfile } from "./tail-device-input.js";
-import type { TailControlProfileDocument } from "../generated/tail-control-profile.js";
-import type { TailPilotDemand } from "./tail-device-input.js";
 import type { TailLogicalInput } from "./tail-input.js";
 
 export interface FlightPosePort {
@@ -12,17 +11,17 @@ export interface FlightPosePort {
 
 export interface TailSessionPort {
   readSnapshot(): TailSnapshotDocument;
-  readControlProfile(): TailControlProfileDocument;
   advanceTick(input: TailLogicalInput): TailSnapshotDocument;
+  advanceFrame(timestampMilliseconds: number, gamepads: readonly FlightGamepadObservation[], available: boolean): FlightFrameDocument;
+  observeFlightKey(observation: FlightKeyObservation): boolean;
+  invalidateFlightInput(): void;
+  failAdapter(): void;
   pause(reason: number): void;
   clear_pause_reason(reason: number): void;
   free(): void;
 }
-export interface TailPilotInputPort {
-  readDemand(gamepads: readonly (Gamepad | null)[], heldTargetNormalized: number): TailPilotDemand;
-  reset(heldTargetNormalized: number): void;
-  suspend(): void;
-  resume(): void;
+export interface FlightInputDevice {
+  readGamepads(): readonly FlightGamepadObservation[];
   dispose(): void;
 }
 export interface TailFlightHudPort {
@@ -34,192 +33,134 @@ export type TailControllerSnapshot = TailSnapshotDocument & Readonly<{ phase: "f
 export type TailResultSnapshot = TailControllerSnapshot & Readonly<{ phase: "result"; frame: Extract<TailSnapshotDocument["frame"], { kind: "result" }> }>;
 
 export class TailFlightController {
-  private readonly clock: FixedTickClock;
-  private execution: "running" | "suspended" | "failed" | "disposed" = "running";
+  private execution: "ready" | "failed" | "disposed" = "ready";
   private snapshotValue: TailControllerSnapshot;
-  private profile: TailControlProfileDocument;
-  private generation = Symbol("tail controller generation");
+  private generation = Symbol("flight display generation");
 
-  constructor(private readonly session: TailSessionPort, private readonly input: TailPilotInputPort,
-    private readonly renderer: FlightPosePort, private hud: TailFlightHudPort, physicsHz: number, maximumFrameGapMilliseconds: number,
-    private readonly readGamepads: () => readonly (Gamepad | null)[] = availableGamepads,
+  constructor(private readonly session: TailSessionPort, private readonly input: FlightInputDevice,
+    private readonly renderer: FlightPosePort, private hud: TailFlightHudPort,
     private onTerminal: (snapshot: TailResultSnapshot) => void = () => undefined,
     private readonly onPauseChanged: () => void = () => undefined) {
-    if (!Number.isSafeInteger(physicsHz) || physicsHz <= 0) throw new RangeError("Tail physics frequency must be a positive integer");
-    this.clock = new FixedTickClock(1_000 / physicsHz, maximumFrameGapMilliseconds);
-    this.snapshotValue = this.decodeSnapshot(session.readSnapshot());
-    this.profile = session.readControlProfile();
-    this.initializeInput(this.snapshotValue);
-    this.applySnapshot(this.snapshotValue);
-    if (this.snapshotValue.phase !== "flight_running") this.suspend();
-  }
-
-  get currentSnapshot(): TailControllerSnapshot {
-    return this.snapshotValue;
-  }
-
-  onFrame(timestampMs: number): void {
-    if (this.execution === "failed" || this.execution === "disposed" || this.snapshotValue.phase === "result") return;
-    const generation = this.generation;
-    const completion: { value: Readonly<{ kind: "none" }> | Readonly<{ kind: "terminal"; snapshot: TailResultSnapshot }> } = { value: { kind: "none" } };
     try {
-      const advancedTicks = this.clock.advanceFrame(timestampMs, () => {
-        const demand = this.input.readDemand(this.readGamepads(), this.snapshotValue.frame.state.pilot_position_target_normalized);
-        const intent = tailInputFromControlProfile(demand, this.profile);
-        const next = this.decodeSnapshot(this.session.advanceTick(intent));
-        this.snapshotValue = next;
-        if (next.phase === "result") {
-          completion.value = { kind: "terminal", snapshot: next as TailResultSnapshot };
-          return false;
-        }
-        return next.phase === "flight_running";
-      });
-      if (advancedTicks.kind === "processing-delay") {
-        if (advancedTicks.blocked) {
-          this.suspend();
-          if (!this.isCurrentGeneration(generation)) return;
-          this.session.pause(3);
-        } else {
-          this.session.clear_pause_reason(3);
-        }
-        if (!this.isCurrentGeneration(generation)) return;
-        this.synchronizeSnapshot(this.session.readSnapshot());
-        if (!this.isCurrentGeneration(generation)) return;
-        this.onPauseChanged();
-        return;
-      }
-      const completed = completion.value;
-      if (completed.kind === "terminal") {
-        this.onTerminal(completed.snapshot);
-        if (!this.isCurrentFrame(generation, completed.snapshot)) return;
-      }
-      if (advancedTicks.count === 0 || !this.isCurrentGeneration(generation)) return;
-      const committed = this.snapshotValue;
-      if (!this.isCurrentFrame(generation, committed)) return;
-      this.renderer.setFlightPose(committed.render_pose);
-      if (!this.isCurrentFrame(generation, committed)) return;
-      this.hud.render(committed);
-      if (!this.isCurrentFrame(generation, committed)) return;
-      if (completed.kind === "terminal") this.input.suspend();
+      this.snapshotValue = this.decodeSnapshot(session.readSnapshot());
+      this.applySnapshot(this.snapshotValue);
     } catch (error: unknown) {
-      if (!this.isCurrentGeneration(generation)) return;
-      this.execution = "failed";
-      this.clock.suspend();
-      let message = error instanceof Error ? error.message : String(error);
-      try {
-        this.input.suspend();
-      } catch (cleanup: unknown) {
-        message += `; input suspension failed: ${cleanup instanceof Error ? cleanup.message : String(cleanup)}`;
-      }
-      if (!this.isCurrentGeneration(generation)) return;
-      this.hud.fail(message);
+      this.session.failAdapter();
+      throw error;
     }
   }
 
-  suspend(): void {
-    if (this.execution === "disposed") return;
-    this.clock.suspend();
-    if (this.execution !== "failed") this.execution = "suspended";
-    this.input.suspend();
+  get currentSnapshot(): TailControllerSnapshot { return this.snapshotValue; }
+
+  onFrame(timestampMilliseconds: number, available = true): void {
+    if (this.execution !== "ready") return;
+    const generation = this.generation;
+    try {
+      const gamepads = this.input.readGamepads();
+      if (!this.isCurrentGeneration(generation)) return;
+      const report = this.session.advanceFrame(timestampMilliseconds, gamepads, available);
+      if (!this.isCurrentGeneration(generation)) return;
+      if (report.snapshot === null) {
+        if (report.phase_changed) this.onPauseChanged();
+        return;
+      }
+      const wasTerminal = this.snapshotValue.phase === "result";
+      const next = this.decodeSnapshot(report.snapshot);
+      this.snapshotValue = next;
+      if (next.phase === "result" && !wasTerminal) {
+        this.onTerminal(next as TailResultSnapshot);
+        if (!this.isCurrentFrame(generation, next)) return;
+      }
+      if (report.phase_changed && next.phase !== "result") {
+        this.onPauseChanged();
+        if (!this.isCurrentFrame(generation, next)) return;
+      }
+      this.renderer.setFlightPose(report.render_pose ?? next.render_pose);
+      if (!this.isCurrentFrame(generation, next)) return;
+      this.hud.render(next);
+    } catch (error: unknown) {
+      this.fail(error, generation);
+    }
   }
 
-  resume(): void {
-    if (this.execution === "failed" || this.execution === "disposed" || this.snapshotValue.phase === "result") return;
-    this.synchronizeSnapshot(this.session.readSnapshot());
-    if (this.snapshotValue.phase !== "flight_running") return;
-    this.input.resume();
-    this.clock.resume();
-    this.execution = "running";
+  invalidateInput(): void {
+    if (this.execution !== "disposed") this.session.invalidateFlightInput();
   }
 
   synchronizeSnapshot(snapshot: TailSnapshotDocument): void {
-    if (this.execution === "failed" || this.execution === "disposed") return;
-    const previousExecution = this.execution;
-    this.execution = "failed";
-    this.clock.suspend();
+    if (this.execution !== "ready") return;
+    const generation = this.generation;
     try {
       const next = this.decodeSnapshot(snapshot);
-      this.applySnapshot(next);
       this.snapshotValue = next;
-      if (previousExecution === "running" && next.phase === "flight_running") {
-        this.clock.resume();
-        this.execution = "running";
-      } else {
-        this.input.suspend();
-        this.execution = "suspended";
-      }
+      this.applySnapshot(next);
     } catch (error: unknown) {
-      let failure = error;
-      try {
-        this.input.suspend();
-      } catch (cleanup: unknown) {
-        failure = new AggregateError([error, cleanup], "Tail synchronization and input suspension failed", { cause: error });
-      }
-      throw failure;
+      this.fail(error, generation);
+      throw error;
     }
   }
 
-  reset(snapshot: TailSnapshotDocument, hud: TailFlightHudPort = this.hud, onTerminal: (snapshot: TailResultSnapshot) => void = this.onTerminal): void {
-    if (this.execution === "disposed") throw new Error("Cannot reset a disposed tail controller");
-    this.generation = Symbol("reset tail controller generation");
+  reset(snapshot: TailSnapshotDocument, hud: TailFlightHudPort = this.hud,
+    onTerminal: (snapshot: TailResultSnapshot) => void = this.onTerminal): void {
+    if (this.execution === "disposed") throw new Error("Cannot reset a disposed flight display");
+    this.generation = Symbol("reset flight display generation");
     this.execution = "failed";
-    this.clock.suspend();
+    const generation = this.generation;
     try {
       const next = this.decodeSnapshot(snapshot);
-      const profile = this.session.readControlProfile();
-      this.initializeInput(next);
-      this.applySnapshot(next, hud);
+      this.renderer.setFlightPose(next.render_pose);
+      if (!this.isCurrentGeneration(generation)) return;
+      hud.render(next);
+      if (!this.isCurrentGeneration(generation)) return;
       this.snapshotValue = next;
-      this.profile = profile;
       this.hud = hud;
       this.onTerminal = onTerminal;
-      this.clock.reset();
-      if (next.phase === "flight_running") this.execution = "running";
-      else {
-        this.clock.suspend();
-        this.execution = "suspended";
-      }
+      this.execution = "ready";
     } catch (error: unknown) {
-      let failure = error;
-      try {
-        this.input.suspend();
-      } catch (cleanup: unknown) {
-        failure = new AggregateError([error, cleanup], "Tail reset and input suspension failed", { cause: error });
-      }
-      throw failure;
+      this.fail(error, generation);
+      throw error;
     }
   }
 
   renderCurrentSnapshot(): void {
-    if (this.execution === "disposed") return;
-    this.applySnapshot(this.snapshotValue);
+    if (this.execution !== "disposed") this.applySnapshot(this.snapshotValue);
   }
 
   dispose(): void {
     if (this.execution === "disposed") return;
-    this.generation = Symbol("disposed tail controller generation");
+    this.generation = Symbol("disposed flight display generation");
     this.execution = "disposed";
-    this.clock.suspend();
     const failures: unknown[] = [];
     for (const cleanup of [
       () => { this.input.dispose(); },
       () => { this.session.free(); },
       () => { this.renderer.setFlightPose(null); },
-      () => { this.hud.setVisible(false); },
+      () => { this.hud.setVisible(false); }
     ]) {
-      try {
-        cleanup();
-      } catch (error: unknown) {
-        failures.push(error);
-      }
+      try { cleanup(); } catch (error: unknown) { failures.push(error); }
     }
     if (failures.length === 1) throw failures[0];
-    if (failures.length > 1) throw new AggregateError(failures, "Tail controller cleanup failed", { cause: failures[0] });
+    if (failures.length > 1) throw new AggregateError(failures, "Flight display cleanup failed", { cause: failures[0] });
+  }
+
+  private fail(error: unknown, generation: symbol): void {
+    if (!this.isCurrentGeneration(generation)) return;
+    this.execution = "failed";
+    let message = error instanceof Error ? error.message : String(error);
+    try { this.session.failAdapter(); }
+    catch (failure: unknown) { message += `; execution stop failed: ${String(failure)}`; }
+    if (!this.isCurrentGeneration(generation)) return;
+    try {
+      const retained = this.decodeSnapshot(this.session.readSnapshot());
+      if (!this.isCurrentGeneration(generation)) return;
+      this.snapshotValue = retained;
+    } catch (failure: unknown) { message += `; snapshot refresh failed: ${String(failure)}`; }
+    if (this.isCurrentGeneration(generation)) this.hud.fail(message);
   }
 
   private decodeSnapshot(snapshot: TailSnapshotDocument): TailControllerSnapshot {
     if (snapshot.phase !== "flight_running" && snapshot.phase !== "flight_paused" && snapshot.phase !== "result") {
-      throw new RangeError("Tail controller requires a Rust flight or Result snapshot");
+      throw new RangeError("Flight display requires a Rust flight or Result snapshot");
     }
     return snapshot as TailControllerSnapshot;
   }
@@ -229,22 +170,12 @@ export class TailFlightController {
   }
 
   private isCurrentFrame(generation: symbol, snapshot: TailControllerSnapshot): boolean {
-    return this.isCurrentGeneration(generation) && this.execution === "running" && this.snapshotValue === snapshot;
+    return this.isCurrentGeneration(generation) && this.execution === "ready" && this.snapshotValue === snapshot;
   }
 
-  private initializeInput(snapshot: TailControllerSnapshot): void {
-    this.input.reset(snapshot.frame.state.pilot_position_target_normalized);
-    if (snapshot.phase === "flight_running") this.input.resume();
-    else this.input.suspend();
-  }
-
-  private applySnapshot(snapshot: TailControllerSnapshot, hud: TailFlightHudPort = this.hud): void {
+  private applySnapshot(snapshot: TailControllerSnapshot): void {
+    const generation = this.generation;
     this.renderer.setFlightPose(snapshot.render_pose);
-    hud.render(snapshot);
+    if (this.isCurrentFrame(generation, snapshot)) this.hud.render(snapshot);
   }
-}
-
-function availableGamepads(): readonly (Gamepad | null)[] {
-  if (typeof navigator === "undefined" || typeof navigator.getGamepads !== "function") return [];
-  return navigator.getGamepads();
 }

@@ -15,7 +15,7 @@ import { HudCanvasFixture } from "./hud-canvas-fixture.js";
 import { Window } from "happy-dom";
 import { TailFlightController } from "../../web/src/game/tail-flight-controller.js";
 import { createAppSession } from "../../web/src/app/session-factory.js";
-import { initSync, maximum_flight_frame_gap_milliseconds } from "../../web/pkg/birdman_game_wasm.js";
+import { initSync } from "../../web/pkg/birdman_game_wasm.js";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { launchCurrentSession } from "../game-check/current-session-fixture.js";
@@ -102,13 +102,12 @@ describe("Immutable same-frame Flight view finalization", () => {
     launchCurrentSession(session);
     const failures: string[] = [];
     const controller = new TailFlightController(session.flightPort, {
-      readDemand: () => ({ controlLayout: "tail_incidence", noseUp: 0, turnRight: 0, pilotPositionCommand: { kind: "hold" } }),
-      reset() {}, suspend() {}, resume() {}, dispose() {}
+      readGamepads: () => [], dispose() {}
     }, { setFlightPose() {} }, {
       render: () => { hud.render(createFlightUiHudModel(model)); },
       fail: (message) => { failures.push(message); },
       setVisible: (visible) => { hud.setVisible(visible); }
-    }, 100, maximum_flight_frame_gap_milliseconds(), () => []);
+    });
     try {
       expect(() => { controller.reset(session.flightPort.readSnapshot()); }).not.toThrow();
       expect(() => { controller.synchronizeSnapshot(session.flightPort.readSnapshot()); }).not.toThrow();
@@ -151,14 +150,13 @@ describe("Immutable same-frame Flight view finalization", () => {
     launchCurrentSession(session);
     let model = flightModel("screen");
     const controller = new TailFlightController({ ...session.flightPort,
-      advanceTick: () => { throw new Error("Rust tick failed"); } }, {
-      readDemand: () => ({ controlLayout: "tail_incidence", noseUp: 0, turnRight: 0, pilotPositionCommand: { kind: "hold" } }),
-      reset() {}, suspend() {}, resume() {}, dispose() {}
+      advanceFrame: () => { throw new Error("Rust frame failed"); } }, {
+      readGamepads: () => [], dispose() {}
     }, renderer, { render: () => { hud.render(createFlightUiHudModel(model)); },
       fail: (message) => {
         model = { ...model, sharedGameUi: currentSharedGameUiFixture("flight_running", { platform: { flight_controller_failure: message } }) };
         hud.render(createFlightUiHudModel(model));
-      }, setVisible: (visible) => { hud.setVisible(visible); } }, 100, maximum_flight_frame_gap_milliseconds(), () => []);
+      }, setVisible: (visible) => { hud.setVisible(visible); } });
     const runtime = new PresentationRuntime(renderer, [new ScreenPresentationBackend(() => ({ x: 1280, y: 720, pixelRatio: 1 }))],
       (viewer) => { const draft = createFlightFrameViewDraft(model, viewer, "ja"); return fixturePresentation(finalizeFlightFrameView(draft, draft.headHud)); },
       (timestamp) => { controller.onFrame(timestamp); });
@@ -167,9 +165,9 @@ describe("Immutable same-frame Flight view finalization", () => {
       if (evidence.loop === null) throw new Error("Missing Screen loop");
       evidence.loop(0);
       evidence.loop(20);
-      expect(root.querySelector('output[aria-live="polite"]')?.textContent).toBe("停止理由: Rust tick failed");
+      expect(root.querySelector('output[aria-live="polite"]')?.textContent).toBe("停止理由: Rust frame failed");
       evidence.loop(40);
-      expect(root.querySelector('output[aria-live="polite"]')?.textContent).toBe("停止理由: Rust tick failed");
+      expect(root.querySelector('output[aria-live="polite"]')?.textContent).toBe("停止理由: Rust frame failed");
       expect(evidence.frames).toBe(3);
     } finally { controller.dispose(); session.dispose(); await runtime.dispose(); await window.happyDOM.abort(); }
   });

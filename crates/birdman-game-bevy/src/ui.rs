@@ -1756,18 +1756,16 @@ mod tests {
     fn native_ui_admission_starts_countdown_at_zero_before_real_update_elapsed() {
         let mut app = app(1280.0, 720.0);
         app.add_plugins(bevy::input::InputPlugin)
-            .init_resource::<super::super::native_session::FlightInput>()
-            .init_resource::<super::super::world::RenderHistory>()
-            .insert_resource(Time::<Fixed>::from_hz(f64::from(
-                birdman_game_core::PHYSICS_HZ,
-            )))
             .insert_resource(Time::<Virtual>::from_max_delta(
                 super::super::MAX_FRAME_DELTA,
             ))
             .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
                 std::time::Duration::from_millis(100),
             ))
-            .add_systems(FixedUpdate, super::super::advance_physics)
+            .add_systems(
+                Update,
+                super::super::advance_flight_frame.before(super::super::advance_presentation),
+            )
             .add_systems(
                 Update,
                 super::super::advance_presentation
@@ -2617,7 +2615,11 @@ mod tests {
                 document.header.difficulty
             );
             assert_eq!(
-                session.initial_pilot_position_m,
+                session
+                    .render_pose()
+                    .unwrap()
+                    .unwrap()
+                    .initial_pilot_position_meters,
                 document.samples[0].state.pilot_position_m
             );
             assert_eq!(session.game.difficulty(), selection);
@@ -3958,8 +3960,7 @@ mod tests {
     #[test]
     fn replay_entry_reapplies_the_shared_camera_after_return_keys_and_retry() {
         let mut app = app(1280.0, 720.0);
-        app.init_resource::<super::super::native_session::FlightInput>()
-            .add_message::<bevy::input::keyboard::KeyboardInput>()
+        app.add_message::<bevy::input::keyboard::KeyboardInput>()
             .init_resource::<ButtonInput<MouseButton>>()
             .init_resource::<bevy::input::mouse::AccumulatedMouseMotion>()
             .add_systems(PreUpdate, super::super::read_input);

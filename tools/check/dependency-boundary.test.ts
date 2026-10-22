@@ -394,12 +394,18 @@ describe("Cargo dependency boundary", () => {
     { req: "^0.19.1" }, { kind: "build" }, { kind: "dev" }, { target: null },
     { target: 'cfg(target_arch = "wasm32")' }, { uses_default_features: true },
     { features: ["3d"] }, { features: ["ui"] }, { features: ["default_platform"] }, { features: ["default_font"] },
-    { features: ["audio"] }, { features: ["bevy_gilrs"] }, { features: ["web"] },
+    { features: ["audio"] }, { features: ["web"] },
     { features: ["webgl2"] }, { features: ["webgpu"] }
   ])("rejects a broader native engine dependency %j", (difference) => {
     expect(() => { assertDependencyBoundary([
       { name: "birdman-game-bevy", dependencies: [{ ...nativeEngineDependency, ...difference }] }
     ]); }).toThrow("Forbidden native engine dependency");
+  });
+
+  it("accepts desktop gamepad observation through the native engine", () => {
+    expect(() => { assertDependencyBoundary([
+      { name: "birdman-game-bevy", dependencies: [{ ...nativeEngineDependency, features: ["bevy_gilrs"] }] }
+    ]); }).not.toThrow();
   });
 
   it("rejects a dev-only native font feature beside the product native engine", () => {
