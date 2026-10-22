@@ -20,7 +20,7 @@ export function placeMenuPanel(head: Pose, distance: number): Pose {
 
 export function geometryMenuFixture(view: UiViewModel): MenuPresentation {
   const panel = view.panels[0];
-  if (panel === undefined || panel.anchor !== "menu") return { kind: "absent" };
+  if (panel === undefined) return { kind: "absent" };
   const context = { generation: 1, scope: { panelId: panel.id, viewKey: view.interactionScope } };
   const viewport = {
     size: panel.size, title: panel.title, background: "#123", opacity: 0.5,
