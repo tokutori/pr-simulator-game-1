@@ -1379,20 +1379,46 @@ pub(crate) fn supply_input(
     mut devices: ResMut<super::flight_devices::FlightDevices>,
 ) {
     use birdman_game_app::flight_input::FlightGamepadAcquisition;
+    let mut requested = match verification.stage {
+        VerificationStage::Pilot => [0.172, 0.172, 0.31],
+        VerificationStage::InputTrialFlight => [1.0, 0.0, 0.0],
+        _ => [0.0; 3],
+    };
     let axes = match session.game.flight_gamepad_acquisition() {
         FlightGamepadAcquisition::Unselected | FlightGamepadAcquisition::WaitingNeutral { .. } => {
             [0.0; 3]
         }
         FlightGamepadAcquisition::WaitingPilot {
             previous_target, ..
-        } => [0.0, 0.0, if previous_target <= 0.0 { 1.0 } else { -1.0 }],
-        FlightGamepadAcquisition::Active { .. } => match verification.stage {
-            VerificationStage::Pilot => [0.172, 0.172, 0.31],
-            VerificationStage::InputTrialFlight => [1.0, 0.0, 0.0],
-            _ => [0.0; 3],
-        },
+        } => {
+            requested[2] = pickup_pilot_axis(&session, previous_target);
+            requested
+        }
+        FlightGamepadAcquisition::Active { .. } => requested,
     };
     devices.verification_axes(axes);
+}
+
+fn pickup_pilot_axis(session: &NativeSession, previous: f64) -> f64 {
+    use birdman_game_app::flight_input::GAMEPAD_DEAD_ZONE;
+    let core = session.game.core_session();
+    let state = core
+        .snapshot()
+        .tail_flight_state()
+        .expect("Pilot acquisition requires a retained flight state");
+    let held = core
+        .tail_pilot_position_mapping()
+        .expect("Pilot acquisition requires the prepared mapping")
+        .normalized_target(state.pilot_position_target())
+        .expect("The retained pilot target is valid")
+        .value();
+    let margin = 16.0 * f64::EPSILON;
+    let target = if previous <= held {
+        (held + margin).min(1.0)
+    } else {
+        (held - margin).max(-1.0)
+    };
+    target.signum() * (GAMEPAD_DEAD_ZONE + (1.0 - GAMEPAD_DEAD_ZONE) * target.abs())
 }
 
 fn pilot_input_applied(session: &NativeSession) -> bool {
@@ -4395,6 +4421,41 @@ mod tests {
             initial.pilot_position_target()
         );
         assert!(matches!(verification.capture, CaptureState::Requested(_)));
+        app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+            Duration::from_millis(151),
+        ));
+        app.update();
+        app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+            Duration::from_millis(10),
+        ));
+        app.update();
+        app.update();
+        app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+            Duration::from_millis(100),
+        ));
+        for _ in 0..4 {
+            app.update();
+            let session = app.world().resource::<NativeSession>();
+            let input = session
+                .game
+                .core_session()
+                .flight_record()
+                .unwrap()
+                .samples()
+                .last()
+                .unwrap()
+                .controls
+                .input_from_previous
+                .unwrap();
+            if let birdman_game_core::TailPilotPositionCommand::Set(target) =
+                input.pilot_position_command()
+            {
+                assert!((target.value() - 0.25).abs() < 1.0e-12);
+            }
+        }
+        assert!(super::pilot_input_applied(
+            app.world().resource::<NativeSession>()
+        ));
     }
 
     #[test]

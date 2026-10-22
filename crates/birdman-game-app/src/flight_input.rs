@@ -6,7 +6,8 @@ use birdman_game_core::{
 };
 use serde::{Deserialize, Serialize};
 
-const GAMEPAD_DEAD_ZONE: f64 = 0.08;
+/// Inclusive neutral band for the shared standard-gamepad axes.
+pub const GAMEPAD_DEAD_ZONE: f64 = 0.08;
 
 /// A control binding observed by a platform keyboard adapter.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
