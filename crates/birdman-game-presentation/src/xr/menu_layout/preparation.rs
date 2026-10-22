@@ -78,12 +78,20 @@ pub fn prepare_game_ui_menu(
                     });
                 }
                 PreparationStep::Ready { geometry } => {
+                    let plan = requested.ok_or(MenuLayoutFailure::MissingTextMetrics)?;
+                    let measurements = observation
+                        .ok_or(MenuLayoutFailure::MissingTextMetrics)?
+                        .measurements;
                     return Ok(MenuLayoutReply::Ready {
-                        plan: Box::new(requested.ok_or(MenuLayoutFailure::MissingTextMetrics)?),
-                        measurements: observation
-                            .ok_or(MenuLayoutFailure::MissingTextMetrics)?
-                            .measurements,
-                        geometry,
+                        projection: Box::new(super::projection::project(
+                            view,
+                            frame,
+                            panel,
+                            &input,
+                            &plan,
+                            &measurements,
+                            &geometry,
+                        )?),
                     });
                 }
             }

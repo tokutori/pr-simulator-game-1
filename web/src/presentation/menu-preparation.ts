@@ -1,4 +1,4 @@
-import type { MenuFontIdentity, MenuFontMeasurer, MenuLayoutRequest } from "../render/contracts/menu-layout.js";
+import type { MenuFontIdentity, MenuFontMeasurer } from "../render/contracts/menu-layout.js";
 import type { MenuPresentation } from "../render/contracts/runtime.js";
 import type { MenuScrollContext, UiPanel } from "../render/contracts/ui.js";
 import type { ViewerFrame } from "../render/contracts/viewer-frame.js";
@@ -6,10 +6,9 @@ import type { MenuPreparationInput } from "../generated/menu-preparation-input.j
 import type { MenuLayoutReply } from "../generated/menu-layout-reply.js";
 import { menuCanvasSize } from "./menu-canvas.js";
 import type { MenuDrawingContext } from "./menu-canvas.js";
-import { menuDocumentFromGeometry, menuLayoutRequest, menuViewport } from "./menu-layout.js";
 
 export function prepareMenuPresentation(context: MenuDrawingContext, panel: UiPanel, scroll: MenuScrollContext,
-  progress: number, viewer: ViewerFrame, style: Readonly<{ theme: MenuLayoutRequest["theme"]; locale: string; font: MenuFontIdentity; viewRevision: number }>,
+  progress: number, viewer: ViewerFrame, style: Readonly<{ locale: string; font: MenuFontIdentity; viewRevision: number }>,
   prepare: (input: MenuPreparationInput, measure: MenuFontMeasurer) => MenuLayoutReply): MenuPresentation {
   if (panel.anchor !== "menu") return { kind: "absent" };
   context.save();
@@ -18,7 +17,7 @@ export function prepareMenuPresentation(context: MenuDrawingContext, panel: UiPa
     context.setLocale(style.locale);
     context.setTextAlign("left");
     context.setTextBaseline("alphabetic");
-    const reply = prepare({ panelId: panel.id, viewRevision: style.viewRevision, viewer, font: style.font, locale: style.locale },
+    const reply = prepare({ panelId: panel.id, viewRevision: style.viewRevision, viewer, font: style.font, locale: style.locale, progress, generation: scroll.generation },
       (value, fontMeters, weight, width, height) => {
         const size = menuCanvasSize({ width, height });
         const verticalScale = height / size.height;
@@ -30,12 +29,8 @@ export function prepareMenuPresentation(context: MenuDrawingContext, panel: UiPa
           metric.right * horizontalScale, metric.ascent * verticalScale, metric.descent * verticalScale);
       });
     if (reply.kind === "unavailable") return reply;
-    if (reply.kind !== "ready") throw new Error("Shared Menu preparation returned an unexpected reply");
-    const fittedPanel = { ...panel, size: reply.plan.source.surfaceSize, title: reply.plan.source.title };
-    const request = menuLayoutRequest(fittedPanel, style.theme, reply.plan);
-    const result = menuDocumentFromGeometry(request, reply.measurements, reply.geometry);
-    return result.kind === "unavailable" ? result
-      : { kind: "ready", panel: fittedPanel, viewport: menuViewport(result.document, progress), context: scroll };
+    const fittedPanel = { ...panel, size: reply.projection.size, title: reply.projection.title };
+    return { kind: "ready", panel: fittedPanel, viewport: reply.projection, context: scroll };
   } catch (cause) {
     if (typeof cause === "string" || cause instanceof RangeError) return { kind: "unavailable", reason: "invalid-layout" };
     throw cause;

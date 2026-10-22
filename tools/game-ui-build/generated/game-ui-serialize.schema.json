@@ -5363,123 +5363,22 @@
         }
       ]
     },
-    "MenuChartLabel": {
+    "MenuControlGeometry": {
       "additionalProperties": false,
-      "description": "Shared chart label projected into the menu's text measurement pass.",
+      "description": "Geometry and scale of one published control.",
       "properties": {
-        "index": {
-          "description": "Stable source index.",
-          "format": "uint",
-          "minimum": 0,
-          "type": "integer"
+        "bounds": {
+          "$ref": "#/$defs/MenuRect",
+          "description": "Complete document rectangle."
         },
-        "role": {
-          "$ref": "#/$defs/MenuTextRole",
-          "description": "Logical text role."
-        },
-        "text": {
-          "$ref": "#/$defs/GameUiChartText",
-          "description": "Shared chart label descriptor."
-        }
-      },
-      "required": [
-        "role",
-        "index",
-        "text"
-      ],
-      "type": "object"
-    },
-    "MenuChartLayout": {
-      "additionalProperties": false,
-      "description": "Static chart geometry needed by layout, independent of sample arrays.",
-      "properties": {
-        "labels": {
-          "description": "Ordered chart text descriptors.",
+        "identity": {
+          "description": "Published control identity and widget kind.",
           "items": {
-            "$ref": "#/$defs/MenuChartLabel"
-          },
-          "type": "array"
-        },
-        "legend": {
-          "description": "Shared legend entries.",
-          "items": {
-            "$ref": "#/$defs/GameUiChartLegend"
-          },
-          "type": "array"
-        },
-        "plot": {
-          "description": "Chart plot rectangle ordered left, top, right and bottom.",
-          "items": {
-            "format": "double",
-            "type": "number"
-          },
-          "maxItems": 4,
-          "minItems": 4,
-          "type": "array"
-        },
-        "size": {
-          "description": "Chart viewport width and height.",
-          "items": {
-            "format": "double",
-            "type": "number"
+            "type": "string"
           },
           "maxItems": 2,
           "minItems": 2,
           "type": "array"
-        },
-        "tickFontSize": {
-          "description": "Reference font size for chart label scaling.",
-          "format": "double",
-          "type": "number"
-        }
-      },
-      "required": [
-        "size",
-        "plot",
-        "tickFontSize",
-        "labels",
-        "legend"
-      ],
-      "type": "object"
-    },
-    "MenuChartProjection": {
-      "additionalProperties": false,
-      "description": "Spatial chart text projection around its baseline anchor.",
-      "properties": {
-        "anchor": {
-          "$ref": "#/$defs/GameUiChartTextAnchor",
-          "description": "Horizontal text anchor."
-        },
-        "baseline": {
-          "$ref": "#/$defs/MenuPoint",
-          "description": "Metric alphabetic baseline anchor."
-        },
-        "rotationDegrees": {
-          "description": "Rotation about the baseline in degrees.",
-          "format": "double",
-          "type": "number"
-        }
-      },
-      "required": [
-        "baseline",
-        "rotationDegrees",
-        "anchor"
-      ],
-      "type": "object"
-    },
-    "MenuControlPlacement": {
-      "additionalProperties": false,
-      "description": "Placement of one control and its measured labels.",
-      "properties": {
-        "bounds": {
-          "$ref": "#/$defs/MenuRect",
-          "description": "Metric document bounds."
-        },
-        "controlIndex": {
-          "description": "Index of the corresponding source control.",
-          "format": "uint",
-          "minimum": 0,
-          "type": "integer"
         },
         "plot": {
           "anyOf": [
@@ -5490,109 +5389,29 @@
               "type": "null"
             }
           ],
-          "description": "Chart plot rectangle ordered left, top, right and bottom."
+          "description": "Optional chart plot rectangle."
         },
-        "texts": {
-          "description": "Ordered measurement requests or placed labels.",
+        "range": {
+          "description": "Optional range minimum, maximum and step.",
           "items": {
-            "$ref": "#/$defs/MenuTextPlacement"
+            "format": "double",
+            "type": "number"
           },
-          "type": "array"
+          "maxItems": 3,
+          "minItems": 3,
+          "type": [
+            "array",
+            "null"
+          ]
         }
       },
       "required": [
-        "controlIndex",
+        "identity",
         "bounds",
-        "texts",
-        "plot"
+        "plot",
+        "range"
       ],
       "type": "object"
-    },
-    "MenuDocumentGeometry": {
-      "additionalProperties": false,
-      "description": "Shared document geometry; source objects remain with the adapter.",
-      "properties": {
-        "caption": {
-          "$ref": "#/$defs/MenuTextPlacement",
-          "description": "Panel description."
-        },
-        "contentHeightMeters": {
-          "description": "Full scrollable content height.",
-          "format": "double",
-          "type": "number"
-        },
-        "controls": {
-          "description": "Ordered source controls or allocated row items.",
-          "items": {
-            "$ref": "#/$defs/MenuControlPlacement"
-          },
-          "type": "array"
-        },
-        "footerHeightMeters": {
-          "description": "Measured page-control height.",
-          "format": "double",
-          "type": "number"
-        },
-        "nextIndex": {
-          "description": "Measurement index for the next-page label.",
-          "format": "uint",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "previousIndex": {
-          "description": "Measurement index for the previous-page label.",
-          "format": "uint",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "sectionHeadings": {
-          "description": "Placed section headings.",
-          "items": {
-            "$ref": "#/$defs/MenuTextPlacement"
-          },
-          "type": "array"
-        },
-        "title": {
-          "$ref": "#/$defs/MenuTextPlacement",
-          "description": "Panel heading."
-        }
-      },
-      "required": [
-        "title",
-        "caption",
-        "sectionHeadings",
-        "controls",
-        "contentHeightMeters",
-        "footerHeightMeters",
-        "previousIndex",
-        "nextIndex"
-      ],
-      "type": "object"
-    },
-    "MenuFixedRole": {
-      "description": "Logical role of one fixed menu text.",
-      "oneOf": [
-        {
-          "const": "title",
-          "description": "Panel title.",
-          "type": "string"
-        },
-        {
-          "const": "caption",
-          "description": "Panel description.",
-          "type": "string"
-        },
-        {
-          "const": "previous",
-          "description": "Previous-page label.",
-          "type": "string"
-        },
-        {
-          "const": "next",
-          "description": "Next-page label.",
-          "type": "string"
-        }
-      ]
     },
     "MenuFocus": {
       "description": "Focus within the current menu revision.",
@@ -5681,64 +5500,51 @@
         }
       ]
     },
-    "MenuHeading": {
+    "MenuGeometryIdentity": {
       "additionalProperties": false,
-      "description": "One section heading retained in the row plan.",
+      "description": "Unscrolled input geometry used to invalidate a changed menu layout.",
       "properties": {
-        "id": {
-          "description": "Published source identifier.",
-          "type": "string"
+        "clips": {
+          "description": "Content and previous/next page clipping rectangles.",
+          "items": {
+            "$ref": "#/$defs/MenuRect"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
         },
-        "label": {
-          "description": "Already localized visible label.",
-          "type": "string"
+        "controls": {
+          "description": "Published controls and unscrolled hit geometry.",
+          "items": {
+            "$ref": "#/$defs/MenuControlGeometry"
+          },
+          "type": "array"
+        },
+        "headings": {
+          "description": "Heading and caption bounds.",
+          "items": {
+            "$ref": "#/$defs/MenuRect"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "maximumOffsetMeters": {
+          "description": "Maximum scroll offset.",
+          "format": "double",
+          "type": "number"
+        },
+        "size": {
+          "$ref": "#/$defs/MenuSize",
+          "description": "Fitted surface size."
         }
       },
       "required": [
-        "id",
-        "label"
-      ],
-      "type": "object"
-    },
-    "MenuHeadingRole": {
-      "description": "Section heading marker.",
-      "oneOf": [
-        {
-          "const": "heading",
-          "description": "Section heading marker.",
-          "type": "string"
-        }
-      ]
-    },
-    "MenuLayoutControl": {
-      "additionalProperties": false,
-      "description": "Compact source control, excluding record samples and semantic actions.",
-      "properties": {
-        "id": {
-          "description": "Published source identifier.",
-          "type": "string"
-        },
-        "label": {
-          "description": "Already localized visible label.",
-          "type": "string"
-        },
-        "section": {
-          "description": "Published section membership.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "widget": {
-          "$ref": "#/$defs/MenuWidget",
-          "description": "Widget presentation needed by measurement."
-        }
-      },
-      "required": [
-        "id",
-        "section",
-        "label",
-        "widget"
+        "size",
+        "clips",
+        "maximumOffsetMeters",
+        "headings",
+        "controls"
       ],
       "type": "object"
     },
@@ -5807,54 +5613,6 @@
         }
       ]
     },
-    "MenuLayoutPlan": {
-      "additionalProperties": false,
-      "description": "Prepared layout and its complete measurement contract.",
-      "properties": {
-        "gapMeters": {
-          "description": "Spacing between rows in metres.",
-          "format": "double",
-          "type": "number"
-        },
-        "lineHeightMeters": {
-          "description": "Line spacing in metres.",
-          "format": "double",
-          "type": "number"
-        },
-        "paddingMeters": {
-          "description": "Inner padding in metres.",
-          "format": "double",
-          "type": "number"
-        },
-        "rows": {
-          "description": "Responsive section and control allocation.",
-          "items": {
-            "$ref": "#/$defs/MenuRow"
-          },
-          "type": "array"
-        },
-        "source": {
-          "$ref": "#/$defs/MenuLayoutSource",
-          "description": "Compact source and typography observation."
-        },
-        "texts": {
-          "description": "Ordered measurement requests or placed labels.",
-          "items": {
-            "$ref": "#/$defs/MenuTextRequest"
-          },
-          "type": "array"
-        }
-      },
-      "required": [
-        "source",
-        "lineHeightMeters",
-        "paddingMeters",
-        "gapMeters",
-        "rows",
-        "texts"
-      ],
-      "type": "object"
-    },
     "MenuLayoutReply": {
       "description": "Layout result or a precise measurement failure.",
       "oneOf": [
@@ -5862,45 +5620,13 @@
           "additionalProperties": false,
           "description": "Complete resolved document geometry.",
           "properties": {
-            "geometry": {
-              "$ref": "#/$defs/MenuDocumentGeometry",
-              "description": "Resolved document geometry."
-            },
             "kind": {
               "const": "ready",
               "type": "string"
             },
-            "measurements": {
-              "description": "Observed text for the fitted contract.",
-              "items": {
-                "$ref": "#/$defs/MenuTextMeasurement"
-              },
-              "type": "array"
-            },
-            "plan": {
-              "$ref": "#/$defs/MenuLayoutPlan",
-              "description": "Complete fitted text request contract."
-            }
-          },
-          "required": [
-            "kind",
-            "plan",
-            "measurements",
-            "geometry"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Resolved viewport and corresponding ordered batch projections.",
-          "properties": {
-            "kind": {
-              "const": "viewport",
-              "type": "string"
-            },
             "projection": {
-              "$ref": "#/$defs/MenuViewportProjection",
-              "description": "Scroll geometry, clipped rectangles and transformed points."
+              "$ref": "#/$defs/MenuProjection",
+              "description": "Resolved paint operations and input surface."
             }
           },
           "required": [
@@ -5930,147 +5656,221 @@
         }
       ]
     },
-    "MenuLayoutSource": {
-      "additionalProperties": false,
-      "description": "Complete source and typography observation for one layout pass.",
-      "properties": {
-        "caption": {
-          "description": "Panel description.",
-          "type": "string"
+    "MenuPaintItem": {
+      "description": "Engine-independent paint operation in surface coordinates.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Filled rectangle or horizontal colour gradient.",
+          "properties": {
+            "bounds": {
+              "$ref": "#/$defs/MenuRect",
+              "description": "Surface bounds in metres."
+            },
+            "color": {
+              "description": "Fill colour.",
+              "type": "string"
+            },
+            "gradient": {
+              "description": "Optional left-to-right gradient.",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "kind": {
+              "const": "rectangle",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "bounds",
+            "color",
+            "gradient"
+          ],
+          "type": "object"
         },
-        "controls": {
-          "description": "Ordered source controls or allocated row items.",
+        {
+          "additionalProperties": false,
+          "description": "Measured line with its resolved alphabetic baseline.",
+          "properties": {
+            "anchor": {
+              "$ref": "#/$defs/MenuPoint",
+              "description": "Alphabetic baseline in surface metres."
+            },
+            "color": {
+              "description": "Text colour.",
+              "type": "string"
+            },
+            "font": {
+              "$ref": "#/$defs/MenuFont",
+              "description": "Observed font resource."
+            },
+            "fontMeters": {
+              "description": "Font size in metres.",
+              "format": "double",
+              "type": "number"
+            },
+            "identity": {
+              "description": "Font-measurement identity.",
+              "type": "string"
+            },
+            "kind": {
+              "const": "text",
+              "type": "string"
+            },
+            "locale": {
+              "description": "Text-shaping locale.",
+              "type": "string"
+            },
+            "rotationDegrees": {
+              "description": "Rotation about the baseline.",
+              "format": "double",
+              "type": "number"
+            },
+            "value": {
+              "description": "Visible line content.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "identity",
+            "value",
+            "font",
+            "fontMeters",
+            "locale",
+            "anchor",
+            "rotationDegrees",
+            "color"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Chart or guide segment.",
+          "properties": {
+            "color": {
+              "description": "Stroke colour.",
+              "type": "string"
+            },
+            "end": {
+              "$ref": "#/$defs/MenuPoint",
+              "description": "Segment end in metres."
+            },
+            "kind": {
+              "const": "line",
+              "type": "string"
+            },
+            "opacity": {
+              "description": "Stroke opacity.",
+              "format": "double",
+              "type": "number"
+            },
+            "start": {
+              "$ref": "#/$defs/MenuPoint",
+              "description": "Segment start in metres."
+            },
+            "widthPx": {
+              "description": "Stroke width in texture pixels.",
+              "format": "double",
+              "type": "number"
+            }
+          },
+          "required": [
+            "kind",
+            "start",
+            "end",
+            "color",
+            "widthPx",
+            "opacity"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Screen-sized sample marker.",
+          "properties": {
+            "color": {
+              "description": "Fill colour.",
+              "type": "string"
+            },
+            "kind": {
+              "const": "marker",
+              "type": "string"
+            },
+            "point": {
+              "$ref": "#/$defs/MenuPoint",
+              "description": "Marker centre in surface metres."
+            },
+            "sizePx": {
+              "description": "Square side in texture pixels.",
+              "format": "double",
+              "type": "number"
+            }
+          },
+          "required": [
+            "kind",
+            "point",
+            "sizePx",
+            "color"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Nested clipping for plot primitives.",
+          "properties": {
+            "clip": {
+              "$ref": "#/$defs/MenuRect",
+              "description": "Plot clipping rectangle in surface metres."
+            },
+            "items": {
+              "description": "Ordered plot operations.",
+              "items": {
+                "$ref": "#/$defs/MenuPaintItem"
+              },
+              "type": "array"
+            },
+            "kind": {
+              "const": "plot",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "clip",
+            "items"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "MenuPaintLayer": {
+      "additionalProperties": false,
+      "description": "Clipped spatial UI paint layer.",
+      "properties": {
+        "clip": {
+          "$ref": "#/$defs/MenuRect",
+          "description": "Surface-space clipping bounds in metres."
+        },
+        "items": {
+          "description": "Ordered paint operations.",
           "items": {
-            "$ref": "#/$defs/MenuLayoutControl"
+            "$ref": "#/$defs/MenuPaintItem"
           },
           "type": "array"
-        },
-        "font": {
-          "$ref": "#/$defs/MenuFont",
-          "description": "Observed font identity."
-        },
-        "fontMeters": {
-          "description": "Nominal font size in metres.",
-          "format": "double",
-          "type": "number"
-        },
-        "locale": {
-          "description": "Explicit text measurement locale.",
-          "type": "string"
-        },
-        "nextLabel": {
-          "description": "Localized next-page label.",
-          "type": "string"
-        },
-        "panelId": {
-          "description": "Published panel identifier.",
-          "type": "string"
-        },
-        "previousLabel": {
-          "description": "Localized previous-page label.",
-          "type": "string"
-        },
-        "sections": {
-          "description": "Declared sections or implicit vertical flow.",
-          "items": {
-            "$ref": "#/$defs/GameUiSection"
-          },
-          "type": [
-            "array",
-            "null"
-          ]
-        },
-        "surfaceSize": {
-          "$ref": "#/$defs/MenuSize",
-          "description": "Metric width and height of the menu surface."
-        },
-        "title": {
-          "description": "Panel heading.",
-          "type": "string"
         }
       },
       "required": [
-        "panelId",
-        "title",
-        "sections",
-        "controls",
-        "surfaceSize",
-        "fontMeters",
-        "font",
-        "locale",
-        "caption",
-        "previousLabel",
-        "nextLabel"
-      ],
-      "type": "object"
-    },
-    "MenuLineGeometry": {
-      "additionalProperties": false,
-      "description": "Baseline and ink bounds of one already measured line.",
-      "properties": {
-        "anchor": {
-          "$ref": "#/$defs/MenuPoint",
-          "description": "Horizontal text anchor."
-        },
-        "bounds": {
-          "$ref": "#/$defs/MenuRect",
-          "description": "Metric document bounds."
-        }
-      },
-      "required": [
-        "anchor",
-        "bounds"
-      ],
-      "type": "object"
-    },
-    "MenuMeasuredLine": {
-      "additionalProperties": false,
-      "description": "One measured line with signed ink bearings in metres.",
-      "properties": {
-        "advanceMeters": {
-          "description": "Measured horizontal text advance.",
-          "format": "double",
-          "type": "number"
-        },
-        "ascentMeters": {
-          "description": "Measured ink ascent.",
-          "format": "double",
-          "type": "number"
-        },
-        "descentMeters": {
-          "description": "Measured ink descent.",
-          "format": "double",
-          "type": "number"
-        },
-        "leftMeters": {
-          "description": "Signed left ink bearing.",
-          "format": "double",
-          "type": "number"
-        },
-        "paragraphIndex": {
-          "description": "Zero-based index of the original explicit paragraph.",
-          "format": "uint",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "rightMeters": {
-          "description": "Signed right ink bearing.",
-          "format": "double",
-          "type": "number"
-        },
-        "value": {
-          "description": "Already formatted content or current toggle selection.",
-          "type": "string"
-        }
-      },
-      "required": [
-        "paragraphIndex",
-        "value",
-        "advanceMeters",
-        "leftMeters",
-        "rightMeters",
-        "ascentMeters",
-        "descentMeters"
+        "clip",
+        "items"
       ],
       "type": "object"
     },
@@ -6092,6 +5892,77 @@
       "required": [
         "x",
         "y"
+      ],
+      "type": "object"
+    },
+    "MenuProjection": {
+      "additionalProperties": false,
+      "description": "Prepared painting and input geometry from one published UI and font observation.",
+      "properties": {
+        "background": {
+          "description": "Full-surface background colour.",
+          "type": "string"
+        },
+        "content": {
+          "$ref": "#/$defs/MenuPaintLayer",
+          "description": "Clipped document painting."
+        },
+        "footer": {
+          "description": "Fixed page-control painting.",
+          "items": {
+            "$ref": "#/$defs/MenuPaintItem"
+          },
+          "type": "array"
+        },
+        "geometryKey": {
+          "$ref": "#/$defs/MenuGeometryIdentity",
+          "description": "Unscrolled layout identity for input-generation invalidation."
+        },
+        "maximumOffsetMeters": {
+          "description": "Maximum scroll offset in metres.",
+          "format": "double",
+          "type": "number"
+        },
+        "offsetMeters": {
+          "description": "Current scroll offset in metres.",
+          "format": "double",
+          "type": "number"
+        },
+        "opacity": {
+          "description": "Background opacity.",
+          "format": "double",
+          "type": "number"
+        },
+        "pageProgress": {
+          "description": "Normalized increment for one visible page.",
+          "format": "double",
+          "type": "number"
+        },
+        "size": {
+          "$ref": "#/$defs/MenuSize",
+          "description": "Fitted surface dimensions in metres."
+        },
+        "surface": {
+          "$ref": "#/$defs/XrPointerSurface",
+          "description": "Enabled targets in the same surface coordinates as the painting."
+        },
+        "title": {
+          "description": "Published panel title.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "size",
+        "title",
+        "background",
+        "opacity",
+        "content",
+        "footer",
+        "surface",
+        "pageProgress",
+        "offsetMeters",
+        "maximumOffsetMeters",
+        "geometryKey"
       ],
       "type": "object"
     },
@@ -6125,63 +5996,6 @@
         "y",
         "width",
         "height"
-      ],
-      "type": "object"
-    },
-    "MenuRow": {
-      "additionalProperties": false,
-      "description": "One responsive menu row.",
-      "properties": {
-        "controls": {
-          "description": "Ordered source controls or allocated row items.",
-          "items": {
-            "$ref": "#/$defs/MenuRowItem"
-          },
-          "type": "array"
-        },
-        "heading": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/MenuHeading"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Optional heading at the start of a section."
-        }
-      },
-      "required": [
-        "heading",
-        "controls"
-      ],
-      "type": "object"
-    },
-    "MenuRowItem": {
-      "additionalProperties": false,
-      "description": "Control reference and its metric column allocation.",
-      "properties": {
-        "index": {
-          "description": "Stable source index.",
-          "format": "uint",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "left": {
-          "description": "Horizontal column offset in metres.",
-          "format": "double",
-          "type": "number"
-        },
-        "width": {
-          "description": "Width in metres.",
-          "format": "double",
-          "type": "number"
-        }
-      },
-      "required": [
-        "index",
-        "left",
-        "width"
       ],
       "type": "object"
     },
@@ -6287,475 +6101,6 @@
         "height"
       ],
       "type": "object"
-    },
-    "MenuTextMeasurement": {
-      "additionalProperties": false,
-      "description": "Measured lines associated with one exact request identity.",
-      "properties": {
-        "identity": {
-          "description": "Exact identity of the measurement request.",
-          "type": "string"
-        },
-        "lines": {
-          "description": "Measured lines preserving explicit paragraphs.",
-          "items": {
-            "$ref": "#/$defs/MenuMeasuredLine"
-          },
-          "type": "array"
-        }
-      },
-      "required": [
-        "identity",
-        "lines"
-      ],
-      "type": "object"
-    },
-    "MenuTextPlacement": {
-      "additionalProperties": false,
-      "description": "Placement of one measured text within its document.",
-      "properties": {
-        "bounds": {
-          "$ref": "#/$defs/MenuRect",
-          "description": "Metric document bounds."
-        },
-        "chartProjection": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/MenuChartProjection"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Optional chart baseline projection."
-        },
-        "lineGeometry": {
-          "description": "Projected line anchors and ink bounds.",
-          "items": {
-            "$ref": "#/$defs/MenuLineGeometry"
-          },
-          "type": "array"
-        },
-        "textIndex": {
-          "description": "Index of the corresponding measurement request.",
-          "format": "uint",
-          "minimum": 0,
-          "type": "integer"
-        }
-      },
-      "required": [
-        "textIndex",
-        "bounds",
-        "lineGeometry"
-      ],
-      "type": "object"
-    },
-    "MenuTextRequest": {
-      "additionalProperties": false,
-      "description": "Adapter measurement request derived from the shared row plan.",
-      "properties": {
-        "chartText": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/GameUiChartText"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Optional shared chart text descriptor."
-        },
-        "font": {
-          "$ref": "#/$defs/MenuFont",
-          "description": "Observed font identity."
-        },
-        "fontMeters": {
-          "description": "Nominal font size in metres.",
-          "format": "double",
-          "type": "number"
-        },
-        "identity": {
-          "description": "Exact identity of the measurement request.",
-          "type": "string"
-        },
-        "legend": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/GameUiChartLegend"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Shared legend entries."
-        },
-        "locale": {
-          "description": "Explicit text measurement locale.",
-          "type": "string"
-        },
-        "slot": {
-          "$ref": "#/$defs/MenuTextSlot",
-          "description": "Text's logical source location."
-        },
-        "value": {
-          "description": "Already formatted content or current toggle selection.",
-          "type": "string"
-        },
-        "widthMeters": {
-          "description": "Maximum measured line width in metres.",
-          "format": "double",
-          "type": "number"
-        }
-      },
-      "required": [
-        "identity",
-        "slot",
-        "value",
-        "locale",
-        "fontMeters",
-        "font",
-        "widthMeters"
-      ],
-      "type": "object"
-    },
-    "MenuTextRole": {
-      "description": "Logical role of one measured control text.",
-      "oneOf": [
-        {
-          "const": "label",
-          "description": "Control label.",
-          "type": "string"
-        },
-        {
-          "const": "value",
-          "description": "Current control value.",
-          "type": "string"
-        },
-        {
-          "const": "x-axis",
-          "description": "Horizontal axis title.",
-          "type": "string"
-        },
-        {
-          "const": "y-axis",
-          "description": "Vertical axis title.",
-          "type": "string"
-        },
-        {
-          "const": "x-tick",
-          "description": "Horizontal axis tick.",
-          "type": "string"
-        },
-        {
-          "const": "y-tick",
-          "description": "Vertical axis tick.",
-          "type": "string"
-        },
-        {
-          "const": "legend",
-          "description": "Legend entry.",
-          "type": "string"
-        },
-        {
-          "const": "annotation",
-          "description": "Chart annotation.",
-          "type": "string"
-        },
-        {
-          "const": "north",
-          "description": "North reference.",
-          "type": "string"
-        },
-        {
-          "const": "scale",
-          "description": "Map scale reference.",
-          "type": "string"
-        }
-      ]
-    },
-    "MenuTextSlot": {
-      "description": "Stable identity of a measured text within its source panel.",
-      "oneOf": [
-        {
-          "additionalProperties": false,
-          "description": "Fixed document text.",
-          "properties": {
-            "kind": {
-              "const": "fixed",
-              "type": "string"
-            },
-            "role": {
-              "$ref": "#/$defs/MenuFixedRole",
-              "description": "Logical text role."
-            }
-          },
-          "required": [
-            "kind",
-            "role"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Section heading.",
-          "properties": {
-            "kind": {
-              "const": "section",
-              "type": "string"
-            },
-            "role": {
-              "$ref": "#/$defs/MenuHeadingRole",
-              "description": "Logical text role."
-            },
-            "sectionId": {
-              "description": "Published section identifier.",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind",
-            "role",
-            "sectionId"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Control-owned text.",
-          "properties": {
-            "controlId": {
-              "description": "Published control identifier.",
-              "type": "string"
-            },
-            "index": {
-              "description": "Stable source index.",
-              "format": "uint",
-              "minimum": 0,
-              "type": "integer"
-            },
-            "kind": {
-              "const": "control",
-              "type": "string"
-            },
-            "role": {
-              "$ref": "#/$defs/MenuTextRole",
-              "description": "Logical text role."
-            }
-          },
-          "required": [
-            "kind",
-            "controlId",
-            "role",
-            "index"
-          ],
-          "type": "object"
-        }
-      ]
-    },
-    "MenuViewportProjection": {
-      "additionalProperties": false,
-      "description": "Shared viewport placement and ordered coordinate projections.",
-      "properties": {
-        "contentClip": {
-          "$ref": "#/$defs/MenuRect",
-          "description": "Surface-space visible content rectangle."
-        },
-        "documentPoints": {
-          "description": "Center-origin panel coordinates in request order.",
-          "items": {
-            "$ref": "#/$defs/MenuPoint"
-          },
-          "type": "array"
-        },
-        "maximumOffsetMeters": {
-          "description": "Full metric scroll range.",
-          "format": "double",
-          "type": "number"
-        },
-        "nextBounds": {
-          "$ref": "#/$defs/MenuRect",
-          "description": "Next-page surface rectangle."
-        },
-        "offsetMeters": {
-          "description": "Current metric scroll offset.",
-          "format": "double",
-          "type": "number"
-        },
-        "pageProgress": {
-          "description": "Normalized increment for one visible page.",
-          "format": "double",
-          "type": "number"
-        },
-        "panelPoints": {
-          "description": "Document coordinates, absent for panel points outside the content clip.",
-          "items": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/MenuPoint"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "type": "array"
-        },
-        "previousBounds": {
-          "$ref": "#/$defs/MenuRect",
-          "description": "Previous-page surface rectangle."
-        },
-        "progress": {
-          "description": "Current normalized scroll position.",
-          "format": "double",
-          "type": "number"
-        },
-        "rectangles": {
-          "description": "Translated and clipped rectangles in request order.",
-          "items": {
-            "$ref": "#/$defs/MenuViewportRect"
-          },
-          "type": "array"
-        }
-      },
-      "required": [
-        "contentClip",
-        "previousBounds",
-        "nextBounds",
-        "progress",
-        "offsetMeters",
-        "maximumOffsetMeters",
-        "pageProgress",
-        "rectangles",
-        "panelPoints",
-        "documentPoints"
-      ],
-      "type": "object"
-    },
-    "MenuViewportRect": {
-      "additionalProperties": false,
-      "description": "Surface-space rectangle and its intersection with the visible content.",
-      "properties": {
-        "full": {
-          "$ref": "#/$defs/MenuRect",
-          "description": "Translated rectangle before clipping, also used by range input tracks."
-        },
-        "visible": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/MenuRect"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Intersection with content, or absent when entirely outside."
-        }
-      },
-      "required": [
-        "full",
-        "visible"
-      ],
-      "type": "object"
-    },
-    "MenuWidget": {
-      "description": "Widget presentation data used for layout and measurement.",
-      "oneOf": [
-        {
-          "additionalProperties": false,
-          "description": "Action or choice button.",
-          "properties": {
-            "kind": {
-              "const": "button",
-              "type": "string"
-            },
-            "presentation": {
-              "$ref": "#/$defs/GameUiButtonPresentation",
-              "description": "Shared button presentation."
-            }
-          },
-          "required": [
-            "kind",
-            "presentation"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Boolean selection.",
-          "properties": {
-            "kind": {
-              "const": "toggle",
-              "type": "string"
-            },
-            "value": {
-              "description": "Already formatted content or current toggle selection.",
-              "type": "boolean"
-            }
-          },
-          "required": [
-            "kind",
-            "value"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Numeric range selection.",
-          "properties": {
-            "displayValue": {
-              "description": "Formatted range selection.",
-              "type": "string"
-            },
-            "kind": {
-              "const": "range",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind",
-            "displayValue"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Read-only status.",
-          "properties": {
-            "kind": {
-              "const": "status",
-              "type": "string"
-            },
-            "value": {
-              "description": "Already formatted content or current toggle selection.",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind",
-            "value"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Static chart layout.",
-          "properties": {
-            "kind": {
-              "const": "chart",
-              "type": "string"
-            },
-            "layout": {
-              "$ref": "#/$defs/MenuChartLayout",
-              "description": "Static chart layout."
-            }
-          },
-          "required": [
-            "kind",
-            "layout"
-          ],
-          "type": "object"
-        }
-      ]
     },
     "PhysicalControlsDocument": {
       "oneOf": [
@@ -9908,6 +9253,67 @@
         }
       ]
     },
+    "XrPointerControl": {
+      "description": "Widget value and uncut track required for shared activation resolution.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Toggle's observed value.",
+          "properties": {
+            "kind": {
+              "const": "toggle",
+              "type": "string"
+            },
+            "value": {
+              "description": "Current selection.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Range's shared scale and complete track before clipping.",
+          "properties": {
+            "kind": {
+              "const": "range",
+              "type": "string"
+            },
+            "maximum": {
+              "description": "Upper bound.",
+              "format": "double",
+              "type": "number"
+            },
+            "minimum": {
+              "description": "Lower bound.",
+              "format": "double",
+              "type": "number"
+            },
+            "step": {
+              "description": "Positive step size.",
+              "format": "double",
+              "type": "number"
+            },
+            "track": {
+              "$ref": "#/$defs/XrPointerRect",
+              "description": "Complete slider rectangle in surface coordinates."
+            }
+          },
+          "required": [
+            "kind",
+            "minimum",
+            "maximum",
+            "step",
+            "track"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "XrPointerHit": {
       "description": "Visible metric cursor and its typed target.",
       "properties": {
@@ -10018,6 +9424,48 @@
       ],
       "type": "object"
     },
+    "XrPointerRect": {
+      "description": "Rectangle in surface coordinates: left, top, width and height, in metres.",
+      "items": {
+        "format": "double",
+        "type": "number"
+      },
+      "maxItems": 4,
+      "minItems": 4,
+      "type": "array"
+    },
+    "XrPointerRegion": {
+      "additionalProperties": false,
+      "description": "One enabled control or page rectangle after measurement and clipping.",
+      "properties": {
+        "bounds": {
+          "$ref": "#/$defs/XrPointerRect",
+          "description": "Visible hit rectangle in surface coordinates."
+        },
+        "control": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/XrPointerControl"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Interactive widget data; an omitted descriptor represents a button."
+        },
+        "target": {
+          "$ref": "#/$defs/XrPointerTarget",
+          "description": "Typed control or page target."
+        }
+      },
+      "required": [
+        "target",
+        "bounds",
+        "control"
+      ],
+      "type": "object"
+    },
     "XrPointerSource": {
       "description": "Runtime input identity, stable for one presentation session.",
       "oneOf": [
@@ -10085,6 +9533,47 @@
           "type": "object"
         }
       ]
+    },
+    "XrPointerSurface": {
+      "additionalProperties": false,
+      "description": "Measured surface geometry owned until its scope or layout changes.",
+      "properties": {
+        "regions": {
+          "description": "Enabled rectangles in drawing/hit priority order.",
+          "items": {
+            "$ref": "#/$defs/XrPointerRegion"
+          },
+          "type": "array"
+        },
+        "revision": {
+          "default": 0,
+          "description": "Layout/input revision within the same semantic menu.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "scope": {
+          "description": "Adapter's exact scene, overlay, panel and scroll context identity.",
+          "type": "string"
+        },
+        "sizeM": {
+          "description": "Surface width and height in metres.",
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        }
+      },
+      "required": [
+        "scope",
+        "revision",
+        "sizeM",
+        "regions"
+      ],
+      "type": "object"
     },
     "XrPointerTarget": {
       "description": "Semantic target of a measured interactive rectangle.",

@@ -245,7 +245,7 @@ fn chart_ink_uses_signed_bearings_and_rotated_baseline_coordinates() {
 }
 
 #[test]
-fn viewport_projects_unclipped_tracks_clipped_ink_and_reversible_points() {
+fn viewport_projects_unclipped_tracks_and_clipped_ink() {
     let source = MenuViewportSource {
         surface_size: MenuSize {
             width: 2.0,
@@ -279,11 +279,6 @@ fn viewport_projects_unclipped_tracks_clipped_ink_and_reversible_points() {
                 height: 0.0,
             },
         ],
-        vec![
-            MenuPoint { x: -0.7, y: 0.325 },
-            MenuPoint { x: 1.0, y: 0.5 },
-        ],
-        vec![MenuPoint { x: 0.2, y: 0.8 }],
     )
     .unwrap();
     assert!((projection.content_clip.height - 0.55).abs() < 1.0e-12);
@@ -295,19 +290,11 @@ fn viewport_projects_unclipped_tracks_clipped_ink_and_reversible_points() {
     assert!((clipped.height - 0.15).abs() < 1.0e-12);
     assert!(projection.rectangles[1].visible.is_none());
     assert!(projection.rectangles[2].visible.is_none());
-    let restored = projection.panel_points[0].unwrap();
-    assert!((restored.x - 0.2).abs() < 1.0e-12);
-    assert!((restored.y - 0.8).abs() < 1.0e-12);
-    assert!(projection.panel_points[1].is_none());
-    assert!((projection.document_points[0].x + 0.7).abs() < 1.0e-12);
-    assert!((projection.document_points[0].y - 0.325).abs() < 1.0e-12);
     let fitting = viewport::project(
         MenuViewportSource {
             content_height_meters: 0.5,
             ..source.clone()
         },
-        vec![],
-        vec![],
         vec![],
     )
     .unwrap();
@@ -320,8 +307,6 @@ fn viewport_projects_unclipped_tracks_clipped_ink_and_reversible_points() {
                 progress: 1.1,
                 ..source
             },
-            vec![],
-            vec![],
             vec![]
         ),
         Err(MenuLayoutFailure::InvalidLayout)

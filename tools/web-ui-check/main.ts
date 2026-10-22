@@ -13,6 +13,7 @@ import { projectRuntimeEnvironment, readExhibitionEnvironment } from "../../web/
 import { HybridGameSessionBridge } from "../../web/pkg/birdman_game_wasm.js";
 import { captureConfiguredViewerFrame } from "../../web/src/render/engines/three/viewer-frame.js";
 import { initializeWasmFixture } from "../game-check/wasm-fixture.js";
+import { sharedGameUiPlatform } from "../game-check/shared-game-ui-fixture.js";
 import { observeLiveSky, observeWaterRenderer, verifySkyRenderer, verifyWaterRenderer } from "./water.js";
 import type { WaterShaderReference } from "./water.js";
 
@@ -368,28 +369,35 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
         const started = performance.now();
         const ready = preparationModule.prepareMenuPresentation(measuredContext, spatial,
           { generation: 1, scope: { panelId: panel.id, viewKey: "canvas-preparation" } },
-          0, viewer, { theme: shared.theme, locale: "ja", viewRevision: shared.view_revision,
+          0, viewer, { locale: "ja", viewRevision: shared.view_revision,
             font: { family: "system-ui, sans-serif", weight: 600, style: "normal", generation: 0 } }, (input, measure) => JSON.parse(window.__uiBridge.game_ui_menu_json(platform, JSON.stringify(input), measure)) as import("../../web/src/generated/menu-layout-reply.js").MenuLayoutReply);
         if (ready.kind !== "ready") throw new Error(`Real Canvas Menu preparation failed: ${ready.kind === "unavailable" ? ready.reason : ready.kind}`);
-        const document = ready.viewport.document;
-        if (document.request.fontMeters < 0.035 || ready.panel.size.width > spatial.size.width || document.controls.length !== panel.controls.length) {
-          throw new Error("Shared Menu preparation changed content or rejected its requested typography");
+        const projection = ready.viewport;
+        const text = projection.content.items.filter(item => item.kind === "text");
+        if (text.length === 0 || ready.panel.size.width > spatial.size.width || text.some(item => !Number.isFinite(item.anchor.x + item.anchor.y))) {
+          throw new Error("Shared Menu preparation lost its measured text geometry");
         }
-        const choices = document.controls.filter(node => node.control.kind === "button"
-          && node.control.presentation?.kind === "choice" && node.control.presentation.description.length === 0);
-        if (choices.length === 0) throw new Error("Missing empty-description choices");
+        const choices = panel.controls.filter(node => node.kind === "button" && node.presentation?.kind === "choice" && node.presentation.description.length === 0);
+        let checkedChoices = 0;
         for (const choice of choices) {
-          const label = choice.texts.find(text => text.request.slot.kind === "control" && text.request.slot.role === "label");
-          if (label === undefined || label.request.value.endsWith("\n") || label.lines.some(line => line.value.length === 0)) {
-            throw new Error("An empty choice description added a VR label line");
-          }
-          const expected = label.lines.length * document.request.lineHeightMeters + document.request.paddingMeters * 2;
-          if (Math.abs(choice.bounds.height - expected) > 1e-10) throw new Error("An empty choice description added VR height");
+          const bounds = projection.geometryKey.controls.find(control => control.identity[0] === choice.id)?.bounds;
+          if (bounds === undefined) throw new Error("Missing shared choice geometry");
+          const left = bounds.x + projection.content.clip.x;
+          const top = bounds.y + projection.content.clip.y - projection.offsetMeters;
+          const lines = text.filter(line => line.anchor.x >= left && line.anchor.x < left + bounds.width
+            && line.anchor.y >= top && line.anchor.y < top + bounds.height);
+          const firstLine = lines[0];
+          if (firstLine === undefined) continue;
+          if (lines.some(line => line.value.length === 0 || line.value.endsWith("\n"))) throw new Error("Empty description added a VR line");
+          const expected = lines.length * firstLine.fontMeters * 1.35 + firstLine.fontMeters;
+          if (Math.abs(bounds.height - expected) > 1e-10) throw new Error("Empty description added VR height");
+          checkedChoices++;
         }
+        if (checkedChoices === 0) throw new Error("Missing painted empty-description choices");
         const dimensions = canvasModule.menuCanvasSize(ready.panel.size);
         canvas.width = dimensions.width; canvas.height = dimensions.height;
         canvasModule.drawMeasuredMenu(canvasModule.browserMenuContext(context), ready.viewport, canvas.width, canvas.height);
-        return { emptyDescriptions: choices.length, widthMeters: ready.panel.size.width, fontMeters: document.request.fontMeters, controls: document.controls.length,
+        return { emptyDescriptions: checkedChoices, widthMeters: ready.panel.size.width, textLines: text.length, controls: panel.controls.length,
           fontQueries, preparationMilliseconds: performance.now() - started };
       });
       return { emptyDescriptions: prepared[0]?.emptyDescriptions, prepared, measuredIn: "production VR Menu layout and browser Canvas" };
@@ -723,32 +731,47 @@ async function verifyPointers(activeBrowser: Browser): Promise<void> {
     '<!doctype html><html><head><style>html,body{margin:0;background:#000}canvas{display:block;width:1280px;height:720px}</style></head><body><canvas width="1280" height="720"></canvas></body></html>' }); });
   try {
     await page.goto(address);
+    const camera = new PerspectiveCamera(60, 1280 / 720, 0.1, 100);
+    const stereo = new StereoCamera(); stereo.aspect = 0.5;
+    const viewer = captureConfiguredViewerFrame(camera, stereo);
     const result = await page.evaluate(async modules => {
       const wasm = await import(modules.wasm) as typeof import("../../web/pkg/birdman_game_wasm.js");
       await wasm.default();
       const { createThreeRenderer } = await import(modules.renderer) as typeof import("../../web/src/render/engines/three/three-renderer.js");
       const { XrPointerSession } = await import(modules.pointer) as typeof import("../../web/src/presentation/xr-pointer-session.js");
       const { IDENTITY_POSE, composePose, rotateVec3, pose, vec3 } = await import(modules.math) as typeof import("../../web/src/render/contracts/math.js");
+      const { createGameViewModel } = await import(modules.view) as typeof import("../../web/src/app/game-view.js");
+      const { prepareMenuPresentation } = await import(modules.preparation) as typeof import("../../web/src/presentation/menu-preparation.js");
+      const { browserMenuContext, drawMeasuredMenu, menuCanvasSize } = await import(modules.canvas) as typeof import("../../web/src/presentation/menu-canvas.js");
+      const session = wasm.HybridGameSessionBridge.public_default();
+      const platform = JSON.stringify(modules.platform);
+      const shared = JSON.parse(session.game_ui_view_json(platform)) as GameUiView;
+      const source = createGameViewModel(shared).panels[0];
+      if (source === undefined) throw new Error("Missing shared Title Menu");
       const canvas = document.querySelector("canvas");
       if (canvas === null) throw new Error("Missing projection canvas");
       const texture = document.createElement("canvas");
-      texture.width = 1200;
-      texture.height = 900;
       const drawing = texture.getContext("2d");
       if (drawing === null) throw new Error("Missing panel canvas");
-      drawing.fillStyle = "#12314b";
-      drawing.fillRect(0, 0, texture.width, texture.height);
-      drawing.fillStyle = "#266782";
-      drawing.fillRect(120, 90, 420, 720);
-      drawing.fillRect(660, 90, 420, 720);
-      drawing.fillStyle = "white";
-      drawing.font = "48px sans-serif";
-      drawing.fillText("Left target", 150, 180);
-      drawing.fillText("Right target", 690, 180);
+      const menu = prepareMenuPresentation(browserMenuContext(drawing), source,
+        { generation: 1, scope: { panelId: source.id, viewKey: shared.interaction_scope } }, 0, modules.viewer,
+        { locale: "ja", viewRevision: shared.view_revision, font: { family: "sans-serif", weight: 600, style: "normal", generation: 0 } },
+        (input, measure) => JSON.parse(session.game_ui_menu_json(platform, JSON.stringify(input), measure)) as import("../../web/src/generated/menu-layout-reply.js").MenuLayoutReply);
+      if (menu.kind !== "ready") throw new Error("Missing prepared Title Menu");
+      const dimensions = menuCanvasSize(menu.panel.size);
+      texture.width = dimensions.width; texture.height = dimensions.height;
+      drawMeasuredMenu(browserMenuContext(drawing), menu.viewport, texture.width, texture.height);
+      const panel = menu.panel;
+      const targets = menu.viewport.surface.regions.filter(region => region.target.kind === "control").slice(0, 2).map(region => ({
+        id: region.target.kind === "control" ? region.target.id : "",
+        x: region.bounds[0] + region.bounds[2] / 2 - panel.size.width / 2,
+        y: panel.size.height / 2 - region.bounds[1] - region.bounds[3] / 2
+      }));
+      if (targets.length !== 2) throw new Error("Missing shared controller targets");
       const bundle = createThreeRenderer(canvas, texture, null, 60, "low");
       const actions: import("../../web/src/render/contracts/ui.js").UiAction[] = [];
       const owner = new XrPointerSession(action => { actions.push(action); });
-      window.__pointerProbeCleanup = () => { owner.reset(); bundle.renderer.dispose(); };
+      window.__pointerProbeCleanup = () => { owner.reset(); bundle.renderer.dispose(); session.free(); };
       const viewport = { x: 1280, y: 720, pixelRatio: 1 };
       bundle.renderer.resize(viewport);
       bundle.renderer.setLakeVenueVisible(false);
@@ -756,15 +779,10 @@ async function verifyPointers(activeBrowser: Browser): Promise<void> {
       bundle.renderer.setStereoPresentation({ eyeSeparationMeters: 0.064, verticalFieldOfViewDegrees: 60, focusDistanceMeters: 2.4, distortion: "disabled" });
       const reference = bundle.renderer.projectTrackingFrame(IDENTITY_POSE);
       const panelPose = composePose(reference.head, pose(vec3(0, 0, -2.4), IDENTITY_POSE.orientation));
-      const panel: import("../../web/src/render/contracts/ui.js").UiPanel = {
-        id: "pointer-check", anchor: "head", localPose: IDENTITY_POSE, size: { width: 1.4, height: 0.8 }, title: "Pointer check",
-        controls: [{ id: "left", kind: "button", label: "Left", enabled: true, rect: { x: 0.1, y: 0.1, width: 0.35, height: 0.8 } },
-          { id: "right", kind: "button", label: "Right", enabled: true, rect: { x: 0.55, y: 0.1, width: 0.35, height: 0.8 } }]
-      };
-      const rays = [-0.25, 0.25].map((horizontal, index) => ({ source: { kind: "controller" as const, id: index + 1 }, timestampMs: 100,
-        origin: composePose(reference.head, pose(vec3(horizontal, 0, 0), IDENTITY_POSE.orientation)).position,
+      const rays = targets.map((target, index) => ({ source: { kind: "controller" as const, id: index + 1 }, timestampMs: 100,
+        origin: composePose(reference.head, pose(vec3(target.x, target.y, 0), IDENTITY_POSE.orientation)).position,
         direction: rotateVec3(reference.head.orientation, vec3(0, 0, -1)) }));
-      const cursors = owner.observe("projection", panel, panelPose, { kind: "absent" }, reference.head, rays, true, 100);
+      const cursors = owner.observe(panelPose, menu, null, rays, true, 100);
       const right = rays[1];
       const left = rays[0];
       if (right === undefined || left === undefined) throw new Error("Missing controller observation");
@@ -775,23 +793,26 @@ async function verifyPointers(activeBrowser: Browser): Promise<void> {
       const graphics = canvas.getContext("webgl2");
       if (graphics === null) throw new Error("Missing WebGL2 readback");
       const scale = 720 / (2 * Math.tan(Math.PI / 6) * 2.4);
-      const pixels = [0, 1].flatMap(eye => [-0.25, 0.25].map(horizontal => {
-        const horizontalPixel = Math.round((eye + 0.5) * 640 + horizontal * scale);
+      const pixels = [0, 1].flatMap(eye => targets.map(target => {
+        const horizontalPixel = Math.round((eye + 0.5) * 640 + target.x * scale);
+        const verticalPixel = Math.round(360 + target.y * scale);
         const foreground = new Uint8Array(4);
         const background = new Uint8Array(4);
-        graphics.readPixels(horizontalPixel, 360, 1, 1, graphics.RGBA, graphics.UNSIGNED_BYTE, foreground);
-        graphics.readPixels(horizontalPixel + Math.ceil(0.035 * scale * 2.5), 360, 1, 1, graphics.RGBA, graphics.UNSIGNED_BYTE, background);
+        graphics.readPixels(horizontalPixel, verticalPixel, 1, 1, graphics.RGBA, graphics.UNSIGNED_BYTE, foreground);
+        graphics.readPixels(horizontalPixel + Math.ceil(0.035 * scale * 2.5), verticalPixel, 1, 1, graphics.RGBA, graphics.UNSIGNED_BYTE, background);
         return { eye, horizontalPixel, foreground: [...foreground], background: [...background] };
       }));
-      return { cursors, actions, pixels };
+      return { cursors, actions, pixels, targets };
     }, { wasm: new URL("pkg/birdman_game_wasm.js", url).href, renderer: new URL("src/render/engines/three/three-renderer.ts", url).href,
-      pointer: new URL("src/presentation/xr-pointer-session.ts", url).href, math: new URL("src/render/contracts/math.ts", url).href });
+      pointer: new URL("src/presentation/xr-pointer-session.ts", url).href, math: new URL("src/render/contracts/math.ts", url).href,
+      view: new URL("src/app/game-view.ts", url).href, preparation: new URL("src/presentation/menu-preparation.ts", url).href,
+      canvas: new URL("src/presentation/menu-canvas.ts", url).href, platform: sharedGameUiPlatform({ presentation_mode: "hmd" }), viewer });
     assert.ok(result.cursors.cursor !== null);
     assert.equal(result.cursors.secondaryCursors.length, 1);
-    assert.ok(Math.abs(result.cursors.cursor.point.x + 0.25) < 1e-10);
-    assert.ok(Math.abs((result.cursors.secondaryCursors[0]?.point.x ?? Number.NaN) - 0.25) < 1e-10);
-    assert.deepEqual(result.actions.filter(action => action.type === "activate"), [
-      { type: "activate", controlId: "right" }, { type: "activate", controlId: "left" }
+    assert.ok(Math.abs(result.cursors.cursor.point.x - (result.targets[0]?.x ?? Number.NaN)) < 1e-10);
+    assert.ok(Math.abs((result.cursors.secondaryCursors[0]?.point.x ?? Number.NaN) - (result.targets[1]?.x ?? Number.NaN)) < 1e-10);
+    assert.deepEqual(result.actions.filter(action => action.type === "menu-control").map(action => action.action), [
+      { type: "activate", controlId: result.targets[1]?.id }, { type: "activate", controlId: result.targets[0]?.id }
     ]);
     for (const pixel of result.pixels) {
       const contrast = Math.hypot(...pixel.foreground.slice(0, 3).map((value, index) => value - (pixel.background[index] ?? 0)));

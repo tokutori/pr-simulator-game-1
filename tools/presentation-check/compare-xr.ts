@@ -8,14 +8,13 @@ import { createGameViewModel } from "../../web/src/app/game-view.js";
 import { prepareMenuPresentation } from "../../web/src/presentation/menu-preparation.js";
 import type { MenuPreparationInput } from "../../web/src/generated/menu-preparation-input.js";
 import { HudCanvasFixture } from "./hud-canvas-fixture.js";
-import type { MenuLayoutQuery } from "../../web/src/generated/menu-layout-query.js";
 import type { MenuLayoutReply } from "../../web/src/generated/menu-layout-reply.js";
 import { configuredViewerFixture } from "./viewer-fixture.js";
 import { DEFAULT_XR_HEAD_HUD_PROFILE } from "../../web/src/generated/xr-head-hud-profile.js";
 import type { FlightRecordHudProfileDocument } from "../../web/src/generated/record-difficulty.js";
 import type { ViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
 import { IDENTITY_POSE, composePose, rotateVec3, pose, quaternion, vec3 } from "../../web/src/render/contracts/math.js";
-import { menu_layout_json, xr_head_hud_projection_json, xr_text_ink_fit_json, XrCameraBridge, XrSpatialBridge,
+import { xr_head_hud_projection_json, xr_text_ink_fit_json, XrCameraBridge, XrSpatialBridge,
   xr_reference_frame_json, pose_chain_json, inverse_pose_json, xr_panel_camera_poses_json, XrPointerBridge } from "../../web/pkg/birdman_game_wasm.js";
 import type { XrPointerObservation } from "../../web/src/generated/xr-pointer-observation.js";
 import type { XrPointerSurface } from "../../web/src/generated/xr-pointer-surface.js";
@@ -104,8 +103,8 @@ try {
 
 function menuObservations() {
   const observations: { view: import("../../web/src/generated/game-ui-view.js").GameUiView;
-    frame: import("../../web/src/generated/game-ui-frame.js").GameUiFrame; input: MenuPreparationInput; probes: TextProbe[]; viewport: MenuLayoutQuery[] }[] = [];
-  const results: { preparation: MenuLayoutReply; viewport: MenuLayoutReply[] }[] = [];
+    frame: import("../../web/src/generated/game-ui-frame.js").GameUiFrame; input: MenuPreparationInput; probes: TextProbe[] }[] = [];
+  const results: { preparation: MenuLayoutReply }[] = [];
   for (const phase of ["title", "flight_setup", "briefing_ready", "flight_paused", "result", "replay"] as const) {
     for (const [width, height] of [[1280, 720], [720, 1280]] as const) {
       withSharedGameUiSession(phase, { ticks: 20, platform: { presentation_mode: "hmd" },
@@ -118,7 +117,7 @@ function menuObservations() {
         const probes: TextProbe[] = [];
         const ready = prepareMenuPresentation(new HudCanvasFixture(), panel,
           { generation: 1, scope: { panelId: panel.id, viewKey: "comparison" } }, 0,
-          configuredViewerFixture(width, height), { theme: view.theme, viewRevision: view.view_revision, locale: "ja",
+          configuredViewerFixture(width, height), { viewRevision: view.view_revision, locale: "ja",
             font: { family: "sans-serif", weight: 600, style: "normal", generation: 0 } }, (request, measure) => {
             const reply = session.prepareSharedMenu(request, platform, (value, fontMeters, weight, surfaceWidth, surfaceHeight) => {
               const metrics = measure(value, fontMeters, weight, surfaceWidth, surfaceHeight);
@@ -133,16 +132,8 @@ function menuObservations() {
         assert.ok(observed !== undefined);
         const { input, reply: prepared } = observed;
         assert.equal(prepared.kind, "ready");
-        const geometry = prepared.geometry;
-        const plan = prepared.plan;
-        const rectangles = geometry.controls.flatMap(control => [control.bounds,
-          ...(control.plot === null ? [] : [control.plot]), ...control.texts.flatMap(text => text.lineGeometry.map(line => line.bounds))]);
-        const viewport: MenuLayoutQuery[] = [0, 0.5, 1].map(progress => ({ kind: "viewport", source: {
-          surfaceSize: plan.source.surfaceSize, paddingMeters: plan.paddingMeters, gapMeters: plan.gapMeters,
-          contentHeightMeters: geometry.contentHeightMeters, footerHeightMeters: geometry.footerHeightMeters, progress },
-          rectangles, panel_points: [{ x: 0, y: 0 }], document_points: [{ x: 0, y: geometry.contentHeightMeters }] }));
-        observations.push({ view, frame, input, probes, viewport });
-        results.push({ preparation: prepared, viewport: viewport.map(query => JSON.parse(menu_layout_json(JSON.stringify(query))) as MenuLayoutReply) });
+        observations.push({ view, frame, input, probes });
+        results.push({ preparation: prepared });
       });
     }
   }

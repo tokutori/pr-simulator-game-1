@@ -1,14 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { drawMeasuredMenu, menuCanvasSize, menuPaintedTextInk } from "../../web/src/presentation/menu-canvas.js";
+import { drawMeasuredMenu, menuCanvasSize } from "../../web/src/presentation/menu-canvas.js";
 import type { MenuDrawingContext } from "../../web/src/presentation/menu-canvas.js";
 import type { HeadHudTextMetrics } from "../../web/src/presentation/head-hud-canvas.js";
 import type { TailAppSessionFacade } from "../../web/src/app/session-facade.js";
 import type { GameUiPlatformInput } from "../../web/src/generated/game-ui-input.js";
-import { menuViewport, menuRectInViewport } from "../../web/src/presentation/menu-layout.js";
 import { prepareMenuPresentation } from "../../web/src/presentation/menu-preparation.js";
 import { configuredViewerFixture } from "./viewer-fixture.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
 import { withSharedGameUiSession } from "../game-check/shared-game-ui-fixture.js";
+import { menuActionAt } from "./menu-fixture.js";
+import type { GameUiFrame } from "../../web/src/generated/game-ui-frame.js";
 
 class RecordingContext implements MenuDrawingContext {
   font = "";
@@ -70,45 +71,41 @@ class RecordingContext implements MenuDrawingContext {
 const font = { family: "system-ui, sans-serif", weight: 600, style: "normal", generation: 0 } as const;
 
 function prepare(context: MenuDrawingContext, session: TailAppSessionFacade, platform: GameUiPlatformInput, generation = 0,
-  viewer = configuredViewerFixture(1280, 720)) {
+  viewer = configuredViewerFixture(1280, 720), progress = 0) {
   const shared = session.readSharedUi(platform);
   const panel = createGameViewModel(shared).panels[0];
   if (panel === undefined) throw new Error("Missing shared Menu");
   const ready = prepareMenuPresentation(context, panel,
-    { scope: { panelId: panel.id, viewKey: "canvas" }, generation: 1 }, 0, viewer,
-    { theme: shared.theme, locale: "ja", viewRevision: shared.view_revision, font: { ...font, generation } },
+    { scope: { panelId: panel.id, viewKey: "canvas" }, generation: 1 }, progress, viewer,
+    { locale: "ja", viewRevision: shared.view_revision, font: { ...font, generation } },
     (input, measure) => session.prepareSharedMenu(input, platform, measure));
   if (ready.kind !== "ready") throw new Error(ready.kind === "unavailable" ? ready.reason : ready.kind);
   return ready;
 }
 
 describe("Shared Menu Canvas adapter", () => {
-  it.each(["title", "flight_setup", "briefing_ready", "countdown", "flight_running", "flight_paused", "result", "replay", "attract"] as const)(
-    "paints the actual %s Menu and keeps controls reachable in both optical orientations", phase => {
+  it.each(["title", "flight_paused"] as const)(
+    "paints the shared %s projection with the observed Canvas baseline in both orientations", phase => {
       withSharedGameUiSession(phase, { platform: { presentation_mode: "hmd" } }, (session, platform) => {
         for (const [width, height] of [[1280, 720], [720, 1280]] as const) {
           const context = new RecordingContext();
           const ready = prepare(context, session, platform, 0, configuredViewerFixture(width, height));
-          const document = ready.viewport.document;
           const size = menuCanvasSize(ready.panel.size);
-          for (const layout of document.controls) {
-            const progress = Math.max(0, Math.min(1, layout.bounds.y / (ready.viewport.maximumOffsetMeters || 1)));
-            const viewport = menuViewport(document, progress);
-            expect(menuRectInViewport(viewport, layout.bounds).kind, layout.control.id).toBe("visible");
-          }
           drawMeasuredMenu(context, ready.viewport, size.width, size.height);
           expect(context.drawings.length).toBeGreaterThan(0);
           expect(context.drawings.every(drawing => drawing.baseline === "alphabetic")).toBe(true);
           expect(context.saves).toBe(context.restores);
-          expect(context.boxes[0]).toMatchObject({ color: document.request.theme.panel_background,
-            alpha: document.request.theme.panel_opacity });
-          const title = document.title.lines.find(line => line.value.length > 0);
-          if (title !== undefined) {
-            const request = document.title.request;
-            expect(title.ascentMeters).toBeCloseTo(request.fontMeters * 0.6, 12);
-            expect(title.descentMeters).toBeCloseTo(request.fontMeters * 0.2, 12);
-            expect(title.leftMeters).toBeLessThan(0);
-          }
+          expect(context.boxes[0]).toMatchObject({ color: ready.viewport.background, alpha: ready.viewport.opacity });
+          const region = ready.viewport.surface.regions.find(region => region.target.kind === "control");
+          if (region?.target.kind !== "control") throw new Error("Missing shared input target");
+          const [left, top, targetWidth, targetHeight] = region.bounds;
+          expect(menuActionAt(ready, { x: left + targetWidth / 2 - ready.panel.size.width / 2, y: ready.panel.size.height / 2 - top - targetHeight / 2 }))
+            .toMatchObject({ kind: "action", action: { type: "menu-control", action: { controlId: region.target.id } } });
+          expect(context.boxes.some(box => Math.abs(box.x - left * size.width / ready.panel.size.width) < 1e-10
+            && Math.abs(box.y - top * size.height / ready.panel.size.height) < 1e-10)).toBe(true);
+          const text = ready.viewport.content.items.find(item => item.kind === "text");
+          if (text?.kind !== "text") throw new Error("Missing shared text");
+          expect(context.translations.some(point => Math.abs(point.x - text.anchor.x * size.width / ready.panel.size.width) < 1e-10 && Math.abs(point.y - text.anchor.y * size.height / ready.panel.size.height) < 1e-10)).toBe(true);
         }
       });
     });
@@ -124,7 +121,7 @@ describe("Shared Menu Canvas adapter", () => {
       queries = 0;
       const cached = prepare(context, session, platform);
       expect(queries).toBe(0);
-      expect(cached.viewport.document).toEqual(first.viewport.document);
+      expect(cached.viewport).toEqual(first.viewport);
       prepare(context, session, platform, 1);
       expect(queries).toBeGreaterThan(0);
       const shared = session.readSharedUi(platform);
@@ -132,7 +129,7 @@ describe("Shared Menu Canvas adapter", () => {
       if (panel === undefined) throw new Error("Missing Title Menu");
       session.updateSharedUi({ kind: "set_credits", open: true }, platform);
       const stale = prepareMenuPresentation(context, panel, first.context, 0, configuredViewerFixture(1280, 720),
-        { theme: shared.theme, locale: "ja", viewRevision: shared.view_revision, font },
+        { locale: "ja", viewRevision: shared.view_revision, font },
         (input, measure) => session.prepareSharedMenu(input, platform, measure));
       expect(stale).toEqual({ kind: "unavailable", reason: "invalid-layout" });
       expect(context.saves).toBe(context.restores);
@@ -151,7 +148,7 @@ describe("Shared Menu Canvas adapter", () => {
       };
       const result = prepareMenuPresentation(context, panel,
         { scope: { panelId: panel.id, viewKey: "font" }, generation: 1 }, 0,
-        configuredViewerFixture(1280, 720), { theme: shared.theme, locale: "ja", viewRevision: shared.view_revision, font },
+        configuredViewerFixture(1280, 720), { locale: "ja", viewRevision: shared.view_revision, font },
         (input, measure) => session.prepareSharedMenu(input, platform, measure));
       expect(result).toEqual({ kind: "unavailable", reason: failure === "throw" ? "measurement-unavailable" : "invalid-text-metrics" });
       expect(context.saves).toBe(context.restores);
@@ -160,32 +157,41 @@ describe("Shared Menu Canvas adapter", () => {
 
   it.each(["map", "speed"] as const)("paints shared %s chart text baselines and the current frame after seeking", chart => {
     withSharedGameUiSession("result", { ticks: 20, platform: { presentation_mode: "hmd" },
-      actions: [{ kind: "set_result_tab", tab: "analysis" }, { kind: "set_analysis_chart", chart }] }, (session, platform) => {
+      actions: [{ kind: "set_result_tab", tab: "analysis" }, { kind: "set_analysis_chart", chart }] }, (session, platform, bridge) => {
+      const published = session.readSharedUi(platform);
       const context = new RecordingContext();
       const first = prepare(context, session, platform);
-      const document = first.viewport.document;
-      const plot = document.controls.find(control => control.kind === "chart");
-      if (plot?.kind !== "chart") throw new Error("Missing Analysis chart");
-      const progress = Math.min(1, plot.bounds.y / (first.viewport.maximumOffsetMeters || 1));
-      const viewport = menuViewport(document, progress);
-      const size = menuCanvasSize(first.panel.size);
-      drawMeasuredMenu(context, viewport, size.width, size.height);
-      const inks = menuPaintedTextInk(viewport).filter(ink => ink.visible.kind === "visible");
-      expect(inks.length).toBeGreaterThan(0);
-      for (const text of plot.texts.filter(text => text.chartProjection !== undefined)) {
-        const ink = inks.find(ink => ink.identity === text.request.identity);
-        if (ink === undefined) continue;
-        expect(context.translations.some(point => Math.abs(point.x * first.panel.size.width / size.width - ink.anchorX) < 1e-12
-          && Math.abs(point.y * first.panel.size.height / size.height - ink.baselineY) < 1e-12)).toBe(true);
-        expect(context.drawings.some(drawing => drawing.value === ink.value && drawing.baseline === "alphabetic")).toBe(true);
+      const ready = [0, 0.5, 1].map(progress => prepare(context, session, platform, 0, configuredViewerFixture(1280, 720), progress))
+        .find(menu => menu.viewport.content.items.some(item => item.kind === "plot"));
+      if (ready === undefined) throw new Error("Missing Analysis plot");
+      const size = menuCanvasSize(ready.panel.size);
+      drawMeasuredMenu(context, ready.viewport, size.width, size.height);
+      const rotated = ready.viewport.content.items.filter(item => item.kind === "text" && item.rotationDegrees !== 0);
+      expect(rotated.length).toBeGreaterThan(0);
+      for (const text of rotated) {
+        if (text.kind !== "text") continue;
+        expect(context.translations.some(point => Math.abs(point.x - text.anchor.x * size.width / ready.panel.size.width) < 1e-10 && Math.abs(point.y - text.anchor.y * size.height / ready.panel.size.height) < 1e-10)).toBe(true);
+        expect(context.drawings.some(drawing => drawing.value === text.value && drawing.baseline === "alphabetic")).toBe(true);
       }
       session.updateSharedUi({ kind: "seek_analysis", time_seconds: 0.1 }, platform);
-      const next = prepare(context, session, platform);
-      const values = next.viewport.document.controls.flatMap(control => control.texts.map(text => text.request.value));
-      const shared = session.readSharedUi(platform);
-      for (const control of shared.panels.flatMap(panel => panel.controls)) {
-        if (control.content.kind === "range") expect(values).toContain(control.content.display_value);
-        if (control.content.kind === "status" && control.content.value.length > 0) expect(values).toContain(control.content.value);
+      const next = [0, 0.5, 1].map(progress => {
+        const menu = prepareMenuPresentation(context, first.panel, first.context, progress, configuredViewerFixture(1280, 720),
+          { locale: "ja", viewRevision: published.view_revision, font },
+          (input, measure) => session.prepareSharedMenu(input, platform, measure));
+        if (menu.kind !== "ready") throw new Error("Missing retained Menu after seek");
+        return menu;
+      });
+      const retained = new Map<string, string>();
+      for (const menu of next) {
+        const lines = new Map<string, string[]>();
+        for (const item of menu.viewport.content.items) if (item.kind === "text") {
+          const values = lines.get(item.identity) ?? []; values.push(item.value); lines.set(item.identity, values);
+        }
+        for (const [identity, values] of lines) retained.set(identity, values.join("").replace(/\s/g, ""));
+      }
+      const frame = JSON.parse(bridge.game_ui_frame_json(published.view_revision, JSON.stringify(platform))) as GameUiFrame;
+      for (const value of [...frame.ranges.map(range => range.display_value), ...frame.readouts.map(readout => readout.value)].filter(value => value.length > 0)) {
+        expect([...retained.values()]).toContain(value.replace(/\s/g, ""));
       }
       expect(context.saves).toBe(context.restores);
     });

@@ -9,22 +9,9 @@ mod preparation;
 pub use preparation::{MenuFontCache, prepare_game_ui_menu};
 mod text;
 pub use text::*;
+mod projection;
 mod viewport;
-
-/// Resolves a complete layout phase using engine-independent metric observations.
-pub fn menu_layout(query: MenuLayoutQuery) -> MenuLayoutReply {
-    match query {
-        MenuLayoutQuery::Viewport {
-            source,
-            rectangles,
-            panel_points,
-            document_points,
-        } => match viewport::project(source, rectangles, panel_points, document_points) {
-            Ok(projection) => MenuLayoutReply::Viewport { projection },
-            Err(reason) => MenuLayoutReply::Unavailable { reason },
-        },
-    }
-}
+pub use projection::*;
 
 fn plan(source: MenuLayoutSource) -> Result<MenuLayoutPlan, MenuLayoutFailure> {
     use MenuLayoutFailure::InvalidLayout;

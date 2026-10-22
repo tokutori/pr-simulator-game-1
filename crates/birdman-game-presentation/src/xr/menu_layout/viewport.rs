@@ -3,8 +3,6 @@ use super::*;
 pub(super) fn project(
     source: MenuViewportSource,
     rectangles: Vec<MenuRect>,
-    panel_points: Vec<MenuPoint>,
-    document_points: Vec<MenuPoint>,
 ) -> Result<MenuViewportProjection, MenuLayoutFailure> {
     use MenuLayoutFailure::InvalidLayout;
     let size = source.surface_size;
@@ -29,13 +27,7 @@ pub(super) fn project(
         || source.footer_height_meters < 0.0
         || !(0.0..=1.0).contains(&source.progress)
         || rectangles.len() > 16384
-        || panel_points.len() > 16384
-        || document_points.len() > 16384
         || rectangles.iter().any(|rectangle| !valid_rect(*rectangle))
-        || panel_points
-            .iter()
-            .chain(&document_points)
-            .any(|point| !point.x.is_finite() || !point.y.is_finite())
     {
         return Err(InvalidLayout);
     }
@@ -89,33 +81,6 @@ pub(super) fn project(
             }
         })
         .collect::<Vec<_>>();
-    let panel_points = panel_points
-        .into_iter()
-        .map(|point| {
-            let surface = MenuPoint {
-                x: point.x + size.width / 2.0,
-                y: size.height / 2.0 - point.y,
-            };
-            (surface.x >= clip.x
-                && surface.x <= clip.x + clip.width
-                && surface.y >= clip.y
-                && surface.y <= clip.y + clip.height)
-                .then_some(MenuPoint {
-                    x: surface.x - clip.x,
-                    y: surface.y - clip.y + offset,
-                })
-        })
-        .collect::<Vec<_>>();
-    let document_points = document_points
-        .into_iter()
-        .map(|point| {
-            let surface = translate(point);
-            MenuPoint {
-                x: surface.x - size.width / 2.0,
-                y: size.height / 2.0 - surface.y,
-            }
-        })
-        .collect::<Vec<_>>();
     let projection = MenuViewportProjection {
         content_clip: clip,
         previous_bounds: MenuRect {
@@ -139,18 +104,11 @@ pub(super) fn project(
             (clip.height / maximum).min(1.0)
         },
         rectangles: projected_rectangles,
-        panel_points,
-        document_points,
     };
     if projection
         .rectangles
         .iter()
         .any(|rectangle| !valid_rect(rectangle.full))
-        || projection
-            .document_points
-            .iter()
-            .chain(projection.panel_points.iter().flatten())
-            .any(|point| !point.x.is_finite() || !point.y.is_finite())
     {
         return Err(InvalidLayout);
     }

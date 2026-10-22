@@ -178,7 +178,7 @@ export class WebXrPresentationBackend implements PresentationBackendAdapter {
         return Object.freeze({ timestampMs, headHud: NO_HEAD_HUD, cameraPose: IDENTITY_POSE, panel: placement, viewport: this.viewport() });
     }
     const worldFromPanel = placement.kind === "ready" ? placement.referenceFromPanel : IDENTITY_POSE;
-    const cursors = this.pointers.observe(JSON.stringify([viewModel.scene, viewModel.activeOverlay, panel?.id]), panel,
+    const cursors = this.pointers.observe(
       worldFromPanel, menu, presentationViewerPose, input.rays, input.focused, timestampMs);
     return Object.freeze({
       timestampMs,

@@ -364,7 +364,7 @@ T_{eye,object}=T_{R,eye}^{-1}T_{R,object}
 - 収容不能projectionは型付き失敗とし、同frameの描画を止め、世代付きScreen回復へ接続する。
 - font読込み等のpendingでは旧入力contextを失効させ、回復を要求せず新geometryを待つ。
 
-- 共通の順序付きsectionと型付きnodeをCanvasの実font・localeで計測し、不変MenuDocumentとviewportへ導出する。
+- 共通の順序付きsectionと型付きnodeを実font・localeで計測し、共有Rustが同じView/FrameからMenuの描画命令・clip・ページ操作・入力面を一括導出する。adapterは文字計測と、返された矩形・線分・文字の描画を担当する。
 - 文字幅は折返し・再配置で収め、指定したフォント寸法を保持する。
 - advanceとactualBoundingBox、描画のfont・locale・baseline・alignを一致させ、符号付きink metricsから実矩形を復元する。
 

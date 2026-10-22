@@ -8,12 +8,6 @@ pub use spatial::*;
 mod interaction;
 pub use interaction::*;
 
-/// Projects menu scrolling, clipping and coordinate batches.
-#[wasm_bindgen]
-pub fn menu_layout_json(query_json: &str) -> Result<String, JsValue> {
-    encode(&shared::menu_layout(decode(query_json, 1_048_576)?))
-}
-
 #[wasm_bindgen]
 extern "C" {
     /// Synchronous font observation in the requested physical surface and typography.

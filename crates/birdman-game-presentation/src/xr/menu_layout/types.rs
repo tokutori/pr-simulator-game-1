@@ -455,6 +455,10 @@ pub struct MenuDocumentGeometry {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct MenuPreparationInput {
+    /// Normalized document scroll observation.
+    pub progress: f64,
+    /// Active menu input generation.
+    pub generation: u64,
     /// Published view whose controls are displayed by the adapter.
     pub view_revision: u32,
     /// Current visible menu panel.
@@ -467,24 +471,6 @@ pub struct MenuPreparationInput {
     pub locale: String,
 }
 
-/// Batch menu viewport and coordinate projection query.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
-pub enum MenuLayoutQuery {
-    /// Batch scroll clipping and panel/document coordinate projection.
-    Viewport {
-        /// Measured document and current scroll observation.
-        source: MenuViewportSource,
-        /// Document rectangles to translate and clip together.
-        rectangles: Vec<MenuRect>,
-        /// Center-origin panel points to map into visible document content.
-        panel_points: Vec<MenuPoint>,
-        /// Document points to map into center-origin panel coordinates.
-        document_points: Vec<MenuPoint>,
-    },
-}
-
 /// Layout result or a precise measurement failure.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -492,17 +478,8 @@ pub enum MenuLayoutQuery {
 pub enum MenuLayoutReply {
     /// Complete resolved document geometry.
     Ready {
-        /// Complete fitted text request contract.
-        plan: Box<MenuLayoutPlan>,
-        /// Observed text for the fitted contract.
-        measurements: Vec<MenuTextMeasurement>,
-        /// Resolved document geometry.
-        geometry: MenuDocumentGeometry,
-    },
-    /// Resolved viewport and corresponding ordered batch projections.
-    Viewport {
-        /// Scroll geometry, clipped rectangles and transformed points.
-        projection: MenuViewportProjection,
+        /// Resolved paint operations and input surface.
+        projection: Box<super::MenuProjection>,
     },
     /// Rejected layout or measurement.
     Unavailable {
@@ -571,10 +548,6 @@ pub struct MenuViewportProjection {
     pub page_progress: f64,
     /// Translated and clipped rectangles in request order.
     pub rectangles: Vec<MenuViewportRect>,
-    /// Document coordinates, absent for panel points outside the content clip.
-    pub panel_points: Vec<Option<MenuPoint>>,
-    /// Center-origin panel coordinates in request order.
-    pub document_points: Vec<MenuPoint>,
 }
 
 /// Rejection class of a measured menu document.

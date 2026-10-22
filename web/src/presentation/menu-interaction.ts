@@ -1,6 +1,5 @@
 import type { MenuPresentation } from "../render/contracts/runtime.js";
 import type { MenuScrollContext, MenuScrollState } from "../render/contracts/ui.js";
-import { menuRectInViewport } from "./menu-layout.js";
 
 export type ReadyMenu = Extract<MenuPresentation, { readonly kind: "ready" }>;
 
@@ -19,13 +18,7 @@ export function menuContextCanInteract(menu: MenuPresentation, state: MenuScroll
 }
 
 export function menuInputGeometry(menu: ReadyMenu): Extract<MenuInputGeometry, { kind: "ready" }> {
-  const viewport = menu.viewport;
-  const signature = JSON.stringify([menu.panel.size, viewport.contentClip, viewport.previousBounds, viewport.nextBounds,
-    viewport.maximumOffsetMeters, viewport.document.title.bounds, viewport.document.caption.bounds,
-    viewport.document.controls.map((layout) => [layout.control.id, layout.control.kind, layout.bounds,
-      layout.control.kind === "range" ? [layout.control.minimum, layout.control.maximum, layout.control.step] : [],
-      layout.kind === "chart" ? layout.plot : []])]);
-  return Object.freeze({ kind: "ready", context: menu.context, signature });
+  return Object.freeze({ kind: "ready", context: menu.context, signature: JSON.stringify(menu.viewport.geometryKey) });
 }
 
 export function menuInputGeometryChanged(previous: MenuInputGeometry, menu: ReadyMenu): boolean {
@@ -38,6 +31,5 @@ export function menuPageProgress(menu: ReadyMenu): number {
 }
 
 export function menuExposesControl(menu: ReadyMenu, controlId: string): boolean {
-  return menu.viewport.document.controls.some((layout) => layout.control.id === controlId && layout.control.enabled &&
-    menuRectInViewport(menu.viewport, layout.bounds).kind === "visible");
+  return menu.viewport.surface.regions.some(region => region.target.kind === "control" && region.target.id === controlId);
 }

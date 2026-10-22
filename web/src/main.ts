@@ -198,14 +198,13 @@ function currentFrameViewModel(viewer: ViewerFrame): PreparedPresentationView {
   const panel = viewModel.panels[0];
   const panelContext = panelCanvas.getContext("2d");
   const scroll = frameModel.menuScroll;
-  const menuTheme = viewModel.sharedPresentation?.theme ?? frameModel.sharedGameUi?.theme;
   const menuOwner = gameSession;
   preparedMenu = panel === undefined || panel.anchor !== "menu" || scroll.kind !== "active" ? Object.freeze({ kind: "absent" })
-    : menuTheme === undefined || menuOwner === null || frameModel.sharedGameUi === null ? Object.freeze({ kind: "pending" })
+    : menuOwner === null || frameModel.sharedGameUi === null ? Object.freeze({ kind: "pending" })
     : document.fonts.status === "loading" ? Object.freeze({ kind: "pending" })
     : panelContext === null ? Object.freeze({ kind: "unavailable", reason: "context-unavailable" })
     : prepareMenuPresentation(browserMenuContext(panelContext), panel, { scope: scroll.scope, generation: scroll.generation }, scroll.progress,
-      viewer, { theme: menuTheme, locale: displayLocale, viewRevision: frameModel.sharedGameUi.view_revision, font: { family: "Arial, sans-serif", weight: 600, style: "normal", generation: menuFontGeneration } }, (input, measure) => menuOwner.prepareSharedMenu(input, sharedGameUiPlatformInput(), measure));
+      viewer, { locale: displayLocale, viewRevision: frameModel.sharedGameUi.view_revision, font: { family: "Arial, sans-serif", weight: 600, style: "normal", generation: menuFontGeneration } }, (input, measure) => menuOwner.prepareSharedMenu(input, sharedGameUiPlatformInput(), measure));
   if (preparedMenu.kind === "ready") {
     if (menuInputGeometryChanged(presentedMenuGeometry, preparedMenu)) {
       const observedContext = preparedMenu.context;

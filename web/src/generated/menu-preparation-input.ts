@@ -61,6 +61,10 @@ export type XrEye = "left" | "right";
 export interface MenuPreparationInput {
     readonly font: MenuFont;
     /**
+     * Active menu input generation.
+     */
+    readonly generation: number;
+    /**
      * Platform text shaping locale.
      */
     readonly locale: string;
@@ -68,6 +72,10 @@ export interface MenuPreparationInput {
      * Current visible menu panel.
      */
     readonly panelId: string;
+    /**
+     * Normalized document scroll observation.
+     */
+    readonly progress: number;
     /**
      * Published view whose controls are displayed by the adapter.
      */

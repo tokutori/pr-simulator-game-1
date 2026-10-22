@@ -45,7 +45,6 @@ struct MenuObservation {
     frame: birdman_game_presentation::game_ui::GameUiFrame,
     input: MenuPreparationInput,
     probes: Vec<TextProbe>,
-    viewport: Vec<MenuLayoutQuery>,
 }
 
 #[derive(Deserialize)]
@@ -92,8 +91,7 @@ fn menu_results(observations: Vec<MenuObservation>) -> Vec<serde_json::Value> {
                 probes.next().is_none(),
                 "Native Menu consumed a different font observation trace"
             );
-            serde_json::json!({ "preparation": preparation,
-            "viewport": observation.viewport.into_iter().map(menu_layout).collect::<Vec<_>>() })
+            serde_json::json!({ "preparation": preparation })
         })
         .collect()
 }

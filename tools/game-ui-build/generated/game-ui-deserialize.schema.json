@@ -1318,54 +1318,6 @@
         }
       ]
     },
-    "MenuLayoutQuery": {
-      "description": "Batch menu viewport and coordinate projection query.",
-      "oneOf": [
-        {
-          "additionalProperties": false,
-          "description": "Batch scroll clipping and panel/document coordinate projection.",
-          "properties": {
-            "document_points": {
-              "description": "Document points to map into center-origin panel coordinates.",
-              "items": {
-                "$ref": "#/$defs/MenuPoint"
-              },
-              "type": "array"
-            },
-            "kind": {
-              "const": "viewport",
-              "type": "string"
-            },
-            "panel_points": {
-              "description": "Center-origin panel points to map into visible document content.",
-              "items": {
-                "$ref": "#/$defs/MenuPoint"
-              },
-              "type": "array"
-            },
-            "rectangles": {
-              "description": "Document rectangles to translate and clip together.",
-              "items": {
-                "$ref": "#/$defs/MenuRect"
-              },
-              "type": "array"
-            },
-            "source": {
-              "$ref": "#/$defs/MenuViewportSource",
-              "description": "Measured document and current scroll observation."
-            }
-          },
-          "required": [
-            "kind",
-            "source",
-            "rectangles",
-            "panel_points",
-            "document_points"
-          ],
-          "type": "object"
-        }
-      ]
-    },
     "MenuPageDirection": {
       "description": "Relative direction of a page action.",
       "oneOf": [
@@ -1381,27 +1333,6 @@
         }
       ]
     },
-    "MenuPoint": {
-      "additionalProperties": false,
-      "description": "Metric point in a spatial menu document.",
-      "properties": {
-        "x": {
-          "description": "Horizontal coordinate in metres.",
-          "format": "double",
-          "type": "number"
-        },
-        "y": {
-          "description": "Vertical coordinate in metres.",
-          "format": "double",
-          "type": "number"
-        }
-      },
-      "required": [
-        "x",
-        "y"
-      ],
-      "type": "object"
-    },
     "MenuPreparationInput": {
       "additionalProperties": false,
       "description": "Platform observations for preparing the current published menu.",
@@ -1410,6 +1341,12 @@
           "$ref": "#/$defs/MenuFont",
           "description": "Current platform font resource."
         },
+        "generation": {
+          "description": "Active menu input generation.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "locale": {
           "description": "Platform text shaping locale.",
           "type": "string"
@@ -1417,6 +1354,11 @@
         "panelId": {
           "description": "Current visible menu panel.",
           "type": "string"
+        },
+        "progress": {
+          "description": "Normalized document scroll observation.",
+          "format": "double",
+          "type": "number"
         },
         "viewRevision": {
           "description": "Published view whose controls are displayed by the adapter.",
@@ -1430,44 +1372,13 @@
         }
       },
       "required": [
+        "progress",
+        "generation",
         "viewRevision",
         "panelId",
         "viewer",
         "font",
         "locale"
-      ],
-      "type": "object"
-    },
-    "MenuRect": {
-      "additionalProperties": false,
-      "description": "Metric rectangle in a spatial menu document.",
-      "properties": {
-        "height": {
-          "description": "Height in metres.",
-          "format": "double",
-          "type": "number"
-        },
-        "width": {
-          "description": "Width in metres.",
-          "format": "double",
-          "type": "number"
-        },
-        "x": {
-          "description": "Horizontal coordinate in metres.",
-          "format": "double",
-          "type": "number"
-        },
-        "y": {
-          "description": "Vertical coordinate in metres.",
-          "format": "double",
-          "type": "number"
-        }
-      },
-      "required": [
-        "x",
-        "y",
-        "width",
-        "height"
       ],
       "type": "object"
     },
@@ -1664,27 +1575,6 @@
         }
       ]
     },
-    "MenuSize": {
-      "additionalProperties": false,
-      "description": "Measured surface dimensions in metres.",
-      "properties": {
-        "height": {
-          "description": "Height in metres.",
-          "format": "double",
-          "type": "number"
-        },
-        "width": {
-          "description": "Width in metres.",
-          "format": "double",
-          "type": "number"
-        }
-      },
-      "required": [
-        "width",
-        "height"
-      ],
-      "type": "object"
-    },
     "MenuTarget": {
       "description": "Observation of menu opening or closure.",
       "oneOf": [
@@ -1722,50 +1612,6 @@
           "type": "object"
         }
       ]
-    },
-    "MenuViewportSource": {
-      "additionalProperties": false,
-      "description": "Metric observations required to place a scrollable document on its surface.",
-      "properties": {
-        "contentHeightMeters": {
-          "description": "Measured scrollable document height.",
-          "format": "double",
-          "type": "number"
-        },
-        "footerHeightMeters": {
-          "description": "Measured footer control height.",
-          "format": "double",
-          "type": "number"
-        },
-        "gapMeters": {
-          "description": "Separation between content and page controls.",
-          "format": "double",
-          "type": "number"
-        },
-        "paddingMeters": {
-          "description": "Inset around document content and page controls.",
-          "format": "double",
-          "type": "number"
-        },
-        "progress": {
-          "description": "Normalized document scroll position.",
-          "format": "double",
-          "type": "number"
-        },
-        "surfaceSize": {
-          "$ref": "#/$defs/MenuSize",
-          "description": "Physical panel dimensions."
-        }
-      },
-      "required": [
-        "surfaceSize",
-        "paddingMeters",
-        "gapMeters",
-        "contentHeightMeters",
-        "footerHeightMeters",
-        "progress"
-      ],
-      "type": "object"
     },
     "Pose": {
       "additionalProperties": false,

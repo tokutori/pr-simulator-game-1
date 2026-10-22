@@ -1,7 +1,7 @@
 import type { Pose, Vec2, Vec3 } from "./math.js";
 import type { CinematicCameraView } from "./camera.js";
 import type { MenuScrollContext, UiPanel, UiViewModel } from "./ui.js";
-import type { MenuDocumentResult, MenuViewport } from "./menu-layout.js";
+import type { MenuLayoutUnavailableReason, MenuViewport } from "./menu-layout.js";
 import type { LakeVisualCondition, LakeWaterQuality } from "./lake-water.js";
 import type { LakeSkyCondition } from "./lake-sky.js";
 import type { HeadHudFrame } from "./head-hud.js";
@@ -36,7 +36,7 @@ export interface BackendFrame {
 }
 
 export type PanelUnavailableReason = ViewerGeometryUnavailableReason | "insufficient-view-area" | "insufficient-ink-angle" | "context-unavailable" |
-  Extract<MenuDocumentResult, { kind: "unavailable" }>["reason"] | "measurement-unavailable" | "drawing-unavailable";
+  MenuLayoutUnavailableReason | "measurement-unavailable" | "drawing-unavailable";
 
 export type MenuPresentation =
   | { readonly kind: "absent" }

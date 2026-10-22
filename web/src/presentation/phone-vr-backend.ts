@@ -214,7 +214,7 @@ export class PhoneVrPresentationBackend implements PresentationBackendAdapter {
       axes: [gamepadState.axes[0] ?? 0, gamepadState.axes[1] ?? 0, gamepadState.axes[2] ?? 0, gamepadState.axes[3] ?? 0] as const,
       buttons: [gamepadState.buttons[0] ?? false, gamepadState.buttons[1] ?? false] as const
     };
-    const cursors = this.pointers.observe(JSON.stringify([viewModel.scene, viewModel.activeOverlay, panel?.id]), panel,
+    const cursors = this.pointers.observe(
       panelPose, menu, viewerPose, [], this.inputAvailable(), timestampMs, gamepad);
     return Object.freeze({
       timestampMs,

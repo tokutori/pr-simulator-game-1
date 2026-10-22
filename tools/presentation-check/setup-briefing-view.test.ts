@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import { currentSharedGameUiFixture, withSharedGameUiSession } from "../game-check/shared-game-ui-fixture.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
 import { controlInputAction } from "../../web/src/render/contracts/ui.js";
-import { menuViewport, menuRectInViewport } from "../../web/src/presentation/menu-layout.js";
 import { prepareMenuPresentation } from "../../web/src/presentation/menu-preparation.js";
 import { configuredViewerFixture } from "./viewer-fixture.js";
 import { HudCanvasFixture } from "./hud-canvas-fixture.js";
@@ -146,23 +145,20 @@ describe("Shared Flight Setup and Briefing presentation", () => {
     const view = createGameViewModel(shared);
     const panel = view.panels[0];
     if (panel === undefined) throw new Error("Missing panel");
-    const ready = prepareMenuPresentation(new HudCanvasFixture(), panel,
-      { generation: 1, scope: { panelId: panel.id, viewKey: "setup" } }, 0,
-      configuredViewerFixture(720, 1280), { theme: shared.theme,
-        font: { family: "system-ui, sans-serif", weight: 600, style: "normal", generation: 0 },
-        locale: "ja", viewRevision: shared.view_revision }, (input, measure) => session.prepareSharedMenu(input, platform, measure));
-    if (ready.kind !== "ready") throw new Error("Missing prepared Setup");
-    const document = ready.viewport.document;
-    const initial = menuViewport(document, 0);
-    expect(initial.maximumOffsetMeters).toBeGreaterThan(0);
     const ids = phase === "flight_setup" ? ["game-setup-start", "game-setup-back"]
       : ["game-briefing-start", "game-briefing-cancel", "game-briefing-technical"];
-    for (const id of ids) {
-      const control = document.controls.find((control) => control.control.id === id);
-      if (control === undefined) throw new Error(`Missing control ${id}`);
-      const progress = Math.min(1, Math.max(0, control.bounds.y / initial.maximumOffsetMeters));
-      expect(menuRectInViewport(menuViewport(document, progress), control.bounds).kind, id).toBe("visible");
+    const reached = new Set<string>();
+    for (let progress = 0; progress <= 1; progress += 0.25) {
+      const ready = prepareMenuPresentation(new HudCanvasFixture(), panel,
+        { generation: 1, scope: { panelId: panel.id, viewKey: "setup" } }, progress,
+        configuredViewerFixture(720, 1280), {
+          font: { family: "system-ui, sans-serif", weight: 600, style: "normal", generation: 0 },
+          locale: "ja", viewRevision: shared.view_revision }, (input, measure) => session.prepareSharedMenu(input, platform, measure));
+      if (ready.kind !== "ready") throw new Error("Missing prepared Setup");
+      expect(ready.viewport.maximumOffsetMeters).toBeGreaterThan(0);
+      for (const region of ready.viewport.surface.regions) if (region.target.kind === "control") reached.add(region.target.id);
     }
+    for (const id of ids) expect(reached.has(id), id).toBe(true);
     });
   });
 

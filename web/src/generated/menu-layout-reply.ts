@@ -3,184 +3,202 @@
  * Layout result or a precise measurement failure.
  */
 export type MenuLayoutReply = {
-    readonly geometry: MenuDocumentGeometry;
     readonly kind: "ready";
-    /**
-     * Observed text for the fitted contract.
-     */
-    readonly measurements: readonly MenuTextMeasurement[];
-    readonly plan: MenuLayoutPlan;
-} | {
-    readonly kind: "viewport";
-    readonly projection: MenuViewportProjection;
+    readonly projection: MenuProjection;
 } | {
     readonly kind: "unavailable";
     readonly reason: MenuLayoutFailure;
 };
 /**
- * Horizontal alignment relative to a chart label's baseline anchor.
+ * Engine-independent paint operation in surface coordinates.
  */
-export type GameUiChartTextAnchor = "start" | "middle" | "end";
-/**
- * Widget presentation data used for layout and measurement.
- */
-export type MenuWidget = {
-    readonly kind: "button";
-    readonly presentation: GameUiButtonPresentation;
-} | {
-    readonly kind: "toggle";
+export type MenuPaintItem = {
+    readonly bounds: MenuRect;
     /**
-     * Already formatted content or current toggle selection.
+     * Fill colour.
      */
-    readonly value: boolean;
-} | {
+    readonly color: string;
     /**
-     * Formatted range selection.
+     * Optional left-to-right gradient.
+     *
+     * @minItems 2
+     * @maxItems 2
      */
-    readonly displayValue: string;
-    readonly kind: "range";
+    readonly gradient: readonly [
+        string,
+        string
+    ] | null;
+    readonly kind: "rectangle";
 } | {
-    readonly kind: "status";
+    readonly anchor: MenuPoint;
     /**
-     * Already formatted content or current toggle selection.
+     * Text colour.
+     */
+    readonly color: string;
+    readonly font: MenuFont;
+    /**
+     * Font size in metres.
+     */
+    readonly fontMeters: number;
+    /**
+     * Font-measurement identity.
+     */
+    readonly identity: string;
+    readonly kind: "text";
+    /**
+     * Text-shaping locale.
+     */
+    readonly locale: string;
+    /**
+     * Rotation about the baseline.
+     */
+    readonly rotationDegrees: number;
+    /**
+     * Visible line content.
      */
     readonly value: string;
 } | {
-    readonly kind: "chart";
-    readonly layout: MenuChartLayout;
-};
-/**
- * Shared button role and selection state.
- */
-export type GameUiButtonPresentation = {
-    readonly emphasis: GameUiEmphasis;
-    readonly kind: "action";
+    /**
+     * Stroke colour.
+     */
+    readonly color: string;
+    readonly end: MenuPoint;
+    readonly kind: "line";
+    /**
+     * Stroke opacity.
+     */
+    readonly opacity: number;
+    readonly start: MenuPoint;
+    /**
+     * Stroke width in texture pixels.
+     */
+    readonly widthPx: number;
 } | {
     /**
-     * Shared option explanation.
+     * Fill colour.
      */
-    readonly description: string;
+    readonly color: string;
+    readonly kind: "marker";
+    readonly point: MenuPoint;
     /**
-     * Stable group identifier.
+     * Square side in texture pixels.
      */
-    readonly group: string;
-    /**
-     * Group heading.
-     */
-    readonly group_label: string;
-    readonly kind: "choice";
-    /**
-     * Current selected option.
-     */
-    readonly selected: boolean;
+    readonly sizePx: number;
 } | {
+    readonly clip: MenuRect;
     /**
-     * Current disclosure state.
+     * Ordered plot operations.
      */
-    readonly expanded: boolean;
-    readonly kind: "disclosure";
+    readonly items: readonly MenuPaintItem[];
+    readonly kind: "plot";
 };
-/**
- * Shared action emphasis.
- */
-export type GameUiEmphasis = "primary" | "secondary" | "normal";
-/**
- * Logical role of one measured control text.
- */
-export type MenuTextRole = "label" | "value" | "x-axis" | "y-axis" | "x-tick" | "y-tick" | "legend" | "annotation" | "north" | "scale";
 /**
  * Font slant selected for measurement.
  */
 export type MenuFontStyle = "normal" | "italic";
 /**
- * Group placement strategy, selected in shared Rust.
+ * Rectangle in surface coordinates: left, top, width and height, in metres.
+ *
+ * @minItems 4
+ * @maxItems 4
  */
-export type GameUiSectionLayout = "column" | "choice_grid" | "row";
+export type XrPointerRect = readonly [
+    number,
+    number,
+    number,
+    number
+];
 /**
- * Stable identity of a measured text within its source panel.
+ * Widget value and uncut track required for shared activation resolution.
  */
-export type MenuTextSlot = {
-    readonly kind: "fixed";
-    readonly role: MenuFixedRole;
+export type XrPointerControl = {
+    readonly kind: "toggle";
+    /**
+     * Current selection.
+     */
+    readonly value: boolean;
 } | {
-    readonly kind: "section";
-    readonly role: MenuHeadingRole;
+    readonly kind: "range";
     /**
-     * Published section identifier.
+     * Upper bound.
      */
-    readonly sectionId: string;
-} | {
+    readonly maximum: number;
     /**
-     * Published control identifier.
+     * Lower bound.
      */
-    readonly controlId: string;
+    readonly minimum: number;
     /**
-     * Stable source index.
+     * Positive step size.
      */
-    readonly index: number;
-    readonly kind: "control";
-    readonly role: MenuTextRole;
+    readonly step: number;
+    readonly track: XrPointerRect;
 };
 /**
- * Logical role of one fixed menu text.
+ * Semantic target of a measured interactive rectangle.
  */
-export type MenuFixedRole = "title" | "caption" | "previous" | "next";
-/**
- * Section heading marker.
- */
-export type MenuHeadingRole = "heading";
+export type XrPointerTarget = {
+    /**
+     * Identifier from the shared UI control.
+     */
+    readonly id: string;
+    readonly kind: "control";
+} | {
+    readonly kind: "page";
+    /**
+     * True advances to the next page.
+     */
+    readonly next: boolean;
+};
 /**
  * Rejection class of a measured menu document.
  */
 export type MenuLayoutFailure = "stale-view" | "measurement-unavailable" | "not-stereo" | "viewer-unavailable" | "unsupported-view-configuration" | "invalid-view-geometry" | "insufficient-view-area" | "insufficient-ink-angle" | "missing-text-metrics" | "stale-text-metrics" | "invalid-text-metrics" | "invalid-layout";
 /**
- * Shared document geometry; source objects remain with the adapter.
+ * Prepared painting and input geometry from one published UI and font observation.
  */
-export interface MenuDocumentGeometry {
-    readonly caption: MenuTextPlacement;
+export interface MenuProjection {
     /**
-     * Full scrollable content height.
+     * Full-surface background colour.
      */
-    readonly contentHeightMeters: number;
+    readonly background: string;
+    readonly content: MenuPaintLayer;
     /**
-     * Ordered source controls or allocated row items.
+     * Fixed page-control painting.
      */
-    readonly controls: readonly MenuControlPlacement[];
+    readonly footer: readonly MenuPaintItem[];
+    readonly geometryKey: MenuGeometryIdentity;
     /**
-     * Measured page-control height.
+     * Maximum scroll offset in metres.
      */
-    readonly footerHeightMeters: number;
+    readonly maximumOffsetMeters: number;
     /**
-     * Measurement index for the next-page label.
+     * Current scroll offset in metres.
      */
-    readonly nextIndex: number;
+    readonly offsetMeters: number;
     /**
-     * Measurement index for the previous-page label.
+     * Background opacity.
      */
-    readonly previousIndex: number;
+    readonly opacity: number;
     /**
-     * Placed section headings.
+     * Normalized increment for one visible page.
      */
-    readonly sectionHeadings: readonly MenuTextPlacement[];
-    readonly title: MenuTextPlacement;
+    readonly pageProgress: number;
+    readonly size: MenuSize;
+    readonly surface: XrPointerSurface;
+    /**
+     * Published panel title.
+     */
+    readonly title: string;
 }
 /**
- * Placement of one measured text within its document.
+ * Clipped spatial UI paint layer.
  */
-export interface MenuTextPlacement {
-    readonly bounds: MenuRect;
+export interface MenuPaintLayer {
+    readonly clip: MenuRect;
     /**
-     * Optional chart baseline projection.
+     * Ordered paint operations.
      */
-    readonly chartProjection?: MenuChartProjection | null;
-    /**
-     * Projected line anchors and ink bounds.
-     */
-    readonly lineGeometry: readonly MenuLineGeometry[];
-    /**
-     * Index of the corresponding measurement request.
-     */
-    readonly textIndex: number;
+    readonly items: readonly MenuPaintItem[];
 }
 /**
  * Metric rectangle in a spatial menu document.
@@ -204,17 +222,6 @@ export interface MenuRect {
     readonly y: number;
 }
 /**
- * Spatial chart text projection around its baseline anchor.
- */
-export interface MenuChartProjection {
-    readonly anchor: GameUiChartTextAnchor;
-    readonly baseline: MenuPoint;
-    /**
-     * Rotation about the baseline in degrees.
-     */
-    readonly rotationDegrees: number;
-}
-/**
  * Metric point in a spatial menu document.
  */
 export interface MenuPoint {
@@ -226,320 +233,6 @@ export interface MenuPoint {
      * Vertical coordinate in metres.
      */
     readonly y: number;
-}
-/**
- * Baseline and ink bounds of one already measured line.
- */
-export interface MenuLineGeometry {
-    readonly anchor: MenuPoint;
-    readonly bounds: MenuRect;
-}
-/**
- * Placement of one control and its measured labels.
- */
-export interface MenuControlPlacement {
-    readonly bounds: MenuRect;
-    /**
-     * Index of the corresponding source control.
-     */
-    readonly controlIndex: number;
-    /**
-     * Chart plot rectangle ordered left, top, right and bottom.
-     */
-    readonly plot: MenuRect | null;
-    /**
-     * Ordered measurement requests or placed labels.
-     */
-    readonly texts: readonly MenuTextPlacement[];
-}
-/**
- * Measured lines associated with one exact request identity.
- */
-export interface MenuTextMeasurement {
-    /**
-     * Exact identity of the measurement request.
-     */
-    readonly identity: string;
-    /**
-     * Measured lines preserving explicit paragraphs.
-     */
-    readonly lines: readonly MenuMeasuredLine[];
-}
-/**
- * One measured line with signed ink bearings in metres.
- */
-export interface MenuMeasuredLine {
-    /**
-     * Measured horizontal text advance.
-     */
-    readonly advanceMeters: number;
-    /**
-     * Measured ink ascent.
-     */
-    readonly ascentMeters: number;
-    /**
-     * Measured ink descent.
-     */
-    readonly descentMeters: number;
-    /**
-     * Signed left ink bearing.
-     */
-    readonly leftMeters: number;
-    /**
-     * Zero-based index of the original explicit paragraph.
-     */
-    readonly paragraphIndex: number;
-    /**
-     * Signed right ink bearing.
-     */
-    readonly rightMeters: number;
-    /**
-     * Already formatted content or current toggle selection.
-     */
-    readonly value: string;
-}
-/**
- * Prepared layout and its complete measurement contract.
- */
-export interface MenuLayoutPlan {
-    /**
-     * Spacing between rows in metres.
-     */
-    readonly gapMeters: number;
-    /**
-     * Line spacing in metres.
-     */
-    readonly lineHeightMeters: number;
-    /**
-     * Inner padding in metres.
-     */
-    readonly paddingMeters: number;
-    /**
-     * Responsive section and control allocation.
-     */
-    readonly rows: readonly MenuRow[];
-    readonly source: MenuLayoutSource;
-    /**
-     * Ordered measurement requests or placed labels.
-     */
-    readonly texts: readonly MenuTextRequest[];
-}
-/**
- * One responsive menu row.
- */
-export interface MenuRow {
-    /**
-     * Ordered source controls or allocated row items.
-     */
-    readonly controls: readonly MenuRowItem[];
-    /**
-     * Optional heading at the start of a section.
-     */
-    readonly heading: MenuHeading | null;
-}
-/**
- * Control reference and its metric column allocation.
- */
-export interface MenuRowItem {
-    /**
-     * Stable source index.
-     */
-    readonly index: number;
-    /**
-     * Horizontal column offset in metres.
-     */
-    readonly left: number;
-    /**
-     * Width in metres.
-     */
-    readonly width: number;
-}
-/**
- * One section heading retained in the row plan.
- */
-export interface MenuHeading {
-    /**
-     * Published source identifier.
-     */
-    readonly id: string;
-    /**
-     * Already localized visible label.
-     */
-    readonly label: string;
-}
-/**
- * Complete source and typography observation for one layout pass.
- */
-export interface MenuLayoutSource {
-    /**
-     * Panel description.
-     */
-    readonly caption: string;
-    /**
-     * Ordered source controls or allocated row items.
-     */
-    readonly controls: readonly MenuLayoutControl[];
-    readonly font: MenuFont;
-    /**
-     * Nominal font size in metres.
-     */
-    readonly fontMeters: number;
-    /**
-     * Explicit text measurement locale.
-     */
-    readonly locale: string;
-    /**
-     * Localized next-page label.
-     */
-    readonly nextLabel: string;
-    /**
-     * Published panel identifier.
-     */
-    readonly panelId: string;
-    /**
-     * Localized previous-page label.
-     */
-    readonly previousLabel: string;
-    /**
-     * Declared sections or implicit vertical flow.
-     */
-    readonly sections: readonly GameUiSection[] | null;
-    readonly surfaceSize: MenuSize;
-    /**
-     * Panel heading.
-     */
-    readonly title: string;
-}
-/**
- * Compact source control, excluding record samples and semantic actions.
- */
-export interface MenuLayoutControl {
-    /**
-     * Published source identifier.
-     */
-    readonly id: string;
-    /**
-     * Already localized visible label.
-     */
-    readonly label: string;
-    /**
-     * Published section membership.
-     */
-    readonly section: string | null;
-    readonly widget: MenuWidget;
-}
-/**
- * Static chart geometry needed by layout, independent of sample arrays.
- */
-export interface MenuChartLayout {
-    /**
-     * Ordered chart text descriptors.
-     */
-    readonly labels: readonly MenuChartLabel[];
-    /**
-     * Shared legend entries.
-     */
-    readonly legend: readonly GameUiChartLegend[];
-    /**
-     * Chart plot rectangle ordered left, top, right and bottom.
-     *
-     * @minItems 4
-     * @maxItems 4
-     */
-    readonly plot: readonly [
-        number,
-        number,
-        number,
-        number
-    ];
-    /**
-     * Chart viewport width and height.
-     *
-     * @minItems 2
-     * @maxItems 2
-     */
-    readonly size: readonly [
-        number,
-        number
-    ];
-    /**
-     * Reference font size for chart label scaling.
-     */
-    readonly tickFontSize: number;
-}
-/**
- * Shared chart label projected into the menu's text measurement pass.
- */
-export interface MenuChartLabel {
-    /**
-     * Stable source index.
-     */
-    readonly index: number;
-    readonly role: MenuTextRole;
-    readonly text: GameUiChartText;
-}
-/**
- * Static label placement independent of the rendering engine.
- */
-export interface GameUiChartText {
-    readonly anchor: GameUiChartTextAnchor;
-    /**
-     * Shared text colour.
-     */
-    readonly color: string;
-    /**
-     * Font size in logical pixels.
-     */
-    readonly font_size: number;
-    /**
-     * CSS-compatible font weight.
-     */
-    readonly font_weight: number;
-    /**
-     * Already formatted content.
-     */
-    readonly label: string;
-    readonly position: GameUiChartPoint;
-    /**
-     * Rotation around the baseline anchor in degrees.
-     */
-    readonly rotation_degrees: number;
-}
-/**
- * One chart-space point with units defined by the axes.
- */
-export interface GameUiChartPoint {
-    /**
-     * Horizontal component.
-     */
-    readonly x: number;
-    /**
-     * Vertical component.
-     */
-    readonly y: number;
-}
-/**
- * One ordered legend item with an optional progress gradient.
- */
-export interface GameUiChartLegend {
-    /**
-     * Solid swatch colour.
-     */
-    readonly color: string;
-    /**
-     * Shared label.
-     */
-    readonly label: string;
-    /**
-     * First and last progress colours when the series uses a gradient.
-     *
-     * @minItems 2
-     * @maxItems 2
-     */
-    readonly segment_gradient: readonly [
-        string,
-        string
-    ] | null;
 }
 /**
  * Font resource observation supplied by the drawing adapter.
@@ -560,18 +253,70 @@ export interface MenuFont {
     readonly weight: number;
 }
 /**
- * Shared control group and placement mode.
+ * Unscrolled input geometry used to invalidate a changed menu layout.
  */
-export interface GameUiSection {
+export interface MenuGeometryIdentity {
     /**
-     * Stable group identifier.
+     * Content and previous/next page clipping rectangles.
+     *
+     * @minItems 3
+     * @maxItems 3
      */
-    readonly id: string;
+    readonly clips: readonly [
+        MenuRect,
+        MenuRect,
+        MenuRect
+    ];
     /**
-     * Optional visible group heading.
+     * Published controls and unscrolled hit geometry.
      */
-    readonly label: string;
-    readonly layout: GameUiSectionLayout;
+    readonly controls: readonly MenuControlGeometry[];
+    /**
+     * Heading and caption bounds.
+     *
+     * @minItems 2
+     * @maxItems 2
+     */
+    readonly headings: readonly [
+        MenuRect,
+        MenuRect
+    ];
+    /**
+     * Maximum scroll offset.
+     */
+    readonly maximumOffsetMeters: number;
+    readonly size: MenuSize;
+}
+/**
+ * Geometry and scale of one published control.
+ */
+export interface MenuControlGeometry {
+    readonly bounds: MenuRect;
+    /**
+     * Published control identity and widget kind.
+     *
+     * @minItems 2
+     * @maxItems 2
+     */
+    readonly identity: readonly [
+        string,
+        string
+    ];
+    /**
+     * Optional chart plot rectangle.
+     */
+    readonly plot: MenuRect | null;
+    /**
+     * Optional range minimum, maximum and step.
+     *
+     * @minItems 3
+     * @maxItems 3
+     */
+    readonly range: readonly [
+        number,
+        number,
+        number
+    ] | null;
 }
 /**
  * Measured surface dimensions in metres.
@@ -587,83 +332,40 @@ export interface MenuSize {
     readonly width: number;
 }
 /**
- * Adapter measurement request derived from the shared row plan.
+ * Measured surface geometry owned until its scope or layout changes.
  */
-export interface MenuTextRequest {
+export interface XrPointerSurface {
     /**
-     * Optional shared chart text descriptor.
+     * Enabled rectangles in drawing/hit priority order.
      */
-    readonly chartText?: GameUiChartText | null;
-    readonly font: MenuFont;
+    readonly regions: readonly XrPointerRegion[];
     /**
-     * Nominal font size in metres.
+     * Layout/input revision within the same semantic menu.
      */
-    readonly fontMeters: number;
+    readonly revision: number;
     /**
-     * Exact identity of the measurement request.
+     * Adapter's exact scene, overlay, panel and scroll context identity.
      */
-    readonly identity: string;
+    readonly scope: string;
     /**
-     * Shared legend entries.
+     * Surface width and height in metres.
+     *
+     * @minItems 2
+     * @maxItems 2
      */
-    readonly legend?: GameUiChartLegend | null;
-    /**
-     * Explicit text measurement locale.
-     */
-    readonly locale: string;
-    readonly slot: MenuTextSlot;
-    /**
-     * Already formatted content or current toggle selection.
-     */
-    readonly value: string;
-    /**
-     * Maximum measured line width in metres.
-     */
-    readonly widthMeters: number;
+    readonly sizeM: readonly [
+        number,
+        number
+    ];
 }
 /**
- * Shared viewport placement and ordered coordinate projections.
+ * One enabled control or page rectangle after measurement and clipping.
  */
-export interface MenuViewportProjection {
-    readonly contentClip: MenuRect;
+export interface XrPointerRegion {
+    readonly bounds: XrPointerRect;
     /**
-     * Center-origin panel coordinates in request order.
+     * Interactive widget data; an omitted descriptor represents a button.
      */
-    readonly documentPoints: readonly MenuPoint[];
-    /**
-     * Full metric scroll range.
-     */
-    readonly maximumOffsetMeters: number;
-    readonly nextBounds: MenuRect;
-    /**
-     * Current metric scroll offset.
-     */
-    readonly offsetMeters: number;
-    /**
-     * Normalized increment for one visible page.
-     */
-    readonly pageProgress: number;
-    /**
-     * Document coordinates, absent for panel points outside the content clip.
-     */
-    readonly panelPoints: readonly (MenuPoint | null)[];
-    readonly previousBounds: MenuRect;
-    /**
-     * Current normalized scroll position.
-     */
-    readonly progress: number;
-    /**
-     * Translated and clipped rectangles in request order.
-     */
-    readonly rectangles: readonly MenuViewportRect[];
-}
-/**
- * Surface-space rectangle and its intersection with the visible content.
- */
-export interface MenuViewportRect {
-    readonly full: MenuRect;
-    /**
-     * Intersection with content, or absent when entirely outside.
-     */
-    readonly visible: MenuRect | null;
+    readonly control: XrPointerControl | null;
+    readonly target: XrPointerTarget;
 }
