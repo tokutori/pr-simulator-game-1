@@ -413,7 +413,7 @@ export function createThreeRenderer(
   let pointerSources = new WeakMap<XRInputSource, number>();
   let nextPointerSource = 1;
   let framePointerRays: readonly SelectRay[] = [];
-  let inputFocusHandler: ((focused: boolean) => void) | null = null;
+  let visibilityHandler: ((visibility: XRVisibilityState) => void) | null = null;
   let flightPose: FlightRenderPose | null = null;
   let preparedFlightPose: FlightRenderPose | null = null;
   let flightCameraMode: FlightCameraMode = "pilot";
@@ -588,17 +588,17 @@ export function createThreeRenderer(
     if (ray !== null) selectRayHandler(transformRay({ ...ray, timestampMs: performance.now(), source: pointerSource(event.inputSource) }, renderedTrackingMount));
   };
 
-  const onInputFocusChange = (): void => {
+  const onXrVisibilityChange = (): void => {
     const focused = hasXrInputFocus();
     if (!focused) { framePointerRays = []; renderedTrackingMount = null; }
-    inputFocusHandler?.(focused);
+    visibilityHandler?.(sessionFromState(xrState)?.visibilityState ?? "hidden");
   };
 
   const onSessionEnd = (): void => {
     const session = sessionFromState(xrState);
     if (session === null) return;
     session.removeEventListener("select", onSelect);
-    session.removeEventListener("visibilitychange", onInputFocusChange);
+    session.removeEventListener("visibilitychange", onXrVisibilityChange);
     const expected = xrState.type === "stopping";
     xrState = { type: "idle" };
     renderedTrackingMount = null;
@@ -1009,9 +1009,9 @@ export function createThreeRenderer(
   };
 
   const webxr: WebXrSessionPort = {
-    setInputFocusHandler(handler) { inputFocusHandler = handler; },
+    setVisibilityHandler(handler) { visibilityHandler = handler; },
     readPointerFrame() {
-      return { focused: hasXrInputFocus(), rays: framePointerRays.map((ray) => transformRay(ray, currentTrackingMountPose())) };
+      return { visibility: sessionFromState(xrState)?.visibilityState ?? "hidden", focused: hasXrInputFocus(), rays: framePointerRays.map((ray) => transformRay(ray, currentTrackingMountPose())) };
     },
     projectTrackingFrame(value: Pose) {
       return projectXrReferenceFrame(currentCameraPlacement().rig, value);
@@ -1065,7 +1065,7 @@ export function createThreeRenderer(
       xrState = { type: "attaching", session };
       session.addEventListener("end", onSessionEnd);
       session.addEventListener("select", onSelect);
-      session.addEventListener("visibilitychange", onInputFocusChange);
+      session.addEventListener("visibilitychange", onXrVisibilityChange);
       renderer.xr.enabled = true;
       renderer.xr.setReferenceSpaceType("local");
       try {
@@ -1166,7 +1166,7 @@ export function createThreeRenderer(
   function clearSession(session = sessionFromState(xrState)): void {
     if (session !== null) {
       session.removeEventListener("select", onSelect);
-      session.removeEventListener("visibilitychange", onInputFocusChange);
+      session.removeEventListener("visibilitychange", onXrVisibilityChange);
       session.removeEventListener("end", onSessionEnd);
     }
     activeReferenceSpace?.removeEventListener("reset", onReferenceSpaceReset);
@@ -1183,7 +1183,7 @@ export function createThreeRenderer(
 
   function hasXrInputFocus(): boolean {
     const session = sessionFromState(xrState);
-    return session !== null && session.visibilityState !== "hidden" && session.visibilityState !== "visible-blurred";
+    return session?.visibilityState === "visible";
   }
 
   function pointerSource(source: XRInputSource): NonNullable<SelectRay["source"]> {

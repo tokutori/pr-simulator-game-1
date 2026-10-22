@@ -163,6 +163,7 @@ impl NativeSession {
         GameUiContext {
             session: self.game.core_session(),
             resume_available: self.game.can_resume(),
+            presentation_available: self.game.presentation_available(),
             difficulty: self.game.display_difficulty(),
             preset: self.game.display_preset(),
             identity: self.ui_identity(),

@@ -154,6 +154,7 @@ impl HybridGameSessionBridge {
         Ok(GameUiContext {
             session: self.session.core_session(),
             resume_available: self.session.can_resume(),
+            presentation_available: self.session.presentation_available(),
             difficulty,
             preset,
             identity,

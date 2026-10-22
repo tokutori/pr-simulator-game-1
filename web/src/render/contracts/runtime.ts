@@ -100,6 +100,7 @@ export interface RendererAdapter {
 }
 
 export interface PresentationBackendAdapter {
+  observeViewerFrame?(viewer: ViewerFrame): void;
   readonly mode: PresentationMode;
   start(): Promise<void>;
   stop(): Promise<void>;

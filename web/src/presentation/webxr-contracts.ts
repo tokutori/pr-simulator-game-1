@@ -12,8 +12,8 @@ export type WebXrSessionRequest =
   | { readonly ok: false; readonly message: string };
 
 export interface WebXrSessionPort {
-  readPointerFrame?(): Readonly<{ focused: boolean; rays: readonly SelectRay[] }>;
-  setInputFocusHandler?(handler: ((focused: boolean) => void) | null): void;
+  readPointerFrame(): Readonly<{ visibility: XRVisibilityState; focused: boolean; rays: readonly SelectRay[] }>;
+  setVisibilityHandler(handler: ((visibility: XRVisibilityState) => void) | null): void;
   projectTrackingFrame(pose: Pose): XrReferenceFrame;
   checkAvailability(): Promise<WebXrAvailability>;
   requestSessionFromUserGesture(): Promise<WebXrSessionRequest>;

@@ -512,6 +512,8 @@ pub struct GameUiContext<'view, 'session> {
     pub session: &'view GameSession<'session>,
     /// Resume admission from the application-owned live driver and domain session.
     pub resume_available: bool,
+    /// Admission from retained backend, focus and tracking observations.
+    pub presentation_available: bool,
     /// Existing selected or saved settings.
     pub difficulty: DifficultySettings,
     /// Exact displayed preset retained for archived selections.

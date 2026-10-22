@@ -98,6 +98,8 @@ async function fixture(failInitialization = false, seedCurrentArchive = false, d
   } satisfies RendererAdapter;
   let sessionEndHandler: (() => void) | null = null;
   const webxr: WebXrSessionPort = {
+    readPointerFrame: () => ({ visibility: "visible", focused: true, rays: [] }),
+    setVisibilityHandler: () => undefined,
     projectTrackingFrame: (pose) => referenceFrameFixture(pose),
     checkAvailability: () => Promise.resolve({ supported: webXrAvailable, message: "Headless WebXR test port" }),
     requestSessionFromUserGesture: () => Promise.resolve({ ok: true }),
@@ -320,6 +322,12 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     const owner = await trial.sessionOwner();
     owner.executeSharedSessionCommand({ kind: "open_setup" });
     owner.executeSharedSessionCommand({ kind: "prepare" });
+    owner.observePresentation({ kind: "xr", observation: { visibility: "visible", input_focused: true, tracking_valid: true } });
+    await vi.waitFor(() => {
+      const start = owner.readSharedUi(sharedGameUiPlatform()).panels.flatMap(panel => panel.controls)
+        .find(control => control.id === "game-briefing-start");
+      expect(start?.enabled).toBe(true);
+    });
     owner.executeSharedSessionCommand({ kind: "start_countdown" });
     const obsolete = owner.captureCountdownToken();
     expect(owner.readLifecycle().phase).toBe("countdown");

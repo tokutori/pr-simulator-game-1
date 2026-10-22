@@ -57,6 +57,49 @@ pub struct AttractMetadata {
     pub difficulty: DifficultySettings,
 }
 
+/// Runtime visibility observed independently of input focus and tracking.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum XrVisibility {
+    /// The application imagery is visible.
+    Visible,
+    /// Imagery remains visible behind runtime-owned UI.
+    Blurred,
+    /// The runtime hides application imagery.
+    Hidden,
+}
+
+/// Same-session XR resource observations supplied by a platform adapter.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct XrAvailability {
+    /// Runtime visibility.
+    pub visibility: XrVisibility,
+    /// Whether the runtime grants application input focus.
+    pub input_focused: bool,
+    /// Whether the current frame has a usable head pose.
+    pub tracking_valid: bool,
+}
+
+/// Resource observations that jointly determine presentation admission.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum PresentationObservation {
+    /// Completion or suspension of the active backend transition.
+    Backend {
+        /// Whether the selected backend is ready to present the application.
+        ready: bool,
+    },
+    /// Current XR session, or None after its adapter releases the session.
+    Xr {
+        /// Retained observation; None releases the adapter's XR session.
+        observation: Option<XrAvailability>,
+    },
+}
+
 /// Opaque record-source identity within one application owner's lifetime.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RecordSourceId(u64);
@@ -74,6 +117,8 @@ pub struct ApplicationSession {
     flight_clock: crate::flight_clock::FlightFrameClock,
     flight_input: crate::flight_input::FlightInputState,
     flight_failure: Option<FlightFrameError>,
+    backend_ready: bool,
+    xr_availability: Option<XrAvailability>,
 }
 
 impl Default for ApplicationSession {
@@ -107,6 +152,8 @@ impl ApplicationSession {
             flight_clock: crate::flight_clock::FlightFrameClock::default(),
             flight_input: crate::flight_input::FlightInputState::default(),
             flight_failure: None,
+            backend_ready: true,
+            xr_availability: None,
         }
     }
 
@@ -193,6 +240,10 @@ impl ApplicationSession {
         let previous = self.session.snapshot().phase();
         let result = self.execute_inner(command, readiness);
         self.synchronize_flight_driver(previous);
+        if result.is_ok() && !self.presentation_available() {
+            self.observe_external_pause(ExternalPauseReason::TrackingSuspended, false)
+                .map_err(ApplicationError::Session)?;
+        }
         result
     }
 
@@ -293,6 +344,31 @@ impl ApplicationSession {
         }
     }
 
+    /// Returns admission from all retained backend and XR observations.
+    pub fn presentation_available(&self) -> bool {
+        self.backend_ready
+            && self.xr_availability.is_none_or(|observation| {
+                observation.visibility == XrVisibility::Visible
+                    && observation.input_focused
+                    && observation.tracking_valid
+            })
+    }
+
+    /// Updates one resource observation and applies their combined availability.
+    pub fn observe_presentation(
+        &mut self,
+        observation: PresentationObservation,
+    ) -> Result<(), ApplicationError> {
+        match observation {
+            PresentationObservation::Backend { ready } => self.backend_ready = ready,
+            PresentationObservation::Xr { observation } => self.xr_availability = observation,
+        }
+        self.observe_availability(
+            ExternalPauseReason::TrackingSuspended,
+            self.presentation_available(),
+        )
+    }
+
     /// Applies an external pause observation; recovery clears only its observed cause.
     pub fn observe_availability(
         &mut self,
@@ -330,6 +406,9 @@ impl ApplicationSession {
 
     /// Starts an explicit presentation duration through the canonical core policy.
     pub fn start_countdown(&mut self, duration_seconds: u32) -> Result<(), GameSessionError> {
+        if !self.presentation_available() {
+            return Err(GameSessionError::PauseConditionsRemain);
+        }
         self.session.start_countdown(duration_seconds)
     }
 
@@ -344,7 +423,9 @@ impl ApplicationSession {
         let result = self.session.observe_countdown(
             token,
             elapsed_seconds,
-            frame_available && !self.flight_clock.processing_delayed(),
+            frame_available
+                && self.presentation_available()
+                && !self.flight_clock.processing_delayed(),
         );
         self.synchronize_flight_driver(previous);
         result
@@ -437,6 +518,9 @@ impl ApplicationSession {
 
     /// Changes only the core-owned playback running state.
     pub fn set_playback_playing(&mut self, playing: bool) -> Result<(), GameSessionError> {
+        if playing && !self.presentation_available() {
+            return Err(GameSessionError::PauseConditionsRemain);
+        }
         self.session.set_playback_playing(playing)
     }
 

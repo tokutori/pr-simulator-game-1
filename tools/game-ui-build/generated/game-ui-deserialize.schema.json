@@ -1880,6 +1880,55 @@
       ],
       "type": "object"
     },
+    "PresentationObservation": {
+      "description": "Resource observations that jointly determine presentation admission.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Completion or suspension of the active backend transition.",
+          "properties": {
+            "kind": {
+              "const": "backend",
+              "type": "string"
+            },
+            "ready": {
+              "description": "Whether the selected backend is ready to present the application.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "kind",
+            "ready"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Current XR session, or None after its adapter releases the session.",
+          "properties": {
+            "kind": {
+              "const": "xr",
+              "type": "string"
+            },
+            "observation": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/XrAvailability"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Retained observation; None releases the adapter's XR session."
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "Quaternion": {
       "additionalProperties": false,
       "description": "Scalar-first unit quaternion in a right-handed reference space.",
@@ -2690,6 +2739,30 @@
         }
       ]
     },
+    "XrAvailability": {
+      "additionalProperties": false,
+      "description": "Same-session XR resource observations supplied by a platform adapter.",
+      "properties": {
+        "input_focused": {
+          "description": "Whether the runtime grants application input focus.",
+          "type": "boolean"
+        },
+        "tracking_valid": {
+          "description": "Whether the current frame has a usable head pose.",
+          "type": "boolean"
+        },
+        "visibility": {
+          "$ref": "#/$defs/XrVisibility",
+          "description": "Runtime visibility."
+        }
+      },
+      "required": [
+        "visibility",
+        "input_focused",
+        "tracking_valid"
+      ],
+      "type": "object"
+    },
     "XrCameraMount": {
       "description": "Camera mounting policy, separate from the runtime's head and eye tracking.",
       "oneOf": [
@@ -3478,6 +3551,26 @@
         {
           "const": "invalid-view-geometry",
           "description": "Pose or projection data is invalid.",
+          "type": "string"
+        }
+      ]
+    },
+    "XrVisibility": {
+      "description": "Runtime visibility observed independently of input focus and tracking.",
+      "oneOf": [
+        {
+          "const": "visible",
+          "description": "The application imagery is visible.",
+          "type": "string"
+        },
+        {
+          "const": "blurred",
+          "description": "Imagery remains visible behind runtime-owned UI.",
+          "type": "string"
+        },
+        {
+          "const": "hidden",
+          "description": "The runtime hides application imagery.",
           "type": "string"
         }
       ]

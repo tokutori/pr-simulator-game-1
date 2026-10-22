@@ -206,6 +206,20 @@ impl HybridGameSessionBridge {
         self.advance_internal(json).map_err(BoundaryError::into_js)
     }
 
+    /// Applies backend and XR observations through the shared application owner.
+    pub fn observe_presentation_json(&mut self, json: &str) -> Result<(), JsValue> {
+        if json.len() > MAX_INPUT_JSON_BYTES {
+            return Err(BoundaryError::InputTooLarge.into_js());
+        }
+        let observation = serde_json::from_str(json)
+            .map_err(BoundaryError::Json)
+            .map_err(BoundaryError::into_js)?;
+        self.session
+            .observe_presentation(observation)
+            .map_err(BoundaryError::Application)
+            .map_err(BoundaryError::into_js)
+    }
+
     /// Adds one of the existing manual, visibility, tracking or processing pause reasons.
     pub fn pause(&mut self, reason: u32) -> Result<(), JsValue> {
         if reason == 0 {

@@ -64,7 +64,7 @@ export function currentFlightSnapshotFixture(phase: "flight_running" | "flight_p
   try {
     launchCurrentSession(session);
     session.flightPort.advanceTick(neutralTailInput);
-    if (phase === "flight_paused") session.pauseForReason("page_hidden");
+    if (phase === "flight_paused") session.suspendDocument();
     if (phase === "result") session.executeSharedSessionCommand({ kind: "abort" });
     const snapshot = session.readSnapshot();
     if (snapshot.phase !== phase || snapshot.frame.kind === "menu") throw new Error("Current fixture did not reach the requested Rust phase");

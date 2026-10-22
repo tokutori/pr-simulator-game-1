@@ -585,6 +585,70 @@ fn countdown_retains_elapsed_time_attempt_identity_and_once_only_launch() {
 }
 
 #[test]
+fn backend_and_xr_observations_gate_launch_and_recover_independently() {
+    let mut application = prepared();
+    let ready = XrAvailability {
+        visibility: XrVisibility::Visible,
+        input_focused: true,
+        tracking_valid: true,
+    };
+    application
+        .observe_presentation(PresentationObservation::Backend { ready: false })
+        .unwrap();
+    application
+        .observe_presentation(PresentationObservation::Xr {
+            observation: Some(ready),
+        })
+        .unwrap();
+    assert!(!application.presentation_available());
+    assert_eq!(
+        application.start_countdown(3),
+        Err(GameSessionError::PauseConditionsRemain)
+    );
+    application
+        .observe_presentation(PresentationObservation::Backend { ready: true })
+        .unwrap();
+    launch(&mut application);
+    for observation in [
+        XrAvailability {
+            visibility: XrVisibility::Blurred,
+            ..ready
+        },
+        XrAvailability {
+            input_focused: false,
+            ..ready
+        },
+        XrAvailability {
+            tracking_valid: false,
+            ..ready
+        },
+    ] {
+        application
+            .observe_presentation(PresentationObservation::Xr {
+                observation: Some(observation),
+            })
+            .unwrap();
+        assert!(!application.can_resume());
+        application
+            .observe_presentation(PresentationObservation::Backend { ready: false })
+            .unwrap();
+        application
+            .observe_presentation(PresentationObservation::Xr { observation: None })
+            .unwrap();
+        assert!(!application.can_resume());
+        application
+            .observe_presentation(PresentationObservation::Backend { ready: true })
+            .unwrap();
+        assert!(application.can_resume());
+        assert!(matches!(
+            application.core_session().snapshot().phase(),
+            SessionPhase::FlightPaused { .. }
+        ));
+        execute(&mut application, SessionCommand::Resume {});
+    }
+}
+
+#[test]
 fn unavailable_presentation_cancels_countdown_and_retires_its_attempt() {
     let mut application = prepared();
     execute(&mut application, SessionCommand::StartCountdown {});

@@ -190,6 +190,7 @@ export class PresentationRuntime {
   private renderFrame(timestampMs: number, viewer: ViewerFrame): void {
     const backend = this.activeBackend;
     if (backend === null || this.disposed) return;
+    backend.observeViewerFrame?.(viewer);
     this.onFrame(timestampMs);
     this.renderer.beginViewFrame();
     const prepared = this.viewModel(viewer);

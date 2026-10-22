@@ -76,6 +76,7 @@ pub fn export_game_ui_schema(name: &str) -> Result<String, String> {
     input.subschema_for::<crate::xr::MenuLayoutQuery>();
     input.subschema_for::<crate::xr::MenuPreparationInput>();
     input.subschema_for::<birdman_game_format::TailInputDocument>();
+    input.subschema_for::<birdman_game_app::application::PresentationObservation>();
     input.subschema_for::<birdman_game_app::flight_input::FlightKeyObservation>();
     input.subschema_for::<birdman_game_app::flight_input::FlightGamepadObservation>();
     let mut output_definitions = output.take_definitions(true);

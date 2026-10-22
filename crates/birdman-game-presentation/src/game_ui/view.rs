@@ -156,7 +156,7 @@ pub fn game_ui_view(
                     "発進カウントダウンを開始",
                     SessionCommand::StartCountdown {},
                     GameUiEmphasis::Primary,
-                    true,
+                    context.presentation_available,
                 ),
                 SessionPhase::BriefingFailed { .. } => menu.session(
                     "game-briefing-retry",
@@ -1415,7 +1415,7 @@ fn replay(
             "game-replay-play-pause",
             if clock.is_playing() { "Pause" } else { "Play" },
             GameUiAction::ToggleReplayPlaying {},
-            context.platform.replay_available,
+            context.platform.replay_available && context.presentation_available,
         );
         if state.replay_view == GameUiReplayView::Telemetry {
             for (code, suffix, label) in [(0, "0_5", "0.5×"), (1, "1", "1×"), (2, "2", "2×")] {

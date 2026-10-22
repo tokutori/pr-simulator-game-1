@@ -81,6 +81,7 @@ impl ApplicationSession {
     /// Reports explicit Resume eligibility across the domain and live driver.
     pub fn can_resume(&self) -> bool {
         self.flight_failure.is_none()
+            && self.presentation_available()
             && !self.flight_clock.processing_delayed()
             && self.session.can_resume()
     }

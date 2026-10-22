@@ -621,7 +621,12 @@ async function initializePresentation(requestId: number): Promise<void> {
       currentViewport,
       dispatchUiAction,
       onWebXrSessionEnd,
-      onUnresolvableReferenceSpaceReset
+      onUnresolvableReferenceSpaceReset,
+      (observation) => {
+        if (gameSession !== session) return;
+        session.observePresentation({ kind: "xr", observation });
+        syncGameSession();
+      }
     );
     phoneVrBackend = new PhoneVrPresentationBackend(
       createBrowserPhoneVrSensorPort(),
@@ -1083,7 +1088,7 @@ function suspendPageFlightState(): void {
   runSideEffects([
     () => { phoneVrBackend?.invalidateInput(); },
     () => { flightController?.invalidateInput(); },
-    () => { pauseSessionForReason("page_hidden"); }
+    () => { suspendSessionForDocument(); }
   ]);
 }
 
@@ -1101,18 +1106,20 @@ function onPageRestore(): void {
 }
 
 function pauseForPresentationTransition(): void {
-  pauseSessionForReason("presentation_transition");
+  gameSession?.observePresentation({ kind: "backend", ready: false });
+  syncGameSession();
 }
 
 function resolvePresentationTransitionPause(): void {
-  clearSessionPauseReason(2);
+  gameSession?.observePresentation({ kind: "backend", ready: true });
+  syncGameSession();
 }
 
-function pauseSessionForReason(reason: "page_hidden" | "presentation_transition"): void {
+function suspendSessionForDocument(): void {
   const session = gameSession;
   if (session === null) return;
   try {
-    session.pauseForReason(reason);
+    session.suspendDocument();
     syncGameSession();
   } catch (error: unknown) {
     dispatch({ type: "game-session-status", message: `飛行の一時停止に失敗した: ${errorMessage(error)}` });

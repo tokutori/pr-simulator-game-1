@@ -53,6 +53,7 @@ pub(super) fn context<'view>(
         archived_identity: None,
         session,
         resume_available: session.can_resume(),
+        presentation_available: true,
         difficulty,
         preset: difficulty.preset_label(),
         identity: session.configuration_identity(),

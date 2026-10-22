@@ -5,6 +5,7 @@ import { compile } from "json-schema-to-typescript";
 import ts from "typescript";
 
 export const schemaEntries = [
+  { key: "presentation_observation", name: "PresentationObservation", filename: "presentation-observation", group: "deserialize" },
   { key: "view", name: "GameUiView", filename: "game-ui-view", group: "serialize" },
   { key: "action", name: "GameUiAction", filename: "game-ui-action", group: "deserialize" },
   { key: "input", name: "GameUiPlatformInput", filename: "game-ui-input", group: "deserialize" },

@@ -1,6 +1,7 @@
 import { projectTailGameSession } from "./session-snapshot.js";
 import type { PlaybackSessionSnapshot, ReplayReturnTarget, SessionLifecycleProjection, TailGameSessionProjection } from "./session-snapshot.js";
 import type { TailResultSnapshot, TailSessionPort } from "../game/tail-flight-controller.js";
+import type { PresentationObservation } from "../generated/presentation-observation.js";
 import { encodeTailLogicalInput } from "../game/tail-input.js";
 import { captureJsonInput } from "../game/tail-boundary-values.js";
 import type { FlightRenderPose, RecordedFlightRenderPose } from "../render/contracts/runtime.js";
@@ -72,6 +73,7 @@ export interface TailAppSessionPort extends SessionResourcePort {
   fail_flight_adapter(): void;
   flight_frame_available_at(timestampMilliseconds: number): boolean;
   pause(reason: number): void;
+  observe_presentation_json(json: string): void;
   prepared_launch_snapshot_json(): string;
   game_ui_view_revision(platformJson: string): number;
   game_ui_view_json(platformJson: string): string;
@@ -252,8 +254,13 @@ export class TailAppSessionFacade extends SessionResourceOwner {
     this.change(() => { this.port.apply_game_ui_record_action_json(json); });
   }
 
-  pauseForReason(reason: "page_hidden" | "presentation_transition"): void {
-    this.change(() => { this.port.pause(reason === "page_hidden" ? 1 : 2); });
+  suspendDocument(): void {
+    this.change(() => { this.port.pause(1); });
+  }
+
+  observePresentation(observation: PresentationObservation): void {
+    const json = JSON.stringify(observation);
+    this.change(() => { this.port.observe_presentation_json(json); });
   }
 
   readSnapshot(): TailSnapshotDocument {

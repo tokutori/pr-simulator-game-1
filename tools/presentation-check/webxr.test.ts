@@ -2,7 +2,9 @@ import { referenceFrameFixture } from "./menu-fixture.js";
 import { runtimeViewerFixture, visiblePanelFrame } from "./viewer-fixture.js";
 import { fixtureBackendFrame, fixturePresentation, fixtureSemanticAction, geometryMenuFixture } from "./menu-fixture.js";
 import { describe, expect, it } from "vitest";
-import { currentSharedGameUiFixture } from "../game-check/shared-game-ui-fixture.js";
+import { currentSharedGameUiFixture, sharedGameUiPlatform } from "../game-check/shared-game-ui-fixture.js";
+import { createAppSession } from "../../web/src/app/session-factory.js";
+import { initializeWasmFixture } from "../game-check/wasm-fixture.js";
 import { composePose, IDENTITY_POSE, inversePose, pose, vec3 } from "../../web/src/render/contracts/math.js";
 import { headPlaneFitsViews, unavailableViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
 import type { Pose } from "../../web/src/render/contracts/math.js";
@@ -17,6 +19,59 @@ import type { WebXrAvailability, WebXrSessionPort, WebXrSessionRequest } from ".
 import { GAME_SCENES } from "../../web/src/render/contracts/ui.js";
 
 describe("WebXR session backend", () => {
+  it("connects initial visibility, focus recovery and pose loss to the actual shared owner", async () => {
+    initializeWasmFixture();
+    const owner = createAppSession();
+    const adapter = new FakeWebXrAdapter();
+    adapter.visibility = "hidden";
+    const renderer = new FakeRenderer();
+    const backend = new WebXrPresentationBackend(adapter, renderer, viewport, () => undefined,
+      () => undefined, () => undefined, observation => { owner.observePresentation({ kind: "xr", observation }); });
+    const view = createSceneFixture("Briefing");
+    const runtime = new PresentationRuntime(renderer, [backend], () => fixturePresentation(view),
+      timestamp => { owner.advanceFlightFrame(timestamp, []); });
+    const startEnabled = () => owner.readSharedUi(sharedGameUiPlatform()).panels.flatMap(panel => panel.controls)
+      .find(control => control.id === "game-briefing-start")?.enabled;
+    try {
+      owner.executeSharedSessionCommand({ kind: "open_setup" });
+      owner.executeSharedSessionCommand({ kind: "prepare" });
+      await backend.requestSessionFromUserGesture();
+      expect(await runtime.start("webxr")).toEqual({ ok: true });
+      expect(startEnabled()).toBe(false);
+      adapter.emitVisibility("visible");
+      expect(startEnabled()).toBe(false);
+      renderer.tick(0, runtimeViewerFixture(IDENTITY_POSE));
+      expect(startEnabled()).toBe(true);
+      owner.executeSharedSessionCommand({ kind: "start_countdown" });
+      owner.observeCountdown(owner.captureCountdownToken(), 3, true);
+      adapter.emitVisibility("visible-blurred");
+      expect(owner.readLifecycle()).toMatchObject({ phase: "flight_paused", can_resume: false });
+      adapter.emitVisibility("visible");
+      expect(owner.readLifecycle()).toMatchObject({ phase: "flight_paused", can_resume: true });
+      owner.executeSharedSessionCommand({ kind: "resume" });
+      renderer.tick(10, runtimeViewerFixture(IDENTITY_POSE));
+      const before = owner.readSnapshot();
+      renderer.tick(20, unavailableViewerFrame("viewer-unavailable"));
+      expect(owner.readLifecycle()).toMatchObject({ phase: "flight_paused", can_resume: false });
+      const after = owner.readSnapshot();
+      expect(after.frame.kind === "flight" && before.frame.kind === "flight" && after.frame.state.tick === before.frame.state.tick).toBe(true);
+      const stale = adapter.captureHandlers();
+      await backend.stop();
+      expect(owner.readLifecycle()).toMatchObject({ phase: "flight_paused", can_resume: true });
+      stale.visibility?.("hidden");
+      expect(owner.readLifecycle()).toMatchObject({ phase: "flight_paused", can_resume: true });
+      await backend.requestSessionFromUserGesture();
+      await backend.start();
+      expect(owner.readLifecycle().can_resume).toBe(false);
+      renderer.tick(30, runtimeViewerFixture(IDENTITY_POSE));
+      stale.visibility?.("hidden");
+      stale.end?.();
+      stale.reset?.(null);
+      expect(adapter.active).toBe(true);
+      expect(owner.readLifecycle()).toMatchObject({ phase: "flight_paused", can_resume: true });
+    } finally { await runtime.dispose(); owner.dispose(); }
+  });
+
   it("holds the Menu anchor and rejects controller selection through pending metrics without Screen recovery", async () => {
     const adapter = new FakeWebXrAdapter();
     const renderer = new FakeRenderer();
@@ -264,8 +319,16 @@ class FakeWebXrAdapter implements WebXrSessionPort {
   endCallCount = 0;
   pendingRequest: Promise<WebXrSessionRequest> | null = null;
   active = false;
+  visibility: XRVisibilityState = "visible";
+  visibilityHandler: ((visibility: XRVisibilityState) => void) | null = null;
   private endHandler: (() => void) | null = null;
   private referenceSpaceResetHandler: ((previousReferenceFromNew: Pose | null) => void) | null = null;
+
+  readPointerFrame() { return { visibility: this.visibility, focused: this.visibility === "visible", rays: [] }; }
+
+  setVisibilityHandler(handler: ((visibility: XRVisibilityState) => void) | null): void { this.visibilityHandler = handler; }
+
+  emitVisibility(visibility: XRVisibilityState): void { this.visibility = visibility; this.visibilityHandler?.(visibility); }
 
   projectTrackingFrame(value: Pose) { return referenceFrameFixture(value); }
 
@@ -293,6 +356,10 @@ class FakeWebXrAdapter implements WebXrSessionPort {
 
   setSessionEndHandler(handler: (() => void) | null): void {
     this.endHandler = handler;
+  }
+
+  captureHandlers() {
+    return { end: this.endHandler, reset: this.referenceSpaceResetHandler, visibility: this.visibilityHandler };
   }
 
   setReferenceSpaceResetHandler(handler: ((previousReferenceFromNew: Pose | null) => void) | null): void {

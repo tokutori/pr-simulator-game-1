@@ -1,3 +1,4 @@
+import type { PresentationObservation } from "../generated/presentation-observation.js";
 import { IDENTITY_POSE, rotateVec3, vec3 } from "../render/contracts/math.js";
 import type { Pose } from "../render/contracts/math.js";
 import type { BackendFrame, MenuPresentation, PresentationBackendAdapter, RendererAdapter, SelectRay, ViewportSize } from "../render/contracts/runtime.js";
@@ -7,6 +8,8 @@ import type { UiActionDispatcher, UiViewModel } from "../render/contracts/ui.js"
 import { XrSpatialSession } from "./xr-spatial-session.js";
 import { XrPointerSession } from "./xr-pointer-session.js";
 import type { WebXrAvailability, WebXrSessionPort, WebXrSessionRequest } from "./webxr-contracts.js";
+
+type XrAvailability = NonNullable<Extract<PresentationObservation, { kind: "xr" }>["observation"]>;
 
 type WebXrBackendState =
   | { readonly type: "idle" }
@@ -22,6 +25,7 @@ export class WebXrPresentationBackend implements PresentationBackendAdapter {
   private state: WebXrBackendState = { type: "idle" };
   private requestGeneration = 0;
   private lastViewerPose: Pose | null = null;
+  private lastAvailability: XrAvailability | null = null;
   private lastPanel: UiViewModel["panels"][number] | null = null;
   private lastPanelPose: Pose | null = null;
   private readonly spatial = new XrSpatialSession();
@@ -34,7 +38,8 @@ export class WebXrPresentationBackend implements PresentationBackendAdapter {
     private readonly viewport: () => ViewportSize,
     dispatch: UiActionDispatcher,
     private readonly onSessionEnd: () => void,
-    private readonly onReferenceSpaceResetUnavailable: () => void = () => undefined
+    private readonly onReferenceSpaceResetUnavailable: () => void = () => undefined,
+    private readonly onAvailability: (observation: XrAvailability | null) => void = () => undefined
   ) {
     this.pointers = new XrPointerSession(dispatch);
   }
@@ -75,10 +80,21 @@ export class WebXrPresentationBackend implements PresentationBackendAdapter {
     if (this.state.type !== "requested") throw new Error("WebXR session must be requested by an explicit user action");
     this.state = { type: "starting" };
     this.spatial.reset();
-    this.xrRenderer.setSessionEndHandler(() => { this.handleUnexpectedEnd(); });
-    this.xrRenderer.setReferenceSpaceResetHandler((transform) => { this.handleReferenceSpaceReset(transform); });
-    this.xrRenderer.setInputFocusHandler?.((focused) => {
-      if (focused) return;
+    this.lastViewerPose = null;
+    this.lastPanel = null;
+    this.lastPanelPose = null;
+    const generation = this.requestGeneration;
+    this.xrRenderer.setSessionEndHandler(() => {
+      if (generation === this.requestGeneration) this.handleUnexpectedEnd();
+    });
+    this.xrRenderer.setReferenceSpaceResetHandler((transform) => {
+      if (generation === this.requestGeneration) this.handleReferenceSpaceReset(transform);
+    });
+    this.xrRenderer.setVisibilityHandler((visibility) => {
+      if (generation !== this.requestGeneration) return;
+      if (this.state.type !== "active" && this.state.type !== "starting") return;
+      this.publishAvailability(visibility, visibility === "visible", this.lastViewerPose !== null);
+      if (visibility === "visible") return;
       this.lastPanelPose = null;
       this.pointers.reset();
     });
@@ -87,6 +103,8 @@ export class WebXrPresentationBackend implements PresentationBackendAdapter {
       await this.xrRenderer.startSession();
       if (!this.isStarting()) throw new Error("WebXR session ended during startup");
       this.state = { type: "active" };
+      const observation = this.xrRenderer.readPointerFrame();
+      this.publishAvailability(observation.visibility, observation.focused, false);
     } catch (error) {
       this.state = { type: "failed", message: errorMessage(error) };
       this.renderer.setSelectRayHandler(null);
@@ -97,7 +115,8 @@ export class WebXrPresentationBackend implements PresentationBackendAdapter {
       } finally {
         this.xrRenderer.setSessionEndHandler(null);
         this.xrRenderer.setReferenceSpaceResetHandler(null);
-        this.xrRenderer.setInputFocusHandler?.(null);
+        this.xrRenderer.setVisibilityHandler(null);
+        this.releaseAvailability();
       }
       throw error;
     }
@@ -109,7 +128,7 @@ export class WebXrPresentationBackend implements PresentationBackendAdapter {
     this.renderer.setSelectRayHandler(null);
     this.xrRenderer.setSessionEndHandler(null);
     this.xrRenderer.setReferenceSpaceResetHandler(null);
-    this.xrRenderer.setInputFocusHandler?.(null);
+    this.xrRenderer.setVisibilityHandler(null);
     try {
       await this.xrRenderer.endSession();
     } finally {
@@ -119,6 +138,7 @@ export class WebXrPresentationBackend implements PresentationBackendAdapter {
       this.lastPanelPose = null;
       this.spatial.reset();
       this.pointers.reset();
+      this.releaseAvailability();
     }
   }
 
@@ -134,8 +154,14 @@ export class WebXrPresentationBackend implements PresentationBackendAdapter {
     }
   }
 
+  observeViewerFrame(viewer: ViewerFrame): void {
+    const input = this.xrRenderer.readPointerFrame();
+    this.publishAvailability(input.visibility, input.focused, viewer.trackingFromHead !== null);
+  }
+
   currentFrame(timestampMs: number, viewModel: UiViewModel, viewer: ViewerFrame, menu: MenuPresentation): BackendFrame {
     const viewerPose = viewer.trackingFromHead;
+    const input = this.xrRenderer.readPointerFrame();
     const reference = viewerPose === null ? null : this.xrRenderer.projectTrackingFrame(viewerPose);
     const presentationViewerPose = reference?.head ?? null;
     this.lastViewerPose = presentationViewerPose;
@@ -167,7 +193,6 @@ export class WebXrPresentationBackend implements PresentationBackendAdapter {
     const worldFromPanel = placement.kind === "ready" ? placement.referenceFromPanel : IDENTITY_POSE;
     this.lastPanel = panel;
     this.lastPanelPose = worldFromPanel;
-    const input = this.xrRenderer.readPointerFrame?.() ?? { focused: true, rays: [] };
     const gaze: readonly SelectRay[] = presentationViewerPose === null ? [] : [{ source: { kind: "gaze" },
       origin: presentationViewerPose.position, direction: rotateVec3(presentationViewerPose.orientation, vec3(0, 0, -1)), timestampMs }];
     const cursors = this.pointers.observe(JSON.stringify([viewModel.scene, viewModel.activeOverlay, panel?.id]), panel,
@@ -188,6 +213,23 @@ export class WebXrPresentationBackend implements PresentationBackendAdapter {
     }
   }
 
+  private publishAvailability(visibility: XRVisibilityState, focused: boolean, tracked: boolean): void {
+    if (this.state.type !== "active" && this.state.type !== "starting") return;
+    const observation: XrAvailability = { visibility: visibility === "visible-blurred" ? "blurred" : visibility,
+      input_focused: focused, tracking_valid: tracked };
+    const previous = this.lastAvailability;
+    if (previous !== null && previous.visibility === observation.visibility && previous.input_focused === focused
+        && previous.tracking_valid === tracked) return;
+    this.lastAvailability = observation;
+    this.onAvailability(observation);
+  }
+
+  private releaseAvailability(): void {
+    if (this.lastAvailability === null) return;
+    this.lastAvailability = null;
+    this.onAvailability(null);
+  }
+
   private handleSelectRay(ray: SelectRay): void {
     if (this.lastPanel === null || this.lastPanelPose === null) return;
     this.pointers.select(ray);
@@ -195,9 +237,10 @@ export class WebXrPresentationBackend implements PresentationBackendAdapter {
 
   private handleUnexpectedEnd(): void {
     if (this.state.type !== "active" && this.state.type !== "starting") return;
+    this.publishAvailability("hidden", false, false);
     this.state = { type: "idle" };
     this.renderer.setSelectRayHandler(null);
-    this.xrRenderer.setInputFocusHandler?.(null);
+    this.xrRenderer.setVisibilityHandler(null);
     queueMicrotask(() => {
       this.spatial.reset();
       this.pointers.reset();
@@ -208,6 +251,8 @@ export class WebXrPresentationBackend implements PresentationBackendAdapter {
   private handleReferenceSpaceReset(previousReferenceFromNew: Pose | null): void {
     if (this.state.type !== "active" && this.state.type !== "starting") return;
     if (previousReferenceFromNew === null) {
+      const input = this.xrRenderer.readPointerFrame();
+      this.publishAvailability(input.visibility, input.focused, false);
       this.renderer.setSelectRayHandler(null);
       this.state = { type: "failed", message: "WebXR reference-space reset cannot be reconciled" };
       this.onReferenceSpaceResetUnavailable();
