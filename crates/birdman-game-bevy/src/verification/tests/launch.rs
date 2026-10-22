@@ -112,7 +112,7 @@ fn countdown_driver_accepts_capture_saving_across_launch_without_freezing_ticks(
         0
     );
     app.world_mut()
-        .run_system_once(driver::verify_ui_layout)
+        .run_system_once(driver::ui_validation::verify_ui_layout)
         .unwrap();
     app.world_mut()
         .resource_mut::<driver::Verification>()
@@ -125,7 +125,7 @@ fn countdown_driver_accepts_capture_saving_across_launch_without_freezing_ticks(
         }),
     });
     app.world_mut()
-        .run_system_once(driver::verify_ui_layout)
+        .run_system_once(driver::ui_validation::verify_ui_layout)
         .unwrap();
     app.update();
     app.update();
@@ -166,7 +166,7 @@ fn countdown_driver_drains_canceled_capture_before_reusing_its_filename() {
         for _ in 0..10 {
             app.update();
             app.world_mut()
-                .run_system_once(driver::verify_ui_layout)
+                .run_system_once(driver::ui_validation::verify_ui_layout)
                 .unwrap();
         }
         let verification = app.world().resource::<driver::Verification>();
@@ -194,7 +194,7 @@ fn countdown_driver_drains_canceled_capture_before_reusing_its_filename() {
             }),
         });
         app.world_mut()
-            .run_system_once(driver::verify_ui_layout)
+            .run_system_once(driver::ui_validation::verify_ui_layout)
             .unwrap();
         app.update();
         assert_eq!(

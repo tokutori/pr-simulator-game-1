@@ -137,12 +137,12 @@ fn source_boundary_matches_the_real_last_frame_increment_before_render_extractio
 
 #[test]
 fn source_summary_uses_frames_across_epoch_changes_and_retains_missing_or_duplicate_samples() {
-    use bevy::diagnostic::{DiagnosticMeasurement, DiagnosticsStore};
-    use driver::timing::{
+    use crate::app::screen_render::timing::{
         self,
         tests::{packet, packet_quality},
     };
-    use driver::{MotionSourceWindow, SourceBoundary, summarize_source_timing};
+    use bevy::diagnostic::{DiagnosticMeasurement, DiagnosticsStore};
+    use driver::metrics::{MotionSourceWindow, SourceBoundary, summarize_source_timing};
     let arrival = std::time::Instant::now();
     let mut store = DiagnosticsStore::default();
     packet(&mut store, arrival, 1, 10, 16_123, 50.0);
@@ -265,8 +265,8 @@ fn timing_summary_selects_closed_arrival_window_and_nearest_rank_p95() {
     let mut samples = vec![(0, 500.0)];
     samples.extend((1..=19).map(|index| (1000 + (index - 1) * 100, index as f64)));
     samples.extend([(3000, 20.0), (3001, 1000.0)]);
-    let diagnostic = timing_diagnostic(base, driver::TIMING_HISTORY_LIMIT, &samples);
-    let summary = driver::summarize_timing(&diagnostic, start, end);
+    let diagnostic = timing_diagnostic(base, driver::metrics::TIMING_HISTORY_LIMIT, &samples);
+    let summary = driver::metrics::summarize_timing(&diagnostic, start, end);
     assert_eq!(summary.received_count, 20);
     assert_eq!(summary.invalid_count, 0);
     assert_eq!(summary.sample_span_ms, Some(2000.0));
@@ -275,7 +275,7 @@ fn timing_summary_selects_closed_arrival_window_and_nearest_rank_p95() {
     assert_eq!(summary.maximum_ms, Some(20.0));
     assert!(summary.is_complete());
     let diagnostic = timing_diagnostic(base, 120, &[(1000, 2.0), (1001, 1.0), (1002, 3.0)]);
-    let summary = driver::summarize_timing(&diagnostic, start, end);
+    let summary = driver::metrics::summarize_timing(&diagnostic, start, end);
     assert_eq!(summary.p95_ms, Some(3.0));
     assert_eq!(summary.mean_ms, Some(2.0));
 }
@@ -286,7 +286,8 @@ fn timing_summary_marks_truncated_history_incomplete_at_eighty_fps() {
     let samples: Vec<_> = (0..160).map(|index| (index * 12, 12.5)).collect();
     for (capacity, expected_count, incomplete) in [(120, 120, true), (4096, 160, false)] {
         let diagnostic = timing_diagnostic(start, capacity, &samples);
-        let summary = driver::summarize_timing(&diagnostic, start, start + MOTION_DURATION);
+        let summary =
+            driver::metrics::summarize_timing(&diagnostic, start, start + MOTION_DURATION);
         assert_eq!(summary.received_count, expected_count);
         assert_eq!(summary.history_incomplete, incomplete);
         assert_eq!(summary.is_complete(), !incomplete);
@@ -294,9 +295,10 @@ fn timing_summary_marks_truncated_history_incomplete_at_eighty_fps() {
     }
     let diagnostic = timing_diagnostic(start, 4, &[(0, 1.0), (1, 1.0), (2, 1.0), (3, 1.0)]);
     assert!(
-        driver::summarize_timing(&diagnostic, start, start + MOTION_DURATION).history_incomplete
+        driver::metrics::summarize_timing(&diagnostic, start, start + MOTION_DURATION)
+            .history_incomplete
     );
-    let summary = driver::summarize_timing(
+    let summary = driver::metrics::summarize_timing(
         &diagnostic,
         start + Duration::from_millis(2),
         start + MOTION_DURATION,
@@ -310,10 +312,10 @@ fn timing_summary_keeps_invalid_samples_and_unavailable_distinct() {
     let start = std::time::Instant::now();
     let diagnostic = timing_diagnostic(
         start,
-        driver::TIMING_HISTORY_LIMIT,
+        driver::metrics::TIMING_HISTORY_LIMIT,
         &[(0, f64::NAN), (1, f64::INFINITY), (2, -1.0), (3, 0.0)],
     );
-    let summary = driver::summarize_timing(&diagnostic, start, start + MOTION_DURATION);
+    let summary = driver::metrics::summarize_timing(&diagnostic, start, start + MOTION_DURATION);
     assert_eq!(summary.received_count, 4);
     assert_eq!(summary.invalid_count, 3);
     assert_eq!(summary.sample_span_ms, Some(3.0));
@@ -321,7 +323,7 @@ fn timing_summary_keeps_invalid_samples_and_unavailable_distinct() {
     assert_eq!(summary.p95_ms, Some(0.0));
     assert_eq!(summary.maximum_ms, Some(0.0));
     assert!(!summary.is_complete());
-    let summary = driver::summarize_timing(
+    let summary = driver::metrics::summarize_timing(
         &diagnostic,
         start + MOTION_DURATION,
         start + MOTION_DURATION * 2,
@@ -345,7 +347,8 @@ fn timing_history_extension_preserves_metadata_and_current_frame_deferred_measur
         ))
         .add_systems(
             Update,
-            driver::maintain_timing_history.after(FrameTimeDiagnosticsPlugin::diagnostic_system),
+            driver::metrics::maintain_timing_history
+                .after(FrameTimeDiagnosticsPlugin::diagnostic_system),
         )
         .add_systems(
             Update,
@@ -360,7 +363,7 @@ fn timing_history_extension_preserves_metadata_and_current_frame_deferred_measur
                     );
                 }
             })
-            .after(driver::maintain_timing_history),
+            .after(driver::metrics::maintain_timing_history),
         );
     let path = DiagnosticPath::const_new("render/test/elapsed_gpu");
     let mut diagnostic = Diagnostic::new(path.clone()).with_suffix("ms");
@@ -378,7 +381,7 @@ fn timing_history_extension_preserves_metadata_and_current_frame_deferred_measur
     let diagnostic = store.get(&path).unwrap();
     assert_eq!(
         diagnostic.get_max_history_length(),
-        driver::TIMING_HISTORY_LIMIT
+        driver::metrics::TIMING_HISTORY_LIMIT
     );
     assert_eq!(diagnostic.history_len(), 1);
     assert_eq!(diagnostic.suffix, "ms");
@@ -410,10 +413,10 @@ fn timing_history_extension_preserves_metadata_and_current_frame_deferred_measur
             .get(&late)
             .unwrap()
             .get_max_history_length(),
-        driver::TIMING_HISTORY_LIMIT,
+        driver::metrics::TIMING_HISTORY_LIMIT,
     );
     assert_eq!(
-        driver::timing_kind(&Diagnostic::new(DiagnosticPath::const_new(
+        driver::metrics::timing_kind(&Diagnostic::new(DiagnosticPath::const_new(
             "render/invalid_elapsed_gpu"
         ))),
         None,
@@ -429,6 +432,6 @@ fn timing_history_extension_preserves_metadata_and_current_frame_deferred_measur
             .get(&metadata)
             .unwrap()
             .get_max_history_length(),
-        driver::TIMING_HISTORY_LIMIT
+        driver::metrics::TIMING_HISTORY_LIMIT
     );
 }

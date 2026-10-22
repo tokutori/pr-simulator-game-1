@@ -90,7 +90,7 @@ impl Options {
 
     pub(crate) fn verify_font(&self, bytes: &[u8]) -> Result<(), Box<dyn Error>> {
         if self.directory.is_some() {
-            super::verify_text_layout(bytes)?;
+            super::ui_validation::verify_text_layout(bytes)?;
         }
         Ok(())
     }
@@ -144,7 +144,7 @@ impl Options {
             app.add_plugins(bevy::diagnostic::FrameTimeDiagnosticsPlugin::default())
                 .add_systems(
                     Update,
-                    super::maintain_timing_history
+                    super::metrics::maintain_timing_history
                         .after(bevy::diagnostic::FrameTimeDiagnosticsPlugin::diagnostic_system)
                         .before(super::project_observer),
                 );
@@ -157,13 +157,13 @@ impl Options {
             self.replay_cameras,
         )?;
         app.insert_resource(verification)
-            .add_plugins(super::VerificationRenderPlugin)
+            .add_plugins(super::render_readiness::VerificationRenderPlugin)
             .add_systems(PreUpdate, super::supply_input.after(read_input))
             .add_systems(Update, super::project_observer.before(world::project_world))
             .add_systems(Update, super::advance.after(ui::update_ui))
             .add_systems(
                 PostUpdate,
-                super::verify_ui_layout.after(bevy::ui::UiSystems::PostLayout),
+                super::ui_validation::verify_ui_layout.after(bevy::ui::UiSystems::PostLayout),
             );
         Ok(Some(completion))
     }

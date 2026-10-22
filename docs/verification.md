@@ -456,7 +456,13 @@ observer費用、headlessの表示上限、CPU/GPU競合を記録し、補正で
 
 利用者向けの起動・キー操作は[Nativeガイド](native-guide.md)へ分離する。
 
-検証専用コードは `verify-harness` featureで有効にする。driverはシナリオの進行を、captureは撮影要求の識別・非同期保存・完了通知とReplay中の記録保持検査を所有する。
+検証専用コードは `verify-harness` featureで有効にする。
+
+- driver: シナリオの進行と操作を担当する。
+- capture: 撮影要求の識別・非同期保存・完了通知とReplay中の記録保持検査を所有する。
+- metrics: frameと計測区間の対応、統計量と計測履歴の完全性を検査する。
+- render readiness / scene probe: GPU資源の準備状態と、実際のcamera・水面・描画寸法を観測する。
+- UI validation: 実測文字・配置・clip・操作への到達性を検査する。
 
 ~~~sh
 cargo run -p birdman-game-bevy --features verify-harness --locked -- --verify target/native-offscreen --offscreen --verify-size 1280x720 --export-dir target/native-test-logs

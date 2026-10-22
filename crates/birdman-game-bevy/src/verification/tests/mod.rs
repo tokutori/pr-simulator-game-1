@@ -3,13 +3,14 @@ use super::super::{
     ui::{setup_ui, update_ui},
     water_quality::WaterQualitySelection,
 };
+use super::ui_validation::{VerificationUiHierarchy, contains_layout, within_ancestor_clip};
 use super::{
     CaptureCompletion, CaptureIdentity, CaptureState, MOTION_DURATION, MenuAction, MotionEndpoint,
     MotionInterval, MotionMetrics, NativeSession, READY_CONFIRMATION_FRAMES, RenderReadiness,
-    VerificationCompletion, VerificationStage, VerificationUiHierarchy, WaterMotion,
-    WaterVerificationCase, contains_layout, focus_briefing_navigation, queue_ui_control,
-    recover_processing_delay, save_capture, shader_is_pending, within_ancestor_clip,
+    VerificationCompletion, VerificationStage, WaterMotion, WaterVerificationCase,
+    focus_briefing_navigation, queue_ui_control, recover_processing_delay, save_capture,
 };
+use crate::app::screen_render::timing::shader_is_pending;
 use bevy::ecs::system::{RunSystemOnce, SystemState};
 use bevy::input_focus::{FocusCause, InputFocus, tab_navigation::TabIndex};
 use bevy::prelude::{
@@ -38,16 +39,16 @@ fn countdown_driver_app() -> App {
     .init_asset::<Shader>()
     .init_asset_loader::<bevy::shader::ShaderLoader>()
     .init_resource::<NativeSession>()
-    .init_resource::<super::CameraMode>()
+    .init_resource::<crate::app::CameraMode>()
     .init_resource::<WaterQualitySelection>()
     .init_resource::<super::super::screen_render::NativeScreenRender>()
-    .init_resource::<super::timing::TimingReadout>()
+    .init_resource::<crate::app::screen_render::timing::TimingReadout>()
     .init_resource::<bevy::light::DirectionalLightShadowMap>()
     .init_resource::<Assets<Mesh>>()
-    .init_resource::<Assets<super::WaterMaterial>>()
+    .init_resource::<Assets<crate::app::water::WaterMaterial>>()
     .init_resource::<Assets<Image>>()
     .init_resource::<InputFocus>()
-    .insert_resource(super::NativeEnvironment::try_default().unwrap())
+    .insert_resource(crate::app::environment::NativeEnvironment::try_default().unwrap())
     .insert_resource(Time::<Virtual>::from_max_delta(super::MAX_FRAME_DELTA))
     .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
         Duration::from_secs_f64(1.0 / f64::from(birdman_game_core::PHYSICS_HZ)),

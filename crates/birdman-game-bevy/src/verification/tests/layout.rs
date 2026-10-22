@@ -2,6 +2,11 @@ use super::*;
 use crate::app::verification as driver;
 
 #[test]
+fn embedded_japanese_font_preserves_cjk_and_mixed_script_layout() {
+    driver::ui_validation::verify_text_layout(crate::app::native_assets::bundled_font()).unwrap();
+}
+
+#[test]
 fn layout_verification_ignores_stale_requested_identity() {
     let mut app = countdown_driver_app();
     let identity = {
@@ -28,7 +33,7 @@ fn layout_verification_ignores_stale_requested_identity() {
             .resource_mut::<driver::Verification>()
             .capture = CaptureState::Requested(stale);
         app.world_mut()
-            .run_system_once(driver::verify_ui_layout)
+            .run_system_once(driver::ui_validation::verify_ui_layout)
             .unwrap();
         let verification = app.world().resource::<driver::Verification>();
         assert!(verification.failure.is_none());
@@ -46,7 +51,7 @@ fn live_requested_capture_rejects_missing_navigation() {
         verification.capture = CaptureState::Requested(verification.capture_identity());
     }
     app.world_mut()
-        .run_system_once(driver::verify_ui_layout)
+        .run_system_once(driver::ui_validation::verify_ui_layout)
         .unwrap();
     assert_eq!(
         app.world()
