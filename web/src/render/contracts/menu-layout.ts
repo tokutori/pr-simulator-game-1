@@ -108,6 +108,7 @@ export interface MenuViewport {
   readonly progress: number;
   readonly offsetMeters: number;
   readonly maximumOffsetMeters: number;
+  readonly pageProgress: number;
 }
 
 export type MenuLayoutUnavailableReason = "missing-text-metrics" | "stale-text-metrics" |

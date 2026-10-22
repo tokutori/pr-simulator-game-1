@@ -4,7 +4,7 @@ import { uiControlBackground } from "../render/contracts/ui.js";
 import type { UiChart } from "../render/contracts/ui.js";
 import { browserHeadHudContext } from "./head-hud-canvas.js";
 import type { HeadHudDrawingContext } from "./head-hud-canvas.js";
-import { menuRectInViewport } from "./menu-layout.js";
+import { projectMenuViewport } from "./menu-layout.js";
 
 export type MenuMeasurementResult =
   | { readonly kind: "ready"; readonly measurements: readonly MenuTextMeasurement[] }
@@ -17,7 +17,7 @@ export interface MenuTextInk {
   readonly baselineY: number;
   readonly rotationDegrees: number;
   readonly fullRect: MenuRect;
-  readonly visible: ReturnType<typeof menuRectInViewport>;
+  readonly visible: { readonly kind: "outside" } | { readonly kind: "visible"; readonly rect: MenuRect };
 }
 
 export interface MenuDrawingContext extends HeadHudDrawingContext {
@@ -107,7 +107,9 @@ function configureText(context: MenuDrawingContext, text: MenuTextRequest, meter
   context.setTextAlign("left");
 }
 
-function paintedText(viewport: MenuViewport, text: MenuTextLayout, surfaceFixed: boolean): readonly MenuTextInk[] {
+type PendingInk = Readonly<{ ink: Omit<MenuTextInk, "visible">; documentRect: MenuRect | null }>;
+
+function paintedText(viewport: MenuViewport, text: MenuTextLayout, surfaceFixed: boolean): readonly PendingInk[] {
   const request = viewport.document.request;
   const left = text.bounds.x + (surfaceFixed ? 0 : viewport.contentClip.x);
   const top = text.bounds.y + (surfaceFixed ? 0 : viewport.contentClip.y - viewport.offsetMeters);
@@ -117,11 +119,10 @@ function paintedText(viewport: MenuViewport, text: MenuTextLayout, surfaceFixed:
       const geometry = text.lineGeometry?.[index];
       if (geometry === undefined) throw new Error("Shared Menu chart line lost its ink geometry");
       const { anchor, bounds: documentRect } = geometry;
-      return Object.freeze({ identity: text.request.identity, value: line.value,
+      return { ink: { identity: text.request.identity, value: line.value,
         anchorX: anchor.x + viewport.contentClip.x, baselineY: anchor.y + viewport.contentClip.y - viewport.offsetMeters,
         rotationDegrees: projection.rotationDegrees,
-        fullRect: Object.freeze({ ...documentRect, x: documentRect.x + viewport.contentClip.x, y: documentRect.y + viewport.contentClip.y - viewport.offsetMeters }),
-        visible: menuRectInViewport(viewport, documentRect) });
+        fullRect: { ...documentRect, x: documentRect.x + viewport.contentClip.x, y: documentRect.y + viewport.contentClip.y - viewport.offsetMeters } }, documentRect };
     }
     const anchorX = left + Math.max(0, line.leftMeters);
     const baselineY = top + index * request.lineHeightMeters + request.lineHeightMeters / 2 + (line.ascentMeters - line.descentMeters) / 2;
@@ -129,8 +130,8 @@ function paintedText(viewport: MenuViewport, text: MenuTextLayout, surfaceFixed:
       width: line.leftMeters + line.rightMeters, height: line.ascentMeters + line.descentMeters });
     const documentRect = { ...fullRect, x: fullRect.x - viewport.contentClip.x,
       y: fullRect.y - viewport.contentClip.y + viewport.offsetMeters };
-    return Object.freeze({ identity: text.request.identity, value: line.value, anchorX, baselineY, rotationDegrees: 0, fullRect,
-      visible: surfaceFixed ? Object.freeze({ kind: "visible" as const, rect: fullRect }) : menuRectInViewport(viewport, documentRect) });
+    return { ink: { identity: text.request.identity, value: line.value, anchorX, baselineY, rotationDegrees: 0, fullRect },
+      documentRect: surfaceFixed ? null : documentRect };
   }));
 }
 
@@ -145,22 +146,41 @@ function pageText(viewport: MenuViewport, direction: "previous" | "next"): MenuT
 }
 
 export function menuPaintedTextInk(viewport: MenuViewport): readonly MenuTextInk[] {
-  return Object.freeze([viewport.document.title, viewport.document.caption, ...viewport.document.sectionHeadings, ...viewport.document.controls.flatMap((control) => control.texts)]
+  const pending = [viewport.document.title, viewport.document.caption, ...viewport.document.sectionHeadings, ...viewport.document.controls.flatMap((control) => control.texts)]
     .flatMap((text) => paintedText(viewport, text, false))
-    .concat(viewport.maximumOffsetMeters > 0 ? [...paintedText(viewport, pageText(viewport, "previous"), true), ...paintedText(viewport, pageText(viewport, "next"), true)] : []));
+    .concat(viewport.maximumOffsetMeters > 0 ? [...paintedText(viewport, pageText(viewport, "previous"), true), ...paintedText(viewport, pageText(viewport, "next"), true)] : []);
+  const rectangles = pending.flatMap(item => item.documentRect === null ? [] : [item.documentRect]);
+  const projected = projectMenuViewport(viewport, rectangles);
+  let index = 0;
+  return pending.map(({ ink, documentRect }): MenuTextInk => {
+    if (documentRect === null) return { ...ink, visible: { kind: "visible", rect: ink.fullRect } };
+    const geometry = projected.rectangles[index++];
+    if (geometry === undefined) throw new Error("Menu text lost its viewport projection");
+    return { ...ink, fullRect: geometry.full, visible: geometry.visible === null
+      ? { kind: "outside" } : { kind: "visible", rect: geometry.visible } };
+  });
 }
 
 export function drawMeasuredMenu(context: MenuDrawingContext, viewport: MenuViewport, canvasWidth: number, canvasHeight: number): void {
   if (![canvasWidth, canvasHeight].every((value) => Number.isInteger(value) && value > 0)) throw new RangeError("Menu canvas dimensions must be positive integers");
   const request = viewport.document.request;
   const theme = request.theme;
+  const inkByIdentity = new Map<string, MenuTextInk[]>();
+  for (const ink of menuPaintedTextInk(viewport)) {
+    const lines = inkByIdentity.get(ink.identity) ?? [];
+    lines.push(ink);
+    inkByIdentity.set(ink.identity, lines);
+  }
+  const rectangles = viewport.document.controls.flatMap(layout => layout.kind === "chart" ? [layout.bounds, layout.plot] : [layout.bounds]);
+  const projected = projectMenuViewport(viewport, rectangles);
+  const visibleRects = new Map(rectangles.map((rectangle, index) => [rectangle, projected.rectangles[index]?.visible ?? null]));
   const scaleX = canvasWidth / request.surfaceSize.width;
   const scaleY = canvasHeight / request.surfaceSize.height;
   const drawRect = (rectangle: MenuRect): void => { context.fillRect(rectangle.x * scaleX, rectangle.y * scaleY, rectangle.width * scaleX, rectangle.height * scaleY); };
-  const text = (layout: MenuTextLayout, fixed: boolean, color = theme.text): void => {
+  const text = (layout: MenuTextLayout, color = theme.text): void => {
     configureText(context, layout.request, 1 / scaleY);
     context.setFillStyle(layout.request.chartText?.color ?? color);
-    for (const ink of paintedText(viewport, layout, fixed)) {
+    for (const ink of inkByIdentity.get(layout.request.identity) ?? []) {
       if (ink.visible.kind !== "visible") continue;
       if (layout.chartProjection === undefined) context.fillText(ink.value, ink.anchorX * scaleX, ink.baselineY * scaleY);
       else {
@@ -186,15 +206,15 @@ export function drawMeasuredMenu(context: MenuDrawingContext, viewport: MenuView
       context.rect(viewport.contentClip.x * scaleX, viewport.contentClip.y * scaleY,
         viewport.contentClip.width * scaleX, viewport.contentClip.height * scaleY);
       context.clip();
-      text(viewport.document.title, false);
-      text(viewport.document.caption, false, theme.muted_text);
-      for (const heading of viewport.document.sectionHeadings) text(heading, false);
+      text(viewport.document.title);
+      text(viewport.document.caption, theme.muted_text);
+      for (const heading of viewport.document.sectionHeadings) text(heading);
       for (const control of viewport.document.controls) {
-        const clipped = menuRectInViewport(viewport, control.bounds);
-        if (clipped.kind === "outside") continue;
+        const clipped = visibleRects.get(control.bounds);
+        if (clipped == null) continue;
         context.setFillStyle(uiControlBackground(control.control, theme));
-        drawRect(clipped.rect);
-        if (control.kind === "chart") drawChart(context, control.control, control.plot, viewport, scaleX, scaleY);
+        drawRect(clipped);
+        if (control.kind === "chart") drawChart(context, control.control, control.plot, viewport, visibleRects.get(control.plot) ?? null, scaleX, scaleY);
         for (const layout of control.texts) {
           const legend = layout.request.legend;
           if (legend !== undefined) {
@@ -207,7 +227,7 @@ export function drawMeasuredMenu(context: MenuDrawingContext, viewport: MenuView
               context.fillRect(left, top, width, height);
             } else context.fillGradientRect(left, top, width, height, legend.segment_gradient);
           }
-          text(layout, false, control.control.enabled || control.control.kind === "status" || control.control.kind === "chart" ? theme.text : theme.muted_text);
+          text(layout, control.control.enabled || control.control.kind === "status" || control.control.kind === "chart" ? theme.text : theme.muted_text);
         }
       }
     } finally { context.restore(); }
@@ -218,14 +238,13 @@ export function drawMeasuredMenu(context: MenuDrawingContext, viewport: MenuView
       context.setGlobalAlpha(1);
       context.setFillStyle(theme.normal_background);
       drawRect(bounds);
-      text(pageText(viewport, direction), true, enabled ? theme.text : theme.muted_text);
+      text(pageText(viewport, direction), enabled ? theme.text : theme.muted_text);
     }
   } finally { context.restore(); }
 }
 
-function drawChart(context: HeadHudDrawingContext, chart: UiChart, plot: MenuRect, viewport: MenuViewport, scaleX: number, scaleY: number): void {
-  const clip = menuRectInViewport(viewport, plot);
-  if (clip.kind === "outside") return;
+function drawChart(context: HeadHudDrawingContext, chart: UiChart, plot: MenuRect, viewport: MenuViewport, clip: MenuRect | null, scaleX: number, scaleY: number): void {
+  if (clip === null) return;
   const transform = (point: Readonly<{ x: number; y: number }>) => ({
     x: (plot.x + (point.x - chart.x_minimum) / (chart.x_maximum - chart.x_minimum) * plot.width + viewport.contentClip.x) * scaleX,
     y: (plot.y + (chart.y_maximum - point.y) / (chart.y_maximum - chart.y_minimum) * plot.height + viewport.contentClip.y - viewport.offsetMeters) * scaleY
@@ -243,7 +262,7 @@ function drawChart(context: HeadHudDrawingContext, chart: UiChart, plot: MenuRec
   context.save();
   try {
     context.beginPath();
-    context.rect(clip.rect.x * scaleX, clip.rect.y * scaleY, clip.rect.width * scaleX, clip.rect.height * scaleY);
+    context.rect(clip.x * scaleX, clip.y * scaleY, clip.width * scaleX, clip.height * scaleY);
     context.clip();
     const [left, top, right, bottom] = chart.presentation.plot;
     const descriptorPoint = (point: Readonly<{ x: number; y: number }>) => ({

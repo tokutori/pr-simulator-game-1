@@ -3,6 +3,7 @@ import { PerspectiveCamera, StereoCamera } from "three";
 import { XrSpatialBridge, XrCameraBridge, XrPointerBridge } from "../../web/pkg/birdman_game_wasm.js";
 import { XrPointerSession } from "../../web/src/presentation/xr-pointer-session.js";
 import { MenuSession } from "../../web/src/presentation/menu-session.js";
+import { menuViewport, projectMenuViewport } from "../../web/src/presentation/menu-layout.js";
 import { createInitialAppModel, updateApp } from "../../web/src/app/app-state.js";
 import type { UiAction } from "../../web/src/render/contracts/ui.js";
 import { initializeWasmFixture } from "../game-check/wasm-fixture.js";
@@ -42,10 +43,11 @@ describe("shared pointer adapter", () => {
     });
     const frame = (timestampMs: number, pressed: boolean, horizontal: number) => {
       if (model.menuScroll.kind !== "active") throw new Error("Missing active scroll context");
-      const menu = { ...measured, context: { scope: model.menuScroll.scope, generation: model.menuScroll.generation }, viewport: { ...measured.viewport,
-        offsetMeters: model.menuScroll.progress, maximumOffsetMeters: 1,
-        contentClip: { x: 0, y: 0, width: 2, height: 0.8 },
-        previousBounds: { x: 0, y: 0.9, width: 0.9, height: 0.1 }, nextBounds: { x: 1.1, y: 0.9, width: 0.9, height: 0.1 } } };
+      const viewport = menuViewport({ ...measured.viewport.document, contentHeightMeters: 1.8, footerHeightMeters: 0.2 }, model.menuScroll.progress);
+      expect(viewport.maximumOffsetMeters).toBe(1);
+      expect(viewport.pageProgress).toBe(0.8);
+      expect(viewport.offsetMeters).toBe(model.menuScroll.progress);
+      const menu = { ...measured, context: { scope: model.menuScroll.scope, generation: model.menuScroll.generation }, viewport };
       return owner.observe("title", panel, panelPose, menu, [], true, timestampMs,
         { index: 0, generation: 1, axes: [horizontal, 0, 0, 1], buttons: [pressed, false] });
     };
@@ -91,9 +93,13 @@ describe("shared pointer adapter", () => {
     ] };
     const measured = geometryMenuFixture({ ...fixture, panels: [panel] });
     if (measured.kind !== "ready") throw new Error("Missing menu");
-    const menu = { ...measured, viewport: { ...measured.viewport, offsetMeters: 0.2, maximumOffsetMeters: 1,
-      contentClip: { x: 0, y: 0, width: 2, height: 0.8 }, previousBounds: { x: 0, y: 0.9, width: 0.9, height: 0.1 },
-      nextBounds: { x: 1.1, y: 0.9, width: 0.9, height: 0.1 } } };
+    const viewport = menuViewport({ ...measured.viewport.document, contentHeightMeters: 1.8, footerHeightMeters: 0.2 }, 0.3);
+    const range = viewport.document.controls.find(layout => layout.control.id === "range");
+    if (range === undefined) throw new Error("Missing range");
+    const geometry = projectMenuViewport(viewport, [range.bounds]).rectangles[0];
+    expect(geometry?.full.y).toBeCloseTo(-0.1);
+    expect(geometry?.visible?.height).toBeCloseTo(0.3);
+    const menu = { ...measured, viewport };
     const actions: UiAction[] = [];
     const owner = new XrPointerSession((action) => actions.push(action));
     try {

@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { menuActionAt } from "./menu-fixture.js";
+import { menuActionAt, hitMenuViewport, menuDocumentPointToPanel, menuPanelPointToDocument } from "./menu-fixture.js";
 import { IDENTITY_POSE, pose, vec3 } from "../../web/src/render/contracts/math.js";
 import type { MenuDocument, MenuLayoutRequest, MenuTextMeasurement, MenuTextRequest } from "../../web/src/render/contracts/menu-layout.js";
 import { MENU_MINIMUM_INK_HEIGHT_DEGREES } from "../../web/src/render/contracts/menu-layout.js";
 import { normalizedRect } from "../../web/src/render/contracts/ui.js";
 import type { UiChart, UiControl, UiPanel } from "../../web/src/render/contracts/ui.js";
 import { unavailableViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
-import { hitMenuViewport, layoutMeasuredMenu, menuDocumentPointToPanel, menuPanelPointToDocument,
+import { layoutMeasuredMenu,
   menuRectInViewport, menuViewport, requestMenuLayout, validateMenuOpeningInk } from "../../web/src/presentation/menu-layout.js";
 import { fitMenuView } from "../../web/src/presentation/menu-view-fit.js";
 import { configuredViewerFixture } from "./viewer-fixture.js";

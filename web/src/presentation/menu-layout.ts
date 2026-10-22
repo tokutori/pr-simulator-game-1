@@ -1,7 +1,7 @@
 import type { Pose } from "../render/contracts/math.js";
 import { MENU_MINIMUM_INK_HEIGHT_DEGREES } from "../render/contracts/menu-layout.js";
-import type { MenuClippedRect, MenuContentPoint, MenuControlLayout, MenuDocumentResult, MenuDocument,
-  MenuFontIdentity, MenuHit, MenuLayoutRequest, MenuMeasuredLine, MenuOpeningReadability, MenuPoint, MenuRect,
+import type { MenuClippedRect, MenuControlLayout, MenuDocumentResult, MenuDocument,
+  MenuFontIdentity, MenuLayoutRequest, MenuMeasuredLine, MenuOpeningReadability, MenuPoint, MenuRect,
   MenuTextLayout, MenuTextMeasurement } from "../render/contracts/menu-layout.js";
 import type { PanelSize, UiControl, UiPanel } from "../render/contracts/ui.js";
 import { menu_layout_json, xr_text_ink_fit_json } from "../../pkg/birdman_game_wasm.js";
@@ -128,61 +128,36 @@ export function layoutMeasuredMenu(request: MenuLayoutRequest, measurements: rea
     footerHeightMeters: geometry.footerHeightMeters, previous: measurementAt(geometry.previousIndex), next: measurementAt(geometry.nextIndex) }) };
 }
 
-export function menuViewport(document: MenuDocument, progress: number): MenuViewport {
-  if (!Number.isFinite(progress) || progress < 0 || progress > 1) throw new RangeError("Menu scroll progress must be in [0, 1]");
+type ViewportProjection = Extract<MenuLayoutReply, { kind: "viewport" }>["projection"];
+
+function viewportProjection(document: MenuDocument, progress: number, rectangles: readonly MenuRect[],
+  panelPoints: readonly MenuPoint[], documentPoints: readonly MenuPoint[]): ViewportProjection {
   const request = document.request;
-  const contentFits = document.contentHeightMeters <= request.surfaceSize.height - request.paddingMeters * 2;
-  const footerHeight = contentFits ? 0 : document.footerHeightMeters;
-  const footerTop = request.surfaceSize.height - request.paddingMeters - footerHeight;
-  const contentClip = Object.freeze({ x: request.paddingMeters, y: request.paddingMeters,
-    width: request.surfaceSize.width - request.paddingMeters * 2, height: footerTop - (contentFits ? 0 : request.gapMeters) - request.paddingMeters });
-  const pageWidth = (contentClip.width - request.gapMeters) / 2;
-  const maximumOffsetMeters = Math.max(0, document.contentHeightMeters - contentClip.height);
-  return Object.freeze({ document, contentClip, progress, maximumOffsetMeters, offsetMeters: progress * maximumOffsetMeters,
-    previousBounds: Object.freeze({ x: contentClip.x, y: footerTop, width: pageWidth, height: footerHeight }),
-    nextBounds: Object.freeze({ x: contentClip.x + pageWidth + request.gapMeters, y: footerTop, width: pageWidth, height: footerHeight }) });
+  const query: MenuLayoutQuery = { kind: "viewport", source: { surfaceSize: request.surfaceSize,
+    paddingMeters: request.paddingMeters, gapMeters: request.gapMeters,
+    contentHeightMeters: document.contentHeightMeters, footerHeightMeters: document.footerHeightMeters, progress },
+    rectangles, panel_points: panelPoints, document_points: documentPoints };
+  let reply: MenuLayoutReply;
+  try { reply = JSON.parse(menu_layout_json(JSON.stringify(query))) as MenuLayoutReply; }
+  catch (cause) { throw new RangeError("Menu viewport geometry is invalid", { cause }); }
+  if (reply.kind !== "viewport") throw new RangeError("Menu viewport geometry is invalid");
+  return reply.projection;
 }
 
-export function menuPanelPointToDocument(viewport: MenuViewport, point: MenuPoint): MenuContentPoint {
-  if (![point.x, point.y].every(Number.isFinite)) return Object.freeze({ kind: "outside" });
-  const surface = viewport.document.request.surfaceSize;
-  const surfacePoint = { x: point.x + surface.width / 2, y: surface.height / 2 - point.y };
-  return contains(viewport.contentClip, surfacePoint) ? Object.freeze({ kind: "inside", point: Object.freeze({ x: surfacePoint.x - viewport.contentClip.x,
-    y: surfacePoint.y - viewport.contentClip.y + viewport.offsetMeters }) }) : Object.freeze({ kind: "outside" });
+export function projectMenuViewport(viewport: MenuViewport, rectangles: readonly MenuRect[] = [],
+  panelPoints: readonly MenuPoint[] = [], documentPoints: readonly MenuPoint[] = []): ViewportProjection {
+  return viewportProjection(viewport.document, viewport.progress, rectangles, panelPoints, documentPoints);
 }
 
-export function menuDocumentPointToPanel(viewport: MenuViewport, point: MenuPoint): MenuPoint {
-  if (![point.x, point.y].every(Number.isFinite)) throw new RangeError("Menu document points must be finite");
-  const surface = viewport.document.request.surfaceSize;
-  return Object.freeze({ x: point.x + viewport.contentClip.x - surface.width / 2,
-    y: surface.height / 2 - (point.y - viewport.offsetMeters + viewport.contentClip.y) });
+export function menuViewport(document: MenuDocument, progress: number): MenuViewport {
+  const projection = viewportProjection(document, progress, [], [], []);
+  return Object.freeze({ document, ...projection });
 }
 
 export function menuRectInViewport(viewport: MenuViewport, rectangle: MenuRect): MenuClippedRect {
-  const left = rectangle.x + viewport.contentClip.x;
-  const top = rectangle.y - viewport.offsetMeters + viewport.contentClip.y;
-  const clippedLeft = Math.max(left, viewport.contentClip.x);
-  const clippedTop = Math.max(top, viewport.contentClip.y);
-  const right = Math.min(left + rectangle.width, viewport.contentClip.x + viewport.contentClip.width);
-  const bottom = Math.min(top + rectangle.height, viewport.contentClip.y + viewport.contentClip.height);
-  return right > clippedLeft && bottom > clippedTop ? Object.freeze({ kind: "visible", rect: Object.freeze({ x: clippedLeft, y: clippedTop,
-    width: right - clippedLeft, height: bottom - clippedTop }) }) : Object.freeze({ kind: "outside" });
-}
-
-export function hitMenuViewport(viewport: MenuViewport, point: MenuPoint): MenuHit {
-  if (![point.x, point.y].every(Number.isFinite)) return Object.freeze({ kind: "none" });
-  const size = viewport.document.request.surfaceSize;
-  const surfacePoint = { x: point.x + size.width / 2, y: size.height / 2 - point.y };
-  if (contains(viewport.previousBounds, surfacePoint)) return viewport.offsetMeters > 0 ? Object.freeze({ kind: "page", direction: "previous" }) : Object.freeze({ kind: "none" });
-  if (contains(viewport.nextBounds, surfacePoint)) return viewport.offsetMeters < viewport.maximumOffsetMeters ? Object.freeze({ kind: "page", direction: "next" }) : Object.freeze({ kind: "none" });
-  const documentPoint = menuPanelPointToDocument(viewport, point);
-  if (documentPoint.kind === "outside") return Object.freeze({ kind: "none" });
-  const layout = viewport.document.controls.find((control) => control.control.enabled && contains(control.bounds, documentPoint.point));
-  return layout === undefined ? Object.freeze({ kind: "none" }) : Object.freeze({ kind: "control", layout, documentPoint: documentPoint.point });
-}
-
-function contains(rectangle: MenuRect, point: MenuPoint): boolean {
-  return point.x >= rectangle.x && point.x <= rectangle.x + rectangle.width && point.y >= rectangle.y && point.y <= rectangle.y + rectangle.height;
+  const projected = projectMenuViewport(viewport, [rectangle]).rectangles[0];
+  if (projected === undefined) throw new Error("Menu rectangle lost its projection");
+  return projected.visible === null ? { kind: "outside" } : { kind: "visible", rect: projected.visible };
 }
 
 export function validateMenuOpeningInk(document: MenuDocument, viewer: ViewerFrame, headFromSurface: Pose): MenuOpeningReadability {

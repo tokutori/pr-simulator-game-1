@@ -9,6 +9,7 @@ import { requestMenuLayout } from "../../web/src/presentation/menu-layout.js";
 import { measureMenuLayout, menuCanvasSize } from "../../web/src/presentation/menu-canvas.js";
 import { HudCanvasFixture } from "./hud-canvas-fixture.js";
 import type { MenuLayoutQuery } from "../../web/src/generated/menu-layout-query.js";
+import type { MenuLayoutReply } from "../../web/src/generated/menu-layout-reply.js";
 import { configuredViewerFixture } from "./viewer-fixture.js";
 import { DEFAULT_XR_HEAD_HUD_PROFILE } from "../../web/src/generated/xr-head-hud-profile.js";
 import type { FlightRecordHudProfileDocument } from "../../web/src/generated/record-difficulty.js";
@@ -106,8 +107,18 @@ function menuQueries(): MenuLayoutQuery[] {
         const dimensions = menuCanvasSize(surface);
         const measured = measureMenuLayout(new HudCanvasFixture(), request, dimensions.width, dimensions.height);
         assert.equal(measured.kind, "ready");
-        queries.push({ kind: "plan", source: request.shared.source },
-          { kind: "arrange", source: request.shared.source, measurements: measured.measurements });
+        const arrange: MenuLayoutQuery = { kind: "arrange", source: request.shared.source, measurements: measured.measurements };
+        queries.push({ kind: "plan", source: request.shared.source }, arrange);
+        const arranged = JSON.parse(menu_layout_json(JSON.stringify(arrange))) as MenuLayoutReply;
+        assert.equal(arranged.kind, "ready");
+        const geometry = arranged.geometry;
+        const rectangles = geometry.controls.flatMap(control => [control.bounds,
+          ...(control.plot === null ? [] : [control.plot]), ...control.texts.flatMap(text => text.lineGeometry.map(line => line.bounds))]);
+        for (const progress of [0, 0.5, 1]) queries.push({ kind: "viewport", source: {
+          surfaceSize: surface, paddingMeters: request.paddingMeters, gapMeters: request.gapMeters,
+          contentHeightMeters: geometry.contentHeightMeters, footerHeightMeters: geometry.footerHeightMeters, progress },
+          rectangles, panel_points: [{ x: 0, y: 0 }, { x: -width, y: 1.8 }],
+          document_points: [{ x: 0, y: 0 }, { x: 0.2, y: geometry.contentHeightMeters }] });
       }
     }
   }

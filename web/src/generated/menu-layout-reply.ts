@@ -9,6 +9,9 @@ export type MenuLayoutReply = {
     readonly geometry: MenuDocumentGeometry;
     readonly kind: "ready";
 } | {
+    readonly kind: "viewport";
+    readonly projection: MenuViewportProjection;
+} | {
     readonly kind: "unavailable";
     /**
      * Reason for rejecting the layout.
@@ -727,4 +730,147 @@ export interface MenuTextPlacement2 {
      * Index of the corresponding measurement request.
      */
     readonly textIndex: number;
+}
+/**
+ * Scroll geometry, clipped rectangles and transformed points.
+ */
+export interface MenuViewportProjection {
+    readonly contentClip: MenuRect4;
+    /**
+     * Center-origin panel coordinates in request order.
+     */
+    readonly documentPoints: readonly MenuPoint2[];
+    /**
+     * Full metric scroll range.
+     */
+    readonly maximumOffsetMeters: number;
+    readonly nextBounds: MenuRect5;
+    /**
+     * Current metric scroll offset.
+     */
+    readonly offsetMeters: number;
+    /**
+     * Normalized increment for one visible page.
+     */
+    readonly pageProgress: number;
+    /**
+     * Document coordinates, absent for panel points outside the content clip.
+     */
+    readonly panelPoints: readonly (MenuPoint2 | null)[];
+    readonly previousBounds: MenuRect6;
+    /**
+     * Current normalized scroll position.
+     */
+    readonly progress: number;
+    /**
+     * Translated and clipped rectangles in request order.
+     */
+    readonly rectangles: readonly MenuViewportRect[];
+}
+/**
+ * Metric rectangle in a spatial menu document.
+ */
+export interface MenuRect4 {
+    /**
+     * Height in metres.
+     */
+    readonly height: number;
+    /**
+     * Width in metres.
+     */
+    readonly width: number;
+    /**
+     * Horizontal coordinate in metres.
+     */
+    readonly x: number;
+    /**
+     * Vertical coordinate in metres.
+     */
+    readonly y: number;
+}
+/**
+ * Metric point in a spatial menu document.
+ */
+export interface MenuPoint2 {
+    /**
+     * Horizontal coordinate in metres.
+     */
+    readonly x: number;
+    /**
+     * Vertical coordinate in metres.
+     */
+    readonly y: number;
+}
+/**
+ * Metric rectangle in a spatial menu document.
+ */
+export interface MenuRect5 {
+    /**
+     * Height in metres.
+     */
+    readonly height: number;
+    /**
+     * Width in metres.
+     */
+    readonly width: number;
+    /**
+     * Horizontal coordinate in metres.
+     */
+    readonly x: number;
+    /**
+     * Vertical coordinate in metres.
+     */
+    readonly y: number;
+}
+/**
+ * Metric rectangle in a spatial menu document.
+ */
+export interface MenuRect6 {
+    /**
+     * Height in metres.
+     */
+    readonly height: number;
+    /**
+     * Width in metres.
+     */
+    readonly width: number;
+    /**
+     * Horizontal coordinate in metres.
+     */
+    readonly x: number;
+    /**
+     * Vertical coordinate in metres.
+     */
+    readonly y: number;
+}
+/**
+ * Surface-space rectangle and its intersection with the visible content.
+ */
+export interface MenuViewportRect {
+    readonly full: MenuRect7;
+    /**
+     * Intersection with content, or absent when entirely outside.
+     */
+    readonly visible: MenuRect3 | null;
+}
+/**
+ * Metric rectangle in a spatial menu document.
+ */
+export interface MenuRect7 {
+    /**
+     * Height in metres.
+     */
+    readonly height: number;
+    /**
+     * Width in metres.
+     */
+    readonly width: number;
+    /**
+     * Horizontal coordinate in metres.
+     */
+    readonly x: number;
+    /**
+     * Vertical coordinate in metres.
+     */
+    readonly y: number;
 }

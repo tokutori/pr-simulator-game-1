@@ -6,7 +6,7 @@ import type { Pose } from "../render/contracts/math.js";
 import type { MenuPresentation, PanelCursor, SelectRay } from "../render/contracts/runtime.js";
 import type { UiActionDispatcher, UiPanel } from "../render/contracts/ui.js";
 import { menuPageProgress } from "./menu-interaction.js";
-import { menuRectInViewport } from "./menu-layout.js";
+import { projectMenuViewport } from "./menu-layout.js";
 
 export class XrPointerSession {
   private bridge: XrPointerBridge | null = null;
@@ -109,13 +109,14 @@ function pointerSurface(scope: string, panel: UiPanel | null, menu: MenuPresenta
       [false, viewport.previousBounds, viewport.offsetMeters > 0],
       [true, viewport.nextBounds, viewport.offsetMeters < viewport.maximumOffsetMeters]
     ] as const) if (enabled) regions.push({ target: { kind: "page", next }, bounds: [bounds.x, bounds.y, bounds.width, bounds.height] });
-    for (const layout of viewport.document.controls) {
-      if (!layout.control.enabled) continue;
-      const visible = menuRectInViewport(viewport, layout.bounds);
-      if (visible.kind === "outside") continue;
-      const bounds = visible.rect;
-      const track = { ...layout.bounds, x: layout.bounds.x + viewport.contentClip.x,
-        y: layout.bounds.y - viewport.offsetMeters + viewport.contentClip.y };
+    const controls = viewport.document.controls.filter(layout => layout.control.enabled);
+    const projected = projectMenuViewport(viewport, controls.map(layout => layout.bounds));
+    for (const [index, layout] of controls.entries()) {
+      const geometry = projected.rectangles[index];
+      if (geometry === undefined) throw new Error("Menu control lost its viewport projection");
+      if (geometry.visible === null) continue;
+      const bounds = geometry.visible;
+      const track = geometry.full;
       regions.push({ target: { kind: "control", id: layout.control.id }, bounds: [bounds.x, bounds.y, bounds.width, bounds.height],
         control: pointerControl(layout.control, track) });
     }

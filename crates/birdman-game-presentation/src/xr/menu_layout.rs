@@ -5,6 +5,7 @@ use crate::game_ui::{
 use std::collections::{BTreeMap, BTreeSet};
 mod types;
 pub use types::*;
+mod viewport;
 
 /// Resolves a complete layout phase using engine-independent metric observations.
 pub fn menu_layout(query: MenuLayoutQuery) -> MenuLayoutReply {
@@ -18,6 +19,15 @@ pub fn menu_layout(query: MenuLayoutQuery) -> MenuLayoutReply {
             measurements,
         } => match plan(source).and_then(|plan| arrange(&plan, &measurements)) {
             Ok(geometry) => MenuLayoutReply::Ready { geometry },
+            Err(reason) => MenuLayoutReply::Unavailable { reason },
+        },
+        MenuLayoutQuery::Viewport {
+            source,
+            rectangles,
+            panel_points,
+            document_points,
+        } => match viewport::project(source, rectangles, panel_points, document_points) {
+            Ok(projection) => MenuLayoutReply::Viewport { projection },
             Err(reason) => MenuLayoutReply::Unavailable { reason },
         },
     }

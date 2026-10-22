@@ -467,6 +467,17 @@ pub enum MenuLayoutQuery {
         /// Actual adapter text measurements.
         measurements: Vec<MenuTextMeasurement>,
     },
+    /// Batch scroll clipping and panel/document coordinate projection.
+    Viewport {
+        /// Measured document and current scroll observation.
+        source: MenuViewportSource,
+        /// Document rectangles to translate and clip together.
+        rectangles: Vec<MenuRect>,
+        /// Center-origin panel points to map into visible document content.
+        panel_points: Vec<MenuPoint>,
+        /// Document points to map into center-origin panel coordinates.
+        document_points: Vec<MenuPoint>,
+    },
 }
 
 /// Layout result or a precise measurement failure.
@@ -484,11 +495,73 @@ pub enum MenuLayoutReply {
         /// Resolved document geometry.
         geometry: MenuDocumentGeometry,
     },
+    /// Resolved viewport and corresponding ordered batch projections.
+    Viewport {
+        /// Scroll geometry, clipped rectangles and transformed points.
+        projection: MenuViewportProjection,
+    },
     /// Rejected layout or measurement.
     Unavailable {
         /// Reason for rejecting the layout.
         reason: MenuLayoutFailure,
     },
+}
+
+/// Metric observations required to place a scrollable document on its surface.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MenuViewportSource {
+    /// Physical panel dimensions.
+    pub surface_size: MenuSize,
+    /// Inset around document content and page controls.
+    pub padding_meters: f64,
+    /// Separation between content and page controls.
+    pub gap_meters: f64,
+    /// Measured scrollable document height.
+    pub content_height_meters: f64,
+    /// Measured footer control height.
+    pub footer_height_meters: f64,
+    /// Normalized document scroll position.
+    pub progress: f64,
+}
+
+/// Surface-space rectangle and its intersection with the visible content.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MenuViewportRect {
+    /// Translated rectangle before clipping, also used by range input tracks.
+    pub full: MenuRect,
+    /// Intersection with content, or absent when entirely outside.
+    pub visible: Option<MenuRect>,
+}
+
+/// Shared viewport placement and ordered coordinate projections.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MenuViewportProjection {
+    /// Surface-space visible content rectangle.
+    pub content_clip: MenuRect,
+    /// Previous-page surface rectangle.
+    pub previous_bounds: MenuRect,
+    /// Next-page surface rectangle.
+    pub next_bounds: MenuRect,
+    /// Current normalized scroll position.
+    pub progress: f64,
+    /// Current metric scroll offset.
+    pub offset_meters: f64,
+    /// Full metric scroll range.
+    pub maximum_offset_meters: f64,
+    /// Normalized increment for one visible page.
+    pub page_progress: f64,
+    /// Translated and clipped rectangles in request order.
+    pub rectangles: Vec<MenuViewportRect>,
+    /// Document coordinates, absent for panel points outside the content clip.
+    pub panel_points: Vec<Option<MenuPoint>>,
+    /// Center-origin panel coordinates in request order.
+    pub document_points: Vec<MenuPoint>,
 }
 
 /// Rejection class of a measured menu document.

@@ -172,3 +172,87 @@ fn chart_ink_uses_signed_bearings_and_rotated_baseline_coordinates() {
     assert!((geometry.bounds.width - 0.3).abs() < 1.0e-12);
     assert!((geometry.bounds.height - 0.4).abs() < 1.0e-12);
 }
+
+#[test]
+fn viewport_projects_unclipped_tracks_clipped_ink_and_reversible_points() {
+    let source = MenuViewportSource {
+        surface_size: MenuSize {
+            width: 2.0,
+            height: 1.0,
+        },
+        padding_meters: 0.1,
+        gap_meters: 0.05,
+        content_height_meters: 2.0,
+        footer_height_meters: 0.2,
+        progress: 0.5,
+    };
+    let projection = viewport::project(
+        source.clone(),
+        vec![
+            MenuRect {
+                x: 0.0,
+                y: 0.675,
+                width: 0.4,
+                height: 0.2,
+            },
+            MenuRect {
+                x: 0.0,
+                y: 0.0,
+                width: 0.4,
+                height: 0.2,
+            },
+            MenuRect {
+                x: 0.0,
+                y: 0.8,
+                width: 0.0,
+                height: 0.0,
+            },
+        ],
+        vec![
+            MenuPoint { x: -0.7, y: 0.325 },
+            MenuPoint { x: 1.0, y: 0.5 },
+        ],
+        vec![MenuPoint { x: 0.2, y: 0.8 }],
+    )
+    .unwrap();
+    assert!((projection.content_clip.height - 0.55).abs() < 1.0e-12);
+    assert!((projection.offset_meters - 0.725).abs() < 1.0e-12);
+    assert!((projection.page_progress - 0.55 / 1.45).abs() < 1.0e-12);
+    assert!((projection.rectangles[0].full.y - 0.05).abs() < 1.0e-12);
+    let clipped = projection.rectangles[0].visible.unwrap();
+    assert!((clipped.y - 0.1).abs() < 1.0e-12);
+    assert!((clipped.height - 0.15).abs() < 1.0e-12);
+    assert!(projection.rectangles[1].visible.is_none());
+    assert!(projection.rectangles[2].visible.is_none());
+    let restored = projection.panel_points[0].unwrap();
+    assert!((restored.x - 0.2).abs() < 1.0e-12);
+    assert!((restored.y - 0.8).abs() < 1.0e-12);
+    assert!(projection.panel_points[1].is_none());
+    assert!((projection.document_points[0].x + 0.7).abs() < 1.0e-12);
+    assert!((projection.document_points[0].y - 0.325).abs() < 1.0e-12);
+    let fitting = viewport::project(
+        MenuViewportSource {
+            content_height_meters: 0.5,
+            ..source.clone()
+        },
+        vec![],
+        vec![],
+        vec![],
+    )
+    .unwrap();
+    assert_eq!(fitting.maximum_offset_meters, 0.0);
+    assert_eq!(fitting.previous_bounds.height, 0.0);
+    assert_eq!(fitting.page_progress, 0.0);
+    assert_eq!(
+        viewport::project(
+            MenuViewportSource {
+                progress: 1.1,
+                ..source
+            },
+            vec![],
+            vec![],
+            vec![]
+        ),
+        Err(MenuLayoutFailure::InvalidLayout)
+    );
+}

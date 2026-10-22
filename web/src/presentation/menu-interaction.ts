@@ -35,7 +35,7 @@ export function menuInputGeometryChanged(previous: MenuInputGeometry, menu: Read
 }
 
 export function menuPageProgress(menu: ReadyMenu): number {
-  return menu.viewport.maximumOffsetMeters === 0 ? 0 : Math.min(1, menu.viewport.contentClip.height / menu.viewport.maximumOffsetMeters);
+  return menu.viewport.pageProgress;
 }
 
 export function menuExposesControl(menu: ReadyMenu, controlId: string): boolean {

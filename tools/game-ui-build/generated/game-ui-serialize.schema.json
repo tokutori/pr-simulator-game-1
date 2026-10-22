@@ -5853,6 +5853,25 @@
         },
         {
           "additionalProperties": false,
+          "description": "Resolved viewport and corresponding ordered batch projections.",
+          "properties": {
+            "kind": {
+              "const": "viewport",
+              "type": "string"
+            },
+            "projection": {
+              "$ref": "#/$defs/MenuViewportProjection",
+              "description": "Scroll geometry, clipped rectangles and transformed points."
+            }
+          },
+          "required": [
+            "kind",
+            "projection"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
           "description": "Rejected layout or measurement.",
           "properties": {
             "kind": {
@@ -6469,6 +6488,111 @@
           "type": "object"
         }
       ]
+    },
+    "MenuViewportProjection": {
+      "additionalProperties": false,
+      "description": "Shared viewport placement and ordered coordinate projections.",
+      "properties": {
+        "contentClip": {
+          "$ref": "#/$defs/MenuRect",
+          "description": "Surface-space visible content rectangle."
+        },
+        "documentPoints": {
+          "description": "Center-origin panel coordinates in request order.",
+          "items": {
+            "$ref": "#/$defs/MenuPoint"
+          },
+          "type": "array"
+        },
+        "maximumOffsetMeters": {
+          "description": "Full metric scroll range.",
+          "format": "double",
+          "type": "number"
+        },
+        "nextBounds": {
+          "$ref": "#/$defs/MenuRect",
+          "description": "Next-page surface rectangle."
+        },
+        "offsetMeters": {
+          "description": "Current metric scroll offset.",
+          "format": "double",
+          "type": "number"
+        },
+        "pageProgress": {
+          "description": "Normalized increment for one visible page.",
+          "format": "double",
+          "type": "number"
+        },
+        "panelPoints": {
+          "description": "Document coordinates, absent for panel points outside the content clip.",
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/MenuPoint"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "type": "array"
+        },
+        "previousBounds": {
+          "$ref": "#/$defs/MenuRect",
+          "description": "Previous-page surface rectangle."
+        },
+        "progress": {
+          "description": "Current normalized scroll position.",
+          "format": "double",
+          "type": "number"
+        },
+        "rectangles": {
+          "description": "Translated and clipped rectangles in request order.",
+          "items": {
+            "$ref": "#/$defs/MenuViewportRect"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "contentClip",
+        "previousBounds",
+        "nextBounds",
+        "progress",
+        "offsetMeters",
+        "maximumOffsetMeters",
+        "pageProgress",
+        "rectangles",
+        "panelPoints",
+        "documentPoints"
+      ],
+      "type": "object"
+    },
+    "MenuViewportRect": {
+      "additionalProperties": false,
+      "description": "Surface-space rectangle and its intersection with the visible content.",
+      "properties": {
+        "full": {
+          "$ref": "#/$defs/MenuRect",
+          "description": "Translated rectangle before clipping, also used by range input tracks."
+        },
+        "visible": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MenuRect"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Intersection with content, or absent when entirely outside."
+        }
+      },
+      "required": [
+        "full",
+        "visible"
+      ],
+      "type": "object"
     },
     "MenuWidget": {
       "description": "Widget presentation data used for layout and measurement.",
