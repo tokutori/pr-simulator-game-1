@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { PerspectiveCamera, StereoCamera } from "three";
 import { XrSpatialBridge, XrCameraBridge, XrPointerBridge } from "../../web/pkg/birdman_game_wasm.js";
 import { XrPointerSession } from "../../web/src/presentation/xr-pointer-session.js";
+import { MenuSession } from "../../web/src/presentation/menu-session.js";
 import { createInitialAppModel, updateApp } from "../../web/src/app/app-state.js";
 import type { UiAction } from "../../web/src/render/contracts/ui.js";
 import { initializeWasmFixture } from "../game-check/wasm-fixture.js";
@@ -31,16 +32,17 @@ describe("shared pointer adapter", () => {
     const measured = geometryMenuFixture({ ...view, panels: [panel] });
     if (measured.kind !== "ready") throw new Error("Missing menu");
     let model = createInitialAppModel();
-    model = updateApp(model, { type: "menu-scroll-synchronized", generation: 0,
-      target: { kind: "active", scope: measured.context.scope } }).model;
+    const scrollOwner = new MenuSession();
+    model = updateApp(model, { type: "menu-owner-observed", state: scrollOwner.update({ type: "menu-scroll-synchronized", generation: 0,
+      target: { kind: "active", scope: measured.context.scope } }) }).model;
     const actions: UiAction[] = [];
     const owner = new XrPointerSession(action => {
       actions.push(action);
-      if (action.type === "menu-scroll") model = updateApp(model, action).model;
+      if (action.type === "menu-scroll") model = updateApp(model, { type: "menu-owner-observed", state: scrollOwner.update(action) }).model;
     });
     const frame = (timestampMs: number, pressed: boolean, horizontal: number) => {
       if (model.menuScroll.kind !== "active") throw new Error("Missing active scroll context");
-      const menu = { ...measured, context: model.menuScroll, viewport: { ...measured.viewport,
+      const menu = { ...measured, context: { scope: model.menuScroll.scope, generation: model.menuScroll.generation }, viewport: { ...measured.viewport,
         offsetMeters: model.menuScroll.progress, maximumOffsetMeters: 1,
         contentClip: { x: 0, y: 0, width: 2, height: 0.8 },
         previousBounds: { x: 0, y: 0.9, width: 0.9, height: 0.1 }, nextBounds: { x: 1.1, y: 0.9, width: 0.9, height: 0.1 } } };
@@ -55,7 +57,7 @@ describe("shared pointer adapter", () => {
       expect(frame(100, true, 0).cursor?.point.x).toBeCloseTo(0.12);
       expect(model.menuScroll.generation).toBe(3);
       expect(actions.filter(action => action.type === "menu-control")).toHaveLength(1);
-    } finally { owner.reset(); }
+    } finally { owner.reset(); scrollOwner.dispose(); }
   });
 
   it("commits held gamepad observations before a changed-layout focus callback throws", () => {

@@ -31,6 +31,7 @@ import { ScreenUiAdapter } from "./presentation/screen-ui.js";
 import { browserHeadHudContext, drawHeadHud, headHudCanvasSize, prepareHeadHudPaint, validateHeadHudPaint } from "./presentation/head-hud-canvas.js";
 import { browserMenuContext, drawMeasuredMenu, menuCanvasSize } from "./presentation/menu-canvas.js";
 import { prepareMenuPresentation } from "./presentation/menu-preparation.js";
+import { MenuSession } from "./presentation/menu-session.js";
 import type { MenuMeasurementCache } from "./presentation/menu-preparation.js";
 import { menuContextCanInteract, menuExposesControl, menuInputGeometry, menuInputGeometryChanged } from "./presentation/menu-interaction.js";
 import type { MenuInputGeometry } from "./presentation/menu-interaction.js";
@@ -102,6 +103,8 @@ let preparedMenu: MenuPresentation = Object.freeze({ kind: "absent" });
 let menuFontGeneration = 0;
 let presentedMenuGeometry: MenuInputGeometry = Object.freeze({ kind: "none" });
 const menuMeasurementCache: MenuMeasurementCache = new Map();
+const menuSession = new MenuSession();
+let pageDisposed = false;
 const screenUi = new ScreenUiAdapter(uiRoot, (action) => {
   dispatchUiAction(action);
 }, () => {
@@ -228,6 +231,7 @@ function currentFrameViewModel(viewer: ViewerFrame): PreparedPresentationView {
 }
 
 function synchronizeMenuScroll(): void {
+  if (pageDisposed) return;
   const observed = model;
   const view = currentViewModel();
   const panel = view.panels.find((candidate) => candidate.anchor === "menu");
@@ -237,11 +241,13 @@ function synchronizeMenuScroll(): void {
   const scope: MenuScrollScope = view.activeOverlay === null
     ? { kind: "scene", scene: view.scene, panelId: panel?.id ?? "", viewKey }
     : { kind: "overlay", scene: view.scene, panelId: panel?.id ?? "", viewKey, overlay: view.activeOverlay };
-  model = updateApp(model, { type: "menu-scroll-synchronized", generation: observed.menuScroll.generation,
-    target: active ? { kind: "active", scope } : { kind: "closed" } }).model;
+  const state = menuSession.update({ type: "menu-scroll-synchronized", generation: observed.menuScroll.generation,
+    target: active ? { kind: "active", scope } : { kind: "closed" } });
+  model = updateApp(model, { type: "menu-owner-observed", state }).model;
 }
 
 function invalidateMenuGeometry(): void {
+  if (pageDisposed) return;
   const scroll = model.menuScroll;
   if (scroll.kind === "active") dispatch({ type: "menu-scroll-invalidated", context: { scope: scroll.scope, generation: scroll.generation } });
   preparedMenu = Object.freeze({ kind: "pending" });
@@ -255,6 +261,10 @@ for (const fontEvent of ["loading", "loadingdone", "loadingerror"]) document.fon
 
 function runEffect(effect: AppEffect): void {
   switch (effect.type) {
+    case "update-menu-session":
+      if (pageDisposed) return;
+      dispatch({ type: "menu-owner-observed", state: menuSession.update(effect.input) });
+      return;
     case "select-screen-render-scale":
       flightRenderer?.setScreenRenderScale(Number(effect.scale) / 100);
       return;
@@ -1041,7 +1051,7 @@ function onResize(): void {
 }
 
 function onPageHide(): void {
-  flightLogDownload.dispose();
+  pageDisposed = true;
   window.removeEventListener("resize", onResize);
   window.removeEventListener("blur", cancelUnavailableCountdown);
   document.removeEventListener("visibilitychange", onVisibilityChange);
@@ -1050,12 +1060,13 @@ function onPageHide(): void {
   const session = gameSession;
   flightController = null;
   gameSession = null;
-  try {
-    controller?.dispose();
-  } finally {
-    try { session?.dispose(); }
-    finally { dispatch({ type: "page-hidden" }); }
-  }
+  runSideEffects([
+    () => { flightLogDownload.dispose(); },
+    () => { controller?.dispose(); },
+    () => { session?.dispose(); },
+    () => { menuSession.dispose(); },
+    () => { dispatch({ type: "page-hidden" }); }
+  ]);
 }
 
 function onVisibilityChange(): void {

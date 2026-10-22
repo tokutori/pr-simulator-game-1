@@ -2,7 +2,8 @@ import type { GamePhase } from "./session-snapshot.js";
 import type { FlightCameraMode, LakeWaterQualityCleanupResult, PresentationMode, RecordedFlightRenderPose } from "../render/contracts/runtime.js";
 import type { LakeWaterQuality } from "../render/contracts/lake-water.js";
 import type { UiAction } from "../render/contracts/ui.js";
-import type { MenuScrollContext, MenuScrollIntent, MenuScrollScope, MenuScrollState } from "../render/contracts/menu-layout.js";
+import type { MenuSessionInput } from "../generated/menu-session-input.js";
+import type { MenuSessionState } from "../generated/menu-session-state.js";
 import type { FlightSnapshotInput } from "./session-snapshot.js";
 import { isRetainedLiveSnapshot } from "./session-snapshot.js";
 import type { GameSessionProjection, LiveSessionSnapshot, TailGameSessionProjection } from "./session-snapshot.js";
@@ -95,13 +96,8 @@ export type PresentationUiState = LivePresentationUiState
 
 export type GameSessionUiState = Readonly<{ phase: "boot" }> | GameSessionProjection;
 
-export type MenuFocusState =
-  | { readonly kind: "none" }
-  | { readonly kind: "control"; readonly controlId: string };
-
-export type AppMenuScrollState =
-  | Extract<MenuScrollState, { kind: "closed" }>
-  | (Extract<MenuScrollState, { kind: "active" }> & { readonly focus: MenuFocusState });
+export type MenuFocusState = Extract<MenuSessionState, { kind: "active" }>["focus"];
+export type AppMenuScrollState = MenuSessionState;
 
 export type FlightLogDownloadState =
   | { readonly kind: "idle" }
@@ -183,14 +179,8 @@ export type AppMessage =
     }
   | { readonly type: "presentation-initialization-failed"; readonly requestId: number; readonly message: string }
   | { readonly type: "ui-action"; readonly action: UiAction }
-  | {
-      readonly type: "menu-scroll-synchronized";
-      readonly generation: number;
-      readonly target: { readonly kind: "closed" } | { readonly kind: "active"; readonly scope: MenuScrollScope };
-    }
-  | { readonly type: "menu-scroll"; readonly context: MenuScrollContext; readonly intent: MenuScrollIntent }
-  | { readonly type: "menu-focus"; readonly context: MenuScrollContext; readonly focus: MenuFocusState }
-  | { readonly type: "menu-scroll-invalidated"; readonly context: MenuScrollContext }
+  | MenuSessionInput
+  | { readonly type: "menu-owner-observed"; readonly state: MenuSessionState }
   | { readonly type: "refresh-stored-flight-records" }
   | { readonly type: "stored-flight-records-loaded"; readonly requestId: number; readonly records: readonly StoredFlightRecordUiEntry[] }
   | { readonly type: "stored-flight-records-failed"; readonly requestId: number; readonly message: string }
@@ -235,6 +225,7 @@ export type AppMessage =
   | (Readonly<{ type: "stored-record-open-failed"; requestId: number }> & GameOperationFailure);
 
 export type AppEffect =
+  | { readonly type: "update-menu-session"; readonly input: MenuSessionInput }
   | { readonly type: "select-screen-render-scale"; readonly scale: Extract<GameUiPlatformInput["screen_render_scale"]["selection"], { kind: "manual" }>["scale"] }
   | { readonly type: "select-screen-render-auto"; readonly enabled: boolean }
   | { readonly type: "update-shared-game-ui"; readonly action: GameUiAction }
@@ -541,13 +532,13 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
     case "ui-action":
       return updateUiAction(model, message.action);
     case "menu-scroll-synchronized":
-      return synchronizeMenuScroll(model, message.generation, message.target);
     case "menu-scroll":
-      return updateMenuScroll(model, message.context, message.intent);
     case "menu-focus":
-      return updateMenuFocus(model, message.context, message.focus);
     case "menu-scroll-invalidated":
-      return invalidateMenuScroll(model, message.context);
+      return transition(model, [{ type: "update-menu-session", input: message }]);
+    case "menu-owner-observed":
+      return message.state === model.menuScroll ? transition(model)
+        : transition(withModel(model, { menuScroll: message.state }));
     case "refresh-stored-flight-records":
       return beginStoredFlightRecordLoad(model);
     case "stored-flight-records-loaded":
@@ -715,91 +706,6 @@ export function updateApp(model: AppModel, message: AppMessage): AppTransition {
     default:
       return assertNever(message);
   }
-}
-
-function sameMenuScope(left: MenuScrollScope, right: MenuScrollScope): boolean {
-  return left.scene === right.scene && left.panelId === right.panelId && left.viewKey === right.viewKey
-    && (left.kind === "scene" ? right.kind === "scene" : right.kind === "overlay" && left.overlay === right.overlay);
-}
-
-function menuContextMatches(state: AppMenuScrollState, context: MenuScrollContext): boolean {
-  return state.kind === "active" && state.generation === context.generation
-    && sameMenuScope(state.scope, context.scope);
-}
-
-function nextMenuGeneration(generation: number): number | null {
-  return Number.isSafeInteger(generation) && generation >= 0 && generation < Number.MAX_SAFE_INTEGER
-    ? generation + 1 : null;
-}
-
-function synchronizeMenuScroll(
-  model: AppModel,
-  observedGeneration: number,
-  target: { readonly kind: "closed" } | { readonly kind: "active"; readonly scope: MenuScrollScope }
-): AppTransition {
-  const current = model.menuScroll;
-  if (observedGeneration !== current.generation) return transition(model);
-  if (target.kind === "closed" && current.kind === "closed") return transition(model);
-  if (target.kind === "active") {
-    if (target.scope.panelId.trim().length === 0 || target.scope.viewKey.trim().length === 0
-        || target.scope.kind === "overlay" && target.scope.overlay.trim().length === 0) return transition(model);
-    if (current.kind === "active" && sameMenuScope(current.scope, target.scope)) return transition(model);
-  }
-  const generation = nextMenuGeneration(current.generation);
-  if (generation === null) return transition(model);
-  if (target.kind === "closed") {
-    return transition(withModel(model, { menuScroll: Object.freeze({ kind: "closed", generation }) }));
-  }
-  const scope = target.scope.kind === "scene"
-    ? Object.freeze({ kind: target.scope.kind, scene: target.scope.scene, panelId: target.scope.panelId, viewKey: target.scope.viewKey })
-    : Object.freeze({ kind: target.scope.kind, scene: target.scope.scene, panelId: target.scope.panelId, viewKey: target.scope.viewKey, overlay: target.scope.overlay });
-  return transition(withModel(model, {
-    menuScroll: Object.freeze({ kind: "active", scope, generation, progress: 0, focus: Object.freeze({ kind: "none" }) })
-  }));
-}
-
-function updateMenuScroll(model: AppModel, context: MenuScrollContext, intent: MenuScrollIntent): AppTransition {
-  const current = model.menuScroll;
-  if (current.kind !== "active" || !menuContextMatches(current, context)) return transition(model);
-  let progress: number;
-  if (intent.kind === "set-progress") {
-    if (!Number.isFinite(intent.progress) || intent.progress < 0 || intent.progress > 1) return transition(model);
-    progress = intent.progress;
-  } else {
-    if (!Number.isFinite(intent.pageProgress) || intent.pageProgress < 0 || intent.pageProgress > 1) return transition(model);
-    const pages = intent.kind === "page" ? (intent.direction === "previous" ? -1 : 1) : intent.viewportPages;
-    if (!Number.isFinite(pages)) return transition(model);
-    const change = pages * intent.pageProgress;
-    if (!Number.isFinite(change)) return transition(model);
-    progress = Math.max(0, Math.min(1, current.progress + change));
-  }
-  if (progress === current.progress) return transition(model);
-  const generation = nextMenuGeneration(current.generation);
-  if (generation === null) return transition(model);
-  return transition(withModel(model, {
-    menuScroll: Object.freeze({ ...current, generation, progress, focus: Object.freeze({ kind: "none" }) })
-  }));
-}
-
-function updateMenuFocus(model: AppModel, context: MenuScrollContext, focus: MenuFocusState): AppTransition {
-  const current = model.menuScroll;
-  if (current.kind !== "active" || !menuContextMatches(current, context)) return transition(model);
-  if (focus.kind === "control" && focus.controlId.trim().length === 0) return transition(model);
-  if (focus.kind === "none" ? current.focus.kind === "none"
-      : current.focus.kind === "control" && current.focus.controlId === focus.controlId) return transition(model);
-  const nextFocus = focus.kind === "none" ? Object.freeze({ kind: focus.kind })
-    : Object.freeze({ kind: focus.kind, controlId: focus.controlId });
-  return transition(withModel(model, { menuScroll: Object.freeze({ ...current, focus: nextFocus }) }));
-}
-
-function invalidateMenuScroll(model: AppModel, context: MenuScrollContext): AppTransition {
-  const current = model.menuScroll;
-  if (current.kind !== "active" || !menuContextMatches(current, context)) return transition(model);
-  const generation = nextMenuGeneration(current.generation);
-  if (generation === null) return transition(model);
-  return transition(withModel(model, {
-    menuScroll: Object.freeze({ ...current, generation, focus: Object.freeze({ kind: "none" }) })
-  }));
 }
 
 function updateUiAction(model: AppModel, action: UiAction): AppTransition {

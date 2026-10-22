@@ -997,6 +997,51 @@
         }
       ]
     },
+    "GameUiScene": {
+      "description": "Shared scene name, preserving current Web spelling.",
+      "oneOf": [
+        {
+          "const": "Boot",
+          "description": "Initial platform preparation.",
+          "type": "string"
+        },
+        {
+          "const": "Title",
+          "description": "Flight and demo entry.",
+          "type": "string"
+        },
+        {
+          "const": "FlightSetup",
+          "description": "Flight settings.",
+          "type": "string"
+        },
+        {
+          "const": "Briefing",
+          "description": "Prepared flight confirmation.",
+          "type": "string"
+        },
+        {
+          "const": "Countdown",
+          "description": "Launch countdown.",
+          "type": "string"
+        },
+        {
+          "const": "Flight",
+          "description": "Active or paused flight.",
+          "type": "string"
+        },
+        {
+          "const": "Result",
+          "description": "Finalized result.",
+          "type": "string"
+        },
+        {
+          "const": "Replay",
+          "description": "Saved snapshot playback.",
+          "type": "string"
+        }
+      ]
+    },
     "GameUiStoredRecord": {
       "additionalProperties": false,
       "description": "Persistence metadata, not an independent flight record.",
@@ -1202,6 +1247,360 @@
           "const": "custom",
           "description": "Independently configured flight information cues.",
           "type": "string"
+        }
+      ]
+    },
+    "MenuContext": {
+      "additionalProperties": false,
+      "description": "Revision of the menu targeted by an input observation.",
+      "properties": {
+        "generation": {
+          "description": "Monotonic input/layout revision.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "scope": {
+          "$ref": "#/$defs/MenuScope",
+          "description": "Semantic opening identity."
+        }
+      },
+      "required": [
+        "scope",
+        "generation"
+      ],
+      "type": "object"
+    },
+    "MenuFocus": {
+      "description": "Focus within the current menu revision.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "No control has focus.",
+          "properties": {
+            "kind": {
+              "const": "none",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Focused published control.",
+          "properties": {
+            "controlId": {
+              "description": "Published control identifier.",
+              "type": "string"
+            },
+            "kind": {
+              "const": "control",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "controlId"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "MenuPageDirection": {
+      "description": "Relative direction of a page action.",
+      "oneOf": [
+        {
+          "const": "previous",
+          "description": "Move toward the beginning.",
+          "type": "string"
+        },
+        {
+          "const": "next",
+          "description": "Move toward the end.",
+          "type": "string"
+        }
+      ]
+    },
+    "MenuScope": {
+      "description": "Semantic identity of one spatial menu opening.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Scene-owned menu.",
+          "properties": {
+            "kind": {
+              "const": "scene",
+              "type": "string"
+            },
+            "panelId": {
+              "description": "Published panel identifier.",
+              "type": "string"
+            },
+            "scene": {
+              "$ref": "#/$defs/GameUiScene",
+              "description": "Current scene."
+            },
+            "viewKey": {
+              "description": "Current presentation subview.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "scene",
+            "panelId",
+            "viewKey"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Menu belonging to an overlay.",
+          "properties": {
+            "kind": {
+              "const": "overlay",
+              "type": "string"
+            },
+            "overlay": {
+              "description": "Current overlay identifier.",
+              "type": "string"
+            },
+            "panelId": {
+              "description": "Published panel identifier.",
+              "type": "string"
+            },
+            "scene": {
+              "$ref": "#/$defs/GameUiScene",
+              "description": "Current scene."
+            },
+            "viewKey": {
+              "description": "Current presentation subview.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "scene",
+            "panelId",
+            "viewKey",
+            "overlay"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "MenuScrollIntent": {
+      "description": "Scroll observation expressed in viewport units or normalized progress.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Page button action.",
+          "properties": {
+            "direction": {
+              "$ref": "#/$defs/MenuPageDirection",
+              "description": "Direction of travel."
+            },
+            "kind": {
+              "const": "page",
+              "type": "string"
+            },
+            "pageProgress": {
+              "description": "One viewport's fraction of the scrollable extent.",
+              "format": "double",
+              "type": "number"
+            }
+          },
+          "required": [
+            "kind",
+            "direction",
+            "pageProgress"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Continuous scroll input.",
+          "properties": {
+            "kind": {
+              "const": "delta",
+              "type": "string"
+            },
+            "pageProgress": {
+              "description": "One viewport's fraction of the scrollable extent.",
+              "format": "double",
+              "type": "number"
+            },
+            "viewportPages": {
+              "description": "Signed number of viewport heights.",
+              "format": "double",
+              "type": "number"
+            }
+          },
+          "required": [
+            "kind",
+            "viewportPages",
+            "pageProgress"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Explicit normalized progress.",
+          "properties": {
+            "kind": {
+              "const": "set-progress",
+              "type": "string"
+            },
+            "progress": {
+              "description": "Value in the closed unit interval.",
+              "format": "double",
+              "type": "number"
+            }
+          },
+          "required": [
+            "kind",
+            "progress"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "MenuSessionInput": {
+      "description": "Input protocol of the engine-independent menu owner.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Synchronizes the presented opening against the observed revision.",
+          "properties": {
+            "generation": {
+              "description": "Revision observed by the caller.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "target": {
+              "$ref": "#/$defs/MenuTarget",
+              "description": "Current presentation target."
+            },
+            "type": {
+              "const": "menu-scroll-synchronized",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "generation",
+            "target"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Applies scrolling to the matching opening and revision.",
+          "properties": {
+            "context": {
+              "$ref": "#/$defs/MenuContext",
+              "description": "Observed input context."
+            },
+            "intent": {
+              "$ref": "#/$defs/MenuScrollIntent",
+              "description": "Raw scroll intent."
+            },
+            "type": {
+              "const": "menu-scroll",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "context",
+            "intent"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Updates focus within the matching input context.",
+          "properties": {
+            "context": {
+              "$ref": "#/$defs/MenuContext",
+              "description": "Observed input context."
+            },
+            "focus": {
+              "$ref": "#/$defs/MenuFocus",
+              "description": "Current focus."
+            },
+            "type": {
+              "const": "menu-focus",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "context",
+            "focus"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Retires input after a layout or font change.",
+          "properties": {
+            "context": {
+              "$ref": "#/$defs/MenuContext",
+              "description": "Context whose layout changed."
+            },
+            "type": {
+              "const": "menu-scroll-invalidated",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "context"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "MenuTarget": {
+      "description": "Observation of menu opening or closure.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "No spatial menu is presented.",
+          "properties": {
+            "kind": {
+              "const": "closed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Current spatial menu.",
+          "properties": {
+            "kind": {
+              "const": "active",
+              "type": "string"
+            },
+            "scope": {
+              "$ref": "#/$defs/MenuScope",
+              "description": "Semantic identity derived from the presented view."
+            }
+          },
+          "required": [
+            "kind",
+            "scope"
+          ],
+          "type": "object"
         }
       ]
     },

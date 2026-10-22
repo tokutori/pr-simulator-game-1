@@ -370,7 +370,7 @@ T_{eye,object}=T_{R,eye}^{-1}T_{R,object}
 
 - 描画、clip、gaze/controller hit、range、chart cursor、ページ操作は同じviewportとoffsetを使用する。
 - portraitと長文はscrollで収容する。
-- scroll/focusはScene/overlay・panel ID・view keyでscopeを区別し、generation付き入力だけを受理する。
+- 共有Rustの`MenuSession`がscroll/focusを所有し、Scene/overlay・panel ID・view keyでscopeを区別する。開閉・scroll変更・配置失効でgenerationを更新し、対応する入力を受理する。
 - scope/geometry変更・閉じる/再表示では古い入力を拒否する。
 - 通常head motionやtelemetryでgenerationを更新しない。
 

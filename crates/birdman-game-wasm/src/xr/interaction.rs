@@ -2,6 +2,27 @@ use super::{decode, encode, error};
 use birdman_game_presentation::xr as shared;
 use wasm_bindgen::prelude::*;
 
+/// Owns spatial menu scroll, focus and input revisions.
+#[wasm_bindgen]
+#[derive(Default)]
+pub struct MenuSessionBridge {
+    owner: shared::MenuSession,
+}
+
+#[wasm_bindgen]
+impl MenuSessionBridge {
+    /// Creates an empty presentation-lifetime owner.
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Applies one typed menu observation and returns the current projection.
+    pub fn update_json(&mut self, input_json: &str) -> Result<String, JsValue> {
+        encode(self.owner.update(decode(input_json, 16_384)?))
+    }
+}
+
 /// Runtime-independent pointer and dwell owner for one presentation lifetime.
 #[wasm_bindgen]
 #[derive(Default)]

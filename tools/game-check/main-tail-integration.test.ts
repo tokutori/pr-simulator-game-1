@@ -142,6 +142,8 @@ async function fixture(failInitialization = false, seedCurrentArchive = false, d
     else list.mockRejectedValue(new Error("Injected record listing failure"));
   }
   const free = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "free");
+  const menuOwnerFree = vi.spyOn(wasm.MenuSessionBridge.prototype, "free");
+  const menuOwnerUpdate = vi.spyOn(wasm.MenuSessionBridge.prototype, "update_json");
   const exportRecord = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "export_flight_record_json");
   const summary = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "flight_record_summary_json");
   const analysis = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "flight_analysis_samples_json");
@@ -208,7 +210,7 @@ async function fixture(failInitialization = false, seedCurrentArchive = false, d
     } else nowMilliseconds = nextMilliseconds;
     callback?.();
   };
-  return { browser, documentRef, renderer, scene, click, launch, page, free, exportRecord, summary, analysis, wind, sharedCommand, sharedView, pause, clearPauseReason, tickCount, flightFrame, advancePlayback, playbackClock, playbackCamera, replayTicks, observeCountdown,
+  return { browser, documentRef, renderer, scene, click, launch, page, free, menuOwnerFree, menuOwnerUpdate, exportRecord, summary, analysis, wind, sharedCommand, sharedView, pause, clearPauseReason, tickCount, flightFrame, advancePlayback, playbackClock, playbackCamera, replayTicks, observeCountdown,
     countdownTick, countdown, acknowledgeWaterQuality,
     advanceClock: (elapsedMilliseconds: number) => { nowMilliseconds += elapsedMilliseconds; },
     sessionOwner: () => {
@@ -268,6 +270,36 @@ async function manualReplayFixture() {
 }
 
 describe("public main entrypoint with actual two-tail Rust WASM", () => {
+  it.each([false, true])("retains the spatial Menu owner across BFCache and completes final cleanup when download release fails: %s", async failDownloadCleanup => {
+    const trial = await fixture(false, false, false, false, "normal", true);
+    await vi.waitFor(() => { expect(trial.scene()).toBe("Title"); });
+    trial.click("boot-enter-webxr");
+    await vi.waitFor(() => { expect(trial.menuOwnerUpdate).toHaveBeenCalled(); });
+    const firstOwner = trial.menuOwnerUpdate.mock.contexts[0];
+    trial.page("pagehide", true);
+    expect(trial.menuOwnerFree).not.toHaveBeenCalled();
+    trial.page("pageshow", true);
+    await vi.waitFor(() => { expect(trial.documentRef.querySelector<HTMLButtonElement>('[data-control-id="boot-enter-webxr"]')?.disabled).toBe(false); });
+    trial.click("boot-enter-webxr");
+    await vi.waitFor(() => { expect(trial.documentRef.querySelector('[data-control-id="boot-exit-vr"]')).not.toBeNull(); });
+    expect(trial.menuOwnerUpdate.mock.contexts.every(owner => owner === firstOwner)).toBe(true);
+    expect(trial.menuOwnerFree).not.toHaveBeenCalled();
+    if (failDownloadCleanup) {
+      const { BrowserFlightLogDownload } = await import("../../web/src/app/browser-flight-log-download.js");
+      const release = vi.spyOn(BrowserFlightLogDownload.prototype, "dispose").mockImplementationOnce(() => { throw new Error("Injected download cleanup failure"); });
+      trial.page("pagehide", false);
+      expect(release).toHaveBeenCalledTimes(1);
+    } else trial.page("pagehide", false);
+    expect(trial.free).toHaveBeenCalledTimes(1);
+    expect(trial.menuOwnerFree).toHaveBeenCalledTimes(1);
+    const updates = trial.menuOwnerUpdate.mock.calls.length;
+    trial.documentRef.fonts.dispatchEvent(new trial.browser.Event("loadingdone") as unknown as Event);
+    trial.page("pagehide", false);
+    trial.frame(100);
+    expect(trial.menuOwnerUpdate).toHaveBeenCalledTimes(updates);
+    expect(trial.menuOwnerFree).toHaveBeenCalledTimes(1);
+  });
+
   it("pauses the Rust Attract clock after camera failure before scheduling another timer", async () => {
     const trial = await fixture(false, false, false, true);
     await vi.waitFor(() => { expect(trial.scene()).toBe("Title"); });

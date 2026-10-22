@@ -3,6 +3,8 @@ import { validateHeadHudLayer } from "./head-hud.js";
 import type { HeadHudLayer } from "./head-hud.js";
 import type { GameUiView } from "../../generated/game-ui-view.js";
 import type { GameUiAction } from "../../generated/game-ui-action.js";
+import type { MenuSessionInput } from "../../generated/menu-session-input.js";
+import type { MenuSessionState } from "../../generated/menu-session-state.js";
 
 type GameUiControlInput = Extract<GameUiAction, { kind: "control_input" }>["input"];
 
@@ -106,16 +108,11 @@ export interface PanelSize {
   readonly height: number;
 }
 
-export type MenuScrollScope = Readonly<{ scene: GameScene; panelId: string; viewKey: string }> &
-  ({ readonly kind: "scene" } | { readonly kind: "overlay"; readonly overlay: string });
-export interface MenuScrollContext { readonly scope: MenuScrollScope; readonly generation: number }
-export type MenuScrollState =
-  | { readonly kind: "closed"; readonly generation: number }
-  | Readonly<{ kind: "active"; progress: number }> & MenuScrollContext;
-export type MenuScrollIntent =
-  | { readonly kind: "page"; readonly direction: "previous" | "next"; readonly pageProgress: number }
-  | { readonly kind: "delta"; readonly viewportPages: number; readonly pageProgress: number }
-  | { readonly kind: "set-progress"; readonly progress: number };
+export type MenuScrollScope = Extract<MenuSessionState, { kind: "active" }>["scope"];
+export type MenuScrollContext = Extract<MenuSessionInput, { type: "menu-scroll" }>["context"];
+export type MenuScrollState = Extract<MenuSessionState, { kind: "closed" }>
+  | Omit<Extract<MenuSessionState, { kind: "active" }>, "focus">;
+export type MenuScrollIntent = Extract<MenuSessionInput, { type: "menu-scroll" }>["intent"];
 
 export type MenuControlAction = Extract<UiAction, { readonly type: "activate" | "set-toggle" | "set-range" }>;
 

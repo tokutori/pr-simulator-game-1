@@ -5358,6 +5358,175 @@
         }
       ]
     },
+    "MenuFocus": {
+      "description": "Focus within the current menu revision.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "No control has focus.",
+          "properties": {
+            "kind": {
+              "const": "none",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Focused published control.",
+          "properties": {
+            "controlId": {
+              "description": "Published control identifier.",
+              "type": "string"
+            },
+            "kind": {
+              "const": "control",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "controlId"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "MenuScope": {
+      "description": "Semantic identity of one spatial menu opening.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Scene-owned menu.",
+          "properties": {
+            "kind": {
+              "const": "scene",
+              "type": "string"
+            },
+            "panelId": {
+              "description": "Published panel identifier.",
+              "type": "string"
+            },
+            "scene": {
+              "$ref": "#/$defs/GameUiScene",
+              "description": "Current scene."
+            },
+            "viewKey": {
+              "description": "Current presentation subview.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "scene",
+            "panelId",
+            "viewKey"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Menu belonging to an overlay.",
+          "properties": {
+            "kind": {
+              "const": "overlay",
+              "type": "string"
+            },
+            "overlay": {
+              "description": "Current overlay identifier.",
+              "type": "string"
+            },
+            "panelId": {
+              "description": "Published panel identifier.",
+              "type": "string"
+            },
+            "scene": {
+              "$ref": "#/$defs/GameUiScene",
+              "description": "Current scene."
+            },
+            "viewKey": {
+              "description": "Current presentation subview.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "scene",
+            "panelId",
+            "viewKey",
+            "overlay"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "MenuSessionState": {
+      "description": "Read-only projection of the menu owner's current state.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Closed menu retaining its lifetime revision.",
+          "properties": {
+            "generation": {
+              "description": "Monotonic revision.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "closed",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "generation"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Active opening and its interaction state.",
+          "properties": {
+            "focus": {
+              "$ref": "#/$defs/MenuFocus",
+              "description": "Current focus."
+            },
+            "generation": {
+              "description": "Current input/layout revision.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "active",
+              "type": "string"
+            },
+            "progress": {
+              "description": "Scroll position in the closed unit interval.",
+              "format": "double",
+              "type": "number"
+            },
+            "scope": {
+              "$ref": "#/$defs/MenuScope",
+              "description": "Current semantic identity."
+            }
+          },
+          "required": [
+            "kind",
+            "scope",
+            "generation",
+            "progress",
+            "focus"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "PhysicalControlsDocument": {
       "oneOf": [
         {
