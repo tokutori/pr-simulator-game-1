@@ -77,7 +77,7 @@ export function sharedScreenRenderSnapshot(scale: "100" | "75" | "50" = "100", q
 }
 
 export function createSharedGameUiSession(phase: SessionPhase, options: SharedGameUiFixtureOptions = {}):
-  Readonly<{ session: TailAppSessionFacade; platform: GameUiPlatformInput }> {
+  Readonly<{ session: TailAppSessionFacade; platform: GameUiPlatformInput; bridge: HybridGameSessionBridge }> {
   const bridge = new HybridGameSessionBridge(0, 21, 22);
   let owner: TailAppSessionFacade | null = null;
   try {
@@ -127,7 +127,7 @@ export function createSharedGameUiSession(phase: SessionPhase, options: SharedGa
         if (effect.kind === "record") owner.executeSharedRecordAction(effect.action);
       }
     }
-    return { session: owner, platform };
+    return { session: owner, platform, bridge };
   } catch (cause) {
     if (owner === null) bridge.free();
     else owner.dispose();
@@ -136,9 +136,9 @@ export function createSharedGameUiSession(phase: SessionPhase, options: SharedGa
 }
 
 export function withSharedGameUiSession<Value>(phase: SessionPhase, options: SharedGameUiFixtureOptions,
-  observe: (session: TailAppSessionFacade, platform: GameUiPlatformInput) => Value): Value {
-  const { session, platform } = createSharedGameUiSession(phase, options);
-  try { return observe(session, platform); }
+  observe: (session: TailAppSessionFacade, platform: GameUiPlatformInput, bridge: HybridGameSessionBridge) => Value): Value {
+  const { session, platform, bridge } = createSharedGameUiSession(phase, options);
+  try { return observe(session, platform, bridge); }
   finally { session.dispose(); }
 }
 

@@ -3,21 +3,13 @@
  * Layout result or a precise measurement failure.
  */
 export type MenuLayoutReply = {
-    readonly kind: "measured";
-    /**
-     * Measured lines in request order.
-     */
-    readonly measurements: readonly MenuTextMeasurement[];
-} | {
-    /**
-     * Bounded continuation index to return with the measurements.
-     */
-    readonly attempt: number;
-    readonly kind: "measure";
-    readonly plan: MenuLayoutPlan;
-} | {
     readonly geometry: MenuDocumentGeometry;
     readonly kind: "ready";
+    /**
+     * Observed text for the fitted contract.
+     */
+    readonly measurements: readonly MenuTextMeasurement[];
+    readonly plan: MenuLayoutPlan;
 } | {
     readonly kind: "viewport";
     readonly projection: MenuViewportProjection;
@@ -25,6 +17,10 @@ export type MenuLayoutReply = {
     readonly kind: "unavailable";
     readonly reason: MenuLayoutFailure;
 };
+/**
+ * Horizontal alignment relative to a chart label's baseline anchor.
+ */
+export type GameUiChartTextAnchor = "start" | "middle" | "end";
 /**
  * Widget presentation data used for layout and measurement.
  */
@@ -93,10 +89,6 @@ export type GameUiEmphasis = "primary" | "secondary" | "normal";
  */
 export type MenuTextRole = "label" | "value" | "x-axis" | "y-axis" | "x-tick" | "y-tick" | "legend" | "annotation" | "north" | "scale";
 /**
- * Horizontal alignment relative to a chart label's baseline anchor.
- */
-export type GameUiChartTextAnchor = "start" | "middle" | "end";
-/**
  * Font slant selected for measurement.
  */
 export type MenuFontStyle = "normal" | "italic";
@@ -140,7 +132,126 @@ export type MenuHeadingRole = "heading";
 /**
  * Rejection class of a measured menu document.
  */
-export type MenuLayoutFailure = "measurement-unavailable" | "not-stereo" | "viewer-unavailable" | "unsupported-view-configuration" | "invalid-view-geometry" | "insufficient-view-area" | "insufficient-ink-angle" | "missing-text-metrics" | "stale-text-metrics" | "invalid-text-metrics" | "invalid-layout";
+export type MenuLayoutFailure = "stale-view" | "measurement-unavailable" | "not-stereo" | "viewer-unavailable" | "unsupported-view-configuration" | "invalid-view-geometry" | "insufficient-view-area" | "insufficient-ink-angle" | "missing-text-metrics" | "stale-text-metrics" | "invalid-text-metrics" | "invalid-layout";
+/**
+ * Shared document geometry; source objects remain with the adapter.
+ */
+export interface MenuDocumentGeometry {
+    readonly caption: MenuTextPlacement;
+    /**
+     * Full scrollable content height.
+     */
+    readonly contentHeightMeters: number;
+    /**
+     * Ordered source controls or allocated row items.
+     */
+    readonly controls: readonly MenuControlPlacement[];
+    /**
+     * Measured page-control height.
+     */
+    readonly footerHeightMeters: number;
+    /**
+     * Measurement index for the next-page label.
+     */
+    readonly nextIndex: number;
+    /**
+     * Measurement index for the previous-page label.
+     */
+    readonly previousIndex: number;
+    /**
+     * Placed section headings.
+     */
+    readonly sectionHeadings: readonly MenuTextPlacement[];
+    readonly title: MenuTextPlacement;
+}
+/**
+ * Placement of one measured text within its document.
+ */
+export interface MenuTextPlacement {
+    readonly bounds: MenuRect;
+    /**
+     * Optional chart baseline projection.
+     */
+    readonly chartProjection?: MenuChartProjection | null;
+    /**
+     * Projected line anchors and ink bounds.
+     */
+    readonly lineGeometry: readonly MenuLineGeometry[];
+    /**
+     * Index of the corresponding measurement request.
+     */
+    readonly textIndex: number;
+}
+/**
+ * Metric rectangle in a spatial menu document.
+ */
+export interface MenuRect {
+    /**
+     * Height in metres.
+     */
+    readonly height: number;
+    /**
+     * Width in metres.
+     */
+    readonly width: number;
+    /**
+     * Horizontal coordinate in metres.
+     */
+    readonly x: number;
+    /**
+     * Vertical coordinate in metres.
+     */
+    readonly y: number;
+}
+/**
+ * Spatial chart text projection around its baseline anchor.
+ */
+export interface MenuChartProjection {
+    readonly anchor: GameUiChartTextAnchor;
+    readonly baseline: MenuPoint;
+    /**
+     * Rotation about the baseline in degrees.
+     */
+    readonly rotationDegrees: number;
+}
+/**
+ * Metric point in a spatial menu document.
+ */
+export interface MenuPoint {
+    /**
+     * Horizontal coordinate in metres.
+     */
+    readonly x: number;
+    /**
+     * Vertical coordinate in metres.
+     */
+    readonly y: number;
+}
+/**
+ * Baseline and ink bounds of one already measured line.
+ */
+export interface MenuLineGeometry {
+    readonly anchor: MenuPoint;
+    readonly bounds: MenuRect;
+}
+/**
+ * Placement of one control and its measured labels.
+ */
+export interface MenuControlPlacement {
+    readonly bounds: MenuRect;
+    /**
+     * Index of the corresponding source control.
+     */
+    readonly controlIndex: number;
+    /**
+     * Chart plot rectangle ordered left, top, right and bottom.
+     */
+    readonly plot: MenuRect | null;
+    /**
+     * Ordered measurement requests or placed labels.
+     */
+    readonly texts: readonly MenuTextPlacement[];
+}
 /**
  * Measured lines associated with one exact request identity.
  */
@@ -509,125 +620,6 @@ export interface MenuTextRequest {
      * Maximum measured line width in metres.
      */
     readonly widthMeters: number;
-}
-/**
- * Shared document geometry; source objects remain with the adapter.
- */
-export interface MenuDocumentGeometry {
-    readonly caption: MenuTextPlacement;
-    /**
-     * Full scrollable content height.
-     */
-    readonly contentHeightMeters: number;
-    /**
-     * Ordered source controls or allocated row items.
-     */
-    readonly controls: readonly MenuControlPlacement[];
-    /**
-     * Measured page-control height.
-     */
-    readonly footerHeightMeters: number;
-    /**
-     * Measurement index for the next-page label.
-     */
-    readonly nextIndex: number;
-    /**
-     * Measurement index for the previous-page label.
-     */
-    readonly previousIndex: number;
-    /**
-     * Placed section headings.
-     */
-    readonly sectionHeadings: readonly MenuTextPlacement[];
-    readonly title: MenuTextPlacement;
-}
-/**
- * Placement of one measured text within its document.
- */
-export interface MenuTextPlacement {
-    readonly bounds: MenuRect;
-    /**
-     * Optional chart baseline projection.
-     */
-    readonly chartProjection?: MenuChartProjection | null;
-    /**
-     * Projected line anchors and ink bounds.
-     */
-    readonly lineGeometry: readonly MenuLineGeometry[];
-    /**
-     * Index of the corresponding measurement request.
-     */
-    readonly textIndex: number;
-}
-/**
- * Metric rectangle in a spatial menu document.
- */
-export interface MenuRect {
-    /**
-     * Height in metres.
-     */
-    readonly height: number;
-    /**
-     * Width in metres.
-     */
-    readonly width: number;
-    /**
-     * Horizontal coordinate in metres.
-     */
-    readonly x: number;
-    /**
-     * Vertical coordinate in metres.
-     */
-    readonly y: number;
-}
-/**
- * Spatial chart text projection around its baseline anchor.
- */
-export interface MenuChartProjection {
-    readonly anchor: GameUiChartTextAnchor;
-    readonly baseline: MenuPoint;
-    /**
-     * Rotation about the baseline in degrees.
-     */
-    readonly rotationDegrees: number;
-}
-/**
- * Metric point in a spatial menu document.
- */
-export interface MenuPoint {
-    /**
-     * Horizontal coordinate in metres.
-     */
-    readonly x: number;
-    /**
-     * Vertical coordinate in metres.
-     */
-    readonly y: number;
-}
-/**
- * Baseline and ink bounds of one already measured line.
- */
-export interface MenuLineGeometry {
-    readonly anchor: MenuPoint;
-    readonly bounds: MenuRect;
-}
-/**
- * Placement of one control and its measured labels.
- */
-export interface MenuControlPlacement {
-    readonly bounds: MenuRect;
-    /**
-     * Index of the corresponding source control.
-     */
-    readonly controlIndex: number;
-    /**
-     * Chart plot rectangle ordered left, top, right and bottom.
-     */
-    readonly plot: MenuRect | null;
-    /**
-     * Ordered measurement requests or placed labels.
-     */
-    readonly texts: readonly MenuTextPlacement[];
 }
 /**
  * Shared viewport placement and ordered coordinate projections.

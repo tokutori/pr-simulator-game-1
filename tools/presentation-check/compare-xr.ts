@@ -3,10 +3,10 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { currentSharedGameUiFixture, currentSharedHeadHudFixture } from "../game-check/shared-game-ui-fixture.js";
+import { currentSharedHeadHudFixture, withSharedGameUiSession } from "../game-check/shared-game-ui-fixture.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
-import { menuLayoutRequest, menuLayoutSource } from "../../web/src/presentation/menu-layout.js";
-import { measureMenuLayout, menuCanvasSize } from "../../web/src/presentation/menu-canvas.js";
+import { prepareMenuPresentation } from "../../web/src/presentation/menu-preparation.js";
+import type { MenuPreparationInput } from "../../web/src/generated/menu-preparation-input.js";
 import { HudCanvasFixture } from "./hud-canvas-fixture.js";
 import type { MenuLayoutQuery } from "../../web/src/generated/menu-layout-query.js";
 import type { MenuLayoutReply } from "../../web/src/generated/menu-layout-reply.js";
@@ -15,7 +15,7 @@ import { DEFAULT_XR_HEAD_HUD_PROFILE } from "../../web/src/generated/xr-head-hud
 import type { FlightRecordHudProfileDocument } from "../../web/src/generated/record-difficulty.js";
 import type { ViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
 import { IDENTITY_POSE, composePose, rotateVec3, pose, quaternion, vec3 } from "../../web/src/render/contracts/math.js";
-import { menu_layout_json, menu_measure_text_json, xr_head_hud_projection_json, xr_text_ink_fit_json, XrCameraBridge, XrSpatialBridge,
+import { menu_layout_json, xr_head_hud_projection_json, xr_text_ink_fit_json, XrCameraBridge, XrSpatialBridge,
   xr_reference_frame_json, pose_chain_json, inverse_pose_json, xr_panel_camera_poses_json, XrPointerBridge } from "../../web/pkg/birdman_game_wasm.js";
 import type { XrPointerObservation } from "../../web/src/generated/xr-pointer-observation.js";
 import type { XrPointerSurface } from "../../web/src/generated/xr-pointer-surface.js";
@@ -40,9 +40,8 @@ await writeFile(resolve(output, "source.patch"), patch, "utf8");
 const wasmPath = resolve(root, "web/pkg/birdman_game_wasm_bg.wasm");
 const wasmHash = createHash("sha256").update(await readFile(wasmPath)).digest("hex");
 const optics: { name: string; observation: ReturnType<typeof observation> }[] = [];
-type TextProbe = { index: number; value: string; metrics: [number, number, number, number, number] | null };
-type TextObservation = { requests: Extract<MenuLayoutReply, { kind: "measure" }>["plan"]["texts"]; probes: TextProbe[] };
-const textObservations: TextObservation[] = [];
+type TextProbe = { value: string; font_meters: number; weight: number; size: { width: number; height: number }; metrics: number[] };
+const menus = menuObservations();
 for (const informationCode of [0, 1, 2, 3, 4] as const) {
   const model = currentSharedHeadHudFixture({ informationCode });
   for (const [width, height] of [[1280, 720], [720, 1280]] as const) {
@@ -62,7 +61,7 @@ for (let mask = 0; mask < 64; mask += 1) {
 const batch = { optics: optics.map(candidate => candidate.observation),
   custom_hud: { viewer: opticalViewer(1280, 720, "negative-one-to-one", false),
     profile: DEFAULT_XR_HEAD_HUD_PROFILE, huds: customHuds.map(candidate => candidate.hud) },
-  interaction: pointerScenario(), layout: menuQueries(), text: textObservations };
+  interaction: pointerScenario(), menu: menus.observations };
 assert.equal(optics.length, 30);
 assert.equal(customHuds.length, 64);
 const input = JSON.stringify(batch);
@@ -85,8 +84,7 @@ try {
     custom_hud: batch.custom_hud.huds.map(hud => JSON.parse(xr_head_hud_projection_json(JSON.stringify(hud),
       JSON.stringify(batch.custom_hud.viewer), JSON.stringify(batch.custom_hud.profile), "FPS 72.0")) as unknown),
     interaction: pointerResults(batch.interaction),
-    layout: batch.layout.map(query => JSON.parse(menu_layout_json(JSON.stringify(query))) as unknown),
-    text: batch.text.map(textResult)
+    menu: menus.results
   };
   await writeFile(resolve(output, "wasm.json"), JSON.stringify(actual), "utf8");
   compare(expected, actual, "batch");
@@ -94,7 +92,7 @@ try {
   assert.equal(execFileSync("git", sourceArguments, gitOptions), patch, "Source changed during comparison");
   assert.equal(execFileSync("git", untrackedArguments, gitOptions), "", "New source appeared during comparison");
   assert.equal(createHash("sha256").update(await readFile(wasmPath)).digest("hex"), wasmHash, "WASM changed during comparison");
-  const report = { status: "passed", ...provenance, cases: [...optics.map(candidate => candidate.name), ...customHuds.map(candidate => candidate.name)], batches: { optics: optics.length, customHud: customHuds.length, interaction: 1, menuQueries: batch.layout.length, text: batch.text.length }, comparedNumbers, maximumAbsoluteError,
+  const report = { status: "passed", ...provenance, cases: [...optics.map(candidate => candidate.name), ...customHuds.map(candidate => candidate.name)], batches: { optics: optics.length, customHud: customHuds.length, interaction: 1, menuPreparations: batch.menu.length }, comparedNumbers, maximumAbsoluteError,
     tolerance: "error <= 1e-10 * max(1, abs(native), abs(wasm))" };
   await writeFile(resolve(output, "result.json"), `${JSON.stringify(report, null, 2)}\n`, "utf8");
   console.log(JSON.stringify({ status: report.status, cases: optics.length + customHuds.length, batches: report.batches, comparedNumbers, maximumAbsoluteError, output }));
@@ -104,77 +102,51 @@ try {
   throw cause;
 }
 
-function menuQueries(): MenuLayoutQuery[] {
-  const queries: MenuLayoutQuery[] = [];
+function menuObservations() {
+  const observations: { view: import("../../web/src/generated/game-ui-view.js").GameUiView;
+    frame: import("../../web/src/generated/game-ui-frame.js").GameUiFrame; input: MenuPreparationInput; probes: TextProbe[]; viewport: MenuLayoutQuery[] }[] = [];
+  const results: { preparation: MenuLayoutReply; viewport: MenuLayoutReply[] }[] = [];
   for (const phase of ["title", "flight_setup", "briefing_ready", "flight_paused", "result", "replay"] as const) {
-    const shared = currentSharedGameUiFixture(phase, { ticks: 20, platform: { presentation_mode: "webxr" },
-      actions: phase === "result" ? [{ kind: "set_result_tab", tab: "analysis" }] : [] });
-    for (const panel of createGameViewModel(shared).panels) for (const width of [2.4, 0.5]) {
-      const source = menuLayoutSource(panel, { width, height: 1.8 }, { theme: shared.theme, fontMeters: 0.035,
-        font: { family: "sans-serif", weight: 600, style: "normal", generation: 0 },
-        locale: "ja", caption: "", previousLabel: "前頁", nextLabel: "次頁" });
-      const viewer = configuredViewerFixture(width > 1 ? 1280 : 720, width > 1 ? 720 : 1280);
-      let observation: Extract<MenuLayoutQuery, { kind: "prepare" }>["observation"] = null;
-      let requested: ReturnType<typeof menuLayoutRequest> | null = null;
-      let ready = false;
-      for (let attempt = 0; attempt <= 12; attempt++) {
-        const preparation: MenuLayoutQuery = { kind: "prepare", source, viewer, menu_from_panel: panel.localPose, observation };
-        queries.push(preparation);
-        const reply = JSON.parse(menu_layout_json(JSON.stringify(preparation))) as MenuLayoutReply;
-        if (reply.kind === "ready") {
-          assert.ok(requested !== null);
-          const geometry = reply.geometry;
-          const rectangles = geometry.controls.flatMap(control => [control.bounds,
-            ...(control.plot === null ? [] : [control.plot]), ...control.texts.flatMap(text => text.lineGeometry.map(line => line.bounds))]);
-          for (const progress of [0, 0.5, 1]) queries.push({ kind: "viewport", source: {
-            surfaceSize: requested.surfaceSize, paddingMeters: requested.paddingMeters, gapMeters: requested.gapMeters,
-            contentHeightMeters: geometry.contentHeightMeters, footerHeightMeters: geometry.footerHeightMeters, progress },
-            rectangles, panel_points: [{ x: 0, y: 0 }, { x: -width, y: 1.8 }],
-            document_points: [{ x: 0, y: 0 }, { x: 0.2, y: geometry.contentHeightMeters }] });
-          ready = true;
-          break;
-        }
-        assert.equal(reply.kind, "measure");
-        requested = menuLayoutRequest(panel, shared.theme, reply.plan);
-        const canvas = menuCanvasSize(requested.surfaceSize);
-        const context = new HudCanvasFixture();
-        const read = context.measureText.bind(context);
-        const locale = context.setLocale.bind(context);
+    for (const [width, height] of [[1280, 720], [720, 1280]] as const) {
+      withSharedGameUiSession(phase, { ticks: 20, platform: { presentation_mode: "webxr" },
+        actions: phase === "result" ? [{ kind: "set_result_tab", tab: "analysis" }] : [] }, (session, platform, bridge) => {
+        const view = session.readSharedUi(platform);
+        const frame = JSON.parse(bridge.game_ui_frame_json(view.view_revision, JSON.stringify(platform))) as import("../../web/src/generated/game-ui-frame.js").GameUiFrame;
+        const panel = createGameViewModel(view).panels[0];
+        assert.ok(panel !== undefined);
+        const captured: { input: MenuPreparationInput; reply: MenuLayoutReply }[] = [];
         const probes: TextProbe[] = [];
-        let index = -1;
-        context.setLocale = value => { index++; locale(value); };
-        context.measureText = value => {
-          const metric = read(value);
-          const horizontal = reply.plan.source.surfaceSize.width / canvas.width;
-          const vertical = reply.plan.source.surfaceSize.height / canvas.height;
-          probes.push({ index, value, metrics: [metric.width * horizontal, metric.left * horizontal,
-            metric.right * horizontal, metric.ascent * vertical, metric.descent * vertical] });
-          return metric;
-        };
-        const measured = measureMenuLayout(context, requested, canvas.width, canvas.height);
-        assert.equal(measured.kind, "ready");
-        textObservations.push({ requests: requested.texts, probes });
-        observation = { attempt: reply.attempt, measurements: measured.measurements };
-      }
-      assert.ok(ready, "Menu preparation must reach a readable document");
+        const ready = prepareMenuPresentation(new HudCanvasFixture(), panel,
+          { generation: 1, scope: { kind: "scene", scene: view.scene, panelId: panel.id, viewKey: "comparison" } }, 0,
+          configuredViewerFixture(width, height), { theme: view.theme, viewRevision: view.view_revision, locale: "ja",
+            font: { family: "sans-serif", weight: 600, style: "normal", generation: 0 } }, (request, measure) => {
+            const reply = session.prepareSharedMenu(request, platform, (value, fontMeters, weight, surfaceWidth, surfaceHeight) => {
+              const metrics = measure(value, fontMeters, weight, surfaceWidth, surfaceHeight);
+              probes.push({ value, font_meters: fontMeters, weight, size: { width: surfaceWidth, height: surfaceHeight }, metrics: Array.from(metrics) });
+              return metrics;
+            });
+            captured.push({ input: request, reply });
+            return reply;
+          });
+        assert.equal(ready.kind, "ready");
+        const observed = captured[0];
+        assert.ok(observed !== undefined);
+        const { input, reply: prepared } = observed;
+        assert.equal(prepared.kind, "ready");
+        const geometry = prepared.geometry;
+        const plan = prepared.plan;
+        const rectangles = geometry.controls.flatMap(control => [control.bounds,
+          ...(control.plot === null ? [] : [control.plot]), ...control.texts.flatMap(text => text.lineGeometry.map(line => line.bounds))]);
+        const viewport: MenuLayoutQuery[] = [0, 0.5, 1].map(progress => ({ kind: "viewport", source: {
+          surfaceSize: plan.source.surfaceSize, paddingMeters: plan.paddingMeters, gapMeters: plan.gapMeters,
+          contentHeightMeters: geometry.contentHeightMeters, footerHeightMeters: geometry.footerHeightMeters, progress },
+          rectangles, panel_points: [{ x: 0, y: 0 }], document_points: [{ x: 0, y: geometry.contentHeightMeters }] }));
+        observations.push({ view, frame, input, probes, viewport });
+        results.push({ preparation: prepared, viewport: viewport.map(query => JSON.parse(menu_layout_json(JSON.stringify(query))) as MenuLayoutReply) });
+      });
     }
   }
-  assert.ok(queries.length > 0);
-  return queries;
-}
-
-function textResult(observation: TextObservation): unknown {
-  let cursor = 0;
-  const result: unknown = JSON.parse(menu_measure_text_json(JSON.stringify(observation.requests), (index, value) => {
-    const probe = observation.probes[cursor++];
-    assert.ok(probe !== undefined);
-    assert.equal(probe.index, index);
-    assert.equal(probe.value, value);
-    if (probe.metrics === null) throw new Error("Observed font service failure");
-    return Float64Array.from(probe.metrics);
-  }));
-  assert.equal(cursor, observation.probes.length);
-  return result;
+  return { observations, results };
 }
 
 function pointerScenario() {

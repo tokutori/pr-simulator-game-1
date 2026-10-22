@@ -13,9 +13,22 @@ import { menuViewport, projectMenuViewport } from "../../web/src/presentation/me
 import { prepareMenuPresentation } from "../../web/src/presentation/menu-preparation.js";
 import { configuredViewerFixture } from "./viewer-fixture.js";
 import { HudCanvasFixture } from "./hud-canvas-fixture.js";
-import { currentSharedGameUiFixture } from "../game-check/shared-game-ui-fixture.js";
+import { createGameViewModel } from "../../web/src/app/game-view.js";
+import { withSharedGameUiSession } from "../game-check/shared-game-ui-fixture.js";
 
-const fixtureTheme = currentSharedGameUiFixture("title").theme;
+const geometryLayout = withSharedGameUiSession("title", { platform: { presentation_mode: "webxr" } }, (session, platform) => {
+    const shared = session.readSharedUi(platform);
+    const source = createGameViewModel(shared).panels[0];
+    if (source === undefined) throw new Error("Missing shared Title panel");
+    return prepareMenuPresentation(new HudCanvasFixture(), source,
+      { generation: 1, scope: { kind: "scene", scene: "Title", panelId: source.id, viewKey: "geometry-fixture" } }, 0,
+      configuredViewerFixture(1280, 1280, 0.1, 100, 120),
+      { theme: shared.theme, viewRevision: shared.view_revision,
+        font: { family: "sans-serif", weight: 600, style: "normal", generation: 0 }, locale: "ja" },
+      (input, measure) => session.prepareSharedMenu(input, platform, measure));
+  });
+if (geometryLayout.kind !== "ready") throw new Error("Missing geometry fixture document");
+const geometryDocument = geometryLayout.viewport.document;
 
 export function referenceFrameFixture(head: Pose): XrReferenceFrame {
   return { basis: "world", world: IDENTITY_POSE, cockpit: IDENTITY_POSE, head };
@@ -28,19 +41,13 @@ export function placeMenuPanel(head: Pose, distance: number): Pose {
 export function geometryMenuFixture(view: UiViewModel): MenuPresentation {
   const panel = view.panels[0];
   if (panel === undefined || panel.anchor !== "menu") return { kind: "absent" };
-  const layout = prepareMenuPresentation(new HudCanvasFixture(), panel,
-    { generation: 1, scope: { kind: "scene", scene: view.scene, panelId: panel.id, viewKey: "geometry-fixture" } }, 0,
-    configuredViewerFixture(1280, 1280, 0.1, 100, 120),
-    { theme: view.sharedPresentation?.theme ?? fixtureTheme,
-      font: { family: "sans-serif", weight: 600, style: "normal", generation: 0 }, locale: "ja", caption: "" }, new Map());
-  if (layout.kind !== "ready") throw new Error("Missing geometry fixture document");
   const controls = panel.controls.map((control): MenuControlLayout => {
     const bounds = { x: control.rect.x * panel.size.width, y: control.rect.y * panel.size.height,
       width: control.rect.width * panel.size.width, height: control.rect.height * panel.size.height };
     return control.kind === "chart" ? { kind: "chart", control, bounds, plot: bounds, texts: [] } : { kind: "control", control, bounds, texts: [] };
   });
-  const document = { ...layout.viewport.document, controls, contentHeightMeters: panel.size.height, footerHeightMeters: 0,
-    request: { ...layout.viewport.document.request, paddingMeters: 0, gapMeters: 0 } };
+  const document = { ...geometryDocument, controls, contentHeightMeters: panel.size.height, footerHeightMeters: 0,
+    request: { ...geometryDocument.request, panel, surfaceSize: panel.size, paddingMeters: 0, gapMeters: 0 } };
   const viewport = menuViewport(document, 0);
   const context = { generation: 1, scope: view.activeOverlay === null
     ? { kind: "scene" as const, scene: view.scene, panelId: panel.id, viewKey: "geometry-fixture" }

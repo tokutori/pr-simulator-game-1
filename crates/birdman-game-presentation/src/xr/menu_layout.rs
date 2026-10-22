@@ -6,6 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 mod types;
 pub use types::*;
 mod preparation;
+pub use preparation::{MenuFontCache, prepare_game_ui_menu};
 mod text;
 pub use text::*;
 mod viewport;
@@ -13,12 +14,6 @@ mod viewport;
 /// Resolves a complete layout phase using engine-independent metric observations.
 pub fn menu_layout(query: MenuLayoutQuery) -> MenuLayoutReply {
     match query {
-        MenuLayoutQuery::Prepare {
-            source,
-            viewer,
-            menu_from_panel,
-            observation,
-        } => preparation::prepare(*source, &viewer, menu_from_panel, observation.as_ref()),
         MenuLayoutQuery::Viewport {
             source,
             rectangles,

@@ -482,83 +482,6 @@
         }
       ]
     },
-    "GameUiButtonPresentation": {
-      "description": "Shared button role and selection state.",
-      "oneOf": [
-        {
-          "additionalProperties": false,
-          "description": "Navigation or command.",
-          "properties": {
-            "emphasis": {
-              "$ref": "#/$defs/GameUiEmphasis",
-              "description": "Primary or secondary emphasis."
-            },
-            "kind": {
-              "const": "action",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind",
-            "emphasis"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Explicit option in a named choice group.",
-          "properties": {
-            "description": {
-              "description": "Shared option explanation.",
-              "type": "string"
-            },
-            "group": {
-              "description": "Stable group identifier.",
-              "type": "string"
-            },
-            "group_label": {
-              "description": "Group heading.",
-              "type": "string"
-            },
-            "kind": {
-              "const": "choice",
-              "type": "string"
-            },
-            "selected": {
-              "description": "Current selected option.",
-              "type": "boolean"
-            }
-          },
-          "required": [
-            "kind",
-            "group",
-            "group_label",
-            "selected",
-            "description"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Technical-information disclosure.",
-          "properties": {
-            "expanded": {
-              "description": "Current disclosure state.",
-              "type": "boolean"
-            },
-            "kind": {
-              "const": "disclosure",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind",
-            "expanded"
-          ],
-          "type": "object"
-        }
-      ]
-    },
     "GameUiChartExtent": {
       "additionalProperties": false,
       "description": "Measured or initially assumed chart content dimensions in logical pixels.",
@@ -579,127 +502,6 @@
         "height"
       ],
       "type": "object"
-    },
-    "GameUiChartLegend": {
-      "additionalProperties": false,
-      "description": "One ordered legend item with an optional progress gradient.",
-      "properties": {
-        "color": {
-          "description": "Solid swatch colour.",
-          "type": "string"
-        },
-        "label": {
-          "description": "Shared label.",
-          "type": "string"
-        },
-        "segment_gradient": {
-          "description": "First and last progress colours when the series uses a gradient.",
-          "items": {
-            "type": "string"
-          },
-          "maxItems": 2,
-          "minItems": 2,
-          "type": [
-            "array",
-            "null"
-          ]
-        }
-      },
-      "required": [
-        "label",
-        "color"
-      ],
-      "type": "object"
-    },
-    "GameUiChartPoint": {
-      "additionalProperties": false,
-      "description": "One chart-space point with units defined by the axes.",
-      "properties": {
-        "x": {
-          "description": "Horizontal component.",
-          "format": "double",
-          "type": "number"
-        },
-        "y": {
-          "description": "Vertical component.",
-          "format": "double",
-          "type": "number"
-        }
-      },
-      "required": [
-        "x",
-        "y"
-      ],
-      "type": "object"
-    },
-    "GameUiChartText": {
-      "additionalProperties": false,
-      "description": "Static label placement independent of the rendering engine.",
-      "properties": {
-        "anchor": {
-          "$ref": "#/$defs/GameUiChartTextAnchor",
-          "description": "Horizontal text anchor."
-        },
-        "color": {
-          "description": "Shared text colour.",
-          "type": "string"
-        },
-        "font_size": {
-          "description": "Font size in logical pixels.",
-          "format": "double",
-          "type": "number"
-        },
-        "font_weight": {
-          "description": "CSS-compatible font weight.",
-          "format": "uint16",
-          "maximum": 65535,
-          "minimum": 0,
-          "type": "integer"
-        },
-        "label": {
-          "description": "Already formatted content.",
-          "type": "string"
-        },
-        "position": {
-          "$ref": "#/$defs/GameUiChartPoint",
-          "description": "Alphabetic-baseline position in logical pixels; adapters apply actual font metrics."
-        },
-        "rotation_degrees": {
-          "description": "Rotation around the baseline anchor in degrees.",
-          "format": "double",
-          "type": "number"
-        }
-      },
-      "required": [
-        "label",
-        "position",
-        "font_size",
-        "font_weight",
-        "rotation_degrees",
-        "anchor",
-        "color"
-      ],
-      "type": "object"
-    },
-    "GameUiChartTextAnchor": {
-      "description": "Horizontal alignment relative to a chart label's baseline anchor.",
-      "oneOf": [
-        {
-          "const": "start",
-          "description": "Left edge.",
-          "type": "string"
-        },
-        {
-          "const": "middle",
-          "description": "Horizontal centre.",
-          "type": "string"
-        },
-        {
-          "const": "end",
-          "description": "Right edge.",
-          "type": "string"
-        }
-      ]
     },
     "GameUiControlInput": {
       "description": "Engine-independent widget observation, resolved by the shared UI owner.",
@@ -771,26 +573,6 @@
             "value"
           ],
           "type": "object"
-        }
-      ]
-    },
-    "GameUiEmphasis": {
-      "description": "Shared action emphasis.",
-      "oneOf": [
-        {
-          "const": "primary",
-          "description": "Principal forward operation.",
-          "type": "string"
-        },
-        {
-          "const": "secondary",
-          "description": "Back or auxiliary operation.",
-          "type": "string"
-        },
-        {
-          "const": "normal",
-          "description": "Existing ordinary action styling.",
-          "type": "string"
         }
       ]
     },
@@ -1260,50 +1042,6 @@
         }
       ]
     },
-    "GameUiSection": {
-      "additionalProperties": false,
-      "description": "Shared control group and placement mode.",
-      "properties": {
-        "id": {
-          "description": "Stable group identifier.",
-          "type": "string"
-        },
-        "label": {
-          "description": "Optional visible group heading.",
-          "type": "string"
-        },
-        "layout": {
-          "$ref": "#/$defs/GameUiSectionLayout",
-          "description": "Shared layout mode."
-        }
-      },
-      "required": [
-        "id",
-        "label",
-        "layout"
-      ],
-      "type": "object"
-    },
-    "GameUiSectionLayout": {
-      "description": "Group placement strategy, selected in shared Rust.",
-      "oneOf": [
-        {
-          "const": "column",
-          "description": "Vertical flow in declared control order.",
-          "type": "string"
-        },
-        {
-          "const": "choice_grid",
-          "description": "Responsive choice grid using shared column count.",
-          "type": "string"
-        },
-        {
-          "const": "row",
-          "description": "Horizontal action row.",
-          "type": "string"
-        }
-      ]
-    },
     "GameUiStoredRecord": {
       "additionalProperties": false,
       "description": "Persistence metadata, not an independent flight record.",
@@ -1512,85 +1250,6 @@
         }
       ]
     },
-    "MenuChartLabel": {
-      "additionalProperties": false,
-      "description": "Shared chart label projected into the menu's text measurement pass.",
-      "properties": {
-        "index": {
-          "description": "Stable source index.",
-          "format": "uint",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "role": {
-          "$ref": "#/$defs/MenuTextRole",
-          "description": "Logical text role."
-        },
-        "text": {
-          "$ref": "#/$defs/GameUiChartText",
-          "description": "Shared chart label descriptor."
-        }
-      },
-      "required": [
-        "role",
-        "index",
-        "text"
-      ],
-      "type": "object"
-    },
-    "MenuChartLayout": {
-      "additionalProperties": false,
-      "description": "Static chart geometry needed by layout, independent of sample arrays.",
-      "properties": {
-        "labels": {
-          "description": "Ordered chart text descriptors.",
-          "items": {
-            "$ref": "#/$defs/MenuChartLabel"
-          },
-          "type": "array"
-        },
-        "legend": {
-          "description": "Shared legend entries.",
-          "items": {
-            "$ref": "#/$defs/GameUiChartLegend"
-          },
-          "type": "array"
-        },
-        "plot": {
-          "description": "Chart plot rectangle ordered left, top, right and bottom.",
-          "items": {
-            "format": "double",
-            "type": "number"
-          },
-          "maxItems": 4,
-          "minItems": 4,
-          "type": "array"
-        },
-        "size": {
-          "description": "Chart viewport width and height.",
-          "items": {
-            "format": "double",
-            "type": "number"
-          },
-          "maxItems": 2,
-          "minItems": 2,
-          "type": "array"
-        },
-        "tickFontSize": {
-          "description": "Reference font size for chart label scaling.",
-          "format": "double",
-          "type": "number"
-        }
-      },
-      "required": [
-        "size",
-        "plot",
-        "tickFontSize",
-        "labels",
-        "legend"
-      ],
-      "type": "object"
-    },
     "MenuContext": {
       "additionalProperties": false,
       "description": "Revision of the menu targeted by an input observation.",
@@ -1699,80 +1358,9 @@
         }
       ]
     },
-    "MenuLayoutControl": {
-      "additionalProperties": false,
-      "description": "Compact source control, excluding record samples and semantic actions.",
-      "properties": {
-        "id": {
-          "description": "Published source identifier.",
-          "type": "string"
-        },
-        "label": {
-          "description": "Already localized visible label.",
-          "type": "string"
-        },
-        "section": {
-          "description": "Published section membership.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "widget": {
-          "$ref": "#/$defs/MenuWidget",
-          "description": "Widget presentation needed by measurement."
-        }
-      },
-      "required": [
-        "id",
-        "label",
-        "widget"
-      ],
-      "type": "object"
-    },
     "MenuLayoutQuery": {
       "description": "Aggregate layout protocol spanning preparation and measured arrangement.",
       "oneOf": [
-        {
-          "additionalProperties": false,
-          "description": "Fits a surface and requests real text observations until readable.",
-          "properties": {
-            "kind": {
-              "const": "prepare",
-              "type": "string"
-            },
-            "menu_from_panel": {
-              "$ref": "#/$defs/Pose",
-              "description": "Physical panel pose relative to the menu anchor."
-            },
-            "observation": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/MenuPreparationObservation"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Reply to the current requested candidate, or absent at opening."
-            },
-            "source": {
-              "$ref": "#/$defs/MenuLayoutSource",
-              "description": "Requested content and initial typography."
-            },
-            "viewer": {
-              "$ref": "#/$defs/XrViewerFrame",
-              "description": "Same-frame stereo optics."
-            }
-          },
-          "required": [
-            "kind",
-            "source",
-            "viewer",
-            "menu_from_panel"
-          ],
-          "type": "object"
-        },
         {
           "additionalProperties": false,
           "description": "Batch scroll clipping and panel/document coordinate projection.",
@@ -1818,130 +1406,6 @@
         }
       ]
     },
-    "MenuLayoutSource": {
-      "additionalProperties": false,
-      "description": "Complete source and typography observation for one layout pass.",
-      "properties": {
-        "caption": {
-          "description": "Panel description.",
-          "type": "string"
-        },
-        "controls": {
-          "description": "Ordered source controls or allocated row items.",
-          "items": {
-            "$ref": "#/$defs/MenuLayoutControl"
-          },
-          "type": "array"
-        },
-        "font": {
-          "$ref": "#/$defs/MenuFont",
-          "description": "Observed font identity."
-        },
-        "fontMeters": {
-          "description": "Nominal font size in metres.",
-          "format": "double",
-          "type": "number"
-        },
-        "locale": {
-          "description": "Explicit text measurement locale.",
-          "type": "string"
-        },
-        "nextLabel": {
-          "description": "Localized next-page label.",
-          "type": "string"
-        },
-        "panelId": {
-          "description": "Published panel identifier.",
-          "type": "string"
-        },
-        "previousLabel": {
-          "description": "Localized previous-page label.",
-          "type": "string"
-        },
-        "sections": {
-          "description": "Declared sections or implicit vertical flow.",
-          "items": {
-            "$ref": "#/$defs/GameUiSection"
-          },
-          "type": [
-            "array",
-            "null"
-          ]
-        },
-        "surfaceSize": {
-          "$ref": "#/$defs/MenuSize",
-          "description": "Metric width and height of the menu surface."
-        },
-        "title": {
-          "description": "Panel heading.",
-          "type": "string"
-        }
-      },
-      "required": [
-        "panelId",
-        "title",
-        "controls",
-        "surfaceSize",
-        "fontMeters",
-        "font",
-        "locale",
-        "caption",
-        "previousLabel",
-        "nextLabel"
-      ],
-      "type": "object"
-    },
-    "MenuMeasuredLine": {
-      "additionalProperties": false,
-      "description": "One measured line with signed ink bearings in metres.",
-      "properties": {
-        "advanceMeters": {
-          "description": "Measured horizontal text advance.",
-          "format": "double",
-          "type": "number"
-        },
-        "ascentMeters": {
-          "description": "Measured ink ascent.",
-          "format": "double",
-          "type": "number"
-        },
-        "descentMeters": {
-          "description": "Measured ink descent.",
-          "format": "double",
-          "type": "number"
-        },
-        "leftMeters": {
-          "description": "Signed left ink bearing.",
-          "format": "double",
-          "type": "number"
-        },
-        "paragraphIndex": {
-          "description": "Zero-based index of the original explicit paragraph.",
-          "format": "uint",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "rightMeters": {
-          "description": "Signed right ink bearing.",
-          "format": "double",
-          "type": "number"
-        },
-        "value": {
-          "description": "Already formatted content or current toggle selection.",
-          "type": "string"
-        }
-      },
-      "required": [
-        "paragraphIndex",
-        "value",
-        "advanceMeters",
-        "leftMeters",
-        "rightMeters",
-        "ascentMeters",
-        "descentMeters"
-      ],
-      "type": "object"
-    },
     "MenuPageDirection": {
       "description": "Relative direction of a page action.",
       "oneOf": [
@@ -1978,27 +1442,39 @@
       ],
       "type": "object"
     },
-    "MenuPreparationObservation": {
+    "MenuPreparationInput": {
       "additionalProperties": false,
-      "description": "One adapter observation of a requested preparation candidate.",
+      "description": "Platform observations for preparing the current published menu.",
       "properties": {
-        "attempt": {
-          "description": "Candidate index supplied by the shared preparation result.",
-          "format": "uint",
+        "font": {
+          "$ref": "#/$defs/MenuFont",
+          "description": "Current platform font resource."
+        },
+        "locale": {
+          "description": "Platform text shaping locale.",
+          "type": "string"
+        },
+        "panelId": {
+          "description": "Current visible menu panel.",
+          "type": "string"
+        },
+        "viewRevision": {
+          "description": "Published view whose controls are displayed by the adapter.",
+          "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
-        "measurements": {
-          "description": "Actual text metrics for that candidate's exact measurement identities.",
-          "items": {
-            "$ref": "#/$defs/MenuTextMeasurement"
-          },
-          "type": "array"
+        "viewer": {
+          "$ref": "#/$defs/XrViewerFrame",
+          "description": "Same-frame stereo optics."
         }
       },
       "required": [
-        "attempt",
-        "measurements"
+        "viewRevision",
+        "panelId",
+        "viewer",
+        "font",
+        "locale"
       ],
       "type": "object"
     },
@@ -2336,83 +1812,6 @@
         }
       ]
     },
-    "MenuTextMeasurement": {
-      "additionalProperties": false,
-      "description": "Measured lines associated with one exact request identity.",
-      "properties": {
-        "identity": {
-          "description": "Exact identity of the measurement request.",
-          "type": "string"
-        },
-        "lines": {
-          "description": "Measured lines preserving explicit paragraphs.",
-          "items": {
-            "$ref": "#/$defs/MenuMeasuredLine"
-          },
-          "type": "array"
-        }
-      },
-      "required": [
-        "identity",
-        "lines"
-      ],
-      "type": "object"
-    },
-    "MenuTextRole": {
-      "description": "Logical role of one measured control text.",
-      "oneOf": [
-        {
-          "const": "label",
-          "description": "Control label.",
-          "type": "string"
-        },
-        {
-          "const": "value",
-          "description": "Current control value.",
-          "type": "string"
-        },
-        {
-          "const": "x-axis",
-          "description": "Horizontal axis title.",
-          "type": "string"
-        },
-        {
-          "const": "y-axis",
-          "description": "Vertical axis title.",
-          "type": "string"
-        },
-        {
-          "const": "x-tick",
-          "description": "Horizontal axis tick.",
-          "type": "string"
-        },
-        {
-          "const": "y-tick",
-          "description": "Vertical axis tick.",
-          "type": "string"
-        },
-        {
-          "const": "legend",
-          "description": "Legend entry.",
-          "type": "string"
-        },
-        {
-          "const": "annotation",
-          "description": "Chart annotation.",
-          "type": "string"
-        },
-        {
-          "const": "north",
-          "description": "North reference.",
-          "type": "string"
-        },
-        {
-          "const": "scale",
-          "description": "Map scale reference.",
-          "type": "string"
-        }
-      ]
-    },
     "MenuViewportSource": {
       "additionalProperties": false,
       "description": "Metric observations required to place a scrollable document on its surface.",
@@ -2456,106 +1855,6 @@
         "progress"
       ],
       "type": "object"
-    },
-    "MenuWidget": {
-      "description": "Widget presentation data used for layout and measurement.",
-      "oneOf": [
-        {
-          "additionalProperties": false,
-          "description": "Action or choice button.",
-          "properties": {
-            "kind": {
-              "const": "button",
-              "type": "string"
-            },
-            "presentation": {
-              "$ref": "#/$defs/GameUiButtonPresentation",
-              "description": "Shared button presentation."
-            }
-          },
-          "required": [
-            "kind",
-            "presentation"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Boolean selection.",
-          "properties": {
-            "kind": {
-              "const": "toggle",
-              "type": "string"
-            },
-            "value": {
-              "description": "Already formatted content or current toggle selection.",
-              "type": "boolean"
-            }
-          },
-          "required": [
-            "kind",
-            "value"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Numeric range selection.",
-          "properties": {
-            "displayValue": {
-              "description": "Formatted range selection.",
-              "type": "string"
-            },
-            "kind": {
-              "const": "range",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind",
-            "displayValue"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Read-only status.",
-          "properties": {
-            "kind": {
-              "const": "status",
-              "type": "string"
-            },
-            "value": {
-              "description": "Already formatted content or current toggle selection.",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind",
-            "value"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Static chart layout.",
-          "properties": {
-            "kind": {
-              "const": "chart",
-              "type": "string"
-            },
-            "layout": {
-              "$ref": "#/$defs/MenuChartLayout",
-              "description": "Static chart layout."
-            }
-          },
-          "required": [
-            "kind",
-            "layout"
-          ],
-          "type": "object"
-        }
-      ]
     },
     "Pose": {
       "additionalProperties": false,

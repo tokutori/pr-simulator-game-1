@@ -330,6 +330,7 @@ fn viewport_projects_unclipped_tracks_clipped_ink_and_reversible_points() {
 
 #[test]
 fn preparation_owns_surface_fit_and_measured_font_selection() {
+    use preparation::{PreparationStep, select};
     let viewer = crate::xr::tests::viewer(crate::xr::XrDepthRange::NegativeOneToOne);
     let mut edge_source = source();
     edge_source.font_meters = 0.02;
@@ -343,16 +344,16 @@ fn preparation_owns_surface_fit_and_measured_font_selection() {
     let central_angle = (2.0 * (0.016 / (2.0 * 2.4_f64.hypot(0.032))).atan()).to_degrees();
     assert!(central_angle > 0.35);
     assert!(matches!(
-        menu_layout(MenuLayoutQuery::Prepare {
-            source: Box::new(edge_source),
-            viewer: Box::new(viewer.clone()),
-            menu_from_panel: crate::camera::Pose::IDENTITY,
-            observation: Some(MenuPreparationObservation {
+        select(
+            &mut edge_source,
+            &viewer,
+            crate::camera::Pose::IDENTITY,
+            Some(&MenuPreparationObservation {
                 attempt: 0,
-                measurements: edge_metrics,
-            }),
-        }),
-        MenuLayoutReply::Measure { attempt: 1, .. }
+                measurements: edge_metrics
+            })
+        ),
+        Ok(PreparationStep::Measure { attempt: 1, .. })
     ));
     let mut requested = source();
     requested.surface_size.width = 8.0;
@@ -360,14 +361,17 @@ fn preparation_owns_surface_fit_and_measured_font_selection() {
     let mut observation = None;
     let mut measured_count = 0;
     let mut selected = None;
+    let mut ready = false;
     for _ in 0..13 {
-        match menu_layout(MenuLayoutQuery::Prepare {
-            source: Box::new(requested.clone()),
-            viewer: Box::new(viewer.clone()),
-            menu_from_panel: crate::camera::Pose::IDENTITY,
-            observation: observation.clone(),
-        }) {
-            MenuLayoutReply::Measure { plan, attempt } => {
+        match select(
+            &mut requested.clone(),
+            &viewer,
+            crate::camera::Pose::IDENTITY,
+            observation.as_ref(),
+        )
+        .unwrap()
+        {
+            PreparationStep::Measure { plan, attempt } => {
                 assert!(plan.source.surface_size.width < requested.surface_size.width);
                 assert!(plan.source.font_meters >= requested.font_meters);
                 let measured = plan
@@ -397,45 +401,34 @@ fn preparation_owns_surface_fit_and_measured_font_selection() {
                 });
                 measured_count += 1;
             }
-            MenuLayoutReply::Ready { .. } => break,
-            reply => panic!("Unexpected preparation result: {reply:?}"),
+            PreparationStep::Ready { .. } => {
+                ready = true;
+                break;
+            }
         }
     }
-    assert!(measured_count > 1 && measured_count <= 12);
+    assert!(ready && measured_count > 1 && measured_count <= 12);
     assert!(selected.unwrap() > requested.font_meters);
-    assert!(matches!(
-        menu_layout(MenuLayoutQuery::Prepare {
-            source: Box::new(requested.clone()),
-            viewer: Box::new(viewer.clone()),
-            menu_from_panel: crate::camera::Pose::IDENTITY,
-            observation: observation.clone(),
-        }),
-        MenuLayoutReply::Ready { .. }
-    ));
     let mut mismatched = observation.clone().unwrap();
     mismatched.attempt = if mismatched.attempt == 0 { 1 } else { 0 };
     assert_eq!(
-        menu_layout(MenuLayoutQuery::Prepare {
-            source: Box::new(requested.clone()),
-            viewer: Box::new(viewer.clone()),
-            menu_from_panel: crate::camera::Pose::IDENTITY,
-            observation: Some(mismatched),
-        }),
-        MenuLayoutReply::Unavailable {
-            reason: MenuLayoutFailure::StaleTextMetrics
-        }
+        select(
+            &mut requested.clone(),
+            &viewer,
+            crate::camera::Pose::IDENTITY,
+            Some(&mismatched)
+        ),
+        Err(MenuLayoutFailure::StaleTextMetrics)
     );
     let mut stale = observation.unwrap();
     stale.attempt = 12;
     assert_eq!(
-        menu_layout(MenuLayoutQuery::Prepare {
-            source: Box::new(requested),
-            viewer: Box::new(viewer),
-            menu_from_panel: crate::camera::Pose::IDENTITY,
-            observation: Some(stale),
-        }),
-        MenuLayoutReply::Unavailable {
-            reason: MenuLayoutFailure::StaleTextMetrics
-        }
+        select(
+            &mut requested,
+            &viewer,
+            crate::camera::Pose::IDENTITY,
+            Some(&stale)
+        ),
+        Err(MenuLayoutFailure::StaleTextMetrics)
     );
 }

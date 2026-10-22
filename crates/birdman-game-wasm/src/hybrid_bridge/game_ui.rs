@@ -1,8 +1,8 @@
 use super::*;
 use birdman_game_app::application::RecordCommand;
 use birdman_game_presentation::game_ui::{
-    GameUiAction, GameUiContext, GameUiPlatformInput, GameUiStructureKey, game_ui_frame,
-    game_ui_view, update_game_ui,
+    GameUiAction, GameUiContext, GameUiFrame, GameUiPlatformInput, GameUiStructureKey,
+    game_ui_frame, game_ui_view, update_game_ui,
 };
 
 #[wasm_bindgen]
@@ -34,20 +34,32 @@ impl HybridGameSessionBridge {
         platform_json: &str,
     ) -> Result<String, JsValue> {
         let platform: GameUiPlatformInput = decode(platform_json)?;
-        let environment = self.ui_environment_readout()?;
-        let revision = self.observe_ui_revision(&platform, &environment)?;
-        let retained = self
+        let frame = self.current_ui_frame(expected_revision, &platform)?;
+        serde_json::to_string(&frame).map_err(ui_error)
+    }
+
+    /// Prepares the retained UI in one call using live font observations.
+    pub fn game_ui_menu_json(
+        &mut self,
+        platform_json: &str,
+        input_json: &str,
+        measure: &crate::xr::MenuTextMeasurer,
+    ) -> Result<String, JsValue> {
+        let platform: GameUiPlatformInput = decode(platform_json)?;
+        let input: birdman_game_presentation::xr::MenuPreparationInput = decode(input_json)?;
+        let frame = self.current_ui_frame(input.view_revision, &platform)?;
+        let view = self
             .ui_view_cache
             .as_ref()
-            .ok_or_else(|| JsValue::from_str("shared UI view unavailable"))?;
-        let context = self.ui_context(&platform, &environment)?;
-        if retained.view_revision != expected_revision {
-            return Err(ui_error(
-                birdman_game_presentation::game_ui::GameUiError::StaleView,
-            ));
-        }
-        let frame = game_ui_frame(&self.ui, &context, retained, revision).map_err(ui_error)?;
-        serde_json::to_string(&frame).map_err(ui_error)
+            .ok_or_else(|| ui_error(birdman_game_presentation::game_ui::GameUiError::StaleView))?;
+        let reply = birdman_game_presentation::xr::prepare_game_ui_menu(
+            view,
+            &frame,
+            input,
+            &mut self.ui_menu_fonts,
+            |request, size, value| crate::xr::measure_menu_glyph(measure, request, size, value),
+        );
+        serde_json::to_string(&reply).map_err(ui_error)
     }
 
     /// Admits one semantic action and changes only the UI state, returning typed effects.
@@ -83,6 +95,26 @@ impl HybridGameSessionBridge {
 }
 
 impl HybridGameSessionBridge {
+    fn current_ui_frame(
+        &mut self,
+        expected_revision: u32,
+        platform: &GameUiPlatformInput,
+    ) -> Result<GameUiFrame, JsValue> {
+        let environment = self.ui_environment_readout()?;
+        let revision = self.observe_ui_revision(platform, &environment)?;
+        let retained = self
+            .ui_view_cache
+            .as_ref()
+            .ok_or_else(|| JsValue::from_str("shared UI view unavailable"))?;
+        let context = self.ui_context(platform, &environment)?;
+        if retained.view_revision != expected_revision {
+            return Err(ui_error(
+                birdman_game_presentation::game_ui::GameUiError::StaleView,
+            ));
+        }
+        game_ui_frame(&self.ui, &context, retained, revision).map_err(ui_error)
+    }
+
     fn observe_ui_revision(
         &mut self,
         platform: &GameUiPlatformInput,

@@ -142,16 +142,17 @@ describe("Shared Flight Setup and Briefing presentation", () => {
   });
 
   it.each(["flight_setup", "briefing_ready"] as const)("keeps primary, back and disclosure reachable in a short portrait VR menu in phase %s", (phase) => {
-    const shared = currentSharedGameUiFixture(phase, { platform: { presentation_mode: "phone_vr" },
-      actions: phase === "briefing_ready" ? [{ kind: "toggle_technical" }] : [] });
+    withSharedGameUiSession(phase, { platform: { presentation_mode: "phone_vr" },
+      actions: phase === "briefing_ready" ? [{ kind: "toggle_technical" }] : [] }, (session, platform) => {
+    const shared = session.readSharedUi(platform);
     const view = createGameViewModel(shared);
     const panel = view.panels[0];
     if (panel === undefined) throw new Error("Missing panel");
-    const ready = prepareMenuPresentation(new HudCanvasFixture(), { ...panel, size: { width: 0.5, height: 0.6 } },
+    const ready = prepareMenuPresentation(new HudCanvasFixture(), panel,
       { generation: 1, scope: { kind: "scene", scene: view.scene, panelId: panel.id, viewKey: "setup" } }, 0,
       configuredViewerFixture(720, 1280), { theme: shared.theme,
         font: { family: "system-ui, sans-serif", weight: 600, style: "normal", generation: 0 },
-        locale: "ja", caption: view.description }, new Map());
+        locale: "ja", viewRevision: shared.view_revision }, (input, measure) => session.prepareSharedMenu(input, platform, measure));
     if (ready.kind !== "ready") throw new Error("Missing prepared Setup");
     const document = ready.viewport.document;
     const initial = menuViewport(document, 0);
@@ -164,6 +165,7 @@ describe("Shared Flight Setup and Briefing presentation", () => {
       const progress = Math.min(1, Math.max(0, control.bounds.y / initial.maximumOffsetMeters));
       expect(menuRectInViewport(menuViewport(document, progress), control.bounds).kind, id).toBe("visible");
     }
+    });
   });
 
   it("applies shared layout, selection and disclosure while preserving keyed DOM, focus and scroll", async () => {

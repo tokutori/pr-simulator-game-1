@@ -1,26 +1,241 @@
 use super::*;
 use crate::camera::{Pose, Vector3, compose_pose};
+use crate::game_ui::{GameUiAnchor, GameUiControlContent, GameUiFrame, GameUiPanel, GameUiView};
 use crate::xr::{
     XrFitReason, XrInkFit, XrInkSegment, XrMenuViewFit, XrViewerFrame, fit_xr_menu_view,
     fit_xr_text_ink,
 };
 
-pub(super) fn prepare(
-    mut source: MenuLayoutSource,
-    viewer: &XrViewerFrame,
-    menu_from_panel: Pose,
-    observation: Option<&MenuPreparationObservation>,
+/// Bounded font observations owned with the platform UI resource.
+#[derive(Debug, Default)]
+pub struct MenuFontCache {
+    entries: Vec<Vec<MenuTextMeasurement>>,
+}
+
+/// Prepares the published shared UI with current frame values and platform font observations.
+pub fn prepare_game_ui_menu(
+    view: &GameUiView,
+    frame: &GameUiFrame,
+    input: MenuPreparationInput,
+    cache: &mut MenuFontCache,
+    mut measure: impl FnMut(
+        &MenuTextRequest,
+        MenuSize,
+        &str,
+    ) -> Result<MenuGlyphMetrics, MenuLayoutFailure>,
 ) -> MenuLayoutReply {
-    let result = select(&mut source, viewer, menu_from_panel, observation);
+    let result = (|| {
+        if input.view_revision != view.view_revision || frame.view_revision != view.view_revision {
+            return Err(MenuLayoutFailure::StaleView);
+        }
+        let panel = view
+            .panels
+            .iter()
+            .find(|panel| panel.id == input.panel_id && panel.anchor == GameUiAnchor::Menu)
+            .ok_or(MenuLayoutFailure::StaleView)?;
+        let source = source_from_view(panel, &view.description, frame, &input);
+        let menu_from_panel = Pose {
+            position: Vector3 {
+                x: panel.local_position[0],
+                y: panel.local_position[1],
+                z: panel.local_position[2],
+            },
+            ..Pose::IDENTITY
+        };
+        let mut observation = None;
+        let mut requested = None;
+        for _ in 0..13 {
+            match select(
+                &mut source.clone(),
+                &input.viewer,
+                menu_from_panel,
+                observation.as_ref(),
+            )? {
+                PreparationStep::Measure { plan, attempt } => {
+                    let cached = cache.entries.iter().find(|entry| {
+                        entry.len() == plan.texts.len()
+                            && entry
+                                .iter()
+                                .zip(&plan.texts)
+                                .all(|(metric, text)| metric.identity == text.identity)
+                    });
+                    let measurements = if let Some(cached) = cached {
+                        cached.clone()
+                    } else {
+                        let measured = measure_menu_text(&plan.texts, |index, value| {
+                            measure(&plan.texts[index], plan.source.surface_size, value)
+                        })?;
+                        if cache.entries.len() >= 32 {
+                            cache.entries.remove(0);
+                        }
+                        cache.entries.push(measured.clone());
+                        measured
+                    };
+                    requested = Some(plan);
+                    observation = Some(MenuPreparationObservation {
+                        attempt,
+                        measurements,
+                    });
+                }
+                PreparationStep::Ready { geometry } => {
+                    return Ok(MenuLayoutReply::Ready {
+                        plan: Box::new(requested.ok_or(MenuLayoutFailure::MissingTextMetrics)?),
+                        measurements: observation
+                            .ok_or(MenuLayoutFailure::MissingTextMetrics)?
+                            .measurements,
+                        geometry,
+                    });
+                }
+            }
+        }
+        Err(MenuLayoutFailure::InsufficientInkAngle)
+    })();
     result.unwrap_or_else(|reason| MenuLayoutReply::Unavailable { reason })
 }
 
-fn select(
+fn source_from_view(
+    panel: &GameUiPanel,
+    caption: &str,
+    frame: &GameUiFrame,
+    input: &MenuPreparationInput,
+) -> MenuLayoutSource {
+    let controls = panel
+        .controls
+        .iter()
+        .map(|control| {
+            let widget = match &control.content {
+                GameUiControlContent::Button { presentation, .. } => MenuWidget::Button {
+                    presentation: presentation.clone(),
+                },
+                GameUiControlContent::Toggle { value, .. } => MenuWidget::Toggle { value: *value },
+                GameUiControlContent::Range { display_value, .. } => MenuWidget::Range {
+                    display_value: frame
+                        .ranges
+                        .iter()
+                        .find(|value| value.id == control.id)
+                        .map_or(display_value, |value| &value.display_value)
+                        .clone(),
+                },
+                GameUiControlContent::Status { value, .. } => MenuWidget::Status {
+                    value: frame
+                        .readouts
+                        .iter()
+                        .find(|readout| readout.id == control.id)
+                        .map_or(value, |readout| &readout.value)
+                        .clone(),
+                },
+                GameUiControlContent::Chart { plot, .. } => {
+                    let chart = &plot.presentation;
+                    let mut labels = vec![
+                        MenuChartLabel {
+                            role: MenuTextRole::XAxis,
+                            index: 0,
+                            text: chart.x_axis.clone(),
+                        },
+                        MenuChartLabel {
+                            role: MenuTextRole::YAxis,
+                            index: 0,
+                            text: chart.y_axis.clone(),
+                        },
+                    ];
+                    if let Some(guides) = &chart.map_guides {
+                        labels.push(MenuChartLabel {
+                            role: MenuTextRole::North,
+                            index: 0,
+                            text: guides.north_label.clone(),
+                        });
+                        labels.push(MenuChartLabel {
+                            role: MenuTextRole::Scale,
+                            index: 0,
+                            text: guides.scale_label.clone(),
+                        });
+                    }
+                    labels.extend(chart.x_ticks.iter().enumerate().map(|(index, tick)| {
+                        MenuChartLabel {
+                            role: MenuTextRole::XTick,
+                            index,
+                            text: tick.text.clone(),
+                        }
+                    }));
+                    labels.extend(chart.y_ticks.iter().enumerate().map(|(index, tick)| {
+                        MenuChartLabel {
+                            role: MenuTextRole::YTick,
+                            index,
+                            text: tick.text.clone(),
+                        }
+                    }));
+                    labels.extend(
+                        chart
+                            .marker_labels
+                            .iter()
+                            .chain(&chart.time_marker_labels)
+                            .chain(&chart.reference_labels)
+                            .enumerate()
+                            .map(|(index, text)| MenuChartLabel {
+                                role: MenuTextRole::Annotation,
+                                index,
+                                text: text.clone(),
+                            }),
+                    );
+                    MenuWidget::Chart {
+                        layout: MenuChartLayout {
+                            size: [chart.viewport.width, chart.viewport.height],
+                            plot: chart.plot,
+                            tick_font_size: chart.tick_font_size,
+                            labels,
+                            legend: chart.legend.clone(),
+                        },
+                    }
+                }
+            };
+            MenuLayoutControl {
+                id: control.id.clone(),
+                section: Some(control.section.clone()),
+                label: frame
+                    .button_labels
+                    .iter()
+                    .find(|button| button.id == control.id)
+                    .map_or(&control.label, |button| &button.label)
+                    .clone(),
+                widget,
+            }
+        })
+        .collect();
+    MenuLayoutSource {
+        panel_id: panel.id.clone(),
+        title: panel.title.clone(),
+        sections: Some(panel.sections.clone()),
+        controls,
+        surface_size: MenuSize {
+            width: panel.size[0],
+            height: panel.size[1],
+        },
+        font_meters: 0.035,
+        font: input.font.clone(),
+        locale: input.locale.clone(),
+        caption: caption.into(),
+        previous_label: "前頁".into(),
+        next_label: "次頁".into(),
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub(super) enum PreparationStep {
+    Measure {
+        plan: MenuLayoutPlan,
+        attempt: usize,
+    },
+    Ready {
+        geometry: MenuDocumentGeometry,
+    },
+}
+
+pub(super) fn select(
     source: &mut MenuLayoutSource,
     viewer: &XrViewerFrame,
     menu_from_panel: Pose,
     observation: Option<&MenuPreparationObservation>,
-) -> Result<MenuLayoutReply, MenuLayoutFailure> {
+) -> Result<PreparationStep, MenuLayoutFailure> {
     let attempt = observation.map_or(0, |observed| observed.attempt);
     if attempt >= 12 {
         return Err(MenuLayoutFailure::StaleTextMetrics);
@@ -63,7 +278,7 @@ fn select(
     }
     let planned = plan(source.clone())?;
     let Some(observed) = observation else {
-        return Ok(MenuLayoutReply::Measure {
+        return Ok(PreparationStep::Measure {
             plan: planned,
             attempt,
         });
@@ -75,11 +290,11 @@ fn select(
         &observed.measurements,
         head_from_surface,
     ) {
-        XrInkFit::Ready { .. } => Ok(MenuLayoutReply::Ready { geometry }),
+        XrInkFit::Ready { .. } => Ok(PreparationStep::Ready { geometry }),
         XrInkFit::Unavailable { reason } => Err(fit_reason(reason)),
         XrInkFit::Empty | XrInkFit::TooSmall if attempt + 1 < 12 => {
             source.font_meters *= 1.15;
-            Ok(MenuLayoutReply::Measure {
+            Ok(PreparationStep::Measure {
                 plan: plan(source.clone())?,
                 attempt: attempt + 1,
             })

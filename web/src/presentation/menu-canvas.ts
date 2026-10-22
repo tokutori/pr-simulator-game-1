@@ -1,16 +1,9 @@
-import { menu_measure_text_json } from "../../pkg/birdman_game_wasm.js";
-import type { MenuLayoutReply } from "../generated/menu-layout-reply.js";
-import type { MenuLayoutRequest, MenuRect, MenuTextLayout, MenuTextMeasurement,
-  MenuTextRequest, MenuViewport } from "../render/contracts/menu-layout.js";
+import type { MenuLayoutRequest, MenuRect, MenuTextLayout, MenuTextRequest, MenuViewport } from "../render/contracts/menu-layout.js";
 import { uiControlBackground } from "../render/contracts/ui.js";
 import type { UiChart } from "../render/contracts/ui.js";
 import { browserHeadHudContext } from "./head-hud-canvas.js";
 import type { HeadHudDrawingContext } from "./head-hud-canvas.js";
 import { projectMenuViewport } from "./menu-layout.js";
-
-export type MenuMeasurementResult =
-  | { readonly kind: "ready"; readonly measurements: readonly MenuTextMeasurement[] }
-  | { readonly kind: "unavailable"; readonly reason: "invalid-text-metrics" | "measurement-unavailable" };
 
 export interface MenuTextInk {
   readonly identity: string;
@@ -56,38 +49,10 @@ export function menuCanvasSize(size: MenuLayoutRequest["surfaceSize"]): Readonly
   return Object.freeze({ width: Math.max(1, Math.round(size.width * scale)), height: Math.max(1, Math.round(size.height * scale)) });
 }
 
-export function measureMenuLayout(context: MenuDrawingContext, request: MenuLayoutRequest, canvasWidth: number, canvasHeight: number): MenuMeasurementResult {
-  if (![canvasWidth, canvasHeight].every((value) => Number.isInteger(value) && value > 0)) throw new RangeError("Menu canvas dimensions must be positive integers");
-  const metersPerPixel = request.surfaceSize.height / canvasHeight;
-  const horizontalMetersPerPixel = request.surfaceSize.width / canvasWidth;
-  context.save();
-  try {
-    let activeIndex = -1;
-    const reply = JSON.parse(menu_measure_text_json(JSON.stringify(request.texts), (index, value) => {
-      const text = request.texts[index];
-      if (text === undefined) throw new Error("Shared Menu font query lost its request");
-      if (activeIndex !== index) {
-        configureText(context, text, metersPerPixel);
-        activeIndex = index;
-      }
-      const metrics = context.measureText(value);
-      return Float64Array.of(metrics.width * horizontalMetersPerPixel, metrics.left * horizontalMetersPerPixel,
-        metrics.right * horizontalMetersPerPixel, metrics.ascent * metersPerPixel, metrics.descent * metersPerPixel);
-    })) as MenuLayoutReply;
-    if (reply.kind === "unavailable" && (reply.reason === "invalid-text-metrics" || reply.reason === "measurement-unavailable")) return { kind: "unavailable", reason: reply.reason };
-    if (reply.kind !== "measured") throw new Error("Shared Menu measurement returned an unexpected phase");
-    return { kind: "ready", measurements: reply.measurements };
-  } catch {
-    return Object.freeze({ kind: "unavailable", reason: "measurement-unavailable" });
-  } finally {
-    context.restore();
-  }
-}
-
 function configureText(context: MenuDrawingContext, text: MenuTextRequest, metersPerPixel: number): void {
   context.setLocale(text.locale);
   context.setFont(`${text.font.style} ${String(text.font.weight)} ${String(text.fontMeters / metersPerPixel)}px ${text.font.family}`);
-  context.setTextBaseline(text.chartText == null ? "middle" : "alphabetic");
+  context.setTextBaseline("alphabetic");
   context.setTextAlign("left");
 }
 

@@ -32,7 +32,6 @@ import { browserHeadHudContext, drawHeadHud, headHudCanvasSize, prepareHeadHudPa
 import { browserMenuContext, drawMeasuredMenu, menuCanvasSize } from "./presentation/menu-canvas.js";
 import { prepareMenuPresentation } from "./presentation/menu-preparation.js";
 import { MenuSession } from "./presentation/menu-session.js";
-import type { MenuMeasurementCache } from "./presentation/menu-preparation.js";
 import { menuContextCanInteract, menuExposesControl, menuInputGeometry, menuInputGeometryChanged } from "./presentation/menu-interaction.js";
 import type { MenuInputGeometry } from "./presentation/menu-interaction.js";
 import { PresentationRuntime } from "./presentation/runtime.js";
@@ -102,7 +101,6 @@ const controllerHudDisplay = Object.freeze({
 let preparedMenu: MenuPresentation = Object.freeze({ kind: "absent" });
 let menuFontGeneration = 0;
 let presentedMenuGeometry: MenuInputGeometry = Object.freeze({ kind: "none" });
-const menuMeasurementCache: MenuMeasurementCache = new Map();
 const menuSession = new MenuSession();
 let pageDisposed = false;
 const screenUi = new ScreenUiAdapter(uiRoot, (action) => {
@@ -202,12 +200,13 @@ function currentFrameViewModel(viewer: ViewerFrame): PreparedPresentationView {
   const panelContext = panelCanvas.getContext("2d");
   const scroll = frameModel.menuScroll;
   const menuTheme = viewModel.sharedPresentation?.theme ?? frameModel.sharedGameUi?.theme;
+  const menuOwner = gameSession;
   preparedMenu = panel === undefined || panel.anchor !== "menu" || scroll.kind !== "active" ? Object.freeze({ kind: "absent" })
-    : menuTheme === undefined ? Object.freeze({ kind: "pending" })
+    : menuTheme === undefined || menuOwner === null || frameModel.sharedGameUi === null ? Object.freeze({ kind: "pending" })
     : document.fonts.status === "loading" ? Object.freeze({ kind: "pending" })
     : panelContext === null ? Object.freeze({ kind: "unavailable", reason: "context-unavailable" })
     : prepareMenuPresentation(browserMenuContext(panelContext), panel, { scope: scroll.scope, generation: scroll.generation }, scroll.progress,
-      viewer, { theme: menuTheme, locale: displayLocale, caption: viewModel.description, font: { family: "Arial, sans-serif", weight: 600, style: "normal", generation: menuFontGeneration } }, menuMeasurementCache);
+      viewer, { theme: menuTheme, locale: displayLocale, viewRevision: frameModel.sharedGameUi.view_revision, font: { family: "Arial, sans-serif", weight: 600, style: "normal", generation: menuFontGeneration } }, (input, measure) => menuOwner.prepareSharedMenu(input, sharedGameUiPlatformInput(), measure));
   if (preparedMenu.kind === "ready") {
     if (menuInputGeometryChanged(presentedMenuGeometry, preparedMenu)) {
       const observedContext = preparedMenu.context;
@@ -255,7 +254,6 @@ function invalidateMenuGeometry(): void {
 
 for (const fontEvent of ["loading", "loadingdone", "loadingerror"]) document.fonts.addEventListener(fontEvent, () => {
   menuFontGeneration++;
-  menuMeasurementCache.clear();
   invalidateMenuGeometry();
 });
 

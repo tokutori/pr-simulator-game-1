@@ -27,8 +27,7 @@ struct Batch {
     optics: Vec<Observation>,
     custom_hud: CustomHudBatch,
     interaction: PointerScenario,
-    layout: Vec<MenuLayoutQuery>,
-    text: Vec<TextObservation>,
+    menu: Vec<MenuObservation>,
 }
 
 #[derive(Deserialize)]
@@ -41,49 +40,60 @@ struct CustomHudBatch {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct TextObservation {
-    requests: Vec<MenuTextRequest>,
+struct MenuObservation {
+    view: birdman_game_presentation::game_ui::GameUiView,
+    frame: birdman_game_presentation::game_ui::GameUiFrame,
+    input: MenuPreparationInput,
     probes: Vec<TextProbe>,
+    viewport: Vec<MenuLayoutQuery>,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct TextProbe {
-    index: usize,
     value: String,
-    metrics: Option<[f64; 5]>,
+    font_meters: f64,
+    weight: u16,
+    size: MenuSize,
+    metrics: [f64; 5],
 }
 
-fn text_results(observations: &[TextObservation]) -> Vec<MenuLayoutReply> {
+fn menu_results(observations: Vec<MenuObservation>) -> Vec<serde_json::Value> {
     observations
-        .iter()
+        .into_iter()
         .map(|observation| {
             let mut probes = observation.probes.iter();
-            let result = measure_menu_text(&observation.requests, |index, value| {
-                let probe = probes.next().ok_or(MenuLayoutFailure::InvalidTextMetrics)?;
-                if probe.index != index || probe.value != value {
-                    return Err(MenuLayoutFailure::InvalidTextMetrics);
-                }
-                let [advance, left, right, ascent, descent] = probe
-                    .metrics
-                    .ok_or(MenuLayoutFailure::MeasurementUnavailable)?;
-                Ok(MenuGlyphMetrics {
-                    advance,
-                    left,
-                    right,
-                    ascent,
-                    descent,
-                })
-            });
-            if probes.next().is_some() {
-                return MenuLayoutReply::Unavailable {
-                    reason: MenuLayoutFailure::InvalidTextMetrics,
-                };
-            }
-            match result {
-                Ok(measurements) => MenuLayoutReply::Measured { measurements },
-                Err(reason) => MenuLayoutReply::Unavailable { reason },
-            }
+            let preparation = prepare_game_ui_menu(
+                &observation.view,
+                &observation.frame,
+                observation.input,
+                &mut MenuFontCache::default(),
+                |request, size, value| {
+                    let probe = probes.next().ok_or(MenuLayoutFailure::InvalidTextMetrics)?;
+                    if probe.value != value
+                        || probe.weight != request.font.weight
+                        || (probe.font_meters - request.font_meters).abs() > 1.0e-12
+                        || (probe.size.width - size.width).abs() > 1.0e-12
+                        || (probe.size.height - size.height).abs() > 1.0e-12
+                    {
+                        return Err(MenuLayoutFailure::InvalidTextMetrics);
+                    }
+                    let [advance, left, right, ascent, descent] = probe.metrics;
+                    Ok(MenuGlyphMetrics {
+                        advance,
+                        left,
+                        right,
+                        ascent,
+                        descent,
+                    })
+                },
+            );
+            assert!(
+                probes.next().is_none(),
+                "Native Menu consumed a different font observation trace"
+            );
+            serde_json::json!({ "preparation": preparation,
+            "viewport": observation.viewport.into_iter().map(menu_layout).collect::<Vec<_>>() })
         })
         .collect()
 }
@@ -142,8 +152,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "optics": optics,
         "custom_hud": custom_hud,
         "interaction": pointer_results(&batch.interaction)?,
-        "layout": batch.layout.into_iter().map(menu_layout).collect::<Vec<_>>(),
-        "text": text_results(&batch.text),
+        "menu": menu_results(batch.menu),
     }))?;
     let mut stdout = std::io::stdout().lock();
     stdout.write_all(&output)?;

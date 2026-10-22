@@ -450,22 +450,28 @@ pub struct MenuDocumentGeometry {
     pub next_index: usize,
 }
 
+/// Platform observations for preparing the current published menu.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MenuPreparationInput {
+    /// Published view whose controls are displayed by the adapter.
+    pub view_revision: u32,
+    /// Current visible menu panel.
+    pub panel_id: String,
+    /// Same-frame stereo optics.
+    pub viewer: Box<crate::xr::XrViewerFrame>,
+    /// Current platform font resource.
+    pub font: MenuFont,
+    /// Platform text shaping locale.
+    pub locale: String,
+}
+
 /// Aggregate layout protocol spanning preparation and measured arrangement.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
 pub enum MenuLayoutQuery {
-    /// Fits a surface and requests real text observations until readable.
-    Prepare {
-        /// Requested content and initial typography.
-        source: Box<MenuLayoutSource>,
-        /// Same-frame stereo optics.
-        viewer: Box<crate::xr::XrViewerFrame>,
-        /// Physical panel pose relative to the menu anchor.
-        menu_from_panel: crate::camera::Pose,
-        /// Reply to the current requested candidate, or absent at opening.
-        observation: Option<MenuPreparationObservation>,
-    },
     /// Batch scroll clipping and panel/document coordinate projection.
     Viewport {
         /// Measured document and current scroll observation.
@@ -484,20 +490,12 @@ pub enum MenuLayoutQuery {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
 pub enum MenuLayoutReply {
-    /// Complete observed text with shared paragraph and wrapping decisions.
-    Measured {
-        /// Measured lines in request order.
-        measurements: Vec<MenuTextMeasurement>,
-    },
-    /// Requested real text measurement for the next preparation candidate.
-    Measure {
-        /// Bounded continuation index to return with the measurements.
-        attempt: usize,
-        /// Complete fitted measurement contract.
-        plan: MenuLayoutPlan,
-    },
     /// Complete resolved document geometry.
     Ready {
+        /// Complete fitted text request contract.
+        plan: Box<MenuLayoutPlan>,
+        /// Observed text for the fitted contract.
+        measurements: Vec<MenuTextMeasurement>,
         /// Resolved document geometry.
         geometry: MenuDocumentGeometry,
     },
@@ -513,11 +511,9 @@ pub enum MenuLayoutReply {
     },
 }
 
-/// One adapter observation of a requested preparation candidate.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(deny_unknown_fields)]
-pub struct MenuPreparationObservation {
+/// Internal continuation for one fitted font candidate.
+#[derive(Clone, Debug)]
+pub(super) struct MenuPreparationObservation {
     /// Candidate index supplied by the shared preparation result.
     pub attempt: usize,
     /// Actual text metrics for that candidate's exact measurement identities.
@@ -586,6 +582,8 @@ pub struct MenuViewportProjection {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "kebab-case")]
 pub enum MenuLayoutFailure {
+    /// The displayed view or frame has been superseded.
+    StaleView,
     /// The platform font measurement service failed.
     MeasurementUnavailable,
     /// No stereo observation is available.

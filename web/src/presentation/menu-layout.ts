@@ -1,54 +1,14 @@
 import type { MenuClippedRect, MenuControlLayout, MenuDocumentResult, MenuDocument,
-  MenuFontIdentity, MenuLayoutRequest, MenuPoint, MenuRect,
+  MenuLayoutRequest, MenuPoint, MenuRect,
   MenuTextLayout, MenuTextMeasurement } from "../render/contracts/menu-layout.js";
-import type { PanelSize, UiControl, UiPanel } from "../render/contracts/ui.js";
+import type { UiPanel } from "../render/contracts/ui.js";
 import { menu_layout_json } from "../../pkg/birdman_game_wasm.js";
 import type { MenuLayoutQuery } from "../generated/menu-layout-query.js";
 import type { MenuLayoutReply } from "../generated/menu-layout-reply.js";
 import type { MenuViewport } from "../render/contracts/menu-layout.js";
 
-type Plan = Extract<MenuLayoutReply, { kind: "measure" }>["plan"];
-type Source = Extract<MenuLayoutQuery, { kind: "prepare" }>["source"];
+type Plan = Extract<MenuLayoutReply, { kind: "ready" }>["plan"];
 type Geometry = Extract<MenuLayoutReply, { kind: "ready" }>["geometry"];
-function widget(control: UiControl): Source["controls"][number]["widget"] {
-  switch (control.kind) {
-    case "button": {
-      const presentation = control.presentation;
-      return { kind: "button", presentation: presentation?.kind === "choice"
-        ? { kind: "choice", group: presentation.group, group_label: presentation.groupLabel,
-          selected: presentation.selected, description: presentation.description }
-        : presentation ?? { kind: "action", emphasis: "normal" } };
-    }
-    case "toggle": return { kind: "toggle", value: control.value };
-    case "range": return { kind: "range", displayValue: control.displayValue };
-    case "status": return { kind: "status", value: control.value };
-    case "chart": {
-      const chart = control.presentation;
-      const labels: Extract<Source["controls"][number]["widget"], { kind: "chart" }>["layout"]["labels"][number][] = [
-        { role: "x-axis", index: 0, text: chart.x_axis }, { role: "y-axis", index: 0, text: chart.y_axis }
-      ];
-      if (chart.map_guides !== null) labels.push({ role: "north", index: 0, text: chart.map_guides.north_label },
-        { role: "scale", index: 0, text: chart.map_guides.scale_label });
-      chart.x_ticks.forEach((tick, index) => { labels.push({ role: "x-tick", index, text: tick.text }); });
-      chart.y_ticks.forEach((tick, index) => { labels.push({ role: "y-tick", index, text: tick.text }); });
-      [...chart.marker_labels, ...chart.time_marker_labels, ...chart.reference_labels]
-        .forEach((text, index) => { labels.push({ role: "annotation", index, text }); });
-      return { kind: "chart", layout: { size: [chart.viewport.width, chart.viewport.height], plot: chart.plot,
-        tickFontSize: chart.tick_font_size, labels, legend: chart.legend } };
-    }
-  }
-}
-
-type MenuLayoutStyle = Readonly<{
-  theme: MenuLayoutRequest["theme"]; fontMeters: number; font: MenuFontIdentity; locale: string; previousLabel: string; nextLabel: string; caption: string;
-}>;
-
-export function menuLayoutSource(panel: UiPanel, surfaceSize: PanelSize, style: MenuLayoutStyle): Source {
-  return { panelId: panel.id, title: panel.title, sections: panel.sections ?? null,
-    controls: panel.controls.map(control => ({ id: control.id, label: control.label, section: control.section ?? null, widget: widget(control) })),
-    surfaceSize, fontMeters: style.fontMeters, font: style.font, locale: style.locale,
-    previousLabel: style.previousLabel, nextLabel: style.nextLabel, caption: style.caption };
-}
 
 export function menuLayoutRequest(panel: UiPanel, theme: MenuLayoutRequest["theme"], shared: Plan): MenuLayoutRequest {
   return Object.freeze({ panel, theme, surfaceSize: shared.source.surfaceSize,

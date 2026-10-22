@@ -16,44 +16,49 @@ pub fn menu_layout_json(query_json: &str) -> Result<String, JsValue> {
 
 #[wasm_bindgen]
 extern "C" {
-    /// Synchronous browser font measurement for a request index and exact text.
-    #[wasm_bindgen(typescript_type = "(index: number, value: string) => Float64Array")]
+    /// Synchronous font observation in the requested physical surface and typography.
+    #[wasm_bindgen(
+        typescript_type = "(value: string, fontMeters: number, weight: number, widthMeters: number, heightMeters: number) => Float64Array"
+    )]
     pub type MenuTextMeasurer;
 
     #[wasm_bindgen(method, catch, js_name = call)]
     fn measure_text(
         this: &MenuTextMeasurer,
         context: JsValue,
-        index: u32,
         value: &str,
+        font_meters: f64,
+        weight: u16,
+        width_meters: f64,
+        height_meters: f64,
     ) -> Result<Box<[f64]>, JsValue>;
 }
 
-/// Resolves shared wrapping using a synchronous platform font observer.
-#[wasm_bindgen]
-pub fn menu_measure_text_json(
-    requests_json: &str,
+pub(crate) fn measure_menu_glyph(
     measure: &MenuTextMeasurer,
-) -> Result<String, JsValue> {
-    let requests: Vec<shared::MenuTextRequest> = decode(requests_json, 1_048_576)?;
-    let result = shared::measure_menu_text(&requests, |index, value| {
-        let values = measure
-            .measure_text(JsValue::UNDEFINED, index as u32, value)
-            .map_err(|_| shared::MenuLayoutFailure::MeasurementUnavailable)?;
-        let [advance, left, right, ascent, descent] = values.as_ref() else {
-            return Err(shared::MenuLayoutFailure::InvalidTextMetrics);
-        };
-        Ok(shared::MenuGlyphMetrics {
-            advance: *advance,
-            left: *left,
-            right: *right,
-            ascent: *ascent,
-            descent: *descent,
-        })
-    });
-    encode(&match result {
-        Ok(measurements) => shared::MenuLayoutReply::Measured { measurements },
-        Err(reason) => shared::MenuLayoutReply::Unavailable { reason },
+    request: &shared::MenuTextRequest,
+    size: shared::MenuSize,
+    value: &str,
+) -> Result<shared::MenuGlyphMetrics, shared::MenuLayoutFailure> {
+    let values = measure
+        .measure_text(
+            JsValue::UNDEFINED,
+            value,
+            request.font_meters,
+            request.font.weight,
+            size.width,
+            size.height,
+        )
+        .map_err(|_| shared::MenuLayoutFailure::MeasurementUnavailable)?;
+    let [advance, left, right, ascent, descent] = values.as_ref() else {
+        return Err(shared::MenuLayoutFailure::InvalidTextMetrics);
+    };
+    Ok(shared::MenuGlyphMetrics {
+        advance: *advance,
+        left: *left,
+        right: *right,
+        ascent: *ascent,
+        descent: *descent,
     })
 }
 

@@ -20,6 +20,8 @@ declare global {
   interface Window {
     __uiPauseEvents: readonly { at: number; reason: number }[];
     __uiViewJson: string | null;
+    __uiBridge: HybridGameSessionBridge;
+    __uiPlatformJson: string;
     __pointerProbeCleanup?: () => void;
   }
 }
@@ -269,7 +271,11 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
       window.__uiViewJson = null;
       Object.defineProperty(prototype, "game_ui_view_json", { ...viewDescriptor, value(this: unknown, ...args: unknown[]): unknown {
         const returned: unknown = Reflect.apply(readView, this, args);
-        if (typeof returned === "string") window.__uiViewJson = returned;
+        if (typeof returned === "string" && typeof args[0] === "string") {
+          window.__uiViewJson = returned;
+          window.__uiBridge = this as HybridGameSessionBridge;
+          window.__uiPlatformJson = args[0];
+        }
         return returned;
       } });
     }, moduleUrl);
@@ -343,7 +349,8 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
     });
     report.vrChoiceLayout = await page.evaluate(async addresses => {
       if (window.__uiViewJson === null) throw new Error("The production shared Setup View was not captured");
-      const shared = JSON.parse(window.__uiViewJson) as GameUiView;
+      const platform = JSON.stringify({ ...JSON.parse(window.__uiPlatformJson) as Record<string, unknown>, presentation_mode: "webxr" });
+      const shared = JSON.parse(window.__uiBridge.game_ui_view_json(platform)) as GameUiView;
       if (shared.scene !== "FlightSetup") throw new Error("VR text projection requires the current shared Setup View");
       const viewModule = await import(addresses.view) as typeof import("../../web/src/app/game-view.js");
       const canvasModule = await import(addresses.canvas) as typeof import("../../web/src/presentation/menu-canvas.js");
@@ -354,15 +361,15 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
       const context = canvas.getContext("2d");
       if (context === null) throw new Error("Browser Canvas measurement is unavailable");
       const prepared = addresses.viewers.map(viewer => {
-        const spatial = { ...panel, anchor: "menu" as const, size: { width: 2.4, height: 1.8 } };
+        const spatial = panel;
         const observer = canvasModule.browserMenuContext(context);
         let fontQueries = 0;
         const measuredContext = { ...observer, measureText(value: string) { fontQueries++; return observer.measureText(value); } };
         const started = performance.now();
         const ready = preparationModule.prepareMenuPresentation(measuredContext, spatial,
           { generation: 1, scope: { kind: "scene", scene: shared.scene, panelId: panel.id, viewKey: "canvas-preparation" } },
-          0, viewer, { theme: shared.theme, locale: "ja", caption: shared.description,
-            font: { family: "system-ui, sans-serif", weight: 600, style: "normal", generation: 0 } }, new Map());
+          0, viewer, { theme: shared.theme, locale: "ja", viewRevision: shared.view_revision,
+            font: { family: "system-ui, sans-serif", weight: 600, style: "normal", generation: 0 } }, (input, measure) => JSON.parse(window.__uiBridge.game_ui_menu_json(platform, JSON.stringify(input), measure)) as import("../../web/src/generated/menu-layout-reply.js").MenuLayoutReply);
         if (ready.kind !== "ready") throw new Error(`Real Canvas Menu preparation failed: ${ready.kind}`);
         const document = ready.viewport.document;
         if (document.request.fontMeters < 0.035 || ready.panel.size.width > spatial.size.width || document.controls.length !== panel.controls.length) {

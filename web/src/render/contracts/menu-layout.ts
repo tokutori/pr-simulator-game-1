@@ -8,6 +8,8 @@ import type { MenuPoint, MenuRect, MenuFont as MenuFontIdentity, MenuTextRequest
 export type { MenuPoint, MenuRect, MenuFont as MenuFontIdentity, MenuTextRequest, MenuMeasuredLine,
   MenuTextMeasurement } from "../../generated/menu-layout-reply.js";
 
+export type MenuFontMeasurer = (value: string, fontMeters: number, weight: number, widthMeters: number, heightMeters: number) => Float64Array;
+
 export interface MenuLayoutRequest {
   readonly panel: UiPanel;
   readonly theme: GameUiView["theme"];

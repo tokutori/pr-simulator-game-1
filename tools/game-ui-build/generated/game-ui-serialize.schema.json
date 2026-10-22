@@ -5741,6 +5741,11 @@
       "description": "Rejection class of a measured menu document.",
       "oneOf": [
         {
+          "const": "stale-view",
+          "description": "The displayed view or frame has been superseded.",
+          "type": "string"
+        },
+        {
           "const": "measurement-unavailable",
           "description": "The platform font measurement service failed.",
           "type": "string"
@@ -5850,54 +5855,6 @@
       "oneOf": [
         {
           "additionalProperties": false,
-          "description": "Complete observed text with shared paragraph and wrapping decisions.",
-          "properties": {
-            "kind": {
-              "const": "measured",
-              "type": "string"
-            },
-            "measurements": {
-              "description": "Measured lines in request order.",
-              "items": {
-                "$ref": "#/$defs/MenuTextMeasurement"
-              },
-              "type": "array"
-            }
-          },
-          "required": [
-            "kind",
-            "measurements"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Requested real text measurement for the next preparation candidate.",
-          "properties": {
-            "attempt": {
-              "description": "Bounded continuation index to return with the measurements.",
-              "format": "uint",
-              "minimum": 0,
-              "type": "integer"
-            },
-            "kind": {
-              "const": "measure",
-              "type": "string"
-            },
-            "plan": {
-              "$ref": "#/$defs/MenuLayoutPlan",
-              "description": "Complete fitted measurement contract."
-            }
-          },
-          "required": [
-            "kind",
-            "attempt",
-            "plan"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
           "description": "Complete resolved document geometry.",
           "properties": {
             "geometry": {
@@ -5907,10 +5864,23 @@
             "kind": {
               "const": "ready",
               "type": "string"
+            },
+            "measurements": {
+              "description": "Observed text for the fitted contract.",
+              "items": {
+                "$ref": "#/$defs/MenuTextMeasurement"
+              },
+              "type": "array"
+            },
+            "plan": {
+              "$ref": "#/$defs/MenuLayoutPlan",
+              "description": "Complete fitted text request contract."
             }
           },
           "required": [
             "kind",
+            "plan",
+            "measurements",
             "geometry"
           ],
           "type": "object"
