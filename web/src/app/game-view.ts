@@ -2,7 +2,6 @@ import type { GameUiView } from "../generated/game-ui-view.js";
 import { NO_HEAD_HUD } from "../render/contracts/head-hud.js";
 import type { HeadHudLayer } from "../render/contracts/head-hud.js";
 import { IDENTITY_POSE, pose, vec3 } from "../render/contracts/math.js";
-import { normalizedRect } from "../render/contracts/ui.js";
 import type { UiButtonPresentation, UiControl, UiViewModel } from "../render/contracts/ui.js";
 
 type SharedControl = GameUiView["panels"][number]["controls"][number];
@@ -33,7 +32,7 @@ export function createGameViewModel(shared: GameUiView, headHud: HeadHudLayer = 
 
 function projectControl(control: SharedControl): UiControl {
   const base = { id: control.id, label: control.label, enabled: control.enabled, section: control.section,
-    rect: normalizedRect(control.rect.x, control.rect.y, control.rect.width, control.rect.height) };
+    rect: control.rect };
   const content = control.content;
   switch (content.kind) {
     case "button": {

@@ -10,7 +10,7 @@ import type { SessionPhase } from "../../web/src/app/session-snapshot.js";
 import { readRuntimeSessionProjection } from "../../web/src/app/session-runtime-projection.js";
 import type { LakeWaterQuality } from "../../web/src/render/contracts/lake-water.js";
 import type { PresentationMode } from "../../web/src/render/contracts/runtime.js";
-import { validateUiViewModel } from "../../web/src/render/contracts/ui.js";
+
 import { currentGameSessionProjectionFixture, currentSharedGameUiFixture, sharedGameUiPlatform, sharedScreenRenderSnapshot, withSharedGameUiSession } from "../game-check/shared-game-ui-fixture.js";
 import type { SharedGameUiFixtureOptions } from "../game-check/shared-game-ui-fixture.js";
 import type { GameUiView } from "../../web/src/generated/game-ui-view.js";
@@ -126,7 +126,6 @@ describe("manual lake water quality ownership", () => {
     for (const phase of ["flight_setup", "flight_paused"] as const) {
       const initial = readyModel(phase, mode);
       const view = createGameViewModel(qualityView(initial));
-      validateUiViewModel(view);
       const controls = view.panels[0]?.controls.filter((control) => control.id.startsWith("presentation-water-quality-")) ?? [];
       expect(controls).toHaveLength(4);
       const choices = controls.filter((control) => control.kind === "button");

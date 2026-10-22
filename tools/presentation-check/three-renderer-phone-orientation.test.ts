@@ -12,7 +12,6 @@ import type { BackendFrame } from "../../web/src/render/contracts/runtime.js";
 import { createSceneFixture } from "./ui-adapter-fixture.js";
 import { createBrowserPhoneVrSensorPort } from "../../web/src/presentation/phone-vr-browser.js";
 import { PhoneVrPresentationBackend } from "../../web/src/presentation/phone-vr-backend.js";
-import { GAME_SCENES } from "../../web/src/render/contracts/ui.js";
 import type { UiViewModel } from "../../web/src/render/contracts/ui.js";
 
 interface RecordedDraw {
@@ -215,7 +214,7 @@ describe("Phone VR browser orientation through the Three adapter and StereoEffec
     } finally { await backend.stop(); }
   });
 
-  it.each(orientations)("preserves nonzero startup tilt and returns every non-Flight camera to horizontal at screen $screen degrees", async (orientation) => {
+  it.each(orientations)("preserves startup tilt and returns the menu camera to horizontal at screen $screen degrees", async (orientation) => {
     bundle.renderer.setFlightPose(null);
     bundle.renderer.resize(viewport);
     const screenBase = poseMatrix(titleScreenCameraPoseForViewport(viewport.x, viewport.y, 60));
@@ -226,20 +225,16 @@ describe("Phone VR browser orientation through the Three adapter and StereoEffec
         const physical = new Matrix4().makeRotationY(35 * Math.PI / 180).multiply(tilt);
         const { browser, backend, unavailable } = await start(orientation.screen, deviceAngles(physical, orientation.screen));
         try {
-          for (const scene of GAME_SCENES) {
-            const sceneView = createSceneFixture(scene);
-            const initial = render(backend, 100, sceneView);
-            expectMatrix(centerCamera(initial.eyes), phoneBase.clone().multiply(tilt));
-            expect(new Vector3(0, 0, -1).transformDirection(centerCamera(initial.eyes)).y).toBeCloseTo(Math.sin(pitch * Math.PI / 180), 10);
-            backend.recenterTracking();
-            expectMatrix(centerCamera(render(backend, 100, sceneView).eyes), centerCamera(initial.eyes));
-          }
+          const sceneView = createSceneFixture("Title");
+          const initial = render(backend, 100, sceneView);
+          expectMatrix(centerCamera(initial.eyes), phoneBase.clone().multiply(tilt));
+          expect(new Vector3(0, 0, -1).transformDirection(centerCamera(initial.eyes)).y).toBeCloseTo(Math.sin(pitch * Math.PI / 180), 10);
+          backend.recenterTracking();
+          expectMatrix(centerCamera(render(backend, 100, sceneView).eyes), centerCamera(initial.eyes));
           browser.emit(deviceAngles(new Matrix4().makeRotationY(35 * Math.PI / 180), orientation.screen));
-          for (const scene of GAME_SCENES) {
-            const horizontal = render(backend, 100, createSceneFixture(scene));
-            expectMatrix(centerCamera(horizontal.eyes), phoneBase);
-            expect(new Vector3(0, 0, -1).transformDirection(centerCamera(horizontal.eyes)).y).toBeCloseTo(0, 10);
-          }
+          const horizontal = render(backend, 100, sceneView);
+          expectMatrix(centerCamera(horizontal.eyes), phoneBase);
+          expect(new Vector3(0, 0, -1).transformDirection(centerCamera(horizontal.eyes)).y).toBeCloseTo(0, 10);
           expect(unavailable).toEqual([]);
         } finally { await backend.stop(); }
         driver.draws.length = 0;

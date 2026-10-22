@@ -1,5 +1,4 @@
 import type { Pose } from "./math.js";
-import { validateHeadHudLayer } from "./head-hud.js";
 import type { HeadHudLayer } from "./head-hud.js";
 import type { GameUiView } from "../../generated/game-ui-view.js";
 import type { GameUiAction } from "../../generated/game-ui-action.js";
@@ -10,8 +9,7 @@ type GameUiControlInput = Extract<GameUiAction, { kind: "control_input" }>["inpu
 
 export type AnchorKind = GameUiView["panels"][number]["anchor"];
 
-export const GAME_SCENES = ["Boot", "Title", "FlightSetup", "Briefing", "Countdown", "Flight", "Result", "Replay"] as const;
-export type GameScene = typeof GAME_SCENES[number];
+export type GameScene = GameUiView["scene"];
 
 export { XR_FLIGHT_MENU_GEOMETRY as FLIGHT_MENU_GEOMETRY } from "../../generated/xr-flight-menu-geometry.js";
 
@@ -178,67 +176,4 @@ export function viewExposesAction(view: UiViewModel, action: UiAction): boolean 
     if (action.type === "set-range") return control.kind === "range";
     return false;
   }));
-}
-
-export function normalizedRect(x: number, y: number, width: number, height: number): NormalizedRect {
-  const values = [x, y, width, height];
-  if (values.some((value) => !Number.isFinite(value)) || width <= 0 || height <= 0 ||
-      x < 0 || y < 0 || x + width > 1 || y + height > 1) {
-    throw new RangeError("UI rectangles must be finite and remain inside the normalized panel");
-  }
-  return Object.freeze({ x, y, width, height });
-}
-
-export function validateUiViewModel(viewModel: UiViewModel): void {
-  validateHeadHudLayer(viewModel.headHud);
-  const ids = new Set<string>();
-  for (const panel of viewModel.panels) {
-    if (ids.has(panel.id)) throw new Error(`Duplicate UI identifier: ${panel.id}`);
-    ids.add(panel.id);
-    if (!Number.isFinite(panel.size.width) || !Number.isFinite(panel.size.height) || panel.size.width <= 0 || panel.size.height <= 0) {
-      throw new RangeError(`Invalid panel size: ${panel.id}`);
-    }
-    for (const control of panel.controls) {
-      if (ids.has(control.id)) throw new Error(`Duplicate UI identifier: ${control.id}`);
-      ids.add(control.id);
-      normalizedRect(control.rect.x, control.rect.y, control.rect.width, control.rect.height);
-      if (control.kind === "range" &&
-          (!Number.isFinite(control.minimum) || !Number.isFinite(control.maximum) || !Number.isFinite(control.step) ||
-            !Number.isFinite(control.value) || control.minimum >= control.maximum || control.step <= 0 ||
-            control.value < control.minimum || control.value > control.maximum)) {
-        throw new RangeError(`Invalid range control: ${control.id}`);
-      }
-      if (control.kind === "chart") {
-        if (![control.x_minimum, control.x_maximum, control.y_minimum, control.y_maximum].every(Number.isFinite)
-            || control.x_minimum >= control.x_maximum || control.y_minimum >= control.y_maximum
-            || (control.equal_axis_scale && Math.abs((control.x_maximum - control.x_minimum) - (control.y_maximum - control.y_minimum)) > 1.0e-9)
-            || control.series.length === 0) {
-          throw new RangeError(`Invalid chart scale or series: ${control.id}`);
-        }
-        if ((control.cursor_x !== null && (!Number.isFinite(control.cursor_x)
-              || control.cursor_x < control.x_minimum || control.cursor_x > control.x_maximum))
-            || control.cursor_points.some((cursor) => !Number.isFinite(cursor.point.x) || !Number.isFinite(cursor.point.y))
-            || control.vectors.some((vector) => vector.segment !== null
-              && vector.segment.some((point) => ![point.x, point.y].every(Number.isFinite)))
-            || control.markers.some((marker) => !Number.isFinite(marker.point.x) || !Number.isFinite(marker.point.y))) {
-          throw new RangeError(`Invalid chart cursor: ${control.id}`);
-        }
-        if (control.time_markers.some((marker) => !Number.isFinite(marker.point.x) || !Number.isFinite(marker.point.y))) {
-          throw new RangeError(`Invalid chart time marker: ${control.id}`);
-        }
-        if (control.reference_lines.some((line) => !Number.isFinite(line.value))) {
-          throw new RangeError(`Invalid chart reference line: ${control.id}`);
-        }
-        for (const series of control.series) {
-          if (series.points.some((point) => !Number.isFinite(point.x) || !Number.isFinite(point.y))) {
-            throw new RangeError(`Chart series has non-finite points: ${control.id}`);
-          }
-          if (series.segment_colors.length > 0 && (
-            series.segment_colors.length !== Math.max(0, series.points.length - 1)
-            || series.segment_colors.some((color) => !/^#[0-9a-f]{6}$/i.test(color))
-          )) throw new RangeError(`Chart series has invalid segment colors: ${control.id}`);
-        }
-      }
-    }
-  }
 }

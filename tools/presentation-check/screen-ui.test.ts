@@ -6,7 +6,7 @@ import { createGameViewModel } from "../../web/src/app/game-view.js";
 import { currentSharedGameUiFixture, withSharedGameUiSession } from "../game-check/shared-game-ui-fixture.js";
 import { projectSharedFlightHudModel } from "../../web/src/presentation/flight-hud-model.js";
 import { IDENTITY_POSE } from "../../web/src/render/contracts/math.js";
-import { normalizedRect } from "../../web/src/render/contracts/ui.js";
+
 import type { UiViewModel } from "../../web/src/render/contracts/ui.js";
 import type { GameUiPlatformInput } from "../../web/src/generated/game-ui-input.js";
 
@@ -24,7 +24,7 @@ describe("screen UI DOM patching", () => {
       adapter.render({ ...fixture, panels: fixture.panels.map(panel => ({ ...panel,
         sections: [{ id: "notice", label: "", layout: "column" }], controls: [{
           kind: "status", id: "notice", section: "notice", label, value: "発進準備完了", enabled: false,
-          rect: normalizedRect(0.04, 0.1, 0.92, 0.1)
+          rect: { x: 0.04, y: 0.1, width: 0.92, height: 0.1 }
         }]
       })) });
       expect(required(root, "output#notice").textContent).toBe(label.length === 0 ? "発進準備完了" : "通知: 発進準備完了");
@@ -340,7 +340,7 @@ describe("screen UI DOM patching", () => {
       cursor_x: null,
       cursor_points: [],
       enabled: false,
-      rect: normalizedRect(0.08, 0.22, 0.84, 0.3)
+      rect: { x: 0.08, y: 0.22, width: 0.84, height: 0.3 }
     };
     const view: UiViewModel = {
       interactionScope: scene,
@@ -357,7 +357,7 @@ describe("screen UI DOM patching", () => {
         size: { width: 2.4, height: 1.8 },
         sections: [{ id: "analysis", label: "", layout: "column" }],
         controls: [
-          { kind: "button", id: "map", section: "analysis", label: "Map", enabled: true, rect: normalizedRect(0.08, 0.7, 0.25, 0.07) },
+          { kind: "button", id: "map", section: "analysis", label: "Map", enabled: true, rect: { x: 0.08, y: 0.7, width: 0.25, height: 0.07 } },
           chart
         ]
       }]
@@ -775,10 +775,10 @@ describe("screen UI DOM patching", () => {
       ...fixture,
       panels: fixture.panels.map((panel) => ({ ...panel, sections: [{ id: "measured", label: "", layout: "column" }], controls: [
         ...panel.controls.map((control) => ({ ...control, section: "measured" })),
-        { kind: "status", id: "long-notice", section: "measured", label: "通知", value: "元のfailure原因\n2行目\n3行目\n4行目", enabled: false, rect: normalizedRect(0.04, 0.72, 0.92, 0.085) },
+        { kind: "status", id: "long-notice", section: "measured", label: "通知", value: "元のfailure原因\n2行目\n3行目\n4行目", enabled: false, rect: { x: 0.04, y: 0.72, width: 0.92, height: 0.085 } },
         {
           ...analysisChart(), id: "measured-chart", section: "measured", cursor_x: 0.1,
-          enabled: false, rect: normalizedRect(0.04, 0.105, 0.92, 0.49)
+          enabled: false, rect: { x: 0.04, y: 0.105, width: 0.92, height: 0.49 }
         }
       ] }))
     };

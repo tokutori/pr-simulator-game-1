@@ -9,7 +9,6 @@ import type { GameSessionUiState } from "../../web/src/app/app-state.js";
 import type { ReplayReturnTarget, TailGameSessionProjection } from "../../web/src/app/session-snapshot.js";
 import { selectSharedReplayView, sharedGameUiPlatform } from "./shared-game-ui-fixture.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
-import { validateUiViewModel } from "../../web/src/render/contracts/ui.js";
 
 initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url))) });
 
@@ -36,7 +35,6 @@ function verifyUiReturnViews(session: TailAppSessionFacade, expected: ReplayRetu
       const model = updateApp({ ...createInitialAppModel(), presentation: { type: "ready", mode } as const },
         { type: "shared-game-ui-observed", view: shared }).model;
       const view = createGameViewModel(shared);
-      validateUiViewModel(view);
       const controls = view.panels.flatMap((panel) => panel.controls).filter((control) => control.id === "game-replay-return");
       expect(controls).toHaveLength(1);
       expect(controls[0]).toMatchObject({ kind: "button", enabled: true, label: expected === "title" ? "Titleへ戻る" : "Resultへ戻る" });

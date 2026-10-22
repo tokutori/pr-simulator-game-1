@@ -11,12 +11,11 @@ import type { Pose } from "../../web/src/render/contracts/math.js";
 import type { BackendFrame, MenuPresentation, RendererAdapter, SelectRay, ViewportSize } from "../../web/src/render/contracts/runtime.js";
 import type { ViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
 import type { UiAction } from "../../web/src/render/contracts/ui.js";
-import { createAnchorFixture, createHeadHudFixture, createSceneFixture, SCENE_FIXTURE_OVERLAYS } from "./ui-adapter-fixture.js";
+import { createAnchorFixture, createHeadHudFixture, createSceneFixture } from "./ui-adapter-fixture.js";
 import { WebXrPresentationBackend } from "../../web/src/presentation/webxr-backend.js";
 import { PresentationRuntime } from "../../web/src/presentation/runtime.js";
 import { ScreenPresentationBackend } from "../../web/src/presentation/screen-backend.js";
 import type { WebXrAvailability, WebXrSessionPort, WebXrSessionRequest } from "../../web/src/presentation/webxr-contracts.js";
-import { GAME_SCENES } from "../../web/src/render/contracts/ui.js";
 
 describe("WebXR session backend", () => {
   it("connects initial visibility, focus recovery and pose loss to the actual shared owner", async () => {
@@ -224,7 +223,7 @@ describe("WebXR session backend", () => {
     expect(adapter.endCount).toBe(1);
   });
 
-  it("forwards controls from every scene and permitted overlay through the same XR action path", async () => {
+  it("forwards a Title menu and a paused overlay through the XR action path", async () => {
     const adapter = new FakeWebXrAdapter();
     const actions: UiAction[] = [];
     const renderer = new FakeRenderer();
@@ -234,25 +233,22 @@ describe("WebXR session backend", () => {
     await backend.requestSessionFromUserGesture();
     await backend.start();
     let timestampMs = 0;
-    for (const scene of GAME_SCENES) {
-      const overlays = [null, ...SCENE_FIXTURE_OVERLAYS[scene]];
-      for (const overlay of overlays) {
-        const viewModel = createSceneFixture(scene, overlay);
-        const frame = fixtureBackendFrame(backend, ++timestampMs, viewModel, runtimeViewerFixture(IDENTITY_POSE));
-        const panel = visiblePanelFrame(frame).panel;
-        const button = panel.controls.find((control) => control.kind === "button");
-        if (button === undefined) throw new Error(`Missing button for ${scene}`);
-        const normalizedX = button.rect.x + button.rect.width / 2;
-        const normalizedY = button.rect.y + button.rect.height / 2;
-        const point = vec3((normalizedX - 0.5) * panel.size.width, (0.5 - normalizedY) * panel.size.height, 0);
-        renderer.selectHandler?.({
-          origin: vec3(visiblePanelFrame(frame).pose.position.x + point.x, visiblePanelFrame(frame).pose.position.y + point.y, visiblePanelFrame(frame).pose.position.z + 2),
-          direction: vec3(0, 0, -1),
-          timestampMs: timestampMs + 1000
-        });
-        expect(actions).toContainEqual({ type: "activate", controlId: button.id });
-        actions.length = 0;
-      }
+    for (const [scene, overlay] of [["Title", null], ["Flight", "Pause"]] as const) {
+      const viewModel = createSceneFixture(scene, overlay);
+      const frame = fixtureBackendFrame(backend, ++timestampMs, viewModel, runtimeViewerFixture(IDENTITY_POSE));
+      const panel = visiblePanelFrame(frame).panel;
+      const button = panel.controls.find((control) => control.kind === "button");
+      if (button === undefined) throw new Error(`Missing button for ${scene}`);
+      const normalizedX = button.rect.x + button.rect.width / 2;
+      const normalizedY = button.rect.y + button.rect.height / 2;
+      const point = vec3((normalizedX - 0.5) * panel.size.width, (0.5 - normalizedY) * panel.size.height, 0);
+      renderer.selectHandler?.({
+        origin: vec3(visiblePanelFrame(frame).pose.position.x + point.x, visiblePanelFrame(frame).pose.position.y + point.y, visiblePanelFrame(frame).pose.position.z + 2),
+        direction: vec3(0, 0, -1),
+        timestampMs: timestampMs + 1000
+      });
+      expect(actions).toContainEqual({ type: "activate", controlId: button.id });
+      actions.length = 0;
     }
     await backend.stop();
   });

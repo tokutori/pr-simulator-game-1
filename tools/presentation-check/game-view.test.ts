@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { currentSharedGameUiFixture, sharedGameUiPlatform, withSharedGameUiSession } from "../game-check/shared-game-ui-fixture.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
 import { controlInputAction } from "../../web/src/render/contracts/ui.js";
-import { validateUiViewModel } from "../../web/src/render/contracts/ui.js";
+
 import { NO_HEAD_HUD } from "../../web/src/render/contracts/head-hud.js";
 import type { GameUiAction } from "../../web/src/generated/game-ui-action.js";
 import { contractValidator } from "../game-ui-build/validate.js";
@@ -39,7 +39,6 @@ describe("Shared Rust game View projection", () => {
         const shared = session.readSharedUi(sharedGameUiPlatform({ presentation_mode }));
         const before = JSON.stringify(shared);
         const view = createGameViewModel(shared);
-        validateUiViewModel(view);
         expect(view).toMatchObject({ scene: shared.scene, title: shared.title, description: shared.description, activeOverlay: shared.active_overlay });
         expect(view.sharedPresentation?.layout).toBe(shared.layout);
         expect(view.sharedPresentation?.theme).toBe(shared.theme);
@@ -131,7 +130,6 @@ describe("Shared Rust game View projection", () => {
     for (const vector of projected.vectors) {
       if (vector.segment !== null) expect(vector.segment).toHaveLength(2);
     }
-    validateUiViewModel(view);
   });
 
   it("projects stored record choices and native capability restrictions from the shared view", () => {

@@ -3,7 +3,7 @@ import { currentSharedGameUiFixture, currentSharedHudFixture, sharedHudNode } fr
 import { NO_HEAD_HUD, resolveHeadHudFrame, validateHeadHudLayer } from "../../web/src/render/contracts/head-hud.js";
 import type { HeadHudElement, VisibleHeadHud } from "../../web/src/render/contracts/head-hud.js";
 import { IDENTITY_POSE, pose, vec3 } from "../../web/src/render/contracts/math.js";
-import { validateUiViewModel, viewExposesAction } from "../../web/src/render/contracts/ui.js";
+import { viewExposesAction } from "../../web/src/render/contracts/ui.js";
 import { createHeadHudFixture, createSceneFixture } from "./ui-adapter-fixture.js";
 import { ScreenPresentationBackend } from "../../web/src/presentation/screen-backend.js";
 
@@ -15,7 +15,6 @@ describe("Non-interactive Head HUD contract", () => {
     expectTypeOf<Extract<HeadHudElement["content"], { kind: "linear_gauge" }>["position_ratio"]>().toEqualTypeOf<number | null>();
     const hud = createHeadHudFixture(currentSharedGameUiFixture().theme);
     const view = { ...createSceneFixture("Flight"), headHud: hud };
-    expect(() => { validateUiViewModel(view); }).not.toThrow();
     expect(viewExposesAction(view, { type: "activate", controlId: "flight-status" })).toBe(false);
     expect(viewExposesAction(view, { type: "activate", controlId: "flight-action" })).toBe(true);
   });

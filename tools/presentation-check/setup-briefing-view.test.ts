@@ -7,7 +7,7 @@ import { menuViewport, menuRectInViewport } from "../../web/src/presentation/men
 import { prepareMenuPresentation } from "../../web/src/presentation/menu-preparation.js";
 import { configuredViewerFixture } from "./viewer-fixture.js";
 import { HudCanvasFixture } from "./hud-canvas-fixture.js";
-import { uiButtonLabel, uiControlBackground, validateUiViewModel } from "../../web/src/render/contracts/ui.js";
+import { uiButtonLabel, uiControlBackground } from "../../web/src/render/contracts/ui.js";
 import type { UiViewModel } from "../../web/src/render/contracts/ui.js";
 
 function statusValue(view: UiViewModel, id: string): string {
@@ -61,7 +61,6 @@ describe("Shared Flight Setup and Briefing presentation", () => {
         expect(session.updateSharedUi(openAction, platform).effects).toEqual([]);
         const credits = session.readSharedUi(platform);
         const view = createGameViewModel(credits);
-        validateUiViewModel(view);
         expect(credits.hud).toBeNull();
         expect(view.activeOverlay).toBe("Credits");
         for (const source of ["osm", "jaxa", "copernicus", "jma", "font", "earcut", "ryu", "time", "unicode-width"]) {
@@ -80,7 +79,6 @@ describe("Shared Flight Setup and Briefing presentation", () => {
   it.each(["screen", "phone_vr", "hmd"] as const)("projects the same direct candidates, groups and Weather in %s", (presentation_mode) => {
     const shared = currentSharedGameUiFixture("flight_setup", { platform: { presentation_mode } });
     const view = createGameViewModel(shared);
-    validateUiViewModel(view);
     const controls = view.panels.flatMap((panel) => panel.controls);
     const choices = controls.filter((control) => control.kind === "button" && control.presentation?.kind === "choice");
     expect(choices.filter((control) => control.id.startsWith("game-setup-select-"))).toHaveLength(18);

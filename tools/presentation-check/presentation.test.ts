@@ -7,44 +7,12 @@ import { createPilotEyePoint, pilotEyePoseFrd, pilotEyePoseRender } from "../../
 import { chaseCameraPoseFrd } from "../../web/src/render/camera/spatial.js";
 import { IDENTITY_POSE, pose, rotateVec3, vec3 } from "../../web/src/render/contracts/math.js";
 import type { BackendFrame, MenuPresentation, PresentationBackendAdapter, PresentationMode, RendererAdapter, ViewportSize } from "../../web/src/render/contracts/runtime.js";
-import { GAME_SCENES, validateUiViewModel } from "../../web/src/render/contracts/ui.js";
+
 import type { UiViewModel } from "../../web/src/render/contracts/ui.js";
-import { createAllSceneFixtures, createSceneFixture, SCENE_FIXTURE_OVERLAYS } from "./ui-adapter-fixture.js";
+import { createSceneFixture } from "./ui-adapter-fixture.js";
 import { PresentationRuntime } from "../../web/src/presentation/runtime.js";
 import { sharedPanelHit } from "./menu-fixture.js";
 import type { UiPanel } from "../../web/src/render/contracts/ui.js";
-
-describe("scene and overlay fixtures", () => {
-  it("provides valid view models for all eight GameScenes", () => {
-    const fixtures = createAllSceneFixtures();
-    expect(GAME_SCENES).toHaveLength(8);
-    expect(fixtures.map((fixture) => fixture.scene)).toEqual(GAME_SCENES);
-    for (const fixture of fixtures) {
-      validateUiViewModel(fixture);
-      expect(fixture.panels).not.toHaveLength(0);
-    }
-  });
-
-  it("covers each permitted overlay and rejects scene-incompatible overlays", () => {
-    for (const scene of GAME_SCENES) {
-      for (const overlay of SCENE_FIXTURE_OVERLAYS[scene]) {
-        const fixture = createSceneFixture(scene, overlay);
-        validateUiViewModel(fixture);
-        expect(fixture.activeOverlay).toBe(overlay);
-      }
-    }
-    expect(() => createSceneFixture("Countdown", "Settings")).toThrow("not available");
-  });
-
-  it("anchors Flight HUD to Cockpit and paused overlays to Menu", () => {
-    expect(requiredPanel(createSceneFixture("Flight")).anchor).toBe("cockpit");
-    for (const overlay of ["Pause", "Pause/Settings", "Pause/Help"]) {
-      expect(requiredPanel(createSceneFixture("Flight", overlay)).anchor).toBe("menu");
-    }
-  });
-
-
-});
 
 describe("same-frame view projection boundary", () => {
   it("passes the same immutable binocular frame into pure view derivation and the backend", async () => {

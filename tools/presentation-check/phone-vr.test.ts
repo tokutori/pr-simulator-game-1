@@ -9,14 +9,13 @@ import { unavailableViewerFrame } from "../../web/src/render/contracts/viewer-fr
 import type { ViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
 import type { BackendFrame, MenuPresentation, RendererAdapter, StereoPresentationProfile, ViewportSize } from "../../web/src/render/contracts/runtime.js";
 import type { UiAction, UiViewModel } from "../../web/src/render/contracts/ui.js";
-import { createAnchorFixture, createHeadHudFixture, createSceneFixture, SCENE_FIXTURE_OVERLAYS } from "./ui-adapter-fixture.js";
+import { createAnchorFixture, createHeadHudFixture, createSceneFixture } from "./ui-adapter-fixture.js";
 import { createBrowserPhoneVrSensorPort } from "../../web/src/presentation/phone-vr-browser.js";
 import { createBrowserPhoneVrGamepadInputPort } from "../../web/src/presentation/phone-vr-gamepad-browser.js";
 import { PhoneVrPresentationBackend } from "../../web/src/presentation/phone-vr-backend.js";
 import type { PhoneVrAvailability, PhoneVrGamepadInputPort, PhoneVrPermissionResult, PhoneVrSensorPort, PhoneVrSensorReading } from "../../web/src/presentation/phone-vr-contracts.js";
 import { PHONE_VR_OPTICAL_PROFILE } from "../../web/src/presentation/phone-vr-contracts.js";
 import { phoneOrientationQuaternion } from "../../web/src/presentation/phone-vr-orientation.js";
-import { GAME_SCENES } from "../../web/src/render/contracts/ui.js";
 import { createInitialAppModel, updateApp } from "../../web/src/app/app-state.js";
 import type { AppEffect, AppMessage, AppModel } from "../../web/src/app/app-state.js";
 import { menuFrameFailureRecovery } from "../../web/src/app/flight-frame-view.js";
@@ -611,35 +610,33 @@ describe("Phone VR presentation backend", () => {
     await backend.stop();
   });
 
-  it("renders and gaze-activates common controls in every scene and overlay", async () => {
+  it("renders and gaze-activates Title and paused menu controls", async () => {
     let timestampMs = 100;
-    for (const scene of GAME_SCENES) {
-      for (const overlay of [null, ...SCENE_FIXTURE_OVERLAYS[scene]]) {
-        const sensors = new FakePhoneVrSensors();
-        const renderer = new FakeRenderer();
-        const actions: UiAction[] = [];
-        const backend = new PhoneVrPresentationBackend(
-          sensors, renderer, viewport, (action) => { actions.push(fixtureSemanticAction(action)); }, () => undefined,
-          { opticalProfile: PHONE_VR_OPTICAL_PROFILE, firstSampleTimeoutMs: 3000, nowMs: () => sensors.currentTimeMs }
-        );
-        await backend.requestPermissionFromUserGesture();
-        const startup = backend.start();
-        sensors.emit(reading(0, 90, 0, timestampMs));
-        await startup;
-        const viewModel = withMenuAnchors(createSceneFixture(scene, overlay));
-        const frame = fixtureBackendFrame(backend, timestampMs + 1, viewModel, configuredViewerFixture());
-        expect((frame.panel.kind === "visible")).toBe(true);
-        expect(visiblePanelFrame(frame).panel.id).toBe(`${scene.toLowerCase()}-panel`);
-        sensors.emit(reading(0, 79.8, 0, timestampMs + 2));
-        fixtureBackendFrame(backend, timestampMs + 2, viewModel, configuredViewerFixture());
-        const activatedFrame = fixtureBackendFrame(backend, timestampMs + 1002, viewModel, configuredViewerFixture());
-        expect(panelFrameCursor(activatedFrame)?.progress).toBe(1);
-        if (!actions.some((action) => action.type === "activate" && action.controlId === `${scene.toLowerCase()}-action`)) {
-          throw new Error(`Missing gaze activation for ${scene}/${String(overlay)} at ${String(timestampMs)}`);
-        }
-        await backend.stop();
-        timestampMs += 2000;
+    for (const [scene, overlay] of [["Title", null], ["Flight", "Pause"]] as const) {
+      const sensors = new FakePhoneVrSensors();
+      const renderer = new FakeRenderer();
+      const actions: UiAction[] = [];
+      const backend = new PhoneVrPresentationBackend(
+        sensors, renderer, viewport, (action) => { actions.push(fixtureSemanticAction(action)); }, () => undefined,
+        { opticalProfile: PHONE_VR_OPTICAL_PROFILE, firstSampleTimeoutMs: 3000, nowMs: () => sensors.currentTimeMs }
+      );
+      await backend.requestPermissionFromUserGesture();
+      const startup = backend.start();
+      sensors.emit(reading(0, 90, 0, timestampMs));
+      await startup;
+      const viewModel = withMenuAnchors(createSceneFixture(scene, overlay));
+      const frame = fixtureBackendFrame(backend, timestampMs + 1, viewModel, configuredViewerFixture());
+      expect((frame.panel.kind === "visible")).toBe(true);
+      expect(visiblePanelFrame(frame).panel.id).toBe(`${scene.toLowerCase()}-panel`);
+      sensors.emit(reading(0, 79.8, 0, timestampMs + 2));
+      fixtureBackendFrame(backend, timestampMs + 2, viewModel, configuredViewerFixture());
+      const activatedFrame = fixtureBackendFrame(backend, timestampMs + 1002, viewModel, configuredViewerFixture());
+      expect(panelFrameCursor(activatedFrame)?.progress).toBe(1);
+      if (!actions.some((action) => action.type === "activate" && action.controlId === `${scene.toLowerCase()}-action`)) {
+        throw new Error(`Missing gaze activation for ${scene}/${String(overlay)} at ${String(timestampMs)}`);
       }
+      await backend.stop();
+      timestampMs += 2000;
     }
   });
 

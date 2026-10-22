@@ -24,7 +24,7 @@ import { PresentationRuntime } from "../../web/src/presentation/runtime.js";
 import { ScreenPresentationBackend } from "../../web/src/presentation/screen-backend.js";
 import type { RendererAdapter } from "../../web/src/render/contracts/runtime.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
-import { validateUiViewModel, viewExposesAction } from "../../web/src/render/contracts/ui.js";
+import { viewExposesAction } from "../../web/src/render/contracts/ui.js";
 
 function flightModel(mode: "screen" | "phone-vr" | "webxr", phase: SessionPhase = "flight_running", headFailure: string | null = null,
   replayView?: "cinematic" | "telemetry" | "analysis"): AppModel {
@@ -55,7 +55,6 @@ describe("Immutable same-frame Flight view finalization", () => {
       expect(view.headHud.elements.some((element) => element.id === "head-frame-rate")).toBe(true);
       if (model.sharedGameUi?.hud === null) expect(view.headHud.elements.map((element) => element.id)).toEqual(["head-frame-rate"]);
       expect(viewExposesAction(view, { type: "activate", controlId: "head-frame-rate" })).toBe(false);
-      expect(() => { validateUiViewModel(view); }).not.toThrow();
       expect(JSON.stringify(model)).toBe(before);
     }
     const model = flightModel("screen", "title");
@@ -224,7 +223,6 @@ describe("Immutable same-frame Flight view finalization", () => {
     expect(view.headHud).toBe(draft.headHud.layer);
     expect(view.panels[0]?.anchor).toBe("menu");
     expect(viewExposesAction(view, { type: "activate", controlId: "head-attitude" })).toBe(false);
-    expect(() => { validateUiViewModel(view); }).not.toThrow();
     const absent = finalizeFlightFrameView(draft, { kind: "absent" });
     expect(absent.panels[0]?.controls.some((control) => control.id === "game-head-hud-unavailable")).toBe(false);
     const screen = flightModel("screen");

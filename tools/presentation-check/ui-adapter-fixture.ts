@@ -2,38 +2,11 @@ import { IDENTITY_POSE, pose, vec3 } from "../../web/src/render/contracts/math.j
 import { NO_HEAD_HUD } from "../../web/src/render/contracts/head-hud.js";
 import type { VisibleHeadHud } from "../../web/src/render/contracts/head-hud.js";
 import type { GameUiView } from "../../web/src/generated/game-ui-view.js";
-import { GAME_SCENES, normalizedRect } from "../../web/src/render/contracts/ui.js";
 import type { AnchorKind, GameScene, UiPanel, UiViewModel } from "../../web/src/render/contracts/ui.js";
-
-export const SCENE_FIXTURE_OVERLAYS: Readonly<Record<GameScene, readonly string[]>> = Object.freeze({
-  Boot: [],
-  Title: ["Settings", "Help", "Credits"],
-  FlightSetup: ["Settings", "Help", "Credits"],
-  Briefing: ["Help", "Credits"],
-  Countdown: [],
-  Flight: ["Pause", "Pause/Settings", "Pause/Help"],
-  Result: ["Help", "Credits"],
-  Replay: ["Settings", "Help", "Credits"]
-} as const satisfies Record<GameScene, readonly string[]>);
-
-const SCENE_DESCRIPTIONS: Readonly<Record<GameScene, string>> = Object.freeze({
-  Boot: "初期化状態の表示fixture",
-  Title: "title screenの表示fixture",
-  FlightSetup: "flight setupの表示fixture",
-  Briefing: "briefingの表示fixture",
-  Countdown: "countdownの表示fixture",
-  Flight: "cockpit HUDの表示fixture",
-  Result: "result analysisの表示fixture",
-  Replay: "replay controlsの表示fixture"
-});
 
 const PANEL_SIZE = Object.freeze({ width: 2.4, height: 1.8 });
 
 export function createSceneFixture(scene: GameScene, overlay: string | null = null): UiViewModel {
-  if (!GAME_SCENES.includes(scene)) throw new RangeError(`Unsupported game scene: ${scene}`);
-  if (overlay !== null && !SCENE_FIXTURE_OVERLAYS[scene].includes(overlay)) {
-    throw new RangeError(`Overlay ${overlay} is not available in ${scene}`);
-  }
   const anchor: AnchorKind = scene === "Flight" && overlay === null ? "cockpit" : "menu";
   const title = overlay === null ? scene : `${scene} / ${overlay}`;
   const panel: UiPanel = Object.freeze({
@@ -48,7 +21,7 @@ export function createSceneFixture(scene: GameScene, overlay: string | null = nu
         id: `${scene.toLowerCase()}-action`,
         label: "共通actionを送信",
         enabled: true,
-        rect: normalizedRect(0.08, 0.68, 0.84, 0.12)
+        rect: { x: 0.08, y: 0.68, width: 0.84, height: 0.12 }
       }),
       Object.freeze({
         kind: "toggle" as const,
@@ -56,7 +29,7 @@ export function createSceneFixture(scene: GameScene, overlay: string | null = nu
         label: "表示補助",
         value: false,
         enabled: true,
-        rect: normalizedRect(0.08, 0.49, 0.84, 0.1)
+        rect: { x: 0.08, y: 0.49, width: 0.84, height: 0.1 }
       }),
       Object.freeze({
         kind: "range" as const,
@@ -68,7 +41,7 @@ export function createSceneFixture(scene: GameScene, overlay: string | null = nu
         maximum: 1,
         step: 0.1,
         enabled: true,
-        rect: normalizedRect(0.08, 0.29, 0.84, 0.12)
+        rect: { x: 0.08, y: 0.29, width: 0.84, height: 0.12 }
       }),
       Object.freeze({
         kind: "status" as const,
@@ -76,7 +49,7 @@ export function createSceneFixture(scene: GameScene, overlay: string | null = nu
         label: "状態",
         value: "fixture",
         enabled: false,
-        rect: normalizedRect(0.08, 0.1, 0.84, 0.1)
+        rect: { x: 0.08, y: 0.1, width: 0.84, height: 0.1 }
       })
     ])
   });
@@ -84,15 +57,11 @@ export function createSceneFixture(scene: GameScene, overlay: string | null = nu
     interactionScope: JSON.stringify([scene, overlay]),
     scene,
     title,
-    description: SCENE_DESCRIPTIONS[scene],
+    description: "描画adapter用fixture",
     activeOverlay: overlay,
     panels: Object.freeze([panel]),
     headHud: NO_HEAD_HUD
   });
-}
-
-export function createAllSceneFixtures(): readonly UiViewModel[] {
-  return Object.freeze(GAME_SCENES.map((scene) => createSceneFixture(scene)));
 }
 
 export function createAnchorFixture(anchor: AnchorKind): UiPanel {
