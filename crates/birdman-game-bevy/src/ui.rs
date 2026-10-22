@@ -965,7 +965,7 @@ fn project_control(
                     .insert(UiText::WaterQualityChoice);
             }
         }
-        GameUiControlContent::Toggle { cue, value } => {
+        GameUiControlContent::Toggle { value, .. } => {
             node.min_height = px(theme.button_min_height_px);
             background = color(&theme.choice_background, 1.0)?;
             label = format!("{} {}", if *value { "☑" } else { "☐" }, control.label);
@@ -973,12 +973,10 @@ fn project_control(
                 Button,
                 MenuButton {
                     enabled: control.enabled,
-                    action: GameUiAction::Session {
-                        command: birdman_game_app::application::SessionCommand::SetCue {
-                            cue: *cue,
-                            visible: !value,
-                        },
-                    },
+                    action: control
+                        .content
+                        .activation_action()
+                        .expect("Toggle publishes a shared action"),
                 },
             ));
         }

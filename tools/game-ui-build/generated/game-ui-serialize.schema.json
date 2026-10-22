@@ -4703,6 +4703,17 @@
           ],
           "description": "Shared exclusive overlay name."
         },
+        "back_action": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GameUiAction"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Contextual Back operation selected from enabled shared controls."
+        },
         "description": {
           "description": "Shared explanatory text.",
           "type": "string"
@@ -4766,6 +4777,7 @@
         "title",
         "description",
         "active_overlay",
+        "back_action",
         "panels",
         "layout",
         "theme",

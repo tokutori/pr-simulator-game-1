@@ -111,7 +111,13 @@ export async function generateGameUiFiles(schemas: GameUiSchemas): Promise<reado
     if (!isObject(definitions)) throw new Error(`Invalid ${entry.group} schema group`);
     const definition = definitions[entry.name];
     if (!isObject(definition)) throw new Error(`Invalid ${entry.name} schema root`);
-    const schema: Record<string, unknown> = { ...definition, $defs: definitions, $schema: group["$schema"], title: entry.name };
+    const sharedDefinitions = Object.fromEntries(Object.entries(definitions).map(([name, definition]) => {
+      const owner = schemaEntries.find(candidate => candidate.name === name);
+      return [name, owner !== undefined && owner.name !== entry.name
+        && equivalentDefinition(schemas, entry.group, owner.group, name)
+        ? { tsType: `import("./${owner.filename}.js").${owner.name}` } : definition];
+    }));
+    const schema: Record<string, unknown> = { ...definition, $defs: sharedDefinitions, $schema: group["$schema"], title: entry.name };
     const declarations = await compile(schema, entry.name, {
       bannerComment: "",
       unknownAny: true,
@@ -130,6 +136,31 @@ export async function generateGameUiFiles(schemas: GameUiSchemas): Promise<reado
     })));
   files.push({ path: "tools/game-ui-build/generated/game-ui-generation.json", content: `${JSON.stringify({ schemaVersion: 2, generators, sources: sourceHashes }, null, 2)}\n` });
   return files;
+}
+
+function equivalentDefinition(schemas: GameUiSchemas, source: typeof schemaGroups[number], target: typeof schemaGroups[number], name: string): boolean {
+  if (source === target) return true;
+  const sourceDefinitions = schemas[source]["$defs"];
+  const targetDefinitions = schemas[target]["$defs"];
+  if (!isObject(sourceDefinitions) || !isObject(targetDefinitions)) return false;
+  const visited = new Set<string>();
+  const compare = (definitionName: string): boolean => {
+    if (visited.has(definitionName)) return true;
+    const definition = sourceDefinitions[definitionName];
+    if (definition === undefined || JSON.stringify(definition) !== JSON.stringify(targetDefinitions[definitionName])) return false;
+    visited.add(definitionName);
+    const references = new Set<string>();
+    const visit = (value: unknown): void => {
+      if (Array.isArray(value)) { value.forEach(visit); return; }
+      if (!isObject(value)) return;
+      const reference = value["$ref"];
+      if (typeof reference === "string" && reference.startsWith("#/$defs/")) references.add(reference.slice("#/$defs/".length));
+      Object.values(value).forEach(visit);
+    };
+    visit(definition);
+    return [...references].every(compare);
+  };
+  return compare(name);
 }
 
 function schemaLimit(schema: unknown, key: string): number {

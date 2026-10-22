@@ -3,6 +3,102 @@ use birdman_game_app::application::{RecordCommand, SessionCommand};
 use birdman_game_app::record_query::validate_record_time;
 use birdman_game_core::FlightRecordQueryError;
 
+impl GameUiView {
+    /// Resolves Back from the enabled navigation actions published by this view.
+    pub fn back_action(&self) -> Option<GameUiAction> {
+        self.panels
+            .iter()
+            .flat_map(|panel| &panel.controls)
+            .filter(|control| control.enabled)
+            .filter_map(|control| control.content.activation_action())
+            .filter_map(|action| {
+                let priority = match &action {
+                    GameUiAction::SetCredits { open: false }
+                    | GameUiAction::SetPauseOverlay {
+                        overlay: GameUiPauseOverlay::Menu,
+                    } => 0,
+                    GameUiAction::SetResultTab {
+                        tab: GameUiResultTab::Summary,
+                    } if self.scene == GameUiScene::Result
+                        && self.selections.result_tab == GameUiResultTab::Analysis =>
+                    {
+                        0
+                    }
+                    GameUiAction::Session {
+                        command:
+                            SessionCommand::CancelBriefing {}
+                            | SessionCommand::CancelCountdown {}
+                            | SessionCommand::LeaveReplay {}
+                            | SessionCommand::LeaveAttract {}
+                            | SessionCommand::Pause {}
+                            | SessionCommand::Resume {},
+                    } => 1,
+                    GameUiAction::Session {
+                        command: SessionCommand::ReturnToTitle {},
+                    } => 2,
+                    GameUiAction::Platform {
+                        command:
+                            GameUiPlatformCommand::SetPresentation {
+                                mode: GameUiPresentationMode::Screen,
+                            },
+                    } => 3,
+                    _ => return None,
+                };
+                Some((priority, action))
+            })
+            .min_by_key(|(priority, _)| *priority)
+            .map(|(_, action)| action)
+    }
+}
+
+impl GameUiControlContent {
+    /// Derives the semantic action represented by a button or toggle.
+    pub fn activation_action(&self) -> Option<GameUiAction> {
+        match self {
+            Self::Button { action, .. } => Some(action.clone()),
+            Self::Toggle { cue, value } => Some(GameUiAction::Session {
+                command: SessionCommand::SetCue {
+                    cue: *cue,
+                    visible: !value,
+                },
+            }),
+            _ => None,
+        }
+    }
+
+    /// Projects a finite panel ratio onto the range's shared step grid.
+    pub fn range_action(&self, ratio: f64) -> Option<GameUiAction> {
+        let Self::Range {
+            target,
+            minimum,
+            maximum,
+            step,
+            ..
+        } = self
+        else {
+            return None;
+        };
+        if ![ratio, *minimum, *maximum, *step]
+            .into_iter()
+            .all(f64::is_finite)
+            || maximum < minimum
+            || *step <= 0.0
+        {
+            return None;
+        }
+        let raw = minimum + ratio.clamp(0.0, 1.0) * (maximum - minimum);
+        let time_seconds = minimum + ((raw - minimum) / step).round() * step;
+        if !time_seconds.is_finite() {
+            return None;
+        }
+        let time_seconds = time_seconds.clamp(*minimum, *maximum);
+        Some(match target {
+            GameUiRangeTarget::Analysis => GameUiAction::SeekAnalysis { time_seconds },
+            GameUiRangeTarget::Replay => GameUiAction::SeekReplay { time_seconds },
+        })
+    }
+}
+
 /// Admits an action against the actual shared view and returns UI state plus effects.
 pub fn update_game_ui(
     state: &GameUiState,

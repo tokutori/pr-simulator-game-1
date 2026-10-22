@@ -135,7 +135,10 @@ export interface TailFlightRecordFinalizationDocument {
  */
 export interface TailFlightRecordBoundaryEventDocument {
     readonly input: TailFlightRecordInputDocument;
-    readonly physical_incidence: TailIncidenceDocument3;
+    /**
+     * Physical two-tail incidence after the boundary update.
+     */
+    readonly physical_incidence: import("./tail-incidence.js").TailIncidenceDocument;
     /**
      * Finite accepted displacement coefficient.
      */
@@ -153,9 +156,18 @@ export interface TailFlightRecordInputDocument {
      * Desired body-positive yaw rate r in rad/s.
      */
     readonly desired_yaw_rate_rad_s: number;
-    readonly fbw_incidence_target: TailIncidenceDocument;
-    readonly manual_incidence_target: TailIncidenceDocument1;
-    readonly mixed_incidence_target: TailIncidenceDocument2;
+    /**
+     * Core feedback output before authority mixing.
+     */
+    readonly fbw_incidence_target: import("./tail-incidence.js").TailIncidenceDocument;
+    /**
+     * Manual intent mapped to physical incidence before authority mixing.
+     */
+    readonly manual_incidence_target: import("./tail-incidence.js").TailIncidenceDocument;
+    /**
+     * Mixed target before the software actuator slew step.
+     */
+    readonly mixed_incidence_target: import("./tail-incidence.js").TailIncidenceDocument;
     /**
      * Normalized positive nose-up intent, independent of physical incidence sign.
      */
@@ -180,58 +192,6 @@ export interface TailFlightRecordInputDocument {
      * Normalized positive right-turn intent, independent of physical incidence sign.
      */
     readonly turn_right: number;
-}
-/**
- * Core feedback output before authority mixing.
- */
-export interface TailIncidenceDocument {
-    /**
-     * Horizontal-tail effective incidence, positive for negative pitch moment on an aft tail.
-     */
-    readonly horizontal_tail_rad: number;
-    /**
-     * Vertical-tail effective incidence, positive for negative yaw moment with the configured fin.
-     */
-    readonly vertical_tail_rad: number;
-}
-/**
- * Manual intent mapped to physical incidence before authority mixing.
- */
-export interface TailIncidenceDocument1 {
-    /**
-     * Horizontal-tail effective incidence, positive for negative pitch moment on an aft tail.
-     */
-    readonly horizontal_tail_rad: number;
-    /**
-     * Vertical-tail effective incidence, positive for negative yaw moment with the configured fin.
-     */
-    readonly vertical_tail_rad: number;
-}
-/**
- * Mixed target before the software actuator slew step.
- */
-export interface TailIncidenceDocument2 {
-    /**
-     * Horizontal-tail effective incidence, positive for negative pitch moment on an aft tail.
-     */
-    readonly horizontal_tail_rad: number;
-    /**
-     * Vertical-tail effective incidence, positive for negative yaw moment with the configured fin.
-     */
-    readonly vertical_tail_rad: number;
-}
-/**
- * Physical two-tail incidence after the boundary update.
- */
-export interface TailIncidenceDocument3 {
-    /**
-     * Horizontal-tail effective incidence, positive for negative pitch moment on an aft tail.
-     */
-    readonly horizontal_tail_rad: number;
-    /**
-     * Vertical-tail effective incidence, positive for negative yaw moment with the configured fin.
-     */
-    readonly vertical_tail_rad: number;
 }
 /**
  * Original hybrid site, cause, closed-domain limit and optional RK stage.

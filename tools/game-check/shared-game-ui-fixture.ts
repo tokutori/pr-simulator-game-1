@@ -2,7 +2,7 @@ import { HybridGameSessionBridge, physics_hz, ScreenRenderAutoBridge } from "../
 import { initializeWasmFixture } from "./wasm-fixture.js";
 import type { ScreenRenderAutoSnapshot } from "../../web/src/generated/screen-render-auto.js";
 import { TailAppSessionFacade } from "../../web/src/app/session-facade.js";
-import type { FlightRecordHudProfileDocument } from "../../web/src/generated/record-context.js";
+import type { FlightRecordHudProfileDocument } from "../../web/src/generated/record-difficulty.js";
 import type { SessionPhase } from "../../web/src/app/session-snapshot.js";
 import type { TailGameSessionProjection } from "../../web/src/app/session-snapshot.js";
 import { readRuntimeSessionProjection } from "../../web/src/app/session-runtime-projection.js";

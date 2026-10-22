@@ -3,36 +3,11 @@
  * Pilot eye before and after conversion into render right/up/back axes.
  */
 export interface PilotEyePose {
-    readonly frd: FrdPose;
+    /**
+     * Physical aircraft FRD pose.
+     */
+    readonly frd: import("./frd-pose.js").FrdPose;
     readonly render: Pose;
-}
-/**
- * Physical aircraft FRD pose.
- */
-export interface FrdPose {
-    /**
-     * Scalar-first orientation in the FRD basis.
-     *
-     * @minItems 4
-     * @maxItems 4
-     */
-    readonly orientationFrdWxyz: readonly [
-        number,
-        number,
-        number,
-        number
-    ];
-    /**
-     * Forward/right/down position in metres.
-     *
-     * @minItems 3
-     * @maxItems 3
-     */
-    readonly positionFrdM: readonly [
-        number,
-        number,
-        number
-    ];
 }
 /**
  * Equivalent render-local pose.

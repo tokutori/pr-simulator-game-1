@@ -17,210 +17,25 @@ export interface TailPreparedLaunchDocument {
     readonly preview: {
         readonly kind: "unavailable";
     } | {
-        readonly control_identity: FlightRecordTailIdentityDocument;
+        /**
+         * Borrowed model and controller names.
+         */
+        readonly control_identity: import("./tail-identity.js").FlightRecordTailIdentityDocument;
         readonly kind: "prepared";
-        readonly render_pose: FlightRenderPose;
-        readonly scenario: EnvironmentIdentity;
+        /**
+         * Renderer-ready sealed initial state.
+         */
+        readonly render_pose: import("./flight-render-pose.js").FlightRenderPose;
+        /**
+         * Sealed scenario identity.
+         */
+        readonly scenario: import("./tail-scenario.js").EnvironmentIdentity;
         readonly state: TailStateDocument;
     };
     /**
      * Current live boundary version.
      */
     readonly schema_version: 2;
-}
-/**
- * Borrowed model and controller names.
- */
-export interface FlightRecordTailIdentityDocument {
-    /**
-     * Immutable aircraft configuration name.
-     */
-    readonly aircraft_configuration_id: string;
-    /**
-     * Software tail-controller profile name, independent of aircraft data.
-     */
-    readonly controller_profile_id: string;
-}
-/**
- * Renderer-ready sealed initial state.
- */
-export interface FlightRenderPose {
-    /**
-     * Observed airspeed at this physical or recorded state.
-     */
-    readonly airspeedMetersPerSecond: number | null;
-    readonly attitudeBodyToNed: RenderAttitude;
-    readonly controls: RenderTailControls;
-    readonly datumPositionNed: RenderNedVector;
-    /**
-     * Pilot position at the beginning of this flight or record.
-     */
-    readonly initialPilotPositionMeters: number;
-    /**
-     * Current longitudinal pilot position.
-     */
-    readonly pilotPositionMeters: number;
-    /**
-     * Shared simulation time for environmental animation.
-     */
-    readonly simulationTimeSeconds: number;
-    /**
-     * Geometry resolved from the recorded model identity.
-     */
-    readonly tailGeometry: {
-        readonly kind: "available";
-        readonly value: RenderTailGeometryValue;
-    } | {
-        readonly kind: "unavailable";
-        /**
-         * Reason for the absent geometry.
-         */
-        readonly reason: "unregistered_aircraft_geometry";
-    };
-    /**
-     * Ambient wind at the composite centre of gravity.
-     */
-    readonly windVelocityNedMetersPerSecond: RenderNedVector1 | null;
-    /**
-     * Accepted structural coefficient, distinct from absent legacy data or unknown geometry.
-     */
-    readonly wingDeformation: {
-        /**
-         * Dimensionless bending coefficient held over its physical interval.
-         */
-        readonly factor: number;
-        readonly kind: "accepted";
-    } | {
-        readonly kind: "unavailable";
-        /**
-         * Reason for the missing projection input.
-         */
-        readonly reason: "unrecorded" | "unregistered_aircraft_geometry";
-    };
-}
-/**
- * Scalar-first body-to-NED orientation.
- */
-export interface RenderAttitude {
-    /**
-     * Scalar component.
-     */
-    readonly w: number;
-    /**
-     * Body x component.
-     */
-    readonly x: number;
-    /**
-     * Body y component.
-     */
-    readonly y: number;
-    /**
-     * Body z component.
-     */
-    readonly z: number;
-}
-/**
- * Held physical control positions.
- */
-export interface RenderTailControls {
-    /**
-     * Physical layout.
-     */
-    readonly layout: "tail_incidence";
-    readonly physicalIncidence: RenderTailIncidence;
-}
-/**
- * Held physical incidence.
- */
-export interface RenderTailIncidence {
-    /**
-     * Horizontal tail angle in radians.
-     */
-    readonly horizontalTailRadians: number;
-    /**
-     * Vertical tail angle in radians.
-     */
-    readonly verticalTailRadians: number;
-}
-/**
- * Fixed aircraft datum in NED metres.
- */
-export interface RenderNedVector {
-    /**
-     * Down component.
-     */
-    readonly down: number;
-    /**
-     * East component.
-     */
-    readonly east: number;
-    /**
-     * North component.
-     */
-    readonly north: number;
-}
-/**
- * Model-derived presentation parameters.
- */
-export interface RenderTailGeometryValue {
-    /**
-     * Aft distance to the horizontal tail's physical quarter-chord pivot.
-     */
-    readonly horizontalTailArmMeters: number;
-}
-/**
- * Named NED vector used by rendering APIs.
- */
-export interface RenderNedVector1 {
-    /**
-     * Down component.
-     */
-    readonly down: number;
-    /**
-     * East component.
-     */
-    readonly east: number;
-    /**
-     * North component.
-     */
-    readonly north: number;
-}
-/**
- * Sealed scenario identity.
- */
-export interface EnvironmentIdentity {
-    /**
-     * Aircraft model version.
-     */
-    readonly aircraft_model_version: number;
-    /**
-     * Registered catalog version.
-     */
-    readonly catalog_version: number;
-    /**
-     * Controller profile version.
-     */
-    readonly controller_profile_version: number;
-    /**
-     * Environment content version.
-     */
-    readonly environment_version: number;
-    /**
-     * Scenario identifier; registry lookup applies its own nonzero constraint.
-     */
-    readonly scenario_id: number;
-    /**
-     * Scenario content version.
-     */
-    readonly scenario_version: number;
-    /**
-     * High 32 bits of the exact seed.
-     */
-    readonly seed_high: number;
-    /**
-     * Low 32 bits of the exact seed.
-     */
-    readonly seed_low: number;
 }
 /**
  * Zero-tick initial state.
@@ -279,7 +94,10 @@ export interface TailStateDocument {
      * Fraction within the terminal interval, zero during live flight.
      */
     readonly fraction: number;
-    readonly physical_incidence: TailIncidenceDocument;
+    /**
+     * Actual horizontal and vertical tail incidences.
+     */
+    readonly physical_incidence: import("./tail-incidence.js").TailIncidenceDocument;
     /**
      * Actual longitudinal pilot position in metres.
      */
@@ -300,17 +118,4 @@ export interface TailStateDocument {
      * Integer tick containing this state.
      */
     readonly tick: number;
-}
-/**
- * Actual horizontal and vertical tail incidences.
- */
-export interface TailIncidenceDocument {
-    /**
-     * Horizontal-tail effective incidence, positive for negative pitch moment on an aft tail.
-     */
-    readonly horizontal_tail_rad: number;
-    /**
-     * Vertical-tail effective incidence, positive for negative yaw moment with the configured fin.
-     */
-    readonly vertical_tail_rad: number;
 }

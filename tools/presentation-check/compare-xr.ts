@@ -6,7 +6,7 @@ import { resolve } from "node:path";
 import { currentSharedHeadHudFixture } from "../game-check/shared-game-ui-fixture.js";
 import { configuredViewerFixture } from "./viewer-fixture.js";
 import { DEFAULT_XR_HEAD_HUD_PROFILE } from "../../web/src/generated/xr-head-hud-profile.js";
-import type { FlightRecordHudProfileDocument } from "../../web/src/generated/record-context.js";
+import type { FlightRecordHudProfileDocument } from "../../web/src/generated/record-difficulty.js";
 import type { ViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
 import { IDENTITY_POSE, composePose, rotateVec3, pose, quaternion, vec3 } from "../../web/src/render/contracts/math.js";
 import { xr_head_hud_projection_json, xr_menu_view_fit_json, xr_text_ink_fit_json, XrCameraBridge, XrSpatialBridge,

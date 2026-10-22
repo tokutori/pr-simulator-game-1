@@ -145,6 +145,7 @@ GameUiView / GameUiFrame → platform renderer → DOM / VR panel / Bevy entity
 ```
 
 - ラベル、主要操作、順序、section、表示条件、theme、HUD、chartの意味は共有Rustで定義する。
+- 共有Viewは有効な操作からBackを導出する。button・toggleの実行Actionとrangeの段階値への丸めは共有controlが所有し、adapterは入力観測を渡す。
 - platformは表示API、フォント計測、safe area、focus、scroll、入力方式を担当する。
 - ボタンIDや表示文字列から意味を再推定しない。
 
@@ -180,6 +181,7 @@ GameUiView / GameUiFrame → platform renderer → DOM / VR panel / Bevy entity
 ### schemaとABI
 
 - Rustのserde型とSchemars schemaを正本に、readonlyなTypeScript型と接続試験用のschemaを生成する。対象はUI、操作、session snapshot、準備metadata、環境、record queryである。
+- 複数の生成型で使うroot契約は型importで参照する。serializeとdeserializeの間では推移的な参照先までschemaが一致する場合に共用する。
 - 生成型のreadonlyとtuple制約はTypeScript compilerで検査する。schema生成用featureとAjvによるschema検査は開発ツールの経路へ限定する。
 - 同一buildのWASM出力は、instanceを所有するfacadeの内部でJSONをparseし、生成DTOへ直接接続する。phase、profile、環境、描画poseの正本は共有Rustに置く。
 - WebはDTOを保持し、DOM・engine APIに必要な投影だけを行う。readonlyは静的な変更制約とし、時刻・score・quaternion等の数値契約はRustのproducerとcoreで検査する。

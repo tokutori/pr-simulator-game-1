@@ -804,6 +804,10 @@ fn credits_are_reachable_from_title_and_pause_without_advancing_the_session() {
                 update_game_ui(&state, GameUiAction::SetCredits { open: true }, &context).unwrap();
             assert!(open.effects.is_empty());
             let credits = game_ui_view(&open.state, &context).unwrap();
+            assert_eq!(
+                credits.back_action,
+                Some(GameUiAction::SetCredits { open: false })
+            );
             assert!(credits.hud.is_none());
             assert!(credits.layout.scroll_y);
             assert_eq!(credits.active_overlay, Some(GameUiOverlay::Credits));
@@ -955,6 +959,19 @@ fn custom_cues_and_native_selection_use_the_same_existing_settings_resolver() {
     assert_eq!(custom.information(), InformationLevel::Custom);
     assert!(custom.hud_profile().wind());
     assert_eq!(
+        GameUiControlContent::Toggle {
+            cue: HudCue::Wind,
+            value: custom.hud_profile().wind(),
+        }
+        .activation_action(),
+        Some(GameUiAction::Session {
+            command: SessionCommand::SetCue {
+                cue: HudCue::Wind,
+                visible: false,
+            },
+        })
+    );
+    assert_eq!(
         application.execute(
             SessionCommand::SelectPreset {
                 preset: DifficultyPreset::Custom
@@ -1053,6 +1070,7 @@ fn pause_conditions_and_overlay_states_share_admission_without_resuming_physics(
     let state = GameUiState::default();
     let view = game_ui_view(&state, &context(&session, difficulty(), &platform)).unwrap();
     assert!(!control(&view, "game-flight-resume").enabled);
+    assert_eq!(view.back_action(), None);
     let update = update_game_ui(
         &state,
         GameUiAction::SetPauseOverlay {
@@ -1063,6 +1081,23 @@ fn pause_conditions_and_overlay_states_share_admission_without_resuming_physics(
     .unwrap();
     assert_eq!(update.state.pause_overlay, GameUiPauseOverlay::Settings);
     assert!(update.effects.is_empty());
+    let settings =
+        game_ui_view(&update.state, &context(&session, difficulty(), &platform)).unwrap();
+    let back = settings.back_action().unwrap();
+    assert_eq!(
+        back,
+        GameUiAction::SetPauseOverlay {
+            overlay: GameUiPauseOverlay::Menu
+        }
+    );
+    let returned = update_game_ui(
+        &update.state,
+        back,
+        &context(&session, difficulty(), &platform),
+    )
+    .unwrap();
+    assert_eq!(returned.state.pause_overlay, GameUiPauseOverlay::Menu);
+    assert!(returned.effects.is_empty());
     assert!(matches!(
         session.snapshot().phase(),
         SessionPhase::FlightPaused { .. }
@@ -1730,6 +1765,28 @@ fn lightweight_frame_matches_fresh_full_view_without_record_series() {
 
 #[test]
 fn range_display_text_matches_initial_and_retained_views_at_rounding_boundaries() {
+    let range = GameUiControlContent::Range {
+        target: GameUiRangeTarget::Replay,
+        value: 0.0,
+        display_value: "0.0".into(),
+        minimum: 0.0,
+        maximum: 1.0,
+        step: 0.25,
+    };
+    for (ratio, time_seconds) in [
+        (-1.0, 0.0),
+        (0.124, 0.0),
+        (0.125, 0.25),
+        (0.375, 0.5),
+        (2.0, 1.0),
+    ] {
+        assert_eq!(
+            range.range_action(ratio),
+            Some(GameUiAction::SeekReplay { time_seconds })
+        );
+    }
+    assert_eq!(range.range_action(f64::NAN), None);
+    assert_eq!(range.activation_action(), None);
     for (value, expected) in [
         (0.0, "0.0"),
         (0.24999999999999997, "0.2"),
@@ -2220,6 +2277,20 @@ fn result_summary_keeps_ordered_navigation_across_targets() {
                     let view = game_ui_view(&state, &context).unwrap();
                     let panel = &view.panels[0];
                     assert_eq!(panel.sections.first().unwrap().id, "result-tabs");
+                    let back = view.back_action.clone().unwrap();
+                    assert_eq!(
+                        back,
+                        if tab == GameUiResultTab::Analysis {
+                            GameUiAction::SetResultTab {
+                                tab: GameUiResultTab::Summary,
+                            }
+                        } else {
+                            GameUiAction::Session {
+                                command: SessionCommand::ReturnToTitle {},
+                            }
+                        }
+                    );
+                    assert!(update_game_ui(&state, back, &context).is_ok());
                     assert_eq!(panel.sections.last().unwrap().id, "result-navigation");
                     let notices = panel
                         .controls

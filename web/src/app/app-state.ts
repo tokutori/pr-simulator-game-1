@@ -803,7 +803,11 @@ function invalidateMenuScroll(model: AppModel, context: MenuScrollContext): AppT
 }
 
 function updateUiAction(model: AppModel, action: UiAction): AppTransition {
-  if (action.type === "focus" || action.type === "back" || action.type === "scroll") return transition(model);
+  if (action.type === "focus" || action.type === "scroll") return transition(model);
+  if (action.type === "back") {
+    const semantic = model.sharedGameUi?.back_action ?? null;
+    return semantic === null ? transition(model) : transition(model, [{ type: "update-shared-game-ui", action: semantic }]);
+  }
   if (action.type === "recenter-menu") {
     return isInVr(model.presentation) ? transition(model, [{ type: "recenter-menu" }]) : transition(model);
   }

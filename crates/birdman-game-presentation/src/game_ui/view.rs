@@ -410,7 +410,7 @@ pub fn game_ui_view(
         (false, false) => 0.25,
     };
     let layout = layout(state, context, phase)?;
-    Ok(GameUiView {
+    let mut view = GameUiView {
         schema_version: GAME_UI_SCHEMA_VERSION,
         view_revision: 0,
         selections: state.clone(),
@@ -433,6 +433,7 @@ pub fn game_ui_view(
         } else {
             None
         },
+        back_action: None,
         panels: vec![GameUiPanel {
             id: "game-flow".to_owned(),
             title: String::new(),
@@ -457,7 +458,9 @@ pub fn game_ui_view(
         } else {
             super::hud::game_ui_hud(state, context)?
         },
-    })
+    };
+    view.back_action = view.back_action();
+    Ok(view)
 }
 
 #[derive(Default)]

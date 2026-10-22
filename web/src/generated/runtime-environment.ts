@@ -19,14 +19,20 @@ export interface EnvironmentSnapshot {
      * Explicit availability of the requested registered environment.
      */
     readonly projection: {
-        readonly identity: EnvironmentIdentity;
+        /**
+         * Original identity retained without aliases.
+         */
+        readonly identity: import("./tail-scenario.js").EnvironmentIdentity;
         readonly kind: "unavailable";
         /**
          * Owner of the requested identity.
          */
         readonly source: "exhibition" | "selected" | "sealed" | "record" | "archive" | "attract" | "registry";
     } | {
-        readonly identity: EnvironmentIdentity1;
+        /**
+         * Fully matched registered identity.
+         */
+        readonly identity: import("./tail-scenario.js").EnvironmentIdentity;
         readonly kind: "available";
         readonly metadata: EnvironmentMetadata;
         /**
@@ -50,80 +56,6 @@ export interface EnvironmentSnapshot {
      * Current environment snapshot wire version.
      */
     readonly schema_version: number;
-}
-/**
- * Original identity retained without aliases.
- */
-export interface EnvironmentIdentity {
-    /**
-     * Aircraft model version.
-     */
-    readonly aircraft_model_version: number;
-    /**
-     * Registered catalog version.
-     */
-    readonly catalog_version: number;
-    /**
-     * Controller profile version.
-     */
-    readonly controller_profile_version: number;
-    /**
-     * Environment content version.
-     */
-    readonly environment_version: number;
-    /**
-     * Scenario identifier; registry lookup applies its own nonzero constraint.
-     */
-    readonly scenario_id: number;
-    /**
-     * Scenario content version.
-     */
-    readonly scenario_version: number;
-    /**
-     * High 32 bits of the exact seed.
-     */
-    readonly seed_high: number;
-    /**
-     * Low 32 bits of the exact seed.
-     */
-    readonly seed_low: number;
-}
-/**
- * Fully matched registered identity.
- */
-export interface EnvironmentIdentity1 {
-    /**
-     * Aircraft model version.
-     */
-    readonly aircraft_model_version: number;
-    /**
-     * Registered catalog version.
-     */
-    readonly catalog_version: number;
-    /**
-     * Controller profile version.
-     */
-    readonly controller_profile_version: number;
-    /**
-     * Environment content version.
-     */
-    readonly environment_version: number;
-    /**
-     * Scenario identifier; registry lookup applies its own nonzero constraint.
-     */
-    readonly scenario_id: number;
-    /**
-     * Scenario content version.
-     */
-    readonly scenario_version: number;
-    /**
-     * High 32 bits of the exact seed.
-     */
-    readonly seed_high: number;
-    /**
-     * Low 32 bits of the exact seed.
-     */
-    readonly seed_low: number;
 }
 /**
  * Bounded descriptive metadata without the full wind grid.

@@ -568,6 +568,8 @@ pub struct GameUiView {
     pub description: String,
     /// Shared exclusive overlay name.
     pub active_overlay: Option<GameUiOverlay>,
+    /// Contextual Back operation selected from enabled shared controls.
+    pub back_action: Option<GameUiAction>,
     /// Ordered semantic panels.
     pub panels: Vec<GameUiPanel>,
     /// Shared responsive dimensions and scroll policy.

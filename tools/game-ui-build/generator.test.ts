@@ -34,6 +34,27 @@ function schemaBundle(): string {
 }
 
 describe("Rust game UI schema generation", () => {
+  it("reuses canonical root types after checking their transitive wire definitions", async () => {
+    const document = JSON.parse(schemaBundle()) as Record<"serialize" | "deserialize", { $defs: Record<string, Record<string, unknown>> }>;
+    const output = document.serialize.$defs;
+    const action = document.deserialize.$defs["GameUiAction"];
+    const view = output["GameUiView"];
+    if (action === undefined || view === undefined) throw new Error("Missing canonical root fixture");
+    output["GameUiAction"] = action;
+    const properties = view["properties"] as Record<string, unknown>;
+    properties["back_action"] = { $ref: "#/$defs/GameUiAction" };
+    const schemas = parseSchemaBundle(JSON.stringify(document));
+    const original = JSON.stringify(schemas);
+    const files = await generateGameUiFiles(schemas);
+    expect(files.find(file => file.path === "web/src/generated/game-ui-view.ts")?.content)
+      .toContain('import("./game-ui-action.js").GameUiAction');
+    expect(JSON.stringify(schemas)).toBe(original);
+    output["identifier"] = { type: "string" };
+    const divergent = await generateGameUiFiles(parseSchemaBundle(JSON.stringify(document)));
+    expect(divergent.find(file => file.path === "web/src/generated/game-ui-view.ts")?.content)
+      .not.toContain('import("./game-ui-action.js").GameUiAction');
+  });
+
   it("rejects mismatched schema roots", () => {
     expect(() => parseSchemaBundle("{}")).toThrow("unexpected schema roots");
     expect(() => parseSchemaBundle(schemaBundle().replace("GameUiView", "OtherView"))).toThrow("Invalid GameUiView");

@@ -3,6 +3,7 @@ export type PhysicalControlsDocument = {
     readonly layout: "tail_incidence";
     readonly physical_incidence: TailIncidenceDocument;
 };
+export type TailIncidenceDocument = import("./tail-incidence.js").TailIncidenceDocument;
 /**
  * Existing schema-two single-sample wire projection, shared with record queries.
  */
@@ -14,19 +15,6 @@ export interface RecordedPlaybackSample {
     readonly state: FlightRecordStateDocument;
     readonly tick_index: number;
     readonly wing_bending_factor: number | null;
-}
-/**
- * Named physical angles in radians, preserving the two-tail contract without a roll slot.
- */
-export interface TailIncidenceDocument {
-    /**
-     * Horizontal-tail effective incidence, positive for negative pitch moment on an aft tail.
-     */
-    readonly horizontal_tail_rad: number;
-    /**
-     * Vertical-tail effective incidence, positive for negative yaw moment with the configured fin.
-     */
-    readonly vertical_tail_rad: number;
 }
 /**
  * Saved physics and telemetry values shared by analysis and snapshot playback.

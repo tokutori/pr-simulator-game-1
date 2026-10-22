@@ -21,6 +21,20 @@ const fullHudProfile = Object.freeze({
 });
 
 describe("Boot application state", () => {
+  it.each([
+    ["flight_setup", "return_to_title"],
+    ["flight_paused", "resume"],
+    ["replay", "leave_replay"]
+  ] as const)("routes Back from %s through the shared published action", (phase, command) => {
+    withSharedGameUiSession(phase, { platform: { presentation_mode: "phone_vr" } }, (session, platform) => {
+      const model = observeSharedUi(readyModel(phase), session.readSharedUi(platform));
+      const request = updateApp(model, { type: "ui-action", action: { type: "back" } });
+      expect(request.effects).toEqual([{ type: "update-shared-game-ui", action: { kind: "session", command: { kind: command } } }]);
+      const action = requireSharedUi(model).back_action;
+      if (action === null) throw new Error("Shared Back action is absent");
+      expect(session.updateSharedUi(action, platform).effects).toEqual([{ kind: "session", command: { kind: command } }]);
+    });
+  });
   it("observes synchronous poses and refreshes the current camera without a query request state", () => {
     const initial = readyModel("replay");
     expect(initial.replayPose).toEqual({ kind: "idle" });
