@@ -7,21 +7,21 @@ export interface XrReferenceFrame {
      * Logical basis identity independent of its moving pose.
      */
     readonly basis: "stationary" | "aircraft" | "world";
-    readonly cockpit: XrPose;
-    readonly head: XrPose1;
-    readonly world: XrPose2;
+    readonly cockpit: Pose;
+    readonly head: Pose1;
+    readonly world: Pose2;
 }
 /**
  * Aircraft origin.
  */
-export interface XrPose {
-    readonly orientation: XrQuaternion;
-    readonly position: XrVector;
+export interface Pose {
+    readonly orientation: Quaternion;
+    readonly position: Vector3;
 }
 /**
  * Child-to-parent orientation.
  */
-export interface XrQuaternion {
+export interface Quaternion {
     /**
      * Scalar component.
      */
@@ -42,7 +42,7 @@ export interface XrQuaternion {
 /**
  * Child origin expressed in parent coordinates, in metres.
  */
-export interface XrVector {
+export interface Vector3 {
     /**
      * Rightward coordinate in metres.
      */
@@ -59,14 +59,14 @@ export interface XrVector {
 /**
  * Mounted runtime head.
  */
-export interface XrPose1 {
-    readonly orientation: XrQuaternion;
-    readonly position: XrVector;
+export interface Pose1 {
+    readonly orientation: Quaternion;
+    readonly position: Vector3;
 }
 /**
  * Geographical render-world origin.
  */
-export interface XrPose2 {
-    readonly orientation: XrQuaternion;
-    readonly position: XrVector;
+export interface Pose2 {
+    readonly orientation: Quaternion;
+    readonly position: Vector3;
 }

@@ -22,11 +22,3 @@ export function sameLakeSkyRenderCondition(first: LakeSkyCondition, second: Lake
   return first.sunAzimuthDegrees === second.sunAzimuthDegrees && first.sunElevationDegrees === second.sunElevationDegrees &&
     first.cloudFraction === second.cloudFraction && first.visibilityMeters === second.visibilityMeters;
 }
-
-export function lakeSkySunDirectionNed(condition: LakeSkyCondition): Readonly<{ north: number; east: number; down: number }> {
-  const validated = createLakeSkyCondition(condition);
-  const azimuth = validated.sunAzimuthDegrees * Math.PI / 180;
-  const elevation = validated.sunElevationDegrees * Math.PI / 180;
-  const horizontal = Math.cos(elevation);
-  return Object.freeze({ north: horizontal * Math.cos(azimuth), east: horizontal * Math.sin(azimuth), down: -Math.sin(elevation) });
-}

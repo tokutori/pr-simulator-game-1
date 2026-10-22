@@ -1,4 +1,5 @@
-use super::geometry::{PreparedViews, XrFitReason, XrPose, XrVector, XrViewerFrame};
+use super::geometry::{PreparedViews, XrFitReason, XrViewerFrame};
+use crate::camera::{Pose, Vector3};
 use crate::game_ui::{
     GameUiHeadHudFit, GameUiHeadHudNode, GameUiHeadHudSpace, GameUiHud, GameUiRect,
     fit_game_ui_head_hud,
@@ -112,7 +113,7 @@ pub enum XrHeadHudProjection {
     /// Complete projected source-node layout.
     Visible {
         /// Head-to-HUD transform in metres.
-        local_pose: XrPose,
+        local_pose: Pose,
         /// Plane width and height in metres.
         size_m: [f64; 2],
         /// Required text height in metres.
@@ -144,13 +145,13 @@ pub fn project_xr_head_hud(
         Err(reason) => return Ok(unavailable(reason)),
     };
     let distance = profile.distance_meters;
-    let local_pose = XrPose {
-        position: XrVector {
+    let local_pose = Pose {
+        position: Vector3 {
             x: 0.0,
             y: 0.0,
             z: -distance,
         },
-        ..XrPose::IDENTITY
+        ..Pose::IDENTITY
     };
     let text_height = distance * profile.text_height_degrees.to_radians().tan();
     let horizontal = profile
@@ -166,7 +167,7 @@ pub fn project_xr_head_hud(
         let head_from_eye = eye.eye_from_head.inverse();
         for horizontal_sign in [-1.0, 1.0] {
             for vertical_sign in [-1.0, 1.0] {
-                let direction = head_from_eye.rotate(XrVector {
+                let direction = head_from_eye.rotate(Vector3 {
                     x: horizontal_sign * horizontal,
                     y: vertical_sign * vertical,
                     z: -1.0,

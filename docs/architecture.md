@@ -237,7 +237,9 @@ GameUiView / GameUiFrame → platform renderer → DOM / VR panel / Bevy entity
 - app、presentation、camera、契約層からengine adapterを参照しない。
 - 型専用import、re-export、JSDoc import、`require`、dynamic import、module referenceも同じ境界と依存DAGの対象である。
 
-- 共有cameraの低位basisはapp/runtime型に依存しない。
+- 共有cameraの低位basisはapp/runtime型に依存しない。Rustのpresentation::cameraがPose合成・FRD変換・Pilot/Chase配置・Screenのyaw/pitch lookを所有し、XRは同じ型を用いて追跡・両眼・reference spaceを扱う。
+- WebとNativeは共有FlightRenderPoseのf64座標からcameraを導出し、engineへの反映時に描画精度へ変換する。
+- scene::lake_skyが太陽のEast/Up/negative-North方向と地平線以上のdaylight条件を導出し、天空画像・水面・照明へ共通適用する。
 - session選択・snapshotの共通観測型もapp所有型への逆参照を持たない。
 - 型の複写によって循環を回避しない。
 

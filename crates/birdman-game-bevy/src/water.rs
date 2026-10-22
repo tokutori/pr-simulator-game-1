@@ -4,7 +4,7 @@ use super::{
         EnvironmentSurface, EnvironmentTarget, NativeEnvironment,
     },
     native_session::NativeSession,
-    projection::{sky_sun_direction, sunlight_transform},
+    projection::sunlight_transform,
     terrain_haze::{TerrainHazeExtension, TerrainMaterial},
     water_quality::{WaterQualityFailure, WaterQualitySelection},
 };
@@ -39,7 +39,9 @@ use bevy::{
     shader::{ShaderCacheError, ShaderDefVal, ShaderRef},
 };
 use birdman_game_format::WaterQuality;
-use birdman_game_scene::lake_sky::{LakeSceneHaze, LakeSkyRenderCondition, generate_lake_sky};
+use birdman_game_scene::lake_sky::{
+    LakeSceneHaze, LakeSkyRenderCondition, LakeSunlight, generate_lake_sky,
+};
 use birdman_game_scene::lake_water::{
     LakeVisualCondition, LakeWaveProjection, MAX_LAKE_WAVE_COMPONENTS, generate_lake_detail,
     production_lake_detail_configs,
@@ -145,17 +147,12 @@ impl WaterMaterial {
             .transpose()
             .map_err(|cause| format!("共有天空条件を準備できない: {cause:?}"))?;
         let waves = condition.waves;
-        let sun_cloud = condition.sky.map_or(Vec4::ZERO, |sky| {
-            sky_sun_direction(sky.sun_azimuth_degrees, sky.sun_elevation_degrees)
-                .extend(sky.cloud_fraction as f32)
-        });
+        let sunlight = LakeSunlight::for_condition(sky_condition);
+        let sun_cloud = Vec3::from_array(sunlight.direction.map(|value| value as f32))
+            .extend(condition.sky.map_or(0.0, |sky| sky.cloud_fraction as f32));
         let haze = LakeSceneHaze::try_new(condition.sky.map(|sky| sky.visibility_m))
             .map_err(|cause| format!("共有水面hazeを準備できない: {cause:?}"))?;
-        let daylight = f32::from(
-            condition
-                .sky
-                .is_some_and(|sky| sky.sun_elevation_degrees >= 0.0),
-        );
+        let daylight = f32::from(sunlight.daylight);
         let mut displacement_bounds = Vec2::ZERO;
         for quality in WaterQuality::ALL {
             let projection = LakeWaveProjection::try_new(visual_condition, quality)
@@ -206,6 +203,10 @@ impl WaterMaterial {
         };
         material.apply_profile(WaterQuality::High)?;
         Ok(material)
+    }
+
+    pub(crate) fn sunlight_enabled(&self) -> bool {
+        self.haze_parameters.z > 0.0
     }
 
     pub(crate) fn far_surface(&self) -> Self {
@@ -746,10 +747,7 @@ pub(crate) fn apply_environment(
             images.remove(image);
         }
         *transform = sunlight;
-        light.illuminance = if condition
-            .sky
-            .is_some_and(|sky| sky.sun_elevation_degrees >= 0.0)
-        {
+        light.illuminance = if prepared[EnvironmentSurface::Sky.index()].haze_parameters.z > 0.0 {
             super::world::SCENE_SUN_ILLUMINANCE_LUX
         } else {
             0.0
@@ -1475,7 +1473,7 @@ mod tests {
             .into_iter()
             .zip(environment_materials(&mut app))
         {
-            assert_eq!(material.sun_cloud, Vec4::ZERO);
+            assert_eq!(material.sun_cloud, Vec4::new(0.0, 1.0, 0.0, 0.0));
             assert_eq!(material.waves_sky.truncate(), high.waves_sky.truncate());
             assert_eq!(
                 material.waves_sky.w,
@@ -1562,7 +1560,7 @@ mod tests {
             {
                 assert_eq!(material.camera_time, before[role.index()].camera_time);
                 assert_eq!(material.geometry_patch, before[role.index()].geometry_patch);
-                assert_eq!(material.sun_cloud, Vec4::ZERO);
+                assert_eq!(material.sun_cloud, Vec4::new(0.0, 1.0, 0.0, 0.0));
                 assert_eq!(material.waves_sky, before[role.index()].waves_sky);
                 assert_eq!(material.water_palette, before[role.index()].water_palette);
                 assert_eq!(
@@ -1974,7 +1972,10 @@ mod tests {
             WaterQuality::Low
         );
         assert_eq!(environment_light(&mut app), (0.0, Transform::IDENTITY));
-        assert_eq!(environment_materials(&mut app)[0].sun_cloud, Vec4::ZERO);
+        assert_eq!(
+            environment_materials(&mut app)[0].sun_cloud,
+            Vec4::new(0.0, 1.0, 0.0, 0.0)
+        );
         assert!(!shared_ui_text(&mut app).contains("以前の表示を保持する"));
         assert!(platform_input(app.world_mut()).notification.is_empty());
     }
@@ -2770,7 +2771,7 @@ mod tests {
             missing.haze_parameters,
             Vec4::new(14_000.0, 80_000.0, 0.0, 0.0)
         );
-        assert_eq!(missing.sun_cloud, Vec4::ZERO);
+        assert_eq!(missing.sun_cloud, Vec4::new(0.0, 1.0, 0.0, 0.0));
         condition.sky = Some(sky);
         for visibility in [
             0.0,

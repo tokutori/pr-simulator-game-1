@@ -3,20 +3,20 @@
  * Equivalent panel poses for a scene root or a camera-tracking parent.
  */
 export interface XrPanelCameraPoses {
-    readonly trackingFromPanel: XrPose;
-    readonly worldFromPanel: XrPose1;
+    readonly trackingFromPanel: Pose;
+    readonly worldFromPanel: Pose1;
 }
 /**
  * Panel-local to runtime tracking-parent transform.
  */
-export interface XrPose {
-    readonly orientation: XrQuaternion;
-    readonly position: XrVector;
+export interface Pose {
+    readonly orientation: Quaternion;
+    readonly position: Vector3;
 }
 /**
  * Child-to-parent orientation.
  */
-export interface XrQuaternion {
+export interface Quaternion {
     /**
      * Scalar component.
      */
@@ -37,7 +37,7 @@ export interface XrQuaternion {
 /**
  * Child origin expressed in parent coordinates, in metres.
  */
-export interface XrVector {
+export interface Vector3 {
     /**
      * Rightward coordinate in metres.
      */
@@ -54,7 +54,7 @@ export interface XrVector {
 /**
  * Panel-local to render-world transform.
  */
-export interface XrPose1 {
-    readonly orientation: XrQuaternion;
-    readonly position: XrVector;
+export interface Pose1 {
+    readonly orientation: Quaternion;
+    readonly position: Vector3;
 }

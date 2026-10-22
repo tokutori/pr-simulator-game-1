@@ -3,13 +3,13 @@
  * One measured vertical glyph segment in its drawing surface's local metres.
  */
 export interface XrInkSegment {
-    readonly end: XrVector;
-    readonly start: XrVector1;
+    readonly end: Vector3;
+    readonly start: Vector31;
 }
 /**
  * Opposite glyph boundary.
  */
-export interface XrVector {
+export interface Vector3 {
     /**
      * Rightward coordinate in metres.
      */
@@ -26,7 +26,7 @@ export interface XrVector {
 /**
  * First glyph boundary.
  */
-export interface XrVector1 {
+export interface Vector31 {
     /**
      * Rightward coordinate in metres.
      */

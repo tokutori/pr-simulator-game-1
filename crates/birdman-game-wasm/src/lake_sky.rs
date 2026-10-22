@@ -1,5 +1,6 @@
 use birdman_game_scene::lake_sky::{
-    LAKE_SCENE_LIGHTING, LakeSceneHaze, LakeSkyImage, LakeSkyRenderCondition, generate_lake_sky,
+    LAKE_SCENE_LIGHTING, LakeSceneHaze, LakeSkyImage, LakeSkyRenderCondition, LakeSunlight,
+    generate_lake_sky,
 };
 use wasm_bindgen::prelude::*;
 
@@ -86,4 +87,31 @@ impl LakeSkyImageBridge {
     pub fn height(&self) -> u32 {
         self.image.height()
     }
+}
+
+/// Copies the shared sun direction and daylight flag in render coordinates.
+#[wasm_bindgen]
+pub fn lake_scene_sunlight(
+    azimuth: Option<f64>,
+    elevation: Option<f64>,
+) -> Result<Vec<f64>, JsValue> {
+    let condition = match (azimuth, elevation) {
+        (None, None) => None,
+        (Some(azimuth), Some(elevation)) => Some(
+            LakeSkyRenderCondition::try_new(azimuth, elevation, 0.0, 80_000.0)
+                .map_err(|cause| JsValue::from_str(&format!("lake sunlight: {cause:?}")))?,
+        ),
+        _ => {
+            return Err(JsValue::from_str(
+                "Sunlight requires both azimuth and elevation",
+            ));
+        }
+    };
+    let sunlight = LakeSunlight::for_condition(condition);
+    Ok(vec![
+        sunlight.direction[0],
+        sunlight.direction[1],
+        sunlight.direction[2],
+        f64::from(sunlight.daylight),
+    ])
 }

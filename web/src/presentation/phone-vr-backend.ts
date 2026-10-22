@@ -8,7 +8,7 @@ import type { BackendFrame, MenuPresentation, PresentationBackendAdapter, Render
 import { NO_HEAD_HUD, resolveHeadHudFrame } from "../render/contracts/head-hud.js";
 import type { ViewerFrame } from "../render/contracts/viewer-frame.js";
 import type { UiActionDispatcher, UiViewModel } from "../render/contracts/ui.js";
-import { xrReferenceChange } from "../render/camera/xr-spatial.js";
+import { xrReferenceChange } from "../render/camera/spatial.js";
 import { XrSpatialSession } from "./xr-spatial-session.js";
 import { GazeDwellSelector } from "./gaze-dwell.js";
 import { intersectPanel } from "./panel-interaction.js";

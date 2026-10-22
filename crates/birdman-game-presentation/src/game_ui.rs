@@ -40,8 +40,8 @@ pub fn export_game_ui_schema(name: &str) -> Result<String, String> {
     output.subschema_for::<crate::xr::XrMenuViewFit>();
     output.subschema_for::<crate::xr::XrInkFit>();
     output.subschema_for::<crate::xr::XrCameraRig>();
-    output.subschema_for::<crate::xr::XrPilotEyePose>();
-    output.subschema_for::<crate::xr::XrFrdPose>();
+    output.subschema_for::<crate::camera::PilotEyePose>();
+    output.subschema_for::<crate::camera::FrdPose>();
     output.subschema_for::<crate::xr::XrPanelPlacement>();
     output.subschema_for::<crate::xr::XrPanelCameraPoses>();
     output.subschema_for::<crate::xr::XrReferenceFrame>();

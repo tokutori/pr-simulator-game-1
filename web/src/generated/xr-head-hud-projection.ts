@@ -15,7 +15,7 @@ export type XrHeadHudProjection = {
      */
     readonly frameRateBounds: GameUiRect1 | null;
     readonly kind: "visible";
-    readonly localPose: XrPose;
+    readonly localPose: Pose;
     /**
      * Every unchanged shared source node in its original order.
      */
@@ -80,14 +80,14 @@ export interface GameUiRect1 {
 /**
  * Head-to-HUD transform in metres.
  */
-export interface XrPose {
-    readonly orientation: XrQuaternion;
-    readonly position: XrVector;
+export interface Pose {
+    readonly orientation: Quaternion;
+    readonly position: Vector3;
 }
 /**
  * Child-to-parent orientation.
  */
-export interface XrQuaternion {
+export interface Quaternion {
     /**
      * Scalar component.
      */
@@ -108,7 +108,7 @@ export interface XrQuaternion {
 /**
  * Child origin expressed in parent coordinates, in metres.
  */
-export interface XrVector {
+export interface Vector3 {
     /**
      * Rightward coordinate in metres.
      */

@@ -11,7 +11,7 @@ export type XrViewerFrame = {
     /**
      * Valid centre tracking, if separately available.
      */
-    readonly trackingFromHead: XrPose | null;
+    readonly trackingFromHead: Pose | null;
 } | {
     /**
      * Left and right eye geometry, in that order.
@@ -40,19 +40,19 @@ export type XrViewerFrame = {
         XrEyeGeometry
     ];
     readonly source: "runtime-derived";
-    readonly trackingFromHead: XrPose2;
+    readonly trackingFromHead: Pose2;
 };
 /**
  * Rigid child-to-parent transform; the caller names both reference spaces.
  */
-export interface XrPose {
-    readonly orientation: XrQuaternion;
-    readonly position: XrVector;
+export interface Pose {
+    readonly orientation: Quaternion;
+    readonly position: Vector3;
 }
 /**
  * Child-to-parent orientation.
  */
-export interface XrQuaternion {
+export interface Quaternion {
     /**
      * Scalar component.
      */
@@ -73,7 +73,7 @@ export interface XrQuaternion {
 /**
  * Child origin expressed in parent coordinates, in metres.
  */
-export interface XrVector {
+export interface Vector3 {
     /**
      * Rightward coordinate in metres.
      */
@@ -99,7 +99,7 @@ export interface XrEyeGeometry {
      * Primary eye identity.
      */
     readonly eye: "left" | "right";
-    readonly headFromEye: XrPose1;
+    readonly headFromEye: Pose1;
     /**
      * Unmodified column-major 4-by-4 projection matrix.
      *
@@ -128,14 +128,14 @@ export interface XrEyeGeometry {
 /**
  * Rigid child-to-parent transform; the caller names both reference spaces.
  */
-export interface XrPose1 {
-    readonly orientation: XrQuaternion;
-    readonly position: XrVector;
+export interface Pose1 {
+    readonly orientation: Quaternion;
+    readonly position: Vector3;
 }
 /**
  * Rigid child-to-parent transform; the caller names both reference spaces.
  */
-export interface XrPose2 {
-    readonly orientation: XrQuaternion;
-    readonly position: XrVector;
+export interface Pose2 {
+    readonly orientation: Quaternion;
+    readonly position: Vector3;
 }

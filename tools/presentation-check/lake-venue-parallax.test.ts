@@ -5,10 +5,10 @@ import terrain from "../../assets/biwa-terrain.json";
 import { recordedCameraFixture } from "./recorded-camera-fixture.js";
 import { currentFlightPoseFixture } from "../game-check/current-session-fixture.js";
 import "./lake-model-fixture.js";
-import { pilotEyePoseRender, registeredPilotEyePoint } from "../../web/src/render/camera/xr-spatial.js";
+import { pilotEyePoseRender, registeredPilotEyePoint } from "../../web/src/render/camera/spatial.js";
 import { IDENTITY_POSE, composePose, multiplyQuaternion, quaternion } from "../../web/src/render/contracts/math.js";
 import type { FlightRenderPose } from "../../web/src/render/contracts/runtime.js";
-import { flightRelativePose } from "../../web/src/render/camera/xr-spatial.js";
+import { flightRelativePose } from "../../web/src/render/camera/spatial.js";
 
 interface Grid {
   readonly columns: number;

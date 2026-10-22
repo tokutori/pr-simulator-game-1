@@ -1,6 +1,7 @@
 //! Batch JSON entry point for direct-Rust and actual-WASM optical comparisons.
 
 use birdman_game_presentation::{
+    camera::{compose_pose, inverse_pose},
     game_ui::{GameUiAnchor, GameUiHud},
     xr::*,
 };
@@ -13,9 +14,9 @@ struct Observation {
     viewer: XrViewerFrame,
     hud: Option<GameUiHud>,
     profile: XrHeadHudProfile,
-    panel_pose: XrPose,
+    panel_pose: Pose,
     panel_size: [f64; 2],
-    head_from_surface: XrPose,
+    head_from_surface: Pose,
     ink: Vec<XrInkSegment>,
     spatial: SpatialObservation,
     interaction: PointerScenario,
@@ -38,10 +39,10 @@ struct PointerStep {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SpatialObservation {
-    aircraft: XrPose,
-    head: XrPose,
+    aircraft: Pose,
+    head: Pose,
     mounts: Vec<XrCameraMount>,
-    resets: Vec<XrPose>,
+    resets: Vec<Pose>,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -125,7 +126,7 @@ fn spatial_results(
                     XrAnchorFrames {
                         world: reference.world,
                         cockpit: reference.cockpit,
-                        menu: XrPose::IDENTITY,
+                        menu: Pose::IDENTITY,
                         head: reference.head,
                     },
                 )?;
@@ -141,8 +142,8 @@ fn spatial_results(
             let eyes: Vec<_> = eyes
                 .iter()
                 .map(|eye| {
-                    compose_xr_pose(
-                        compose_xr_pose(rig.world_from_tracking, head)?,
+                    compose_pose(
+                        compose_pose(rig.world_from_tracking, head)?,
                         eye.head_from_eye,
                     )
                 })
@@ -150,7 +151,7 @@ fn spatial_results(
             frames.push(serde_json::json!({ "rig": rig, "reference": reference, "menu": menu, "anchors": anchors, "eyes": eyes }));
             if let Some(change) = observation.spatial.resets.get(step) {
                 origin.reset_reference(*change)?;
-                head = compose_xr_pose(inverse_xr_pose(*change)?, head)?;
+                head = compose_pose(inverse_pose(*change)?, head)?;
             }
         }
         output.push(frames);

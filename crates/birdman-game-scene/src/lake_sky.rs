@@ -60,6 +60,39 @@ impl LakeSceneHaze {
     }
 }
 
+/// Shared direction and daylight state for sky radiance, water and scene lighting.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LakeSunlight {
+    /// Unit direction toward the sun in render East/Up/negative-North axes.
+    pub direction: [f64; 3],
+    /// Enables sunlight at and above the horizon.
+    pub daylight: bool,
+}
+
+impl LakeSunlight {
+    /// Projects validated sky metadata, with the neutral sky pointing upward.
+    pub fn for_condition(condition: Option<LakeSkyRenderCondition>) -> Self {
+        condition.map_or(
+            Self {
+                direction: [0.0, 1.0, 0.0],
+                daylight: false,
+            },
+            |sky| {
+                let azimuth = sky.sun_azimuth_degrees.to_radians();
+                let elevation = sky.sun_elevation_degrees.to_radians();
+                Self {
+                    direction: [
+                        elevation.cos() * azimuth.sin(),
+                        elevation.sin(),
+                        -elevation.cos() * azimuth.cos(),
+                    ],
+                    daylight: sky.sun_elevation_degrees >= 0.0,
+                }
+            },
+        )
+    }
+}
+
 /// Horizontal resolution of the Web reference panorama.
 pub const LAKE_SKY_IMAGE_WIDTH: u32 = 1024;
 /// Vertical resolution of the Web reference panorama.
@@ -304,18 +337,9 @@ fn clear_sky_pixel(longitude: f64, latitude: f64, sun: [f64; 3], daylight: f64) 
 
 /// Generates the shared opaque sky and distant cloud panorama.
 pub fn generate_lake_sky(condition: Option<LakeSkyRenderCondition>) -> LakeSkyImage {
-    let (sun, daylight) = condition.map_or(([0.0, 1.0, 0.0], 0.0), |sky| {
-        let azimuth = sky.sun_azimuth_degrees.to_radians();
-        let elevation = sky.sun_elevation_degrees.to_radians();
-        (
-            [
-                elevation.cos() * azimuth.sin(),
-                elevation.sin(),
-                -elevation.cos() * azimuth.cos(),
-            ],
-            f64::from(sky.sun_elevation_degrees >= 0.0),
-        )
-    });
+    let sunlight = LakeSunlight::for_condition(condition);
+    let sun = sunlight.direction;
+    let daylight = f64::from(sunlight.daylight);
     let fraction = condition.map_or(0.0, |sky| sky.cloud_fraction);
     let mut rgba = Vec::with_capacity((LAKE_SKY_IMAGE_WIDTH * LAKE_SKY_IMAGE_HEIGHT * 4) as usize);
     for row in 0..LAKE_SKY_IMAGE_HEIGHT {
@@ -335,6 +359,33 @@ pub fn generate_lake_sky(condition: Option<LakeSkyRenderCondition>) -> LakeSkyIm
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sunlight_uses_render_axes_and_the_horizon_daylight_boundary() {
+        for (azimuth, elevation, direction) in [
+            (0.0, 0.0, [0.0, 0.0, -1.0]),
+            (90.0, 0.0, [1.0, 0.0, 0.0]),
+            (180.0, 0.0, [0.0, 0.0, 1.0]),
+            (270.0, 0.0, [-1.0, 0.0, 0.0]),
+            (135.0, 90.0, [0.0, 1.0, 0.0]),
+        ] {
+            let sky = LakeSkyRenderCondition::try_new(azimuth, elevation, 0.5, 25_000.0).unwrap();
+            let sunlight = LakeSunlight::for_condition(Some(sky));
+            assert!(sunlight.daylight);
+            for (actual, expected) in sunlight.direction.into_iter().zip(direction) {
+                assert!((actual - expected).abs() < 1.0e-14);
+            }
+        }
+        let night = LakeSkyRenderCondition::try_new(135.0, -0.1, 0.5, 25_000.0).unwrap();
+        assert!(!LakeSunlight::for_condition(Some(night)).daylight);
+        assert_eq!(
+            LakeSunlight::for_condition(None),
+            LakeSunlight {
+                direction: [0.0, 1.0, 0.0],
+                daylight: false
+            }
+        );
+    }
 
     #[test]
     fn scene_haze_retains_registered_and_unrecorded_web_bounds() {

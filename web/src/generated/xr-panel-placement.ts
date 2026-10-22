@@ -12,19 +12,19 @@ export type XrPanelPlacement = {
     readonly reason: "not-stereo" | "viewer-unavailable" | "unsupported-view-configuration" | "invalid-view-geometry" | "insufficient-view-area";
 } | {
     readonly kind: "ready";
-    readonly referenceFromPanel: XrPose;
+    readonly referenceFromPanel: Pose;
 };
 /**
  * Panel-local to presentation-reference pose.
  */
-export interface XrPose {
-    readonly orientation: XrQuaternion;
-    readonly position: XrVector;
+export interface Pose {
+    readonly orientation: Quaternion;
+    readonly position: Vector3;
 }
 /**
  * Child-to-parent orientation.
  */
-export interface XrQuaternion {
+export interface Quaternion {
     /**
      * Scalar component.
      */
@@ -45,7 +45,7 @@ export interface XrQuaternion {
 /**
  * Child origin expressed in parent coordinates, in metres.
  */
-export interface XrVector {
+export interface Vector3 {
     /**
      * Rightward coordinate in metres.
      */

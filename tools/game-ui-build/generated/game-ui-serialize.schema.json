@@ -1874,6 +1874,37 @@
       ],
       "type": "object"
     },
+    "FrdPose": {
+      "additionalProperties": false,
+      "description": "Pose in aircraft FRD coordinates, before the render-axis conversion.",
+      "properties": {
+        "orientationFrdWxyz": {
+          "description": "Scalar-first orientation in the FRD basis.",
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 4,
+          "minItems": 4,
+          "type": "array"
+        },
+        "positionFrdM": {
+          "description": "Forward/right/down position in metres.",
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        }
+      },
+      "required": [
+        "positionFrdM",
+        "orientationFrdWxyz"
+      ],
+      "type": "object"
+    },
     "GameUiAction": {
       "description": "UI message whose handling is shared by native and browser adapters.",
       "oneOf": [
@@ -5244,6 +5275,25 @@
         }
       ]
     },
+    "PilotEyePose": {
+      "additionalProperties": false,
+      "description": "Pilot eye before and after conversion into render right/up/back axes.",
+      "properties": {
+        "frd": {
+          "$ref": "#/$defs/FrdPose",
+          "description": "Physical aircraft FRD pose."
+        },
+        "render": {
+          "$ref": "#/$defs/Pose",
+          "description": "Equivalent render-local pose."
+        }
+      },
+      "required": [
+        "frd",
+        "render"
+      ],
+      "type": "object"
+    },
     "PlaybackContext": {
       "additionalProperties": false,
       "description": "Metadata of the exact record selected by the application owner.",
@@ -5320,6 +5370,58 @@
           "type": "object"
         }
       ]
+    },
+    "Pose": {
+      "additionalProperties": false,
+      "description": "Rigid child-to-parent transform; the caller names both reference spaces.",
+      "properties": {
+        "orientation": {
+          "$ref": "#/$defs/Quaternion",
+          "description": "Child-to-parent orientation."
+        },
+        "position": {
+          "$ref": "#/$defs/Vector3",
+          "description": "Child origin expressed in parent coordinates, in metres."
+        }
+      },
+      "required": [
+        "position",
+        "orientation"
+      ],
+      "type": "object"
+    },
+    "Quaternion": {
+      "additionalProperties": false,
+      "description": "Scalar-first unit quaternion in a right-handed reference space.",
+      "properties": {
+        "w": {
+          "description": "Scalar component.",
+          "format": "double",
+          "type": "number"
+        },
+        "x": {
+          "description": "Right-axis component.",
+          "format": "double",
+          "type": "number"
+        },
+        "y": {
+          "description": "Up-axis component.",
+          "format": "double",
+          "type": "number"
+        },
+        "z": {
+          "description": "Back-axis component.",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "w",
+        "x",
+        "y",
+        "z"
+      ],
+      "type": "object"
     },
     "RecordCommand": {
       "description": "Canonical operations on the retained record and its existing playback clock.",
@@ -7472,6 +7574,33 @@
         }
       ]
     },
+    "Vector3": {
+      "additionalProperties": false,
+      "description": "Metric right/up/back coordinates in the explicitly named reference space.",
+      "properties": {
+        "x": {
+          "description": "Rightward coordinate in metres.",
+          "format": "double",
+          "type": "number"
+        },
+        "y": {
+          "description": "Upward coordinate in metres.",
+          "format": "double",
+          "type": "number"
+        },
+        "z": {
+          "description": "Backward coordinate in metres.",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "z"
+      ],
+      "type": "object"
+    },
     "WaterQuality": {
       "description": "Shared non-physical water-detail selection.",
       "oneOf": [
@@ -7803,7 +7932,7 @@
       "description": "Equivalent scene-graph and logical-reference transforms for one camera mount.",
       "properties": {
         "aircraftFromTracking": {
-          "$ref": "#/$defs/XrPose",
+          "$ref": "#/$defs/Pose",
           "description": "Tracking origin as a child of the displayed aircraft."
         },
         "basis": {
@@ -7811,23 +7940,23 @@
           "description": "Logical basis identity for retained panel coordinates."
         },
         "referenceFromCockpit": {
-          "$ref": "#/$defs/XrPose",
+          "$ref": "#/$defs/Pose",
           "description": "Physical aircraft origin in the logical reference."
         },
         "referenceFromTracking": {
-          "$ref": "#/$defs/XrPose",
+          "$ref": "#/$defs/Pose",
           "description": "Runtime tracking coordinates in the backend's logical panel reference."
         },
         "referenceFromWorld": {
-          "$ref": "#/$defs/XrPose",
+          "$ref": "#/$defs/Pose",
           "description": "Geographical world origin in the logical reference."
         },
         "worldFromReference": {
-          "$ref": "#/$defs/XrPose",
+          "$ref": "#/$defs/Pose",
           "description": "Logical panel-reference coordinates in render world."
         },
         "worldFromTracking": {
-          "$ref": "#/$defs/XrPose",
+          "$ref": "#/$defs/Pose",
           "description": "Runtime tracking coordinates in render world."
         }
       },
@@ -7885,7 +8014,7 @@
           "description": "Primary eye identity."
         },
         "headFromEye": {
-          "$ref": "#/$defs/XrPose",
+          "$ref": "#/$defs/Pose",
           "description": "Eye-to-centre-head transform in metres."
         },
         "projection": {
@@ -7973,37 +8102,6 @@
         "centerY",
         "width",
         "height"
-      ],
-      "type": "object"
-    },
-    "XrFrdPose": {
-      "additionalProperties": false,
-      "description": "Pose in aircraft FRD coordinates, before the render-axis conversion.",
-      "properties": {
-        "orientationFrdWxyz": {
-          "description": "Scalar-first orientation in the FRD basis.",
-          "items": {
-            "format": "double",
-            "type": "number"
-          },
-          "maxItems": 4,
-          "minItems": 4,
-          "type": "array"
-        },
-        "positionFrdM": {
-          "description": "Forward/right/down position in metres.",
-          "items": {
-            "format": "double",
-            "type": "number"
-          },
-          "maxItems": 3,
-          "minItems": 3,
-          "type": "array"
-        }
-      },
-      "required": [
-        "positionFrdM",
-        "orientationFrdWxyz"
       ],
       "type": "object"
     },
@@ -8120,7 +8218,7 @@
               "type": "string"
             },
             "localPose": {
-              "$ref": "#/$defs/XrPose",
+              "$ref": "#/$defs/Pose",
               "description": "Head-to-HUD transform in metres."
             },
             "nodes": {
@@ -8244,7 +8342,7 @@
               "type": "number"
             },
             "headFromMenu": {
-              "$ref": "#/$defs/XrPose",
+              "$ref": "#/$defs/Pose",
               "description": "Menu-anchor-to-head transform."
             },
             "kind": {
@@ -8285,11 +8383,11 @@
       "description": "Equivalent panel poses for a scene root or a camera-tracking parent.",
       "properties": {
         "trackingFromPanel": {
-          "$ref": "#/$defs/XrPose",
+          "$ref": "#/$defs/Pose",
           "description": "Panel-local to runtime tracking-parent transform."
         },
         "worldFromPanel": {
-          "$ref": "#/$defs/XrPose",
+          "$ref": "#/$defs/Pose",
           "description": "Panel-local to render-world transform."
         }
       },
@@ -8344,7 +8442,7 @@
               "type": "string"
             },
             "referenceFromPanel": {
-              "$ref": "#/$defs/XrPose",
+              "$ref": "#/$defs/Pose",
               "description": "Panel-local to presentation-reference pose."
             }
           },
@@ -8355,25 +8453,6 @@
           "type": "object"
         }
       ]
-    },
-    "XrPilotEyePose": {
-      "additionalProperties": false,
-      "description": "Pilot eye before and after conversion into render right/up/back axes.",
-      "properties": {
-        "frd": {
-          "$ref": "#/$defs/XrFrdPose",
-          "description": "Physical aircraft FRD pose."
-        },
-        "render": {
-          "$ref": "#/$defs/XrPose",
-          "description": "Equivalent render-local pose."
-        }
-      },
-      "required": [
-        "frd",
-        "render"
-      ],
-      "type": "object"
     },
     "XrPointerHit": {
       "description": "Visible metric cursor and its typed target.",
@@ -8545,58 +8624,6 @@
         }
       ]
     },
-    "XrPose": {
-      "additionalProperties": false,
-      "description": "Rigid child-to-parent transform; the caller names both reference spaces.",
-      "properties": {
-        "orientation": {
-          "$ref": "#/$defs/XrQuaternion",
-          "description": "Child-to-parent orientation."
-        },
-        "position": {
-          "$ref": "#/$defs/XrVector",
-          "description": "Child origin expressed in parent coordinates, in metres."
-        }
-      },
-      "required": [
-        "position",
-        "orientation"
-      ],
-      "type": "object"
-    },
-    "XrQuaternion": {
-      "additionalProperties": false,
-      "description": "Scalar-first unit quaternion in a right-handed reference space.",
-      "properties": {
-        "w": {
-          "description": "Scalar component.",
-          "format": "double",
-          "type": "number"
-        },
-        "x": {
-          "description": "Right-axis component.",
-          "format": "double",
-          "type": "number"
-        },
-        "y": {
-          "description": "Up-axis component.",
-          "format": "double",
-          "type": "number"
-        },
-        "z": {
-          "description": "Back-axis component.",
-          "format": "double",
-          "type": "number"
-        }
-      },
-      "required": [
-        "w",
-        "x",
-        "y",
-        "z"
-      ],
-      "type": "object"
-    },
     "XrReferenceBasis": {
       "description": "Logical reference basis; changes invalidate retained menu coordinates.",
       "oneOf": [
@@ -8626,15 +8653,15 @@
           "description": "Logical basis identity independent of its moving pose."
         },
         "cockpit": {
-          "$ref": "#/$defs/XrPose",
+          "$ref": "#/$defs/Pose",
           "description": "Aircraft origin."
         },
         "head": {
-          "$ref": "#/$defs/XrPose",
+          "$ref": "#/$defs/Pose",
           "description": "Mounted runtime head."
         },
         "world": {
-          "$ref": "#/$defs/XrPose",
+          "$ref": "#/$defs/Pose",
           "description": "Geographical render-world origin."
         }
       },
@@ -8643,33 +8670,6 @@
         "world",
         "cockpit",
         "head"
-      ],
-      "type": "object"
-    },
-    "XrVector": {
-      "additionalProperties": false,
-      "description": "Metric right/up/back coordinates in the explicitly named reference space.",
-      "properties": {
-        "x": {
-          "description": "Rightward coordinate in metres.",
-          "format": "double",
-          "type": "number"
-        },
-        "y": {
-          "description": "Upward coordinate in metres.",
-          "format": "double",
-          "type": "number"
-        },
-        "z": {
-          "description": "Backward coordinate in metres.",
-          "format": "double",
-          "type": "number"
-        }
-      },
-      "required": [
-        "x",
-        "y",
-        "z"
       ],
       "type": "object"
     },
@@ -8691,7 +8691,7 @@
             "trackingFromHead": {
               "anyOf": [
                 {
-                  "$ref": "#/$defs/XrPose"
+                  "$ref": "#/$defs/Pose"
                 },
                 {
                   "type": "null"
@@ -8754,7 +8754,7 @@
               "type": "string"
             },
             "trackingFromHead": {
-              "$ref": "#/$defs/XrPose",
+              "$ref": "#/$defs/Pose",
               "description": "Tracked centre-head pose in the runtime reference space."
             }
           },

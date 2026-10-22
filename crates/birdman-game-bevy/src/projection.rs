@@ -1,10 +1,13 @@
 #[cfg(feature = "verify-harness")]
 use bevy::ecs as bevy_ecs;
 use bevy::prelude::*;
-#[cfg(any(test, feature = "verify-harness"))]
+#[cfg(test)]
 use birdman_game_core::{FlightState, UnitQuaternion};
+use birdman_game_presentation::{
+    camera::{CameraError, Pose, flight_camera_pose},
+    render_pose::FlightRenderPose,
+};
 use birdman_game_presentation::{game_ui::GameUiReplayCamera, replay_camera::ReplayCameraView};
-use birdman_game_scene::cockpit_geometry::CockpitGeometry;
 
 #[cfg(feature = "verify-harness")]
 #[derive(Resource)]
@@ -18,21 +21,11 @@ pub(crate) fn ned_to_engine(components: [f64; 3]) -> Vec3 {
     )
 }
 
-pub(crate) fn sky_sun_direction(azimuth_degrees: f64, elevation_degrees: f64) -> Vec3 {
-    let azimuth = azimuth_degrees.to_radians();
-    let elevation = elevation_degrees.to_radians();
-    ned_to_engine([
-        elevation.cos() * azimuth.cos(),
-        elevation.cos() * azimuth.sin(),
-        -elevation.sin(),
-    ])
-}
-
 pub(crate) fn sunlight_transform(sun_direction: Vec3) -> Transform {
     Transform::IDENTITY.looking_to(-sun_direction, Vec3::Y)
 }
 
-#[cfg(any(test, feature = "verify-harness"))]
+#[cfg(test)]
 pub(crate) fn attitude_to_engine(attitude: UnitQuaternion) -> Quat {
     orientation_to_engine(attitude.components())
 }
@@ -59,51 +52,42 @@ pub(crate) fn render_aircraft_transform(
     ]))
 }
 
-#[cfg(any(test, feature = "verify-harness"))]
+#[cfg(test)]
 pub(crate) fn aircraft_transform(state: FlightState) -> Transform {
     Transform::from_translation(ned_to_engine(state.datum_position_ned().components()))
         .with_rotation(attitude_to_engine(state.attitude_body_to_ned()))
 }
 
-pub(crate) fn pilot_eye(
-    aircraft: Transform,
-    pilot_position_m: f64,
-    initial_position_m: f64,
-) -> Vec3 {
-    let [forward, right, down] = CockpitGeometry::pilot_eye_offset_frd();
-    let offset = ned_to_engine([forward + pilot_position_m - initial_position_m, right, down]);
-    aircraft.transform_point(offset)
+fn camera_pose_transform(pose: Pose) -> Transform {
+    Transform::from_translation(Vec3::new(
+        pose.position.x as f32,
+        pose.position.y as f32,
+        pose.position.z as f32,
+    ))
+    .with_rotation(Quat::from_xyzw(
+        pose.orientation.x as f32,
+        pose.orientation.y as f32,
+        pose.orientation.z as f32,
+        pose.orientation.w as f32,
+    ))
 }
 
 pub(crate) fn camera_transform(
-    aircraft: Transform,
-    pilot_position_m: f64,
-    initial_position_m: f64,
+    pose: &FlightRenderPose,
     chase: bool,
     look: Vec2,
-) -> Transform {
-    if chase {
-        let offset = ned_to_engine([-12.0, 0.0, -4.0]);
-        Transform::from_translation(aircraft.transform_point(offset))
-            .looking_at(aircraft.translation, aircraft.rotation * Vec3::Y)
-    } else {
-        Transform::from_translation(pilot_eye(aircraft, pilot_position_m, initial_position_m))
-            .with_rotation(
-                aircraft.rotation * Quat::from_rotation_y(look.x) * Quat::from_rotation_x(look.y),
-            )
-    }
+) -> Result<Transform, CameraError> {
+    flight_camera_pose(pose, chase, [f64::from(look.x), f64::from(look.y)])
+        .map(camera_pose_transform)
 }
 
 pub(crate) fn replay_camera_transform(
     view: &ReplayCameraView,
-    aircraft: Transform,
-    pilot_position_m: f64,
-    initial_position_m: f64,
     look: Vec2,
-) -> Transform {
+) -> Result<Transform, CameraError> {
     if let Some(cinematic) = view.cinematic() {
         let [scalar, first, second, third] = cinematic.orientation_wxyz();
-        Transform::from_translation(Vec3::from_array(
+        Ok(Transform::from_translation(Vec3::from_array(
             cinematic.position_m().map(|value| value as f32),
         ))
         .with_rotation(Quat::from_xyzw(
@@ -111,12 +95,10 @@ pub(crate) fn replay_camera_transform(
             second as f32,
             third as f32,
             scalar as f32,
-        ))
+        )))
     } else {
         camera_transform(
-            aircraft,
-            pilot_position_m,
-            initial_position_m,
+            &view.render_pose(),
             view.camera() != GameUiReplayCamera::Pilot,
             look,
         )
@@ -128,24 +110,43 @@ mod tests {
     use super::*;
     use birdman_game_core::{BodyVector, NedPoint, NedVector};
 
-    #[test]
-    fn solar_azimuth_is_clockwise_from_north_and_elevation_points_up() {
-        for (azimuth, elevation, expected) in [
-            (0.0, 0.0, Vec3::NEG_Z),
-            (90.0, 0.0, Vec3::X),
-            (180.0, 0.0, Vec3::Z),
-            (270.0, 0.0, Vec3::NEG_X),
-            (135.0, 90.0, Vec3::Y),
-            (
-                135.0,
-                55.0,
-                Vec3::new(0.405_579_78, 0.819_152_06, 0.405_579_78),
-            ),
-        ] {
-            let direction = sky_sun_direction(azimuth, elevation);
-            assert!(direction.distance(expected) < 1.0e-6);
-            assert!((direction.length() - 1.0).abs() < 1.0e-6);
-        }
+    fn render_pose_fixture(aircraft: Transform, pilot: f64, initial: f64) -> FlightRenderPose {
+        use birdman_game_presentation::render_pose::{
+            RenderGeometryUnavailable, RenderTailGeometry, flight_render_pose,
+        };
+        let basis = Quat::from_xyzw(0.5, 0.5, -0.5, 0.5);
+        let attitude = basis.inverse() * aircraft.rotation * basis;
+        let state = FlightState::try_new(
+            NedPoint::try_new(
+                -f64::from(aircraft.translation.z),
+                f64::from(aircraft.translation.x),
+                -f64::from(aircraft.translation.y),
+            )
+            .unwrap(),
+            NedVector::zero(),
+            UnitQuaternion::try_new(
+                f64::from(attitude.w),
+                f64::from(attitude.x),
+                f64::from(attitude.y),
+                f64::from(attitude.z),
+            )
+            .unwrap(),
+            BodyVector::zero(),
+            pilot,
+            0.0,
+        )
+        .unwrap();
+        flight_render_pose(
+            state,
+            birdman_game_core::TailIncidence::try_new(0.0, 0.0).unwrap(),
+            initial,
+            0.0,
+            None,
+            RenderTailGeometry::Unavailable {
+                reason: RenderGeometryUnavailable::UnregisteredAircraftGeometry,
+            },
+            None,
+        )
     }
 
     #[test]
@@ -193,15 +194,6 @@ mod tests {
         let body = BodyVector::try_new(0.26, 0.0, 1.04).unwrap();
         let expected = ned_to_engine(physical.datum_position_ned().components())
             + ned_to_engine(attitude.body_to_ned(body).unwrap().components());
-        assert!(
-            pilot_eye(
-                aircraft_transform(physical),
-                physical.pilot_position_m(),
-                0.0
-            )
-            .distance(expected)
-                < 1.0e-5
-        );
         let forward = attitude_to_engine(attitude) * -Vec3::Z;
         assert!(
             forward.distance(ned_to_engine(
@@ -213,12 +205,15 @@ mod tests {
         );
         assert!(
             camera_transform(
-                aircraft_transform(physical),
-                physical.pilot_position_m(),
-                0.0,
+                &render_pose_fixture(
+                    aircraft_transform(physical),
+                    physical.pilot_position_m(),
+                    0.0
+                ),
                 false,
                 Vec2::ZERO
             )
+            .unwrap()
             .translation
             .distance(expected)
                 < 1.0e-5
@@ -246,10 +241,14 @@ mod tests {
         for fraction in [0.0, 0.5, 1.0] {
             let aircraft = Transform::from_xyz(10.0 + 0.1 * fraction, 4.0, -20.0)
                 .with_rotation(Quat::from_rotation_x(0.2));
-            let camera = camera_transform(aircraft, 0.2, 0.0, false, Vec2::ZERO);
-            assert_eq!(
-                camera.translation,
-                aircraft.transform_point(ned_to_engine([0.26, 0.0, 1.04]))
+            let camera =
+                camera_transform(&render_pose_fixture(aircraft, 0.2, 0.0), false, Vec2::ZERO)
+                    .unwrap();
+            assert!(
+                camera
+                    .translation
+                    .distance(aircraft.transform_point(ned_to_engine([0.26, 0.0, 1.04])))
+                    < 2.0e-6
             );
         }
     }
@@ -302,7 +301,12 @@ mod tests {
             for aspect in [9.0 / 16.0, 16.0 / 9.0] {
                 let aircraft = Transform::from_xyz(2.0, 10.0, -5.0)
                     .with_rotation(Quat::from_euler(EulerRot::YXZ, 0.4, -0.2, 0.1));
-                let camera = camera_transform(aircraft, current, initial, false, Vec2::ZERO);
+                let camera = camera_transform(
+                    &render_pose_fixture(aircraft, current, initial),
+                    false,
+                    Vec2::ZERO,
+                )
+                .unwrap();
                 assert!(camera.forward().distance(aircraft.forward().as_vec3()) < 1.0e-6);
                 let projection = PerspectiveProjection {
                     fov: birdman_game_presentation::SCREEN_VERTICAL_FIELD_OF_VIEW_DEGREES

@@ -4,25 +4,25 @@
  */
 export type XrCameraMount = {
     readonly kind: "stationary";
-    readonly worldFromTracking: XrPose;
+    readonly worldFromTracking: Pose;
 } | {
-    readonly aircraftFromTracking: XrPose1;
+    readonly aircraftFromTracking: Pose1;
     readonly kind: "aircraft";
 } | {
     readonly kind: "external";
-    readonly worldFromTracking: XrPose2;
+    readonly worldFromTracking: Pose2;
 };
 /**
  * Render-world camera base.
  */
-export interface XrPose {
-    readonly orientation: XrQuaternion;
-    readonly position: XrVector;
+export interface Pose {
+    readonly orientation: Quaternion;
+    readonly position: Vector3;
 }
 /**
  * Child-to-parent orientation.
  */
-export interface XrQuaternion {
+export interface Quaternion {
     /**
      * Scalar component.
      */
@@ -43,7 +43,7 @@ export interface XrQuaternion {
 /**
  * Child origin expressed in parent coordinates, in metres.
  */
-export interface XrVector {
+export interface Vector3 {
     /**
      * Rightward coordinate in metres.
      */
@@ -60,14 +60,14 @@ export interface XrVector {
 /**
  * Aircraft-to-tracking mount.
  */
-export interface XrPose1 {
-    readonly orientation: XrQuaternion;
-    readonly position: XrVector;
+export interface Pose1 {
+    readonly orientation: Quaternion;
+    readonly position: Vector3;
 }
 /**
  * Render-world camera base.
  */
-export interface XrPose2 {
-    readonly orientation: XrQuaternion;
-    readonly position: XrVector;
+export interface Pose2 {
+    readonly orientation: Quaternion;
+    readonly position: Vector3;
 }

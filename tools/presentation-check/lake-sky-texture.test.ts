@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { ClampToEdgeWrapping, EquirectangularReflectionMapping, LinearFilter,
   LinearMipmapLinearFilter, RepeatWrapping, SRGBColorSpace } from "three";
 import { LakeSkyImageBridge } from "../../web/pkg/birdman_game_wasm.js";
-import { createLakeSkyTexture, lakeSkyHaze } from "../../web/src/render/engines/three/lake-sky-texture.js";
+import { createLakeSkyTexture, lakeSkyHaze, lakeSkySunlight } from "../../web/src/render/engines/three/lake-sky-texture.js";
 
 const condition = { sunAzimuthDegrees: 135, sunElevationDegrees: 55, cloudFraction: 0.25, cloudBaseMeters: 1500, visibilityMeters: 25_000 };
 
@@ -14,6 +14,16 @@ function fingerprint(texture: ReturnType<typeof createLakeSkyTexture>): string {
 }
 
 describe("shared lake sky", () => {
+  it("transfers the shared sunlight vector and horizon state through WASM", () => {
+    const [east, up, back, daylight] = lakeSkySunlight(condition);
+    expect(east).toBeCloseTo(0.4055797877, 9);
+    expect(up).toBeCloseTo(0.8191520443, 9);
+    expect(back).toBeCloseTo(0.4055797877, 9);
+    expect(daylight).toBe(1);
+    expect(lakeSkySunlight(null)).toEqual([0, 1, 0, 0]);
+    expect(lakeSkySunlight({ ...condition, sunElevationDegrees: -0.1 })[3]).toBe(0);
+    expect(lakeSkySunlight({ ...condition, sunElevationDegrees: 0 })[3]).toBe(1);
+  });
   it("transfers shared haze bounds without replacing absent visibility with weather metadata", () => {
     expect(lakeSkyHaze(undefined)).toEqual([0x9aafb1, 14_000, 80_000]);
     expect(lakeSkyHaze(condition.visibilityMeters)).toEqual([0x9aafb1, 4_375, 25_000]);

@@ -5,7 +5,7 @@ import { XrPointerSession } from "../../web/src/presentation/xr-pointer-session.
 import type { UiAction } from "../../web/src/render/contracts/ui.js";
 import { initializeWasmFixture } from "../game-check/wasm-fixture.js";
 import { XrSpatialSession } from "../../web/src/presentation/xr-spatial-session.js";
-import { XrCameraOrigin, projectXrReferenceFrame } from "../../web/src/render/camera/xr-spatial.js";
+import { XrCameraOrigin, projectXrReferenceFrame } from "../../web/src/render/camera/spatial.js";
 import { composePose, IDENTITY_POSE, inversePose, pose, quaternion, vec3 } from "../../web/src/render/contracts/math.js";
 import type { Pose } from "../../web/src/render/contracts/math.js";
 import { headPlaneFitsViews, unavailableViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";

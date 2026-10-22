@@ -1,4 +1,5 @@
 use super::*;
+use crate::camera::*;
 
 fn viewer(depth: XrDepthRange) -> XrViewerFrame {
     let tangent = (60.0_f64.to_radians() / 2.0).tan();
@@ -33,13 +34,13 @@ fn viewer(depth: XrDepthRange) -> XrViewerFrame {
         eye,
         projection,
         depth_range: depth,
-        head_from_eye: XrPose {
-            position: XrVector {
+        head_from_eye: Pose {
+            position: Vector3 {
                 x: offset,
                 y: 0.0,
                 z: 0.0,
             },
-            ..XrPose::IDENTITY
+            ..Pose::IDENTITY
         },
     };
     XrViewerFrame::Configured {
@@ -48,14 +49,14 @@ fn viewer(depth: XrDepthRange) -> XrViewerFrame {
     }
 }
 
-fn plane(distance: f64) -> XrPose {
-    XrPose {
-        position: XrVector {
+fn plane(distance: f64) -> Pose {
+    Pose {
+        position: Vector3 {
             x: 0.0,
             y: 0.0,
             z: -distance,
         },
-        ..XrPose::IDENTITY
+        ..Pose::IDENTITY
     }
 }
 
@@ -67,7 +68,7 @@ fn projection_preserves_runtime_matrix_and_respects_both_depth_conventions() {
             unreachable!()
         };
         let source = eyes[0].projection;
-        let point = XrVector {
+        let point = Vector3 {
             x: 0.3,
             y: -0.2,
             z: -2.4,
@@ -96,7 +97,7 @@ fn menu_solver_fits_asymmetric_canted_views_and_physical_panel_offsets() {
         };
         for (index, eye) in eyes.iter_mut().enumerate() {
             let angle: f64 = if index == 0 { 0.07 } else { -0.04 };
-            eye.head_from_eye.orientation = XrQuaternion {
+            eye.head_from_eye.orientation = Quaternion {
                 w: (angle / 2.0).cos(),
                 x: 0.0,
                 y: (angle / 2.0).sin(),
@@ -104,13 +105,13 @@ fn menu_solver_fits_asymmetric_canted_views_and_physical_panel_offsets() {
             };
             eye.projection[8] = if index == 0 { 0.16 } else { -0.1 };
         }
-        let offset = XrPose {
-            position: XrVector {
+        let offset = Pose {
+            position: Vector3 {
                 x: 0.2,
                 y: -0.5,
                 z: 0.0,
             },
-            ..XrPose::IDENTITY
+            ..Pose::IDENTITY
         };
         let XrMenuViewFit::Ready {
             head_from_menu,
@@ -120,7 +121,7 @@ fn menu_solver_fits_asymmetric_canted_views_and_physical_panel_offsets() {
             panic!("Expected menu fit")
         };
         assert!(distance_meters >= 2.4);
-        let pose = XrPose {
+        let pose = Pose {
             position: head_from_menu.transform(offset.position),
             orientation: offset.orientation,
         };
@@ -175,12 +176,12 @@ fn head_fit_preserves_forward_and_menu_clearance_with_shared_defaults() {
 fn measured_ink_is_checked_in_both_views_with_a_stable_angular_reference() {
     let frame = viewer(XrDepthRange::NegativeOneToOne);
     let segment = XrInkSegment {
-        start: XrVector {
+        start: Vector3 {
             x: 0.0,
             y: 0.02,
             z: -2.4,
         },
-        end: XrVector {
+        end: Vector3 {
             x: 0.0,
             y: -0.02,
             z: -2.4,
@@ -188,31 +189,31 @@ fn measured_ink_is_checked_in_both_views_with_a_stable_angular_reference() {
     };
     let XrInkFit::Ready {
         minimum_ink_angle_degrees,
-    } = fit_xr_text_ink(&frame, &[segment], XrPose::IDENTITY, 0.35)
+    } = fit_xr_text_ink(&frame, &[segment], Pose::IDENTITY, 0.35)
     else {
         panic!("Expected readable ink")
     };
     let expected = (2.0 * (0.02 / 2.4_f64.hypot(0.032)).atan()).to_degrees();
     assert!((minimum_ink_angle_degrees - expected).abs() < 1.0e-12);
     assert!(matches!(
-        fit_xr_text_ink(&frame, &[segment], XrPose::IDENTITY, 2.0),
+        fit_xr_text_ink(&frame, &[segment], Pose::IDENTITY, 2.0),
         XrInkFit::TooSmall
     ));
     assert_eq!(
-        fit_xr_text_ink(&frame, &[], XrPose::IDENTITY, 0.35),
+        fit_xr_text_ink(&frame, &[], Pose::IDENTITY, 0.35),
         XrInkFit::Empty
     );
     assert!(matches!(
         fit_xr_text_ink(
             &frame,
             &[XrInkSegment {
-                start: XrVector {
+                start: Vector3 {
                     z: 1.0,
                     ..segment.start
                 },
                 ..segment
             }],
-            XrPose::IDENTITY,
+            Pose::IDENTITY,
             0.35
         ),
         XrInkFit::Unavailable { .. }
@@ -227,7 +228,7 @@ fn invalid_eye_identity_pose_and_projection_are_classified_before_layout() {
     };
     eyes[1].eye = XrEye::Left;
     assert!(matches!(
-        fit_xr_menu_view(&frame, [2.4, 1.8], XrPose::IDENTITY, 2.4, 0.035).unwrap(),
+        fit_xr_menu_view(&frame, [2.4, 1.8], Pose::IDENTITY, 2.4, 0.035).unwrap(),
         XrMenuViewFit::Unavailable {
             reason: XrFitReason::UnsupportedViewConfiguration
         }
@@ -242,21 +243,21 @@ fn invalid_eye_identity_pose_and_projection_are_classified_before_layout() {
 
 #[test]
 fn camera_rig_applies_aircraft_pilot_head_and_eye_transforms_once() {
-    let aircraft = XrPose {
-        position: XrVector {
+    let aircraft = Pose {
+        position: Vector3 {
             x: 12.0,
             y: 7.0,
             z: -8.0,
         },
-        orientation: XrQuaternion {
+        orientation: Quaternion {
             w: (0.3_f64 / 2.0).cos(),
             x: 0.0,
             y: (0.3_f64 / 2.0).sin(),
             z: 0.0,
         },
     };
-    let pilot = xr_pilot_eye_pose(
-        XrFrdPose {
+    let pilot = pilot_eye_pose(
+        FrdPose {
             position_frd_m: [1.2, 0.04, -0.08],
             orientation_frd_wxyz: [1.0, 0.0, 0.0, 0.0],
         },
@@ -267,7 +268,7 @@ fn camera_rig_applies_aircraft_pilot_head_and_eye_transforms_once() {
     assert_eq!(pilot.frd.position_frd_m, [1.5, 0.04, -0.08]);
     assert_eq!(
         pilot.render.position,
-        XrVector {
+        Vector3 {
             x: 0.04,
             y: 0.08,
             z: -1.5
@@ -280,15 +281,15 @@ fn camera_rig_applies_aircraft_pilot_head_and_eye_transforms_once() {
         },
     )
     .unwrap();
-    let head = XrPose {
-        position: XrVector {
+    let head = Pose {
+        position: Vector3 {
             x: 0.1,
             y: 0.2,
             z: -0.3,
         },
-        ..XrPose::IDENTITY
+        ..Pose::IDENTITY
     };
-    let mounted = compose_xr_pose(rig.world_from_tracking, head).unwrap();
+    let mounted = compose_pose(rig.world_from_tracking, head).unwrap();
     let local = [0.14, 0.28, -1.8];
     assert!(
         (mounted.position.x - (12.0 + local[0] * 0.3_f64.cos() + local[2] * 0.3_f64.sin())).abs()
@@ -312,8 +313,8 @@ fn camera_rig_applies_aircraft_pilot_head_and_eye_transforms_once() {
     .unwrap();
     assert_eq!(rig.world_from_tracking, external);
     assert_eq!(rig.reference_from_tracking, external);
-    assert_eq!(rig.world_from_reference, XrPose::IDENTITY);
-    let reconstructed = compose_xr_pose(aircraft, rig.aircraft_from_tracking).unwrap();
+    assert_eq!(rig.world_from_reference, Pose::IDENTITY);
+    let reconstructed = compose_pose(aircraft, rig.aircraft_from_tracking).unwrap();
     assert!(reconstructed.position.x.abs() < 1e-14);
     assert!(reconstructed.position.y.abs() < 1e-14);
     assert!((reconstructed.position.z + 12.0).abs() < 1e-14);
@@ -321,13 +322,13 @@ fn camera_rig_applies_aircraft_pilot_head_and_eye_transforms_once() {
 
 #[test]
 fn passive_origin_reset_preserves_world_head_and_both_eyes() {
-    let aircraft = XrPose {
-        position: XrVector {
+    let aircraft = Pose {
+        position: Vector3 {
             x: 12.0,
             y: 7.0,
             z: -8.0,
         },
-        orientation: XrQuaternion {
+        orientation: Quaternion {
             w: 0.3_f64.cos(),
             x: 0.0,
             y: 0.3_f64.sin(),
@@ -335,68 +336,68 @@ fn passive_origin_reset_preserves_world_head_and_both_eyes() {
         },
     };
     let mount = XrCameraMount::Aircraft {
-        aircraft_from_tracking: XrPose {
-            position: XrVector {
+        aircraft_from_tracking: Pose {
+            position: Vector3 {
                 x: 0.2,
                 y: 0.15,
                 z: -0.55,
             },
-            ..XrPose::IDENTITY
+            ..Pose::IDENTITY
         },
     };
-    let change = XrPose {
-        position: XrVector {
+    let change = Pose {
+        position: Vector3 {
             x: 0.3,
             y: -0.1,
             z: 0.2,
         },
-        orientation: XrQuaternion {
+        orientation: Quaternion {
             w: 0.2_f64.cos(),
             x: 0.0,
             y: 0.2_f64.sin(),
             z: 0.0,
         },
     };
-    let head = XrPose {
-        position: XrVector {
+    let head = Pose {
+        position: Vector3 {
             x: -0.1,
             y: 0.2,
             z: 0.3,
         },
-        ..XrPose::IDENTITY
+        ..Pose::IDENTITY
     };
     let mut origin = XrTrackingOrigin::default();
     let before = origin.camera_rig(aircraft, mount).unwrap();
     origin.reset_reference(change).unwrap();
     let after = origin.camera_rig(aircraft, mount).unwrap();
-    let new_head = compose_xr_pose(inverse_xr_pose(change).unwrap(), head).unwrap();
-    let before_head = compose_xr_pose(before.world_from_tracking, head).unwrap();
-    let after_head = compose_xr_pose(after.world_from_tracking, new_head).unwrap();
+    let new_head = compose_pose(inverse_pose(change).unwrap(), head).unwrap();
+    let before_head = compose_pose(before.world_from_tracking, head).unwrap();
+    let after_head = compose_pose(after.world_from_tracking, new_head).unwrap();
     assert_pose_close(after_head, before_head);
     for eye_x in [-0.032, 0.032] {
-        let eye = XrPose {
-            position: XrVector {
+        let eye = Pose {
+            position: Vector3 {
                 x: eye_x,
                 y: 0.0,
                 z: 0.0,
             },
-            ..XrPose::IDENTITY
+            ..Pose::IDENTITY
         };
         assert_pose_close(
-            compose_xr_pose(after_head, eye).unwrap(),
-            compose_xr_pose(before_head, eye).unwrap(),
+            compose_pose(after_head, eye).unwrap(),
+            compose_pose(before_head, eye).unwrap(),
         );
     }
     assert_pose_close(after.world_from_reference, before.world_from_reference);
     assert!(
         origin
-            .reset_reference(XrPose {
-                position: XrVector {
+            .reset_reference(Pose {
+                position: Vector3 {
                     x: f64::NAN,
                     y: 0.0,
                     z: 0.0
                 },
-                ..XrPose::IDENTITY
+                ..Pose::IDENTITY
             })
             .is_err()
     );
@@ -408,23 +409,23 @@ fn world_cockpit_and_head_keep_their_distinct_physical_owners() {
     use crate::game_ui::GameUiAnchor;
     let views = viewer(XrDepthRange::NegativeOneToOne);
     let local = plane(2.4);
-    let head = XrPose {
-        position: XrVector {
+    let head = Pose {
+        position: Vector3 {
             x: 0.1,
             y: 0.2,
             z: 0.0,
         },
-        ..XrPose::IDENTITY
+        ..Pose::IDENTITY
     };
     let mut session = XrSpatialSession::new();
     for north in [0.0, 40.0] {
-        let aircraft = XrPose {
-            position: XrVector {
+        let aircraft = Pose {
+            position: Vector3 {
                 x: north,
                 y: 10.0,
                 z: -5.0,
             },
-            orientation: XrQuaternion {
+            orientation: Quaternion {
                 w: 0.2_f64.cos(),
                 x: 0.2_f64.sin(),
                 y: 0.0,
@@ -436,7 +437,7 @@ fn world_cockpit_and_head_keep_their_distinct_physical_owners() {
                 world_from_tracking: plane(-5.0),
             },
             XrCameraMount::Aircraft {
-                aircraft_from_tracking: XrPose::IDENTITY,
+                aircraft_from_tracking: Pose::IDENTITY,
             },
             XrCameraMount::External {
                 world_from_tracking: plane(-12.0),
@@ -448,15 +449,12 @@ fn world_cockpit_and_head_keep_their_distinct_physical_owners() {
                 (GameUiAnchor::World, local),
                 (
                     GameUiAnchor::Cockpit,
-                    compose_xr_pose(aircraft, local).unwrap(),
+                    compose_pose(aircraft, local).unwrap(),
                 ),
                 (
                     GameUiAnchor::Head,
-                    compose_xr_pose(
-                        compose_xr_pose(rig.world_from_tracking, head).unwrap(),
-                        local,
-                    )
-                    .unwrap(),
+                    compose_pose(compose_pose(rig.world_from_tracking, head).unwrap(), local)
+                        .unwrap(),
                 ),
             ] {
                 let mut geometry = menu_geometry();
@@ -476,7 +474,7 @@ fn world_cockpit_and_head_keep_their_distinct_physical_owners() {
                 let poses = xr_panel_camera_poses(rig, reference_from_panel).unwrap();
                 assert_pose_close(poses.world_from_panel, expected);
                 assert_pose_close(
-                    compose_xr_pose(rig.world_from_tracking, poses.tracking_from_panel).unwrap(),
+                    compose_pose(rig.world_from_tracking, poses.tracking_from_panel).unwrap(),
                     expected,
                 );
             }
@@ -494,9 +492,9 @@ fn menu_opening_retains_motion_and_refits_camera_basis_changes() {
     let mut session = XrSpatialSession::new();
     let reference = XrReferenceFrame {
         basis: XrReferenceBasis::Aircraft,
-        world: XrPose::IDENTITY,
-        cockpit: XrPose::IDENTITY,
-        head: XrPose::IDENTITY,
+        world: Pose::IDENTITY,
+        cockpit: Pose::IDENTITY,
+        head: Pose::IDENTITY,
     };
     let before = session.place_panel(observation.clone(), &views, Some(reference));
     let moved = XrReferenceFrame {
@@ -511,7 +509,7 @@ fn menu_opening_retains_motion_and_refits_camera_basis_changes() {
         eyes[0].head_from_eye.position.x =
             ((eyes[0].head_from_eye.position.x + noise) as f32).into();
         eyes[0].head_from_eye.position.y = noise;
-        eyes[0].head_from_eye.orientation = XrQuaternion {
+        eyes[0].head_from_eye.orientation = Quaternion {
             w: (noise / 2.0).cos(),
             x: 0.0,
             y: (noise / 2.0).sin(),
@@ -533,14 +531,14 @@ fn menu_opening_retains_motion_and_refits_camera_basis_changes() {
     );
     assert!(
         session
-            .recenter_tracking(XrPose {
-                orientation: XrQuaternion {
+            .recenter_tracking(Pose {
+                orientation: Quaternion {
                     w: 0.0,
                     x: 0.0,
                     y: 0.0,
                     z: 0.0
                 },
-                ..XrPose::IDENTITY
+                ..Pose::IDENTITY
             })
             .is_err()
     );
@@ -569,12 +567,12 @@ fn menu_geometry() -> XrPanelGeometry {
             panel_id: "main".into(),
         },
         anchor: crate::game_ui::GameUiAnchor::Menu,
-        local_pose: XrPose::IDENTITY,
+        local_pose: Pose::IDENTITY,
         size_m: [2.4, 1.8],
     }
 }
 
-fn assert_pose_close(actual: XrPose, expected: XrPose) {
+fn assert_pose_close(actual: Pose, expected: Pose) {
     for (first, second) in actual
         .position
         .array()

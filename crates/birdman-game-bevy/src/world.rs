@@ -66,8 +66,7 @@ pub(crate) struct RegisteredVenue;
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct RenderSample {
     aircraft: Transform,
-    pilot_position_m: f64,
-    initial_pilot_position_m: f64,
+    pose: birdman_game_presentation::render_pose::FlightRenderPose,
     elevator_rad: f64,
     rudder_rad: f64,
     simulation_time_seconds: f64,
@@ -76,8 +75,7 @@ impl RenderSample {
     fn from_pose(pose: birdman_game_presentation::render_pose::FlightRenderPose) -> Self {
         Self {
             aircraft: render_aircraft_transform(&pose),
-            pilot_position_m: pose.pilot_position_meters,
-            initial_pilot_position_m: pose.initial_pilot_position_meters,
+            pose,
             elevator_rad: pose.controls.physical_incidence.horizontal_tail_radians,
             rudder_rad: pose.controls.physical_incidence.vertical_tail_radians,
             simulation_time_seconds: pose.simulation_time_seconds,
@@ -541,6 +539,7 @@ pub(crate) fn setup_world(
         .upload_detail(&mut images)
         .expect("登録微細波画像が不正");
     let sunlight = sunlight_transform(registered_water.sun_cloud.truncate());
+    let sunlight_enabled = registered_water.sunlight_enabled();
     let mut registered_sky = registered_water.clone();
     registered_sky.waves_sky.w = 1.0;
     registered_sky.geometry_patch = Vec4::ZERO;
@@ -580,8 +579,12 @@ pub(crate) fn setup_world(
         EnvironmentSun,
         DirectionalLight {
             color: wing_color(LAKE_SCENE_LIGHTING.sunlight_color_srgb),
-            illuminance: SCENE_SUN_ILLUMINANCE_LUX,
-            shadow_maps_enabled: true,
+            illuminance: if sunlight_enabled {
+                SCENE_SUN_ILLUMINANCE_LUX
+            } else {
+                0.0
+            },
+            shadow_maps_enabled: sunlight_enabled,
             ..default()
         },
         CascadeShadowConfigBuilder {
@@ -940,26 +943,25 @@ pub(crate) fn project_world(
         .then_some(render_sample)
         .flatten()
         .map_or_else(
-            || Transform::from_xyz(15.0, 14.0, 22.0).looking_at(Vec3::new(0.0, 8.0, 0.0), Vec3::Y),
+            || {
+                Ok(Transform::from_xyz(15.0, 14.0, 22.0)
+                    .looking_at(Vec3::new(0.0, 8.0, 0.0), Vec3::Y))
+            },
             |sample| {
                 if let Some(ref view) = record_camera {
-                    return replay_camera_transform(
-                        view,
-                        sample.aircraft,
-                        sample.pilot_position_m,
-                        sample.initial_pilot_position_m,
-                        camera.look,
-                    );
+                    return replay_camera_transform(view, camera.look);
                 }
-                camera_transform(
-                    sample.aircraft,
-                    sample.pilot_position_m,
-                    sample.initial_pilot_position_m,
-                    camera.chase,
-                    camera.look,
-                )
+                camera_transform(&sample.pose, camera.chase, camera.look)
             },
         );
+    let projected_camera = match projected_camera {
+        Ok(pose) => pose,
+        Err(cause) => {
+            session.game.fail_flight_adapter();
+            session.notice = Some(format!("視点の更新に失敗した: {cause}"));
+            return;
+        }
+    };
     #[cfg(feature = "verify-harness")]
     let projected_camera = observer
         .as_ref()
@@ -1295,13 +1297,7 @@ mod tests {
             app.update();
             let session = app.world().resource::<NativeSession>();
             let sample = RenderSample::from_pose(session.render_pose().unwrap().unwrap());
-            let expected_transform = replay_camera_transform(
-                &expected,
-                sample.aircraft,
-                sample.pilot_position_m,
-                sample.initial_pilot_position_m,
-                Vec2::ZERO,
-            );
+            let expected_transform = replay_camera_transform(&expected, Vec2::ZERO).unwrap();
             assert!(session.notice.is_none());
             assert_eq!(
                 before,
@@ -1450,13 +1446,7 @@ mod tests {
         );
         let camera = projected_transform(app, WorldProjection::FlightCamera);
         let expected_camera = if live_camera {
-            camera_transform(
-                sample.aircraft,
-                sample.pilot_position_m,
-                sample.initial_pilot_position_m,
-                false,
-                Vec2::ZERO,
-            )
+            camera_transform(&sample.pose, false, Vec2::ZERO).unwrap()
         } else {
             Transform::from_xyz(15.0, 14.0, 22.0).looking_at(Vec3::new(0.0, 8.0, 0.0), Vec3::Y)
         };

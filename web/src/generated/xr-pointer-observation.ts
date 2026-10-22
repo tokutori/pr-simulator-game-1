@@ -7,7 +7,7 @@ export interface XrPointerObservation {
      * Runtime grants input focus.
      */
     readonly focused: boolean;
-    readonly panelPose: XrPose;
+    readonly panelPose: Pose;
     /**
      * Tracked controllers and head gaze observed in the same frame.
      */
@@ -20,14 +20,14 @@ export interface XrPointerObservation {
 /**
  * Reference-from-panel pose from this rendered frame.
  */
-export interface XrPose {
-    readonly orientation: XrQuaternion;
-    readonly position: XrVector;
+export interface Pose {
+    readonly orientation: Quaternion;
+    readonly position: Vector3;
 }
 /**
  * Child-to-parent orientation.
  */
-export interface XrQuaternion {
+export interface Quaternion {
     /**
      * Scalar component.
      */
@@ -48,7 +48,7 @@ export interface XrQuaternion {
 /**
  * Child origin expressed in parent coordinates, in metres.
  */
-export interface XrVector {
+export interface Vector3 {
     /**
      * Rightward coordinate in metres.
      */
@@ -66,8 +66,8 @@ export interface XrVector {
  * Pointing ray in the same reference frame as the panel.
  */
 export interface XrPointerRay {
-    readonly direction: XrVector1;
-    readonly origin: XrVector2;
+    readonly direction: Vector31;
+    readonly origin: Vector32;
     /**
      * Stable input source.
      */
@@ -84,7 +84,7 @@ export interface XrPointerRay {
 /**
  * Unit pointing direction in reference coordinates.
  */
-export interface XrVector1 {
+export interface Vector31 {
     /**
      * Rightward coordinate in metres.
      */
@@ -101,7 +101,7 @@ export interface XrVector1 {
 /**
  * Ray origin in reference coordinates, in metres.
  */
-export interface XrVector2 {
+export interface Vector32 {
     /**
      * Rightward coordinate in metres.
      */

@@ -2,14 +2,14 @@
 /**
  * Pilot eye before and after conversion into render right/up/back axes.
  */
-export interface XrPilotEyePose {
-    readonly frd: XrFrdPose;
-    readonly render: XrPose;
+export interface PilotEyePose {
+    readonly frd: FrdPose;
+    readonly render: Pose;
 }
 /**
  * Physical aircraft FRD pose.
  */
-export interface XrFrdPose {
+export interface FrdPose {
     /**
      * Scalar-first orientation in the FRD basis.
      *
@@ -37,14 +37,14 @@ export interface XrFrdPose {
 /**
  * Equivalent render-local pose.
  */
-export interface XrPose {
-    readonly orientation: XrQuaternion;
-    readonly position: XrVector;
+export interface Pose {
+    readonly orientation: Quaternion;
+    readonly position: Vector3;
 }
 /**
  * Child-to-parent orientation.
  */
-export interface XrQuaternion {
+export interface Quaternion {
     /**
      * Scalar component.
      */
@@ -65,7 +65,7 @@ export interface XrQuaternion {
 /**
  * Child origin expressed in parent coordinates, in metres.
  */
-export interface XrVector {
+export interface Vector3 {
     /**
      * Rightward coordinate in metres.
      */

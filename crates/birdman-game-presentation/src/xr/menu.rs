@@ -1,4 +1,5 @@
-use super::geometry::{PreparedViews, XrDepthRange, XrFitReason, XrPose, XrVector, XrViewerFrame};
+use super::geometry::{PreparedViews, XrDepthRange, XrFitReason, XrViewerFrame};
+use crate::camera::{Pose, Vector3};
 use serde::{Deserialize, Serialize};
 
 /// Binocular menu-placement result, in centre-head coordinates.
@@ -14,7 +15,7 @@ pub enum XrMenuViewFit {
     /// Complete plane fit.
     Ready {
         /// Menu-anchor-to-head transform.
-        head_from_menu: XrPose,
+        head_from_menu: Pose,
         /// Required viewing distance in metres.
         distance_meters: f64,
     },
@@ -29,7 +30,7 @@ pub enum XrMenuViewFit {
 pub fn fit_xr_menu_view(
     viewer: &XrViewerFrame,
     size: [f64; 2],
-    menu_from_panel: XrPose,
+    menu_from_panel: Pose,
     minimum_distance: f64,
     margin: f64,
 ) -> Result<XrMenuViewFit, &'static str> {
@@ -53,7 +54,7 @@ pub fn fit_xr_menu_view(
     let mut lower = minimum_distance;
     let mut upper = f64::INFINITY;
     for eye in &views.eyes {
-        let direction = eye.eye_from_head.rotate(XrVector {
+        let direction = eye.eye_from_head.rotate(Vector3 {
             x: 0.0,
             y: 0.0,
             z: -1.0,
@@ -63,7 +64,7 @@ pub fn fit_xr_menu_view(
             for vertical in [-1.0, 1.0] {
                 let point = eye
                     .eye_from_head
-                    .transform(menu_from_panel.transform(XrVector {
+                    .transform(menu_from_panel.transform(Vector3 {
                         x: horizontal * size[0] / 2.0,
                         y: vertical * size[1] / 2.0,
                         z: 0.0,
@@ -119,15 +120,15 @@ pub fn fit_xr_menu_view(
         return Ok(unavailable(XrFitReason::InsufficientViewArea));
     }
     let distance = upper.min(lower + lower.max(1.0) * 1.0e-10);
-    let head_from_menu = XrPose {
-        position: XrVector {
+    let head_from_menu = Pose {
+        position: Vector3 {
             x: 0.0,
             y: 0.0,
             z: -distance,
         },
-        ..XrPose::IDENTITY
+        ..Pose::IDENTITY
     };
-    let head_from_panel = XrPose {
+    let head_from_panel = Pose {
         position: head_from_menu.transform(menu_from_panel.position),
         orientation: menu_from_panel.orientation,
     };
@@ -146,9 +147,9 @@ pub fn fit_xr_menu_view(
 #[serde(deny_unknown_fields)]
 pub struct XrInkSegment {
     /// First glyph boundary.
-    pub start: XrVector,
+    pub start: Vector3,
     /// Opposite glyph boundary.
-    pub end: XrVector,
+    pub end: Vector3,
 }
 
 /// Actual glyph-boundary fit and angular readability in both eyes.
@@ -182,7 +183,7 @@ pub enum XrInkFit {
 pub fn fit_xr_text_ink(
     viewer: &XrViewerFrame,
     segments: &[XrInkSegment],
-    head_from_surface: XrPose,
+    head_from_surface: Pose,
     minimum_angle: f64,
 ) -> XrInkFit {
     let unavailable = |reason| XrInkFit::Unavailable { reason };

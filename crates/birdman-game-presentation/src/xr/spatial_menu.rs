@@ -1,7 +1,7 @@
 use super::geometry::PreparedViews;
 use super::{
-    XrEyeGeometry, XrFitReason, XrMenuViewFit, XrPose, XrReferenceBasis, XrReferenceFrame,
-    XrSpatialError, XrViewerFrame, compose_xr_pose, fit_xr_menu_view,
+    CameraError, Pose, XrEyeGeometry, XrFitReason, XrMenuViewFit, XrReferenceBasis,
+    XrReferenceFrame, XrViewerFrame, compose_pose, fit_xr_menu_view,
 };
 use crate::game_ui::GameUiAnchor;
 use serde::{Deserialize, Serialize};
@@ -16,28 +16,28 @@ const PROJECTION_RELATIVE_TOLERANCE: f64 = 1.0e-4;
 #[serde(deny_unknown_fields)]
 pub struct XrAnchorFrames {
     /// Fixed world anchor in the active presentation reference.
-    pub world: XrPose,
+    pub world: Pose,
     /// Aircraft/cockpit anchor in the same reference.
-    pub cockpit: XrPose,
+    pub cockpit: Pose,
     /// Retained recenterable menu anchor.
-    pub menu: XrPose,
+    pub menu: Pose,
     /// Observed mounted head pose.
-    pub head: XrPose,
+    pub head: Pose,
 }
 
 /// Resolves an explicit anchor without inferring semantics from a node ID.
 pub fn resolve_xr_anchor(
     anchor: GameUiAnchor,
-    local: XrPose,
+    local: Pose,
     frames: XrAnchorFrames,
-) -> Result<XrPose, XrSpatialError> {
+) -> Result<Pose, CameraError> {
     let parent = match anchor {
         GameUiAnchor::World => frames.world,
         GameUiAnchor::Cockpit => frames.cockpit,
         GameUiAnchor::Menu => frames.menu,
         GameUiAnchor::Head => frames.head,
     };
-    compose_xr_pose(parent, local)
+    compose_pose(parent, local)
 }
 
 /// Identity of one menu opening; all strings are opaque identity components.
@@ -63,7 +63,7 @@ pub struct XrPanelGeometry {
     /// Explicit UI anchor.
     pub anchor: GameUiAnchor,
     /// Panel transform within that anchor.
-    pub local_pose: XrPose,
+    pub local_pose: Pose,
     /// Physical width and height in metres.
     pub size_m: [f64; 2],
 }
@@ -109,7 +109,7 @@ pub enum XrPanelPlacement {
     /// Complete pose in the active logical presentation reference.
     Ready {
         /// Panel-local to presentation-reference pose.
-        reference_from_panel: XrPose,
+        reference_from_panel: Pose,
     },
 }
 
@@ -117,8 +117,8 @@ struct MenuOpening {
     basis: XrReferenceBasis,
     geometry: XrPanelGeometry,
     eyes: [XrEyeGeometry; 2],
-    head_from_menu: XrPose,
-    reference_from_menu: XrPose,
+    head_from_menu: Pose,
+    reference_from_menu: Pose,
 }
 
 /// Owns a retained menu in its camera-reference basis.
@@ -191,11 +191,11 @@ impl XrSpatialSession {
             if let Some(opening) = &self.menu
                 && opening.basis == reference.basis
                 && same_opening(opening, &geometry, eyes)
-                && compose_xr_pose(opening.head_from_menu, geometry.local_pose).is_ok_and(|pose| {
+                && compose_pose(opening.head_from_menu, geometry.local_pose).is_ok_and(|pose| {
                     views.plane_fits(pose, geometry.size_m[0], geometry.size_m[1], 0.0)
                 })
             {
-                return match compose_xr_pose(opening.reference_from_menu, geometry.local_pose) {
+                return match compose_pose(opening.reference_from_menu, geometry.local_pose) {
                     Ok(reference_from_panel) => XrPanelPlacement::Ready {
                         reference_from_panel,
                     },
@@ -211,11 +211,11 @@ impl XrSpatialSession {
                 XrMenuViewFit::Ready { head_from_menu, .. } => head_from_menu,
                 XrMenuViewFit::Unavailable { reason } => return unavailable(reason),
             };
-            let reference_from_menu = match compose_xr_pose(head, head_from_menu) {
+            let reference_from_menu = match compose_pose(head, head_from_menu) {
                 Ok(pose) => pose,
                 Err(_) => return unavailable(XrFitReason::InvalidViewGeometry),
             };
-            if compose_xr_pose(reference_from_menu, geometry.local_pose).is_err() {
+            if compose_pose(reference_from_menu, geometry.local_pose).is_err() {
                 return unavailable(XrFitReason::InvalidViewGeometry);
             }
             self.menu = Some(MenuOpening {
@@ -227,7 +227,7 @@ impl XrSpatialSession {
             });
             reference_from_menu
         } else {
-            XrPose::IDENTITY
+            Pose::IDENTITY
         };
         match resolve_xr_anchor(
             geometry.anchor,
@@ -247,9 +247,9 @@ impl XrSpatialSession {
     }
 
     /// Moves an existing menu to the observed head while preserving its fitted distance.
-    pub fn recenter_menu(&mut self, reference_from_head: XrPose) -> Result<(), XrSpatialError> {
+    pub fn recenter_menu(&mut self, reference_from_head: Pose) -> Result<(), CameraError> {
         if let Some(menu) = &mut self.menu {
-            menu.reference_from_menu = compose_xr_pose(reference_from_head, menu.head_from_menu)?;
+            menu.reference_from_menu = compose_pose(reference_from_head, menu.head_from_menu)?;
         }
         Ok(())
     }
@@ -257,13 +257,13 @@ impl XrSpatialSession {
     /// Transports the retained menu after an explicit user tracking recenter.
     pub fn recenter_tracking(
         &mut self,
-        new_reference_from_previous: XrPose,
-    ) -> Result<(), XrSpatialError> {
+        new_reference_from_previous: Pose,
+    ) -> Result<(), CameraError> {
         let change = new_reference_from_previous
             .normalized()
-            .ok_or(XrSpatialError::InvalidPose)?;
+            .ok_or(CameraError::InvalidPose)?;
         if let Some(opening) = &mut self.menu {
-            opening.reference_from_menu = compose_xr_pose(change, opening.reference_from_menu)?;
+            opening.reference_from_menu = compose_pose(change, opening.reference_from_menu)?;
         }
         Ok(())
     }
@@ -302,8 +302,8 @@ fn same_opening(
 }
 
 fn same_pose(
-    previous: XrPose,
-    current: XrPose,
+    previous: Pose,
+    current: Pose,
     position_tolerance_m: f64,
     angle_tolerance_rad: f64,
 ) -> bool {

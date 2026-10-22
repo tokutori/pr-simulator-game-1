@@ -6,8 +6,8 @@ import { AmbientLight, BufferGeometry, DataTexture, DirectionalLight, Fog, Matri
 import type { Camera, Color, Object3D, Scene } from "three";
 import { createThreeRenderer, titleScreenCameraPoseForViewport } from "../../web/src/render/engines/three/three-renderer.js";
 import type { ThreeRendererBundle } from "../../web/src/render/engines/three/three-renderer.js";
-import { flightRelativePose } from "../../web/src/render/camera/xr-spatial.js";
-import { pilotEyePoseRender, registeredPilotEyePoint } from "../../web/src/render/camera/xr-spatial.js";
+import { flightRelativePose } from "../../web/src/render/camera/spatial.js";
+import { pilotEyePoseRender, registeredPilotEyePoint } from "../../web/src/render/camera/spatial.js";
 import { composePose, IDENTITY_POSE, pose, quaternion, rotateVec3, vec3 } from "../../web/src/render/contracts/math.js";
 import type { Pose } from "../../web/src/render/contracts/math.js";
 import type { BackendFrame, FlightRenderPose, LakeWaterQualityCleanupResult } from "../../web/src/render/contracts/runtime.js";

@@ -5,16 +5,28 @@ import { AirframeMemberKind, AirframeStructureBridge, screen_vertical_field_of_v
 import { createAppSession } from "../../web/src/app/session-factory.js";
 import { currentFlightPoseFixture, launchCurrentSession } from "../game-check/current-session-fixture.js";
 import {
-  createPilotEyePoint, pilotEyePoseRender, poseFrdToRender, registeredPilotEyePoint
-} from "../../web/src/render/camera/xr-spatial.js";
-import { chaseCameraPoseFrd } from "../../web/src/render/camera/xr-spatial.js";
+  cameraLocalPose, createPilotEyePoint, pilotEyePoseRender, poseFrdToRender, registeredPilotEyePoint
+} from "../../web/src/render/camera/spatial.js";
+import { chaseCameraPoseFrd } from "../../web/src/render/camera/spatial.js";
 import {
   IDENTITY_POSE, multiplyQuaternion, quaternion, rotateVec3, transformPoint, vec3
 } from "../../web/src/render/contracts/math.js";
 import type { Quaternion, Vec3 } from "../../web/src/render/contracts/math.js";
-import { flightRelativePose } from "../../web/src/render/camera/xr-spatial.js";
+import { flightRelativePose } from "../../web/src/render/camera/spatial.js";
 
 describe("FRD camera basis", () => {
+  it("applies Screen look after the pilot mount and keeps Chase independent of look", () => {
+    const point = registeredPilotEyePoint();
+    const pilot = cameraLocalPose(point, 0.3, 0.1, false, [0.4, -0.2]);
+    const reference = pilotEyePoseRender(point, 0.3, 0.1);
+    expectVector(pilot.position, reference.position);
+    const expected = multiplyQuaternion(quaternion(Math.cos(0.2), 0, Math.sin(0.2), 0),
+      quaternion(Math.cos(-0.1), Math.sin(-0.1), 0, 0));
+    expectVector(rotateVec3(pilot.orientation, vec3(0, 0, -1)), rotateVec3(expected, vec3(0, 0, -1)));
+    expect(cameraLocalPose(point, 0.3, 0.1, true, [0.4, -0.2])).toEqual(cameraLocalPose(point, 0.3, 0.1, true));
+    expect(() => cameraLocalPose(point, 0, 0, false, [NaN, 0])).toThrow();
+  });
+
   it.each([
     ["positive roll", Math.PI / 2, 0, 0],
     ["negative roll", -Math.PI / 2, 0, 0],

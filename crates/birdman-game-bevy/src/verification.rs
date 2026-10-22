@@ -9,9 +9,7 @@ use super::{
     CameraMode, MAX_FRAME_DELTA,
     environment::{EnvironmentSurface, EnvironmentTarget, NativeEnvironment},
     native_session::{MenuAction, NativeSession},
-    projection::{
-        VerificationObserver, aircraft_transform, camera_transform, replay_camera_transform,
-    },
+    projection::{VerificationObserver, camera_transform, replay_camera_transform},
     screen_render::{
         NativeScreenRender,
         timing::{self, TimingMode, shader_is_pending},
@@ -1786,14 +1784,8 @@ impl VerificationPresentation<'_, '_> {
             false,
         )
         .map_err(|cause| format!("Replay camera query failed: {cause:?}"))?;
-        let pose = view.render_pose();
-        let expected = replay_camera_transform(
-            &view,
-            super::projection::render_aircraft_transform(&pose),
-            pose.pilot_position_meters,
-            pose.initial_pilot_position_meters,
-            Vec2::ZERO,
-        );
+        let expected = replay_camera_transform(&view, Vec2::ZERO)
+            .map_err(|cause| format!("Replay camera projection failed: {cause}"))?;
         let (_, _, _, Projection::Perspective(lens), actual) = self
             .scene_cameras
             .iter()
@@ -2585,20 +2577,16 @@ fn advance_step(
         VerificationStage::Countdown | VerificationStage::WaterCountdown(_) => {
             match session.game.core_session().snapshot() {
                 SessionSnapshot::Countdown { .. } => {}
-                SessionSnapshot::TailFlightRunning { state, .. } => {
+                SessionSnapshot::TailFlightRunning { .. } => {
                     if verification.water_case.is_some() {
-                        let flight = state.flight_state();
-                        verification.observer_base = Some(camera_transform(
-                            aircraft_transform(flight),
-                            flight.pilot_position_m(),
-                            session
-                                .render_pose()
-                                .unwrap()
-                                .unwrap()
-                                .initial_pilot_position_meters,
-                            true,
-                            Vec2::ZERO,
-                        ));
+                        verification.observer_base = Some(
+                            camera_transform(
+                                &session.render_pose().unwrap().unwrap(),
+                                true,
+                                Vec2::ZERO,
+                            )
+                            .map_err(|cause| format!("Water observer camera failed: {cause}"))?,
+                        );
                         verification.next(VerificationStage::WaterMotion(
                             match verification.stage {
                                 VerificationStage::WaterCountdown(motion) => motion,
@@ -3952,24 +3940,15 @@ mod tests {
             .tail_flight_state()
             .unwrap()
             .flight_state();
-        let aircraft = super::aircraft_transform(flight);
+        let aircraft = super::super::projection::aircraft_transform(flight);
         let base = app
             .world()
             .resource::<super::Verification>()
             .observer_base
             .unwrap();
         let camera = |chase| {
-            super::camera_transform(
-                aircraft,
-                flight.pilot_position_m(),
-                session
-                    .render_pose()
-                    .unwrap()
-                    .unwrap()
-                    .initial_pilot_position_meters,
-                chase,
-                Vec2::ZERO,
-            )
+            super::camera_transform(&session.render_pose().unwrap().unwrap(), chase, Vec2::ZERO)
+                .unwrap()
         };
         assert_eq!(base, camera(true));
         assert_ne!(base, camera(false));

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { currentFlightPoseFixture } from "../game-check/current-session-fixture.js";
 import { quaternion, vec3 } from "../../web/src/render/contracts/math.js";
-import { flightRelativePose } from "../../web/src/render/camera/xr-spatial.js";
+import { flightRelativePose } from "../../web/src/render/camera/spatial.js";
 
 describe("Three.js flight pose conversion", () => {
   it("preserves a local pose at identity aircraft attitude", () => {

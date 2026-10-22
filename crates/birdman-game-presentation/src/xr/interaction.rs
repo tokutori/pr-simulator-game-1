@@ -1,4 +1,4 @@
-use super::{XrPose, XrVector};
+use super::{Pose, Vector3};
 use serde::{Deserialize, Serialize};
 
 /// Runtime input identity, stable for one presentation session.
@@ -112,9 +112,9 @@ pub struct XrPointerRay {
     /// Stable input source.
     pub source: XrPointerSource,
     /// Ray origin in reference coordinates, in metres.
-    pub origin: XrVector,
+    pub origin: Vector3,
     /// Unit pointing direction in reference coordinates.
-    pub direction: XrVector,
+    pub direction: Vector3,
 }
 
 /// One same-frame input observation.
@@ -127,7 +127,7 @@ pub struct XrPointerObservation {
     /// Runtime grants input focus.
     pub focused: bool,
     /// Reference-from-panel pose from this rendered frame.
-    pub panel_pose: XrPose,
+    pub panel_pose: Pose,
     /// Tracked controllers and head gaze observed in the same frame.
     pub pointers: Vec<XrPointerRay>,
 }
@@ -319,7 +319,7 @@ impl XrPointerSession {
 
 fn pointer_hit(
     surface: &XrPointerSurface,
-    panel: XrPose,
+    panel: Pose,
     pointer: XrPointerRay,
 ) -> Option<XrPointerHit> {
     let panel = panel.normalized()?.inverse();
@@ -335,7 +335,7 @@ fn pointer_hit(
         return None;
     }
     let origin = panel.transform(pointer.origin);
-    let direction = panel.rotate(XrVector {
+    let direction = panel.rotate(Vector3 {
         x: pointer.direction.x / norm,
         y: pointer.direction.y / norm,
         z: pointer.direction.z / norm,

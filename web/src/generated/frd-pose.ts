@@ -2,7 +2,7 @@
 /**
  * Pose in aircraft FRD coordinates, before the render-axis conversion.
  */
-export interface XrFrdPose {
+export interface FrdPose {
     /**
      * Scalar-first orientation in the FRD basis.
      *

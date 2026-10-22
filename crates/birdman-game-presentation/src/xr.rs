@@ -1,5 +1,8 @@
 //! Engine-independent metric XR geometry and optical layout.
 
+pub(crate) use crate::camera::{CameraError, compose_pose, inverse_pose};
+pub use crate::camera::{Pose, Quaternion, Vector3};
+
 mod geometry;
 mod head_hud;
 mod interaction;

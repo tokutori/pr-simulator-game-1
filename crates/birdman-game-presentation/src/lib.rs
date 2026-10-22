@@ -1,5 +1,6 @@
 //! Engine-independent UI views, camera projection, XR layout and presentation policies.
 
+pub mod camera;
 pub mod game_ui;
 pub mod render_pose;
 pub mod replay_camera;

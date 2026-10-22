@@ -38,17 +38,17 @@ import { selectRayFromXrEvent } from "./xr-select-ray.js";
 import { captureConfiguredViewerFrame, captureXrViewerFrame } from "./viewer-frame.js";
 import { createHeadHudSurface } from "./head-hud-surface.js";
 import { unavailableViewerFrame } from "../../contracts/viewer-frame.js";
-import { flightRelativePose, pilotEyePoseRender, poseFrdToRender, registeredPilotEyePoint,
-  chaseCameraPoseFrd, XrCameraOrigin, projectXrPanelCameraPoses, projectXrReferenceFrame } from "../../camera/xr-spatial.js";
+import { flightRelativePose, cameraLocalPose, registeredPilotEyePoint,
+  XrCameraOrigin, projectXrPanelCameraPoses, projectXrReferenceFrame } from "../../camera/spatial.js";
 import type { XrCameraRig } from "../../../generated/xr-camera-rig.js";
 import { lakeWaterQualityProfile } from "../../contracts/lake-water.js";
 import { readExhibitionEnvironment } from "../../../game/runtime-environment.js";
 import type { LakeVisualCondition, LakeWaterQuality } from "../../contracts/lake-water.js";
-import { createLakeSkyCondition, lakeSkySunDirectionNed, sameLakeSkyRenderCondition } from "../../contracts/lake-sky.js";
+import { createLakeSkyCondition, sameLakeSkyRenderCondition } from "../../contracts/lake-sky.js";
 import type { LakeSkyCondition } from "../../contracts/lake-sky.js";
 import { createProductionLakeDetailLayer } from "./lake-detail-texture.js";
 import type { LakeDetailLayer } from "./lake-detail-texture.js";
-import { createLakeSkyTexture, lakeSkyHaze } from "./lake-sky-texture.js";
+import { createLakeSkyTexture, lakeSkyHaze, lakeSkySunlight } from "./lake-sky-texture.js";
 import { lake_scene_ambient_color_srgb, lake_scene_ambient_irradiance,
   lake_scene_sunlight_color_srgb, lake_scene_sunlight_irradiance } from "../../../../pkg/birdman_game_wasm.js";
 import { createLakeChunks, disposeLakeChunks, lakeWaterDisplacementBounds, updateLakeChunkBounds } from "./lake-water-geometry.js";
@@ -547,12 +547,12 @@ export function createThreeRenderer(
   const currentExternalCameraPose = (): Pose | null => {
     if (flightPose === null || flightCameraMode === "pilot") return null;
     if (flightCameraMode !== "chase" && fixedCameraView !== null) return fixedCameraView.pose;
-    return flightRelativePose(flightPose, poseFrdToRender(chaseCameraPoseFrd("chase")));
+    return flightRelativePose(flightPose, cameraLocalPose(pilotEyePoint, flightPose.pilotPositionMeters, flightPose.initialPilotPositionMeters, true));
   };
   const pilotEyePoint = registeredPilotEyePoint();
   const currentPilotEyePose = (): Pose => flightPose === null
     ? IDENTITY_POSE
-    : pilotEyePoseRender(pilotEyePoint, flightPose.pilotPositionMeters, flightPose.initialPilotPositionMeters);
+    : cameraLocalPose(pilotEyePoint, flightPose.pilotPositionMeters, flightPose.initialPilotPositionMeters, false);
   const usesExternalCamera = (): boolean => flightPose !== null && flightCameraMode !== "pilot";
   const cameraOrigin = new XrCameraOrigin();
   let cameraPlacement: { flight: FlightRenderPose | null; prepared: FlightRenderPose | null; mode: FlightCameraMode;
@@ -1207,16 +1207,12 @@ export function createThreeRenderer(
 
   function applySkyLighting(condition: LakeSkyCondition | null): void {
     const [, hazeNear, hazeFar] = lakeSkyHaze(condition?.visibilityMeters);
-    const direction = condition === null ? null : lakeSkySunDirectionNed(condition);
-    const daylight = condition !== null && condition.sunElevationDegrees >= 0 ? 1 : 0;
-    const north = direction?.north ?? 0;
-    const east = direction?.east ?? 0;
-    const up = direction === null ? 1 : -direction.down;
-    sunOffset.set(east, up, -north).multiplyScalar(sunDistanceMeters);
+    const [east, up, back, daylight] = lakeSkySunlight(condition);
+    sunOffset.set(east, up, back).multiplyScalar(sunDistanceMeters);
     sun.position.copy(sun.target.position).add(sunOffset);
     sun.intensity = lake_scene_sunlight_irradiance() * daylight;
     sun.castShadow = daylight === 1;
-    lakeUniforms.sunDirection.value.set(east, up, -north, daylight);
+    lakeUniforms.sunDirection.value.set(east, up, back, daylight);
     lakeFog.far = hazeFar;
     lakeFog.near = hazeNear;
     lakeUniforms.hazeRange.value.set(lakeFog.near, lakeFog.far, 0, 0);

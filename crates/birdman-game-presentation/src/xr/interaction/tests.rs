@@ -14,12 +14,12 @@ fn surface() -> XrPointerSurface {
 fn pointer(source: XrPointerSource, horizontal: f64) -> XrPointerRay {
     XrPointerRay {
         source,
-        origin: XrVector {
+        origin: Vector3 {
             x: horizontal,
             y: 0.0,
             z: 0.0,
         },
-        direction: XrVector {
+        direction: Vector3 {
             x: 0.0,
             y: 0.0,
             z: -1.0,
@@ -36,13 +36,13 @@ fn observe(
         .observe(XrPointerObservation {
             timestamp_ms,
             focused: true,
-            panel_pose: XrPose {
-                position: XrVector {
+            panel_pose: Pose {
+                position: Vector3 {
                     x: 0.0,
                     y: 0.0,
                     z: -2.0,
                 },
-                ..XrPose::IDENTITY
+                ..Pose::IDENTITY
             },
             pointers,
         })
@@ -93,7 +93,7 @@ fn focus_loss_scope_exchange_and_stale_sources_invalidate_selection() {
     let observation = XrPointerObservation {
         timestamp_ms: 30.0,
         focused: false,
-        panel_pose: XrPose::IDENTITY,
+        panel_pose: Pose::IDENTITY,
         pointers: vec![gaze],
     };
     assert!(owner.observe(observation).unwrap().primary.is_none());

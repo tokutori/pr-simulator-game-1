@@ -7,7 +7,7 @@ export type XrMenuViewFit = {
      * Required viewing distance in metres.
      */
     readonly distanceMeters: number;
-    readonly headFromMenu: XrPose;
+    readonly headFromMenu: Pose;
     readonly kind: "ready";
 } | {
     readonly kind: "unavailable";
@@ -19,14 +19,14 @@ export type XrMenuViewFit = {
 /**
  * Menu-anchor-to-head transform.
  */
-export interface XrPose {
-    readonly orientation: XrQuaternion;
-    readonly position: XrVector;
+export interface Pose {
+    readonly orientation: Quaternion;
+    readonly position: Vector3;
 }
 /**
  * Child-to-parent orientation.
  */
-export interface XrQuaternion {
+export interface Quaternion {
     /**
      * Scalar component.
      */
@@ -47,7 +47,7 @@ export interface XrQuaternion {
 /**
  * Child origin expressed in parent coordinates, in metres.
  */
-export interface XrVector {
+export interface Vector3 {
     /**
      * Rightward coordinate in metres.
      */

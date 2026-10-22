@@ -1113,6 +1113,58 @@
         }
       ]
     },
+    "Pose": {
+      "additionalProperties": false,
+      "description": "Rigid child-to-parent transform; the caller names both reference spaces.",
+      "properties": {
+        "orientation": {
+          "$ref": "#/$defs/Quaternion",
+          "description": "Child-to-parent orientation."
+        },
+        "position": {
+          "$ref": "#/$defs/Vector3",
+          "description": "Child origin expressed in parent coordinates, in metres."
+        }
+      },
+      "required": [
+        "position",
+        "orientation"
+      ],
+      "type": "object"
+    },
+    "Quaternion": {
+      "additionalProperties": false,
+      "description": "Scalar-first unit quaternion in a right-handed reference space.",
+      "properties": {
+        "w": {
+          "description": "Scalar component.",
+          "format": "double",
+          "type": "number"
+        },
+        "x": {
+          "description": "Right-axis component.",
+          "format": "double",
+          "type": "number"
+        },
+        "y": {
+          "description": "Up-axis component.",
+          "format": "double",
+          "type": "number"
+        },
+        "z": {
+          "description": "Back-axis component.",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "w",
+        "x",
+        "y",
+        "z"
+      ],
+      "type": "object"
+    },
     "ScreenRenderAutoSnapshot": {
       "additionalProperties": false,
       "description": "Readonly rendering observation used by both platform UIs.",
@@ -1813,6 +1865,33 @@
         }
       ]
     },
+    "Vector3": {
+      "additionalProperties": false,
+      "description": "Metric right/up/back coordinates in the explicitly named reference space.",
+      "properties": {
+        "x": {
+          "description": "Rightward coordinate in metres.",
+          "format": "double",
+          "type": "number"
+        },
+        "y": {
+          "description": "Upward coordinate in metres.",
+          "format": "double",
+          "type": "number"
+        },
+        "z": {
+          "description": "Backward coordinate in metres.",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "z"
+      ],
+      "type": "object"
+    },
     "WaterQuality": {
       "description": "Shared non-physical water-detail selection.",
       "oneOf": [
@@ -1875,7 +1954,7 @@
               "type": "string"
             },
             "worldFromTracking": {
-              "$ref": "#/$defs/XrPose",
+              "$ref": "#/$defs/Pose",
               "description": "Render-world camera base."
             }
           },
@@ -1890,7 +1969,7 @@
           "description": "Cockpit camera; pilot displacement is already resolved in this mount.",
           "properties": {
             "aircraftFromTracking": {
-              "$ref": "#/$defs/XrPose",
+              "$ref": "#/$defs/Pose",
               "description": "Aircraft-to-tracking mount."
             },
             "kind": {
@@ -1913,7 +1992,7 @@
               "type": "string"
             },
             "worldFromTracking": {
-              "$ref": "#/$defs/XrPose",
+              "$ref": "#/$defs/Pose",
               "description": "Render-world camera base."
             }
           },
@@ -1960,11 +2039,11 @@
       "description": "One measured vertical glyph segment in its drawing surface's local metres.",
       "properties": {
         "end": {
-          "$ref": "#/$defs/XrVector",
+          "$ref": "#/$defs/Vector3",
           "description": "Opposite glyph boundary."
         },
         "start": {
-          "$ref": "#/$defs/XrVector",
+          "$ref": "#/$defs/Vector3",
           "description": "First glyph boundary."
         }
       },
@@ -2009,7 +2088,7 @@
           "description": "Explicit UI anchor."
         },
         "localPose": {
-          "$ref": "#/$defs/XrPose",
+          "$ref": "#/$defs/Pose",
           "description": "Panel transform within that anchor."
         },
         "scope": {
@@ -2115,7 +2194,7 @@
           "type": "boolean"
         },
         "panelPose": {
-          "$ref": "#/$defs/XrPose",
+          "$ref": "#/$defs/Pose",
           "description": "Reference-from-panel pose from this rendered frame."
         },
         "pointers": {
@@ -2144,11 +2223,11 @@
       "description": "Pointing ray in the same reference frame as the panel.",
       "properties": {
         "direction": {
-          "$ref": "#/$defs/XrVector",
+          "$ref": "#/$defs/Vector3",
           "description": "Unit pointing direction in reference coordinates."
         },
         "origin": {
-          "$ref": "#/$defs/XrVector",
+          "$ref": "#/$defs/Vector3",
           "description": "Ray origin in reference coordinates, in metres."
         },
         "source": {
@@ -2307,85 +2386,6 @@
           "type": "object"
         }
       ]
-    },
-    "XrPose": {
-      "additionalProperties": false,
-      "description": "Rigid child-to-parent transform; the caller names both reference spaces.",
-      "properties": {
-        "orientation": {
-          "$ref": "#/$defs/XrQuaternion",
-          "description": "Child-to-parent orientation."
-        },
-        "position": {
-          "$ref": "#/$defs/XrVector",
-          "description": "Child origin expressed in parent coordinates, in metres."
-        }
-      },
-      "required": [
-        "position",
-        "orientation"
-      ],
-      "type": "object"
-    },
-    "XrQuaternion": {
-      "additionalProperties": false,
-      "description": "Scalar-first unit quaternion in a right-handed reference space.",
-      "properties": {
-        "w": {
-          "description": "Scalar component.",
-          "format": "double",
-          "type": "number"
-        },
-        "x": {
-          "description": "Right-axis component.",
-          "format": "double",
-          "type": "number"
-        },
-        "y": {
-          "description": "Up-axis component.",
-          "format": "double",
-          "type": "number"
-        },
-        "z": {
-          "description": "Back-axis component.",
-          "format": "double",
-          "type": "number"
-        }
-      },
-      "required": [
-        "w",
-        "x",
-        "y",
-        "z"
-      ],
-      "type": "object"
-    },
-    "XrVector": {
-      "additionalProperties": false,
-      "description": "Metric right/up/back coordinates in the explicitly named reference space.",
-      "properties": {
-        "x": {
-          "description": "Rightward coordinate in metres.",
-          "format": "double",
-          "type": "number"
-        },
-        "y": {
-          "description": "Upward coordinate in metres.",
-          "format": "double",
-          "type": "number"
-        },
-        "z": {
-          "description": "Backward coordinate in metres.",
-          "format": "double",
-          "type": "number"
-        }
-      },
-      "required": [
-        "x",
-        "y",
-        "z"
-      ],
-      "type": "object"
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",

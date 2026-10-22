@@ -3,28 +3,28 @@
  * Equivalent scene-graph and logical-reference transforms for one camera mount.
  */
 export interface XrCameraRig {
-    readonly aircraftFromTracking: XrPose;
+    readonly aircraftFromTracking: Pose;
     /**
      * Logical basis identity for retained panel coordinates.
      */
     readonly basis: "stationary" | "aircraft" | "world";
-    readonly referenceFromCockpit: XrPose1;
-    readonly referenceFromTracking: XrPose2;
-    readonly referenceFromWorld: XrPose3;
-    readonly worldFromReference: XrPose4;
-    readonly worldFromTracking: XrPose5;
+    readonly referenceFromCockpit: Pose1;
+    readonly referenceFromTracking: Pose2;
+    readonly referenceFromWorld: Pose3;
+    readonly worldFromReference: Pose4;
+    readonly worldFromTracking: Pose5;
 }
 /**
  * Tracking origin as a child of the displayed aircraft.
  */
-export interface XrPose {
-    readonly orientation: XrQuaternion;
-    readonly position: XrVector;
+export interface Pose {
+    readonly orientation: Quaternion;
+    readonly position: Vector3;
 }
 /**
  * Child-to-parent orientation.
  */
-export interface XrQuaternion {
+export interface Quaternion {
     /**
      * Scalar component.
      */
@@ -45,7 +45,7 @@ export interface XrQuaternion {
 /**
  * Child origin expressed in parent coordinates, in metres.
  */
-export interface XrVector {
+export interface Vector3 {
     /**
      * Rightward coordinate in metres.
      */
@@ -62,35 +62,35 @@ export interface XrVector {
 /**
  * Physical aircraft origin in the logical reference.
  */
-export interface XrPose1 {
-    readonly orientation: XrQuaternion;
-    readonly position: XrVector;
+export interface Pose1 {
+    readonly orientation: Quaternion;
+    readonly position: Vector3;
 }
 /**
  * Runtime tracking coordinates in the backend's logical panel reference.
  */
-export interface XrPose2 {
-    readonly orientation: XrQuaternion;
-    readonly position: XrVector;
+export interface Pose2 {
+    readonly orientation: Quaternion;
+    readonly position: Vector3;
 }
 /**
  * Geographical world origin in the logical reference.
  */
-export interface XrPose3 {
-    readonly orientation: XrQuaternion;
-    readonly position: XrVector;
+export interface Pose3 {
+    readonly orientation: Quaternion;
+    readonly position: Vector3;
 }
 /**
  * Logical panel-reference coordinates in render world.
  */
-export interface XrPose4 {
-    readonly orientation: XrQuaternion;
-    readonly position: XrVector;
+export interface Pose4 {
+    readonly orientation: Quaternion;
+    readonly position: Vector3;
 }
 /**
  * Runtime tracking coordinates in render world.
  */
-export interface XrPose5 {
-    readonly orientation: XrQuaternion;
-    readonly position: XrVector;
+export interface Pose5 {
+    readonly orientation: Quaternion;
+    readonly position: Vector3;
 }

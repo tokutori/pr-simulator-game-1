@@ -1,3 +1,4 @@
+use crate::{decode, encode, error};
 use birdman_game_presentation::{game_ui::GameUiHud, xr as shared};
 use serde::de::DeserializeOwned;
 use wasm_bindgen::{JsValue, prelude::*};
@@ -18,9 +19,9 @@ pub fn xr_projection_matrix_is_valid(values: &[f64]) -> bool {
 pub fn xr_project_head_point_json(eye_json: &str, point_json: &str) -> Result<String, JsValue> {
     let (Some(eye), Some(point)) = (
         decode_geometry::<shared::XrEyeGeometry>(eye_json, 4_096),
-        decode_geometry::<shared::XrVector>(point_json, 512),
+        decode_geometry::<shared::Vector3>(point_json, 512),
     ) else {
-        return encode(&Option::<shared::XrVector>::None);
+        return encode(&Option::<shared::Vector3>::None);
     };
     encode(&shared::xr_project_head_point(&eye, point))
 }
@@ -36,7 +37,7 @@ pub fn xr_head_plane_fits_json(
 ) -> Result<bool, JsValue> {
     let (Some(viewer), Some(pose)) = (
         decode_geometry::<shared::XrViewerFrame>(viewer_json, 16_384),
-        decode_geometry::<shared::XrPose>(pose_json, 1_024),
+        decode_geometry::<shared::Pose>(pose_json, 1_024),
     ) else {
         return Ok(false);
     };
@@ -122,23 +123,9 @@ pub fn xr_text_ink_fit_json(
     ))
 }
 
-fn decode<T: DeserializeOwned>(text: &str, maximum_bytes: usize) -> Result<T, JsValue> {
-    if text.len() > maximum_bytes {
-        return Err(error("XR input exceeds its bounded query"));
-    }
-    serde_json::from_str(text).map_err(error)
-}
-
 fn decode_geometry<T: DeserializeOwned>(text: &str, maximum_bytes: usize) -> Option<T> {
     if text.len() > maximum_bytes {
         return None;
     }
     serde_json::from_str(text).ok()
-}
-
-fn encode(value: &impl serde::Serialize) -> Result<String, JsValue> {
-    serde_json::to_string(value).map_err(error)
-}
-fn error(cause: impl core::fmt::Display) -> JsValue {
-    JsValue::from_str(&cause.to_string())
 }

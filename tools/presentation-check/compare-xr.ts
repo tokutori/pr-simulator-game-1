@@ -10,7 +10,7 @@ import type { FlightRecordHudProfileDocument } from "../../web/src/generated/rec
 import type { ViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
 import { IDENTITY_POSE, composePose, rotateVec3, pose, quaternion, vec3 } from "../../web/src/render/contracts/math.js";
 import { xr_head_hud_projection_json, xr_menu_view_fit_json, xr_text_ink_fit_json, XrCameraBridge, XrSpatialBridge,
-  xr_reference_frame_json, xr_pose_chain_json, xr_inverse_pose_json, xr_panel_camera_poses_json, XrPointerBridge } from "../../web/pkg/birdman_game_wasm.js";
+  xr_reference_frame_json, pose_chain_json, inverse_pose_json, xr_panel_camera_poses_json, XrPointerBridge } from "../../web/pkg/birdman_game_wasm.js";
 import type { XrPointerObservation } from "../../web/src/generated/xr-pointer-observation.js";
 import type { XrPointerSurface } from "../../web/src/generated/xr-pointer-surface.js";
 import type { Pose } from "../../web/src/render/contracts/math.js";
@@ -153,7 +153,7 @@ function spatialResults(candidate: ReturnType<typeof observation>): unknown {
         const change = candidate.spatial.resets[step];
         if (change !== undefined) {
           camera.reset_reference_json(JSON.stringify(change));
-          head = composeSpatial(JSON.parse(xr_inverse_pose_json(JSON.stringify(change))) as Pose, head);
+          head = composeSpatial(JSON.parse(inverse_pose_json(JSON.stringify(change))) as Pose, head);
         }
       }
       return frames;
@@ -162,7 +162,7 @@ function spatialResults(candidate: ReturnType<typeof observation>): unknown {
 }
 
 function composeSpatial(...poses: readonly Pose[]): Pose {
-  return JSON.parse(xr_pose_chain_json(JSON.stringify(poses))) as Pose;
+  return JSON.parse(pose_chain_json(JSON.stringify(poses))) as Pose;
 }
 
 function opticalViewer(width: number, height: number, convention: "negative-one-to-one" | "zero-to-one" | "reversed-zero-to-one", canted: boolean): ViewerFrame {

@@ -6,6 +6,7 @@ use birdman_game_format::{AssistanceLevel, DifficultyPreset, InformationLevel, W
 use wasm_bindgen::{JsValue, prelude::*};
 
 mod airframe_structure;
+mod camera;
 mod cockpit_geometry;
 mod hybrid_bridge;
 mod hybrid_record;
@@ -20,6 +21,7 @@ mod wing_texture;
 mod xr;
 
 pub use airframe_structure::{AirframeAttachment, AirframeMemberKind, AirframeStructureBridge};
+pub use camera::*;
 pub use cockpit_geometry::CockpitGeometryBridge;
 pub use hybrid_bridge::{HybridGameSessionBridge, TailPersonalBestSelectionBridge};
 pub use lake_sky::{
@@ -186,4 +188,18 @@ fn briefing_failure_from_code(code: u32) -> Result<BriefingFailure, JsValue> {
         3 => Ok(BriefingFailure::InvalidConfiguration),
         _ => Err(JsValue::from_str("briefing failure code must be in [0, 3]")),
     }
+}
+
+fn decode<T: serde::de::DeserializeOwned>(text: &str, maximum_bytes: usize) -> Result<T, JsValue> {
+    if text.len() > maximum_bytes {
+        return Err(error("Presentation input exceeds its bounded query"));
+    }
+    serde_json::from_str(text).map_err(error)
+}
+
+fn encode(value: &impl serde::Serialize) -> Result<String, JsValue> {
+    serde_json::to_string(value).map_err(error)
+}
+fn error(cause: impl core::fmt::Display) -> JsValue {
+    JsValue::from_str(&cause.to_string())
 }
