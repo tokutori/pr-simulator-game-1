@@ -116,6 +116,10 @@ mod tests {
         };
         let basis = Quat::from_xyzw(0.5, 0.5, -0.5, 0.5);
         let attitude = basis.inverse() * aircraft.rotation * basis;
+        let [body_x, body_y, body_z, scalar] = attitude.to_array().map(f64::from);
+        let norm = [scalar, body_x, body_y, body_z]
+            .into_iter()
+            .fold(0.0_f64, f64::hypot);
         let state = FlightState::try_new(
             NedPoint::try_new(
                 -f64::from(aircraft.translation.z),
@@ -124,13 +128,8 @@ mod tests {
             )
             .unwrap(),
             NedVector::zero(),
-            UnitQuaternion::try_new(
-                f64::from(attitude.w),
-                f64::from(attitude.x),
-                f64::from(attitude.y),
-                f64::from(attitude.z),
-            )
-            .unwrap(),
+            UnitQuaternion::try_new(scalar / norm, body_x / norm, body_y / norm, body_z / norm)
+                .unwrap(),
             BodyVector::zero(),
             pilot,
             0.0,
