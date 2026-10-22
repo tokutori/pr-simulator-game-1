@@ -3,7 +3,6 @@ import type { FlightFrameDocument } from "../generated/flight-frame.js";
 import type { FlightGamepadObservation } from "../generated/flight-gamepad.js";
 import type { FlightKeyObservation } from "../generated/flight-key.js";
 import type { FlightRenderPose } from "../render/contracts/runtime.js";
-import type { TailLogicalInput } from "./tail-input.js";
 
 export interface FlightPosePort {
   setFlightPose(pose: FlightRenderPose | null): void;
@@ -11,13 +10,10 @@ export interface FlightPosePort {
 
 export interface TailSessionPort {
   readSnapshot(): TailSnapshotDocument;
-  advanceTick(input: TailLogicalInput): TailSnapshotDocument;
   advanceFrame(timestampMilliseconds: number, gamepads: readonly FlightGamepadObservation[], available: boolean): FlightFrameDocument;
   observeFlightKey(observation: FlightKeyObservation): boolean;
   invalidateFlightInput(): void;
   failAdapter(): void;
-  pause(reason: number): void;
-  clear_pause_reason(reason: number): void;
   free(): void;
 }
 export interface FlightInputDevice {

@@ -8,7 +8,6 @@ mod environment;
 mod flight_record;
 mod personal_best;
 mod personal_best_metadata;
-mod tail_input;
 mod venue;
 
 pub use venue::{
@@ -24,7 +23,6 @@ pub use environment::{
     MAX_ENVIRONMENT_TEXT_BYTES, MAX_ENVIRONMENT_WIND_SAMPLES, SkyStateDocument, WaveStateDocument,
     WindGridDocument,
 };
-pub use tail_input::{TAIL_INPUT_SCHEMA_VERSION, TailControlLayoutDocument, TailInputDocument};
 
 pub use flight_record::{
     ActuatorFailureDocument, AeroFailureDocument, AerodynamicFailureDocument,

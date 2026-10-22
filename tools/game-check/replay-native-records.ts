@@ -31,7 +31,7 @@ const execLogs: Promise<void>[] = [];
 const nativeLog = run("cargo", ["test", "-p", "birdman-game-bevy", "--locked",
   "native_acceptance_", "--", "--nocapture"],
 "native.log", { ...process.env, BPG_NATIVE_ACCEPTANCE_DIR: native });
-assert.match(nativeLog, /^test result: ok\. 2 passed; 0 failed;/m);
+assert.match(nativeLog, /^test result: ok\. 1 passed; 0 failed;/m);
 run(process.execPath, [resolve(root, "node_modules/tsx/dist/cli.mjs"), "tools/wasm-build/main.ts"], "wasm-build.log");
 await Promise.all(execLogs);
 const wasmBytes = await readFile(resolve(root, "web/pkg/birdman_game_wasm_bg.wasm"));
@@ -66,87 +66,6 @@ function compare(actual: unknown, expected: unknown, path: string): void {
 }
 
 const artifactFiles = (await readdir(native)).filter(file => file.endsWith(".json")).sort();
-const files = artifactFiles.filter(file => !file.startsWith("frame-"));
-assert.equal(files.length, 12, "Expected four assistance levels and three longitudinal inputs");
-const covered = new Set<string>();
-for (const file of files) {
-  const artifact = record(JSON.parse(await readFile(resolve(native, file), "utf8")) as unknown);
-  assert.ok(typeof artifact.record_json === "string" && typeof artifact.csv === "string");
-  const document = record(JSON.parse(artifact.record_json) as unknown);
-  const header = record(document.header);
-  const difficulty = record(header.difficulty);
-  const demand = record(artifact.input);
-  const assistance = difficulty.assistance;
-  assert.ok(assistance === "manual" || assistance === "assisted" || assistance === "light" || assistance === "strong");
-  const controlModeCode = assistance === "manual" ? 0 : assistance === "strong" ? 2 : 1;
-  assert.ok(typeof header.seed === "number" && Number.isSafeInteger(header.seed));
-  const seed = BigInt(header.seed);
-  const bridge = new HybridGameSessionBridge(controlModeCode, Number(seed & 0xffff_ffffn), Number(seed >> 32n));
-  const session = new TailAppSessionFacade(bridge, physics_hz());
-  const archive = createAppSession();
-  try {
-    session.executeSharedSessionCommand({ kind: "open_setup" });
-    session.executeSharedSessionCommand({ kind: "select_assistance", assistance });
-    const weather = difficulty.weather;
-    assert.ok(weather === "calm" || weather === "mild" || weather === "typical" || weather === "challenging" || weather === "near_limit");
-    session.executeSharedSessionCommand({ kind: "select_weather", weather });
-    session.executeSharedSessionCommand({ kind: "prepare" });
-    session.executeSharedSessionCommand({ kind: "start_countdown" });
-    session.observeCountdown(session.captureCountdownToken(), 3, true);
-    assert.ok(Array.isArray(document.samples));
-    const samples = document.samples.map((sample: unknown) => record(sample));
-    assert.ok(samples.length > 1);
-    assert.ok(typeof demand.nose_up === "number" && typeof demand.turn_right === "number"
-      && typeof demand.desired_pitch_rate_rad_s === "number" && typeof demand.desired_yaw_rate_rad_s === "number");
-    assert.ok([-1, 0, 1].includes(demand.nose_up));
-    assert.deepEqual(demand.pilot_position_command, { kind: "hold" });
-    const input = { controlLayout: "tail_incidence" as const, noseUp: demand.nose_up, turnRight: demand.turn_right,
-      desiredPitchRateRadiansPerSecond: demand.desired_pitch_rate_rad_s, desiredYawRateRadiansPerSecond: demand.desired_yaw_rate_rad_s,
-      pilotPositionCommand: { kind: "hold" as const } };
-    assert.ok(typeof header.maximum_flight_ticks === "number");
-    let attempts = 0;
-    while (session.readLifecycle().phase === "flight_running" && attempts <= header.maximum_flight_ticks) {
-      try { session.flightPort.advanceTick(input); }
-      catch (cause) {
-        if (session.readLifecycle().phase !== "result" || record(document.finalization).failure === null) throw cause;
-      }
-      attempts += 1;
-    }
-    assert.equal(session.readLifecycle().phase, "result", file);
-    const wasmJson = session.exportRecordJson();
-    const actual = record(JSON.parse(wasmJson) as unknown);
-    assert.equal(actual.schema_version, 7);
-    assert.deepEqual(actual.header, header, `${file}: identity and comparison key`);
-    assert.deepEqual(actual.control_identity, document.control_identity);
-    compare(actual.samples, document.samples, `${file}.samples`);
-    compare(actual.finalization, document.finalization, `${file}.finalization`);
-    const nativeMetadata = record(document.identity_metadata);
-    const wasmMetadata = record(actual.identity_metadata);
-    assert.deepEqual(wasmMetadata.conditions, nativeMetadata.conditions);
-    assert.equal(wasmMetadata.comparison_version, nativeMetadata.comparison_version);
-    assert.deepEqual(record(wasmMetadata.build).source_fingerprints, record(nativeMetadata.build).source_fingerprints);
-    session.executeSharedSessionCommand({ kind: "enter_replay" });
-    archive.openArchive(artifact.record_json);
-    assert.equal(archive.readFlightLog("json"), artifact.record_json);
-    assert.equal(archive.readFlightLog("csv"), artifact.csv);
-    assert.ok(Array.isArray(artifact.replay) && artifact.replay.length === 5);
-    for (const value of artifact.replay) {
-      const projection = record(value);
-      const time = projection.time;
-      assert.ok(typeof time === "number");
-      compare(session.queryRecordSample(time), projection.sample, `${file}.nativeQuery@${String(time)}`);
-      compare(JSON.parse(bridge.playback_camera_view_json(time, "chase", true)) as unknown, projection.camera, `${file}.nativeCamera@${String(time)}`);
-      compare(session.queryRecordSample(time), archive.queryRecordSample(time), `${file}.archiveQuery@${String(time)}`);
-      compare(session.queryReplayCamera(time, "chase", true), archive.queryReplayCamera(time, "chase", true), `${file}.archiveCamera@${String(time)}`);
-    }
-    assert.equal(archive.readFlightLog("json"), artifact.record_json);
-    await writeFile(resolve(output, file), wasmJson, "utf8");
-    covered.add(`${String(difficulty.assistance)}:${String(demand.nose_up)}`);
-    cases.push({ file, attempts, samples: samples.length, finalization: document.finalization, nativeRecordSha256: createHash("sha256").update(artifact.record_json).digest("hex"),
-      wasmRecordSha256: createHash("sha256").update(wasmJson).digest("hex") });
-  } finally { archive.dispose(); session.dispose(); }
-}
-assert.equal(covered.size, 12);
 const frameFiles = artifactFiles.filter(file => file.startsWith("frame-"));
 assert.equal(frameFiles.length, 4);
 for (const file of frameFiles) {
@@ -157,9 +76,11 @@ for (const file of frameFiles) {
   assert.ok(typeof header.seed === "number");
   const seed = BigInt(header.seed);
   const bridge = new HybridGameSessionBridge(0, Number(seed & 0xffff_ffffn), Number(seed >> 32n));
+  const session = new TailAppSessionFacade(bridge, physics_hz());
   try {
     bridge.apply_game_ui_session_command_json(JSON.stringify({ kind: "open_setup" }));
     bridge.apply_game_ui_session_command_json(JSON.stringify({ kind: "select_assistance", assistance: artifact.assistance }));
+    bridge.apply_game_ui_session_command_json(JSON.stringify({ kind: "select_weather", weather: record(header.difficulty).weather }));
     bridge.apply_game_ui_session_command_json(JSON.stringify({ kind: "prepare" }));
     bridge.apply_game_ui_session_command_json(JSON.stringify({ kind: "start_countdown" }));
     bridge.observe_countdown(bridge.countdown_token(), 3, true);
@@ -174,10 +95,31 @@ for (const file of frameFiles) {
       compare(frame.render_pose, observation.render_pose, `${file}.pose@${String(observation.timestamp_ms)}`);
     }
     const actual = record(JSON.parse(bridge.export_current_flight_record_json()) as unknown);
+    assert.deepEqual(actual.header, document.header);
+    assert.deepEqual(actual.control_identity, document.control_identity);
+    const nativeMetadata = record(document.identity_metadata), wasmMetadata = record(actual.identity_metadata);
+    assert.deepEqual(wasmMetadata.conditions, nativeMetadata.conditions);
+    assert.equal(wasmMetadata.comparison_version, nativeMetadata.comparison_version);
+    assert.deepEqual(record(wasmMetadata.build).source_fingerprints, record(nativeMetadata.build).source_fingerprints);
+    const archive = createAppSession();
+    try {
+      archive.openArchive(artifact.record_json);
+      assert.equal(archive.readFlightLog("json"), artifact.record_json);
+      assert.equal(archive.readFlightLog("csv"), artifact.csv);
+      bridge.apply_game_ui_session_command_json(JSON.stringify({ kind: "enter_replay" }));
+      assert.ok(Array.isArray(artifact.replay));
+      for (const value of artifact.replay) {
+        const projection = record(value);
+        assert.ok(typeof projection.time === "number");
+        compare(archive.queryRecordSample(projection.time), projection.sample, file + ".replay.sample");
+        compare(JSON.parse(bridge.playback_camera_view_json(projection.time, "chase", true)) as unknown, projection.camera, file + ".replay.camera");
+        compare(archive.queryReplayCamera(projection.time, "chase", true), session.queryReplayCamera(projection.time, "chase", true), file + ".archive.camera");
+      }
+    } finally { archive.dispose(); }
     compare(actual.samples, document.samples, `${file}.samples`);
     compare(actual.finalization, document.finalization, `${file}.finalization`);
     cases.push({ file, frames: artifact.observations.length, samples: Array.isArray(document.samples) ? document.samples.length : 0 });
-  } finally { bridge.free(); }
+  } finally { session.dispose(); }
 }
 assert.equal(execFileSync("git", ["diff", "--binary", "HEAD"], gitOptions), patch);
 assert.equal(execFileSync("git", ["rev-parse", "HEAD"], gitOptions).trim(), head);

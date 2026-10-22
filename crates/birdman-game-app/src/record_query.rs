@@ -1,13 +1,13 @@
 //! Schema-two record query wire types shared by producers and generated consumers.
 
+use crate::session_snapshot::TailControlLayoutDocument;
 use birdman_game_core::{
     FlightRecord, FlightRecordPlaybackSample, FlightRecordQueryError, FlightRecordSummary,
     FlightState, FlightTelemetry, TailIncidence,
 };
 use birdman_game_format::{
     FlightRecordDifficultyDocument, FlightRecordStateDocument, FlightRecordTailIdentityDocument,
-    FlightRecordTelemetryDocument, TailControlLayoutDocument, TailFlightRecordFinalizationDocument,
-    TailIncidenceDocument,
+    FlightRecordTelemetryDocument, TailFlightRecordFinalizationDocument, TailIncidenceDocument,
 };
 use serde::Serialize;
 

@@ -1,10 +1,11 @@
+import { advanceFlightFixture } from "./current-session-fixture.js";
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { HybridGameSessionBridge, initSync, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
 import { TailAppSessionFacade } from "../../web/src/app/session-facade.js";
 import { createInitialAppModel, updateApp } from "../../web/src/app/app-state.js";
 import { projectRuntimePlaybackClock, readRuntimeSessionProjection } from "../../web/src/app/session-runtime-projection.js";
-import { launchCurrentSession, neutralTailInput } from "./current-session-fixture.js";
+import { launchCurrentSession } from "./current-session-fixture.js";
 import { sharedGameUiPlatform } from "./shared-game-ui-fixture.js";
 
 initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url))) });
@@ -15,7 +16,7 @@ describe("shared Rust record UI and synchronous browser projection", () => {
     const session = new TailAppSessionFacade(bridge, physics_hz());
     try {
       launchCurrentSession(session);
-      session.flightPort.advanceTick(neutralTailInput);
+      advanceFlightFixture(session);
       session.executeSharedSessionCommand({ kind: "abort" });
       const saved = session.exportRecordJson();
       const platform = sharedGameUiPlatform();
@@ -55,7 +56,7 @@ describe("shared Rust record UI and synchronous browser projection", () => {
     const session = new TailAppSessionFacade(new HybridGameSessionBridge(0, 21, 22), physics_hz());
     try {
       launchCurrentSession(session);
-      session.flightPort.advanceTick(neutralTailInput);
+      advanceFlightFixture(session);
       session.executeSharedSessionCommand({ kind: "abort" });
       session.executeSharedSessionCommand({ kind: "enter_replay" });
       session.setPlaybackPlaying(true);

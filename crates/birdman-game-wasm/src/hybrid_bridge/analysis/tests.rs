@@ -13,18 +13,8 @@ fn complete(weather_code: u32) -> HybridGameSessionBridge {
     bridge
         .observe_countdown(bridge.countdown_token(), 1.0, true)
         .unwrap();
-    let input = json!({
-        "schema_version": 2,
-        "control_layout": "tail_incidence",
-        "nose_up": 0.0,
-        "turn_right": 0.0,
-        "desired_pitch_rate_rad_s": 0.0,
-        "desired_yaw_rate_rad_s": 0.0,
-        "pilot_position_command": { "kind": "hold" }
-    })
-    .to_string();
-    bridge.advance_internal(&input).unwrap();
-    bridge.advance_internal(&input).unwrap();
+    bridge.advance_frame_fixture().unwrap();
+    bridge.advance_frame_fixture().unwrap();
     assert!(matches!(
         bridge.session.core_session().snapshot().phase(),
         SessionPhase::Result

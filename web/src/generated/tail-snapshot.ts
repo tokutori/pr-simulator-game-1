@@ -1,7 +1,7 @@
 /* Generated from birdman-game-presentation::game_ui. Edit the Rust contract and regenerate. */
 export type FlightRecordTailIdentityDocument = import("./tail-identity.js").FlightRecordTailIdentityDocument;
 /**
- * Control layout accepted by the current live session boundary.
+ * Physical control layout projected by the shared session.
  */
 export type TailControlLayoutDocument = "tail_incidence";
 /**

@@ -1,6 +1,7 @@
 use super::*;
 use birdman_game_core::{
-    FlightRecordDisposition, FlightRecordFinalization, SessionEndReason, TailFlightTickError,
+    FlightRecordDisposition, FlightRecordFinalization, SessionEndReason, TailControlError,
+    TailFlightTickError,
 };
 use birdman_game_format::{FlightRecordEndReasonDocument, TailFlightRecordDocument};
 use serde_json::{Value, json};
@@ -14,18 +15,8 @@ fn complete() -> HybridGameSessionBridge {
     bridge
         .observe_countdown(bridge.countdown_token(), 1.0, true)
         .unwrap();
-    let input = json!({
-        "schema_version":2,
-        "control_layout":"tail_incidence",
-        "nose_up":0.5,
-        "turn_right":-0.5,
-        "desired_pitch_rate_rad_s":0.0,
-        "desired_yaw_rate_rad_s":0.0,
-        "pilot_position_command":{"kind":"hold"}
-    })
-    .to_string();
-    bridge.advance_internal(&input).unwrap();
-    bridge.advance_internal(&input).unwrap();
+    bridge.advance_frame_fixture().unwrap();
+    bridge.advance_frame_fixture().unwrap();
     assert_eq!(
         bridge
             .session

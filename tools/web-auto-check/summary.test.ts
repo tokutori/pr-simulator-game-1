@@ -1,8 +1,9 @@
+import { advanceFlightFixture } from "../game-check/current-session-fixture.js";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { initSync } from "../../web/pkg/birdman_game_wasm.js";
 import { createAppSession } from "../../web/src/app/session-factory.js";
-import { launchCurrentSession, neutralTailInput } from "../game-check/current-session-fixture.js";
+import { launchCurrentSession } from "../game-check/current-session-fixture.js";
 import type { LiveObservation } from "./browser-observer.js";
 import { distribution, summarize } from "./summary.js";
 
@@ -10,7 +11,7 @@ initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_ga
 const session = createAppSession({ controlModeCode: 0, seedLow: 21, seedHigh: 22 });
 launchCurrentSession(session);
 const initialSnapshotJson = JSON.stringify(session.flightPort.readSnapshot());
-for (let tick = 0; tick < 200; tick++) session.flightPort.advanceTick(neutralTailInput);
+for (let tick = 0; tick < 200; tick++) advanceFlightFixture(session);
 const finalSnapshotJson = JSON.stringify(session.flightPort.readSnapshot());
 session.executeSharedSessionCommand({ kind: "pause" });
 const pausedSnapshotJson = JSON.stringify(session.flightPort.readSnapshot());

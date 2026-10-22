@@ -1,3 +1,4 @@
+import { advanceFlightFixture } from "./current-session-fixture.js";
 import { readFileSync } from "node:fs";
 import { Window } from "happy-dom";
 import { PerspectiveCamera, StereoCamera } from "three";
@@ -7,7 +8,6 @@ import type { TailSnapshotDocument } from "../../web/src/generated/tail-snapshot
 import type { RecordedPlaybackSample } from "../../web/src/generated/record-sample.js";
 import type { GameUiView } from "../../web/src/generated/game-ui-view.js";
 import { readContract } from "../game-ui-build/validate.js";
-import { encodeTailLogicalInput } from "../../web/src/game/tail-input.js";
 import { FlightHudAdapter } from "../../web/src/presentation/flight-hud.js";
 import { projectSharedFlightHudModel } from "../../web/src/presentation/flight-hud-model.js";
 import { currentSharedHudFixture, sharedHudNode, sharedGameUiPlatform, withSharedGameUiSession } from "./shared-game-ui-fixture.js";
@@ -29,9 +29,7 @@ function display(session: HybridGameSessionBridge): TailSnapshotDocument {
 }
 
 function advance(session: HybridGameSessionBridge): void {
-  session.advance_tick_json(encodeTailLogicalInput({ controlLayout: "tail_incidence", noseUp: 0.5, turnRight: -0.5,
-    desiredPitchRateRadiansPerSecond: 0, desiredYawRateRadiansPerSecond: 0,
-    pilotPositionCommand: { kind: "set", normalized: 0.1 } }));
+  advanceFlightFixture(session, 1, [{ identity: { slot_low: 0, slot_high: 0, generation: 0 }, connected: true, axes: [0.5, -0.5, 0.1] }]);
 }
 
 function sharedHud(session: HybridGameSessionBridge, head = false) {
@@ -54,9 +52,8 @@ describe("tail-aware shared Flight HUD", () => {
       const rate = snapshot.frame.state.angular_rate_body_rad_s;
       const degrees = (value: number): string => (value * 180 / Math.PI).toFixed(1);
       const attitude = sharedHudNode(model, "hud-attitude").content;
-      expect(attitude.kind === "attitude" && attitude.geometry).toMatchObject({ kind: "attitude", horizon: {
-        rotation_degrees: -snapshot.frame.telemetry.attitude_euler_rad[0] * 180 / Math.PI
-      } });
+      if (attitude.kind !== "attitude" || attitude.geometry.kind !== "attitude") throw new Error("Expected shared attitude geometry");
+      expect(attitude.geometry.horizon.rotation_degrees).toBeCloseTo(-snapshot.frame.telemetry.attitude_euler_rad[0] * 180 / Math.PI, 12);
       const readouts = model.groups.flatMap(group => group.nodes).map(node => `${node.label} ${node.content.value}`).join("\n");
       expect(sharedHudNode(model, "hud-angular-rates").content.value).toBe(`${degrees(rate[0])}/${degrees(rate[1])}/${degrees(rate[2])} °/s`);
       expect(sharedHudNode(model, "hud-tail-incidence").content.value)
@@ -152,15 +149,15 @@ describe("tail-aware shared Flight HUD", () => {
       expect(summary.value).toContain("操作により飛行を終了した");
       expect(result.phase).toBe("result");
       replay.open_archived_flight_record(source.export_flight_record_json());
-      const snapshot = readContract<RecordedPlaybackSample>("record_sample", replay.flight_record_sample_at_seconds(0.005));
+      const snapshot = readContract<RecordedPlaybackSample>("record_sample", replay.flight_record_sample_at_seconds(0.015));
       replay.game_ui_action_json(JSON.stringify({ kind: "set_replay_view", view: "telemetry" }), JSON.stringify(sharedGameUiPlatform()));
       expect(readContract<GameUiView>("view", replay.game_ui_view_json(JSON.stringify(sharedGameUiPlatform()))).selections.replay_view).toBe("telemetry");
-      replay.seek_playback(0.005);
+      replay.seek_playback(0.015);
       const model = sharedHud(replay);
       expect(sharedHudNode(model, "hud-distance").content.value).toBe("—");
       expect(sharedHudNode(model, "hud-pilot-position").content.value).toContain(`(${target >= 0 ? "+" : ""}${target.toFixed(2)}) m`);
       expect(sharedHudNode(model, "hud-elapsed").content.value).toBe(`${snapshot.flight_time_s.toFixed(1)} s`);
-      expect(snapshot.flight_time_s).toBe(0.005);
+      expect(snapshot.flight_time_s).toBe(0.015);
     } finally {
       source.free();
       replay.free();

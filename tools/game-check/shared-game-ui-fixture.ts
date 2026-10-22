@@ -1,3 +1,4 @@
+import { advanceFlightFixture } from "./current-session-fixture.js";
 import { HybridGameSessionBridge, physics_hz, ScreenRenderAutoBridge } from "../../web/pkg/birdman_game_wasm.js";
 import { initializeWasmFixture } from "./wasm-fixture.js";
 import type { ScreenRenderAutoSnapshot } from "../../web/src/generated/screen-render-auto.js";
@@ -11,8 +12,6 @@ import type { GameUiPlatformInput } from "../../web/src/generated/game-ui-input.
 import type { GameUiView } from "../../web/src/generated/game-ui-view.js";
 import { projectSharedFlightHudModel } from "../../web/src/presentation/flight-hud-model.js";
 import type { FlightHudModel, FlightHudNode } from "../../web/src/presentation/flight-hud-model.js";
-import { neutralTailInput } from "./current-session-fixture.js";
-import { encodeTailLogicalInput } from "../../web/src/game/tail-input.js";
 import type { LakeWaterQuality } from "../../web/src/render/contracts/lake-water.js";
 
 initializeWasmFixture();
@@ -106,7 +105,7 @@ export function createSharedGameUiSession(phase: SessionPhase, options: SharedGa
               bridge.observe_countdown(bridge.countdown_token(), 1, true);
               const ticks = options.ticks ?? 2;
               if (!Number.isSafeInteger(ticks) || ticks < 0) throw new RangeError("Fixture tick count must be a nonnegative integer");
-              for (let index = 0; index < ticks && owner.readSnapshot().phase === "flight_running"; index += 1) bridge.advance_tick_json(encodeTailLogicalInput(neutralTailInput));
+              for (let index = 0; index < ticks && owner.readSnapshot().phase === "flight_running"; index += 1) advanceFlightFixture(bridge);
               if (phase === "flight_paused") bridge.pause(options.pauseReason ?? 0);
               if (phase === "result" || phase === "replay") bridge.abort();
               if (phase === "replay") bridge.enter_replay();

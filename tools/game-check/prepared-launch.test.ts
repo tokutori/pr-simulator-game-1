@@ -1,3 +1,4 @@
+import { advanceFlightFixture } from "./current-session-fixture.js";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { HybridGameSessionBridge, initSync, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
@@ -6,8 +7,6 @@ import type { TailPreparedLaunchDocument } from "../../web/src/generated/tail-pr
 import { readContract } from "../game-ui-build/validate.js";
 
 initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url))) });
-const neutral = ({ controlLayout: "tail_incidence" as const, noseUp: 0, turnRight: 0,
-  desiredPitchRateRadiansPerSecond: 0, desiredYawRateRadiansPerSecond: 0, pilotPositionCommand: { kind: "hold" as const } });
 
 describe("sealed initial launch presentation", () => {
   for (const mode of [0, 1, 2]) {
@@ -43,7 +42,7 @@ describe("sealed initial launch presentation", () => {
         expect(airspeedMetersPerSecond).toBeNull();
         expect(windVelocityNedMetersPerSecond).toBeNull();
         expect(live.render_pose).toMatchObject(initialPose);
-        session.flightPort.advanceTick(neutral);
+        advanceFlightFixture(session);
         session.executeSharedSessionCommand({ kind: "abort" });
         expect(session.readPreparedLaunchPose()).toBeNull();
         session.executeSharedSessionCommand({ kind: "retry" });

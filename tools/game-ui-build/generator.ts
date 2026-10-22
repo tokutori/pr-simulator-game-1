@@ -35,7 +35,6 @@ export const schemaEntries = [
   { key: "menu_layout_reply", name: "MenuLayoutReply", filename: "menu-layout-reply", group: "serialize" },
   { key: "screen_render_auto", name: "ScreenRenderAutoSnapshot", filename: "screen-render-auto", group: "serialize" },
   { key: "replay_camera", name: "ReplayCameraView", filename: "replay-camera", group: "serialize" },
-  { key: "tail_input", name: "TailInputDocument", filename: "tail-input", group: "deserialize" },
   { key: "tail_snapshot", name: "TailSnapshotDocument", filename: "tail-snapshot", group: "serialize" },
   { key: "flight_frame", name: "FlightFrameDocument", filename: "flight-frame", group: "serialize" },
   { key: "flight_key", name: "FlightKeyObservation", filename: "flight-key", group: "deserialize" },

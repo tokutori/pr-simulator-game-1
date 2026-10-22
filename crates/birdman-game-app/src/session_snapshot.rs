@@ -6,8 +6,7 @@ use birdman_game_core::{
     TailRateTarget,
 };
 use birdman_game_format::{
-    AssistanceLevel, TAIL_INPUT_SCHEMA_VERSION, TailControlLayoutDocument,
-    TailFlightRecordFinalizationDocument, TailIncidenceDocument,
+    AssistanceLevel, TailFlightRecordFinalizationDocument, TailIncidenceDocument,
 };
 
 use crate::application::ApplicationSession;
@@ -273,7 +272,7 @@ pub fn control_profile(
     let limits = TailRateTarget::limits_rad_per_second();
     let gains = prepared.controller_profile.gains_seconds();
     Ok(TailControlProfileDocument {
-        schema_version: TAIL_INPUT_SCHEMA_VERSION,
+        schema_version: SESSION_SNAPSHOT_SCHEMA_VERSION,
         control_layout: TailControlLayoutDocument::TailIncidence,
         controller_profile_id: &prepared.record_identity.controller_profile_id,
         controller_profile_version: scenario.controller_profile_version,
@@ -333,4 +332,16 @@ impl TailStateDocument {
             },
         })
     }
+}
+
+/// Version of the shared live-session observation.
+pub const SESSION_SNAPSHOT_SCHEMA_VERSION: u32 = 2;
+
+/// Physical control layout projected by the shared session.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum TailControlLayoutDocument {
+    /// Independently controlled horizontal and vertical tail incidence.
+    TailIncidence,
 }

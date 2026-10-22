@@ -13,8 +13,7 @@ use birdman_game_core::{
     WingBendingFactor,
 };
 use birdman_game_format::{
-    FlightRecordFormatError, FlightRecordTailIdentityDocument, TAIL_INPUT_SCHEMA_VERSION,
-    TailControlLayoutDocument as ControlLayout, TailFlightRecordFinalizationDocument,
+    FlightRecordFormatError, FlightRecordTailIdentityDocument, TailFlightRecordFinalizationDocument,
 };
 
 use crate::render_pose::{FlightRenderPose, flight_render_pose, render_tail_geometry};
@@ -25,7 +24,7 @@ use crate::render_pose::{FlightRenderPose, flight_render_pose, render_tail_geome
 #[serde(deny_unknown_fields)]
 pub struct TailSnapshotDocument<'identity> {
     /// Current live boundary version.
-    #[cfg_attr(feature = "schema", schemars(extend("const" = birdman_game_format::TAIL_INPUT_SCHEMA_VERSION)))]
+    #[cfg_attr(feature = "schema", schemars(extend("const" = birdman_game_app::session_snapshot::SESSION_SNAPSHOT_SCHEMA_VERSION)))]
     pub schema_version: u32,
     /// Current two-tail layout.
     pub control_layout: ControlLayout,
@@ -145,7 +144,7 @@ fn interpolate_live_pose(
 #[serde(deny_unknown_fields)]
 pub struct TailPreparedLaunchDocument<'identity> {
     /// Current live boundary version.
-    #[cfg_attr(feature = "schema", schemars(extend("const" = birdman_game_format::TAIL_INPUT_SCHEMA_VERSION)))]
+    #[cfg_attr(feature = "schema", schemars(extend("const" = birdman_game_app::session_snapshot::SESSION_SNAPSHOT_SCHEMA_VERSION)))]
     pub schema_version: u32,
     /// Current two-tail layout.
     pub control_layout: ControlLayout,
@@ -250,7 +249,7 @@ impl<'session> Projection<'session> {
             None => TailPreparedLaunchFrame::Unavailable,
         };
         Ok(TailPreparedLaunchDocument {
-            schema_version: TAIL_INPUT_SCHEMA_VERSION,
+            schema_version: SESSION_SNAPSHOT_SCHEMA_VERSION,
             control_layout: ControlLayout::TailIncidence,
             phase: self.session.core_session().snapshot().phase().into(),
             preview,
@@ -344,7 +343,7 @@ impl<'session> Projection<'session> {
             | SessionSnapshot::Countdown { .. } => (TailFrameDocument::Menu, None),
         };
         Ok(TailSnapshotDocument {
-            schema_version: TAIL_INPUT_SCHEMA_VERSION,
+            schema_version: SESSION_SNAPSHOT_SCHEMA_VERSION,
             control_layout: ControlLayout::TailIncidence,
             phase: snapshot.phase().into(),
             control_mode_code: birdman_game_app::session_snapshot::control_mode_code(self.session),
@@ -434,3 +433,7 @@ impl<'session> Projection<'session> {
             ))
     }
 }
+
+use birdman_game_app::session_snapshot::{
+    SESSION_SNAPSHOT_SCHEMA_VERSION, TailControlLayoutDocument as ControlLayout,
+};

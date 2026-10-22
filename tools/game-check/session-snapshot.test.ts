@@ -1,3 +1,4 @@
+import { advanceFlightFixture } from "./current-session-fixture.js";
 import { readFileSync } from "node:fs";
 import { describe, expect, expectTypeOf, it, vi } from "vitest";
 import { initSync } from "../../web/pkg/birdman_game_wasm.js";
@@ -13,8 +14,6 @@ import { projectTailGameSession } from "../../web/src/app/session-snapshot.js";
 import type { TailGameSessionProjection } from "../../web/src/app/session-snapshot.js";
 
 initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url))) });
-const neutral = ({ controlLayout: "tail_incidence" as const, noseUp: 0, turnRight: 0,
-  desiredPitchRateRadiansPerSecond: 0, desiredYawRateRadiansPerSecond: 0, pilotPositionCommand: { kind: "hold" as const } });
 
 function projection(session: TailAppSessionFacade): TailGameSessionProjection {
   return projectTailGameSession(session.readSnapshot(), session.readLifecycle());
@@ -93,7 +92,7 @@ describe("raw Rust snapshot application observations", () => {
     const facade = session();
     try {
       launch(facade);
-      facade.flightPort.advanceTick(neutral);
+      advanceFlightFixture(facade);
       const current = projection(facade);
       if (current.phase !== "flight_running") throw new Error("Expected a live tail projection");
       let model = updateApp(createInitialAppModel(), { type: "game-session-synced", ...current }).model;
@@ -133,7 +132,7 @@ describe("raw Rust snapshot application observations", () => {
     const facade = session();
     try {
       launch(facade);
-      facade.flightPort.advanceTick(neutral);
+      advanceFlightFixture(facade);
       const beforePause = projection(facade);
       if (beforePause.phase !== "flight_running") throw new Error("Expected a live tail projection");
       facade.executeSharedSessionCommand({ kind: "pause" });

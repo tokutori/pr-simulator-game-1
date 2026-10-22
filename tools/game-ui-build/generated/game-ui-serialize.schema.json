@@ -8341,7 +8341,7 @@
       ]
     },
     "TailControlLayoutDocument": {
-      "description": "Control layout accepted by the current live session boundary.",
+      "description": "Physical control layout projected by the shared session.",
       "oneOf": [
         {
           "const": "tail_incidence",

@@ -342,7 +342,7 @@ L(t)-z(t)=\frac{g(t-a)(b-t)}2\le\frac{g\,dt^2}8,
 |---|---|
 | Countdown | elapsed時間、800 msでは3秒/1秒では2秒、3秒で発進1回。重複時刻・不規則差分・overflow・取消後token・stale owner |
 | GameSession | 準備・発進・Pause/Resume・終端・Retryの許可と拒否、停止理由の残存、最後の有効状態、tick/record保持 |
-| input | own-field/getter-once/prototype保護、生成型とRust schema 2受理、Hold/Set、finite/normalized範囲、1024-byte上限、余剰field拒否、拒否時非commit |
+| input/frame | キー・Gamepad観測の生成型とRust受理、接続世代・入力解放、frame時刻と停止・補間、実Native/WASMの同一観測・記録・Replay・CSVの一致 |
 | snapshot/query | 実Rust/WASM producerから生成DTOへの接続、named phase/profile/環境/pose、query schema 2のcontext/sample/batch/summary/wind、toolsの構造検査、Rustの時刻・quaternion・終端/score契約 |
 | FlightRecord | 全保存sample・finalization・capacity・終端fraction・元cause、CSV/JSON出力、保存key検証 |
 | PB | 比較方式v2、同条件・来歴差・条件差、未知方式の未順位、元JSON/key保持、Web/Nativeの共有selector |

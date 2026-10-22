@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { PerspectiveCamera, Vector3 } from "three";
 import { AirframeMemberKind, AirframeStructureBridge, screen_vertical_field_of_view_degrees } from "../../web/pkg/birdman_game_wasm.js";
 import { createAppSession } from "../../web/src/app/session-factory.js";
-import { currentFlightPoseFixture, launchCurrentSession } from "../game-check/current-session-fixture.js";
+import { advanceFlightFixture, currentFlightPoseFixture, launchCurrentSession } from "../game-check/current-session-fixture.js";
 import {
   cameraLocalPose, createPilotEyePoint, pilotEyePoseRender, poseFrdToRender, registeredPilotEyePoint
 } from "../../web/src/render/camera/spatial.js";
@@ -150,14 +150,13 @@ function registeredPilotTravel(): Readonly<{ initial: number; positions: readonl
     const initial = session.readSnapshot();
     if (initial.frame.kind !== "flight") throw new Error("Expected registered launch state");
     const positions = [-1, 0, 1].map((normalized) => {
-      const result = session.flightPort.advanceTick({
-        controlLayout: "tail_incidence", noseUp: 0, turnRight: 0,
-        desiredPitchRateRadiansPerSecond: 0, desiredYawRateRadiansPerSecond: 0,
-        pilotPositionCommand: { kind: "set", normalized }
-      });
+      const result = advanceFlightFixture(session, 1, [{ identity: { slot_low: 0, slot_high: 0, generation: 0 }, connected: true, axes: [0, 0, normalized] }]);
       if (result.frame.kind !== "flight") throw new Error("Expected registered pilot target");
+      expect(result.frame.state.pilot_position_target_normalized).toBe(normalized);
       return result.frame.state.pilot_position_target_m;
     });
+    expect(positions[0]).toBeLessThan(positions[1] ?? NaN);
+    expect(positions[2]).toBeGreaterThan(positions[1] ?? NaN);
     return { initial: initial.frame.state.pilot_position_m, positions };
   } finally { session.dispose(); }
 }

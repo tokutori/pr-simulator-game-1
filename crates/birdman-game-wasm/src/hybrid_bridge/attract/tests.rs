@@ -1,6 +1,6 @@
 use super::*;
 use birdman_game_format::WeatherClass;
-use serde_json::{Value, json};
+use serde_json::Value;
 
 fn context(bridge: &HybridGameSessionBridge) -> Value {
     serde_json::from_str(&bridge.playback_context_json().unwrap()).unwrap()
@@ -182,20 +182,7 @@ fn invalid_enter_does_not_replace_a_player_result_or_its_export() {
     bridge
         .observe_countdown(bridge.countdown_token(), 1.0, true)
         .unwrap();
-    bridge
-        .advance_internal(
-            &json!({
-                "schema_version": 2,
-                "control_layout": "tail_incidence",
-                "nose_up": 0.0,
-                "turn_right": 0.0,
-                "desired_pitch_rate_rad_s": 0.0,
-                "desired_yaw_rate_rad_s": 0.0,
-                "pilot_position_command": { "kind": "hold" }
-            })
-            .to_string(),
-        )
-        .unwrap();
+    bridge.advance_frame_fixture().unwrap();
     let before = bridge.export_flight_record_json().unwrap();
     assert!(
         bridge

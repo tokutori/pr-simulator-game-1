@@ -1,3 +1,4 @@
+import { advanceFlightFixture } from "./current-session-fixture.js";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it, vi } from "vitest";
@@ -12,7 +13,7 @@ import { createGameViewModel } from "../../web/src/app/game-view.js";
 import { createInitialAppModel, updateApp } from "../../web/src/app/app-state.js";
 import type { AppEffect, AppMessage } from "../../web/src/app/app-state.js";
 import type { TailControllerSnapshot } from "../../web/src/game/tail-flight-controller.js";
-import { launchCurrentSession, neutralTailInput } from "./current-session-fixture.js";
+import { launchCurrentSession } from "./current-session-fixture.js";
 import { sharedGameUiPlatform } from "./shared-game-ui-fixture.js";
 
 beforeAll(() => {
@@ -131,7 +132,7 @@ describe("current WebAssembly browser binding", () => {
       expect(session.readLifecycle().phase).toBe("flight_paused");
       session.executeSharedSessionCommand({ kind: "resume" });
       for (let tick = 0; tick < 4_000 && session.readLifecycle().phase === "flight_running"; tick += 1) {
-        session.flightPort.advanceTick(neutralTailInput);
+        advanceFlightFixture(session);
       }
       const snapshot = session.readSnapshot();
       if (snapshot.frame.kind !== "result") throw new Error("Expected fractional Result");

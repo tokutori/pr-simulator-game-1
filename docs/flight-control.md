@@ -270,10 +270,8 @@ S_h(v)=\frac{v^2}{2A}+\frac{r(Ah-r)}{2A}
 - trimを0、両端を±1とし、trimと端点が同じ場合は同じphysical targetを0へ正規化する。
 - 現在の身体位置から目標を推測せず、元の`Hold`/`Set`要求とresolved effective targetを区別する。
 
-- WASMのschema 2は`control_layout=tail_incidence`を必須とし、二系統intent、body-positiveのq/r目標、`pilot_position_command`の`hold`/`set`を受け取る。
-- 余剰axis、未知field、未対応schemaを拒否する。
 - seedはlow/highの32 bit値で正確に渡す。
-- 本番frame入口はキー遷移と生Gamepad軸・接続世代を受け取り、appの共有規則がsealed rate上限への写像と各tick直前の確定targetへの積分を行う。schema 2の明示的tick入力はoffline検査・再現用に利用する。
+- WASMのframe入口はキー遷移と生Gamepad軸・接続世代を受け取り、appの共有規則がsealed rate上限への写像と各tick直前の確定targetへの積分を行う。offlineのWeb/Native比較も同じframe観測を使用する。
 - snapshotのphase/frame、physical incidence、身体状態、CG telemetry、terminal stamp/causeの整合は[データ形式](data-and-formats.md)に従う。
 - 保存値を再シミュレーション・再制御して表示しない。
 

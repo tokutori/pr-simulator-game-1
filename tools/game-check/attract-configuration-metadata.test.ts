@@ -1,10 +1,9 @@
+import { advanceFlightFixture } from "./current-session-fixture.js";
 import { readContract } from "../game-ui-build/validate.js";
 import type { SessionLifecycleDocument } from "../../web/src/generated/session-lifecycle.js";
-import { encodeTailLogicalInput } from "../../web/src/game/tail-input.js";
 import { readFileSync } from "node:fs";
 import { beforeAll, expect, it } from "vitest";
 import { HybridGameSessionBridge, TailPersonalBestSelectionBridge, initSync } from "../../web/pkg/birdman_game_wasm.js";
-import { neutralTailInput } from "./current-session-fixture.js";
 import { record } from "../shared/validation.js";
 
 beforeAll(() => {
@@ -110,7 +109,7 @@ it("keeps configuration queries observational through Briefing, pause, Result an
     stableQuery(); session.fail_briefing(0); stableQuery(); session.retry_briefing(); stableQuery();
     session.mark_briefing_ready(); stableQuery(); session.start_countdown(1); stableQuery();
     session.observe_countdown(session.countdown_token(), 1, true); stableQuery(); session.pause(0); stableQuery();
-    session.resume(); session.advance_tick_json(encodeTailLogicalInput(neutralTailInput)); session.abort(); stableQuery();
+    session.resume(); advanceFlightFixture(session); session.abort(); stableQuery();
     const json = session.export_flight_record_json();
     const best = new TailPersonalBestSelectionBridge(json);
     try { expect(best.is_eligible()).toBe(false); } finally { best.free(); }
@@ -127,7 +126,7 @@ it("retains current archive preset metadata independently of the demo declaratio
   const archived = new HybridGameSessionBridge(2, 31, 32);
   try {
     player.open_setup(); player.set_difficulty_preset(1); startFlight(player);
-    player.advance_tick_json(encodeTailLogicalInput(neutralTailInput)); player.abort();
+    advanceFlightFixture(player); player.abort();
     const metadata = Array.from(player.configuration_metadata());
     expect(metadata[0]).toBe(1);
     const json = player.export_flight_record_json();

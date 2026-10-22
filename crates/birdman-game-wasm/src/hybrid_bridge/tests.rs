@@ -1,20 +1,7 @@
 use super::*;
-use birdman_game_core::{FbwAuthority, SessionEndReason};
+use birdman_game_core::{FbwAuthority, TailRateTarget};
 use birdman_game_format::WeatherClass;
 use serde_json::{Value, json};
-
-fn input(position: Value) -> String {
-    json!({
-        "schema_version": 2,
-        "control_layout": "tail_incidence",
-        "nose_up": 0.0,
-        "turn_right": 0.0,
-        "desired_pitch_rate_rad_s": 0.0,
-        "desired_yaw_rate_rad_s": 0.0,
-        "pilot_position_command": position
-    })
-    .to_string()
-}
 
 fn launch(mode: ControlMode, maximum_ticks: u64) -> HybridGameSessionBridge {
     let mut bridge = HybridGameSessionBridge::from_mode(mode, maximum_ticks, u64::MAX);
@@ -181,11 +168,14 @@ fn wasm_commands_execute_the_same_application_sequence_as_native_without_an_extr
             application.core_session().snapshot()
         );
     }
-    let intent = input(json!({"kind":"hold"}));
-    bridge.advance_internal(&intent).unwrap();
-    application
-        .advance_tail_flight_tick(decode_input(&intent).unwrap())
-        .unwrap();
+    for timestamp in [0.0, 10.0] {
+        bridge
+            .advance_flight_frame_json(timestamp, "[]", true)
+            .unwrap();
+        application
+            .advance_flight_frame(timestamp, &[], true)
+            .unwrap();
+    }
     for command in [
         SessionCommand::Pause {},
         SessionCommand::Resume {},
@@ -314,9 +304,7 @@ fn prepared_launch_query_matches_the_first_live_frame_without_starting_physics()
             let live: Value =
                 serde_json::from_str(&bridge.prepared_launch_internal().unwrap()).unwrap();
             assert_eq!(live["preview"]["kind"], "unavailable");
-            bridge
-                .advance_internal(&input(json!({ "kind": "hold" })))
-                .unwrap();
+            bridge.advance_frame_fixture().unwrap();
             bridge.abort().unwrap();
             bridge.retry().unwrap();
             let retry: Value =
@@ -345,101 +333,6 @@ fn prepared_launch_query_matches_the_first_live_frame_without_starting_physics()
 }
 
 #[test]
-fn shared_native_preparation_matches_wasm_states_records_and_public_defaults() {
-    let seed = birdman_game_app::DEFAULT_SESSION_SEED;
-    let defaults = HybridGameSessionBridge::public_default();
-    assert_eq!(
-        defaults.session.difficulty(),
-        ApplicationSession::default().difficulty()
-    );
-    assert_eq!(defaults.session.seed(), seed);
-    for mode in [
-        ControlMode::Manual,
-        ControlMode::Shared(FbwAuthority::try_new(0.5).unwrap()),
-        ControlMode::Automatic,
-    ] {
-        for weather in [
-            WeatherClass::Calm,
-            WeatherClass::Mild,
-            WeatherClass::Typical,
-            WeatherClass::Challenging,
-            WeatherClass::NearLimit,
-        ] {
-            let mut bridge = HybridGameSessionBridge::from_mode(mode, MAX_TICKS, seed);
-            bridge.open_setup().unwrap();
-            bridge
-                .session
-                .execute(
-                    SessionCommand::SelectWeather { weather },
-                    BackendReadiness::Preparing,
-                )
-                .unwrap();
-            bridge.prepare_internal().unwrap();
-            let mut native = ApplicationSession::new(mode, MAX_TICKS, seed);
-            for command in [
-                SessionCommand::OpenSetup {},
-                SessionCommand::SelectWeather { weather },
-                SessionCommand::Prepare {},
-            ] {
-                native.execute(command, BackendReadiness::Ready).unwrap();
-            }
-            assert_eq!(
-                bridge.session.prepared().unwrap().record_identity,
-                native.prepared().unwrap().record_identity
-            );
-            bridge.mark_briefing_ready().unwrap();
-            bridge.start_countdown(1).unwrap();
-            native.start_countdown(1).unwrap();
-            bridge
-                .observe_countdown(bridge.countdown_token(), 1.0, true)
-                .unwrap();
-            native
-                .observe_countdown(native.core_session().countdown_token().unwrap(), 1.0, true)
-                .unwrap();
-            assert_eq!(
-                bridge.session.core_session().configuration_identity(),
-                native.core_session().configuration_identity()
-            );
-            assert_eq!(
-                bridge.session.core_session().snapshot(),
-                native.core_session().snapshot()
-            );
-            assert_eq!(
-                bridge.session.core_session().telemetry().unwrap(),
-                native.core_session().telemetry().unwrap()
-            );
-            let json = input(json!({"kind":"hold"}));
-            for _tick in 0..10 {
-                bridge.advance_internal(&json).unwrap();
-                native
-                    .advance_tail_flight_tick(decode_input(&json).unwrap())
-                    .unwrap();
-                assert_eq!(
-                    bridge.session.core_session().snapshot(),
-                    native.core_session().snapshot()
-                );
-                assert_eq!(
-                    bridge.session.core_session().telemetry().unwrap(),
-                    native.core_session().telemetry().unwrap()
-                );
-            }
-            bridge.abort().unwrap();
-            native
-                .execute(SessionCommand::Abort {}, BackendReadiness::Ready)
-                .unwrap();
-            assert_eq!(
-                bridge.session.core_session().snapshot(),
-                native.core_session().snapshot()
-            );
-            let wasm_record = bridge.session.core_session().flight_record().unwrap();
-            let native_record = native.core_session().flight_record().unwrap();
-            assert_eq!(wasm_record.samples(), native_record.samples());
-            assert_eq!(wasm_record.finalization(), native_record.finalization());
-        }
-    }
-}
-
-#[test]
 fn live_progress_is_rust_datum_geometry_separate_from_terminal_score_and_saved_queries() {
     for mode in [
         ControlMode::Manual,
@@ -454,12 +347,7 @@ fn live_progress_is_rust_datum_geometry_separate_from_terminal_score_and_saved_q
                 "course_parallel_m": 0.0, "cross_track_m": 0.0, "net_horizontal_m": 0.0
             })
         );
-        let next: Value = serde_json::from_str(
-            &bridge
-                .advance_internal(&input(json!({"kind":"set", "normalized":0.5})))
-                .unwrap(),
-        )
-        .unwrap();
+        let next: Value = serde_json::from_str(&bridge.advance_frame_fixture().unwrap()).unwrap();
         let progress = bridge
             .session
             .core_session()
@@ -500,12 +388,8 @@ fn live_progress_is_rust_datum_geometry_separate_from_terminal_score_and_saved_q
             next["frame"]["progress_m"]
         );
         bridge.resume().unwrap();
-        let terminal: Value = serde_json::from_str(
-            &bridge
-                .advance_internal(&input(json!({"kind":"hold"})))
-                .unwrap(),
-        )
-        .unwrap();
+        let terminal: Value =
+            serde_json::from_str(&bridge.advance_frame_fixture().unwrap()).unwrap();
         assert_eq!(terminal["frame"]["kind"], "result");
         assert!(terminal["frame"].get("progress_m").is_none());
         let result = bridge.session.core_session().snapshot().result().unwrap();
@@ -596,264 +480,6 @@ fn factory_and_snapshot_expose_the_current_tail_layout() {
         initial["frame"]["telemetry"]["wind_at_cg_ned_mps"],
         json!(core_telemetry.wind_velocity_ned_mps.components())
     );
-}
-
-#[test]
-fn versioned_input_preserves_signs_and_independent_hold_set_position() {
-    let mut bridge = launch(ControlMode::Manual, 10);
-    let mut document: Value =
-        serde_json::from_str(&input(json!({"kind":"set", "normalized":1.0}))).unwrap();
-    document["nose_up"] = json!(1.0);
-    document["turn_right"] = json!(1.0);
-    document["desired_pitch_rate_rad_s"] = json!(0.2);
-    document["desired_yaw_rate_rad_s"] = json!(0.2);
-    let next: Value =
-        serde_json::from_str(&bridge.advance_internal(&document.to_string()).unwrap()).unwrap();
-    assert_eq!(next["frame"]["state"]["tick"], 1);
-    assert_eq!(
-        next["frame"]["state"]["physical_incidence"]["horizontal_tail_rad"],
-        -0.01
-    );
-    assert_eq!(
-        next["frame"]["state"]["physical_incidence"]["vertical_tail_rad"],
-        -0.01
-    );
-    assert_eq!(next["frame"]["state"]["pilot_position_target_m"], 0.4);
-    assert_eq!(
-        next["frame"]["state"]["pilot_position_target_normalized"],
-        1.0
-    );
-    let held: Value = serde_json::from_str(
-        &bridge
-            .advance_internal(&input(json!({"kind":"hold"})))
-            .unwrap(),
-    )
-    .unwrap();
-    assert_eq!(held["frame"]["state"]["pilot_position_target_m"], 0.4);
-    assert_eq!(
-        held["frame"]["state"]["pilot_position_target_normalized"],
-        1.0
-    );
-    let previous_input = bridge
-        .session
-        .core_session()
-        .flight_record()
-        .unwrap()
-        .samples()[1]
-        .controls;
-    let birdman_game_core::FlightRecordControls {
-        input_from_previous: Some(recorded),
-        ..
-    } = previous_input
-    else {
-        panic!("tail interval must retain its original two-axis input");
-    };
-    assert_eq!(recorded.manual_intent().nose_up(), 1.0);
-    assert_eq!(recorded.desired_body_rate().pitch_rad_per_second(), 0.2);
-}
-
-#[test]
-fn invalid_version_layout_surplus_axis_and_bounds_never_advance_the_session() {
-    let mut bridge = launch(ControlMode::Manual, 10);
-    let before = bridge.snapshot_internal().unwrap();
-    let base: Value = serde_json::from_str(&input(json!({"kind":"hold"}))).unwrap();
-    for (field, replacement) in [
-        ("schema_version", json!(1)),
-        ("control_layout", json!("legacy_three_axis")),
-        ("roll", json!(0.0)),
-        ("nose_up", json!(1.01)),
-        ("desired_pitch_rate_rad_s", json!(0.201)),
-        (
-            "pilot_position_command",
-            json!({"kind":"set", "normalized":-1.01}),
-        ),
-        (
-            "pilot_position_command",
-            json!({"kind":"hold", "normalized":0.0}),
-        ),
-        ("pilot_position_command", json!({"kind":"unknown"})),
-        ("pilot_position_command", json!({"kind":"set"})),
-        ("pilot_position_command", json!(null)),
-        ("desired_yaw_rate_rad_s", json!(-0.201)),
-    ] {
-        let mut document = base.clone();
-        document[field] = replacement;
-        assert!(
-            bridge.advance_internal(&document.to_string()).is_err(),
-            "{field}"
-        );
-        assert_eq!(bridge.snapshot_internal().unwrap(), before);
-        assert_eq!(
-            bridge
-                .session
-                .core_session()
-                .flight_record()
-                .unwrap()
-                .sample_count(),
-            1
-        );
-    }
-    for field in base.as_object().unwrap().keys() {
-        let mut document = base.clone();
-        document.as_object_mut().unwrap().remove(field);
-        assert!(bridge.advance_internal(&document.to_string()).is_err());
-        document[field] = Value::Null;
-        assert!(bridge.advance_internal(&document.to_string()).is_err());
-        assert_eq!(bridge.snapshot_internal().unwrap(), before);
-        assert_eq!(
-            bridge
-                .session
-                .core_session()
-                .flight_record()
-                .unwrap()
-                .sample_count(),
-            1
-        );
-    }
-    let valid = base.to_string();
-    let padded = format!("{valid}{}", " ".repeat(MAX_INPUT_JSON_BYTES - valid.len()));
-    assert_eq!(padded.len(), MAX_INPUT_JSON_BYTES);
-    assert!(decode_input(&padded).is_ok());
-    for rejected in [
-        format!("{padded} "),
-        valid.replace("\"nose_up\":0.0", "\"nose_up\":1e400"),
-    ] {
-        assert!(bridge.advance_internal(&rejected).is_err());
-        assert_eq!(bridge.snapshot_internal().unwrap(), before);
-        assert_eq!(
-            bridge
-                .session
-                .core_session()
-                .flight_record()
-                .unwrap()
-                .sample_count(),
-            1
-        );
-    }
-}
-
-#[test]
-fn held_position_projection_survives_hold_pause_result_and_resets_to_sealed_trim() {
-    for mode in [
-        ControlMode::Manual,
-        ControlMode::Shared(FbwAuthority::try_new(0.5).unwrap()),
-        ControlMode::Automatic,
-    ] {
-        let mut bridge = launch(mode, 3);
-        let initial = snapshot(&bridge);
-        assert_eq!(
-            initial["frame"]["state"]["pilot_position_target_normalized"],
-            0.0
-        );
-        let updated: Value = serde_json::from_str(
-            &bridge
-                .advance_internal(&input(json!({"kind":"set", "normalized":0.5})))
-                .unwrap(),
-        )
-        .unwrap();
-        let held = &updated["frame"]["state"];
-        let normalized = held["pilot_position_target_normalized"].as_f64().unwrap();
-        assert!((normalized - 0.5).abs() < 1.0e-15);
-        assert_ne!(held["pilot_position_target_m"], held["pilot_position_m"]);
-        bridge.pause(0).unwrap();
-        assert_eq!(snapshot(&bridge)["frame"]["state"], *held);
-        bridge.resume().unwrap();
-        assert_eq!(snapshot(&bridge)["frame"]["state"], *held);
-        let hold = input(json!({"kind":"hold"}));
-        bridge.advance_internal(&hold).unwrap();
-        bridge.advance_internal(&hold).unwrap();
-        let terminal = snapshot(&bridge);
-        assert_eq!(terminal["frame"]["kind"], "result");
-        assert_eq!(
-            terminal["frame"]["state"]["pilot_position_target_normalized"],
-            normalized
-        );
-        assert_eq!(
-            terminal["frame"]["state"]["pilot_position_target_m"],
-            held["pilot_position_target_m"]
-        );
-        let samples: Value =
-            serde_json::from_str(&bridge.flight_analysis_samples_json().unwrap()).unwrap();
-        assert!(
-            samples["samples"][0]["state"]
-                .get("pilot_position_target_normalized")
-                .is_none()
-        );
-        bridge.retry().unwrap();
-        bridge.start_countdown(1).unwrap();
-        bridge
-            .observe_countdown(bridge.countdown_token(), 1.0, true)
-            .unwrap();
-        assert_eq!(
-            snapshot(&bridge)["frame"]["state"]["pilot_position_target_normalized"],
-            0.0
-        );
-        assert_eq!(
-            snapshot(&bridge)["frame"]["state"]["pilot_position_target_m"],
-            initial["frame"]["state"]["pilot_position_target_m"]
-        );
-    }
-}
-
-#[test]
-fn all_authorities_keep_one_core_lifecycle_and_consistent_terminal_time() {
-    for mode in [
-        ControlMode::Manual,
-        ControlMode::Shared(FbwAuthority::try_new(0.5).unwrap()),
-        ControlMode::Automatic,
-    ] {
-        let mut bridge = launch(mode, 2);
-        bridge.pause(0).unwrap();
-        assert!(matches!(
-            bridge.session.core_session().snapshot().phase(),
-            SessionPhase::FlightPaused { .. }
-        ));
-        assert!(bridge.can_resume());
-        bridge.resume().unwrap();
-        let neutral = input(json!({"kind":"hold"}));
-        bridge.advance_internal(&neutral).unwrap();
-        bridge.advance_internal(&neutral).unwrap();
-        let terminal = snapshot(&bridge);
-        assert_eq!(terminal["frame"]["kind"], "result");
-        assert_eq!(terminal["frame"]["state"]["tick"], 2);
-        assert_eq!(terminal["frame"]["state"]["flight_time_s"], 0.02);
-        assert_eq!(terminal["frame"]["finalization"]["terminal_tick"], 2);
-        assert_eq!(terminal["frame"]["finalization"]["terminal_fraction"], 0.0);
-        assert_eq!(terminal["frame"]["finalization"]["failure"], Value::Null);
-        assert_eq!(
-            bridge
-                .session
-                .core_session()
-                .snapshot()
-                .result()
-                .unwrap()
-                .reason,
-            SessionEndReason::TimeLimit
-        );
-        let count = bridge
-            .session
-            .core_session()
-            .flight_record()
-            .unwrap()
-            .sample_count();
-        bridge.advance_internal(&neutral).unwrap();
-        assert_eq!(
-            bridge
-                .session
-                .core_session()
-                .flight_record()
-                .unwrap()
-                .sample_count(),
-            count
-        );
-        bridge.retry().unwrap();
-        bridge.start_countdown(1).unwrap();
-        bridge
-            .observe_countdown(bridge.countdown_token(), 1.0, true)
-            .unwrap();
-        assert_eq!(snapshot(&bridge)["frame"]["state"]["tick"], 0);
-        assert_eq!(snapshot(&bridge)["scenario"]["seed_high"], u32::MAX);
-    }
 }
 
 #[test]
@@ -1084,7 +710,7 @@ fn selection_is_frozen_during_briefing_and_retry_preserves_identity_without_new_
 }
 
 #[test]
-fn sealed_controller_metadata_supplies_typed_limits_without_changing_the_explicit_rate_abi() {
+fn sealed_controller_metadata_supplies_typed_limits() {
     let mut bridge = HybridGameSessionBridge::new(1, 0, 0).unwrap();
     assert!(bridge.control_profile_internal().is_err());
     bridge.open_setup().unwrap();
@@ -1104,23 +730,28 @@ fn sealed_controller_metadata_supplies_typed_limits_without_changing_the_explici
         snapshot["scenario"]["controller_profile_version"]
     );
     let limits = TailRateTarget::limits_rad_per_second();
-    let desired_pitch = limits[0] * 0.5;
-    let desired_yaw = -limits[1];
     assert_eq!(
         profile["desired_body_rate_limit_rad_s"],
         json!({"pitch":limits[0],"yaw":limits[1]})
-    );
-    let mut document: Value = serde_json::from_str(&input(json!({"kind":"hold"}))).unwrap();
-    document["desired_pitch_rate_rad_s"] = json!(desired_pitch);
-    document["desired_yaw_rate_rad_s"] = json!(desired_yaw);
-    let decoded = decode_input(&document.to_string()).unwrap();
-    assert_eq!(
-        decoded.desired_body_rate(),
-        TailRateTarget::try_new(desired_pitch, desired_yaw).unwrap()
     );
     assert_eq!(
         profile["feedback_gain_seconds"],
         json!({"pitch":0.2,"yaw":0.2})
     );
     assert_eq!(profile["maximum_slew_rad_s"], 1.0);
+}
+
+impl HybridGameSessionBridge {
+    pub(super) fn advance_frame_fixture(&mut self) -> Result<String, JsValue> {
+        let tick = self
+            .session
+            .core_session()
+            .snapshot()
+            .tail_flight_state()
+            .map_or(0, |state| state.tick_index());
+        let milliseconds = 1000.0 / f64::from(birdman_game_core::PHYSICS_HZ);
+        self.advance_flight_frame_json(tick as f64 * milliseconds, "[]", true)?;
+        self.advance_flight_frame_json((tick + 1) as f64 * milliseconds, "[]", true)?;
+        self.snapshot_internal().map_err(BoundaryError::into_js)
+    }
 }

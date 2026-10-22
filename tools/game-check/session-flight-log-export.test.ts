@@ -1,3 +1,4 @@
+import { advanceFlightFixture } from "./current-session-fixture.js";
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { HybridGameSessionBridge, initSync } from "../../web/pkg/birdman_game_wasm.js";
@@ -6,15 +7,13 @@ import type { AppSessionFacade } from "../../web/src/app/session-facade.js";
 
 initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url))) });
 afterEach(() => { vi.restoreAllMocks(); });
-const neutral = ({ controlLayout: "tail_incidence" as const, noseUp: 0, turnRight: 0,
-  desiredPitchRateRadiansPerSecond: 0, desiredYawRateRadiansPerSecond: 0, pilotPositionCommand: { kind: "hold" as const } });
 
 function complete(session: AppSessionFacade): void {
   session.executeSharedSessionCommand({ kind: "open_setup" });
   session.executeSharedSessionCommand({ kind: "prepare" });
   session.executeSharedSessionCommand({ kind: "start_countdown" });
   session.observeCountdown(session.captureCountdownToken(), 3, true);
-  session.flightPort.advanceTick(neutral);
+  advanceFlightFixture(session);
   session.executeSharedSessionCommand({ kind: "abort" });
 }
 

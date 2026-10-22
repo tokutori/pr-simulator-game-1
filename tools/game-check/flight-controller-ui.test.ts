@@ -213,8 +213,6 @@ function fixture(mode: "screen" | "phone-vr" | "webxr", informationCode = 0) {
   };
   const session = {
     ...facade.flightPort,
-    pause: (reason: number) => { facade.flightPort.pause(reason); },
-    clear_pause_reason: (reason: number) => { facade.flightPort.clear_pause_reason(reason); },
     readSnapshot: () => facade.flightPort.readSnapshot(),
     advanceFrame: vi.fn((timestamp: number, gamepads: readonly FlightGamepadObservation[], available: boolean) => {
       const report = facade.flightPort.advanceFrame(timestamp, gamepads, available);

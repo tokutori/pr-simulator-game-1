@@ -497,11 +497,15 @@ mod tests {
     }
 
     fn driver_app() -> (App, Entity) {
-        driver_app_for_assistance(birdman_game_format::AssistanceLevel::Manual)
+        driver_app_for_assistance(
+            birdman_game_format::AssistanceLevel::Manual,
+            birdman_game_format::WeatherClass::Typical,
+        )
     }
 
     fn driver_app_for_assistance(
         assistance: birdman_game_format::AssistanceLevel,
+        weather: birdman_game_format::WeatherClass,
     ) -> (App, Entity) {
         let (mut app, window) = input_app();
         app.add_plugins(bevy::time::TimePlugin)
@@ -516,6 +520,11 @@ mod tests {
             session.action(native_session::MenuAction::Start).unwrap();
             session
                 .execute_ui_command(SessionCommand::SelectAssistance { assistance })
+                .unwrap();
+            session
+                .execute_ui_command(
+                    birdman_game_app::application::SessionCommand::SelectWeather { weather },
+                )
                 .unwrap();
             session.action(native_session::MenuAction::Prepare).unwrap();
             session.action(native_session::MenuAction::Launch).unwrap();
@@ -780,19 +789,29 @@ mod tests {
             birdman_game_format::AssistanceLevel::Light,
             birdman_game_format::AssistanceLevel::Strong,
         ] {
-            let (mut app, window) = driver_app_for_assistance(assistance);
+            let natural_contact = assistance == birdman_game_format::AssistanceLevel::Manual;
+            let weather = if natural_contact {
+                birdman_game_format::WeatherClass::Calm
+            } else {
+                birdman_game_format::WeatherClass::Typical
+            };
+            let (mut app, window) = driver_app_for_assistance(assistance, weather);
             let gamepad = app.world_mut().spawn_empty().id();
             let mut observations = Vec::new();
-            for step in 0..24 {
+            for step in 0..if natural_contact { 401 } else { 24 } {
                 let mut keys = Vec::new();
                 let mut commands = Vec::new();
-                let elapsed = match step {
-                    0 => 0,
-                    3 => 35,
-                    8 => 151,
-                    _ => 10,
+                let elapsed = if natural_contact {
+                    if step == 0 { 0 } else { 100 }
+                } else {
+                    match step {
+                        0 => 0,
+                        3 => 35,
+                        8 => 151,
+                        _ => 10,
+                    }
                 };
-                if step == 1 || step == 12 {
+                if !natural_contact && (step == 1 || step == 12) {
                     keys.push(FlightKeyObservation {
                         control: FlightControl::NoseUp,
                         pressed: true,
@@ -804,7 +823,7 @@ mod tests {
                         repeat: false,
                     });
                 }
-                if step == 6 || step == 11 || step == 14 {
+                if !natural_contact && (step == 6 || step == 11 || step == 14) {
                     keys.push(FlightKeyObservation {
                         control: FlightControl::NoseUp,
                         pressed: false,
@@ -816,13 +835,13 @@ mod tests {
                         repeat: false,
                     });
                 }
-                if step == 10 {
+                if !natural_contact && step == 10 {
                     commands.push(SessionCommand::Resume {});
                 }
-                if step == 23 {
+                if !natural_contact && step == 23 {
                     commands.push(SessionCommand::Abort {});
                 }
-                if step == 15 || step == 20 {
+                if !natural_contact && (step == 15 || step == 20) {
                     let connection = GamepadConnectionEvent::new(
                         gamepad,
                         GamepadConnection::Connected {
@@ -835,7 +854,7 @@ mod tests {
                     app.world_mut()
                         .write_message(RawGamepadEvent::Connection(connection));
                 }
-                if step == 16 || step == 17 || step == 18 {
+                if !natural_contact && (step == 16 || step == 17 || step == 18) {
                     let value = match step {
                         16 => 1.0,
                         17 => -1.0,
@@ -848,7 +867,7 @@ mod tests {
                         RawGamepadAxisChangedEvent::new(gamepad, GamepadAxis::LeftStickY, 0.5),
                     ));
                 }
-                if step == 19 {
+                if !natural_contact && step == 19 {
                     let connection =
                         GamepadConnectionEvent::new(gamepad, GamepadConnection::Disconnected);
                     app.world_mut().write_message(connection.clone());
@@ -894,6 +913,9 @@ mod tests {
                     "gamepads": app.world().resource::<flight_devices::FlightDevices>().observations(),
                     "snapshot": snapshot, "render_pose": session.render_pose().unwrap(),
                 }));
+                if session.game.core_session().snapshot().phase() == SessionPhase::Result {
+                    break;
+                }
             }
             let session = app.world().resource::<NativeSession>();
             assert_eq!(
@@ -909,9 +931,41 @@ mod tests {
                     .sample_count()
                     > 5
             );
+            if natural_contact {
+                let finalization = session
+                    .game
+                    .core_session()
+                    .flight_record()
+                    .unwrap()
+                    .finalization()
+                    .unwrap();
+                assert_eq!(
+                    finalization.reason,
+                    birdman_game_core::SessionEndReason::WaterContact
+                );
+                assert!(finalization.terminal_fraction > 0.0);
+            }
             if let Some(directory) = std::env::var_os("BPG_NATIVE_ACCEPTANCE_DIR") {
                 std::fs::create_dir_all(&directory).unwrap();
-                let artifact = serde_json::json!({ "assistance": assistance, "observations": observations, "record_json": String::from_utf8(session.game.flight_record_document().unwrap().encode_json().unwrap()).unwrap() });
+                let document = session.game.flight_record_document().unwrap();
+                let record = session.game.core_session().flight_record().unwrap();
+                let replay = [0.0, 0.5, 1.0].map(|fraction| {
+                    let time = record.duration_seconds().unwrap() * fraction;
+                    let sample = birdman_game_app::record_query::RecordedPlaybackSample::from(
+                        record.sample_at_seconds(time).unwrap(),
+                    );
+                    let camera = birdman_game_presentation::replay_camera::replay_camera_view(
+                        record,
+                        Some(&document.control_identity),
+                        time,
+                        birdman_game_presentation::game_ui::GameUiReplayCamera::Chase,
+                        birdman_game_presentation::game_ui::GameUiPresentationMode::Screen,
+                        false,
+                    )
+                    .unwrap();
+                    serde_json::json!({ "time": time, "sample": sample, "camera": camera })
+                });
+                let artifact = serde_json::json!({ "assistance": assistance, "observations": observations, "record_json": String::from_utf8(document.encode_json().unwrap()).unwrap(), "csv": String::from_utf8(document.encode_csv().unwrap()).unwrap(), "replay": replay });
                 std::fs::write(
                     std::path::Path::new(&directory).join(format!("frame-{assistance:?}.json")),
                     serde_json::to_vec(&artifact).unwrap(),

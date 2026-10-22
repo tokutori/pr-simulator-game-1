@@ -1,3 +1,4 @@
+import { advanceFlightFixture } from "./current-session-fixture.js";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { HybridGameSessionBridge, initSync } from "../../web/pkg/birdman_game_wasm.js";
@@ -7,7 +8,6 @@ import { projectRuntimeEnvironment } from "../../web/src/game/runtime-environmen
 import { projectRuntimeVenue } from "../../web/src/game/runtime-venue.js";
 import type { TailAppSessionFacade } from "../../web/src/app/session-facade.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
-import { encodeTailLogicalInput } from "../../web/src/game/tail-input.js";
 import { selectSharedReplayView, sharedGameUiPlatform } from "./shared-game-ui-fixture.js";
 
 initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url))) });
@@ -79,9 +79,7 @@ describe("application runtime session projection", () => {
     try {
       archived.open_setup(); archived.prepare(); archived.mark_briefing_ready();
       archived.start_countdown(1); archived.observe_countdown(archived.countdown_token(), 1, true);
-      archived.advance_tick_json(encodeTailLogicalInput({ controlLayout: "tail_incidence", noseUp: 0.05, turnRight: -0.05,
-        desiredPitchRateRadiansPerSecond: 0.01, desiredYawRateRadiansPerSecond: -0.01,
-        pilotPositionCommand: { kind: "set", normalized: 0.25 } }));
+      advanceFlightFixture(archived, 1, [{ identity: { slot_low: 0, slot_high: 0, generation: 0 }, connected: true, axes: [0.5, -0.5, 0.25] }]);
       archived.abort();
       session.executeSharedSessionCommand({ kind: "cancel_briefing" }); session.executeSharedSessionCommand({ kind: "return_to_title" });
       const saved = archived.export_flight_record_json();
@@ -90,8 +88,8 @@ describe("application runtime session projection", () => {
       expect(readRuntimeSessionProjection(session)).toMatchObject({ phase: "replay", display: { value: { controls: { layout: "tail_incidence" } } } });
       const samples = session.readAnalysisSamples();
       const clock = session.readPlaybackClock();
-      const cursor = session.queryRecordSample(0.005);
-      const pose = session.queryReplayCamera(0.005, "auto", true);
+      const cursor = session.queryRecordSample(0.015);
+      const pose = session.queryReplayCamera(0.015, "auto", true);
       const terminalSample = samples.at(-1);
       if (terminalSample === undefined) throw new Error("Expected the saved terminal control sample");
       expect(terminalSample.controls.physical_incidence.horizontal_tail_rad).not.toBe(0);

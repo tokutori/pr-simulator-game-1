@@ -1,9 +1,9 @@
 //! Engine-independent projection of committed and recorded physical states.
 
+use birdman_game_app::session_snapshot::TailControlLayoutDocument;
 use birdman_game_core::{
     FlightState, FlightTelemetry, HybridSurfaceRole, TailIncidence, WingBendingFactor,
 };
-use birdman_game_format::TailControlLayoutDocument;
 
 use std::sync::OnceLock;
 

@@ -1,3 +1,4 @@
+import { advanceFlightFixture } from "./current-session-fixture.js";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { HybridGameSessionBridge, initSync, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
@@ -16,8 +17,6 @@ import { projectRuntimeEnvironment } from "../../web/src/game/runtime-environmen
 import { contractValidator, readContract } from "../game-ui-build/validate.js";
 
 initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url))) });
-const neutral = { controlLayout: "tail_incidence" as const, noseUp: 0, turnRight: 0,
-  desiredPitchRateRadiansPerSecond: 0, desiredYawRateRadiansPerSecond: 0, pilotPositionCommand: { kind: "hold" as const } };
 const wind = { north_min_m: -10, east_min_m: -10, altitude_m: 10, spacing_m: 5 };
 
 function fixture(mode = 0) {
@@ -124,7 +123,7 @@ describe("same-build Rust/WASM generated DTO connections", () => {
     const { bridge, session } = fixture();
     try {
       launch(session);
-      session.flightPort.advanceTick(neutral);
+      advanceFlightFixture(session);
       const live = readContract<TailSnapshotDocument>("tail_snapshot", bridge.snapshot_json());
       expect(session.readSnapshot()).toEqual(live);
       session.executeSharedSessionCommand({ kind: "abort" });
@@ -164,7 +163,7 @@ describe("same-build Rust/WASM generated DTO connections", () => {
     const viewer = fixture(2);
     try {
       launch(source.session);
-      for (let tick = 0; tick < ticks; tick += 1) source.session.flightPort.advanceTick(neutral);
+      advanceFlightFixture(source.session, ticks);
       source.session.executeSharedSessionCommand({ kind: "abort" });
       const original = source.session.exportRecordJson();
       viewer.session.openArchive(original);

@@ -2,7 +2,6 @@ import { projectTailGameSession } from "./session-snapshot.js";
 import type { PlaybackSessionSnapshot, ReplayReturnTarget, SessionLifecycleProjection, TailGameSessionProjection } from "./session-snapshot.js";
 import type { TailResultSnapshot, TailSessionPort } from "../game/tail-flight-controller.js";
 import type { PresentationObservation } from "../generated/presentation-observation.js";
-import { encodeTailLogicalInput } from "../game/tail-input.js";
 import { captureJsonInput } from "../game/tail-boundary-values.js";
 import type { FlightRenderPose, RecordedFlightRenderPose } from "../render/contracts/runtime.js";
 import { projectReplayCamera } from "../render/camera/replay-camera.js";
@@ -66,7 +65,6 @@ const ownedSessionResources = new WeakSet<SessionResourcePort>();
 export interface TailAppSessionPort extends SessionResourcePort {
   snapshot_json(): string;
   control_profile_json(): string;
-  advance_tick_json(json: string): string;
   advance_flight_frame_json(timestampMilliseconds: number, gamepadsJson: string, frameAvailable: boolean): string;
   observe_flight_key_json(json: string): boolean;
   invalidate_flight_input(): void;
@@ -207,12 +205,6 @@ export class TailAppSessionFacade extends SessionResourceOwner {
         if (this.readLifecycle().phase === "result") this.observe(() => { port.fail_flight_adapter(); });
         else this.change(() => { port.fail_flight_adapter(); });
       },
-      advanceTick: (input) => {
-        const json = encodeTailLogicalInput(input);
-        return this.change(() => this.readOutput<TailSnapshotDocument>(() => port.advance_tick_json(json)));
-      },
-      pause: (reason) => { this.change(() => { port.pause(reason); }); },
-      clear_pause_reason: (reason) => { this.clearPauseReason(reason); },
       free: () => { this.dispose(); }
     };
   }

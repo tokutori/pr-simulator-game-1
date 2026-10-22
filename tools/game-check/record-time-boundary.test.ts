@@ -1,10 +1,11 @@
+import { advanceFlightFixture } from "./current-session-fixture.js";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
 import { initSync } from "../../web/pkg/birdman_game_wasm.js";
 import { createAppSession } from "../../web/src/app/session-factory.js";
 import { record } from "../shared/validation.js";
-import { launchCurrentSession, neutralTailInput } from "./current-session-fixture.js";
+import { launchCurrentSession } from "./current-session-fixture.js";
 
 let sourceJson: string;
 beforeAll(() => {
@@ -13,7 +14,7 @@ beforeAll(() => {
   const session = createAppSession({ controlModeCode: 0, seedLow: 0, seedHigh: 0 });
   try {
     launchCurrentSession(session);
-    for (let tick = 0; tick < 5; tick += 1) session.flightPort.advanceTick(neutralTailInput);
+    for (let tick = 0; tick < 5; tick += 1) advanceFlightFixture(session);
     session.executeSharedSessionCommand({ kind: "abort" });
     sourceJson = session.exportRecordJson();
   } finally { session.dispose(); }

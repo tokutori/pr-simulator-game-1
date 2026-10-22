@@ -1,3 +1,4 @@
+import { advanceFlightFixture } from "./current-session-fixture.js";
 import type { SessionLifecycleDocument } from "../../web/src/generated/session-lifecycle.js";
 import { readFileSync } from "node:fs";
 import { Window as BrowserWindow } from "happy-dom";
@@ -58,9 +59,7 @@ async function fixture(archive = false) {
   session.mark_briefing_ready();
   session.start_countdown(1);
   session.observe_countdown(session.countdown_token(), 1, true);
-  const { encodeTailLogicalInput } = await import("../../web/src/game/tail-input.js");
-  session.advance_tick_json(encodeTailLogicalInput({ controlLayout: "tail_incidence", noseUp: 0, turnRight: 0,
-    desiredPitchRateRadiansPerSecond: 0, desiredYawRateRadiansPerSecond: 0, pilotPositionCommand: { kind: "hold" } }));
+  advanceFlightFixture(session);
   session.abort();
   const original = ` \n${session.export_flight_record_json()}\n `;
   if (archive) {

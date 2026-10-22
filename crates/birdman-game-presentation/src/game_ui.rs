@@ -75,7 +75,6 @@ pub fn export_game_ui_schema(name: &str) -> Result<String, String> {
     input.subschema_for::<crate::xr::MenuSessionInput>();
     input.subschema_for::<crate::xr::MenuLayoutQuery>();
     input.subschema_for::<crate::xr::MenuPreparationInput>();
-    input.subschema_for::<birdman_game_format::TailInputDocument>();
     input.subschema_for::<birdman_game_app::application::PresentationObservation>();
     input.subschema_for::<birdman_game_app::flight_input::FlightKeyObservation>();
     input.subschema_for::<birdman_game_app::flight_input::FlightGamepadObservation>();
@@ -126,7 +125,6 @@ pub fn export_game_ui_schema(name: &str) -> Result<String, String> {
         "xr-ink-segment" => ("deserialize", "XrInkSegment"),
         "screen-render-auto" => ("serialize", "ScreenRenderAutoSnapshot"),
         "replay-camera" => ("serialize", "ReplayCameraView"),
-        "tail-input" => ("deserialize", "TailInputDocument"),
         "tail-snapshot" => ("serialize", "TailSnapshotDocument"),
         "tail-prepared" => ("serialize", "TailPreparedLaunchDocument"),
         "record-context" => ("serialize", "PlaybackContext"),
@@ -140,7 +138,7 @@ pub fn export_game_ui_schema(name: &str) -> Result<String, String> {
         "flight-render-pose" => ("serialize", "FlightRenderPose"),
         _ => {
             return Err(
-                "schema must be bundle, view, action, input, effects, frame, screen-render-auto, replay-camera, tail-input, tail-snapshot, tail-prepared, record-context, record-sample, record-analysis, record-summary, record-wind, lifecycle, tail-profile, runtime-environment or flight-render-pose"
+                "schema must be bundle, view, action, input, effects, frame, screen-render-auto, replay-camera, tail-snapshot, tail-prepared, record-context, record-sample, record-analysis, record-summary, record-wind, lifecycle, tail-profile, runtime-environment or flight-render-pose"
                     .to_owned(),
             );
         }

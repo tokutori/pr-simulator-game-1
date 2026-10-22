@@ -1,3 +1,4 @@
+import { advanceFlightFixture } from "./current-session-fixture.js";
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { HybridGameSessionBridge, initSync, physics_hz } from "../../web/pkg/birdman_game_wasm.js";
@@ -8,8 +9,6 @@ import type { GameUiUpdate } from "../../web/src/generated/game-ui-effects.js";
 import { readContract } from "../game-ui-build/validate.js";
 
 initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url))) });
-const neutralTail = ({ controlLayout: "tail_incidence" as const, noseUp: 0, turnRight: 0,
-  desiredPitchRateRadiansPerSecond: 0, desiredYawRateRadiansPerSecond: 0, pilotPositionCommand: { kind: "hold" as const } });
 const windRequest = { north_min_m: -10, east_min_m: -10, altitude_m: 10, spacing_m: 5 };
 
 function launch(facade: AppSessionFacade): void {
@@ -23,7 +22,7 @@ function launch(facade: AppSessionFacade): void {
 }
 
 function advance(facade: AppSessionFacade): void {
-  facade.flightPort.advanceTick(neutralTail);
+  advanceFlightFixture(facade);
 }
 
 describe("layout-discriminated application session facade", () => {
@@ -52,10 +51,10 @@ describe("layout-discriminated application session facade", () => {
     } finally { facade.dispose(); }
   });
 
-  it.each(["tick", "action", "platform", "session", "record", "wind", "flight-frame", "flight-key"] as const)("checks owner liveness after capturing input getters (%s)", (boundary) => {
+  it.each(["action", "platform", "session", "record", "wind", "flight-frame", "flight-key"] as const)("checks owner liveness after capturing input getters (%s)", (boundary) => {
     const bridge = new HybridGameSessionBridge(0, 21, 22);
     const facade = new TailAppSessionFacade(bridge, physics_hz());
-    const methods = { tick: "advance_tick_json", action: "game_ui_action_json", platform: "game_ui_view_revision",
+    const methods = { action: "game_ui_action_json", platform: "game_ui_view_revision",
       session: "apply_game_ui_session_command_json", record: "apply_game_ui_record_action_json", wind: "flight_wind_grid_json",
       "flight-frame": "advance_flight_frame_json", "flight-key": "observe_flight_key_json" } as const;
     const call = vi.spyOn(bridge, methods[boundary]);
@@ -65,7 +64,6 @@ describe("layout-discriminated application session facade", () => {
     try {
       expect(() => {
         switch (boundary) {
-          case "tick": facade.flightPort.advanceTick({ ...neutralTail, get noseUp() { dispose(); return 0; } }); break;
           case "action": facade.updateSharedUi({ get kind() { dispose(); return "toggle_technical" as const; } }, sharedGameUiPlatform()); break;
           case "platform": facade.readSharedUi({ ...sharedGameUiPlatform(), get notification() { dispose(); return ""; } }); break;
           case "session": facade.executeSharedSessionCommand({ get kind() { dispose(); return "open_setup" as const; } }); break;

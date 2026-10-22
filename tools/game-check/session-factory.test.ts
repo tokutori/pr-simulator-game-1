@@ -1,3 +1,4 @@
+import { advanceFlightFixture } from "./current-session-fixture.js";
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { IDBFactory } from "fake-indexeddb";
@@ -6,7 +7,7 @@ import { createAppSession, initializeAppSession } from "../../web/src/app/sessio
 import type { AppSessionConfiguration } from "../../web/src/app/session-factory.js";
 import { createArchivedPersonalBestSelection, personalBestComparisonVersion } from "../../web/src/game/archived-personal-best.js";
 import { FlightRecordRepository, IndexedDbFlightRecordPersistence } from "../../web/src/game/flight-record-store.js";
-import { currentRecordFixture, launchCurrentSession, neutralTailInput } from "./current-session-fixture.js";
+import { currentRecordFixture, launchCurrentSession } from "./current-session-fixture.js";
 
 initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url))) });
 afterEach(() => { vi.restoreAllMocks(); });
@@ -33,7 +34,7 @@ describe("current application session factory", () => {
       const observed = session.captureQueryToken();
       launchCurrentSession(session);
       expect(session.acceptQuery(observed, "Title").kind).toBe("stale");
-      session.flightPort.advanceTick(neutralTailInput);
+      advanceFlightFixture(session);
       expect(session.readSnapshot()).toMatchObject({ frame: { kind: "flight", state: { tick: 1, pilot_position_target_normalized: 0 } } });
       const snapshot = session.readSnapshot();
       if (snapshot.frame.kind !== "flight" || snapshot.scenario === null) throw new Error("Expected a sealed Rust flight");

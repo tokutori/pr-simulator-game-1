@@ -1,9 +1,10 @@
+import { advanceFlightFixture } from "../game-check/current-session-fixture.js";
 import { Mesh, Raycaster, Vector3 } from "three";
 import { describe, expect, it } from "vitest";
 import analysisMap from "../../assets/biwa-analysis-map.json";
 import { physics_hz } from "../../web/pkg/birdman_game_wasm.js";
 import { createAppSession } from "../../web/src/app/session-factory.js";
-import { launchCurrentSession, neutralTailInput } from "../game-check/current-session-fixture.js";
+import { launchCurrentSession } from "../game-check/current-session-fixture.js";
 import { venueTerrainMeshes } from "../../web/src/render/engines/three/lake-venue-mesh.js";
 import "./lake-model-fixture.js";
 
@@ -58,7 +59,7 @@ describe("registered fixed camera terrain clearance", () => {
     const mesh = regionalTerrain();
     try {
       launchCurrentSession(session);
-      for (let tick = 0; tick < physics_hz() * 60 && session.readSnapshot().phase === "flight_running"; tick++) session.flightPort.advanceTick(neutralTailInput);
+      for (let tick = 0; tick < physics_hz() * 60 && session.readSnapshot().phase === "flight_running"; tick++) advanceFlightFixture(session);
       expect(session.readSnapshot().phase).toBe("result");
       session.executeSharedSessionCommand({ kind: "enter_replay" });
       const dataset = { samples: session.readAnalysisSamples(), summary: session.readRecordSummary() };

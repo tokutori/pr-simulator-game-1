@@ -1,6 +1,6 @@
+import { advanceFlightFixture } from "./current-session-fixture.js";
 import { readContract } from "../game-ui-build/validate.js";
 import type { SessionLifecycleDocument } from "../../web/src/generated/session-lifecycle.js";
-import { encodeTailLogicalInput } from "../../web/src/game/tail-input.js";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -11,7 +11,6 @@ import {
   initSync
 } from "../../web/pkg/birdman_game_wasm.js";
 import { record } from "../shared/validation.js";
-import { neutralTailInput } from "./current-session-fixture.js";
 
 const wasmPath = fileURLToPath(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url));
 const assetPath = fileURLToPath(new URL("../../assets/biwa-typical-july-environment-v6.json", import.meta.url));
@@ -132,7 +131,7 @@ it("retains archived samples when environment metadata is unavailable", () => {
     session.mark_briefing_ready();
     session.start_countdown(1);
     session.observe_countdown(session.countdown_token(), 1, true);
-    session.advance_tick_json(encodeTailLogicalInput(neutralTailInput));
+    advanceFlightFixture(session);
     session.abort();
     const document = parse(session.export_flight_record_json());
     const header = record(document.header);

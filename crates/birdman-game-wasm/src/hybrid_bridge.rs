@@ -1,15 +1,15 @@
 use birdman_game_app::HybridSessionPreparation;
 use birdman_game_app::application::{ApplicationSession, BackendReadiness, SessionCommand};
+use birdman_game_app::session_snapshot::{
+    SESSION_SNAPSHOT_SCHEMA_VERSION as SCHEMA_VERSION, TailControlLayoutDocument as ControlLayout,
+};
 use birdman_game_core::{
     ControlMode, CountdownProgress, CourseAxis, DistanceScoreError, DynamicsError,
-    GameSessionError, SessionPhase, TailControlError, TailFlightTickInput, TailPilotIntent,
-    TailPilotPositionCommand, TailPilotPositionIntent, TailRateTarget,
+    GameSessionError, SessionPhase,
 };
 use birdman_game_format::{
     DifficultySettings, FlightRecordFormatError, InformationLevel,
-    TAIL_INPUT_SCHEMA_VERSION as SCHEMA_VERSION, TailControlLayoutDocument as ControlLayout,
-    TailFlightRecordFinalizationDocument, TailInputDocument, TailPersonalBestConfiguration,
-    TailPilotPositionCommandDocument,
+    TailFlightRecordFinalizationDocument, TailPersonalBestConfiguration,
 };
 use birdman_game_presentation::session_snapshot::SnapshotProjectionError;
 use wasm_bindgen::{JsValue, prelude::*};
@@ -30,38 +30,11 @@ mod setup;
 
 pub use record::TailPersonalBestSelectionBridge;
 
-fn decode_input(json: &str) -> Result<TailFlightTickInput, BoundaryError> {
-    if json.len() > MAX_INPUT_JSON_BYTES {
-        return Err(BoundaryError::InputTooLarge);
-    }
-    let document: TailInputDocument = serde_json::from_str(json).map_err(BoundaryError::Json)?;
-    if document.schema_version != SCHEMA_VERSION {
-        return Err(BoundaryError::UnsupportedSchema);
-    }
-    let manual = TailPilotIntent::try_new(document.nose_up, document.turn_right)
-        .map_err(BoundaryError::Control)?;
-    let rate = TailRateTarget::try_new(
-        document.desired_pitch_rate_rad_s,
-        document.desired_yaw_rate_rad_s,
-    )
-    .map_err(BoundaryError::Control)?;
-    let position = match document.pilot_position_command {
-        TailPilotPositionCommandDocument::Hold {} => TailPilotPositionCommand::Hold,
-        TailPilotPositionCommandDocument::Set { normalized } => TailPilotPositionCommand::Set(
-            TailPilotPositionIntent::try_new(normalized).map_err(BoundaryError::Control)?,
-        ),
-    };
-    let ControlLayout::TailIncidence = document.control_layout;
-    Ok(TailFlightTickInput::new(manual, rate, position))
-}
-
 #[derive(Debug)]
 enum BoundaryError {
     InputTooLarge,
-    UnsupportedSchema,
     UnsupportedPhase,
     Session(GameSessionError),
-    Control(TailControlError),
     PilotPosition(DynamicsError),
     Progress(DistanceScoreError),
     InvalidWindGrid,
@@ -97,7 +70,6 @@ impl BoundaryError {
     fn into_js(self) -> JsValue {
         let message = match self {
             Self::Session(error) => format!("hybrid session operation failed: {error:?}"),
-            Self::Control(error) => format!("hybrid input failed: {error:?}"),
             Self::PilotPosition(error) => {
                 format!("hybrid pilot target projection failed: {error:?}")
             }
@@ -199,11 +171,6 @@ impl HybridGameSessionBridge {
             SessionCommand::CancelCountdown {},
             BackendReadiness::Preparing,
         )
-    }
-
-    /// Validates a schema-two input before atomically advancing the Rust-owned tail tick.
-    pub fn advance_tick_json(&mut self, json: &str) -> Result<String, JsValue> {
-        self.advance_internal(json).map_err(BoundaryError::into_js)
     }
 
     /// Applies backend and XR observations through the shared application owner.
@@ -334,17 +301,6 @@ impl HybridGameSessionBridge {
             .map_err(BoundaryError::Application)
             .map_err(BoundaryError::into_js)?;
         Ok(())
-    }
-
-    fn advance_internal(&mut self, json: &str) -> Result<String, BoundaryError> {
-        let input = decode_input(json)?;
-        match self.session.advance_tail_flight_tick(input) {
-            Ok(_) => self.snapshot_internal(),
-            Err(_) if self.session.core_session().snapshot().phase() == SessionPhase::Result => {
-                self.snapshot_internal()
-            }
-            Err(error) => Err(BoundaryError::Session(error)),
-        }
     }
 
     fn snapshot_internal(&self) -> Result<String, BoundaryError> {

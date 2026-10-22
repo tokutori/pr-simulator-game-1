@@ -1,3 +1,4 @@
+import { advanceFlightFixture } from "./current-session-fixture.js";
 import { readFileSync } from "node:fs";
 import { IDBFactory } from "fake-indexeddb";
 import { Window as BrowserWindow } from "happy-dom";
@@ -128,10 +129,7 @@ async function fixture(failInitialization = false, seedCurrentArchive = false, d
       archived.mark_briefing_ready();
       archived.start_countdown(1);
       archived.observe_countdown(archived.countdown_token(), 1, true);
-      const { encodeTailLogicalInput } = await import("../../web/src/game/tail-input.js");
-      const neutral = encodeTailLogicalInput({ controlLayout: "tail_incidence", noseUp: 0, turnRight: 0,
-        desiredPitchRateRadiansPerSecond: 0, desiredYawRateRadiansPerSecond: 0, pilotPositionCommand: { kind: "hold" } });
-      for (let tick = 0; tick < 5; tick += 1) archived.advance_tick_json(neutral);
+      advanceFlightFixture(archived, 5);
       archived.abort();
       const repository = new FlightRecordRepository(new IndexedDbFlightRecordPersistence(persistence, wasm.TailPersonalBestSelectionBridge.comparison_version()), () => new Date("2026-10-08T00:00:00Z"), createArchivedPersonalBestSelection);
       await repository.saveFrom(archived);
