@@ -24,6 +24,10 @@ export interface XrPointerProjection {
      */
     readonly activation: XrPointerHit | null;
     /**
+     * Back button's newly accepted press.
+     */
+    readonly back: boolean;
+    /**
      * Focus changed because the target or source changed.
      */
     readonly focusChanged: boolean;
@@ -35,6 +39,10 @@ export interface XrPointerProjection {
      * Gaze dwell completion; controllers use an explicit trigger.
      */
     readonly progress: number;
+    /**
+     * Right-stick scroll measured in viewport pages.
+     */
+    readonly scrollPages: number;
     /**
      * Other controllers with visible panel intersections.
      */
@@ -66,6 +74,16 @@ export interface XrPointerHit {
          */
         readonly id: number;
         readonly kind: "controller";
+    } | {
+        /**
+         * Connection generation for this slot.
+         */
+        readonly generation: number;
+        /**
+         * Adapter's device slot.
+         */
+        readonly index: number;
+        readonly kind: "gamepad";
     };
     /**
      * Enabled control or page under the cursor.

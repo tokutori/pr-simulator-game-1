@@ -3,6 +3,7 @@ use super::*;
 fn surface() -> XrPointerSurface {
     XrPointerSurface {
         scope: "title".into(),
+        revision: 0,
         size_m: [2.0, 1.0],
         regions: vec![XrPointerRegion {
             target: XrPointerTarget::Control { id: "start".into() },
@@ -45,6 +46,7 @@ fn observe(
                 ..Pose::IDENTITY
             },
             pointers,
+            gamepad: None,
         })
         .unwrap()
 }
@@ -95,6 +97,7 @@ fn focus_loss_scope_exchange_and_stale_sources_invalidate_selection() {
         focused: false,
         panel_pose: Pose::IDENTITY,
         pointers: vec![gaze],
+        gamepad: None,
     };
     assert!(owner.observe(observation).unwrap().primary.is_none());
     assert!(owner.select(gaze, 31.0).is_none());
@@ -120,4 +123,129 @@ fn transformed_panel_intersection_and_front_face_admission_match_trigger() {
     let mut invalid = controller;
     invalid.direction.x = f64::NAN;
     assert!(observe(&mut owner, 20.0, vec![invalid]).primary.is_none());
+}
+
+fn gamepad_frame(
+    owner: &mut XrPointerSession,
+    timestamp_ms: f64,
+    gamepad: Option<XrGamepadObservation>,
+    focused: bool,
+) -> XrPointerProjection {
+    owner
+        .observe(XrPointerObservation {
+            timestamp_ms,
+            focused,
+            panel_pose: Pose {
+                position: Vector3 {
+                    x: 0.0,
+                    y: 0.0,
+                    z: -2.0,
+                },
+                ..Pose::IDENTITY
+            },
+            pointers: vec![pointer(XrPointerSource::Gaze, 0.0)],
+            gamepad,
+        })
+        .unwrap()
+}
+
+#[test]
+fn gamepad_connection_cursor_edges_scroll_and_focus_share_one_owner() {
+    let mut owner = XrPointerSession::default();
+    owner.set_surface(Some(surface())).unwrap();
+    let mut pad = XrGamepadObservation {
+        index: 1,
+        generation: 3,
+        axes: [0.0; 4],
+        buttons: [true; 2],
+    };
+    let first = gamepad_frame(&mut owner, 0.0, Some(pad), true);
+    assert_eq!(first.primary.unwrap().point, [0.0, 0.0]);
+    assert!(first.activation.is_none() && !first.back);
+    pad.axes = [1.0, -1.0, 0.0, 1.0];
+    pad.buttons = [false; 2];
+    let moved = gamepad_frame(&mut owner, 50.0, Some(pad), true);
+    assert!((moved.primary.unwrap().point[0] - 0.12).abs() < 1e-12);
+    assert_eq!(moved.scroll_pages, 0.1);
+    owner
+        .set_surface(Some(XrPointerSurface {
+            revision: 1,
+            regions: vec![XrPointerRegion {
+                bounds: XrPointerRect([0.0, 0.0, 2.0, 0.9]),
+                ..surface().regions.remove(0)
+            }],
+            ..surface()
+        }))
+        .unwrap();
+    let moved = gamepad_frame(&mut owner, 5000.0, Some(pad), true);
+    assert!((moved.primary.unwrap().point[0] - 0.24).abs() < 1e-12);
+    pad.axes = [0.0; 4];
+    pad.buttons[0] = true;
+    assert!(
+        gamepad_frame(&mut owner, 5016.0, Some(pad), true)
+            .activation
+            .is_some()
+    );
+    assert!(
+        gamepad_frame(&mut owner, 5032.0, Some(pad), true)
+            .activation
+            .is_none()
+    );
+    pad.generation += 1;
+    pad.buttons[1] = true;
+    let changed = gamepad_frame(&mut owner, 5048.0, Some(pad), true);
+    assert_eq!(changed.primary.unwrap().point, [0.0; 2]);
+    assert!(changed.activation.is_none() && !changed.back);
+    gamepad_frame(&mut owner, 5064.0, Some(pad), false);
+    assert!(
+        gamepad_frame(&mut owner, 5080.0, Some(pad), true)
+            .activation
+            .is_none()
+    );
+    pad.buttons = [false; 2];
+    gamepad_frame(&mut owner, 5096.0, Some(pad), true);
+    pad.buttons = [true; 2];
+    let back = gamepad_frame(&mut owner, 5112.0, Some(pad), true);
+    assert!(back.back && back.activation.is_none());
+    assert!(!gamepad_frame(&mut owner, 5128.0, Some(pad), true).back);
+    assert!(
+        owner
+            .observe(XrPointerObservation {
+                timestamp_ms: 5127.0,
+                focused: true,
+                panel_pose: Pose::IDENTITY,
+                pointers: vec![],
+                gamepad: Some(pad),
+            })
+            .is_err()
+    );
+}
+
+#[test]
+fn gamepad_disconnect_starts_fresh_gaze_and_invalid_axes_are_neutral() {
+    let mut owner = XrPointerSession::default();
+    owner.set_surface(Some(surface())).unwrap();
+    gamepad_frame(&mut owner, 0.0, None, true);
+    let pad = XrGamepadObservation {
+        index: 0,
+        generation: 1,
+        axes: [f64::NAN, 0.2, 0.0, f64::INFINITY],
+        buttons: [false; 2],
+    };
+    gamepad_frame(&mut owner, 900.0, Some(pad), true);
+    let held = gamepad_frame(&mut owner, 2000.0, Some(pad), true);
+    assert_eq!(held.primary.unwrap().point, [0.0; 2]);
+    assert_eq!(held.scroll_pages, 0.0);
+    assert!(held.activation.is_none());
+    assert_eq!(gamepad_frame(&mut owner, 2100.0, None, true).progress, 0.0);
+    assert!(
+        gamepad_frame(&mut owner, 3100.0, None, true)
+            .activation
+            .is_some()
+    );
+    assert!(
+        gamepad_frame(&mut owner, 4100.0, None, true)
+            .activation
+            .is_none()
+    );
 }

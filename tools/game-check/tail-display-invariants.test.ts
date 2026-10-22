@@ -8,7 +8,7 @@ import type { AnalysisDocument } from "../../web/src/generated/record-analysis.j
 import { readContract } from "../game-ui-build/validate.js";
 import { PresentationRuntime } from "../../web/src/presentation/runtime.js";
 import { ScreenPresentationBackend } from "../../web/src/presentation/screen-backend.js";
-import { createSceneFixture } from "../../web/src/presentation/fixtures.js";
+import { createSceneFixture } from "../presentation-check/ui-adapter-fixture.js";
 import { IDENTITY_POSE, pose, vec3 } from "../../web/src/render/contracts/math.js";
 import { NO_HEAD_HUD } from "../../web/src/render/contracts/head-hud.js";
 import type { BackendFrame, PresentationBackendAdapter, PresentationMode, RendererAdapter } from "../../web/src/render/contracts/runtime.js";

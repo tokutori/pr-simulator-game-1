@@ -14,8 +14,6 @@ import { createGameViewModel } from "../../web/src/app/game-view.js";
 import { sharedGameUiPlatform } from "../game-check/shared-game-ui-fixture.js";
 import { PhoneVrPresentationBackend } from "../../web/src/presentation/phone-vr-backend.js";
 import { createBrowserPhoneVrGamepadInputPort } from "../../web/src/presentation/phone-vr-gamepad-browser.js";
-import { GamepadUiSelector } from "../../web/src/presentation/gamepad-ui-selector.js";
-import { createSceneFixture } from "../../web/src/presentation/fixtures.js";
 import { NO_PHONE_VR_GAMEPAD_INPUT } from "../../web/src/presentation/phone-vr-contracts.js";
 import type { PhoneVrPermissionResult, PhoneVrSensorPort, PhoneVrSensorReading } from "../../web/src/presentation/phone-vr-contracts.js";
 import type { RendererAdapter } from "../../web/src/render/contracts/runtime.js";
@@ -32,6 +30,28 @@ afterEach(async () => {
 });
 
 describe("Phone VR UI Gamepad connection ownership", () => {
+  it.each([false, true])("requires release then press after input loss with a hidden frame: %s", async (observeHidden) => {
+    const browser = new GamepadBrowser();
+    const pad = gamepad(0);
+    browser.connect(pad);
+    let available = true;
+    const fixture = await createFixture(browser, { inputAvailable: () => available });
+    fixture.frame();
+    moveToStart(fixture, pad);
+    available = false;
+    fixture.backend.invalidateInput();
+    pad.buttons = [{ pressed: true }, { pressed: false }];
+    if (observeHidden) fixture.frame();
+    available = true;
+    fixture.frame();
+    moveToStart(fixture, pad);
+    expect(fixture.operations).toEqual([]);
+    pad.buttons = [{ pressed: false }, { pressed: false }];
+    fixture.frame();
+    pad.buttons = [{ pressed: true }, { pressed: false }];
+    fixture.frame();
+    expect(fixture.operations).toEqual([{ kind: "start_countdown" }]);
+  });
   it.each(["remaining device", "same index reconnect", "lower index addition"] as const)(
     "does not start the actual Rust countdown from a held replacement button: %s", async (change) => {
       const first = gamepad(change === "lower index addition" ? 1 : 0);
@@ -278,71 +298,6 @@ describe("Phone VR attempts own the browser Gamepad port", () => {
   });
 });
 
-describe("connection-scoped Menu cursor history", () => {
-  const panel = createSceneFixture("Title").panels[0];
-  if (panel === undefined) throw new Error("Missing title panel");
-  const sample = (generation: number, buttons = [false, false], axes = [0, 0, 0, 0]) => ({
-    connection: { index: 0, generation }, buttons, axes
-  });
-
-  it("resets cursor/focus/time, seeds held toggle/back, and retains range and scroll operation", () => {
-    const actions: UiAction[] = [];
-    const selector = new GamepadUiSelector((action) => { actions.push(fixtureSemanticAction(action)); });
-    selector.update(panel, sample(1), 0);
-    selector.update(panel, sample(1, [false, false], [1, 1, 0, 0]), 50);
-    actions.length = 0;
-    expect(selector.update(panel, sample(2, [true, true], [1, 1, 1, 1]), 5000)?.point).toEqual({ x: 0, y: 0 });
-    expect(actions.filter((action) => action.type !== "focus")).toEqual([]);
-    selector.update(panel, sample(2, [true, true]), 5016);
-    selector.update(panel, sample(2), 5032);
-    selector.update(panel, sample(2, [true, true]), 5048);
-    expect(actions.filter((action) => action.type === "set-toggle")).toEqual([{ type: "set-toggle", controlId: "title-toggle", value: true }]);
-    expect(actions.filter((action) => action.type === "back")).toHaveLength(1);
-    for (let frame = 1; frame <= 8; frame++) selector.update(panel, sample(2, [false, false], [0, -1, 0, 0]), 5048 + frame * 16);
-    selector.update(panel, sample(2, [true, false], [0, 0, 1, 1]), 5192);
-    expect(actions).toContainEqual({ type: "set-range", controlId: "title-range", value: 0.5 });
-    expect(actions.some((action) => action.type === "scroll" && action.deltaX > 0 && action.deltaY > 0)).toBe(true);
-    selector.update(panel, null, 5208);
-    actions.length = 0;
-    expect(selector.update(panel, sample(2, [true, true]), 5224)?.point).toEqual({ x: 0, y: 0 });
-    expect(actions.filter((action) => action.type !== "focus")).toEqual([]);
-  });
-
-  it("finishes internal reset before a throwing external focus notification", () => {
-    const dispatch = vi.fn<(action: UiAction) => void>();
-    const selector = new GamepadUiSelector(dispatch);
-    selector.update(panel, sample(1), 0);
-    const failure = new Error("focus observer failed");
-    dispatch.mockImplementationOnce(() => { throw failure; });
-    expect(() => { selector.reset(); }).toThrow(failure);
-    dispatch.mockClear();
-    expect(() => { selector.reset(); }).not.toThrow();
-    expect(dispatch).not.toHaveBeenCalled();
-    selector.update(panel, sample(1, [true, true]), 1000);
-    expect(dispatch.mock.calls.map(([action]) => action).filter((action) => action.type !== "focus")).toEqual([]);
-  });
-
-  it("does not replay held inputs after handover focus dispatch throws", () => {
-    const dispatch = vi.fn<(action: UiAction) => void>();
-    const selector = new GamepadUiSelector(dispatch);
-    selector.update(panel, sample(1), 0);
-    dispatch.mockImplementationOnce(() => { throw new Error("handover focus failed"); });
-    expect(() => selector.update(panel, sample(2, [true, true]), 10)).toThrow("handover focus failed");
-    dispatch.mockClear();
-    selector.update(panel, sample(2, [true, true]), 20);
-    expect(dispatch).not.toHaveBeenCalled();
-  });
-
-  it("abandons queued old-connection actions after a reentrant reset", () => {
-    const dispatch = vi.fn<(action: UiAction) => void>();
-    const selector = new GamepadUiSelector(dispatch);
-    selector.update(panel, sample(1), 0);
-    dispatch.mockClear();
-    dispatch.mockImplementationOnce(() => { selector.reset(); });
-    expect(selector.update(panel, sample(1, [true, true], [0, -1, 1, 1]), 50)).toBeNull();
-    expect(dispatch.mock.calls.map(([action]) => action).filter((action) => action.type !== "focus")).toEqual([]);
-  });
-});
 
 interface TestGamepad {
   readonly index: number;
@@ -405,7 +360,7 @@ function gamepad(index: number, buttons: readonly boolean[] = [false, false]): T
   return { index, id: "same-product", timestamp: 1, connected: true, mapping: "standard", axes: [0, 0, 0, 0], buttons: buttons.map((pressed) => ({ pressed })) };
 }
 
-async function createFixture(browser: GamepadBrowser, options: { readonly autoStart?: boolean; readonly initialSample?: boolean } = {}) {
+async function createFixture(browser: GamepadBrowser, options: { readonly autoStart?: boolean; readonly initialSample?: boolean; readonly inputAvailable?: () => boolean } = {}) {
   const session = createAppSession({ controlModeCode: 0, seedLow: 21, seedHigh: 22 });
   session.executeSharedSessionCommand({ kind: "open_setup" });
   session.executeSharedSessionCommand({ kind: "prepare" });
@@ -458,7 +413,8 @@ async function createFixture(browser: GamepadBrowser, options: { readonly autoSt
   } satisfies RendererAdapter;
   const input = createBrowserPhoneVrGamepadInputPort(browser, browser);
   const unavailable = vi.fn<(message: string) => void>();
-  const backend = new PhoneVrPresentationBackend(sensors, renderer, () => ({ x: 1280, y: 720, pixelRatio: 1 }), dispatch, unavailable, { gamepadInput: input, nowMs: () => 100, firstSampleTimeoutMs: 50 });
+  const backend = new PhoneVrPresentationBackend(sensors, renderer, () => ({ x: 1280, y: 720, pixelRatio: 1 }), dispatch, unavailable,
+    { gamepadInput: input, nowMs: () => 100, firstSampleTimeoutMs: 50, inputAvailable: options.inputAvailable ?? (() => true) });
   cleanups.push(async () => { try { await backend.stop(); } finally { session.dispose(); } });
   if (options.autoStart !== false) {
     await backend.requestPermissionFromUserGesture();

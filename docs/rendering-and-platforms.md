@@ -447,11 +447,11 @@ M C' H'=M C S S^{-1}H=M C H
 ### VR入力と安全
 
 - Screenはkeyboard/pointer/touch、VRはhead-gaze dwellまたは標準mappingのgamepadを用いる。
-- WebXRは同じframe・参照空間の`tracked-pointer` rayを観測する。共有Rustのpointer ownerが、実測・clip済み矩形への交差、入力源の優先保持、focus、1秒dwellとtriggerの重複抑止を扱う。左右controllerの照準を同時に描画し、triggerは同じ交差判定へ接続する。
-- panelへ向いたcontrollerをfocus所有者とし、追跡喪失・退出後は新たなgaze dwellを開始する。`visibilitychange`・reference reset・scene/overlay/layout交換は入力ownerを失効させる。
+- WebXRとPhone VRは共有Rustのpointer ownerを利用する。WebXRは同じframe・参照空間の`tracked-pointer` ray、Phone VRはhead rayと標準gamepadの接続identity・軸・ボタンを渡し、実測・clip済み矩形への交差、focus、1秒dwell、押下edgeを共有する。左右controllerの照準とtriggerは同じ交差判定へ接続する。
+- panelへ向いたcontroller、接続済みgamepad、gazeの順にfocusを解決する。gamepadは接続slotと世代で識別し、初回・接続交代・focus復帰では保持中ボタンを観測してから次の押下を受理する。
+- `visibilitychange`・blur・reference reset・recenterは入力を失効させる。Scene/overlay/layout交換はfocusとdwellを更新し、同じmenuのscrollによる矩形変更ではgamepadのカーソル積分と押下履歴を保持する。入力源の喪失後は新たなgaze dwellを開始する。
 - dwellとtriggerの時刻は同じ単調な受信時計へ揃える。XR rAFの現在時刻とselect配送時の`performance.now()`を使用し、予測表示時刻はpose観測に限定する。照準はpanelの非等方scaleを相殺して実寸座標へ配置する。
-- gamepadの左stickはpanel cursor、button0は選択、button1は戻る、右stickはscrollへ接続する。
-- 標準gamepadが有効な場合は操作元をgamepadへ切り替え、それ以外はgazeを使用する。
+- gamepadの左stickはpanel cursor、button0は選択、button1は共有UIのBack、右stickはviewport単位のscrollへ接続する。同時押下ではBackを優先する。
 
 - dwellの進行と取消を示し、視線を外して確定を中止できる。
 - Scene切替後の操作には、新しい入力開始を必要とする。

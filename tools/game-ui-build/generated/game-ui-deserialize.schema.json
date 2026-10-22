@@ -2034,6 +2034,50 @@
         }
       ]
     },
+    "XrGamepadObservation": {
+      "additionalProperties": false,
+      "description": "Raw standard gamepad values used by spatial UI.",
+      "properties": {
+        "axes": {
+          "description": "Left and right stick axes in standard mapping order.",
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 4,
+          "minItems": 4,
+          "type": "array"
+        },
+        "buttons": {
+          "description": "Primary and Back button states.",
+          "items": {
+            "type": "boolean"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "generation": {
+          "description": "Connection generation for this slot.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "index": {
+          "description": "Adapter's device slot.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "index",
+        "generation",
+        "axes",
+        "buttons"
+      ],
+      "type": "object"
+    },
     "XrInkSegment": {
       "additionalProperties": false,
       "description": "One measured vertical glyph segment in its drawing surface's local metres.",
@@ -2193,6 +2237,18 @@
           "description": "Runtime grants input focus.",
           "type": "boolean"
         },
+        "gamepad": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/XrGamepadObservation"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Connected standard gamepad observed with the rays."
+        },
         "panelPose": {
           "$ref": "#/$defs/Pose",
           "description": "Reference-from-panel pose from this rendered frame."
@@ -2308,6 +2364,34 @@
             "id"
           ],
           "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Standard gamepad cursor, identified by connection lifetime.",
+          "properties": {
+            "generation": {
+              "description": "Connection generation for this slot.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "index": {
+              "description": "Adapter's device slot.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "gamepad",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "index",
+            "generation"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -2321,6 +2405,13 @@
             "$ref": "#/$defs/XrPointerRegion"
           },
           "type": "array"
+        },
+        "revision": {
+          "default": 0,
+          "description": "Layout/input revision within the same semantic menu.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
         },
         "scope": {
           "description": "Adapter's exact scene, overlay, panel and scroll context identity.",

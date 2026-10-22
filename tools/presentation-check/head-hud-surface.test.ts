@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { currentSharedGameUiFixture } from "../game-check/shared-game-ui-fixture.js";
 import { Matrix4, PerspectiveCamera, Quaternion, Scene, StereoCamera, Vector3 } from "three";
 import { createHeadHudSurface } from "../../web/src/render/engines/three/head-hud-surface.js";
-import { createHeadHudFixture } from "../../web/src/presentation/fixtures.js";
+import { createHeadHudFixture } from "./ui-adapter-fixture.js";
 import { NO_HEAD_HUD, resolveHeadHudFrame } from "../../web/src/render/contracts/head-hud.js";
 import { composePose, IDENTITY_POSE, pose, quaternion, vec3 } from "../../web/src/render/contracts/math.js";
 import type { Pose } from "../../web/src/render/contracts/math.js";

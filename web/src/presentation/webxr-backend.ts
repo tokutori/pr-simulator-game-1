@@ -182,7 +182,10 @@ export class WebXrPresentationBackend implements PresentationBackendAdapter {
   }
 
   recenterMenu(): void {
-    if (this.lastViewerPose !== null) this.spatial.recenterMenu(this.lastViewerPose);
+    if (this.lastViewerPose !== null) {
+      this.spatial.recenterMenu(this.lastViewerPose);
+      this.pointers.reset();
+    }
   }
 
   private handleSelectRay(ray: SelectRay): void {

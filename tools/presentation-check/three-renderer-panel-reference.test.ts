@@ -14,7 +14,7 @@ import type { BackendFrame, FlightRenderPose, LakeWaterQualityCleanupResult } fr
 import type { ViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
 import { projectHeadPoint } from "../../web/src/render/contracts/viewer-frame.js";
 import type { UiAction, UiViewModel, UiPanel } from "../../web/src/render/contracts/ui.js";
-import { createSceneFixture } from "../../web/src/presentation/fixtures.js";
+import { createSceneFixture } from "./ui-adapter-fixture.js";
 import { placeMenuPanel } from "./menu-fixture.js";
 import { PhoneVrPresentationBackend } from "../../web/src/presentation/phone-vr-backend.js";
 import { PHONE_VR_OPTICAL_PROFILE } from "../../web/src/presentation/phone-vr-contracts.js";

@@ -9,11 +9,10 @@ import { unavailableViewerFrame } from "../../web/src/render/contracts/viewer-fr
 import type { ViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
 import type { BackendFrame, MenuPresentation, RendererAdapter, StereoPresentationProfile, ViewportSize } from "../../web/src/render/contracts/runtime.js";
 import type { UiAction, UiViewModel } from "../../web/src/render/contracts/ui.js";
-import { createAnchorFixture, createHeadHudFixture, createSceneFixture, SCENE_FIXTURE_OVERLAYS } from "../../web/src/presentation/fixtures.js";
+import { createAnchorFixture, createHeadHudFixture, createSceneFixture, SCENE_FIXTURE_OVERLAYS } from "./ui-adapter-fixture.js";
 import { createBrowserPhoneVrSensorPort } from "../../web/src/presentation/phone-vr-browser.js";
 import { createBrowserPhoneVrGamepadInputPort } from "../../web/src/presentation/phone-vr-gamepad-browser.js";
 import { PhoneVrPresentationBackend } from "../../web/src/presentation/phone-vr-backend.js";
-import { GamepadUiSelector } from "../../web/src/presentation/gamepad-ui-selector.js";
 import type { PhoneVrAvailability, PhoneVrGamepadInputPort, PhoneVrPermissionResult, PhoneVrSensorPort, PhoneVrSensorReading } from "../../web/src/presentation/phone-vr-contracts.js";
 import { PHONE_VR_OPTICAL_PROFILE } from "../../web/src/presentation/phone-vr-contracts.js";
 import { phoneOrientationQuaternion } from "../../web/src/presentation/phone-vr-orientation.js";
@@ -128,35 +127,6 @@ describe("Phone VR browser sensor adapter", () => {
 });
 
 describe("Phone VR gamepad UI", () => {
-  it("moves a cursor, focuses controls, selects, backs, and scrolls through common actions", () => {
-    const actions: UiAction[] = [];
-    const selector = new GamepadUiSelector((action) => { actions.push(fixtureSemanticAction(action)); });
-    const panel = createSceneFixture("Title").panels[0];
-    if (panel === undefined) throw new Error("Missing UI panel fixture");
-    selector.update(panel, gamepadState([0, 0, 0, 0], [false, false]), 100);
-    let cursor = null;
-    for (let frame = 1; frame <= 13; frame++) {
-      cursor = selector.update(panel, gamepadState([0, 1, 0, 0], [false, false]), 100 + frame * 16);
-    }
-    expect(cursor?.point.y).toBeCloseTo(-0.449, 2);
-    expect(actions).toContainEqual({ type: "focus", controlId: "title-action" });
-
-    selector.update(panel, gamepadState([0, 0, 0, 0], [true, false]), 324);
-    selector.update(panel, gamepadState([0, 0, 0, 0.5], [true, true]), 340);
-    expect(actions).toContainEqual({ type: "activate", controlId: "title-action" });
-    expect(actions).toContainEqual({ type: "back" });
-    expectScrollAction(actions);
-    expect(cursor?.progress).toBe(0);
-
-    selector.reset();
-    actions.length = 0;
-    selector.update(panel, gamepadState([0, 0, 0, 0], [true, false]), 400);
-    selector.update(panel, gamepadState([0, 0, 0, 0], [true, false]), 416);
-    expect(actions).not.toContainEqual({ type: "set-toggle", controlId: "title-toggle", value: true });
-    selector.update(panel, gamepadState([0, 0, 0, 0], [false, false]), 432);
-    selector.update(panel, gamepadState([0, 0, 0, 0], [true, false]), 448);
-    expect(actions).toContainEqual({ type: "set-toggle", controlId: "title-toggle", value: true });
-  });
 
   it("reads only connected standard-mapped browser gamepads", () => {
     let currentGamepads: readonly unknown[] = [
@@ -742,6 +712,8 @@ describe("Phone VR presentation backend", () => {
     fixtureBackendFrame(backend, 360, viewModel, configuredViewerFixture());
     expect(actions).toContainEqual({ type: "activate", controlId: "title-action" });
     expect(actions).toContainEqual({ type: "back" });
+    gamepad.state = gamepadState([0, 0, 0, 0.5], [false, false]);
+    fixtureBackendFrame(backend, 376, viewModel, configuredViewerFixture());
     const scrollAction = actions.find((action) => action.type === "menu-scroll");
     expect(scrollAction?.type).toBe("menu-scroll");
     if (scrollAction?.type !== "menu-scroll" || scrollAction.intent.kind !== "delta") throw new Error("Missing Menu viewport scroll action");
@@ -885,14 +857,6 @@ function gamepadState(axes: readonly number[], buttons: readonly boolean[]) {
   return Object.freeze({ connection: { index: 0, generation: 0 }, axes, buttons });
 }
 
-function expectScrollAction(actions: readonly UiAction[]): void {
-  const scrollAction = actions.find((action) => action.type === "scroll");
-  expect(scrollAction?.type).toBe("scroll");
-  if (scrollAction?.type === "scroll") {
-    expect(scrollAction.deltaX).toBe(0);
-    expect(scrollAction.deltaY).toBeCloseTo(4.32);
-  }
-}
 
 function axisQuaternion(axis: "x" | "y" | "z", degrees: number) {
   const halfAngle = degrees * Math.PI / 360;

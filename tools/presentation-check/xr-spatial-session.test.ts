@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { PerspectiveCamera, StereoCamera } from "three";
 import { XrSpatialBridge, XrCameraBridge, XrPointerBridge } from "../../web/pkg/birdman_game_wasm.js";
 import { XrPointerSession } from "../../web/src/presentation/xr-pointer-session.js";
+import { createInitialAppModel, updateApp } from "../../web/src/app/app-state.js";
 import type { UiAction } from "../../web/src/render/contracts/ui.js";
 import { initializeWasmFixture } from "../game-check/wasm-fixture.js";
 import { XrSpatialSession } from "../../web/src/presentation/xr-spatial-session.js";
@@ -10,7 +11,7 @@ import { composePose, IDENTITY_POSE, inversePose, pose, quaternion, vec3 } from 
 import type { Pose } from "../../web/src/render/contracts/math.js";
 import { headPlaneFitsViews, unavailableViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
 import { captureConfiguredViewerFrame } from "../../web/src/render/engines/three/viewer-frame.js";
-import { createSceneFixture } from "../../web/src/presentation/fixtures.js";
+import { createSceneFixture } from "./ui-adapter-fixture.js";
 import { geometryMenuFixture, referenceFrameFixture } from "./menu-fixture.js";
 
 initializeWasmFixture();
@@ -19,6 +20,63 @@ afterEach(() => { vi.restoreAllMocks(); });
 describe("shared pointer adapter", () => {
   const panelPose = pose(vec3(0, 0, -2), IDENTITY_POSE.orientation);
   const ray = { source: { kind: "controller" as const, id: 5 }, origin: vec3(0.3, 0.3, 0), direction: vec3(0, 0, -1), timestampMs: 100 };
+
+  it("retains the gamepad cursor and held-button history across actual scroll generations", () => {
+    const view = createSceneFixture("Title");
+    const original = view.panels[0];
+    if (original === undefined) throw new Error("Missing panel");
+    const panel = { ...original, size: { width: 2, height: 1 }, controls: [
+      { kind: "button" as const, id: "start", label: "Start", enabled: true, rect: { x: 0, y: 0, width: 1, height: 1 } }
+    ] };
+    const measured = geometryMenuFixture({ ...view, panels: [panel] });
+    if (measured.kind !== "ready") throw new Error("Missing menu");
+    let model = createInitialAppModel();
+    model = updateApp(model, { type: "menu-scroll-synchronized", generation: 0,
+      target: { kind: "active", scope: measured.context.scope } }).model;
+    const actions: UiAction[] = [];
+    const owner = new XrPointerSession(action => {
+      actions.push(action);
+      if (action.type === "menu-scroll") model = updateApp(model, action).model;
+    });
+    const frame = (timestampMs: number, pressed: boolean, horizontal: number) => {
+      if (model.menuScroll.kind !== "active") throw new Error("Missing active scroll context");
+      const menu = { ...measured, context: model.menuScroll, viewport: { ...measured.viewport,
+        offsetMeters: model.menuScroll.progress, maximumOffsetMeters: 1,
+        contentClip: { x: 0, y: 0, width: 2, height: 0.8 },
+        previousBounds: { x: 0, y: 0.9, width: 0.9, height: 0.1 }, nextBounds: { x: 1.1, y: 0.9, width: 0.9, height: 0.1 } } };
+      return owner.observe("title", panel, panelPose, menu, [], true, timestampMs,
+        { index: 0, generation: 1, axes: [horizontal, 0, 0, 1], buttons: [pressed, false] });
+    };
+    try {
+      frame(0, false, 0);
+      const moved = frame(50, true, 1);
+      expect(moved.cursor?.point.x).toBeCloseTo(0.12);
+      expect(model.menuScroll.generation).toBe(2);
+      expect(frame(100, true, 0).cursor?.point.x).toBeCloseTo(0.12);
+      expect(model.menuScroll.generation).toBe(3);
+      expect(actions.filter(action => action.type === "menu-control")).toHaveLength(1);
+    } finally { owner.reset(); }
+  });
+
+  it("commits held gamepad observations before a changed-layout focus callback throws", () => {
+    const view = createSceneFixture("Title");
+    const panel = view.panels[0];
+    if (panel === undefined) throw new Error("Missing panel");
+    const measured = geometryMenuFixture(view);
+    if (measured.kind !== "ready") throw new Error("Missing menu");
+    const dispatch = vi.fn<(action: UiAction) => void>();
+    const owner = new XrPointerSession(dispatch);
+    const sample = (pressed: boolean) => ({ index: 0, generation: 1, axes: [0, 0, 0, 0] as const, buttons: [pressed, false] as const });
+    try {
+      owner.observe("title", panel, panelPose, measured, [], true, 0, sample(false));
+      const changed = { ...measured, context: { ...measured.context, generation: measured.context.generation + 1 } };
+      dispatch.mockImplementationOnce(() => { throw new Error("focus observer failed"); });
+      expect(() => owner.observe("title", panel, panelPose, changed, [], true, 50, sample(true))).toThrow("focus observer failed");
+      dispatch.mockClear();
+      owner.observe("title", panel, panelPose, changed, [], true, 100, sample(true));
+      expect(dispatch.mock.calls.some(([action]) => action.type === "menu-control")).toBe(false);
+    } finally { owner.reset(); }
+  });
 
   it("uses clipped measured menu regions for range selection and ignores disabled controls", () => {
     const fixture = createSceneFixture("Title");

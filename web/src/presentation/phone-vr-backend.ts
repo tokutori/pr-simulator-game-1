@@ -10,14 +10,12 @@ import type { ViewerFrame } from "../render/contracts/viewer-frame.js";
 import type { UiActionDispatcher, UiViewModel } from "../render/contracts/ui.js";
 import { xrReferenceChange } from "../render/camera/spatial.js";
 import { XrSpatialSession } from "./xr-spatial-session.js";
-import { GazeDwellSelector } from "./gaze-dwell.js";
-import { intersectPanel } from "./panel-interaction.js";
+import { XrPointerSession } from "./xr-pointer-session.js";
 import type { PhoneVrAvailability, PhoneVrGamepadInputPort, PhoneVrOpticalProfile, PhoneVrPermissionResult, PhoneVrSensorPort, PhoneVrSensorReading } from "./phone-vr-contracts.js";
 import { NO_PHONE_VR_GAMEPAD_INPUT, PHONE_VR_OPTICAL_PROFILE } from "./phone-vr-contracts.js";
 import { phoneOrientationQuaternion } from "./phone-vr-orientation.js";
 import { calibratePhoneGravity, phoneGravityViewer, recenterPhoneGravity } from "./phone-vr-gravity.js";
 import type { PhoneGravityCalibration, PhoneGravityEvidence } from "./phone-vr-gravity.js";
-import { GamepadUiSelector } from "./gamepad-ui-selector.js";
 
 type PhoneVrBackendState =
   | { readonly type: "idle" }
@@ -45,6 +43,7 @@ export interface PhoneVrBackendOptions {
   readonly firstSampleTimeoutMs?: number;
   readonly gamepadInput?: PhoneVrGamepadInputPort;
   readonly nowMs?: () => number;
+  readonly inputAvailable?: () => boolean;
 }
 
 export class PhoneVrPresentationBackend implements PresentationBackendAdapter {
@@ -59,12 +58,12 @@ export class PhoneVrPresentationBackend implements PresentationBackendAdapter {
   private gravityEvidence: PhoneGravityEvidence | null = null;
   private latestSampleTimestampMs: number | null = null;
   private readonly spatial = new XrSpatialSession();
-  private gazeDwell: GazeDwellSelector;
-  private gamepadSelector: GamepadUiSelector;
+  private pointers: XrPointerSession;
   private readonly opticalProfile: PhoneVrOpticalProfile;
   private readonly firstSampleTimeoutMs: number;
   private readonly gamepadInput: PhoneVrGamepadInputPort;
   private readonly nowMs: () => number;
+  private readonly inputAvailable: () => boolean;
 
   constructor(
     private readonly sensors: PhoneVrSensorPort,
@@ -83,8 +82,8 @@ export class PhoneVrPresentationBackend implements PresentationBackendAdapter {
     this.opticalProfile = opticalProfile;
     this.gamepadInput = options.gamepadInput ?? NO_PHONE_VR_GAMEPAD_INPUT;
     this.nowMs = options.nowMs ?? (() => performance.now());
-    this.gazeDwell = new GazeDwellSelector(dispatch);
-    this.gamepadSelector = new GamepadUiSelector(dispatch);
+    this.pointers = new XrPointerSession(dispatch);
+    this.inputAvailable = options.inputAvailable ?? (() => true);
   }
 
   checkAvailability(): Promise<PhoneVrAvailability> {
@@ -193,39 +192,38 @@ export class PhoneVrPresentationBackend implements PresentationBackendAdapter {
     const panel = menu.kind === "ready" ? menu.panel : semanticPanel;
     if (panel?.anchor !== "menu" || menu.kind === "absent") this.spatial.closeMenu();
     if (panel?.anchor === "menu" && menu.kind !== "ready") {
-      this.gazeDwell.reset();
-      this.gamepadSelector.reset();
+      this.pointers.reset();
       return Object.freeze({ timestampMs, headHud: menu.kind === "unavailable" ? NO_HEAD_HUD : resolveHeadHudFrame(viewModel.headHud, cameraPose),
         cameraPose: cameraPose ?? poseAtOrigin(this.latestViewerOrientation), viewport: this.viewport(),
         panel: menu.kind === "unavailable" ? Object.freeze({ kind: "unavailable", reason: menu.reason }) : Object.freeze({ kind: "absent" }) });
     }
     if (panel !== null && (viewerPose === null || viewer.source === "unavailable")) {
-      this.gazeDwell.update(null, null, timestampMs);
-      this.gamepadSelector.update(null, null, timestampMs);
+      this.pointers.reset();
       return Object.freeze({ timestampMs, headHud: NO_HEAD_HUD, cameraPose: cameraPose ?? poseAtOrigin(this.latestViewerOrientation),
         panel: Object.freeze({ kind: "unavailable", reason: viewer.source === "unavailable" ? viewer.reason : "viewer-unavailable" }), viewport: this.viewport() });
     }
     const placement = this.spatial.place(viewModel, panel, viewer, reference);
     if (placement.kind === "unavailable") {
-        this.gazeDwell.update(null, null, timestampMs);
-        this.gamepadSelector.update(null, null, timestampMs);
+        this.pointers.reset();
         return Object.freeze({ timestampMs, headHud: NO_HEAD_HUD, cameraPose: cameraPose ?? poseAtOrigin(this.latestViewerOrientation),
           panel: placement, viewport: this.viewport() });
     }
     const panelPose = placement.kind === "ready" ? placement.referenceFromPanel : IDENTITY_POSE;
     const gamepadState = viewerPose === null ? null : this.gamepadInput.readState();
-    const gamepadCursor = menu.kind === "ready" && gamepadState !== null
-      ? this.gamepadSelector.updateMenu(menu, gamepadState, timestampMs) : this.gamepadSelector.update(panel, gamepadState, timestampMs);
-    const gazeCursor = gamepadState !== null
-      ? this.gazeDwell.update(null, null, timestampMs)
-      : viewerPose === null
-        ? this.gazeDwell.update(null, null, timestampMs)
-        : this.updateGaze(panel, panelPose, viewerPose, timestampMs, menu);
+    const gamepad = gamepadState === null ? null : {
+      ...gamepadState.connection,
+      axes: [gamepadState.axes[0] ?? 0, gamepadState.axes[1] ?? 0, gamepadState.axes[2] ?? 0, gamepadState.axes[3] ?? 0] as const,
+      buttons: [gamepadState.buttons[0] ?? false, gamepadState.buttons[1] ?? false] as const
+    };
+    const rays = viewerPose === null ? [] : [{ source: { kind: "gaze" as const }, origin: viewerPose.position,
+      direction: rotateVec3(viewerPose.orientation, vec3(0, 0, -1)), timestampMs }];
+    const cursors = this.pointers.observe(JSON.stringify([viewModel.scene, viewModel.activeOverlay, panel?.id]), panel,
+      panelPose, menu, rays, this.inputAvailable(), timestampMs, gamepad);
     return Object.freeze({
       timestampMs,
       headHud: resolveHeadHudFrame(viewModel.headHud, cameraPose),
       cameraPose: cameraPose ?? poseAtOrigin(this.latestViewerOrientation),
-      panel: panel === null ? Object.freeze({ kind: "absent" }) : Object.freeze({ kind: "visible", panel, pose: panelPose, cursor: gamepadCursor ?? gazeCursor }),
+      panel: panel === null ? Object.freeze({ kind: "absent" }) : Object.freeze({ kind: "visible", panel, pose: panelPose, ...cursors }),
       viewport: this.viewport()
     });
   }
@@ -243,13 +241,18 @@ export class PhoneVrPresentationBackend implements PresentationBackendAdapter {
     this.spatial.recenterTracking(xrReferenceChange(mountedOrigin, poseAtOrigin(result.newTrackingFromOldTracking)));
     this.calibration = result.calibration;
     this.latestViewerOrientation = result.viewer;
-    this.gazeDwell.reset();
+    this.pointers.reset();
   }
 
   recenterMenu(): void {
     if (this.state.type === "active") {
       this.spatial.recenterMenu(this.renderer.projectTrackingFrame(poseAtOrigin(this.latestViewerOrientation)).head);
+      this.pointers.reset();
     }
+  }
+
+  invalidateInput(): void {
+    this.pointers.reset();
   }
 
   private currentViewerPose(timestampMs: number): Pose | null {
@@ -380,21 +383,6 @@ export class PhoneVrPresentationBackend implements PresentationBackendAdapter {
     this.onTrackingUnavailable(message);
   }
 
-  private updateGaze(
-    panel: UiViewModel["panels"][number] | null,
-    panelPose: Pose,
-    viewerPose: Pose,
-    timestampMs: number,
-    menu: MenuPresentation
-  ) {
-    if (panel === null) return this.gazeDwell.update(null, null, timestampMs);
-    const point = intersectPanel({
-      origin: viewerPose.position,
-      direction: rotateVec3(viewerPose.orientation, vec3(0, 0, -1))
-    }, panelPose);
-    return menu.kind === "ready" ? this.gazeDwell.updateMenu(menu, point, timestampMs) : this.gazeDwell.update(panel, point, timestampMs);
-  }
-
   private stopTracking(message: string): Promise<void> {
     if (this.state.type === "stopping") return Promise.resolve();
     const previousState = this.state;
@@ -415,8 +403,7 @@ export class PhoneVrPresentationBackend implements PresentationBackendAdapter {
     if (attempt.resources === "released") return;
     attempt.resources = "released";
     this.clearAttemptTimer(attempt);
-    const gazeDwell = this.gazeDwell;
-    const gamepadSelector = this.gamepadSelector;
+    const pointers = this.pointers;
     this.resetTracking();
     let result: { readonly type: "released" } | { readonly type: "failed"; readonly error: Error } = { type: "released" };
     for (const cleanup of [
@@ -424,8 +411,7 @@ export class PhoneVrPresentationBackend implements PresentationBackendAdapter {
       () => { this.sensors.stopListening(); },
       () => { this.gamepadInput.stop(); },
       () => { this.renderer.setStereoPresentation(null); },
-      () => { gazeDwell.reset(); },
-      () => { gamepadSelector.reset(); }
+      () => { pointers.reset(); }
     ]) {
       try {
         cleanup();
@@ -444,8 +430,7 @@ export class PhoneVrPresentationBackend implements PresentationBackendAdapter {
     this.calibration = null;
     this.gravityEvidence = null;
     this.spatial.reset();
-    this.gazeDwell = new GazeDwellSelector(this.dispatch);
-    this.gamepadSelector = new GamepadUiSelector(this.dispatch);
+    this.pointers = new XrPointerSession(this.dispatch);
   }
 
   private clearAttemptTimer(attempt: PhoneVrTrackingAttempt): void {

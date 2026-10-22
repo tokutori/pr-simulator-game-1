@@ -9,7 +9,7 @@ import type { ThreeRendererBundle } from "../../web/src/render/engines/three/thr
 import { IDENTITY_POSE } from "../../web/src/render/contracts/math.js";
 import type { Pose } from "../../web/src/render/contracts/math.js";
 import type { BackendFrame } from "../../web/src/render/contracts/runtime.js";
-import { createSceneFixture } from "../../web/src/presentation/fixtures.js";
+import { createSceneFixture } from "./ui-adapter-fixture.js";
 import { createBrowserPhoneVrSensorPort } from "../../web/src/presentation/phone-vr-browser.js";
 import { PhoneVrPresentationBackend } from "../../web/src/presentation/phone-vr-backend.js";
 import { GAME_SCENES } from "../../web/src/render/contracts/ui.js";

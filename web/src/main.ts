@@ -622,7 +622,7 @@ async function initializePresentation(requestId: number): Promise<void> {
       currentViewport,
       dispatchUiAction,
       onPhoneVrTrackingUnavailable,
-      { gamepadInput: createBrowserPhoneVrGamepadInputPort() }
+      { gamepadInput: createBrowserPhoneVrGamepadInputPort(), inputAvailable: () => document.visibilityState !== "hidden" && document.hasFocus() }
     );
     const presentation = new PresentationRuntime(
       bundle.renderer,
@@ -1045,6 +1045,7 @@ function onPageHide(): void {
   window.removeEventListener("resize", onResize);
   window.removeEventListener("blur", cancelUnavailableCountdown);
   document.removeEventListener("visibilitychange", onVisibilityChange);
+  window.removeEventListener("blur", onUiInputBlur);
   const controller = flightController;
   const session = gameSession;
   flightController = null;
@@ -1071,19 +1072,27 @@ function onVisibilityChange(): void {
 
 function suspendPageFlightState(): void {
   try {
-    const session = gameSession;
-    const pagePort = session === null ? null : {
-      phase: () => session.readLifecycle().phase,
-      cancel_countdown: () => { session.executeSharedSessionCommand({ kind: "cancel_countdown" }); },
-      pause: (reason: number) => {
-        if (reason !== 1) throw new RangeError("Page suspension requires the page-hidden reason");
-        session.pauseForReason("page_hidden");
-      }
-    };
-    suspendPageFlight(pagePort, flightController, syncGameSession);
-  } catch (error: unknown) {
-    dispatch({ type: "game-session-status", message: `非表示化に伴う停止に失敗した: ${errorMessage(error)}` });
+    phoneVrBackend?.invalidateInput();
+  } finally {
+    try {
+      const session = gameSession;
+      const pagePort = session === null ? null : {
+        phase: () => session.readLifecycle().phase,
+        cancel_countdown: () => { session.executeSharedSessionCommand({ kind: "cancel_countdown" }); },
+        pause: (reason: number) => {
+          if (reason !== 1) throw new RangeError("Page suspension requires the page-hidden reason");
+          session.pauseForReason("page_hidden");
+        }
+      };
+      suspendPageFlight(pagePort, flightController, syncGameSession);
+    } catch (error: unknown) {
+      dispatch({ type: "game-session-status", message: `非表示化に伴う停止に失敗した: ${errorMessage(error)}` });
+    }
   }
+}
+
+function onUiInputBlur(): void {
+  phoneVrBackend?.invalidateInput();
 }
 
 function onPageSuspend(): void {
@@ -1179,4 +1188,5 @@ renderModel();
 window.addEventListener("resize", onResize);
 installBrowserPageLifecycle(window, { suspend: onPageSuspend, restore: onPageRestore, dispose: onPageHide });
 document.addEventListener("visibilitychange", onVisibilityChange);
+window.addEventListener("blur", onUiInputBlur);
 dispatch({ type: "initialize" });

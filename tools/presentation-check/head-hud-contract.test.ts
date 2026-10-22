@@ -4,7 +4,7 @@ import { NO_HEAD_HUD, resolveHeadHudFrame, validateHeadHudLayer } from "../../we
 import type { HeadHudElement, VisibleHeadHud } from "../../web/src/render/contracts/head-hud.js";
 import { IDENTITY_POSE, pose, vec3 } from "../../web/src/render/contracts/math.js";
 import { validateUiViewModel, viewExposesAction } from "../../web/src/render/contracts/ui.js";
-import { createHeadHudFixture, createSceneFixture } from "../../web/src/presentation/fixtures.js";
+import { createHeadHudFixture, createSceneFixture } from "./ui-adapter-fixture.js";
 import { ScreenPresentationBackend } from "../../web/src/presentation/screen-backend.js";
 
 describe("Non-interactive Head HUD contract", () => {

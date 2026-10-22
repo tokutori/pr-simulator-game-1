@@ -20,6 +20,10 @@ export interface XrPointerSurface {
      */
     readonly regions: readonly XrPointerRegion[];
     /**
+     * Layout/input revision within the same semantic menu.
+     */
+    readonly revision?: number;
+    /**
      * Adapter's exact scene, overlay, panel and scroll context identity.
      */
     readonly scope: string;

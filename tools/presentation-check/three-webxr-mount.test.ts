@@ -13,7 +13,7 @@ import { composePose, IDENTITY_POSE, inversePose, pose, quaternion, vec3 } from 
 import type { Pose } from "../../web/src/render/contracts/math.js";
 import type { BackendFrame, FlightRenderPose } from "../../web/src/render/contracts/runtime.js";
 import type { UiAction, UiViewModel } from "../../web/src/render/contracts/ui.js";
-import { createSceneFixture } from "../../web/src/presentation/fixtures.js";
+import { createSceneFixture } from "./ui-adapter-fixture.js";
 import { WebXrPresentationBackend } from "../../web/src/presentation/webxr-backend.js";
 import { PresentationRuntime } from "../../web/src/presentation/runtime.js";
 import { createInitialAppModel, updateApp } from "../../web/src/app/app-state.js";
@@ -655,12 +655,12 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
     const geographical = flightRelativePose(flight, local);
     const moved = { ...flight, datumPositionNed: { north: 170, east: -20, down: -13 },
       attitudeBodyToNed: { w: Math.cos(0.35), x: Math.sin(0.35), y: 0, z: 0 } };
-    for (const anchor of ["world", "cockpit"] as const) {
+    for (const [index, anchor] of (["world", "cockpit"] as const).entries()) {
       bundle.renderer.setFlightPose(flight);
       view = centeredPanel(anchor, anchor === "world" ? flightRelativePose(flight, mountedHead) : mountedHead);
-      session.run(100, head);
+      session.run(100 + index * 200, head);
       bundle.renderer.setFlightPose(moved);
-      session.run(200, head);
+      session.run(200 + index * 200, head);
       const panel = lastDraw(driver).panel;
       if (panel === null) throw new Error("Missing physical panel");
       expectMatrix(panel, poseMatrix(anchor === "world" ? geographical : flightRelativePose(moved, local)));

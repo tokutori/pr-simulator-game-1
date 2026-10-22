@@ -146,7 +146,7 @@ GameUiView / GameUiFrame → platform renderer → DOM / VR panel / Bevy entity
 
 - ラベル、主要操作、順序、section、表示条件、theme、HUD、chartの意味は共有Rustで定義する。
 - 共有Viewは有効な操作からBackを導出する。button・toggleの実行Actionとrangeの段階値への丸めは共有controlが所有し、adapterは入力観測を渡す。
-- platformは表示API、フォント計測、safe area、focus、scroll、入力方式を担当する。
+- platformは表示API、フォント計測、safe area、OS/browserのfocus・visibility・機器観測を担当する。XRのcursor積分・押下edge・入力源切替・dwellは共有presentationが所有する。
 - ボタンIDや表示文字列から意味を再推定しない。
 
 - menuは順序付きsectionとrow/column/gridを持つ。

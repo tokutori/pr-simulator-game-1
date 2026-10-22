@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { Window } from "happy-dom";
 import { describe, expect, it, vi } from "vitest";
-import { createSceneFixture } from "../../web/src/presentation/fixtures.js";
+import { createSceneFixture } from "./ui-adapter-fixture.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
 import { currentSharedGameUiFixture, withSharedGameUiSession } from "../game-check/shared-game-ui-fixture.js";
 import { projectSharedFlightHudModel } from "../../web/src/presentation/flight-hud-model.js";

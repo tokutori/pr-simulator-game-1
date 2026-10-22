@@ -1,9 +1,9 @@
-import { IDENTITY_POSE, pose, vec3 } from "../render/contracts/math.js";
-import { NO_HEAD_HUD } from "../render/contracts/head-hud.js";
-import type { VisibleHeadHud } from "../render/contracts/head-hud.js";
-import type { GameUiView } from "../generated/game-ui-view.js";
-import { GAME_SCENES, normalizedRect } from "../render/contracts/ui.js";
-import type { AnchorKind, GameScene, UiPanel, UiViewModel } from "../render/contracts/ui.js";
+import { IDENTITY_POSE, pose, vec3 } from "../../web/src/render/contracts/math.js";
+import { NO_HEAD_HUD } from "../../web/src/render/contracts/head-hud.js";
+import type { VisibleHeadHud } from "../../web/src/render/contracts/head-hud.js";
+import type { GameUiView } from "../../web/src/generated/game-ui-view.js";
+import { GAME_SCENES, normalizedRect } from "../../web/src/render/contracts/ui.js";
+import type { AnchorKind, GameScene, UiPanel, UiViewModel } from "../../web/src/render/contracts/ui.js";
 
 export const SCENE_FIXTURE_OVERLAYS: Readonly<Record<GameScene, readonly string[]>> = Object.freeze({
   Boot: [],

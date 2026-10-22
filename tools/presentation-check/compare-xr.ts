@@ -101,9 +101,21 @@ function pointerScenario() {
     [2000, false, [gaze, right], [right, 2001]], [2100, true, [gaze], [right, 2101]],
     [3100, true, [gaze], null], [4200, true, [gaze], [gaze, 4201]]
   ] as const;
-  return { surface, steps: steps.map(([timestampMs, focused, pointers, select]) => ({
+  const gamepad = (timestampMs: number, generation: number, buttons: readonly [boolean, boolean], focused = true): XrPointerObservation => ({
+    timestampMs, focused, panelPose, pointers: [gaze], gamepad: { index: 0, generation, axes: [1, -1, 0, 0.5], buttons }
+  });
+  const gamepadSteps = [
+    gamepad(5000, 1, [true, true]), gamepad(5016, 1, [false, false]),
+    gamepad(5032, 1, [true, false]), gamepad(5048, 1, [true, false]),
+    gamepad(5064, 1, [false, false]), gamepad(5080, 1, [true, true], false),
+    gamepad(5096, 1, [true, true]), gamepad(5112, 1, [false, false]),
+    gamepad(5128, 1, [false, true]), gamepad(5144, 2, [true, true]),
+    { timestampMs: 5160, focused: true, panelPose, pointers: [gaze], gamepad: null },
+    { timestampMs: 6160, focused: true, panelPose, pointers: [gaze], gamepad: null }
+  ];
+  return { surface, steps: [...steps.map(([timestampMs, focused, pointers, select]) => ({
     observation: { timestampMs, focused, panelPose, pointers } satisfies XrPointerObservation, select
-  })) };
+  })), ...gamepadSteps.map(observation => ({ observation, select: null }))] };
 }
 
 function pointerResults(scenario: ReturnType<typeof pointerScenario>): unknown[] {

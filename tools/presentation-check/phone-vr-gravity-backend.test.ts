@@ -6,7 +6,7 @@ import { Euler, Matrix4, Quaternion as ThreeQuaternion, Vector3 } from "three";
 import { composePose, IDENTITY_POSE, pose, quaternion, vec3 } from "../../web/src/render/contracts/math.js";
 import type { Pose } from "../../web/src/render/contracts/math.js";
 import type { RendererAdapter, StereoPresentationProfile } from "../../web/src/render/contracts/runtime.js";
-import { createAnchorFixture, createSceneFixture } from "../../web/src/presentation/fixtures.js";
+import { createAnchorFixture, createSceneFixture } from "./ui-adapter-fixture.js";
 import { PhoneVrPresentationBackend } from "../../web/src/presentation/phone-vr-backend.js";
 import { createBrowserPhoneVrSensorPort } from "../../web/src/presentation/phone-vr-browser.js";
 import type { PhoneVrSensorPort, PhoneVrSensorReading } from "../../web/src/presentation/phone-vr-contracts.js";

@@ -4,7 +4,7 @@ import { fixtureBackendFrame, fixturePresentation, fixtureSemanticAction } from 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { RendererAdapter, StereoPresentationProfile } from "../../web/src/render/contracts/runtime.js";
 import type { UiActionDispatcher } from "../../web/src/render/contracts/ui.js";
-import { createSceneFixture } from "../../web/src/presentation/fixtures.js";
+import { createSceneFixture } from "./ui-adapter-fixture.js";
 import { PhoneVrPresentationBackend } from "../../web/src/presentation/phone-vr-backend.js";
 import type { PhoneVrGamepadState, PhoneVrPermissionResult, PhoneVrSensorPort, PhoneVrSensorReading } from "../../web/src/presentation/phone-vr-contracts.js";
 import { PHONE_VR_OPTICAL_PROFILE } from "../../web/src/presentation/phone-vr-contracts.js";
@@ -315,7 +315,7 @@ describe("Phone VR startup attempt ownership", () => {
     expect(fixture.dispatch).toHaveBeenCalledExactlyOnceWith({ type: "focus", controlId: "title-toggle" });
   });
 
-  it("attempts both focused selector releases and all resources while preserving the first cleanup exception", async () => {
+  it("releases the shared input owner and all resources while preserving the first cleanup exception", async () => {
     const fixture = createFixture();
     await fixture.backend.requestPermissionFromUserGesture();
     const startup = fixture.backend.start();
@@ -327,16 +327,14 @@ describe("Phone VR startup attempt ownership", () => {
       if (action.type === "focus" && action.controlId === null) throw focusFailure;
     });
     fixture.gamepad.mockReturnValue({ connection: { index: 0, generation: 0 }, axes: [], buttons: [] });
-    expect(() => fixtureBackendFrame(fixture.backend, 201, view, configuredViewerFixture())).toThrow(focusFailure);
+    expect(() => fixtureBackendFrame(fixture.backend, 201, view, configuredViewerFixture())).not.toThrow();
     fixture.dispatch.mockClear();
     const firstFailure = new Error("select handler cleanup failed");
     fixture.renderer.setSelectRayHandler.mockImplementationOnce(() => { throw firstFailure; });
     fixture.sensors.stopListening.mockImplementationOnce(() => { fixture.sensors.detach(); throw new Error("listener cleanup failed"); });
     fixture.renderer.setStereoPresentation.mockImplementationOnce(() => { throw new Error("stereo cleanup failed"); });
     await expect(fixture.backend.stop()).rejects.toBe(firstFailure);
-    expect(fixture.dispatch).toHaveBeenCalledTimes(2);
-    expect(fixture.dispatch).toHaveBeenNthCalledWith(1, { type: "focus", controlId: null });
-    expect(fixture.dispatch).toHaveBeenNthCalledWith(2, { type: "focus", controlId: null });
+    expect(fixture.dispatch).toHaveBeenCalledExactlyOnceWith({ type: "focus", controlId: null });
     expect(fixture.sensors.stopListening).toHaveBeenCalledTimes(1);
     expect(fixture.renderer.setStereoPresentation).toHaveBeenLastCalledWith(null);
     expect(vi.getTimerCount()).toBe(0);

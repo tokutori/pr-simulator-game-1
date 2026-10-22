@@ -8516,6 +8516,10 @@
           ],
           "description": "At most one accepted action for this observation."
         },
+        "back": {
+          "description": "Back button's newly accepted press.",
+          "type": "boolean"
+        },
         "focusChanged": {
           "description": "Focus changed because the target or source changed.",
           "type": "boolean"
@@ -8536,6 +8540,11 @@
           "format": "double",
           "type": "number"
         },
+        "scrollPages": {
+          "description": "Right-stick scroll measured in viewport pages.",
+          "format": "double",
+          "type": "number"
+        },
         "secondary": {
           "description": "Other controllers with visible panel intersections.",
           "items": {
@@ -8549,7 +8558,9 @@
         "secondary",
         "progress",
         "focusChanged",
-        "activation"
+        "activation",
+        "back",
+        "scrollPages"
       ],
       "type": "object"
     },
@@ -8588,6 +8599,34 @@
           "required": [
             "kind",
             "id"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Standard gamepad cursor, identified by connection lifetime.",
+          "properties": {
+            "generation": {
+              "description": "Connection generation for this slot.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "index": {
+              "description": "Adapter's device slot.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "gamepad",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "index",
+            "generation"
           ],
           "type": "object"
         }

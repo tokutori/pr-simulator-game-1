@@ -381,6 +381,26 @@ describe("public main entrypoint with actual two-tail Rust WASM", () => {
     expect(trial.observeCountdown.mock.results.filter((result) => result.type === "return" && result.value === 3)).toHaveLength(0);
     expect(trial.tickCount()).toBe(0);
   });
+  it.each(["countdown", "flight"] as const)("stops %s on page hiding even if UI input cleanup throws", async (phase) => {
+    const trial = await fixture();
+    await vi.waitFor(() => { expect(trial.scene()).toBe("Title"); });
+    trial.frame(0);
+    trial.click("game-title-start");
+    trial.click("game-setup-start");
+    if (phase === "flight") trial.launch();
+    else trial.click("game-briefing-start");
+    const { PhoneVrPresentationBackend } = await import("../../web/src/presentation/phone-vr-backend.js");
+    const failure = new Error("UI input cleanup failed");
+    vi.spyOn(PhoneVrPresentationBackend.prototype, "invalidateInput").mockImplementation(() => { throw failure; });
+    Object.defineProperty(trial.browser.document, "visibilityState", { value: "hidden", configurable: true });
+    try {
+      trial.browser.document.dispatchEvent(new trial.browser.Event("visibilitychange"));
+    } catch (cause) {
+      expect(cause).toBe(failure);
+    }
+    const owner = await trial.sessionOwner();
+    expect(owner.readGameSessionProjection().phase).toBe(phase === "flight" ? "flight_paused" : "briefing_ready");
+  });
   it("advances from callback arrivals when the initial RAF timestamp precedes delivery", async () => {
     const trial = await fixture();
     await vi.waitFor(() => { expect(trial.scene()).toBe("Title"); });

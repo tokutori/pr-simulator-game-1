@@ -7,6 +7,10 @@ export interface XrPointerObservation {
      * Runtime grants input focus.
      */
     readonly focused: boolean;
+    /**
+     * Connected standard gamepad observed with the rays.
+     */
+    readonly gamepad?: XrGamepadObservation | null;
     readonly panelPose: Pose;
     /**
      * Tracked controllers and head gaze observed in the same frame.
@@ -16,6 +20,41 @@ export interface XrPointerObservation {
      * Monotonic presentation timestamp in milliseconds.
      */
     readonly timestampMs: number;
+}
+/**
+ * Raw standard gamepad values used by spatial UI.
+ */
+export interface XrGamepadObservation {
+    /**
+     * Left and right stick axes in standard mapping order.
+     *
+     * @minItems 4
+     * @maxItems 4
+     */
+    readonly axes: readonly [
+        number,
+        number,
+        number,
+        number
+    ];
+    /**
+     * Primary and Back button states.
+     *
+     * @minItems 2
+     * @maxItems 2
+     */
+    readonly buttons: readonly [
+        boolean,
+        boolean
+    ];
+    /**
+     * Connection generation for this slot.
+     */
+    readonly generation: number;
+    /**
+     * Adapter's device slot.
+     */
+    readonly index: number;
 }
 /**
  * Reference-from-panel pose from this rendered frame.
@@ -79,6 +118,16 @@ export interface XrPointerRay {
          */
         readonly id: number;
         readonly kind: "controller";
+    } | {
+        /**
+         * Connection generation for this slot.
+         */
+        readonly generation: number;
+        /**
+         * Adapter's device slot.
+         */
+        readonly index: number;
+        readonly kind: "gamepad";
     };
 }
 /**

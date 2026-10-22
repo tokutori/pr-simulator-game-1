@@ -13,6 +13,13 @@ pub enum XrPointerSource {
         /// Session-local runtime source identifier.
         id: u32,
     },
+    /// Standard gamepad cursor, identified by connection lifetime.
+    Gamepad {
+        /// Adapter's device slot.
+        index: u32,
+        /// Connection generation for this slot.
+        generation: u32,
+    },
 }
 
 /// Semantic target of a measured interactive rectangle.
@@ -69,6 +76,9 @@ pub struct XrPointerRegion {
 pub struct XrPointerSurface {
     /// Adapter's exact scene, overlay, panel and scroll context identity.
     pub scope: String,
+    /// Layout/input revision within the same semantic menu.
+    #[serde(default)]
+    pub revision: u64,
     /// Surface width and height in metres.
     pub size_m: [f64; 2],
     /// Enabled rectangles in drawing/hit priority order.
@@ -130,6 +140,33 @@ pub struct XrPointerObservation {
     pub panel_pose: Pose,
     /// Tracked controllers and head gaze observed in the same frame.
     pub pointers: Vec<XrPointerRay>,
+    /// Connected standard gamepad observed with the rays.
+    #[serde(default)]
+    pub gamepad: Option<XrGamepadObservation>,
+}
+
+/// Raw standard gamepad values used by spatial UI.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct XrGamepadObservation {
+    /// Adapter's device slot.
+    pub index: u32,
+    /// Connection generation for this slot.
+    pub generation: u32,
+    /// Left and right stick axes in standard mapping order.
+    pub axes: [f64; 4],
+    /// Primary and Back button states.
+    pub buttons: [bool; 2],
+}
+
+impl XrGamepadObservation {
+    fn source(self) -> XrPointerSource {
+        XrPointerSource::Gamepad {
+            index: self.index,
+            generation: self.generation,
+        }
+    }
 }
 
 /// Visible metric cursor and its typed target.
@@ -160,6 +197,10 @@ pub struct XrPointerProjection {
     pub focus_changed: bool,
     /// At most one accepted action for this observation.
     pub activation: Option<XrPointerHit>,
+    /// Back button's newly accepted press.
+    pub back: bool,
+    /// Right-stick scroll measured in viewport pages.
+    pub scroll_pages: f64,
 }
 
 #[derive(Clone)]
@@ -169,6 +210,12 @@ struct Focus {
     activated: bool,
 }
 
+struct GamepadInput {
+    sample: XrGamepadObservation,
+    timestamp_ms: f64,
+    cursor: [f64; 2],
+}
+
 /// Owns source handover, one-second dwell and duplicate activation admission.
 #[derive(Default)]
 pub struct XrPointerSession {
@@ -176,6 +223,8 @@ pub struct XrPointerSession {
     focus: Option<Focus>,
     previous_activation: Option<(XrPointerTarget, f64)>,
     observation: Option<XrPointerObservation>,
+    gamepad: Option<GamepadInput>,
+    last_timestamp_ms: Option<f64>,
 }
 
 impl XrPointerSession {
@@ -185,8 +234,17 @@ impl XrPointerSession {
             return Err("Invalid XR pointer surface");
         }
         if self.surface != surface {
+            let mut gamepad = self.gamepad.take();
+            if self.surface.as_ref().map(|value| &value.scope)
+                != surface.as_ref().map(|value| &value.scope)
+                && let Some(input) = &mut gamepad
+            {
+                input.cursor = [0.5; 2];
+            }
             *self = Self {
                 surface,
+                gamepad,
+                last_timestamp_ms: self.last_timestamp_ms,
                 ..Self::default()
             };
         }
@@ -201,10 +259,14 @@ impl XrPointerSession {
         if !observation.timestamp_ms.is_finite()
             || observation.timestamp_ms < 0.0
             || observation.pointers.len() > 16
+            || self
+                .last_timestamp_ms
+                .is_some_and(|previous| observation.timestamp_ms < previous)
         {
             return Err("Invalid XR pointer observation");
         }
         let mut result = XrPointerProjection::default();
+        let gamepad = self.observe_gamepad(&observation);
         if observation.focused
             && let Some(surface) = &self.surface
         {
@@ -225,11 +287,24 @@ impl XrPointerSession {
                         .position(|hit| matches!(hit.source, XrPointerSource::Controller { .. }))
                 })
                 .or_else(|| {
+                    if gamepad.is_some() {
+                        return None;
+                    }
                     hits.iter()
                         .position(|hit| hit.source == XrPointerSource::Gaze)
                 });
             if let Some(index) = preferred {
                 result.primary = Some(hits.remove(index));
+            }
+            if result.primary.is_none()
+                && let Some((hit, pressed, back, scroll)) = gamepad
+            {
+                result.primary = Some(hit.clone());
+                result.back = back;
+                result.scroll_pages = if back { 0.0 } else { scroll };
+                if pressed && !back && hit.target.is_some() {
+                    result.activation = Some(hit);
+                }
             }
             result.secondary = hits
                 .into_iter()
@@ -271,13 +346,59 @@ impl XrPointerSession {
             }
         }
         self.observation = Some(observation);
+        self.last_timestamp_ms = Some(timestamp);
         Ok(result)
+    }
+
+    fn observe_gamepad(
+        &mut self,
+        observation: &XrPointerObservation,
+    ) -> Option<(XrPointerHit, bool, bool, f64)> {
+        let sample = observation.gamepad.filter(|_| observation.focused);
+        let Some(sample) = sample else {
+            self.gamepad = None;
+            return None;
+        };
+        let previous = self
+            .gamepad
+            .as_ref()
+            .filter(|input| input.sample.source() == sample.source());
+        let elapsed = previous.map_or(0.0, |input| {
+            ((observation.timestamp_ms - input.timestamp_ms) / 1000.0).clamp(0.0, 0.05)
+        });
+        let mut cursor = previous.map_or([0.5; 2], |input| input.cursor);
+        for (coordinate, axis) in cursor.iter_mut().zip(sample.axes) {
+            *coordinate = (*coordinate + gamepad_axis(axis) * 1.2 * elapsed).clamp(0.0, 1.0);
+        }
+        let pressed = previous.is_some_and(|input| sample.buttons[0] && !input.sample.buttons[0]);
+        let back = previous.is_some_and(|input| sample.buttons[1] && !input.sample.buttons[1]);
+        self.gamepad = Some(GamepadInput {
+            sample,
+            timestamp_ms: observation.timestamp_ms,
+            cursor,
+        });
+        let surface = self.surface.as_ref()?;
+        let point = [
+            (cursor[0] - 0.5) * surface.size_m[0],
+            (0.5 - cursor[1]) * surface.size_m[1],
+        ];
+        Some((
+            XrPointerHit {
+                source: sample.source(),
+                point,
+                target: surface.hit(point),
+            },
+            pressed,
+            back,
+            gamepad_axis(sample.axes[3]) * elapsed * 2.0,
+        ))
     }
 
     /// Uses the same panel geometry for explicit trigger selection.
     pub fn select(&mut self, pointer: XrPointerRay, timestamp_ms: f64) -> Option<XrPointerHit> {
         let observation = self.observation.as_ref()?;
         if !observation.focused
+            || matches!(pointer.source, XrPointerSource::Gamepad { .. })
             || !timestamp_ms.is_finite()
             || timestamp_ms < observation.timestamp_ms
             || !observation
@@ -315,6 +436,13 @@ impl XrPointerSession {
         self.previous_activation = Some((target.clone(), timestamp));
         true
     }
+}
+
+fn gamepad_axis(value: f64) -> f64 {
+    if !value.is_finite() || value.abs() <= 0.2 {
+        return 0.0;
+    }
+    value.signum() * (value.abs().min(1.0) - 0.2) / 0.8
 }
 
 fn pointer_hit(

@@ -1,6 +1,6 @@
 import { referenceFrameFixture } from "./menu-fixture.js";
 import { describe, expect, it, vi } from "vitest";
-import { fixturePresentation, fixtureSemanticAction } from "./menu-fixture.js";
+import { fixturePresentation } from "./menu-fixture.js";
 import { unavailableViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
 import type { ViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
 import { createPilotEyePoint, pilotEyePoseFrd, pilotEyePoseRender } from "../../web/src/render/camera/spatial.js";
@@ -8,10 +8,9 @@ import { chaseCameraPoseFrd } from "../../web/src/render/camera/spatial.js";
 import { IDENTITY_POSE, pose, rotateVec3, vec3 } from "../../web/src/render/contracts/math.js";
 import type { BackendFrame, MenuPresentation, PresentationBackendAdapter, PresentationMode, RendererAdapter, ViewportSize } from "../../web/src/render/contracts/runtime.js";
 import { GAME_SCENES, validateUiViewModel } from "../../web/src/render/contracts/ui.js";
-import type { UiAction, UiViewModel } from "../../web/src/render/contracts/ui.js";
-import { createAllSceneFixtures, createSceneFixture, SCENE_FIXTURE_OVERLAYS } from "../../web/src/presentation/fixtures.js";
+import type { UiViewModel } from "../../web/src/render/contracts/ui.js";
+import { createAllSceneFixtures, createSceneFixture, SCENE_FIXTURE_OVERLAYS } from "./ui-adapter-fixture.js";
 import { PresentationRuntime } from "../../web/src/presentation/runtime.js";
-import { GazeDwellSelector } from "../../web/src/presentation/gaze-dwell.js";
 import { actionForControl, hitTestControl, intersectPanel, rangeAction } from "../../web/src/presentation/panel-interaction.js";
 import type { UiPanel } from "../../web/src/render/contracts/ui.js";
 
@@ -140,38 +139,6 @@ describe("anchor and camera transforms", () => {
   });
 });
 
-describe("head-gaze selection", () => {
-  it("focuses a control, exposes dwell progress, activates once, and clears on cancellation", () => {
-    const panel = requiredPanel(createSceneFixture("Title"));
-    const button = panel.controls.find((control) => control.kind === "button");
-    if (button === undefined) throw new Error("Missing button fixture");
-    const point = normalizedPoint(panel, button.rect.x + button.rect.width / 2, button.rect.y + button.rect.height / 2);
-    const actions: UiAction[] = [];
-    const selector = new GazeDwellSelector((action) => { actions.push(fixtureSemanticAction(action)); }, 1000);
-    expect(selector.update(panel, point, 100)?.progress).toBe(0);
-    expect(selector.update(panel, point, 600)?.progress).toBe(0.5);
-    expect(selector.update(panel, point, 1100)?.progress).toBe(1);
-    expect(selector.update(panel, point, 1600)?.progress).toBe(1);
-    expect(actions.filter((action) => action.type === "activate")).toHaveLength(1);
-    expect(selector.wasActivatedRecently(button.id, {
-      origin: vec3(0, 0, 0), direction: vec3(0, 0, -1), timestampMs: 1200
-    })).toBe(true);
-    expect(selector.update(panel, null, 1700)).toBeNull();
-    expect(actions.at(-1)).toEqual({ type: "focus", controlId: null });
-  });
-
-  it("converts a dwell on a range control to the selected value", () => {
-    const panel = requiredPanel(createSceneFixture("Title"));
-    const range = panel.controls.find((control) => control.kind === "range");
-    if (range === undefined) throw new Error("Missing range fixture");
-    const point = normalizedPoint(panel, range.rect.x + range.rect.width, range.rect.y + range.rect.height / 2);
-    const actions: UiAction[] = [];
-    const selector = new GazeDwellSelector((action) => { actions.push(fixtureSemanticAction(action)); }, 500);
-    selector.update(panel, point, 200);
-    selector.update(panel, point, 700);
-    expect(actions).toContainEqual({ type: "set-range", controlId: range.id, value: 1 });
-  });
-});
 
 describe("presentation runtime", () => {
   it.each(["screen", "phone-vr", "webxr"] as const)("observes one successfully rendered frame per %s callback and resets on backend changes", async (mode) => {

@@ -9,7 +9,7 @@ import type { Pose } from "../../web/src/render/contracts/math.js";
 import type { BackendFrame, MenuPresentation, RendererAdapter, SelectRay, ViewportSize } from "../../web/src/render/contracts/runtime.js";
 import type { ViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
 import type { UiAction } from "../../web/src/render/contracts/ui.js";
-import { createAnchorFixture, createHeadHudFixture, createSceneFixture, SCENE_FIXTURE_OVERLAYS } from "../../web/src/presentation/fixtures.js";
+import { createAnchorFixture, createHeadHudFixture, createSceneFixture, SCENE_FIXTURE_OVERLAYS } from "./ui-adapter-fixture.js";
 import { WebXrPresentationBackend } from "../../web/src/presentation/webxr-backend.js";
 import { PresentationRuntime } from "../../web/src/presentation/runtime.js";
 import { ScreenPresentationBackend } from "../../web/src/presentation/screen-backend.js";

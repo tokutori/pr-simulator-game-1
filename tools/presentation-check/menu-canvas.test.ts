@@ -8,7 +8,7 @@ import type { MenuDrawingContext } from "../../web/src/presentation/menu-canvas.
 import { hitMenuViewport, layoutMeasuredMenu, menuViewport, requestMenuLayout, validateMenuOpeningInk } from "../../web/src/presentation/menu-layout.js";
 import { fitMenuView } from "../../web/src/presentation/menu-view-fit.js";
 import { configuredViewerFixture } from "./viewer-fixture.js";
-import { createAllSceneFixtures, createSceneFixture } from "../../web/src/presentation/fixtures.js";
+import { createAllSceneFixtures, createSceneFixture } from "./ui-adapter-fixture.js";
 import { prepareMenuPresentation } from "../../web/src/presentation/menu-preparation.js";
 import type { MenuMeasurementCache } from "../../web/src/presentation/menu-preparation.js";
 import { menuActionAt, menuContextCanInteract, menuInputGeometry, menuInputGeometryChanged, menuPageProgress } from "../../web/src/presentation/menu-interaction.js";

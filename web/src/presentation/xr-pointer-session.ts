@@ -13,30 +13,40 @@ export class XrPointerSession {
   private bridge: XrPointerBridge | null = null;
   private geometry = "";
   private generation = 0;
+  private focusDirty = false;
   private panel: UiPanel | null = null;
   private menu: MenuPresentation = { kind: "absent" };
 
   constructor(private readonly dispatch: UiActionDispatcher) {}
 
   observe(scope: string, panel: UiPanel | null, panelPose: Pose, menu: MenuPresentation,
-    rays: readonly SelectRay[], focused: boolean, timestampMs: number): Readonly<{ cursor: PanelCursor | null; secondaryCursors: readonly PanelCursor[] }> {
+    rays: readonly SelectRay[], focused: boolean, timestampMs: number, gamepad: XrPointerObservation["gamepad"] = null): Readonly<{ cursor: PanelCursor | null; secondaryCursors: readonly PanelCursor[] }> {
     const surface = pointerSurface(scope, panel, menu);
     const geometry = JSON.stringify(surface);
     const generation = this.generation;
-    if (geometry !== this.geometry) {
-      this.clearFocus();
-      if (generation !== this.generation) return { cursor: null, secondaryCursors: [] };
+    const geometryChanged = geometry !== this.geometry;
+    if (geometryChanged) {
       this.owner().set_surface_json(geometry);
       this.geometry = geometry;
     }
     this.panel = panel;
     this.menu = menu;
-    const observation: XrPointerObservation = { timestampMs, focused, panelPose,
+    const observation: XrPointerObservation = { timestampMs, focused, panelPose, gamepad,
       pointers: rays.map((ray) => ({ source: ray.source ?? { kind: "gaze" }, origin: ray.origin, direction: ray.direction })) };
     const projection = JSON.parse(this.owner().observe_json(JSON.stringify(observation))) as XrPointerProjection;
-    if (projection.focusChanged) this.focus(projection.primary);
+    this.focusDirty ||= geometryChanged || projection.focusChanged;
+    if (this.focusDirty) {
+      this.focus(projection.primary);
+      if (generation === this.generation) this.focusDirty = false;
+    }
     if (generation !== this.generation) return { cursor: null, secondaryCursors: [] };
     if (projection.activation !== null) this.activate(projection.activation);
+    if (generation !== this.generation) return { cursor: null, secondaryCursors: [] };
+    if (projection.back) this.dispatch({ type: "back" });
+    if (generation !== this.generation) return { cursor: null, secondaryCursors: [] };
+    if (projection.scrollPages !== 0 && menu.kind === "ready") this.dispatch({ type: "menu-scroll", context: menu.context,
+      intent: { kind: "delta", viewportPages: projection.scrollPages, pageProgress: menuPageProgress(menu) } });
+    if (generation !== this.generation) return { cursor: null, secondaryCursors: [] };
     return { cursor: projection.primary === null ? null : cursor(projection.primary, projection.progress),
       secondaryCursors: projection.secondary.map((hit) => cursor(hit, 1)) };
   }
@@ -56,6 +66,7 @@ export class XrPointerSession {
     this.generation++;
     this.bridge = null;
     this.geometry = "";
+    this.focusDirty = false;
     this.panel = null;
     this.menu = { kind: "absent" };
     previous?.free();
@@ -64,10 +75,6 @@ export class XrPointerSession {
   }
 
   private owner(): XrPointerBridge { this.bridge ??= new XrPointerBridge(); return this.bridge; }
-
-  private clearFocus(): void {
-    if (this.panel !== null) this.focus(null);
-  }
 
   private focus(hit: XrPointerHit | null): void {
     const controlId = hit?.target?.kind === "control" ? hit.target.id : null;
@@ -122,5 +129,6 @@ function pointerSurface(scope: string, panel: UiPanel | null, menu: MenuPresenta
     const bounds = control.rect;
     regions.push({ target: { kind: "control", id: control.id }, bounds: [bounds.x * size.width, bounds.y * size.height, bounds.width * size.width, bounds.height * size.height] });
   }
-  return { scope: JSON.stringify([scope, menu.kind === "ready" ? menu.context : null]), sizeM: [size.width, size.height], regions };
+  return { scope: JSON.stringify([scope, menu.kind === "ready" ? menu.context.scope : null]),
+    revision: menu.kind === "ready" ? menu.context.generation : 0, sizeM: [size.width, size.height], regions };
 }
