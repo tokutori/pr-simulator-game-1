@@ -456,7 +456,7 @@ observer費用、headlessの表示上限、CPU/GPU競合を記録し、補正で
 
 利用者向けの起動・キー操作は[Nativeガイド](native-guide.md)へ分離する。
 
-検証専用コードは `verify-harness` featureで有効にする。
+検証専用コードは `verify-harness` featureで有効にする。driverはシナリオの進行を、captureは撮影要求の識別・非同期保存・完了通知とReplay中の記録保持検査を所有する。
 
 ~~~sh
 cargo run -p birdman-game-bevy --features verify-harness --locked -- --verify target/native-offscreen --offscreen --verify-size 1280x720 --export-dir target/native-test-logs
