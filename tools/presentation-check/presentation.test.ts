@@ -1,3 +1,4 @@
+import "./lake-model-fixture.js";
 import { referenceFrameFixture } from "./menu-fixture.js";
 import { describe, expect, it, vi } from "vitest";
 import { fixturePresentation } from "./menu-fixture.js";
