@@ -149,7 +149,7 @@ describe("Shared Flight Setup and Briefing presentation", () => {
     const panel = view.panels[0];
     if (panel === undefined) throw new Error("Missing panel");
     const ready = prepareMenuPresentation(new HudCanvasFixture(), panel,
-      { generation: 1, scope: { kind: "scene", scene: view.scene, panelId: panel.id, viewKey: "setup" } }, 0,
+      { generation: 1, scope: { panelId: panel.id, viewKey: "setup" } }, 0,
       configuredViewerFixture(720, 1280), { theme: shared.theme,
         font: { family: "system-ui, sans-serif", weight: 600, style: "normal", generation: 0 },
         locale: "ja", viewRevision: shared.view_revision }, (input, measure) => session.prepareSharedMenu(input, platform, measure));

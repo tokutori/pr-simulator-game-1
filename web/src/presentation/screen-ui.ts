@@ -18,8 +18,7 @@ interface RetainedScreenDom {
   readonly reason: "hidden" | "disabled";
   readonly focus: HTMLElement | null;
   readonly shell: HTMLElement;
-  readonly scene: string | undefined;
-  readonly overlay: string | undefined;
+  readonly scope: string | undefined;
   readonly scrollTop: number;
   readonly scrollLeft: number;
 }
@@ -57,8 +56,7 @@ export class ScreenUiAdapter {
   }
 
   render(viewModel: UiViewModel, visible = true): void {
-    const scopeChanged = this.currentViewModel !== null && (this.currentViewModel.scene !== viewModel.scene
-      || this.currentViewModel.activeOverlay !== viewModel.activeOverlay);
+    const scopeChanged = this.currentViewModel !== null && (this.currentViewModel.interactionScope !== viewModel.interactionScope);
     this.currentViewModel = viewModel;
     const wasVisible = this.visible;
     if (wasVisible && !visible) {
@@ -79,6 +77,7 @@ export class ScreenUiAdapter {
       if (viewModel.panels.some((panel) => panel.controls.some((control) => control.kind === "chart"))) dataset.mode = "analysis";
       else if (viewModel.presentationStyle === "cinematic") dataset.mode = "cinematic";
     }
+    dataset.scope = viewModel.interactionScope;
     if (viewModel.activeOverlay !== null) dataset.overlay = viewModel.activeOverlay;
     const shell = h("section.screen-ui-shell", { ...data, key: "screen-shell", dataset }, [
       h("h1", viewModel.title),
@@ -149,7 +148,7 @@ export class ScreenUiAdapter {
       ? active
       : null;
     this.retainedDom = {
-      reason, focus, shell, scene: shell.dataset.scene, overlay: shell.dataset.overlay,
+      reason, focus, shell, scope: shell.dataset.scope,
       scrollTop: shell.scrollTop, scrollLeft: shell.scrollLeft
     };
     this.root.ownerDocument.addEventListener("focusin", this.discardRetainedDom);
@@ -164,7 +163,7 @@ export class ScreenUiAdapter {
     const active = this.root.ownerDocument.activeElement;
     const focus = retained.focus;
     if (!retained.shell.isConnected || !this.mount.contains(retained.shell)
-        || retained.shell.dataset.scene !== retained.scene || retained.shell.dataset.overlay !== retained.overlay
+        || retained.shell.dataset.scope !== retained.scope
         || (focus !== null && (!focus.isConnected || !this.mount.contains(focus)))) {
       this.discardRetainedDom();
       return;

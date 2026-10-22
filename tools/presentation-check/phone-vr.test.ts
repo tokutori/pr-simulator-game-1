@@ -718,7 +718,7 @@ describe("Phone VR presentation backend", () => {
     expect(scrollAction?.type).toBe("menu-scroll");
     if (scrollAction?.type !== "menu-scroll" || scrollAction.intent.kind !== "delta") throw new Error("Missing Menu viewport scroll action");
     expect(scrollAction.context.generation).toBe(1);
-    expect(scrollAction.context.scope.scene).toBe("Title");
+    expect(scrollAction.context.scope.viewKey).toBe(viewModel.interactionScope);
     expect(scrollAction.intent.viewportPages).toBeCloseTo(0.012);
     expect(scrollAction.intent.pageProgress).toBe(0);
     await backend.stop();

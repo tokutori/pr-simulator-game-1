@@ -1,4 +1,3 @@
-use crate::game_ui::GameUiScene;
 use serde::{Deserialize, Serialize};
 
 const MAX_GENERATION: u64 = 9_007_199_254_740_991;
@@ -6,48 +5,17 @@ const MAX_GENERATION: u64 = 9_007_199_254_740_991;
 /// Semantic identity of one spatial menu opening.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(
-    tag = "kind",
-    rename_all = "lowercase",
-    rename_all_fields = "camelCase",
-    deny_unknown_fields
-)]
-pub enum MenuScope {
-    /// Scene-owned menu.
-    Scene {
-        /// Current scene.
-        scene: GameUiScene,
-        /// Published panel identifier.
-        panel_id: String,
-        /// Current presentation subview.
-        view_key: String,
-    },
-    /// Menu belonging to an overlay.
-    Overlay {
-        /// Current scene.
-        scene: GameUiScene,
-        /// Published panel identifier.
-        panel_id: String,
-        /// Current presentation subview.
-        view_key: String,
-        /// Current overlay identifier.
-        overlay: String,
-    },
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MenuScope {
+    /// Published panel identifier.
+    pub panel_id: String,
+    /// Opaque semantic identity supplied by the shared view.
+    pub view_key: String,
 }
 
 impl MenuScope {
     fn valid(&self) -> bool {
-        match self {
-            Self::Scene {
-                panel_id, view_key, ..
-            } => valid_id(panel_id) && valid_id(view_key),
-            Self::Overlay {
-                panel_id,
-                view_key,
-                overlay,
-                ..
-            } => valid_id(panel_id) && valid_id(view_key) && valid_id(overlay),
-        }
+        valid_id(&self.panel_id) && valid_id(&self.view_key)
     }
 }
 

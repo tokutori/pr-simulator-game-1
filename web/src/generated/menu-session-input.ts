@@ -31,40 +31,6 @@ export type MenuTarget = {
     readonly scope: MenuScope;
 };
 /**
- * Semantic identity of one spatial menu opening.
- */
-export type MenuScope = {
-    readonly kind: "scene";
-    /**
-     * Published panel identifier.
-     */
-    readonly panelId: string;
-    readonly scene: GameUiScene;
-    /**
-     * Current presentation subview.
-     */
-    readonly viewKey: string;
-} | {
-    readonly kind: "overlay";
-    /**
-     * Current overlay identifier.
-     */
-    readonly overlay: string;
-    /**
-     * Published panel identifier.
-     */
-    readonly panelId: string;
-    readonly scene: GameUiScene;
-    /**
-     * Current presentation subview.
-     */
-    readonly viewKey: string;
-};
-/**
- * Shared scene name, preserving current Web spelling.
- */
-export type GameUiScene = "Boot" | "Title" | "FlightSetup" | "Briefing" | "Countdown" | "Flight" | "Result" | "Replay";
-/**
  * Scroll observation expressed in viewport units or normalized progress.
  */
 export type MenuScrollIntent = {
@@ -107,6 +73,19 @@ export type MenuFocus = {
     readonly controlId: string;
     readonly kind: "control";
 };
+/**
+ * Semantic identity of one spatial menu opening.
+ */
+export interface MenuScope {
+    /**
+     * Published panel identifier.
+     */
+    readonly panelId: string;
+    /**
+     * Opaque semantic identity supplied by the shared view.
+     */
+    readonly viewKey: string;
+}
 /**
  * Revision of the menu targeted by an input observation.
  */

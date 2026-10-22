@@ -21,7 +21,7 @@ const geometryLayout = withSharedGameUiSession("title", { platform: { presentati
     const source = createGameViewModel(shared).panels[0];
     if (source === undefined) throw new Error("Missing shared Title panel");
     return prepareMenuPresentation(new HudCanvasFixture(), source,
-      { generation: 1, scope: { kind: "scene", scene: "Title", panelId: source.id, viewKey: "geometry-fixture" } }, 0,
+      { generation: 1, scope: { panelId: source.id, viewKey: "geometry-fixture" } }, 0,
       configuredViewerFixture(1280, 1280, 0.1, 100, 120),
       { theme: shared.theme, viewRevision: shared.view_revision,
         font: { family: "sans-serif", weight: 600, style: "normal", generation: 0 }, locale: "ja" },
@@ -49,9 +49,7 @@ export function geometryMenuFixture(view: UiViewModel): MenuPresentation {
   const document = { ...geometryDocument, controls, contentHeightMeters: panel.size.height, footerHeightMeters: 0,
     request: { ...geometryDocument.request, panel, surfaceSize: panel.size, paddingMeters: 0, gapMeters: 0 } };
   const viewport = menuViewport(document, 0);
-  const context = { generation: 1, scope: view.activeOverlay === null
-    ? { kind: "scene" as const, scene: view.scene, panelId: panel.id, viewKey: "geometry-fixture" }
-    : { kind: "overlay" as const, scene: view.scene, panelId: panel.id, viewKey: "geometry-fixture", overlay: view.activeOverlay } };
+  const context = { generation: 1, scope: { panelId: panel.id, viewKey: view.interactionScope } };
   return { kind: "ready", panel, viewport, context };
 }
 
@@ -116,7 +114,7 @@ export function hitMenuViewport(viewport: MenuViewport, point: MenuPoint): MenuH
   if (![point.x, point.y].every(Number.isFinite)) return { kind: "none" };
   const panel = { ...viewport.document.request.panel, size: viewport.document.request.surfaceSize };
   const result = menuActionAt({ kind: "ready", panel, viewport,
-    context: { generation: 1, scope: { kind: "scene", scene: "Title", panelId: panel.id, viewKey: "viewport-hit" } } }, point);
+    context: { generation: 1, scope: { panelId: panel.id, viewKey: "viewport-hit" } } }, point);
   if (result.kind === "absent") return { kind: "none" };
   if (result.action.type === "menu-scroll" && result.action.intent.kind === "page") {
     return { kind: "page", direction: result.action.intent.direction };

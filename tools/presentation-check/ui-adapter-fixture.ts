@@ -81,6 +81,7 @@ export function createSceneFixture(scene: GameScene, overlay: string | null = nu
     ])
   });
   return Object.freeze({
+    interactionScope: JSON.stringify([scene, overlay]),
     scene,
     title,
     description: SCENE_DESCRIPTIONS[scene],

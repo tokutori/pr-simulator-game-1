@@ -594,6 +594,8 @@ impl GameUiScene {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct GameUiView {
+    /// Opaque semantic view identity for focus and scroll ownership.
+    pub interaction_scope: String,
     /// Boundary version.
     pub schema_version: u32,
     /// Adapter query-cache revision; pure projections use zero until published.

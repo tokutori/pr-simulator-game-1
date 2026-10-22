@@ -241,6 +241,10 @@ export interface GameUiView {
      * Shared telemetry and instrument projection, absent outside a flight or record.
      */
     readonly hud: GameUiHud | null;
+    /**
+     * Opaque semantic view identity for focus and scroll ownership.
+     */
+    readonly interaction_scope: string;
     readonly layout: GameUiLayout;
     /**
      * Ordered semantic panels.

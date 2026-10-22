@@ -9,6 +9,7 @@ export function createBootViewModel(model: AppModel): UiViewModel {
   const canStart = model.presentation.type === "failed" ||
     (model.presentation.type === "ready" && model.presentation.mode === "screen");
   return Object.freeze({
+    interactionScope: "boot",
     scene: "Boot",
     title: "鳥人間滑空ゲーム",
     description: "Rust/WASMと表示基盤を初期化する。操縦方法は飛行準備画面で確認する。",

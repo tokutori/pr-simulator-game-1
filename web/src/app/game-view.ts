@@ -9,6 +9,7 @@ type SharedControl = GameUiView["panels"][number]["controls"][number];
 
 export function createGameViewModel(shared: GameUiView, headHud: HeadHudLayer = NO_HEAD_HUD): UiViewModel {
   return Object.freeze({
+    interactionScope: shared.interaction_scope,
     scene: shared.scene,
     title: shared.title,
     description: shared.description,

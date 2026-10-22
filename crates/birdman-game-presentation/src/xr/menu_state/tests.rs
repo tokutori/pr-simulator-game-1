@@ -1,18 +1,9 @@
 use super::*;
 
 fn scope(overlay: Option<&str>) -> MenuScope {
-    match overlay {
-        None => MenuScope::Scene {
-            scene: GameUiScene::Title,
-            panel_id: "menu".into(),
-            view_key: "main".into(),
-        },
-        Some(overlay) => MenuScope::Overlay {
-            scene: GameUiScene::Title,
-            panel_id: "menu".into(),
-            view_key: "main".into(),
-            overlay: overlay.into(),
-        },
+    MenuScope {
+        panel_id: "menu".into(),
+        view_key: format!("Title:{overlay:?}"),
     }
 }
 
@@ -176,8 +167,7 @@ fn viewport_units_clamp_progress_and_reject_invalid_inputs_atomically() {
     );
     open(
         &mut owner,
-        MenuScope::Scene {
-            scene: GameUiScene::Title,
+        MenuScope {
             panel_id: " ".into(),
             view_key: "main".into(),
         },

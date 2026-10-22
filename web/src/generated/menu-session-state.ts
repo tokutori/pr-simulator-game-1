@@ -36,34 +36,13 @@ export type MenuFocus = {
 /**
  * Semantic identity of one spatial menu opening.
  */
-export type MenuScope = {
-    readonly kind: "scene";
+export interface MenuScope {
     /**
      * Published panel identifier.
      */
     readonly panelId: string;
-    readonly scene: GameUiScene;
     /**
-     * Current presentation subview.
+     * Opaque semantic identity supplied by the shared view.
      */
     readonly viewKey: string;
-} | {
-    readonly kind: "overlay";
-    /**
-     * Current overlay identifier.
-     */
-    readonly overlay: string;
-    /**
-     * Published panel identifier.
-     */
-    readonly panelId: string;
-    readonly scene: GameUiScene;
-    /**
-     * Current presentation subview.
-     */
-    readonly viewKey: string;
-};
-/**
- * Shared scene name, preserving current Web spelling.
- */
-export type GameUiScene = "Boot" | "Title" | "FlightSetup" | "Briefing" | "Countdown" | "Flight" | "Result" | "Replay";
+}

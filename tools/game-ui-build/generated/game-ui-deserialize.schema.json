@@ -1002,51 +1002,6 @@
         }
       ]
     },
-    "GameUiScene": {
-      "description": "Shared scene name, preserving current Web spelling.",
-      "oneOf": [
-        {
-          "const": "Boot",
-          "description": "Initial platform preparation.",
-          "type": "string"
-        },
-        {
-          "const": "Title",
-          "description": "Flight and demo entry.",
-          "type": "string"
-        },
-        {
-          "const": "FlightSetup",
-          "description": "Flight settings.",
-          "type": "string"
-        },
-        {
-          "const": "Briefing",
-          "description": "Prepared flight confirmation.",
-          "type": "string"
-        },
-        {
-          "const": "Countdown",
-          "description": "Launch countdown.",
-          "type": "string"
-        },
-        {
-          "const": "Flight",
-          "description": "Active or paused flight.",
-          "type": "string"
-        },
-        {
-          "const": "Result",
-          "description": "Finalized result.",
-          "type": "string"
-        },
-        {
-          "const": "Replay",
-          "description": "Saved snapshot playback.",
-          "type": "string"
-        }
-      ]
-    },
     "GameUiStoredRecord": {
       "additionalProperties": false,
       "description": "Persistence metadata, not an independent flight record.",
@@ -1517,72 +1472,23 @@
       "type": "object"
     },
     "MenuScope": {
+      "additionalProperties": false,
       "description": "Semantic identity of one spatial menu opening.",
-      "oneOf": [
-        {
-          "additionalProperties": false,
-          "description": "Scene-owned menu.",
-          "properties": {
-            "kind": {
-              "const": "scene",
-              "type": "string"
-            },
-            "panelId": {
-              "description": "Published panel identifier.",
-              "type": "string"
-            },
-            "scene": {
-              "$ref": "#/$defs/GameUiScene",
-              "description": "Current scene."
-            },
-            "viewKey": {
-              "description": "Current presentation subview.",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind",
-            "scene",
-            "panelId",
-            "viewKey"
-          ],
-          "type": "object"
+      "properties": {
+        "panelId": {
+          "description": "Published panel identifier.",
+          "type": "string"
         },
-        {
-          "additionalProperties": false,
-          "description": "Menu belonging to an overlay.",
-          "properties": {
-            "kind": {
-              "const": "overlay",
-              "type": "string"
-            },
-            "overlay": {
-              "description": "Current overlay identifier.",
-              "type": "string"
-            },
-            "panelId": {
-              "description": "Published panel identifier.",
-              "type": "string"
-            },
-            "scene": {
-              "$ref": "#/$defs/GameUiScene",
-              "description": "Current scene."
-            },
-            "viewKey": {
-              "description": "Current presentation subview.",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind",
-            "scene",
-            "panelId",
-            "viewKey",
-            "overlay"
-          ],
-          "type": "object"
+        "viewKey": {
+          "description": "Opaque semantic identity supplied by the shared view.",
+          "type": "string"
         }
-      ]
+      },
+      "required": [
+        "panelId",
+        "viewKey"
+      ],
+      "type": "object"
     },
     "MenuScrollIntent": {
       "description": "Scroll observation expressed in viewport units or normalized progress.",

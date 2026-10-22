@@ -900,7 +900,7 @@ describe("Boot application state", () => {
 });
 
 describe("Shared Menu owner connection", () => {
-  const scope: MenuScrollScope = { kind: "scene", scene: "Title", panelId: "title-menu", viewKey: "main" };
+  const scope: MenuScrollScope = { panelId: "title-menu", viewKey: "main" };
 
   it("forwards menu observations to Rust and retains only its read-only projection", () => {
     const owner = new MenuSession();
@@ -926,7 +926,7 @@ describe("Shared Menu owner connection", () => {
       apply({ type: "menu-scroll-invalidated", context: { scope, generation: 2 } });
       expect(model.menuScroll).toMatchObject({ generation: 3, progress: 0.25, focus: { kind: "none" } });
       apply({ type: "menu-scroll-synchronized", generation: 3, target: {
-        kind: "active", scope: { ...scope, kind: "overlay", overlay: "Credits" }
+        kind: "active", scope: { ...scope, viewKey: "Title:Credits" }
       } });
       expect(model.menuScroll).toMatchObject({ generation: 4, progress: 0 });
       expect(model.gameSession).toBe(initial.gameSession);

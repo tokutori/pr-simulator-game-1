@@ -669,6 +669,14 @@ fn project_view(
             .iter()
             .find_map(|(id, widget)| (widget.node == focused).then(|| id.clone()))
     });
+    if retained
+        .view
+        .as_ref()
+        .is_some_and(|previous| previous.interaction_scope != view.interaction_scope)
+        && let Some(mut scroll) = world.get_mut::<ScrollPosition>(retained.shell)
+    {
+        scroll.y = 0.0;
+    }
     if rebuild {
         let children = world
             .entity(retained.content)
@@ -680,12 +688,6 @@ fn project_view(
         }
         retained.sections.clear();
         retained.widgets.clear();
-        if retained.view.as_ref().is_some_and(|previous| {
-            previous.scene != view.scene || previous.active_overlay != view.active_overlay
-        }) && let Some(mut scroll) = world.get_mut::<ScrollPosition>(retained.shell)
-        {
-            scroll.y = 0.0;
-        }
         for panel in &view.panels {
             for section in &panel.sections {
                 let group = world
@@ -2430,6 +2432,15 @@ mod tests {
             let node = app.world().resource::<RetainedUi>().widgets[&control.id].node;
             assert!(app.world().get::<TabIndex>(node).is_none());
         }
+        let mut app = analysis_app();
+        let shell = app.world().resource::<RetainedUi>().shell;
+        let chart = projected_chart(&app).0;
+        app.world_mut()
+            .entity_mut(shell)
+            .insert(ScrollPosition(Vec2::new(0.0, 80.0)));
+        press(&mut app, "game-analysis-altitude");
+        assert_eq!(app.world().get::<ScrollPosition>(shell).unwrap().y, 0.0);
+        assert_eq!(projected_chart(&app).0, chart);
     }
 
     #[test]

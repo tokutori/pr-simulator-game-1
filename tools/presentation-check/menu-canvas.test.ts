@@ -75,7 +75,7 @@ function prepare(context: MenuDrawingContext, session: TailAppSessionFacade, pla
   const panel = createGameViewModel(shared).panels[0];
   if (panel === undefined) throw new Error("Missing shared Menu");
   const ready = prepareMenuPresentation(context, panel,
-    { scope: { kind: "scene", scene: shared.scene, panelId: panel.id, viewKey: "canvas" }, generation: 1 }, 0, viewer,
+    { scope: { panelId: panel.id, viewKey: "canvas" }, generation: 1 }, 0, viewer,
     { theme: shared.theme, locale: "ja", viewRevision: shared.view_revision, font: { ...font, generation } },
     (input, measure) => session.prepareSharedMenu(input, platform, measure));
   if (ready.kind !== "ready") throw new Error(ready.kind === "unavailable" ? ready.reason : ready.kind);
@@ -150,7 +150,7 @@ describe("Shared Menu Canvas adapter", () => {
         return { width: NaN, left: 0, right: 0, ascent: 1, descent: 0 };
       };
       const result = prepareMenuPresentation(context, panel,
-        { scope: { kind: "scene", scene: "Title", panelId: panel.id, viewKey: "font" }, generation: 1 }, 0,
+        { scope: { panelId: panel.id, viewKey: "font" }, generation: 1 }, 0,
         configuredViewerFixture(1280, 720), { theme: shared.theme, locale: "ja", viewRevision: shared.view_revision, font },
         (input, measure) => session.prepareSharedMenu(input, platform, measure));
       expect(result).toEqual({ kind: "unavailable", reason: failure === "throw" ? "measurement-unavailable" : "invalid-text-metrics" });

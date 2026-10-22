@@ -411,6 +411,7 @@ pub fn game_ui_view(
     };
     let layout = layout(state, context, phase)?;
     let mut view = GameUiView {
+        interaction_scope: String::new(),
         schema_version: GAME_UI_SCHEMA_VERSION,
         view_revision: 0,
         selections: state.clone(),
@@ -460,6 +461,17 @@ pub fn game_ui_view(
         },
     };
     view.back_action = view.back_action();
+    view.interaction_scope = match scene {
+        GameUiScene::Result => format!(
+            "{scene:?}:{:?}:{:?}:{:?}",
+            view.active_overlay, state.result_tab, state.analysis_chart
+        ),
+        GameUiScene::Replay => format!(
+            "{scene:?}:{:?}:{:?}:{:?}",
+            view.active_overlay, state.replay_view, state.analysis_chart
+        ),
+        _ => format!("{scene:?}:{:?}", view.active_overlay),
+    };
     Ok(view)
 }
 

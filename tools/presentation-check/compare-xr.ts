@@ -117,7 +117,7 @@ function menuObservations() {
         const captured: { input: MenuPreparationInput; reply: MenuLayoutReply }[] = [];
         const probes: TextProbe[] = [];
         const ready = prepareMenuPresentation(new HudCanvasFixture(), panel,
-          { generation: 1, scope: { kind: "scene", scene: view.scene, panelId: panel.id, viewKey: "comparison" } }, 0,
+          { generation: 1, scope: { panelId: panel.id, viewKey: "comparison" } }, 0,
           configuredViewerFixture(width, height), { theme: view.theme, viewRevision: view.view_revision, locale: "ja",
             font: { family: "sans-serif", weight: 600, style: "normal", generation: 0 } }, (request, measure) => {
             const reply = session.prepareSharedMenu(request, platform, (value, fontMeters, weight, surfaceWidth, surfaceHeight) => {

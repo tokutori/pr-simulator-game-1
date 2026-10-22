@@ -10,9 +10,8 @@ export type MenuInputGeometry = { readonly kind: "none" } | {
 
 export function menuContextMatches(state: MenuScrollState, context: MenuScrollContext): boolean {
   const scope = context.scope;
-  return state.kind === "active" && state.generation === context.generation && state.scope.kind === scope.kind &&
-    state.scope.scene === scope.scene && state.scope.panelId === scope.panelId && state.scope.viewKey === scope.viewKey &&
-    (state.scope.kind === "scene" || scope.kind === "overlay" && state.scope.overlay === scope.overlay);
+  return state.kind === "active" && state.generation === context.generation &&
+    state.scope.panelId === scope.panelId && state.scope.viewKey === scope.viewKey;
 }
 
 export function menuContextCanInteract(menu: MenuPresentation, state: MenuScrollState, context: MenuScrollContext): boolean {

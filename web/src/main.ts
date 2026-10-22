@@ -234,11 +234,7 @@ function synchronizeMenuScroll(): void {
   const view = currentViewModel();
   const panel = view.panels.find((candidate) => candidate.anchor === "menu");
   const active = observed.presentation.type === "ready" && observed.presentation.mode !== "screen" && panel !== undefined;
-  const viewKey = view.scene === "Result" ? `${observed.resultTab}:${observed.analysisChart}`
-    : view.scene === "Replay" ? `${observed.replayViewMode}:${observed.analysisChart}` : "main";
-  const scope: MenuScrollScope = view.activeOverlay === null
-    ? { kind: "scene", scene: view.scene, panelId: panel?.id ?? "", viewKey }
-    : { kind: "overlay", scene: view.scene, panelId: panel?.id ?? "", viewKey, overlay: view.activeOverlay };
+  const scope: MenuScrollScope = { panelId: panel?.id ?? "", viewKey: view.interactionScope };
   const state = menuSession.update({ type: "menu-scroll-synchronized", generation: observed.menuScroll.generation,
     target: active ? { kind: "active", scope } : { kind: "closed" } });
   model = updateApp(model, { type: "menu-owner-observed", state }).model;

@@ -4821,6 +4821,10 @@
           ],
           "description": "Shared telemetry and instrument projection, absent outside a flight or record."
         },
+        "interaction_scope": {
+          "description": "Opaque semantic view identity for focus and scroll ownership.",
+          "type": "string"
+        },
         "layout": {
           "$ref": "#/$defs/GameUiLayout",
           "description": "Shared responsive dimensions and scroll policy."
@@ -4862,6 +4866,7 @@
         }
       },
       "required": [
+        "interaction_scope",
         "schema_version",
         "view_revision",
         "selections",
@@ -6181,72 +6186,23 @@
       "type": "object"
     },
     "MenuScope": {
+      "additionalProperties": false,
       "description": "Semantic identity of one spatial menu opening.",
-      "oneOf": [
-        {
-          "additionalProperties": false,
-          "description": "Scene-owned menu.",
-          "properties": {
-            "kind": {
-              "const": "scene",
-              "type": "string"
-            },
-            "panelId": {
-              "description": "Published panel identifier.",
-              "type": "string"
-            },
-            "scene": {
-              "$ref": "#/$defs/GameUiScene",
-              "description": "Current scene."
-            },
-            "viewKey": {
-              "description": "Current presentation subview.",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind",
-            "scene",
-            "panelId",
-            "viewKey"
-          ],
-          "type": "object"
+      "properties": {
+        "panelId": {
+          "description": "Published panel identifier.",
+          "type": "string"
         },
-        {
-          "additionalProperties": false,
-          "description": "Menu belonging to an overlay.",
-          "properties": {
-            "kind": {
-              "const": "overlay",
-              "type": "string"
-            },
-            "overlay": {
-              "description": "Current overlay identifier.",
-              "type": "string"
-            },
-            "panelId": {
-              "description": "Published panel identifier.",
-              "type": "string"
-            },
-            "scene": {
-              "$ref": "#/$defs/GameUiScene",
-              "description": "Current scene."
-            },
-            "viewKey": {
-              "description": "Current presentation subview.",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind",
-            "scene",
-            "panelId",
-            "viewKey",
-            "overlay"
-          ],
-          "type": "object"
+        "viewKey": {
+          "description": "Opaque semantic identity supplied by the shared view.",
+          "type": "string"
         }
-      ]
+      },
+      "required": [
+        "panelId",
+        "viewKey"
+      ],
+      "type": "object"
     },
     "MenuSessionState": {
       "description": "Read-only projection of the menu owner's current state.",

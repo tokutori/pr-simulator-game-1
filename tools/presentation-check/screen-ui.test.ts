@@ -106,8 +106,8 @@ describe("screen UI DOM patching", () => {
         if (change === "pointerdown") external.dispatchEvent(new EventConstructor("pointerdown", { bubbles: true }));
         if (change === "keydown") documentRef.dispatchEvent(new EventConstructor("keydown", { bubbles: true }));
         if (change === "window-blur") window.dispatchEvent(new window.Event("blur"));
-        if (change === "changed-scene") adapter.render({ ...pending, scene: "Briefing" });
-        if (change === "changed-overlay") adapter.render({ ...pending, activeOverlay: "settings" });
+        if (change === "changed-scene") adapter.render({ ...pending, scene: "Briefing", interactionScope: "changed-scene" });
+        if (change === "changed-overlay") adapter.render({ ...pending, activeOverlay: "settings", interactionScope: "changed-overlay" });
         if (change === "replaced") adapter.render({ ...pending, panels: [] });
         if (change === "detached") root.remove();
         if (change === "hidden") adapter.render(pending, false);
@@ -206,8 +206,8 @@ describe("screen UI DOM patching", () => {
     let updated = initial;
     if (change === "external-focus") external.focus();
     if (change === "changed-scene") updated = createSceneFixture("Result");
-    if (change === "changed-scene-roundtrip") adapter.render({ ...initial, scene: "Result" }, false);
-    if (change === "changed-overlay-roundtrip") adapter.render({ ...initial, activeOverlay: "settings" }, false);
+    if (change === "changed-scene-roundtrip") adapter.render({ ...initial, scene: "Result", interactionScope: "changed-scene" }, false);
+    if (change === "changed-overlay-roundtrip") adapter.render({ ...initial, activeOverlay: "settings", interactionScope: "changed-overlay" }, false);
     if (change === "disabled") {
       updated = { ...initial, panels: initial.panels.map((panel) => ({
         ...panel, controls: panel.controls.map((control) => ({ ...control, enabled: false }))
@@ -343,6 +343,7 @@ describe("screen UI DOM patching", () => {
       rect: normalizedRect(0.08, 0.22, 0.84, 0.3)
     };
     const view: UiViewModel = {
+      interactionScope: scene,
       scene,
       title: scene,
       description: "Analysis",

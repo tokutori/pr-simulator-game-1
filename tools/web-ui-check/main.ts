@@ -367,7 +367,7 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
         const measuredContext = { ...observer, measureText(value: string) { fontQueries++; return observer.measureText(value); } };
         const started = performance.now();
         const ready = preparationModule.prepareMenuPresentation(measuredContext, spatial,
-          { generation: 1, scope: { kind: "scene", scene: shared.scene, panelId: panel.id, viewKey: "canvas-preparation" } },
+          { generation: 1, scope: { panelId: panel.id, viewKey: "canvas-preparation" } },
           0, viewer, { theme: shared.theme, locale: "ja", viewRevision: shared.view_revision,
             font: { family: "system-ui, sans-serif", weight: 600, style: "normal", generation: 0 } }, (input, measure) => JSON.parse(window.__uiBridge.game_ui_menu_json(platform, JSON.stringify(input), measure)) as import("../../web/src/generated/menu-layout-reply.js").MenuLayoutReply);
         if (ready.kind !== "ready") throw new Error(`Real Canvas Menu preparation failed: ${ready.kind === "unavailable" ? ready.reason : ready.kind}`);

@@ -813,6 +813,10 @@ fn credits_are_reachable_from_title_and_pause_without_advancing_the_session() {
             assert!(credits.hud.is_none());
             assert!(credits.layout.scroll_y);
             assert_eq!(credits.active_overlay, Some(GameUiOverlay::Credits));
+            assert_ne!(
+                credits.interaction_scope,
+                game_ui_view(&state, &context).unwrap().interaction_scope
+            );
             for id in [
                 "osm",
                 "jaxa",
@@ -2333,6 +2337,28 @@ fn result_summary_keeps_ordered_navigation_across_targets() {
                     let view = game_ui_view(&state, &context).unwrap();
                     let panel = &view.panels[0];
                     assert_eq!(panel.sections.first().unwrap().id, "result-tabs");
+                    let other = GameUiState {
+                        result_tab: if tab == GameUiResultTab::Summary {
+                            GameUiResultTab::Analysis
+                        } else {
+                            GameUiResultTab::Summary
+                        },
+                        ..state.clone()
+                    };
+                    assert_ne!(
+                        view.interaction_scope,
+                        game_ui_view(&other, &context).unwrap().interaction_scope
+                    );
+                    let disclosure = GameUiState {
+                        technical_open: !technical_open,
+                        ..state.clone()
+                    };
+                    assert_eq!(
+                        view.interaction_scope,
+                        game_ui_view(&disclosure, &context)
+                            .unwrap()
+                            .interaction_scope
+                    );
                     let back = view.back_action.clone().unwrap();
                     assert_eq!(
                         back,

@@ -140,6 +140,7 @@ export function uiPanelComposition(anchor: AnchorKind): UiPanelComposition {
 }
 
 export interface UiViewModel {
+  readonly interactionScope: string;
   readonly scene: GameScene;
   readonly title: string;
   readonly description: string;
