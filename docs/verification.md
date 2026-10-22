@@ -357,15 +357,15 @@ L(t)-z(t)=\frac{g(t-a)(b-t)}2\le\frac{g\,dt^2}8,
 - 数値・保存契約: 時刻、stamp、quaternion、終端、score、request echoの整合はRustのproducer/core/formatで検査し、Webはその出力を転送する。
 - 資源寿命: 実非同期のquery・record-source・Countdown世代とcleanupを検査し、表示DTOの静的readonly制約と分ける。
 
-Countdownはcoreだけでなく、実WASM/facade/Web frame列とNative Update/FixedUpdateを通す。
+Countdownはcore、実WASM/facade/Web frame列とNative Updateを通す。
 非表示化・blur・frame停止・VR中断で安全取消し、record未開始と発進tick0を確認する。
 
-- 表示不変回帰は同じ実WASMでManual/Shared/Automaticごとに、Information 5種、 Screen/合成WebXR/合成Phone VR、30/60/120 FPSを比較する。
+- 表示不変回帰は既存controller fixtureと同じ実WASMを使い、Fullを基準にInformation 5種、Manual/Shared/Automatic、30/60/120 FPSの代表組合せを比較する。
 - 生キー観測列は発進後にpilot増加を押し、500 msのframe直後に解放する。appの共有driverが各物理tickの確定targetへ積分する。
 - 100 tickのManualAbortまでの保存sample・controls・telemetry・query・finalization・最終poseを比較する。複数tickのframe、0 tickの補間更新、Pause/Resumeとfractional終端も直接Rust・実WASM・本番controllerで検査する。
 - 同じWASM演算列には追加許容差を設けない。
 - 表示/PB metadataは物理列から分離する。
-- この合成backend検査と実XR端末の受入は区別する。
+- backendの接続・切替・単一描画loopと資源解放はpresentation runtimeの試験、実XR端末の操作受入は#15 / #16で確認する。
 
 ## 8. 環境・地形・視認性
 
