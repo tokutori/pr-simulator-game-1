@@ -1,4 +1,5 @@
 use super::{Pose, Vector3};
+use crate::game_ui::{GameUiControlInput, range_value};
 use serde::{Deserialize, Serialize};
 
 /// Runtime input identity, stable for one presentation session.
@@ -67,6 +68,79 @@ pub struct XrPointerRegion {
     pub target: XrPointerTarget,
     /// Visible hit rectangle in surface coordinates.
     pub bounds: XrPointerRect,
+    /// Interactive widget data; an omitted descriptor represents a button.
+    #[serde(default)]
+    pub control: Option<XrPointerControl>,
+}
+
+/// Widget value and uncut track required for shared activation resolution.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum XrPointerControl {
+    /// Toggle's observed value.
+    Toggle {
+        /// Current selection.
+        value: bool,
+    },
+    /// Range's shared scale and complete track before clipping.
+    Range {
+        /// Lower bound.
+        minimum: f64,
+        /// Upper bound.
+        maximum: f64,
+        /// Positive step size.
+        step: f64,
+        /// Complete slider rectangle in surface coordinates.
+        track: XrPointerRect,
+    },
+}
+
+impl XrPointerRegion {
+    fn valid(&self) -> bool {
+        self.bounds.valid()
+            && match self.control {
+                Some(XrPointerControl::Range {
+                    minimum,
+                    maximum,
+                    step,
+                    track,
+                }) => track.valid() && range_value(minimum, maximum, step, 0.0).is_some(),
+                _ => true,
+            }
+    }
+
+    fn intent(&self, point: [f64; 2]) -> Option<GameUiControlInput> {
+        let XrPointerTarget::Control { id } = &self.target else {
+            return None;
+        };
+        Some(match self.control {
+            None => GameUiControlInput::Activate {
+                control_id: id.clone(),
+            },
+            Some(XrPointerControl::Toggle { value }) => GameUiControlInput::SetToggle {
+                control_id: id.clone(),
+                value: !value,
+            },
+            Some(XrPointerControl::Range {
+                minimum,
+                maximum,
+                step,
+                track,
+            }) => {
+                let ratio = (point[0] - track.0[0]) / track.0[2];
+                GameUiControlInput::SetRange {
+                    control_id: id.clone(),
+                    value: range_value(minimum, maximum, step, ratio)?,
+                }
+            }
+        })
+    }
 }
 
 /// Measured surface geometry owned until its scope or layout changes.
@@ -94,7 +168,7 @@ impl XrPointerSurface {
                 .all(|value| value.is_finite() && value > 0.0)
             && self.regions.len() <= 512
             && self.regions.iter().all(|region| {
-                region.bounds.valid()
+                region.valid()
                     && match &region.target {
                         XrPointerTarget::Control { id } => !id.is_empty() && id.len() <= 1024,
                         XrPointerTarget::Page { .. } => true,
@@ -102,15 +176,21 @@ impl XrPointerSurface {
             })
     }
 
-    fn hit(&self, point: [f64; 2]) -> Option<XrPointerTarget> {
+    fn hit(&self, source: XrPointerSource, point: [f64; 2]) -> XrPointerHit {
         let surface = [
             point[0] + self.size_m[0] / 2.0,
             self.size_m[1] / 2.0 - point[1],
         ];
-        self.regions
+        let region = self
+            .regions
             .iter()
-            .find(|region| region.bounds.contains(surface))
-            .map(|region| region.target.clone())
+            .find(|region| region.bounds.contains(surface));
+        XrPointerHit {
+            source,
+            point,
+            target: region.map(|region| region.target.clone()),
+            intent: region.and_then(|region| region.intent(surface)),
+        }
     }
 }
 
@@ -180,6 +260,8 @@ pub struct XrPointerHit {
     pub point: [f64; 2],
     /// Enabled control or page under the cursor.
     pub target: Option<XrPointerTarget>,
+    /// Shared widget input resolved at this hit, including range snapping.
+    pub intent: Option<GameUiControlInput>,
 }
 
 /// Cursor, focus and activation projected by the shared owner.
@@ -383,11 +465,7 @@ impl XrPointerSession {
             (0.5 - cursor[1]) * surface.size_m[1],
         ];
         Some((
-            XrPointerHit {
-                source: sample.source(),
-                point,
-                target: surface.hit(point),
-            },
+            surface.hit(sample.source(), point),
             pressed,
             back,
             gamepad_axis(sample.axes[3]) * elapsed * 2.0,
@@ -486,11 +564,7 @@ fn pointer_hit(
     {
         return None;
     }
-    Some(XrPointerHit {
-        source: pointer.source,
-        point,
-        target: surface.hit(point),
-    })
+    Some(surface.hit(pointer.source, point))
 }
 
 #[cfg(test)]

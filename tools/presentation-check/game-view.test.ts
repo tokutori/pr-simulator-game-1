@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { currentSharedGameUiFixture, sharedGameUiPlatform, withSharedGameUiSession } from "../game-check/shared-game-ui-fixture.js";
-import { createGameViewModel, sharedGameUiAction } from "../../web/src/app/game-view.js";
+import { createGameViewModel } from "../../web/src/app/game-view.js";
+import { controlInputAction } from "../../web/src/render/contracts/ui.js";
 import { validateUiViewModel } from "../../web/src/render/contracts/ui.js";
 import { NO_HEAD_HUD } from "../../web/src/render/contracts/head-hud.js";
 import type { GameUiAction } from "../../web/src/generated/game-ui-action.js";
@@ -83,30 +84,31 @@ describe("Shared Rust game View projection", () => {
     expect(view.activeOverlay).toBe(overlay === "menu" ? "Pause" : overlay === "settings" ? "PauseSettings" : "PauseHelp");
     const blocked = currentSharedGameUiFixture("flight_paused", { pauseReason: 1 });
     const resume = blocked.panels.flatMap((panel) => panel.controls).find((control) => control.id === "game-flight-resume");
-    expect(sharedGameUiAction(blocked, { type: "activate", controlId: "game-flight-resume" })).toBeNull();
     if (overlay === "menu") expect(resume?.enabled).toBe(false);
   });
 
-  it("maps only enabled, published actions and rejects wrong control kinds or invalid ranges", () => {
-    const setup = currentSharedGameUiFixture("flight_setup");
-    const button = setup.panels.flatMap((panel) => panel.controls).find((control) => control.id === "game-setup-start");
-    if (button?.content.kind !== "button") throw new Error("Missing start action");
-    expect(sharedGameUiAction(setup, { type: "activate", controlId: button.id })).toBe(button.content.action);
-    expect(sharedGameUiAction(setup, { type: "menu-control", context: { generation: 1,
-      scope: { kind: "scene", scene: "FlightSetup", panelId: "game-panel", viewKey: "fixture" } },
-      action: { type: "activate", controlId: button.id } })).toBe(button.content.action);
-    expect(sharedGameUiAction(setup, { type: "set-toggle", controlId: button.id, value: true })).toBeNull();
-    expect(sharedGameUiAction(setup, { type: "activate", controlId: "unknown" })).toBeNull();
-    const pending = currentSharedGameUiFixture("flight_setup", { platform: { operation_pending: true } });
-    expect(sharedGameUiAction(pending, { type: "activate", controlId: button.id })).toBeNull();
-    const analysis = currentSharedGameUiFixture("result", { actions: [{ kind: "set_result_tab", tab: "analysis" }] });
-    const range = analysis.panels.flatMap((panel) => panel.controls).find((control) => control.content.kind === "range");
-    if (range?.content.kind !== "range") throw new Error("Missing analysis range");
-    expect(sharedGameUiAction(analysis, { type: "set-range", controlId: range.id, value: range.content.minimum }))
-      .toEqual({ kind: "seek_analysis", time_seconds: range.content.minimum });
-    for (const value of [NaN, Infinity, -Infinity, range.content.minimum - 1, range.content.maximum + 1]) {
-      expect(sharedGameUiAction(analysis, { type: "set-range", controlId: range.id, value })).toBeNull();
-    }
+  it("routes widget observations through the actual shared UI owner", () => {
+    withSharedGameUiSession("flight_setup", {}, (session, platform) => {
+      const input = { type: "activate" as const, controlId: "game-setup-start" };
+      const action = controlInputAction(input);
+      if (action === null) throw new Error("Missing control input request");
+      expect(session.updateSharedUi(action, platform).effects)
+        .toEqual([{ kind: "session", command: { kind: "prepare" } }]);
+      for (const rejected of [
+        { type: "activate" as const, controlId: "unknown" },
+        { type: "set-toggle" as const, controlId: input.controlId, value: true }
+      ]) expect(() => session.updateSharedUi({ kind: "control_input", input: rejected }, platform)).toThrow();
+      expect(() => session.updateSharedUi(action, { ...platform, operation_pending: true })).toThrow();
+    });
+    withSharedGameUiSession("result", { actions: [{ kind: "set_result_tab", tab: "analysis" }] }, (session, platform) => {
+      const range = session.readSharedUi(platform).panels.flatMap(panel => panel.controls).find(control => control.content.kind === "range");
+      if (range?.content.kind !== "range") throw new Error("Missing analysis range");
+      const request = (value: number): GameUiAction => ({ kind: "control_input", input: { type: "set-range", controlId: range.id, value } });
+      expect(session.updateSharedUi(request(range.content.minimum), platform).effects)
+        .toEqual([{ kind: "record", action: { kind: "seek_analysis", time_seconds: range.content.minimum } }]);
+      for (const value of [NaN, Infinity, -Infinity, range.content.minimum - 1, range.content.maximum + 1])
+        expect(() => session.updateSharedUi(request(value), platform)).toThrow();
+    });
   });
 
   it.each(["map", "altitude", "speed"] as const)("retains the shared %s chart payload without generating another series", (chart) => {

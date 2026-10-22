@@ -2,6 +2,9 @@ import type { Pose } from "./math.js";
 import { validateHeadHudLayer } from "./head-hud.js";
 import type { HeadHudLayer } from "./head-hud.js";
 import type { GameUiView } from "../../generated/game-ui-view.js";
+import type { GameUiAction } from "../../generated/game-ui-action.js";
+
+type GameUiControlInput = Extract<GameUiAction, { kind: "control_input" }>["input"];
 
 export type AnchorKind = GameUiView["panels"][number]["anchor"];
 
@@ -151,9 +154,7 @@ export interface UiViewModel {
 }
 
 export type UiAction =
-  | { readonly type: "activate"; readonly controlId: string }
-  | { readonly type: "set-toggle"; readonly controlId: string; readonly value: boolean }
-  | { readonly type: "set-range"; readonly controlId: string; readonly value: number }
+  | GameUiControlInput
   | { readonly type: "focus"; readonly controlId: string | null }
   | { readonly type: "back" }
   | { readonly type: "scroll"; readonly deltaX: number; readonly deltaY: number }
@@ -163,6 +164,12 @@ export type UiAction =
   | { readonly type: "recenter-menu" };
 
 export type UiActionDispatcher = (action: UiAction) => void;
+
+export function controlInputAction(action: UiAction): GameUiAction | null {
+  if (action.type === "menu-control") return controlInputAction(action.action);
+  return action.type === "activate" || action.type === "set-toggle" || action.type === "set-range"
+    ? { kind: "control_input", input: action } : null;
+}
 
 export function viewExposesAction(view: UiViewModel, action: UiAction): boolean {
   if (!("controlId" in action) || action.controlId === null) return false;

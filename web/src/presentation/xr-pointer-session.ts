@@ -5,9 +5,8 @@ import type { XrPointerObservation } from "../generated/xr-pointer-observation.j
 import type { Pose } from "../render/contracts/math.js";
 import type { MenuPresentation, PanelCursor, SelectRay } from "../render/contracts/runtime.js";
 import type { UiActionDispatcher, UiPanel } from "../render/contracts/ui.js";
-import { actionForControl, rangeAction } from "./panel-interaction.js";
 import { menuPageProgress } from "./menu-interaction.js";
-import { menuRangeAction, menuRectInViewport } from "./menu-layout.js";
+import { menuRectInViewport } from "./menu-layout.js";
 
 export class XrPointerSession {
   private bridge: XrPointerBridge | null = null;
@@ -91,14 +90,7 @@ export class XrPointerSession {
         intent: { kind: "page", direction: hit.target.next ? "next" : "previous", pageProgress: menuPageProgress(menu) } });
       return;
     }
-    const identifier = hit.target.id;
-    const control = this.panel.controls.find((value) => value.id === identifier && value.enabled);
-    if (control === undefined) return;
-    const point = { x: hit.point[0], y: hit.point[1] };
-    const range = menu.kind === "ready" ? menuRangeAction(menu.viewport, point) : null;
-    const action = control.kind === "range" ? menu.kind === "ready"
-      ? range?.kind === "action" && range.controlId === control.id ? { type: "set-range" as const, controlId: control.id, value: range.value } : null
-      : rangeAction(control, this.panel, point) : actionForControl(control);
+    const action = hit.intent;
     if (action !== null) this.dispatch(menu.kind === "ready" ? { type: "menu-control", context: menu.context, action } : action);
   }
 }
@@ -122,13 +114,25 @@ function pointerSurface(scope: string, panel: UiPanel | null, menu: MenuPresenta
       const visible = menuRectInViewport(viewport, layout.bounds);
       if (visible.kind === "outside") continue;
       const bounds = visible.rect;
-      regions.push({ target: { kind: "control", id: layout.control.id }, bounds: [bounds.x, bounds.y, bounds.width, bounds.height] });
+      const track = { ...layout.bounds, x: layout.bounds.x + viewport.contentClip.x,
+        y: layout.bounds.y - viewport.offsetMeters + viewport.contentClip.y };
+      regions.push({ target: { kind: "control", id: layout.control.id }, bounds: [bounds.x, bounds.y, bounds.width, bounds.height],
+        control: pointerControl(layout.control, track) });
     }
   } else for (const control of panel.controls) {
     if (!control.enabled) continue;
     const bounds = control.rect;
-    regions.push({ target: { kind: "control", id: control.id }, bounds: [bounds.x * size.width, bounds.y * size.height, bounds.width * size.width, bounds.height * size.height] });
+    const track = { x: bounds.x * size.width, y: bounds.y * size.height, width: bounds.width * size.width, height: bounds.height * size.height };
+    regions.push({ target: { kind: "control", id: control.id }, bounds: [track.x, track.y, track.width, track.height],
+      control: pointerControl(control, track) });
   }
   return { scope: JSON.stringify([scope, menu.kind === "ready" ? menu.context.scope : null]),
     revision: menu.kind === "ready" ? menu.context.generation : 0, sizeM: [size.width, size.height], regions };
+}
+
+function pointerControl(control: UiPanel["controls"][number], track: { readonly x: number; readonly y: number; readonly width: number; readonly height: number }): Exclude<XrPointerRegion["control"], undefined> {
+  if (control.kind === "toggle") return { kind: "toggle", value: control.value };
+  if (control.kind === "range") return { kind: "range", minimum: control.minimum, maximum: control.maximum, step: control.step,
+    track: [track.x, track.y, track.width, track.height] };
+  return null;
 }

@@ -56,7 +56,11 @@ describe("Flight controller shared stop diagnosis", () => {
     const diagnosis = trial.model().flightExecution;
     trial.syncPhase("flight_paused");
     const stopped = trial.model();
-    expect(updateApp(stopped, { type: "ui-action", action: { type: "activate", controlId: "game-flight-resume" } })).toEqual({ model: stopped, effects: [] });
+    const request = updateApp(stopped, { type: "ui-action", action: { type: "activate", controlId: "game-flight-resume" } }).effects[0];
+    if (request?.type !== "update-shared-game-ui") throw new Error("Missing widget request");
+    expect(() => trial.facade.updateSharedUi(request.action, sharedGameUiPlatform({
+      flight_controller_failure: "Gamepad permission denied"
+    }))).toThrow(/ActionUnavailable/);
     trial.update({ type: "ui-action", action: { type: "focus", controlId: "game-flight-resume" } });
     trial.update({ type: "page-suspended" });
     trial.update({ type: "page-restored" });

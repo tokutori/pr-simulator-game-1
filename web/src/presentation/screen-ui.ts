@@ -1,4 +1,3 @@
-import { actionForControl } from "./panel-interaction.js";
 import { APP_BUILD_LABEL } from "./build-info.js";
 import type { GameUiChartExtent } from "../generated/game-ui-input.js";
 import type { UiActionDispatcher, UiControl, UiPanel, UiViewModel } from "../render/contracts/ui.js";
@@ -202,9 +201,8 @@ export class ScreenUiAdapter {
     const controlId = button?.getAttribute("data-control-id");
     if (controlId === null || controlId === undefined) return;
     const control = this.controls.get(controlId);
-    if (control?.kind !== "button") return;
-    const action = actionForControl(control);
-    if (action !== null) this.dispatch(action);
+    if (control?.kind !== "button" || !control.enabled) return;
+    this.dispatch({ type: "activate", controlId: control.id });
   };
 
   private readonly onChange = (event: Event): void => {

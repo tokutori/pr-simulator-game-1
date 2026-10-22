@@ -182,6 +182,25 @@
       "oneOf": [
         {
           "additionalProperties": false,
+          "description": "Resolves a widget observation against the current shared view.",
+          "properties": {
+            "input": {
+              "$ref": "#/$defs/GameUiControlInput",
+              "description": "Button, toggle or range observation from an adapter."
+            },
+            "kind": {
+              "const": "control_input",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "input"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
           "description": "Opens or closes the shared legal notices.",
           "properties": {
             "kind": {
@@ -483,6 +502,79 @@
         "height"
       ],
       "type": "object"
+    },
+    "GameUiControlInput": {
+      "description": "Engine-independent widget observation, resolved by the shared UI owner.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Activates an enabled button.",
+          "properties": {
+            "controlId": {
+              "description": "Published control identifier.",
+              "type": "string"
+            },
+            "type": {
+              "const": "activate",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "controlId"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Changes an enabled toggle.",
+          "properties": {
+            "controlId": {
+              "description": "Published control identifier.",
+              "type": "string"
+            },
+            "type": {
+              "const": "set-toggle",
+              "type": "string"
+            },
+            "value": {
+              "description": "Observed selection.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "type",
+            "controlId",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Changes an enabled range value.",
+          "properties": {
+            "controlId": {
+              "description": "Published control identifier.",
+              "type": "string"
+            },
+            "type": {
+              "const": "set-range",
+              "type": "string"
+            },
+            "value": {
+              "description": "Finite selected value within the published bounds.",
+              "format": "double",
+              "type": "number"
+            }
+          },
+          "required": [
+            "type",
+            "controlId",
+            "value"
+          ],
+          "type": "object"
+        }
+      ]
     },
     "GameUiPauseOverlay": {
       "description": "Exclusive pause overlay.",
@@ -2229,6 +2321,67 @@
         }
       ]
     },
+    "XrPointerControl": {
+      "description": "Widget value and uncut track required for shared activation resolution.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Toggle's observed value.",
+          "properties": {
+            "kind": {
+              "const": "toggle",
+              "type": "string"
+            },
+            "value": {
+              "description": "Current selection.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Range's shared scale and complete track before clipping.",
+          "properties": {
+            "kind": {
+              "const": "range",
+              "type": "string"
+            },
+            "maximum": {
+              "description": "Upper bound.",
+              "format": "double",
+              "type": "number"
+            },
+            "minimum": {
+              "description": "Lower bound.",
+              "format": "double",
+              "type": "number"
+            },
+            "step": {
+              "description": "Positive step size.",
+              "format": "double",
+              "type": "number"
+            },
+            "track": {
+              "$ref": "#/$defs/XrPointerRect",
+              "description": "Complete slider rectangle in surface coordinates."
+            }
+          },
+          "required": [
+            "kind",
+            "minimum",
+            "maximum",
+            "step",
+            "track"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "XrPointerObservation": {
       "additionalProperties": false,
       "description": "One same-frame input observation.",
@@ -2315,6 +2468,18 @@
         "bounds": {
           "$ref": "#/$defs/XrPointerRect",
           "description": "Visible hit rectangle in surface coordinates."
+        },
+        "control": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/XrPointerControl"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Interactive widget data; an omitted descriptor represents a button."
         },
         "target": {
           "$ref": "#/$defs/XrPointerTarget",

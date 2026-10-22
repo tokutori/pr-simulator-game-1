@@ -19,7 +19,7 @@ import { placeMenuPanel } from "./menu-fixture.js";
 import { PhoneVrPresentationBackend } from "../../web/src/presentation/phone-vr-backend.js";
 import { PHONE_VR_OPTICAL_PROFILE } from "../../web/src/presentation/phone-vr-contracts.js";
 import type { PhoneVrSensorPort, PhoneVrSensorReading } from "../../web/src/presentation/phone-vr-contracts.js";
-import { hitTestControl, intersectPanel } from "../../web/src/presentation/panel-interaction.js";
+import { sharedPanelHit } from "./menu-fixture.js";
 import { createInitialAppModel, updateApp } from "../../web/src/app/app-state.js";
 import type { AppModel } from "../../web/src/app/app-state.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
@@ -1160,7 +1160,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
       if (draw === undefined) throw new Error("No stereo draw");
       const relative = centerEye(driver.draws).invert().multiply(draw.panel);
       expectMatrix(relative, poseMatrix(current.cameraPose).invert().multiply(poseMatrix(visiblePanelFrame(current).pose)));
-      const hit = intersectPanel({ origin: current.cameraPose.position, direction: rotateVec3(current.cameraPose.orientation, vec3(0, 0, -1)) }, visiblePanelFrame(current).pose);
+      const hit = sharedPanelHit(visiblePanelFrame(current).panel, visiblePanelFrame(current).pose, { origin: current.cameraPose.position, direction: rotateVec3(current.cameraPose.orientation, vec3(0, 0, -1)) });
       expect(hit).not.toBeNull();
       return { frame: current, relative };
     };
@@ -1435,9 +1435,9 @@ describe("Three adapter panel reference with real StereoEffect", () => {
           const target = new Vector3((control.rect.x + control.rect.width / 2 - 0.5) * 2.4,
             (0.5 - control.rect.y - control.rect.height / 2) * 1.8, 0).applyMatrix4(worldPanel);
           const direction = target.clone().sub(origin).normalize();
-          const point = intersectPanel({ origin: vec3(origin.x, origin.y, origin.z), direction: vec3(direction.x, direction.y, direction.z) }, matrixPose(worldPanel));
+          const point = sharedPanelHit(visible.panel, matrixPose(worldPanel), { origin: vec3(origin.x, origin.y, origin.z), direction: vec3(direction.x, direction.y, direction.z) });
           if (point === null) throw new Error("Rendered Menu ray missed");
-          expect(hitTestControl(visible.panel, point)?.id).toBe(control.id);
+          expect(point.controlId).toBe(control.id);
         }
         driver.draws.length = 0;
         driver.tick(10_100, null);
@@ -1472,8 +1472,8 @@ describe("Three adapter panel reference with real StereoEffect", () => {
         expectMatrix(center, poseMatrix(flightRelativePose(flight, mountedHead)));
         expectMatrix(panel, poseMatrix(flightRelativePose(flight, visiblePanelFrame(current).pose)));
         const worldCamera = matrixPose(center);
-        const point = intersectPanel({ origin: worldCamera.position,
-          direction: rotateVec3(worldCamera.orientation, vec3(0, 0, -1)) }, matrixPose(panel));
+        const point = sharedPanelHit(visiblePanelFrame(current).panel, matrixPose(panel), { origin: worldCamera.position,
+          direction: rotateVec3(worldCamera.orientation, vec3(0, 0, -1)) });
         expect(point?.x).toBeCloseTo(panelFrameCursor(current)?.point.x ?? Number.NaN, 8);
         expect(point?.y).toBeCloseTo(panelFrameCursor(current)?.point.y ?? Number.NaN, 8);
         expect(panelFrameCursor(current)?.point.x).toBeCloseTo(0, 8);

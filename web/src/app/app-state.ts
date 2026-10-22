@@ -11,7 +11,7 @@ import type { GameUiAction } from "../generated/game-ui-action.js";
 import type { GameUiEffect } from "../generated/game-ui-effects.js";
 import type { GameUiPlatformInput } from "../generated/game-ui-input.js";
 import type { SessionCommand } from "./game-ui-types.js";
-import { sharedGameUiAction } from "./game-view.js";
+import { controlInputAction } from "../render/contracts/ui.js";
 
 export interface StoredFlightRecordUiEntry {
   readonly id: number;
@@ -812,7 +812,7 @@ function updateUiAction(model: AppModel, action: UiAction): AppTransition {
     return isInVr(model.presentation) ? transition(model, [{ type: "recenter-menu" }]) : transition(model);
   }
   if (model.sharedGameUi !== null) {
-    const semantic = sharedGameUiAction(model.sharedGameUi, action);
+    const semantic = controlInputAction(action);
     return semantic === null ? transition(model) : transition(model, [{ type: "update-shared-game-ui", action: semantic }]);
   }
   if (action.type !== "activate" || model.gameSession.phase !== "boot") return transition(model);

@@ -123,7 +123,7 @@ describe("raw Rust snapshot application observations", () => {
         expect(sharedView(projected).description).toContain("停止");
       }
       expect(updateApp(model, { type: "ui-action", action: { type: "activate", controlId: "game-flight-abort" } }).effects)
-        .toEqual([expect.objectContaining({ type: "update-shared-game-ui", action: { kind: "session", command: { kind: "abort" } } })]);
+        .toEqual([{ type: "update-shared-game-ui", action: { kind: "control_input", input: { type: "activate", controlId: "game-flight-abort" } } }]);
     } finally {
       facade.dispose();
     }
@@ -148,9 +148,13 @@ describe("raw Rust snapshot application observations", () => {
       if (model.flightExecution.kind !== "stopped") throw new Error("Missing retained stop projection");
       expect(model.flightExecution.snapshot).toBe(beforePause.display.value);
       const resume = updateApp(model, { type: "ui-action", action: { type: "activate", controlId: "game-flight-resume" } });
-      expect(resume.effects).toEqual([]);
+      const request = resume.effects[0];
+      if (request?.type !== "update-shared-game-ui") throw new Error("Missing widget request");
+      expect(() => facade.updateSharedUi(request.action, sharedGameUiPlatform({
+        flight_controller_failure: "Pause synchronization failed"
+      }))).toThrow(/ActionUnavailable/);
       expect(updateApp(model, { type: "ui-action", action: { type: "activate", controlId: "game-paused-abort" } }).effects)
-        .toEqual([expect.objectContaining({ type: "update-shared-game-ui", action: { kind: "session", command: { kind: "abort" } } })]);
+        .toEqual([{ type: "update-shared-game-ui", action: { kind: "control_input", input: { type: "activate", controlId: "game-paused-abort" } } }]);
     } finally {
       facade.dispose();
     }

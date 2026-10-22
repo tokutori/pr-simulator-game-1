@@ -1,5 +1,49 @@
 use super::*;
 
+#[test]
+fn clipped_range_preserves_uncut_track_scale_and_toggle_uses_observed_value() {
+    let mut region = XrPointerRegion {
+        target: XrPointerTarget::Control { id: "seek".into() },
+        bounds: XrPointerRect([0.5, 0.0, 0.5, 1.0]),
+        control: Some(XrPointerControl::Range {
+            minimum: 10.0,
+            maximum: 30.0,
+            step: 0.5,
+            track: XrPointerRect([0.0, 0.0, 2.0, 1.0]),
+        }),
+    };
+    assert!(region.valid());
+    assert_eq!(
+        region.intent([0.5, 0.5]),
+        Some(GameUiControlInput::SetRange {
+            control_id: "seek".into(),
+            value: 15.0,
+        })
+    );
+    assert_eq!(
+        region.intent([0.76, 0.5]),
+        Some(GameUiControlInput::SetRange {
+            control_id: "seek".into(),
+            value: 17.5,
+        })
+    );
+    region.control = Some(XrPointerControl::Toggle { value: true });
+    assert_eq!(
+        region.intent([0.5, 0.5]),
+        Some(GameUiControlInput::SetToggle {
+            control_id: "seek".into(),
+            value: false,
+        })
+    );
+    region.control = Some(XrPointerControl::Range {
+        minimum: 0.0,
+        maximum: 1.0,
+        step: 0.0,
+        track: XrPointerRect([0.0, 0.0, 1.0, 1.0]),
+    });
+    assert!(!region.valid());
+}
+
 fn surface() -> XrPointerSurface {
     XrPointerSurface {
         scope: "title".into(),
@@ -8,6 +52,7 @@ fn surface() -> XrPointerSurface {
         regions: vec![XrPointerRegion {
             target: XrPointerTarget::Control { id: "start".into() },
             bounds: XrPointerRect([0.0, 0.0, 2.0, 1.0]),
+            control: None,
         }],
     }
 }

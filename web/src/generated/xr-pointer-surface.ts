@@ -12,6 +12,43 @@ export type XrPointerRect = readonly [
     number
 ];
 /**
+ * Widget value and uncut track required for shared activation resolution.
+ */
+export type XrPointerControl = {
+    readonly kind: "toggle";
+    /**
+     * Current selection.
+     */
+    readonly value: boolean;
+} | {
+    readonly kind: "range";
+    /**
+     * Upper bound.
+     */
+    readonly maximum: number;
+    /**
+     * Lower bound.
+     */
+    readonly minimum: number;
+    /**
+     * Positive step size.
+     */
+    readonly step: number;
+    readonly track: XrPointerRect1;
+};
+/**
+ * Complete slider rectangle in surface coordinates.
+ *
+ * @minItems 4
+ * @maxItems 4
+ */
+export type XrPointerRect1 = readonly [
+    number,
+    number,
+    number,
+    number
+];
+/**
  * Measured surface geometry owned until its scope or layout changes.
  */
 export interface XrPointerSurface {
@@ -43,6 +80,10 @@ export interface XrPointerSurface {
  */
 export interface XrPointerRegion {
     readonly bounds: XrPointerRect;
+    /**
+     * Interactive widget data; an omitted descriptor represents a button.
+     */
+    readonly control?: XrPointerControl | null;
     /**
      * Typed control or page target.
      */

@@ -3,6 +3,38 @@
  * UI message whose handling is shared by native and browser adapters.
  */
 export type GameUiAction = {
+    /**
+     * Button, toggle or range observation from an adapter.
+     */
+    readonly input: {
+        /**
+         * Published control identifier.
+         */
+        readonly controlId: string;
+        readonly type: "activate";
+    } | {
+        /**
+         * Published control identifier.
+         */
+        readonly controlId: string;
+        readonly type: "set-toggle";
+        /**
+         * Observed selection.
+         */
+        readonly value: boolean;
+    } | {
+        /**
+         * Published control identifier.
+         */
+        readonly controlId: string;
+        readonly type: "set-range";
+        /**
+         * Finite selected value within the published bounds.
+         */
+        readonly value: number;
+    };
+    readonly kind: "control_input";
+} | {
     readonly kind: "set_credits";
     /**
      * Whether the credits replace the current menu.

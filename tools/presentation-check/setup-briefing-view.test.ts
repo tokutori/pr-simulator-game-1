@@ -1,7 +1,8 @@
 import { Window } from "happy-dom";
 import { describe, expect, it } from "vitest";
 import { currentSharedGameUiFixture, withSharedGameUiSession } from "../game-check/shared-game-ui-fixture.js";
-import { createGameViewModel, sharedGameUiAction } from "../../web/src/app/game-view.js";
+import { createGameViewModel } from "../../web/src/app/game-view.js";
+import { controlInputAction } from "../../web/src/render/contracts/ui.js";
 import { requestMenuLayout, layoutMeasuredMenu, menuViewport, menuRectInViewport } from "../../web/src/presentation/menu-layout.js";
 import type { MenuTextMeasurement, MenuTextRequest } from "../../web/src/render/contracts/menu-layout.js";
 import { uiButtonLabel, uiControlBackground, validateUiViewModel } from "../../web/src/render/contracts/ui.js";
@@ -68,9 +69,9 @@ describe("Shared Flight Setup and Briefing presentation", () => {
       withSharedGameUiSession(phase, { platform: { presentation_mode } }, (session, platform) => {
         const before = session.readGameSessionProjection();
         const normal = session.readSharedUi(platform);
-        const openAction = sharedGameUiAction(normal, { type: "activate", controlId: "game-credits-open" });
-        expect(openAction).toEqual({ kind: "set_credits", open: true });
-        expect(session.updateSharedUi({ kind: "set_credits", open: true }, platform).effects).toEqual([]);
+        const openAction = controlInputAction({ type: "activate", controlId: "game-credits-open" });
+        if (openAction === null) throw new Error("Missing credits input");
+        expect(session.updateSharedUi(openAction, platform).effects).toEqual([]);
         const credits = session.readSharedUi(platform);
         const view = createGameViewModel(credits);
         validateUiViewModel(view);
@@ -79,8 +80,9 @@ describe("Shared Flight Setup and Briefing presentation", () => {
         for (const source of ["osm", "jaxa", "copernicus", "jma", "font", "earcut", "ryu", "time", "unicode-width"]) {
           expect(statusValue(view, `game-credits-${source}`).length).toBeGreaterThan(0);
         }
-        expect(sharedGameUiAction(credits, { type: "activate", controlId: "game-credits-close" })).toEqual({ kind: "set_credits", open: false });
-        expect(session.updateSharedUi({ kind: "set_credits", open: false }, platform).effects).toEqual([]);
+        const closeAction = controlInputAction({ type: "activate", controlId: "game-credits-close" });
+        if (closeAction === null) throw new Error("Missing credits input");
+        expect(session.updateSharedUi(closeAction, platform).effects).toEqual([]);
         expect(session.readGameSessionProjection()).toEqual(before);
         expect(session.readSharedUi(platform).selections.credits_open).toBe(false);
         expect(createGameViewModel(session.readSharedUi(platform)).activeOverlay).toBe(createGameViewModel(normal).activeOverlay);
@@ -110,7 +112,7 @@ describe("Shared Flight Setup and Briefing presentation", () => {
       if (control.kind !== "button" || control.presentation?.kind !== "choice") continue;
       expect(Array.from(control.presentation.description).length).toBeLessThanOrEqual(30);
       if (!control.presentation.selected) expect(control.presentation.description).toBe("");
-      expect(sharedGameUiAction(shared, { type: "activate", controlId: control.id })).not.toBeNull();
+      expect(controlInputAction({ type: "activate", controlId: control.id })).not.toBeNull();
     }
     expect(controls.find((control) => control.id === "game-setup-start")).toMatchObject({
       label: "飛行準備へ進む", presentation: { kind: "action", emphasis: "primary" }
@@ -131,7 +133,12 @@ describe("Shared Flight Setup and Briefing presentation", () => {
     const openView = createGameViewModel(open);
     expect(JSON.stringify(closedView)).not.toContain("Seed:");
     expect(statusValue(openView, "game-briefing-technical-content")).toContain("Seed:");
-    expect(sharedGameUiAction(closed, { type: "activate", controlId: "game-briefing-technical" })).toEqual({ kind: "toggle_technical" });
+    withSharedGameUiSession("briefing_ready", {}, (session, platform) => {
+      const input = controlInputAction({ type: "activate", controlId: "game-briefing-technical" });
+      if (input === null) throw new Error("Missing disclosure input");
+      session.updateSharedUi(input, platform);
+      expect(session.readSharedUi(platform).selections.technical_open).toBe(true);
+    });
     expect(openView.panels.flatMap((panel) => panel.controls).find((control) => control.id === "game-briefing-start"))
       .toMatchObject({ label: "発進カウントダウンを開始", presentation: { emphasis: "primary" } });
     expect(closed.selections.technical_open).toBe(false);

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { menuActionAt } from "./menu-fixture.js";
 import { IDENTITY_POSE } from "../../web/src/render/contracts/math.js";
 import type { UiPanel } from "../../web/src/render/contracts/ui.js";
 import { normalizedRect } from "../../web/src/render/contracts/ui.js";
@@ -11,7 +12,7 @@ import { configuredViewerFixture } from "./viewer-fixture.js";
 import { createAllSceneFixtures, createSceneFixture } from "./ui-adapter-fixture.js";
 import { prepareMenuPresentation } from "../../web/src/presentation/menu-preparation.js";
 import type { MenuMeasurementCache } from "../../web/src/presentation/menu-preparation.js";
-import { menuActionAt, menuContextCanInteract, menuInputGeometry, menuInputGeometryChanged, menuPageProgress } from "../../web/src/presentation/menu-interaction.js";
+import { menuContextCanInteract, menuInputGeometry, menuInputGeometryChanged, menuPageProgress } from "../../web/src/presentation/menu-interaction.js";
 import { menuDocumentPointToPanel, menuRectInViewport } from "../../web/src/presentation/menu-layout.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
 import { currentSharedGameUiFixture } from "../game-check/shared-game-ui-fixture.js";

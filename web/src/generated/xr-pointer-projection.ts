@@ -1,5 +1,35 @@
 /* Generated from birdman-game-presentation::game_ui. Edit the Rust contract and regenerate. */
 /**
+ * Engine-independent widget observation, resolved by the shared UI owner.
+ */
+export type GameUiControlInput = {
+    /**
+     * Published control identifier.
+     */
+    readonly controlId: string;
+    readonly type: "activate";
+} | {
+    /**
+     * Published control identifier.
+     */
+    readonly controlId: string;
+    readonly type: "set-toggle";
+    /**
+     * Observed selection.
+     */
+    readonly value: boolean;
+} | {
+    /**
+     * Published control identifier.
+     */
+    readonly controlId: string;
+    readonly type: "set-range";
+    /**
+     * Finite selected value within the published bounds.
+     */
+    readonly value: number;
+};
+/**
  * Semantic target of a measured interactive rectangle.
  */
 export type XrPointerTarget = {
@@ -53,6 +83,10 @@ export interface XrPointerProjection {
  * Visible metric cursor and its typed target.
  */
 export interface XrPointerHit {
+    /**
+     * Shared widget input resolved at this hit, including range snapping.
+     */
+    readonly intent: GameUiControlInput | null;
     /**
      * Panel-local right/up metric coordinates.
      *

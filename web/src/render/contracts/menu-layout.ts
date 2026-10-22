@@ -130,7 +130,3 @@ export type MenuContentPoint =
 export type MenuClippedRect =
   | { readonly kind: "outside" }
   | { readonly kind: "visible"; readonly rect: MenuRect };
-
-export type MenuRangeResult =
-  | { readonly kind: "absent" }
-  | { readonly kind: "action"; readonly controlId: string; readonly value: number };

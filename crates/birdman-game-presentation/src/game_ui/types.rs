@@ -252,6 +252,11 @@ pub enum GameUiPlatformCommand {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum GameUiAction {
+    /// Resolves a widget observation against the current shared view.
+    ControlInput {
+        /// Button, toggle or range observation from an adapter.
+        input: GameUiControlInput,
+    },
     /// Opens or closes the shared legal notices.
     SetCredits {
         /// Whether the credits replace the current menu.
@@ -307,6 +312,37 @@ pub enum GameUiAction {
     SetReplayRate {
         /// Zero is half speed, one normal speed, two double speed.
         code: u32,
+    },
+}
+
+/// Engine-independent widget observation, resolved by the shared UI owner.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(
+    tag = "type",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum GameUiControlInput {
+    /// Activates an enabled button.
+    Activate {
+        /// Published control identifier.
+        control_id: String,
+    },
+    /// Changes an enabled toggle.
+    SetToggle {
+        /// Published control identifier.
+        control_id: String,
+        /// Observed selection.
+        value: bool,
+    },
+    /// Changes an enabled range value.
+    SetRange {
+        /// Published control identifier.
+        control_id: String,
+        /// Finite selected value within the published bounds.
+        value: f64,
     },
 }
 

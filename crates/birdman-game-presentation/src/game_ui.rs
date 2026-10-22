@@ -20,6 +20,7 @@ pub use head_fit::{GameUiHeadHudFit, GameUiHeadHudNode, GameUiHeadHudSpace, fit_
 pub use structure::{GameUiStructureCache, GameUiStructureKey};
 pub use timestamps::game_ui_saved_record_timestamp;
 pub use types::*;
+pub(crate) use update::range_value;
 pub use update::update_game_ui;
 pub use view::game_ui_view;
 pub use view::scene as game_ui_scene;

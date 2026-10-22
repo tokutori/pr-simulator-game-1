@@ -3,7 +3,8 @@ import { Window } from "happy-dom";
 import { describe, expect, it } from "vitest";
 import { canSelectLakeWaterQuality, createInitialAppModel, gameSessionPhase, updateApp } from "../../web/src/app/app-state.js";
 import type { AppModel, AppTransition } from "../../web/src/app/app-state.js";
-import { createGameViewModel, sharedGameUiAction } from "../../web/src/app/game-view.js";
+import { createGameViewModel } from "../../web/src/app/game-view.js";
+import { controlInputAction } from "../../web/src/render/contracts/ui.js";
 import type { TailAppSessionFacade } from "../../web/src/app/session-facade.js";
 import type { SessionPhase } from "../../web/src/app/session-snapshot.js";
 import { readRuntimeSessionProjection } from "../../web/src/app/session-runtime-projection.js";
@@ -27,7 +28,7 @@ describe("manual lake water quality ownership", () => {
     expect(requested.model.gameSession).toBe(initial.gameSession);
     expect(requested.model.status).toBe(initial.status);
     expect(requested.model.recordOpen).toEqual({ kind: "idle" });
-    expect(select(requested.model, "medium").model).toBe(requested.model);
+    expect(() => select(requested.model, "medium")).toThrow(/ActionUnavailable/);
   });
 
   it("accepts only the matching completion after the requested resource swap", () => {
@@ -62,15 +63,15 @@ describe("manual lake water quality ownership", () => {
     expect(canSelectLakeWaterQuality(paused)).toBe(true);
     for (const phase of ["title", "briefing_preparing", "briefing_ready", "countdown", "flight_running", "result", "briefing_failed", "replay", "attract"] as const) {
       const model = readyModel(phase);
-      expect(select(model, "low").model).toBe(model);
+      expect(() => select(model, "low")).toThrow(/ActionUnavailable/);
     }
     for (const overlay of ["menu", "help"] as const) {
       const model: AppModel = { ...paused, sharedGameUi: currentSharedGameUiFixture("flight_paused",
         overlay === "menu" ? {} : { actions: [{ kind: "set_pause_overlay", overlay }] }) };
-      expect(select(model, "low").model).toBe(model);
+      expect(() => select(model, "low")).toThrow(/ActionUnavailable/);
     }
     const pending: AppModel = { ...setup, recordOpen: { kind: "loading" as const, requestId: 9, id: 1 } };
-    expect(select(pending, "low").model).toBe(pending);
+    expect(() => select(pending, "low")).toThrow(/ActionUnavailable/);
     const exhausted: AppModel = { ...setup, nextRequestId: Number.MAX_SAFE_INTEGER };
     expect(select(exhausted, "low").model).toBe(exhausted);
     expect(updateApp(setup, { type: "ui-action", action: { type: "activate", controlId: "presentation-water-quality-auto" } }).model).toBe(setup);
@@ -90,7 +91,11 @@ describe("manual lake water quality ownership", () => {
     expect(transition.model.lakeWaterQuality).toBe(selected.lakeWaterQuality);
     const terminal: AppModel = { ...readyModel("result"), lakeWaterQuality: selected.lakeWaterQuality };
     const retry = updateApp(terminal, { type: "ui-action", action: { type: "activate", controlId: "game-result-retry" } });
-    expect(retry.effects.some((effect) => effect.type === "update-shared-game-ui" && effect.action.kind === "session" && effect.action.command.kind === "retry")).toBe(true);
+    const request = retry.effects.find(effect => effect.type === "update-shared-game-ui");
+    if (request?.type !== "update-shared-game-ui") throw new Error("Missing retry input");
+    withSharedGameUiSession("result", {}, (session, platform) => {
+      expect(session.updateSharedUi(request.action, platform).effects).toContainEqual({ kind: "session", command: { kind: "retry" } });
+    });
     expect(retry.model.lakeWaterQuality).toBe(selected.lakeWaterQuality);
   });
 
@@ -238,7 +243,7 @@ function select(model: AppModel, quality: LakeWaterQuality): AppTransition {
   const requested = transition.effects.find((effect) => effect.type === "update-shared-game-ui");
   if (requested?.type !== "update-shared-game-ui") return transition;
   return withQualitySession(model, (session, platform) => {
-    const admitted = sharedGameUiAction(session.readSharedUi(platform), {
+    const admitted = controlInputAction({
       type: "activate", controlId: `presentation-water-quality-${quality}`
     });
     if (admitted === null) return { model, effects: [] };

@@ -4,6 +4,51 @@ use birdman_game_app::record_query::validate_record_time;
 use birdman_game_core::FlightRecordQueryError;
 
 impl GameUiView {
+    /// Resolves a widget observation using this view's enabled controls.
+    pub fn control_input_action(&self, input: &GameUiControlInput) -> Option<GameUiAction> {
+        let control_id = match input {
+            GameUiControlInput::Activate { control_id }
+            | GameUiControlInput::SetToggle { control_id, .. }
+            | GameUiControlInput::SetRange { control_id, .. } => control_id,
+        };
+        let control = self
+            .panels
+            .iter()
+            .flat_map(|panel| &panel.controls)
+            .find(|control| control.enabled && &control.id == control_id)?;
+        match (&control.content, input) {
+            (GameUiControlContent::Button { action, .. }, GameUiControlInput::Activate { .. }) => {
+                Some(action.clone())
+            }
+            (
+                GameUiControlContent::Toggle { cue, .. },
+                GameUiControlInput::SetToggle { value, .. },
+            ) => Some(GameUiAction::Session {
+                command: SessionCommand::SetCue {
+                    cue: *cue,
+                    visible: *value,
+                },
+            }),
+            (
+                GameUiControlContent::Range {
+                    target,
+                    minimum,
+                    maximum,
+                    ..
+                },
+                GameUiControlInput::SetRange { value, .. },
+            ) if value.is_finite() && value >= minimum && value <= maximum => Some(match target {
+                GameUiRangeTarget::Analysis => GameUiAction::SeekAnalysis {
+                    time_seconds: *value,
+                },
+                GameUiRangeTarget::Replay => GameUiAction::SeekReplay {
+                    time_seconds: *value,
+                },
+            }),
+            _ => None,
+        }
+    }
+
     /// Resolves Back from the enabled navigation actions published by this view.
     pub fn back_action(&self) -> Option<GameUiAction> {
         self.panels
@@ -78,25 +123,26 @@ impl GameUiControlContent {
         else {
             return None;
         };
-        if ![ratio, *minimum, *maximum, *step]
-            .into_iter()
-            .all(f64::is_finite)
-            || maximum < minimum
-            || *step <= 0.0
-        {
-            return None;
-        }
-        let raw = minimum + ratio.clamp(0.0, 1.0) * (maximum - minimum);
-        let time_seconds = minimum + ((raw - minimum) / step).round() * step;
-        if !time_seconds.is_finite() {
-            return None;
-        }
-        let time_seconds = time_seconds.clamp(*minimum, *maximum);
+        let time_seconds = range_value(*minimum, *maximum, *step, ratio)?;
         Some(match target {
             GameUiRangeTarget::Analysis => GameUiAction::SeekAnalysis { time_seconds },
             GameUiRangeTarget::Replay => GameUiAction::SeekReplay { time_seconds },
         })
     }
+}
+
+pub(crate) fn range_value(minimum: f64, maximum: f64, step: f64, ratio: f64) -> Option<f64> {
+    if ![minimum, maximum, step, ratio]
+        .into_iter()
+        .all(f64::is_finite)
+        || maximum < minimum
+        || step <= 0.0
+    {
+        return None;
+    }
+    let raw = minimum + ratio.clamp(0.0, 1.0) * (maximum - minimum);
+    let value = minimum + ((raw - minimum) / step).round() * step;
+    value.is_finite().then(|| value.clamp(minimum, maximum))
 }
 
 /// Admits an action against the actual shared view and returns UI state plus effects.
@@ -106,6 +152,12 @@ pub fn update_game_ui(
     context: &GameUiContext<'_, '_>,
 ) -> Result<GameUiUpdate, GameUiError> {
     let view = game_ui_view(state, context)?;
+    let action = if let GameUiAction::ControlInput { input } = action {
+        view.control_input_action(&input)
+            .ok_or(GameUiError::ActionUnavailable)?
+    } else {
+        action
+    };
     let admitted = view
         .panels
         .iter()
@@ -150,6 +202,7 @@ pub fn update_game_ui(
     let mut next = state.clone();
     let mut effects = Vec::new();
     match action {
+        GameUiAction::ControlInput { .. } => return Err(GameUiError::ActionUnavailable),
         GameUiAction::SetCredits { open } => next.credits_open = open,
         GameUiAction::Session { command } => {
             let entering_replay = command == (SessionCommand::EnterReplay {});

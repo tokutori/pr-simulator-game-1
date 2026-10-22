@@ -1910,6 +1910,25 @@
       "oneOf": [
         {
           "additionalProperties": false,
+          "description": "Resolves a widget observation against the current shared view.",
+          "properties": {
+            "input": {
+              "$ref": "#/$defs/GameUiControlInput",
+              "description": "Button, toggle or range observation from an adapter."
+            },
+            "kind": {
+              "const": "control_input",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "input"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
           "description": "Opens or closes the shared legal notices.",
           "properties": {
             "kind": {
@@ -3185,6 +3204,79 @@
             "kind",
             "chart",
             "plot"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "GameUiControlInput": {
+      "description": "Engine-independent widget observation, resolved by the shared UI owner.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Activates an enabled button.",
+          "properties": {
+            "controlId": {
+              "description": "Published control identifier.",
+              "type": "string"
+            },
+            "type": {
+              "const": "activate",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "controlId"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Changes an enabled toggle.",
+          "properties": {
+            "controlId": {
+              "description": "Published control identifier.",
+              "type": "string"
+            },
+            "type": {
+              "const": "set-toggle",
+              "type": "string"
+            },
+            "value": {
+              "description": "Observed selection.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "type",
+            "controlId",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Changes an enabled range value.",
+          "properties": {
+            "controlId": {
+              "description": "Published control identifier.",
+              "type": "string"
+            },
+            "type": {
+              "const": "set-range",
+              "type": "string"
+            },
+            "value": {
+              "description": "Finite selected value within the published bounds.",
+              "format": "double",
+              "type": "number"
+            }
+          },
+          "required": [
+            "type",
+            "controlId",
+            "value"
           ],
           "type": "object"
         }
@@ -8469,6 +8561,17 @@
     "XrPointerHit": {
       "description": "Visible metric cursor and its typed target.",
       "properties": {
+        "intent": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GameUiControlInput"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Shared widget input resolved at this hit, including range snapping."
+        },
         "point": {
           "description": "Panel-local right/up metric coordinates.",
           "items": {
@@ -8498,7 +8601,8 @@
       "required": [
         "source",
         "point",
-        "target"
+        "target",
+        "intent"
       ],
       "type": "object"
     },

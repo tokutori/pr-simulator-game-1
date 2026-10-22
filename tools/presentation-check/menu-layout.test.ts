@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { menuActionAt } from "./menu-fixture.js";
 import { IDENTITY_POSE, pose, vec3 } from "../../web/src/render/contracts/math.js";
 import type { MenuDocument, MenuLayoutRequest, MenuTextMeasurement, MenuTextRequest } from "../../web/src/render/contracts/menu-layout.js";
 import { MENU_MINIMUM_INK_HEIGHT_DEGREES } from "../../web/src/render/contracts/menu-layout.js";
@@ -6,7 +7,7 @@ import { normalizedRect } from "../../web/src/render/contracts/ui.js";
 import type { UiChart, UiControl, UiPanel } from "../../web/src/render/contracts/ui.js";
 import { unavailableViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
 import { hitMenuViewport, layoutMeasuredMenu, menuDocumentPointToPanel, menuPanelPointToDocument,
-  menuRangeAction, menuRectInViewport, menuViewport, requestMenuLayout, validateMenuOpeningInk } from "../../web/src/presentation/menu-layout.js";
+  menuRectInViewport, menuViewport, requestMenuLayout, validateMenuOpeningInk } from "../../web/src/presentation/menu-layout.js";
 import { fitMenuView } from "../../web/src/presentation/menu-view-fit.js";
 import { configuredViewerFixture } from "./viewer-fixture.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
@@ -196,8 +197,11 @@ describe("Pure measured Menu document and shared viewport", () => {
     const clipped = menuRectInViewport(viewport, range.bounds);
     if (clipped.kind !== "visible") throw new Error("Missing clipped range");
     expect(clipped.rect.height).toBeLessThan(range.bounds.height);
-    expect(menuRangeAction(viewport, point)).toEqual({ kind: "action", controlId: "time", value: 15 });
-    expect(menuRangeAction(viewport, { x: 0.3, y: 0 })).toEqual({ kind: "absent" });
+    const menu = { kind: "ready" as const, panel: { ...extended, size: document.request.surfaceSize }, viewport,
+      context: { generation: 1, scope: { kind: "scene" as const, scene: "Title" as const, panelId: extended.id, viewKey: "range" } } };
+    expect(menuActionAt(menu, point)).toEqual({ kind: "action", action: { type: "menu-control", context: menu.context,
+      action: { type: "set-range", controlId: "time", value: 15 } } });
+    expect(menuActionAt(menu, { x: 0.3, y: 0 })).toEqual({ kind: "absent" });
   });
 
   it("measures every chart label, axis, tick, legend and annotation and keeps Rust query arrays and square scaling", () => {

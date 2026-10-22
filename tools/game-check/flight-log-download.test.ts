@@ -5,7 +5,6 @@ import { createInitialAppModel, flightLogDownloadNotice, updateApp } from "../..
 import type { SessionPhase } from "../../web/src/app/session-snapshot.js";
 import type { AppModel } from "../../web/src/app/app-state.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
-import { actionForControl } from "../../web/src/presentation/panel-interaction.js";
 import { readFileSync } from "node:fs";
 import { initSync } from "../../web/pkg/birdman_game_wasm.js";
 import { withSharedGameUiSession } from "./shared-game-ui-fixture.js";
@@ -51,10 +50,14 @@ function viewForModel(model: AppModel, viewport?: GameUiPlatformInput["viewport"
 
 function beginDownload(model: AppModel, format: "csv" | "json" = "csv") {
   const admission = updateApp(model, { type: "ui-action", action: { type: "activate", controlId: `game-flight-log-${format}` } });
-  expect(admission.effects).toEqual([{ type: "update-shared-game-ui", action: { kind: "platform",
-    command: { kind: format === "csv" ? "download_flight_csv" : "download_record_json" } } }]);
-  const requested = updateApp(model, { type: "shared-game-ui-effect", effect: { kind: "platform",
-    command: { kind: format === "csv" ? "download_flight_csv" : "download_record_json" } } });
+  const request = admission.effects[0];
+  if (request?.type !== "update-shared-game-ui") throw new Error("Missing widget request");
+  const phase = model.gameSession.phase;
+  if (phase === "boot") throw new Error("Missing session");
+  const effectFromRust = withSharedGameUiSession(phase, { actions: phase === "result" ? [{ kind: "toggle_technical" }] : [] },
+    (session, platform) => session.updateSharedUi(request.action, platform).effects[0]);
+  if (effectFromRust === undefined) throw new Error("Missing Rust export effect");
+  const requested = updateApp(model, { type: "shared-game-ui-effect", effect: effectFromRust });
   const effect = requested.effects[0];
   if (effect?.type !== "download-flight-log") throw new Error("Missing download effect");
   return { ...requested, effect };
@@ -217,9 +220,6 @@ describe("flight log download state and common presentation", () => {
       expect(panel?.anchor).toBe("menu");
       const controls = panel?.controls.filter((control) => control.id === "game-flight-log-csv" || control.id === "game-flight-log-json");
       expect(controls).toHaveLength(2);
-      expect(controls?.map(actionForControl)).toEqual([
-        { type: "activate", controlId: "game-flight-log-csv" }, { type: "activate", controlId: "game-flight-log-json" }
-      ]);
       screen.render(view);
       const button = root.querySelector('[data-control-id="game-flight-log-csv"]');
       if (!(button instanceof browser.HTMLButtonElement)) throw new Error("Required download button is unavailable");
@@ -231,9 +231,16 @@ describe("flight log download state and common presentation", () => {
   });
 
   it.each(["title", "flight_setup", "briefing_preparing", "briefing_ready", "countdown", "briefing_failed", "attract"] as const)("rejects export commands outside valid record phases: %s", (phase) => {
-    const model = readyModel(phase);
-    expect(updateApp(model, { type: "ui-action", action: { type: "activate", controlId: "game-flight-log-json" } }).effects).toEqual([]);
-    expect(viewForModel(model).panels.flatMap((panel) => panel.controls).some((control) => control.id === "game-flight-log-json")).toBe(false);
+    withSharedGameUiSession(phase, {}, (session, platform) => {
+      const observed = updateApp({ ...createInitialAppModel(), presentation: { type: "ready", mode: "screen" } as const },
+        { type: "game-session-synced", ...readRuntimeSessionProjection(session) }).model;
+      const view = session.readSharedUi(platform);
+      const model = updateApp(observed, { type: "shared-game-ui-observed", view }).model;
+      const request = updateApp(model, { type: "ui-action", action: { type: "activate", controlId: "game-flight-log-json" } }).effects[0];
+      if (request?.type !== "update-shared-game-ui") throw new Error("Missing widget request");
+      expect(() => session.updateSharedUi(request.action, platform)).toThrow(/ActionUnavailable/);
+      expect(view.panels.flatMap(panel => panel.controls).some(control => control.id === "game-flight-log-json")).toBe(false);
+    });
   });
 
   it("reports synchronous output failures and allows another command immediately", () => {

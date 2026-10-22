@@ -5,7 +5,7 @@ import { createAppSession } from "../../web/src/app/session-factory.js";
 import { describe, expect, it } from "vitest";
 import { createInitialAppModel, updateApp } from "../../web/src/app/app-state.js";
 import type { AppModel } from "../../web/src/app/app-state.js";
-import { sharedGameUiAction } from "../../web/src/app/game-view.js";
+import { controlInputAction } from "../../web/src/render/contracts/ui.js";
 import { currentGameSessionProjectionFixture, currentSharedGameUiFixture, sharedGameUiPlatform, withSharedGameUiSession } from "../game-check/shared-game-ui-fixture.js";
 
 function setupModel(): AppModel {
@@ -20,7 +20,7 @@ describe("Direct flight setup selection", () => {
     withSharedGameUiSession("flight_setup", {}, (session, platform) => {
       const model = { ...setupModel(), sharedGameUi: session.readSharedUi(platform) };
       const action = { type: "activate" as const, controlId: `game-setup-select-${axis}-${String(code)}` };
-      const admitted = sharedGameUiAction(model.sharedGameUi, action);
+      const admitted = controlInputAction(action);
       if (admitted === null) throw new Error("Missing shared difficulty choice");
       const next = updateApp(model, { type: "ui-action", action });
       expect(next.model.gameSession).toBe(model.gameSession);
@@ -42,19 +42,24 @@ describe("Direct flight setup selection", () => {
   });
 
   it.each(["game-setup-select-preset-4", "game-setup-select-assistance-4", "game-setup-select-weather-5", "game-setup-select-weather-NaN", "game-setup-select-roll-1"])("rejects invalid candidate %s", (controlId) => {
-    const model = setupModel();
-    const next = updateApp(model, { type: "ui-action", action: { type: "activate", controlId } });
-    expect(next.model).toBe(model);
-    expect(next.effects).toEqual([]);
+    withSharedGameUiSession("flight_setup", {}, (session, platform) => {
+      const model = setupModel();
+      const next = updateApp(model, { type: "ui-action", action: { type: "activate", controlId } });
+      const request = next.effects[0];
+      expect(next.model).toBe(model);
+      if (request?.type !== "update-shared-game-ui") throw new Error("Missing widget request");
+      expect(() => session.updateSharedUi(request.action, platform)).toThrow(/ActionUnavailable/);
+    });
   });
 
   it("rejects selection outside Setup and preserves the selected value", () => {
-    for (const model of [createInitialAppModel(), { ...setupModel(),
-      gameSession: currentGameSessionProjectionFixture("title"), sharedGameUi: currentSharedGameUiFixture("title") }]) {
-      const next = updateApp(model, { type: "ui-action", action: { type: "activate", controlId: "game-setup-select-weather-0" } });
-      expect(next.model).toBe(model);
-      expect(next.effects).toEqual([]);
-    }
+    withSharedGameUiSession("title", {}, (session, platform) => {
+      const before = session.readSharedUi(platform);
+      const action = controlInputAction({ type: "activate", controlId: "game-setup-select-weather-0" });
+      if (action === null) throw new Error("Missing widget request");
+      expect(() => session.updateSharedUi(action, platform)).toThrow(/ActionUnavailable/);
+      expect(session.readSharedUi(platform)).toEqual(before);
+    });
   });
 
   it.each([

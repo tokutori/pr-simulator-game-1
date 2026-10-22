@@ -3,7 +3,7 @@ import { MENU_MINIMUM_INK_HEIGHT_DEGREES } from "../render/contracts/menu-layout
 import type { MenuClippedRect, MenuContentPoint, MenuControlLayout, MenuControlTextRole, MenuDocument, MenuDocumentResult,
   MenuFixedTextRole, MenuFontIdentity, MenuHit, MenuLayoutRequest,
   MenuLayoutRow, MenuMeasuredLine, MenuOpeningReadability, MenuPoint, MenuRect, MenuTextLayout, MenuTextMeasurement, MenuTextRequest,
-  MenuRangeResult, MenuTextSlot, MenuViewport } from "../render/contracts/menu-layout.js";
+  MenuTextSlot, MenuViewport } from "../render/contracts/menu-layout.js";
 import { uiButtonLabel } from "../render/contracts/ui.js";
 import type { PanelSize, UiChart, UiPanel } from "../render/contracts/ui.js";
 import { xr_text_ink_fit_json } from "../../pkg/birdman_game_wasm.js";
@@ -285,16 +285,6 @@ export function hitMenuViewport(viewport: MenuViewport, point: MenuPoint): MenuH
   if (documentPoint.kind === "outside") return Object.freeze({ kind: "none" });
   const layout = viewport.document.controls.find((control) => control.control.enabled && contains(control.bounds, documentPoint.point));
   return layout === undefined ? Object.freeze({ kind: "none" }) : Object.freeze({ kind: "control", layout, documentPoint: documentPoint.point });
-}
-
-export function menuRangeAction(viewport: MenuViewport, point: MenuPoint): MenuRangeResult {
-  const hit = hitMenuViewport(viewport, point);
-  if (hit.kind !== "control" || hit.layout.control.kind !== "range") return Object.freeze({ kind: "absent" });
-  const control = hit.layout.control;
-  const ratio = Math.min(1, Math.max(0, (hit.documentPoint.x - hit.layout.bounds.x) / hit.layout.bounds.width));
-  const raw = control.minimum + ratio * (control.maximum - control.minimum);
-  const value = Math.min(control.maximum, Math.max(control.minimum, control.minimum + Math.round((raw - control.minimum) / control.step) * control.step));
-  return Object.freeze({ kind: "action", controlId: control.id, value });
 }
 
 function contains(rectangle: MenuRect, point: MenuPoint): boolean {

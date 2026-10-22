@@ -1,10 +1,9 @@
-import type { GameUiAction } from "../generated/game-ui-action.js";
 import type { GameUiView } from "../generated/game-ui-view.js";
 import { NO_HEAD_HUD } from "../render/contracts/head-hud.js";
 import type { HeadHudLayer } from "../render/contracts/head-hud.js";
 import { IDENTITY_POSE, pose, vec3 } from "../render/contracts/math.js";
 import { normalizedRect } from "../render/contracts/ui.js";
-import type { UiAction, UiButtonPresentation, UiControl, UiViewModel } from "../render/contracts/ui.js";
+import type { UiButtonPresentation, UiControl, UiViewModel } from "../render/contracts/ui.js";
 
 type SharedControl = GameUiView["panels"][number]["controls"][number];
 
@@ -29,22 +28,7 @@ export function createGameViewModel(shared: GameUiView, headHud: HeadHudLayer = 
   });
 }
 
-export function sharedGameUiAction(shared: GameUiView, action: UiAction): GameUiAction | null {
-  if (action.type === "menu-control") return sharedGameUiAction(shared, action.action);
-  if (action.type !== "activate" && action.type !== "set-toggle" && action.type !== "set-range") return null;
-  const control = shared.panels.flatMap((panel) => panel.controls).find((candidate) => candidate.id === action.controlId);
-  if (control === undefined || !control.enabled) return null;
-  const content = control.content;
-  if (action.type === "activate" && content.kind === "button") return content.action;
-  if (action.type === "set-toggle" && content.kind === "toggle") {
-    return Object.freeze({ kind: "session", command: Object.freeze({ kind: "set_cue", cue: content.cue, visible: action.value }) });
-  }
-  if (action.type === "set-range" && content.kind === "range" && Number.isFinite(action.value)
-      && action.value >= content.minimum && action.value <= content.maximum) {
-    return Object.freeze({ kind: content.target === "analysis" ? "seek_analysis" : "seek_replay", time_seconds: action.value });
-  }
-  return null;
-}
+
 
 function projectControl(control: SharedControl): UiControl {
   const base = { id: control.id, label: control.label, enabled: control.enabled, section: control.section,

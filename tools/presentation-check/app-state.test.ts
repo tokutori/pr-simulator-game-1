@@ -857,13 +857,17 @@ describe("Boot application state", () => {
     expect(rejected.model.status).toBe("InvalidTransition");
   });
 
-  it("ignores controls that the shared Rust view does not publish", () => {
+  it("routes widget admission to the shared Rust view", () => {
     const model = observeSharedUi(readyModel("result"), currentSharedGameUiFixture("result"));
     const rejected = updateApp(model, {
       type: "ui-action", action: { type: "activate", controlId: "unknown-result-action" }
     });
     expect(rejected.model).toBe(model);
-    expect(rejected.effects).toEqual([]);
+    const request = rejected.effects[0];
+    if (request?.type !== "update-shared-game-ui") throw new Error("Missing widget request");
+    withSharedGameUiSession("result", {}, (session, platform) => {
+      expect(() => session.updateSharedUi(request.action, platform)).toThrow(/ActionUnavailable/);
+    });
   });
 
   it("preserves Result analysis and allows Retry again after a record allocation failure", () => {

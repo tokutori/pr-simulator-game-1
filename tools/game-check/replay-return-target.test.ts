@@ -41,8 +41,9 @@ function verifyUiReturnViews(session: TailAppSessionFacade, expected: ReplayRetu
       expect(controls).toHaveLength(1);
       expect(controls[0]).toMatchObject({ kind: "button", enabled: true, label: expected === "title" ? "Titleへ戻る" : "Resultへ戻る" });
       const action = updateApp(model, { type: "ui-action", action: { type: "activate", controlId: "game-replay-return" } });
-      expect(action.effects).toContainEqual({ type: "update-shared-game-ui", action: { kind: "session", command: { kind: "leave_replay" } } });
-      expect(session.updateSharedUi({ kind: "session", command: { kind: "leave_replay" } }, platform).effects)
+      const request = action.effects[0];
+      if (request?.type !== "update-shared-game-ui") throw new Error("Missing widget request");
+      expect(session.updateSharedUi(request.action, platform).effects)
         .toEqual([{ kind: "session", command: { kind: "leave_replay" } }]);
     }
   }

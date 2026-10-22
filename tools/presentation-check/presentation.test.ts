@@ -11,7 +11,7 @@ import { GAME_SCENES, validateUiViewModel } from "../../web/src/render/contracts
 import type { UiViewModel } from "../../web/src/render/contracts/ui.js";
 import { createAllSceneFixtures, createSceneFixture, SCENE_FIXTURE_OVERLAYS } from "./ui-adapter-fixture.js";
 import { PresentationRuntime } from "../../web/src/presentation/runtime.js";
-import { actionForControl, hitTestControl, intersectPanel, rangeAction } from "../../web/src/presentation/panel-interaction.js";
+import { sharedPanelHit } from "./menu-fixture.js";
 import type { UiPanel } from "../../web/src/render/contracts/ui.js";
 
 describe("scene and overlay fixtures", () => {
@@ -43,24 +43,6 @@ describe("scene and overlay fixtures", () => {
     }
   });
 
-  it("uses the same control actions for screen and spatial panel interactions", () => {
-    for (const scene of GAME_SCENES) {
-      const fixture = createSceneFixture(scene);
-      const panel = requiredPanel(fixture);
-      const button = panel.controls.find((control) => control.kind === "button");
-      const toggle = panel.controls.find((control) => control.kind === "toggle");
-      const range = panel.controls.find((control) => control.kind === "range");
-      expect(button === undefined ? null : actionForControl(button)).toEqual({ type: "activate", controlId: `${scene.toLowerCase()}-action` });
-      expect(toggle === undefined ? null : actionForControl(toggle)).toEqual({
-        type: "set-toggle", controlId: `${scene.toLowerCase()}-toggle`, value: true
-      });
-      if (range === undefined) throw new Error(`Missing range fixture for ${scene}`);
-      const rightEdge = normalizedPoint(panel, range.rect.x + range.rect.width, range.rect.y + range.rect.height / 2);
-      expect(rangeAction(range, panel, rightEdge)).toEqual({
-        type: "set-range", controlId: `${scene.toLowerCase()}-range`, value: 1
-      });
-    }
-  });
 
 });
 
@@ -127,15 +109,19 @@ describe("anchor and camera transforms", () => {
     const worldFromPanel = pose(vec3(0, 0, -2), IDENTITY_POSE.orientation);
     const leftRay = { origin: vec3(-0.032, 0, 0), direction: vec3(target.x + 0.032, target.y, target.z) };
     const rightRay = { origin: vec3(0.032, 0, 0), direction: vec3(target.x - 0.032, target.y, target.z) };
-    const leftHit = intersectPanel(leftRay, worldFromPanel);
-    const rightHit = intersectPanel(rightRay, worldFromPanel);
+    for (const ray of [leftRay, rightRay]) {
+      const length = Math.hypot(ray.direction.x, ray.direction.y, ray.direction.z);
+      ray.direction = vec3(ray.direction.x / length, ray.direction.y / length, ray.direction.z / length);
+    }
+    const leftHit = sharedPanelHit(panel, worldFromPanel, leftRay);
+    const rightHit = sharedPanelHit(panel, worldFromPanel, rightRay);
     expect(leftHit).not.toBeNull();
     expect(rightHit).not.toBeNull();
     if (leftHit === null || rightHit === null) throw new Error("Expected both eye rays to hit the panel");
     expect(leftHit.x).toBeCloseTo(rightHit.x, 10);
     expect(leftHit.y).toBeCloseTo(rightHit.y, 10);
-    expect(hitTestControl(panel, leftHit)?.id).toBe(button.id);
-    expect(hitTestControl(panel, rightHit)?.id).toBe(button.id);
+    expect(leftHit.controlId).toBe(button.id);
+    expect(rightHit.controlId).toBe(button.id);
   });
 });
 
