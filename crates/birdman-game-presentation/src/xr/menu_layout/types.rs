@@ -496,6 +496,11 @@ pub enum MenuLayoutQuery {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
 pub enum MenuLayoutReply {
+    /// Complete observed text with shared paragraph and wrapping decisions.
+    Measured {
+        /// Measured lines in request order.
+        measurements: Vec<MenuTextMeasurement>,
+    },
     /// Requested real text measurement for the next preparation candidate.
     Measure {
         /// Bounded continuation index to return with the measurements.
@@ -598,6 +603,8 @@ pub struct MenuViewportProjection {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "kebab-case")]
 pub enum MenuLayoutFailure {
+    /// The platform font measurement service failed.
+    MeasurementUnavailable,
     /// No stereo observation is available.
     NotStereo,
     /// Current tracking has no viewer pose.

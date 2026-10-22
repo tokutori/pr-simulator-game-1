@@ -376,7 +376,11 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
       }
       const prepared = addresses.viewers.map(viewer => {
         const spatial = { ...panel, anchor: "menu" as const, size: { width: 2.4, height: 1.8 } };
-        const ready = preparationModule.prepareMenuPresentation(canvasModule.browserMenuContext(context), spatial,
+        const observer = canvasModule.browserMenuContext(context);
+        let fontQueries = 0;
+        const measuredContext = { ...observer, measureText(value: string) { fontQueries++; return observer.measureText(value); } };
+        const started = performance.now();
+        const ready = preparationModule.prepareMenuPresentation(measuredContext, spatial,
           { generation: 1, scope: { kind: "scene", scene: shared.scene, panelId: panel.id, viewKey: "canvas-preparation" } },
           0, viewer, { theme: shared.theme, locale: "ja", caption: shared.description,
             font: { family: "system-ui, sans-serif", weight: 600, style: "normal", generation: 0 } }, new Map());
@@ -388,7 +392,8 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
         const dimensions = canvasModule.menuCanvasSize(ready.panel.size);
         canvas.width = dimensions.width; canvas.height = dimensions.height;
         canvasModule.drawMeasuredMenu(canvasModule.browserMenuContext(context), ready.viewport, canvas.width, canvas.height);
-        return { widthMeters: ready.panel.size.width, fontMeters: document.request.fontMeters, controls: document.controls.length };
+        return { widthMeters: ready.panel.size.width, fontMeters: document.request.fontMeters, controls: document.controls.length,
+          fontQueries, preparationMilliseconds: performance.now() - started };
       });
       return { emptyDescriptions: choices.length, prepared, measuredIn: "production VR Menu layout and browser Canvas" };
     }, { view: new URL("../src/app/game-view.ts", moduleUrl).href,

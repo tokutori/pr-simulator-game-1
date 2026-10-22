@@ -3,6 +3,12 @@
  * Layout result or a precise measurement failure.
  */
 export type MenuLayoutReply = {
+    readonly kind: "measured";
+    /**
+     * Measured lines in request order.
+     */
+    readonly measurements: readonly MenuTextMeasurement[];
+} | {
     /**
      * Bounded continuation index to return with the measurements.
      */
@@ -23,8 +29,54 @@ export type MenuLayoutReply = {
     /**
      * Reason for rejecting the layout.
      */
-    readonly reason: "not-stereo" | "viewer-unavailable" | "unsupported-view-configuration" | "invalid-view-geometry" | "insufficient-view-area" | "insufficient-ink-angle" | "missing-text-metrics" | "stale-text-metrics" | "invalid-text-metrics" | "invalid-layout";
+    readonly reason: "measurement-unavailable" | "not-stereo" | "viewer-unavailable" | "unsupported-view-configuration" | "invalid-view-geometry" | "insufficient-view-area" | "insufficient-ink-angle" | "missing-text-metrics" | "stale-text-metrics" | "invalid-text-metrics" | "invalid-layout";
 };
+/**
+ * Measured lines associated with one exact request identity.
+ */
+export interface MenuTextMeasurement {
+    /**
+     * Exact identity of the measurement request.
+     */
+    readonly identity: string;
+    /**
+     * Measured lines preserving explicit paragraphs.
+     */
+    readonly lines: readonly MenuMeasuredLine[];
+}
+/**
+ * One measured line with signed ink bearings in metres.
+ */
+export interface MenuMeasuredLine {
+    /**
+     * Measured horizontal text advance.
+     */
+    readonly advanceMeters: number;
+    /**
+     * Measured ink ascent.
+     */
+    readonly ascentMeters: number;
+    /**
+     * Measured ink descent.
+     */
+    readonly descentMeters: number;
+    /**
+     * Signed left ink bearing.
+     */
+    readonly leftMeters: number;
+    /**
+     * Zero-based index of the original explicit paragraph.
+     */
+    readonly paragraphIndex: number;
+    /**
+     * Signed right ink bearing.
+     */
+    readonly rightMeters: number;
+    /**
+     * Already formatted content or current toggle selection.
+     */
+    readonly value: string;
+}
 /**
  * Complete fitted measurement contract.
  */

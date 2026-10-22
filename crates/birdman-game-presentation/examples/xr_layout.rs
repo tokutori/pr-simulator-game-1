@@ -21,6 +21,56 @@ struct Observation {
     spatial: SpatialObservation,
     interaction: PointerScenario,
     layout: Vec<MenuLayoutQuery>,
+    text: Vec<TextObservation>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TextObservation {
+    requests: Vec<MenuTextRequest>,
+    probes: Vec<TextProbe>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TextProbe {
+    index: usize,
+    value: String,
+    metrics: Option<[f64; 5]>,
+}
+
+fn text_results(observations: &[TextObservation]) -> Vec<MenuLayoutReply> {
+    observations
+        .iter()
+        .map(|observation| {
+            let mut probes = observation.probes.iter();
+            let result = measure_menu_text(&observation.requests, |index, value| {
+                let probe = probes.next().ok_or(MenuLayoutFailure::InvalidTextMetrics)?;
+                if probe.index != index || probe.value != value {
+                    return Err(MenuLayoutFailure::InvalidTextMetrics);
+                }
+                let [advance, left, right, ascent, descent] = probe
+                    .metrics
+                    .ok_or(MenuLayoutFailure::MeasurementUnavailable)?;
+                Ok(MenuGlyphMetrics {
+                    advance,
+                    left,
+                    right,
+                    ascent,
+                    descent,
+                })
+            });
+            if probes.next().is_some() {
+                return MenuLayoutReply::Unavailable {
+                    reason: MenuLayoutFailure::InvalidTextMetrics,
+                };
+            }
+            match result {
+                Ok(measurements) => MenuLayoutReply::Measured { measurements },
+                Err(reason) => MenuLayoutReply::Unavailable { reason },
+            }
+        })
+        .collect()
 }
 
 #[derive(Deserialize)]
@@ -62,6 +112,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "spatial": spatial_results(&observation)?,
             "interaction": pointer_results(&observation.interaction)?,
             "layout": observation.layout.iter().cloned().map(menu_layout).collect::<Vec<_>>(),
+            "text": text_results(&observation.text),
         }));
     }
     let output = serde_json::to_vec(&results)?;

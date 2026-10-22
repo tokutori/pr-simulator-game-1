@@ -15,7 +15,7 @@ import { DEFAULT_XR_HEAD_HUD_PROFILE } from "../../web/src/generated/xr-head-hud
 import type { FlightRecordHudProfileDocument } from "../../web/src/generated/record-difficulty.js";
 import type { ViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
 import { IDENTITY_POSE, composePose, rotateVec3, pose, quaternion, vec3 } from "../../web/src/render/contracts/math.js";
-import { menu_layout_json, xr_head_hud_projection_json, xr_menu_view_fit_json, xr_text_ink_fit_json, XrCameraBridge, XrSpatialBridge,
+import { menu_layout_json, menu_measure_text_json, xr_head_hud_projection_json, xr_menu_view_fit_json, xr_text_ink_fit_json, XrCameraBridge, XrSpatialBridge,
   xr_reference_frame_json, pose_chain_json, inverse_pose_json, xr_panel_camera_poses_json, XrPointerBridge } from "../../web/pkg/birdman_game_wasm.js";
 import type { XrPointerObservation } from "../../web/src/generated/xr-pointer-observation.js";
 import type { XrPointerSurface } from "../../web/src/generated/xr-pointer-surface.js";
@@ -40,6 +40,9 @@ await writeFile(resolve(output, "source.patch"), patch, "utf8");
 const wasmPath = resolve(root, "web/pkg/birdman_game_wasm_bg.wasm");
 const wasmHash = createHash("sha256").update(await readFile(wasmPath)).digest("hex");
 const cases: { name: string; observation: ReturnType<typeof observation> }[] = [];
+type TextProbe = { index: number; value: string; metrics: [number, number, number, number, number] | null };
+type TextObservation = { requests: Extract<MenuLayoutReply, { kind: "plan" }>["plan"]["texts"]; probes: TextProbe[] };
+const textObservations: TextObservation[] = [];
 for (const informationCode of [0, 1, 2, 3, 4] as const) {
   const model = currentSharedHeadHudFixture({ informationCode });
   for (const [width, height] of [[1280, 720], [720, 1280]] as const) {
@@ -58,6 +61,7 @@ for (let mask = 0; mask < 64; mask += 1) {
 const firstCase = cases[0];
 assert.ok(firstCase !== undefined);
 firstCase.observation.layout = menuQueries();
+firstCase.observation.text = textObservations;
 const input = JSON.stringify(cases.map(candidate => candidate.observation));
 await writeFile(resolve(output, "observations.json"), input, "utf8");
 let maximumAbsoluteError = 0;
@@ -75,7 +79,8 @@ try {
     ink: JSON.parse(xr_text_ink_fit_json(JSON.stringify(candidate.viewer), JSON.stringify(candidate.ink), JSON.stringify(candidate.head_from_surface), 0.35)) as unknown,
     spatial: spatialResults(candidate),
     interaction: pointerResults(candidate.interaction),
-    layout: candidate.layout.map(query => JSON.parse(menu_layout_json(JSON.stringify(query))) as unknown)
+    layout: candidate.layout.map(query => JSON.parse(menu_layout_json(JSON.stringify(query))) as unknown),
+    text: candidate.text.map(textResult)
   }));
   await writeFile(resolve(output, "wasm.json"), JSON.stringify(actual), "utf8");
   compare(expected, actual, "cases");
@@ -104,6 +109,16 @@ function menuQueries(): MenuLayoutQuery[] {
         const request = requestMenuLayout(panel, surface, { theme: shared.theme, fontMeters: 0.035,
           font: { family: "sans-serif", weight: 600, style: "normal", generation: 0 },
           locale: "ja", caption: "", previousLabel: "前頁", nextLabel: "次頁" });
+        const probes: TextProbe[] = [];
+        const measuredText = JSON.parse(menu_measure_text_json(JSON.stringify(request.shared.texts), (index, value) => {
+          const advance = Array.from(value).length * 0.01;
+          const metrics: TextProbe["metrics"] = [advance, value.length === 0 ? 0 : -0.001,
+            value.length === 0 ? 0 : advance + 0.001, 0.02, 0.005];
+          probes.push({ index, value, metrics });
+          return Float64Array.from(metrics);
+        })) as MenuLayoutReply;
+        assert.equal(measuredText.kind, "measured");
+        textObservations.push({ requests: request.shared.texts, probes });
         const dimensions = menuCanvasSize(surface);
         const measured = measureMenuLayout(new HudCanvasFixture(), request, dimensions.width, dimensions.height);
         assert.equal(measured.kind, "ready");
@@ -141,6 +156,20 @@ function menuQueries(): MenuLayoutQuery[] {
   }
   assert.ok(queries.length > 0);
   return queries;
+}
+
+function textResult(observation: TextObservation): unknown {
+  let cursor = 0;
+  const result: unknown = JSON.parse(menu_measure_text_json(JSON.stringify(observation.requests), (index, value) => {
+    const probe = observation.probes[cursor++];
+    assert.ok(probe !== undefined);
+    assert.equal(probe.index, index);
+    assert.equal(probe.value, value);
+    if (probe.metrics === null) throw new Error("Observed font service failure");
+    return Float64Array.from(probe.metrics);
+  }));
+  assert.equal(cursor, observation.probes.length);
+  return result;
 }
 
 function pointerScenario() {
@@ -191,7 +220,7 @@ function pointerResults(scenario: ReturnType<typeof pointerScenario>): unknown[]
 
 function observation(viewer: ViewerFrame, model: ReturnType<typeof currentSharedHeadHudFixture>) {
   return { viewer, hud: { layout: model.layout, groups: model.groups }, profile: DEFAULT_XR_HEAD_HUD_PROFILE,
-    interaction: pointerScenario(), layout: [] as MenuLayoutQuery[],
+    interaction: pointerScenario(), layout: [] as MenuLayoutQuery[], text: [] as TextObservation[],
     panel_pose: pose(vec3(0.1, -0.2, 0), IDENTITY_POSE.orientation), panel_size: [2.4, 1.8] as const,
     head_from_surface: pose(vec3(0, -0.2, -2.4), IDENTITY_POSE.orientation),
     ink: [{ start: vec3(-0.1, 0.025, 0), end: vec3(-0.1, -0.025, 0) }, { start: vec3(0.1, 0.025, 0), end: vec3(0.1, -0.025, 0) }],

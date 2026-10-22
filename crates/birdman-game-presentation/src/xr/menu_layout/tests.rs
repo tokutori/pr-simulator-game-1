@@ -1,6 +1,77 @@
 use super::*;
 use crate::game_ui::GameUiEmphasis;
 
+#[test]
+fn text_wrapping_uses_contextual_metrics_and_preserves_unicode_paragraphs() {
+    let mut text = plan(source()).unwrap().texts[0].clone();
+    text.value = "AV😀\n\nB\n".into();
+    text.width_meters = 1.1;
+    let measured = measure_menu_text(&[text], |index, value| {
+        assert_eq!(index, 0);
+        let advance = if value == "AV" {
+            0.9
+        } else {
+            value.chars().count() as f64 * 0.6
+        };
+        Ok(MenuGlyphMetrics {
+            advance,
+            left: if value.is_empty() { 0.0 } else { -0.1 },
+            right: if value.is_empty() { 0.0 } else { advance + 0.1 },
+            ascent: 0.02,
+            descent: 0.005,
+        })
+    })
+    .unwrap();
+    let lines = &measured[0].lines;
+    assert_eq!(
+        lines
+            .iter()
+            .map(|line| (line.paragraph_index, line.value.as_str()))
+            .collect::<Vec<_>>(),
+        vec![(0, "AV"), (0, "😀"), (1, ""), (2, "B"), (3, "")]
+    );
+    assert_eq!(lines[0].left_meters, -0.1);
+    assert_eq!(lines[0].advance_meters, 0.9);
+}
+
+#[test]
+fn text_wrapping_rejects_invalid_metrics_and_propagates_measurement_failure() {
+    let mut text = plan(source()).unwrap().texts[0].clone();
+    text.value = "x".into();
+    for invalid in [f64::NAN, -1.0, f64::INFINITY] {
+        assert_eq!(
+            measure_menu_text(&[text.clone()], |_, _| Ok(MenuGlyphMetrics {
+                advance: invalid,
+                left: 0.0,
+                right: 0.0,
+                ascent: 0.01,
+                descent: 0.0,
+            })),
+            Err(MenuLayoutFailure::InvalidTextMetrics)
+        );
+    }
+    assert_eq!(
+        measure_menu_text(&[text.clone()], |_, _| Err(
+            MenuLayoutFailure::MeasurementUnavailable
+        )),
+        Err(MenuLayoutFailure::MeasurementUnavailable)
+    );
+    assert_eq!(
+        measure_menu_text(&[text.clone()], |_, value| Ok(MenuGlyphMetrics {
+            advance: if value.is_empty() {
+                0.0
+            } else {
+                text.width_meters * 2.0
+            },
+            left: 0.0,
+            right: 0.0,
+            ascent: 0.01,
+            descent: 0.0,
+        })),
+        Err(MenuLayoutFailure::InvalidTextMetrics)
+    );
+}
+
 fn source() -> MenuLayoutSource {
     MenuLayoutSource {
         panel_id: "menu".into(),

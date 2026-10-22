@@ -1,4 +1,6 @@
-import type { MenuLayoutRequest, MenuMeasuredLine, MenuRect, MenuTextLayout, MenuTextMeasurement,
+import { menu_measure_text_json } from "../../pkg/birdman_game_wasm.js";
+import type { MenuLayoutReply } from "../generated/menu-layout-reply.js";
+import type { MenuLayoutRequest, MenuRect, MenuTextLayout, MenuTextMeasurement,
   MenuTextRequest, MenuViewport } from "../render/contracts/menu-layout.js";
 import { uiControlBackground } from "../render/contracts/ui.js";
 import type { UiChart } from "../render/contracts/ui.js";
@@ -60,39 +62,21 @@ export function measureMenuLayout(context: MenuDrawingContext, request: MenuLayo
   const horizontalMetersPerPixel = request.surfaceSize.width / canvasWidth;
   context.save();
   try {
-    const measurements: MenuTextMeasurement[] = [];
-    for (const text of request.texts) {
-      configureText(context, text, metersPerPixel);
-      const lines: MenuMeasuredLine[] = [];
-      const measure = (value: string, paragraphIndex: number): MenuMeasuredLine => {
-        const metrics = context.measureText(value);
-        return Object.freeze({ value, paragraphIndex, advanceMeters: metrics.width * horizontalMetersPerPixel,
-          leftMeters: metrics.left * horizontalMetersPerPixel, rightMeters: metrics.right * horizontalMetersPerPixel,
-          ascentMeters: metrics.ascent * metersPerPixel, descentMeters: metrics.descent * metersPerPixel });
-      };
-      const valid = (line: MenuMeasuredLine): boolean => [line.advanceMeters, line.leftMeters, line.rightMeters,
-        line.ascentMeters, line.descentMeters].every(Number.isFinite) && line.advanceMeters >= 0 &&
-        line.leftMeters + line.rightMeters >= 0 && line.ascentMeters + line.descentMeters >= 0;
-      const fits = (line: MenuMeasuredLine): boolean => Math.max(line.advanceMeters, Math.max(0, line.leftMeters) + line.rightMeters) <= text.widthMeters + 1e-10;
-      for (const [paragraphIndex, paragraph] of text.value.split("\n").entries()) {
-        let current = measure("", paragraphIndex);
-        if (!valid(current) || !fits(current)) return Object.freeze({ kind: "unavailable", reason: "invalid-text-metrics" });
-        for (const character of Array.from(paragraph)) {
-          const candidate = measure(current.value + character, paragraphIndex);
-          if (!valid(candidate)) return Object.freeze({ kind: "unavailable", reason: "invalid-text-metrics" });
-          if (fits(candidate)) current = candidate;
-          else {
-            if (current.value === "") return Object.freeze({ kind: "unavailable", reason: "invalid-text-metrics" });
-            lines.push(current);
-            current = measure(character, paragraphIndex);
-            if (!valid(current) || !fits(current)) return Object.freeze({ kind: "unavailable", reason: "invalid-text-metrics" });
-          }
-        }
-        lines.push(current);
+    let activeIndex = -1;
+    const reply = JSON.parse(menu_measure_text_json(JSON.stringify(request.texts), (index, value) => {
+      const text = request.texts[index];
+      if (text === undefined) throw new Error("Shared Menu font query lost its request");
+      if (activeIndex !== index) {
+        configureText(context, text, metersPerPixel);
+        activeIndex = index;
       }
-      measurements.push(Object.freeze({ identity: text.identity, lines: Object.freeze(lines) }));
-    }
-    return Object.freeze({ kind: "ready", measurements: Object.freeze(measurements) });
+      const metrics = context.measureText(value);
+      return Float64Array.of(metrics.width * horizontalMetersPerPixel, metrics.left * horizontalMetersPerPixel,
+        metrics.right * horizontalMetersPerPixel, metrics.ascent * metersPerPixel, metrics.descent * metersPerPixel);
+    })) as MenuLayoutReply;
+    if (reply.kind === "unavailable" && (reply.reason === "invalid-text-metrics" || reply.reason === "measurement-unavailable")) return { kind: "unavailable", reason: reply.reason };
+    if (reply.kind !== "measured") throw new Error("Shared Menu measurement returned an unexpected phase");
+    return { kind: "ready", measurements: reply.measurements };
   } catch {
     return Object.freeze({ kind: "unavailable", reason: "measurement-unavailable" });
   } finally {

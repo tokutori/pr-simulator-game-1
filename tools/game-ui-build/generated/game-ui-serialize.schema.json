@@ -5741,6 +5741,11 @@
       "description": "Rejection class of a measured menu document.",
       "oneOf": [
         {
+          "const": "measurement-unavailable",
+          "description": "The platform font measurement service failed.",
+          "type": "string"
+        },
+        {
           "const": "not-stereo",
           "description": "No stereo observation is available.",
           "type": "string"
@@ -5843,6 +5848,28 @@
     "MenuLayoutReply": {
       "description": "Layout result or a precise measurement failure.",
       "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Complete observed text with shared paragraph and wrapping decisions.",
+          "properties": {
+            "kind": {
+              "const": "measured",
+              "type": "string"
+            },
+            "measurements": {
+              "description": "Measured lines in request order.",
+              "items": {
+                "$ref": "#/$defs/MenuTextMeasurement"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "kind",
+            "measurements"
+          ],
+          "type": "object"
+        },
         {
           "additionalProperties": false,
           "description": "Requested real text measurement for the next preparation candidate.",
@@ -6037,6 +6064,57 @@
       "required": [
         "anchor",
         "bounds"
+      ],
+      "type": "object"
+    },
+    "MenuMeasuredLine": {
+      "additionalProperties": false,
+      "description": "One measured line with signed ink bearings in metres.",
+      "properties": {
+        "advanceMeters": {
+          "description": "Measured horizontal text advance.",
+          "format": "double",
+          "type": "number"
+        },
+        "ascentMeters": {
+          "description": "Measured ink ascent.",
+          "format": "double",
+          "type": "number"
+        },
+        "descentMeters": {
+          "description": "Measured ink descent.",
+          "format": "double",
+          "type": "number"
+        },
+        "leftMeters": {
+          "description": "Signed left ink bearing.",
+          "format": "double",
+          "type": "number"
+        },
+        "paragraphIndex": {
+          "description": "Zero-based index of the original explicit paragraph.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "rightMeters": {
+          "description": "Signed right ink bearing.",
+          "format": "double",
+          "type": "number"
+        },
+        "value": {
+          "description": "Already formatted content or current toggle selection.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "paragraphIndex",
+        "value",
+        "advanceMeters",
+        "leftMeters",
+        "rightMeters",
+        "ascentMeters",
+        "descentMeters"
       ],
       "type": "object"
     },
@@ -6300,6 +6378,28 @@
       "required": [
         "width",
         "height"
+      ],
+      "type": "object"
+    },
+    "MenuTextMeasurement": {
+      "additionalProperties": false,
+      "description": "Measured lines associated with one exact request identity.",
+      "properties": {
+        "identity": {
+          "description": "Exact identity of the measurement request.",
+          "type": "string"
+        },
+        "lines": {
+          "description": "Measured lines preserving explicit paragraphs.",
+          "items": {
+            "$ref": "#/$defs/MenuMeasuredLine"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "identity",
+        "lines"
       ],
       "type": "object"
     },

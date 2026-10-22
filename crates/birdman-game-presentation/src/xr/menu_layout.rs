@@ -6,6 +6,8 @@ use std::collections::{BTreeMap, BTreeSet};
 mod types;
 pub use types::*;
 mod preparation;
+mod text;
+pub use text::*;
 mod viewport;
 
 /// Resolves a complete layout phase using engine-independent metric observations.

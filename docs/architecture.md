@@ -151,6 +151,7 @@ GameUiView / GameUiFrame → platform renderer → DOM / VR panel / Bevy entity
 - Menuの行・列割当、余白、文字計測要求、計測後のcontrol・chart・回転文字の配置は共有Rustが導出する。adapterは実フォントの計測結果を返し、共有座標を描画APIへ投影する。計測identityは表示内容・locale・surface・解決済み文字サイズ・font世代を含み、共有側が計測結果との対応を検査する。
 - Menu viewportは共有Rustがcontent clip・page操作領域・scroll量を導出する。矩形とpanel/document座標は一括で投影し、描画とpointer入力が同じclipを利用する。rangeの値はclip前のtrackに対応する。
 - 空間Menuの準備は共有Rustが両眼fitに応じた幅と、実測glyphの視角に応じた文字サイズを選ぶ。adapterは要求されたplanの実フォント計測を返し、共有側が対応する計測identityと可読性を認可して配置を確定する。
+- 文字折返しは共有Rustが明示改行・Unicode文字列・符号付きink幅から決める。フォント観測callbackは要求された文字列全体を計測し、advance・bearing・ascent/descentをメートル単位で返す。Webは同期呼出し中だけCanvas観測を提供し、共有処理が行とparagraphを確定する。
 - platformは表示API、フォント計測、safe area、OS/browserのfocus・visibility・機器観測を担当する。XRのcursor積分・押下edge・入力源切替・dwellは共有presentationが所有する。
 - ボタンIDや表示文字列から意味を再推定しない。
 
