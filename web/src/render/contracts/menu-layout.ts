@@ -111,8 +111,7 @@ export interface MenuViewport {
   readonly pageProgress: number;
 }
 
-export type MenuLayoutUnavailableReason = "missing-text-metrics" | "stale-text-metrics" |
-  "invalid-text-metrics" | "invalid-layout" | "insufficient-ink-angle";
+export type MenuLayoutUnavailableReason = Extract<MenuLayoutReply, { kind: "unavailable" }>["reason"];
 
 export type MenuDocumentResult =
   | { readonly kind: "ready"; readonly document: MenuDocument }

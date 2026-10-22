@@ -1735,6 +1735,46 @@
       "oneOf": [
         {
           "additionalProperties": false,
+          "description": "Fits a surface and requests real text observations until readable.",
+          "properties": {
+            "kind": {
+              "const": "prepare",
+              "type": "string"
+            },
+            "menu_from_panel": {
+              "$ref": "#/$defs/Pose",
+              "description": "Physical panel pose relative to the menu anchor."
+            },
+            "observation": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/MenuPreparationObservation"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Reply to the current requested candidate, or absent at opening."
+            },
+            "source": {
+              "$ref": "#/$defs/MenuLayoutSource",
+              "description": "Requested content and initial typography."
+            },
+            "viewer": {
+              "$ref": "#/$defs/XrViewerFrame",
+              "description": "Same-frame stereo optics."
+            }
+          },
+          "required": [
+            "kind",
+            "source",
+            "viewer",
+            "menu_from_panel"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
           "description": "Menu measurement planning phase.",
           "properties": {
             "kind": {
@@ -1981,6 +2021,30 @@
       "required": [
         "x",
         "y"
+      ],
+      "type": "object"
+    },
+    "MenuPreparationObservation": {
+      "additionalProperties": false,
+      "description": "One adapter observation of a requested preparation candidate.",
+      "properties": {
+        "attempt": {
+          "description": "Candidate index supplied by the shared preparation result.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "measurements": {
+          "description": "Actual text metrics for that candidate's exact measurement identities.",
+          "items": {
+            "$ref": "#/$defs/MenuTextMeasurement"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "attempt",
+        "measurements"
       ],
       "type": "object"
     },
@@ -3430,6 +3494,71 @@
         }
       ]
     },
+    "XrDepthRange": {
+      "description": "Homogeneous depth-clip convention of the rendering API's projection matrix.",
+      "oneOf": [
+        {
+          "const": "negative-one-to-one",
+          "description": "OpenGL and WebGL depth interval.",
+          "type": "string"
+        },
+        {
+          "const": "zero-to-one",
+          "description": "Vulkan, D3D, Metal and WebGPU depth interval, including reversed Z.",
+          "type": "string"
+        }
+      ]
+    },
+    "XrEye": {
+      "description": "Eye identity within the supported primary stereo view configuration.",
+      "oneOf": [
+        {
+          "const": "left",
+          "description": "Left eye.",
+          "type": "string"
+        },
+        {
+          "const": "right",
+          "description": "Right eye.",
+          "type": "string"
+        }
+      ]
+    },
+    "XrEyeGeometry": {
+      "additionalProperties": false,
+      "description": "One same-frame eye pose and the runtime's column-major projection matrix.",
+      "properties": {
+        "depthRange": {
+          "$ref": "#/$defs/XrDepthRange",
+          "description": "Rendering API's clip-depth interval."
+        },
+        "eye": {
+          "$ref": "#/$defs/XrEye",
+          "description": "Primary eye identity."
+        },
+        "headFromEye": {
+          "$ref": "#/$defs/Pose",
+          "description": "Eye-to-centre-head transform in metres."
+        },
+        "projection": {
+          "description": "Unmodified column-major 4-by-4 projection matrix.",
+          "items": {
+            "format": "double",
+            "type": "number"
+          },
+          "maxItems": 16,
+          "minItems": 16,
+          "type": "array"
+        }
+      },
+      "required": [
+        "eye",
+        "headFromEye",
+        "projection",
+        "depthRange"
+      ],
+      "type": "object"
+    },
     "XrFitReason": {
       "description": "Optical rejection reason shared by layout and measured text checks.",
       "oneOf": [
@@ -3974,6 +4103,124 @@
             "next"
           ],
           "type": "object"
+        }
+      ]
+    },
+    "XrViewerFrame": {
+      "description": "Same-frame stereo geometry, separate from tracked world-camera placement.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Classified unavailable geometry, optionally retaining valid centre tracking.",
+          "properties": {
+            "reason": {
+              "$ref": "#/$defs/XrViewerUnavailableReason",
+              "description": "Unavailability classification."
+            },
+            "source": {
+              "const": "unavailable",
+              "type": "string"
+            },
+            "trackingFromHead": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Pose"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Valid centre tracking, if separately available."
+            }
+          },
+          "required": [
+            "source",
+            "reason"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Configured stereo optics, independent of world tracking.",
+          "properties": {
+            "eyes": {
+              "description": "Left and right eye geometry, in that order.",
+              "items": {
+                "$ref": "#/$defs/XrEyeGeometry"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            },
+            "source": {
+              "const": "configured",
+              "type": "string"
+            },
+            "trackingFromHead": {
+              "description": "Explicit null at the existing wire boundary.",
+              "type": "null"
+            }
+          },
+          "required": [
+            "source",
+            "trackingFromHead",
+            "eyes"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Runtime-provided same-frame centre and eye geometry.",
+          "properties": {
+            "eyes": {
+              "description": "Left and right eye geometry, in that order.",
+              "items": {
+                "$ref": "#/$defs/XrEyeGeometry"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            },
+            "source": {
+              "const": "runtime-derived",
+              "type": "string"
+            },
+            "trackingFromHead": {
+              "$ref": "#/$defs/Pose",
+              "description": "Tracked centre-head pose in the runtime reference space."
+            }
+          },
+          "required": [
+            "source",
+            "trackingFromHead",
+            "eyes"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "XrViewerUnavailableReason": {
+      "description": "Classified absence of usable stereo observations.",
+      "oneOf": [
+        {
+          "const": "not-stereo",
+          "description": "The presentation mode supplies no stereo views.",
+          "type": "string"
+        },
+        {
+          "const": "viewer-unavailable",
+          "description": "The runtime supplies no viewer pose for this frame.",
+          "type": "string"
+        },
+        {
+          "const": "unsupported-view-configuration",
+          "description": "The runtime's primary eye configuration is unsupported.",
+          "type": "string"
+        },
+        {
+          "const": "invalid-view-geometry",
+          "description": "Pose or projection data is invalid.",
+          "type": "string"
         }
       ]
     }

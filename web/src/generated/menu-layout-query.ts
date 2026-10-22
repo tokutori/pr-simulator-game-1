@@ -3,15 +3,66 @@
  * Aggregate layout protocol spanning preparation and measured arrangement.
  */
 export type MenuLayoutQuery = {
-    readonly kind: "plan";
+    readonly kind: "prepare";
+    readonly menu_from_panel: Pose;
+    /**
+     * Reply to the current requested candidate, or absent at opening.
+     */
+    readonly observation?: MenuPreparationObservation | null;
     readonly source: MenuLayoutSource;
+    /**
+     * Same-frame stereo optics.
+     */
+    readonly viewer: {
+        /**
+         * Unavailability classification.
+         */
+        readonly reason: "not-stereo" | "viewer-unavailable" | "unsupported-view-configuration" | "invalid-view-geometry";
+        readonly source: "unavailable";
+        /**
+         * Valid centre tracking, if separately available.
+         */
+        readonly trackingFromHead?: Pose1 | null;
+    } | {
+        /**
+         * Left and right eye geometry, in that order.
+         *
+         * @minItems 2
+         * @maxItems 2
+         */
+        readonly eyes: readonly [
+            XrEyeGeometry,
+            XrEyeGeometry
+        ];
+        readonly source: "configured";
+        /**
+         * Explicit null at the existing wire boundary.
+         */
+        readonly trackingFromHead: null;
+    } | {
+        /**
+         * Left and right eye geometry, in that order.
+         *
+         * @minItems 2
+         * @maxItems 2
+         */
+        readonly eyes: readonly [
+            XrEyeGeometry,
+            XrEyeGeometry
+        ];
+        readonly source: "runtime-derived";
+        readonly trackingFromHead: Pose3;
+    };
+} | {
+    readonly kind: "plan";
+    readonly source: MenuLayoutSource1;
 } | {
     readonly kind: "arrange";
     /**
      * Actual adapter text measurements.
      */
     readonly measurements: readonly MenuTextMeasurement[];
-    readonly source: MenuLayoutSource1;
+    readonly source: MenuLayoutSource2;
 } | {
     /**
      * Document points to map into center-origin panel coordinates.
@@ -29,7 +80,111 @@ export type MenuLayoutQuery = {
     readonly source: MenuViewportSource;
 };
 /**
- * Compact source and typography observation.
+ * Physical panel pose relative to the menu anchor.
+ */
+export interface Pose {
+    readonly orientation: Quaternion;
+    readonly position: Vector3;
+}
+/**
+ * Child-to-parent orientation.
+ */
+export interface Quaternion {
+    /**
+     * Scalar component.
+     */
+    readonly w: number;
+    /**
+     * Right-axis component.
+     */
+    readonly x: number;
+    /**
+     * Up-axis component.
+     */
+    readonly y: number;
+    /**
+     * Back-axis component.
+     */
+    readonly z: number;
+}
+/**
+ * Child origin expressed in parent coordinates, in metres.
+ */
+export interface Vector3 {
+    /**
+     * Rightward coordinate in metres.
+     */
+    readonly x: number;
+    /**
+     * Upward coordinate in metres.
+     */
+    readonly y: number;
+    /**
+     * Backward coordinate in metres.
+     */
+    readonly z: number;
+}
+/**
+ * One adapter observation of a requested preparation candidate.
+ */
+export interface MenuPreparationObservation {
+    /**
+     * Candidate index supplied by the shared preparation result.
+     */
+    readonly attempt: number;
+    /**
+     * Actual text metrics for that candidate's exact measurement identities.
+     */
+    readonly measurements: readonly MenuTextMeasurement[];
+}
+/**
+ * Measured lines associated with one exact request identity.
+ */
+export interface MenuTextMeasurement {
+    /**
+     * Exact identity of the measurement request.
+     */
+    readonly identity: string;
+    /**
+     * Measured lines preserving explicit paragraphs.
+     */
+    readonly lines: readonly MenuMeasuredLine[];
+}
+/**
+ * One measured line with signed ink bearings in metres.
+ */
+export interface MenuMeasuredLine {
+    /**
+     * Measured horizontal text advance.
+     */
+    readonly advanceMeters: number;
+    /**
+     * Measured ink ascent.
+     */
+    readonly ascentMeters: number;
+    /**
+     * Measured ink descent.
+     */
+    readonly descentMeters: number;
+    /**
+     * Signed left ink bearing.
+     */
+    readonly leftMeters: number;
+    /**
+     * Zero-based index of the original explicit paragraph.
+     */
+    readonly paragraphIndex: number;
+    /**
+     * Signed right ink bearing.
+     */
+    readonly rightMeters: number;
+    /**
+     * Already formatted content or current toggle selection.
+     */
+    readonly value: string;
+}
+/**
+ * Requested content and initial typography.
  */
 export interface MenuLayoutSource {
     /**
@@ -320,55 +475,111 @@ export interface MenuSize {
     readonly width: number;
 }
 /**
- * Measured lines associated with one exact request identity.
+ * Rigid child-to-parent transform; the caller names both reference spaces.
  */
-export interface MenuTextMeasurement {
-    /**
-     * Exact identity of the measurement request.
-     */
-    readonly identity: string;
-    /**
-     * Measured lines preserving explicit paragraphs.
-     */
-    readonly lines: readonly MenuMeasuredLine[];
+export interface Pose1 {
+    readonly orientation: Quaternion;
+    readonly position: Vector3;
 }
 /**
- * One measured line with signed ink bearings in metres.
+ * One same-frame eye pose and the runtime's column-major projection matrix.
  */
-export interface MenuMeasuredLine {
+export interface XrEyeGeometry {
     /**
-     * Measured horizontal text advance.
+     * Rendering API's clip-depth interval.
      */
-    readonly advanceMeters: number;
+    readonly depthRange: "negative-one-to-one" | "zero-to-one";
     /**
-     * Measured ink ascent.
+     * Primary eye identity.
      */
-    readonly ascentMeters: number;
+    readonly eye: "left" | "right";
+    readonly headFromEye: Pose2;
     /**
-     * Measured ink descent.
+     * Unmodified column-major 4-by-4 projection matrix.
+     *
+     * @minItems 16
+     * @maxItems 16
      */
-    readonly descentMeters: number;
-    /**
-     * Signed left ink bearing.
-     */
-    readonly leftMeters: number;
-    /**
-     * Zero-based index of the original explicit paragraph.
-     */
-    readonly paragraphIndex: number;
-    /**
-     * Signed right ink bearing.
-     */
-    readonly rightMeters: number;
-    /**
-     * Already formatted content or current toggle selection.
-     */
-    readonly value: string;
+    readonly projection: readonly [
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number
+    ];
+}
+/**
+ * Rigid child-to-parent transform; the caller names both reference spaces.
+ */
+export interface Pose2 {
+    readonly orientation: Quaternion;
+    readonly position: Vector3;
+}
+/**
+ * Rigid child-to-parent transform; the caller names both reference spaces.
+ */
+export interface Pose3 {
+    readonly orientation: Quaternion;
+    readonly position: Vector3;
 }
 /**
  * Compact source and typography observation.
  */
 export interface MenuLayoutSource1 {
+    /**
+     * Panel description.
+     */
+    readonly caption: string;
+    /**
+     * Ordered source controls or allocated row items.
+     */
+    readonly controls: readonly MenuLayoutControl[];
+    readonly font: MenuFont;
+    /**
+     * Nominal font size in metres.
+     */
+    readonly fontMeters: number;
+    /**
+     * Explicit text measurement locale.
+     */
+    readonly locale: string;
+    /**
+     * Localized next-page label.
+     */
+    readonly nextLabel: string;
+    /**
+     * Published panel identifier.
+     */
+    readonly panelId: string;
+    /**
+     * Localized previous-page label.
+     */
+    readonly previousLabel: string;
+    /**
+     * Declared sections or implicit vertical flow.
+     */
+    readonly sections?: readonly GameUiSection[] | null;
+    readonly surfaceSize: MenuSize;
+    /**
+     * Panel heading.
+     */
+    readonly title: string;
+}
+/**
+ * Compact source and typography observation.
+ */
+export interface MenuLayoutSource2 {
     /**
      * Panel description.
      */

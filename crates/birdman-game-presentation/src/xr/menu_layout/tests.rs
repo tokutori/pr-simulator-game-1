@@ -256,3 +256,92 @@ fn viewport_projects_unclipped_tracks_clipped_ink_and_reversible_points() {
         Err(MenuLayoutFailure::InvalidLayout)
     );
 }
+
+#[test]
+fn preparation_owns_surface_fit_and_measured_font_selection() {
+    let viewer = crate::xr::tests::viewer(crate::xr::XrDepthRange::NegativeOneToOne);
+    let mut requested = source();
+    requested.surface_size.width = 8.0;
+    requested.font_meters = 0.012;
+    let mut observation = None;
+    let mut measured_count = 0;
+    let mut selected = None;
+    for _ in 0..13 {
+        match menu_layout(MenuLayoutQuery::Prepare {
+            source: requested.clone(),
+            viewer: Box::new(viewer.clone()),
+            menu_from_panel: crate::camera::Pose::IDENTITY,
+            observation: observation.clone(),
+        }) {
+            MenuLayoutReply::Measure { plan, attempt } => {
+                assert!(plan.source.surface_size.width < requested.surface_size.width);
+                assert!(plan.source.font_meters >= requested.font_meters);
+                let measured = plan
+                    .texts
+                    .iter()
+                    .map(|text| MenuTextMeasurement {
+                        identity: text.identity.clone(),
+                        lines: vec![MenuMeasuredLine {
+                            paragraph_index: 0,
+                            value: text.value.clone(),
+                            advance_meters: text.value.len() as f64 * text.font_meters * 0.2,
+                            left_meters: 0.0,
+                            right_meters: text.value.len() as f64 * text.font_meters * 0.2,
+                            ascent_meters: if text.value.is_empty() {
+                                0.0
+                            } else {
+                                text.font_meters * 0.8
+                            },
+                            descent_meters: 0.0,
+                        }],
+                    })
+                    .collect();
+                selected = Some(plan.source.font_meters);
+                observation = Some(MenuPreparationObservation {
+                    attempt,
+                    measurements: measured,
+                });
+                measured_count += 1;
+            }
+            MenuLayoutReply::Ready { .. } => break,
+            reply => panic!("Unexpected preparation result: {reply:?}"),
+        }
+    }
+    assert!(measured_count > 1 && measured_count <= 12);
+    assert!(selected.unwrap() > requested.font_meters);
+    assert!(matches!(
+        menu_layout(MenuLayoutQuery::Prepare {
+            source: requested.clone(),
+            viewer: Box::new(viewer.clone()),
+            menu_from_panel: crate::camera::Pose::IDENTITY,
+            observation: observation.clone(),
+        }),
+        MenuLayoutReply::Ready { .. }
+    ));
+    let mut mismatched = observation.clone().unwrap();
+    mismatched.attempt = if mismatched.attempt == 0 { 1 } else { 0 };
+    assert_eq!(
+        menu_layout(MenuLayoutQuery::Prepare {
+            source: requested.clone(),
+            viewer: Box::new(viewer.clone()),
+            menu_from_panel: crate::camera::Pose::IDENTITY,
+            observation: Some(mismatched),
+        }),
+        MenuLayoutReply::Unavailable {
+            reason: MenuLayoutFailure::StaleTextMetrics
+        }
+    );
+    let mut stale = observation.unwrap();
+    stale.attempt = 12;
+    assert_eq!(
+        menu_layout(MenuLayoutQuery::Prepare {
+            source: requested,
+            viewer: Box::new(viewer),
+            menu_from_panel: crate::camera::Pose::IDENTITY,
+            observation: Some(stale),
+        }),
+        MenuLayoutReply::Unavailable {
+            reason: MenuLayoutFailure::StaleTextMetrics
+        }
+    );
+}

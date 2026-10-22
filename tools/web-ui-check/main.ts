@@ -334,6 +334,13 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
     });
     assert.deepEqual(overflowing, []);
     await noEmptyLabelPrefix();
+    const menuViewers = ([[1280, 720], [720, 1280]] as const).map(([width, height]) => {
+      const camera = new PerspectiveCamera(60, width / height, 0.05, 100);
+      camera.updateMatrixWorld(true);
+      const stereo = new StereoCamera();
+      stereo.aspect = 0.5;
+      return captureConfiguredViewerFrame(camera, stereo);
+    });
     report.vrChoiceLayout = await page.evaluate(async addresses => {
       if (window.__uiViewJson === null) throw new Error("The production shared Setup View was not captured");
       const shared = JSON.parse(window.__uiViewJson) as GameUiView;
@@ -341,6 +348,7 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
       const viewModule = await import(addresses.view) as typeof import("../../web/src/app/game-view.js");
       const layoutModule = await import(addresses.layout) as typeof import("../../web/src/presentation/menu-layout.js");
       const canvasModule = await import(addresses.canvas) as typeof import("../../web/src/presentation/menu-canvas.js");
+      const preparationModule = await import(addresses.preparation) as typeof import("../../web/src/presentation/menu-preparation.js");
       const panel = viewModule.createGameViewModel(shared).panels[0];
       if (panel === undefined) throw new Error("Missing shared Setup panel");
       const request = layoutModule.requestMenuLayout(panel, panel.size, { theme: shared.theme, fontMeters: 0.04,
@@ -366,9 +374,26 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
         const expected = label.lines.length * request.lineHeightMeters + request.paddingMeters * 2;
         if (Math.abs(choice.bounds.height - expected) > 1e-10) throw new Error("An empty choice description added VR height");
       }
-      return { emptyDescriptions: choices.length, measuredIn: "production VR Menu layout and browser Canvas" };
+      const prepared = addresses.viewers.map(viewer => {
+        const spatial = { ...panel, anchor: "menu" as const, size: { width: 2.4, height: 1.8 } };
+        const ready = preparationModule.prepareMenuPresentation(canvasModule.browserMenuContext(context), spatial,
+          { generation: 1, scope: { kind: "scene", scene: shared.scene, panelId: panel.id, viewKey: "canvas-preparation" } },
+          0, viewer, { theme: shared.theme, locale: "ja", caption: shared.description,
+            font: { family: "system-ui, sans-serif", weight: 600, style: "normal", generation: 0 } }, new Map());
+        if (ready.kind !== "ready") throw new Error(`Real Canvas Menu preparation failed: ${ready.kind}`);
+        const document = ready.viewport.document;
+        if (document.request.fontMeters < 0.035 || ready.panel.size.width > spatial.size.width || document.controls.length !== panel.controls.length) {
+          throw new Error("Shared Menu preparation changed content or rejected its requested typography");
+        }
+        const dimensions = canvasModule.menuCanvasSize(ready.panel.size);
+        canvas.width = dimensions.width; canvas.height = dimensions.height;
+        canvasModule.drawMeasuredMenu(canvasModule.browserMenuContext(context), ready.viewport, canvas.width, canvas.height);
+        return { widthMeters: ready.panel.size.width, fontMeters: document.request.fontMeters, controls: document.controls.length };
+      });
+      return { emptyDescriptions: choices.length, prepared, measuredIn: "production VR Menu layout and browser Canvas" };
     }, { view: new URL("../src/app/game-view.ts", moduleUrl).href,
-      layout: new URL("../src/presentation/menu-layout.ts", moduleUrl).href, canvas: new URL("../src/presentation/menu-canvas.ts", moduleUrl).href });
+      layout: new URL("../src/presentation/menu-layout.ts", moduleUrl).href, canvas: new URL("../src/presentation/menu-canvas.ts", moduleUrl).href,
+      preparation: new URL("../src/presentation/menu-preparation.ts", moduleUrl).href, viewers: menuViewers });
     report.portraitViewport = { width: 360, height: 640, selectedDescriptions };
     await screenshot("01-setup-portrait");
     await page.setViewportSize({ width: 1280, height: 720 });

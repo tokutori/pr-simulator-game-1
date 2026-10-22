@@ -52,13 +52,19 @@ function widget(control: UiControl): Source["controls"][number]["widget"] {
   }
 }
 
-export function requestMenuLayout(panel: UiPanel, surfaceSize: PanelSize, style: Readonly<{
+type MenuLayoutStyle = Readonly<{
   theme: MenuLayoutRequest["theme"]; fontMeters: number; font: MenuFontIdentity; locale: string; previousLabel: string; nextLabel: string; caption: string;
-}>): MenuLayoutRequest {
-  const source: Source = { panelId: panel.id, title: panel.title, sections: panel.sections ?? null,
+}>;
+
+export function menuLayoutSource(panel: UiPanel, surfaceSize: PanelSize, style: MenuLayoutStyle): Source {
+  return { panelId: panel.id, title: panel.title, sections: panel.sections ?? null,
     controls: panel.controls.map(control => ({ id: control.id, label: control.label, section: control.section ?? null, widget: widget(control) })),
     surfaceSize, fontMeters: style.fontMeters, font: style.font, locale: style.locale,
     previousLabel: style.previousLabel, nextLabel: style.nextLabel, caption: style.caption };
+}
+
+export function requestMenuLayout(panel: UiPanel, surfaceSize: PanelSize, style: MenuLayoutStyle): MenuLayoutRequest {
+  const source = menuLayoutSource(panel, surfaceSize, style);
   const key = JSON.stringify({ kind: "plan", source } satisfies MenuLayoutQuery);
   let shared = plans.get(key);
   if (shared === undefined) {
@@ -70,6 +76,10 @@ export function requestMenuLayout(panel: UiPanel, surfaceSize: PanelSize, style:
     if (plans.size >= 32) plans.clear();
     plans.set(key, shared);
   }
+  return menuLayoutRequest(panel, style.theme, shared);
+}
+
+export function menuLayoutRequest(panel: UiPanel, theme: MenuLayoutRequest["theme"], shared: Plan): MenuLayoutRequest {
   const rows = shared.rows.map(row => ({ heading: row.heading, controls: row.controls.map(item => {
     const control = panel.controls[item.index];
     if (control === undefined) throw new Error("Shared Menu row lost its source control");
@@ -77,7 +87,7 @@ export function requestMenuLayout(panel: UiPanel, surfaceSize: PanelSize, style:
   }) }));
   const texts = shared.texts.map(({ chartText, legend, ...text }) => ({ ...text,
     ...(chartText == null ? {} : { chartText }), ...(legend == null ? {} : { legend }) }));
-  return Object.freeze({ panel, theme: style.theme, shared, surfaceSize: shared.source.surfaceSize,
+  return Object.freeze({ panel, theme, shared, surfaceSize: shared.source.surfaceSize,
     fontMeters: shared.source.fontMeters, font: shared.source.font, lineHeightMeters: shared.lineHeightMeters,
     paddingMeters: shared.paddingMeters, gapMeters: shared.gapMeters, rows, texts });
 }
@@ -93,14 +103,24 @@ export function layoutMeasuredMenu(request: MenuLayoutRequest, measurements: rea
     } catch { return { kind: "unavailable", reason: "invalid-text-metrics" }; }
     if (reply.kind === "unavailable") return reply;
     if (reply.kind !== "ready") throw new Error("Shared Menu arrangement returned an unexpected phase");
-    observed = { signature, geometry: reply.geometry, measurements: new Map(measurements.map(measurement => [
-      measurement.identity, { identity: measurement.identity, lines: Object.freeze(measurement.lines.map(line => Object.freeze({ ...line }))) }
-    ])) };
+    observed = { signature, geometry: reply.geometry, measurements: retainMeasurements(measurements) };
     const cached = documents.get(measurements) ?? new Map<Plan, MeasuredDocument>();
     cached.set(request.shared, observed);
     documents.set(measurements, cached);
   }
-  const { geometry, measurements: retained } = observed;
+  return projectMenuDocument(request, observed.geometry, observed.measurements);
+}
+
+function retainMeasurements(measurements: readonly MenuTextMeasurement[]): ReadonlyMap<string, MenuTextMeasurement> {
+  return new Map(measurements.map(measurement => [measurement.identity, { identity: measurement.identity,
+    lines: Object.freeze(measurement.lines.map(line => Object.freeze({ ...line }))) }]));
+}
+
+export function menuDocumentFromGeometry(request: MenuLayoutRequest, measurements: readonly MenuTextMeasurement[], geometry: Geometry): MenuDocumentResult {
+  return projectMenuDocument(request, geometry, retainMeasurements(measurements));
+}
+
+function projectMenuDocument(request: MenuLayoutRequest, geometry: Geometry, retained: ReadonlyMap<string, MenuTextMeasurement>): MenuDocumentResult {
   const placeText = (placed: Geometry["title"]): MenuTextLayout => {
     const text = request.texts[placed.textIndex];
     if (text === undefined) throw new Error("Shared Menu text lost its measurement request");

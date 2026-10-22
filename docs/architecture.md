@@ -150,6 +150,7 @@ GameUiView / GameUiFrame → platform renderer → DOM / VR panel / Bevy entity
 - 空間Menuのscroll・focus・入力世代はpresentationの`MenuSession`が所有する。Webのapp modelは読み取り専用の状態投影を保持し、開閉・scroll・focus・配置変更の観測を所有者へ渡す。
 - Menuの行・列割当、余白、文字計測要求、計測後のcontrol・chart・回転文字の配置は共有Rustが導出する。adapterは実フォントの計測結果を返し、共有座標を描画APIへ投影する。計測identityは表示内容・locale・surface・解決済み文字サイズ・font世代を含み、共有側が計測結果との対応を検査する。
 - Menu viewportは共有Rustがcontent clip・page操作領域・scroll量を導出する。矩形とpanel/document座標は一括で投影し、描画とpointer入力が同じclipを利用する。rangeの値はclip前のtrackに対応する。
+- 空間Menuの準備は共有Rustが両眼fitに応じた幅と、実測glyphの視角に応じた文字サイズを選ぶ。adapterは要求されたplanの実フォント計測を返し、共有側が対応する計測identityと可読性を認可して配置を確定する。
 - platformは表示API、フォント計測、safe area、OS/browserのfocus・visibility・機器観測を担当する。XRのcursor積分・押下edge・入力源切替・dwellは共有presentationが所有する。
 - ボタンIDや表示文字列から意味を再推定しない。
 

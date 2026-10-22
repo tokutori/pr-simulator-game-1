@@ -3,8 +3,15 @@
  * Layout result or a precise measurement failure.
  */
 export type MenuLayoutReply = {
-    readonly kind: "plan";
+    /**
+     * Bounded continuation index to return with the measurements.
+     */
+    readonly attempt: number;
+    readonly kind: "measure";
     readonly plan: MenuLayoutPlan;
+} | {
+    readonly kind: "plan";
+    readonly plan: MenuLayoutPlan1;
 } | {
     readonly geometry: MenuDocumentGeometry;
     readonly kind: "ready";
@@ -16,10 +23,10 @@ export type MenuLayoutReply = {
     /**
      * Reason for rejecting the layout.
      */
-    readonly reason: "missing-text-metrics" | "stale-text-metrics" | "invalid-text-metrics" | "invalid-layout";
+    readonly reason: "not-stereo" | "viewer-unavailable" | "unsupported-view-configuration" | "invalid-view-geometry" | "insufficient-view-area" | "insufficient-ink-angle" | "missing-text-metrics" | "stale-text-metrics" | "invalid-text-metrics" | "invalid-layout";
 };
 /**
- * Complete measurement contract.
+ * Complete fitted measurement contract.
  */
 export interface MenuLayoutPlan {
     /**
@@ -496,6 +503,32 @@ export interface MenuFont1 {
      * Font weight in the range 1 through 1000.
      */
     readonly weight: number;
+}
+/**
+ * Complete measurement contract.
+ */
+export interface MenuLayoutPlan1 {
+    /**
+     * Spacing between rows in metres.
+     */
+    readonly gapMeters: number;
+    /**
+     * Line spacing in metres.
+     */
+    readonly lineHeightMeters: number;
+    /**
+     * Inner padding in metres.
+     */
+    readonly paddingMeters: number;
+    /**
+     * Responsive section and control allocation.
+     */
+    readonly rows: readonly MenuRow[];
+    readonly source: MenuLayoutSource;
+    /**
+     * Ordered measurement requests or placed labels.
+     */
+    readonly texts: readonly MenuTextRequest[];
 }
 /**
  * Resolved document geometry.

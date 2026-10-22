@@ -455,6 +455,17 @@ pub struct MenuDocumentGeometry {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
 pub enum MenuLayoutQuery {
+    /// Fits a surface and requests real text observations until readable.
+    Prepare {
+        /// Requested content and initial typography.
+        source: MenuLayoutSource,
+        /// Same-frame stereo optics.
+        viewer: Box<crate::xr::XrViewerFrame>,
+        /// Physical panel pose relative to the menu anchor.
+        menu_from_panel: crate::camera::Pose,
+        /// Reply to the current requested candidate, or absent at opening.
+        observation: Option<MenuPreparationObservation>,
+    },
     /// Menu measurement planning phase.
     Plan {
         /// Compact source and typography observation.
@@ -485,6 +496,13 @@ pub enum MenuLayoutQuery {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
 pub enum MenuLayoutReply {
+    /// Requested real text measurement for the next preparation candidate.
+    Measure {
+        /// Bounded continuation index to return with the measurements.
+        attempt: usize,
+        /// Complete fitted measurement contract.
+        plan: MenuLayoutPlan,
+    },
     /// Menu measurement planning phase.
     Plan {
         /// Complete measurement contract.
@@ -505,6 +523,17 @@ pub enum MenuLayoutReply {
         /// Reason for rejecting the layout.
         reason: MenuLayoutFailure,
     },
+}
+
+/// One adapter observation of a requested preparation candidate.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct MenuPreparationObservation {
+    /// Candidate index supplied by the shared preparation result.
+    pub attempt: usize,
+    /// Actual text metrics for that candidate's exact measurement identities.
+    pub measurements: Vec<MenuTextMeasurement>,
 }
 
 /// Metric observations required to place a scrollable document on its surface.
@@ -569,6 +598,18 @@ pub struct MenuViewportProjection {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "kebab-case")]
 pub enum MenuLayoutFailure {
+    /// No stereo observation is available.
+    NotStereo,
+    /// Current tracking has no viewer pose.
+    ViewerUnavailable,
+    /// The runtime view arrangement is unsupported.
+    UnsupportedViewConfiguration,
+    /// Observed pose or projection is invalid.
+    InvalidViewGeometry,
+    /// The complete surface cannot fit into both views.
+    InsufficientViewArea,
+    /// Measured glyphs remain below the required angular size.
+    InsufficientInkAngle,
     /// A requested measurement is absent.
     MissingTextMetrics,
     /// A measurement identity is duplicated or belongs to another plan.

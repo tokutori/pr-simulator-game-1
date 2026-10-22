@@ -5741,6 +5741,36 @@
       "description": "Rejection class of a measured menu document.",
       "oneOf": [
         {
+          "const": "not-stereo",
+          "description": "No stereo observation is available.",
+          "type": "string"
+        },
+        {
+          "const": "viewer-unavailable",
+          "description": "Current tracking has no viewer pose.",
+          "type": "string"
+        },
+        {
+          "const": "unsupported-view-configuration",
+          "description": "The runtime view arrangement is unsupported.",
+          "type": "string"
+        },
+        {
+          "const": "invalid-view-geometry",
+          "description": "Observed pose or projection is invalid.",
+          "type": "string"
+        },
+        {
+          "const": "insufficient-view-area",
+          "description": "The complete surface cannot fit into both views.",
+          "type": "string"
+        },
+        {
+          "const": "insufficient-ink-angle",
+          "description": "Measured glyphs remain below the required angular size.",
+          "type": "string"
+        },
+        {
           "const": "missing-text-metrics",
           "description": "A requested measurement is absent.",
           "type": "string"
@@ -5813,6 +5843,32 @@
     "MenuLayoutReply": {
       "description": "Layout result or a precise measurement failure.",
       "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Requested real text measurement for the next preparation candidate.",
+          "properties": {
+            "attempt": {
+              "description": "Bounded continuation index to return with the measurements.",
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "measure",
+              "type": "string"
+            },
+            "plan": {
+              "$ref": "#/$defs/MenuLayoutPlan",
+              "description": "Complete fitted measurement contract."
+            }
+          },
+          "required": [
+            "kind",
+            "attempt",
+            "plan"
+          ],
+          "type": "object"
+        },
         {
           "additionalProperties": false,
           "description": "Menu measurement planning phase.",

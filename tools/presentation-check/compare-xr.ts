@@ -5,7 +5,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { currentSharedGameUiFixture, currentSharedHeadHudFixture } from "../game-check/shared-game-ui-fixture.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
-import { requestMenuLayout } from "../../web/src/presentation/menu-layout.js";
+import { menuLayoutRequest, requestMenuLayout } from "../../web/src/presentation/menu-layout.js";
 import { measureMenuLayout, menuCanvasSize } from "../../web/src/presentation/menu-canvas.js";
 import { HudCanvasFixture } from "./hud-canvas-fixture.js";
 import type { MenuLayoutQuery } from "../../web/src/generated/menu-layout-query.js";
@@ -119,6 +119,23 @@ function menuQueries(): MenuLayoutQuery[] {
           contentHeightMeters: geometry.contentHeightMeters, footerHeightMeters: geometry.footerHeightMeters, progress },
           rectangles, panel_points: [{ x: 0, y: 0 }, { x: -width, y: 1.8 }],
           document_points: [{ x: 0, y: 0 }, { x: 0.2, y: geometry.contentHeightMeters }] });
+        let observation: Extract<MenuLayoutQuery, { kind: "prepare" }>["observation"] = null;
+        const viewer = configuredViewerFixture(width > 1 ? 1280 : 720, width > 1 ? 720 : 1280);
+        let ready = false;
+        for (let attempt = 0; attempt <= 12; attempt++) {
+          const preparation: MenuLayoutQuery = { kind: "prepare", source: request.shared.source,
+            viewer, menu_from_panel: panel.localPose, observation };
+          queries.push(preparation);
+          const reply = JSON.parse(menu_layout_json(JSON.stringify(preparation))) as MenuLayoutReply;
+          if (reply.kind === "ready") { ready = true; break; }
+          assert.equal(reply.kind, "measure");
+          const requested = menuLayoutRequest(panel, shared.theme, reply.plan);
+          const canvas = menuCanvasSize(requested.surfaceSize);
+          const observed = measureMenuLayout(new HudCanvasFixture(), requested, canvas.width, canvas.height);
+          assert.equal(observed.kind, "ready");
+          observation = { attempt: reply.attempt, measurements: observed.measurements };
+        }
+        assert.ok(ready, "Menu preparation must reach a readable document");
       }
     }
   }

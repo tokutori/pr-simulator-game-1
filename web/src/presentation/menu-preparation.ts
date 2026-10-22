@@ -1,57 +1,51 @@
-import { composePose } from "../render/contracts/math.js";
 import type { MenuFontIdentity, MenuLayoutRequest, MenuTextMeasurement } from "../render/contracts/menu-layout.js";
 import type { MenuPresentation } from "../render/contracts/runtime.js";
 import type { MenuScrollContext, UiPanel } from "../render/contracts/ui.js";
 import type { ViewerFrame } from "../render/contracts/viewer-frame.js";
+import type { MenuLayoutQuery } from "../generated/menu-layout-query.js";
+import type { MenuLayoutReply } from "../generated/menu-layout-reply.js";
+import { menu_layout_json } from "../../pkg/birdman_game_wasm.js";
 import { menuCanvasSize, measureMenuLayout } from "./menu-canvas.js";
 import type { MenuDrawingContext } from "./menu-canvas.js";
-import { layoutMeasuredMenu, menuViewport, requestMenuLayout, validateMenuOpeningInk } from "./menu-layout.js";
-import { fitMenuView } from "./menu-view-fit.js";
+import { menuDocumentFromGeometry, menuLayoutRequest, menuLayoutSource, menuViewport } from "./menu-layout.js";
 
 export type MenuMeasurementCache = Map<string, readonly MenuTextMeasurement[]>;
 
 export function prepareMenuPresentation(context: MenuDrawingContext, panel: UiPanel, scroll: MenuScrollContext,
   progress: number, viewer: ViewerFrame, style: Readonly<{ theme: MenuLayoutRequest["theme"]; locale: string; caption: string; font: MenuFontIdentity }>, cache: MenuMeasurementCache): MenuPresentation {
-  if (panel.anchor !== "menu") return Object.freeze({ kind: "absent" });
-  if (viewer.source === "unavailable") return Object.freeze({ kind: "unavailable", reason: viewer.reason });
-  let surface = panel.size;
-  let fit = fitMenuView(viewer, surface, panel.localPose);
-  if (fit.kind === "unavailable") return fit;
-  for (let attempt = 0; attempt < 12 && fit.distanceMeters > 2.6 && surface.width > 0.35; attempt++) {
-    surface = Object.freeze({ width: Math.max(0.35, surface.width * 0.85), height: surface.height });
-    fit = fitMenuView(viewer, surface, panel.localPose);
-    if (fit.kind === "unavailable") return fit;
-  }
-  const compact = panel.size.height < 0.6;
-  const fittedPanel: UiPanel = Object.freeze({ ...panel, size: surface });
-  const layoutPanel: UiPanel = compact ? Object.freeze({ ...fittedPanel, title: "" }) : fittedPanel;
-  const dimensions = menuCanvasSize(surface);
-  const headFromSurface = composePose(fit.headFromMenu, panel.localPose);
-  let fontMeters = 0.035;
-  for (let attempt = 0; attempt < 12; attempt++, fontMeters *= 1.15) {
-    let request: MenuLayoutRequest;
-    try {
-      request = requestMenuLayout(layoutPanel, surface, { ...style, caption: compact ? "" : style.caption,
-        fontMeters, previousLabel: "前頁", nextLabel: "次頁" });
-    } catch (error) {
-      if (error instanceof RangeError) return Object.freeze({ kind: "unavailable", reason: "invalid-layout" });
-      throw error;
+  if (panel.anchor !== "menu") return { kind: "absent" };
+  const source = menuLayoutSource(panel, panel.size, { ...style, fontMeters: 0.035, previousLabel: "前頁", nextLabel: "次頁" });
+  let observation: Extract<MenuLayoutQuery, { kind: "prepare" }>["observation"] = null;
+  let request: MenuLayoutRequest | null = null;
+  for (;;) {
+    const query: MenuLayoutQuery = { kind: "prepare", source, viewer, menu_from_panel: panel.localPose, observation };
+    let reply: MenuLayoutReply;
+    try { reply = JSON.parse(menu_layout_json(JSON.stringify(query))) as MenuLayoutReply; }
+    catch (cause) {
+      if (typeof cause === "string" || cause instanceof RangeError) return { kind: "unavailable", reason: "invalid-layout" };
+      throw cause;
     }
-    const measurementKey = JSON.stringify([dimensions.width, dimensions.height, ...request.texts.map((text) => text.identity)]);
-    const stored = cache.get(measurementKey);
+    if (reply.kind === "unavailable") return reply;
+    if (reply.kind === "ready") {
+      const measured = observation?.measurements;
+      if (request === null || measured === undefined) throw new Error("Menu preparation lost its measurement request");
+      const document = menuDocumentFromGeometry(request, measured, reply.geometry);
+      if (document.kind === "unavailable") return document;
+      return { kind: "ready", panel: { ...panel, size: request.surfaceSize }, viewport: menuViewport(document.document, progress), context: scroll };
+    }
+    if (reply.kind !== "measure") throw new Error("Menu preparation returned an unexpected phase");
+    const fittedPanel = { ...panel, size: reply.plan.source.surfaceSize, title: reply.plan.source.title };
+    request = menuLayoutRequest(fittedPanel, style.theme, reply.plan);
+    const dimensions = menuCanvasSize(request.surfaceSize);
+    const key = JSON.stringify([dimensions.width, dimensions.height, ...request.texts.map(text => text.identity)]);
+    const stored = cache.get(key);
     const measurement = stored === undefined ? measureMenuLayout(context, request, dimensions.width, dimensions.height)
-      : Object.freeze({ kind: "ready" as const, measurements: stored });
+      : { kind: "ready" as const, measurements: stored };
     if (measurement.kind === "unavailable") return measurement;
     if (stored === undefined) {
       if (cache.size >= 32) cache.clear();
-      cache.set(measurementKey, measurement.measurements);
+      cache.set(key, measurement.measurements);
     }
-    const document = layoutMeasuredMenu(request, measurement.measurements);
-    if (document.kind === "unavailable") return document;
-    const readability = validateMenuOpeningInk(document.document, viewer, headFromSurface);
-    if (readability.kind === "ready") return Object.freeze({ kind: "ready", panel: fittedPanel,
-      viewport: menuViewport(document.document, progress), context: scroll });
-    if (readability.reason !== "insufficient-ink-angle") return readability;
+    observation = { attempt: reply.attempt, measurements: measurement.measurements };
   }
-  return Object.freeze({ kind: "unavailable", reason: "insufficient-ink-angle" });
 }
