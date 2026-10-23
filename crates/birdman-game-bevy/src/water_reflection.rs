@@ -28,7 +28,7 @@ pub(crate) fn spawn(world: &mut World, target: Handle<Image>, layer: usize) -> E
                 ..default()
             },
             RenderTarget::Image(target.into()),
-            RenderLayers::layer(layer + 1),
+            RenderLayers::none().with(layer + 1),
             Tonemapping::None,
             super::world::scene_exposure(),
             Msaa::Off,

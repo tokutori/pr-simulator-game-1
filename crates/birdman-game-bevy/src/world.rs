@@ -615,7 +615,7 @@ impl NativeGpu {
                                 assets.lighting.haze_range_meters,
                             ),
                         });
-                let layers = RenderLayers::layer(layer);
+                let layers = RenderLayers::none().with(layer);
                 let layers = if asset.attachment == ApplicationMeshAttachment::World {
                     layers
                 } else {
@@ -668,7 +668,7 @@ impl NativeGpu {
                     MeshMaterial3d(water[usize::from(far)].clone()),
                     Transform::IDENTITY,
                     Visibility::Visible,
-                    RenderLayers::layer(layer),
+                    RenderLayers::none().with(layer),
                     NotShadowCaster,
                     Aabb::from_min_max(
                         Vec3::from_array(chunk.bounds.minimum.map(|value| value as f32)),
@@ -695,7 +695,7 @@ impl NativeGpu {
                 MeshMaterial3d(water[2].clone()),
                 Transform::IDENTITY,
                 Visibility::Visible,
-                RenderLayers::layer(layer),
+                RenderLayers::none().with(layer),
                 NoFrustumCulling,
                 NotShadowCaster,
                 bevy::light::NotShadowReceiver,
@@ -717,7 +717,7 @@ impl NativeGpu {
                     minimum_distance: 0.0,
                     overlap_proportion: 0.0,
                 },
-                RenderLayers::layer(layer).with(layer + 1),
+                RenderLayers::none().with(layer).with(layer + 1),
                 Transform::IDENTITY,
             ))
             .id();
@@ -730,7 +730,7 @@ impl NativeGpu {
                     ..default()
                 },
                 RenderTarget::Image(output.clone().into()),
-                RenderLayers::layer(layer),
+                RenderLayers::none().with(layer),
                 Tonemapping::None,
                 scene_exposure(),
                 Msaa::Off,

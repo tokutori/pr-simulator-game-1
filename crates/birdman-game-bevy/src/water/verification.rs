@@ -30,6 +30,10 @@ const CASES: [(&str, WaterQuality, bool, bool, bool); 6] = [
 ];
 const PROBE_COUNT: usize = CASES.len() * ProbeOutput::ALL.len();
 
+fn probe_layers(index: usize) -> RenderLayers {
+    RenderLayers::none().with(128 + index)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum ProbeOutput {
     Displacement,
@@ -217,7 +221,7 @@ fn setup(
         };
         let bounds = Vec2::from_array(geometry.displacement_meters.map(|value| value as f32));
         for (output_index, output) in ProbeOutput::ALL.into_iter().enumerate() {
-            let layers = RenderLayers::layer(128 + case_index * 3 + output_index);
+            let layers = probe_layers(case_index * ProbeOutput::ALL.len() + output_index);
             let mut image = Image::new_target_texture(SIDE, SIDE, TextureFormat::Rgba32Float, None);
             image.texture_descriptor.usage |= TextureUsages::COPY_SRC;
             let image = images.add(image);
@@ -412,6 +416,14 @@ mod tests {
 
     #[test]
     fn clear_target_is_pending_and_valid_flat_outputs_are_accepted() {
+        for index in 0..PROBE_COUNT {
+            let layers = probe_layers(index);
+            assert_eq!(layers.iter().collect::<Vec<_>>(), [128 + index]);
+            assert!(!layers.intersects(&RenderLayers::default()));
+            for previous in 0..index {
+                assert!(!layers.intersects(&probe_layers(previous)));
+            }
+        }
         assert!(
             inspect_pixels(
                 &data([1000.0, 1000.0, 1000.0, 0.0]),
