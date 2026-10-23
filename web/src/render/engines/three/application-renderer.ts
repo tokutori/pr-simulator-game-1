@@ -59,7 +59,6 @@ export class ThreeApplicationRenderer {
   private readonly sources = new WeakMap<XRInputSource, number>();
   private readonly gamepad_generations = new Map<number, number>();
   private readonly sessions = new Map<number, XrHandle>();
-  private readonly sensors = new Map<number, () => void>();
   private readonly display_handles = new Set<number>();
   private readonly camera = new PerspectiveCamera();
   private readonly reflection_camera = new PerspectiveCamera();
@@ -117,7 +116,7 @@ export class ThreeApplicationRenderer {
   }
 
   ownsDisplay(id: number): boolean {
-    return this.sessions.has(id) || this.sensors.has(id) || this.display_handles.has(id);
+    return this.sessions.has(id) || this.display_handles.has(id);
   }
 
   prepare(request: PrepareRequest): void {
@@ -441,16 +440,15 @@ export class ThreeApplicationRenderer {
         });
       } else if (request.mode === "phone_vr") {
         const orientation = DeviceOrientationEvent as typeof DeviceOrientationEvent & { requestPermission?: (absolute: boolean) => Promise<PermissionState> };
-        const motion = DeviceMotionEvent as typeof DeviceMotionEvent & { requestPermission?: () => Promise<PermissionState> };
-        let permissions: readonly Promise<PermissionState>[];
-        try { permissions = [orientation.requestPermission?.(true) ?? Promise.resolve("granted"), motion.requestPermission?.() ?? Promise.resolve("granted")]; }
+        let permission: Promise<PermissionState>;
+        try { permission = orientation.requestPermission?.(true) ?? Promise.resolve("granted"); }
         catch (cause) {
           this.notify({ kind: "display_completed", request_id: request.request_id, completion: { kind: "failed", cause: errorMessage(cause) } });
           return;
         }
-        void Promise.all(permissions).then(values => {
+        void permission.then(value => {
           this.notify({ kind: "display_completed", request_id: request.request_id,
-            completion: values.every(value => value === "granted") ? { kind: "permission_granted" } : { kind: "failed", cause: "Sensor permission denied" } });
+            completion: value === "granted" ? { kind: "permission_granted" } : { kind: "failed", cause: "Sensor permission denied" } });
         }, (cause: unknown) => {
           this.notify({ kind: "display_completed", request_id: request.request_id, completion: { kind: "failed", cause: errorMessage(cause) } });
         });
@@ -517,7 +515,6 @@ export class ThreeApplicationRenderer {
     }
     const id = request.request_id;
     try {
-      if (request.mode === "phone_vr") this.listenSensors(id);
       this.display_id = id;
       this.display_handles.add(id);
       this.renderer.xr.enabled = false;
@@ -529,37 +526,8 @@ export class ThreeApplicationRenderer {
     this.notify({ kind: "display_completed", request_id: request.request_id, completion: { kind: "started", resource_id: id } });
   }
 
-  private listenSensors(id: number): void {
-    const orientation = (event: DeviceOrientationEvent): void => {
-      this.notify({ kind: "phone_orientation", resource_id: id, observation: { alpha: event.alpha, beta: event.beta, gamma: event.gamma,
-        absolute: event.absolute, source: event.type === "deviceorientationabsolute" ? "absolute_orientation" : "orientation",
-        timestamp_ms: event.timeStamp, screen_angle_degrees: screen.orientation.angle, sample_id: null } });
-    };
-    const motion = (event: DeviceMotionEvent): void => {
-      const acceleration = event.acceleration;
-      const gravity = event.accelerationIncludingGravity;
-      this.notify({ kind: "phone_motion", resource_id: id, observation: {
-        acceleration: [acceleration?.x ?? null, acceleration?.y ?? null, acceleration?.z ?? null],
-        acceleration_including_gravity: [gravity?.x ?? null, gravity?.y ?? null, gravity?.z ?? null], timestamp_ms: event.timeStamp, sample_id: null } });
-    };
-    const rotation = (): void => { this.notify({ kind: "phone_screen_rotation", resource_id: id, angle_degrees: screen.orientation.angle }); };
-    window.addEventListener("deviceorientation", orientation);
-    window.addEventListener("deviceorientationabsolute", orientation);
-    window.addEventListener("devicemotion", motion);
-    screen.orientation.addEventListener("change", rotation);
-    this.sensors.set(id, () => {
-      window.removeEventListener("deviceorientation", orientation);
-      window.removeEventListener("deviceorientationabsolute", orientation);
-      window.removeEventListener("devicemotion", motion);
-      screen.orientation.removeEventListener("change", rotation);
-    });
-  }
-
   private async stopDisplay(id: number | null): Promise<void> {
     const failures: unknown[] = [];
-    const sensor = id === null ? undefined : this.sensors.get(id);
-    if (id !== null) this.sensors.delete(id);
-    try { sensor?.(); } catch (cause) { failures.push(cause); }
     if (id === null || this.display_id === id) {
       this.display_id = null;
       try { this.renderer.setAnimationLoop(null); } catch (cause) { failures.push(cause); }

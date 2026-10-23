@@ -3,7 +3,7 @@ use super::surface::{ApplicationSpatialProjection, ApplicationSurfaceObservation
 use super::{
     ApplicationGraphicsObservation, ApplicationGraphicsProjection, ApplicationGraphicsTarget,
     ApplicationRendererObservation, ApplicationResourceCommit, DisplayCompletion, DisplayRequest,
-    PhoneMotionObservation, PhoneOrientationObservation,
+    PhoneMotionObservation, PhoneOrientationObservation, PhoneSensorApiObservation,
 };
 use birdman_game_app::application::{ApplicationError, FlightFrameError, XrVisibility};
 use birdman_game_app::environment_snapshot::{EnvironmentIdentity, EnvironmentSnapshotError};
@@ -23,8 +23,8 @@ use serde::{Deserialize, Serialize};
 pub struct ApplicationCapabilities {
     /// Runtime can create a tracked head-mounted display.
     pub hmd_available: bool,
-    /// Browser provides the required phone sensor APIs.
-    pub phone_vr_available: bool,
+    /// Raw orientation API and permission-method availability, absent without the required browser APIs.
+    pub phone_sensors: Option<PhoneSensorApiObservation>,
     /// Drawing adapter supports record plots.
     pub analysis_available: bool,
     /// Drawing adapter supports recorded playback.
@@ -145,6 +145,20 @@ pub struct ApplicationSpatialObservation {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ApplicationInput {
+    /// Terminal result of attaching the exact requested sensor subscription.
+    PhoneSensorsStarted {
+        #[doc = "Owner-issued sensor subscription identity."]
+        resource_id: u32,
+        #[doc = "Original subscription failure, absent after successful attachment."]
+        failure: Option<String>,
+    },
+    /// Terminal result of detaching the exact requested sensor subscription.
+    PhoneSensorsStopped {
+        #[doc = "Owner-issued sensor subscription identity."]
+        resource_id: u32,
+        #[doc = "Original cleanup failure, absent after successful detachment."]
+        failure: Option<String>,
+    },
     /// A drawing API operation failed independently of a graphics-context loss event.
     RendererFailed {
         #[doc = "Actual renderer lifetime reporting the failure."]
@@ -374,6 +388,16 @@ pub enum ApplicationInput {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ApplicationRequest {
+    /// Subscribe to raw phone observations without changing the active display.
+    StartPhoneSensors {
+        #[doc = "Owner-issued sensor subscription identity."]
+        resource_id: u32,
+    },
+    /// Detach the exact raw sensor subscription and report its terminal result.
+    StopPhoneSensors {
+        #[doc = "Owner-issued sensor subscription identity."]
+        resource_id: u32,
+    },
     /// Aborts the exact record transaction or pending open and reports its terminal result.
     CancelRecordIo {
         #[doc = "Original storage operation identity."]

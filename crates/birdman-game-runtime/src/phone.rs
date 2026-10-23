@@ -1,7 +1,36 @@
+use crate::ApplicationRequest;
 use birdman_game_presentation::camera::{
     CameraError, Pose, Quaternion, Vector3, compose_pose, inverse_pose,
 };
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+
+/// Browser orientation API observations before a sensor sample is available.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct PhoneSensorApiObservation {
+    /// The orientation constructor exposes a gesture-only permission method.
+    pub permission_required: bool,
+    /// Raw screen rotation, absent when the browser cannot provide it.
+    pub screen_angle_degrees: Option<f64>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Availability {
+    Unavailable,
+    Unchecked,
+    Probing(u32),
+    Available,
+    PermissionRequired,
+}
+
+struct Subscription {
+    display: Option<u32>,
+    started: bool,
+    stopping: bool,
+    stopped: bool,
+}
 
 /// Browser event source, before selection of a gravity reference.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -88,6 +117,10 @@ pub struct PhoneTrackingProjection {
 }
 
 pub(super) struct PhoneTracking {
+    api: Option<bool>,
+    availability: Availability,
+    probe_deadline_ms: f64,
+    subscriptions: BTreeMap<u32, Subscription>,
     resource_id: Option<u32>,
     deadline_ms: f64,
     source: Option<PhoneOrientationSource>,
@@ -101,6 +134,10 @@ pub(super) struct PhoneTracking {
 impl Default for PhoneTracking {
     fn default() -> Self {
         Self {
+            api: None,
+            availability: Availability::Unavailable,
+            probe_deadline_ms: 0.0,
+            subscriptions: BTreeMap::new(),
             resource_id: None,
             deadline_ms: 0.0,
             source: None,
@@ -119,16 +156,177 @@ impl Default for PhoneTracking {
 }
 
 impl PhoneTracking {
+    pub(super) fn configure(&mut self, observation: Option<PhoneSensorApiObservation>) {
+        let api = observation
+            .filter(|api| api.screen_angle_degrees.is_some_and(f64::is_finite))
+            .map(|api| api.permission_required);
+        if self.api != api {
+            self.api = api;
+            self.availability = match api {
+                None => Availability::Unavailable,
+                Some(true) => Availability::PermissionRequired,
+                Some(false) => Availability::Unchecked,
+            };
+            if api.is_none() && self.resource_id.is_some() {
+                self.unavailable(PhoneTrackingReason::InvalidSample);
+            }
+        }
+    }
+
+    pub(super) fn available(&self) -> bool {
+        matches!(
+            self.availability,
+            Availability::Available | Availability::PermissionRequired
+        ) && !self
+            .subscriptions
+            .values()
+            .any(|subscription| subscription.display.is_none())
+    }
+
+    pub(super) fn needs_subscription(&self) -> bool {
+        if matches!(
+            self.projection.reason,
+            Some(
+                PhoneTrackingReason::InvalidSample
+                    | PhoneTrackingReason::InvalidTimestamp
+                    | PhoneTrackingReason::ReferenceChanged
+                    | PhoneTrackingReason::InitialSampleTimeout
+            )
+        ) {
+            return false;
+        }
+        match self.resource_id {
+            Some(display) => !self.subscriptions.values().any(|subscription| {
+                subscription.display == Some(display) && !subscription.stopping
+            }),
+            None => self.availability == Availability::Unchecked && self.subscriptions.is_empty(),
+        }
+    }
+
+    pub(super) fn subscribe(&mut self, resource_id: u32, requests: &mut Vec<ApplicationRequest>) {
+        if self.resource_id.is_none() {
+            self.availability = Availability::Probing(resource_id);
+        }
+        self.subscriptions.insert(
+            resource_id,
+            Subscription {
+                display: self.resource_id,
+                started: false,
+                stopping: false,
+                stopped: false,
+            },
+        );
+        requests.push(ApplicationRequest::StartPhoneSensors { resource_id });
+    }
+
+    pub(super) fn release_unused(&mut self, requests: &mut Vec<ApplicationRequest>) {
+        for (&resource_id, subscription) in &mut self.subscriptions {
+            let desired = if subscription.display.is_some() {
+                subscription.display == self.resource_id
+            } else {
+                self.resource_id.is_none()
+                    && self.availability == Availability::Probing(resource_id)
+            };
+            if !desired && !subscription.stopping {
+                subscription.stopping = true;
+                requests.push(ApplicationRequest::StopPhoneSensors { resource_id });
+            }
+        }
+    }
+
+    pub(super) fn started(
+        &mut self,
+        resource_id: u32,
+        failure: Option<&str>,
+        now_ms: f64,
+        requests: &mut Vec<ApplicationRequest>,
+    ) -> bool {
+        let Some(subscription) = self.subscriptions.get_mut(&resource_id) else {
+            return false;
+        };
+        if subscription.started {
+            return false;
+        }
+        subscription.started = true;
+        if failure.is_none() && !subscription.stopping {
+            if self.availability == Availability::Probing(resource_id) {
+                self.probe_deadline_ms = now_ms + 1_500.0;
+            } else if subscription.display.is_some() && subscription.display == self.resource_id {
+                self.deadline_ms = now_ms + 3_000.0;
+            }
+        }
+        if failure.is_some() {
+            if !subscription.stopping {
+                subscription.stopping = true;
+                requests.push(ApplicationRequest::StopPhoneSensors { resource_id });
+            }
+            if subscription.display.is_none() {
+                self.availability = Availability::Unavailable;
+            } else {
+                self.unavailable(PhoneTrackingReason::InvalidSample);
+            }
+        }
+        let subscription = self.subscriptions.get_mut(&resource_id).unwrap();
+        if subscription.stopping && subscription.stopped {
+            subscription.stopped = false;
+            requests.push(ApplicationRequest::StopPhoneSensors { resource_id });
+        }
+        self.release_unused(requests);
+        true
+    }
+
+    pub(super) fn stopped(&mut self, resource_id: u32, failure: Option<&str>) -> bool {
+        let Some(subscription) = self
+            .subscriptions
+            .get_mut(&resource_id)
+            .filter(|subscription| subscription.stopping && !subscription.stopped)
+        else {
+            return false;
+        };
+        subscription.stopped = true;
+        if failure.is_some() {
+            self.availability = Availability::Unavailable;
+        }
+        if subscription.started {
+            self.subscriptions.remove(&resource_id);
+        }
+        true
+    }
+
+    pub(super) fn close(&mut self, requests: &mut Vec<ApplicationRequest>) {
+        self.availability = Availability::Unavailable;
+        self.end();
+        self.release_unused(requests);
+    }
+
+    fn active_subscription(&self, resource_id: u32) -> bool {
+        self.resource_id.is_some()
+            && self
+                .subscriptions
+                .get(&resource_id)
+                .is_some_and(|subscription| {
+                    subscription.display == self.resource_id
+                        && subscription.started
+                        && !subscription.stopping
+                })
+    }
     pub(super) fn resource(&self) -> Option<u32> {
         self.resource_id
     }
 
-    pub(super) fn begin(&mut self, resource_id: u32, now_ms: f64) {
-        *self = Self {
-            resource_id: Some(resource_id),
-            deadline_ms: now_ms + 3_000.0,
-            ..Self::default()
-        };
+    pub(super) fn begin(&mut self, resource_id: u32) {
+        self.end();
+        self.resource_id = Some(resource_id);
+    }
+
+    pub(super) fn end(&mut self) {
+        self.resource_id = None;
+        self.source = None;
+        self.orientation = None;
+        self.motion = None;
+        self.tracking_from_reference = None;
+        self.absolute_reference = None;
+        self.projection = Self::default().projection;
     }
 
     pub(super) fn projection(&self) -> PhoneTrackingProjection {
@@ -136,7 +334,17 @@ impl PhoneTracking {
     }
 
     pub(super) fn deadline(&self) -> Option<f64> {
-        (self.resource_id.is_some()
+        if let Availability::Probing(resource_id) = self.availability {
+            return self
+                .subscriptions
+                .get(&resource_id)
+                .filter(|subscription| subscription.started && !subscription.stopping)
+                .map(|_| self.probe_deadline_ms);
+        }
+        (self
+            .subscriptions
+            .keys()
+            .any(|resource_id| self.active_subscription(*resource_id))
             && self.projection.last_valid_head.is_none()
             && self.projection.reason != Some(PhoneTrackingReason::InitialSampleTimeout))
         .then_some(self.deadline_ms)
@@ -148,7 +356,28 @@ impl PhoneTracking {
         sample: PhoneOrientationObservation,
         now_ms: f64,
     ) {
-        if self.resource_id != Some(resource_id)
+        if self.availability == Availability::Probing(resource_id) {
+            if self
+                .subscriptions
+                .get(&resource_id)
+                .is_some_and(|subscription| subscription.started && !subscription.stopping)
+                && now_ms < self.probe_deadline_ms
+                && sample.absolute
+                && valid_timestamp(sample.timestamp_ms, now_ms)
+                && [
+                    sample.alpha,
+                    sample.beta,
+                    sample.gamma,
+                    sample.screen_angle_degrees,
+                ]
+                .into_iter()
+                .all(|value| value.is_some_and(f64::is_finite))
+            {
+                self.availability = Availability::Available;
+            }
+            return;
+        }
+        if !self.active_subscription(resource_id)
             || self.source.is_some_and(|source| source != sample.source)
             || self.projection.reason == Some(PhoneTrackingReason::InitialSampleTimeout)
         {
@@ -190,7 +419,7 @@ impl PhoneTracking {
         sample: PhoneMotionObservation,
         now_ms: f64,
     ) {
-        if self.resource_id != Some(resource_id)
+        if !self.active_subscription(resource_id)
             || self.projection.reason == Some(PhoneTrackingReason::InitialSampleTimeout)
         {
             return;
@@ -209,7 +438,7 @@ impl PhoneTracking {
     }
 
     pub(super) fn screen_changed(&mut self, resource_id: u32, angle: Option<f64>) {
-        if self.resource_id != Some(resource_id)
+        if !self.active_subscription(resource_id)
             || self.projection.reason == Some(PhoneTrackingReason::InitialSampleTimeout)
         {
             return;
@@ -225,7 +454,19 @@ impl PhoneTracking {
     }
 
     pub(super) fn observe_time(&mut self, now_ms: f64) {
-        if self.resource_id.is_some()
+        if let Availability::Probing(resource_id) = self.availability
+            && self
+                .subscriptions
+                .get(&resource_id)
+                .is_some_and(|subscription| subscription.started && !subscription.stopping)
+            && now_ms >= self.probe_deadline_ms
+        {
+            self.availability = Availability::Unavailable;
+        }
+        if self
+            .subscriptions
+            .keys()
+            .any(|resource_id| self.active_subscription(*resource_id))
             && self.projection.last_valid_head.is_none()
             && now_ms >= self.deadline_ms
         {
@@ -506,9 +747,87 @@ mod tests {
     }
 
     #[test]
+    fn availability_probe_requires_finite_absolute_sample_before_deadline_and_defers_gesture_permission()
+     {
+        let api = PhoneSensorApiObservation {
+            permission_required: false,
+            screen_angle_degrees: Some(0.0),
+        };
+        let mut probe = PhoneTracking::default();
+        probe.configure(Some(api));
+        assert!(!probe.available());
+        assert!(probe.needs_subscription());
+        let mut requests = Vec::new();
+        probe.subscribe(41, &mut requests);
+        assert!(probe.deadline().is_none());
+        probe.observe_time(5_000.0);
+        probe.observe_orientation(41, sample(5_000.0, true), 5_000.0);
+        assert!(!probe.available());
+        assert!(probe.deadline().is_none());
+        probe.started(41, None, 5_000.0, &mut requests);
+        probe.observe_orientation(
+            41,
+            PhoneOrientationObservation {
+                alpha: None,
+                ..sample(5_010.0, true)
+            },
+            5_010.0,
+        );
+        probe.observe_orientation(41, sample(5_020.0, false), 5_020.0);
+        assert_eq!(probe.deadline(), Some(6_500.0));
+        assert!(!probe.available());
+        probe.observe_orientation(41, sample(6_499.0, true), 6_499.0);
+        probe.release_unused(&mut requests);
+        assert!(matches!(
+            requests.last(),
+            Some(ApplicationRequest::StopPhoneSensors { resource_id: 41 })
+        ));
+        assert!(!probe.available());
+        assert!(probe.stopped(41, None));
+        assert!(probe.available());
+        probe.configure(Some(api));
+        assert!(!probe.needs_subscription());
+        let mut expired = PhoneTracking::default();
+        expired.configure(Some(api));
+        expired.subscribe(42, &mut requests);
+        expired.started(42, None, 0.0, &mut requests);
+        expired.observe_orientation(42, sample(1_500.0, true), 1_500.0);
+        assert!(!expired.available());
+        expired.observe_time(1_500.0);
+        expired.release_unused(&mut requests);
+        assert!(matches!(
+            requests.last(),
+            Some(ApplicationRequest::StopPhoneSensors { resource_id: 42 })
+        ));
+        expired.configure(Some(api));
+        assert!(!expired.needs_subscription());
+        let mut permission = PhoneTracking::default();
+        permission.configure(Some(PhoneSensorApiObservation {
+            permission_required: true,
+            ..api
+        }));
+        assert!(permission.available());
+        assert!(!permission.needs_subscription());
+        assert!(permission.deadline().is_none());
+        let mut active = PhoneTracking::default();
+        active.begin(70);
+        active.subscribe(71, &mut requests);
+        active.observe_time(10_000.0);
+        active.observe_orientation(71, sample(10_000.0, true), 10_000.0);
+        assert!(active.deadline().is_none());
+        assert!(!active.projection().available);
+        active.started(71, None, 10_000.0, &mut requests);
+        assert_eq!(active.deadline(), Some(13_000.0));
+        active.observe_orientation(71, sample(10_001.0, true), 10_001.0);
+        assert!(active.projection().available);
+    }
+
+    #[test]
     fn raw_orientation_and_yaw_recenter_preserve_gravity_pitch_roll_and_last_valid_head() {
         let mut tracker = PhoneTracking::default();
-        tracker.begin(7, 0.0);
+        tracker.begin(7);
+        tracker.subscribe(7, &mut Vec::new());
+        tracker.started(7, None, 0.0, &mut Vec::new());
         let initial = sample(10.0, true);
         tracker.observe_orientation(7, initial, 10.0);
         let first = tracker.projection().last_valid_head.unwrap();
@@ -584,7 +903,9 @@ mod tests {
     #[test]
     fn relative_calibration_uses_only_coherent_raw_motion_and_retains_the_vertical_basis() {
         let mut tracker = PhoneTracking::default();
-        tracker.begin(9, 0.0);
+        tracker.begin(9);
+        tracker.subscribe(9, &mut Vec::new());
+        tracker.started(9, None, 0.0, &mut Vec::new());
         let orientation = PhoneOrientationObservation {
             sample_id: Some(42),
             alpha: Some(0.0),
@@ -655,7 +976,9 @@ mod tests {
         let vertical = tracker.projection().last_valid_head;
         assert!(tracker.recenter().unwrap().is_none());
         assert_eq!(tracker.projection().last_valid_head, vertical);
-        tracker.begin(10, 100.0);
+        tracker.begin(10);
+        tracker.subscribe(10, &mut Vec::new());
+        tracker.started(10, None, 100.0, &mut Vec::new());
         tracker.observe_time(3_100.0);
         tracker.observe_orientation(
             10,

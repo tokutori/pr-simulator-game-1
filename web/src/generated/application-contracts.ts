@@ -8,6 +8,26 @@ export type MenuFontStyle = "normal" | "italic";
  */
 export type ApplicationInput = {
     /**
+     * Original subscription failure, absent after successful attachment.
+     */
+    readonly failure?: string | null;
+    readonly kind: "phone_sensors_started";
+    /**
+     * Owner-issued sensor subscription identity.
+     */
+    readonly resource_id: number;
+} | {
+    /**
+     * Original cleanup failure, absent after successful detachment.
+     */
+    readonly failure?: string | null;
+    readonly kind: "phone_sensors_stopped";
+    /**
+     * Owner-issued sensor subscription identity.
+     */
+    readonly resource_id: number;
+} | {
+    /**
      * Original platform diagnostic.
      */
     readonly cause: string;
@@ -1271,6 +1291,20 @@ export type ApplicationLifecycle = "running" | "closing" | "drained";
  * Ordered platform operations produced by the application owner.
  */
 export type ApplicationRequest = {
+    readonly kind: "start_phone_sensors";
+    /**
+     * Owner-issued sensor subscription identity.
+     */
+    readonly resource_id: number;
+    readonly [k: string]: unknown | undefined;
+} | {
+    readonly kind: "stop_phone_sensors";
+    /**
+     * Owner-issued sensor subscription identity.
+     */
+    readonly resource_id: number;
+    readonly [k: string]: unknown | undefined;
+} | {
     readonly kind: "cancel_record_io";
     /**
      * Original storage operation identity.
@@ -2031,9 +2065,9 @@ export interface ApplicationCapabilities {
      */
     readonly hmd_available: boolean;
     /**
-     * Browser provides the required phone sensor APIs.
+     * Raw orientation API and permission-method availability, absent without the required browser APIs.
      */
-    readonly phone_vr_available: boolean;
+    readonly phone_sensors?: PhoneSensorApiObservation | null;
     /**
      * Drawing adapter supports recorded playback.
      */
@@ -2046,6 +2080,19 @@ export interface ApplicationCapabilities {
      * Camera rigs supported by the drawing adapter.
      */
     readonly supported_replay_cameras: readonly GameUiReplayCamera[];
+}
+/**
+ * Browser orientation API observations before a sensor sample is available.
+ */
+export interface PhoneSensorApiObservation {
+    /**
+     * The orientation constructor exposes a gesture-only permission method.
+     */
+    readonly permission_required: boolean;
+    /**
+     * Raw screen rotation, absent when the browser cannot provide it.
+     */
+    readonly screen_angle_degrees?: number | null;
 }
 /**
  * Measured or initially assumed chart content dimensions in logical pixels.

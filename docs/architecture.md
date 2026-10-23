@@ -167,6 +167,7 @@ GameUiView / GameUiFrame → platform renderer → DOM / VR panel / Bevy entity
 - 文字折返しは共有Rustが明示改行・Unicode文字列・符号付きink幅から決める。フォント観測callbackは要求された文字列全体を計測し、advance・bearing・ascent/descentをメートル単位で返す。Webは同期呼出し中だけCanvas観測を提供し、共有処理が行とparagraphを確定する。
 - platformは表示API、フォント計測、safe area、OS/browserのfocus・visibility・機器観測を担当する。Native UIは入力とentity寿命の管理、View/Frameのwidget投影、chart描画、HUD描画をmodule境界で分ける。XRのcursor積分・押下edge・入力源切替・dwellは共有presentationが所有する。
 - 共有UIの表示modeはScreen・Hmd・PhoneVrとし、HMDの利用可否とMenuの再配置能力をadapterが観測する。WebはHmdをWebXRへ変換し、共有UIが公開した能力から切替・再配置Actionを認可する。
+- Phone VRの可用性は共有Runtimeが所有する。権限要求APIのない環境では、起動準備の完了後に購読し、実購読の成功通知から1,500 ms以内に生の絶対姿勢と画面回転の有限値を確認し、購読解除後に切替を認可する。権限要求APIのある環境では利用者の切替操作から権限を要求する。起動時確認と表示中のセンサー購読は同じI/O要求と完了認可を使い、表示中の初回姿勢待ちは実購読の成功通知から3,000 msとする。終了時は解除の終端を待つ。
 - ボタンIDや表示文字列から意味を再推定しない。
 
 - menuは順序付きsectionとrow/column/gridを持つ。

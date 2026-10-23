@@ -164,6 +164,18 @@ pub(crate) fn update(world: &mut World) {
                 continue;
             }
             match request {
+                ApplicationRequest::StartPhoneSensors { resource_id } => {
+                    queue.push_back(ApplicationInput::PhoneSensorsStarted {
+                        resource_id,
+                        failure: Some("This native adapter has no phone sensor API".to_owned()),
+                    });
+                }
+                ApplicationRequest::StopPhoneSensors { resource_id } => {
+                    queue.push_back(ApplicationInput::PhoneSensorsStopped {
+                        resource_id,
+                        failure: None,
+                    });
+                }
                 ApplicationRequest::ScheduleWake { request_id, at_ms } => {
                     world
                         .resource_mut::<NativeIo>()

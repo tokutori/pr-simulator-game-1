@@ -48,7 +48,7 @@ pub use types::*;
 pub use display::{DisplayCompletion, DisplayRequest, DisplayState};
 pub use phone::{
     PhoneMotionObservation, PhoneOrientationObservation, PhoneOrientationSource,
-    PhoneTrackingProjection, PhoneTrackingReason,
+    PhoneSensorApiObservation, PhoneTrackingProjection, PhoneTrackingReason,
 };
 
 use birdman_game_app::application::{
@@ -145,13 +145,15 @@ impl ApplicationRuntime {
             .map_err(ApplicationRuntimeError::Graphics)?;
         let surface_observation = observation.surface;
         let capabilities = observation.capabilities;
+        let mut phone = phone::PhoneTracking::default();
+        phone.configure(capabilities.phone_sensors);
         let platform = GameUiPlatformInput {
             viewport: observation.viewport,
             chart_extent: observation.chart_extent,
             presentation_mode: GameUiPresentationMode::Screen,
             operation_pending: false,
             hmd_available: capabilities.hmd_available,
-            phone_vr_available: capabilities.phone_vr_available,
+            phone_vr_available: phone.available(),
             menu_recenter_available: false,
             analysis_available: capabilities.analysis_available,
             replay_available: capabilities.replay_available,
@@ -178,7 +180,7 @@ impl ApplicationRuntime {
             resource_readiness: BackendReadiness::Preparing,
             resources: None,
             observed_ms: 0.0,
-            phone: phone::PhoneTracking::default(),
+            phone,
             phone_wake: None,
             page_visible: true,
             page_frozen: false,
@@ -244,6 +246,8 @@ impl ApplicationRuntime {
                     | ApplicationInput::RendererReleased { .. }
                     | ApplicationInput::DisplayCompleted { .. }
                     | ApplicationInput::DisplayReleased { .. }
+                    | ApplicationInput::PhoneSensorsStarted { .. }
+                    | ApplicationInput::PhoneSensorsStopped { .. }
                     | ApplicationInput::RecordIoCancelled { .. }
                     | ApplicationInput::RecordSaveObserved { .. }
                     | ApplicationInput::RecordPreviewObserved { .. }
@@ -276,6 +280,25 @@ impl ApplicationRuntime {
         let mut spatial_frame = None;
         let mut render_spatial = false;
         match input {
+            ApplicationInput::PhoneSensorsStarted {
+                resource_id,
+                failure,
+            } => {
+                if self
+                    .phone
+                    .started(resource_id, failure.as_deref(), observed_ms, &mut requests)
+                {
+                    self.diagnostic = failure;
+                }
+            }
+            ApplicationInput::PhoneSensorsStopped {
+                resource_id,
+                failure,
+            } => {
+                if self.phone.stopped(resource_id, failure.as_deref()) {
+                    self.diagnostic = failure;
+                }
+            }
             ApplicationInput::RendererFailed {
                 renderer_resource_id,
                 cause,
@@ -672,7 +695,7 @@ impl ApplicationRuntime {
                 self.platform.chart_extent = observation.chart_extent;
                 let capabilities = observation.capabilities;
                 self.platform.hmd_available = capabilities.hmd_available;
-                self.platform.phone_vr_available = capabilities.phone_vr_available;
+                self.phone.configure(capabilities.phone_sensors);
                 self.platform.analysis_available = capabilities.analysis_available;
                 self.platform.replay_available = capabilities.replay_available;
                 self.platform.supported_replay_cameras = capabilities.supported_replay_cameras;
@@ -805,6 +828,9 @@ impl ApplicationRuntime {
                 BackendReadiness::Failed(_) => boot::BootOwner::Failed,
                 BackendReadiness::Preparing => boot::BootOwner::Preparing,
             };
+            if matches!(self.boot, boot::BootOwner::Ready) {
+                self.synchronize_phone(&mut requests)?;
+            }
         }
         if !self.spatial_input_focused() {
             self.surface.retire_input();
@@ -1002,6 +1028,10 @@ impl ApplicationRuntime {
         self.boot = boot::BootOwner::Closed;
         self.page_visible = false;
         self.storage.close();
+        self.phone.close(requests);
+        if let Some(request_id) = self.phone_wake.take() {
+            requests.push(ApplicationRequest::CancelWake { request_id });
+        }
         requests.extend(self.assets.select(None));
         requests.extend(
             self.display
@@ -1320,15 +1350,24 @@ impl ApplicationRuntime {
         .then(|| self.display.active_resource())
         .flatten();
         if self.phone.resource() != resource {
-            self.phone = phone::PhoneTracking::default();
+            self.phone.end();
             if let Some(resource_id) = resource {
-                self.phone.begin(resource_id, self.observed_ms);
+                self.phone.begin(resource_id);
             }
             if let Some(request_id) = self.phone_wake.take() {
                 requests.push(ApplicationRequest::CancelWake { request_id });
             }
         }
         self.phone.observe_time(self.observed_ms);
+        self.phone.release_unused(requests);
+        if !self.shutdown.closed()
+            && (resource.is_some() || matches!(self.boot, boot::BootOwner::Ready))
+            && self.phone.needs_subscription()
+        {
+            let resource_id = self.allocate_request()?;
+            self.phone.subscribe(resource_id, requests);
+        }
+        self.platform.phone_vr_available = self.phone.available();
         let failure = match self.phone.projection().reason {
             Some(PhoneTrackingReason::InitialSampleTimeout) => {
                 Some("端末姿勢を取得できなかったため通常画面へ戻る。")

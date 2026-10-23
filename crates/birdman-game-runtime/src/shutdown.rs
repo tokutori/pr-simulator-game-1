@@ -22,6 +22,8 @@ pub enum ApplicationLifecycle {
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Operation {
+    StartPhone(u32),
+    StopPhone(u32),
     Renderer(u32),
     ReleaseRenderer(u32),
     Prepare(u32),
@@ -85,6 +87,12 @@ impl ShutdownOwner {
     pub(super) fn observe(&mut self, input: &ApplicationInput) -> bool {
         let previous = self.pending.len();
         let operation = match input {
+            ApplicationInput::PhoneSensorsStarted { resource_id, .. } => {
+                Some(Operation::StartPhone(*resource_id))
+            }
+            ApplicationInput::PhoneSensorsStopped { resource_id, .. } => {
+                Some(Operation::StopPhone(*resource_id))
+            }
             ApplicationInput::RendererCreated { request_id, .. } => {
                 Some(Operation::Renderer(*request_id))
             }
@@ -164,6 +172,12 @@ impl ShutdownOwner {
     pub(super) fn requests(&mut self, requests: &[ApplicationRequest]) {
         for request in requests {
             let operation = match request {
+                ApplicationRequest::StartPhoneSensors { resource_id } => {
+                    Some(Operation::StartPhone(*resource_id))
+                }
+                ApplicationRequest::StopPhoneSensors { resource_id } => {
+                    Some(Operation::StopPhone(*resource_id))
+                }
                 ApplicationRequest::CreateRenderer { request_id } => {
                     Some(Operation::Renderer(*request_id))
                 }

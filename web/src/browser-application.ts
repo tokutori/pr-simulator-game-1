@@ -19,6 +19,7 @@ export class BrowserApplication {
   private readonly records: BrowserFlightRecordStore;
   private readonly timers = new Map<number, ReturnType<typeof setTimeout>>();
   private readonly renderers = new Map<number, ThreeApplicationRenderer>();
+  private readonly phoneSensors = new Map<number, () => void>();
   private readonly measurement: CanvasRenderingContext2D;
   private readonly documentStyle: MutationObserver;
   private fontGeneration = 0;
@@ -198,6 +199,17 @@ export class BrowserApplication {
           completion: { kind: "failed", cause: "Requested display resource handle is unavailable" } });
         break;
       }
+      case "start_phone_sensors": {
+        this.startPhoneSensors(request.resource_id);
+        break;
+      }
+      case "stop_phone_sensors": {
+        const detach = this.phoneSensors.get(request.resource_id);
+        let failure: string | null = detach === undefined ? "Requested phone sensor subscription is unavailable" : null;
+        try { detach?.(); this.phoneSensors.delete(request.resource_id); } catch (cause) { failure = errorMessage(cause); }
+        this.observe({ kind: "phone_sensors_stopped", resource_id: request.resource_id, failure });
+        break;
+      }
       case "read_record":
       case "begin_record_preview":
       case "record_preview":
@@ -228,6 +240,48 @@ export class BrowserApplication {
       }
       case "reload_application": window.location.reload(); break;
     }
+  }
+
+  private startPhoneSensors(id: number): void {
+    if (this.phoneSensors.has(id)) {
+      this.observe({ kind: "phone_sensors_started", resource_id: id, failure: "Phone sensor subscription already exists" });
+      return;
+    }
+    const orientation = (event: DeviceOrientationEvent): void => {
+      this.observe({ kind: "phone_orientation", resource_id: id, observation: { alpha: event.alpha, beta: event.beta, gamma: event.gamma,
+        absolute: event.absolute, source: event.type === "deviceorientationabsolute" ? "absolute_orientation" : "orientation",
+        timestamp_ms: event.timeStamp, screen_angle_degrees: screen.orientation.angle, sample_id: null } });
+    };
+    const motion = (event: DeviceMotionEvent): void => {
+      const acceleration = event.acceleration;
+      const gravity = event.accelerationIncludingGravity;
+      this.observe({ kind: "phone_motion", resource_id: id, observation: {
+        acceleration: [acceleration?.x ?? null, acceleration?.y ?? null, acceleration?.z ?? null],
+        acceleration_including_gravity: [gravity?.x ?? null, gravity?.y ?? null, gravity?.z ?? null], timestamp_ms: event.timeStamp, sample_id: null } });
+    };
+    const rotation = (): void => { this.observe({ kind: "phone_screen_rotation", resource_id: id, angle_degrees: screen.orientation.angle }); };
+    const detach = (): void => {
+      const failures: unknown[] = [];
+      for (const remove of [() => { window.removeEventListener("deviceorientation", orientation); },
+        () => { window.removeEventListener("deviceorientationabsolute", orientation); },
+        () => { window.removeEventListener("devicemotion", motion); }, () => { screen.orientation.removeEventListener("change", rotation); }]) {
+        try { remove(); } catch (cause) { failures.push(cause); }
+      }
+      if (failures.length > 0) throw new AggregateError(failures, "Phone sensor subscription cleanup failed");
+    };
+    let failure: string | null = null;
+    try {
+      this.phoneSensors.set(id, detach);
+      window.addEventListener("deviceorientation", orientation);
+      window.addEventListener("deviceorientationabsolute", orientation);
+      if (typeof window.DeviceMotionEvent === "function") window.addEventListener("devicemotion", motion);
+      screen.orientation.addEventListener("change", rotation);
+    } catch (cause) {
+      let result = cause;
+      try { detach(); this.phoneSensors.delete(id); } catch (cleanup) { result = new AggregateError([cause, cleanup], "Phone sensor subscription failed"); }
+      failure = errorMessage(result);
+    }
+    this.observe({ kind: "phone_sensors_started", resource_id: id, failure });
   }
 
   private readonly onPlatform = (): void => { this.observe({ kind: "platform", observation: this.platform() }); };
@@ -264,7 +318,9 @@ export class BrowserApplication {
     this.mount.ownerDocument.fonts.removeEventListener("loadingdone", this.onFontLoaded);
     this.documentStyle.disconnect();
     const failures: unknown[] = [];
-    for (const release of [() => { this.screen.dispose(); }, () => { this.records.dispose(); }, () => { this.download.dispose(); }, () => { owner?.free(); }]) {
+    const sensors = [...this.phoneSensors.values()];
+    this.phoneSensors.clear();
+    for (const release of [...sensors, () => { this.screen.dispose(); }, () => { this.records.dispose(); }, () => { this.download.dispose(); }, () => { owner?.free(); }]) {
       try { release(); } catch (cause) { failures.push(cause); }
     }
     if (failures.length > 0) console.error(new AggregateError(failures, "Browser resource cleanup failed"));

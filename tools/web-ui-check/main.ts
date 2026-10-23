@@ -128,6 +128,9 @@ async function verify(activeBrowser: Browser): Promise<void> {
       return { renderer: String(gl.getParameter(debug?.UNMASKED_RENDERER_WEBGL ?? gl.RENDERER)), version: String(gl.getParameter(gl.VERSION)), userAgent: navigator.userAgent };
     });
     await pair("title");
+    const phoneVr = { disabled: await control("boot-enter-phone-vr").isDisabled(), label: await control("boot-enter-phone-vr").innerText() };
+    report.phoneVr = phoneVr;
+    assert.equal(phoneVr.disabled, true, "Desktop without orientation samples must keep Phone VR unavailable");
     checks.push("Title: production scene pixels and controls at HD/FHD");
     await click("game-title-start");
     await scene("FlightSetup");

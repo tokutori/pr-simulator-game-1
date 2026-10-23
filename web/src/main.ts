@@ -24,7 +24,10 @@ try {
     analysis_available: true,
     flight_log_available: typeof URL.createObjectURL === "function",
     hmd_available: hmd,
-    phone_vr_available: window.isSecureContext && "DeviceOrientationEvent" in window && "DeviceMotionEvent" in window && "orientation" in screen,
+    phone_sensors: window.isSecureContext && "DeviceOrientationEvent" in window && "orientation" in screen ? {
+      permission_required: typeof (DeviceOrientationEvent as typeof DeviceOrientationEvent & { requestPermission?: unknown }).requestPermission === "function",
+      screen_angle_degrees: screen.orientation.angle
+    } : null,
     replay_available: true,
     stored_records_available: "indexedDB" in window,
     supported_replay_cameras: ["auto", "pilot", "chase", "orbit", "platform", "shore", "overhead", "side", "front", "telephoto"]

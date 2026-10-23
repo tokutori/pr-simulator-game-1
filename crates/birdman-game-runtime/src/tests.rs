@@ -11,7 +11,7 @@ fn no_text_metrics(_: &ApplicationTextProbe) -> Result<ApplicationGlyphMetrics, 
 #[test]
 fn dispose_drains_atomic_bind_record_cancellation_and_release_before_renderer_destruction() {
     for binding_lost in [false, true] {
-        let platform = ApplicationPlatformObservation {
+        let mut platform = ApplicationPlatformObservation {
             renderer: Some(renderer_observation()),
             surface: None,
             viewport: GameUiViewport {
@@ -22,6 +22,10 @@ fn dispose_drains_atomic_bind_record_cancellation_and_release_before_renderer_de
             chart_extent: None,
             capabilities: ApplicationCapabilities {
                 stored_records_available: true,
+                phone_sensors: binding_lost.then_some(PhoneSensorApiObservation {
+                    permission_required: false,
+                    screen_angle_degrees: Some(0.0),
+                }),
                 ..Default::default()
             },
         };
@@ -32,7 +36,7 @@ fn dispose_drains_atomic_bind_record_cancellation_and_release_before_renderer_de
                 observation: platform.clone(),
             })
             .unwrap();
-        let preparation = initial
+        let boot_preparation = initial
             .requests
             .iter()
             .find_map(|request| match request {
@@ -45,6 +49,33 @@ fn dispose_drains_atomic_bind_record_cancellation_and_release_before_renderer_de
             .iter()
             .find_map(|request| match request {
                 ApplicationRequest::BeginRecordPreview { request_id, .. } => Some(*request_id),
+                _ => None,
+            })
+            .unwrap();
+        assert!(
+            !initial
+                .requests
+                .iter()
+                .any(|request| matches!(request, ApplicationRequest::StartPhoneSensors { .. }))
+        );
+        let boot_resource = 10_000 + boot_preparation;
+        let ready = resources_ready(&mut runtime, boot_preparation).unwrap();
+        let sensor = ready.requests.iter().find_map(|request| match request {
+            ApplicationRequest::StartPhoneSensors { resource_id } => Some(*resource_id),
+            _ => None,
+        });
+        assert_eq!(sensor.is_some(), binding_lost);
+        platform.renderer.as_mut().unwrap().screen_extent_px[0] += 2;
+        let next = runtime
+            .observe_test(ApplicationInput::Platform {
+                observation: platform.clone(),
+            })
+            .unwrap();
+        let preparation = next
+            .requests
+            .iter()
+            .find_map(|request| match request {
+                ApplicationRequest::PrepareResources { request_id, .. } => Some(*request_id),
                 _ => None,
             })
             .unwrap();
@@ -85,12 +116,52 @@ fn dispose_drains_atomic_bind_record_cancellation_and_release_before_renderer_de
                 Some("bind and rollback failed")
             );
             assert!(failed.drawing.unwrap().graphics.resource.is_none());
+            assert!(failed.requests.iter().any(|request| matches!(request, ApplicationRequest::ReleaseResources { resource_id } if *resource_id == boot_resource)));
+            runtime
+                .observe_test(ApplicationInput::ResourcesReleased {
+                    resource_id: boot_resource,
+                    failure: None,
+                })
+                .unwrap();
             Some(request_id)
         } else {
             None
         };
         let closing = runtime.observe_test(ApplicationInput::Dispose).unwrap();
+        if let Some(sensor) = sensor {
+            assert!(closing.requests.iter().any(|request| matches!(request, ApplicationRequest::StopPhoneSensors { resource_id } if *resource_id == sensor)));
+            let stopped = runtime
+                .observe_test(ApplicationInput::PhoneSensorsStopped {
+                    resource_id: sensor,
+                    failure: None,
+                })
+                .unwrap();
+            assert_eq!(stopped.lifecycle, ApplicationLifecycle::Closing);
+            let late = runtime
+                .observe_test(ApplicationInput::PhoneSensorsStarted {
+                    resource_id: sensor,
+                    failure: None,
+                })
+                .unwrap();
+            assert_eq!(late.lifecycle, ApplicationLifecycle::Closing);
+            assert!(late.requests.iter().any(|request| matches!(request, ApplicationRequest::StopPhoneSensors { resource_id } if *resource_id == sensor)));
+            runtime
+                .observe_test(ApplicationInput::PhoneSensorsStopped {
+                    resource_id: sensor,
+                    failure: None,
+                })
+                .unwrap();
+        }
         assert_eq!(closing.lifecycle, ApplicationLifecycle::Closing);
+        if !binding_lost {
+            assert!(closing.requests.iter().any(|request| matches!(request, ApplicationRequest::ReleaseResources { resource_id } if *resource_id == boot_resource)));
+            runtime
+                .observe_test(ApplicationInput::ResourcesReleased {
+                    resource_id: boot_resource,
+                    failure: None,
+                })
+                .unwrap();
+        }
         assert!(closing.requests.iter().any(|request| matches!(request, ApplicationRequest::CancelRecordIo { request_id } if *request_id == preview)));
         assert!(
             !closing
@@ -829,7 +900,10 @@ fn started_display(mode: GameUiPresentationMode) -> (ApplicationRuntime, Applica
         },
         chart_extent: None,
         capabilities: ApplicationCapabilities {
-            phone_vr_available: true,
+            phone_sensors: Some(PhoneSensorApiObservation {
+                permission_required: true,
+                screen_angle_degrees: Some(0.0),
+            }),
             hmd_available: true,
             ..Default::default()
         },
@@ -887,7 +961,7 @@ fn started_display(mode: GameUiPresentationMode) -> (ApplicationRuntime, Applica
             _ => None,
         })
         .expect("Expected sensor and stereo resource creation");
-    let active = runtime
+    let mut active = runtime
         .update(
             ApplicationObservation {
                 observed_ms: 10_000.0,
@@ -899,6 +973,25 @@ fn started_display(mode: GameUiPresentationMode) -> (ApplicationRuntime, Applica
             &mut no_text_metrics,
         )
         .unwrap();
+    if let Some(sensor) = active.requests.iter().find_map(|request| match request {
+        ApplicationRequest::StartPhoneSensors { resource_id } => Some(*resource_id),
+        _ => None,
+    }) {
+        let started = runtime
+            .update(
+                ApplicationObservation {
+                    observed_ms: 10_000.0,
+                    input: ApplicationInput::PhoneSensorsStarted {
+                        resource_id: sensor,
+                        failure: None,
+                    },
+                },
+                &mut no_text_metrics,
+            )
+            .unwrap();
+        active.requests.extend(started.requests);
+        active.drawing = started.drawing;
+    }
     (runtime, active)
 }
 
@@ -1178,7 +1271,10 @@ fn hmd_frame_and_focus_use_the_confirmed_display_resource_and_shared_viewer_capt
                         chart_extent: None,
                         capabilities: ApplicationCapabilities {
                             hmd_available: true,
-                            phone_vr_available: true,
+                            phone_sensors: Some(PhoneSensorApiObservation {
+                                permission_required: true,
+                                screen_angle_degrees: Some(0.0),
+                            }),
                             ..Default::default()
                         },
                     },
