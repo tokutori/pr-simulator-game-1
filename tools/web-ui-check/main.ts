@@ -5,12 +5,21 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { chromium } from "playwright-core";
 import type { Browser, Page } from "playwright-core";
+import type { ApplicationRuntimeBridge } from "../../web/pkg/birdman_game_wasm.js";
+import type { ApplicationInput, ApplicationObservation, ApplicationOutput, ApplicationRequest } from "../../web/src/generated/application-contracts.js";
 
 declare global {
   interface Window {
     __graphicsLosses: number;
     __recoveryRead: { requestSucceeded: boolean; aborts: number; error: string | null };
     __recoveryGpu: { framebufferFailures: number; partialTextureCreated: boolean; partialTextureDeletes: number; partialFramebufferCreated: boolean; partialFramebufferDeletes: number; canvas: HTMLCanvasElement | OffscreenCanvas | null };
+    __recoveryCompile: {
+      hold: boolean; polls: number; heldReadyPolls: number; contextLost: boolean;
+      textureDeletes: number; framebufferDeletes: number; requestId: number | null;
+      inputs: Extract<ApplicationInput, { kind: "resources" }>[];
+      requests: Extract<ApplicationRequest, { kind: "cancel_resources" | "commit_resources" }>[];
+      restore(): void;
+    };
   }
 }
 
@@ -272,8 +281,112 @@ async function verify(activeBrowser: Browser): Promise<void> {
       report.recoveryGpu = partial;
       assert.deepEqual(partial, { framebufferFailures: 1, partialTextureCreated: true, partialTextureDeletes: 1,
         partialFramebufferCreated: true, partialFramebufferDeletes: 1 }, "Failed GPU candidate did not release its partial texture and framebuffer exactly once");
-      phase = "renderer-retry";
+      phase = "delayed-compilation";
+      const supported = await page.evaluate(async () => {
+        const canvas = document.querySelector<HTMLCanvasElement>(".presentation-canvas");
+        const gl = canvas?.getContext("webgl2");
+        if (gl == null) throw new Error("Recovery renderer context is unavailable");
+        const extension = gl.getExtension("KHR_parallel_shader_compile");
+        if (extension === null) return false;
+        const prototype = WebGL2RenderingContext.prototype;
+        const getProgramParameter = Object.getOwnPropertyDescriptor(prototype, "getProgramParameter")?.value as WebGL2RenderingContext["getProgramParameter"] | undefined;
+        const deleteTexture = Object.getOwnPropertyDescriptor(prototype, "deleteTexture")?.value as WebGL2RenderingContext["deleteTexture"] | undefined;
+        const deleteFramebuffer = Object.getOwnPropertyDescriptor(prototype, "deleteFramebuffer")?.value as WebGL2RenderingContext["deleteFramebuffer"] | undefined;
+        const framebufferTexture2D = Object.getOwnPropertyDescriptor(prototype, "framebufferTexture2D")?.value as WebGL2RenderingContext["framebufferTexture2D"] | undefined;
+        const runtime = await import(new URL("pkg/birdman_game_wasm.js", location.href).href) as typeof import("../../web/pkg/birdman_game_wasm.js");
+        const update = Object.getOwnPropertyDescriptor(runtime.ApplicationRuntimeBridge.prototype, "update")?.value as ApplicationRuntimeBridge["update"] | undefined;
+        if (getProgramParameter === undefined || deleteTexture === undefined || deleteFramebuffer === undefined || framebufferTexture2D === undefined || update === undefined) throw new Error("Recovery I/O observation APIs are unavailable");
+        let texture: WebGLTexture | null = null;
+        let framebuffer: WebGLFramebuffer | null = null;
+        const observed: Window["__recoveryCompile"] = { hold: true, polls: 0, heldReadyPolls: 0, contextLost: false,
+          textureDeletes: 0, framebufferDeletes: 0, requestId: null, inputs: [], requests: [], restore() {
+            observed.hold = false;
+            for (const [name, value] of [["getProgramParameter", getProgramParameter], ["deleteTexture", deleteTexture],
+              ["deleteFramebuffer", deleteFramebuffer], ["framebufferTexture2D", framebufferTexture2D]] as const) {
+              Object.defineProperty(prototype, name, { configurable: true, writable: true, value });
+            }
+            runtime.ApplicationRuntimeBridge.prototype.update = update;
+            canvas?.removeEventListener("webglcontextlost", lost[0]);
+          } };
+        window.__recoveryCompile = observed;
+        const lost: [() => void] = [() => { observed.contextLost = true; observed.hold = false; }];
+        canvas?.addEventListener("webglcontextlost", lost[0]);
+        runtime.ApplicationRuntimeBridge.prototype.update = function (this: ApplicationRuntimeBridge, ...args: Parameters<typeof update>): ReturnType<typeof update> {
+          const result = Reflect.apply(update, this, args);
+          const input = (JSON.parse(args[0]) as ApplicationObservation).input;
+          const output = JSON.parse(result) as ApplicationOutput;
+          if (observed.requestId === null) observed.requestId = output.requests.find(request => request.kind === "prepare_resources")?.request_id ?? null;
+          if (input.kind === "resources" && input.request_id === observed.requestId) observed.inputs.push(input);
+          for (const request of output.requests) if ((request.kind === "cancel_resources" || request.kind === "commit_resources") && request.request_id === observed.requestId) observed.requests.push(request);
+          return result;
+        };
+        Object.defineProperty(prototype, "framebufferTexture2D", { configurable: true, writable: true,
+          value(this: WebGL2RenderingContext, target: number, attachment: number, textureTarget: number, candidate: WebGLTexture | null, level: number): void {
+            Reflect.apply(framebufferTexture2D, this, [target, attachment, textureTarget, candidate, level]);
+            if (this === gl && target === this.FRAMEBUFFER && attachment === this.COLOR_ATTACHMENT0 && textureTarget === this.TEXTURE_2D && candidate !== null && level === 0) {
+              const binding: unknown = this.getParameter(this.FRAMEBUFFER_BINDING);
+              if (binding instanceof WebGLFramebuffer) {
+                texture = candidate;
+                framebuffer = binding;
+                Object.defineProperty(prototype, "framebufferTexture2D", { configurable: true, writable: true, value: framebufferTexture2D });
+              }
+            }
+          }
+        });
+        Object.defineProperty(prototype, "deleteTexture", { configurable: true, writable: true, value(this: WebGL2RenderingContext, candidate: WebGLTexture | null): void {
+          Reflect.apply(deleteTexture, this, [candidate]);
+          if (this === gl && candidate !== null && candidate === texture) observed.textureDeletes++;
+        } });
+        Object.defineProperty(prototype, "deleteFramebuffer", { configurable: true, writable: true, value(this: WebGL2RenderingContext, candidate: WebGLFramebuffer | null): void {
+          Reflect.apply(deleteFramebuffer, this, [candidate]);
+          if (this === gl && candidate !== null && candidate === framebuffer) observed.framebufferDeletes++;
+        } });
+        Object.defineProperty(prototype, "getProgramParameter", { configurable: true, writable: true, value(this: WebGL2RenderingContext, program: WebGLProgram, parameter: number): unknown {
+          const result: unknown = Reflect.apply(getProgramParameter, this, [program, parameter]);
+          if (this === gl && parameter === extension.COMPLETION_STATUS_KHR) {
+            observed.polls++;
+            if (this.isContextLost()) lost[0]();
+            if (observed.hold && result === true) { observed.heldReadyPolls++; return false; }
+          }
+          return result;
+        } });
+        return true;
+      });
+      report.recoveryCompile = { supported, status: supported ? "pending" : "unavailable", verified: false };
       await click("game-boot-retry");
+      if (supported) {
+        await page.waitForFunction(() => window.__recoveryCompile.heldReadyPolls > 0 && window.__recoveryCompile.requestId !== null);
+        await page.setViewportSize({ width: 1440, height: 900 });
+        await page.waitForFunction(() => window.__recoveryCompile.requests.some(request => request.kind === "cancel_resources"));
+        const held = await page.evaluate(() => ({ requestId: window.__recoveryCompile.requestId,
+          polls: window.__recoveryCompile.polls, heldReadyPolls: window.__recoveryCompile.heldReadyPolls,
+          textureDeletes: window.__recoveryCompile.textureDeletes, framebufferDeletes: window.__recoveryCompile.framebufferDeletes,
+          requests: window.__recoveryCompile.requests, inputs: window.__recoveryCompile.inputs }));
+        report.recoveryCompile = { supported, status: "pending", verified: false, held };
+        assert.equal(held.textureDeletes, 0, "Cancelled preparation released its texture before real compilation completed");
+        assert.equal(held.framebufferDeletes, 0, "Cancelled preparation released its framebuffer before real compilation completed");
+        assert.equal(held.requests.filter(request => request.kind === "cancel_resources").length, 1);
+        assert.equal(held.requests.filter(request => request.kind === "commit_resources").length, 0);
+        assert.equal(held.inputs.length, 0, "Held preparation reported a terminal before real compilation completed");
+        await page.evaluate(() => { window.__recoveryCompile.hold = false; });
+        await page.waitForFunction(() => window.__recoveryCompile.inputs.some(input => input.observation.kind === "cancelled"));
+        await scene("Title");
+        const completed = await page.evaluate(() => {
+          const observed = window.__recoveryCompile;
+          observed.restore();
+          return { requestId: observed.requestId, polls: observed.polls, heldReadyPolls: observed.heldReadyPolls,
+            contextLost: observed.contextLost, textureDeletes: observed.textureDeletes, framebufferDeletes: observed.framebufferDeletes,
+            requests: observed.requests, inputs: observed.inputs };
+        });
+        report.recoveryCompile = { supported, status: "pending", verified: false, held, completed };
+        assert.equal(completed.contextLost, false);
+        assert.equal(completed.textureDeletes, 1);
+        assert.equal(completed.framebufferDeletes, 1);
+        assert.equal(completed.requests.filter(request => request.kind === "cancel_resources").length, 1);
+        assert.equal(completed.requests.filter(request => request.kind === "commit_resources").length, 0);
+        assert.equal(completed.inputs.length, 1);
+        assert.equal(completed.inputs[0]?.observation.kind, "cancelled");
+      }
       await scene("Title");
       assert.equal(await page.getByText("描画資源を準備できない。", { exact: true }).count(), 0, "Recovered Title retained the Boot resource failure notification");
       assert.equal(await page.locator(".presentation-canvas").count(), 1, "GPU retry duplicated the renderer canvas");
@@ -283,6 +396,15 @@ async function verify(activeBrowser: Browser): Promise<void> {
       report.recoveryGpu = { ...partial, ...retried };
       assert.deepEqual(retried, { partialTextureDeletes: 1, partialFramebufferDeletes: 1, candidateRetryRetainedCanvas: true }, "GPU candidate retry changed partial cleanup or recreated the renderer canvas");
       checks.push("Startup recovery: one failed WASM request, public reload, one failed WebGL2 acquisition, one failed initial renderer observation, one failed framebuffer attachment with partial texture/framebuffer cleanup and public Boot retries");
+      if (supported) {
+        Object.assign(report.recoveryCompile as object, { status: "verified", verified: true });
+        checks.push("Delayed real shader completion: public resize cancels the same preparation, retains its texture/framebuffer until terminal, then releases each once without commit");
+        await page.setViewportSize({ width: 1280, height: 720 });
+        await page.waitForFunction(() => {
+          const canvas = document.querySelector<HTMLCanvasElement>(".presentation-canvas");
+          return canvas !== null && !canvas.hidden && canvas.width > 0 && canvas.height > 0 && canvas.width * 9 === canvas.height * 16;
+        });
+      }
     }
     await scene("Title");
     phase = "normal";

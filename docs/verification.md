@@ -421,6 +421,7 @@ npm run measure:web-auto -- http://127.0.0.1:4202/pr-simulator-game-1/ target/we
 - 水面品質Low/Medium/Highを公開UIで切り替え、準備完了後の描画を確認する。`--without-gpu-timer`は実拡張取得を非対応へ置き換えるI/O条件である。Autoの採否と準備認可は共有Rustが所有する。
 - downloadは実browserからJSON原文とCSVを保存し、Replayからの再出力とbyte一致を確認する。RetryからBriefing、SetupからTitleへの操作到達性を検査する。
 - `--recovery`はWASM要求・初回WebGL2取得・初回renderer観測・framebuffer設定・Titleからの保存記録readonly transactionへ各1回の実I/O障害を注入し、公開再読み込み・Boot再試行・同じ記録の再選択から回復する。部分GPU texture・framebufferの解放、候補再試行でのcanvas再利用、日本語案内、実GPU表示、Replay/分析、原JSON/CSVのbyte一致を確認し、期待した障害診断はphase・原文・件数を照合して記録する。
+- 実`KHR_parallel_shader_compile`対応環境では初回compileの完了配送を保留し、公開resizeによる取消と遅着終端・候補資源の解放を確認し、非対応時は追加観測を`unavailable`（未検証）として記録して他の回復受入を継続する。
 - 画面のWebGL2画素、context loss、console、全HTTP失敗URL、配信WASMのHTTP200とSHA-256を記録する。視覚的な品質は保存画像の確認と合わせて受け入れる。
 - `--allow-dirty`は基準HEAD・repository全体の`source.patch`・差分SHA-256を保存する。新規sourceはindexへ認識させ、検査前後のHEAD・差分・untracked集合・WASM hashを照合する。出力先はrepository外またはignored directoryを使用する。
 - 共有波・天空・機体・座標・clip・実測文字の数値契約はRustの担当moduleで検査する。WebXRのengine境界は実WebXRManagerと集約ownerの代表結合試験で検査し、本番の内部ownerや描画producerへCUI専用操作を追加しない。
