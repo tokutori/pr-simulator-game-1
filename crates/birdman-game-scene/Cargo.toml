@@ -6,6 +6,9 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+schema = ["dep:schemars"]
+
 [dependencies]
 birdman-game-app.workspace = true
 birdman-game-content.workspace = true
@@ -13,7 +16,8 @@ birdman-game-core.workspace = true
 birdman-game-format.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-image = { version = "=0.25.10", default-features = false }
+schemars = { workspace = true, optional = true }
+image = { version = "=0.25.10", default-features = false, features = ["png"] }
 earcut = "=0.4.10"
 
 [dev-dependencies]

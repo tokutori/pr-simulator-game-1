@@ -1,4 +1,4 @@
-//! Web-reference indigo main-wing pixels; decoding and GPU resources belong to adapters.
+//! Deterministic indigo wing pixels, registered alpha composition and linear-light mipmaps.
 
 use image::{DynamicImage, GrayImage, RgbaImage, imageops, metadata::Cicp};
 

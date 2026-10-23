@@ -12,6 +12,7 @@ const NOISE_DERIVATIVE_FACTOR: f64 = 48.861639589;
 
 /// Float32-compatible mesh spacing domain used by the bounded wave packet projection.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct LakeMeshSpacingDomain {
     minimum: f64,
@@ -147,6 +148,7 @@ pub fn lake_wave_displacement_derivative_bound(
 
 /// Canonical uploads and derivative bounds for the existing finite Web wave packets.
 #[derive(Clone, Debug, PartialEq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct LakeWaveProjection {
     wave_k_amplitude: [[f32; 4]; MAX_LAKE_WAVE_COMPONENTS],

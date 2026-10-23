@@ -1584,6 +1584,7 @@ dependencies = [
  "birdman-game-format",
  "earcut",
  "image",
+ "schemars",
  "serde",
  "serde_json",
  "sha2",

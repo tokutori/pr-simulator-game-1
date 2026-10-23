@@ -155,6 +155,88 @@ impl<'definition> AirframeStructure<'definition> {
     pub const fn bending_factor(&self) -> Option<WingBendingFactor> {
         self.factor
     }
+
+    pub(crate) fn into_prepared(self) -> PreparedStructure<'definition> {
+        PreparedStructure {
+            definition: self.definition,
+            meshes: self.meshes,
+            factor: self.factor,
+        }
+    }
+}
+
+/// Immutable structural topology without construction or deformation scratch buffers.
+pub struct PreparedStructure<'definition> {
+    definition: &'definition AircraftDefinition,
+    meshes: Vec<StructuralMesh>,
+    factor: Option<WingBendingFactor>,
+}
+
+impl<'definition> PreparedStructure<'definition> {
+    /// Borrows the prepared physical attachment and material batches.
+    pub fn meshes(&self) -> &[StructuralMesh] {
+        &self.meshes
+    }
+
+    pub(crate) fn frame(&self) -> StructuralFrame<'_, 'definition> {
+        StructuralFrame {
+            geometry: self,
+            physical: self
+                .definition
+                .structural_geometry()
+                .neutral_vertices()
+                .to_vec(),
+            positions: self
+                .meshes
+                .iter()
+                .map(|mesh| {
+                    (mesh.attachment == StructuralAttachment::MainWing)
+                        .then(|| mesh.positions.clone())
+                })
+                .collect(),
+            factor: self.factor,
+        }
+    }
+}
+
+pub(crate) struct StructuralFrame<'geometry, 'definition> {
+    geometry: &'geometry PreparedStructure<'definition>,
+    physical: Vec<BodyPoint>,
+    positions: Vec<Option<Vec<[f32; 3]>>>,
+    factor: Option<WingBendingFactor>,
+}
+
+impl StructuralFrame<'_, '_> {
+    pub(crate) fn update(&mut self, factor: WingBendingFactor) -> Result<bool, ShapeError> {
+        if self.factor == Some(factor) {
+            return Ok(false);
+        }
+        self.factor = None;
+        self.geometry.definition.write_structural_vertices(
+            factor,
+            TailIncidence::neutral(),
+            &mut self.physical,
+        )?;
+        for (mesh, positions) in self.geometry.meshes.iter().zip(&mut self.positions) {
+            if let Some(positions) = positions {
+                for (source, position) in mesh.sources.iter().zip(positions) {
+                    *position = local_position(self.physical[*source], mesh.origin)?;
+                }
+            }
+        }
+        self.factor = Some(factor);
+        Ok(true)
+    }
+
+    pub(crate) fn positions(&self, index: usize) -> Option<&[[f32; 3]]> {
+        self.factor?;
+        self.positions.get(index)?.as_deref().or_else(|| {
+            self.geometry
+                .meshes
+                .get(index)
+                .map(StructuralMesh::positions)
+        })
+    }
 }
 
 fn point_to_render(point: BodyPoint) -> [f64; 3] {
