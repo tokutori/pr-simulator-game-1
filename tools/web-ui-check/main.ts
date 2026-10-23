@@ -10,7 +10,7 @@ declare global {
   interface Window {
     __graphicsLosses: number;
     __recoveryRead: { requestSucceeded: boolean; aborts: number; error: string | null };
-    __recoveryGpu: { framebufferFailures: number; partialTextureCreated: boolean; partialTextureDeletes: number; canvas: HTMLCanvasElement | OffscreenCanvas | null };
+    __recoveryGpu: { framebufferFailures: number; partialTextureCreated: boolean; partialTextureDeletes: number; partialFramebufferCreated: boolean; partialFramebufferDeletes: number; canvas: HTMLCanvasElement | OffscreenCanvas | null };
   }
 }
 
@@ -223,49 +223,65 @@ async function verify(activeBrowser: Browser): Promise<void> {
       await snapshot(page, "recovery-renderer-observation-failed", false);
       assert.equal(await page.locator(".presentation-canvas").count(), 0, "Failed renderer observation retained its canvas");
       phase = "framebuffer-failure";
-      expectedDiagnostics.push({ phase, source: "console", text: "AggregateError: GPU resource creation failed (Error: Injected framebuffer creation failure)", observed: [] });
+      expectedDiagnostics.push({ phase, source: "console", text: "AggregateError: GPU resource creation failed (Error: Injected framebuffer attachment failure)", observed: [] });
       await page.evaluate(() => {
         const prototype = WebGL2RenderingContext.prototype;
-        const createTexture = Object.getOwnPropertyDescriptor(prototype, "createTexture")?.value as WebGL2RenderingContext["createTexture"] | undefined;
         const deleteTexture = Object.getOwnPropertyDescriptor(prototype, "deleteTexture")?.value as WebGL2RenderingContext["deleteTexture"] | undefined;
-        const createFramebuffer = Object.getOwnPropertyDescriptor(prototype, "createFramebuffer")?.value as WebGL2RenderingContext["createFramebuffer"] | undefined;
-        if (createTexture === undefined || deleteTexture === undefined || createFramebuffer === undefined) throw new Error("WebGL2 resource APIs are unavailable");
-        const observed: Window["__recoveryGpu"] = { framebufferFailures: 0, partialTextureCreated: false, partialTextureDeletes: 0, canvas: null };
+        const deleteFramebuffer = Object.getOwnPropertyDescriptor(prototype, "deleteFramebuffer")?.value as WebGL2RenderingContext["deleteFramebuffer"] | undefined;
+        const framebufferTexture2D = Object.getOwnPropertyDescriptor(prototype, "framebufferTexture2D")?.value as WebGL2RenderingContext["framebufferTexture2D"] | undefined;
+        if (deleteTexture === undefined || deleteFramebuffer === undefined || framebufferTexture2D === undefined) throw new Error("WebGL2 resource APIs are unavailable");
+        const observed: Window["__recoveryGpu"] = { framebufferFailures: 0, partialTextureCreated: false, partialTextureDeletes: 0,
+          partialFramebufferCreated: false, partialFramebufferDeletes: 0, canvas: null };
         window.__recoveryGpu = observed;
         let partialTexture: WebGLTexture | null = null;
-        Object.defineProperty(prototype, "createTexture", { configurable: true, writable: true, value(this: WebGL2RenderingContext): WebGLTexture | null {
-          partialTexture = Reflect.apply(createTexture, this, []);
-          return partialTexture;
-        } });
+        let partialFramebuffer: WebGLFramebuffer | null = null;
         Object.defineProperty(prototype, "deleteTexture", { configurable: true, writable: true, value(this: WebGL2RenderingContext, texture: WebGLTexture | null): void {
           Reflect.apply(deleteTexture, this, [texture]);
           if (observed.framebufferFailures === 1 && texture !== null && texture === partialTexture) observed.partialTextureDeletes++;
         } });
-        Object.defineProperty(prototype, "createFramebuffer", { configurable: true, writable: true, value(this: WebGL2RenderingContext): never {
-          Object.defineProperty(prototype, "createTexture", { configurable: true, writable: true, value: createTexture });
-          Object.defineProperty(prototype, "createFramebuffer", { configurable: true, writable: true, value: createFramebuffer });
-          observed.framebufferFailures++;
-          observed.partialTextureCreated = partialTexture !== null;
-          observed.canvas = this.canvas;
-          throw new Error("Injected framebuffer creation failure");
+        Object.defineProperty(prototype, "deleteFramebuffer", { configurable: true, writable: true, value(this: WebGL2RenderingContext, framebuffer: WebGLFramebuffer | null): void {
+          Reflect.apply(deleteFramebuffer, this, [framebuffer]);
+          if (observed.framebufferFailures === 1 && framebuffer !== null && framebuffer === partialFramebuffer) observed.partialFramebufferDeletes++;
         } });
+        Object.defineProperty(prototype, "framebufferTexture2D", { configurable: true, writable: true,
+          value(this: WebGL2RenderingContext, target: number, attachment: number, textureTarget: number, texture: WebGLTexture | null, level: number): void {
+            if (target === this.FRAMEBUFFER && attachment === this.COLOR_ATTACHMENT0 && textureTarget === this.TEXTURE_2D && texture !== null && level === 0) {
+              const binding: unknown = this.getParameter(this.FRAMEBUFFER_BINDING);
+              if (binding instanceof WebGLFramebuffer) {
+                Object.defineProperty(prototype, "framebufferTexture2D", { configurable: true, writable: true, value: framebufferTexture2D });
+                partialTexture = texture;
+                partialFramebuffer = binding;
+                observed.framebufferFailures++;
+                observed.partialTextureCreated = true;
+                observed.partialFramebufferCreated = true;
+                observed.canvas = this.canvas;
+                throw new Error("Injected framebuffer attachment failure");
+              }
+            }
+            Reflect.apply(framebufferTexture2D, this, [target, attachment, textureTarget, texture, level]);
+          }
+        });
       });
       await click("game-boot-retry");
       await scene("Boot");
       await page.getByText("表示を準備できない。再試行するか、ページを再読み込みする。", { exact: true }).waitFor();
       await snapshot(page, "recovery-framebuffer-failed", false);
       const partial = await page.evaluate(() => ({ framebufferFailures: window.__recoveryGpu.framebufferFailures,
-        partialTextureCreated: window.__recoveryGpu.partialTextureCreated, partialTextureDeletes: window.__recoveryGpu.partialTextureDeletes }));
+        partialTextureCreated: window.__recoveryGpu.partialTextureCreated, partialTextureDeletes: window.__recoveryGpu.partialTextureDeletes,
+        partialFramebufferCreated: window.__recoveryGpu.partialFramebufferCreated, partialFramebufferDeletes: window.__recoveryGpu.partialFramebufferDeletes }));
       report.recoveryGpu = partial;
-      assert.deepEqual(partial, { framebufferFailures: 1, partialTextureCreated: true, partialTextureDeletes: 1 }, "Failed GPU candidate did not release its partial texture exactly once");
+      assert.deepEqual(partial, { framebufferFailures: 1, partialTextureCreated: true, partialTextureDeletes: 1,
+        partialFramebufferCreated: true, partialFramebufferDeletes: 1 }, "Failed GPU candidate did not release its partial texture and framebuffer exactly once");
       phase = "renderer-retry";
       await click("game-boot-retry");
       await scene("Title");
       assert.equal(await page.locator(".presentation-canvas").count(), 1, "GPU retry duplicated the renderer canvas");
-      const retained = await page.evaluate(() => window.__recoveryGpu.canvas === document.querySelector(".presentation-canvas"));
-      report.recoveryGpu = { ...partial, candidateRetryRetainedCanvas: retained };
-      assert.equal(retained, true, "GPU candidate retry recreated the renderer canvas");
-      checks.push("Startup recovery: one failed WASM request, public reload, one failed WebGL2 acquisition, one failed initial renderer observation, one failed framebuffer allocation with partial texture cleanup and public Boot retries");
+      const retried = await page.evaluate(() => ({ partialTextureDeletes: window.__recoveryGpu.partialTextureDeletes,
+        partialFramebufferDeletes: window.__recoveryGpu.partialFramebufferDeletes,
+        candidateRetryRetainedCanvas: window.__recoveryGpu.canvas === document.querySelector(".presentation-canvas") }));
+      report.recoveryGpu = { ...partial, ...retried };
+      assert.deepEqual(retried, { partialTextureDeletes: 1, partialFramebufferDeletes: 1, candidateRetryRetainedCanvas: true }, "GPU candidate retry changed partial cleanup or recreated the renderer canvas");
+      checks.push("Startup recovery: one failed WASM request, public reload, one failed WebGL2 acquisition, one failed initial renderer observation, one failed framebuffer attachment with partial texture/framebuffer cleanup and public Boot retries");
     }
     await scene("Title");
     phase = "normal";
