@@ -44,33 +44,34 @@ const report: Record<string, unknown> = { status: "failed", sourceHead, sourceDi
 let browser: Browser | undefined;
 
 async function snapshot(page: Page, name: string, graphics = true): Promise<void> {
-  if (graphics) await page.locator(".presentation-canvas").waitFor({ state: "visible" });
   await page.evaluate(() => new Promise<void>(complete => { requestAnimationFrame(() => { requestAnimationFrame(() => { complete(); }); }); }));
   if (graphics) {
-    const observed = await page.evaluate(() => new Promise<{ width: number; height: number; colors: number; nonblack: number; error: number; lost: boolean; losses: number }>((complete, reject) => {
-      requestAnimationFrame(() => {
-        try {
-          const canvas = document.querySelector<HTMLCanvasElement>(".presentation-canvas");
-          const gl = canvas?.getContext("webgl2");
-          if (canvas == null || gl == null || canvas.hidden) throw new Error("Production WebGL2 canvas is unavailable");
-          const colors = new Set<string>();
-          let nonblack = 0;
-          const pixel = new Uint8Array(4);
-          for (let row = 1; row < 8; row++) for (let column = 1; column < 12; column++) {
-            gl.readPixels(Math.floor(canvas.width * column / 12), Math.floor(canvas.height * row / 8), 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
-            colors.add(pixel.join(","));
-            if (pixel[0] !== 0 || pixel[1] !== 0 || pixel[2] !== 0) nonblack++;
-          }
-          complete({ width: canvas.width, height: canvas.height, colors: colors.size, nonblack, error: gl.getError(), lost: gl.isContextLost(), losses: window.__graphicsLosses });
-        } catch (cause) { reject(cause instanceof Error ? cause : new Error(String(cause))); }
-      });
-    }));
+    const observation = await page.waitForFunction(() => {
+      if (window.__graphicsLosses !== 0) throw new Error("Production WebGL2 context was lost");
+      const canvas = document.querySelector<HTMLCanvasElement>(".presentation-canvas");
+      if (canvas == null || canvas.hidden) return null;
+      const gl = canvas.getContext("webgl2");
+      if (gl == null) throw new Error("Production WebGL2 context is unavailable");
+      const colors = new Set<string>();
+      let nonblack = 0;
+      const pixel = new Uint8Array(4);
+      for (let row = 1; row < 8; row++) for (let column = 1; column < 12; column++) {
+        gl.readPixels(Math.floor(canvas.width * column / 12), Math.floor(canvas.height * row / 8), 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
+        colors.add(pixel.join(","));
+        if (pixel[0] !== 0 || pixel[1] !== 0 || pixel[2] !== 0) nonblack++;
+      }
+      return { width: canvas.width, height: canvas.height, colors: colors.size, nonblack, error: gl.getError(), lost: gl.isContextLost(), losses: window.__graphicsLosses };
+    }, undefined, { polling: "raf", timeout: 30_000 });
+    const observed = await observation.jsonValue();
+    await observation.dispose();
+    assert.ok(observed !== null, `${name}: scene observation is unavailable`);
     assert.ok(observed.nonblack > 8 && observed.colors > 4, `${name}: missing scene pixels`);
     assert.equal(observed.error, 0, `${name}: WebGL error`);
     assert.equal(observed.lost, false, `${name}: context lost`);
     assert.equal(observed.losses, 0, `${name}: context loss event`);
     captures.push({ name, viewport: page.viewportSize(), graphics: observed });
   } else captures.push({ name, viewport: page.viewportSize() });
+  if (graphics) await page.locator(".presentation-canvas").waitFor({ state: "visible" });
   await page.screenshot({ path: resolve(output, `${name}.png`), fullPage: false });
 }
 
