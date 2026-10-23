@@ -186,7 +186,7 @@ export class BrowserFlightRecordStore {
     transaction.onabort = () => {
       this.transactions.delete(request.request_id);
       if (this.finishCancellation(request.request_id, handle)) return;
-      this.notify({ kind: "record_loaded", request_id: request.request_id, completion: { kind: "failed", cause: failureMessage(transaction.error) } });
+      this.notify({ kind: "record_loaded", request_id: request.request_id, completion: { kind: "failed", cause: failureMessage(transaction.error ?? new Error("IndexedDB transaction aborted")) } });
     };
   }
 

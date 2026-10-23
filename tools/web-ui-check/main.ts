@@ -7,12 +7,15 @@ import { chromium } from "playwright-core";
 import type { Browser, Page } from "playwright-core";
 
 declare global {
-  interface Window { __graphicsLosses: number }
+  interface Window {
+    __graphicsLosses: number;
+    __recoveryRead: { requestSucceeded: boolean; aborts: number; error: string | null };
+  }
 }
 
 const [address, destination, ...options] = process.argv.slice(2);
-assert.ok(address !== undefined && destination !== undefined, "Usage: npm run test:web-ui -- VITE_URL OUTPUT_DIRECTORY [--allow-dirty] [--without-gpu-timer]");
-assert.ok(options.every(option => ["--allow-dirty", "--without-gpu-timer"].includes(option)), "Unknown Web UI check option");
+assert.ok(address !== undefined && destination !== undefined, "Usage: npm run test:web-ui -- VITE_URL OUTPUT_DIRECTORY [--allow-dirty] [--without-gpu-timer] [--recovery]");
+assert.ok(options.every(option => ["--allow-dirty", "--without-gpu-timer", "--recovery"].includes(option)), "Unknown Web UI check option");
 const url = new URL(address);
 assert.ok(["127.0.0.1", "localhost", "[::1]"].includes(url.hostname), "Use the local Vite development server");
 const root = resolve(import.meta.dirname, "../..");
@@ -38,10 +41,16 @@ const wasm: { url: string; status: number; sha256: string }[] = [];
 const pendingResponses: Promise<void>[] = [];
 const captures: unknown[] = [];
 const chartInteractions: { chart: string; before: string; after: string }[] = [];
+const recovery = options.includes("--recovery");
+let phase = "startup";
+const diagnostics: { phase: string; source: string; url: string; text: string }[] = [];
+const expectedDiagnostics: { phase: string; source: string; text: string; url?: string; observed: typeof diagnostics }[] = [];
+const wasmFailure = { url: "", status: 503, sha256: hash("Injected WASM request failure") };
 const report: Record<string, unknown> = { status: "failed", sourceHead, sourceDiffSha256: hash(sourcePatch), wasmSha256,
   execution: "Production page, aggregate Rust/WASM owner, actual DOM/Canvas/Three/WebGL2; HD/FHD at DPR 1",
   limits: "Synthetic WebXR engine submission is covered separately. Physical HMD/phone input and presentation-rate acceptance require their own runs.",
-  withoutGpuTimer: options.includes("--without-gpu-timer"), errors, warnings, checks, wasm, captures, chartInteractions };
+  withoutGpuTimer: options.includes("--without-gpu-timer"), recovery, errors, warnings, checks, wasm, captures, chartInteractions,
+  diagnostics, expectedDiagnostics };
 let browser: Browser | undefined;
 
 async function snapshot(page: Page, name: string, graphics = true): Promise<void> {
@@ -102,7 +111,7 @@ async function snapshot(page: Page, name: string, graphics = true): Promise<void
 async function verify(activeBrowser: Browser): Promise<void> {
   const context = await activeBrowser.newContext({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1, acceptDownloads: true });
   try {
-    await context.addInitScript(withoutTimer => {
+    await context.addInitScript(({ withoutTimer, recovery }) => {
       window.__graphicsLosses = 0;
       window.addEventListener("error", event => {
         console.error("window.error", JSON.stringify({ at: performance.now(),
@@ -113,6 +122,19 @@ async function verify(activeBrowser: Browser): Promise<void> {
         }));
       }, true);
       document.addEventListener("webglcontextlost", () => { window.__graphicsLosses++; }, true);
+      if (recovery) {
+        const original = Object.getOwnPropertyDescriptor(HTMLCanvasElement.prototype, "getContext")?.value as HTMLCanvasElement["getContext"] | undefined;
+        if (original === undefined) throw new Error("Canvas context lookup is unavailable");
+        Object.defineProperty(HTMLCanvasElement.prototype, "getContext", { configurable: true, writable: true,
+          value(this: HTMLCanvasElement, kind: string, ...parameters: unknown[]): unknown {
+            if (kind === "webgl2") {
+              Object.defineProperty(HTMLCanvasElement.prototype, "getContext", { configurable: true, writable: true, value: original });
+              throw new Error("Injected WebGL2 acquisition failure");
+            }
+            return Reflect.apply(original, this, [kind, ...parameters]);
+          }
+        });
+      }
       if (withoutTimer) {
         const original = Object.getOwnPropertyDescriptor(WebGL2RenderingContext.prototype, "getExtension")?.value as WebGL2RenderingContext["getExtension"] | undefined;
         if (original === undefined) throw new Error("WebGL2 extension lookup is unavailable");
@@ -120,17 +142,17 @@ async function verify(activeBrowser: Browser): Promise<void> {
           return name === "EXT_disjoint_timer_query_webgl2" ? null : Reflect.apply(original, this, [name]);
         } });
       }
-    }, options.includes("--without-gpu-timer"));
+    }, { withoutTimer: options.includes("--without-gpu-timer"), recovery });
     const page = await context.newPage();
     page.setDefaultTimeout(30_000);
-    page.on("pageerror", cause => { errors.push(cause.message); });
+    page.on("pageerror", cause => { diagnostics.push({ phase, source: "page", url: page.url(), text: cause.message }); });
     page.on("console", message => {
-      if (message.type() === "error") errors.push(`${message.location().url}: ${message.text()}`);
+      if (message.type() === "error") diagnostics.push({ phase, source: "console", url: message.location().url, text: message.text() });
       if (message.type() === "warning") warnings.push(`${message.location().url}: ${message.text()}`);
     });
-    page.on("requestfailed", request => { errors.push(`${request.url()}: ${request.failure()?.errorText ?? "request failed"}`); });
+    page.on("requestfailed", request => { diagnostics.push({ phase, source: "request", url: request.url(), text: request.failure()?.errorText ?? "request failed" }); });
     page.on("response", response => {
-      if (response.status() >= 400) errors.push(`HTTP ${String(response.status())}: ${response.url()}`);
+      if (response.status() >= 400) diagnostics.push({ phase, source: "http", url: response.url(), text: `HTTP ${String(response.status())}` });
       if (new URL(response.url()).pathname.endsWith(".wasm")) pendingResponses.push(response.body().then(bytes => {
         wasm.push({ url: response.url(), status: response.status(), sha256: hash(bytes) });
       }));
@@ -154,8 +176,41 @@ async function verify(activeBrowser: Browser): Promise<void> {
         await snapshot(page, `${name}-${size}`, graphics);
       }
     };
+    if (recovery) {
+      phase = "wasm-failure";
+      await page.route("**/*.wasm", async route => {
+        if (wasmFailure.url !== "") { await route.continue(); return; }
+        wasmFailure.url = route.request().url();
+        expectedDiagnostics.push(
+          { phase, source: "http", url: wasmFailure.url, text: "HTTP 503", observed: [] },
+          { phase, source: "console", url: wasmFailure.url, text: "Failed to load resource: the server responded with a status of 503 (Service Unavailable)", observed: [] },
+          { phase, source: "console", text: `Error: failed to fetch Wasm: 503 Service Unavailable fetching '${wasmFailure.url}'`, observed: [] }
+        );
+        await route.fulfill({ status: 503, contentType: "application/wasm", body: "Injected WASM request failure" });
+      });
+    }
     await page.goto(url.href, { waitUntil: "domcontentloaded" });
+    if (recovery) {
+      await page.getByText("ゲームを読み込めない。ページを再読み込みして再試行する。", { exact: true }).waitFor();
+      await snapshot(page, "recovery-wasm-failed", false);
+      assert.equal(await page.locator(".screen-ui-shell").count(), 0, "Failed WASM started the application owner");
+      phase = "webgl-failure";
+      expectedDiagnostics.push(
+        { phase, source: "console", text: "THREE.WebGLRenderer: Injected WebGL2 acquisition failure", observed: [] },
+        { phase, source: "console", text: "Error: Injected WebGL2 acquisition failure", observed: [] }
+      );
+      await page.locator("#application-reload").click();
+      await scene("Boot");
+      await control("game-boot-retry").waitFor();
+      await page.getByText("表示を準備できない。再試行するか、ページを再読み込みする。", { exact: true }).waitFor();
+      await snapshot(page, "recovery-webgl-failed", false);
+      assert.equal(await page.locator(".presentation-canvas").count(), 0, "Failed renderer retained its canvas");
+      phase = "renderer-retry";
+      await click("game-boot-retry");
+      checks.push("Startup recovery: one failed WASM request, public reload, one failed WebGL2 acquisition and public Boot retry");
+    }
     await scene("Title");
+    phase = "normal";
     report.build = await page.locator(".build-version").innerText();
     assert.ok(String(report.build).includes(sourceHead.slice(0, 8)), "Restart Vite for the current source HEAD before verification");
     report.graphics = await page.evaluate(() => {
@@ -274,6 +329,55 @@ async function verify(activeBrowser: Browser): Promise<void> {
     await scene("Title");
     await snapshot(page, "returned-title");
     checks.push("Retry and Title: retained controls and environment resource replacement");
+    if (recovery) {
+      const saved = page.locator('[data-control-id^="game-title-open-record-"]').first();
+      await saved.waitFor();
+      const savedControlId = await saved.getAttribute("data-control-id");
+      assert.ok(savedControlId !== null);
+      phase = "record-read-failure";
+      expectedDiagnostics.push({ phase, source: "console", text: "Error: IndexedDB transaction aborted", observed: [] });
+      await page.evaluate(() => {
+        const original = Object.getOwnPropertyDescriptor(IDBObjectStore.prototype, "get")?.value as IDBObjectStore["get"] | undefined;
+        if (original === undefined) throw new Error("IndexedDB record lookup is unavailable");
+        Object.defineProperty(IDBObjectStore.prototype, "get", { configurable: true, writable: true,
+          value(this: IDBObjectStore, query: IDBValidKey | IDBKeyRange): IDBRequest {
+            const request = Reflect.apply(original, this, [query]);
+            const transaction = this.transaction;
+            if (transaction.db.name === "birdman-flight-records" && this.name === "records"
+                && transaction.mode === "readonly" && transaction.objectStoreNames.length === 1) {
+              Object.defineProperty(IDBObjectStore.prototype, "get", { configurable: true, writable: true, value: original });
+              const observed = { requestSucceeded: false, aborts: 0, error: null as string | null };
+              window.__recoveryRead = observed;
+              transaction.addEventListener("abort", () => { observed.aborts++; observed.error = transaction.error?.message ?? null; }, { once: true });
+              request.addEventListener("success", () => { observed.requestSucceeded = true; transaction.abort(); }, { once: true });
+            }
+            return request;
+          }
+        });
+      });
+      await click(savedControlId);
+      await page.getByText("飛行記録を開けない。記録を選び直して再試行できる。", { exact: true }).waitFor();
+      await scene("Title");
+      await snapshot(page, "recovery-record-read-failed");
+      const readAbort = await page.evaluate(() => window.__recoveryRead);
+      assert.deepEqual(readAbort, { requestSucceeded: true, aborts: 1, error: null });
+      report.recordReadAbort = { controlId: savedControlId, ...readAbort };
+      phase = "record-read-retry";
+      await click(savedControlId);
+      await scene("Replay");
+      await snapshot(page, "recovery-stored-replay");
+      await click("game-replay-technical");
+      assert.deepEqual(await download("json", "recovered-record"), original, "Stored read recovery changed the original JSON");
+      assert.deepEqual(await download("csv", "recovered-record"), csv, "Stored read recovery changed the CSV");
+      await click("game-replay-view-mode");
+      await click("game-replay-view-mode");
+      await control("game-analysis-map").waitFor();
+      await chartSettled();
+      await snapshot(page, "recovery-stored-analysis", false);
+      await click("game-replay-return");
+      await scene("Title");
+      checks.push("Stored read recovery: successful real request followed by one readonly transaction abort, Japanese guidance, same Title control retry, Replay/Analysis and byte-identical JSON/CSV");
+    }
   } finally { await context.close(); }
 }
 
@@ -288,8 +392,11 @@ try {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const responses = await Promise.race([Promise.allSettled(pendingResponses), new Promise<null>(complete => { timer = setTimeout(() => { complete(null); }, 5000); })]);
   clearTimeout(timer);
-  if (responses === null || responses.some(response => response.status === "rejected") || wasm.length === 0
-      || wasm.some(response => response.status !== 200 || response.sha256 !== wasmSha256)) errors.push("Served WASM response/hash does not match the captured local artifact");
+  const successfulWasm = wasm.filter(response => response.status === 200);
+  if (responses === null || responses.some(response => response.status === "rejected") || successfulWasm.length === 0
+      || successfulWasm.some(response => response.sha256 !== wasmSha256)
+      || wasm.some(response => response.status !== 200 && (!recovery || response.url !== wasmFailure.url || response.status !== wasmFailure.status || response.sha256 !== wasmFailure.sha256))
+      || (recovery && wasm.filter(response => response.status === 503).length !== 1)) errors.push("Served WASM response/hash does not match the captured local artifact or the single injected failure");
   try { await browser?.close(); } catch (cause) { errors.push(`Browser cleanup: ${String(cause)}`); }
   try {
     assert.equal(git(["rev-parse", "HEAD"]).trim(), sourceHead, "HEAD changed during verification");
@@ -297,6 +404,13 @@ try {
     assert.equal(git(untrackedArguments), "", "New source appeared during verification");
     assert.equal(hash(await readFile(wasmPath)), wasmSha256, "WASM changed during verification");
   } catch (cause) { errors.push(String(cause)); }
+  for (const diagnostic of diagnostics) {
+    const expected = expectedDiagnostics.find(value => value.phase === diagnostic.phase && value.source === diagnostic.source
+      && value.text === diagnostic.text.split("\n")[0] && (value.url === undefined || value.url === diagnostic.url));
+    if (expected === undefined) errors.push(`${diagnostic.phase}/${diagnostic.source} ${diagnostic.url}: ${diagnostic.text}`);
+    else expected.observed.push(diagnostic);
+  }
+  for (const expected of expectedDiagnostics) if (expected.observed.length !== 1) errors.push(`Expected exactly one ${expected.phase}/${expected.source} diagnostic: ${expected.text}; observed ${String(expected.observed.length)}`);
   if (errors.length > 0) report.status = "failed";
   await writeFile(resolve(output, "result.json"), `${JSON.stringify(report, null, 2)}\n`, "utf8");
 }

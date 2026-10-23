@@ -147,7 +147,7 @@ describe("Browser record primitive I/O", () => {
     } finally { store.dispose(); }
   });
 
-  it.each([false, true])("notifies a single read only after transaction termination, cancelled=%s", async cancelled => {
+  it.each(["complete", "cancel", "abort"] as const)("notifies a single read only after transaction termination, %s", async outcome => {
     const inputs: ApplicationInput[] = [];
     let finish: (() => void) | undefined;
     const done = new Promise<void>(resolve => { finish = resolve; });
@@ -162,15 +162,17 @@ describe("Browser record primitive I/O", () => {
     const read = vi.spyOn(IDBObjectStore.prototype, "get").mockImplementation(function (this: IDBObjectStore, query) {
       enqueue = () => original.call(this, query);
       const request = original.call(this, query);
-      if (cancelled) request.addEventListener("success", () => { store.cancel(18); });
+      if (outcome === "cancel") request.addEventListener("success", () => { store.cancel(18); });
+      if (outcome === "abort") request.addEventListener("success", () => { this.transaction.abort(); });
       return request;
     });
     try {
       store.execute({ kind: "read_record", request_id: 18, record_id: 1 });
       await done;
-      expect(inputs).toEqual(cancelled
+      expect(inputs).toEqual(outcome === "cancel"
         ? [{ kind: "record_io_cancelled", request_id: 18, failure: null }]
-        : [{ kind: "record_loaded", request_id: 18, completion: { kind: "missing" } }]);
+        : [{ kind: "record_loaded", request_id: 18, completion: outcome === "abort"
+          ? { kind: "failed", cause: "Error: IndexedDB transaction aborted" } : { kind: "missing" } }]);
     } finally { read.mockRestore(); store.dispose(); }
   });
 });
