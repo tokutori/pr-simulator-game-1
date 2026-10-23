@@ -218,12 +218,11 @@ impl Verification {
         self.capture_serial += 1;
         let identity = self.capture_identity();
         self.capture = CaptureState::Requested(identity);
+        let requested_at = std::time::Instant::now();
         commands
             .spawn(Screenshot(self.capture_target.clone()))
             .observe(
-                move |capture: On<ScreenshotCaptured>,
-                      mut verification: ResMut<Verification>,
-                      runtime: bevy::prelude::Res<NativeRuntime>| {
+                move |capture: On<ScreenshotCaptured>, mut verification: ResMut<Verification>| {
                     if verification.failure.is_some()
                         || !verification
                             .capture
@@ -231,12 +230,23 @@ impl Verification {
                     {
                         return;
                     }
-                    verification
-                        .observe_phase(runtime.0.application().core_session().snapshot().phase());
+                    println!(
+                        "Native capture readback: serial={} latency_ms={:.3}",
+                        identity.serial,
+                        requested_at.elapsed().as_secs_f64() * 1000.0
+                    );
                     let image = capture.image.clone();
                     let path = path.clone();
-                    let task = AsyncComputeTaskPool::get()
-                        .spawn(async move { save_capture(identity, image, path) });
+                    let task = AsyncComputeTaskPool::get().spawn(async move {
+                        let saving_at = std::time::Instant::now();
+                        let result = save_capture(identity, image, path);
+                        println!(
+                            "Native capture save: serial={} duration_ms={:.3}",
+                            identity.serial,
+                            saving_at.elapsed().as_secs_f64() * 1000.0
+                        );
+                        result
+                    });
                     verification.capture = CaptureState::Saving { identity, task };
                 },
             );

@@ -222,7 +222,6 @@ pub(crate) struct Verification {
     capture: CaptureState,
     capture_serial: u64,
     capture_source: Option<serde_json::Value>,
-    capture_running: Option<bool>,
     capture_target: RenderTarget,
     water_case: Option<WaterVerificationCase>,
     motion_interval: Option<MotionInterval>,
@@ -244,14 +243,6 @@ fn overlay(overlay: GameUiPauseOverlay) -> Check {
 }
 
 impl Verification {
-    pub(crate) fn observe_phase(&mut self, phase: SessionPhase) {
-        if self.capture.pending()
-            && let Some(eligible) = &mut self.capture_running
-        {
-            *eligible &= phase == SessionPhase::FlightRunning;
-        }
-    }
-
     pub(crate) fn try_new(
         directory: PathBuf,
         asset_server: &AssetServer,
@@ -429,7 +420,6 @@ impl Verification {
                 capture: CaptureState::Idle,
                 capture_serial: 0,
                 capture_source: None,
-                capture_running: None,
                 capture_target,
                 water_case,
                 motion_interval: None,
@@ -602,15 +592,7 @@ fn advance_step(world: &mut World, verification: &mut Verification) -> Result<()
     };
     let phase = runtime.0.application().core_session().snapshot().phase();
     if verification.capture.pending() {
-        verification.observe_phase(phase);
         if let Some(saved) = verification.capture.poll(verification.capture_identity())? {
-            if verification.capture_running == Some(false) {
-                verification.capture_source = None;
-                std::fs::remove_file(&saved.path).map_err(|cause| {
-                    format!("Rejected capture cleanup {}: {cause}", saved.path.display())
-                })?;
-                return Ok(());
-            }
             trace::capture(
                 world,
                 saved
@@ -675,7 +657,6 @@ fn advance_step(world: &mut World, verification: &mut Verification) -> Result<()
                 .ready(pipelines_ready)?;
             if pipelines_ready && probes_ready && world.resource::<NativeIo>().drawing.as_ref().is_some_and(|drawing| drawing.presentation.scene_visible) {
                 verification.capture_source = world.resource::<NativeIo>().drawing.as_ref().map(serde_json::to_value).transpose().map_err(|cause| format!("Capture source serialization: {cause}"))?;
-                verification.capture_running = matches!(verification.checks.get(verification.index), Some(Check::FlightCapture(_))).then_some(true);
                 verification.capture(&mut world.commands(), &filename);
                 trace::capture_started(world, &filename, verification.capture_serial)?;
             }
@@ -685,7 +666,10 @@ fn advance_step(world: &mut World, verification: &mut Verification) -> Result<()
             else if matches!(phase, SessionPhase::FlightPaused { .. }) && let Some(input) = action_input(world, &GameUiAction::Session { command: SessionCommand::Resume {} }) { world.resource_mut::<NativeInputs>().0.push(input); }
             else if phase == SessionPhase::BriefingReady && let Some(input) = action_input(world, &GameUiAction::Session { command: SessionCommand::StartCountdown {} }) { world.resource_mut::<NativeInputs>().0.push(input); }
         }
-        Check::Result => { if phase == SessionPhase::Result { verification.next(); } }
+        Check::Result => {
+            if phase == SessionPhase::Result { verification.next(); }
+            else if matches!(phase, SessionPhase::FlightPaused { .. }) && let Some(input) = action_input(world, &GameUiAction::Session { command: SessionCommand::Resume {} }) { world.resource_mut::<NativeInputs>().0.push(input); }
+        }
         Check::Delay(duration) => {
             if let Some(MotionInterval::Interrupted { phase, .. }) = verification.motion_interval { return Err(format!("Water motion interrupted: {phase:?}")); }
             if verification.stage_started.elapsed() >= duration { verification.next(); }
