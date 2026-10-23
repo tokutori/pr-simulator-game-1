@@ -1,5 +1,6 @@
 //! Shared application owner for platform observations, progression and UI effects.
 
+mod assets;
 mod display;
 mod graphics;
 mod phone;
@@ -8,6 +9,11 @@ mod storage;
 mod surface;
 mod types;
 
+pub use assets::{
+    ApplicationAssetError, ApplicationEnvironmentAssets, ApplicationImageAsset,
+    ApplicationImageEncoding, ApplicationLightingAssets, ApplicationWaterAssets,
+    ApplicationWaterDetailAsset,
+};
 pub use graphics::{
     ApplicationGpuQuery, ApplicationGraphicsCompletion, ApplicationGraphicsObservation,
     ApplicationGraphicsProjection, ApplicationGraphicsResource, ApplicationRenderQuality,
@@ -81,6 +87,8 @@ pub struct ApplicationRuntime {
     graphics: graphics::GraphicsOwner,
     last_ready_resources: Option<ResourceKey>,
     storage: storage::StorageOwner,
+    assets: assets::AssetsOwner,
+    diagnostic: Option<String>,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -162,12 +170,19 @@ impl ApplicationRuntime {
             graphics,
             last_ready_resources: None,
             storage: storage::StorageOwner::default(),
+            assets: assets::AssetsOwner::default(),
+            diagnostic: None,
         })
     }
 
     /// Read-only access for native resource generation and record projection.
     pub fn application(&self) -> &ApplicationSession {
         &self.application
+    }
+
+    /// Borrows immutable upload bytes retained by an active or outstanding resource preparation.
+    pub fn asset_bytes(&self, buffer_id: u32) -> Option<&[u8]> {
+        self.assets.bytes(buffer_id)
     }
 
     /// Processes one observation; adapters execute only the returned I/O requests.
@@ -462,15 +477,24 @@ impl ApplicationRuntime {
                 request_id,
                 observation,
             } => {
+                let completion = self.assets.observe(request_id, observation);
+                requests.extend(completion.requests);
+                let terminal = completion.committed == Some(request_id)
+                    || completion
+                        .failed
+                        .as_ref()
+                        .is_some_and(|(failed, _)| *failed == request_id);
                 if let Some(resources) = self.resources.as_mut()
                     && resources.request_id == request_id
                     && !resources.completed
+                    && terminal
                 {
                     resources.completed = true;
-                    self.resource_readiness = match observation {
-                        ApplicationResourceObservation::Ready => BackendReadiness::Ready,
-                        ApplicationResourceObservation::Failed { cause } => {
-                            self.platform.notification = format!("描画資源を準備できない: {cause}");
+                    self.resource_readiness = match completion.failed {
+                        None => BackendReadiness::Ready,
+                        Some((_, cause)) => {
+                            self.diagnostic = Some(cause);
+                            self.platform.notification = "描画資源を準備できない。".to_owned();
                             BackendReadiness::Failed(
                                 birdman_game_core::BriefingFailure::AssetUnavailable,
                             )
@@ -628,7 +652,10 @@ impl ApplicationRuntime {
             None
         };
         Ok(ApplicationOutput {
-            diagnostic: self.storage.take_diagnostic(),
+            diagnostic: self
+                .diagnostic
+                .take()
+                .or_else(|| self.storage.take_diagnostic()),
             graphics: self
                 .graphics
                 .projection(render_spatial, observed_ms)
@@ -703,6 +730,13 @@ impl ApplicationRuntime {
         for effect in update.effects {
             match effect {
                 GameUiEffect::Session { command } => {
+                    if matches!(
+                        &command,
+                        birdman_game_app::application::SessionCommand::RetryBriefing {}
+                    ) {
+                        self.resources = None;
+                        self.resource_readiness = BackendReadiness::Preparing;
+                    }
                     self.application
                         .execute(command, self.resource_readiness)
                         .map_err(ApplicationRuntimeError::Application)?;
@@ -982,11 +1016,13 @@ impl ApplicationRuntime {
     ) -> Result<(), ApplicationRuntimeError> {
         let state = self.display.state();
         let Some(graphics) = self.graphics.resource() else {
+            requests.extend(self.assets.select(None));
             self.resources = None;
             self.resource_readiness = BackendReadiness::Preparing;
             return Ok(());
         };
         let Some(mode) = state.active_mode() else {
+            requests.extend(self.assets.select(None));
             self.resources = None;
             self.resource_readiness = BackendReadiness::Preparing;
             return Ok(());
@@ -1014,6 +1050,11 @@ impl ApplicationRuntime {
             return Ok(());
         }
         let request_id = self.allocate_request()?;
+        let assets = self
+            .assets
+            .prepare(request_id, environment, graphics.quality.water_quality)
+            .map_err(ApplicationRuntimeError::Assets)?;
+        requests.extend(self.assets.select(Some(request_id)));
         self.resources = Some(ResourcePreparation {
             key,
             request_id,
@@ -1024,6 +1065,7 @@ impl ApplicationRuntime {
             .prepared(key.graphics, false, self.observed_ms)
             .map_err(ApplicationRuntimeError::Graphics)?;
         requests.push(ApplicationRequest::PrepareResources {
+            assets: Box::new(assets),
             graphics: key.graphics,
             request_id,
             environment: key.environment,

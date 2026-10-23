@@ -60,6 +60,13 @@ adapter・runtime・presentation・scene・app・contentは責務に応じて下
 
 ## 状態と実行規則の正本
 
+### ApplicationRuntimeと描画資源
+
+- runtimeの合成ownerは生観測・UI操作・I/O完了を受け、最終描画データとprimitive I/O要求を返す。WASMの共通buffer転送は、同じ出力に付随するimmutableな描画データを所有コピーで提出する。
+- 空のpanorama、光源・霧、波の係数とdetail画像は登録環境からRustが準備する。画像は同じ生成条件で共有し、水面品質の変更では波の投影とmesh密度を更新する。
+- GPU資源は候補作成、ownerのcommit認可、atomicなbinding完了の順に進む。ownerはcommitを直列化し、確認した適用状態から次の候補と旧資源の解放を決定する。
+- preparationの取消は完了通知までCPU bufferを保持する。取消中に作成が完了した候補もownerが解放し、adapterは要求されたGPU操作と結果通知を実行する。
+
 ### GameSessionとApplicationSession
 
 - `GameSession`はdomain phase、停止理由、封印済みconfiguration、飛行状態、終了理由、score、確定record、RetryとReplayを所有する。

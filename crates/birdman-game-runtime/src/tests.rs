@@ -8,6 +8,86 @@ fn no_text_metrics(_: &ApplicationTextProbe) -> Result<ApplicationGlyphMetrics, 
     Err(MenuLayoutFailure::MeasurementUnavailable)
 }
 
+#[test]
+fn briefing_retry_restarts_failed_resource_preparation_through_the_shared_action() {
+    let platform = ApplicationPlatformObservation {
+        renderer: Some(renderer_observation()),
+        surface: None,
+        viewport: GameUiViewport {
+            width: 1280.0,
+            height: 720.0,
+            root_font_size: 16.0,
+        },
+        chart_extent: None,
+        capabilities: ApplicationCapabilities::default(),
+    };
+    let mut application = ApplicationSession::default();
+    for command in [SessionCommand::OpenSetup {}, SessionCommand::Prepare {}] {
+        application
+            .execute(command, BackendReadiness::Preparing)
+            .unwrap();
+    }
+    let mut runtime = ApplicationRuntime::new(application, platform.clone()).unwrap();
+    let initial = runtime
+        .observe_test(ApplicationInput::Platform {
+            observation: platform,
+        })
+        .unwrap();
+    let request_id = initial
+        .requests
+        .iter()
+        .find_map(|request| match request {
+            ApplicationRequest::PrepareResources { request_id, .. } => Some(*request_id),
+            _ => None,
+        })
+        .unwrap();
+    let failed = runtime
+        .observe_test(ApplicationInput::Resources {
+            request_id,
+            observation: ApplicationResourceObservation::Failed {
+                cause: "pipeline creation failed".to_owned(),
+            },
+        })
+        .unwrap();
+    assert!(matches!(
+        runtime.application().core_session().snapshot().phase(),
+        SessionPhase::BriefingFailed { .. }
+    ));
+    let retry = activate(
+        &mut runtime,
+        &structure(failed),
+        SessionCommand::RetryBriefing {},
+    );
+    let replacement = retry
+        .requests
+        .iter()
+        .find_map(|request| match request {
+            ApplicationRequest::PrepareResources { request_id, .. } => Some(*request_id),
+            _ => None,
+        })
+        .unwrap();
+    assert_ne!(replacement, request_id);
+    resources_ready(&mut runtime, replacement).unwrap();
+    assert_eq!(
+        runtime.application().core_session().snapshot().phase(),
+        SessionPhase::BriefingReady
+    );
+}
+
+fn resources_ready(
+    runtime: &mut ApplicationRuntime,
+    request_id: u32,
+) -> Result<ApplicationOutput, ApplicationRuntimeError> {
+    let resource_id = 10_000 + request_id;
+    let prepared = runtime.observe_test(ApplicationInput::Resources {
+        request_id,
+        observation: ApplicationResourceObservation::Prepared { resource_id },
+    })?;
+    if prepared.requests.iter().any(|request| matches!(request, ApplicationRequest::CommitResources { request_id: expected, resource_id: candidate } if *expected == request_id && *candidate == resource_id)) {
+        runtime.observe_test(ApplicationInput::Resources { request_id, observation: ApplicationResourceObservation::Committed { resource_id } })
+    } else { Ok(prepared) }
+}
+
 fn finalized_application() -> ApplicationSession {
     use birdman_game_core::{
         ControlMode, TailFlightTickInput, TailPilotIntent, TailPilotPositionCommand, TailRateTarget,
@@ -399,14 +479,16 @@ fn started_display(mode: GameUiPresentationMode) -> (ApplicationRuntime, Applica
             completion: DisplayCompletion::Stopped,
         })
         .unwrap();
-    let start_id = match starting.requests.as_slice() {
-        [
+    let start_id = starting
+        .requests
+        .iter()
+        .find_map(|request| match request {
             ApplicationRequest::Display {
                 request: DisplayRequest::Start { request_id, .. },
-            },
-        ] => *request_id,
-        _ => panic!("Expected sensor and stereo resource creation"),
-    };
+            } => Some(*request_id),
+            _ => None,
+        })
+        .expect("Expected sensor and stereo resource creation");
     let active = runtime
         .update(
             ApplicationObservation {
@@ -496,14 +578,7 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
         [ApplicationRequest::PrepareResources { request_id, .. }] => *request_id,
         _ => panic!("Expected initial scene resource preparation"),
     };
-    let title = structure(
-        runtime
-            .observe_test(ApplicationInput::Resources {
-                request_id,
-                observation: ApplicationResourceObservation::Ready,
-            })
-            .unwrap(),
-    );
+    let title = structure(resources_ready(&mut runtime, request_id).unwrap());
     let setup = structure(activate(&mut runtime, &title, SessionCommand::OpenSetup {}));
     let changed = activate(
         &mut runtime,
@@ -519,24 +594,12 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
     assert_ne!(replacement_id, request_id);
     let changed = structure(changed);
     let _preparing = activate(&mut runtime, &changed, SessionCommand::Prepare {});
-    runtime
-        .observe_test(ApplicationInput::Resources {
-            request_id,
-            observation: ApplicationResourceObservation::Ready,
-        })
-        .unwrap();
+    resources_ready(&mut runtime, request_id).unwrap();
     assert_eq!(
         runtime.application().core_session().snapshot().phase(),
         SessionPhase::BriefingPreparing
     );
-    let briefing = structure(
-        runtime
-            .observe_test(ApplicationInput::Resources {
-                request_id: replacement_id,
-                observation: ApplicationResourceObservation::Ready,
-            })
-            .unwrap(),
-    );
+    let briefing = structure(resources_ready(&mut runtime, replacement_id).unwrap());
     assert_eq!(
         runtime.application().core_session().snapshot().phase(),
         SessionPhase::BriefingReady
@@ -627,12 +690,7 @@ fn hmd_frame_and_focus_use_the_confirmed_display_resource_and_shared_viewer_capt
             _ => None,
         })
         .unwrap();
-    runtime
-        .observe_test(ApplicationInput::Resources {
-            request_id: resource_request,
-            observation: ApplicationResourceObservation::Ready,
-        })
-        .unwrap();
+    resources_ready(&mut runtime, resource_request).unwrap();
     assert!(!runtime.application().presentation_available());
     let head = Pose {
         position: Vector3 {
@@ -1142,12 +1200,7 @@ fn graphics_commit_tracks_actual_resources_cleanup_and_renderer_lifetimes() {
         [ApplicationRequest::PrepareResources { request_id, .. }] => *request_id,
         other => panic!("Expected resource preparation: {other:?}"),
     };
-    runtime
-        .observe_test(ApplicationInput::Resources {
-            request_id: old_preparation,
-            observation: ApplicationResourceObservation::Ready,
-        })
-        .unwrap();
+    resources_ready(&mut runtime, old_preparation).unwrap();
     let frame = runtime
         .observe_test(ApplicationInput::Frame {
             display_resource_id: None,
@@ -1228,22 +1281,12 @@ fn graphics_commit_tracks_actual_resources_cleanup_and_renderer_lifetimes() {
         })
         .unwrap();
     assert_ne!(old_preparation, new_preparation);
-    runtime
-        .observe_test(ApplicationInput::Resources {
-            request_id: old_preparation,
-            observation: ApplicationResourceObservation::Ready,
-        })
-        .unwrap();
+    resources_ready(&mut runtime, old_preparation).unwrap();
     assert!(matches!(
         runtime.resource_readiness,
         BackendReadiness::Preparing
     ));
-    runtime
-        .observe_test(ApplicationInput::Resources {
-            request_id: new_preparation,
-            observation: ApplicationResourceObservation::Ready,
-        })
-        .unwrap();
+    resources_ready(&mut runtime, new_preparation).unwrap();
     runtime
         .observe_test(ApplicationInput::Graphics {
             renderer_resource_id: 100,

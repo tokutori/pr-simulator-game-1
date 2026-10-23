@@ -58,9 +58,19 @@ pub struct ApplicationPlatformObservation {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ApplicationResourceObservation {
-    /// All required resources have been committed.
-    Ready,
-    /// Resource preparation failed with its original diagnostic.
+    /// GPU resources have been created as an unbound candidate.
+    Prepared {
+        /// New opaque GPU resource identity.
+        resource_id: u32,
+    },
+    /// A requested atomic binding completed; older bindings remain owned until explicitly released.
+    Committed {
+        /// Exact candidate identity from the commit request.
+        resource_id: u32,
+    },
+    /// Cancellation completed and no further asset reads will occur for this request.
+    Cancelled,
+    /// Creation or atomic binding failed while the previous binding remains owned and unchanged.
     Failed {
         #[doc = "Original preparation failure."]
         cause: String,
@@ -285,6 +295,23 @@ pub enum ApplicationInput {
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ApplicationRequest {
+    /// Cancels an obsolete preparation; its CPU buffers remain retained until completion.
+    CancelResources {
+        /// Preparation identity to cancel.
+        request_id: u32,
+    },
+    /// Atomically binds a prepared candidate while retaining the previous GPU resources.
+    CommitResources {
+        /// Owner-authorized preparation identity.
+        request_id: u32,
+        /// Exact candidate GPU identity.
+        resource_id: u32,
+    },
+    /// Disposes a retired or rejected candidate, independently of the current binding.
+    ReleaseResources {
+        /// Opaque GPU resource identity to release.
+        resource_id: u32,
+    },
     /// Opens one atomic read transaction with a descending metadata cursor and same-key records.
     BeginRecordPreview {
         /// Owner-issued read transaction identity.
@@ -334,6 +361,8 @@ pub enum ApplicationRequest {
     },
     /// Prepare scene resources for one confirmed display and environment.
     PrepareResources {
+        /// Revision-scoped CPU drawing data; image bytes use the common buffer channel.
+        assets: Box<super::ApplicationEnvironmentAssets>,
         /// Exact confirmed renderer resource generation to prepare.
         graphics: ApplicationGraphicsResource,
         /// Owner-issued identity to echo in the completion.
@@ -408,6 +437,8 @@ pub struct ApplicationOutput {
 /// Finite failures from the same domain and presentation implementations.
 #[derive(Debug)]
 pub enum ApplicationRuntimeError {
+    /// Shared immutable drawing-resource generation failed.
+    Assets(super::ApplicationAssetError),
     /// The canonical finalized result could not be exported.
     RecordExport(birdman_game_app::record_archive::RecordExportError),
     /// A record document failed the shared external-data contract.
