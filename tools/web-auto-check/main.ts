@@ -30,20 +30,29 @@ await writeFile(resolve(output, "source.patch"), patch, "utf8");
 const wasmPath = resolve(root, "web/pkg/birdman_game_wasm_bg.wasm");
 const wasmSha256 = hash(await readFile(wasmPath));
 const errors: string[] = [];
+const requestFailures: { at: number; url: string; resourceType: string; errorText: string; afterCloseRequested: boolean }[] = [];
+const browserLifecycle: { clock: string; close_requested: number | null; closed: number | null } = {
+  clock: "Node performance.now() milliseconds", close_requested: null, closed: null
+};
 const wasm: { url: string; status: number; sha256: string }[] = [];
 const responses: Promise<void>[] = [];
 let moduleUrl: string | undefined;
 let browser: Browser | undefined;
 const report: Record<string, unknown> = { status: "failed", sourceHead, sourceDiffSha256: hash(patch), wasmSha256,
-  execution: "Actual production Rust/WASM owner, WebGL GPU completions, DOM controls and browser RAF; Typical/Manual/High/Auto",
-  limits: "Development/headless observation. Raw completion statistics do not establish owner acceptance, 80 FPS presentation or physical-device performance.", errors, wasm };
+  execution: "Actual production Rust/WASM owner, WebGL GPU completions, DOM controls and browser RAF; Typical/Manual; water ceiling High; Auto rendering",
+  limits: "Development/headless GPU work and RAF sample; performance acceptance follows docs/verification.md.", errors, requestFailures, browserLifecycle, wasm };
 try {
   browser = await chromium.launch({ headless: true, channel: "chromium" });
   const page = await browser.newPage({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1 });
   page.setDefaultTimeout(30_000);
   page.on("pageerror", cause => { errors.push(cause.message); });
   page.on("console", message => { if (message.type() === "error") errors.push(`${message.location().url}: ${message.text()}`); });
-  page.on("requestfailed", request => { errors.push(`${request.url()}: ${request.failure()?.errorText ?? "request failed"}`); });
+  page.on("requestfailed", request => {
+    const errorText = request.failure()?.errorText ?? "request failed";
+    requestFailures.push({ at: performance.now(), url: request.url(), resourceType: request.resourceType(), errorText,
+      afterCloseRequested: browserLifecycle.close_requested !== null });
+    errors.push(`${request.url()}: ${errorText}`);
+  });
   page.on("response", response => {
     const path = new URL(response.url()).pathname;
     if (path.endsWith("/pkg/birdman_game_wasm.js")) moduleUrl = response.url();
@@ -96,7 +105,13 @@ finally {
   clearTimeout(timer);
   if (received === null || received.some(response => response.status === "rejected") || wasm.length === 0
       || wasm.some(response => response.status !== 200 || response.sha256 !== wasmSha256)) errors.push("Served WASM/hash mismatch");
-  try { await browser?.close(); } catch (cause) { errors.push(`Browser cleanup: ${String(cause)}`); }
+  try {
+    if (browser !== undefined) {
+      browserLifecycle.close_requested = performance.now();
+      await browser.close();
+      browserLifecycle.closed = performance.now();
+    }
+  } catch (cause) { errors.push(`Browser cleanup: ${String(cause)}`); }
   try {
     assert.equal(git(["rev-parse", "HEAD"]).trim(), sourceHead);
     assert.equal(git(diffArguments), patch);
