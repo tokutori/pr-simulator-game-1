@@ -221,7 +221,9 @@ impl Verification {
         commands
             .spawn(Screenshot(self.capture_target.clone()))
             .observe(
-                move |capture: On<ScreenshotCaptured>, mut verification: ResMut<Verification>| {
+                move |capture: On<ScreenshotCaptured>,
+                      mut verification: ResMut<Verification>,
+                      runtime: bevy::prelude::Res<NativeRuntime>| {
                     if verification.failure.is_some()
                         || !verification
                             .capture
@@ -229,6 +231,8 @@ impl Verification {
                     {
                         return;
                     }
+                    verification
+                        .observe_phase(runtime.0.application().core_session().snapshot().phase());
                     let image = capture.image.clone();
                     let path = path.clone();
                     let task = AsyncComputeTaskPool::get()

@@ -1,5 +1,5 @@
 use super::Verification;
-use crate::app::native_runtime::{NativeInputs, NativeIo};
+use crate::app::native_runtime::NativeInputs;
 use bevy::{ecs as bevy_ecs, prelude::*};
 use birdman_game_runtime::{
     ApplicationInput, ApplicationObservation, ApplicationOutput, ApplicationPlatformObservation,
@@ -96,9 +96,22 @@ pub(crate) fn failed(
     }
 }
 
-pub(super) fn capture(world: &mut World, file: &str) -> Result<(), String> {
+pub(super) fn capture_started(world: &mut World, file: &str, serial: u64) -> Result<(), String> {
+    write(
+        world,
+        json!({ "capture_started": serial, "file": file }),
+        false,
+    )
+}
+
+pub(super) fn capture(
+    world: &mut World,
+    file: &str,
+    serial: u64,
+    drawing: Option<&Value>,
+) -> Result<(), String> {
     if world.contains_resource::<ApplicationTrace>() {
-        let value = json!({ "capture": world.resource::<NativeIo>().drawing, "file": file });
+        let value = json!({ "capture": drawing, "file": file, "serial": serial });
         write(world, value, true)?;
     }
     Ok(())
@@ -113,7 +126,6 @@ mod tests {
         let directory = crate::app::native_storage::tests::Directory::new();
         let mut world = World::new();
         world.insert_resource(ApplicationTrace::create(&directory.0).unwrap());
-        world.insert_resource(NativeIo::default());
         let input = ApplicationObservation {
             observed_ms: 3.0,
             input: ApplicationInput::PageVisibility { visible: false },
@@ -140,13 +152,14 @@ mod tests {
             fonts,
             "original observation error".into(),
         );
-        capture(&mut world, "capture.png").unwrap();
+        capture_started(&mut world, "capture.png", 1).unwrap();
+        capture(&mut world, "capture.png", 1, None).unwrap();
         let bytes = std::fs::read_to_string(directory.0.join("application-trace.jsonl")).unwrap();
         let rows: Vec<Value> = bytes
             .lines()
             .map(|line| serde_json::from_str(line).unwrap())
             .collect();
-        assert_eq!(rows.len(), 3);
+        assert_eq!(rows.len(), 4);
         assert_eq!(rows[0]["observation"]["input"]["visible"], false);
         assert!(rows[0].get("drawing").is_none());
         assert_eq!(rows[1]["error"], "original observation error");
@@ -154,7 +167,9 @@ mod tests {
             rows[1]["fonts"][0]["result"]["Err"],
             "measurement-unavailable"
         );
-        assert_eq!(rows[2]["file"], "capture.png");
-        assert!(rows[2]["capture"].is_null());
+        assert_eq!(rows[2]["capture_started"], 1);
+        assert_eq!(rows[3]["file"], "capture.png");
+        assert_eq!(rows[3]["serial"], 1);
+        assert!(rows[3]["capture"].is_null());
     }
 }

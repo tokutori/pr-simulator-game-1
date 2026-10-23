@@ -128,6 +128,12 @@ pub(crate) fn update(world: &mut World) {
             let _ = probe;
             result
         });
+        #[cfg(feature = "verify-harness")]
+        if let Some(mut verification) =
+            world.get_resource_mut::<super::verification::Verification>()
+        {
+            verification.observe_phase(runtime.0.application().core_session().snapshot().phase());
+        }
         let output = match output {
             Ok(output) => output,
             Err(cause) => {

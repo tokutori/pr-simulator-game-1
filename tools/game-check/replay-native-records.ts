@@ -85,6 +85,7 @@ function compare(actual: unknown, expected: unknown, path: string): void {
 
 let bridge: InstanceType<typeof ApplicationRuntimeBridge> | undefined;
 let drawing: ApplicationDrawingOutput | undefined;
+let pendingCapture: { serial: unknown; file: unknown; drawing: ApplicationDrawingOutput | undefined } | undefined;
 let observations = 0, captures = 0, downloads = 0;
 let loadedRecords = 0;
 let lifecycle = "running";
@@ -143,9 +144,15 @@ try {
         lifecycle = actual.lifecycle;
       }
       observations++;
+    } else if ("capture_started" in entry) {
+      pendingCapture = { serial: entry["capture_started"], file: entry["file"], drawing };
     } else {
       assert.ok("capture" in entry && typeof entry["file"] === "string");
-      compare(drawing, entry["capture"], entry["file"]);
+      assert.ok(pendingCapture !== undefined);
+      assert.equal(pendingCapture.serial, entry["serial"]);
+      assert.equal(pendingCapture.file, entry["file"]);
+      compare(pendingCapture.drawing, entry["capture"], entry["file"]);
+      pendingCapture = undefined;
       captureFiles.push(entry["file"]);
       captures++;
     }
