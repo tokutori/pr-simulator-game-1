@@ -408,9 +408,9 @@ export class ScreenUiAdapter {
       if (label !== undefined) svg.push(chartText(label, "screen-ui-chart-time-marker"));
     });
     control.vectors.forEach((vector) => {
-      if (vector.segment === null) return;
+      if (vector.segments.length === 0) return;
       svg.push(svgElement("path", {
-        d: [vector.segment, ...(vector.head_segments ?? [])].map(([from, to]) =>
+        d: vector.segments.map(([from, to]) =>
           `M ${String(from.x)} ${String(from.y)} L ${String(to.x)} ${String(to.y)}`).join(" "),
         fill: "none",
         stroke: vector.color,

@@ -569,11 +569,8 @@ fn paint_chart(
         }
     }
     for vector in &chart.vectors {
-        if let Some([start, end]) = vector.segment {
-            segment(start, end, &vector.color, 2.0, 1.0);
-            for [start, end] in vector.head_segments.iter().flatten() {
-                segment(*start, *end, &vector.color, 2.0, 1.0);
-            }
+        for [start, end] in &vector.segments {
+            segment(*start, *end, &vector.color, 2.0, 1.0);
         }
     }
     for marker in chart.markers.iter().chain(&chart.time_markers) {

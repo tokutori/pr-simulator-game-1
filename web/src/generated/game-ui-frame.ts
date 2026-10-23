@@ -196,35 +196,16 @@ export interface GameUiChartVector {
      */
     readonly color: string;
     /**
-     * Arrowhead line segments in logical display pixels.
-     *
-     * @minItems 2
-     * @maxItems 2
-     */
-    readonly head_segments: readonly [
-        readonly [
-            GameUiChartPoint,
-            GameUiChartPoint
-        ],
-        readonly [
-            GameUiChartPoint,
-            GameUiChartPoint
-        ]
-    ] | null;
-    /**
      * Legend label.
      */
     readonly label: string;
     /**
-     * Visible logical-pixel segment, absent for zero wind or outside the chart.
-     *
-     * @minItems 2
-     * @maxItems 2
+     * Clipped body and arrowhead lines in logical pixels; empty for zero wind.
      */
-    readonly segment: readonly [
+    readonly segments: readonly (readonly [
         GameUiChartPoint,
         GameUiChartPoint
-    ] | null;
+    ])[];
 }
 /**
  * Shared Web-baseline HUD model; no adapter rederives flight values or labels.

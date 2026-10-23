@@ -1326,10 +1326,8 @@ pub struct GameUiChartVector {
     pub label: String,
     /// Shared colour.
     pub color: String,
-    /// Visible logical-pixel segment, absent for zero wind or outside the chart.
-    pub segment: Option<[GameUiChartPoint; 2]>,
-    /// Arrowhead line segments in logical display pixels.
-    pub head_segments: Option<[[GameUiChartPoint; 2]; 2]>,
+    /// Clipped body and arrowhead lines in logical pixels; empty for zero wind.
+    pub segments: Vec<[GameUiChartPoint; 2]>,
 }
 
 /// One labelled chart location.

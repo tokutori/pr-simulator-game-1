@@ -58,37 +58,38 @@ impl ChartProjection {
     }
 
     fn vector(self, vector: ChartWindVector) -> GameUiChartVector {
-        let segment = vector
+        let mut segments = Vec::new();
+        if let Some([start, end]) = vector
             .segment
-            .map(|points| points.map(|point| self.point(point)));
-        let head_segments = segment.and_then(|[start, end]| {
+            .map(|points| points.map(|point| self.point(point)))
+        {
             let dx = end.x - start.x;
             let dy = end.y - start.y;
             let length = dx.hypot(dy);
-            if length <= f64::EPSILON {
-                return None;
+            if length > f64::EPSILON {
+                segments.push([start, end]);
+                let head_length = 12.0_f64.min(length * 0.45);
+                let angle = dy.atan2(dx);
+                for sign in [-1.0, 1.0] {
+                    let angle = angle + sign * std::f64::consts::FRAC_PI_6;
+                    let tip = GameUiChartPoint {
+                        x: end.x - head_length * angle.cos(),
+                        y: end.y - head_length * angle.sin(),
+                    };
+                    if let Some(segment) = super::clip_segment(
+                        end,
+                        tip,
+                        [self.plot[0], self.plot[2], self.plot[1], self.plot[3]],
+                    ) {
+                        segments.push(segment);
+                    }
+                }
             }
-            let head_length = 12.0_f64.min(length * 0.45);
-            let angle = dy.atan2(dx);
-            Some([-1.0, 1.0].map(|sign| {
-                let angle = angle + sign * std::f64::consts::FRAC_PI_6;
-                let tip = GameUiChartPoint {
-                    x: end.x - head_length * angle.cos(),
-                    y: end.y - head_length * angle.sin(),
-                };
-                super::clip_segment(
-                    end,
-                    tip,
-                    [self.plot[0], self.plot[2], self.plot[1], self.plot[3]],
-                )
-                .unwrap_or([end, end])
-            }))
-        });
+        }
         GameUiChartVector {
             label: vector.label,
             color: vector.color,
-            segment,
-            head_segments,
+            segments,
         }
     }
 
@@ -231,17 +232,19 @@ mod tests {
             })
         };
         let long = vector(1.0);
-        for [start, end] in long.head_segments.unwrap() {
-            assert_eq!(start, GameUiChartPoint { x: 210.0, y: 70.0 });
+        assert_eq!(long.segments.len(), 3);
+        for [start, end] in &long.segments[1..] {
+            assert_eq!(*start, GameUiChartPoint { x: 210.0, y: 70.0 });
             assert!(((end.x - start.x).hypot(end.y - start.y) - 12.0).abs() < 1e-10);
             assert!(((end.y - 70.0).abs() - 6.0).abs() < 1e-10);
             assert!(end.x < start.x);
         }
         let short = vector(-0.99);
-        for [start, end] in short.head_segments.unwrap() {
+        assert_eq!(short.segments.len(), 3);
+        for [start, end] in &short.segments[1..] {
             assert!(((end.x - start.x).hypot(end.y - start.y) - 0.45).abs() < 1e-10);
         }
-        assert!(vector(-1.0).head_segments.is_none());
+        assert!(vector(-1.0).segments.is_empty());
         let boundary = projection.vector(ChartWindVector {
             label: String::new(),
             color: String::new(),
@@ -250,7 +253,7 @@ mod tests {
                 GameUiChartPoint { x: 1.0, y: 2.0 },
             ]),
         });
-        for point in boundary.head_segments.unwrap().into_iter().flatten() {
+        for point in boundary.segments.into_iter().flatten() {
             assert!((10.0..=210.0).contains(&point.x) && (20.0..=120.0).contains(&point.y));
         }
         assert!(
@@ -260,8 +263,8 @@ mod tests {
                     color: String::new(),
                     segment: None
                 })
-                .head_segments
-                .is_none()
+                .segments
+                .is_empty()
         );
     }
 }

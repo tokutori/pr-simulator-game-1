@@ -2997,8 +2997,12 @@
           "description": "Shared colour.",
           "type": "string"
         },
-        "head_segments": {
-          "description": "Arrowhead line segments in logical display pixels.",
+        "label": {
+          "description": "Legend label.",
+          "type": "string"
+        },
+        "segments": {
+          "description": "Clipped body and arrowhead lines in logical pixels; empty for zero wind.",
           "items": {
             "items": {
               "$ref": "#/$defs/GameUiChartPoint"
@@ -3007,35 +3011,13 @@
             "minItems": 2,
             "type": "array"
           },
-          "maxItems": 2,
-          "minItems": 2,
-          "type": [
-            "array",
-            "null"
-          ]
-        },
-        "label": {
-          "description": "Legend label.",
-          "type": "string"
-        },
-        "segment": {
-          "description": "Visible logical-pixel segment, absent for zero wind or outside the chart.",
-          "items": {
-            "$ref": "#/$defs/GameUiChartPoint"
-          },
-          "maxItems": 2,
-          "minItems": 2,
-          "type": [
-            "array",
-            "null"
-          ]
+          "type": "array"
         }
       },
       "required": [
         "label",
         "color",
-        "segment",
-        "head_segments"
+        "segments"
       ],
       "type": "object"
     },

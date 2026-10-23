@@ -88,14 +88,9 @@ pub(super) fn project_chart(
         }
     }
     for vector in chart.vectors.iter().skip(1) {
-        if let Some([start, end]) = vector.segment {
+        for [start, end] in &vector.segments {
             let ink = color(&vector.color, 1.0)?;
-            let start = position(start);
-            let end = position(end);
-            chart_line(world, surface, start, end, ink);
-            for [start, end] in vector.head_segments.iter().flatten() {
-                chart_line(world, surface, position(*start), position(*end), ink);
-            }
+            chart_line(world, surface, position(*start), position(*end), ink);
         }
     }
     for marker in chart.markers.iter().chain(&chart.time_markers) {
@@ -419,24 +414,15 @@ pub(super) fn project_chart_cursor(
                 .insert(BackgroundColor(color(&sample.color, 1.0)?));
         }
     }
-    let wind = cursor
-        .selected_wind_vector
-        .as_ref()
-        .and_then(|vector| vector.segment);
-    if let (Some(vector), Some([start, end])) = (&cursor.selected_wind_vector, wind) {
+    if let Some(vector) = &cursor.selected_wind_vector {
         let ink = color(&vector.color, 1.0)?;
-        set_chart_line(world, retained.wind[0], position(start), position(end), ink);
-        for (entity, segment) in retained.wind[1..]
-            .iter()
-            .zip(vector.head_segments.unwrap_or([[end, end]; 2]))
-        {
-            set_chart_line(
-                world,
-                *entity,
-                position(segment[0]),
-                position(segment[1]),
-                ink,
-            );
+        for (index, entity) in retained.wind.iter().enumerate() {
+            let [start, end] = vector
+                .segments
+                .get(index)
+                .copied()
+                .unwrap_or([GameUiChartPoint { x: 0.0, y: 0.0 }; 2]);
+            set_chart_line(world, *entity, position(start), position(end), ink);
         }
     } else {
         for entity in retained.wind {
