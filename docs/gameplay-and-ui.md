@@ -193,7 +193,7 @@ Retryはsealed configuration、初期状態、scenario seed、波の位相基準
 - 共有Rustが記録座標を論理pxへ投影し、2Dのy反転と風矢印の線分を導出する。Screen・Bevyはその座標を描画し、空間Menuは同じgeometryをpanel矩形へ配置する。
 - 軌跡は記録済み合成重心を使用し、body stateから再計算しない。
 - 接触時の機体重心位置と物理接触点を区別する。
-- 着水はSplash、それ以外は理由付きEndを表示する。
+- 終端のマーカーと凡例には共通の日本語終了理由を表示する。
 
 - 静止・極短・一直線の軌跡でも表示範囲を退化させない。
 - 距離目盛・scale bar・time marker・legendを備え、色だけに依存しない。

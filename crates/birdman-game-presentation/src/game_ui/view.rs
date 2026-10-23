@@ -1248,6 +1248,7 @@ fn analysis(
             state.analysis_chart,
             time,
             context.platform.chart_extent,
+            context.platform.viewport.root_font_size,
         )?;
         let sample = record
             .sample_at_seconds(time)

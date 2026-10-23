@@ -12,6 +12,9 @@ use projection::{
     ChartData, ChartDataCursor, ChartProjection, ChartReferenceLine, ChartWindVector,
 };
 
+const BASE_TICK_FONT_PX: f64 = 14.0;
+const BASE_AXIS_FONT_PX: f64 = 16.0;
+
 impl GameUiChart {
     /// Resolves a raw viewport pointer to the retained time axis; initial presses must hit the plot.
     pub fn pointer_time(&self, position: [f64; 2], rect: [f64; 4], initial: bool) -> Option<f64> {
@@ -51,6 +54,7 @@ pub(super) fn record_chart(
     kind: GameUiAnalysisChart,
     time: f64,
     extent: Option<GameUiChartExtent>,
+    root_font_size: f64,
 ) -> Result<GameUiChart, GameUiError> {
     let samples = record.samples();
     let first = samples
@@ -64,7 +68,7 @@ pub(super) fn record_chart(
         .map_err(GameUiError::Record)?
         .max(0.01);
     let mut chart = ChartData {
-        presentation: initial_presentation(extent)?,
+        presentation: initial_presentation(extent, root_font_size)?,
         x_axis_label: "飛行時間 (s)".to_owned(),
         y_axis_label: String::new(),
         x_minimum: 0.0,
@@ -169,14 +173,19 @@ pub(super) fn record_chart(
 
 fn initial_presentation(
     extent: Option<GameUiChartExtent>,
+    root_font_size: f64,
 ) -> Result<GameUiChartPresentation, GameUiError> {
+    let scale = root_font_size / BASE_AXIS_FONT_PX;
+    if !scale.is_finite() || scale <= 0.0 {
+        return Err(GameUiError::InvalidViewport);
+    }
     let measurement_minimum = GameUiChartExtent {
-        width: 140.0,
-        height: 100.0,
+        width: 140.0 * scale,
+        height: 100.0 * scale,
     };
     let viewport = extent.unwrap_or(GameUiChartExtent {
-        width: 1000.0,
-        height: 520.0,
+        width: 1000.0 * scale,
+        height: 520.0 * scale,
     });
     if !viewport.width.is_finite()
         || !viewport.height.is_finite()
@@ -188,7 +197,7 @@ fn initial_presentation(
     let axis = chart_text(
         String::new(),
         point(0.0, 0.0),
-        16.0,
+        root_font_size,
         400,
         GameUiChartTextAnchor::Middle,
         "#d5e0dc",
@@ -197,9 +206,14 @@ fn initial_presentation(
         viewport,
         measurement_minimum,
         scroll_overflow: true,
-        plot: [64.0, 26.0, viewport.width - 20.0, viewport.height - 48.0],
-        tick_font_size: 14.0,
-        axis_font_size: 16.0,
+        plot: [
+            64.0 * scale,
+            26.0 * scale,
+            viewport.width - 20.0 * scale,
+            viewport.height - 48.0 * scale,
+        ],
+        tick_font_size: BASE_TICK_FONT_PX * scale,
+        axis_font_size: root_font_size,
         x_ticks: Vec::new(),
         y_ticks: Vec::new(),
         grid_lines: Vec::new(),
@@ -226,9 +240,10 @@ fn initial_presentation(
 
 fn complete_presentation(chart: &mut ChartData) {
     let presentation = &mut chart.presentation;
+    let scale = presentation.axis_font_size / BASE_AXIS_FONT_PX;
     if chart.equal_axis_scale {
         let [left, top, right, bottom] = presentation.plot;
-        let top = (top + 40.0).min(bottom - 1.0);
+        let top = (top + 40.0 * scale).min(bottom - scale);
         let side = (right - left).min(bottom - top);
         let centre_x = (left + right) / 2.0;
         let centre_y = (top + bottom) / 2.0;
@@ -250,10 +265,11 @@ fn complete_presentation(chart: &mut ChartData) {
             chart.y_maximum,
         ],
         presentation.plot,
+        scale,
     );
     let project = |position| projection.point(position);
-    let tick_count_x = (width / 80.0).floor().clamp(1.0, 4.0) as u32;
-    let tick_count_y = (height / 32.0).floor().clamp(1.0, 4.0) as u32;
+    let tick_count_x = (width / (80.0 * scale)).floor().clamp(1.0, 4.0) as u32;
+    let tick_count_y = (height / (32.0 * scale)).floor().clamp(1.0, 4.0) as u32;
     presentation.x_ticks = (0..=tick_count_x)
         .map(|index| {
             let ratio = f64::from(index) / f64::from(tick_count_x);
@@ -263,8 +279,8 @@ fn complete_presentation(chart: &mut ChartData) {
                 ratio,
                 text: chart_text(
                     format_chart_tick(value),
-                    point(left + ratio * width, bottom + 20.0),
-                    14.0,
+                    point(left + ratio * width, bottom + 20.0 * scale),
+                    presentation.tick_font_size,
                     400,
                     GameUiChartTextAnchor::Middle,
                     "#d5e0dc",
@@ -281,8 +297,8 @@ fn complete_presentation(chart: &mut ChartData) {
                 ratio,
                 text: chart_text(
                     format_chart_tick(value),
-                    point(left - 10.0, bottom - ratio * height + 5.0),
-                    14.0,
+                    point(left - 10.0 * scale, bottom - ratio * height + 5.0 * scale),
+                    presentation.tick_font_size,
                     400,
                     GameUiChartTextAnchor::End,
                     "#d5e0dc",
@@ -298,16 +314,22 @@ fn complete_presentation(chart: &mut ChartData) {
         .collect();
     presentation.x_axis = chart_text(
         chart.x_axis_label.clone(),
-        point((left + right) / 2.0, presentation.viewport.height - 8.0),
-        16.0,
+        point(
+            (left + right) / 2.0,
+            presentation.viewport.height - 8.0 * scale,
+        ),
+        presentation.axis_font_size,
         400,
         GameUiChartTextAnchor::Middle,
         "#d5e0dc",
     );
     presentation.y_axis = chart_text(
         chart.y_axis_label.clone(),
-        point((left - 48.0).max(16.0), (top + bottom) / 2.0),
-        16.0,
+        point(
+            (left - 48.0 * scale).max(presentation.axis_font_size),
+            (top + bottom) / 2.0,
+        ),
+        presentation.axis_font_size,
         400,
         GameUiChartTextAnchor::Middle,
         "#d5e0dc",
@@ -315,19 +337,20 @@ fn complete_presentation(chart: &mut ChartData) {
     presentation.y_axis.rotation_degrees = -90.0;
     let marker_text = |marker: &GameUiChartMarker, offset: [f64; 2], weight| {
         let position = project(marker.point);
-        let estimated_width = marker.label.encode_utf16().count() as f64 * 14.0 * 0.65;
+        let estimated_width =
+            marker.label.encode_utf16().count() as f64 * presentation.tick_font_size * 0.65;
         let position = point(
-            (position.x + offset[0])
-                .min(presentation.viewport.width - estimated_width - 4.0)
-                .max(4.0),
-            (position.y + offset[1])
-                .min(presentation.viewport.height - 4.0)
-                .max(16.0),
+            (position.x + offset[0] * scale)
+                .min(presentation.viewport.width - estimated_width - 4.0 * scale)
+                .max(4.0 * scale),
+            (position.y + offset[1] * scale)
+                .min(presentation.viewport.height - 4.0 * scale)
+                .max(presentation.axis_font_size),
         );
         chart_text(
             marker.label.clone(),
             position,
-            14.0,
+            presentation.tick_font_size,
             weight,
             GameUiChartTextAnchor::Start,
             "#f3f4e8",
@@ -346,8 +369,8 @@ fn complete_presentation(chart: &mut ChartData) {
     let mut previous_labels = Vec::new();
     for label in &mut presentation.time_marker_labels {
         if previous_labels.iter().any(|position: &GameUiChartPoint| {
-            (position.x - label.position.x).abs() < 64.0
-                && (position.y - label.position.y).abs() < 22.0
+            (position.x - label.position.x).abs() < 64.0 * scale
+                && (position.y - label.position.y).abs() < 22.0 * scale
         }) {
             label.label.clear();
         } else {
@@ -361,10 +384,10 @@ fn complete_presentation(chart: &mut ChartData) {
             chart_text(
                 line.label.clone(),
                 point(
-                    left + 8.0,
-                    project(point(chart.x_minimum, line.value)).y - 7.0,
+                    left + 8.0 * scale,
+                    project(point(chart.x_minimum, line.value)).y - 7.0 * scale,
                 ),
-                14.0,
+                presentation.tick_font_size,
                 500,
                 GameUiChartTextAnchor::Start,
                 "#f3f4e8",
@@ -416,12 +439,12 @@ fn complete_presentation(chart: &mut ChartData) {
         let distance = scale_bar_distance(chart.x_maximum - chart.x_minimum);
         let scale_width = distance / (chart.x_maximum - chart.x_minimum) * width;
         let scale_x = left;
-        let scale_y = 42.0;
-        let north_x = right - 12.0;
-        let north_top = 22.0;
-        let north_length = 24.0_f64;
-        let north_head_height = north_length.min(10.0);
-        let north_head_width = 6.0_f64.min(north_x - left).min(right - north_x);
+        let scale_y = 42.0 * scale;
+        let north_x = right - 12.0 * scale;
+        let north_top = 22.0 * scale;
+        let north_length = 24.0 * scale;
+        let north_head_height = north_length.min(10.0 * scale);
+        let north_head_width = (6.0 * scale).min(north_x - left).min(right - north_x);
         presentation.map_guides = Some(GameUiChartMapGuides {
             scale_distance_m: distance,
             scale_segments: [
@@ -429,16 +452,19 @@ fn complete_presentation(chart: &mut ChartData) {
                     point(scale_x, scale_y),
                     point(scale_x + scale_width, scale_y),
                 ],
-                [point(scale_x, scale_y - 6.0), point(scale_x, scale_y + 3.0)],
                 [
-                    point(scale_x + scale_width, scale_y - 6.0),
-                    point(scale_x + scale_width, scale_y + 3.0),
+                    point(scale_x, scale_y - 6.0 * scale),
+                    point(scale_x, scale_y + 3.0 * scale),
+                ],
+                [
+                    point(scale_x + scale_width, scale_y - 6.0 * scale),
+                    point(scale_x + scale_width, scale_y + 3.0 * scale),
                 ],
             ],
             scale_label: chart_text(
                 format!("{} m", format_chart_tick(distance)),
-                point(scale_x + scale_width / 2.0, scale_y - 8.0),
-                14.0,
+                point(scale_x + scale_width / 2.0, scale_y - 8.0 * scale),
+                presentation.tick_font_size,
                 600,
                 GameUiChartTextAnchor::Middle,
                 "#f3f4e8",
@@ -459,8 +485,8 @@ fn complete_presentation(chart: &mut ChartData) {
             ],
             north_label: chart_text(
                 "N".to_owned(),
-                point(north_x, north_top - 6.0),
-                14.0,
+                point(north_x, north_top - 6.0 * scale),
+                presentation.tick_font_size,
                 600,
                 GameUiChartTextAnchor::Middle,
                 "#f3f4e8",
@@ -541,14 +567,12 @@ pub(super) fn chart_cursor(
         plot.y_minimum,
         plot.y_maximum,
     ];
-    ChartProjection::new(bounds, plot.presentation.plot).cursor(data_cursor(
-        id,
-        kind,
+    ChartProjection::new(
         bounds,
-        &plot.series,
-        sample,
-        time,
-    ))
+        plot.presentation.plot,
+        plot.presentation.tick_font_size / BASE_TICK_FONT_PX,
+    )
+    .cursor(data_cursor(id, kind, bounds, &plot.series, sample, time))
 }
 
 fn data_cursor(

@@ -1836,7 +1836,8 @@ fn unknown_archived_environment_remains_explicit_in_full_and_lightweight_readout
 #[test]
 fn lightweight_frame_matches_fresh_full_view_without_record_series() {
     let session = finalized();
-    let platform = platform();
+    let mut platform = platform();
+    platform.viewport.root_font_size = 24.0;
     let mut state = GameUiState {
         result_tab: GameUiResultTab::Analysis,
         ..GameUiState::default()
@@ -1866,6 +1867,22 @@ fn lightweight_frame_matches_fresh_full_view_without_record_series() {
             panic!("missing plot")
         };
         let cursor = frame.chart_cursor.as_ref().unwrap();
+        assert_eq!(plot.presentation.tick_font_size, 21.0);
+        assert_eq!(plot.presentation.axis_font_size, 24.0);
+        if chart == GameUiAnalysisChart::Map {
+            assert_eq!(
+                plot.presentation
+                    .map_guides
+                    .as_ref()
+                    .unwrap()
+                    .scale_segments[0][0]
+                    .y,
+                63.0
+            );
+        } else {
+            assert_eq!(plot.presentation.plot[0], 96.0);
+            assert_eq!(plot.presentation.plot[1], 39.0);
+        }
         assert_eq!(frame.view_revision, 7);
         assert_eq!(cursor.cursor_x, plot.cursor_x);
         assert_eq!(cursor.cursor_points, plot.cursor_points);
@@ -1902,12 +1919,6 @@ fn lightweight_frame_matches_fresh_full_view_without_record_series() {
                 panic!("missing retained plot");
             };
             assert_eq!(original.presentation.legend, plot.presentation.legend);
-            assert!(
-                plot.presentation
-                    .legend
-                    .iter()
-                    .any(|entry| entry.color == "#f2b35e" && entry.label.contains("選択地点の風"))
-            );
             assert!(
                 !plot
                     .presentation

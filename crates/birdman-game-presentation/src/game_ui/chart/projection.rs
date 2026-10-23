@@ -41,11 +41,16 @@ pub(super) struct ChartReferenceLine {
 pub(super) struct ChartProjection {
     domain: [f64; 4],
     plot: [f64; 4],
+    ink_scale: f64,
 }
 
 impl ChartProjection {
-    pub(super) fn new(domain: [f64; 4], plot: [f64; 4]) -> Self {
-        Self { domain, plot }
+    pub(super) fn new(domain: [f64; 4], plot: [f64; 4], ink_scale: f64) -> Self {
+        Self {
+            domain,
+            plot,
+            ink_scale,
+        }
     }
 
     pub(super) fn point(self, point: GameUiChartPoint) -> GameUiChartPoint {
@@ -68,7 +73,7 @@ impl ChartProjection {
             let length = dx.hypot(dy);
             if length > f64::EPSILON {
                 segments.push([start, end]);
-                let head_length = 12.0_f64.min(length * 0.45);
+                let head_length = (12.0 * self.ink_scale).min(length * 0.45);
                 let angle = dy.atan2(dx);
                 for sign in [-1.0, 1.0] {
                     let angle = angle + sign * std::f64::consts::FRAC_PI_6;
@@ -128,6 +133,7 @@ impl ChartData {
                 self.y_maximum,
             ],
             self.presentation.plot,
+            self.presentation.tick_font_size / super::BASE_TICK_FONT_PX,
         );
         let markers = |markers: Vec<GameUiChartMarker>| {
             markers
@@ -205,7 +211,8 @@ mod tests {
 
     #[test]
     fn pixel_projection_inverts_height_and_bounds_arrowheads_by_the_visible_segment() {
-        let projection = ChartProjection::new([-1.0, 1.0, -2.0, 2.0], [10.0, 20.0, 210.0, 120.0]);
+        let projection =
+            ChartProjection::new([-1.0, 1.0, -2.0, 2.0], [10.0, 20.0, 210.0, 120.0], 1.0);
         for (input, expected) in [
             ([-1.0, -2.0], [10.0, 120.0]),
             ([1.0, 2.0], [210.0, 20.0]),
@@ -246,6 +253,20 @@ mod tests {
             assert!(((end.x - start.x).hypot(end.y - start.y) - 0.45).abs() < 1e-10);
         }
         assert!(vector(-1.0).segments.is_empty());
+        let enlarged =
+            ChartProjection::new([-1.0, 1.0, -2.0, 2.0], [10.0, 20.0, 210.0, 120.0], 1.5).vector(
+                ChartWindVector {
+                    label: String::new(),
+                    color: String::new(),
+                    segment: Some([
+                        GameUiChartPoint { x: -1.0, y: 0.0 },
+                        GameUiChartPoint { x: 1.0, y: 0.0 },
+                    ]),
+                },
+            );
+        for [start, end] in &enlarged.segments[1..] {
+            assert!(((end.x - start.x).hypot(end.y - start.y) - 18.0).abs() < 1e-10);
+        }
         let boundary = projection.vector(ChartWindVector {
             label: String::new(),
             color: String::new(),
