@@ -1,6 +1,16 @@
 schema_version = 1
 
 [[assets]]
+path = "assets/favicon.svg"
+sha256 = "812ad964d9b4903210cde52a1a9362632e4104691f0b40682a3b3319e77f7052"
+source = "Original glider silhouette favicon"
+source_version = "1"
+license = "MIT"
+license_url = "../LICENSE"
+attribution = "pr-simulator-game contributors"
+processing = "Original SVG vector artwork; no external source transformation; UTF-8 LF"
+
+[[assets]]
 path = "assets/aircraft/playable-glider-v5.json"
 sha256 = "f2897c777a4f9357cb414bb9f526b01a2dbab1d6cd047472727a3c4915823b5a"
 source = "Original fictional glider parameters and procedural structural definition"
