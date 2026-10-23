@@ -45,9 +45,22 @@ pub(super) struct ShutdownOwner {
     closed: bool,
     pending: BTreeSet<Operation>,
     renderer: Option<u32>,
+    reload: bool,
 }
 
 impl ShutdownOwner {
+    pub(super) fn request_reload(&mut self) {
+        self.reload = true;
+    }
+
+    pub(super) fn take_reload(&mut self) -> Option<ApplicationRequest> {
+        if self.lifecycle() == ApplicationLifecycle::Drained && std::mem::take(&mut self.reload) {
+            Some(ApplicationRequest::ReloadApplication)
+        } else {
+            None
+        }
+    }
+
     pub(super) fn closed(&self) -> bool {
         self.closed
     }

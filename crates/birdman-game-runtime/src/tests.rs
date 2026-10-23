@@ -205,7 +205,7 @@ fn boot_retries_renderer_creation_releases_late_resources_and_enters_title_after
         ApplicationRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
     let initial = runtime
         .observe_test(ApplicationInput::Platform {
-            observation: platform,
+            observation: platform.clone(),
         })
         .unwrap();
     let first = initial
@@ -306,6 +306,78 @@ fn boot_retries_renderer_creation_releases_late_resources_and_enters_title_after
         runtime.application().core_session().snapshot().phase(),
         SessionPhase::Title
     );
+    let mut platform = platform;
+    platform.capabilities.stored_records_available = true;
+    let mut reload =
+        ApplicationRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
+    let initial = reload
+        .observe_test(ApplicationInput::Platform {
+            observation: platform,
+        })
+        .unwrap();
+    let creation = initial
+        .requests
+        .iter()
+        .find_map(|request| match request {
+            ApplicationRequest::CreateRenderer { request_id } => Some(*request_id),
+            _ => None,
+        })
+        .unwrap();
+    let preview = initial
+        .requests
+        .iter()
+        .find_map(|request| match request {
+            ApplicationRequest::BeginRecordPreview { request_id, .. } => Some(*request_id),
+            _ => None,
+        })
+        .unwrap();
+    let failed = structure(
+        reload
+            .observe_test(ApplicationInput::RendererCreated {
+                request_id: creation,
+                result: ApplicationRendererCreation::Failed {
+                    cause: "create failed".into(),
+                },
+            })
+            .unwrap(),
+    );
+    let closing = reload
+        .observe_test(ApplicationInput::Control {
+            view_revision: failed.view_revision,
+            input: GameUiControlInput::Activate {
+                control_id: "game-boot-reload".into(),
+            },
+        })
+        .unwrap();
+    assert_eq!(closing.lifecycle, ApplicationLifecycle::Closing);
+    assert!(
+        !closing
+            .requests
+            .iter()
+            .any(|request| matches!(request, ApplicationRequest::ReloadApplication))
+    );
+    let drained = reload
+        .observe_test(ApplicationInput::RecordIoCancelled {
+            request_id: preview,
+            failure: None,
+        })
+        .unwrap();
+    assert_eq!(drained.lifecycle, ApplicationLifecycle::Drained);
+    assert_eq!(
+        drained
+            .requests
+            .iter()
+            .filter(|request| matches!(request, ApplicationRequest::ReloadApplication))
+            .count(),
+        1
+    );
+    let duplicate = reload
+        .observe_test(ApplicationInput::RecordIoCancelled {
+            request_id: preview,
+            failure: None,
+        })
+        .unwrap();
+    assert!(duplicate.requests.is_empty());
 }
 
 #[test]

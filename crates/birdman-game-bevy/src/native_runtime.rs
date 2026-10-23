@@ -23,7 +23,6 @@ pub(crate) struct NativeIo {
     origin: Instant,
     wakes: BTreeMap<u32, f64>,
     pub(crate) display_resource_id: Option<u32>,
-    restart: Option<std::process::Command>,
     pub(crate) drawing: Option<ApplicationDrawingOutput>,
 }
 
@@ -33,7 +32,6 @@ impl Default for NativeIo {
             origin: Instant::now(),
             wakes: BTreeMap::new(),
             display_resource_id: None,
-            restart: None,
             drawing: None,
         }
     }
@@ -126,6 +124,7 @@ pub(crate) fn update(world: &mut World) {
         if let Some(cause) = output.diagnostic {
             warn!("Native application: {cause}");
         }
+        let mut restart_failed = false;
         for request in output.requests {
             if let Some(inputs) = world
                 .resource_mut::<super::native_storage::NativeStorage>()
@@ -180,15 +179,16 @@ pub(crate) fn update(world: &mut World) {
                         })
                     }
                 },
-                ApplicationRequest::ReloadApplication => match std::env::current_exe() {
-                    Ok(path) => {
-                        let mut command = std::process::Command::new(path);
-                        command.args(std::env::args_os().skip(1));
-                        world.resource_mut::<NativeIo>().restart = Some(command);
-                        queue.push_back(ApplicationInput::Dispose);
+                ApplicationRequest::ReloadApplication => {
+                    if let Err(cause) = std::env::current_exe().and_then(|path| {
+                        std::process::Command::new(path)
+                            .args(std::env::args_os().skip(1))
+                            .spawn()
+                    }) {
+                        error!("Native application restart: {cause}");
+                        restart_failed = true;
                     }
-                    Err(cause) => error!("Native application restart: {cause}"),
-                },
+                }
                 request => match super::world::execute(world, &runtime.0, &request) {
                     Ok(Some(inputs)) => queue.extend(inputs),
                     Ok(None) => error!("Unhandled native I/O request: {request:?}"),
@@ -211,14 +211,11 @@ pub(crate) fn update(world: &mut World) {
             world.resource_mut::<NativeIo>().drawing = Some(drawing);
         }
         if output.lifecycle == ApplicationLifecycle::Drained {
-            if let Some(mut command) = world.resource_mut::<NativeIo>().restart.take()
-                && let Err(cause) = command.spawn()
-            {
-                error!("Native application restart: {cause}");
-                world.write_message(AppExit::error());
-                break;
-            }
-            world.write_message(AppExit::Success);
+            world.write_message(if restart_failed {
+                AppExit::error()
+            } else {
+                AppExit::Success
+            });
             break;
         }
     }

@@ -310,18 +310,7 @@ impl ApplicationRuntime {
                 }
             }
             ApplicationInput::Dispose => {
-                let renderer = self.graphics.retire();
-                requests.extend(self.shutdown.begin(renderer));
-                self.boot = boot::BootOwner::Closed;
-                self.page_visible = false;
-                self.storage.close();
-                requests.extend(self.assets.select(None));
-                requests.extend(
-                    self.display
-                        .close()
-                        .into_iter()
-                        .map(|request| ApplicationRequest::Display { request }),
-                );
+                self.close(&mut requests);
             }
             ApplicationInput::PageHide { persisted: true } => {
                 self.page_frozen = true;
@@ -1003,6 +992,21 @@ impl ApplicationRuntime {
         Ok(self.output(Some(drawing), requests, keyboard_consumed))
     }
 
+    fn close(&mut self, requests: &mut Vec<ApplicationRequest>) {
+        let renderer = self.graphics.retire();
+        requests.extend(self.shutdown.begin(renderer));
+        self.boot = boot::BootOwner::Closed;
+        self.page_visible = false;
+        self.storage.close();
+        requests.extend(self.assets.select(None));
+        requests.extend(
+            self.display
+                .close()
+                .into_iter()
+                .map(|request| ApplicationRequest::Display { request }),
+        );
+    }
+
     fn output(
         &mut self,
         drawing: Option<ApplicationDrawingOutput>,
@@ -1012,6 +1016,9 @@ impl ApplicationRuntime {
         self.shutdown.requests(&requests);
         if let Some(request) = self.shutdown.release_renderer() {
             self.shutdown.requests(std::slice::from_ref(&request));
+            requests.push(request);
+        }
+        if let Some(request) = self.shutdown.take_reload() {
             requests.push(request);
         }
         ApplicationOutput {
@@ -1104,7 +1111,10 @@ impl ApplicationRuntime {
                 && matches!(self.boot, boot::BootOwner::Failed)
             {
                 match control_id.as_str() {
-                    "game-boot-reload" => requests.push(ApplicationRequest::ReloadApplication),
+                    "game-boot-reload" => {
+                        self.shutdown.request_reload();
+                        self.close(requests);
+                    }
                     "game-boot-retry" => {
                         self.resources = None;
                         self.resource_readiness = BackendReadiness::Preparing;
