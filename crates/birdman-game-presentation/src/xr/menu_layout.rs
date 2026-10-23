@@ -204,6 +204,24 @@ fn plan(source: MenuLayoutSource) -> Result<MenuLayoutPlan, MenuLayoutFailure> {
                     None,
                     None,
                 )?,
+                MenuWidget::Fields { fields } => {
+                    for (index, field) in fields.into_iter().enumerate() {
+                        for (role, value) in [
+                            (MenuTextRole::FieldLabel, field.label),
+                            (MenuTextRole::FieldValue, field.value),
+                            (MenuTextRole::FieldUnit, field.unit),
+                        ] {
+                            output.add_text(
+                                slot(role, index),
+                                value,
+                                text_width - padding * 2.0,
+                                None,
+                                None,
+                                None,
+                            )?;
+                        }
+                    }
+                }
                 MenuWidget::Chart { layout } => {
                     if ![layout.size[0], layout.size[1], layout.tick_font_size]
                         .into_iter()
@@ -273,6 +291,15 @@ impl MenuLayoutPlan {
             return Err(MenuLayoutFailure::InvalidLayout);
         }
         let mut font = self.source.font.clone();
+        if matches!(
+            slot,
+            MenuTextSlot::Control {
+                role: MenuTextRole::FieldValue,
+                ..
+            }
+        ) {
+            font.family = "monospace".to_owned();
+        }
         let mut font_meters = self.source.font_meters;
         if let Some(text) = &chart_text {
             if ![
@@ -407,6 +434,152 @@ fn arrange(
                 texts.push(text);
             }
             let mut plot = None;
+            let mut cards = Vec::new();
+            if let MenuWidget::Fields { fields } = &control.widget {
+                let indices = (0..fields.len()).map(|field_index| {
+                    [MenuTextRole::FieldLabel, MenuTextRole::FieldValue, MenuTextRole::FieldUnit].map(|role| specifications.iter().find_map(|(index, text)| matches!(&text.slot, MenuTextSlot::Control { role: candidate, index: candidate_index, .. } if *candidate == role && *candidate_index == field_index).then_some(*index)).ok_or(InvalidLayout)).into_iter().collect::<Result<Vec<_>, _>>()
+                }).collect::<Result<Vec<_>, _>>()?;
+                let text_width = |index: usize| {
+                    measured[&index]
+                        .lines
+                        .iter()
+                        .map(|line| {
+                            line.advance_meters
+                                .max(line.left_meters.max(0.0) + line.right_meters)
+                        })
+                        .fold(0.0_f64, f64::max)
+                };
+                let widths = [0, 1, 2].map(|role| {
+                    indices
+                        .iter()
+                        .map(|indices| text_width(indices[role]))
+                        .fold(0.0_f64, f64::max)
+                });
+                let content_width = item.width - plan.padding_meters * 2.0;
+                let required_width = widths[0].max(widths[1] + widths[2] + plan.gap_meters)
+                    + plan.padding_meters * 2.0;
+                let columns = (((content_width + plan.gap_meters)
+                    / (required_width + plan.gap_meters))
+                    .floor() as usize)
+                    .clamp(1, 3)
+                    .min(fields.len().max(1));
+                let card_width =
+                    (content_width - plan.gap_meters * (columns - 1) as f64) / columns as f64;
+                let stacked_unit = widths[1] + widths[2] + plan.gap_meters
+                    > card_width - plan.padding_meters * 2.0;
+                let maximum_ascent = indices
+                    .iter()
+                    .flatten()
+                    .flat_map(|index| &measured[index].lines)
+                    .map(|line| line.ascent_meters)
+                    .fold(0.0_f64, f64::max);
+                let maximum_descent = indices
+                    .iter()
+                    .flatten()
+                    .flat_map(|index| &measured[index].lines)
+                    .map(|line| line.descent_meters)
+                    .fold(0.0_f64, f64::max);
+                let line_height = plan
+                    .line_height_meters
+                    .max(maximum_ascent + maximum_descent);
+                let rows = [0, 1, 2].map(|role| {
+                    indices
+                        .iter()
+                        .map(|indices| measured[&indices[role]].lines.len())
+                        .max()
+                        .unwrap_or(0)
+                });
+                let card_height = (rows[0]
+                    + if stacked_unit {
+                        rows[1] + rows[2]
+                    } else {
+                        rows[1].max(rows[2])
+                    }) as f64
+                    * line_height
+                    + plan.padding_meters * 3.0;
+                text_top += plan.gap_meters;
+                for (field_index, indices) in indices.iter().enumerate() {
+                    let card = MenuRect {
+                        x: item.left
+                            + plan.padding_meters
+                            + (field_index % columns) as f64 * (card_width + plan.gap_meters),
+                        y: text_top
+                            + (field_index / columns) as f64 * (card_height + plan.gap_meters),
+                        width: card_width,
+                        height: card_height,
+                    };
+                    let value_top =
+                        card.y + plan.padding_meters * 2.0 + rows[0] as f64 * line_height;
+                    let unit_left = if stacked_unit {
+                        card.x + plan.padding_meters
+                    } else {
+                        card.x + card.width - plan.padding_meters - widths[2]
+                    };
+                    let value_right = if stacked_unit {
+                        card.x + card.width - plan.padding_meters
+                    } else {
+                        unit_left - plan.gap_meters
+                    };
+                    for (role_index, index) in indices.iter().enumerate() {
+                        let lines = &measured[index].lines;
+                        let left_bearing = lines
+                            .iter()
+                            .map(|line| line.left_meters)
+                            .fold(0.0_f64, f64::max);
+                        let right_overhang = lines
+                            .iter()
+                            .map(|line| line.right_meters - line.advance_meters)
+                            .fold(0.0_f64, f64::max);
+                        let (coordinate_x, coordinate_y, anchor) = match role_index {
+                            0 => (
+                                card.x + plan.padding_meters + left_bearing,
+                                card.y + plan.padding_meters,
+                                crate::game_ui::GameUiChartTextAnchor::Start,
+                            ),
+                            1 => (
+                                value_right - right_overhang,
+                                value_top,
+                                crate::game_ui::GameUiChartTextAnchor::End,
+                            ),
+                            _ => (
+                                unit_left + left_bearing,
+                                value_top
+                                    + if stacked_unit {
+                                        rows[1] as f64 * line_height
+                                    } else {
+                                        0.0
+                                    },
+                                crate::game_ui::GameUiChartTextAnchor::Start,
+                            ),
+                        };
+                        let projection = MenuChartProjection {
+                            baseline: MenuPoint {
+                                x: coordinate_x,
+                                y: coordinate_y + maximum_ascent,
+                            },
+                            rotation_degrees: 0.0,
+                            anchor,
+                        };
+                        let line_geometry = lines
+                            .iter()
+                            .enumerate()
+                            .map(|(line_index, line)| {
+                                chart_line(&projection, line, line_index, line_height)
+                            })
+                            .collect::<Vec<_>>();
+                        let bounds = union(line_geometry.iter().map(|geometry| geometry.bounds))
+                            .ok_or(InvalidLayout)?;
+                        texts.push(MenuTextPlacement {
+                            text_index: *index,
+                            bounds,
+                            chart_projection: Some(projection),
+                            line_geometry,
+                        });
+                    }
+                    cards.push(card);
+                }
+                text_top += fields.len().div_ceil(columns) as f64 * (card_height + plan.gap_meters);
+            }
             if let MenuWidget::Chart { layout } = &control.widget {
                 let scale = (item.width - plan.padding_meters * 2.0) / layout.size[0];
                 let [left, chart_top, right, bottom] = layout.plot;
@@ -485,6 +658,7 @@ fn arrange(
                 bounds,
                 texts,
                 plot,
+                cards,
             });
         }
         top += height + plan.gap_meters;

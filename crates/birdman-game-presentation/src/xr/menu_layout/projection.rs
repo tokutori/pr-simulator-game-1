@@ -208,6 +208,23 @@ pub(super) fn project(
                 color: control_background(&control.content, theme).into(),
                 gradient: None,
             });
+            for card in &placement.cards {
+                let origin = translate(MenuPoint {
+                    x: card.x,
+                    y: card.y,
+                });
+                content.push(SurfacePaintItem::Rectangle {
+                    opacity: 1.0,
+                    bounds: MenuRect {
+                        x: origin.x,
+                        y: origin.y,
+                        width: card.width,
+                        height: card.height,
+                    },
+                    color: theme.normal_background.clone(),
+                    gradient: None,
+                });
+            }
             if let (GameUiControlContent::Chart { plot, .. }, Some(bounds)) =
                 (&control.content, placement.plot)
             {

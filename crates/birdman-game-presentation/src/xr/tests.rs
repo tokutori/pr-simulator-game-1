@@ -1,7 +1,7 @@
 use super::*;
 use crate::camera::*;
 
-pub(super) fn viewer(depth: XrDepthRange) -> XrViewerFrame {
+pub(crate) fn viewer(depth: XrDepthRange) -> XrViewerFrame {
     let tangent = (60.0_f64.to_radians() / 2.0).tan();
     let near = 0.05;
     let far = 100.0;

@@ -147,16 +147,13 @@ fn source_from_view(
                         .map_or(value, |readout| &readout.value)
                         .clone(),
                 },
-                GameUiControlContent::Fields { fields, .. } => MenuWidget::Status {
-                    value: frame
+                GameUiControlContent::Fields { fields, .. } => MenuWidget::Fields {
+                    fields: frame
                         .fields
                         .iter()
                         .find(|value| value.id == control.id)
                         .map_or(fields, |value| &value.fields)
-                        .iter()
-                        .map(|field| format!("{}  {} {}", field.label, field.value, field.unit))
-                        .collect::<Vec<_>>()
-                        .join("\n"),
+                        .clone(),
                 },
                 GameUiControlContent::Chart { plot, .. } => {
                     let chart = &plot.presentation;

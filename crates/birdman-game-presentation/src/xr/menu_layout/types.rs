@@ -1,4 +1,6 @@
-use crate::game_ui::{GameUiButtonPresentation, GameUiChartLegend, GameUiChartText, GameUiSection};
+use crate::game_ui::{
+    GameUiButtonPresentation, GameUiChartLegend, GameUiChartText, GameUiNumericField, GameUiSection,
+};
 use serde::{Deserialize, Serialize};
 
 /// Metric point in a spatial menu document.
@@ -62,6 +64,12 @@ pub enum MenuTextRole {
     Label,
     /// Current control value.
     Value,
+    /// Numeric card label.
+    FieldLabel,
+    /// Monospaced numeric card value.
+    FieldValue,
+    /// Numeric card unit.
+    FieldUnit,
     /// Horizontal axis title.
     XAxis,
     /// Vertical axis title.
@@ -196,6 +204,11 @@ pub enum MenuWidget {
     Status {
         /// Already formatted content or current toggle selection.
         value: String,
+    },
+    /// Structured numeric cards using the common field values.
+    Fields {
+        /// Ordered labels, values and units.
+        fields: Vec<GameUiNumericField>,
     },
     /// Static chart layout.
     Chart {
@@ -425,6 +438,8 @@ pub struct MenuControlPlacement {
     pub texts: Vec<MenuTextPlacement>,
     /// Chart plot rectangle ordered left, top, right and bottom.
     pub plot: Option<MenuRect>,
+    /// Numeric-card rectangles in the same document coordinates.
+    pub cards: Vec<MenuRect>,
 }
 
 /// Shared document geometry; source objects remain with the adapter.

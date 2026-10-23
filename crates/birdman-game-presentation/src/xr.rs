@@ -24,4 +24,4 @@ pub use spatial::*;
 pub use spatial_menu::*;
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

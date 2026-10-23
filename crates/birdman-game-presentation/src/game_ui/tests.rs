@@ -1467,6 +1467,78 @@ fn analysis_sections_preserve_order_and_typed_values_across_targets() {
                     game_ui_view(&state, &context(&session, difficulty(), &platform)).unwrap();
                 assert_eq!(spatial.panels, screen.panels);
                 assert!(spatial.hud.is_none());
+                if !replay && width == 1280.0 && mode == GameUiPresentationMode::PhoneVr {
+                    use crate::xr::*;
+                    let mut numeric = spatial.clone();
+                    let frame = game_ui_frame(
+                        &state,
+                        &context(&session, difficulty(), &platform),
+                        &numeric,
+                        numeric.view_revision,
+                    )
+                    .unwrap();
+                    numeric.panels[0].controls.retain(|control| {
+                        matches!(control.content, GameUiControlContent::Fields { .. })
+                    });
+                    let input = MenuPreparationInput {
+                        progress: 0.0,
+                        generation: 0,
+                        view_revision: numeric.view_revision,
+                        panel_id: numeric.panels[0].id.clone(),
+                        viewer: Box::new(crate::xr::tests::viewer(XrDepthRange::NegativeOneToOne)),
+                        font: MenuFont {
+                            family: "sans-serif".into(),
+                            weight: 400,
+                            style: MenuFontStyle::Normal,
+                            generation: 0,
+                        },
+                        locale: "ja".into(),
+                    };
+                    let result = prepare_game_ui_menu(
+                        &numeric,
+                        &frame,
+                        input,
+                        &mut SurfaceFontCache::default(),
+                        |request, _, value| {
+                            let width = value.chars().count() as f64 * request.font_meters * 0.6;
+                            Ok(MenuGlyphMetrics {
+                                advance: width,
+                                left: 0.0,
+                                right: width,
+                                ascent: if value.is_empty() {
+                                    0.0
+                                } else {
+                                    request.font_meters * 0.8
+                                },
+                                descent: if value.is_empty() {
+                                    0.0
+                                } else {
+                                    request.font_meters * 0.2
+                                },
+                            })
+                        },
+                    );
+                    let MenuLayoutReply::Ready { projection } = result else {
+                        panic!("numeric cards failed: {result:?}")
+                    };
+                    let rectangles = projection
+                        .content
+                        .items
+                        .iter()
+                        .filter_map(|item| match item {
+                            SurfacePaintItem::Rectangle { bounds, .. } => Some(bounds),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>();
+                    assert_eq!(rectangles.len(), 10);
+                    assert_eq!(rectangles[1].y, rectangles[2].y);
+                    assert!(rectangles[4].y > rectangles[1].y);
+                    let fields = &frame.fields[0].fields;
+                    for field in fields {
+                        assert!(projection.content.items.iter().any(|item| matches!(item, SurfacePaintItem::Text { value, font, .. } if value == &field.value && font.family == "monospace")));
+                        assert!(projection.content.items.iter().any(|item| matches!(item, SurfacePaintItem::Text { value, .. } if value == &field.label)));
+                    }
+                }
             }
             assert_eq!(session.snapshot(), snapshot);
         }
