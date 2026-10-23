@@ -1,12 +1,4 @@
-use super::{
-    NativeFont,
-    environment::NativeEnvironment,
-    flight_log::{FlightLogExport, FlightLogFormat},
-    frame_rate::FrameRate,
-    native_session::NativeSession,
-    screen_render::{self, NativeScreenRender},
-    water_quality::WaterQualitySelection,
-};
+use super::{NativeFont, native_runtime::NativeInputs};
 use bevy::ecs as bevy_ecs;
 use bevy::{
     input::mouse::MouseScrollUnit,
@@ -20,16 +12,13 @@ use bevy::{
     ui::ColorStop,
     ui::RelativeCursorPosition,
 };
-#[cfg(test)]
-use birdman_game_format::WaterQuality;
 use birdman_game_presentation::game_ui::{
     GameUiAction, GameUiButtonPresentation, GameUiChart, GameUiChartCursor, GameUiChartExtent,
     GameUiChartPoint, GameUiChartText, GameUiChartTextAnchor, GameUiControl, GameUiControlContent,
-    GameUiEffect, GameUiEmphasis, GameUiFrame, GameUiLayout, GameUiPlatformCommand,
-    GameUiPlatformInput, GameUiPresentationMode, GameUiRangeTarget, GameUiReplayCamera,
+    GameUiControlInput, GameUiEmphasis, GameUiFrame, GameUiLayout, GameUiPlatformCommand,
     GameUiSectionLayout, GameUiShell, GameUiTheme, GameUiView, GameUiViewport,
-    GameUiWaterQualityOperation,
 };
+use birdman_game_runtime::{ApplicationDrawingOutput, ApplicationInput, ApplicationUiProjection};
 use std::collections::BTreeMap;
 
 #[path = "ui/chart.rs"]
@@ -44,13 +33,13 @@ use projection::*;
 
 #[derive(Component)]
 pub(crate) struct MenuButton {
-    action: GameUiAction,
+    control_id: String,
     enabled: bool,
 }
 
 #[derive(Component)]
 struct MenuRange {
-    target: GameUiRangeTarget,
+    control_id: String,
     value: f64,
     minimum: f64,
     maximum: f64,
@@ -175,7 +164,7 @@ fn frame_rate_node() -> Node {
     }
 }
 
-pub(crate) fn platform_input(world: &mut World) -> GameUiPlatformInput {
+pub(crate) fn viewport(world: &mut World) -> (GameUiViewport, Option<GameUiChartExtent>) {
     let scale = world.get_resource::<UiScale>().map_or(1.0, |scale| scale.0);
     let viewport = world
         .query::<&Window>()
@@ -213,107 +202,72 @@ pub(crate) fn platform_input(world: &mut World) -> GameUiPlatformInput {
                 height: f64::from(size.y),
             })
         });
-    let quality = world.resource::<WaterQualitySelection>();
-    let session = world.resource::<NativeSession>();
-    let mut notifications = Vec::new();
-    if let Some(notice) = &session.notice {
-        notifications.push(notice.clone());
-    }
-    let flight_log_export = world.get_resource::<FlightLogExport>();
-    if let Some(export) = flight_log_export
-        && matches!(
-            session.game.core_session().snapshot().phase(),
-            birdman_game_core::SessionPhase::Result | birdman_game_core::SessionPhase::Replay
-        )
-    {
-        notifications.push(format!(
-            "飛行ログの保存先: {}",
-            export.directory().display()
-        ));
-    }
-    if let Some(environment) = world.get_resource::<NativeEnvironment>()
-        && let Some(notice) = environment.failure_notice()
-    {
-        notifications.push(notice);
-    }
-    GameUiPlatformInput {
-        viewport: GameUiViewport {
+    (
+        GameUiViewport {
             width: f64::from(viewport.0),
             height: f64::from(viewport.1),
             root_font_size: 16.0,
         },
         chart_extent,
-        presentation_mode: GameUiPresentationMode::Screen,
-        operation_pending: false,
-        hmd_available: false,
-        phone_vr_available: false,
-        menu_recenter_available: false,
-        analysis_available: true,
-        replay_available: session.game.core_session().playback_record().is_some(),
-        stored_records_available: flight_log_export.is_some(),
-        flight_log_available: flight_log_export.is_some(),
-        supported_replay_cameras: GameUiReplayCamera::ALL.to_vec(),
-        screen_render_scale: world.resource::<NativeScreenRender>().snapshot(),
-        water_quality: quality.applied(),
-        water_quality_operation: if let Some(requested) = quality.pending() {
-            GameUiWaterQualityOperation::Applying { requested }
-        } else if let Some((requested, cause)) = quality.failure() {
-            GameUiWaterQualityOperation::Failed {
-                requested,
-                cause: format!("{cause:?}"),
-            }
-        } else {
-            GameUiWaterQualityOperation::Idle {}
-        },
-        flight_controller_failure: None,
-        head_hud_failure: None,
-        notification: notifications.join("\n"),
-        stored_records: flight_log_export
-            .map_or_else(Vec::new, FlightLogExport::stored_records)
-            .into(),
-    }
+    )
 }
 
 pub(crate) fn button_actions(world: &mut World) {
-    let platform = platform_input(world);
-    let mut actions = Vec::new();
+    let revision = world
+        .resource::<RetainedUi>()
+        .view
+        .as_ref()
+        .map(|view| view.view_revision);
+    let Some(view_revision) = revision else {
+        return;
+    };
+    let mut inputs = Vec::new();
     for (entity, interaction, button) in world
         .query_filtered::<(Entity, &Interaction, &MenuButton), Changed<Interaction>>()
         .iter(world)
     {
         if *interaction == Interaction::Pressed && button.enabled {
-            actions.push((entity, button.action.clone()));
+            inputs.push((
+                entity,
+                GameUiControlInput::Activate {
+                    control_id: button.control_id.clone(),
+                },
+            ));
         }
     }
     for (entity, interaction, cursor, range) in world
         .query::<(Entity, &Interaction, &RelativeCursorPosition, &MenuRange)>()
         .iter(world)
     {
-        if *interaction != Interaction::Pressed || !range.enabled {
-            continue;
-        }
-        if let Some(position) = cursor.normalized {
-            let time_seconds = range.minimum
+        if *interaction == Interaction::Pressed
+            && range.enabled
+            && let Some(position) = cursor.normalized
+        {
+            let value = range.minimum
                 + f64::from((position.x + 0.5).clamp(0.0, 1.0)) * (range.maximum - range.minimum);
-            actions.push((
+            inputs.push((
                 entity,
-                match range.target {
-                    GameUiRangeTarget::Analysis => GameUiAction::SeekAnalysis { time_seconds },
-                    GameUiRangeTarget::Replay => GameUiAction::SeekReplay { time_seconds },
+                GameUiControlInput::SetRange {
+                    control_id: range.control_id.clone(),
+                    value,
                 },
             ));
         }
     }
-    let focused = world.resource::<InputFocus>().get();
-    if let Some(focused) = focused
+    if let Some(focused) = world.resource::<InputFocus>().get()
         && let Some(keys) = world.get_resource::<ButtonInput<KeyCode>>()
     {
         if (keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::Space))
             && let Some(button) = world.get::<MenuButton>(focused)
             && button.enabled
-            && !actions.iter().any(|(entity, _)| *entity == focused)
+            && !inputs.iter().any(|(entity, _)| *entity == focused)
         {
-            actions.push((focused, button.action.clone()));
+            inputs.push((
+                focused,
+                GameUiControlInput::Activate {
+                    control_id: button.control_id.clone(),
+                },
+            ));
         }
         if let Some(range) = world.get::<MenuRange>(focused)
             && range.enabled
@@ -331,172 +285,61 @@ pub(crate) fn button_actions(world: &mut World) {
             } else {
                 None
             };
-            if let Some(next) = next {
-                let time_seconds = next.clamp(range.minimum, range.maximum);
-                actions.push((
+            if let Some(value) = next {
+                inputs.push((
                     focused,
-                    match range.target {
-                        GameUiRangeTarget::Analysis => GameUiAction::SeekAnalysis { time_seconds },
-                        GameUiRangeTarget::Replay => GameUiAction::SeekReplay { time_seconds },
+                    GameUiControlInput::SetRange {
+                        control_id: range.control_id.clone(),
+                        value: value.clamp(range.minimum, range.maximum),
                     },
                 ));
             }
         }
     }
-    for (entity, action) in actions {
+    for (entity, input) in inputs {
         world
             .resource_mut::<InputFocus>()
             .set(entity, FocusCause::Pressed);
-        let update = world
-            .resource_mut::<NativeSession>()
-            .update_ui_action(action, &platform);
-        let result = update.and_then(|update| {
-            for effect in update.effects {
-                match effect {
-                    GameUiEffect::Session { command } => world
-                        .resource_mut::<NativeSession>()
-                        .execute_ui_command(command)?,
-                    GameUiEffect::Record { action } => world
-                        .resource_mut::<NativeSession>()
-                        .execute_ui_record_action(action)?,
-                    GameUiEffect::Platform {
-                        command:
-                            command @ (GameUiPlatformCommand::DownloadRecordJson {}
-                            | GameUiPlatformCommand::DownloadFlightCsv {}),
-                    } => {
-                        let export = world
-                            .get_resource::<FlightLogExport>()
-                            .ok_or("飛行ログの保存先が設定されていない")?;
-                        let format = match command {
-                            GameUiPlatformCommand::DownloadRecordJson {} => FlightLogFormat::Json,
-                            _ => FlightLogFormat::Csv,
-                        };
-                        let path = export
-                            .save(world.resource::<NativeSession>(), format)
-                            .map_err(|cause| cause.to_string())?;
-                        let mut notice = format!("飛行ログを保存した: {}", path.display());
-                        if matches!(format, FlightLogFormat::Json) {
-                            match world.resource_mut::<FlightLogExport>().refresh() {
-                                Ok(failures) if !failures.is_empty() => notice.push_str(&format!(
-                                    "。一覧の一部を読み込めない: {}",
-                                    failures[0]
-                                )),
-                                Err(error) => {
-                                    notice.push_str(&format!("。一覧を更新できない: {error}"))
-                                }
-                                _ => {}
-                            }
-                        }
-                        world.resource_mut::<NativeSession>().notice = Some(notice);
-                    }
-                    GameUiEffect::Platform {
-                        command: GameUiPlatformCommand::OpenStoredRecord { id },
-                    } => {
-                        let (path, json) = world
-                            .get_resource::<FlightLogExport>()
-                            .ok_or("飛行ログの保存先が設定されていない")?
-                            .read_stored(id)
-                            .map_err(|error| error.to_string())?;
-                        world
-                            .resource_mut::<NativeSession>()
-                            .open_stored_record(&json)
-                            .map_err(|cause| format!("{}: {cause}", path.display()))?;
-                    }
-                    GameUiEffect::Platform {
-                        command: GameUiPlatformCommand::SetWaterQuality { quality },
-                    } => {
-                        let phase = world
-                            .resource::<NativeSession>()
-                            .game
-                            .core_session()
-                            .snapshot()
-                            .phase();
-                        if !world.resource::<WaterQualitySelection>().can_select(phase) {
-                            return Err("湖面画質の変更を受理できない".to_owned());
-                        }
-                        screen_render::select_water_quality(world, quality)
-                            .map_err(|cause| format!("水面画質を適用できない: {cause:?}"))?;
-                    }
-                    GameUiEffect::Platform {
-                        command: GameUiPlatformCommand::SetScreenRenderScale { scale },
-                    } => screen_render::apply_scale(world, scale)
-                        .map_err(|cause| format!("3D描画倍率を適用できない: {cause:?}"))?,
-                    GameUiEffect::Platform {
-                        command: GameUiPlatformCommand::SetScreenRenderAuto { enabled },
-                    } => screen_render::select_auto(world, enabled)
-                        .map_err(|cause| format!("3D描画倍率Autoを適用できない: {cause:?}"))?,
-                    GameUiEffect::Platform {
-                        command: GameUiPlatformCommand::SetReplayCamera { camera },
-                    } => {
-                        let mut mode = world.resource_mut::<super::CameraMode>();
-                        mode.chase = camera == GameUiReplayCamera::Chase;
-                        mode.look = Vec2::ZERO;
-                    }
-                    GameUiEffect::Platform { command } => {
-                        return Err(format!("native capabilityに存在しない操作: {command:?}"));
-                    }
-                }
-            }
-            Ok(())
-        });
-        if let Err(error) = result {
-            world.resource_mut::<NativeSession>().notice = Some(error);
-        }
+        world
+            .resource_mut::<NativeInputs>()
+            .0
+            .push(ApplicationInput::Control {
+                view_revision,
+                input,
+            });
     }
 }
 
-pub(crate) fn update_ui(world: &mut World) {
-    if !world.contains_resource::<RetainedUi>() {
-        return;
-    }
-    let platform = platform_input(world);
+pub(crate) fn submit(world: &mut World, drawing: &ApplicationDrawingOutput) -> Result<(), String> {
+    let Some(mut retained) = world.remove_resource::<RetainedUi>() else {
+        return Ok(());
+    };
     let font = world.resource::<NativeFont>().0.clone();
-    let mut retained = world
-        .remove_resource::<RetainedUi>()
-        .expect("UI owner exists during exclusive projection");
-    let projected = world
-        .resource_mut::<NativeSession>()
-        .ui_revision(&platform)
-        .and_then(|revision| {
-            if retained
-                .view
-                .as_ref()
-                .is_none_or(|view| view.view_revision != revision)
-            {
-                let view = world.resource::<NativeSession>().ui_view(&platform)?;
-                project_view(world, &mut retained, &view, &font)?;
-                project_hud(world, &mut retained.hud, view.hud.as_ref(), &view.theme)?;
-                retained
-                    .view
-                    .as_mut()
-                    .expect("projected view exists")
-                    .view_revision = revision;
-                Ok(())
-            } else {
-                let view = retained.view.as_ref().expect("published view exists");
-                let frame = world
-                    .resource::<NativeSession>()
-                    .ui_frame(&platform, view, revision)?;
-                project_frame(world, &mut retained, &frame)
-            }
-        });
+    let result = match &drawing.ui {
+        ApplicationUiProjection::View { view } => project_view(world, &mut retained, view, &font)
+            .and_then(|()| project_hud(world, &mut retained.hud, view.hud.as_ref(), &view.theme)),
+        ApplicationUiProjection::Frame { frame } => project_frame(world, &mut retained, frame),
+    };
+    if let Some(mut visibility) = world.get_mut::<Visibility>(retained.shell) {
+        *visibility = if drawing.presentation.screen_ui_visible {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+    }
     let theme = retained.view.as_ref().map(|view| view.theme.clone());
     world.insert_resource(retained);
-    if let Err(error) = projected {
-        world.resource_mut::<NativeSession>().notice = Some(error);
-    }
+    result?;
     if let Some(theme) = theme {
         project_focus(world, &theme);
     }
     align_chart_text_baselines(world);
-    let label = world
-        .get_resource::<FrameRate>()
-        .map_or_else(|| "FPS —".to_owned(), FrameRate::label);
     for (role, mut text) in world.query::<(&UiText, &mut Text)>().iter_mut(world) {
-        if matches!(role, UiText::FrameRate) && text.0 != label {
-            text.0.clone_from(&label);
+        if matches!(role, UiText::FrameRate) {
+            text.0.clone_from(&drawing.presentation.frame_rate_label);
         }
     }
+    Ok(())
 }
 
 fn spawn_text(

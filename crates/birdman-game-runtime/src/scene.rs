@@ -159,6 +159,16 @@ impl SceneOwner {
             .display
             .map_or(GameUiPresentationMode::Screen, |(mode, _)| mode);
         let phase = context.application.core_session().snapshot().phase();
+        if !matches!(
+            phase,
+            SessionPhase::FlightRunning
+                | SessionPhase::FlightPaused { .. }
+                | SessionPhase::Result
+                | SessionPhase::Replay
+                | SessionPhase::Attract
+        ) {
+            self.look = [0.0; 2];
+        }
         let replay = if matches!(phase, SessionPhase::Replay | SessionPhase::Attract) {
             let session = context.application.core_session();
             let record = session

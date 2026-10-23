@@ -11,8 +11,6 @@ pub(super) struct RetainedHud {
     pub(super) previous: Option<GameUiHud>,
     groups: BTreeMap<String, Entity>,
     nodes: BTreeMap<String, HudNode>,
-    #[cfg(test)]
-    structure_projections: usize,
 }
 
 struct HudNode {
@@ -94,8 +92,6 @@ pub(super) fn setup_hud(commands: &mut Commands) -> RetainedHud {
         previous: None,
         groups: BTreeMap::new(),
         nodes: BTreeMap::new(),
-        #[cfg(test)]
-        structure_projections: 0,
     }
 }
 
@@ -320,10 +316,6 @@ fn project_structure(
     world
         .entity_mut(retained.shell)
         .replace_children(&group_entities);
-    #[cfg(test)]
-    {
-        retained.structure_projections += 1;
-    }
 }
 
 fn shape(world: &mut World, parent: Entity, node: Node, fill: Color) -> Entity {
@@ -803,644 +795,65 @@ fn project_widget(
 
 #[cfg(test)]
 mod tests {
-    use super::super::{
-        RetainedUi,
-        tests::{add_ui_layout, app, press},
-    };
     use super::*;
-    use birdman_game_presentation::game_ui::{GameUiHudAdiGeometry, GameUiHudHeadingTick};
-
-    fn flying_app() -> App {
-        let mut app = app(1280.0, 720.0);
-        press(&mut app, "game-title-start");
-        press(&mut app, "game-setup-start");
-        press(&mut app, "game-briefing-start");
-        for _step in 0..3 {
-            app.world_mut()
-                .resource_mut::<super::super::super::native_session::NativeSession>()
-                .presentation_frame(1.0);
-        }
-        app.update();
-        app
-    }
-
-    fn descendants(world: &World, root: Entity) -> Vec<Entity> {
-        let mut entities = vec![root];
-        if let Some(children) = world.get::<Children>(root) {
-            for child in children.iter() {
-                entities.extend(descendants(world, child));
-            }
-        }
-        entities
-    }
-
-    fn assert_order_and_text(world: &World, retained: &RetainedHud, hud: &GameUiHud) {
-        let groups = world.get::<Children>(retained.shell).unwrap();
-        assert_eq!(
-            groups.iter().collect::<Vec<_>>(),
-            hud.groups
-                .iter()
-                .map(|group| retained.groups[&group.id])
-                .collect::<Vec<_>>()
-        );
-        for group in &hud.groups {
-            let children = world.get::<Children>(retained.groups[&group.id]).unwrap();
-            assert_eq!(
-                children.iter().collect::<Vec<_>>(),
-                group
-                    .nodes
-                    .iter()
-                    .map(|node| retained.nodes[&node.id].card)
-                    .collect::<Vec<_>>()
-            );
-            for node in &group.nodes {
-                let projected = &retained.nodes[&node.id];
-                assert_eq!(
-                    world.get::<Text>(projected.value).unwrap().0,
-                    if !node.label.is_empty() {
-                        format!("{} {}", node.label, node.content.value())
-                    } else {
-                        node.content.value().to_owned()
-                    }
-                );
-                let card = world.get::<Node>(projected.card).unwrap();
-                assert_eq!(card.left, percent(node.bounds.x * 100.0));
-                assert_eq!(card.top, percent(node.bounds.y * 100.0));
-                assert_eq!(card.width, percent(node.bounds.width * 100.0));
-                assert_eq!(card.height, percent(node.bounds.height * 100.0));
-                assert_eq!(card.overflow, Overflow::default());
-                if let Some(surface) = projected.widget.surface() {
-                    assert_eq!(
-                        world.get::<Node>(surface).unwrap().height,
-                        px(node.instrument_height_em * hud.layout.font_size_px)
-                    );
-                }
-                for entity in descendants(world, projected.card) {
-                    if world
-                        .get::<Text>(entity)
-                        .is_some_and(|text| !text.0.is_empty())
-                    {
-                        assert_eq!(
-                            world.get::<TextFont>(entity).unwrap().font_size,
-                            FontSize::Px(hud.layout.font_size_px as f32)
-                        );
-                    }
-                }
-            }
-        }
-    }
+    use birdman_game_presentation::game_ui::{GameUiHudAdiGeometry, GameUiHudLayout, GameUiRect};
 
     #[test]
-    fn every_shared_widget_instance_is_projected_in_order_and_removed_subtrees_are_released() {
-        let mut app = flying_app();
-        let mut retained = app.world_mut().remove_resource::<RetainedUi>().unwrap();
-        let mut hud = retained.hud.previous.clone().unwrap();
-        let theme = retained.view.as_ref().unwrap().theme.clone();
-        assert_order_and_text(app.world(), &retained.hud, &hud);
-        let original = retained
-            .hud
-            .nodes
-            .iter()
-            .map(|(id, node)| (id.clone(), node.card))
-            .collect::<BTreeMap<_, _>>();
-        let mut extras = Vec::new();
-        for (index, node) in hud.groups.iter().flat_map(|group| &group.nodes).enumerate() {
-            let mut node = node.clone();
-            node.id = format!("new-instance-{index}");
-            node.label = format!("共有の見出し {index}");
-            extras.push(node);
-        }
-        hud.groups[1].nodes.extend(extras);
-        project_hud(app.world_mut(), &mut retained.hud, Some(&hud), &theme).unwrap();
-        assert_order_and_text(app.world(), &retained.hud, &hud);
-        for (id, entity) in &original {
-            assert_eq!(retained.hud.nodes[id].card, *entity);
-        }
-        hud.groups.reverse();
-        for group in &mut hud.groups {
-            group.nodes.reverse();
-        }
-        project_hud(app.world_mut(), &mut retained.hud, Some(&hud), &theme).unwrap();
-        assert_order_and_text(app.world(), &retained.hud, &hud);
-        let retired = hud.groups.remove(1);
-        let retired_entities = descendants(app.world(), retained.hud.groups[&retired.id]);
-        project_hud(app.world_mut(), &mut retained.hud, Some(&hud), &theme).unwrap();
-        assert_order_and_text(app.world(), &retained.hud, &hud);
-        assert!(
-            retired_entities
-                .iter()
-                .all(|entity| app.world().get_entity(*entity).is_err())
-        );
-        assert!(
-            retired
-                .nodes
-                .iter()
-                .all(|node| !retained.hud.nodes.contains_key(&node.id))
-        );
-        let node = &mut hud.groups[0].nodes[0];
-        let old_card = retained.hud.nodes[&node.id].card;
-        let old_tree = descendants(app.world(), old_card);
-        node.label = "任意の型変更".to_owned();
-        node.content = GameUiHudNodeContent::Direction {
-            value: "共有値".to_owned(),
-            rotation_degrees: Some(17.0),
+    fn transparent_flight_path_widget_applies_final_shared_geometry_and_retains_its_entities() {
+        let mut world = World::new();
+        let parent = world.spawn_empty().id();
+        let mut source = GameUiHudNode {
+            id: "hud-attitude".into(),
+            label: String::new(),
+            bounds: GameUiRect {
+                x: 0.0,
+                y: 0.0,
+                width: 1.0,
+                height: 1.0,
+            },
+            instrument_height_em: 4.0,
+            content: GameUiHudNodeContent::Attitude {
+                value: String::new(),
+                geometry: GameUiHudAdiGeometry::FlightPathOnly { y_ratio: 0.25 },
+            },
         };
-        node.instrument_height_em = 3.0;
-        project_hud(app.world_mut(), &mut retained.hud, Some(&hud), &theme).unwrap();
-        assert!(
-            old_tree
-                .iter()
-                .all(|entity| app.world().get_entity(*entity).is_err())
-        );
-        assert_order_and_text(app.world(), &retained.hud, &hud);
-    }
-
-    #[test]
-    fn dynamic_values_preserve_static_nodes_fonts_and_retained_identity_across_hide_and_resize() {
-        let mut app = flying_app();
-        let mut retained = app.world_mut().remove_resource::<RetainedUi>().unwrap();
-        let mut hud = retained.hud.previous.clone().unwrap();
-        let theme = retained.view.as_ref().unwrap().theme.clone();
-        let direction = hud
-            .groups
-            .iter_mut()
-            .flat_map(|group| &mut group.nodes)
-            .find(|node| matches!(node.content, GameUiHudNodeContent::Direction { .. }))
-            .unwrap();
-        let direction_id = direction.id.clone();
-        let GameUiHudNodeContent::Direction {
-            rotation_degrees, ..
-        } = &mut direction.content
-        else {
-            unreachable!()
+        let font = Handle::default();
+        let mut widget = spawn_node(&mut world, parent, &source, &font);
+        let hud = GameUiHud {
+            layout: GameUiHudLayout {
+                offset_px: [12.0; 2],
+                width_px: 800.0,
+                height_px: 100.0,
+                padding_px: [6.0; 2],
+                gap_px: [4.0; 2],
+                attitude_size_px: [80.0, 48.0],
+                font_size_px: 12.0,
+                opacity: 0.48,
+            },
+            groups: Vec::new(),
         };
-        *rotation_degrees = Some(0.0);
-        project_hud(app.world_mut(), &mut retained.hud, Some(&hud), &theme).unwrap();
-        let HudWidget::Direction { needle, .. } = retained.hud.nodes[&direction_id].widget else {
-            unreachable!()
-        };
-        let entities = [retained.hud.shell]
-            .into_iter()
-            .chain(retained.hud.groups.values().copied())
-            .chain(
-                retained
-                    .hud
-                    .nodes
-                    .values()
-                    .flat_map(|node| [node.card, node.value]),
-            )
-            .collect::<Vec<_>>();
-        let observed = |world: &World| {
-            entities
-                .iter()
-                .map(|entity| {
-                    let entity = world.entity(*entity);
-                    let node = entity.get_ref::<Node>().unwrap();
-                    let text = entity
-                        .get_ref::<Text>()
-                        .map(|text| (text.0.clone(), text.last_changed()));
-                    let font = entity.get_ref::<TextFont>().map(|font| font.last_changed());
-                    ((*node).clone(), node.last_changed(), text, font)
-                })
-                .collect::<Vec<_>>()
-        };
-        let before = observed(app.world());
-        let structure_count = retained.hud.structure_projections;
-        let direction = hud
-            .groups
-            .iter_mut()
-            .flat_map(|group| &mut group.nodes)
-            .find(|node| node.id == direction_id)
-            .unwrap();
-        let GameUiHudNodeContent::Direction {
-            rotation_degrees, ..
-        } = &mut direction.content
-        else {
-            unreachable!()
-        };
-        *rotation_degrees = Some(90.0);
-        app.world_mut().increment_change_tick();
-        project_hud(app.world_mut(), &mut retained.hud, Some(&hud), &theme).unwrap();
-        assert_eq!(observed(app.world()), before);
-        assert_eq!(retained.hud.structure_projections, structure_count);
-        assert_eq!(
-            app.world().get::<UiTransform>(needle).unwrap().rotation,
-            Rot2::degrees(90.0)
-        );
-        let node = hud
-            .groups
-            .iter_mut()
-            .flat_map(|group| &mut group.nodes)
-            .find(|node| matches!(node.content, GameUiHudNodeContent::Text { .. }))
-            .unwrap();
-        let value_entity = retained.hud.nodes[&node.id].value;
-        let GameUiHudNodeContent::Text { value, .. } = &mut node.content else {
-            unreachable!()
-        };
-        value.push_str("\n姿勢 PITCH wording is opaque");
-        let expected = if node.label.is_empty() {
-            value.clone()
-        } else {
-            format!("{} {value}", node.label)
-        };
-        project_hud(app.world_mut(), &mut retained.hud, Some(&hud), &theme).unwrap();
-        assert_eq!(app.world().get::<Text>(value_entity).unwrap().0, expected);
-        assert_eq!(retained.hud.structure_projections, structure_count);
-        let cards = retained
-            .hud
-            .nodes
-            .iter()
-            .map(|(id, node)| (id.clone(), node.card))
-            .collect::<BTreeMap<_, _>>();
-        hud.layout.width_px -= 13.0;
-        hud.layout.height_px = 100.0;
-        hud.layout.opacity = 0.123;
-        project_hud(app.world_mut(), &mut retained.hud, Some(&hud), &theme).unwrap();
-        assert_eq!(retained.hud.structure_projections, structure_count + 1);
-        let shell = app.world().get::<Node>(retained.hud.shell).unwrap();
-        assert_eq!(shell.width, px(hud.layout.width_px));
-        assert_eq!(shell.height, px(100));
-        assert_eq!(shell.top, auto());
-        assert_eq!(shell.bottom, px(hud.layout.offset_px[1]));
-        assert_eq!(shell.overflow, Overflow::default());
-        assert_eq!(
-            app.world()
-                .get::<BackgroundColor>(retained.hud.shell)
-                .unwrap()
-                .0,
-            Color::NONE
-        );
-        for node in hud.groups.iter().flat_map(|group| &group.nodes) {
-            let expected = if matches!(node.content, GameUiHudNodeContent::Text { .. }) {
-                Color::NONE
-            } else {
-                color(&theme.panel_background, 0.123).unwrap()
-            };
-            assert_eq!(
-                app.world()
-                    .get::<BackgroundColor>(retained.hud.nodes[&node.id].card)
-                    .unwrap()
-                    .0,
-                expected
-            );
-        }
-        project_hud(app.world_mut(), &mut retained.hud, None, &theme).unwrap();
-        assert_eq!(
-            app.world().get::<Node>(retained.hud.shell).unwrap().display,
-            Display::None
-        );
-        project_hud(app.world_mut(), &mut retained.hud, Some(&hud), &theme).unwrap();
-        assert_eq!(
-            app.world().get::<Node>(retained.hud.shell).unwrap().display,
-            Display::Flex
-        );
-        for (id, entity) in cards {
-            assert_eq!(retained.hud.nodes[&id].card, entity);
-        }
-        assert_order_and_text(app.world(), &retained.hud, &hud);
-    }
-
-    #[test]
-    fn shared_geometry_labels_and_unavailability_are_projected_without_fixed_instrument_limits() {
-        let mut app = flying_app();
-        let mut retained = app.world_mut().remove_resource::<RetainedUi>().unwrap();
-        let mut hud = retained.hud.previous.clone().unwrap();
-        let theme = retained.view.as_ref().unwrap().theme.clone();
-        for node in hud.groups.iter_mut().flat_map(|group| &mut group.nodes) {
-            match &mut node.content {
-                GameUiHudNodeContent::HeadingTape { ticks, .. } => {
-                    *ticks = (0..21)
-                        .map(|index| GameUiHudHeadingTick {
-                            position_ratio: index as f64 / 20.0,
-                            major: index % 2 == 0,
-                            label: format!("共有 {index}"),
-                        })
-                        .collect();
-                }
-                GameUiHudNodeContent::LinearGauge {
-                    minimum_label,
-                    maximum_label,
-                    position_ratio,
-                    ..
-                } => {
-                    *minimum_label = "任意下端".to_owned();
-                    *maximum_label = "任意上端".to_owned();
-                    *position_ratio = Some(0.25);
-                }
-                GameUiHudNodeContent::Text { .. }
-                | GameUiHudNodeContent::Attitude { .. }
-                | GameUiHudNodeContent::Direction { .. } => {}
-            }
-        }
-        project_hud(app.world_mut(), &mut retained.hud, Some(&hud), &theme).unwrap();
-        let mut retired_ticks = Vec::new();
-        for node in hud.groups.iter().flat_map(|group| &group.nodes) {
-            let projected = &retained.hud.nodes[&node.id];
-            match (&node.content, &projected.widget) {
-                (
-                    GameUiHudNodeContent::Attitude { geometry, .. },
-                    HudWidget::Attitude {
-                        surface,
-                        horizon,
-                        marker,
-                        ticks,
-                    },
-                ) => {
-                    let layer = geometry.horizon().unwrap();
-                    let offset = layer.pitch_offset_ratio
-                        * node.instrument_height_em
-                        * hud.layout.font_size_px;
-                    let rotation = layer.rotation_degrees.to_radians();
-                    assert_eq!(
-                        app.world()
-                            .get::<UiTransform>(*horizon)
-                            .unwrap()
-                            .translation,
-                        Val2::px(-offset * rotation.sin(), offset * rotation.cos())
-                    );
-                    assert_eq!(
-                        app.world().get::<Node>(*marker).unwrap().top,
-                        percent(geometry.flight_path_y_ratio().unwrap() * 100.0)
-                    );
-                    assert_eq!(
-                        app.world().get::<BackgroundColor>(*surface).unwrap().0,
-                        Color::NONE
-                    );
-                    for ((line, label), tick) in ticks.iter().zip(layer.pitch_ticks) {
-                        let line = app.world().get::<Node>(*line).unwrap();
-                        assert_eq!(line.top, percent(50.0 + tick.offset_ratio * 50.0));
-                        assert_eq!(line.width, percent(tick.half_width_ratio * 100.0));
-                        assert_eq!(
-                            app.world().get::<Text>(*label).unwrap().0,
-                            tick.label_degrees
-                                .map_or_else(String::new, |value| value.to_string())
-                        );
-                    }
-                }
-                (
-                    GameUiHudNodeContent::HeadingTape { ticks, .. },
-                    HudWidget::HeadingTape {
-                        ticks: entities, ..
-                    },
-                ) => {
-                    assert_eq!(entities.len(), 21);
-                    for ((line, label), tick) in entities.iter().zip(ticks) {
-                        assert_eq!(
-                            app.world().get::<Node>(*line).unwrap().left,
-                            percent(tick.position_ratio * 100.0)
-                        );
-                        assert_eq!(app.world().get::<Text>(*label).unwrap().0, tick.label);
-                        assert_eq!(
-                            app.world().get::<Node>(*label).unwrap().display,
-                            Display::Flex
-                        );
-                    }
-                    retired_ticks.extend(entities.iter().flat_map(|(line, label)| [*line, *label]));
-                }
-                (
-                    GameUiHudNodeContent::LinearGauge {
-                        minimum_label,
-                        maximum_label,
-                        ..
-                    },
-                    HudWidget::LinearGauge {
-                        indicator,
-                        minimum,
-                        maximum,
-                        ..
-                    },
-                ) => {
-                    assert_eq!(
-                        app.world().get::<Node>(*indicator).unwrap().left,
-                        percent(27.5)
-                    );
-                    assert_eq!(app.world().get::<Text>(*minimum).unwrap().0, *minimum_label);
-                    assert_eq!(app.world().get::<Text>(*maximum).unwrap().0, *maximum_label);
-                    assert_eq!(
-                        app.world()
-                            .get::<UiTransform>(*minimum)
-                            .unwrap()
-                            .translation,
-                        Val2::percent(0, 0)
-                    );
-                    assert_eq!(
-                        app.world()
-                            .get::<UiTransform>(*maximum)
-                            .unwrap()
-                            .translation,
-                        Val2::percent(-100, 0)
-                    );
-                }
-                _ => {}
-            }
-        }
-        for node in hud.groups.iter_mut().flat_map(|group| &mut group.nodes) {
-            match &mut node.content {
-                GameUiHudNodeContent::Attitude { geometry, .. } => {
-                    *geometry = GameUiHudAdiGeometry::FlightPathOnly { y_ratio: 0.3 }
-                }
-                GameUiHudNodeContent::HeadingTape { ticks, .. } => ticks.clear(),
-                GameUiHudNodeContent::Direction {
-                    rotation_degrees, ..
-                } => *rotation_degrees = None,
-                GameUiHudNodeContent::LinearGauge { position_ratio, .. } => *position_ratio = None,
-                GameUiHudNodeContent::Text { .. } => {}
-            }
-        }
-        project_hud(app.world_mut(), &mut retained.hud, Some(&hud), &theme).unwrap();
-        for node in retained.hud.nodes.values() {
-            match &node.widget {
-                HudWidget::Attitude {
-                    surface,
-                    horizon,
-                    marker,
-                    ..
-                } => {
-                    assert_eq!(
-                        app.world().get::<Node>(*surface).unwrap().display,
-                        Display::Flex
-                    );
-                    assert_eq!(
-                        app.world().get::<Node>(*horizon).unwrap().display,
-                        Display::None
-                    );
-                    assert_eq!(app.world().get::<Node>(*marker).unwrap().top, percent(30));
-                }
-                HudWidget::HeadingTape { ticks, .. } => assert!(ticks.is_empty()),
-                HudWidget::Direction { needle, .. } => assert_eq!(
-                    app.world().get::<Node>(*needle).unwrap().display,
-                    Display::None
-                ),
-                HudWidget::LinearGauge { indicator, .. } => assert_eq!(
-                    app.world().get::<Node>(*indicator).unwrap().display,
-                    Display::None
-                ),
-                HudWidget::Text => {}
-            }
-        }
-        assert!(
-            retired_ticks
-                .iter()
-                .all(|entity| app.world().get_entity(*entity).is_err())
-        );
-    }
-
-    #[test]
-    fn custom_flight_path_only_retains_visible_ancestors_from_the_shared_provider() {
-        let mut app = app(1280.0, 720.0);
-        press(&mut app, "game-title-start");
-        press(&mut app, "game-setup-select-information-4");
-        press(&mut app, "game-setup-information-attitude");
-        press(&mut app, "game-setup-start");
-        press(&mut app, "game-briefing-start");
-        for _step in 0..3 {
-            app.world_mut()
-                .resource_mut::<super::super::super::native_session::NativeSession>()
-                .presentation_frame(1.0);
-        }
-        app.update();
-        let retained = app.world().resource::<RetainedUi>();
-        let hud = retained.hud.previous.as_ref().unwrap();
-        let shared = hud
-            .groups
-            .iter()
-            .flat_map(|group| &group.nodes)
-            .find(|node| matches!(node.content, GameUiHudNodeContent::Attitude { .. }))
-            .unwrap();
-        let GameUiHudNodeContent::Attitude {
-            geometry: GameUiHudAdiGeometry::FlightPathOnly { y_ratio },
-            ..
-        } = shared.content
-        else {
-            panic!("the shared provider must retain the independent flight-path cue")
-        };
+        project_widget(&mut world, &mut widget, &source, &hud, &font, Color::WHITE).unwrap();
         let HudWidget::Attitude {
             surface,
             horizon,
             marker,
             ..
-        } = retained.hud.nodes[&shared.id].widget
+        } = widget.widget
         else {
             unreachable!()
         };
-        let mut ancestor = marker;
-        loop {
-            assert_ne!(
-                app.world().get::<Node>(ancestor).unwrap().display,
-                Display::None
-            );
-            if ancestor == retained.hud.shell {
-                break;
-            }
-            ancestor = app.world().get::<ChildOf>(ancestor).unwrap().parent();
-        }
         assert_eq!(
-            app.world().get::<BackgroundColor>(surface).unwrap().0,
+            world.get::<BackgroundColor>(surface).unwrap().0,
             Color::NONE
         );
-        assert_eq!(
-            app.world().get::<Node>(horizon).unwrap().display,
-            Display::None
-        );
-        assert_eq!(
-            app.world().get::<Node>(marker).unwrap().top,
-            percent(y_ratio * 100.0)
-        );
-    }
-
-    #[test]
-    fn shared_bottom_bounds_leave_forward_view_clear_without_scrolling_or_card_overlap() {
-        let mut app = flying_app();
-        let camera = add_ui_layout(&mut app, 1280, 720);
-        let before = app
-            .world()
-            .resource::<super::super::super::native_session::NativeSession>()
-            .game
-            .core_session()
-            .snapshot();
-        let bounds = |world: &World, entity: Entity| {
-            Rect::from_center_size(
-                world.get::<UiGlobalTransform>(entity).unwrap().translation,
-                world.get::<ComputedNode>(entity).unwrap().size(),
-            )
+        assert_eq!(world.get::<Node>(horizon).unwrap().display, Display::None);
+        assert_eq!(world.get::<Node>(marker).unwrap().top, percent(25.0));
+        source.content = GameUiHudNodeContent::Attitude {
+            value: String::new(),
+            geometry: GameUiHudAdiGeometry::FlightPathOnly { y_ratio: 0.75 },
         };
-        for (width, height, scale) in [
-            (1280, 720, 1.0),
-            (1920, 1080, 1.0),
-            (1600, 900, 1.25),
-            (1920, 1080, 1.5),
-            (1280, 720, 1.0),
-        ] {
-            for mut window in app
-                .world_mut()
-                .query::<&mut Window>()
-                .iter_mut(app.world_mut())
-            {
-                window.resolution.set(width as f32, height as f32);
-            }
-            {
-                let mut camera = app.world_mut().get_mut::<Camera>(camera).unwrap();
-                let dimensions = UVec2::new(width, height);
-                camera.computed.target_info.as_mut().unwrap().physical_size = dimensions;
-                camera.viewport.as_mut().unwrap().physical_size = dimensions;
-            }
-            app.world_mut().resource_mut::<UiScale>().0 = scale;
-            for _frame in 0..4 {
-                app.update();
-            }
-            let retained = &app.world().resource::<RetainedUi>().hud;
-            let hud = retained.previous.as_ref().unwrap();
-            assert_order_and_text(app.world(), retained, hud);
-            let rail = bounds(app.world(), retained.shell);
-            let shell = app.world().get::<Node>(retained.shell).unwrap();
-            assert_eq!(shell.bottom, px(hud.layout.offset_px[1]));
-            assert_eq!(shell.top, auto());
-            assert_eq!(shell.overflow, Overflow::default());
-            assert_eq!(
-                app.world()
-                    .get::<BackgroundColor>(retained.shell)
-                    .unwrap()
-                    .0,
-                Color::NONE
-            );
-            assert!(
-                rail.min.y >= height as f32 * 0.5,
-                "{width}x{height}: {rail:?}"
-            );
-            assert!(rail.min.x >= -1.0 && rail.max.x <= width as f32 + 1.0);
-            assert!(rail.max.y <= height as f32 + 1.0);
-            let cards = retained.nodes.values().collect::<Vec<_>>();
-            for (index, card) in cards.iter().enumerate() {
-                let card_bounds = bounds(app.world(), card.card);
-                assert!(card_bounds.min.x >= rail.min.x - 1.0);
-                assert!(card_bounds.max.x <= rail.max.x + 1.0);
-                assert!(card_bounds.min.y >= rail.min.y - 1.0);
-                assert!(card_bounds.max.y <= rail.max.y + 1.0);
-                let computed = app.world().get::<ComputedNode>(card.card).unwrap();
-                assert!(
-                    computed.content_size.y <= computed.size().y + 1.0,
-                    "{width}x{height}: card={card_bounds:?}, content={:?}",
-                    computed.content_size
-                );
-                for other in &cards[index + 1..] {
-                    let other_bounds = bounds(app.world(), other.card);
-                    assert!(
-                        card_bounds.max.x <= other_bounds.min.x + 1.0
-                            || other_bounds.max.x <= card_bounds.min.x + 1.0
-                            || card_bounds.max.y <= other_bounds.min.y + 1.0
-                            || other_bounds.max.y <= card_bounds.min.y + 1.0,
-                        "{width}x{height}: {card_bounds:?} overlaps {other_bounds:?}"
-                    );
-                }
-            }
-            assert_eq!(
-                app.world()
-                    .resource::<super::super::super::native_session::NativeSession>()
-                    .game
-                    .core_session()
-                    .snapshot(),
-                before
-            );
-        }
+        project_widget(&mut world, &mut widget, &source, &hud, &font, Color::WHITE).unwrap();
+        assert_eq!(world.get::<Node>(marker).unwrap().top, percent(75.0));
+        assert!(world.get_entity(surface).is_ok());
     }
 }

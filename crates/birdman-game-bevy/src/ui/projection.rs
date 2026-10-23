@@ -460,7 +460,7 @@ fn project_control(
             world.entity_mut(widget.node).insert((
                 Button,
                 MenuButton {
-                    action: action.clone(),
+                    control_id: control.id.clone(),
                     enabled: control.enabled,
                 },
             ));
@@ -481,15 +481,12 @@ fn project_control(
                 Button,
                 MenuButton {
                     enabled: control.enabled,
-                    action: control
-                        .content
-                        .activation_action()
-                        .expect("Toggle publishes a shared action"),
+                    control_id: control.id.clone(),
                 },
             ));
         }
         GameUiControlContent::Range {
-            target,
+            target: _,
             value,
             display_value,
             minimum,
@@ -503,7 +500,7 @@ fn project_control(
                 Button,
                 RelativeCursorPosition::default(),
                 MenuRange {
-                    target: *target,
+                    control_id: control.id.clone(),
                     value: *value,
                     minimum: *minimum,
                     maximum: *maximum,
@@ -537,7 +534,7 @@ fn project_control(
                     .entity_mut(widget.node)
                     .insert(ScrollPosition::default());
             }
-            let root_font_size = platform_input(world).viewport.root_font_size;
+            let root_font_size = viewport(world).0.root_font_size;
             let legend_ink = color(&theme.text, 1.0)?;
             project_chart(
                 world,

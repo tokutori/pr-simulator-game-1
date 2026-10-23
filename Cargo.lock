@@ -1494,6 +1494,7 @@ dependencies = [
  "birdman-game-core",
  "birdman-game-format",
  "birdman-game-presentation",
+ "birdman-game-runtime",
  "birdman-game-scene",
  "parley",
  "serde",

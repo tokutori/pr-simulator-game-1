@@ -15,6 +15,7 @@ verify-harness = []
 birdman-game-app.workspace = true
 birdman-game-core.workspace = true
 birdman-game-presentation.workspace = true
+birdman-game-runtime.workspace = true
 birdman-game-scene.workspace = true
 
 [target.'cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))'.dependencies]

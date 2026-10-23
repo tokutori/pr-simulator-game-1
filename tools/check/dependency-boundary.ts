@@ -14,7 +14,7 @@ const allowed = new Map<string, readonly string[]>([
   ["birdman-game-runtime", ["birdman-game-app", "birdman-game-core", "birdman-game-format", "birdman-game-presentation", "birdman-game-scene", "serde", "serde_json", "time"]],
   ["birdman-game-presentation", ["birdman-game-app", "birdman-game-core", "birdman-game-format", "serde", "serde_json", "time", "unicode-width"]],
   ["birdman-game-scene", ["birdman-game-app", "birdman-game-content", "birdman-game-core", "birdman-game-format", "serde", "serde_json", "sha2", "earcut"]],
-  ["birdman-game-bevy", ["birdman-game-app", "birdman-game-core", "birdman-game-format", "birdman-game-presentation", "birdman-game-scene", "bevy", "serde", "serde_json"]]
+  ["birdman-game-bevy", ["birdman-game-app", "birdman-game-core", "birdman-game-format", "birdman-game-presentation", "birdman-game-runtime", "birdman-game-scene", "bevy", "serde", "serde_json"]]
 ]);
 
 const excludedNativeFeatures = new Set([
@@ -102,7 +102,8 @@ function isSharedImageOperationsDependency(crate: string, dependency: Record<str
     && dependency.optional === false
     && dependency.uses_default_features === false
     && Array.isArray(dependency.features)
-    && dependency.features.length === 0;
+    && dependency.features.length === 1
+    && dependency.features[0] === "png";
 }
 
 function isPresentationSceneTestDependency(crate: string, dependency: Record<string, unknown>): boolean {

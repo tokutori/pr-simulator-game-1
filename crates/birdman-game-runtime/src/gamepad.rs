@@ -21,7 +21,7 @@ pub struct ApplicationGamepadObservation {
 
 impl ApplicationGamepadObservation {
     fn standard(&self) -> bool {
-        self.connected && self.mapping == "standard"
+        self.connected && matches!(self.mapping.as_str(), "standard" | "standard-y-up")
     }
 
     fn axis(&self, index: usize) -> Option<f64> {
@@ -37,9 +37,21 @@ impl ApplicationGamepadObservation {
             identity: self.identity,
             connected: true,
             axes: [
-                self.axis(1).map(|value| -value),
+                self.axis(1).map(|value| {
+                    if self.mapping == "standard-y-up" {
+                        value
+                    } else {
+                        -value
+                    }
+                }),
                 self.axis(0),
-                self.axis(3).map(|value| -value),
+                self.axis(3).map(|value| {
+                    if self.mapping == "standard-y-up" {
+                        value
+                    } else {
+                        -value
+                    }
+                }),
             ],
         })
     }
@@ -48,7 +60,14 @@ impl ApplicationGamepadObservation {
         self.standard().then(|| XrGamepadObservation {
             index: self.identity.slot_low,
             generation: self.identity.generation,
-            axes: std::array::from_fn(|index| self.axis(index).unwrap_or(0.0)),
+            axes: std::array::from_fn(|index| {
+                let value = self.axis(index).unwrap_or(0.0);
+                if self.mapping == "standard-y-up" && index % 2 == 1 {
+                    -value
+                } else {
+                    value
+                }
+            }),
             buttons: [
                 self.buttons.first().copied().unwrap_or(false),
                 self.buttons.get(1).copied().unwrap_or(false),

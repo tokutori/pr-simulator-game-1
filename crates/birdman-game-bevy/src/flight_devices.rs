@@ -3,20 +3,21 @@ use bevy::{
     input::gamepad::{GamepadAxis, GamepadConnection, GamepadConnectionEvent, RawGamepadEvent},
     prelude::*,
 };
-use birdman_game_app::flight_input::{FlightDeviceIdentity, FlightGamepadObservation};
+use birdman_game_app::flight_input::FlightDeviceIdentity;
+use birdman_game_runtime::ApplicationGamepadObservation;
 use std::collections::BTreeMap;
 
 #[derive(Resource, Default)]
 pub(crate) struct FlightDevices {
-    connections: BTreeMap<u64, FlightGamepadObservation>,
+    connections: BTreeMap<u64, ApplicationGamepadObservation>,
     generation: u32,
-    observations: Vec<FlightGamepadObservation>,
+    observations: Vec<ApplicationGamepadObservation>,
     #[cfg(feature = "verify-harness")]
-    verification: Option<[FlightGamepadObservation; 1]>,
+    verification: Option<[ApplicationGamepadObservation; 1]>,
 }
 
 impl FlightDevices {
-    pub(crate) fn observations(&self) -> &[FlightGamepadObservation] {
+    pub(crate) fn observations(&self) -> &[ApplicationGamepadObservation] {
         #[cfg(feature = "verify-harness")]
         if let Some(observations) = &self.verification {
             return observations;
@@ -34,14 +35,16 @@ impl FlightDevices {
                     .ok_or("Gamepad接続世代の上限")?;
                 self.connections.insert(
                     slot,
-                    FlightGamepadObservation {
+                    ApplicationGamepadObservation {
                         identity: FlightDeviceIdentity {
                             slot_low: slot as u32,
                             slot_high: (slot >> 32) as u32,
                             generation: self.generation,
                         },
                         connected: true,
-                        axes: [Some(0.0); 3],
+                        mapping: "standard-y-up".into(),
+                        axes: vec![Some(0.0); 4],
+                        buttons: vec![false; 2],
                     },
                 );
             }
@@ -57,9 +60,10 @@ impl FlightDevices {
             RawGamepadEvent::Connection(event) => self.connection(event)?,
             RawGamepadEvent::Axis(event) => {
                 let index = match event.axis {
-                    GamepadAxis::LeftStickY => 0,
-                    GamepadAxis::LeftStickX => 1,
-                    GamepadAxis::RightStickY => 2,
+                    GamepadAxis::LeftStickX => 0,
+                    GamepadAxis::LeftStickY => 1,
+                    GamepadAxis::RightStickX => 2,
+                    GamepadAxis::RightStickY => 3,
                     _ => return Ok(()),
                 };
                 if let Some(pad) = self.connections.get_mut(&event.gamepad.to_bits()) {
@@ -73,14 +77,16 @@ impl FlightDevices {
 
     #[cfg(feature = "verify-harness")]
     pub(crate) fn verification_axes(&mut self, axes: [f64; 3]) {
-        self.verification = Some([FlightGamepadObservation {
+        self.verification = Some([ApplicationGamepadObservation {
             identity: FlightDeviceIdentity {
                 slot_low: 0,
                 slot_high: 0,
                 generation: 1,
             },
             connected: true,
-            axes: axes.map(Some),
+            mapping: "standard-y-up".into(),
+            axes: vec![Some(axes[1]), Some(axes[0]), Some(0.0), Some(axes[2])],
+            buttons: vec![false; 2],
         }]);
     }
 }
@@ -89,7 +95,7 @@ pub(crate) fn observe_devices(
     mut devices: ResMut<FlightDevices>,
     mut raw: MessageReader<RawGamepadEvent>,
     mut connections: MessageReader<GamepadConnectionEvent>,
-    mut session: ResMut<super::native_session::NativeSession>,
+    gamepads: Query<&Gamepad>,
 ) {
     let changed = !raw.is_empty() || !connections.is_empty();
     let raw = raw.read().collect::<Vec<_>>();
@@ -109,12 +115,18 @@ pub(crate) fn observe_devices(
     })();
     if let Err(error) = result {
         devices.connections.clear();
-        session.game.fail_flight_adapter();
-        session.notice = Some(error.into());
+        error!("Gamepad input stream: {error}");
     }
     if changed {
-        let observed = devices.connections.values().copied().collect::<Vec<_>>();
+        let observed = devices.connections.values().cloned().collect::<Vec<_>>();
         devices.observations = observed;
+    }
+    for pad in &mut devices.observations {
+        let bits = (u64::from(pad.identity.slot_high) << 32) | u64::from(pad.identity.slot_low);
+        if let Ok(gamepad) = gamepads.get(Entity::from_bits(bits)) {
+            pad.buttons[0] = gamepad.pressed(bevy::input::gamepad::GamepadButton::South);
+            pad.buttons[1] = gamepad.pressed(bevy::input::gamepad::GamepadButton::East);
+        }
     }
 }
 
@@ -140,11 +152,11 @@ mod tests {
         let mut world = World::new();
         let gamepad = world.spawn_empty().id();
         devices.connection(&connected(gamepad)).unwrap();
-        let initial = devices.connections[&gamepad.to_bits()];
+        let initial = devices.connections[&gamepad.to_bits()].clone();
         for (axis, value, index) in [
-            (GamepadAxis::LeftStickY, 0.02, 0),
-            (GamepadAxis::LeftStickX, -0.03, 1),
-            (GamepadAxis::RightStickY, 0.5, 2),
+            (GamepadAxis::LeftStickY, 0.02, 1),
+            (GamepadAxis::LeftStickX, -0.03, 0),
+            (GamepadAxis::RightStickY, 0.5, 3),
         ] {
             devices
                 .event(&RawGamepadAxisChangedEvent::new(gamepad, axis, value).into())
@@ -161,15 +173,15 @@ mod tests {
             .event(&RawGamepadAxisChangedEvent::new(gamepad, GamepadAxis::LeftStickX, 1.0).into())
             .unwrap();
         devices.event(&connected(gamepad).into()).unwrap();
-        let reconnected = devices.connections[&gamepad.to_bits()];
+        let reconnected = devices.connections[&gamepad.to_bits()].clone();
         assert_ne!(initial.identity, reconnected.identity);
-        assert_eq!(reconnected.axes, [Some(0.0); 3]);
+        assert_eq!(reconnected.axes, vec![Some(0.0); 4]);
         devices
             .event(
                 &RawGamepadAxisChangedEvent::new(gamepad, GamepadAxis::LeftStickY, f32::NAN).into(),
             )
             .unwrap();
-        assert_eq!(devices.connections[&gamepad.to_bits()].axes[0], None);
+        assert_eq!(devices.connections[&gamepad.to_bits()].axes[1], None);
     }
 
     #[test]
@@ -177,12 +189,11 @@ mod tests {
         let mut app = App::new();
         app.add_plugins(bevy::input::InputPlugin)
             .init_resource::<FlightDevices>()
-            .init_resource::<super::super::native_session::NativeSession>()
             .add_systems(PreUpdate, observe_devices.after(bevy::input::InputSystems));
         let gamepad = app.world_mut().spawn_empty().id();
         app.world_mut().write_message(connected(gamepad));
         app.update();
-        let initial = app.world().resource::<FlightDevices>().observations()[0];
+        let initial = app.world().resource::<FlightDevices>().observations()[0].clone();
         app.world_mut().write_message(GamepadConnectionEvent::new(
             gamepad,
             GamepadConnection::Disconnected,
@@ -208,6 +219,9 @@ mod tests {
             observed[0].identity.generation,
             initial.identity.generation + 1
         );
-        assert_eq!(observed[0].axes, [Some(0.75), Some(0.0), Some(0.0)]);
+        assert_eq!(
+            observed[0].axes,
+            vec![Some(0.0), Some(0.75), Some(0.0), Some(0.0)]
+        );
     }
 }

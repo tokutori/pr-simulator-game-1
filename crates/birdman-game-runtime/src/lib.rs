@@ -484,6 +484,15 @@ impl ApplicationRuntime {
                 if self.display.state().active_mode() == Some(GameUiPresentationMode::Screen)
                     && self.display.active_resource() == display_resource_id
                     && !self.display.state().pending()
+                    && self.presentation_input_focused()
+                    && matches!(
+                        self.application.core_session().snapshot().phase(),
+                        SessionPhase::FlightRunning
+                            | SessionPhase::FlightPaused { .. }
+                            | SessionPhase::Result
+                            | SessionPhase::Replay
+                            | SessionPhase::Attract
+                    )
                 {
                     self.scene
                         .observe_look(delta_px)
@@ -630,6 +639,30 @@ impl ApplicationRuntime {
                     {
                         self.scene.toggle_camera();
                         keyboard_consumed = true;
+                    } else if matches!(code.as_str(), "KeyP" | "Escape")
+                        && pressed
+                        && !repeat
+                        && !self.boot.active()
+                    {
+                        let command = match self.application.core_session().snapshot().phase() {
+                            SessionPhase::FlightRunning => {
+                                Some(birdman_game_app::application::SessionCommand::Pause {})
+                            }
+                            SessionPhase::FlightPaused { .. } => {
+                                Some(birdman_game_app::application::SessionCommand::Resume {})
+                            }
+                            _ => None,
+                        };
+                        if let Some(command) = command {
+                            let environment = self.environment()?;
+                            let revision = self.structure_revision(&environment)?;
+                            self.apply_action(
+                                revision,
+                                GameUiAction::Session { command },
+                                &mut requests,
+                            )?;
+                            keyboard_consumed = true;
+                        }
                     }
                 }
             }
