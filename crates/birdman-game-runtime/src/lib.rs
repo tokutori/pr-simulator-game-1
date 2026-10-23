@@ -912,7 +912,9 @@ impl ApplicationRuntime {
                         ),
                         Some(failed) => {
                             self.diagnostic = Some(failed.cause);
-                            self.platform.notification = "描画資源を準備できない。".to_owned();
+                            if !self.boot.active() {
+                                self.platform.notification = "描画資源を準備できない。".to_owned();
+                            }
                             BackendReadiness::Failed(
                                 birdman_game_core::BriefingFailure::AssetUnavailable,
                             )

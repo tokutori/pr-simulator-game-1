@@ -275,6 +275,7 @@ async function verify(activeBrowser: Browser): Promise<void> {
       phase = "renderer-retry";
       await click("game-boot-retry");
       await scene("Title");
+      assert.equal(await page.getByText("描画資源を準備できない。", { exact: true }).count(), 0, "Recovered Title retained the Boot resource failure notification");
       assert.equal(await page.locator(".presentation-canvas").count(), 1, "GPU retry duplicated the renderer canvas");
       const retried = await page.evaluate(() => ({ partialTextureDeletes: window.__recoveryGpu.partialTextureDeletes,
         partialFramebufferDeletes: window.__recoveryGpu.partialFramebufferDeletes,

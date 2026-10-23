@@ -445,7 +445,10 @@ fn boot_retries_renderer_creation_releases_late_resources_and_enters_title_after
             height: 720.0,
             root_font_size: 16.0,
         },
-        capabilities: ApplicationCapabilities::default(),
+        capabilities: ApplicationCapabilities {
+            stored_records_available: true,
+            ..Default::default()
+        },
     };
     let mut runtime =
         ApplicationRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
@@ -459,6 +462,14 @@ fn boot_retries_renderer_creation_releases_late_resources_and_enters_title_after
         .iter()
         .find_map(|request| match request {
             ApplicationRequest::CreateRenderer { request_id } => Some(*request_id),
+            _ => None,
+        })
+        .unwrap();
+    let preview = initial
+        .requests
+        .iter()
+        .find_map(|request| match request {
+            ApplicationRequest::BeginRecordPreview { request_id, .. } => Some(*request_id),
             _ => None,
         })
         .unwrap();
@@ -543,17 +554,68 @@ fn boot_retries_renderer_creation_releases_late_resources_and_enters_title_after
         structure(preparing).scene,
         birdman_game_presentation::game_ui::GameUiScene::Boot
     );
-    let ready = resources_ready(&mut runtime, preparation).unwrap();
+    runtime
+        .observe_test(ApplicationInput::RecordPreviewObserved {
+            request_id: preview,
+            observation: birdman_game_app::record_persistence::RecordPreviewObservation::Failed {
+                cause: "record preview failed".into(),
+            },
+        })
+        .unwrap();
+    let stored_notification = runtime.platform.notification.clone();
+    assert!(!stored_notification.is_empty());
+    let failed = runtime
+        .observe_test(ApplicationInput::Resources {
+            request_id: preparation,
+            observation: ApplicationResourceObservation::Failed {
+                cause: "initial pipeline creation failed".into(),
+            },
+        })
+        .unwrap();
     assert_eq!(
-        structure(ready).scene,
+        failed.diagnostic.as_deref(),
+        Some("initial pipeline creation failed")
+    );
+    let failed = structure(failed);
+    assert_eq!(failed.interaction_scope, "boot-failed");
+    assert_eq!(runtime.platform.notification, stored_notification);
+    let retried = runtime
+        .observe_test(ApplicationInput::Control {
+            view_revision: failed.view_revision,
+            input: GameUiControlInput::Activate {
+                control_id: "game-boot-retry".into(),
+            },
+        })
+        .unwrap();
+    let replacement = retried
+        .requests
+        .iter()
+        .find_map(|request| match request {
+            ApplicationRequest::PrepareResources { request_id, .. } => Some(*request_id),
+            _ => None,
+        })
+        .unwrap();
+    assert_ne!(replacement, preparation);
+    let ready = structure(resources_ready(&mut runtime, replacement).unwrap());
+    assert_eq!(
+        ready.scene,
         birdman_game_presentation::game_ui::GameUiScene::Title
     );
+    assert!(
+        ready
+            .panels
+            .iter()
+            .flat_map(|panel| &panel.controls)
+            .any(|control| {
+                matches!(&control.content, GameUiControlContent::Status { value, .. }
+            if value == &stored_notification)
+            })
+    );
+    assert_eq!(runtime.platform.notification, stored_notification);
     assert_eq!(
         runtime.application().core_session().snapshot().phase(),
         SessionPhase::Title
     );
-    let mut platform = platform;
-    platform.capabilities.stored_records_available = true;
     let mut reload =
         ApplicationRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
     let initial = reload
@@ -669,6 +731,7 @@ fn briefing_retry_restarts_failed_resource_preparation_through_the_shared_action
             },
         })
         .unwrap();
+    assert!(!runtime.platform.notification.is_empty());
     assert!(matches!(
         runtime.application().core_session().snapshot().phase(),
         SessionPhase::BriefingFailed { .. }
