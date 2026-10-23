@@ -1,5 +1,6 @@
 use super::*;
 use crate::camera::{Pose, Vector3, compose_pose};
+use crate::game_ui::GameUiReadoutSource;
 use crate::game_ui::{GameUiAnchor, GameUiControlContent, GameUiFrame, GameUiPanel, GameUiView};
 use crate::xr::{
     XrFitReason, XrInkFit, XrInkSegment, XrMenuViewFit, XrViewerFrame, fit_xr_menu_view,
@@ -146,6 +147,17 @@ fn source_from_view(
                         .map_or(value, |readout| &readout.value)
                         .clone(),
                 },
+                GameUiControlContent::Fields { fields, .. } => MenuWidget::Status {
+                    value: frame
+                        .fields
+                        .iter()
+                        .find(|value| value.id == control.id)
+                        .map_or(fields, |value| &value.fields)
+                        .iter()
+                        .map(|field| format!("{}  {} {}", field.label, field.value, field.unit))
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                },
                 GameUiControlContent::Chart { plot, .. } => {
                     let chart = &plot.presentation;
                     let mut labels = vec![
@@ -205,7 +217,22 @@ fn source_from_view(
                             plot: chart.plot,
                             tick_font_size: chart.tick_font_size,
                             labels,
-                            legend: chart.legend.clone(),
+                            legend: chart
+                                .legend
+                                .iter()
+                                .cloned()
+                                .map(|mut legend| {
+                                    if legend.source == GameUiReadoutSource::AnalysisCursor
+                                        && let Some(vector) = frame
+                                            .chart_cursor
+                                            .as_ref()
+                                            .and_then(|cursor| cursor.selected_wind_vector.as_ref())
+                                    {
+                                        legend.label.clone_from(&vector.label);
+                                    }
+                                    legend
+                                })
+                                .collect(),
                         },
                     }
                 }

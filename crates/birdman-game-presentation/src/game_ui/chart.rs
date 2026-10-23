@@ -12,6 +12,40 @@ use projection::{
     ChartData, ChartDataCursor, ChartProjection, ChartReferenceLine, ChartWindVector,
 };
 
+impl GameUiChart {
+    /// Resolves a raw viewport pointer to the retained time axis; initial presses must hit the plot.
+    pub fn pointer_time(&self, position: [f64; 2], rect: [f64; 4], initial: bool) -> Option<f64> {
+        self.seek_target?;
+        if !position.iter().chain(&rect).all(|value| value.is_finite())
+            || rect[2] <= 0.0
+            || rect[3] <= 0.0
+        {
+            return None;
+        }
+        let extent = self.presentation.viewport;
+        let [left, top, right, bottom] = self.presentation.plot;
+        let scale = (rect[2] / extent.width).min(rect[3] / extent.height);
+        if !scale.is_finite() || scale <= 0.0 {
+            return None;
+        }
+        let plot_x = (position[0] - rect[0] - (rect[2] - extent.width * scale) / 2.0) / scale;
+        let plot_y = (position[1] - rect[1] - (rect[3] - extent.height * scale) / 2.0) / scale;
+        if !plot_x.is_finite() || !plot_y.is_finite() {
+            return None;
+        }
+        if right <= left
+            || (initial && (plot_x < left || plot_x > right || plot_y < top || plot_y > bottom))
+        {
+            return None;
+        }
+        Some(
+            self.x_minimum
+                + ((plot_x - left) / (right - left)).clamp(0.0, 1.0)
+                    * (self.x_maximum - self.x_minimum),
+        )
+    }
+}
+
 pub(super) fn record_chart(
     record: &FlightRecord,
     kind: GameUiAnalysisChart,
@@ -180,6 +214,7 @@ fn initial_presentation(
         legend: Vec::new(),
         map_guides: None,
         viewport_minimum_rem: [14.0, 10.0],
+        target_height_px: viewport.height,
         legend_font_rem: 0.85,
         legend_gap_rem: 0.75,
         legend_swatch_rem: [0.75, 0.75],
@@ -193,6 +228,7 @@ fn complete_presentation(chart: &mut ChartData) {
     let presentation = &mut chart.presentation;
     if chart.equal_axis_scale {
         let [left, top, right, bottom] = presentation.plot;
+        let top = (top + 40.0).min(bottom - 1.0);
         let side = (right - left).min(bottom - top);
         let centre_x = (left + right) / 2.0;
         let centre_y = (top + bottom) / 2.0;
@@ -270,7 +306,7 @@ fn complete_presentation(chart: &mut ChartData) {
     );
     presentation.y_axis = chart_text(
         chart.y_axis_label.clone(),
-        point(16.0, (top + bottom) / 2.0),
+        point((left - 48.0).max(16.0), (top + bottom) / 2.0),
         16.0,
         400,
         GameUiChartTextAnchor::Middle,
@@ -307,6 +343,17 @@ fn complete_presentation(chart: &mut ChartData) {
         .iter()
         .map(|marker| marker_text(marker, [7.0, 18.0], 500))
         .collect();
+    let mut previous_labels = Vec::new();
+    for label in &mut presentation.time_marker_labels {
+        if previous_labels.iter().any(|position: &GameUiChartPoint| {
+            (position.x - label.position.x).abs() < 64.0
+                && (position.y - label.position.y).abs() < 22.0
+        }) {
+            label.label.clear();
+        } else {
+            previous_labels.push(label.position);
+        }
+    }
     presentation.reference_labels = chart
         .reference_lines
         .iter()
@@ -328,6 +375,7 @@ fn complete_presentation(chart: &mut ChartData) {
         .series
         .iter()
         .map(|series| GameUiChartLegend {
+            source: GameUiReadoutSource::Static,
             label: series.label.clone(),
             color: series.color.clone(),
             segment_gradient: series
@@ -337,6 +385,7 @@ fn complete_presentation(chart: &mut ChartData) {
                 .map(|(first, last)| [first.clone(), last.clone()]),
         })
         .chain(chart.markers.iter().map(|marker| GameUiChartLegend {
+            source: GameUiReadoutSource::Static,
             label: marker.label.clone(),
             color: marker.color.clone(),
             segment_gradient: None,
@@ -348,8 +397,13 @@ fn complete_presentation(chart: &mut ChartData) {
                 .enumerate()
                 .filter(|(_, vector)| !vector.label.is_empty())
                 .map(|(index, vector)| GameUiChartLegend {
+                    source: if chart.equal_axis_scale && index == 0 {
+                        GameUiReadoutSource::AnalysisCursor
+                    } else {
+                        GameUiReadoutSource::Static
+                    },
                     label: if chart.equal_axis_scale && index == 0 {
-                        "選択地点の風（矢印は空気の移動先）".to_owned()
+                        vector.label.clone()
                     } else {
                         "周辺の風（発進高度・矢印は空気の移動先）".to_owned()
                     },
@@ -361,11 +415,11 @@ fn complete_presentation(chart: &mut ChartData) {
     if chart.equal_axis_scale {
         let distance = scale_bar_distance(chart.x_maximum - chart.x_minimum);
         let scale_width = distance / (chart.x_maximum - chart.x_minimum) * width;
-        let scale_x = right - scale_width - 14.0;
-        let scale_y = bottom - 18.0;
-        let north_x = right - 22.0;
-        let north_top = (top + 18.0).min(bottom);
-        let north_length = (bottom - north_top).min(34.0);
+        let scale_x = left;
+        let scale_y = 42.0;
+        let north_x = right - 12.0;
+        let north_top = 22.0;
+        let north_length = 24.0_f64;
         let north_head_height = north_length.min(10.0);
         let north_head_width = 6.0_f64.min(north_x - left).min(right - north_x);
         presentation.map_guides = Some(GameUiChartMapGuides {

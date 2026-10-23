@@ -48,10 +48,25 @@ pub struct ApplicationPlatformObservation {
     pub surface: Option<ApplicationSurfaceObservation>,
     /// Physical logical-pixel viewport and root font size.
     pub viewport: GameUiViewport,
-    /// Measured chart host, absent before measurement.
-    pub chart_extent: Option<GameUiChartExtent>,
     /// Actual API and drawing support.
     pub capabilities: ApplicationCapabilities,
+}
+
+/// Raw stage of a platform chart pointer event.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum ApplicationChartPointerPhase {
+    /// Pointer button pressed.
+    Down,
+    /// Pointer position changed.
+    Move,
+    /// Pointer button released.
+    Up,
+    /// Platform cancelled this pointer.
+    Cancel,
+    /// Platform lost its capture handle.
+    LostCapture,
 }
 
 /// Completion state of the display and scene resources needed for launch.
@@ -352,6 +367,36 @@ pub enum ApplicationInput {
         view_revision: u32,
         /// Observed widget interaction.
         input: GameUiControlInput,
+    },
+    /// Actual measured viewport belonging to a displayed chart.
+    ChartMeasured {
+        /// Revision displayed by the measured element.
+        view_revision: u32,
+        /// Measured chart identity.
+        control_id: String,
+        /// Actual logical-pixel extent.
+        extent: GameUiChartExtent,
+    },
+    /// Raw pointer event and actual chart rectangle in the same coordinate system.
+    ChartPointer {
+        /// Revision displayed by the event target.
+        view_revision: u32,
+        /// Chart element identity.
+        control_id: String,
+        /// Platform pointer identity.
+        pointer_id: i32,
+        /// Raw event stage.
+        phase: ApplicationChartPointerPhase,
+        /// Changed button, using the platform pointer-event numbering.
+        button: i16,
+        /// Currently held button bitset.
+        buttons: u16,
+        /// Platform primary-pointer observation.
+        is_primary: bool,
+        /// Pointer coordinates in logical pixels.
+        position: [f64; 2],
+        /// Actual viewport rectangle: left, top, width, height.
+        rect: [f64; 4],
     },
     /// A raw keyboard binding transition.
     Keyboard {

@@ -1,4 +1,4 @@
-use birdman_game_core::{FlightRecordPlaybackSample, SessionPhase, SessionScenarioIdentity};
+use birdman_game_core::{FlightRecordPlaybackSample, SessionPhase};
 
 use super::{types::*, view};
 
@@ -18,6 +18,7 @@ pub fn game_ui_frame(
         hud: super::hud::game_ui_hud(state, context)?,
         ranges: Vec::new(),
         readouts: Vec::new(),
+        fields: Vec::new(),
         button_labels: Vec::new(),
         chart_cursor: None,
     };
@@ -93,16 +94,7 @@ pub fn game_ui_frame(
                             );
                         format!("{distance} · t {time:.2} s")
                     }
-                    GameUiReadoutSource::AnalysisCursor => analysis_cursor_readout(
-                        sample.ok_or(GameUiError::StaleView)?,
-                        time,
-                        record.header().scenario,
-                        frame
-                            .chart_cursor
-                            .as_ref()
-                            .and_then(|cursor| cursor.selected_wind_vector.as_ref())
-                            .map(|vector| vector.label.as_str()),
-                    ),
+                    GameUiReadoutSource::AnalysisCursor => continue,
                 };
                 frame.readouts.push(readout(&control.id, value));
             }
@@ -136,7 +128,17 @@ pub fn game_ui_frame(
                     label,
                 });
             }
-            GameUiControlContent::Button { .. }
+            GameUiControlContent::Fields {
+                source: GameUiReadoutSource::AnalysisCursor,
+                ..
+            } => {
+                frame.fields.push(GameUiFieldsValue {
+                    id: control.id.clone(),
+                    fields: analysis_cursor_fields(sample.ok_or(GameUiError::StaleView)?, time),
+                });
+            }
+            GameUiControlContent::Fields { .. }
+            | GameUiControlContent::Button { .. }
             | GameUiControlContent::Toggle { .. }
             | GameUiControlContent::Chart { .. } => {}
         }
@@ -155,26 +157,49 @@ pub(super) fn range_display_value(value: f64) -> String {
     ryu_js::Buffer::new().format_to_fixed(value, 1).to_owned()
 }
 
-pub(super) fn analysis_cursor_readout(
+pub(super) fn analysis_cursor_fields(
     sample: FlightRecordPlaybackSample,
     time: f64,
-    identity: SessionScenarioIdentity,
-    selected_wind_label: Option<&str>,
-) -> String {
+) -> Vec<GameUiNumericField> {
     let [north, east, _] = sample.telemetry.composite_cg_position_ned_m.components();
     let [wind_north, wind_east, wind_down] = sample.telemetry.wind_velocity_ned_mps.components();
-    let mut readout = format!(
-        "飛行時間 {time:.2} s · 北 {north:.1} m · 東 {east:.1} m · 高度 {:.1} m\n対気速度 {:.1} m/s · 対地速度 {:.1} m/s\n風: 北向き {wind_north:.1} m/s · 東向き {wind_east:.1} m/s · 下向き {wind_down:.1} m/s",
-        sample.telemetry.altitude_m,
-        sample.telemetry.airspeed_mps,
-        sample.telemetry.groundspeed_mps
-    );
-    if !super::environment::registered(identity) {
-        readout.push_str(" · 周辺の風場データを取得できない");
-    }
-    if let Some(label) = selected_wind_label {
-        readout.push('\n');
-        readout.push_str(label);
-    }
-    readout
+    [
+        ("time", "時刻", format!("{time:.2}"), "s"),
+        ("north", "北", format!("{north:.1}"), "m"),
+        ("east", "東", format!("{east:.1}"), "m"),
+        (
+            "altitude",
+            "高度",
+            format!("{:.1}", sample.telemetry.altitude_m),
+            "m",
+        ),
+        (
+            "airspeed",
+            "対気速度",
+            format!("{:.1}", sample.telemetry.airspeed_mps),
+            "m/s",
+        ),
+        (
+            "groundspeed",
+            "対地速度",
+            format!("{:.1}", sample.telemetry.groundspeed_mps),
+            "m/s",
+        ),
+        (
+            "wind-north",
+            "北向きの風",
+            format!("{wind_north:.1}"),
+            "m/s",
+        ),
+        ("wind-east", "東向きの風", format!("{wind_east:.1}"), "m/s"),
+        ("wind-down", "下向きの風", format!("{wind_down:.1}"), "m/s"),
+    ]
+    .into_iter()
+    .map(|(id, label, value, unit)| GameUiNumericField {
+        id: id.to_owned(),
+        label: label.to_owned(),
+        value,
+        unit: unit.to_owned(),
+    })
+    .collect()
 }

@@ -1282,16 +1282,28 @@ fn shared_chart_layout_preserves_the_web_pixel_policy_and_observed_extent() {
                 for segment in guides.scale_segments.iter().chain(&guides.north_segments) {
                     for point in segment {
                         assert!(
-                            point.x >= left
-                                && point.x <= right
-                                && point.y >= top
-                                && point.y <= bottom
+                            point.x >= 0.0 && point.x <= width && point.y >= 0.0 && point.y < top
                         );
                     }
                 }
             } else {
                 assert_eq!(presentation.plot, [64.0, 26.0, width - 20.0, height - 48.0]);
                 assert!(presentation.map_guides.is_none());
+                let rect = [100.0, 200.0, width, height];
+                let midpoint = [100.0 + (left + right) / 2.0, 200.0 + (top + bottom) / 2.0];
+                assert_eq!(
+                    plot.pointer_time(midpoint, rect, true),
+                    Some((plot.x_minimum + plot.x_maximum) / 2.0)
+                );
+                assert_eq!(plot.pointer_time([100.0, midpoint[1]], rect, true), None);
+                assert_eq!(
+                    plot.pointer_time([0.0, midpoint[1]], rect, false),
+                    Some(plot.x_minimum)
+                );
+                assert_eq!(
+                    plot.pointer_time([f64::NAN, midpoint[1]], rect, false),
+                    None
+                );
             }
             assert!((2..=5).contains(&presentation.x_ticks.len()));
             assert!((2..=5).contains(&presentation.y_ticks.len()));
@@ -1301,7 +1313,7 @@ fn shared_chart_layout_preserves_the_web_pixel_policy_and_observed_extent() {
             assert_eq!(presentation.y_ticks.last().unwrap().value, plot.y_maximum);
             assert_eq!(presentation.grid_lines.len(), 3);
             assert_eq!(presentation.x_axis.position.y, height - 8.0);
-            assert_eq!(presentation.y_axis.position.x, 16.0);
+            assert_eq!(presentation.y_axis.position.x, (left - 48.0).max(16.0));
             assert_eq!(presentation.y_axis.rotation_degrees, -90.0);
             assert_eq!(presentation.marker_labels.len(), plot.markers.len());
             assert_eq!(
@@ -1401,7 +1413,7 @@ fn analysis_sections_preserve_order_and_typed_values_across_targets() {
             replay_view: GameUiReplayView::Analysis,
             ..GameUiState::default()
         };
-        for (width, height) in [(360.0, 300.0), (1280.0, 720.0)] {
+        for (width, height) in [(1280.0, 720.0), (1920.0, 1080.0)] {
             let mut platform = platform();
             platform.viewport.width = width;
             platform.viewport.height = height;
@@ -1444,7 +1456,7 @@ fn analysis_sections_preserve_order_and_typed_values_across_targets() {
             }
             assert!(matches!(
                 control(&screen, "game-analysis-cursor-values").content,
-                GameUiControlContent::Status {
+                GameUiControlContent::Fields {
                     source: GameUiReadoutSource::AnalysisCursor,
                     ..
                 }
@@ -1705,31 +1717,34 @@ fn unknown_archived_environment_remains_explicit_in_full_and_lightweight_readout
     .unwrap();
     let fresh = game_ui_view(&state, &context(&session, difficulty(), &platform)).unwrap();
     for view in [&retained, &fresh] {
-        let GameUiControlContent::Status { value, .. } =
+        let GameUiControlContent::Fields { fields, .. } =
             &control(view, "game-analysis-cursor-values").content
         else {
             panic!("missing archived wind readout")
         };
-        assert!(value.contains("周辺の風場データを取得できない"));
         assert!(
-            value.contains("北向き 0.0 m/s")
-                && value.contains("東向き 0.0 m/s")
-                && value.contains("下向き 0.0 m/s")
+            matches!(&control(view, "game-analysis-wind-availability").content, GameUiControlContent::Status { value, .. } if value.contains("周辺の風場データを取得できない"))
+        );
+        assert!(
+            fields
+                .iter()
+                .filter(|field| field.id.starts_with("wind-"))
+                .all(|field| field.value == "0.0" && field.unit == "m/s")
         );
     }
-    let GameUiControlContent::Status { value, .. } =
+    let GameUiControlContent::Fields { fields, .. } =
         &control(&fresh, "game-analysis-cursor-values").content
     else {
         panic!("missing current archived wind readout")
     };
     assert_eq!(
         &frame
-            .readouts
+            .fields
             .iter()
             .find(|readout| readout.id == "game-analysis-cursor-values")
             .unwrap()
-            .value,
-        value
+            .fields,
+        fields
     );
     assert_eq!(session.playback_record().unwrap().header(), header);
 }
@@ -1782,19 +1797,19 @@ fn lightweight_frame_matches_fresh_full_view_without_record_series() {
             }
         );
         assert_eq!(frame.hud, full.hud);
-        let GameUiControlContent::Status { value, .. } =
+        let GameUiControlContent::Fields { fields, .. } =
             &control(&full, "game-analysis-cursor-values").content
         else {
             panic!("missing readout")
         };
         assert_eq!(
             &frame
-                .readouts
+                .fields
                 .iter()
                 .find(|readout| readout.id == "game-analysis-cursor-values")
                 .unwrap()
-                .value,
-            value
+                .fields,
+            fields
         );
         if chart == GameUiAnalysisChart::Map {
             let GameUiControlContent::Chart { plot: original, .. } =
@@ -1817,7 +1832,21 @@ fn lightweight_frame_matches_fresh_full_view_without_record_series() {
                     .any(|entry| entry.label.contains(" m/(m/s)"))
             );
             let selected = cursor.selected_wind_vector.as_ref().unwrap();
-            assert!(value.contains(&selected.label));
+            assert_eq!(
+                plot.presentation
+                    .legend
+                    .iter()
+                    .find(|entry| entry.source == GameUiReadoutSource::AnalysisCursor)
+                    .unwrap()
+                    .label,
+                selected.label
+            );
+            assert!(
+                plot.presentation
+                    .legend
+                    .iter()
+                    .any(|entry| entry.label.contains(&selected.label))
+            );
             assert_eq!(plot.vectors.first().unwrap().label, selected.label);
         }
         assert!(
@@ -2332,7 +2361,18 @@ fn result_summary_keeps_ordered_navigation_across_targets() {
                     let context = context(&session, difficulty(), &platform);
                     let view = game_ui_view(&state, &context).unwrap();
                     let panel = &view.panels[0];
-                    assert_eq!(panel.sections.first().unwrap().id, "result-tabs");
+                    assert!(
+                        panel
+                            .sections
+                            .iter()
+                            .position(|section| section.id == "record-notification")
+                            .unwrap()
+                            < panel
+                                .sections
+                                .iter()
+                                .position(|section| section.id == "result-tabs")
+                                .unwrap()
+                    );
                     let other = GameUiState {
                         result_tab: if tab == GameUiResultTab::Summary {
                             GameUiResultTab::Analysis

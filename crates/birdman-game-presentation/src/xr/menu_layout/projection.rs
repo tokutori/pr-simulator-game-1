@@ -259,7 +259,9 @@ pub(super) fn project(
                 let color = if control.enabled
                     || matches!(
                         control.content,
-                        GameUiControlContent::Status { .. } | GameUiControlContent::Chart { .. }
+                        GameUiControlContent::Status { .. }
+                            | GameUiControlContent::Fields { .. }
+                            | GameUiControlContent::Chart { .. }
                     ) {
                     &theme.text
                 } else {
@@ -377,6 +379,7 @@ pub(super) fn project(
                         ..
                     } => ("range", Some([minimum, maximum, step])),
                     GameUiControlContent::Status { .. } => ("status", None),
+                    GameUiControlContent::Fields { .. } => ("fields", None),
                     GameUiControlContent::Chart { .. } => ("chart", None),
                 };
                 MenuControlGeometry {

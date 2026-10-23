@@ -5,6 +5,7 @@ pub(super) fn result(
     state: &GameUiState,
     context: &GameUiContext<'_, '_>,
 ) -> Result<(), GameUiError> {
+    notification(menu, context);
     menu.section("result-tabs", "", GameUiSectionLayout::Row);
     for (tab, id, label) in [
         (GameUiResultTab::Summary, "game-result-open-summary", "概要"),
@@ -30,7 +31,6 @@ pub(super) fn result(
             },
         );
     }
-    notification(menu, context);
     if state.result_tab == GameUiResultTab::Analysis {
         analysis(menu, state, context, false)?;
     } else {

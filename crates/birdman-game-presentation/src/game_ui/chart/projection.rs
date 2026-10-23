@@ -139,6 +139,7 @@ impl ChartData {
                 .collect()
         };
         GameUiChart {
+            seek_target: (!self.equal_axis_scale).then_some(super::GameUiRangeTarget::Analysis),
             presentation: self.presentation,
             x_axis_label: self.x_axis_label,
             y_axis_label: self.y_axis_label,

@@ -1,11 +1,176 @@
 use super::*;
 use birdman_game_app::application::SessionCommand;
 use birdman_game_presentation::game_ui::{
-    GameUiControlContent, GameUiControlInput, GameUiViewport,
+    GameUiAnalysisChart, GameUiChartExtent, GameUiControlContent, GameUiControlInput,
+    GameUiResultTab, GameUiViewport,
 };
 
 fn no_text_metrics(_: &ApplicationTextProbe) -> Result<ApplicationGlyphMetrics, MenuLayoutFailure> {
     Err(MenuLayoutFailure::MeasurementUnavailable)
+}
+
+#[test]
+fn chart_measurement_converges_and_raw_pointer_scrubs_only_its_admitted_range() {
+    let platform = ApplicationPlatformObservation {
+        renderer: Some(renderer_observation()),
+        surface: None,
+        viewport: GameUiViewport {
+            width: 1280.0,
+            height: 720.0,
+            root_font_size: 16.0,
+        },
+        capabilities: ApplicationCapabilities {
+            analysis_available: true,
+            ..Default::default()
+        },
+    };
+    let mut runtime = ApplicationRuntime::new(finalized_application(), platform.clone()).unwrap();
+    let initial = runtime
+        .observe_test(ApplicationInput::Platform {
+            observation: platform,
+        })
+        .unwrap();
+    let ready = finish_boot(&mut runtime, initial);
+    let result = structure(ready);
+    let analysis = structure(activate_action(
+        &mut runtime,
+        &result,
+        GameUiAction::SetResultTab {
+            tab: GameUiResultTab::Analysis,
+        },
+    ));
+    let altitude = structure(activate_action(
+        &mut runtime,
+        &analysis,
+        GameUiAction::SetAnalysisChart {
+            chart: GameUiAnalysisChart::Altitude,
+        },
+    ));
+    let extent = GameUiChartExtent {
+        width: 900.0,
+        height: 400.0,
+    };
+    let measurement = |revision, id: &str| ApplicationInput::ChartMeasured {
+        view_revision: revision,
+        control_id: id.to_owned(),
+        extent,
+    };
+    runtime
+        .observe_test(measurement(analysis.view_revision, "game-analysis-plot"))
+        .unwrap();
+    assert_eq!(runtime.platform.chart_extent, None);
+    let measured = structure(
+        runtime
+            .observe_test(measurement(altitude.view_revision, "game-analysis-plot"))
+            .unwrap(),
+    );
+    assert_eq!(runtime.platform.chart_extent, Some(extent));
+    for id in ["game-analysis-plot", "other"] {
+        let unchanged = runtime
+            .observe_test(measurement(measured.view_revision, id))
+            .unwrap();
+        assert!(matches!(
+            unchanged.drawing.unwrap().ui,
+            ApplicationUiProjection::Frame { .. }
+        ));
+    }
+    let plot = measured
+        .panels
+        .iter()
+        .flat_map(|panel| &panel.controls)
+        .find_map(|control| match &control.content {
+            GameUiControlContent::Chart { plot, .. } => Some(plot),
+            _ => None,
+        })
+        .unwrap();
+    let [left, top, right, bottom] = plot.presentation.plot;
+    let pointer = |revision, phase, position_x, buttons| ApplicationInput::ChartPointer {
+        view_revision: revision,
+        control_id: "game-analysis-plot".to_owned(),
+        pointer_id: 9,
+        phase,
+        button: 0,
+        buttons,
+        is_primary: true,
+        position: [position_x, (top + bottom) / 2.0],
+        rect: [0.0, 0.0, extent.width, extent.height],
+    };
+    let revision = measured.view_revision;
+    runtime
+        .observe_test(pointer(
+            altitude.view_revision,
+            ApplicationChartPointerPhase::Down,
+            right,
+            1,
+        ))
+        .unwrap();
+    assert!(runtime.chart_pointer.is_none());
+    runtime
+        .observe_test(pointer(
+            revision,
+            ApplicationChartPointerPhase::Down,
+            right,
+            1,
+        ))
+        .unwrap();
+    assert_eq!(runtime.ui.analysis_time_seconds, plot.x_maximum);
+    runtime
+        .observe_test(pointer(
+            revision,
+            ApplicationChartPointerPhase::Move,
+            left - 100.0,
+            1,
+        ))
+        .unwrap();
+    assert_eq!(runtime.ui.analysis_time_seconds, 0.0);
+    runtime
+        .observe_test(pointer(
+            revision,
+            ApplicationChartPointerPhase::Up,
+            right,
+            0,
+        ))
+        .unwrap();
+    assert!(runtime.chart_pointer.is_none());
+    for ending in [
+        ApplicationChartPointerPhase::Cancel,
+        ApplicationChartPointerPhase::LostCapture,
+        ApplicationChartPointerPhase::Move,
+    ] {
+        runtime
+            .observe_test(pointer(
+                revision,
+                ApplicationChartPointerPhase::Down,
+                left,
+                1,
+            ))
+            .unwrap();
+        runtime
+            .observe_test(pointer(revision, ending, left, 0))
+            .unwrap();
+        runtime
+            .observe_test(pointer(
+                revision,
+                ApplicationChartPointerPhase::Move,
+                right,
+                1,
+            ))
+            .unwrap();
+        assert_eq!(runtime.ui.analysis_time_seconds, 0.0);
+        assert!(runtime.chart_pointer.is_none());
+    }
+    runtime
+        .observe_test(pointer(
+            revision,
+            ApplicationChartPointerPhase::Down,
+            right,
+            1,
+        ))
+        .unwrap();
+    runtime
+        .observe_test(ApplicationInput::PageVisibility { visible: false })
+        .unwrap();
+    assert!(runtime.chart_pointer.is_none());
 }
 
 #[test]
@@ -19,7 +184,6 @@ fn dispose_drains_atomic_bind_record_cancellation_and_release_before_renderer_de
                 height: 720.0,
                 root_font_size: 16.0,
             },
-            chart_extent: None,
             capabilities: ApplicationCapabilities {
                 stored_records_available: true,
                 phone_sensors: binding_lost.then_some(PhoneSensorApiObservation {
@@ -269,7 +433,6 @@ fn boot_retries_renderer_creation_releases_late_resources_and_enters_title_after
             height: 720.0,
             root_font_size: 16.0,
         },
-        chart_extent: None,
         capabilities: ApplicationCapabilities::default(),
     };
     let mut runtime =
@@ -461,7 +624,6 @@ fn briefing_retry_restarts_failed_resource_preparation_through_the_shared_action
             height: 720.0,
             root_font_size: 16.0,
         },
-        chart_extent: None,
         capabilities: ApplicationCapabilities::default(),
     };
     let mut runtime =
@@ -604,7 +766,6 @@ fn saved_result_owns_transaction_and_rejects_notifications_after_leaving_result(
             height: 720.0,
             root_font_size: 16.0,
         },
-        chart_extent: None,
         capabilities: ApplicationCapabilities {
             stored_records_available: true,
             ..Default::default()
@@ -701,7 +862,6 @@ fn stored_record_preview_load_retry_and_original_download_share_owner() {
             height: 720.0,
             root_font_size: 16.0,
         },
-        chart_extent: None,
         capabilities: ApplicationCapabilities {
             stored_records_available: true,
             flight_log_available: true,
@@ -898,7 +1058,6 @@ fn started_display(mode: GameUiPresentationMode) -> (ApplicationRuntime, Applica
             height: 720.0,
             root_font_size: 16.0,
         },
-        chart_extent: None,
         capabilities: ApplicationCapabilities {
             phone_sensors: Some(PhoneSensorApiObservation {
                 permission_required: true,
@@ -1055,7 +1214,6 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
             height: 720.0,
             root_font_size: 16.0,
         },
-        chart_extent: None,
         capabilities: ApplicationCapabilities::default(),
     };
     let mut runtime =
@@ -1268,7 +1426,6 @@ fn hmd_frame_and_focus_use_the_confirmed_display_resource_and_shared_viewer_capt
                             locale: "ja".to_owned(),
                         }),
                         viewport: runtime.platform.viewport,
-                        chart_extent: None,
                         capabilities: ApplicationCapabilities {
                             hmd_available: true,
                             phone_sensors: Some(PhoneSensorApiObservation {
@@ -1570,7 +1727,6 @@ fn spatial_trigger_uses_submitted_painting_and_the_canonical_ui_action_owner() {
                             locale: "ja".to_owned(),
                         }),
                         viewport: runtime.platform.viewport,
-                        chart_extent: None,
                         capabilities: ApplicationCapabilities {
                             hmd_available: true,
                             ..Default::default()
@@ -1780,7 +1936,6 @@ fn graphics_commit_tracks_actual_resources_cleanup_and_renderer_lifetimes() {
             height: 720.0,
             root_font_size: 16.0,
         },
-        chart_extent: None,
         capabilities: ApplicationCapabilities::default(),
     };
     let mut runtime =
@@ -2041,7 +2196,6 @@ fn graphics_commit_tracks_actual_resources_cleanup_and_renderer_lifetimes() {
             height: 720.0,
             root_font_size: 16.0,
         },
-        chart_extent: None,
         capabilities: ApplicationCapabilities::default(),
     };
     platform.renderer.as_mut().unwrap().resource_id = 101;

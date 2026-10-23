@@ -83,6 +83,7 @@ pub struct ApplicationRuntime {
     platform: GameUiPlatformInput,
     structure: GameUiStructureCache,
     retained: Option<GameUiView>,
+    chart_pointer: Option<(u32, String, i32)>,
     display: display::DisplayWorkflow,
     previous_frame_ms: Option<f64>,
     next_request_id: u32,
@@ -149,7 +150,7 @@ impl ApplicationRuntime {
         phone.configure(capabilities.phone_sensors);
         let platform = GameUiPlatformInput {
             viewport: observation.viewport,
-            chart_extent: observation.chart_extent,
+            chart_extent: None,
             presentation_mode: GameUiPresentationMode::Screen,
             operation_pending: false,
             hmd_available: capabilities.hmd_available,
@@ -174,6 +175,7 @@ impl ApplicationRuntime {
             platform,
             structure: GameUiStructureCache::default(),
             retained: None,
+            chart_pointer: None,
             display: display::DisplayWorkflow::new(GameUiPresentationMode::Screen),
             previous_frame_ms: None,
             next_request_id: 1,
@@ -622,6 +624,113 @@ impl ApplicationRuntime {
                     )?;
                 }
             }
+            ApplicationInput::ChartMeasured {
+                view_revision,
+                control_id,
+                extent,
+            } => {
+                let current = self
+                    .retained
+                    .as_ref()
+                    .filter(|view| view.view_revision == view_revision)
+                    .and_then(|view| {
+                        view.panels
+                            .iter()
+                            .flat_map(|panel| &panel.controls)
+                            .find(|control| control.id == control_id)
+                    })
+                    .and_then(|control| match &control.content {
+                        birdman_game_presentation::game_ui::GameUiControlContent::Chart {
+                            plot,
+                            ..
+                        } => Some(plot.presentation.measurement_minimum),
+                        _ => None,
+                    });
+                if let Some(minimum) = current
+                    && extent.width.is_finite()
+                    && extent.height.is_finite()
+                    && extent.width >= minimum.width
+                    && extent.height >= minimum.height
+                    && self.platform.chart_extent != Some(extent)
+                {
+                    self.platform.chart_extent = Some(extent);
+                }
+            }
+            ApplicationInput::ChartPointer {
+                view_revision,
+                control_id,
+                pointer_id,
+                phase,
+                button,
+                buttons,
+                is_primary,
+                position,
+                rect,
+            } => {
+                let identity = (view_revision, control_id.clone(), pointer_id);
+                if matches!(
+                    phase,
+                    ApplicationChartPointerPhase::Cancel
+                        | ApplicationChartPointerPhase::LostCapture
+                ) || !is_primary
+                    || (phase == ApplicationChartPointerPhase::Move && buttons & 1 == 0)
+                {
+                    if self.chart_pointer.as_ref() == Some(&identity) {
+                        self.chart_pointer = None;
+                    }
+                } else if self.presentation_input_focused() {
+                    let chart = self
+                        .retained
+                        .as_ref()
+                        .filter(|view| view.view_revision == view_revision)
+                        .and_then(|view| {
+                            view.panels
+                                .iter()
+                                .flat_map(|panel| &panel.controls)
+                                .find(|control| control.id == control_id)
+                        })
+                        .and_then(|control| match &control.content {
+                            birdman_game_presentation::game_ui::GameUiControlContent::Chart {
+                                plot,
+                                ..
+                            } => Some((
+                                plot.seek_target?,
+                                plot.pointer_time(
+                                    position,
+                                    rect,
+                                    phase == ApplicationChartPointerPhase::Down,
+                                )?,
+                            )),
+                            _ => None,
+                        });
+                    if let Some((target, value)) = chart {
+                        let range_id = self.retained.as_ref().unwrap().panels.iter().flat_map(|panel| &panel.controls).find_map(|control| match control.content { birdman_game_presentation::game_ui::GameUiControlContent::Range { target: candidate, .. } if candidate == target && control.enabled => Some(control.id.clone()), _ => None });
+                        if phase == ApplicationChartPointerPhase::Down
+                            && button == 0
+                            && buttons & 1 != 0
+                            && range_id.is_some()
+                        {
+                            self.chart_pointer = Some(identity.clone());
+                        }
+                        if self.chart_pointer.as_ref() == Some(&identity)
+                            && matches!(
+                                phase,
+                                ApplicationChartPointerPhase::Down
+                                    | ApplicationChartPointerPhase::Move
+                                    | ApplicationChartPointerPhase::Up
+                            )
+                            && let Some(control_id) = range_id
+                        {
+                            self.apply_action(view_revision, GameUiAction::ControlInput { input: birdman_game_presentation::game_ui::GameUiControlInput::SetRange { control_id, value } }, &mut requests)?;
+                        }
+                    }
+                    if phase == ApplicationChartPointerPhase::Up
+                        && self.chart_pointer.as_ref() == Some(&identity)
+                    {
+                        self.chart_pointer = None;
+                    }
+                }
+            }
 
             ApplicationInput::Keyboard {
                 code,
@@ -692,7 +801,6 @@ impl ApplicationRuntime {
                     .map_err(ApplicationRuntimeError::Graphics)?;
                 self.surface_observation = observation.surface;
                 self.platform.viewport = observation.viewport;
-                self.platform.chart_extent = observation.chart_extent;
                 let capabilities = observation.capabilities;
                 self.platform.hmd_available = capabilities.hmd_available;
                 self.phone.configure(capabilities.phone_sensors);
@@ -890,6 +998,14 @@ impl ApplicationRuntime {
             .map_err(ApplicationRuntimeError::Application)?;
         let environment = self.environment()?;
         let revision = self.structure_revision(&environment)?;
+        if !self.presentation_input_focused()
+            || self
+                .chart_pointer
+                .as_ref()
+                .is_some_and(|(retained, _, _)| *retained != revision)
+        {
+            self.chart_pointer = None;
+        }
         let projection = if self
             .retained
             .as_ref()
@@ -1026,6 +1142,7 @@ impl ApplicationRuntime {
         let renderer = self.graphics.retire();
         requests.extend(self.shutdown.begin(renderer));
         self.boot = boot::BootOwner::Closed;
+        self.chart_pointer = None;
         self.page_visible = false;
         self.storage.close();
         self.phone.close(requests);

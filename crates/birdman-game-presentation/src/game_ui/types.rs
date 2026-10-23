@@ -637,6 +637,8 @@ pub struct GameUiFrame {
     pub ranges: Vec<GameUiRangeValue>,
     /// Fixed record-clock and analysis-cursor readouts.
     pub readouts: Vec<GameUiReadoutValue>,
+    /// Numeric readouts that advance with the retained record cursor.
+    pub fields: Vec<GameUiFieldsValue>,
     /// Replay clock play/pause label.
     pub button_labels: Vec<GameUiButtonLabel>,
     /// Cursor-only chart observation; plotted series and bounds remain in the view.
@@ -1068,6 +1070,13 @@ pub enum GameUiControlContent {
         /// Shared formatted content.
         value: String,
     },
+    /// Stable labelled numeric values for the selected record sample.
+    Fields {
+        /// Shared dynamic-value provider.
+        source: GameUiReadoutSource,
+        /// Ordered values and units.
+        fields: Vec<GameUiNumericField>,
+    },
     /// Record-derived chart data, not a separately simulated trajectory.
     Chart {
         /// Plot selection.
@@ -1075,6 +1084,32 @@ pub enum GameUiControlContent {
         /// Fully derived axes, geometry and cursor; adapters render this value.
         plot: Box<GameUiChart>,
     },
+}
+
+/// One shared formatted numeric measurement.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct GameUiNumericField {
+    /// Stable measurement identity.
+    pub id: String,
+    /// Measurement label.
+    pub label: String,
+    /// Shared formatted numeric value.
+    pub value: String,
+    /// Unit displayed next to the value.
+    pub unit: String,
+}
+
+/// Numeric values for a retained field group.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct GameUiFieldsValue {
+    /// Retained group identity.
+    pub id: String,
+    /// Shared ordered measurements.
+    pub fields: Vec<GameUiNumericField>,
 }
 
 /// Shared source for frame-varying readouts, independent of element identity.
@@ -1099,6 +1134,10 @@ pub enum GameUiReadoutSource {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct GameUiChart {
+    /// Internal range relationship used by shared pointer admission.
+    #[serde(skip)]
+    #[cfg_attr(feature = "schema", schemars(skip))]
+    pub seek_target: Option<GameUiRangeTarget>,
     /// Shared chart layout and labels in logical display pixels.
     pub presentation: GameUiChartPresentation,
     /// Horizontal axis label and unit.
@@ -1187,6 +1226,8 @@ pub struct GameUiChartPresentation {
     pub map_guides: Option<GameUiChartMapGuides>,
     /// Minimum viewport width and height in root-font units.
     pub viewport_minimum_rem: [f64; 2],
+    /// Allocated chart height in logical pixels, independent of its measured extent.
+    pub target_height_px: f64,
     /// Legend font size in root-font units.
     pub legend_font_rem: f64,
     /// Legend item gap in root-font units.
@@ -1253,6 +1294,8 @@ pub enum GameUiChartTextAnchor {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct GameUiChartLegend {
+    /// Shared provider for labels that follow the selected record cursor.
+    pub source: GameUiReadoutSource,
     /// Shared label.
     pub label: String,
     /// Solid swatch colour.
@@ -1444,7 +1487,7 @@ pub enum GameUiShell {
     FlightBar,
     /// Top-right pause settings.
     PauseSettings,
-    /// Full viewport chart composition.
+    /// Centered analysis card with shared chart-height allocation.
     Analysis,
     /// Top-right compact scenic replay menu.
     Cinematic,

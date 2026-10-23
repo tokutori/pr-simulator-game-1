@@ -300,6 +300,72 @@ export type ApplicationInput = {
     readonly view_revision: number;
 } | {
     /**
+     * Measured chart identity.
+     */
+    readonly control_id: string;
+    /**
+     * Actual logical-pixel extent.
+     */
+    readonly extent: GameUiChartExtent;
+    readonly kind: "chart_measured";
+    /**
+     * Revision displayed by the measured element.
+     */
+    readonly view_revision: number;
+} | {
+    /**
+     * Changed button, using the platform pointer-event numbering.
+     */
+    readonly button: number;
+    /**
+     * Currently held button bitset.
+     */
+    readonly buttons: number;
+    /**
+     * Chart element identity.
+     */
+    readonly control_id: string;
+    /**
+     * Platform primary-pointer observation.
+     */
+    readonly is_primary: boolean;
+    readonly kind: "chart_pointer";
+    /**
+     * Raw event stage.
+     */
+    readonly phase: ApplicationChartPointerPhase;
+    /**
+     * Platform pointer identity.
+     */
+    readonly pointer_id: number;
+    /**
+     * Pointer coordinates in logical pixels.
+     *
+     * @minItems 2
+     * @maxItems 2
+     */
+    readonly position: readonly [
+        number,
+        number
+    ];
+    /**
+     * Actual viewport rectangle: left, top, width, height.
+     *
+     * @minItems 4
+     * @maxItems 4
+     */
+    readonly rect: readonly [
+        number,
+        number,
+        number,
+        number
+    ];
+    /**
+     * Revision displayed by the event target.
+     */
+    readonly view_revision: number;
+} | {
+    /**
      * Physical key identifier in the DOM KeyboardEvent.code vocabulary.
      */
     readonly code: string;
@@ -539,6 +605,10 @@ export type GameUiControlInput = {
      */
     readonly value: number;
 };
+/**
+ * Raw stage of a platform chart pointer event.
+ */
+export type ApplicationChartPointerPhase = "down" | "move" | "up" | "cancel" | "lost_capture";
 /**
  * Current Web replay camera candidates in their shared selection order.
  */
@@ -1214,6 +1284,16 @@ export type GameUiControlContent = {
      * Shared formatted content.
      */
     readonly value: string;
+} | {
+    /**
+     * Ordered values and units.
+     */
+    readonly fields: readonly GameUiNumericField[];
+    readonly kind: "fields";
+    /**
+     * Shared dynamic-value provider.
+     */
+    readonly source: GameUiReadoutSource;
 } | {
     /**
      * Plot selection.
@@ -2024,6 +2104,19 @@ export interface XrViewObservation {
     readonly trackingFromEye: XrObservedPose;
 }
 /**
+ * Measured or initially assumed chart content dimensions in logical pixels.
+ */
+export interface GameUiChartExtent {
+    /**
+     * Content height.
+     */
+    readonly height: number;
+    /**
+     * Content width.
+     */
+    readonly width: number;
+}
+/**
  * External metrics and API availability, without derived UI state.
  */
 export interface ApplicationPlatformObservation {
@@ -2031,10 +2124,6 @@ export interface ApplicationPlatformObservation {
      * Actual API and drawing support.
      */
     readonly capabilities: ApplicationCapabilities;
-    /**
-     * Measured chart host, absent before measurement.
-     */
-    readonly chart_extent?: GameUiChartExtent | null;
     /**
      * Live renderer and its startup resources; None retires that lifetime and replacement uses a new creation identity.
      */
@@ -2093,19 +2182,6 @@ export interface PhoneSensorApiObservation {
      * Raw screen rotation, absent when the browser cannot provide it.
      */
     readonly screen_angle_degrees?: number | null;
-}
-/**
- * Measured or initially assumed chart content dimensions in logical pixels.
- */
-export interface GameUiChartExtent {
-    /**
-     * Content height.
-     */
-    readonly height: number;
-    /**
-     * Content width.
-     */
-    readonly width: number;
 }
 /**
  * Actual font resource and shaping locale reported by platform font I/O.
@@ -3249,6 +3325,27 @@ export interface GameUiControl {
     readonly section: string;
 }
 /**
+ * One shared formatted numeric measurement.
+ */
+export interface GameUiNumericField {
+    /**
+     * Stable measurement identity.
+     */
+    readonly id: string;
+    /**
+     * Measurement label.
+     */
+    readonly label: string;
+    /**
+     * Unit displayed next to the value.
+     */
+    readonly unit: string;
+    /**
+     * Shared formatted numeric value.
+     */
+    readonly value: string;
+}
+/**
  * Complete engine-independent recorded chart.
  */
 export interface GameUiChart {
@@ -3456,6 +3553,10 @@ export interface GameUiChartPresentation {
      */
     readonly scroll_overflow: boolean;
     /**
+     * Allocated chart height in logical pixels, independent of its measured extent.
+     */
+    readonly target_height_px: number;
+    /**
      * Tick font size in logical pixels.
      */
     readonly tick_font_size: number;
@@ -3516,6 +3617,10 @@ export interface GameUiChartLegend {
         string,
         string
     ] | null;
+    /**
+     * Shared provider for labels that follow the selected record cursor.
+     */
+    readonly source: GameUiReadoutSource;
 }
 /**
  * Static map references in descriptor coordinates.
@@ -3761,6 +3866,10 @@ export interface GameUiFrame {
      */
     readonly chart_cursor?: GameUiChartCursor | null;
     /**
+     * Numeric readouts that advance with the retained record cursor.
+     */
+    readonly fields: readonly GameUiFieldsValue[];
+    /**
      * Shared HUD projection, never a second physical state.
      */
     readonly hud?: GameUiHud | null;
@@ -3810,6 +3919,19 @@ export interface GameUiChartCursor {
      * Selected-sample wind, replacing the first map vector only.
      */
     readonly selected_wind_vector?: GameUiChartVector | null;
+}
+/**
+ * Numeric values for a retained field group.
+ */
+export interface GameUiFieldsValue {
+    /**
+     * Shared ordered measurements.
+     */
+    readonly fields: readonly GameUiNumericField[];
+    /**
+     * Retained group identity.
+     */
+    readonly id: string;
 }
 /**
  * Value of a retained typed range control.

@@ -46,12 +46,11 @@ impl NativeRuntime {
 }
 
 pub(crate) fn platform(world: &mut World) -> ApplicationPlatformObservation {
-    let (viewport, chart_extent) = super::ui::viewport(world);
+    let viewport = super::ui::viewport(world);
     ApplicationPlatformObservation {
         renderer: Some(super::world::platform(world)),
         surface: None,
         viewport,
-        chart_extent,
         capabilities: ApplicationCapabilities {
             analysis_available: true,
             replay_available: true,

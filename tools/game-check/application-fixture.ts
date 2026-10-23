@@ -10,7 +10,6 @@ export function applicationPlatformFixture(): ApplicationPlatformObservation {
     renderer: null,
     surface: { font: { family: "Arial", generation: 0, style: "normal", weight: 400 }, locale: "ja" },
     viewport: { width: 1280, height: 720, root_font_size: 16 },
-    chart_extent: null,
     capabilities: {
       analysis_available: true, flight_log_available: true, hmd_available: true,
       phone_sensors: null, replay_available: true, stored_records_available: false,

@@ -1217,18 +1217,20 @@ fn analysis(
         ),
         (GameUiAnalysisChart::Speed, "game-analysis-speed", "速度"),
     ] {
-        menu.action(
+        menu.push(
             id,
-            &format!(
-                "{}{label}",
-                if state.analysis_chart == chart {
-                    "● "
-                } else {
-                    ""
-                }
-            ),
-            GameUiAction::SetAnalysisChart { chart },
+            label,
             context.platform.analysis_available,
+            "analysis",
+            GameUiControlContent::Button {
+                action: GameUiAction::SetAnalysisChart { chart },
+                presentation: GameUiButtonPresentation::Choice {
+                    group: "analysis-chart".to_owned(),
+                    group_label: String::new(),
+                    selected: state.analysis_chart == chart,
+                    description: String::new(),
+                },
+            },
         );
     }
     if let Some(record) = context.record {
@@ -1241,7 +1243,7 @@ fn analysis(
         } else {
             state.analysis_time_seconds.min(duration)
         };
-        let plot = super::chart::record_chart(
+        let mut plot = super::chart::record_chart(
             record,
             state.analysis_chart,
             time,
@@ -1250,16 +1252,15 @@ fn analysis(
         let sample = record
             .sample_at_seconds(time)
             .map_err(GameUiError::Record)?;
-        let selected_wind_label = if state.analysis_chart == GameUiAnalysisChart::Map {
-            plot.vectors.first().map(|vector| vector.label.as_str())
-        } else {
-            None
-        };
-        let readout = super::frame::analysis_cursor_readout(
-            sample,
-            time,
-            record.header().scenario,
-            selected_wind_label,
+        plot.seek_target =
+            (state.analysis_chart != GameUiAnalysisChart::Map).then_some(if replay {
+                GameUiRangeTarget::Replay
+            } else {
+                GameUiRangeTarget::Analysis
+            });
+        plot.presentation.target_height_px = (context.platform.viewport.height * 0.52).clamp(
+            20.0 * context.platform.viewport.root_font_size,
+            36.0 * context.platform.viewport.root_font_size,
         );
         menu.section("analysis-chart", "", GameUiSectionLayout::Column);
         menu.push(
@@ -1303,12 +1304,23 @@ fn analysis(
                 step: 0.01,
             },
         );
-        menu.live_status(
+        menu.push(
             "game-analysis-cursor-values",
             "選択地点の値",
-            &readout,
-            GameUiReadoutSource::AnalysisCursor,
+            false,
+            "analysis-cursor",
+            GameUiControlContent::Fields {
+                source: GameUiReadoutSource::AnalysisCursor,
+                fields: super::frame::analysis_cursor_fields(sample, time),
+            },
         );
+        if !super::environment::registered(record.header().scenario) {
+            menu.status(
+                "game-analysis-wind-availability",
+                "",
+                "周辺の風場データを取得できない",
+            );
+        }
     } else {
         menu.section("analysis-chart", "", GameUiSectionLayout::Column);
         menu.status(
@@ -1570,7 +1582,7 @@ pub(super) fn layout(
     let available_width = (viewport.width - if compact { 1.2 } else { 2.0 } * font).max(1.0);
     let width = match shell {
         GameUiShell::Center => available_width.min(42.0 * font),
-        GameUiShell::Analysis => viewport.width,
+        GameUiShell::Analysis => available_width.min(72.0 * font),
         GameUiShell::FlightBar if phase == SessionPhase::FlightRunning => {
             available_width.min(15.5 * font)
         }
@@ -1579,7 +1591,7 @@ pub(super) fn layout(
         GameUiShell::Cinematic => cinematic_width,
     };
     let padding = match shell {
-        GameUiShell::Analysis => 0.0,
+        GameUiShell::Analysis => (viewport.width * 0.025).clamp(font, 2.0 * font),
         GameUiShell::Cinematic => 0.85 * font,
         GameUiShell::FlightBar => 0.75 * font,
         GameUiShell::PauseSettings => font,
@@ -1591,7 +1603,7 @@ pub(super) fn layout(
         shell,
         width_px: width,
         maximum_height_px: if shell == GameUiShell::Analysis {
-            viewport.height
+            (viewport.height - 2.0 * font).max(1.0)
         } else if context.platform.presentation_mode == GameUiPresentationMode::Screen
             && shell == GameUiShell::FlightBar
             && matches!(
