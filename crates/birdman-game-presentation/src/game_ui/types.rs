@@ -1,3 +1,4 @@
+pub use super::presentation_mode::GameUiPresentationMode;
 use birdman_game_app::application::{RecordCommand, SessionCommand};
 use birdman_game_core::{FlightRecord, GameSession, SessionScenarioIdentity};
 use birdman_game_format::WaterQuality;
@@ -187,19 +188,6 @@ pub enum GameUiWaterQualityOperation {
         /// Captured superseded-resource cleanup cause.
         cause: String,
     },
-}
-
-/// Presentation mode supported by a platform adapter.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(rename_all = "snake_case")]
-pub enum GameUiPresentationMode {
-    /// Flat native or browser display.
-    Screen,
-    /// Head-mounted stereo display provided by the platform runtime.
-    Hmd,
-    /// Browser phone headset display.
-    PhoneVr,
 }
 
 /// Platform-owned operation requested by common UI.

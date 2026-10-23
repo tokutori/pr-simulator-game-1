@@ -7,9 +7,14 @@ license.workspace = true
 repository.workspace = true
 
 [features]
+verus-proof = ["dep:vstd", "birdman-game-core/verus-proof", "birdman-game-presentation/verus-proof"]
 schema = ["dep:schemars", "birdman-game-app/schema", "birdman-game-presentation/schema", "birdman-game-scene/schema"]
 
+[package.metadata.verus]
+verify = true
+
 [dependencies]
+vstd = { version = "=0.0.0-2026-10-04-0306", default-features = false, features = ["alloc"], optional = true }
 birdman-game-app.workspace = true
 birdman-game-core.workspace = true
 birdman-game-format.workspace = true

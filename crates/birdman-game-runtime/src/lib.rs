@@ -1,82 +1,117 @@
+#![cfg_attr(verus_only, feature(proc_macro_hygiene))]
 //! Shared application owner for platform observations, progression and UI effects.
 
+#[cfg(not(verus_only))]
 mod assets;
+#[cfg(not(verus_only))]
 mod boot;
 mod display;
+#[cfg(not(verus_only))]
 mod frame_rate;
+#[cfg(not(verus_only))]
 mod gamepad;
+#[cfg(not(verus_only))]
 mod geometry;
+#[cfg(not(verus_only))]
 mod graphics;
+#[cfg(not(verus_only))]
 mod phone;
+#[cfg(not(verus_only))]
 mod scene;
+#[cfg(not(verus_only))]
 mod shutdown;
+#[cfg(not(verus_only))]
 mod storage;
+#[cfg(not(verus_only))]
 mod surface;
+#[cfg(not(verus_only))]
 mod types;
 
+#[cfg(not(verus_only))]
 pub use assets::{
     ApplicationAssetError, ApplicationEnvironmentAssets, ApplicationImageAsset,
     ApplicationImageEncoding, ApplicationLightingAssets, ApplicationWaterAssets,
     ApplicationWaterDetailAsset,
 };
+#[cfg(not(verus_only))]
 pub use boot::{ApplicationRendererCreation, application_startup_html};
+#[cfg(not(verus_only))]
 pub use gamepad::ApplicationGamepadObservation;
+#[cfg(not(verus_only))]
 pub use geometry::{
     ApplicationBufferDescriptor, ApplicationBufferSlice, ApplicationBufferType,
     ApplicationGeometryAssets, ApplicationGeometryFrame, ApplicationGeometryTexture,
     ApplicationMeshAsset, ApplicationMeshAttachment, ApplicationMeshMaterial, ApplicationMeshPose,
     ApplicationMeshUpdate,
 };
+#[cfg(not(verus_only))]
 pub use geometry::{ApplicationWaterBounds, ApplicationWaterChunkAsset, ApplicationWaterGeometry};
+#[cfg(not(verus_only))]
 pub use graphics::{
     ApplicationGpuQuery, ApplicationGpuTimingCapability, ApplicationGraphicsObservation,
     ApplicationGraphicsProjection, ApplicationGraphicsResource, ApplicationGraphicsTarget,
     ApplicationRenderQuality, ApplicationRendererObservation, ApplicationResourceCommit,
 };
+#[cfg(not(verus_only))]
 pub use scene::{
     ApplicationCameraProjection, ApplicationEyeProjection, ApplicationSceneProjection,
 };
+#[cfg(not(verus_only))]
 pub use shutdown::ApplicationLifecycle;
+#[cfg(not(verus_only))]
 pub use storage::ApplicationRecordLoadCompletion;
+#[cfg(not(verus_only))]
 pub use surface::{
     ApplicationGlyphMetrics, ApplicationHeadHudProjection, ApplicationMenuPaint,
     ApplicationMenuProjection, ApplicationSpatialProjection, ApplicationSurfaceObservation,
     ApplicationTextProbe,
 };
+#[cfg(not(verus_only))]
 pub use types::*;
 
 pub use display::{DisplayCompletion, DisplayRequest, DisplayState};
+#[cfg(not(verus_only))]
 pub use phone::{
     PhoneMotionObservation, PhoneOrientationObservation, PhoneOrientationSource,
     PhoneSensorApiObservation, PhoneTrackingProjection, PhoneTrackingReason,
 };
 
+#[cfg(not(verus_only))]
 use birdman_game_app::application::{
     ApplicationError, ApplicationSession, BackendReadiness, ExternalPauseReason,
     PresentationObservation, XrAvailability, XrVisibility,
 };
+#[cfg(not(verus_only))]
 use birdman_game_app::environment_snapshot::{EnvironmentIdentity, EnvironmentSelection};
+#[cfg(not(verus_only))]
 use birdman_game_app::flight_input::{
     FlightControl, FlightGamepadObservation, FlightKeyObservation,
 };
+#[cfg(not(verus_only))]
 use birdman_game_app::{HybridSessionPreparation, identity_for_selection};
+#[cfg(not(verus_only))]
 use birdman_game_core::{SessionPhase, SessionScenarioIdentity};
+#[cfg(not(verus_only))]
 use birdman_game_format::WaterQuality;
 
+#[cfg(not(verus_only))]
 use birdman_game_presentation::game_ui::{
     GameUiAction, GameUiContext, GameUiEffect, GameUiError, GameUiPlatformCommand,
     GameUiPlatformInput, GameUiPresentationMode, GameUiState, GameUiStructureCache,
     GameUiStructureKey, GameUiView, GameUiWaterQualityOperation, game_ui_environment_readout,
     game_ui_frame, game_ui_view, update_game_ui,
 };
+#[cfg(not(verus_only))]
 use birdman_game_presentation::xr::{
     MenuLayoutFailure, XrViewerFrame, XrViewerUnavailableReason, capture_xr_viewer,
 };
 
 #[cfg(test)]
+#[cfg(not(verus_only))]
 mod tests;
 
 /// Owns the application and its presentation state across all platform adapters.
+#[cfg(not(verus_only))]
 pub struct ApplicationRuntime {
     application: ApplicationSession,
     ui: GameUiState,
@@ -113,6 +148,7 @@ pub struct ApplicationRuntime {
 }
 
 #[derive(Clone, Copy, PartialEq)]
+#[cfg(not(verus_only))]
 struct ResourceKey {
     graphics: ApplicationGraphicsTarget,
     environment: EnvironmentIdentity,
@@ -120,12 +156,14 @@ struct ResourceKey {
     display_resource_id: Option<u32>,
 }
 
+#[cfg(not(verus_only))]
 struct ResourcePreparation {
     key: ResourceKey,
     request_id: u32,
     completed: bool,
 }
 
+#[cfg(not(verus_only))]
 impl ApplicationRuntime {
     /// Adopts the canonical application with observed platform capabilities.
     pub fn new(

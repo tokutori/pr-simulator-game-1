@@ -1558,6 +1558,7 @@ dependencies = [
  "serde_json",
  "time",
  "unicode-width",
+ "vstd",
 ]
 
 [[package]]
@@ -1573,6 +1574,7 @@ dependencies = [
  "serde",
  "serde_json",
  "time",
+ "vstd",
 ]
 
 [[package]]

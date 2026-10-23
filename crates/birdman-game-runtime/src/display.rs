@@ -1,10 +1,14 @@
 use birdman_game_presentation::game_ui::GameUiPresentationMode;
+#[cfg(not(verus_only))]
 use serde::{Deserialize, Serialize};
+#[cfg(verus_only)]
+use vstd::prelude::*;
 
 /// Lifecycle stage owned by the shared application.
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[cfg_attr(verus_only, verus_verify)]
+#[cfg_attr(not(verus_only), derive(Clone, Debug, PartialEq, Serialize))]
+#[cfg_attr(all(feature = "schema", not(verus_only)), derive(schemars::JsonSchema))]
+#[cfg_attr(not(verus_only), serde(tag = "kind", rename_all = "snake_case"))]
 pub enum DisplayState {
     /// Application work has stopped; late acquired resources are released.
     Closed,
@@ -49,6 +53,14 @@ pub enum DisplayState {
 
 impl DisplayState {
     /// Confirmed active display, absent after a successful stop.
+    #[cfg_attr(verus_only, verus_verify)]
+    #[cfg_attr(verus_only, verus_spec(result =>
+        ensures result == match self {
+            Self::Ready { mode } | Self::Stopping { mode, .. } => Some(*mode),
+            Self::Permission { active, .. } | Self::Failed { active, .. } => *active,
+            Self::Starting { .. } | Self::Closed => None,
+        },
+    ))]
     pub fn active_mode(&self) -> Option<GameUiPresentationMode> {
         match self {
             Self::Ready { mode } | Self::Stopping { mode, .. } => Some(*mode),
@@ -67,9 +79,10 @@ impl DisplayState {
 }
 
 /// Primitive I/O operation; Rust chooses the next stage from its completion.
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[cfg_attr(verus_only, verus_verify)]
+#[cfg_attr(not(verus_only), derive(Clone, Debug, PartialEq, Serialize))]
+#[cfg_attr(all(feature = "schema", not(verus_only)), derive(schemars::JsonSchema))]
+#[cfg_attr(not(verus_only), serde(tag = "kind", rename_all = "snake_case"))]
 pub enum DisplayRequest {
     /// Acquire permission in the current user activation event.
     Permission {
@@ -104,9 +117,13 @@ pub enum DisplayRequest {
 }
 
 /// Identity and outcome of an actual requested I/O operation.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[cfg_attr(verus_only, verus_verify)]
+#[cfg_attr(not(verus_only), derive(Clone, Debug, Serialize, Deserialize))]
+#[cfg_attr(all(feature = "schema", not(verus_only)), derive(schemars::JsonSchema))]
+#[cfg_attr(
+    not(verus_only),
+    serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)
+)]
 pub enum DisplayCompletion {
     /// Permission was granted, optionally creating a runtime session.
     PermissionGranted {
@@ -137,6 +154,7 @@ impl DisplayCompletion {
     }
 }
 
+#[cfg_attr(verus_only, verus_verify)]
 pub(super) struct DisplayWorkflow {
     state: DisplayState,
     active_resource: Option<u32>,
@@ -177,6 +195,10 @@ impl DisplayWorkflow {
             .map(|resource_id| DisplayRequest::Release { resource_id })
             .collect()
     }
+    #[cfg_attr(verus_only, verus_verify(dual_spec))]
+    #[cfg_attr(verus_only, verus_spec(
+        returns Self::new(mode),
+    ))]
     pub(super) fn new(mode: GameUiPresentationMode) -> Self {
         Self {
             state: DisplayState::Ready { mode },
@@ -337,13 +359,29 @@ impl DisplayWorkflow {
         }
     }
 
+    #[cfg_attr(verus_only, verus_verify)]
+    #[cfg_attr(verus_only, verus_spec(requests =>
+        ensures
+            requests@.len() <= 1,
+            requests@.len() == 1 ==> match requests@[0] {
+                DisplayRequest::Release { resource_id } =>
+                    Some(resource_id) != self.active_resource
+                        && Some(resource_id) != self.permission_resource
+                        && resource == Some(resource_id),
+                _ => false,
+            },
+            resource == self.active_resource || resource == self.permission_resource
+                ==> requests@.len() == 0,
+    ))]
     fn release_unused(&self, resource: Option<u32>) -> Vec<DisplayRequest> {
-        resource
-            .filter(|resource| {
-                Some(*resource) != self.active_resource
-                    && Some(*resource) != self.permission_resource
-            })
-            .map(|resource_id| vec![DisplayRequest::Release { resource_id }])
-            .unwrap_or_default()
+        match resource {
+            Some(resource_id)
+                if Some(resource_id) != self.active_resource
+                    && Some(resource_id) != self.permission_resource =>
+            {
+                vec![DisplayRequest::Release { resource_id }]
+            }
+            _ => Vec::new(),
+        }
     }
 }
