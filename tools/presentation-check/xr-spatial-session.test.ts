@@ -32,7 +32,7 @@ describe("shared pointer adapter", () => {
     const original = view.panels[0];
     if (original === undefined) throw new Error("Missing panel");
     const panel = { ...original, size: { width: 2, height: 1 }, controls: [
-      { kind: "button" as const, id: "start", label: "Start", enabled: true, rect: { x: 0, y: 0, width: 1, height: 1 } }
+      { kind: "button" as const, id: "start", label: "Start", enabled: true }
     ] };
     const measured = geometryMenuFixture({ ...view, panels: [panel] });
     if (measured.kind !== "ready") throw new Error("Missing menu");
@@ -140,8 +140,7 @@ describe("shared pointer adapter", () => {
     const view = createSceneFixture("Title");
     const original = view.panels[0];
     if (original === undefined) throw new Error("Missing panel");
-    const panel = { ...original, controls: [{ kind: "button" as const, id: "start", label: "Start", enabled: true,
-      rect: { x: 0, y: 0, width: 1, height: 1 } }] };
+    const panel = { ...original, controls: [{ kind: "button" as const, id: "start", label: "Start", enabled: true }] };
     const release = vi.spyOn(XrPointerBridge.prototype, "free");
     const actions: UiAction[] = [];
     const owner = new XrPointerSession((action) => {

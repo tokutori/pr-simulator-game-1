@@ -387,7 +387,11 @@ pub fn game_ui_view(
             );
         }
     }
-    menu.position_controls();
+    menu.sections.retain(|section| {
+        menu.controls
+            .iter()
+            .any(|control| control.section == section.id)
+    });
     if context.platform.operation_pending {
         for control in &mut menu.controls {
             if !matches!(
@@ -526,7 +530,6 @@ impl Menu {
             label: label.to_owned(),
             enabled,
             section: section.to_owned(),
-            rect: rect(0.08, 0.72, 0.84, 0.075),
             content,
         });
     }
@@ -622,57 +625,6 @@ impl Menu {
                 presentation: GameUiButtonPresentation::Disclosure { expanded },
             },
         );
-    }
-    fn position_controls(&mut self) {
-        self.sections.retain(|section| {
-            self.controls
-                .iter()
-                .any(|control| control.section == section.id)
-        });
-        let rows: usize = self
-            .sections
-            .iter()
-            .map(|section| {
-                let count = self
-                    .controls
-                    .iter()
-                    .filter(|control| control.section == section.id)
-                    .count();
-                match section.layout {
-                    GameUiSectionLayout::Column => count,
-                    GameUiSectionLayout::ChoiceGrid => count.div_ceil(3),
-                    GameUiSectionLayout::Row => usize::from(count > 0),
-                }
-            })
-            .sum();
-        let height = 0.90 / rows.max(1) as f64;
-        let mut row = 0;
-        for section in &self.sections {
-            let count = self
-                .controls
-                .iter()
-                .filter(|control| control.section == section.id)
-                .count();
-            let columns = match section.layout {
-                GameUiSectionLayout::Column => 1,
-                GameUiSectionLayout::ChoiceGrid => 3,
-                GameUiSectionLayout::Row => count.max(1),
-            };
-            for (index, control) in self
-                .controls
-                .iter_mut()
-                .filter(|control| control.section == section.id)
-                .enumerate()
-            {
-                control.rect = rect(
-                    0.04 + 0.92 * (index % columns) as f64 / columns as f64,
-                    0.04 + (row + index / columns) as f64 * height,
-                    0.90 / columns as f64,
-                    height * 0.94,
-                );
-            }
-            row += count.div_ceil(columns);
-        }
     }
 }
 
@@ -1681,14 +1633,5 @@ fn theme(font: f64) -> GameUiTheme {
         focus_outline: "#f0d382".to_owned(),
         button_min_height_px: 2.75 * font,
         primary_min_height_px: 3.25 * font,
-    }
-}
-
-fn rect(x: f64, y: f64, width: f64, height: f64) -> GameUiRect {
-    GameUiRect {
-        x,
-        y,
-        width,
-        height,
     }
 }

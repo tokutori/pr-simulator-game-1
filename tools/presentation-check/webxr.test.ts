@@ -1,6 +1,6 @@
 import { referenceFrameFixture } from "./menu-fixture.js";
 import { runtimeViewerFixture, visiblePanelFrame, headPlaneFitsViews } from "./viewer-fixture.js";
-import { fixtureBackendFrame, fixturePresentation, fixtureSemanticAction, geometryMenuFixture } from "./menu-fixture.js";
+import { fixtureBackendFrame, fixtureControlBounds, fixturePresentation, fixtureSemanticAction, geometryMenuFixture } from "./menu-fixture.js";
 import { describe, expect, it } from "vitest";
 import { sharedGameUiPlatform } from "../game-check/shared-game-ui-fixture.js";
 import { createAppSession } from "../../web/src/app/session-factory.js";
@@ -176,9 +176,8 @@ describe("WebXR session backend", () => {
     const panel = visiblePanelFrame(frame).panel;
     const button = panel.controls.find((control) => control.kind === "button");
     if (button === undefined) throw new Error("Expected a panel button");
-    const normalizedX = button.rect.x + button.rect.width / 2;
-    const normalizedY = button.rect.y + button.rect.height / 2;
-    const localPoint = vec3((normalizedX - 0.5) * panel.size.width, (0.5 - normalizedY) * panel.size.height, 0);
+    const [x, y, width, height] = fixtureControlBounds(panel, button.id);
+    const localPoint = vec3(x + width / 2 - panel.size.width / 2, panel.size.height / 2 - y - height / 2, 0);
     renderer.selectHandler?.({ referenceFromSpace: IDENTITY_POSE,
       origin: vec3(visiblePanelFrame(frame).pose.position.x + localPoint.x, visiblePanelFrame(frame).pose.position.y + localPoint.y, visiblePanelFrame(frame).pose.position.z + 2),
       direction: vec3(0, 0, -1),
@@ -239,9 +238,8 @@ describe("WebXR session backend", () => {
       const panel = visiblePanelFrame(frame).panel;
       const button = panel.controls.find((control) => control.kind === "button");
       if (button === undefined) throw new Error(`Missing button for ${scene}`);
-      const normalizedX = button.rect.x + button.rect.width / 2;
-      const normalizedY = button.rect.y + button.rect.height / 2;
-      const point = vec3((normalizedX - 0.5) * panel.size.width, (0.5 - normalizedY) * panel.size.height, 0);
+      const [x, y, width, height] = fixtureControlBounds(panel, button.id);
+      const point = vec3(x + width / 2 - panel.size.width / 2, panel.size.height / 2 - y - height / 2, 0);
       renderer.selectHandler?.({ referenceFromSpace: IDENTITY_POSE,
         origin: vec3(visiblePanelFrame(frame).pose.position.x + point.x, visiblePanelFrame(frame).pose.position.y + point.y, visiblePanelFrame(frame).pose.position.z + 2),
         direction: vec3(0, 0, -1),

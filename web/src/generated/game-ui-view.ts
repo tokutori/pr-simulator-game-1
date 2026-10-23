@@ -555,7 +555,6 @@ export interface GameUiControl {
      * Shared visible label.
      */
     readonly label: string;
-    readonly rect: GameUiRect;
     /**
      * Section identifier.
      */

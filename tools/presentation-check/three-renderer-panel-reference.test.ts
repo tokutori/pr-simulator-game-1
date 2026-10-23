@@ -1,4 +1,3 @@
-import { NO_HEAD_HUD } from "../../web/src/render/contracts/head-hud.js";
 import { configuredViewerFixture, panelFrameCursor, visiblePanelFrame, projectHeadPoint } from "./viewer-fixture.js";
 import { readFileSync } from "node:fs";
 import { fixtureBackendFrame, fixturePresentation, fixtureSemanticAction } from "./menu-fixture.js";
@@ -1374,75 +1373,6 @@ describe("Three adapter panel reference with real StereoEffect", () => {
     }
   });
 
-  it.each([[1280, 720], [720, 1280]] as const)("fits the actual Pause Menu and hit targets in both frozen StereoEffect eyes at %s x %s", async (width, height) => {
-    const size = { x: width, y: height, pixelRatio: 1 };
-    const gameSession = currentGameSessionProjectionFixture("flight_paused");
-    const model = { ...createInitialAppModel(), gameSession, presentation: { type: "ready", mode: "phone-vr" } as const,
-      sharedGameUi: currentSharedGameUiFixture("flight_paused", { platform: { presentation_mode: "phone_vr" } }) };
-    for (const pilotPositionMeters of [-0.15, 0.1, 0.35]) {
-      bundle.renderer.resize(size);
-      bundle.renderer.setFlightPose(null);
-      const phone = await startPhone(bundle, size);
-      let paused = false;
-      const observed = { viewer: null as ViewerFrame | null, frame: null as BackendFrame | null };
-      const runtime = new PresentationRuntime({ ...bundle.renderer, dispose() {} }, [{ mode: "phone-vr", start: () => Promise.resolve(), stop: () => Promise.resolve(),
-        currentFrame: (timestamp, view, viewer, menu) => { observed.frame = phone.backend.currentFrame(timestamp, view, viewer, menu); return observed.frame; } }], (viewer) => {
-        observed.viewer = viewer;
-        if (!paused) return fixturePresentation(createSceneFixture("Title"));
-        return fixturePresentation(flightFrameView(model, NO_HEAD_HUD));
-      });
-      try {
-        expect(await runtime.start("phone-vr")).toEqual({ ok: true });
-        driver.tick(1, null);
-        bundle.renderer.setFlightPose({ ...currentFlightPoseFixture(), datumPositionNed: { north: 100, east: 25, down: -8 },
-          attitudeBodyToNed: { ...IDENTITY_POSE.orientation }, pilotPositionMeters, initialPilotPositionMeters: 0.1 });
-        paused = true;
-        driver.draws.length = 0;
-        driver.tick(100, null);
-        const current = observed.frame;
-        const viewer = observed.viewer;
-        if (current === null || viewer?.source !== "configured") throw new Error("Missing same-frame Menu evidence");
-        const visible = visiblePanelFrame(current);
-        expect(model.sharedGameUi.active_overlay).toBe("Pause");
-        expect(visible.panel.title).toBe(model.sharedGameUi.panels[0]?.title);
-        expect(visible.panel.size).toEqual({ width: 2.4, height: 1.8 });
-        expect(driver.draws).toHaveLength(2);
-        for (const [eyeIndex, draw] of driver.draws.entries()) {
-          const eye = viewer.eyes[eyeIndex];
-          if (eye === undefined) throw new Error("Missing eye");
-          expectMatrix(new Matrix4().fromArray(eye.projection), draw.projection);
-          for (const coordinateX of [-1.2, 1.2]) for (const coordinateY of [-0.9, 0.9]) expectVisible(new Vector3(coordinateX, coordinateY, 0), draw);
-          for (const control of visible.panel.controls) {
-            for (const normalizedX of [control.rect.x, control.rect.x + control.rect.width]) {
-              for (const normalizedY of [control.rect.y, control.rect.y + control.rect.height]) {
-                expectVisible(new Vector3((normalizedX - 0.5) * 2.4, (0.5 - normalizedY) * 1.8, 0), draw);
-              }
-            }
-          }
-        }
-        const center = centerEye(driver.draws);
-        const worldPanel = driver.draws[0]?.panel;
-        if (worldPanel === undefined) throw new Error("Missing Menu draw");
-        const origin = new Vector3().setFromMatrixPosition(center);
-        for (const control of visible.panel.controls) {
-          if (control.kind === "status") continue;
-          const target = new Vector3((control.rect.x + control.rect.width / 2 - 0.5) * 2.4,
-            (0.5 - control.rect.y - control.rect.height / 2) * 1.8, 0).applyMatrix4(worldPanel);
-          const direction = target.clone().sub(origin).normalize();
-          const point = sharedPanelHit(visible.panel, matrixPose(worldPanel), { origin: vec3(origin.x, origin.y, origin.z), direction: vec3(direction.x, direction.y, direction.z) });
-          if (point === null) throw new Error("Rendered Menu ray missed");
-          expect(point.controlId).toBe(control.id);
-        }
-        driver.draws.length = 0;
-        driver.tick(10_100, null);
-        if (observed.frame === null) throw new Error("Missing silent frame");
-        expect(visiblePanelFrame(observed.frame).pose).toEqual(visible.pose);
-        expect(driver.draws).toHaveLength(2);
-        expect(runtime.currentMode).toBe("phone-vr");
-      } finally { await runtime.dispose(); await phone.backend.stop(); }
-    }
-  });
-
   it.each(["menu", "head", "cockpit", "world"] as const)("matches real Phone VR %s gaze to both rendered eyes for moving PilotEye positions", async (anchor) => {
     for (const pilotPositionMeters of [-0.15, 0.1, 0.35]) {
       const flight: FlightRenderPose = { ...currentFlightPoseFixture(),
@@ -1555,8 +1485,7 @@ function phonePanel(anchor: UiPanel["anchor"], mountedHead: Pose): UiViewModel {
   const forward = pose(vec3(0, 0, -2.4), IDENTITY_POSE.orientation);
   const localPose = anchor === "menu" ? IDENTITY_POSE : anchor === "head" ? forward : composePose(mountedHead, forward);
   return { ...fixture, panels: [{ ...panel, anchor, localPose, controls: [{
-    id: "phone-eye-button", kind: "button", label: "Phone Eye", enabled: true,
-    rect: { x: 0.25, y: 0.25, width: 0.5, height: 0.5 }
+    id: "phone-eye-button", kind: "button", label: "Phone Eye", enabled: true
   }] }] };
 }
 

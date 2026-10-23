@@ -1023,8 +1023,6 @@ pub struct GameUiControl {
     pub enabled: bool,
     /// Section identifier.
     pub section: String,
-    /// Shared spatial or normalized position.
-    pub rect: GameUiRect,
     /// Exclusive control data.
     pub content: GameUiControlContent,
 }

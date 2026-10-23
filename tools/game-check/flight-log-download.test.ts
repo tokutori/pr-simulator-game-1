@@ -108,24 +108,6 @@ describe("flight log download state and common presentation", () => {
         expect([panel.size.width, panel.size.height].every(Number.isFinite)).toBe(true);
         expect(panel.size.width).toBeGreaterThan(0);
         expect(panel.size.height).toBeGreaterThan(0);
-        for (const control of panel.controls) {
-          expect(control.rect.x).toBeGreaterThanOrEqual(0);
-          expect(control.rect.y).toBeGreaterThanOrEqual(0);
-          expect(control.rect.width).toBeGreaterThan(0);
-          expect(control.rect.height).toBeGreaterThan(0);
-          expect(control.rect.x + control.rect.width).toBeLessThanOrEqual(1);
-          expect(control.rect.y + control.rect.height).toBeLessThanOrEqual(1);
-        }
-        for (const exported of exports) {
-          for (const control of panel.controls) {
-            if (control.id === exported.id) continue;
-            const horizontal = Math.min(exported.rect.x + exported.rect.width, control.rect.x + control.rect.width)
-              - Math.max(exported.rect.x, control.rect.x);
-            const vertical = Math.min(exported.rect.y + exported.rect.height, control.rect.y + control.rect.height)
-              - Math.max(exported.rect.y, control.rect.y);
-            expect(horizontal > 1e-12 && vertical > 1e-12, `${exported.id} overlaps ${control.id}`).toBe(false);
-          }
-        }
         const navigation = phase === "result"
           ? ["game-result-replay", "game-result-retry", "game-result-setup", "game-result-title", "game-result-open-analysis"]
           : ["game-replay-return", "game-replay-camera", "game-replay-view-mode", "game-replay-play-pause", ...(replayViewMode === "cinematic" ? []

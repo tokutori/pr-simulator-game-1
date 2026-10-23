@@ -18,6 +18,15 @@ export function placeMenuPanel(head: Pose, distance: number): Pose {
   return composePose(head, pose(vec3(0, 0, -distance), IDENTITY_POSE.orientation));
 }
 
+export function fixtureControlBounds(panel: UiPanel, controlId: string): readonly [number, number, number, number] {
+  const index = panel.controls.findIndex(control => control.id === controlId);
+  if (index < 0) throw new Error(`Missing fixture control: ${controlId}`);
+  const rectangles = [[0.08, 0.68, 0.84, 0.12], [0.08, 0.49, 0.84, 0.1], [0.08, 0.29, 0.84, 0.12], [0.08, 0.1, 0.84, 0.1]] as const;
+  const rectangle = panel.controls.length === 1 ? [0, 0, 1, 1] as const : rectangles[index];
+  if (rectangle === undefined) throw new Error("Fixture geometry supports at most four controls");
+  return [rectangle[0] * panel.size.width, rectangle[1] * panel.size.height, rectangle[2] * panel.size.width, rectangle[3] * panel.size.height];
+}
+
 export function geometryMenuFixture(view: UiViewModel): MenuPresentation {
   const panel = view.panels[0];
   if (panel === undefined) return { kind: "absent" };
@@ -27,16 +36,18 @@ export function geometryMenuFixture(view: UiViewModel): MenuPresentation {
     content: { clip: { x: 0, y: 0, ...panel.size }, items: [] }, footer: [],
     surface: { scope: view.interactionScope, revision: 1, sizeM: [panel.size.width, panel.size.height] as const,
       regions: panel.controls.filter(control => control.enabled).map(control => {
-        const bounds = [control.rect.x * panel.size.width, control.rect.y * panel.size.height, control.rect.width * panel.size.width, control.rect.height * panel.size.height] as const;
+        const bounds = fixtureControlBounds(panel, control.id);
         return { target: { kind: "control" as const, id: control.id }, bounds,
           control: control.kind === "range" ? { kind: "range" as const, minimum: control.minimum, maximum: control.maximum, step: control.step, track: bounds }
           : control.kind === "toggle" ? { kind: "toggle" as const, value: control.value } : null };
       }) },
-    pageProgress: 0, offsetMeters: 0, maximumOffsetMeters: 0, geometryKey: { size: panel.size, clips: [{ x: 0, y: 0, ...panel.size }, { x: 0, y: 0, width: 0, height: 0 }, { x: 0, y: 0, width: 0, height: 0 }] as const, maximumOffsetMeters: 0, headings: [{ x: 0, y: 0, width: 0, height: 0 }, { x: 0, y: 0, width: 0, height: 0 }] as const, controls: panel.controls.map(control => ({
-      identity: [control.id, control.kind] as const,
-      bounds: { x: control.rect.x * panel.size.width, y: control.rect.y * panel.size.height, width: control.rect.width * panel.size.width, height: control.rect.height * panel.size.height },
-      plot: null, range: control.kind === "range" ? [control.minimum, control.maximum, control.step] as const : null
-    })) }
+    pageProgress: 0, offsetMeters: 0, maximumOffsetMeters: 0, geometryKey: { size: panel.size, clips: [{ x: 0, y: 0, ...panel.size }, { x: 0, y: 0, width: 0, height: 0 }, { x: 0, y: 0, width: 0, height: 0 }] as const, maximumOffsetMeters: 0, headings: [{ x: 0, y: 0, width: 0, height: 0 }, { x: 0, y: 0, width: 0, height: 0 }] as const, controls: panel.controls.map(control => {
+      const [x, y, width, height] = fixtureControlBounds(panel, control.id);
+      return {
+        identity: [control.id, control.kind] as const, bounds: { x, y, width, height },
+        plot: null, range: control.kind === "range" ? [control.minimum, control.maximum, control.step] as const : null
+      };
+    }) }
   };
   return { kind: "ready", panel, viewport, context };
 }
@@ -75,8 +86,7 @@ export function sharedPanelHit(panel: UiPanel, panelPose: Pose, ray: { origin: V
   try {
     owner.set_surface_json(JSON.stringify({ scope: "fixture", sizeM: [panel.size.width, panel.size.height],
       regions: panel.controls.filter(control => control.enabled && ["button", "toggle", "range"].includes(control.kind)).map(control => ({
-        target: { kind: "control", id: control.id }, bounds: [control.rect.x * panel.size.width, control.rect.y * panel.size.height,
-          control.rect.width * panel.size.width, control.rect.height * panel.size.height]
+        target: { kind: "control", id: control.id }, bounds: fixtureControlBounds(panel, control.id)
       })) }));
     const projection = JSON.parse(owner.observe_json(JSON.stringify({ timestampMs: 0, focused: true, panelPose, headPose: null,
       pointers: [{ ...ray, referenceFromSpace: IDENTITY_POSE, source: { kind: "controller", id: 1 } }], gamepad: null }))) as XrPointerProjection;

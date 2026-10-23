@@ -3041,10 +3041,6 @@
           "description": "Shared visible label.",
           "type": "string"
         },
-        "rect": {
-          "$ref": "#/$defs/GameUiRect",
-          "description": "Shared spatial or normalized position."
-        },
         "section": {
           "description": "Section identifier.",
           "type": "string"
@@ -3055,7 +3051,6 @@
         "label",
         "enabled",
         "section",
-        "rect",
         "content"
       ],
       "type": "object"

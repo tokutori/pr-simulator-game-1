@@ -12,7 +12,7 @@ import type { BackendFrame, MenuPresentation, PresentationBackendAdapter, Presen
 import type { UiViewModel } from "../../web/src/render/contracts/ui.js";
 import { createSceneFixture } from "./ui-adapter-fixture.js";
 import { PresentationRuntime } from "../../web/src/presentation/runtime.js";
-import { sharedPanelHit } from "./menu-fixture.js";
+import { fixtureControlBounds, sharedPanelHit } from "./menu-fixture.js";
 import type { UiPanel } from "../../web/src/render/contracts/ui.js";
 
 describe("same-frame view projection boundary", () => {
@@ -72,8 +72,8 @@ describe("anchor and camera transforms", () => {
     const panel = requiredPanel(createSceneFixture("Title"));
     const button = panel.controls.find((control) => control.kind === "button");
     if (button === undefined) throw new Error("Missing button fixture");
-    const normalized = { x: button.rect.x + button.rect.width / 2, y: button.rect.y + button.rect.height / 2 };
-    const localPoint = normalizedPoint(panel, normalized.x, normalized.y);
+    const [x, y, width, height] = fixtureControlBounds(panel, button.id);
+    const localPoint = normalizedPoint(panel, (x + width / 2) / panel.size.width, (y + height / 2) / panel.size.height);
     const target = vec3(localPoint.x, localPoint.y, -2);
     const worldFromPanel = pose(vec3(0, 0, -2), IDENTITY_POSE.orientation);
     const leftRay = { origin: vec3(-0.032, 0, 0), direction: vec3(target.x + 0.032, target.y, target.z) };

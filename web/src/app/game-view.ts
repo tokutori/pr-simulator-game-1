@@ -31,8 +31,7 @@ export function createGameViewModel(shared: GameUiView, headHud: HeadHudLayer = 
 
 
 function projectControl(control: SharedControl): UiControl {
-  const base = { id: control.id, label: control.label, enabled: control.enabled, section: control.section,
-    rect: control.rect };
+  const base = { id: control.id, label: control.label, enabled: control.enabled, section: control.section };
   const content = control.content;
   switch (content.kind) {
     case "button": {

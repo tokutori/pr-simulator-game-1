@@ -23,8 +23,7 @@ describe("screen UI DOM patching", () => {
       const fixture = createSceneFixture("Title");
       adapter.render({ ...fixture, panels: fixture.panels.map(panel => ({ ...panel,
         sections: [{ id: "notice", label: "", layout: "column" }], controls: [{
-          kind: "status", id: "notice", section: "notice", label, value: "発進準備完了", enabled: false,
-          rect: { x: 0.04, y: 0.1, width: 0.92, height: 0.1 }
+          kind: "status", id: "notice", section: "notice", label, value: "発進準備完了", enabled: false
         }]
       })) });
       expect(required(root, "output#notice").textContent).toBe(label.length === 0 ? "発進準備完了" : "通知: 発進準備完了");
@@ -339,8 +338,7 @@ describe("screen UI DOM patching", () => {
       section: "analysis",
       cursor_x: null,
       cursor_points: [],
-      enabled: false,
-      rect: { x: 0.08, y: 0.22, width: 0.84, height: 0.3 }
+      enabled: false
     };
     const view: UiViewModel = {
       interactionScope: scene,
@@ -357,7 +355,7 @@ describe("screen UI DOM patching", () => {
         size: { width: 2.4, height: 1.8 },
         sections: [{ id: "analysis", label: "", layout: "column" }],
         controls: [
-          { kind: "button", id: "map", section: "analysis", label: "Map", enabled: true, rect: { x: 0.08, y: 0.7, width: 0.25, height: 0.07 } },
+          { kind: "button", id: "map", section: "analysis", label: "Map", enabled: true },
           chart
         ]
       }]
@@ -769,7 +767,7 @@ describe("screen UI DOM patching", () => {
     const adapter = new ScreenUiAdapter(root, (action) => actions.push(action), () => {
       view = { ...view, panels: view.panels.map((panel) => ({ ...panel, controls: panel.controls.map((control) =>
         control.kind === "chart" ? { ...analysisChart(adapter.chartExtent(), 0.1), id: control.id,
-          ...(control.section === undefined ? {} : { section: control.section }), rect: control.rect } : control) })) };
+          ...(control.section === undefined ? {} : { section: control.section }) } : control) })) };
       adapter.render(view);
     });
     const fixture = createSceneFixture("Result");
@@ -777,10 +775,10 @@ describe("screen UI DOM patching", () => {
       ...fixture,
       panels: fixture.panels.map((panel) => ({ ...panel, sections: [{ id: "measured", label: "", layout: "column" }], controls: [
         ...panel.controls.map((control) => ({ ...control, section: "measured" })),
-        { kind: "status", id: "long-notice", section: "measured", label: "通知", value: "元のfailure原因\n2行目\n3行目\n4行目", enabled: false, rect: { x: 0.04, y: 0.72, width: 0.92, height: 0.085 } },
+        { kind: "status", id: "long-notice", section: "measured", label: "通知", value: "元のfailure原因\n2行目\n3行目\n4行目", enabled: false },
         {
           ...analysisChart(null, 0.1), id: "measured-chart", section: "measured",
-          enabled: false, rect: { x: 0.04, y: 0.105, width: 0.92, height: 0.49 }
+          enabled: false
         }
       ] }))
     };

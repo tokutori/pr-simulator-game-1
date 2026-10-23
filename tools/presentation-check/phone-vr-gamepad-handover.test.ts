@@ -425,7 +425,10 @@ async function createFixture(browser: GamepadBrowser, options: { readonly autoSt
     timestamp += 16;
     observe();
     if (model.sharedGameUi === null) throw new Error("Missing shared game UI");
-    return fixtureBackendFrame(backend, timestamp, createGameViewModel(model.sharedGameUi), configuredViewerFixture());
+    const view = createGameViewModel(model.sharedGameUi);
+    const selectable = { ...view, panels: view.panels.map(panel => ({ ...panel,
+      controls: panel.controls.filter(control => control.id === "game-briefing-start") })) };
+    return fixtureBackendFrame(backend, timestamp, selectable, configuredViewerFixture());
   };
   return { session, backend, input, actions, operations, frame, sensorCallbacks, sensors, renderer, unavailable };
 }

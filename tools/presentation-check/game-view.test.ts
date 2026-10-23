@@ -28,7 +28,6 @@ describe("Shared Rust game View projection", () => {
         panel.controls.forEach((control, controlIndex) => {
           const output = projected.controls[controlIndex];
           expect(output?.kind).toBe(control.content.kind);
-          expect(output?.rect).toEqual(control.rect);
           if (output?.kind === "status" && control.content.kind === "status") expect(output.value).toBe(control.content.value);
           if (output?.kind === "range" && control.content.kind === "range") {
             expect(output.value).toBe(control.content.value);

@@ -20,7 +20,6 @@ export interface UiButton {
   readonly id: string;
   readonly label: string;
   readonly enabled: boolean;
-  readonly rect: NormalizedRect;
   readonly presentation?: UiButtonPresentation;
 }
 
@@ -54,7 +53,6 @@ export interface UiToggle {
   readonly label: string;
   readonly value: boolean;
   readonly enabled: boolean;
-  readonly rect: NormalizedRect;
 }
 
 export interface UiRange {
@@ -67,7 +65,6 @@ export interface UiRange {
   readonly maximum: number;
   readonly step: number;
   readonly enabled: boolean;
-  readonly rect: NormalizedRect;
 }
 
 export interface UiStatus {
@@ -76,7 +73,6 @@ export interface UiStatus {
   readonly label: string;
   readonly value: string;
   readonly enabled: boolean;
-  readonly rect: NormalizedRect;
 }
 
 type SharedChart = Extract<GameUiView["panels"][number]["controls"][number]["content"], { kind: "chart" }>["plot"];
@@ -86,20 +82,12 @@ export type UiChart = Readonly<{
   readonly id: string;
   readonly label: string;
   readonly enabled: false;
-  readonly rect: NormalizedRect;
 }> & SharedChart;
 
 export type UiChartSeries = SharedChart["series"][number];
 export type UiChartVector = SharedChart["vectors"][number];
 export type UiChartMarker = SharedChart["markers"][number];
 export type UiChartReferenceLine = SharedChart["reference_lines"][number];
-
-export interface NormalizedRect {
-  readonly x: number;
-  readonly y: number;
-  readonly width: number;
-  readonly height: number;
-}
 
 export interface PanelSize {
   readonly width: number;

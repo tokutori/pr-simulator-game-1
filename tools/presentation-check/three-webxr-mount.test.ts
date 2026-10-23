@@ -846,8 +846,7 @@ function centeredPanel(anchor: UiViewModel["panels"][number]["anchor"], mountedH
   return {
     ...fixture,
     panels: [{ ...panel, anchor, localPose, controls: [{
-      id: "mount-button", kind: "button", label: "Mount", enabled: true,
-      rect: { x: 0.25, y: 0.25, width: 0.5, height: 0.5 }
+      id: "mount-button", kind: "button", label: "Mount", enabled: true
     }] }]
   };
 }

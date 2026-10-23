@@ -19,16 +19,14 @@ export function createSceneFixture(scene: GameScene, overlay: string | null = nu
         kind: "button" as const,
         id: `${scene.toLowerCase()}-action`,
         label: "共通actionを送信",
-        enabled: true,
-        rect: { x: 0.08, y: 0.68, width: 0.84, height: 0.12 }
+        enabled: true
       }),
       Object.freeze({
         kind: "toggle" as const,
         id: `${scene.toLowerCase()}-toggle`,
         label: "表示補助",
         value: false,
-        enabled: true,
-        rect: { x: 0.08, y: 0.49, width: 0.84, height: 0.1 }
+        enabled: true
       }),
       Object.freeze({
         kind: "range" as const,
@@ -39,16 +37,14 @@ export function createSceneFixture(scene: GameScene, overlay: string | null = nu
         minimum: 0,
         maximum: 1,
         step: 0.1,
-        enabled: true,
-        rect: { x: 0.08, y: 0.29, width: 0.84, height: 0.12 }
+        enabled: true
       }),
       Object.freeze({
         kind: "status" as const,
         id: `${scene.toLowerCase()}-status`,
         label: "状態",
         value: "fixture",
-        enabled: false,
-        rect: { x: 0.08, y: 0.1, width: 0.84, height: 0.1 }
+        enabled: false
       })
     ])
   });
