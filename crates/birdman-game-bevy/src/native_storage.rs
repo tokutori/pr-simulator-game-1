@@ -473,13 +473,13 @@ impl NativeStorage {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
-    struct Directory(PathBuf);
+    pub(crate) struct Directory(pub(crate) PathBuf);
 
     impl Directory {
-        fn new() -> Self {
+        pub(crate) fn new() -> Self {
             let path = std::env::temp_dir().join(format!(
                 "birdman-native-{}-{}",
                 std::process::id(),

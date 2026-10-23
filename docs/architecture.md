@@ -19,7 +19,7 @@
 ```text
 WASM ── runtime ── presentation ── app ── content ── format ── core
           └─────── scene ──────────┘
-Native ─────────── presentation / scene
+Native ── runtime
 CLI ────────────────────────── app
 CLI --features schema ──────── presentation
 ```
@@ -62,7 +62,7 @@ adapter・runtime・presentation・scene・app・contentは責務に応じて下
 
 ### ApplicationRuntimeと描画資源
 
-- runtimeの合成ownerは生観測・UI操作・I/O完了を受け、最終描画データとprimitive I/O要求を返す。WASMの共通buffer転送は、同じ出力に付随するimmutableな描画データを所有コピーで提出する。
+- runtimeの合成ownerは生観測・UI操作・I/O完了を受け、最終描画データとprimitive I/O要求を返す。Nativeは同じbuffer descriptorの型付きsliceを借用し、WASMは必要なbufferをLittle Endianの所有コピーで提出する。動的属性の借用は次のupdateまで有効とする。
 - 空のpanorama、光源・霧、波の係数とdetail画像は登録環境からRustが準備する。画像は同じ生成条件で共有し、水面品質の変更では波の投影とmesh密度を更新する。
 - GPU資源は候補作成、ownerのcommit認可、atomicなbinding完了の順に進む。ownerはcommitを直列化し、確認した適用状態から次の候補と旧資源の解放を決定する。
 - 画質変更は環境資源と同じ準備・commit経路へ投入する。共有policyの要求は最初の適用確認で確定し、各commitの実適用品質・framebuffer寸法・世代を記録する。Screenの未縮小物理解像度とHMD runtimeのframebuffer寸法は別の生観測とする。
@@ -107,7 +107,7 @@ adapter・runtime・presentation・scene・app・contentは責務に応じて下
 - `ApplicationSession`が入力状態・frame時計・実行失敗を所有し、各tickの入力割当、100 Hzの実行予算と補間残余を導出する。adapterはOS/browserの時刻・機器・可用性を観測し、共有frame入口を一度呼ぶ。
 - 発進・明示Resume直後のframeは経過0とする。150 msを超えるframe間隔はProcessingDelayを設定し、有効frameへの復帰と明示Resumeを分ける。
 - presentationが最後の物理区間を共有残余で補間し、同じposeと時刻を機体・pilot・cameraへ渡す。0 tickのframeも区間内の表示を更新し、Pause・Resultは確定状態を投影する。
-- Webはanimation frameのtimestamp、Nativeは`Time<Real>`の累積時刻を渡す。NativeのUpdateは共有driverを一度呼び、描画へ共有poseを写す。
+- Webはanimation frameのtimestamp、Nativeは単調時計の累積時刻を渡す。両adapterは同じruntimeへframe・入力・I/O完了を通知し、返された描画データとprimitive要求を実行する。
 - Gamepadのdeadzone・中立取得・pilot targetの引継ぎはappが所有する。Nativeは順序付きraw eventを保持し、Entityと接続世代からidentityを作る。接続時の標準軸0はBevyの初期状態として扱い、以後のraw値で更新する。
 - 可変dtへの変更、遅延tickの黙示的破棄、独立した二重clockを導入しない。
 - Pause中に物理状態とrecordを進めない。
@@ -161,7 +161,7 @@ GameUiView / GameUiFrame → platform renderer → DOM / VR panel / Bevy entity
 - ラベル、主要操作、順序、section、表示条件、theme、HUD、chartの意味は共有Rustで定義する。
 - 共有Viewは有効な操作からBackを導出する。adapterは`GameUiControlInput`としてcontrol IDと入力値を渡し、共有Viewが現在の種類・可用性を確認して実行Actionへ解決する。
 - XRのrangeはclip前のtrackを基準に共有Rustで段階値へ丸める。表示・hit領域にはclip後の矩形を使い、スクロール時も同じ値域を保つ。
-- 共有Viewの`interaction_scope`がScene・overlay・Result/Replayの表示タブを識別する。Screen・Nativeのscroll保持と空間Menuの入力世代は同じ識別子を利用し、Menuのcontextはpanel IDとこの識別子を保持する。scroll・focus・入力世代はpresentationの`MenuSession`が所有し、Webのapp modelは状態投影と観測を扱う。
+- 共有Viewの`interaction_scope`がScene・overlay・Result/Replayの表示タブを識別する。Screen・Nativeのscroll保持と空間Menuの入力世代は同じ識別子を利用する。runtimeはpresentationの`MenuSession`を所有し、adapterは実scroll位置・focus・入力を通知する。
 - MenuとHead HUDの内容はRust ownerが保持するGameUiViewと現在のGameUiFrameから導出する。共有presentationは両眼fit、文字サイズ、折返し、control・chart・計器線分・実測文字の配置と視角を一回の同期呼出しで確定する。
 - Menu viewportは共有Rustがcontent clip・page操作領域・scroll量を導出する。矩形とpanel/document座標は一括で投影し、描画とpointer入力が同じclipを利用する。rangeの値はclip前のtrackに対応する。
 - MenuとHead HUDのフォント観測cacheは既存UI ownerの寿命に従い、最大32組を保持する。計測identityは表示内容・locale・surface・解決済み文字サイズ・font世代を含み、変更時に再計測する。Webは共通の描画命令DTOをCanvasへ反映し、Head HUDのposeとsurface寸法をmeshへ渡す。
@@ -205,7 +205,7 @@ GameUiView / GameUiFrame → platform renderer → DOM / VR panel / Bevy entity
 - Rustのserde型とSchemars schemaを正本に、readonlyなTypeScript型と接続試験用のschemaを生成する。対象はUI、操作、session snapshot、準備metadata、環境、record queryである。
 - 複数の生成型で使うroot契約は型importで参照する。serializeとdeserializeの間では推移的な参照先までschemaが一致する場合に共用する。
 - 生成型のreadonlyとtuple制約はTypeScript compilerで検査する。schema生成用featureとAjvによるschema検査は開発ツールの経路へ限定する。
-- 同一buildのWASM出力は、instanceを所有するfacadeの内部でJSONをparseし、生成DTOへ直接接続する。phase、profile、環境、描画poseの正本は共有Rustに置く。
+- 同一buildのWASM出力は単一runtime bridgeから受け取り、生成DTOを描画・I/Oへ直接提出する。phase、profile、環境、最終camera・描画poseの正本は共有Rustに置く。
 - WebはDTOを保持し、DOM・engine APIに必要な投影だけを行う。readonlyは静的な変更制約とし、時刻・score・quaternion等の数値契約はRustのproducerとcoreで検査する。
 - Analysisのchart・cursorは共有Rust UIから投影し、Replay cameraと時計操作は同期呼出しで現在の観測を反映する。遅延tickはsession所有者とtimer世代で管理し、停止・seek・速度変更・復帰で旧callbackを退役させる。
 - 共有session commandは同期で実行し、観測したRust phaseを即時採用する。保存記録の読込みは専用の待機状態で管理し、I/O応答を要求ID・session所有者・source tokenで照合する。
@@ -215,29 +215,14 @@ GameUiView / GameUiFrame → platform renderer → DOM / VR panel / Bevy entity
 - 非同期要求、record source、Countdownのtokenはadapterの実際の待機と資源寿命を管理する。構造・数値・所有権の接続試験は[検証](verification.md)に定める。
 - 生成物を手編集しない。hot pathと保存用文書の変更は、転送量・decode費用・入力意味を個別に確認する。
 
-## Webの状態と資源寿命
+## 共有ownerと資源寿命
 
-- WebのAppModelはbrowserが所有するpresentation、resource観測、権限、focus、form draft、非同期要求を保持する。
-- 純粋なupdateからEffectを生成し、browser APIの実行をinterpreterへ分離する。
-- Rust snapshotの観測をTypeScriptの独立したゲーム状態機械へ変換しない。
-
-- 非同期要求IDとrecord source generationを区別する。
-- 古いquery結果、別recordの解析結果、破棄済みownerの通知を受理しない。
-- WASM resourceは単一のowner/facadeが解放する。
-- Scene退出やBFCache待避によるsuspendと、owner交換・終了によるdisposeを区別する。
-
-- 同recordのseek・clock・再生速度はdatasetの寿命を変えない。
-- Retry、設定変更、archive開閉、disposeはrecord sourceを失効させる。
-- Attractのdemoはplayerと独立した有界record・clockを所有し、playerの保存・exportへ混入させない。
-
-- Controllerのdisposeは入口でgenerationとclockを無効化し、input、session、renderer pose、HUD等の独立cleanupをすべて試行する。
-- 最初の失敗で後続を中断しない。
-- 単一原因を保持し、複数原因はAggregateError等で集約する。
-- 再入と再実行によって同じ解放を重複しない。
-
-- PresentationRuntimeもloop、backend、rendererのcleanupをすべて試行し、最初の完了Promiseと結果を共有する。
-- 失敗は原因を保持する空でない型付き結果として通知する。
-- 表示更新とresourceの寿命変更を同じ責務へ混在させない。
+- `ApplicationRuntime`がアプリケーション状態、進行、入力認可、表示切替、記録検証・選定、非同期要求と世代を所有する。WebとNativeは実API・transaction・GPU handle・timerと描画cacheを保持する。
+- 操作は現在提示したViewのcontrol IDとrevisionで通知する。権限要求、保存、読込、資源準備、commit、解放は、実I/Oの終端を元のrequest/resource IDと原因付き結果で返す。
+- 同recordのseek・clock・再生速度はdatasetの寿命を維持し、Retry、設定変更、archive開閉、disposeはrecord sourceを失効させる。Attractはplayerと独立した有界record・clockを所有する。
+- 終了はRunning、Closing、Drainedで進む。Closingは新しい進行を停止し、発行済みI/Oの終端と遅着資源の解放を継続する。GPU準備・commit・解放の終端後にrendererを解放する。
+- adapterは出力された同期I/O要求を実行し、Drainedを確認してWASM instanceまたはNativeプロセスを終了する。再読み込みも同じ解放順序を使う。
+- BFCacheのpersisted pagehideはsuspendとして通知し、pageshowの生visibility観測で復帰する。disposeはownerの終了に用いる。
 
 ## 描画・camera・presentationの境界
 
@@ -258,12 +243,12 @@ GameUiView / GameUiFrame → platform renderer → DOM / VR panel / Bevy entity
 
 - Three.jsの型・importは`web/src/render/engines/three`内部へ限定する。
 - 具体factoryの接続はcomposition rootが行う。
-- Native worldは地形・会場・湖面・天空・光源の静的資源生成と、機体変形・pose/cameraの動的投影を分離する。同じ頂点色・haze契約の地形は一つの材質を共有する。
+- sceneとruntimeは機体・会場・水面の完成mesh属性、画像、材質範囲と動的変形を生成する。Native worldとThree adapterは共通bufferをGPUへ転写し、同じ頂点色・haze契約の地形材質を共有する。
 - app、presentation、camera、契約層からengine adapterを参照しない。
 - 型専用import、re-export、JSDoc import、`require`、dynamic import、module referenceも同じ境界と依存DAGの対象である。
 
 - 共有cameraの低位basisはapp/runtime型に依存しない。Rustのpresentation::cameraがPose合成・FRD変換・Pilot/Chase配置・Screenのyaw/pitch lookを所有し、XRは同じ型を用いて追跡・両眼・reference spaceを扱う。
-- WebとNativeは共有FlightRenderPoseのf64座標からcameraを導出し、engineへの反映時に描画精度へ変換する。
+- WebとNativeは共有ownerが出力する最終camera・部品pose・projectionをengine型へ転写する。
 - scene::lake_skyが太陽のEast/Up/negative-North方向と地平線以上のdaylight条件を導出し、天空画像・水面・照明へ共通適用する。
 - session選択・snapshotの共通観測型もapp所有型への逆参照を持たない。
 - 型の複写によって循環を回避しない。

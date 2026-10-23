@@ -1,7 +1,5 @@
 use super::{Verification, VerificationCompletion, WaterVerificationCase};
-use crate::app::{
-    offscreen, read_input, screen_render::timing::TimingMode, ui, water_reflection, world,
-};
+use crate::app::{native_runtime, offscreen, read_input, screen_render::timing::TimingMode};
 use bevy::{app::ScheduleRunnerPlugin, prelude::*, window::ExitCondition};
 use std::{error::Error, path::PathBuf};
 
@@ -123,12 +121,7 @@ impl Options {
             );
             app.add_plugins(runner);
         }
-        app.add_systems(
-            Startup,
-            offscreen::redirect_main_camera
-                .after(world::setup_world)
-                .before(water_reflection::setup_reflection),
-        );
+        app.add_systems(PostStartup, offscreen::redirect_main_camera);
         Ok(())
     }
 
@@ -159,8 +152,11 @@ impl Options {
         app.insert_resource(verification)
             .add_plugins(super::render_readiness::VerificationRenderPlugin)
             .add_systems(PreUpdate, super::supply_input.after(read_input))
-            .add_systems(Update, super::project_observer.before(world::project_world))
-            .add_systems(Update, super::advance.after(ui::update_ui))
+            .add_systems(
+                Update,
+                super::project_observer.before(native_runtime::update),
+            )
+            .add_systems(Update, super::advance.after(native_runtime::update))
             .add_systems(
                 PostUpdate,
                 super::ui_validation::verify_ui_layout.after(bevy::ui::UiSystems::PostLayout),

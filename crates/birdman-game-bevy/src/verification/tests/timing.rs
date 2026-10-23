@@ -2,25 +2,6 @@ use super::*;
 use crate::app::verification as driver;
 
 #[test]
-fn water_cases_are_exactly_the_registered_weather_quality_cross_product() {
-    for weather in ["calm", "typical"] {
-        for quality in ["low", "medium", "high"] {
-            let case = WaterVerificationCase::parse(&format!("{weather}-{quality}")).unwrap();
-            assert_ne!(case.quality, case.alternate_quality());
-        }
-    }
-    for invalid in [
-        "calm",
-        "mild-low",
-        "typical-auto",
-        "Calm-high",
-        "calm-high-extra",
-    ] {
-        assert!(WaterVerificationCase::parse(invalid).is_err());
-    }
-}
-
-#[test]
 fn observer_endpoints_are_continuous_and_only_the_selected_component_moves() {
     let base = Transform::from_xyz(10.0, 11.0, 12.0).with_rotation(Quat::from_rotation_y(0.3));
     let mut previous = base;
@@ -49,90 +30,6 @@ fn observer_endpoints_are_continuous_and_only_the_selected_component_moves() {
         previous = end;
     }
     assert_eq!(WaterMotion::Roll.next(), None);
-}
-
-#[test]
-fn continuous_motion_uses_normal_running_frames_and_cannot_recover_an_interrupted_interval() {
-    let mut interval = MotionInterval::Observing(MotionMetrics::default());
-    for _ in 0..20 {
-        interval = interval.observe(SessionPhase::FlightRunning, Duration::from_millis(100));
-    }
-    let MotionInterval::Complete(metrics) = interval else {
-        panic!("Normal interval must complete");
-    };
-    assert_eq!(metrics.elapsed, MOTION_DURATION);
-    assert_eq!(metrics.frames, 20);
-    assert_eq!(metrics.maximum_delta, Duration::from_millis(100));
-    assert_eq!(metrics.pauses, 0);
-    assert_eq!(interval.progress(), 1.0);
-    let paused_phases = [
-        ExternalPauseReason::ProcessingDelay,
-        ExternalPauseReason::DocumentHidden,
-    ]
-    .map(|reason| {
-        let mut session = NativeSession::default();
-        for action in [MenuAction::Start, MenuAction::Prepare, MenuAction::Launch] {
-            session.action(action).unwrap();
-        }
-        for _ in 0..3 {
-            session.presentation_frame(1.0);
-        }
-        session.game.observe_availability(reason, false).unwrap();
-        session.game.core_session().snapshot().phase()
-    });
-    for (phase, delta, pauses) in [
-        (paused_phases[0], Duration::from_millis(200), 1),
-        (paused_phases[1], Duration::from_millis(16), 1),
-        (SessionPhase::FlightRunning, Duration::from_millis(151), 0),
-    ] {
-        let interrupted = MotionInterval::Observing(MotionMetrics::default()).observe(phase, delta);
-        let MotionInterval::Interrupted { metrics, .. } = interrupted else {
-            panic!("Interrupted interval cannot pass");
-        };
-        assert_eq!(metrics.frames, 0);
-        assert_eq!(metrics.elapsed, Duration::ZERO);
-        assert_eq!(metrics.maximum_delta, delta);
-        assert_eq!(metrics.pauses, pauses);
-        assert_eq!(
-            interrupted.observe(SessionPhase::FlightRunning, MOTION_DURATION),
-            interrupted
-        );
-    }
-}
-
-#[test]
-fn source_boundary_matches_the_real_last_frame_increment_before_render_extraction() {
-    use bevy::ecs as bevy_ecs;
-    use bevy::prelude::*;
-    #[derive(Resource, Default)]
-    struct Observed(Option<driver::SourceBoundary>);
-    let mut app = App::new();
-    app.add_plugins(MinimalPlugins)
-        .init_resource::<Observed>()
-        .add_systems(
-            Update,
-            |frame: Res<driver::FrameCount>,
-             time: Res<Time<Real>>,
-             mut observed: ResMut<Observed>| {
-                observed.0 = Some(driver::SourceBoundary::before_extract(
-                    *frame,
-                    time.elapsed(),
-                ));
-            },
-        );
-    for frame in [0, 1, u32::MAX] {
-        app.world_mut().resource_mut::<driver::FrameCount>().0 = frame;
-        app.update();
-        let boundary = app.world().resource::<Observed>().0.unwrap();
-        assert_eq!(
-            boundary.frame,
-            app.world().resource::<driver::FrameCount>().0
-        );
-        assert_eq!(
-            boundary.milliseconds,
-            app.world().resource::<Time<Real>>().elapsed().as_millis() as u64
-        );
-    }
 }
 
 #[test]

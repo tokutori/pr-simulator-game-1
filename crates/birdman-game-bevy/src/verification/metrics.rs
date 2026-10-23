@@ -1,13 +1,11 @@
 use super::{MotionInterval, Verification, WaterMotion};
-use crate::app::screen_render::{
-    NativeScreenRender,
-    timing::{self, TimingMode},
-};
+use crate::app::screen_render::timing::{self, TimingMode};
 use bevy::{
-    diagnostic::{Diagnostic, DiagnosticsStore, FrameCount, FrameTimeDiagnosticsPlugin},
+    diagnostic::{Diagnostic, DiagnosticsStore, FrameTimeDiagnosticsPlugin},
     prelude::{Query, ResMut, Window},
 };
 use birdman_game_format::WaterQuality;
+use birdman_game_runtime::ApplicationGraphicsResource;
 use std::{
     collections::{BTreeMap, BTreeSet},
     time::{Duration, Instant},
@@ -19,15 +17,6 @@ pub(super) const TIMING_HISTORY_LIMIT: usize = 4096;
 pub(super) struct SourceBoundary {
     pub(super) frame: u32,
     pub(super) milliseconds: u64,
-}
-
-impl SourceBoundary {
-    pub(super) fn before_extract(frame: FrameCount, elapsed: Duration) -> Self {
-        Self {
-            frame: frame.0.wrapping_add(1),
-            milliseconds: elapsed.as_millis() as u64,
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -151,20 +140,18 @@ pub(super) fn report_motion_timings(
     diagnostics: Option<&DiagnosticsStore>,
     windows: &Query<&Window>,
     mode: TimingMode,
-    rendering: &NativeScreenRender,
+    rendering: &ApplicationGraphicsResource,
 ) {
     let end = Instant::now();
-    let rendering = rendering.snapshot();
     println!(
-        "Motion timing case={:?} motion={} interval={interval:?} arrival_window_ms={:.3} debug_assertions={} mode={mode:?} selection={:?} applied_scale={:?} shadow_map_size={} water_quality={}; Real frame cycle includes VSync/OS waits; render CPU/GPU paths are not summed or mapped to the same source frame",
+        "Motion timing case={:?} motion={} interval={interval:?} arrival_window_ms={:.3} debug_assertions={} mode={mode:?} applied_scale={:?} shadow_map_size={} water_quality={}; Real frame cycle includes VSync/OS waits; render CPU/GPU paths are not summed or mapped to the same source frame",
         verification.water_case,
         motion.label(),
         end.duration_since(verification.stage_started).as_secs_f64() * 1000.0,
         cfg!(debug_assertions),
-        rendering.selection,
-        rendering.applied,
-        rendering.shadow.size(),
-        rendering.water_quality.label(),
+        rendering.quality.scale,
+        rendering.quality.shadow.size(),
+        rendering.quality.water_quality.label(),
     );
     for window in windows {
         println!(

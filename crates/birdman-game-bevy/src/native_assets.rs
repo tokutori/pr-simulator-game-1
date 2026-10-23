@@ -25,7 +25,8 @@ pub(crate) fn terrain_shader_path() -> AssetPath<'static> {
 mod tests {
     use super::*;
     use crate::app::{
-        flight_log::tests::TestDirectory, terrain_haze::TerrainHazeExtension, water::WaterMaterial,
+        native_storage::tests::Directory as TestDirectory, terrain_haze::TerrainHazeExtension,
+        water::WaterMaterial,
     };
     use bevy::{
         asset::{AssetApp, AssetPlugin, AssetServer, Assets, LoadState},

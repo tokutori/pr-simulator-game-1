@@ -48,7 +48,6 @@ use bevy::{
 use birdman_game_runtime::ApplicationInput;
 use std::{error::Error, path::PathBuf};
 
-#[cfg(feature = "verify-harness")]
 const MAX_FRAME_DELTA: std::time::Duration = std::time::Duration::from_millis(
     birdman_game_app::MAXIMUM_FLIGHT_FRAME_GAP_MILLISECONDS as u64,
 );
@@ -157,6 +156,8 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
     native_assets::register(&mut app);
     #[cfg(feature = "verify-harness")]
     verification.configure_output(&mut app, no_vsync)?;
+    #[cfg(feature = "verify-harness")]
+    app.insert_resource(verification.timing_mode()?);
     world::install(&mut app);
     let font = app
         .world_mut()

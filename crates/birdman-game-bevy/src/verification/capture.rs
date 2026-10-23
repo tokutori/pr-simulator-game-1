@@ -1,5 +1,5 @@
 use super::{Verification, VerificationStage, WaterVerificationCase};
-use crate::app::native_session::NativeSession;
+use crate::app::native_runtime::NativeRuntime;
 use bevy::{
     prelude::{Commands, Image, On, ResMut},
     render::view::screenshot::{Screenshot, ScreenshotCaptured},
@@ -49,9 +49,10 @@ pub(super) struct ReplayCaptureRecord {
 }
 
 impl ReplayCaptureRecord {
-    pub(super) fn retain(session: &NativeSession) -> Result<Self, String> {
+    pub(super) fn retain(session: &NativeRuntime) -> Result<Self, String> {
         let record = session
-            .game
+            .0
+            .application()
             .core_session()
             .flight_record()
             .ok_or("Replay camera capture requires a retained flight record")?;
@@ -70,9 +71,10 @@ impl ReplayCaptureRecord {
         })
     }
 
-    pub(super) fn verify(&self, session: &NativeSession) -> Result<(), String> {
+    pub(super) fn verify(&self, session: &NativeRuntime) -> Result<(), String> {
         let record = session
-            .game
+            .0
+            .application()
             .core_session()
             .flight_record()
             .ok_or("Replay camera capture lost the retained record")?;

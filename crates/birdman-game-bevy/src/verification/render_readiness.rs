@@ -95,17 +95,14 @@ fn observe_render_readiness(
         }
     }
     let mut near = main_world.query_filtered::<&Mesh3d, With<NearWaterSurface>>();
-    match near.single(&main_world) {
-        Ok(mesh) => {
-            readiness.assets_loaded &= meshes
-                .as_ref()
-                .is_some_and(|meshes| meshes.get(mesh.0.id()).is_some());
-        }
-        Err(error) => {
-            readiness
-                .error
-                .get_or_insert_with(|| format!("Verification near mesh: {error}"));
-        }
+    let near_meshes: Vec<_> = near.iter(&main_world).map(|mesh| mesh.0.id()).collect();
+    if near_meshes.is_empty() {
+        readiness.assets_loaded = false;
+    }
+    for mesh in near_meshes {
+        readiness.assets_loaded &= meshes
+            .as_ref()
+            .is_some_and(|meshes| meshes.get(mesh).is_some());
     }
     if let Some(pipelines) = pipelines {
         readiness.pending_pipelines = pipelines.waiting_pipelines().count();

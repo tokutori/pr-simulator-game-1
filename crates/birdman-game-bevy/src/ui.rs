@@ -78,6 +78,11 @@ struct RetainedUi {
     hud: RetainedHud,
 }
 
+#[cfg(feature = "verify-harness")]
+pub(crate) fn submitted_view(world: &World) -> Option<&GameUiView> {
+    world.get_resource::<RetainedUi>()?.view.as_ref()
+}
+
 #[derive(Component, Clone)]
 struct RetainedChart {
     surface: Entity,

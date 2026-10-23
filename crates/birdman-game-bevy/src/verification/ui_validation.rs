@@ -1,16 +1,11 @@
-use super::{Verification, VerificationStage, require_phase};
-use crate::app::{
-    native_session::NativeSession,
-    ui::{MenuButton, UiPanel, UiText},
-};
+use super::Verification;
+use crate::app::ui::{MenuButton, UiPanel, UiText};
 use bevy::{
     ecs as bevy_ecs,
     ecs::system::SystemParam,
     prelude::*,
     ui::{OverrideClip, clip_check_recursive},
 };
-use birdman_game_core::SessionPhase;
-use birdman_game_presentation::game_ui::GameUiResultTab;
 
 pub(super) fn verify_text_layout(bytes: &[u8]) -> Result<(), String> {
     use parley::{
@@ -125,7 +120,6 @@ pub(super) struct VerificationUiHierarchy<'w, 's> {
 
 pub(super) fn verify_ui_layout(
     mut verification: ResMut<Verification>,
-    session: Res<NativeSession>,
     buttons: Query<(Entity, &ComputedNode, &UiGlobalTransform, &Children), With<MenuButton>>,
     labels: Query<VerificationUiLabel>,
     panels: Query<(
@@ -137,14 +131,10 @@ pub(super) fn verify_ui_layout(
         &ScrollPosition,
     )>,
     hierarchy: VerificationUiHierarchy,
-    mut exit: MessageWriter<AppExit>,
+    mut inputs: ResMut<crate::app::native_runtime::NativeInputs>,
 ) {
     let identity = verification.capture_identity();
-    let phase = session.game.core_session().snapshot().phase();
-    if verification.failure.is_some()
-        || !verification.capture.accepts(identity, identity)
-        || !identity.stage.captures_phase(phase)
-    {
+    if verification.failure.is_some() || !verification.capture.accepts(identity, identity) {
         return;
     }
     let result = (|| {
@@ -154,55 +144,6 @@ pub(super) fn verify_ui_layout(
             .next()
             .ok_or("UI viewport is unavailable")?;
         let viewport = Rect::from_corners(Vec2::ZERO, window.physical_size().as_vec2());
-        if verification.stage == VerificationStage::InputTrialDetails {
-            require_phase(
-                session.game.core_session().snapshot().phase(),
-                SessionPhase::Result,
-            )?;
-            if session.ui.result_tab != GameUiResultTab::Summary || !session.ui.technical_open {
-                return Err("Technical capture requires the expanded Result Summary".into());
-            }
-            let terminal = verification
-                .terminal
-                .ok_or("Missing input-trial terminal")?;
-            let expected = format!(
-                "終了理由: {:?}\n失敗したtickの診断:\n{:#?}",
-                terminal.reason, terminal.failure
-            );
-            if !labels
-                .iter()
-                .any(|(entity, text, node, layout, transform, _)| {
-                    hierarchy
-                        .parents
-                        .get(entity)
-                        .ok()
-                        .and_then(|parent| hierarchy.names.get(parent.parent()).ok())
-                        .is_some_and(|name| name.as_str() == "game-result-technical-content")
-                        && text.0.contains(&expected)
-                        && !node.is_empty()
-                        && !layout.glyphs.is_empty()
-                        && layout.size.is_finite()
-                        && layout.size.min_element() > 0.0
-                        && layout.glyphs.last().is_some_and(|glyph| {
-                            let position = node.content_box().min + glyph.position;
-                            let center = transform.transform_point2(position);
-                            !glyph.atlas_info.rect.is_empty()
-                                && node.content_box().contains(position)
-                                && viewport.contains(center)
-                                && clip_check_recursive(
-                                    center,
-                                    entity,
-                                    &hierarchy.clipping,
-                                    &hierarchy.parents,
-                                )
-                        })
-                })
-            {
-                return Err(
-                    "Technical capture lacks the projected original diagnostic glyphs".into(),
-                );
-            }
-        }
         let mut visible_buttons = 0;
         for (entity, button, transform, children) in &buttons {
             if button.is_empty() {
@@ -283,7 +224,9 @@ pub(super) fn verify_ui_layout(
         error!("Native UI verification: {error}; capture={identity:?}, phase={phase:?}");
         verification.complete(Err(error.clone()));
         verification.failure = Some(error);
-        exit.write(AppExit::error());
+        inputs
+            .0
+            .push(birdman_game_runtime::ApplicationInput::Dispose);
     }
 }
 

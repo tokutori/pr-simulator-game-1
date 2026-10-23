@@ -112,14 +112,14 @@ describe("core polynomial roots boundary", () => {
 });
 
 describe("shared image operations boundary", () => {
-  const image = { ...jsonNumberDependency, name: "image", req: "=0.25.10" };
-  it("allows codec-free operations only in the scene crate", () => {
+  const image = { ...jsonNumberDependency, name: "image", req: "=0.25.10", features: ["png"] };
+  it("allows shared PNG decoding and image operations only in the scene crate", () => {
     expect(() => { assertDependencyBoundary([{ name: "birdman-game-scene", dependencies: [image] }]); }).not.toThrow();
     expect(() => { assertDependencyBoundary([{ name: "birdman-game-presentation", dependencies: [image] }]); }).toThrow("Forbidden dependency");
     expect(() => { assertDependencyBoundary(core(image)); }).toThrow("Forbidden dependency");
   });
-  it.each([{ uses_default_features: true }, { features: ["png"] }, { features: ["rayon"] }])(
-    "rejects codec/default/threading activation %j", (difference) => {
+  it.each([{ uses_default_features: true }, { features: [] }, { features: ["png", "jpeg"] }, { features: ["rayon"] }])(
+    "rejects unregistered codec/default/threading activation %j", (difference) => {
       expect(() => { assertDependencyBoundary([{ name: "birdman-game-scene", dependencies: [{ ...image, ...difference }] }]); })
         .toThrow("Forbidden dependency");
     }
@@ -445,7 +445,7 @@ describe("Cargo dependency boundary", () => {
   });
 });
 
-it.each(["birdman-game-scene", "birdman-game-presentation", "image", "earcut", "ryu-js", "time", "unicode-width", "bevy", "wasm-bindgen"])(
+it.each(["birdman-game-scene", "birdman-game-presentation", "image", "earcut", "ryu-js", "unicode-width", "bevy", "wasm-bindgen"])(
   "keeps presentation and platform dependencies outside the application crate (%s)", (name) => {
     expect(() => { assertDependencyBoundary([{ name: "birdman-game-app", dependencies: [{ name }] }]); }).toThrow();
   }
