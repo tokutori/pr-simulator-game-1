@@ -127,8 +127,7 @@ mod tests {
         FlightRecordEndReasonDocument, TailPersonalBestSelection, WeatherClass,
     };
 
-    #[test]
-    fn application_and_explicit_adapter_metadata_export_the_same_canonical_contact_record() {
+    fn contact_application() -> ApplicationSession {
         let mut application = ApplicationSession::new(ControlMode::Manual, 3_000, 42);
         for command in [
             SessionCommand::OpenSetup {},
@@ -158,6 +157,12 @@ mod tests {
                 ))
                 .unwrap();
         }
+        application
+    }
+
+    #[test]
+    fn application_and_explicit_adapter_metadata_export_the_same_canonical_contact_record() {
+        let application = contact_application();
         let before = application.core_session().snapshot();
         let document = application.flight_record_document().unwrap();
         assert_eq!(
@@ -199,5 +204,104 @@ mod tests {
                 .personal_best_key,
             document.header.personal_best_key
         );
+    }
+
+    #[test]
+    fn atomic_record_save_preserves_existing_best_and_waits_for_commit() {
+        use crate::record_persistence::{
+            RecordSaveTransaction, RecordWriteObservation as Seen, RecordWriteRequest as Io,
+        };
+        use serde_json::json;
+        let document = contact_application().flight_record_document().unwrap();
+        let mut save = RecordSaveTransaction::new(&document).unwrap();
+        assert!(matches!(
+            save.start("2026-10-23T00:00:00Z".to_owned()).as_slice(),
+            [Io::ReadBest { .. }]
+        ));
+        assert!(matches!(
+            save.observe(Seen::Best { value: json!(null) }).as_slice(),
+            [Io::ScanRecords]
+        ));
+        let existing = json!({ "id": 4, "savedAt": "2026-10-22T00:00:00Z", "json": String::from_utf8(document.encode_json().unwrap()).unwrap() });
+        assert!(matches!(
+            save.observe(Seen::Scanned {
+                key: json!(4),
+                value: existing
+            })
+            .as_slice(),
+            [Io::ContinueRecords]
+        ));
+        assert!(matches!(
+            save.observe(Seen::Scanned {
+                key: json!(null),
+                value: json!(null)
+            })
+            .as_slice(),
+            [Io::InsertRecord { .. }]
+        ));
+        let writes = save.observe(Seen::Inserted { key: json!(5) });
+        assert!(
+            matches!(writes.as_slice(), [Io::WriteMetadata { id: 5, .. }, Io::WriteBest { entry }] if entry.record_id == 4)
+        );
+        assert!(save.receipt().is_none());
+        assert!(save.observe(Seen::BestWritten).is_empty());
+        assert!(matches!(
+            save.observe(Seen::MetadataWritten).as_slice(),
+            [Io::Finish]
+        ));
+        assert!(save.receipt().is_none());
+        assert!(save.observe(Seen::Committed).is_empty());
+        let receipt = save.receipt().unwrap();
+        assert_eq!(receipt.id, 5);
+        assert!(!receipt.personal_best);
+        assert!(save.observe(Seen::Committed).is_empty());
+    }
+
+    #[test]
+    fn atomic_record_save_aborts_on_invalid_storage_and_write_failure() {
+        use crate::record_persistence::{
+            RecordSaveTransaction, RecordWriteObservation as Seen, RecordWriteRequest as Io,
+        };
+        use serde_json::json;
+        assert!(
+            crate::record_persistence::decode_persisted_record(
+                json!({ "id": 1, "savedAt": "now", "json": "{}" })
+            )
+            .is_err()
+        );
+        let document = contact_application().flight_record_document().unwrap();
+        let mut save = RecordSaveTransaction::new(&document).unwrap();
+        save.start("2026-10-23T00:00:00Z".to_owned());
+        save.observe(Seen::Best { value: json!(null) });
+        assert!(matches!(
+            save.observe(Seen::Scanned {
+                key: json!(1),
+                value: json!({ "id": 2, "savedAt": "now", "json": "{}" })
+            })
+            .as_slice(),
+            [Io::Abort]
+        ));
+        assert!(save.failure().is_some());
+        assert!(save.observe(Seen::Committed).is_empty());
+        assert!(save.receipt().is_none());
+        let mut save = RecordSaveTransaction::new(&document).unwrap();
+        save.start("2026-10-23T00:00:00Z".to_owned());
+        save.observe(Seen::Best { value: json!(null) });
+        save.observe(Seen::Scanned {
+            key: json!(null),
+            value: json!(null),
+        });
+        save.observe(Seen::Inserted { key: json!(1) });
+        save.observe(Seen::MetadataWritten);
+        assert!(matches!(
+            save.observe(Seen::Failed {
+                cause: "quota".to_owned()
+            })
+            .as_slice(),
+            [Io::Abort]
+        ));
+        assert_eq!(save.failure(), Some("quota"));
+        save.observe(Seen::Committed);
+        assert!(save.receipt().is_none());
     }
 }

@@ -51,17 +51,17 @@ impl TailPersonalBestSelection {
         }))
     }
 
-    /// Considers one validated record with matching explicit identities.
+    /// Considers one record and reports whether it is eligible for this comparison key.
     pub fn consider_existing(
         &mut self,
         id: u64,
         existing: &TailFlightRecordDocument,
-    ) -> Result<(), FlightRecordFormatError> {
+    ) -> Result<bool, FlightRecordFormatError> {
         if id == 0 {
             return Err(FlightRecordFormatError::InvalidRecord);
         }
         let Some((key, score)) = validated_tail_personal_best_candidate(existing)? else {
-            return Ok(());
+            return Ok(false);
         };
         match compare_personal_best(self.key, self.best_score, key, score) {
             PersonalBestComparison::ExistingWins => {
@@ -75,7 +75,7 @@ impl TailPersonalBestSelection {
             | PersonalBestComparison::EqualScore
             | PersonalBestComparison::DifferentConfiguration => {}
         }
-        Ok(())
+        Ok(self.key == key)
     }
 
     /// Returns the distinct two-tail canonical key.

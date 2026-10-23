@@ -10,6 +10,7 @@ pub mod flight_clock;
 pub mod flight_input;
 mod hybrid_session;
 pub mod record_archive;
+pub mod record_persistence;
 pub mod record_query;
 pub mod session_snapshot;
 mod venue;

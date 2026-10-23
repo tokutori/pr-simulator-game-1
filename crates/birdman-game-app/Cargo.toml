@@ -16,6 +16,7 @@ birdman-game-format.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 schemars = { workspace = true, optional = true }
+time = { version = "=0.3.55", default-features = false, features = ["parsing"] }
 
 [build-dependencies]
 sha2.workspace = true
