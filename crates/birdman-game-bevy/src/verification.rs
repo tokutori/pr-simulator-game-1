@@ -205,6 +205,7 @@ enum Check {
     Delay(Duration),
     Motion(WaterMotion, MotionEndpoint),
     Range(GameUiRangeTarget),
+    Camera(GameUiReplayCamera),
     RetainRecord,
     OpenStoredRecord,
 }
@@ -310,6 +311,7 @@ impl Verification {
         }
         checks.extend([
             Check::Capture("07-pause-settings.png".into()),
+            overlay(GameUiPauseOverlay::Menu),
             overlay(GameUiPauseOverlay::Help),
             Check::Capture("08-pause-help.png".into()),
             overlay(GameUiPauseOverlay::Menu),
@@ -366,6 +368,11 @@ impl Verification {
             Check::Action(GameUiAction::SetReplayView {
                 view: GameUiReplayView::Telemetry,
             }),
+        ]);
+        if replay_cameras {
+            checks.push(Check::Range(GameUiRangeTarget::Replay));
+        }
+        checks.extend([
             Check::Capture("13-replay-telemetry.png".into()),
             Check::Action(GameUiAction::SetReplayView {
                 view: GameUiReplayView::Analysis,
@@ -376,10 +383,9 @@ impl Verification {
             }),
         ]);
         if replay_cameras {
-            checks.push(Check::Range(GameUiRangeTarget::Replay));
             for camera in GameUiReplayCamera::ALL {
                 checks.extend([
-                    platform(GameUiPlatformCommand::SetReplayCamera { camera }),
+                    Check::Camera(camera),
                     Check::Capture(format!("replay-{camera:?}.png")),
                 ]);
             }
@@ -395,6 +401,9 @@ impl Verification {
                 session(SessionCommand::CancelBriefing {}),
                 session(SessionCommand::ReturnToTitle {}),
                 Check::OpenStoredRecord,
+                Check::Action(GameUiAction::SetReplayView {
+                    view: GameUiReplayView::Telemetry,
+                }),
                 Check::Range(GameUiRangeTarget::Replay),
                 Check::Capture("17-stored-replay.png".into()),
                 platform(GameUiPlatformCommand::DownloadRecordJson {}),
@@ -637,8 +646,12 @@ fn advance_step(world: &mut World, verification: &mut Verification) -> Result<()
     };
     match check {
         Check::Action(action) => {
+            let selected_auto = if let GameUiAction::Platform { command: GameUiPlatformCommand::SetScreenRenderAuto { enabled } } = &action {
+                super::ui::submitted_view(world).is_some_and(|view| view.panels.iter().flat_map(|panel| &panel.controls).any(|control| control.enabled && matches!(&control.content, GameUiControlContent::Button { action: GameUiAction::Platform { command: GameUiPlatformCommand::SetScreenRenderAuto { .. } }, presentation: GameUiButtonPresentation::Choice { selected, .. } } if selected == enabled)))
+            } else { false };
             if action == (GameUiAction::Session { command: SessionCommand::Pause {} })
                 && matches!(phase, SessionPhase::FlightPaused { .. })
+                || selected_auto
             { verification.next(); }
             else if let Some(input) = action_input(world, &action) { world.resource_mut::<NativeInputs>().0.push(input); verification.next(); }
         }
@@ -697,6 +710,16 @@ fn advance_step(world: &mut World, verification: &mut Verification) -> Result<()
             }
         }
         Check::RetainRecord => { verification.replay_record = Some(ReplayCaptureRecord::retain(runtime)?); verification.next(); }
+        Check::Camera(camera) => {
+            let action = GameUiAction::CycleReplayCamera {};
+            if let Some(view) = super::ui::submitted_view(world) && let Some(control) = view.panels.iter().flat_map(|panel| &panel.controls).find(|control| control.enabled && matches!(&control.content, GameUiControlContent::Button { action: actual, .. } if actual == &action)) {
+                if control.label == format!("Camera: {}", camera.label()) {
+                    verification.next();
+                } else if let Some(input) = action_input(world, &action) {
+                    world.resource_mut::<NativeInputs>().0.push(input);
+                }
+            }
+        }
         Check::OpenStoredRecord => {
             let action = super::ui::submitted_view(world).and_then(|view| view.panels.iter().flat_map(|panel| &panel.controls).find_map(|control| match &control.content {
                 GameUiControlContent::Button { action: action @ GameUiAction::Platform { command: GameUiPlatformCommand::OpenStoredRecord { .. } }, .. } if control.enabled => Some(action.clone()),
