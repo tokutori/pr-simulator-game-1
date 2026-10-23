@@ -2,28 +2,19 @@ import { spawnSync } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { generateApplicationFiles, generateGameUiFiles, parseSchemaBundle } from "./generator.js";
+import { generateApplicationFiles } from "./generator.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const mode = process.argv[2];
 if ((mode !== "--write" && mode !== "--check") || process.argv.length !== 3) {
   throw new Error("Usage: tsx tools/game-ui-build/main.ts <--write|--check>");
 }
-const exporter = spawnSync("cargo", ["run", "-p", "birdman-game-cli", "--locked", "--features", "schema", "--", "export-game-ui-schema", "bundle"], {
-  cwd: root,
-  encoding: "utf8",
-  stdio: ["inherit", "pipe", "inherit"],
-  windowsHide: true,
-  maxBuffer: 16 * 1024 * 1024
-});
-if (exporter.error !== undefined) throw exporter.error;
-if (exporter.status !== 0) throw new Error(`Game UI schema exporter exited with status ${String(exporter.status)}`);
 const application = spawnSync("cargo", ["run", "-p", "birdman-game-runtime", "--locked", "--features", "schema", "--example", "contracts"], {
   cwd: root, encoding: "utf8", stdio: ["inherit", "pipe", "inherit"], windowsHide: true, maxBuffer: 16 * 1024 * 1024
 });
 if (application.error !== undefined) throw application.error;
 if (application.status !== 0) throw new Error(`Application contract exporter exited with status ${String(application.status)}`);
-const files = [...await generateGameUiFiles(parseSchemaBundle(exporter.stdout)), ...await generateApplicationFiles(JSON.parse(application.stdout) as unknown)];
+const files = await generateApplicationFiles(JSON.parse(application.stdout) as unknown);
 const stale: string[] = [];
 for (const file of files) {
   const filename = resolve(root, file.path);

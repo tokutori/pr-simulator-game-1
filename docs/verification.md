@@ -38,7 +38,7 @@ npm ci
 npm run verify
 ~~~
 
-- cross-target接続は`npm run test:cross-target -- target/cross-target-check`で検査する。新しい出力先でNativeの既存CPU試験を実行し、直接Rustとの全記録一致を確認してから、同じ設定・seed・入力列をfresh WASMへ投入する。4支援×3入力の全sample・終端と、保存原文・CSV・5時点のReplay query/cameraを照合する。さらに4支援のNative Updateでraw key・Gamepad接続世代・不規則なframe時刻・遅延回復を観測し、同じ入力列を通したWASMの確定snapshot・補間pose・保存記録を比較する。
+- cross-target接続は`npm run test:cross-target -- target/cross-target-check`で検査する。Nativeとfresh WASMの同じApplicationRuntimeへ生観測とI/O完了を渡し、集約出力・保存原文・終了分類を照合する。入力接続世代・不規則なframe時刻・遅延回復は共有ownerの代表接続で確認する。
 - cross-targetの浮動小数点値は絶対許容差 $10^{-9}$ と相対許容差 $10^{-10}$ の和で比較する。identity・比較key・source fingerprint・終了分類は完全一致、保存原文とそのCSV再出力はbyte一致とする。実行結果にはsourceとWASMのhashを記録する。
 - Rustdocでは `RUSTDOCFLAGS=-D warnings` を設定する。
 - Windows CIは共有・Web側のworkspace試験とNative単独試験を分離し、Native実行ファイルもビルドする。
@@ -54,9 +54,9 @@ python -m unittest discover -s tools/native-release -v
 ~~~
 
 - 依存検査はcoreの `no_std`・I/O分離、crateのDAG、engine型の境界、TypeScriptの型依存を含む循環を検査する。
-- CLI通常経路は`cargo tree -p birdman-game-cli --edges normal --locked`でapp・content・format・coreへの依存を確認する。schema featureは表示側の契約exportを有効にし、通常経路と分けて検査する。
+- CLI通常経路は`cargo tree -p birdman-game-cli --edges normal --locked`でapp・content・format・coreへの依存を確認する。集約契約の生成は`birdman-game-runtime`の`contracts` exampleと専用schema featureで実行する。
 - 資産検査はmanifestの存在・hash・重複・登録漏れ、利用条件とViteの取込経路を検査する。
-- 生成契約はRust DTOからのfreshness、compilerによるreadonly型とtuple制約、toolsのschema検査による実WASM出力の構造と不正fixtureの拒否を確認する。
+- 生成契約はRustの集約入出力からのfreshness、compilerによるreadonly型とtuple制約、実WASMと描画・I/Oアダプタの代表接続を確認する。
 - 表示テストは必要な操作・相対順・到達可能性・非重複・表示先の意味を検査する。説明文や無関係なsectionの全列挙を仕様として固定しない。
 
 ## 3. 物理・空力・制御の基礎検査
@@ -343,7 +343,7 @@ L(t)-z(t)=\frac{g(t-a)(b-t)}2\le\frac{g\,dt^2}8,
 | Countdown | elapsed時間、800 msでは3秒/1秒では2秒、3秒で発進1回。重複時刻・不規則差分・overflow・取消後token・stale owner |
 | GameSession | 準備・発進・Pause/Resume・終端・Retryの許可と拒否、停止理由の残存、最後の有効状態、tick/record保持 |
 | input/frame | キー・Gamepad観測の生成型とRust受理、接続世代・入力解放、frame時刻と停止・補間、実Native/WASMの同一観測・記録・Replay・CSVの一致 |
-| snapshot/query | 実Rust/WASM producerから生成DTOへの接続、named phase/profile/環境/pose、query schema 2のcontext/sample/batch/summary/wind、toolsの構造検査、Rustの時刻・quaternion・終端/score契約 |
+| 集約入出力 | 実Rust/WASM ownerからの描画・I/O要求、同観測の受理と失効、共有時刻・quaternion・終端/score契約 |
 | FlightRecord | 全保存sample・finalization・capacity・終端fraction・元cause、CSV/JSON出力、保存key検証 |
 | PB | 比較方式v2、同条件・来歴差・条件差、未知方式の未順位、元JSON/key保持、Web/Nativeの共有selector |
 | Replay/Attract | Rust clock・seek・補間・最短quaternion、確定record不変、独立demoとplayer記録の分離 |
@@ -414,8 +414,8 @@ npm run measure:web-auto -- http://127.0.0.1:4202/pr-simulator-game-1/ target/we
 
 ### 画面遷移と実download
 
-- 飛行の100 Hz固定更新と150 ms安全停止は、描画コールバック到着時の `performance.now()` を同じ固定更新時計へ渡して判定する。
-  RAFのtimestampは描画の時刻として扱う。ResumeとRetry後は、最初の到着を新しい基点とする。
+- browserはrAFの生timestampと、コールバック受信時の`performance.now()`を別々に通知する。共有ownerはScreen/Phoneのframe時刻、HMDの受信時刻を進行時計に使い、予測表示時刻を安全停止の経過時間と区別する。
+  飛行は100 Hz固定更新と150 ms安全停止を共有し、ResumeとRetry後の最初の観測を新しい基点とする。
 - `test:web-ui` は専用BrowserContextから本番ページ・Rust/WASM・Three.jsへ接続する。
   - `--without-gpu-timer`は計測拡張が非対応の経路を再現し、軽量Autoの実適用を確認する。`--allow-dirty`は変更差分とSHA-256を保存してローカル開発中のsourceを識別する。
   - 初期texture生成、uploadのCPU投入、非同期material compileの待機、初回drawのCPU投入を個別に記録する。

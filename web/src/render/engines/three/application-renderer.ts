@@ -393,7 +393,7 @@ export class ThreeApplicationRenderer {
         candidate.sun.castShadow = light.shadow_enabled;
         candidate.sun.shadow.normalBias = light.normal_bias;
         candidate.sun.shadow.bias = light.depth_bias;
-        candidate.sun.shadow.radius = light.filter_radius;
+        candidate.sun.shadow.radius = 5;
         const [left, right, bottom, top, near, far] = light.shadow_bounds;
         Object.assign(candidate.sun.shadow.camera, { left, right, bottom, top, near, far });
         candidate.sun.shadow.camera.updateProjectionMatrix();

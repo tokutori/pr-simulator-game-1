@@ -72,6 +72,6 @@ impl ApplicationRuntimeBridge {
                 })
             })
             .map_err(|cause| crate::error(format!("{cause:?}")))?;
-        crate::encode(&output)
+        serde_json::to_string(&output).map_err(crate::error)
     }
 }

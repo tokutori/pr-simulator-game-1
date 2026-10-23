@@ -36,14 +36,17 @@ const jsonNumberDependency = {
   rename: null, optional: false, uses_default_features: false, features: []
 };
 
-function schemaFeatures(name: "birdman-game-format" | "birdman-game-app" | "birdman-game-presentation"): readonly string[] {
-  return name === "birdman-game-format" ? ["dep:schemars"]
+type SchemaProvider = "birdman-game-format" | "birdman-game-app" | "birdman-game-presentation" | "birdman-game-scene" | "birdman-game-runtime";
+
+function schemaFeatures(name: SchemaProvider): readonly string[] {
+  return name === "birdman-game-format" || name === "birdman-game-scene" ? ["dep:schemars"]
     : name === "birdman-game-app" ? ["dep:schemars", "birdman-game-format/schema"]
+    : name === "birdman-game-runtime" ? ["dep:schemars", "birdman-game-app/schema", "birdman-game-presentation/schema", "birdman-game-scene/schema"]
     : ["dep:schemars", "birdman-game-app/schema", "birdman-game-format/schema"];
 }
 
 function schemaProvider(
-  name: "birdman-game-format" | "birdman-game-app" | "birdman-game-presentation",
+  name: SchemaProvider,
   dependency: unknown = schemaDependency,
   features: unknown = { schema: schemaFeatures(name) }
 ): unknown[] {
@@ -229,7 +232,7 @@ describe("Cargo dependency boundary", () => {
     ]); }).not.toThrow();
   });
 
-  it.each(["birdman-game-format", "birdman-game-app", "birdman-game-presentation"] as const)(
+  it.each(["birdman-game-format", "birdman-game-app", "birdman-game-presentation", "birdman-game-scene", "birdman-game-runtime"] as const)(
     "allows only the optional pinned schema generator in %s", (name) => {
       expect(() => { assertDependencyBoundary(schemaProvider(name)); }).not.toThrow();
     }
@@ -268,11 +271,11 @@ describe("Cargo dependency boundary", () => {
     }
   );
 
-  it("allows schema activation only through the CLI exporter feature", () => {
+  it("keeps the removed CLI schema exporter unavailable", () => {
     expect(() => { assertDependencyBoundary([{
       name: "birdman-game-cli", dependencies: [{ name: "birdman-game-presentation", optional: true, features: [] }],
       features: { schema: ["dep:birdman-game-presentation", "birdman-game-presentation/schema"] }
-    }]); }).not.toThrow();
+    }]); }).toThrow("Forbidden schema feature boundary");
   });
 
   it("allows unrelated features without duplicating the entire manifest feature table", () => {
@@ -284,7 +287,7 @@ describe("Cargo dependency boundary", () => {
     }
     for (const name of ["birdman-game-cli", "birdman-game-wasm", "birdman-game-bevy"]) {
       expect(() => { assertDependencyBoundary([{ name, dependencies: [], features: {
-        ...(name === "birdman-game-cli" ? { schema: ["dep:birdman-game-presentation", "birdman-game-presentation/schema"] } : {}), default: [], audit: []
+        default: [], audit: []
       } }]); }).not.toThrow();
     }
   });
@@ -451,13 +454,12 @@ it.each(["birdman-game-scene", "birdman-game-presentation", "image", "earcut", "
   }
 );
 
-it("keeps the CLI presentation dependency optional", () => {
+it("keeps presentation outside the CLI verification adapter", () => {
   const dependency = { name: "birdman-game-presentation", features: [] };
-  const features = { schema: ["dep:birdman-game-presentation", "birdman-game-presentation/schema"] };
-  expect(() => { assertDependencyBoundary([{ name: "birdman-game-cli", features, dependencies: [dependency] }]); })
-    .toThrow("Forbidden normal presentation dependency");
-  expect(() => { assertDependencyBoundary([{ name: "birdman-game-cli", features, dependencies: [{ ...dependency, optional: true }] }]); })
-    .not.toThrow();
+  expect(() => { assertDependencyBoundary([{ name: "birdman-game-cli", dependencies: [dependency] }]); })
+    .toThrow("Forbidden dependency");
+  expect(() => { assertDependencyBoundary([{ name: "birdman-game-cli", dependencies: [{ ...dependency, optional: true }] }]); })
+    .toThrow("Forbidden dependency");
 });
 
 it("limits scene access from presentation to camera/geometry tests", () => {

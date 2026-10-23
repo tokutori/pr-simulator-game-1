@@ -110,8 +110,6 @@ pub struct LakeSceneShadow {
     pub normal_bias: f64,
     /// Normalized depth bias.
     pub depth_bias: f64,
-    /// Shadow filter radius in texels.
-    pub filter_radius: f64,
 }
 
 impl LakeSceneShadow {
@@ -139,7 +137,6 @@ impl LakeSceneShadow {
             shadow_bounds: [-28.0, 28.0, -28.0, 28.0, 0.5, 160.0],
             normal_bias: 0.025,
             depth_bias: -0.0001,
-            filter_radius: 5.0,
         })
     }
 }

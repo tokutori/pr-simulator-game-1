@@ -1509,7 +1509,6 @@ dependencies = [
  "birdman-game-content",
  "birdman-game-core",
  "birdman-game-format",
- "birdman-game-presentation",
  "serde",
  "serde_json",
 ]
@@ -1597,12 +1596,8 @@ name = "birdman-game-wasm"
 version = "0.1.0"
 dependencies = [
  "birdman-game-app",
- "birdman-game-core",
- "birdman-game-format",
  "birdman-game-presentation",
  "birdman-game-runtime",
- "birdman-game-scene",
- "serde",
  "serde_json",
  "wasm-bindgen",
 ]

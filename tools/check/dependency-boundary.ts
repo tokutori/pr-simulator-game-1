@@ -9,8 +9,8 @@ const allowed = new Map<string, readonly string[]>([
   ["birdman-game-app", ["birdman-game-content", "birdman-game-core", "birdman-game-format", "serde", "serde_json", "sha2", "time"]],
   ["birdman-game-content", ["birdman-game-core", "birdman-game-format", "libm"]],
   ["birdman-game-format", ["birdman-game-core", "serde", "serde_json", "sha2"]],
-  ["birdman-game-cli", ["birdman-game-app", "birdman-game-content", "birdman-game-core", "birdman-game-format", "birdman-game-presentation", "serde", "serde_json"]],
-  ["birdman-game-wasm", ["birdman-game-app", "birdman-game-core", "birdman-game-format", "birdman-game-presentation", "birdman-game-runtime", "birdman-game-scene", "serde", "serde_json", "sha2", "wasm-bindgen"]],
+  ["birdman-game-cli", ["birdman-game-app", "birdman-game-content", "birdman-game-core", "birdman-game-format", "serde", "serde_json"]],
+  ["birdman-game-wasm", ["birdman-game-app", "birdman-game-presentation", "birdman-game-runtime", "serde_json", "wasm-bindgen"]],
   ["birdman-game-runtime", ["birdman-game-app", "birdman-game-core", "birdman-game-format", "birdman-game-presentation", "birdman-game-scene", "serde", "serde_json", "time"]],
   ["birdman-game-presentation", ["birdman-game-app", "birdman-game-core", "birdman-game-format", "serde", "serde_json", "time", "unicode-width"]],
   ["birdman-game-scene", ["birdman-game-app", "birdman-game-content", "birdman-game-core", "birdman-game-format", "serde", "serde_json", "sha2", "earcut"]],
@@ -177,9 +177,10 @@ function hasSchemaFeature(features: unknown, expected: readonly string[]): boole
 }
 
 function isSchemaGenerationDependency(crate: string, dependency: Record<string, unknown>, features: unknown): boolean {
-  const expected = crate === "birdman-game-format" ? ["dep:schemars"]
+  const expected = crate === "birdman-game-format" || crate === "birdman-game-scene" ? ["dep:schemars"]
     : crate === "birdman-game-app" ? ["dep:schemars", "birdman-game-format/schema"]
-    : crate === "birdman-game-presentation" ? ["dep:schemars", "birdman-game-app/schema", "birdman-game-format/schema"] : undefined;
+    : crate === "birdman-game-presentation" ? ["dep:schemars", "birdman-game-app/schema", "birdman-game-format/schema"]
+    : crate === "birdman-game-runtime" ? ["dep:schemars", "birdman-game-app/schema", "birdman-game-presentation/schema", "birdman-game-scene/schema"] : undefined;
   return expected !== undefined
     && hasSchemaFeature(features, expected)
     && dependency.name === "schemars"
@@ -199,7 +200,7 @@ function isSchemaGenerationDependency(crate: string, dependency: Record<string, 
 function assertSchemaFeatureBoundary(crate: string, features: unknown): void {
   if (features === undefined) return;
   if (crate === "birdman-game-cli"
-    && !hasSchemaFeature(features, ["dep:birdman-game-presentation", "birdman-game-presentation/schema"])) {
+    && ("schema" in record(features) || Object.values(record(features)).some((value) => Array.isArray(value) && value.some(activatesSchema)))) {
     throw new Error(`Forbidden schema feature boundary in ${crate}`);
   }
   if (crate !== "birdman-game-wasm" && crate !== "birdman-game-bevy") return;
@@ -228,12 +229,9 @@ export function assertDependencyBoundary(packages: readonly unknown[]): void {
       if (dependencyName === "bevy" && !isNativeEngineDependency(name, dependency)) {
         throw new Error(`Forbidden native engine dependency in ${name}`);
       }
-      if (["birdman-game-format", "birdman-game-app", "birdman-game-presentation"].includes(dependencyName)
+      if (["birdman-game-format", "birdman-game-app", "birdman-game-presentation", "birdman-game-scene", "birdman-game-runtime"].includes(dependencyName)
         && Array.isArray(dependency.features) && dependency.features.includes("schema")) {
         throw new Error(`Forbidden normal schema activation in ${name}: ${dependencyName}`);
-      }
-      if (name === "birdman-game-cli" && dependencyName === "birdman-game-presentation" && dependency.optional !== true) {
-        throw new Error(`Forbidden normal presentation dependency in ${name}`);
       }
       if (Array.isArray(dependency.features) && dependency.features.includes("verus-proof")) {
         throw new Error(`Forbidden normal proof activation in ${name}: ${dependencyName}`);

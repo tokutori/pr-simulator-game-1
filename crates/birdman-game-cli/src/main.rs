@@ -12,18 +12,6 @@ fn main() {
 fn run_command() -> Result<(), String> {
     let mut arguments = std::env::args().skip(1);
     match arguments.next().as_deref() {
-        #[cfg(feature = "schema")]
-        Some("export-game-ui-schema") => {
-            let schema = arguments.next().unwrap_or_else(|| "bundle".to_owned());
-            if arguments.next().is_some() {
-                return Err(usage());
-            }
-            println!(
-                "{}",
-                birdman_game_presentation::game_ui::export_game_ui_schema(&schema)?
-            );
-            Ok(())
-        }
         Some(command @ ("validate-environment" | "validate-aircraft")) => {
             let path = arguments.next().ok_or_else(usage)?;
             if arguments.next().is_some() {
@@ -51,7 +39,7 @@ fn run_command() -> Result<(), String> {
 }
 
 fn usage() -> String {
-    "Usage: birdman-game-cli verify-hybrid-flight [all|manual|shared|automatic]\n       birdman-game-cli validate-environment <path>\n       birdman-game-cli validate-aircraft <path>\n       birdman-game-cli export-game-ui-schema [bundle|view|action|input|effects|frame|tail-snapshot|tail-prepared] (requires schema feature)".to_owned()
+    "Usage: birdman-game-cli verify-hybrid-flight [all|manual|shared|automatic]\n       birdman-game-cli validate-environment <path>\n       birdman-game-cli validate-aircraft <path>".to_owned()
 }
 
 fn validate_environment(path: &str) -> Result<(), String> {

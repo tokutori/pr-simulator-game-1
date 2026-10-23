@@ -2559,10 +2559,6 @@ export interface LakeSceneShadow {
      */
     readonly depth_bias: number;
     /**
-     * Shadow filter radius in texels.
-     */
-    readonly filter_radius: number;
-    /**
      * Surface-normal depth offset in metres.
      */
     readonly normal_bias: number;
@@ -3936,6 +3932,10 @@ export interface ApplicationLightingAssets {
         number,
         number
     ];
+    /**
+     * Candidate-local initial light pose and shadow bounds for GPU pipeline preparation.
+     */
+    readonly initial_shadow?: LakeSceneShadow | null;
     /**
      * Sunlight sRGB 0xRRGGBB colour.
      */

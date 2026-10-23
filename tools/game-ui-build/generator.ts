@@ -1,63 +1,6 @@
-import { createHash } from "node:crypto";
-import { createRequire } from "node:module";
-import { readFile } from "node:fs/promises";
 import { compile } from "json-schema-to-typescript";
 import ts from "typescript";
 
-export const schemaEntries = [
-  { key: "presentation_observation", name: "PresentationObservation", filename: "presentation-observation", group: "deserialize" },
-  { key: "view", name: "GameUiView", filename: "game-ui-view", group: "serialize" },
-  { key: "action", name: "GameUiAction", filename: "game-ui-action", group: "deserialize" },
-  { key: "input", name: "GameUiPlatformInput", filename: "game-ui-input", group: "deserialize" },
-  { key: "effects", name: "GameUiUpdate", filename: "game-ui-effects", group: "serialize" },
-  { key: "frame", name: "GameUiFrame", filename: "game-ui-frame", group: "serialize" },
-  { key: "xr_viewer_frame", name: "XrViewerFrame", filename: "xr-viewer-frame", group: "serialize" },
-  { key: "xr_viewer_observation", name: "XrViewerObservation", filename: "xr-viewer-observation", group: "deserialize" },
-  { key: "xr_head_hud_profile", name: "XrHeadHudProfile", filename: "xr-head-hud-profile", group: "serialize", defaultName: "DEFAULT_XR_HEAD_HUD_PROFILE" },
-  { key: "xr_flight_menu_geometry", name: "XrFlightMenuGeometry", filename: "xr-flight-menu-geometry", group: "serialize", defaultName: "XR_FLIGHT_MENU_GEOMETRY" },
-  { key: "xr_camera_rig", name: "XrCameraRig", filename: "xr-camera-rig", group: "serialize" },
-  { key: "pilot_eye_pose", name: "PilotEyePose", filename: "pilot-eye-pose", group: "serialize" },
-  { key: "frd_pose", name: "FrdPose", filename: "frd-pose", group: "serialize" },
-  { key: "xr_panel_placement", name: "XrPanelPlacement", filename: "xr-panel-placement", group: "serialize" },
-  { key: "xr_panel_camera_poses", name: "XrPanelCameraPoses", filename: "xr-panel-camera-poses", group: "serialize" },
-  { key: "xr_camera_mount", name: "XrCameraMount", filename: "xr-camera-mount", group: "deserialize" },
-  { key: "xr_panel_observation", name: "XrPanelObservation", filename: "xr-panel-observation", group: "deserialize" },
-  { key: "xr_reference_frame", name: "XrReferenceFrame", filename: "xr-reference-frame", group: "serialize" },
-  { key: "xr_pointer_projection", name: "XrPointerProjection", filename: "xr-pointer-projection", group: "serialize" },
-  { key: "xr_pointer_surface", name: "XrPointerSurface", filename: "xr-pointer-surface", group: "deserialize" },
-  { key: "xr_pointer_observation", name: "XrPointerObservation", filename: "xr-pointer-observation", group: "deserialize" },
-  { key: "menu_session_input", name: "MenuSessionInput", filename: "menu-session-input", group: "deserialize" },
-  { key: "menu_session_state", name: "MenuSessionState", filename: "menu-session-state", group: "serialize" },
-  { key: "menu_preparation_input", name: "MenuPreparationInput", filename: "menu-preparation-input", group: "deserialize" },
-  { key: "menu_layout_reply", name: "MenuLayoutReply", filename: "menu-layout-reply", group: "serialize" },
-  { key: "surface_paint_item", name: "SurfacePaintItem", filename: "surface-paint-item", group: "serialize" },
-  { key: "head_hud_preparation_input", name: "HeadHudPreparationInput", filename: "head-hud-preparation-input", group: "deserialize" },
-  { key: "head_hud_paint_reply", name: "HeadHudPaintReply", filename: "head-hud-paint-reply", group: "serialize" },
-  { key: "screen_render_auto", name: "ScreenRenderAutoSnapshot", filename: "screen-render-auto", group: "serialize" },
-  { key: "replay_camera", name: "ReplayCameraView", filename: "replay-camera", group: "serialize" },
-  { key: "tail_snapshot", name: "TailSnapshotDocument", filename: "tail-snapshot", group: "serialize" },
-  { key: "flight_frame", name: "FlightFrameDocument", filename: "flight-frame", group: "serialize" },
-  { key: "flight_key", name: "FlightKeyObservation", filename: "flight-key", group: "deserialize" },
-  { key: "flight_gamepad", name: "FlightGamepadObservation", filename: "flight-gamepad", group: "deserialize" },
-  { key: "tail_prepared", name: "TailPreparedLaunchDocument", filename: "tail-prepared", group: "serialize" },
-  { key: "lifecycle", name: "SessionLifecycleDocument", filename: "session-lifecycle", group: "serialize" },
-  { key: "tail_profile", name: "TailControlProfileDocument", filename: "tail-control-profile", group: "serialize" },
-  { key: "runtime_environment", name: "EnvironmentSnapshot", filename: "runtime-environment", group: "serialize" },
-  { key: "flight_render_pose", name: "FlightRenderPose", filename: "flight-render-pose", group: "serialize" },
-  { key: "tail_scenario", name: "EnvironmentIdentity", filename: "tail-scenario", group: "serialize" },
-  { key: "tail_identity", name: "FlightRecordTailIdentityDocument", filename: "tail-identity", group: "serialize" },
-  { key: "tail_incidence", name: "TailIncidenceDocument", filename: "tail-incidence", group: "serialize" },
-  { key: "tail_finalization", name: "TailFlightRecordFinalizationDocument", filename: "tail-finalization", group: "serialize" },
-  { key: "record_difficulty", name: "FlightRecordDifficultyDocument", filename: "record-difficulty", group: "serialize" },
-  { key: "record_context", name: "PlaybackContext", filename: "record-context", group: "serialize" },
-  { key: "record_sample", name: "RecordedPlaybackSample", filename: "record-sample", group: "serialize" },
-  { key: "record_analysis", name: "AnalysisDocument", filename: "record-analysis", group: "serialize" },
-  { key: "record_summary", name: "SummaryDocument", filename: "record-summary", group: "serialize" },
-  { key: "record_wind", name: "WindDocument", filename: "record-wind", group: "serialize" }
-] as const;
-
-const schemaGroups = ["serialize", "deserialize"] as const;
-export type GameUiSchemas = Readonly<Record<typeof schemaGroups[number], Readonly<Record<string, unknown>>>>;
 export type GeneratedFile = Readonly<{ path: string; content: string }>;
 
 export async function generateApplicationFiles(document: unknown): Promise<readonly GeneratedFile[]> {
@@ -79,88 +22,6 @@ export async function generateApplicationFiles(document: unknown): Promise<reado
   ];
 }
 
-const generatedBanner = "Generated from birdman-game-presentation::game_ui. Edit the Rust contract and regenerate.";
-
-export function parseSchemaBundle(text: string): GameUiSchemas {
-  const document: unknown = JSON.parse(text);
-  if (!isObject(document)) throw new Error("Game UI schema exporter must return an object");
-  const keys = Object.keys(document);
-  if (keys.length !== schemaGroups.length || keys.some((key) => !schemaGroups.some((group) => group === key))) {
-    throw new Error("Game UI schema exporter returned unexpected schema roots");
-  }
-  const schemas = Object.fromEntries(schemaGroups.map((group) => {
-    const schema = document[group];
-    if (!isObject(schema) || schema["$schema"] !== "https://json-schema.org/draft/2020-12/schema" || !isObject(schema["$defs"])) {
-      throw new Error(`Invalid ${group} schema group`);
-    }
-    for (const entry of schemaEntries.filter((entry) => entry.group === group)) {
-      if (!isObject(schema["$defs"][entry.name])) throw new Error(`Invalid ${entry.name} schema root`);
-    }
-    return [group, schema];
-  }));
-  return schemas as GameUiSchemas;
-}
-
-export async function generateGameUiFiles(schemas: GameUiSchemas): Promise<readonly GeneratedFile[]> {
-  const require = createRequire(import.meta.url);
-  const files: GeneratedFile[] = [];
-  const definitions = schemas.deserialize["$defs"];
-  if (!isObject(definitions)) throw new Error("Missing input query definitions");
-  const input = definitions["GameUiPlatformInput"];
-  const records = definitions["GameUiStoredRecordPreview"];
-  const record = definitions["GameUiStoredRecord"];
-  const properties = isObject(input) ? input["properties"] : undefined;
-  const recordProperties = isObject(record) ? record["properties"] : undefined;
-  const notification = isObject(properties) ? properties["notification"] : undefined;
-  const savedAt = isObject(recordProperties) ? recordProperties["saved_at"] : undefined;
-  const query = {
-    maximumBytes: schemaLimit(input, "x-boundary-bytes"),
-    storedRecordLimit: schemaLimit(records, "maxItems"),
-    savedAtCharacters: schemaLimit(savedAt, "maxLength"),
-    noticeCharacters: schemaLimit(notification, "maxLength")
-  };
-  files.push({ path: "web/src/generated/game-ui-input-query.ts", content:
-    `/* ${generatedBanner} */\nexport const gameUiInputQuery = Object.freeze(${JSON.stringify(query, null, 2)} as const);\n` });
-  const sourceHashes: Record<string, string> = {};
-  for (const group of schemaGroups) {
-    const schema = { ...schemas[group], $id: `https://tokutori.github.io/pr-simulator-game-1/game-ui/${group}` };
-    const canonical = `${JSON.stringify(schema, null, 2)}\n`;
-    sourceHashes[group] = createHash("sha256").update(canonical).digest("hex");
-    files.push({ path: `tools/game-ui-build/generated/game-ui-${group}.schema.json`, content: canonical });
-  }
-  for (const entry of schemaEntries) {
-    const group = schemas[entry.group];
-    const definitions = group["$defs"];
-    if (!isObject(definitions)) throw new Error(`Invalid ${entry.group} schema group`);
-    const definition = definitions[entry.name];
-    if (!isObject(definition)) throw new Error(`Invalid ${entry.name} schema root`);
-    const sharedDefinitions = Object.fromEntries(Object.entries(definitions).map(([name, definition]) => {
-      const owner = schemaEntries.find(candidate => candidate.name === name);
-      return [name, owner !== undefined && owner.name !== entry.name
-        && equivalentDefinition(schemas, entry.group, owner.group, name)
-        ? { tsType: `import("./${owner.filename}.js").${owner.name}` } : definition];
-    }));
-    const schema: Record<string, unknown> = { ...definition, $defs: sharedDefinitions, $schema: group["$schema"], title: entry.name };
-    const declarations = await compile(typeReferenceSchema(schema), entry.name, {
-      bannerComment: "",
-      unknownAny: true,
-      strictIndexSignatures: true,
-      style: { singleQuote: false, tabWidth: 2, printWidth: 120, trailingComma: "none", semi: true }
-    });
-    if ("defaultName" in entry && !isObject(definition["default"])) throw new Error(`Missing shared default for ${entry.name}`);
-    const defaults = "defaultName" in entry ? `\nexport const ${entry.defaultName} = Object.freeze(${JSON.stringify(definition["default"], null, 2)} as const);\n` : "";
-    files.push({ path: `web/src/generated/${entry.filename}.ts`, content: `/* ${generatedBanner} */\n${readonlyDeclarations(declarations)}${defaults}` });
-  }
-  const generators = Object.fromEntries(await Promise.all(Object.entries({ jsonSchemaToTypescript: "json-schema-to-typescript", typescript: "typescript" })
-    .map(async ([key, name]): Promise<readonly [string, string]> => {
-      const metadata: unknown = JSON.parse(await readFile(require.resolve(`${name}/package.json`), "utf8"));
-      if (!isObject(metadata) || typeof metadata["version"] !== "string") throw new Error(`Missing ${name} generator version`);
-      return [key, metadata["version"]];
-    })));
-  files.push({ path: "tools/game-ui-build/generated/game-ui-generation.json", content: `${JSON.stringify({ schemaVersion: 2, generators, sources: sourceHashes }, null, 2)}\n` });
-  return files;
-}
-
 export function typeReferenceSchema(schema: Record<string, unknown>): Record<string, unknown> {
   if (Object.keys(schema).every((key) => ["title", "description", "default", "examples", "readOnly", "writeOnly", "deprecated"].includes(key))) {
     return { ...schema, tsType: "unknown" };
@@ -180,39 +41,6 @@ export function typeReferenceSchema(schema: Record<string, unknown>): Record<str
     else if (Array.isArray(child)) result[key] = child.map((value: unknown) => isObject(value) ? typeReferenceSchema(value) : value);
   }
   return result;
-}
-
-function equivalentDefinition(schemas: GameUiSchemas, source: typeof schemaGroups[number], target: typeof schemaGroups[number], name: string): boolean {
-  if (source === target) return true;
-  const sourceDefinitions = schemas[source]["$defs"];
-  const targetDefinitions = schemas[target]["$defs"];
-  if (!isObject(sourceDefinitions) || !isObject(targetDefinitions)) return false;
-  const visited = new Set<string>();
-  const compare = (definitionName: string): boolean => {
-    if (visited.has(definitionName)) return true;
-    const definition = sourceDefinitions[definitionName];
-    if (definition === undefined || JSON.stringify(definition) !== JSON.stringify(targetDefinitions[definitionName])) return false;
-    visited.add(definitionName);
-    const references = new Set<string>();
-    const visit = (value: unknown): void => {
-      if (Array.isArray(value)) { value.forEach(visit); return; }
-      if (!isObject(value)) return;
-      const reference = value["$ref"];
-      if (typeof reference === "string" && reference.startsWith("#/$defs/")) references.add(reference.slice("#/$defs/".length));
-      Object.values(value).forEach(visit);
-    };
-    visit(definition);
-    return [...references].every(compare);
-  };
-  return compare(name);
-}
-
-function schemaLimit(schema: unknown, key: string): number {
-  const value = isObject(schema) ? schema[key] : undefined;
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0) {
-    throw new Error(`Missing positive input query limit: ${key}`);
-  }
-  return value;
 }
 
 export function readonlyDeclarations(source: string): string {

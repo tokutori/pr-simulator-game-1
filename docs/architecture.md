@@ -21,10 +21,9 @@ WASM ── runtime ── presentation ── app ── content ── format 
           └─────── scene ──────────┘
 Native ── runtime
 CLI ────────────────────────── app
-CLI --features schema ──────── presentation
 ```
 
-adapter・runtime・presentation・scene・app・contentは責務に応じて下位のcore・format・contentを直接参照し、依存DAGを形成する。CLIはschema出力時だけoptionalなpresentation依存を有効にする。
+adapter・runtime・presentation・scene・app・contentは責務に応じて下位のcore・format・contentを直接参照し、依存DAGを形成する。集約入出力のschemaと起動表示はruntimeのbuild用exampleが生成する。
 
 | 層 | 所有する責務 |
 | --- | --- |
@@ -43,7 +42,7 @@ adapter・runtime・presentation・scene・app・contentは責務に応じて下
 
 - core・format・contentは`no_std + alloc`を維持する。
 - appとsceneは登録storageの一度限りの初期化に`std::sync::OnceLock`を使う。sceneは`image`・`earcut`による画像処理・地形三角化を所有し、app・presentation・runtimeは日時処理や資源所有に`std`を利用する。
-- CLIの通常実行とschema出力はapp・presentationの利用範囲に対応する。cameraと機体形状の整合はpresentationからsceneへのdev-dependencyで検査する。
+- CLIはapp・content・format・coreのoffline検査を実行する。cameraと機体形状の整合はpresentationからsceneへのdev-dependencyで検査する。
 - coreにfilesystem、network、OS時計、乱数取得、GIS、serde、WASM ABI、描画engineを持ち込まない。
 - 乱数seed、環境、入力、時刻観測は外部から明示的に渡す。
 - モデル構築と記録容量の予約は準備段階で行い、固定tickのheap allocationを発生させない設計を要求する。
@@ -202,9 +201,9 @@ GameUiView / GameUiFrame → platform renderer → DOM / VR panel / Bevy entity
 
 ### schemaとABI
 
-- Rustのserde型とSchemars schemaを正本に、readonlyなTypeScript型と接続試験用のschemaを生成する。対象はUI、操作、session snapshot、準備metadata、環境、record queryである。
-- 複数の生成型で使うroot契約は型importで参照する。serializeとdeserializeの間では推移的な参照先までschemaが一致する場合に共用する。
-- 生成型のreadonlyとtuple制約はTypeScript compilerで検査する。schema生成用featureとAjvによるschema検査は開発ツールの経路へ限定する。
+- runtimeのserde型とSchemars schemaを正本に、入力観測・描画出力・I/O要求・文字計測の集約契約を一つのreadonly TypeScript型へ生成する。
+- 共通の型は同じschema内の参照で共有し、固定長配列・生JSON値・入力と出力の可用性を保持する。起動前の表示HTMLも同じRust ownerから生成する。
+- 生成型のreadonlyとtuple制約はTypeScript compilerで検査し、schema featureは開発時の生成経路へ限定する。
 - 同一buildのWASM出力は単一runtime bridgeから受け取り、生成DTOを描画・I/Oへ直接提出する。phase、profile、環境、最終camera・描画poseの正本は共有Rustに置く。
 - WebはDTOを保持し、DOM・engine APIに必要な投影だけを行う。readonlyは静的な変更制約とし、時刻・score・quaternion等の数値契約はRustのproducerとcoreで検査する。
 - Analysisのchart・cursorは共有Rust UIから投影し、Replay cameraと時計操作は同期呼出しで現在の観測を反映する。遅延tickはsession所有者とtimer世代で管理し、停止・seek・速度変更・復帰で旧callbackを退役させる。

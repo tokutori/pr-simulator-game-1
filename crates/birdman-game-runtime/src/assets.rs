@@ -12,7 +12,8 @@ use birdman_game_app::environment_snapshot::{
 use birdman_game_format::EnvironmentFormatError;
 use birdman_game_presentation::screen_render_auto::ScreenRenderResourceRequest;
 use birdman_game_scene::lake_sky::{
-    LAKE_SCENE_LIGHTING, LakeSceneHaze, LakeSkyRenderCondition, LakeSunlight, generate_lake_sky,
+    LAKE_SCENE_LIGHTING, LakeSceneHaze, LakeSceneShadow, LakeSkyRenderCondition, LakeSunlight,
+    generate_lake_sky,
 };
 use birdman_game_scene::lake_water::{
     LakeDetailConfig, LakeRenderModelError, LakeVisualCondition, LakeWaveProjection,
@@ -67,6 +68,8 @@ pub struct ApplicationLightingAssets {
     pub sunlight_irradiance: f64,
     /// Render-world sun direction XYZ and daylight enable W for direct shader submission.
     pub sunlight_direction: [f64; 4],
+    /// Candidate-local initial light pose and shadow bounds for GPU pipeline preparation.
+    pub initial_shadow: Option<LakeSceneShadow>,
     /// Airlight sRGB 0xRRGGBB colour.
     pub haze_color_srgb: u32,
     /// Near/far distance-fog bounds in metres.
@@ -356,6 +359,7 @@ impl AssetsOwner {
                     sunlight.direction[2],
                     if sunlight.daylight { 1.0 } else { 0.0 },
                 ],
+                initial_shadow: LakeSceneShadow::for_aircraft([0.0; 3], sunlight),
                 haze_color_srgb: haze.color_srgb,
                 haze_range_meters: [haze.near_m, haze.far_m],
             },
