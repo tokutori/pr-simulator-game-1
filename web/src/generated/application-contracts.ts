@@ -7,6 +7,50 @@ export type MenuFontStyle = "normal" | "italic";
  * Payload of one externally observed event.
  */
 export type ApplicationInput = {
+    readonly kind: "display_ended";
+    /**
+     * Ended session or sensor subscription identity.
+     */
+    readonly resource_id: number;
+} | {
+    readonly kind: "dispose";
+} | {
+    readonly kind: "page_hide";
+    /**
+     * Whether the browser retained the document in its history cache.
+     */
+    readonly persisted: boolean;
+} | {
+    /**
+     * Original API diagnostic on failure.
+     */
+    readonly failure?: string | null;
+    readonly kind: "renderer_released";
+    /**
+     * Owner-issued renderer identity.
+     */
+    readonly renderer_resource_id: number;
+} | {
+    /**
+     * Original API diagnostic on failure.
+     */
+    readonly failure?: string | null;
+    readonly kind: "display_released";
+    /**
+     * Actual session or sensor handle identity.
+     */
+    readonly resource_id: number;
+} | {
+    /**
+     * Original API diagnostic on failure.
+     */
+    readonly failure?: string | null;
+    readonly kind: "record_io_cancelled";
+    /**
+     * Original storage operation identity.
+     */
+    readonly request_id: number;
+} | {
     readonly kind: "renderer_created";
     /**
      * Initialization request being completed.
@@ -194,7 +238,7 @@ export type ApplicationInput = {
     /**
      * Unfiltered same-frame flight device samples.
      */
-    readonly gamepads: readonly FlightGamepadObservation[];
+    readonly gamepads: readonly ApplicationGamepadObservation[];
     readonly kind: "frame";
     /**
      * Unfiltered spatial pointer and standard gamepad samples.
@@ -274,6 +318,18 @@ export type ApplicationRendererCreation = {
      */
     readonly cause: string;
     readonly kind: "failed";
+};
+/**
+ * Actual renderer creation and drawing-buffer observations.
+ */
+export type ApplicationGpuTimingCapability = {
+    readonly kind: "available";
+} | {
+    /**
+     * Original capability diagnostic.
+     */
+    readonly cause: string;
+    readonly kind: "unsupported";
 };
 /**
  * Supported manual Screen rendering scales, with full resolution as the default.
@@ -504,424 +560,17 @@ export type DisplayCompletion = {
     readonly kind: "failed";
 };
 /**
- * Lifecycle stage owned by the shared application.
- */
-export type DisplayState = {
-    readonly kind: "ready";
-    /**
-     * Confirmed active mode.
-     */
-    readonly mode: GameUiPresentationMode;
-    readonly [k: string]: unknown | undefined;
-} | {
-    /**
-     * Display retained during permission acquisition.
-     */
-    readonly active?: GameUiPresentationMode | null;
-    readonly kind: "permission";
-    /**
-     * Identity of the permission request.
-     */
-    readonly request_id: number;
-    /**
-     * Requested display mode.
-     */
-    readonly target: GameUiPresentationMode;
-    readonly [k: string]: unknown | undefined;
-} | {
-    readonly kind: "stopping";
-    /**
-     * Display being stopped.
-     */
-    readonly mode: GameUiPresentationMode;
-    /**
-     * Identity of the stop request.
-     */
-    readonly request_id: number;
-    /**
-     * Requested replacement mode.
-     */
-    readonly target: GameUiPresentationMode;
-    readonly [k: string]: unknown | undefined;
-} | {
-    readonly kind: "starting";
-    /**
-     * Identity of the start request.
-     */
-    readonly request_id: number;
-    /**
-     * Display being started.
-     */
-    readonly target: GameUiPresentationMode;
-    readonly [k: string]: unknown | undefined;
-} | {
-    /**
-     * Display retained after the failure, if any.
-     */
-    readonly active?: GameUiPresentationMode | null;
-    /**
-     * Original I/O failure.
-     */
-    readonly cause: string;
-    readonly kind: "failed";
-    readonly [k: string]: unknown | undefined;
-};
-/**
  * Presentation mode supported by a platform adapter.
  */
 export type GameUiPresentationMode = "screen" | "hmd" | "phone_vr";
 /**
- * Ordered platform operations produced by the application owner.
+ * Parent transform selected by shared physical or world placement.
  */
-export type ApplicationRequest = {
-    readonly kind: "create_renderer";
-    /**
-     * Owner-issued initialization identity.
-     */
-    readonly request_id: number;
-    readonly [k: string]: unknown | undefined;
-} | {
-    readonly kind: "release_renderer";
-    /**
-     * Acquired graphics context identity.
-     */
-    readonly renderer_resource_id: number;
-    readonly [k: string]: unknown | undefined;
-} | {
-    readonly kind: "reload_application";
-    readonly [k: string]: unknown | undefined;
-} | {
-    readonly kind: "cancel_resources";
-    /**
-     * Preparation identity to cancel.
-     */
-    readonly request_id: number;
-    readonly [k: string]: unknown | undefined;
-} | {
-    readonly kind: "commit_resources";
-    /**
-     * Owner-authorized preparation identity.
-     */
-    readonly request_id: number;
-    /**
-     * Exact candidate GPU identity.
-     */
-    readonly resource_id: number;
-    readonly [k: string]: unknown | undefined;
-} | {
-    readonly kind: "release_resources";
-    /**
-     * Opaque GPU resource identity to release.
-     */
-    readonly resource_id: number;
-    readonly [k: string]: unknown | undefined;
-} | {
-    readonly kind: "begin_record_preview";
-    /**
-     * Exact maximum number of cursor rows to retrieve.
-     */
-    readonly limit: number;
-    /**
-     * Owner-issued read transaction identity.
-     */
-    readonly request_id: number;
-    readonly [k: string]: unknown | undefined;
-} | {
-    readonly kind: "record_preview";
-    /**
-     * Owner-issued read transaction identity.
-     */
-    readonly request_id: number;
-    /**
-     * Ordered primitive reads selected by shared Rust.
-     */
-    readonly requests: readonly RecordPreviewRequest[];
-    readonly [k: string]: unknown | undefined;
-} | {
-    readonly kind: "begin_record_save";
-    /**
-     * Owner-issued transaction identity.
-     */
-    readonly request_id: number;
-    readonly [k: string]: unknown | undefined;
-} | {
-    readonly kind: "record_write";
-    /**
-     * Owner-issued transaction identity.
-     */
-    readonly request_id: number;
-    /**
-     * Ordered operations selected by the shared application policy.
-     */
-    readonly requests: readonly RecordWriteRequest[];
-    readonly [k: string]: unknown | undefined;
-} | {
-    /**
-     * Deadline on the shared receipt clock, in milliseconds.
-     */
-    readonly at_ms: number;
-    readonly kind: "schedule_wake";
-    /**
-     * Owner-issued timer identity.
-     */
-    readonly request_id: number;
-    readonly [k: string]: unknown | undefined;
-} | {
-    readonly kind: "cancel_wake";
-    /**
-     * Identity of the previously scheduled timer.
-     */
-    readonly request_id: number;
-    readonly [k: string]: unknown | undefined;
-} | {
-    /**
-     * Revision-scoped CPU drawing data; image bytes use the common buffer channel.
-     */
-    readonly assets: ApplicationEnvironmentAssets;
-    /**
-     * Active platform display resource receiving the scene.
-     */
-    readonly display_resource_id?: number | null;
-    /**
-     * Canonical environment to render.
-     */
-    readonly environment: EnvironmentIdentity;
-    /**
-     * Complete desired renderer configuration to prepare and bind atomically.
-     */
-    readonly graphics: ApplicationGraphicsTarget;
-    readonly kind: "prepare_resources";
-    /**
-     * Owner-issued identity to echo in the completion.
-     */
-    readonly request_id: number;
-    readonly [k: string]: unknown | undefined;
-} | {
-    readonly kind: "display";
-    /**
-     * One primitive platform display operation.
-     */
-    readonly request: DisplayRequest;
-    readonly [k: string]: unknown | undefined;
-} | {
-    readonly kind: "read_record";
-    /**
-     * Selected persistence key.
-     */
-    readonly record_id: number;
-    /**
-     * Owner-issued read identity.
-     */
-    readonly request_id: number;
-    readonly [k: string]: unknown | undefined;
-} | {
-    /**
-     * Exact output bytes, including preserved original archive JSON.
-     */
-    readonly bytes: readonly number[];
-    /**
-     * Suggested file name.
-     */
-    readonly file_name: string;
-    readonly kind: "download_file";
-    /**
-     * Media type for the file bytes.
-     */
-    readonly mime_type: string;
-    /**
-     * Owner-issued file operation identity.
-     */
-    readonly request_id: number;
-    readonly [k: string]: unknown | undefined;
-};
+export type ApplicationMeshAttachment = "world" | "aircraft" | "horizontal_tail" | "vertical_tail";
 /**
- * Primitive reads following the initial bounded cursor.
+ * Scalar element format of a shared upload buffer.
  */
-export type RecordPreviewRequest = {
-    /**
-     * Keys in the order expected by the next observation.
-     */
-    readonly keys: readonly string[];
-    readonly kind: "read_best";
-    readonly [k: string]: unknown | undefined;
-} | {
-    readonly kind: "finish";
-    readonly [k: string]: unknown | undefined;
-} | {
-    readonly kind: "abort";
-    readonly [k: string]: unknown | undefined;
-};
-/**
- * Record-store operations within one already opened atomic save transaction.
- */
-export type RecordWriteRequest = {
-    /**
-     * Canonical comparison key.
-     */
-    readonly key: string;
-    readonly kind: "read_best";
-    readonly [k: string]: unknown | undefined;
-} | {
-    /**
-     * Persistence key.
-     */
-    readonly id: number;
-    readonly kind: "read_record";
-    readonly [k: string]: unknown | undefined;
-} | {
-    readonly kind: "scan_records";
-    readonly [k: string]: unknown | undefined;
-} | {
-    readonly kind: "continue_records";
-    readonly [k: string]: unknown | undefined;
-} | {
-    /**
-     * Original finalized JSON.
-     */
-    readonly json: string;
-    readonly kind: "insert_record";
-    /**
-     * Canonical RFC 3339 save timestamp.
-     */
-    readonly saved_at: string;
-    readonly [k: string]: unknown | undefined;
-} | {
-    /**
-     * Generated persistence key.
-     */
-    readonly id: number;
-    readonly kind: "write_metadata";
-    /**
-     * Same timestamp as the inserted record.
-     */
-    readonly saved_at: string;
-    readonly [k: string]: unknown | undefined;
-} | {
-    /**
-     * Exact index replacement.
-     */
-    readonly entry: PersistedBest;
-    readonly kind: "write_best";
-    readonly [k: string]: unknown | undefined;
-} | {
-    readonly kind: "finish";
-    readonly [k: string]: unknown | undefined;
-} | {
-    readonly kind: "abort";
-    readonly [k: string]: unknown | undefined;
-};
-/**
- * Pixel encoding submitted directly to a graphics API.
- */
-export type ApplicationImageEncoding = "srgb_rgba8" | "linear_rgba8";
-/**
- * Shared admission of the launch venue, independent of display resources.
- */
-export type EnvironmentVenueProjection = {
-    readonly kind: "shared_launch";
-} | {
-    readonly kind: "registered_origin";
-} | {
-    readonly kind: "origin_not_recorded";
-} | {
-    readonly kind: "unregistered_origin";
-};
-/**
- * Primitive I/O operation; Rust chooses the next stage from its completion.
- */
-export type DisplayRequest = {
-    readonly kind: "permission";
-    /**
-     * Mode requiring permission.
-     */
-    readonly mode: GameUiPresentationMode;
-    /**
-     * Owner-issued operation identity.
-     */
-    readonly request_id: number;
-    readonly [k: string]: unknown | undefined;
-} | {
-    readonly kind: "stop";
-    /**
-     * Mode being stopped.
-     */
-    readonly mode: GameUiPresentationMode;
-    /**
-     * Owner-issued operation identity.
-     */
-    readonly request_id: number;
-    /**
-     * Actual active resource, if separately allocated.
-     */
-    readonly resource_id?: number | null;
-    readonly [k: string]: unknown | undefined;
-} | {
-    readonly kind: "start";
-    /**
-     * Mode being started.
-     */
-    readonly mode: GameUiPresentationMode;
-    /**
-     * Resource returned by permission acquisition.
-     */
-    readonly permission_resource_id?: number | null;
-    /**
-     * Owner-issued operation identity.
-     */
-    readonly request_id: number;
-    readonly [k: string]: unknown | undefined;
-} | {
-    readonly kind: "release";
-    /**
-     * Concrete platform resource to release.
-     */
-    readonly resource_id: number;
-    readonly [k: string]: unknown | undefined;
-};
-/**
- * Physical control layout projected by the shared session.
- */
-export type TailControlLayoutDocument = "tail_incidence";
-/**
- * Explicit geometry availability for current and imported model identities.
- */
-export type RenderTailGeometry = {
-    readonly kind: "available";
-    /**
-     * Model-derived presentation parameters.
-     */
-    readonly value: RenderTailGeometryValue;
-} | {
-    readonly kind: "unavailable";
-    /**
-     * Reason for the absent geometry.
-     */
-    readonly reason: RenderGeometryUnavailable;
-};
-/**
- * Geometry lookup failure carried to presentation adapters.
- */
-export type RenderGeometryUnavailable = "unregistered_aircraft_geometry";
-/**
- * Structural input supplied by the owning flight or canonical record query.
- */
-export type RenderWingDeformation = {
-    /**
-     * Dimensionless bending coefficient held over its physical interval.
-     */
-    readonly factor: number;
-    readonly kind: "accepted";
-} | {
-    readonly kind: "unavailable";
-    /**
-     * Reason for the missing projection input.
-     */
-    readonly reason: RenderWingDeformationUnavailable;
-};
-/**
- * Structural input availability for saved and live sources.
- */
-export type RenderWingDeformationUnavailable = "unrecorded" | "unregistered_aircraft_geometry";
+export type ApplicationBufferType = "u8" | "f32" | "u32";
 /**
  * Head-fixed painting with its final world anchor.
  */
@@ -1584,6 +1233,325 @@ export type GameUiSectionLayout = "column" | "choice_grid" | "row";
  * Shared scene name, preserving current Web spelling.
  */
 export type GameUiScene = "Boot" | "Title" | "FlightSetup" | "Briefing" | "Countdown" | "Flight" | "Result" | "Replay";
+/**
+ * Ownership stage controlling input admission and the executable owner's final release.
+ */
+export type ApplicationLifecycle = "running" | "closing" | "drained";
+/**
+ * Ordered platform operations produced by the application owner.
+ */
+export type ApplicationRequest = {
+    readonly kind: "cancel_record_io";
+    /**
+     * Original storage operation identity.
+     */
+    readonly request_id: number;
+    readonly [k: string]: unknown | undefined;
+} | {
+    readonly kind: "create_renderer";
+    /**
+     * Owner-issued initialization identity.
+     */
+    readonly request_id: number;
+    readonly [k: string]: unknown | undefined;
+} | {
+    readonly kind: "release_renderer";
+    /**
+     * Acquired graphics context identity.
+     */
+    readonly renderer_resource_id: number;
+    readonly [k: string]: unknown | undefined;
+} | {
+    readonly kind: "reload_application";
+    readonly [k: string]: unknown | undefined;
+} | {
+    readonly kind: "cancel_resources";
+    /**
+     * Preparation identity to cancel.
+     */
+    readonly request_id: number;
+    readonly [k: string]: unknown | undefined;
+} | {
+    readonly kind: "commit_resources";
+    /**
+     * Owner-authorized preparation identity.
+     */
+    readonly request_id: number;
+    /**
+     * Exact candidate GPU identity.
+     */
+    readonly resource_id: number;
+    readonly [k: string]: unknown | undefined;
+} | {
+    readonly kind: "release_resources";
+    /**
+     * Opaque GPU resource identity to release.
+     */
+    readonly resource_id: number;
+    readonly [k: string]: unknown | undefined;
+} | {
+    readonly kind: "begin_record_preview";
+    /**
+     * Exact maximum number of cursor rows to retrieve.
+     */
+    readonly limit: number;
+    /**
+     * Owner-issued read transaction identity.
+     */
+    readonly request_id: number;
+    readonly [k: string]: unknown | undefined;
+} | {
+    readonly kind: "record_preview";
+    /**
+     * Owner-issued read transaction identity.
+     */
+    readonly request_id: number;
+    /**
+     * Ordered primitive reads selected by shared Rust.
+     */
+    readonly requests: readonly RecordPreviewRequest[];
+    readonly [k: string]: unknown | undefined;
+} | {
+    readonly kind: "begin_record_save";
+    /**
+     * Owner-issued transaction identity.
+     */
+    readonly request_id: number;
+    readonly [k: string]: unknown | undefined;
+} | {
+    readonly kind: "record_write";
+    /**
+     * Owner-issued transaction identity.
+     */
+    readonly request_id: number;
+    /**
+     * Ordered operations selected by the shared application policy.
+     */
+    readonly requests: readonly RecordWriteRequest[];
+    readonly [k: string]: unknown | undefined;
+} | {
+    /**
+     * Deadline on the shared receipt clock, in milliseconds.
+     */
+    readonly at_ms: number;
+    readonly kind: "schedule_wake";
+    /**
+     * Owner-issued timer identity.
+     */
+    readonly request_id: number;
+    readonly [k: string]: unknown | undefined;
+} | {
+    readonly kind: "cancel_wake";
+    /**
+     * Identity of the previously scheduled timer.
+     */
+    readonly request_id: number;
+    readonly [k: string]: unknown | undefined;
+} | {
+    /**
+     * Revision-scoped CPU drawing data; image bytes use the common buffer channel.
+     */
+    readonly assets: ApplicationEnvironmentAssets;
+    /**
+     * Active platform display resource receiving the scene.
+     */
+    readonly display_resource_id?: number | null;
+    /**
+     * Canonical environment to render.
+     */
+    readonly environment: EnvironmentIdentity;
+    /**
+     * Complete desired renderer configuration to prepare and bind atomically.
+     */
+    readonly graphics: ApplicationGraphicsTarget;
+    readonly kind: "prepare_resources";
+    /**
+     * Owner-issued identity to echo in the completion.
+     */
+    readonly request_id: number;
+    readonly [k: string]: unknown | undefined;
+} | {
+    readonly kind: "display";
+    /**
+     * One primitive platform display operation.
+     */
+    readonly request: DisplayRequest;
+    readonly [k: string]: unknown | undefined;
+} | {
+    readonly kind: "read_record";
+    /**
+     * Selected persistence key.
+     */
+    readonly record_id: number;
+    /**
+     * Owner-issued read identity.
+     */
+    readonly request_id: number;
+    readonly [k: string]: unknown | undefined;
+} | {
+    /**
+     * Exact output bytes, including preserved original archive JSON.
+     */
+    readonly bytes: readonly number[];
+    /**
+     * Suggested file name.
+     */
+    readonly file_name: string;
+    readonly kind: "download_file";
+    /**
+     * Media type for the file bytes.
+     */
+    readonly mime_type: string;
+    /**
+     * Owner-issued file operation identity.
+     */
+    readonly request_id: number;
+    readonly [k: string]: unknown | undefined;
+};
+/**
+ * Primitive reads following the initial bounded cursor.
+ */
+export type RecordPreviewRequest = {
+    /**
+     * Keys in the order expected by the next observation.
+     */
+    readonly keys: readonly string[];
+    readonly kind: "read_best";
+    readonly [k: string]: unknown | undefined;
+} | {
+    readonly kind: "finish";
+    readonly [k: string]: unknown | undefined;
+} | {
+    readonly kind: "abort";
+    readonly [k: string]: unknown | undefined;
+};
+/**
+ * Record-store operations within one already opened atomic save transaction.
+ */
+export type RecordWriteRequest = {
+    /**
+     * Canonical comparison key.
+     */
+    readonly key: string;
+    readonly kind: "read_best";
+    readonly [k: string]: unknown | undefined;
+} | {
+    /**
+     * Persistence key.
+     */
+    readonly id: number;
+    readonly kind: "read_record";
+    readonly [k: string]: unknown | undefined;
+} | {
+    readonly kind: "scan_records";
+    readonly [k: string]: unknown | undefined;
+} | {
+    readonly kind: "continue_records";
+    readonly [k: string]: unknown | undefined;
+} | {
+    /**
+     * Original finalized JSON.
+     */
+    readonly json: string;
+    readonly kind: "insert_record";
+    /**
+     * Canonical RFC 3339 save timestamp.
+     */
+    readonly saved_at: string;
+    readonly [k: string]: unknown | undefined;
+} | {
+    /**
+     * Generated persistence key.
+     */
+    readonly id: number;
+    readonly kind: "write_metadata";
+    /**
+     * Same timestamp as the inserted record.
+     */
+    readonly saved_at: string;
+    readonly [k: string]: unknown | undefined;
+} | {
+    /**
+     * Exact index replacement.
+     */
+    readonly entry: PersistedBest;
+    readonly kind: "write_best";
+    readonly [k: string]: unknown | undefined;
+} | {
+    readonly kind: "finish";
+    readonly [k: string]: unknown | undefined;
+} | {
+    readonly kind: "abort";
+    readonly [k: string]: unknown | undefined;
+};
+/**
+ * Pixel encoding submitted directly to a graphics API.
+ */
+export type ApplicationImageEncoding = "srgb_rgba8" | "linear_rgba8";
+/**
+ * Shared admission of the launch venue, independent of display resources.
+ */
+export type EnvironmentVenueProjection = {
+    readonly kind: "shared_launch";
+} | {
+    readonly kind: "registered_origin";
+} | {
+    readonly kind: "origin_not_recorded";
+} | {
+    readonly kind: "unregistered_origin";
+};
+/**
+ * Primitive I/O operation; Rust chooses the next stage from its completion.
+ */
+export type DisplayRequest = {
+    readonly kind: "permission";
+    /**
+     * Mode requiring permission.
+     */
+    readonly mode: GameUiPresentationMode;
+    /**
+     * Owner-issued operation identity.
+     */
+    readonly request_id: number;
+    readonly [k: string]: unknown | undefined;
+} | {
+    readonly kind: "stop";
+    /**
+     * Mode being stopped.
+     */
+    readonly mode: GameUiPresentationMode;
+    /**
+     * Owner-issued operation identity.
+     */
+    readonly request_id: number;
+    /**
+     * Actual active resource, if separately allocated.
+     */
+    readonly resource_id?: number | null;
+    readonly [k: string]: unknown | undefined;
+} | {
+    readonly kind: "start";
+    /**
+     * Mode being started.
+     */
+    readonly mode: GameUiPresentationMode;
+    /**
+     * Resource returned by permission acquisition.
+     */
+    readonly permission_resource_id?: number | null;
+    /**
+     * Owner-issued operation identity.
+     */
+    readonly request_id: number;
+    readonly [k: string]: unknown | undefined;
+} | {
+    readonly kind: "release";
+    /**
+     * Concrete platform resource to release.
+     */
+    readonly resource_id: number;
+    readonly [k: string]: unknown | undefined;
+};
 export interface ApplicationContract {
     readonly font_metrics: ApplicationGlyphMetrics;
     readonly font_probe: ApplicationTextProbe;
@@ -1686,6 +1654,10 @@ export interface ApplicationRendererObservation {
         number,
         number
     ];
+    /**
+     * Actual timestamp-query capability of this context, observed before initial resource preparation.
+     */
+    readonly gpu_timing: ApplicationGpuTimingCapability;
     /**
      * Confirmed resources at this renderer's creation, before owner-issued changes.
      */
@@ -1907,28 +1879,29 @@ export interface PhoneMotionObservation {
     readonly timestamp_ms: number;
 }
 /**
- * Unfiltered gamepad axes in common nose-up, right-turn and pilot-target directions.
+ * Unfiltered platform gamepad data in the standard browser/OpenXR mapping vocabulary.
  */
-export interface FlightGamepadObservation {
+export interface ApplicationGamepadObservation {
     /**
-     * Raw normalized axes; an unavailable/non-finite reading is represented by None.
-     *
-     * @minItems 3
-     * @maxItems 3
+     * Raw axis order; missing and non-finite samples are None.
      */
-    readonly axes: readonly [
-        number | null,
-        number | null,
-        number | null
-    ];
+    readonly axes: readonly (number | null)[];
     /**
-     * Whether the platform currently observes the device as connected.
+     * Raw button pressed states in platform order.
+     */
+    readonly buttons: readonly boolean[];
+    /**
+     * Raw connection status.
      */
     readonly connected: boolean;
     /**
-     * Identity of this physical connection.
+     * Physical slot/entity and observed connection generation.
      */
     readonly identity: FlightDeviceIdentity;
+    /**
+     * Platform mapping declaration, such as standard or xr-standard.
+     */
+    readonly mapping: string;
 }
 /**
  * Exact platform device identity, including entity and reconnection generations.
@@ -1954,7 +1927,7 @@ export interface ApplicationSpatialObservation {
     /**
      * Connected standard gamepads, before device selection or dead-zone filtering.
      */
-    readonly gamepads: readonly XrGamepadObservation[];
+    readonly gamepads: readonly ApplicationGamepadObservation[];
     /**
      * Connected tracked pointers with an available pose.
      */
@@ -1963,41 +1936,6 @@ export interface ApplicationSpatialObservation {
      * Identity of the spatial projection actually submitted by the drawing adapter.
      */
     readonly presented_id?: number | null;
-}
-/**
- * Raw standard gamepad values used by spatial UI.
- */
-export interface XrGamepadObservation {
-    /**
-     * Left and right stick axes in standard mapping order.
-     *
-     * @minItems 4
-     * @maxItems 4
-     */
-    readonly axes: readonly [
-        number,
-        number,
-        number,
-        number
-    ];
-    /**
-     * Primary and Back button states.
-     *
-     * @minItems 2
-     * @maxItems 2
-     */
-    readonly buttons: readonly [
-        boolean,
-        boolean
-    ];
-    /**
-     * Connection generation for this slot.
-     */
-    readonly generation: number;
-    /**
-     * Adapter's device slot.
-     */
-    readonly index: number;
 }
 /**
  * Payload of one externally observed event.
@@ -2175,7 +2113,7 @@ export interface ApplicationResourceCommit {
     ];
 }
 /**
- * One shared update's rendering and I/O work.
+ * One update's I/O work and optional drawing submission.
  */
 export interface ApplicationOutput {
     /**
@@ -2183,21 +2121,35 @@ export interface ApplicationOutput {
      */
     readonly diagnostic?: string | null;
     /**
-     * Confirmed active display and pending I/O stage.
+     * Absent for synchronous I/O continuations that leave the visible state unchanged.
      */
-    readonly display: DisplayState;
-    /**
-     * Confirmed graphics resources and optional query for this frame.
-     */
-    readonly graphics: ApplicationGraphicsProjection;
+    readonly drawing?: ApplicationDrawingOutput | null;
     /**
      * Whether the observed key belongs to the active flight input.
      */
     readonly keyboard_consumed: boolean;
     /**
+     * The executable owner can be released only after this becomes Drained.
+     */
+    readonly lifecycle: ApplicationLifecycle;
+    /**
      * Ordered I/O requests to execute at the platform boundary.
      */
     readonly requests: readonly ApplicationRequest[];
+    readonly [k: string]: unknown | undefined;
+}
+/**
+ * One shared update's rendering and I/O work.
+ */
+export interface ApplicationDrawingOutput {
+    /**
+     * Confirmed graphics resources and optional query for this frame.
+     */
+    readonly graphics: ApplicationGraphicsProjection;
+    /**
+     * Final visibility decisions for drawing adapters.
+     */
+    readonly presentation: ApplicationDrawingPresentation;
     /**
      * Aircraft and camera poses ready for direct drawing-engine transfer.
      */
@@ -2255,544 +2207,29 @@ export interface ApplicationGraphicsResource {
     readonly [k: string]: unknown | undefined;
 }
 /**
- * Existing Personal Best index entry.
+ * One shared update's rendering and I/O work.
  */
-export interface PersistedBest {
+export interface ApplicationDrawingPresentation {
     /**
-     * Absent for an index written before comparison versioning.
+     * Shared frame-rate text used by both Screen and Head HUD drawing.
      */
-    readonly comparisonVersion?: number | null;
+    readonly frame_rate_label: string;
     /**
-     * Canonical comparison key.
+     * Confirmed active display, absent during an unbound transition.
      */
-    readonly key: string;
+    readonly mode?: GameUiPresentationMode | null;
     /**
-     * Selected record key.
+     * Submit the prepared 3D scene for this display.
      */
-    readonly recordId: number;
-}
-/**
- * Revision-scoped drawing resources prepared by the shared application owner.
- */
-export interface ApplicationEnvironmentAssets {
+    readonly scene_visible: boolean;
     /**
-     * Final light and fog projection.
+     * Submit the shared screen-anchored HUD.
      */
-    readonly lighting: ApplicationLightingAssets;
+    readonly screen_hud_visible: boolean;
     /**
-     * The resource-preparation request owning this bundle.
+     * Submit the shared DOM/native screen menu.
      */
-    readonly revision: number;
-    /**
-     * Equirectangular sRGB panorama.
-     */
-    readonly sky: ApplicationImageAsset;
-    /**
-     * Shared registration decision for venue geometry.
-     */
-    readonly venue: EnvironmentVenueProjection;
-    /**
-     * Final water uniforms and data images.
-     */
-    readonly water: ApplicationWaterAssets;
-    readonly [k: string]: unknown | undefined;
-}
-/**
- * Final display-light and distance-fog values in the shared render convention.
- */
-export interface ApplicationLightingAssets {
-    /**
-     * Ambient sRGB 0xRRGGBB colour.
-     */
-    readonly ambient_color_srgb: number;
-    /**
-     * Hemispherical irradiance scale.
-     */
-    readonly ambient_irradiance: number;
-    /**
-     * Airlight sRGB 0xRRGGBB colour.
-     */
-    readonly haze_color_srgb: number;
-    /**
-     * Near/far distance-fog bounds in metres.
-     *
-     * @minItems 2
-     * @maxItems 2
-     */
-    readonly haze_range_meters: readonly [
-        number,
-        number
-    ];
-    /**
-     * Sunlight sRGB 0xRRGGBB colour.
-     */
-    readonly sunlight_color_srgb: number;
-    /**
-     * Render-world direction toward the sun.
-     *
-     * @minItems 3
-     * @maxItems 3
-     */
-    readonly sunlight_direction: readonly [
-        number,
-        number,
-        number
-    ];
-    /**
-     * Daylight-gated directional irradiance scale.
-     */
-    readonly sunlight_irradiance: number;
-    readonly [k: string]: unknown | undefined;
-}
-/**
- * An immutable image descriptor; bytes travel through the common asset-buffer channel.
- */
-export interface ApplicationImageAsset {
-    /**
-     * Owner-issued buffer identity, stable while the same image is reused.
-     */
-    readonly buffer_id: number;
-    /**
-     * Pixel interpretation at upload.
-     */
-    readonly encoding: ApplicationImageEncoding;
-    /**
-     * Texture dimensions in texels.
-     *
-     * @minItems 2
-     * @maxItems 2
-     */
-    readonly size: readonly [
-        number,
-        number
-    ];
-    readonly [k: string]: unknown | undefined;
-}
-/**
- * Prepared wave uniforms and immutable detail images.
- */
-export interface ApplicationWaterAssets {
-    /**
-     * Near/far periodic images when the wind supports detail generation.
-     *
-     * @minItems 2
-     * @maxItems 2
-     */
-    readonly detail?: readonly [
-        ApplicationWaterDetailAsset,
-        ApplicationWaterDetailAsset
-    ] | null;
-    /**
-     * Downstream detail multiplier; zero denotes the flat-water case.
-     */
-    readonly detail_amplitude_scale: number;
-    /**
-     * Mesh density selected by the shared quality profile.
-     */
-    readonly mesh_segments: number;
-    /**
-     * Complete GPU wave coefficients, counts and non-inversion bounds.
-     */
-    readonly projection: LakeWaveProjection;
-    /**
-     * Wind magnitude used by the shared visual condition.
-     */
-    readonly wind_speed_meters_per_second: number;
-    readonly [k: string]: unknown | undefined;
-}
-/**
- * One prepared periodic normal/variance/height image.
- */
-export interface ApplicationWaterDetailAsset {
-    /**
-     * World-space repeat length in metres.
-     */
-    readonly extent_meters: number;
-    /**
-     * Linear-data RGBA texture.
-     */
-    readonly image: ApplicationImageAsset;
-    readonly [k: string]: unknown | undefined;
-}
-/**
- * Canonical uploads and derivative bounds for the existing finite Web wave packets.
- */
-export interface LakeWaveProjection {
-    readonly choppiness: number;
-    readonly horizontalDerivativeBound: number;
-    readonly spacing: LakeMeshSpacingDomain;
-    readonly visualWaveHeight: number;
-    readonly waveCount: number;
-    /**
-     * @minItems 24
-     * @maxItems 24
-     */
-    readonly waveKAmplitude: readonly [
-        readonly [
-            number,
-            number,
-            number,
-            number
-        ],
-        readonly [
-            number,
-            number,
-            number,
-            number
-        ],
-        readonly [
-            number,
-            number,
-            number,
-            number
-        ],
-        readonly [
-            number,
-            number,
-            number,
-            number
-        ],
-        readonly [
-            number,
-            number,
-            number,
-            number
-        ],
-        readonly [
-            number,
-            number,
-            number,
-            number
-        ],
-        readonly [
-            number,
-            number,
-            number,
-            number
-        ],
-        readonly [
-            number,
-            number,
-            number,
-            number
-        ],
-        readonly [
-            number,
-            number,
-            number,
-            number
-        ],
-        readonly [
-            number,
-            number,
-            number,
-            number
-        ],
-        readonly [
-            number,
-            number,
-            number,
-            number
-        ],
-        readonly [
-            number,
-            number,
-            number,
-            number
-        ],
-        readonly [
-            number,
-            number,
-            number,
-            number
-        ],
-        readonly [
-            number,
-            number,
-            number,
-            number
-        ],
-        readonly [
-            number,
-            number,
-            number,
-            number
-        ],
-        readonly [
-            number,
-            number,
-            number,
-            number
-        ],
-        readonly [
-            number,
-            number,
-            number,
-            number
-        ],
-        readonly [
-            number,
-            number,
-            number,
-            number
-        ],
-        readonly [
-            number,
-            number,
-            number,
-            number
-        ],
-        readonly [
-            number,
-            number,
-            number,
-            number
-        ],
-        readonly [
-            number,
-            number,
-            number,
-            number
-        ],
-        readonly [
-            number,
-            number,
-            number,
-            number
-        ],
-        readonly [
-            number,
-            number,
-            number,
-            number
-        ],
-        readonly [
-            number,
-            number,
-            number,
-            number
-        ]
-    ];
-    /**
-     * @minItems 24
-     * @maxItems 24
-     */
-    readonly waveOmegaPhase: readonly [
-        readonly [
-            number,
-            number,
-            number,
-            number
-        ],
-        readonly [
-            number,
-            number,
-            number,
-            number
-        ],
-        readonly [
-            number,
-            number,
-            number,
-            number
-        ],
-        readonly [
-            number,
-            number,
-            number,
-            number
-        ],
-        readonly [
-            number,
-            number,
-            number,
-            number
-        ],
-        readonly [
-            number,
-            number,
-            number,
-            number
-        ],
-        readonly [
-            number,
-            number,
-            number,
-            number
-        ],
-        readonly [
-            number,
-            number,
-            number,
-            number
-        ],
-        readonly [
-            number,
-            number,
-            number,
-            number
-        ],
-        readonly [
-            number,
-            number,
-            number,
-            number
-        ],
-        readonly [
-            number,
-            number,
-            number,
-            number
-        ],
-        readonly [
-            number,
-            number,
-            number,
-            number
-        ],
-        readonly [
-            number,
-            number,
-            number,
-            number
-        ],
-        readonly [
-            number,
-            number,
-            number,
-            number
-        ],
-        readonly [
-            number,
-            number,
-            number,
-            number
-        ],
-        readonly [
-            number,
-            number,
-            number,
-            number
-        ],
-        readonly [
-            number,
-            number,
-            number,
-            number
-        ],
-        readonly [
-            number,
-            number,
-            number,
-            number
-        ],
-        readonly [
-            number,
-            number,
-            number,
-            number
-        ],
-        readonly [
-            number,
-            number,
-            number,
-            number
-        ],
-        readonly [
-            number,
-            number,
-            number,
-            number
-        ],
-        readonly [
-            number,
-            number,
-            number,
-            number
-        ],
-        readonly [
-            number,
-            number,
-            number,
-            number
-        ],
-        readonly [
-            number,
-            number,
-            number,
-            number
-        ]
-    ];
-    readonly [k: string]: unknown | undefined;
-}
-/**
- * Float32-compatible mesh spacing domain used by the bounded wave packet projection.
- */
-export interface LakeMeshSpacingDomain {
-    readonly gradientMagnitude: number;
-    readonly maximum: number;
-    readonly minimum: number;
-    readonly [k: string]: unknown | undefined;
-}
-/**
- * Exact split-seed scenario identity shared by live and environment query boundaries.
- */
-export interface EnvironmentIdentity {
-    /**
-     * Aircraft model version.
-     */
-    readonly aircraft_model_version: number;
-    /**
-     * Registered catalog version.
-     */
-    readonly catalog_version: number;
-    /**
-     * Controller profile version.
-     */
-    readonly controller_profile_version: number;
-    /**
-     * Environment content version.
-     */
-    readonly environment_version: number;
-    /**
-     * Scenario identifier; registry lookup applies its own nonzero constraint.
-     */
-    readonly scenario_id: number;
-    /**
-     * Scenario content version.
-     */
-    readonly scenario_version: number;
-    /**
-     * High 32 bits of the exact seed.
-     */
-    readonly seed_high: number;
-    /**
-     * Low 32 bits of the exact seed.
-     */
-    readonly seed_low: number;
-}
-/**
- * Final desired resource configuration, independent of a confirmed commit counter.
- */
-export interface ApplicationGraphicsTarget {
-    /**
-     * Exact target framebuffer dimensions in physical pixels.
-     *
-     * @minItems 2
-     * @maxItems 2
-     */
-    readonly extent_px: readonly [
-        number,
-        number
-    ];
-    /**
-     * Complete resource quality selected by the shared policy.
-     */
-    readonly quality: ApplicationRenderQuality;
-    /**
-     * Graphics context or device lifetime.
-     */
-    readonly renderer_resource_id: number;
+    readonly screen_ui_visible: boolean;
     readonly [k: string]: unknown | undefined;
 }
 /**
@@ -2800,136 +2237,36 @@ export interface ApplicationGraphicsTarget {
  */
 export interface ApplicationSceneProjection {
     /**
-     * Live, prepared or recorded aircraft deformation and controls.
-     */
-    readonly aircraft?: FlightRenderPose | null;
-    /**
      * Current display's camera geometry.
      */
     readonly camera?: ApplicationCameraProjection | null;
+    /**
+     * Complete accepted mutable attributes and final articulated part transforms.
+     */
+    readonly geometry?: ApplicationGeometryFrame | null;
+    /**
+     * Final horizontal centre used by the far-water overlap clip.
+     *
+     * @minItems 2
+     * @maxItems 2
+     */
+    readonly water_clip_center: readonly [
+        number,
+        number
+    ];
+    /**
+     * Accepted simulation time for water animation.
+     */
+    readonly water_time_seconds: number;
+    /**
+     * Final render-world water translation, independent of aircraft rotation and altitude.
+     */
+    readonly water_world_from_surface: Pose;
     /**
      * Aircraft datum and orientation already converted into render-world axes.
      */
     readonly world_from_aircraft: Pose;
     readonly [k: string]: unknown | undefined;
-}
-/**
- * Engine-independent presentation of one committed or recorded aircraft state.
- */
-export interface FlightRenderPose {
-    /**
-     * Observed airspeed at this physical or recorded state.
-     */
-    readonly airspeedMetersPerSecond?: number | null;
-    /**
-     * Scalar-first body-to-NED orientation.
-     */
-    readonly attitudeBodyToNed: RenderAttitude;
-    /**
-     * Held physical control positions.
-     */
-    readonly controls: RenderTailControls;
-    /**
-     * Fixed aircraft datum in NED metres.
-     */
-    readonly datumPositionNed: RenderNedVector;
-    /**
-     * Pilot position at the beginning of this flight or record.
-     */
-    readonly initialPilotPositionMeters: number;
-    /**
-     * Current longitudinal pilot position.
-     */
-    readonly pilotPositionMeters: number;
-    /**
-     * Shared simulation time for environmental animation.
-     */
-    readonly simulationTimeSeconds: number;
-    /**
-     * Geometry resolved from the recorded model identity.
-     */
-    readonly tailGeometry: RenderTailGeometry;
-    /**
-     * Ambient wind at the composite centre of gravity.
-     */
-    readonly windVelocityNedMetersPerSecond?: RenderNedVector | null;
-    /**
-     * Accepted structural coefficient, distinct from absent legacy data or unknown geometry.
-     */
-    readonly wingDeformation: RenderWingDeformation;
-}
-/**
- * Scalar-first orientation components used by rendering APIs.
- */
-export interface RenderAttitude {
-    /**
-     * Scalar component.
-     */
-    readonly w: number;
-    /**
-     * Body x component.
-     */
-    readonly x: number;
-    /**
-     * Body y component.
-     */
-    readonly y: number;
-    /**
-     * Body z component.
-     */
-    readonly z: number;
-}
-/**
- * Current two-tail layout and held incidence.
- */
-export interface RenderTailControls {
-    /**
-     * Physical layout.
-     */
-    readonly layout: TailControlLayoutDocument;
-    /**
-     * Held physical incidence.
-     */
-    readonly physicalIncidence: RenderTailIncidence;
-}
-/**
- * Physical tail incidence in the renderer's public units.
- */
-export interface RenderTailIncidence {
-    /**
-     * Horizontal tail angle in radians.
-     */
-    readonly horizontalTailRadians: number;
-    /**
-     * Vertical tail angle in radians.
-     */
-    readonly verticalTailRadians: number;
-}
-/**
- * Named NED vector used by rendering APIs.
- */
-export interface RenderNedVector {
-    /**
-     * Down component.
-     */
-    readonly down: number;
-    /**
-     * East component.
-     */
-    readonly east: number;
-    /**
-     * North component.
-     */
-    readonly north: number;
-}
-/**
- * Registered tail presentation parameters.
- */
-export interface RenderTailGeometryValue {
-    /**
-     * Aft distance to the horizontal tail's physical quarter-chord pivot.
-     */
-    readonly horizontalTailArmMeters: number;
 }
 /**
  * Camera geometry ready for direct transfer to a drawing engine.
@@ -2947,6 +2284,30 @@ export interface ApplicationCameraProjection {
      * Screen or configured phone near plane in metres.
      */
     readonly near_m: number;
+    /**
+     * Final monoscopic OpenGL projection, absent for stereo displays.
+     *
+     * @minItems 16
+     * @maxItems 16
+     */
+    readonly screen_projection?: readonly [
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number
+    ] | null;
     /**
      * Screen or configured phone vertical field of view, in degrees.
      */
@@ -3001,6 +2362,92 @@ export interface ApplicationEyeProjection {
      * Eye-to-render-world transform.
      */
     readonly world_from_eye: Pose;
+    readonly [k: string]: unknown | undefined;
+}
+/**
+ * Mutable attributes and articulation already resolved by the shared owner.
+ */
+export interface ApplicationGeometryFrame {
+    /**
+     * Whether registered aircraft geometry is available for this source.
+     */
+    readonly aircraft_visible: boolean;
+    /**
+     * Final horizontal and vertical tail transforms.
+     *
+     * @minItems 2
+     * @maxItems 2
+     */
+    readonly part_poses: readonly [
+        ApplicationMeshPose,
+        ApplicationMeshPose
+    ];
+    /**
+     * Geometry upload generation, advancing only after a complete accepted update.
+     */
+    readonly revision: number;
+    /**
+     * Attribute replacements; empty while the accepted coefficient is unchanged.
+     */
+    readonly updates: readonly ApplicationMeshUpdate[];
+    readonly [k: string]: unknown | undefined;
+}
+/**
+ * Final local pose for an articulated mesh parent.
+ */
+export interface ApplicationMeshPose {
+    /**
+     * Shared articulation parent.
+     */
+    readonly attachment: ApplicationMeshAttachment;
+    /**
+     * Final aircraft-local transform, including the physical pivot.
+     */
+    readonly pose: Pose;
+    readonly [k: string]: unknown | undefined;
+}
+/**
+ * One replacement attribute pair using retained mutable CPU buffers.
+ */
+export interface ApplicationMeshUpdate {
+    /**
+     * Static mesh receiving these attributes.
+     */
+    readonly mesh_id: number;
+    /**
+     * Current completed normals.
+     */
+    readonly normal: ApplicationBufferDescriptor;
+    /**
+     * Current accepted positions.
+     */
+    readonly position: ApplicationBufferDescriptor;
+    readonly [k: string]: unknown | undefined;
+}
+/**
+ * Complete typed layout for a borrowed or copied GPU upload.
+ */
+export interface ApplicationBufferDescriptor {
+    /**
+     * Stable identity accepted by the common buffer accessor.
+     */
+    readonly buffer_id: number;
+    /**
+     * Components per attribute item.
+     */
+    readonly components: number;
+    /**
+     * Attribute item count, rather than scalar count.
+     */
+    readonly count: number;
+    /**
+     * Scalar GPU element format.
+     */
+    readonly data_type: ApplicationBufferType;
+    /**
+     * Contiguous item stride in bytes.
+     */
+    readonly stride_bytes: number;
     readonly [k: string]: unknown | undefined;
 }
 /**
@@ -4167,4 +3614,798 @@ export interface GameUiReadoutValue {
      * Shared formatted record or clock observation.
      */
     readonly value: string;
+}
+/**
+ * Existing Personal Best index entry.
+ */
+export interface PersistedBest {
+    /**
+     * Absent for an index written before comparison versioning.
+     */
+    readonly comparisonVersion?: number | null;
+    /**
+     * Canonical comparison key.
+     */
+    readonly key: string;
+    /**
+     * Selected record key.
+     */
+    readonly recordId: number;
+}
+/**
+ * Revision-scoped drawing resources prepared by the shared application owner.
+ */
+export interface ApplicationEnvironmentAssets {
+    /**
+     * Final light and fog projection.
+     */
+    readonly lighting: ApplicationLightingAssets;
+    /**
+     * The resource-preparation request owning this bundle.
+     */
+    readonly revision: number;
+    /**
+     * First immutable scene manifest; later preparations reuse the same owner-issued identities.
+     */
+    readonly scene?: ApplicationGeometryAssets | null;
+    /**
+     * Equirectangular sRGB panorama.
+     */
+    readonly sky: ApplicationImageAsset;
+    /**
+     * Shared registration decision for venue geometry.
+     */
+    readonly venue: EnvironmentVenueProjection;
+    /**
+     * Final water uniforms and data images.
+     */
+    readonly water: ApplicationWaterAssets;
+    readonly [k: string]: unknown | undefined;
+}
+/**
+ * Final display-light and distance-fog values in the shared render convention.
+ */
+export interface ApplicationLightingAssets {
+    /**
+     * Ambient sRGB 0xRRGGBB colour.
+     */
+    readonly ambient_color_srgb: number;
+    /**
+     * Hemispherical irradiance scale.
+     */
+    readonly ambient_irradiance: number;
+    /**
+     * Airlight sRGB 0xRRGGBB colour.
+     */
+    readonly haze_color_srgb: number;
+    /**
+     * Near/far distance-fog bounds in metres.
+     *
+     * @minItems 2
+     * @maxItems 2
+     */
+    readonly haze_range_meters: readonly [
+        number,
+        number
+    ];
+    /**
+     * Sunlight sRGB 0xRRGGBB colour.
+     */
+    readonly sunlight_color_srgb: number;
+    /**
+     * Render-world direction toward the sun.
+     *
+     * @minItems 3
+     * @maxItems 3
+     */
+    readonly sunlight_direction: readonly [
+        number,
+        number,
+        number
+    ];
+    /**
+     * Daylight-gated directional irradiance scale.
+     */
+    readonly sunlight_irradiance: number;
+    readonly [k: string]: unknown | undefined;
+}
+/**
+ * Immutable registered meshes and completed wing images.
+ */
+export interface ApplicationGeometryAssets {
+    /**
+     * Static triangle topology in common GPU attribute form.
+     */
+    readonly meshes: readonly ApplicationMeshAsset[];
+    /**
+     * Left and right completed wing textures.
+     *
+     * @minItems 2
+     * @maxItems 2
+     */
+    readonly wing_textures: readonly [
+        ApplicationGeometryTexture,
+        ApplicationGeometryTexture
+    ];
+    readonly [k: string]: unknown | undefined;
+}
+/**
+ * Static topology and final attributes for one scene mesh.
+ */
+export interface ApplicationMeshAsset {
+    /**
+     * Final transform parent.
+     */
+    readonly attachment: ApplicationMeshAttachment;
+    /**
+     * Optional linear vertex colour.
+     */
+    readonly color?: ApplicationBufferDescriptor | null;
+    /**
+     * Culling is disabled for articulated or deforming aircraft meshes.
+     */
+    readonly frustum_culled: boolean;
+    /**
+     * Surface-local UInt32 triangle indices.
+     */
+    readonly index: ApplicationBufferDescriptor;
+    /**
+     * Final local transform; positions already use right/up/aft or render-world axes.
+     */
+    readonly local_pose: Pose;
+    /**
+     * Contiguous material ranges.
+     */
+    readonly materials: readonly ApplicationMeshMaterial[];
+    /**
+     * Stable drawing identity.
+     */
+    readonly mesh_id: number;
+    /**
+     * Shared diagnostic name.
+     */
+    readonly name: string;
+    /**
+     * Final unit normals.
+     */
+    readonly normal: ApplicationBufferDescriptor;
+    /**
+     * Float32 triangle vertices.
+     */
+    readonly position: ApplicationBufferDescriptor;
+    /**
+     * Optional texture coordinates.
+     */
+    readonly uv?: ApplicationBufferDescriptor | null;
+    readonly [k: string]: unknown | undefined;
+}
+/**
+ * Engine-independent final material values for a triangle range.
+ */
+export interface ApplicationMeshMaterial {
+    /**
+     * Cast an opaque shadow.
+     */
+    readonly cast_shadow: boolean;
+    /**
+     * Opaque sRGB material colour.
+     */
+    readonly color_srgb: number;
+    /**
+     * Number of indices in this range.
+     */
+    readonly count: number;
+    /**
+     * Direct depth-buffer write flag.
+     */
+    readonly depth_write: boolean;
+    /**
+     * Render both triangle orientations.
+     */
+    readonly double_sided: boolean;
+    /**
+     * Apply scene illumination.
+     */
+    readonly lit: boolean;
+    /**
+     * Material alpha.
+     */
+    readonly opacity: number;
+    /**
+     * Receive scene shadows.
+     */
+    readonly receive_shadow: boolean;
+    /**
+     * First triangle index in the shared mesh index buffer.
+     */
+    readonly start: number;
+    /**
+     * Optional shared wing texture identity.
+     */
+    readonly texture_buffer_id?: number | null;
+    /**
+     * Direct transparent-pipeline flag.
+     */
+    readonly transparent: boolean;
+    readonly [k: string]: unknown | undefined;
+}
+/**
+ * Completed static RGBA image including its full linear-light mip chain.
+ */
+export interface ApplicationGeometryTexture {
+    /**
+     * Concatenated RGBA8 mip levels, largest first.
+     */
+    readonly buffer: ApplicationBufferDescriptor;
+    /**
+     * Complete mip level count.
+     */
+    readonly mip_level_count: number;
+    /**
+     * Base image texel dimensions.
+     *
+     * @minItems 2
+     * @maxItems 2
+     */
+    readonly size: readonly [
+        number,
+        number
+    ];
+    readonly [k: string]: unknown | undefined;
+}
+/**
+ * An immutable image descriptor; bytes travel through the common asset-buffer channel.
+ */
+export interface ApplicationImageAsset {
+    /**
+     * Owner-issued buffer identity, stable while the same image is reused.
+     */
+    readonly buffer_id: number;
+    /**
+     * Pixel interpretation at upload.
+     */
+    readonly encoding: ApplicationImageEncoding;
+    /**
+     * Texture dimensions in texels.
+     *
+     * @minItems 2
+     * @maxItems 2
+     */
+    readonly size: readonly [
+        number,
+        number
+    ];
+    readonly [k: string]: unknown | undefined;
+}
+/**
+ * Prepared wave uniforms and immutable detail images.
+ */
+export interface ApplicationWaterAssets {
+    /**
+     * Near/far periodic images when the wind supports detail generation.
+     *
+     * @minItems 2
+     * @maxItems 2
+     */
+    readonly detail?: readonly [
+        ApplicationWaterDetailAsset,
+        ApplicationWaterDetailAsset
+    ] | null;
+    /**
+     * Downstream detail multiplier; zero denotes the flat-water case.
+     */
+    readonly detail_amplitude_scale: number;
+    /**
+     * Complete final-axis water meshes and conservative culling bounds.
+     */
+    readonly geometry: ApplicationWaterGeometry;
+    /**
+     * Complete GPU wave coefficients, counts and non-inversion bounds.
+     */
+    readonly projection: LakeWaveProjection;
+    /**
+     * Wind magnitude used by the shared visual condition.
+     */
+    readonly wind_speed_meters_per_second: number;
+    readonly [k: string]: unknown | undefined;
+}
+/**
+ * One prepared periodic normal/variance/height image.
+ */
+export interface ApplicationWaterDetailAsset {
+    /**
+     * World-space repeat length in metres.
+     */
+    readonly extent_meters: number;
+    /**
+     * Linear-data RGBA texture.
+     */
+    readonly image: ApplicationImageAsset;
+    readonly [k: string]: unknown | undefined;
+}
+/**
+ * Complete water geometry selected by the shared quality policy.
+ */
+export interface ApplicationWaterGeometry {
+    /**
+     * Final far-water inner clip half-extent.
+     */
+    readonly backing_inner_extent_meters: number;
+    /**
+     * Shared horizontal/vertical displacement budgets.
+     *
+     * @minItems 2
+     * @maxItems 2
+     */
+    readonly displacement_meters: readonly [
+        number,
+        number
+    ];
+    /**
+     * Distant backing geometry.
+     */
+    readonly far: ApplicationWaterChunkAsset;
+    /**
+     * Sixteen near chunks, in row-major order.
+     */
+    readonly near: readonly ApplicationWaterChunkAsset[];
+    readonly [k: string]: unknown | undefined;
+}
+/**
+ * One complete immutable water mesh and weather-expanded culling volume.
+ */
+export interface ApplicationWaterChunkAsset {
+    /**
+     * Final culling volume including the shared displacement reserve.
+     */
+    readonly bounds: ApplicationWaterBounds;
+    /**
+     * Whether the engine should apply view-frustum culling.
+     */
+    readonly frustum_culled: boolean;
+    /**
+     * Shared local spacing consumed by the wave shader.
+     */
+    readonly grid_spacing: ApplicationBufferDescriptor;
+    /**
+     * Positive-Y triangle indices.
+     */
+    readonly index: ApplicationBufferDescriptor;
+    /**
+     * Upward base normals.
+     */
+    readonly normal: ApplicationBufferDescriptor;
+    /**
+     * Final render X/0/Z positions.
+     */
+    readonly position: ApplicationBufferDescriptor;
+    /**
+     * Whole-patch texture coordinates.
+     */
+    readonly uv: ApplicationBufferDescriptor;
+    readonly [k: string]: unknown | undefined;
+}
+/**
+ * Completed culling volume in water-local render axes.
+ */
+export interface ApplicationWaterBounds {
+    /**
+     * Inclusive maximum coordinates.
+     *
+     * @minItems 3
+     * @maxItems 3
+     */
+    readonly maximum: readonly [
+        number,
+        number,
+        number
+    ];
+    /**
+     * Inclusive minimum coordinates.
+     *
+     * @minItems 3
+     * @maxItems 3
+     */
+    readonly minimum: readonly [
+        number,
+        number,
+        number
+    ];
+    /**
+     * Final bounding-sphere centre.
+     *
+     * @minItems 3
+     * @maxItems 3
+     */
+    readonly sphere_center: readonly [
+        number,
+        number,
+        number
+    ];
+    /**
+     * Final bounding-sphere radius.
+     */
+    readonly sphere_radius: number;
+    readonly [k: string]: unknown | undefined;
+}
+/**
+ * Canonical uploads and derivative bounds for the existing finite Web wave packets.
+ */
+export interface LakeWaveProjection {
+    readonly choppiness: number;
+    readonly horizontalDerivativeBound: number;
+    readonly spacing: LakeMeshSpacingDomain;
+    readonly visualWaveHeight: number;
+    readonly waveCount: number;
+    /**
+     * @minItems 24
+     * @maxItems 24
+     */
+    readonly waveKAmplitude: readonly [
+        readonly [
+            number,
+            number,
+            number,
+            number
+        ],
+        readonly [
+            number,
+            number,
+            number,
+            number
+        ],
+        readonly [
+            number,
+            number,
+            number,
+            number
+        ],
+        readonly [
+            number,
+            number,
+            number,
+            number
+        ],
+        readonly [
+            number,
+            number,
+            number,
+            number
+        ],
+        readonly [
+            number,
+            number,
+            number,
+            number
+        ],
+        readonly [
+            number,
+            number,
+            number,
+            number
+        ],
+        readonly [
+            number,
+            number,
+            number,
+            number
+        ],
+        readonly [
+            number,
+            number,
+            number,
+            number
+        ],
+        readonly [
+            number,
+            number,
+            number,
+            number
+        ],
+        readonly [
+            number,
+            number,
+            number,
+            number
+        ],
+        readonly [
+            number,
+            number,
+            number,
+            number
+        ],
+        readonly [
+            number,
+            number,
+            number,
+            number
+        ],
+        readonly [
+            number,
+            number,
+            number,
+            number
+        ],
+        readonly [
+            number,
+            number,
+            number,
+            number
+        ],
+        readonly [
+            number,
+            number,
+            number,
+            number
+        ],
+        readonly [
+            number,
+            number,
+            number,
+            number
+        ],
+        readonly [
+            number,
+            number,
+            number,
+            number
+        ],
+        readonly [
+            number,
+            number,
+            number,
+            number
+        ],
+        readonly [
+            number,
+            number,
+            number,
+            number
+        ],
+        readonly [
+            number,
+            number,
+            number,
+            number
+        ],
+        readonly [
+            number,
+            number,
+            number,
+            number
+        ],
+        readonly [
+            number,
+            number,
+            number,
+            number
+        ],
+        readonly [
+            number,
+            number,
+            number,
+            number
+        ]
+    ];
+    /**
+     * @minItems 24
+     * @maxItems 24
+     */
+    readonly waveOmegaPhase: readonly [
+        readonly [
+            number,
+            number,
+            number,
+            number
+        ],
+        readonly [
+            number,
+            number,
+            number,
+            number
+        ],
+        readonly [
+            number,
+            number,
+            number,
+            number
+        ],
+        readonly [
+            number,
+            number,
+            number,
+            number
+        ],
+        readonly [
+            number,
+            number,
+            number,
+            number
+        ],
+        readonly [
+            number,
+            number,
+            number,
+            number
+        ],
+        readonly [
+            number,
+            number,
+            number,
+            number
+        ],
+        readonly [
+            number,
+            number,
+            number,
+            number
+        ],
+        readonly [
+            number,
+            number,
+            number,
+            number
+        ],
+        readonly [
+            number,
+            number,
+            number,
+            number
+        ],
+        readonly [
+            number,
+            number,
+            number,
+            number
+        ],
+        readonly [
+            number,
+            number,
+            number,
+            number
+        ],
+        readonly [
+            number,
+            number,
+            number,
+            number
+        ],
+        readonly [
+            number,
+            number,
+            number,
+            number
+        ],
+        readonly [
+            number,
+            number,
+            number,
+            number
+        ],
+        readonly [
+            number,
+            number,
+            number,
+            number
+        ],
+        readonly [
+            number,
+            number,
+            number,
+            number
+        ],
+        readonly [
+            number,
+            number,
+            number,
+            number
+        ],
+        readonly [
+            number,
+            number,
+            number,
+            number
+        ],
+        readonly [
+            number,
+            number,
+            number,
+            number
+        ],
+        readonly [
+            number,
+            number,
+            number,
+            number
+        ],
+        readonly [
+            number,
+            number,
+            number,
+            number
+        ],
+        readonly [
+            number,
+            number,
+            number,
+            number
+        ],
+        readonly [
+            number,
+            number,
+            number,
+            number
+        ]
+    ];
+    readonly [k: string]: unknown | undefined;
+}
+/**
+ * Float32-compatible mesh spacing domain used by the bounded wave packet projection.
+ */
+export interface LakeMeshSpacingDomain {
+    readonly gradientMagnitude: number;
+    readonly maximum: number;
+    readonly minimum: number;
+    readonly [k: string]: unknown | undefined;
+}
+/**
+ * Exact split-seed scenario identity shared by live and environment query boundaries.
+ */
+export interface EnvironmentIdentity {
+    /**
+     * Aircraft model version.
+     */
+    readonly aircraft_model_version: number;
+    /**
+     * Registered catalog version.
+     */
+    readonly catalog_version: number;
+    /**
+     * Controller profile version.
+     */
+    readonly controller_profile_version: number;
+    /**
+     * Environment content version.
+     */
+    readonly environment_version: number;
+    /**
+     * Scenario identifier; registry lookup applies its own nonzero constraint.
+     */
+    readonly scenario_id: number;
+    /**
+     * Scenario content version.
+     */
+    readonly scenario_version: number;
+    /**
+     * High 32 bits of the exact seed.
+     */
+    readonly seed_high: number;
+    /**
+     * Low 32 bits of the exact seed.
+     */
+    readonly seed_low: number;
+}
+/**
+ * Final desired resource configuration, independent of a confirmed commit counter.
+ */
+export interface ApplicationGraphicsTarget {
+    /**
+     * Exact target framebuffer dimensions in physical pixels.
+     *
+     * @minItems 2
+     * @maxItems 2
+     */
+    readonly extent_px: readonly [
+        number,
+        number
+    ];
+    /**
+     * Complete resource quality selected by the shared policy.
+     */
+    readonly quality: ApplicationRenderQuality;
+    /**
+     * Graphics context or device lifetime.
+     */
+    readonly renderer_resource_id: number;
+    readonly [k: string]: unknown | undefined;
 }

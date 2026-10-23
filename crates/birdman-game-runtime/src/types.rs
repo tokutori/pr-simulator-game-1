@@ -3,18 +3,17 @@ use super::surface::{ApplicationSpatialProjection, ApplicationSurfaceObservation
 use super::{
     ApplicationGraphicsObservation, ApplicationGraphicsProjection, ApplicationGraphicsTarget,
     ApplicationRendererObservation, ApplicationResourceCommit, DisplayCompletion, DisplayRequest,
-    DisplayState, PhoneMotionObservation, PhoneOrientationObservation,
+    PhoneMotionObservation, PhoneOrientationObservation,
 };
 use birdman_game_app::application::{ApplicationError, FlightFrameError, XrVisibility};
 use birdman_game_app::environment_snapshot::{EnvironmentIdentity, EnvironmentSnapshotError};
-use birdman_game_app::flight_input::FlightGamepadObservation;
 use birdman_game_core::GameSessionError;
 use birdman_game_presentation::camera::Pose;
 use birdman_game_presentation::game_ui::{
     GameUiChartExtent, GameUiControlInput, GameUiError, GameUiFrame, GameUiReplayCamera,
     GameUiView, GameUiViewport,
 };
-use birdman_game_presentation::xr::{XrGamepadObservation, XrViewerObservation};
+use birdman_game_presentation::xr::XrViewerObservation;
 use serde::{Deserialize, Serialize};
 
 /// Capabilities implemented by the platform's I/O and drawing adapters.
@@ -126,7 +125,7 @@ pub struct ApplicationSpatialObservation {
     /// Connected tracked pointers with an available pose.
     pub pointers: Vec<ApplicationPointerObservation>,
     /// Connected standard gamepads, before device selection or dead-zone filtering.
-    pub gamepads: Vec<XrGamepadObservation>,
+    pub gamepads: Vec<super::ApplicationGamepadObservation>,
 }
 
 /// Payload of one externally observed event.
@@ -134,6 +133,39 @@ pub struct ApplicationSpatialObservation {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ApplicationInput {
+    /// The actual platform display ended independently of a requested stop.
+    DisplayEnded {
+        #[doc = "Ended session or sensor subscription identity."]
+        resource_id: u32,
+    },
+    /// Stops new application work and drains already issued I/O.
+    Dispose,
+    /// Raw browser pagehide observation; persisted documents suspend rather than dispose.
+    PageHide {
+        #[doc = "Whether the browser retained the document in its history cache."]
+        persisted: bool,
+    },
+    /// A requested graphics context release reached its terminal result.
+    RendererReleased {
+        #[doc = "Owner-issued renderer identity."]
+        renderer_resource_id: u32,
+        #[doc = "Original API diagnostic on failure."]
+        failure: Option<String>,
+    },
+    /// A requested display-resource release reached its terminal result.
+    DisplayReleased {
+        #[doc = "Actual session or sensor handle identity."]
+        resource_id: u32,
+        #[doc = "Original API diagnostic on failure."]
+        failure: Option<String>,
+    },
+    /// Requested cancellation completed after its actual storage operation became terminal.
+    RecordIoCancelled {
+        #[doc = "Original storage operation identity."]
+        request_id: u32,
+        #[doc = "Original API diagnostic on failure."]
+        failure: Option<String>,
+    },
     /// Completion of the current owner-issued graphics context creation.
     RendererCreated {
         /// Initialization request being completed.
@@ -262,7 +294,7 @@ pub enum ApplicationInput {
         /// Monotonic presentation timestamp in milliseconds.
         timestamp_ms: f64,
         /// Unfiltered same-frame flight device samples.
-        gamepads: Vec<FlightGamepadObservation>,
+        gamepads: Vec<super::ApplicationGamepadObservation>,
         /// Same-frame HMD poses and runtime observations, when supplied by the active runtime.
         xr: Option<ApplicationXrFrameObservation>,
         /// Unfiltered spatial pointer and standard gamepad samples.
@@ -310,6 +342,11 @@ pub enum ApplicationInput {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ApplicationRequest {
+    /// Aborts the exact record transaction or pending open and reports its terminal result.
+    CancelRecordIo {
+        #[doc = "Original storage operation identity."]
+        request_id: u32,
+    },
     /// Creates the platform graphics context and reports its actual startup resources.
     CreateRenderer {
         #[doc = "Owner-issued initialization identity."]
@@ -435,9 +472,25 @@ pub enum ApplicationUiProjection {
 /// One shared update's rendering and I/O work.
 #[derive(Debug, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct ApplicationOutput {
-    /// Technical failure details for the platform diagnostic sink, separate from UI wording.
-    pub diagnostic: Option<String>,
+pub struct ApplicationDrawingPresentation {
+    /// Shared frame-rate text used by both Screen and Head HUD drawing.
+    pub frame_rate_label: String,
+    /// Confirmed active display, absent during an unbound transition.
+    pub mode: Option<birdman_game_presentation::game_ui::GameUiPresentationMode>,
+    /// Submit the shared DOM/native screen menu.
+    pub screen_ui_visible: bool,
+    /// Submit the shared screen-anchored HUD.
+    pub screen_hud_visible: bool,
+    /// Submit the prepared 3D scene for this display.
+    pub scene_visible: bool,
+}
+
+/// One shared update's rendering and I/O work.
+#[derive(Debug, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct ApplicationDrawingOutput {
+    /// Final visibility decisions for drawing adapters.
+    pub presentation: ApplicationDrawingPresentation,
     /// Confirmed graphics resources and optional query for this frame.
     pub graphics: ApplicationGraphicsProjection,
     /// Aircraft and camera poses ready for direct drawing-engine transfer.
@@ -446,8 +499,18 @@ pub struct ApplicationOutput {
     pub spatial: Option<ApplicationSpatialProjection>,
     /// Structural replacement or dynamic UI values.
     pub ui: ApplicationUiProjection,
-    /// Confirmed active display and pending I/O stage.
-    pub display: DisplayState,
+}
+
+/// One update's I/O work and optional drawing submission.
+#[derive(Debug, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct ApplicationOutput {
+    /// Absent for synchronous I/O continuations that leave the visible state unchanged.
+    pub drawing: Option<ApplicationDrawingOutput>,
+    /// The executable owner can be released only after this becomes Drained.
+    pub lifecycle: super::ApplicationLifecycle,
+    /// Technical failure details for the platform diagnostic sink, separate from UI wording.
+    pub diagnostic: Option<String>,
     /// Ordered I/O requests to execute at the platform boundary.
     pub requests: Vec<ApplicationRequest>,
     /// Whether the observed key belongs to the active flight input.

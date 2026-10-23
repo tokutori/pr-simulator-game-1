@@ -16,7 +16,7 @@ use birdman_game_scene::lake_sky::{
 };
 use birdman_game_scene::lake_water::{
     LakeDetailConfig, LakeRenderModelError, LakeVisualCondition, LakeWaveProjection,
-    generate_lake_detail, production_lake_detail_configs, water_quality_profile,
+    generate_lake_detail, production_lake_detail_configs,
 };
 use serde::Serialize;
 
@@ -77,10 +77,10 @@ pub struct ApplicationLightingAssets {
 #[derive(Clone, Debug, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ApplicationWaterAssets {
+    /// Complete final-axis water meshes and conservative culling bounds.
+    pub geometry: crate::geometry::ApplicationWaterGeometry,
     /// Complete GPU wave coefficients, counts and non-inversion bounds.
     pub projection: LakeWaveProjection,
-    /// Mesh density selected by the shared quality profile.
-    pub mesh_segments: u32,
     /// Wind magnitude used by the shared visual condition.
     pub wind_speed_meters_per_second: f64,
     /// Downstream detail multiplier; zero denotes the flat-water case.
@@ -93,6 +93,8 @@ pub struct ApplicationWaterAssets {
 #[derive(Clone, Debug, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ApplicationEnvironmentAssets {
+    /// First immutable scene manifest; later preparations reuse the same owner-issued identities.
+    pub scene: Option<crate::ApplicationGeometryAssets>,
     /// The resource-preparation request owning this bundle.
     pub revision: u32,
     /// Equirectangular sRGB panorama.
@@ -108,6 +110,8 @@ pub struct ApplicationEnvironmentAssets {
 /// Failures from registered environment resolution or immutable CPU resource generation.
 #[derive(Debug)]
 pub enum ApplicationAssetError {
+    /// Registered mesh preparation or accepted-frame projection failed.
+    Geometry(String),
     /// The registered environment could not be resolved.
     Environment(EnvironmentSnapshotError),
     /// The selected identity has no registered display environment.
@@ -188,6 +192,8 @@ pub(super) struct AssetCompletion {
 
 #[derive(Default)]
 pub(super) struct AssetsOwner {
+    geometry: Option<Box<crate::geometry::GeometryOwner>>,
+    geometry_renderer: Option<u32>,
     next_buffer_id: u32,
     active: Option<PreparedAssets>,
     active_resource: Option<u32>,
@@ -205,6 +211,13 @@ impl AssetsOwner {
         target: ApplicationGraphicsTarget,
         policy_request: Option<ScreenRenderResourceRequest>,
     ) -> Result<ApplicationEnvironmentAssets, ApplicationAssetError> {
+        if self.geometry.is_none() {
+            let geometry = crate::geometry::GeometryOwner::prepare(&mut self.next_buffer_id)
+                .map_err(ApplicationAssetError::Geometry)?;
+            self.geometry = Some(Box::new(geometry));
+        }
+        let scene = (self.geometry_renderer != Some(target.renderer_resource_id))
+            .then(|| self.geometry.as_ref().unwrap().assets().clone());
         let quality = target.quality.water_quality;
         let EnvironmentProjection::Available {
             metadata, venue, ..
@@ -250,6 +263,12 @@ impl AssetsOwner {
         .map_err(ApplicationAssetError::Water)?;
         let projection = LakeWaveProjection::try_new(condition, quality)
             .map_err(ApplicationAssetError::Water)?;
+        let water_geometry = self
+            .geometry
+            .as_mut()
+            .unwrap()
+            .water(&mut self.next_buffer_id, quality, &projection)
+            .map_err(ApplicationAssetError::Geometry)?;
         let wind_speed = wave.wind_velocity_ne_mps[0].hypot(wave.wind_velocity_ne_mps[1]);
         let detail = if wind_speed < 0.05 {
             None
@@ -287,6 +306,7 @@ impl AssetsOwner {
         let haze = LakeSceneHaze::try_new(sky_condition.map(LakeSkyRenderCondition::visibility_m))
             .map_err(ApplicationAssetError::Sky)?;
         let output = ApplicationEnvironmentAssets {
+            scene,
             revision,
             sky: sky.image.descriptor.clone(),
             lighting: ApplicationLightingAssets {
@@ -303,8 +323,8 @@ impl AssetsOwner {
                 haze_range_meters: [haze.near_m, haze.far_m],
             },
             water: ApplicationWaterAssets {
+                geometry: water_geometry,
                 projection,
-                mesh_segments: water_quality_profile(quality).mesh_segments(),
                 wind_speed_meters_per_second: wind_speed,
                 detail_amplitude_scale: if detail.is_some() {
                     wave.detail_amplitude_scale
@@ -382,6 +402,7 @@ impl AssetsOwner {
                     return output;
                 }
                 if let Some(pending) = self.pending.get_mut(&request_id) && matches!(pending.stage, PreparationStage::Building) && self.desired == Some(request_id) {
+                    self.geometry_renderer = Some(pending.target.renderer_resource_id);
                     pending.stage = PreparationStage::Candidate(resource_id);
                 } else {
                     output.requests.push(ApplicationRequest::ReleaseResources { resource_id });
@@ -391,6 +412,7 @@ impl AssetsOwner {
             ApplicationResourceObservation::Committed { resource_id, actual } => {
                 if self.committing == Some(request_id) && self.pending.get(&request_id).is_some_and(|pending| matches!(pending.stage, PreparationStage::Committing(id) if id == resource_id)) {
                     let pending = self.pending.remove(&request_id).unwrap();
+                    if let Some(geometry) = &mut self.geometry { geometry.rebind(); }
                     output.committed = Some(AssetCommit { request_id, target: pending.target, policy_request: pending.policy_request, actual });
                     self.active = Some(pending.bundle);
                     if let Some(previous) = self.active_resource.replace(resource_id) && previous != resource_id {
@@ -492,6 +514,27 @@ impl AssetsOwner {
         None
     }
 
+    pub(super) fn buffer(&self, buffer_id: u32) -> Option<crate::ApplicationBufferSlice<'_>> {
+        self.geometry
+            .as_ref()
+            .and_then(|geometry| geometry.buffer(buffer_id))
+            .or_else(|| self.bytes(buffer_id).map(crate::ApplicationBufferSlice::U8))
+    }
+
+    pub(super) fn project_geometry(
+        &mut self,
+        pose: Option<birdman_game_presentation::render_pose::FlightRenderPose>,
+    ) -> Result<Option<crate::ApplicationGeometryFrame>, ApplicationAssetError> {
+        self.geometry
+            .as_mut()
+            .map(|geometry| {
+                geometry
+                    .project(pose)
+                    .map_err(ApplicationAssetError::Geometry)
+            })
+            .transpose()
+    }
+
     fn bundles(&self) -> impl Iterator<Item = &PreparedAssets> {
         self.active
             .iter()
@@ -559,6 +602,22 @@ mod tests {
             .prepare(1, exhibition, target(WaterQuality::High), None)
             .unwrap();
         let sky_id = first.sky.buffer_id;
+        let scene = first.scene.as_ref().unwrap();
+        assert!(!scene.meshes.is_empty());
+        assert_eq!(first.water.geometry.near.len(), 16);
+        let position = first.water.geometry.near[0].position;
+        let crate::ApplicationBufferSlice::F32(values) = owner.buffer(position.buffer_id).unwrap()
+        else {
+            panic!("Expected native Float32 attributes");
+        };
+        assert_eq!(
+            values.len(),
+            position.count as usize * position.components as usize
+        );
+        assert_eq!(
+            &crate::ApplicationBufferSlice::F32(values).to_bytes()[..4],
+            &values[0].to_le_bytes()
+        );
         let detail_id = first.water.detail.as_ref().unwrap()[0].image.buffer_id;
         assert_eq!(
             owner.bytes(sky_id).unwrap().len(),
@@ -580,6 +639,7 @@ mod tests {
         let second = owner
             .prepare(2, exhibition, target(WaterQuality::Low), None)
             .unwrap();
+        assert!(second.scene.is_none());
         assert_eq!(second.sky.buffer_id, sky_id);
         assert_eq!(
             second.water.detail.as_ref().unwrap()[0].image.buffer_id,
@@ -641,5 +701,14 @@ mod tests {
         ));
         assert!(owner.bytes(abandoned_id).is_none());
         assert!(owner.bytes(detail_id).is_some());
+        let mut replacement = target(WaterQuality::Low);
+        replacement.renderer_resource_id += 1;
+        assert!(
+            owner
+                .prepare(4, exhibition, replacement, None)
+                .unwrap()
+                .scene
+                .is_some()
+        );
     }
 }

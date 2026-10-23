@@ -32,7 +32,6 @@ impl ApplicationRuntimeBridge {
     pub fn asset_bytes(&self, buffer_id: u32) -> Result<Vec<u8>, JsValue> {
         self.runtime
             .asset_bytes(buffer_id)
-            .map(<[u8]>::to_vec)
             .ok_or_else(|| crate::error("The drawing asset is no longer retained"))
     }
     /// Adopts observed browser capabilities and the actual renderer resource.

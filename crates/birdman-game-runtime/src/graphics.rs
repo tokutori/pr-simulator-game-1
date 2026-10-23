@@ -22,8 +22,24 @@ pub struct ApplicationRenderQuality {
 /// Actual renderer creation and drawing-buffer observations.
 #[derive(Clone, Debug, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ApplicationGpuTimingCapability {
+    /// The actual graphics context exposes timestamp queries.
+    Available,
+    /// The actual graphics API returned an unavailable result.
+    Unsupported {
+        #[doc = "Original capability diagnostic."]
+        cause: String,
+    },
+}
+
+/// Actual renderer creation and drawing-buffer observations.
+#[derive(Clone, Debug, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct ApplicationRendererObservation {
+    /// Actual timestamp-query capability of this context, observed before initial resource preparation.
+    pub gpu_timing: ApplicationGpuTimingCapability,
     /// Creation/restoration identity, replaced after context loss or device replacement.
     pub resource_id: u32,
     /// Actual drawable extent; XR extents come directly from the runtime.
@@ -155,6 +171,13 @@ impl Default for GraphicsOwner {
 }
 
 impl GraphicsOwner {
+    pub(super) fn retire(&mut self) -> Option<u32> {
+        self.retained = self.snapshot();
+        self.policy = None;
+        self.prepared = false;
+        self.eligible = false;
+        self.context.take().map(|context| context.id)
+    }
     pub(super) fn adopt(
         &mut self,
         observation: Option<&ApplicationRendererObservation>,
@@ -193,6 +216,9 @@ impl GraphicsOwner {
             ScreenRenderAutoController::new(quality.scale, quality.shadow, quality.water_quality);
         policy.set_scope(scope, now)?;
         policy.restore_selection(selection, now)?;
+        if let ApplicationGpuTimingCapability::Unsupported { cause } = &observation.gpu_timing {
+            policy.unsupported(cause.clone(), now)?;
+        }
         self.policy = Some(policy);
         self.context = Some(Context {
             id: observation.resource_id,
@@ -513,6 +539,7 @@ mod tests {
         owner
             .adopt(
                 Some(&ApplicationRendererObservation {
+                    gpu_timing: ApplicationGpuTimingCapability::Available,
                     resource_id: 1,
                     extent_px: [640, 360],
                     screen_extent_px: [1283, 723],

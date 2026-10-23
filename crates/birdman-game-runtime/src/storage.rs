@@ -56,6 +56,12 @@ struct SaveJob {
 }
 
 impl StorageOwner {
+    pub(super) fn close(&mut self) {
+        self.saves.clear();
+        self.load = None;
+        self.preview = None;
+        self.downloads.clear();
+    }
     pub(super) fn needs_preview(&self, application: &ApplicationSession) -> bool {
         application.core_session().snapshot().phase() == SessionPhase::Title
             && self.preview.is_none()

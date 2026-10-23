@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum DisplayState {
+    /// Application work has stopped; late acquired resources are released.
+    Closed,
     /// A confirmed display resource is active.
     Ready {
         #[doc = "Confirmed active mode."]
@@ -51,7 +53,7 @@ impl DisplayState {
         match self {
             Self::Ready { mode } | Self::Stopping { mode, .. } => Some(*mode),
             Self::Permission { active, .. } | Self::Failed { active, .. } => *active,
-            Self::Starting { .. } => None,
+            Self::Starting { .. } | Self::Closed => None,
         }
     }
 
@@ -142,6 +144,39 @@ pub(super) struct DisplayWorkflow {
 }
 
 impl DisplayWorkflow {
+    pub(super) fn ended(&mut self, resource_id: u32, next_id: u32) -> Vec<DisplayRequest> {
+        if self.active_resource != Some(resource_id) {
+            return Vec::new();
+        }
+        self.active_resource = None;
+        let mut requests = vec![DisplayRequest::Release { resource_id }];
+        match &mut self.state {
+            DisplayState::Permission { active, .. } => *active = None,
+            DisplayState::Stopping { .. } | DisplayState::Closed => {}
+            _ => {
+                self.state = DisplayState::Starting {
+                    target: GameUiPresentationMode::Screen,
+                    request_id: next_id,
+                };
+                requests.push(DisplayRequest::Start {
+                    request_id: next_id,
+                    mode: GameUiPresentationMode::Screen,
+                    permission_resource_id: None,
+                });
+            }
+        }
+        requests
+    }
+    pub(super) fn close(&mut self) -> Vec<DisplayRequest> {
+        let mut resources = std::collections::BTreeSet::new();
+        resources.extend(self.active_resource.take());
+        resources.extend(self.permission_resource.take());
+        self.state = DisplayState::Closed;
+        resources
+            .into_iter()
+            .map(|resource_id| DisplayRequest::Release { resource_id })
+            .collect()
+    }
     pub(super) fn new(mode: GameUiPresentationMode) -> Self {
         Self {
             state: DisplayState::Ready { mode },

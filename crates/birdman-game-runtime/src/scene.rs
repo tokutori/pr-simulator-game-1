@@ -38,6 +38,8 @@ pub struct ApplicationEyeProjection {
 #[derive(Clone, Debug, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ApplicationCameraProjection {
+    /// Final monoscopic OpenGL projection, absent for stereo displays.
+    pub screen_projection: Option<[f64; 16]>,
     /// Runtime tracking origin mounted in render world.
     pub world_from_tracking: Pose,
     /// Current centre camera, absent while tracking has no valid head observation.
@@ -56,8 +58,14 @@ pub struct ApplicationCameraProjection {
 #[derive(Clone, Debug, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ApplicationSceneProjection {
-    /// Live, prepared or recorded aircraft deformation and controls.
-    pub aircraft: Option<FlightRenderPose>,
+    /// Final render-world water translation, independent of aircraft rotation and altitude.
+    pub water_world_from_surface: Pose,
+    /// Final horizontal centre used by the far-water overlap clip.
+    pub water_clip_center: [f64; 2],
+    /// Complete accepted mutable attributes and final articulated part transforms.
+    pub geometry: Option<crate::ApplicationGeometryFrame>,
+    /// Accepted simulation time for water animation.
+    pub water_time_seconds: f64,
     /// Aircraft datum and orientation already converted into render-world axes.
     pub world_from_aircraft: Pose,
     /// Current display's camera geometry.
@@ -75,6 +83,7 @@ pub(super) struct SceneContext<'a> {
 }
 
 pub(super) struct SceneFrame {
+    pub aircraft: Option<FlightRenderPose>,
     pub projection: ApplicationSceneProjection,
     pub viewer: Option<XrViewerFrame>,
     pub rig: Option<XrCameraRig>,
@@ -219,8 +228,22 @@ impl SceneOwner {
             self.rig = None;
             self.reference = None;
             return Ok(SceneFrame {
+                aircraft,
                 projection: ApplicationSceneProjection {
-                    aircraft,
+                    water_world_from_surface: Pose {
+                        position: Vector3 {
+                            x: world_from_aircraft.position.x,
+                            y: 0.0,
+                            z: world_from_aircraft.position.z,
+                        },
+                        ..Pose::IDENTITY
+                    },
+                    water_clip_center: [
+                        world_from_aircraft.position.x,
+                        world_from_aircraft.position.z,
+                    ],
+                    geometry: None,
+                    water_time_seconds: aircraft.map_or(0.0, |pose| pose.simulation_time_seconds),
                     world_from_aircraft,
                     camera: None,
                 },
@@ -357,10 +380,29 @@ impl SceneOwner {
         self.rig = Some(rig);
         self.reference = reference;
         Ok(SceneFrame {
+            aircraft,
             projection: ApplicationSceneProjection {
-                aircraft,
+                water_world_from_surface: Pose {
+                    position: Vector3 {
+                        x: world_from_aircraft.position.x,
+                        y: 0.0,
+                        z: world_from_aircraft.position.z,
+                    },
+                    ..Pose::IDENTITY
+                },
+                water_clip_center: [
+                    world_from_aircraft.position.x,
+                    world_from_aircraft.position.z,
+                ],
+                geometry: None,
+                water_time_seconds: aircraft.map_or(0.0, |pose| pose.simulation_time_seconds),
                 world_from_aircraft,
                 camera: Some(ApplicationCameraProjection {
+                    screen_projection: if mode == GameUiPresentationMode::Screen {
+                        Some(screen_projection(context.viewport, fov)?)
+                    } else {
+                        None
+                    },
                     world_from_tracking: rig.world_from_tracking,
                     world_from_head,
                     eyes,
@@ -473,4 +515,40 @@ fn phone_viewer(
         tracking_from_head: (),
         eyes: [eye(XrEye::Left, -0.032), eye(XrEye::Right, 0.032)],
     })
+}
+
+fn screen_projection(
+    viewport: &GameUiViewport,
+    vertical_fov_degrees: f64,
+) -> Result<[f64; 16], ApplicationRuntimeError> {
+    if !viewport.width.is_finite()
+        || !viewport.height.is_finite()
+        || viewport.width <= 0.0
+        || viewport.height <= 0.0
+    {
+        return Err(ApplicationRuntimeError::Camera(
+            CameraError::InvalidDistance,
+        ));
+    }
+    let focal = 1.0 / (vertical_fov_degrees.to_radians() / 2.0).tan();
+    let near = 0.05;
+    let far = 100_000.0;
+    Ok([
+        focal * viewport.height / viewport.width,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        focal,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        -(far + near) / (far - near),
+        -1.0,
+        0.0,
+        0.0,
+        -2.0 * far * near / (far - near),
+        0.0,
+    ])
 }

@@ -9,6 +9,128 @@ fn no_text_metrics(_: &ApplicationTextProbe) -> Result<ApplicationGlyphMetrics, 
 }
 
 #[test]
+fn dispose_drains_atomic_bind_record_cancellation_and_release_before_renderer_destruction() {
+    let platform = ApplicationPlatformObservation {
+        renderer: Some(renderer_observation()),
+        surface: None,
+        viewport: GameUiViewport {
+            width: 1280.0,
+            height: 720.0,
+            root_font_size: 16.0,
+        },
+        chart_extent: None,
+        capabilities: ApplicationCapabilities {
+            stored_records_available: true,
+            ..Default::default()
+        },
+    };
+    let mut runtime =
+        ApplicationRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
+    let initial = runtime
+        .observe_test(ApplicationInput::Platform {
+            observation: platform,
+        })
+        .unwrap();
+    let preparation = initial
+        .requests
+        .iter()
+        .find_map(|request| match request {
+            ApplicationRequest::PrepareResources { request_id, .. } => Some(*request_id),
+            _ => None,
+        })
+        .unwrap();
+    let preview = initial
+        .requests
+        .iter()
+        .find_map(|request| match request {
+            ApplicationRequest::BeginRecordPreview { request_id, .. } => Some(*request_id),
+            _ => None,
+        })
+        .unwrap();
+    let target = runtime.resources.as_ref().unwrap().key.graphics;
+    runtime
+        .observe_test(ApplicationInput::Resources {
+            request_id: preparation,
+            observation: ApplicationResourceObservation::Prepared { resource_id: 701 },
+        })
+        .unwrap();
+    let closing = runtime.observe_test(ApplicationInput::Dispose).unwrap();
+    assert_eq!(closing.lifecycle, ApplicationLifecycle::Closing);
+    assert!(closing.requests.iter().any(|request| matches!(request, ApplicationRequest::CancelRecordIo { request_id } if *request_id == preview)));
+    assert!(
+        !closing
+            .requests
+            .iter()
+            .any(|request| matches!(request, ApplicationRequest::ReleaseRenderer { .. }))
+    );
+    let late = runtime
+        .observe_test(ApplicationInput::Resources {
+            request_id: preparation,
+            observation: ApplicationResourceObservation::Committed {
+                resource_id: 701,
+                actual: ApplicationResourceCommit {
+                    applied: target.quality,
+                    extent_px: target.extent_px,
+                },
+            },
+        })
+        .unwrap();
+    assert!(late.requests.iter().any(|request| matches!(
+        request,
+        ApplicationRequest::ReleaseResources { resource_id: 701 }
+    )));
+    assert!(
+        !late
+            .requests
+            .iter()
+            .any(|request| matches!(request, ApplicationRequest::ReleaseRenderer { .. }))
+    );
+    runtime
+        .observe_test(ApplicationInput::RecordIoCancelled {
+            request_id: preview,
+            failure: None,
+        })
+        .unwrap();
+    let released = runtime
+        .observe_test(ApplicationInput::ResourcesReleased {
+            resource_id: 701,
+            failure: Some("GPU release failed".to_owned()),
+        })
+        .unwrap();
+    assert_eq!(released.lifecycle, ApplicationLifecycle::Closing);
+    assert!(released.requests.iter().any(|request| matches!(
+        request,
+        ApplicationRequest::ReleaseRenderer {
+            renderer_resource_id: 100
+        }
+    )));
+    let drained = runtime
+        .observe_test(ApplicationInput::RendererReleased {
+            renderer_resource_id: 100,
+            failure: None,
+        })
+        .unwrap();
+    assert_eq!(drained.lifecycle, ApplicationLifecycle::Drained);
+    assert!(!drained.drawing.unwrap().presentation.screen_ui_visible);
+    let phase = runtime.application().core_session().snapshot().phase();
+    let ignored = runtime
+        .observe_test(ApplicationInput::Frame {
+            display_resource_id: None,
+            timestamp_ms: 50.0,
+            gamepads: Vec::new(),
+            xr: None,
+            spatial: Default::default(),
+        })
+        .unwrap();
+    assert_eq!(ignored.lifecycle, ApplicationLifecycle::Drained);
+    assert!(ignored.requests.is_empty());
+    assert_eq!(
+        runtime.application().core_session().snapshot().phase(),
+        phase
+    );
+}
+
+#[test]
 fn boot_retries_renderer_creation_releases_late_resources_and_enters_title_after_commit() {
     let platform = ApplicationPlatformObservation {
         renderer: None,
@@ -95,6 +217,9 @@ fn boot_retries_renderer_creation_releases_late_resources_and_enters_title_after
     assert!(runtime.graphics.resource().is_none());
     let mut renderer = renderer_observation();
     renderer.resource_id = 101;
+    renderer.gpu_timing = ApplicationGpuTimingCapability::Unsupported {
+        cause: "actual timer extension unavailable".to_owned(),
+    };
     let preparing = runtime
         .observe_test(ApplicationInput::RendererCreated {
             request_id: second,
@@ -109,6 +234,7 @@ fn boot_retries_renderer_creation_releases_late_resources_and_enters_title_after
             _ => None,
         })
         .unwrap();
+    assert!(preparing.requests.iter().any(|request| matches!(request, ApplicationRequest::PrepareResources { graphics, .. } if graphics.quality.water_quality == WaterQuality::Low && graphics.extent_px == [640, 360])));
     assert_eq!(
         structure(preparing).scene,
         birdman_game_presentation::game_ui::GameUiScene::Boot
@@ -308,6 +434,7 @@ fn saved_result_owns_transaction_and_rejects_notifications_after_leaving_result(
     assert!(
         matches!(opened.requests.as_slice(), [ApplicationRequest::RecordWrite { requests, .. }] if matches!(requests.as_slice(), [Io::InsertRecord { saved_at, .. }] if saved_at == "1970-01-01T00:00:00Z"))
     );
+    assert!(opened.drawing.is_none());
     let duplicate = runtime
         .observe_test(ApplicationInput::RecordSaveOpened {
             request_id,
@@ -555,7 +682,7 @@ fn activate_action(
 }
 
 fn structure(output: ApplicationOutput) -> Box<GameUiView> {
-    match output.ui {
+    match output.drawing.unwrap().ui {
         ApplicationUiProjection::View { view } => view,
         ApplicationUiProjection::Frame { .. } => panic!("Expected a structural transition"),
     }
@@ -672,7 +799,7 @@ fn phone_start_deadline_requests_screen_recovery_without_an_adapter_timer_policy
         )
         .unwrap();
     assert!(matches!(
-        recovery.display,
+        runtime.display.state(),
         DisplayState::Stopping {
             mode: GameUiPresentationMode::PhoneVr,
             target: GameUiPresentationMode::Screen,
@@ -798,7 +925,7 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
             .len(),
         1
     );
-    runtime
+    let advanced = runtime
         .observe_test(ApplicationInput::Frame {
             display_resource_id: None,
             timestamp_ms: 13_200.0,
@@ -807,6 +934,10 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
             spatial: Default::default(),
         })
         .unwrap();
+    assert_eq!(
+        advanced.drawing.unwrap().presentation.frame_rate_label,
+        "FPS 10.0"
+    );
     assert!(
         runtime
             .application()
@@ -861,7 +992,7 @@ fn hmd_frame_and_focus_use_the_confirmed_display_resource_and_shared_viewer_capt
             spatial: Default::default(),
         })
         .unwrap();
-    let camera = current.scene.camera.unwrap();
+    let camera = current.drawing.unwrap().scene.camera.unwrap();
     assert_eq!(camera.world_from_head, Some(head));
     assert_eq!(camera.eyes.len(), 2);
     assert!(runtime.application().presentation_available());
@@ -921,7 +1052,7 @@ fn hmd_frame_and_focus_use_the_confirmed_display_resource_and_shared_viewer_capt
             &mut measure,
         )
         .unwrap();
-    let panel_before = match measured.spatial.unwrap().menu {
+    let panel_before = match measured.drawing.unwrap().spatial.unwrap().menu {
         ApplicationMenuProjection::Ready {
             world_from_panel, ..
         } => world_from_panel,
@@ -953,10 +1084,18 @@ fn hmd_frame_and_focus_use_the_confirmed_display_resource_and_shared_viewer_capt
         )
         .unwrap();
     assert_eq!(
-        reset_event.scene.camera.unwrap().world_from_head,
+        reset_event
+            .drawing
+            .as_ref()
+            .unwrap()
+            .scene
+            .camera
+            .as_ref()
+            .unwrap()
+            .world_from_head,
         Some(head)
     );
-    assert!(reset_event.spatial.is_none());
+    assert!(reset_event.drawing.unwrap().spatial.is_none());
     let mut shifted = observation;
     let new_from_previous =
         birdman_game_presentation::camera::inverse_pose(previous_from_new).unwrap();
@@ -984,8 +1123,19 @@ fn hmd_frame_and_focus_use_the_confirmed_display_resource_and_shared_viewer_capt
             &mut measure,
         )
         .unwrap();
-    assert_eq!(reset.scene.camera.unwrap().world_from_head, Some(head));
-    match reset.spatial.unwrap().menu {
+    assert_eq!(
+        reset
+            .drawing
+            .as_ref()
+            .unwrap()
+            .scene
+            .camera
+            .as_ref()
+            .unwrap()
+            .world_from_head,
+        Some(head)
+    );
+    match reset.drawing.unwrap().spatial.unwrap().menu {
         ApplicationMenuProjection::Ready {
             world_from_panel, ..
         } => {
@@ -1069,6 +1219,7 @@ fn display_completion_retains_owned_resources_and_reports_no_active_mode_after_s
             .is_empty()
     );
     assert_eq!(display.state().active_mode(), Some(Hmd));
+    assert!(display.ended(99, 40).is_empty());
     assert!(
         display
             .complete(3, DisplayCompletion::Started { resource_id: 10 }, 5)
@@ -1094,6 +1245,27 @@ fn display_completion_retains_owned_resources_and_reports_no_active_mode_after_s
             .as_slice(),
         [DisplayRequest::Release { resource_id: 99 }]
     ));
+    display.request(Hmd, 10);
+    display.complete(
+        10,
+        DisplayCompletion::PermissionGranted {
+            resource_id: Some(11),
+        },
+        12,
+    );
+    display.complete(12, DisplayCompletion::Started { resource_id: 11 }, 13);
+    assert!(matches!(
+        display.ended(11, 14).as_slice(),
+        [
+            DisplayRequest::Release { resource_id: 11 },
+            DisplayRequest::Start {
+                request_id: 14,
+                mode: Screen,
+                ..
+            }
+        ]
+    ));
+    assert_eq!(display.state().active_mode(), None);
 }
 
 #[test]
@@ -1171,7 +1343,7 @@ fn spatial_trigger_uses_submitted_painting_and_the_canonical_ui_action_owner() {
             _ => None,
         })
         .unwrap();
-    let opening = opening.spatial.unwrap();
+    let opening = opening.drawing.unwrap().spatial.unwrap();
     let (panel, paint) = match &opening.menu {
         ApplicationMenuProjection::Ready {
             tracking_from_panel,
@@ -1243,7 +1415,7 @@ fn spatial_trigger_uses_submitted_painting_and_the_canonical_ui_action_owner() {
         )
         .unwrap();
     assert!(
-        matches!(&hovered.spatial.unwrap().menu, ApplicationMenuProjection::Ready { cursors, .. } if cursors.len() == 1)
+        matches!(&hovered.drawing.unwrap().spatial.unwrap().menu, ApplicationMenuProjection::Ready { cursors, .. } if cursors.len() == 1)
     );
     let notification = runtime
         .update(
@@ -1258,7 +1430,7 @@ fn spatial_trigger_uses_submitted_painting_and_the_canonical_ui_action_owner() {
             &mut measure,
         )
         .unwrap();
-    assert!(notification.spatial.is_none());
+    assert!(notification.drawing.unwrap().spatial.is_none());
     let stale = runtime
         .update(
             ApplicationObservation {
@@ -1273,7 +1445,7 @@ fn spatial_trigger_uses_submitted_painting_and_the_canonical_ui_action_owner() {
             &mut measure,
         )
         .unwrap();
-    assert!(stale.spatial.is_none());
+    assert!(stale.drawing.unwrap().spatial.is_none());
     assert_eq!(
         runtime.application().core_session().snapshot().phase(),
         SessionPhase::Title
@@ -1296,7 +1468,10 @@ fn spatial_trigger_uses_submitted_painting_and_the_canonical_ui_action_owner() {
         runtime.application().core_session().snapshot().phase(),
         SessionPhase::FlightSetup
     );
-    assert!(matches!(selected.ui, ApplicationUiProjection::View { .. }));
+    assert!(matches!(
+        selected.drawing.unwrap().ui,
+        ApplicationUiProjection::View { .. }
+    ));
     runtime
         .update(
             ApplicationObservation {
@@ -1370,7 +1545,14 @@ fn graphics_commit_tracks_actual_resources_cleanup_and_renderer_lifetimes() {
     assert_eq!(target.quality.water_quality, WaterQuality::Low);
     assert_eq!(target.extent_px, [640, 360]);
     assert_eq!(
-        unsupported.graphics.resource.unwrap().quality.water_quality,
+        unsupported
+            .drawing
+            .unwrap()
+            .graphics
+            .resource
+            .unwrap()
+            .quality
+            .water_quality,
         WaterQuality::High
     );
     let prepared = runtime
@@ -1425,7 +1607,13 @@ fn graphics_commit_tracks_actual_resources_cleanup_and_renderer_lifetimes() {
         })
         .unwrap();
     assert_eq!(
-        first_commit.graphics.resource.unwrap().commit,
+        first_commit
+            .drawing
+            .unwrap()
+            .graphics
+            .resource
+            .unwrap()
+            .commit,
         initial_generation + 1
     );
     assert!(first_commit.requests.iter().any(|request| matches!(request, ApplicationRequest::CommitResources { request_id, resource_id: 701 } if *request_id == second_id)));
@@ -1445,7 +1633,7 @@ fn graphics_commit_tracks_actual_resources_cleanup_and_renderer_lifetimes() {
             },
         })
         .unwrap();
-    let resource = committed.graphics.resource.unwrap();
+    let resource = committed.drawing.unwrap().graphics.resource.unwrap();
     assert_eq!(resource.quality, second_target.quality);
     assert_eq!(resource.extent_px, [641, 361]);
     assert_eq!(resource.commit, initial_generation + 2);
@@ -1546,7 +1734,7 @@ fn graphics_commit_tracks_actual_resources_cleanup_and_renderer_lifetimes() {
             observation: replacement,
         })
         .unwrap();
-    let new_resource = replaced.graphics.resource.unwrap();
+    let new_resource = replaced.drawing.unwrap().graphics.resource.unwrap();
     runtime
         .observe_test(ApplicationInput::Resources {
             request_id: second_id,
@@ -1604,7 +1792,7 @@ fn graphics_commit_tracks_actual_resources_cleanup_and_renderer_lifetimes() {
             },
         })
         .unwrap();
-    assert!(invalid.graphics.resource.is_none());
+    assert!(invalid.drawing.unwrap().graphics.resource.is_none());
     assert!(invalid.diagnostic.is_some());
     assert!(
         !invalid
@@ -1650,6 +1838,7 @@ fn immersive_quality_retains_screen_configuration_and_uses_manual_water() {
 
 fn renderer_observation() -> ApplicationRendererObservation {
     ApplicationRendererObservation {
+        gpu_timing: ApplicationGpuTimingCapability::Available,
         resource_id: 100,
         extent_px: [1280, 720],
         screen_extent_px: [1280, 720],

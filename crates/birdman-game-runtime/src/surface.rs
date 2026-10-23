@@ -174,6 +174,14 @@ pub(super) struct SurfaceAction {
     pub back: bool,
 }
 
+pub(super) struct SurfaceDisplay {
+    pub resource: Option<(
+        birdman_game_presentation::game_ui::GameUiPresentationMode,
+        Option<u32>,
+    )>,
+    pub frame_rate_label: String,
+}
+
 impl SurfaceOwner {
     pub(super) fn retire_input(&mut self) {
         self.pointer = XrPointerSession::default();
@@ -236,13 +244,16 @@ impl SurfaceOwner {
             return Ok(None);
         }
         let menu = self.published.as_ref().unwrap();
-        let gamepad = observation
+        let gamepads: Vec<_> = observation
             .gamepads
+            .iter()
+            .filter_map(super::ApplicationGamepadObservation::menu)
+            .collect();
+        let gamepad = gamepads
             .iter()
             .find(|pad| self.gamepad == Some((pad.index, pad.generation)))
             .or_else(|| {
-                observation
-                    .gamepads
+                gamepads
                     .iter()
                     .min_by_key(|pad| (pad.index, pad.generation))
             })
@@ -392,14 +403,15 @@ impl SurfaceOwner {
         frame: &GameUiFrame,
         scene: &SceneFrame,
         font: Option<&ApplicationSurfaceObservation>,
-        display: Option<(
-            birdman_game_presentation::game_ui::GameUiPresentationMode,
-            Option<u32>,
-        )>,
+        display: SurfaceDisplay,
         measure: &mut impl FnMut(
             &ApplicationTextProbe,
         ) -> Result<ApplicationGlyphMetrics, MenuLayoutFailure>,
     ) -> Result<ApplicationSpatialProjection, ApplicationRuntimeError> {
+        let SurfaceDisplay {
+            resource: display,
+            frame_rate_label,
+        } = display;
         let active = display.is_some_and(|(mode, _)| {
             mode != birdman_game_presentation::game_ui::GameUiPresentationMode::Screen
         });
@@ -598,7 +610,7 @@ impl SurfaceOwner {
                         profile: XrHeadHudProfile::default(),
                         font: font.font.clone(),
                         locale: font.locale.clone(),
-                        frame_rate_label: None,
+                        frame_rate_label: Some(frame_rate_label),
                     },
                     &mut self.cache,
                     |request, size, value| measure_pixels(request, size, value, 2048.0, measure),

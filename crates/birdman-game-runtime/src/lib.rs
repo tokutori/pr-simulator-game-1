@@ -3,9 +3,13 @@
 mod assets;
 mod boot;
 mod display;
+mod frame_rate;
+mod gamepad;
+mod geometry;
 mod graphics;
 mod phone;
 mod scene;
+mod shutdown;
 mod storage;
 mod surface;
 mod types;
@@ -16,14 +20,23 @@ pub use assets::{
     ApplicationWaterDetailAsset,
 };
 pub use boot::{ApplicationRendererCreation, application_startup_html};
+pub use gamepad::ApplicationGamepadObservation;
+pub use geometry::{
+    ApplicationBufferDescriptor, ApplicationBufferSlice, ApplicationBufferType,
+    ApplicationGeometryAssets, ApplicationGeometryFrame, ApplicationGeometryTexture,
+    ApplicationMeshAsset, ApplicationMeshAttachment, ApplicationMeshMaterial, ApplicationMeshPose,
+    ApplicationMeshUpdate,
+};
+pub use geometry::{ApplicationWaterBounds, ApplicationWaterChunkAsset, ApplicationWaterGeometry};
 pub use graphics::{
-    ApplicationGpuQuery, ApplicationGraphicsObservation, ApplicationGraphicsProjection,
-    ApplicationGraphicsResource, ApplicationGraphicsTarget, ApplicationRenderQuality,
-    ApplicationRendererObservation, ApplicationResourceCommit,
+    ApplicationGpuQuery, ApplicationGpuTimingCapability, ApplicationGraphicsObservation,
+    ApplicationGraphicsProjection, ApplicationGraphicsResource, ApplicationGraphicsTarget,
+    ApplicationRenderQuality, ApplicationRendererObservation, ApplicationResourceCommit,
 };
 pub use scene::{
     ApplicationCameraProjection, ApplicationEyeProjection, ApplicationSceneProjection,
 };
+pub use shutdown::ApplicationLifecycle;
 pub use storage::ApplicationRecordLoadCompletion;
 pub use surface::{
     ApplicationGlyphMetrics, ApplicationHeadHudProjection, ApplicationMenuCursor,
@@ -92,6 +105,8 @@ pub struct ApplicationRuntime {
     assets: assets::AssetsOwner,
     diagnostic: Option<String>,
     boot: boot::BootOwner,
+    shutdown: shutdown::ShutdownOwner,
+    frame_rate: frame_rate::FrameRateOwner,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -177,6 +192,8 @@ impl ApplicationRuntime {
             assets: assets::AssetsOwner::default(),
             diagnostic: None,
             boot,
+            shutdown: shutdown::ShutdownOwner::default(),
+            frame_rate: frame_rate::FrameRateOwner::default(),
         })
     }
 
@@ -185,9 +202,15 @@ impl ApplicationRuntime {
         &self.application
     }
 
-    /// Borrows immutable upload bytes retained by an active or outstanding resource preparation.
-    pub fn asset_bytes(&self, buffer_id: u32) -> Option<&[u8]> {
-        self.assets.bytes(buffer_id)
+    /// Borrows a read-only typed upload for the current output, valid until the next mutable update.
+    /// Static preparation data is retained across its resource lifetime; mutable attributes are submitted synchronously.
+    pub fn asset_buffer(&self, buffer_id: u32) -> Option<ApplicationBufferSlice<'_>> {
+        self.assets.buffer(buffer_id)
+    }
+
+    /// Copies one common GPU buffer into the platform-independent wire encoding.
+    pub fn asset_bytes(&self, buffer_id: u32) -> Option<Vec<u8>> {
+        self.asset_buffer(buffer_id).map(|buffer| buffer.to_bytes())
     }
 
     /// Processes one observation; adapters execute only the returned I/O requests.
@@ -203,12 +226,88 @@ impl ApplicationRuntime {
             return Err(ApplicationRuntimeError::InvalidTimestamp);
         }
         self.observed_ms = observed_ms;
-        self.phone.observe_time(observed_ms);
+        let input = match input {
+            ApplicationInput::PageHide { persisted: true } => {
+                ApplicationInput::PageVisibility { visible: false }
+            }
+            ApplicationInput::PageHide { persisted: false } => ApplicationInput::Dispose,
+            input => input,
+        };
+        let admitted_terminal = self.shutdown.observe(&input);
+        let input = if self.shutdown.closed()
+            && !matches!(
+                input,
+                ApplicationInput::Resources { .. }
+                    | ApplicationInput::ResourcesReleased { .. }
+                    | ApplicationInput::RendererCreated { .. }
+                    | ApplicationInput::RendererReleased { .. }
+                    | ApplicationInput::DisplayCompleted { .. }
+                    | ApplicationInput::DisplayReleased { .. }
+                    | ApplicationInput::RecordIoCancelled { .. }
+                    | ApplicationInput::RecordSaveObserved { .. }
+                    | ApplicationInput::RecordPreviewObserved { .. }
+                    | ApplicationInput::RecordLoaded { .. }
+                    | ApplicationInput::DownloadCompleted { .. }
+            ) {
+            ApplicationInput::PageVisibility { visible: false }
+        } else {
+            input
+        };
+        let io_continuation = match &input {
+            ApplicationInput::RecordSaveOpened { .. } => true,
+            ApplicationInput::RecordSaveObserved { observation, .. } => !matches!(
+                observation,
+                birdman_game_app::record_persistence::RecordWriteObservation::Committed
+                    | birdman_game_app::record_persistence::RecordWriteObservation::Failed { .. }
+            ),
+            ApplicationInput::RecordPreviewObserved { observation, .. } => !matches!(
+                observation,
+                birdman_game_app::record_persistence::RecordPreviewObservation::Committed
+                    | birdman_game_app::record_persistence::RecordPreviewObservation::Failed { .. }
+            ),
+            _ => false,
+        };
+        if !io_continuation {
+            self.phone.observe_time(observed_ms);
+        }
         let mut requests = Vec::new();
         let mut keyboard_consumed = false;
         let mut spatial_frame = None;
         let mut render_spatial = false;
         match input {
+            ApplicationInput::DisplayEnded { resource_id } => {
+                if self.display.active_resource() == Some(resource_id) {
+                    let next_id = self.allocate_request()?;
+                    requests.extend(
+                        self.display
+                            .ended(resource_id, next_id)
+                            .into_iter()
+                            .map(|request| ApplicationRequest::Display { request }),
+                    );
+                }
+            }
+            ApplicationInput::Dispose => {
+                let renderer = self.graphics.retire();
+                requests.extend(self.shutdown.begin(renderer));
+                self.boot = boot::BootOwner::Closed;
+                self.page_visible = false;
+                self.storage.close();
+                requests.extend(self.assets.select(None));
+                requests.extend(
+                    self.display
+                        .close()
+                        .into_iter()
+                        .map(|request| ApplicationRequest::Display { request }),
+                );
+            }
+            ApplicationInput::PageHide { .. } => unreachable!(),
+            ApplicationInput::RendererReleased { failure, .. }
+            | ApplicationInput::DisplayReleased { failure, .. }
+            | ApplicationInput::RecordIoCancelled { failure, .. } => {
+                if admitted_terminal && let Some(cause) = failure {
+                    self.diagnostic = Some(cause);
+                }
+            }
             ApplicationInput::RendererCreated { request_id, result } => {
                 if self.boot.accepts(request_id) {
                     match result {
@@ -417,6 +516,7 @@ impl ApplicationRuntime {
                     if timestamp_ms > observed_ms {
                         return Err(ApplicationRuntimeError::InvalidTimestamp);
                     }
+                    self.frame_rate.observe(timestamp_ms);
                     if self.xr_resource.is_some() {
                         self.xr_viewer = Some(match xr {
                             Some(xr) => {
@@ -432,7 +532,11 @@ impl ApplicationRuntime {
                     }
                     self.synchronize_xr()?;
                     if !self.display.state().pending() {
-                        self.advance_frame(timestamp_ms, &gamepads, self.page_visible)?;
+                        let flight_gamepads: Vec<_> = gamepads
+                            .iter()
+                            .filter_map(ApplicationGamepadObservation::flight)
+                            .collect();
+                        self.advance_frame(timestamp_ms, &flight_gamepads, self.page_visible)?;
                         spatial_frame = Some((spatial, timestamp_ms));
                     }
                     render_spatial = true;
@@ -570,10 +674,12 @@ impl ApplicationRuntime {
                         self.boot = boot::BootOwner::Failed;
                     }
                 }
-                if matches!(
-                    self.application.core_session().snapshot().phase(),
-                    SessionPhase::BriefingPreparing
-                ) {
+                if !self.shutdown.closed()
+                    && matches!(
+                        self.application.core_session().snapshot().phase(),
+                        SessionPhase::BriefingPreparing
+                    )
+                {
                     self.application
                         .observe_readiness(self.resource_readiness)
                         .map_err(ApplicationRuntimeError::Session)?;
@@ -595,6 +701,9 @@ impl ApplicationRuntime {
                         .map(|request| ApplicationRequest::Display { request }),
                 );
             }
+        }
+        if io_continuation {
+            return Ok(self.output(None, requests, keyboard_consumed));
         }
         self.synchronize_phone(&mut requests)?;
         self.synchronize_xr()?;
@@ -639,12 +748,20 @@ impl ApplicationRuntime {
                 self.synchronize_resources(&mut requests)?;
             }
         }
-        self.storage.reconcile(&self.application);
-        if self.platform.stored_records_available && self.storage.needs_preview(&self.application) {
+        if !self.shutdown.closed() {
+            self.storage.reconcile(&self.application);
+        }
+        if !self.shutdown.closed()
+            && self.platform.stored_records_available
+            && self.storage.needs_preview(&self.application)
+        {
             let request_id = self.allocate_request()?;
             requests.push(self.storage.begin_preview(request_id));
         }
-        if self.platform.stored_records_available && self.storage.needs_save(&self.application) {
+        if !self.shutdown.closed()
+            && self.platform.stored_records_available
+            && self.storage.needs_save(&self.application)
+        {
             let request_id = self.allocate_request()?;
             requests.push(self.storage.begin(&self.application, request_id)?);
         }
@@ -695,7 +812,7 @@ impl ApplicationRuntime {
                 frame: Box::new(frame),
             }
         };
-        let scene_frame = self.scene.project(scene::SceneContext {
+        let mut scene_frame = self.scene.project(scene::SceneContext {
             application: &self.application,
             ui: &self.ui,
             viewport: &self.platform.viewport,
@@ -708,6 +825,10 @@ impl ApplicationRuntime {
             xr_viewer: self.xr_viewer.as_ref(),
             phone_head: self.phone.projection().last_valid_head,
         })?;
+        scene_frame.projection.geometry = self
+            .assets
+            .project_geometry(scene_frame.aircraft)
+            .map_err(ApplicationRuntimeError::Assets)?;
         let view = self.retained.as_ref().unwrap();
         let structural_frame = if matches!(projection, ApplicationUiProjection::View { .. }) {
             Some(
@@ -728,32 +849,71 @@ impl ApplicationRuntime {
                     frame,
                     &scene_frame,
                     self.surface_observation.as_ref(),
-                    self.display
-                        .state()
-                        .active_mode()
-                        .map(|mode| (mode, self.display.active_resource())),
+                    surface::SurfaceDisplay {
+                        resource: self
+                            .display
+                            .state()
+                            .active_mode()
+                            .map(|mode| (mode, self.display.active_resource())),
+                        frame_rate_label: self.frame_rate.label(),
+                    },
                     measure,
                 )?,
             )
         } else {
             None
         };
-        Ok(ApplicationOutput {
+        let graphics = self
+            .graphics
+            .projection(render_spatial, observed_ms)
+            .map_err(ApplicationRuntimeError::Graphics)?;
+        let drawing = ApplicationDrawingOutput {
+            presentation: ApplicationDrawingPresentation {
+                frame_rate_label: self.frame_rate.label(),
+                mode: self.display.state().active_mode(),
+                screen_ui_visible: !self.shutdown.closed()
+                    && self
+                        .display
+                        .state()
+                        .active_mode()
+                        .is_none_or(|mode| mode == GameUiPresentationMode::Screen),
+                screen_hud_visible: !self.shutdown.closed()
+                    && self.display.state().active_mode() == Some(GameUiPresentationMode::Screen)
+                    && view.hud.is_some(),
+                scene_visible: !self.shutdown.closed()
+                    && self.page_visible
+                    && self.drawable_resources_available()
+                    && scene_frame.projection.camera.is_some(),
+            },
+            graphics,
+            scene: scene_frame.projection,
+            spatial,
+            ui: projection,
+        };
+        Ok(self.output(Some(drawing), requests, keyboard_consumed))
+    }
+
+    fn output(
+        &mut self,
+        drawing: Option<ApplicationDrawingOutput>,
+        mut requests: Vec<ApplicationRequest>,
+        keyboard_consumed: bool,
+    ) -> ApplicationOutput {
+        self.shutdown.requests(&requests);
+        if let Some(request) = self.shutdown.release_renderer() {
+            self.shutdown.requests(std::slice::from_ref(&request));
+            requests.push(request);
+        }
+        ApplicationOutput {
+            drawing,
+            lifecycle: self.shutdown.lifecycle(),
             diagnostic: self
                 .diagnostic
                 .take()
                 .or_else(|| self.storage.take_diagnostic()),
-            graphics: self
-                .graphics
-                .projection(render_spatial, observed_ms)
-                .map_err(ApplicationRuntimeError::Graphics)?,
-            scene: scene_frame.projection,
-            spatial,
-            ui: projection,
-            display: self.display.state().clone(),
             requests,
             keyboard_consumed,
-        })
+        }
     }
 
     fn spatial_input_focused(&self) -> bool {
@@ -1113,7 +1273,7 @@ impl ApplicationRuntime {
         &mut self,
         requests: &mut Vec<ApplicationRequest>,
     ) -> Result<(), ApplicationRuntimeError> {
-        if matches!(self.boot, boot::BootOwner::Failed) {
+        if matches!(self.boot, boot::BootOwner::Failed | boot::BootOwner::Closed) {
             requests.extend(self.assets.select(None));
             self.resources = None;
             return Ok(());

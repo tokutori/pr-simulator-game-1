@@ -27,6 +27,7 @@ pub(super) enum BootOwner {
     Preparing,
     Failed,
     Ready,
+    Closed,
 }
 
 impl BootOwner {
@@ -54,6 +55,7 @@ impl BootOwner {
     pub(super) fn description(&self) -> &'static str {
         match self {
             Self::Failed => "表示を準備できない。再試行するか、ページを再読み込みする。",
+            Self::Closed => "ゲームを終了した。",
             Self::Preparing => "空と会場を準備している。",
             _ => "ゲームの表示を準備している。",
         }
@@ -65,6 +67,7 @@ impl BootOwner {
             Self::Preparing => "boot-preparing",
             Self::Failed => "boot-failed",
             Self::Ready => "boot-ready",
+            Self::Closed => "boot-closed",
         }
     }
 
