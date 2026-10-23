@@ -34,6 +34,7 @@ pub fn game_ui_view(
             credits(&mut menu)
         }
         SessionPhase::Title => {
+            notification(&mut menu, context);
             menu.section("title-actions", "", GameUiSectionLayout::Row);
             menu.session(
                 "game-title-start",

@@ -866,6 +866,9 @@ fn stored_record_preview_load_retry_and_original_download_share_owner() {
         .unwrap()
     );
     let record = json!({ "id": 7, "savedAt": "2026-10-23T00:00:00Z", "json": original });
+    let replacement_original = format!("{original}\n");
+    let replacement_record =
+        json!({ "id": 8, "savedAt": "2026-10-23T00:00:01Z", "json": replacement_original });
     let platform = ApplicationPlatformObservation {
         renderer: Some(renderer_observation()),
         surface: None,
@@ -903,11 +906,18 @@ fn stored_record_preview_load_retry_and_original_download_share_owner() {
         .observe_test(ApplicationInput::RecordPreviewObserved {
             request_id: preview_id,
             observation: Seen::Rows {
-                rows: vec![RecordPreviewRow {
-                    key: json!(7),
-                    metadata: json!({ "id": 7, "savedAt": "2026-10-23T00:00:00Z" }),
-                    record: record.clone(),
-                }],
+                rows: vec![
+                    RecordPreviewRow {
+                        key: json!(8),
+                        metadata: json!({ "id": 8, "savedAt": "2026-10-23T00:00:01Z" }),
+                        record: replacement_record.clone(),
+                    },
+                    RecordPreviewRow {
+                        key: json!(7),
+                        metadata: json!({ "id": 7, "savedAt": "2026-10-23T00:00:00Z" }),
+                        record: record.clone(),
+                    },
+                ],
             },
         })
         .unwrap();
@@ -944,13 +954,46 @@ fn stored_record_preview_load_retry_and_original_download_share_owner() {
     assert!(!runtime.platform.notification.contains("raw I/O failure"));
     assert!(!runtime.platform.operation_pending);
     let title = structure(failed);
-    let retry = activate_action(&mut runtime, &title, action);
+    assert!(
+        title
+            .panels
+            .iter()
+            .flat_map(|panel| &panel.controls)
+            .any(|control| {
+                matches!(&control.content, GameUiControlContent::Status { value, .. }
+            if value == "飛行記録を開けない。記録を選び直して再試行できる。")
+            })
+    );
+    let retry = activate_action(
+        &mut runtime,
+        &title,
+        GameUiAction::Platform {
+            command: GameUiPlatformCommand::OpenStoredRecord { id: 8 },
+        },
+    );
     let retry_id = match retry.requests.as_slice() {
-        [ApplicationRequest::ReadRecord { request_id, .. }] => *request_id,
+        [
+            ApplicationRequest::ReadRecord {
+                request_id,
+                record_id: 8,
+            },
+        ] => *request_id,
         other => panic!("Expected a new record read: {other:?}"),
     };
     assert_ne!(request_id, retry_id);
-    runtime
+    let pending = structure(retry);
+    let next_request_id = runtime.next_request_id;
+    assert!(matches!(
+        runtime.observe_test(ApplicationInput::Control {
+            view_revision: pending.view_revision,
+            input: GameUiControlInput::Activate {
+                control_id: "game-title-open-record-8".to_owned(),
+            },
+        }),
+        Err(ApplicationRuntimeError::Ui(GameUiError::ActionUnavailable))
+    ));
+    assert_eq!(runtime.next_request_id, next_request_id);
+    let late = runtime
         .observe_test(ApplicationInput::RecordLoaded {
             request_id,
             completion: ApplicationRecordLoadCompletion::Found {
@@ -958,7 +1001,10 @@ fn stored_record_preview_load_retry_and_original_download_share_owner() {
             },
         })
         .unwrap();
+    assert!(late.requests.is_empty());
+    assert!(late.diagnostic.is_none());
     assert!(runtime.storage.load_pending());
+    assert!(runtime.application().archive().is_none());
     assert_eq!(
         runtime.application().core_session().snapshot().phase(),
         SessionPhase::Title
@@ -966,12 +1012,14 @@ fn stored_record_preview_load_retry_and_original_download_share_owner() {
     runtime
         .observe_test(ApplicationInput::RecordLoaded {
             request_id: retry_id,
-            completion: ApplicationRecordLoadCompletion::Found { value: record },
+            completion: ApplicationRecordLoadCompletion::Found {
+                value: replacement_record,
+            },
         })
         .unwrap();
     assert_eq!(
         runtime.application().archive().unwrap().original_json(),
-        original
+        replacement_original
     );
     let file_id = runtime.allocate_request().unwrap();
     let download = runtime
@@ -979,7 +1027,7 @@ fn stored_record_preview_load_retry_and_original_download_share_owner() {
         .download(&runtime.application, file_id, false)
         .unwrap();
     assert!(
-        matches!(download, ApplicationRequest::DownloadFile { bytes, .. } if bytes == original.as_bytes())
+        matches!(download, ApplicationRequest::DownloadFile { bytes, .. } if bytes == replacement_original.as_bytes())
     );
     let failed = runtime
         .observe_test(ApplicationInput::DownloadCompleted {

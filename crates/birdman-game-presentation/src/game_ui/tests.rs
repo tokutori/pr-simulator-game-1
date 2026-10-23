@@ -867,6 +867,7 @@ fn title_projects_saved_timestamps_without_rewriting_platform_metadata() {
     let session = GameSession::new();
     let mut platform = platform();
     platform.stored_records_available = true;
+    platform.notification = "飛行記録を開けない。記録を選び直して再試行できる。".to_owned();
     platform.stored_records = GameUiStoredRecordPreview::from(vec![GameUiStoredRecord {
         id: 7,
         saved_at: "2026-01-01T00:20:45+09:00".to_owned(),
@@ -889,6 +890,10 @@ fn title_projects_saved_timestamps_without_rewriting_platform_metadata() {
             },
             ..
         }
+    ));
+    assert!(matches!(
+        &control(&view, "game-state").content,
+        GameUiControlContent::Status { value, .. } if value == &platform.notification
     ));
     assert_eq!(platform, before);
 }
