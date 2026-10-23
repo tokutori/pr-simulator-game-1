@@ -159,6 +159,8 @@ pub enum CameraError {
     InvalidPose,
     /// A displacement or viewing distance is invalid.
     InvalidDistance,
+    /// A projection or its final world-space product is non-finite or singular.
+    InvalidProjection,
     /// Registered aircraft geometry is unavailable.
     AircraftUnavailable,
 }
@@ -168,6 +170,7 @@ impl core::fmt::Display for CameraError {
         formatter.write_str(match self {
             Self::InvalidPose => "Camera pose must be finite with unit orientation",
             Self::InvalidDistance => "Camera displacement and distance must be finite",
+            Self::InvalidProjection => "Camera projection must be finite and invertible",
             Self::AircraftUnavailable => "Registered aircraft eye geometry is unavailable",
         })
     }
@@ -199,6 +202,205 @@ pub fn inverse_pose(value: Pose) -> Result<Pose, CameraError> {
         .normalized()
         .and_then(|pose| pose.inverse().normalized())
         .ok_or(CameraError::InvalidPose)
+}
+
+/// Final mirrored camera and its world-to-clip matrix for a horizontal water plane.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct PlanarReflection {
+    /// Reflected camera-to-world transform with reflected forward and up directions.
+    pub world_from_camera: Pose,
+    /// Original column-major drawing projection.
+    pub projection: [f64; 16],
+    /// Column-major projection multiplied by the reflected world-to-camera transform.
+    pub projection_from_world: [f64; 16],
+}
+
+/// Reflects the camera above the water; the existing 5 cm near-surface exclusion is retained.
+pub fn planar_reflection(
+    world_from_camera: Pose,
+    projection: [f64; 16],
+    water_level_m: f64,
+) -> Result<Option<PlanarReflection>, CameraError> {
+    let camera = world_from_camera
+        .normalized()
+        .ok_or(CameraError::InvalidPose)?;
+    if !projection_matrix_is_valid(&projection) {
+        return Err(CameraError::InvalidProjection);
+    }
+    if !water_level_m.is_finite() {
+        return Err(CameraError::InvalidDistance);
+    }
+    if camera.position.y - water_level_m <= 0.05 {
+        return Ok(None);
+    }
+    let rotation = camera.orientation;
+    let mirrored = Pose {
+        position: Vector3 {
+            y: water_level_m - (camera.position.y - water_level_m),
+            ..camera.position
+        },
+        orientation: Quaternion {
+            w: rotation.z,
+            x: rotation.y,
+            y: rotation.x,
+            z: rotation.w,
+        },
+    }
+    .normalized()
+    .ok_or(CameraError::InvalidPose)?;
+    let inverse = mirrored.inverse();
+    let right = inverse.rotate(Vector3 {
+        x: 1.0,
+        y: 0.0,
+        z: 0.0,
+    });
+    let up = inverse.rotate(Vector3 {
+        x: 0.0,
+        y: 1.0,
+        z: 0.0,
+    });
+    let back = inverse.rotate(Vector3 {
+        x: 0.0,
+        y: 0.0,
+        z: 1.0,
+    });
+    let view = [
+        right.x,
+        right.y,
+        right.z,
+        0.0,
+        up.x,
+        up.y,
+        up.z,
+        0.0,
+        back.x,
+        back.y,
+        back.z,
+        0.0,
+        inverse.position.x,
+        inverse.position.y,
+        inverse.position.z,
+        1.0,
+    ];
+    let projection_from_world = core::array::from_fn(|index| {
+        let row = index % 4;
+        let column = index / 4;
+        (0..4)
+            .map(|inner| projection[inner * 4 + row] * view[column * 4 + inner])
+            .sum()
+    });
+    if !projection_from_world.into_iter().all(f64::is_finite) {
+        return Err(CameraError::InvalidProjection);
+    }
+    Ok(Some(PlanarReflection {
+        world_from_camera: mirrored,
+        projection,
+        projection_from_world,
+    }))
+}
+
+/// Checks finite, invertible column-major projection data without replacing it.
+pub fn projection_matrix_is_valid(values: &[f64]) -> bool {
+    if values.len() != 16 || !values.iter().all(|value| value.is_finite()) {
+        return false;
+    }
+    let mut rows = core::array::from_fn::<_, 4, _>(|row| {
+        core::array::from_fn::<_, 4, _>(|column| values[column * 4 + row])
+    });
+    for column in 0..4 {
+        let mut pivot = column;
+        for row in column + 1..4 {
+            if rows[row][column].abs() > rows[pivot][column].abs() {
+                pivot = row;
+            }
+        }
+        if rows[pivot][column] == 0.0 {
+            return false;
+        }
+        rows.swap(pivot, column);
+        let pivot_values = rows[column];
+        for row in &mut rows[column + 1..] {
+            let ratio = row[column] / pivot_values[column];
+            for (value, pivot) in row[column..].iter_mut().zip(&pivot_values[column..]) {
+                *value -= ratio * pivot;
+            }
+            if !row.iter().all(|value| value.is_finite()) {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+pub(crate) fn inverse_matrix(values: [f64; 16]) -> Option<([f64; 16], f64)> {
+    let mut rows = core::array::from_fn::<_, 4, _>(|row| {
+        core::array::from_fn::<_, 8, _>(|column| {
+            if column < 4 {
+                values[column * 4 + row]
+            } else if column - 4 == row {
+                1.0
+            } else {
+                0.0
+            }
+        })
+    });
+    for column in 0..4 {
+        let pivot = (column..4).max_by(|first, second| {
+            rows[*first][column]
+                .abs()
+                .total_cmp(&rows[*second][column].abs())
+        })?;
+        if rows[pivot][column] == 0.0 {
+            return None;
+        }
+        rows.swap(pivot, column);
+        let divisor = rows[column][column];
+        for value in &mut rows[column] {
+            *value /= divisor;
+        }
+        let normalized = rows[column];
+        for (row_index, row) in rows.iter_mut().enumerate() {
+            if row_index != column {
+                let ratio = row[column];
+                for (value, pivot) in row.iter_mut().zip(normalized) {
+                    *value -= ratio * pivot;
+                }
+            }
+        }
+    }
+    let result = core::array::from_fn(|index| rows[index % 4][index / 4 + 4]);
+    if !result.into_iter().all(f64::is_finite) {
+        return None;
+    }
+    let norm = (0..4)
+        .map(|row| {
+            (0..4)
+                .map(|column| result[column * 4 + row].abs())
+                .sum::<f64>()
+        })
+        .fold(0.0, f64::max);
+    let residual = (0..4)
+        .map(|row| {
+            (0..4)
+                .map(|column| {
+                    let products = core::array::from_fn::<_, 4, _>(|inner| {
+                        values[inner * 4 + row] * result[column * 4 + inner]
+                    });
+                    let expected = if row == column { 1.0 } else { 0.0 };
+                    (expected - products.into_iter().sum::<f64>()).abs()
+                        + 16.0
+                            * f64::EPSILON
+                            * (1.0 + products.into_iter().map(f64::abs).sum::<f64>())
+                })
+                .sum::<f64>()
+        })
+        .fold(0.0, f64::max);
+    if !norm.is_finite() || !residual.is_finite() || residual >= 0.25 {
+        return None;
+    }
+    let error = norm * (residual / (1.0 - residual));
+    error.is_finite().then_some((result, error))
 }
 
 /// Pose in aircraft FRD coordinates, before the render-axis conversion.
@@ -381,6 +583,103 @@ pub fn flight_camera_pose(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn water_reflection_preserves_projection_and_mirrors_the_complete_camera_basis() {
+        let projection = [
+            2.0, 0.0, 0.0, 0.0, 0.0, 3.0, 0.0, 0.0, 0.0, 0.0, -1.0, -1.0, 0.0, 0.0, -0.1, 0.0,
+        ];
+        let camera = Pose {
+            position: Vector3 {
+                x: 2.0,
+                y: 4.0,
+                z: 3.0,
+            },
+            ..Pose::IDENTITY
+        };
+        let reflected = planar_reflection(camera, projection, 1.0).unwrap().unwrap();
+        assert_eq!(
+            reflected.world_from_camera.position,
+            Vector3 {
+                x: 2.0,
+                y: -2.0,
+                z: 3.0
+            }
+        );
+        assert_eq!(reflected.projection, projection);
+        assert_eq!(
+            reflected.projection_from_world,
+            [
+                -2.0, 0.0, 0.0, 0.0, 0.0, -3.0, 0.0, 0.0, 0.0, 0.0, -1.0, -1.0, 4.0, -6.0, 2.9, 3.0
+            ]
+        );
+        let rotation = camera_local_pose(
+            FrdPose {
+                position_frd_m: [0.0; 3],
+                orientation_frd_wxyz: [1.0, 0.0, 0.0, 0.0],
+            },
+            0.0,
+            0.0,
+            false,
+            [0.4, -0.2],
+        )
+        .unwrap()
+        .orientation;
+        let tilted = Pose {
+            orientation: rotation,
+            ..camera
+        };
+        let reflected = planar_reflection(tilted, projection, 1.0).unwrap().unwrap();
+        for axis in [
+            Vector3 {
+                x: 0.0,
+                y: 1.0,
+                z: 0.0,
+            },
+            Vector3 {
+                x: 0.0,
+                y: 0.0,
+                z: -1.0,
+            },
+        ] {
+            let source = tilted.rotate(axis);
+            let actual = reflected.world_from_camera.rotate(axis);
+            assert!((actual.x - source.x).abs() < 1.0e-14);
+            assert!((actual.y + source.y).abs() < 1.0e-14);
+            assert!((actual.z - source.z).abs() < 1.0e-14);
+        }
+        let boundary = Pose {
+            position: Vector3 {
+                y: 0.05,
+                ..camera.position
+            },
+            ..camera
+        };
+        assert_eq!(planar_reflection(boundary, projection, 0.0).unwrap(), None);
+        assert!(
+            planar_reflection(
+                Pose {
+                    position: Vector3 {
+                        y: 0.05_f64.next_up(),
+                        ..camera.position
+                    },
+                    ..camera
+                },
+                projection,
+                0.0
+            )
+            .unwrap()
+            .is_some()
+        );
+        assert_eq!(
+            planar_reflection(camera, [0.0; 16], 0.0),
+            Err(CameraError::InvalidProjection)
+        );
+        assert_eq!(
+            planar_reflection(camera, projection, f64::NAN),
+            Err(CameraError::InvalidDistance)
+        );
+    }
 
     #[test]
     fn pilot_look_rotates_about_the_eye_and_aircraft_composition_keeps_precision() {

@@ -223,35 +223,120 @@ impl From<XrViewerUnavailableReason> for XrFitReason {
 
 /// Checks finite, invertible runtime projection data without replacing it.
 pub fn xr_projection_matrix_is_valid(values: &[f64]) -> bool {
-    if values.len() != 16 || !values.iter().all(|value| value.is_finite()) {
-        return false;
+    crate::camera::projection_matrix_is_valid(values)
+}
+
+/// Conservative head-local OpenGL clip matrix enclosing both complete finite eye frusta.
+/// An unbounded or unrepresentable frustum returns `None`, which disables coarse culling.
+/// The returned matrix is used only for culling; both drawing projections stay unchanged.
+pub fn xr_stereo_culling_projection(frame: &XrViewerFrame) -> Option<[f64; 16]> {
+    let views = PreparedViews::new(frame).ok()?;
+    let mut minimum = [f64::INFINITY; 3];
+    let mut maximum = [f64::NEG_INFINITY; 3];
+    for eye in views.eyes {
+        let (inverse, inverse_error) = crate::camera::inverse_matrix(eye.source.projection)?;
+        let near = match eye.source.depth_range {
+            XrDepthRange::NegativeOneToOne => -1.0,
+            XrDepthRange::ZeroToOne => 0.0,
+        };
+        let head_from_eye = eye.source.head_from_eye.normalized()?;
+        for horizontal in [-1.0, 1.0] {
+            for vertical in [-1.0, 1.0] {
+                for depth in [near, 1.0] {
+                    let clip = [horizontal, vertical, depth, 1.0];
+                    let camera = core::array::from_fn::<_, 4, _>(|row| {
+                        (0..4)
+                            .map(|column| inverse[column * 4 + row] * clip[column])
+                            .sum::<f64>()
+                    });
+                    let homogeneous_error = 4.0 * inverse_error
+                        + 16.0 * f64::EPSILON * inverse.into_iter().map(f64::abs).sum::<f64>();
+                    if !camera.into_iter().all(f64::is_finite) || camera[3] <= homogeneous_error {
+                        return None;
+                    }
+                    let centre = [
+                        camera[0] / camera[3],
+                        camera[1] / camera[3],
+                        camera[2] / camera[3],
+                    ];
+                    let coordinate_error = (0..3)
+                        .map(|axis| {
+                            let lower = (camera[axis] - homogeneous_error)
+                                / (camera[3] - homogeneous_error);
+                            let upper = (camera[axis] + homogeneous_error)
+                                / (camera[3] + homogeneous_error);
+                            let other_lower = (camera[axis] - homogeneous_error)
+                                / (camera[3] + homogeneous_error);
+                            let other_upper = (camera[axis] + homogeneous_error)
+                                / (camera[3] - homogeneous_error);
+                            [lower, upper, other_lower, other_upper]
+                                .into_iter()
+                                .map(|value| (value - centre[axis]).abs())
+                                .fold(0.0, f64::max)
+                        })
+                        .fold(0.0, f64::max);
+                    let point = head_from_eye.transform(Vector3 {
+                        x: centre[0],
+                        y: centre[1],
+                        z: centre[2],
+                    });
+                    let world_error = 3.0 * coordinate_error
+                        + 128.0
+                            * f64::EPSILON
+                            * (1.0
+                                + centre
+                                    .into_iter()
+                                    .chain(head_from_eye.position.array())
+                                    .map(f64::abs)
+                                    .sum::<f64>());
+                    if !world_error.is_finite() {
+                        return None;
+                    }
+                    for (axis, value) in point.array().into_iter().enumerate() {
+                        if !value.is_finite() {
+                            return None;
+                        }
+                        minimum[axis] = minimum[axis].min(value - world_error);
+                        maximum[axis] = maximum[axis].max(value + world_error);
+                    }
+                }
+            }
+        }
     }
-    let mut rows = core::array::from_fn::<_, 4, _>(|row| {
-        core::array::from_fn::<_, 4, _>(|column| values[column * 4 + row])
-    });
-    for column in 0..4 {
-        let mut pivot = column;
-        for row in column + 1..4 {
-            if rows[row][column].abs() > rows[pivot][column].abs() {
-                pivot = row;
-            }
-        }
-        if rows[pivot][column] == 0.0 {
-            return false;
-        }
-        rows.swap(pivot, column);
-        let pivot_values = rows[column];
-        for row in &mut rows[column + 1..] {
-            let ratio = row[column] / pivot_values[column];
-            for (value, pivot) in row[column..].iter_mut().zip(&pivot_values[column..]) {
-                *value -= ratio * pivot;
-            }
-            if !row.iter().all(|value| value.is_finite()) {
-                return false;
-            }
-        }
+    let padding = minimum
+        .into_iter()
+        .chain(maximum)
+        .map(f64::abs)
+        .fold(1.0, f64::max)
+        * (128.0 * f64::EPSILON);
+    let minimum = minimum.map(|value| value - padding);
+    let maximum = maximum.map(|value| value + padding);
+    let span = core::array::from_fn::<_, 3, _>(|axis| maximum[axis] - minimum[axis]);
+    if !span
+        .into_iter()
+        .all(|value| value.is_finite() && value > 0.0)
+    {
+        return None;
     }
-    true
+    let projection = [
+        2.0 / span[0],
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        2.0 / span[1],
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        2.0 / span[2],
+        0.0,
+        -(maximum[0] + minimum[0]) / span[0],
+        -(maximum[1] + minimum[1]) / span[1],
+        -(maximum[2] + minimum[2]) / span[2],
+        1.0,
+    ];
+    crate::camera::projection_matrix_is_valid(&projection).then_some(projection)
 }
 
 pub(super) struct PreparedEye<'a> {

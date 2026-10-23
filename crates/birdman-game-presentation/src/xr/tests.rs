@@ -181,6 +181,118 @@ fn menu_solver_fits_asymmetric_canted_views_and_physical_panel_offsets() {
 }
 
 #[test]
+fn culling_encloses_both_asymmetric_canted_eye_volumes_and_rejects_unbounded_views() {
+    for depth in [XrDepthRange::NegativeOneToOne, XrDepthRange::ZeroToOne] {
+        let mut frame = viewer(depth);
+        let XrViewerFrame::Configured { eyes, .. } = &mut frame else {
+            unreachable!()
+        };
+        for (index, eye) in eyes.iter_mut().enumerate() {
+            let yaw: f64 = if index == 0 { 0.12 } else { -0.08 };
+            eye.head_from_eye.orientation = Quaternion {
+                w: (yaw / 2.0).cos(),
+                x: 0.0,
+                y: (yaw / 2.0).sin(),
+                z: 0.0,
+            };
+            eye.projection[8] = if index == 0 { 0.2 } else { -0.1 };
+            eye.projection[9] = if index == 0 { 0.04 } else { -0.03 };
+        }
+        let source = eyes.clone();
+        let culling = xr_stereo_culling_projection(&frame).unwrap();
+        for eye in &source {
+            for distance in [0.05, 7.0, 100.0] {
+                for horizontal in [-1.0, 1.0] {
+                    for vertical in [-1.0, 1.0] {
+                        let point = eye.head_from_eye.transform(Vector3 {
+                            x: (horizontal + eye.projection[8]) * distance / eye.projection[0],
+                            y: (vertical + eye.projection[9]) * distance / eye.projection[5],
+                            z: -distance,
+                        });
+                        let projected = [
+                            culling[0] * point.x + culling[12],
+                            culling[5] * point.y + culling[13],
+                            culling[10] * point.z + culling[14],
+                        ];
+                        assert!(projected.into_iter().all(|value| value.abs() <= 1.0));
+                    }
+                }
+            }
+        }
+        let XrViewerFrame::Configured { eyes, .. } = &frame else {
+            unreachable!()
+        };
+        assert_eq!(eyes, &source);
+    }
+    let mut infinite = viewer(XrDepthRange::NegativeOneToOne);
+    let XrViewerFrame::Configured { eyes, .. } = &mut infinite else {
+        unreachable!()
+    };
+    for eye in eyes {
+        eye.projection[10] = -1.0;
+        eye.projection[14] = -0.1;
+    }
+    assert!(xr_stereo_culling_projection(&infinite).is_none());
+    assert!(
+        xr_stereo_culling_projection(&XrViewerFrame::Unavailable {
+            reason: XrViewerUnavailableReason::ViewerUnavailable,
+            tracking_from_head: None,
+        })
+        .is_none()
+    );
+}
+
+#[test]
+fn surface_depth_and_cursor_geometry_follow_the_shared_anchor_in_world_metres() {
+    use crate::game_ui::GameUiAnchor;
+    let panel = Pose {
+        position: Vector3 {
+            x: 10.0,
+            y: 20.0,
+            z: 30.0,
+        },
+        orientation: Quaternion {
+            w: core::f64::consts::FRAC_1_SQRT_2,
+            x: 0.0,
+            y: core::f64::consts::FRAC_1_SQRT_2,
+            z: 0.0,
+        },
+    };
+    let cursor = XrCursorProjection::try_new(GameUiAnchor::Menu, panel, [0.4, -0.2], 1.0).unwrap();
+    for (actual, expected) in cursor
+        .world_from_cursor
+        .position
+        .array()
+        .into_iter()
+        .zip([10.015, 19.8, 29.6])
+    {
+        assert!((actual - expected).abs() < 1.0e-13);
+    }
+    assert_eq!(cursor.diameter_m, 0.07);
+    assert_eq!(cursor.render_order, 2001);
+    assert!(!cursor.depth_test);
+    let physical =
+        XrCursorProjection::try_new(GameUiAnchor::Cockpit, panel, [0.4, -0.2], 0.0).unwrap();
+    assert_eq!(physical.world_from_cursor, cursor.world_from_cursor);
+    assert_eq!(physical.diameter_m, 0.035);
+    assert_eq!(physical.render_order, 0);
+    assert!(physical.depth_test);
+    assert_eq!(
+        XrSurfaceStyle::for_anchor(GameUiAnchor::Head).render_order,
+        1000
+    );
+    assert!(XrSurfaceStyle::for_anchor(GameUiAnchor::World).depth_write);
+    assert_eq!(
+        XrCursorProjection::try_new(GameUiAnchor::Menu, panel, [f64::NAN, 0.0], 0.0),
+        Err(CameraError::InvalidDistance)
+    );
+    assert_eq!(
+        XrCursorProjection::try_new(GameUiAnchor::Menu, panel, [0.0, 0.0], 1.01),
+        Err(CameraError::InvalidDistance)
+    );
+}
+
+#[test]
 fn head_fit_preserves_forward_and_menu_clearance_with_shared_defaults() {
     let profile = XrHeadHudProfile::default();
     let XrHeadHudProjection::Visible {

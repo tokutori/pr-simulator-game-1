@@ -10,6 +10,92 @@ const EYE_POSITION_TOLERANCE_M: f64 = 1.0e-4;
 const EYE_ANGLE_TOLERANCE_RAD: f64 = 1.0e-4;
 const PROJECTION_RELATIVE_TOLERANCE: f64 = 1.0e-4;
 
+/// Final depth/blending and submission order for one explicit UI anchor.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct XrSurfaceStyle {
+    /// Enables scene-depth occlusion of the surface.
+    pub depth_test: bool,
+    /// Publishes surface depth for later physical geometry.
+    pub depth_write: bool,
+    /// Enables alpha blending of the surface texture.
+    pub transparent: bool,
+    /// Shared drawing order within its depth class.
+    pub render_order: i32,
+}
+
+impl XrSurfaceStyle {
+    /// Maps the shared physical/overlay anchor contract to final GPU settings.
+    pub fn for_anchor(anchor: GameUiAnchor) -> Self {
+        let physical = matches!(anchor, GameUiAnchor::World | GameUiAnchor::Cockpit);
+        Self {
+            depth_test: physical,
+            depth_write: physical,
+            transparent: !physical,
+            render_order: match anchor {
+                GameUiAnchor::World | GameUiAnchor::Cockpit => 0,
+                GameUiAnchor::Head => 1000,
+                GameUiAnchor::Menu => 2000,
+            },
+        }
+    }
+}
+
+/// Final metric cursor primitive, independent of any parent surface's nonuniform scale.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct XrCursorProjection {
+    /// Cursor-to-render-world pose, including the small surface-normal separation.
+    pub world_from_cursor: Pose,
+    /// Diameter of the circular marker in metres.
+    pub diameter_m: f64,
+    /// Marker sRGB 0xRRGGBB colour.
+    pub color_srgb: u32,
+    /// Marker alpha.
+    pub opacity: f64,
+    /// Shared scene-depth admission.
+    pub depth_test: bool,
+    /// Shared submission order.
+    pub render_order: i32,
+}
+
+impl XrCursorProjection {
+    /// Projects an admitted panel-local hit and dwell fraction directly to drawing geometry.
+    pub fn try_new(
+        anchor: GameUiAnchor,
+        world_from_panel: Pose,
+        point: [f64; 2],
+        progress: f64,
+    ) -> Result<Self, CameraError> {
+        if !point.into_iter().all(f64::is_finite) || !(0.0..=1.0).contains(&progress) {
+            return Err(CameraError::InvalidDistance);
+        }
+        let style = XrSurfaceStyle::for_anchor(anchor);
+        Ok(Self {
+            world_from_cursor: compose_pose(
+                world_from_panel,
+                Pose {
+                    position: crate::camera::Vector3 {
+                        x: point[0],
+                        y: point[1],
+                        z: 0.015,
+                    },
+                    ..Pose::IDENTITY
+                },
+            )?,
+            diameter_m: 0.07 * (0.5 + 0.5 * progress),
+            color_srgb: 0xf0d382,
+            opacity: 0.8,
+            depth_test: style.depth_test,
+            render_order: if style.depth_test {
+                0
+            } else {
+                style.render_order + 1
+            },
+        })
+    }
+}
+
 /// Named reference frames used by physical and overlay UI anchors.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]

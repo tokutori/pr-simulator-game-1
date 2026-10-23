@@ -1,6 +1,7 @@
 //! Shared world-direction sky radiance and distant high cloud layers.
 
 use birdman_game_format::{EnvironmentFormatError, SkyStateDocument};
+use serde::Serialize;
 
 /// Display-only scene light convention retained from the Web reference.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -90,6 +91,56 @@ impl LakeSunlight {
                 }
             },
         )
+    }
+}
+
+/// Final sunlight placement and aircraft-following shadow volume in render-world axes.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct LakeSceneShadow {
+    /// Directional light origin in render East/Up/negative-North metres.
+    pub sun_world_position: [f64; 3],
+    /// Accepted aircraft datum targeted by the light.
+    pub sun_target_world_position: [f64; 3],
+    /// Daylight-gated shadow rendering.
+    pub shadow_enabled: bool,
+    /// Orthographic left/right/bottom/top/near/far bounds in metres.
+    pub shadow_bounds: [f64; 6],
+    /// Surface-normal depth offset in metres.
+    pub normal_bias: f64,
+    /// Normalized depth bias.
+    pub depth_bias: f64,
+    /// Shadow filter radius in texels.
+    pub filter_radius: f64,
+}
+
+impl LakeSceneShadow {
+    /// Retains the reference lighting scale and rejects unrepresentable light/target pairs.
+    pub fn for_aircraft(target: [f64; 3], sunlight: LakeSunlight) -> Option<Self> {
+        let length = sunlight.direction.into_iter().fold(0.0, f64::hypot);
+        if !target
+            .into_iter()
+            .chain(sunlight.direction)
+            .all(f64::is_finite)
+            || (length - 1.0).abs() > 1.0e-12
+        {
+            return None;
+        }
+        let distance = 20.0_f64.hypot(35.0).hypot(18.0);
+        let position =
+            core::array::from_fn(|axis| target[axis] + sunlight.direction[axis] * distance);
+        if !position.into_iter().all(f64::is_finite) || position == target {
+            return None;
+        }
+        Some(Self {
+            sun_world_position: position,
+            sun_target_world_position: target,
+            shadow_enabled: sunlight.daylight,
+            shadow_bounds: [-28.0, 28.0, -28.0, 28.0, 0.5, 160.0],
+            normal_bias: 0.025,
+            depth_bias: -0.0001,
+            filter_radius: 5.0,
+        })
     }
 }
 
@@ -375,9 +426,32 @@ mod tests {
             for (actual, expected) in sunlight.direction.into_iter().zip(direction) {
                 assert!((actual - expected).abs() < 1.0e-14);
             }
+            let target = [100.0, 8.0, -200.0];
+            let shadow = LakeSceneShadow::for_aircraft(target, sunlight).unwrap();
+            assert_eq!(shadow.sun_target_world_position, target);
+            assert!(shadow.shadow_enabled);
+            for (axis, value) in shadow.sun_world_position.into_iter().enumerate() {
+                assert!(
+                    (value - target[axis] - direction[axis] * 1949.0_f64.sqrt()).abs() < 1.0e-12
+                );
+            }
+            assert_eq!(shadow.shadow_bounds, [-28.0, 28.0, -28.0, 28.0, 0.5, 160.0]);
         }
         let night = LakeSkyRenderCondition::try_new(135.0, -0.1, 0.5, 25_000.0).unwrap();
         assert!(!LakeSunlight::for_condition(Some(night)).daylight);
+        assert!(
+            !LakeSceneShadow::for_aircraft([0.0; 3], LakeSunlight::for_condition(Some(night)))
+                .unwrap()
+                .shadow_enabled
+        );
+        assert!(
+            LakeSceneShadow::for_aircraft([f64::NAN, 0.0, 0.0], LakeSunlight::for_condition(None))
+                .is_none()
+        );
+        assert!(
+            LakeSceneShadow::for_aircraft([f64::MAX; 3], LakeSunlight::for_condition(None))
+                .is_none()
+        );
         assert_eq!(
             LakeSunlight::for_condition(None),
             LakeSunlight {
