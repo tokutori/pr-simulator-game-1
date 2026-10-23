@@ -54,13 +54,7 @@ pub enum DisplayState {
 impl DisplayState {
     /// Confirmed active display, absent after a successful stop.
     #[cfg_attr(verus_only, verus_verify)]
-    #[cfg_attr(verus_only, verus_spec(result =>
-        ensures result == match self {
-            Self::Ready { mode } | Self::Stopping { mode, .. } => Some(*mode),
-            Self::Permission { active, .. } | Self::Failed { active, .. } => *active,
-            Self::Starting { .. } | Self::Closed => None,
-        },
-    ))]
+    #[cfg_attr(verus_only, verus_spec(result => ensures result == self.confirmed_mode()))]
     pub fn active_mode(&self) -> Option<GameUiPresentationMode> {
         match self {
             Self::Ready { mode } | Self::Stopping { mode, .. } => Some(*mode),
@@ -70,6 +64,8 @@ impl DisplayState {
     }
 
     /// Whether an asynchronous operation currently owns mode admission.
+    #[cfg_attr(verus_only, verus_verify)]
+    #[cfg_attr(verus_only, verus_spec(result => ensures result == self.operation_pending()))]
     pub fn pending(&self) -> bool {
         matches!(
             self,
@@ -145,6 +141,8 @@ pub enum DisplayCompletion {
 }
 
 impl DisplayCompletion {
+    #[cfg_attr(verus_only, verus_verify)]
+    #[cfg_attr(verus_only, verus_spec(result => ensures result == self.acquired_resource()))]
     fn resource(&self) -> Option<u32> {
         match self {
             Self::PermissionGranted { resource_id } => *resource_id,
@@ -159,6 +157,94 @@ pub(super) struct DisplayWorkflow {
     state: DisplayState,
     active_resource: Option<u32>,
     permission_resource: Option<u32>,
+}
+
+#[cfg(verus_only)]
+verus! {
+    impl DisplayState {
+        /// Confirmed presentation retained while an asynchronous operation runs.
+        pub closed spec fn confirmed_mode(self) -> Option<GameUiPresentationMode> {
+            match self {
+                Self::Ready { mode } | Self::Stopping { mode, .. } => Some(mode),
+                Self::Permission { active, .. } | Self::Failed { active, .. } => active,
+                Self::Starting { .. } | Self::Closed => None,
+            }
+        }
+
+        /// Whether a stage currently owns the completion admission identity.
+        pub closed spec fn operation_pending(self) -> bool {
+            matches!(self, Self::Permission { .. } | Self::Stopping { .. } | Self::Starting { .. })
+        }
+    }
+
+    impl DisplayWorkflow {
+        pub(super) closed spec fn ownership(self) -> (DisplayState, Option<u32>, Option<u32>) {
+            (self.state, self.active_resource, self.permission_resource)
+        }
+
+        pub(super) closed spec fn retains(self, resource_id: u32) -> bool {
+            self.active_resource == Some(resource_id) || self.permission_resource == Some(resource_id)
+        }
+
+        pub(super) closed spec fn request_blocked(self, target: GameUiPresentationMode) -> bool {
+            self.state.operation_pending() || Some(target) == self.state.confirmed_mode()
+        }
+
+        pub(super) closed spec fn pending_id(self) -> Option<u32> {
+            match self.state {
+                DisplayState::Permission { request_id, .. }
+                | DisplayState::Stopping { request_id, .. }
+                | DisplayState::Starting { request_id, .. } => Some(request_id),
+                _ => None,
+            }
+        }
+
+        pub(super) closed spec fn accepts_completion(self, completion: DisplayCompletion) -> bool {
+            match (self.state, completion) {
+                (DisplayState::Permission { .. }, DisplayCompletion::PermissionGranted { .. })
+                | (DisplayState::Stopping { .. }, DisplayCompletion::Stopped)
+                | (DisplayState::Starting { .. }, DisplayCompletion::Started { .. })
+                | (_, DisplayCompletion::Failed { .. }) => true,
+                _ => false,
+            }
+        }
+
+        pub(super) closed spec fn request_agrees(self, request: DisplayRequest) -> bool {
+            match (self.state, request) {
+                (DisplayState::Permission { target, request_id, .. },
+                    DisplayRequest::Permission { mode, request_id: issued_id }) =>
+                    target == mode && request_id == issued_id,
+                (DisplayState::Stopping { mode, request_id, .. },
+                    DisplayRequest::Stop { mode: stopped_mode, request_id: issued_id, resource_id }) =>
+                    mode == stopped_mode && request_id == issued_id && resource_id == self.active_resource,
+                (DisplayState::Starting { target, request_id },
+                    DisplayRequest::Start { mode, request_id: issued_id, permission_resource_id }) =>
+                    target == mode && request_id == issued_id
+                        && (permission_resource_id == self.permission_resource
+                            || (mode == GameUiPresentationMode::Screen && permission_resource_id == None)),
+                _ => false,
+            }
+        }
+    }
+
+    impl DisplayRequest {
+        pub(super) closed spec fn release_id(self) -> Option<u32> {
+            match self {
+                Self::Release { resource_id } => Some(resource_id),
+                _ => None,
+            }
+        }
+    }
+
+    impl DisplayCompletion {
+        pub(super) closed spec fn acquired_resource(self) -> Option<u32> {
+            match self {
+                Self::PermissionGranted { resource_id } => resource_id,
+                Self::Started { resource_id } => Some(resource_id),
+                Self::Stopped | Self::Failed { .. } => None,
+            }
+        }
+    }
 }
 
 impl DisplayWorkflow {
@@ -185,15 +271,47 @@ impl DisplayWorkflow {
         }
         requests
     }
+    #[cfg_attr(verus_only, verus_verify)]
+    #[cfg_attr(verus_only, verus_spec(requests =>
+        ensures
+            final(self).ownership() == (DisplayState::Closed, None, None),
+            requests@.len() <= 2,
+            forall|index: int| #![trigger requests@[index]]
+                0 <= index < requests@.len() ==> match requests@[index].release_id() {
+                    Some(resource_id) => old(self).retains(resource_id),
+                    None => false,
+                },
+            forall|resource_id: u32| #![trigger old(self).retains(resource_id)]
+                old(self).retains(resource_id) ==> exists|index: int|
+                    0 <= index < requests@.len() && requests@[index].release_id() == Some(resource_id),
+            requests@.len() == 2 ==> requests@[0].release_id().unwrap() < requests@[1].release_id().unwrap(),
+    ))]
     pub(super) fn close(&mut self) -> Vec<DisplayRequest> {
-        let mut resources = std::collections::BTreeSet::new();
-        resources.extend(self.active_resource.take());
-        resources.extend(self.permission_resource.take());
+        let active = self.active_resource.take();
+        let permission = self.permission_resource.take();
         self.state = DisplayState::Closed;
-        resources
-            .into_iter()
-            .map(|resource_id| DisplayRequest::Release { resource_id })
-            .collect()
+        match (active, permission) {
+            (Some(active), Some(permission)) if active < permission => vec![
+                DisplayRequest::Release {
+                    resource_id: active,
+                },
+                DisplayRequest::Release {
+                    resource_id: permission,
+                },
+            ],
+            (Some(active), Some(permission)) if permission < active => vec![
+                DisplayRequest::Release {
+                    resource_id: permission,
+                },
+                DisplayRequest::Release {
+                    resource_id: active,
+                },
+            ],
+            (Some(resource_id), _) | (_, Some(resource_id)) => {
+                vec![DisplayRequest::Release { resource_id }]
+            }
+            (None, None) => Vec::new(),
+        }
     }
     #[cfg_attr(verus_only, verus_verify(dual_spec))]
     #[cfg_attr(verus_only, verus_spec(
@@ -232,6 +350,24 @@ impl DisplayWorkflow {
         }
     }
 
+    #[cfg_attr(verus_only, verus_verify)]
+    #[cfg_attr(verus_only, verus_spec(requests =>
+        ensures
+            final(self).ownership().1 == old(self).ownership().1,
+            final(self).ownership().2 == old(self).ownership().2,
+            old(self).request_blocked(target) ==> final(self).ownership() == old(self).ownership(),
+            old(self).request_blocked(target) ==> requests@.len() == 0,
+            !old(self).request_blocked(target) ==> final(self).pending_id() == Some(request_id),
+            !old(self).request_blocked(target) ==> requests@.len() == 1,
+            !old(self).request_blocked(target) ==> requests@[0].release_id() == None,
+            requests@.len() == 1 ==> final(self).request_agrees(requests@[0]),
+            !old(self).request_blocked(target) ==> match final(self).ownership().0 {
+                DisplayState::Permission { target: pending_target, .. }
+                | DisplayState::Stopping { target: pending_target, .. }
+                | DisplayState::Starting { target: pending_target, .. } => pending_target == target,
+                _ => false,
+            },
+    ))]
     pub(super) fn request(
         &mut self,
         target: GameUiPresentationMode,
@@ -272,6 +408,42 @@ impl DisplayWorkflow {
         }
     }
 
+    #[cfg_attr(verus_only, verus_verify)]
+    #[cfg_attr(verus_only, verus_spec(requests =>
+        ensures
+            requests@.len() <= 2,
+            forall|index: int| #![trigger requests@[index]]
+                0 <= index < requests@.len() ==> match requests@[index].release_id() {
+                    Some(resource_id) => !final(self).retains(resource_id),
+                    None => final(self).request_agrees(requests@[index]),
+                },
+            old(self).pending_id() != Some(completed_id)
+                || !old(self).accepts_completion(completion)
+                ==> final(self).ownership() == old(self).ownership(),
+            match completion.acquired_resource() {
+                Some(resource_id) if !old(self).retains(resource_id)
+                    && (old(self).pending_id() != Some(completed_id)
+                        || !old(self).accepts_completion(completion)) =>
+                    requests@.len() == 1 && requests@[0].release_id() == Some(resource_id),
+                _ => true,
+            },
+            match (old(self).ownership().0, completion) {
+                (DisplayState::Starting { target, request_id }, DisplayCompletion::Started { resource_id })
+                    if request_id == completed_id =>
+                    final(self).ownership() == (DisplayState::Ready { mode: target }, Some(resource_id), None),
+                (DisplayState::Permission { request_id, .. }, DisplayCompletion::PermissionGranted { resource_id })
+                    if request_id == completed_id =>
+                    final(self).ownership().1 == old(self).ownership().1
+                        && final(self).ownership().2 == resource_id
+                        && final(self).pending_id() == Some(next_id),
+                (DisplayState::Stopping { request_id, .. }, DisplayCompletion::Stopped)
+                    if request_id == completed_id =>
+                    final(self).ownership().1 == None
+                        && final(self).ownership().2 == old(self).ownership().2
+                        && final(self).pending_id() == Some(next_id),
+                _ => true,
+            },
+    ))]
     pub(super) fn complete(
         &mut self,
         completed_id: u32,
@@ -296,11 +468,10 @@ impl DisplayWorkflow {
             let permission = self.permission_resource.take();
             let mut requests = self.release_unused(permission);
             if active.is_none() {
-                requests.extend(
-                    self.active_resource
-                        .take()
-                        .map(|resource_id| DisplayRequest::Release { resource_id }),
-                );
+                let released = self.active_resource.take();
+                if let Some(resource_id) = released {
+                    requests.push(DisplayRequest::Release { resource_id });
+                }
             }
             self.state = DisplayState::Failed { active, cause };
             return requests;
@@ -372,6 +543,8 @@ impl DisplayWorkflow {
             },
             resource == self.active_resource || resource == self.permission_resource
                 ==> requests@.len() == 0,
+            resource.is_some() && resource != self.active_resource && resource != self.permission_resource
+                ==> requests@.len() == 1,
     ))]
     fn release_unused(&self, resource: Option<u32>) -> Vec<DisplayRequest> {
         match resource {
