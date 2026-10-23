@@ -895,6 +895,15 @@ fn title_projects_saved_timestamps_without_rewriting_platform_metadata() {
         &control(&view, "game-state").content,
         GameUiControlContent::Status { value, .. } if value == &platform.notification
     ));
+    assert_eq!(
+        view.panels
+            .iter()
+            .flat_map(|panel| &panel.controls)
+            .filter(|control| matches!(&control.content,
+                GameUiControlContent::Status { value, .. } if value == &platform.notification))
+            .count(),
+        1
+    );
     assert_eq!(platform, before);
 }
 

@@ -127,7 +127,6 @@ pub fn game_ui_view(
                 GameUiAction::SetCredits { open: true },
                 true,
             );
-            feedback(&mut menu, context);
         }
         SessionPhase::FlightSetup => {
             setup(&mut menu, context);
