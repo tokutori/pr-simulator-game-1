@@ -14,7 +14,7 @@ interface Driver {
   readonly apply: ReturnType<typeof vi.fn>;
   finish(missing?: boolean): void;
 }
-const capture = vi.hoisted(() => ({ driver: null as Driver | null, permission: (): void => undefined }));
+const capture = vi.hoisted(() => ({ driver: null as Driver | null, permission: (): void => undefined, observation: (): void => undefined }));
 
 vi.mock("../../web/src/render/engines/three/application-renderer.js", () => ({
   ThreeApplicationRenderer: class {
@@ -26,6 +26,7 @@ vi.mock("../../web/src/render/engines/three/application-renderer.js", () => ({
     constructor(_canvas: HTMLCanvasElement, private readonly id: number, _bytes: (id: number) => Uint8Array,
       private readonly notify: (input: ApplicationInput) => void) { capture.driver = this; }
     observation(): ApplicationRendererObservation {
+      capture.observation();
       return { resource_id: this.id, initial_quality: { scale: "100", shadow: "full", water_quality: "high" },
         extent_px: [1280, 720], screen_extent_px: [window.innerWidth, window.innerHeight], xr_extent_px: null,
         gpu_timing: { kind: "unsupported", cause: "physical timer is unavailable" } };
@@ -68,7 +69,7 @@ vi.mock("../../web/src/render/engines/three/application-renderer.js", () => ({
   }
 }));
 
-afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); capture.driver = null; });
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); capture.driver = null; capture.observation = (): void => undefined; });
 
 async function browserFixture(phoneSensors: "probe" | "permission" | null = null) {
   const browser = new Window({ url: "http://localhost/" });
@@ -147,17 +148,34 @@ describe("Single browser runtime ownership", () => {
     } finally { fixture.page("pagehide", false); fixture.driver.finish(); await fixture.browser.happyDOM.abort(); }
   }, 20_000);
 
-  it("retains an in-flight preparation through BFCache and executes permission inside the originating click", async () => {
+  it("retries initial observation failure, retains preparation through BFCache and requests permission inside the click", async () => {
+    const diagnostic = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    capture.observation = vi.fn().mockImplementationOnce(() => {
+      capture.driver?.dispose.mockImplementationOnce(() => { throw new Error("Initial renderer cleanup failed"); });
+      throw new Error("Initial renderer observation failed");
+    });
     const fixture = await browserFixture("permission");
+    let driver = fixture.driver;
     try {
-      expect(fixture.driver.requests).toHaveLength(1);
-      expect(fixture.driver.requests[0]?.graphics.quality).toEqual({ scale: "50", shadow: "quarter", water_quality: "low" });
+      expect(driver.dispose).toHaveBeenCalledOnce();
+      expect(fixture.mount.querySelector(".presentation-canvas")).toBeNull();
+      const failures = fixture.update.mock.calls.map(([json]) => (JSON.parse(json) as ApplicationObservation).input)
+        .filter(input => input.kind === "renderer_created" && input.result.kind === "failed");
+      expect(failures).toHaveLength(1);
+      expect(failures[0]).toMatchObject({ result: { cause: "AggregateError: Renderer acquisition cleanup failed (Error: Initial renderer observation failed; Error: Initial renderer cleanup failed)" } });
+      expect(diagnostic).toHaveBeenCalledWith("AggregateError: Renderer acquisition cleanup failed (Error: Initial renderer observation failed; Error: Initial renderer cleanup failed)");
+      fixture.mount.querySelector<HTMLButtonElement>('[data-control-id="game-boot-retry"]')?.click();
+      if (capture.driver === null) throw new Error("Retry did not create a renderer");
+      expect(capture.driver).not.toBe(driver);
+      driver = capture.driver;
+      expect(driver.requests).toHaveLength(1);
+      expect(driver.requests[0]?.graphics.quality).toEqual({ scale: "50", shadow: "quarter", water_quality: "low" });
       fixture.page("pagehide", true);
-      fixture.driver.finish();
+      driver.finish();
       expect(fixture.free).not.toHaveBeenCalled();
-      expect(fixture.driver.dispose).not.toHaveBeenCalled();
+      expect(driver.dispose).not.toHaveBeenCalled();
       fixture.page("pageshow", true);
-      fixture.driver.finish();
+      driver.finish();
       let inClick = false;
       const permission = vi.fn(() => { expect(inClick).toBe(true); });
       capture.permission = permission;
@@ -174,15 +192,15 @@ describe("Single browser runtime ownership", () => {
       start.click();
       expect(fixture.mount.querySelector('[data-control-id="game-setup-start"]')).not.toBeNull();
       fixture.page("pagehide", false);
-      fixture.driver.finish();
-      expect(fixture.driver.dispose).toHaveBeenCalledOnce();
+      driver.finish();
+      expect(driver.dispose).toHaveBeenCalledOnce();
       expect(fixture.free).toHaveBeenCalledOnce();
       const updates = fixture.update.mock.calls.length;
       fixture.browser.document.documentElement.style.fontSize = "20px";
       fixture.page("pageshow", true);
       await Promise.resolve();
       expect(fixture.update).toHaveBeenCalledTimes(updates);
-    } finally { fixture.page("pagehide", false); fixture.driver.finish(); await fixture.browser.happyDOM.abort(); }
+    } finally { fixture.page("pagehide", false); driver.finish(); await fixture.browser.happyDOM.abort(); }
   }, 20_000);
 
   it.each(["cancelled preparation", "missing prepared handle"])("frees once after the actual %s terminal and every cleanup", async failure => {

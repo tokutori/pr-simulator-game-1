@@ -1,5 +1,5 @@
 import { ApplicationRuntimeBridge } from "../pkg/birdman_game_wasm.js";
-import type { ApplicationDrawingOutput, ApplicationInput, ApplicationOutput, ApplicationPlatformObservation, ApplicationRequest, ApplicationTextProbe, GameUiView } from "./generated/application-contracts.js";
+import type { ApplicationDrawingOutput, ApplicationInput, ApplicationOutput, ApplicationPlatformObservation, ApplicationRendererObservation, ApplicationRequest, ApplicationTextProbe, GameUiView } from "./generated/application-contracts.js";
 import { BrowserFlightLogDownload } from "./app/browser-flight-log-download.js";
 import { BrowserFlightRecordStore } from "./game/flight-record-store.js";
 import { browserSurfaceContext } from "./presentation/browser-canvas.js";
@@ -134,7 +134,8 @@ export class BrowserApplication {
   private execute(request: ApplicationRequest, drawing: ApplicationDrawingOutput | null | undefined): void {
     switch (request.kind) {
       case "create_renderer": {
-        let renderer: ThreeApplicationRenderer;
+        let renderer: ThreeApplicationRenderer | null = null;
+        let observation: ApplicationRendererObservation;
         const canvas = this.mount.ownerDocument.createElement("canvas");
         canvas.className = "presentation-canvas";
         canvas.setAttribute("aria-hidden", "true");
@@ -145,14 +146,19 @@ export class BrowserApplication {
               if (this.owner === null) throw new Error("Drawing buffer owner is released");
               return this.owner.asset_bytes(id);
             }, input => { this.observe(input); }, this.onPlatform);
+          observation = renderer.observation();
         } catch (cause) {
-          canvas.remove();
-          this.observe({ kind: "renderer_created", request_id: request.request_id, result: { kind: "failed", cause: errorMessage(cause) } });
+          const failures = [cause];
+          for (const release of [() => { renderer?.dispose(); }, () => { canvas.remove(); }]) {
+            try { release(); } catch (cleanup) { failures.push(cleanup); }
+          }
+          this.observe({ kind: "renderer_created", request_id: request.request_id, result: { kind: "failed",
+            cause: errorMessage(failures.length === 1 ? cause : new AggregateError(failures, "Renderer acquisition cleanup failed")) } });
           break;
         }
         this.renderers.set(request.request_id, renderer);
         this.renderer = renderer;
-        this.observe({ kind: "renderer_created", request_id: request.request_id, result: { kind: "ready", renderer: renderer.observation() } });
+        this.observe({ kind: "renderer_created", request_id: request.request_id, result: { kind: "ready", renderer: observation } });
         break;
       }
       case "release_renderer": {
