@@ -169,7 +169,7 @@ export type ApplicationInput = {
     /**
      * New reference coordinates expressed in the previous tracking frame.
      */
-    readonly previous_from_new?: Pose | null;
+    readonly previous_from_new?: XrObservedPose | null;
     /**
      * Runtime resource that emitted the reset.
      */
@@ -620,6 +620,10 @@ export type ApplicationHeadHudProjection = {
      */
     readonly paint: HeadHudPaintProjection;
     /**
+     * Final GPU depth, alpha and ordering settings.
+     */
+    readonly surface_style: XrSurfaceStyle;
+    /**
      * Final render-world surface pose.
      */
     readonly world_from_surface: Pose;
@@ -767,12 +771,16 @@ export type ApplicationMenuProjection = {
     /**
      * Visible cursor points in panel-local right/up metres.
      */
-    readonly cursors: readonly ApplicationMenuCursor[];
+    readonly cursors: readonly XrCursorProjection[];
     readonly kind: "ready";
     /**
      * Drawing commands, without interaction policy or hit geometry.
      */
     readonly paint: ApplicationMenuPaint;
+    /**
+     * Final GPU depth, alpha and ordering settings.
+     */
+    readonly surface_style: XrSurfaceStyle;
     /**
      * Panel pose below a runtime-tracking parent.
      */
@@ -1779,58 +1787,25 @@ export interface ApplicationPointerObservation {
     /**
      * Runtime target-ray-space pose in tracking coordinates.
      */
-    readonly tracking_from_ray: Pose;
+    readonly tracking_from_ray: XrObservedPose;
 }
 /**
- * Rigid child-to-parent transform; the caller names both reference spaces.
+ * Nullable components received from an unvalidated tracking API observation.
  */
-export interface Pose {
-    /**
-     * Child-to-parent orientation.
-     */
-    readonly orientation: Quaternion;
-    /**
-     * Child origin expressed in parent coordinates, in metres.
-     */
-    readonly position: Vector3;
+export interface XrObservedPose {
+    readonly orientation: ObservedQuaternion;
+    readonly position: ObservedVector;
 }
-/**
- * Scalar-first unit quaternion in a right-handed reference space.
- */
-export interface Quaternion {
-    /**
-     * Scalar component.
-     */
-    readonly w: number;
-    /**
-     * Right-axis component.
-     */
-    readonly x: number;
-    /**
-     * Up-axis component.
-     */
-    readonly y: number;
-    /**
-     * Back-axis component.
-     */
-    readonly z: number;
+export interface ObservedQuaternion {
+    readonly w?: number | null;
+    readonly x?: number | null;
+    readonly y?: number | null;
+    readonly z?: number | null;
 }
-/**
- * Metric right/up/back coordinates in the explicitly named reference space.
- */
-export interface Vector3 {
-    /**
-     * Rightward coordinate in metres.
-     */
-    readonly x: number;
-    /**
-     * Upward coordinate in metres.
-     */
-    readonly y: number;
-    /**
-     * Backward coordinate in metres.
-     */
-    readonly z: number;
+export interface ObservedVector {
+    readonly x?: number | null;
+    readonly y?: number | null;
+    readonly z?: number | null;
 }
 /**
  * Unmodified orientation angles and screen rotation from one sensor callback.
@@ -1991,7 +1966,7 @@ export interface XrViewerObservation {
     /**
      * Centre-head pose, or absent when runtime tracking is unavailable.
      */
-    readonly trackingFromHead?: Pose | null;
+    readonly trackingFromHead?: XrObservedPose | null;
     /**
      * Platform view order is preserved until shared eye classification.
      */
@@ -2012,11 +1987,11 @@ export interface XrViewObservation {
     /**
      * Unmodified column-major runtime projection values.
      */
-    readonly projection: readonly number[];
+    readonly projection: readonly (number | null)[];
     /**
      * Eye pose in the same reference space as the centre head.
      */
-    readonly trackingFromEye: Pose;
+    readonly trackingFromEye: XrObservedPose;
 }
 /**
  * External metrics and API availability, without derived UI state.
@@ -2271,6 +2246,14 @@ export interface ApplicationSceneProjection {
      */
     readonly geometry?: ApplicationGeometryFrame | null;
     /**
+     * Final directional-light placement and shadow volume.
+     */
+    readonly lighting?: LakeSceneShadow | null;
+    /**
+     * Final reflection-pass camera and world-to-clip matrix.
+     */
+    readonly reflection?: PlanarReflection | null;
+    /**
      * Whether the registered world geometry belongs to this admitted environment.
      */
     readonly venue_visible: boolean;
@@ -2302,6 +2285,30 @@ export interface ApplicationSceneProjection {
  * Camera geometry ready for direct transfer to a drawing engine.
  */
 export interface ApplicationCameraProjection {
+    /**
+     * Conservative head-local OpenGL culling volume; absent means culling is disabled.
+     *
+     * @minItems 16
+     * @maxItems 16
+     */
+    readonly culling_projection?: readonly [
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number
+    ] | null;
     /**
      * Final left and right eye transforms, empty for Screen or unavailable optics.
      */
@@ -2407,6 +2414,57 @@ export interface ApplicationEyeProjection {
     readonly [k: string]: unknown | undefined;
 }
 /**
+ * Rigid child-to-parent transform; the caller names both reference spaces.
+ */
+export interface Pose {
+    /**
+     * Child-to-parent orientation.
+     */
+    readonly orientation: Quaternion;
+    /**
+     * Child origin expressed in parent coordinates, in metres.
+     */
+    readonly position: Vector3;
+}
+/**
+ * Scalar-first unit quaternion in a right-handed reference space.
+ */
+export interface Quaternion {
+    /**
+     * Scalar component.
+     */
+    readonly w: number;
+    /**
+     * Right-axis component.
+     */
+    readonly x: number;
+    /**
+     * Up-axis component.
+     */
+    readonly y: number;
+    /**
+     * Back-axis component.
+     */
+    readonly z: number;
+}
+/**
+ * Metric right/up/back coordinates in the explicitly named reference space.
+ */
+export interface Vector3 {
+    /**
+     * Rightward coordinate in metres.
+     */
+    readonly x: number;
+    /**
+     * Upward coordinate in metres.
+     */
+    readonly y: number;
+    /**
+     * Backward coordinate in metres.
+     */
+    readonly z: number;
+}
+/**
  * Mutable attributes and articulation already resolved by the shared owner.
  */
 export interface ApplicationGeometryFrame {
@@ -2490,6 +2548,122 @@ export interface ApplicationBufferDescriptor {
      * Contiguous item stride in bytes.
      */
     readonly stride_bytes: number;
+    readonly [k: string]: unknown | undefined;
+}
+/**
+ * Final sunlight placement and aircraft-following shadow volume in render-world axes.
+ */
+export interface LakeSceneShadow {
+    /**
+     * Normalized depth bias.
+     */
+    readonly depth_bias: number;
+    /**
+     * Shadow filter radius in texels.
+     */
+    readonly filter_radius: number;
+    /**
+     * Surface-normal depth offset in metres.
+     */
+    readonly normal_bias: number;
+    /**
+     * Orthographic left/right/bottom/top/near/far bounds in metres.
+     *
+     * @minItems 6
+     * @maxItems 6
+     */
+    readonly shadow_bounds: readonly [
+        number,
+        number,
+        number,
+        number,
+        number,
+        number
+    ];
+    /**
+     * Daylight-gated shadow rendering.
+     */
+    readonly shadow_enabled: boolean;
+    /**
+     * Accepted aircraft datum targeted by the light.
+     *
+     * @minItems 3
+     * @maxItems 3
+     */
+    readonly sun_target_world_position: readonly [
+        number,
+        number,
+        number
+    ];
+    /**
+     * Directional light origin in render East/Up/negative-North metres.
+     *
+     * @minItems 3
+     * @maxItems 3
+     */
+    readonly sun_world_position: readonly [
+        number,
+        number,
+        number
+    ];
+    readonly [k: string]: unknown | undefined;
+}
+/**
+ * Final mirrored camera and its world-to-clip matrix for a horizontal water plane.
+ */
+export interface PlanarReflection {
+    /**
+     * Original column-major drawing projection.
+     *
+     * @minItems 16
+     * @maxItems 16
+     */
+    readonly projection: readonly [
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number
+    ];
+    /**
+     * Column-major projection multiplied by the reflected world-to-camera transform.
+     *
+     * @minItems 16
+     * @maxItems 16
+     */
+    readonly projection_from_world: readonly [
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number
+    ];
+    /**
+     * Reflected camera-to-world transform with reflected forward and up directions.
+     */
+    readonly world_from_camera: Pose;
     readonly [k: string]: unknown | undefined;
 }
 /**
@@ -2610,23 +2784,55 @@ export interface MenuSize {
     readonly width: number;
 }
 /**
- * One cursor's final visible position and dwell indicator.
+ * Final depth/blending and submission order for one explicit UI anchor.
  */
-export interface ApplicationMenuCursor {
+export interface XrSurfaceStyle {
     /**
-     * Panel-local right/up coordinates in metres.
-     *
-     * @minItems 2
-     * @maxItems 2
+     * Enables scene-depth occlusion of the surface.
      */
-    readonly point: readonly [
-        number,
-        number
-    ];
+    readonly depth_test: boolean;
     /**
-     * Completed fraction of the selection indicator.
+     * Publishes surface depth for later physical geometry.
      */
-    readonly progress: number;
+    readonly depth_write: boolean;
+    /**
+     * Shared drawing order within its depth class.
+     */
+    readonly render_order: number;
+    /**
+     * Enables alpha blending of the surface texture.
+     */
+    readonly transparent: boolean;
+    readonly [k: string]: unknown | undefined;
+}
+/**
+ * Final metric cursor primitive, independent of any parent surface's nonuniform scale.
+ */
+export interface XrCursorProjection {
+    /**
+     * Marker sRGB 0xRRGGBB colour.
+     */
+    readonly color_srgb: number;
+    /**
+     * Shared scene-depth admission.
+     */
+    readonly depth_test: boolean;
+    /**
+     * Diameter of the circular marker in metres.
+     */
+    readonly diameter_m: number;
+    /**
+     * Marker alpha.
+     */
+    readonly opacity: number;
+    /**
+     * Shared submission order.
+     */
+    readonly render_order: number;
+    /**
+     * Cursor-to-render-world pose, including the small surface-normal separation.
+     */
+    readonly world_from_cursor: Pose;
     readonly [k: string]: unknown | undefined;
 }
 /**
@@ -3735,12 +3941,13 @@ export interface ApplicationLightingAssets {
      */
     readonly sunlight_color_srgb: number;
     /**
-     * Render-world direction toward the sun.
+     * Render-world sun direction XYZ and daylight enable W for direct shader submission.
      *
-     * @minItems 3
-     * @maxItems 3
+     * @minItems 4
+     * @maxItems 4
      */
     readonly sunlight_direction: readonly [
+        number,
         number,
         number,
         number
@@ -3924,15 +4131,15 @@ export interface ApplicationImageAsset {
  */
 export interface ApplicationWaterAssets {
     /**
-     * Near/far periodic images when the wind supports detail generation.
+     * Near/far periodic images; flat water uses a shared neutral texel.
      *
      * @minItems 2
      * @maxItems 2
      */
-    readonly detail?: readonly [
+    readonly detail: readonly [
         ApplicationWaterDetailAsset,
         ApplicationWaterDetailAsset
-    ] | null;
+    ];
     /**
      * Downstream detail multiplier; zero denotes the flat-water case.
      */
@@ -3949,6 +4156,16 @@ export interface ApplicationWaterAssets {
      * Wind magnitude used by the shared visual condition.
      */
     readonly wind_speed_meters_per_second: number;
+    /**
+     * Final render X/Z wind velocity for texture drift and micro-normal sampling.
+     *
+     * @minItems 2
+     * @maxItems 2
+     */
+    readonly wind_velocity_render: readonly [
+        number,
+        number
+    ];
     readonly [k: string]: unknown | undefined;
 }
 /**

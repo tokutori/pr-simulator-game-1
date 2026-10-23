@@ -39,9 +39,9 @@ pub use scene::{
 pub use shutdown::ApplicationLifecycle;
 pub use storage::ApplicationRecordLoadCompletion;
 pub use surface::{
-    ApplicationGlyphMetrics, ApplicationHeadHudProjection, ApplicationMenuCursor,
-    ApplicationMenuPaint, ApplicationMenuProjection, ApplicationSpatialProjection,
-    ApplicationSurfaceObservation, ApplicationTextProbe,
+    ApplicationGlyphMetrics, ApplicationHeadHudProjection, ApplicationMenuPaint,
+    ApplicationMenuProjection, ApplicationSpatialProjection, ApplicationSurfaceObservation,
+    ApplicationTextProbe,
 };
 pub use types::*;
 
@@ -92,6 +92,7 @@ pub struct ApplicationRuntime {
     phone: phone::PhoneTracking,
     phone_wake: Option<u32>,
     page_visible: bool,
+    page_frozen: bool,
     document_focused: bool,
     xr_resource: Option<u32>,
     xr_viewer: Option<XrViewerFrame>,
@@ -180,6 +181,7 @@ impl ApplicationRuntime {
             phone: phone::PhoneTracking::default(),
             phone_wake: None,
             page_visible: true,
+            page_frozen: false,
             document_focused: true,
             xr_resource: None,
             xr_viewer: None,
@@ -229,9 +231,6 @@ impl ApplicationRuntime {
         }
         self.observed_ms = observed_ms;
         let input = match input {
-            ApplicationInput::PageHide { persisted: true } => {
-                ApplicationInput::PageVisibility { visible: false }
-            }
             ApplicationInput::PageHide { persisted: false } => ApplicationInput::Dispose,
             input => input,
         };
@@ -294,7 +293,9 @@ impl ApplicationRuntime {
                 self.document_focused = focused;
                 if !focused {
                     self.application.invalidate_flight_input();
-                    self.surface.retire_input();
+                    if self.display.state().active_mode() != Some(GameUiPresentationMode::Hmd) {
+                        self.surface.retire_input();
+                    }
                 }
             }
             ApplicationInput::DisplayEnded { resource_id } => {
@@ -322,7 +323,12 @@ impl ApplicationRuntime {
                         .map(|request| ApplicationRequest::Display { request }),
                 );
             }
-            ApplicationInput::PageHide { .. } => unreachable!(),
+            ApplicationInput::PageHide { persisted: true } => {
+                self.page_frozen = true;
+                self.page_visible = false;
+                self.application.invalidate_flight_input();
+            }
+            ApplicationInput::PageHide { persisted: false } => unreachable!(),
             ApplicationInput::RendererReleased { failure, .. }
             | ApplicationInput::DisplayReleased { failure, .. }
             | ApplicationInput::RecordIoCancelled { failure, .. } => {
@@ -496,9 +502,9 @@ impl ApplicationRuntime {
             }
             ApplicationInput::PageVisibility { visible } => {
                 self.page_visible = visible;
-                self.application
-                    .observe_availability(ExternalPauseReason::DocumentHidden, visible)
-                    .map_err(ApplicationRuntimeError::Application)?;
+                if visible {
+                    self.page_frozen = false;
+                }
             }
             ApplicationInput::PhoneOrientation {
                 resource_id,
@@ -569,7 +575,11 @@ impl ApplicationRuntime {
                             .filter(|_| self.document_focused)
                             .filter_map(ApplicationGamepadObservation::flight)
                             .collect();
-                        self.advance_frame(progression_ms, &flight_gamepads, self.page_visible)?;
+                        self.advance_frame(
+                            progression_ms,
+                            &flight_gamepads,
+                            self.presentation_input_focused(),
+                        )?;
                         spatial_frame = Some((spatial, observed_ms));
                     }
                     render_spatial = true;
@@ -579,11 +589,13 @@ impl ApplicationRuntime {
                 view_revision,
                 input,
             } => {
-                self.apply_action(
-                    view_revision,
-                    GameUiAction::ControlInput { input },
-                    &mut requests,
-                )?;
+                if self.presentation_input_focused() {
+                    self.apply_action(
+                        view_revision,
+                        GameUiAction::ControlInput { input },
+                        &mut requests,
+                    )?;
+                }
             }
 
             ApplicationInput::Keyboard {
@@ -650,6 +662,10 @@ impl ApplicationRuntime {
                 let mut commit_failed = false;
                 if let Some(renderer) = completion.invalidated_renderer {
                     self.graphics.invalidate_renderer(renderer);
+                    self.diagnostic = completion
+                        .failed
+                        .as_ref()
+                        .map(|failed| failed.cause.clone());
                     commit_failed = true;
                 }
                 if let Some(committed) = &completion.committed
@@ -868,6 +884,28 @@ impl ApplicationRuntime {
             .assets
             .project_geometry(scene_frame.aircraft)
             .map_err(ApplicationRuntimeError::Assets)?;
+        let position = scene_frame.projection.world_from_aircraft.position;
+        scene_frame.projection.lighting = self.assets.sunlight().and_then(|sunlight| {
+            birdman_game_scene::lake_sky::LakeSceneShadow::for_aircraft(
+                [position.x, position.y, position.z],
+                sunlight,
+            )
+        });
+        if self.drawable_resources_available()
+            && self.presentation_visible()
+            && let Some(camera) = &scene_frame.projection.camera
+        {
+            let view = camera
+                .eyes
+                .first()
+                .map(|eye| (eye.world_from_eye, eye.projection))
+                .or_else(|| camera.world_from_head.zip(camera.screen_projection));
+            if let Some((pose, projection)) = view {
+                scene_frame.projection.reflection =
+                    birdman_game_presentation::camera::planar_reflection(pose, projection, 0.0)
+                        .map_err(ApplicationRuntimeError::Camera)?;
+            }
+        }
         let view = self.retained.as_ref().unwrap();
         let structural_frame = if matches!(projection, ApplicationUiProjection::View { .. }) {
             Some(
@@ -920,7 +958,7 @@ impl ApplicationRuntime {
                     && self.display.state().active_mode() == Some(GameUiPresentationMode::Screen)
                     && view.hud.is_some(),
                 scene_visible: !self.shutdown.closed()
-                    && self.page_visible
+                    && self.presentation_visible()
                     && self.drawable_resources_available()
                     && scene_frame.projection.camera.is_some(),
             },
@@ -955,9 +993,26 @@ impl ApplicationRuntime {
         }
     }
 
+    fn presentation_visible(&self) -> bool {
+        !self.page_frozen
+            && if self.display.state().active_mode() == Some(GameUiPresentationMode::Hmd) {
+                self.xr_visibility != XrVisibility::Hidden
+            } else {
+                self.page_visible
+            }
+    }
+
+    fn presentation_input_focused(&self) -> bool {
+        !self.page_frozen
+            && if self.display.state().active_mode() == Some(GameUiPresentationMode::Hmd) {
+                self.xr_visibility == XrVisibility::Visible && self.xr_input_focused
+            } else {
+                self.page_visible && self.document_focused
+            }
+    }
+
     fn spatial_input_focused(&self) -> bool {
-        self.page_visible
-            && self.document_focused
+        self.presentation_input_focused()
             && !self.display.state().pending()
             && match self.display.state().active_mode() {
                 Some(GameUiPresentationMode::Hmd) => {
@@ -1184,6 +1239,12 @@ impl ApplicationRuntime {
     }
 
     fn synchronize_xr(&mut self) -> Result<(), ApplicationRuntimeError> {
+        let document_available = !self.page_frozen
+            && (self.display.state().active_mode() == Some(GameUiPresentationMode::Hmd)
+                || self.presentation_input_focused());
+        self.application
+            .observe_availability(ExternalPauseReason::DocumentHidden, document_available)
+            .map_err(ApplicationRuntimeError::Application)?;
         let resource = (self.display.state().active_mode() == Some(GameUiPresentationMode::Hmd))
             .then(|| self.display.active_resource())
             .flatten();

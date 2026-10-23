@@ -10,124 +10,182 @@ fn no_text_metrics(_: &ApplicationTextProbe) -> Result<ApplicationGlyphMetrics, 
 
 #[test]
 fn dispose_drains_atomic_bind_record_cancellation_and_release_before_renderer_destruction() {
-    let platform = ApplicationPlatformObservation {
-        renderer: Some(renderer_observation()),
-        surface: None,
-        viewport: GameUiViewport {
-            width: 1280.0,
-            height: 720.0,
-            root_font_size: 16.0,
-        },
-        chart_extent: None,
-        capabilities: ApplicationCapabilities {
-            stored_records_available: true,
-            ..Default::default()
-        },
-    };
-    let mut runtime =
-        ApplicationRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
-    let initial = runtime
-        .observe_test(ApplicationInput::Platform {
-            observation: platform,
-        })
-        .unwrap();
-    let preparation = initial
-        .requests
-        .iter()
-        .find_map(|request| match request {
-            ApplicationRequest::PrepareResources { request_id, .. } => Some(*request_id),
-            _ => None,
-        })
-        .unwrap();
-    let preview = initial
-        .requests
-        .iter()
-        .find_map(|request| match request {
-            ApplicationRequest::BeginRecordPreview { request_id, .. } => Some(*request_id),
-            _ => None,
-        })
-        .unwrap();
-    let target = runtime.resources.as_ref().unwrap().key.graphics;
-    runtime
-        .observe_test(ApplicationInput::Resources {
-            request_id: preparation,
-            observation: ApplicationResourceObservation::Prepared { resource_id: 701 },
-        })
-        .unwrap();
-    let closing = runtime.observe_test(ApplicationInput::Dispose).unwrap();
-    assert_eq!(closing.lifecycle, ApplicationLifecycle::Closing);
-    assert!(closing.requests.iter().any(|request| matches!(request, ApplicationRequest::CancelRecordIo { request_id } if *request_id == preview)));
-    assert!(
-        !closing
-            .requests
-            .iter()
-            .any(|request| matches!(request, ApplicationRequest::ReleaseRenderer { .. }))
-    );
-    let late = runtime
-        .observe_test(ApplicationInput::Resources {
-            request_id: preparation,
-            observation: ApplicationResourceObservation::Committed {
-                resource_id: 701,
-                actual: ApplicationResourceCommit {
-                    applied: target.quality,
-                    extent_px: target.extent_px,
-                },
+    for binding_lost in [false, true] {
+        let platform = ApplicationPlatformObservation {
+            renderer: Some(renderer_observation()),
+            surface: None,
+            viewport: GameUiViewport {
+                width: 1280.0,
+                height: 720.0,
+                root_font_size: 16.0,
             },
-        })
-        .unwrap();
-    assert!(late.requests.iter().any(|request| matches!(
-        request,
-        ApplicationRequest::ReleaseResources { resource_id: 701 }
-    )));
-    assert!(
-        !late
+            chart_extent: None,
+            capabilities: ApplicationCapabilities {
+                stored_records_available: true,
+                ..Default::default()
+            },
+        };
+        let mut runtime =
+            ApplicationRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
+        let initial = runtime
+            .observe_test(ApplicationInput::Platform {
+                observation: platform.clone(),
+            })
+            .unwrap();
+        let preparation = initial
             .requests
             .iter()
-            .any(|request| matches!(request, ApplicationRequest::ReleaseRenderer { .. }))
-    );
-    runtime
-        .observe_test(ApplicationInput::RecordIoCancelled {
-            request_id: preview,
-            failure: None,
-        })
-        .unwrap();
-    let released = runtime
-        .observe_test(ApplicationInput::ResourcesReleased {
-            resource_id: 701,
-            failure: Some("GPU release failed".to_owned()),
-        })
-        .unwrap();
-    assert_eq!(released.lifecycle, ApplicationLifecycle::Closing);
-    assert!(released.requests.iter().any(|request| matches!(
-        request,
-        ApplicationRequest::ReleaseRenderer {
-            renderer_resource_id: 100
+            .find_map(|request| match request {
+                ApplicationRequest::PrepareResources { request_id, .. } => Some(*request_id),
+                _ => None,
+            })
+            .unwrap();
+        let preview = initial
+            .requests
+            .iter()
+            .find_map(|request| match request {
+                ApplicationRequest::BeginRecordPreview { request_id, .. } => Some(*request_id),
+                _ => None,
+            })
+            .unwrap();
+        let target = runtime.resources.as_ref().unwrap().key.graphics;
+        runtime
+            .observe_test(ApplicationInput::Resources {
+                request_id: preparation,
+                observation: ApplicationResourceObservation::Prepared { resource_id: 701 },
+            })
+            .unwrap();
+        let parallel = if binding_lost {
+            let mut platform = platform;
+            platform.renderer.as_mut().unwrap().screen_extent_px[0] += 2;
+            let next = runtime
+                .observe_test(ApplicationInput::Platform {
+                    observation: platform,
+                })
+                .unwrap();
+            let request_id = next
+                .requests
+                .iter()
+                .find_map(|request| match request {
+                    ApplicationRequest::PrepareResources { request_id, .. } => Some(*request_id),
+                    _ => None,
+                })
+                .unwrap();
+            let failed = runtime
+                .observe_test(ApplicationInput::Resources {
+                    request_id: preparation,
+                    observation: ApplicationResourceObservation::BindingLost {
+                        resource_id: 701,
+                        cause: "bind and rollback failed".to_owned(),
+                    },
+                })
+                .unwrap();
+            assert_eq!(
+                failed.diagnostic.as_deref(),
+                Some("bind and rollback failed")
+            );
+            assert!(failed.drawing.unwrap().graphics.resource.is_none());
+            Some(request_id)
+        } else {
+            None
+        };
+        let closing = runtime.observe_test(ApplicationInput::Dispose).unwrap();
+        assert_eq!(closing.lifecycle, ApplicationLifecycle::Closing);
+        assert!(closing.requests.iter().any(|request| matches!(request, ApplicationRequest::CancelRecordIo { request_id } if *request_id == preview)));
+        assert!(
+            !closing
+                .requests
+                .iter()
+                .any(|request| matches!(request, ApplicationRequest::ReleaseRenderer { .. }))
+        );
+        let late = if let Some(request_id) = parallel {
+            runtime
+                .observe_test(ApplicationInput::Resources {
+                    request_id,
+                    observation: ApplicationResourceObservation::Prepared { resource_id: 702 },
+                })
+                .unwrap()
+        } else {
+            runtime
+                .observe_test(ApplicationInput::Resources {
+                    request_id: preparation,
+                    observation: ApplicationResourceObservation::Committed {
+                        resource_id: 701,
+                        actual: ApplicationResourceCommit {
+                            applied: target.quality,
+                            extent_px: target.extent_px,
+                        },
+                    },
+                })
+                .unwrap()
+        };
+        let late_resource = if binding_lost { 702 } else { 701 };
+        assert!(late.requests.iter().any(|request| matches!(request, ApplicationRequest::ReleaseResources { resource_id } if *resource_id == late_resource)));
+        assert!(
+            !late
+                .requests
+                .iter()
+                .any(|request| matches!(request, ApplicationRequest::ReleaseRenderer { .. }))
+        );
+        if binding_lost {
+            let released = runtime
+                .observe_test(ApplicationInput::ResourcesReleased {
+                    resource_id: 702,
+                    failure: None,
+                })
+                .unwrap();
+            assert_eq!(released.lifecycle, ApplicationLifecycle::Closing);
+            assert!(
+                !released
+                    .requests
+                    .iter()
+                    .any(|request| matches!(request, ApplicationRequest::ReleaseRenderer { .. }))
+            );
         }
-    )));
-    let drained = runtime
-        .observe_test(ApplicationInput::RendererReleased {
-            renderer_resource_id: 100,
-            failure: None,
-        })
-        .unwrap();
-    assert_eq!(drained.lifecycle, ApplicationLifecycle::Drained);
-    assert!(!drained.drawing.unwrap().presentation.screen_ui_visible);
-    let phase = runtime.application().core_session().snapshot().phase();
-    let ignored = runtime
-        .observe_test(ApplicationInput::Frame {
-            display_resource_id: None,
-            timestamp_ms: 50.0,
-            gamepads: Vec::new(),
-            xr: None,
-            spatial: Default::default(),
-        })
-        .unwrap();
-    assert_eq!(ignored.lifecycle, ApplicationLifecycle::Drained);
-    assert!(ignored.requests.is_empty());
-    assert_eq!(
-        runtime.application().core_session().snapshot().phase(),
-        phase
-    );
+        runtime
+            .observe_test(ApplicationInput::RecordIoCancelled {
+                request_id: preview,
+                failure: None,
+            })
+            .unwrap();
+        let released = runtime
+            .observe_test(ApplicationInput::ResourcesReleased {
+                resource_id: 701,
+                failure: Some("GPU release failed".to_owned()),
+            })
+            .unwrap();
+        assert_eq!(released.lifecycle, ApplicationLifecycle::Closing);
+        assert!(released.requests.iter().any(|request| matches!(
+            request,
+            ApplicationRequest::ReleaseRenderer {
+                renderer_resource_id: 100
+            }
+        )));
+        let drained = runtime
+            .observe_test(ApplicationInput::RendererReleased {
+                renderer_resource_id: 100,
+                failure: None,
+            })
+            .unwrap();
+        assert_eq!(drained.lifecycle, ApplicationLifecycle::Drained);
+        assert!(!drained.drawing.unwrap().presentation.screen_ui_visible);
+        let phase = runtime.application().core_session().snapshot().phase();
+        let ignored = runtime
+            .observe_test(ApplicationInput::Frame {
+                display_resource_id: None,
+                timestamp_ms: 50.0,
+                gamepads: Vec::new(),
+                xr: None,
+                spatial: Default::default(),
+            })
+            .unwrap();
+        assert_eq!(ignored.lifecycle, ApplicationLifecycle::Drained);
+        assert!(ignored.requests.is_empty());
+        assert_eq!(
+            runtime.application().core_session().snapshot().phase(),
+            phase
+        );
+    }
 }
 
 #[test]
@@ -1002,6 +1060,20 @@ fn hmd_frame_and_focus_use_the_confirmed_display_resource_and_shared_viewer_capt
     assert_eq!(camera.world_from_head, Some(head));
     assert_eq!(camera.eyes.len(), 2);
     assert!(runtime.application().presentation_available());
+    runtime
+        .observe_test(ApplicationInput::DocumentFocus { focused: false })
+        .unwrap();
+    let unfocused = runtime
+        .observe_test(ApplicationInput::PageVisibility { visible: false })
+        .unwrap();
+    assert!(runtime.application().presentation_available());
+    assert!(unfocused.drawing.unwrap().presentation.scene_visible);
+    runtime
+        .observe_test(ApplicationInput::DocumentFocus { focused: true })
+        .unwrap();
+    runtime
+        .observe_test(ApplicationInput::PageVisibility { visible: true })
+        .unwrap();
     let mut probes = 0;
     let mut measure = |probe: &ApplicationTextProbe| {
         probes += 1;
@@ -1102,7 +1174,7 @@ fn hmd_frame_and_focus_use_the_confirmed_display_resource_and_shared_viewer_capt
         Some(head)
     );
     assert!(reset_event.drawing.unwrap().spatial.is_none());
-    let mut shifted = observation;
+    let mut shifted = observation.clone();
     let new_from_previous =
         birdman_game_presentation::camera::inverse_pose(previous_from_new).unwrap();
     shifted.observation.tracking_from_head =
@@ -1183,6 +1255,30 @@ fn hmd_frame_and_focus_use_the_confirmed_display_resource_and_shared_viewer_capt
         runtime.xr_viewer,
         Some(XrViewerFrame::Unavailable { .. })
     ));
+    for missing_projection in [false, true] {
+        let mut raw = serde_json::to_value(&observation.observation).unwrap();
+        if missing_projection {
+            raw["views"][0]["projection"][0] = serde_json::Value::Null;
+        } else {
+            raw["trackingFromHead"]["position"]["x"] = serde_json::Value::Null;
+        }
+        let xr = serde_json::from_value(serde_json::json!({ "observation": raw, "visibility": "visible", "input_focused": true })).unwrap();
+        let timestamp = runtime.observed_ms + 10.0;
+        let output = runtime
+            .observe_test(ApplicationInput::Frame {
+                display_resource_id: Some(50),
+                timestamp_ms: timestamp,
+                gamepads: Vec::new(),
+                xr: Some(xr),
+                spatial: Default::default(),
+            })
+            .unwrap();
+        assert!(matches!(
+            runtime.xr_viewer,
+            Some(XrViewerFrame::Unavailable { .. })
+        ));
+        assert!(output.drawing.unwrap().graphics.resource.is_some());
+    }
 }
 
 #[test]

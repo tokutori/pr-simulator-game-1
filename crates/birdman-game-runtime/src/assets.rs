@@ -65,8 +65,8 @@ pub struct ApplicationLightingAssets {
     pub sunlight_color_srgb: u32,
     /// Daylight-gated directional irradiance scale.
     pub sunlight_irradiance: f64,
-    /// Render-world direction toward the sun.
-    pub sunlight_direction: [f64; 3],
+    /// Render-world sun direction XYZ and daylight enable W for direct shader submission.
+    pub sunlight_direction: [f64; 4],
     /// Airlight sRGB 0xRRGGBB colour.
     pub haze_color_srgb: u32,
     /// Near/far distance-fog bounds in metres.
@@ -77,6 +77,8 @@ pub struct ApplicationLightingAssets {
 #[derive(Clone, Debug, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ApplicationWaterAssets {
+    /// Final render X/Z wind velocity for texture drift and micro-normal sampling.
+    pub wind_velocity_render: [f64; 2],
     /// Complete final-axis water meshes and conservative culling bounds.
     pub geometry: crate::geometry::ApplicationWaterGeometry,
     /// Complete GPU wave coefficients, counts and non-inversion bounds.
@@ -85,8 +87,8 @@ pub struct ApplicationWaterAssets {
     pub wind_speed_meters_per_second: f64,
     /// Downstream detail multiplier; zero denotes the flat-water case.
     pub detail_amplitude_scale: f64,
-    /// Near/far periodic images when the wind supports detail generation.
-    pub detail: Option<[ApplicationWaterDetailAsset; 2]>,
+    /// Near/far periodic images; flat water uses a shared neutral texel.
+    pub detail: [ApplicationWaterDetailAsset; 2],
 }
 
 /// Revision-scoped drawing resources prepared by the shared application owner.
@@ -140,6 +142,7 @@ struct DetailAssets {
 }
 
 struct PreparedAssets {
+    sunlight: LakeSunlight,
     venue_visible: bool,
     sky: Arc<SkyAsset>,
     detail: Option<Arc<DetailAssets>>,
@@ -194,6 +197,7 @@ pub(super) struct AssetCompletion {
 
 #[derive(Default)]
 pub(super) struct AssetsOwner {
+    neutral_detail: Option<ImageBuffer>,
     geometry: Option<Box<crate::geometry::GeometryOwner>>,
     geometry_renderer: Option<u32>,
     next_buffer_id: u32,
@@ -206,6 +210,9 @@ pub(super) struct AssetsOwner {
 }
 
 impl AssetsOwner {
+    pub(super) fn sunlight(&self) -> Option<LakeSunlight> {
+        self.active.as_ref().map(|active| active.sunlight)
+    }
     pub(super) fn venue_visible(&self) -> bool {
         self.active
             .as_ref()
@@ -309,6 +316,24 @@ impl AssetsOwner {
                 }
             }
         };
+        let detail_images = if let Some(detail) = &detail {
+            std::array::from_fn(|index| ApplicationWaterDetailAsset {
+                image: detail.images[index].descriptor.clone(),
+                extent_meters: detail.configuration[index].extent_meters(),
+            })
+        } else {
+            if self.neutral_detail.is_none() {
+                self.neutral_detail = Some(self.image(
+                    [1, 1],
+                    ApplicationImageEncoding::LinearRgba8,
+                    vec![128; 4],
+                )?);
+            }
+            std::array::from_fn(|_| ApplicationWaterDetailAsset {
+                image: self.neutral_detail.as_ref().unwrap().descriptor.clone(),
+                extent_meters: 1.0,
+            })
+        };
         let sunlight = LakeSunlight::for_condition(sky_condition);
         let haze = LakeSceneHaze::try_new(sky_condition.map(LakeSkyRenderCondition::visibility_m))
             .map_err(ApplicationAssetError::Sky)?;
@@ -325,11 +350,17 @@ impl AssetsOwner {
                 } else {
                     0.0
                 },
-                sunlight_direction: sunlight.direction,
+                sunlight_direction: [
+                    sunlight.direction[0],
+                    sunlight.direction[1],
+                    sunlight.direction[2],
+                    if sunlight.daylight { 1.0 } else { 0.0 },
+                ],
                 haze_color_srgb: haze.color_srgb,
                 haze_range_meters: [haze.near_m, haze.far_m],
             },
             water: ApplicationWaterAssets {
+                wind_velocity_render: [wave.wind_velocity_ne_mps[1], -wave.wind_velocity_ne_mps[0]],
                 geometry: water_geometry,
                 projection,
                 wind_speed_meters_per_second: wind_speed,
@@ -338,12 +369,7 @@ impl AssetsOwner {
                 } else {
                     0.0
                 },
-                detail: detail.as_ref().map(|detail| {
-                    std::array::from_fn(|index| ApplicationWaterDetailAsset {
-                        image: detail.images[index].descriptor.clone(),
-                        extent_meters: detail.configuration[index].extent_meters(),
-                    })
-                }),
+                detail: detail_images,
             },
             venue,
         };
@@ -351,6 +377,7 @@ impl AssetsOwner {
             revision,
             PendingAssets {
                 bundle: PreparedAssets {
+                    sunlight,
                     sky,
                     detail,
                     venue_visible: venue.is_visible(),
@@ -519,6 +546,11 @@ impl AssetsOwner {
     }
 
     pub(super) fn bytes(&self, buffer_id: u32) -> Option<&[u8]> {
+        if let Some(image) = &self.neutral_detail
+            && image.descriptor.buffer_id == buffer_id
+        {
+            return Some(&image.bytes);
+        }
         for bundle in self.bundles() {
             if bundle.sky.image.descriptor.buffer_id == buffer_id {
                 return Some(&bundle.sky.image.bytes);
@@ -640,7 +672,7 @@ mod tests {
             &crate::ApplicationBufferSlice::F32(values).to_bytes()[..4],
             &values[0].to_le_bytes()
         );
-        let detail_id = first.water.detail.as_ref().unwrap()[0].image.buffer_id;
+        let detail_id = first.water.detail[0].image.buffer_id;
         assert_eq!(
             owner.bytes(sky_id).unwrap().len(),
             first.sky.size[0] as usize * first.sky.size[1] as usize * 4
@@ -663,10 +695,7 @@ mod tests {
             .unwrap();
         assert!(second.scene.is_none());
         assert_eq!(second.sky.buffer_id, sky_id);
-        assert_eq!(
-            second.water.detail.as_ref().unwrap()[0].image.buffer_id,
-            detail_id
-        );
+        assert_eq!(second.water.detail[0].image.buffer_id, detail_id);
         assert!(second.water.projection.wave_count() < first.water.projection.wave_count());
         assert!(owner.select(Some(2)).is_empty());
         assert!(
@@ -705,7 +734,7 @@ mod tests {
         let third = owner
             .prepare(3, calm, target(WaterQuality::Low), None)
             .unwrap();
-        let abandoned_id = third.water.detail.as_ref().unwrap()[0].image.buffer_id;
+        let abandoned_id = third.water.detail[0].image.buffer_id;
         owner.select(Some(3));
         let cancelled = owner.select(None);
         assert!(cancelled.iter().any(|request| matches!(

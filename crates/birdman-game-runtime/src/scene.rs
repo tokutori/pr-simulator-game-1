@@ -40,6 +40,8 @@ pub struct ApplicationEyeProjection {
 #[derive(Clone, Debug, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ApplicationCameraProjection {
+    /// Conservative head-local OpenGL culling volume; absent means culling is disabled.
+    pub culling_projection: Option<[f64; 16]>,
     /// Final monoscopic OpenGL projection, absent for stereo displays.
     pub screen_projection: Option<[f64; 16]>,
     /// Runtime tracking origin mounted in render world.
@@ -60,6 +62,10 @@ pub struct ApplicationCameraProjection {
 #[derive(Clone, Debug, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ApplicationSceneProjection {
+    /// Final directional-light placement and shadow volume.
+    pub lighting: Option<birdman_game_scene::lake_sky::LakeSceneShadow>,
+    /// Final reflection-pass camera and world-to-clip matrix.
+    pub reflection: Option<birdman_game_presentation::camera::PlanarReflection>,
     /// Whether the registered world geometry belongs to this admitted environment.
     pub venue_visible: bool,
     /// Final render-world water translation, independent of aircraft rotation and altitude.
@@ -236,6 +242,8 @@ impl SceneOwner {
             return Ok(SceneFrame {
                 aircraft,
                 projection: ApplicationSceneProjection {
+                    lighting: None,
+                    reflection: None,
                     venue_visible: context.venue_visible,
                     water_world_from_surface: Pose {
                         position: Vector3 {
@@ -337,9 +345,10 @@ impl SceneOwner {
             .map_err(ApplicationRuntimeError::Camera)?;
         let viewer = match mode {
             GameUiPresentationMode::Screen => None,
-            GameUiPresentationMode::PhoneVr => {
-                Some(phone_viewer(context.viewport, fov).map_err(ApplicationRuntimeError::Camera)?)
-            }
+            GameUiPresentationMode::PhoneVr => Some(
+                phone_viewer(context.viewport, context.render_extent_px, fov)
+                    .map_err(ApplicationRuntimeError::Camera)?,
+            ),
             GameUiPresentationMode::Hmd => context.xr_viewer.cloned(),
         };
         let head = match mode {
@@ -400,6 +409,8 @@ impl SceneOwner {
         Ok(SceneFrame {
             aircraft,
             projection: ApplicationSceneProjection {
+                lighting: None,
+                reflection: None,
                 venue_visible: context.venue_visible,
                 water_world_from_surface: Pose {
                     position: Vector3 {
@@ -417,6 +428,9 @@ impl SceneOwner {
                 water_time_seconds: aircraft.map_or(0.0, |pose| pose.simulation_time_seconds),
                 world_from_aircraft,
                 camera: Some(ApplicationCameraProjection {
+                    culling_projection: viewer
+                        .as_ref()
+                        .and_then(birdman_game_presentation::xr::xr_stereo_culling_projection),
                     screen_projection: if mode == GameUiPresentationMode::Screen {
                         Some(screen_projection(context.viewport, fov)?)
                     } else {
@@ -484,6 +498,7 @@ fn exhibition_camera(
 
 fn phone_viewer(
     viewport: &GameUiViewport,
+    extent: Option<[u32; 2]>,
     vertical_fov_degrees: f64,
 ) -> Result<XrViewerFrame, CameraError> {
     if !viewport.width.is_finite()
@@ -496,8 +511,20 @@ fn phone_viewer(
     let near = 0.05;
     let far = 100_000.0;
     let top = near * (vertical_fov_degrees.to_radians() / 2.0).tan();
-    let half_width = top * viewport.width / viewport.height / 2.0;
+    let [width, height] = extent.map_or([viewport.width, viewport.height], |extent| {
+        extent.map(f64::from)
+    });
+    let left_width = (width / 2.0).floor();
+    if left_width <= 0.0 || height <= 0.0 {
+        return Err(CameraError::InvalidDistance);
+    }
     let eye = |eye, offset: f64| {
+        let eye_width = if eye == XrEye::Left {
+            left_width
+        } else {
+            width - left_width
+        };
+        let half_width = top * eye_width / height;
         let shift = -offset * near / 10.0;
         XrEyeGeometry {
             eye,

@@ -19,56 +19,29 @@ export interface XrViewerObservation {
     /**
      * Centre-head pose, or absent when runtime tracking is unavailable.
      */
-    readonly trackingFromHead?: Pose | null;
+    readonly trackingFromHead?: XrObservedPose | null;
     /**
      * Platform view order is preserved until shared eye classification.
      */
     readonly views: readonly XrViewObservation[];
 }
 /**
- * Rigid child-to-parent transform; the caller names both reference spaces.
+ * Nullable components received from an unvalidated tracking API observation.
  */
-export interface Pose {
-    readonly orientation: Quaternion;
-    readonly position: Vector3;
+export interface XrObservedPose {
+    readonly orientation: ObservedQuaternion;
+    readonly position: ObservedVector;
 }
-/**
- * Scalar-first unit quaternion in a right-handed reference space.
- */
-export interface Quaternion {
-    /**
-     * Scalar component.
-     */
-    readonly w: number;
-    /**
-     * Right-axis component.
-     */
-    readonly x: number;
-    /**
-     * Up-axis component.
-     */
-    readonly y: number;
-    /**
-     * Back-axis component.
-     */
-    readonly z: number;
+export interface ObservedQuaternion {
+    readonly w?: number | null;
+    readonly x?: number | null;
+    readonly y?: number | null;
+    readonly z?: number | null;
 }
-/**
- * Metric right/up/back coordinates in the explicitly named reference space.
- */
-export interface Vector3 {
-    /**
-     * Rightward coordinate in metres.
-     */
-    readonly x: number;
-    /**
-     * Upward coordinate in metres.
-     */
-    readonly y: number;
-    /**
-     * Backward coordinate in metres.
-     */
-    readonly z: number;
+export interface ObservedVector {
+    readonly x?: number | null;
+    readonly y?: number | null;
+    readonly z?: number | null;
 }
 /**
  * One platform view before head-relative geometry has been derived.
@@ -82,6 +55,6 @@ export interface XrViewObservation {
     /**
      * Unmodified column-major runtime projection values.
      */
-    readonly projection: readonly number[];
-    readonly trackingFromEye: Pose;
+    readonly projection: readonly (number | null)[];
+    readonly trackingFromEye: XrObservedPose;
 }

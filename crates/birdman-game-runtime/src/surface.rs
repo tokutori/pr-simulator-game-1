@@ -66,6 +66,8 @@ pub enum ApplicationMenuProjection {
     Ready {
         /// Final render-world panel pose.
         world_from_panel: Pose,
+        /// Final GPU depth, alpha and ordering settings.
+        surface_style: XrSurfaceStyle,
         /// Panel pose below a runtime-tracking parent.
         tracking_from_panel: Pose,
         /// Texture allocation in pixels.
@@ -73,7 +75,7 @@ pub enum ApplicationMenuProjection {
         /// Drawing commands, without interaction policy or hit geometry.
         paint: Box<ApplicationMenuPaint>,
         /// Visible cursor points in panel-local right/up metres.
-        cursors: Vec<ApplicationMenuCursor>,
+        cursors: Vec<XrCursorProjection>,
     },
 }
 
@@ -95,10 +97,8 @@ pub struct ApplicationMenuPaint {
     pub footer: Vec<SurfacePaintItem>,
 }
 
-/// One cursor's final visible position and dwell indicator.
-#[derive(Clone, Debug, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct ApplicationMenuCursor {
+#[derive(Clone, Debug)]
+struct MenuCursor {
     /// Panel-local right/up coordinates in metres.
     pub point: [f64; 2],
     /// Completed fraction of the selection indicator.
@@ -123,6 +123,8 @@ pub enum ApplicationHeadHudProjection {
     Ready {
         /// Final render-world surface pose.
         world_from_surface: Pose,
+        /// Final GPU depth, alpha and ordering settings.
+        surface_style: XrSurfaceStyle,
         /// Head-relative surface and texture drawing commands.
         paint: Box<HeadHudPaintProjection>,
     },
@@ -152,7 +154,7 @@ pub(super) struct SurfaceOwner {
     offered: Option<PublishedMenu>,
     presentation_id: u32,
     gamepad: Option<(u32, u32)>,
-    cursors: Vec<ApplicationMenuCursor>,
+    cursors: Vec<MenuCursor>,
     resource: Option<(
         birdman_game_presentation::game_ui::GameUiPresentationMode,
         Option<u32>,
@@ -266,7 +268,11 @@ impl SurfaceOwner {
                 focused,
                 panel_pose: menu.panel_pose,
                 head_pose: head,
-                pointers: observation.pointers.into_iter().map(pointer_ray).collect(),
+                pointers: observation
+                    .pointers
+                    .into_iter()
+                    .filter_map(pointer_ray)
+                    .collect(),
                 gamepad,
             })
             .map_err(ApplicationRuntimeError::SpatialInput)?;
@@ -319,10 +325,10 @@ impl SurfaceOwner {
             return Ok(None);
         }
         let panel_pose = self.published.as_ref().unwrap().panel_pose;
-        let Some(hit) =
-            self.pointer
-                .select_on_panel(pointer_ray(pointer), timestamp_ms, panel_pose)
-        else {
+        let Some(ray) = pointer_ray(pointer) else {
+            return Ok(None);
+        };
+        let Some(hit) = self.pointer.select_on_panel(ray, timestamp_ms, panel_pose) else {
             return Ok(None);
         };
         Ok(self.activate(hit))
@@ -571,10 +577,22 @@ impl SurfaceOwner {
                                 };
                                 ApplicationMenuProjection::Ready {
                                     world_from_panel: poses.world_from_panel,
+                                    surface_style: XrSurfaceStyle::for_anchor(panel.anchor),
                                     tracking_from_panel: poses.tracking_from_panel,
                                     canvas_size: canvas_size(paint.size, 1536.0),
                                     paint: Box::new(paint),
-                                    cursors,
+                                    cursors: cursors
+                                        .iter()
+                                        .map(|cursor| {
+                                            XrCursorProjection::try_new(
+                                                panel.anchor,
+                                                poses.world_from_panel,
+                                                cursor.point,
+                                                cursor.progress,
+                                            )
+                                        })
+                                        .collect::<Result<Vec<_>, _>>()
+                                        .map_err(ApplicationRuntimeError::Camera)?,
                                 }
                             }
                             XrPanelPlacement::Unavailable { reason } => {
@@ -621,6 +639,7 @@ impl SurfaceOwner {
                     }
                     HeadHudPaintReply::Ready { projection } => {
                         ApplicationHeadHudProjection::Ready {
+                            surface_style: XrSurfaceStyle::for_anchor(GameUiAnchor::Head),
                             world_from_surface: compose_pose(head, projection.local_pose)
                                 .map_err(ApplicationRuntimeError::Camera)?,
                             paint: projection,
@@ -643,12 +662,13 @@ impl SurfaceOwner {
     }
 }
 
-fn pointer_ray(observation: ApplicationPointerObservation) -> XrPointerRay {
-    XrPointerRay {
+fn pointer_ray(observation: ApplicationPointerObservation) -> Option<XrPointerRay> {
+    let pose = compose_pose(Pose::IDENTITY, observation.tracking_from_ray).ok()?;
+    Some(XrPointerRay {
         source: XrPointerSource::Controller {
             id: observation.source_id,
         },
-        reference_from_space: observation.tracking_from_ray,
+        reference_from_space: pose,
         origin: Vector3 {
             x: 0.0,
             y: 0.0,
@@ -659,11 +679,11 @@ fn pointer_ray(observation: ApplicationPointerObservation) -> XrPointerRay {
             y: 0.0,
             z: -1.0,
         },
-    }
+    })
 }
 
-fn cursor(hit: &XrPointerHit, progress: f64) -> ApplicationMenuCursor {
-    ApplicationMenuCursor {
+fn cursor(hit: &XrPointerHit, progress: f64) -> MenuCursor {
+    MenuCursor {
         point: hit.point,
         progress: if matches!(hit.source, XrPointerSource::Controller { .. }) {
             1.0

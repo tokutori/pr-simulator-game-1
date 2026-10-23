@@ -119,6 +119,11 @@ pub struct ApplicationPointerObservation {
     /// Platform input-source identity, retired when that source disconnects.
     pub source_id: u32,
     /// Runtime target-ray-space pose in tracking coordinates.
+    #[serde(deserialize_with = "birdman_game_presentation::xr::deserialize_xr_pose")]
+    #[cfg_attr(
+        feature = "schema",
+        schemars(with = "birdman_game_presentation::xr::XrObservedPose")
+    )]
     pub tracking_from_ray: Pose,
 }
 
@@ -257,6 +262,14 @@ pub enum ApplicationInput {
         /// Runtime resource that emitted the reset.
         resource_id: u32,
         /// New reference coordinates expressed in the previous tracking frame.
+        #[serde(
+            default,
+            deserialize_with = "birdman_game_presentation::xr::deserialize_xr_optional_pose"
+        )]
+        #[cfg_attr(
+            feature = "schema",
+            schemars(with = "Option<birdman_game_presentation::xr::XrObservedPose>")
+        )]
         previous_from_new: Option<Pose>,
     },
     /// Pointer movement while the platform's camera-look button is held.

@@ -1,6 +1,77 @@
 use super::{Pose, Vector3};
 use serde::{Deserialize, Serialize};
 
+/// Nullable components received from an unvalidated tracking API observation.
+#[derive(Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct XrObservedPose {
+    position: ObservedVector,
+    orientation: ObservedQuaternion,
+}
+
+#[derive(Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+struct ObservedVector {
+    x: Option<f64>,
+    y: Option<f64>,
+    z: Option<f64>,
+}
+
+#[derive(Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+struct ObservedQuaternion {
+    w: Option<f64>,
+    x: Option<f64>,
+    y: Option<f64>,
+    z: Option<f64>,
+}
+
+impl XrObservedPose {
+    fn pose(self) -> Pose {
+        Pose {
+            position: Vector3 {
+                x: self.position.x.unwrap_or(f64::NAN),
+                y: self.position.y.unwrap_or(f64::NAN),
+                z: self.position.z.unwrap_or(f64::NAN),
+            },
+            orientation: super::Quaternion {
+                w: self.orientation.w.unwrap_or(f64::NAN),
+                x: self.orientation.x.unwrap_or(f64::NAN),
+                y: self.orientation.y.unwrap_or(f64::NAN),
+                z: self.orientation.z.unwrap_or(f64::NAN),
+            },
+        }
+    }
+}
+
+/// Retains missing tracking numbers for the normal shared pose-availability classification.
+pub fn deserialize_xr_pose<'de, Deserializer: serde::Deserializer<'de>>(
+    deserializer: Deserializer,
+) -> Result<Pose, Deserializer::Error> {
+    XrObservedPose::deserialize(deserializer).map(XrObservedPose::pose)
+}
+
+/// Decodes an optional raw tracking/reset transform with nullable numeric observations.
+pub fn deserialize_xr_optional_pose<'de, Deserializer: serde::Deserializer<'de>>(
+    deserializer: Deserializer,
+) -> Result<Option<Pose>, Deserializer::Error> {
+    Option::<XrObservedPose>::deserialize(deserializer).map(|pose| pose.map(XrObservedPose::pose))
+}
+
+fn deserialize_xr_projection<'de, Deserializer: serde::Deserializer<'de>>(
+    deserializer: Deserializer,
+) -> Result<Vec<f64>, Deserializer::Error> {
+    Vec::<Option<f64>>::deserialize(deserializer).map(|values| {
+        values
+            .into_iter()
+            .map(|value| value.unwrap_or(f64::NAN))
+            .collect()
+    })
+}
+
 /// Eye identity within the supported primary stereo view configuration.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -57,8 +128,12 @@ pub struct XrViewObservation {
     /// Primary eye identity; absent for an unsupported platform view.
     pub eye: Option<XrEye>,
     /// Eye pose in the same reference space as the centre head.
+    #[serde(deserialize_with = "deserialize_xr_pose")]
+    #[cfg_attr(feature = "schema", schemars(with = "XrObservedPose"))]
     pub tracking_from_eye: Pose,
     /// Unmodified column-major runtime projection values.
+    #[serde(deserialize_with = "deserialize_xr_projection")]
+    #[cfg_attr(feature = "schema", schemars(with = "Vec<Option<f64>>"))]
     pub projection: Vec<f64>,
     /// Rendering API clip-depth convention.
     pub depth_range: XrDepthRange,
@@ -72,6 +147,8 @@ pub struct XrViewerObservation {
     /// Origin of the optical observations.
     pub source: XrViewerSource,
     /// Centre-head pose, or absent when runtime tracking is unavailable.
+    #[serde(default, deserialize_with = "deserialize_xr_optional_pose")]
+    #[cfg_attr(feature = "schema", schemars(with = "Option<XrObservedPose>"))]
     pub tracking_from_head: Option<Pose>,
     /// Platform view order is preserved until shared eye classification.
     pub views: Vec<XrViewObservation>,
