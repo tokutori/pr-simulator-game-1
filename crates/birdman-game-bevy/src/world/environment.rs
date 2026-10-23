@@ -241,18 +241,18 @@ pub(super) fn wing_image(
     if bytes.len() != expected {
         return Err("Wing mip chain byte count is incompatible".into());
     }
-    let mut image = Image::new(
+    let mut image = Image::new_uninit(
         Extent3d {
             width,
             height,
             depth_or_array_layers: 1,
         },
         TextureDimension::D2,
-        bytes.to_vec(),
         TextureFormat::Rgba8UnormSrgb,
         RenderAssetUsages::default(),
     );
     image.texture_descriptor.mip_level_count = asset.mip_level_count;
+    image.data = Some(bytes.to_vec());
     image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
         anisotropy_clamp: 8,
         ..ImageSamplerDescriptor::linear()

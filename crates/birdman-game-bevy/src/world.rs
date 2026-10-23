@@ -1295,7 +1295,7 @@ mod tests {
             observation: ApplicationResourceObservation::Committed { resource_id: 3, actual } }] if actual.extent_px == [640, 360])
         );
         assert!(poll(&mut world).is_empty());
-        let runtime = ApplicationRuntime::new(
+        let mut runtime = ApplicationRuntime::new(
             birdman_game_app::application::ApplicationSession::default(),
             birdman_game_runtime::ApplicationPlatformObservation {
                 renderer: None,
@@ -1310,6 +1310,57 @@ mod tests {
             },
         )
         .unwrap();
+        let initial = runtime
+            .update(
+                birdman_game_runtime::ApplicationObservation {
+                    observed_ms: 0.0,
+                    input: ApplicationInput::Platform {
+                        observation: birdman_game_runtime::ApplicationPlatformObservation {
+                            renderer: Some(platform(&mut world)),
+                            surface: None,
+                            viewport: birdman_game_presentation::game_ui::GameUiViewport {
+                                width: 1280.0,
+                                height: 720.0,
+                                root_font_size: 16.0,
+                            },
+                            chart_extent: None,
+                            capabilities: Default::default(),
+                        },
+                    },
+                },
+                &mut |_| {
+                    Err(birdman_game_presentation::xr::MenuLayoutFailure::MeasurementUnavailable)
+                },
+            )
+            .unwrap();
+        let scene = initial
+            .requests
+            .iter()
+            .find_map(|request| match request {
+                ApplicationRequest::PrepareResources { assets, .. } => assets.scene.as_ref(),
+                _ => None,
+            })
+            .expect("Prepared scene upload");
+        for texture in &scene.wing_textures {
+            let image = environment::wing_image(&runtime, texture).unwrap();
+            assert_eq!(
+                image.texture_descriptor.mip_level_count,
+                texture.mip_level_count
+            );
+            assert!(texture.mip_level_count > 1);
+            assert_eq!(image.texture_descriptor.size.width, texture.size[0]);
+            assert_eq!(image.texture_descriptor.size.height, texture.size[1]);
+            assert_eq!(
+                image.texture_descriptor.format,
+                bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb
+            );
+            let Some(birdman_game_runtime::ApplicationBufferSlice::U8(bytes)) =
+                runtime.asset_buffer(texture.buffer.buffer_id)
+            else {
+                panic!("Prepared wing upload")
+            };
+            assert_eq!(image.data.as_deref(), Some(bytes));
+        }
         assert!(
             execute(
                 &mut world,
