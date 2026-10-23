@@ -25,6 +25,8 @@ pub const WEB_REFERENCE_REVISION: &str = "51b8678100da1520773d2247db52e0d830c341
 pub const LAKE_RENDER_MODEL_VERSION: u32 = 1;
 /// Number of RGBA texels along each periodic detail-image axis.
 pub const LAKE_DETAIL_IMAGE_SIZE: usize = 512;
+/// Dark, mid-tone and bright water colours, packed as sRGB 0xRRGGBB.
+pub const LAKE_WATER_PALETTE_SRGB: [u32; 3] = [0x172831, 0x293b43, 0x50636a];
 /// Maximum finite-fetch wave-component budget supported by the Web model.
 pub const MAX_LAKE_WAVE_COMPONENTS: usize = 24;
 /// Maximum accepted total wavelet count for one generated detail image.

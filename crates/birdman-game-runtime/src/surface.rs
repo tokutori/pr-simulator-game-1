@@ -7,7 +7,7 @@ use birdman_game_presentation::xr::*;
 use serde::{Deserialize, Serialize};
 
 /// Actual font resource and shaping locale reported by platform font I/O.
-#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct ApplicationSurfaceObservation {
@@ -32,7 +32,7 @@ pub struct ApplicationTextProbe {
 }
 
 /// Unmodified platform text metrics in logical pixels.
-#[derive(Clone, Copy, Debug, Deserialize)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct ApplicationGlyphMetrics {
@@ -68,8 +68,6 @@ pub enum ApplicationMenuProjection {
         world_from_panel: Pose,
         /// Final GPU depth, alpha and ordering settings.
         surface_style: XrSurfaceStyle,
-        /// Panel pose below a runtime-tracking parent.
-        tracking_from_panel: Pose,
         /// Texture allocation in pixels.
         canvas_size: [u32; 2],
         /// Drawing commands, without interaction policy or hit geometry.
@@ -578,7 +576,6 @@ impl SurfaceOwner {
                                 ApplicationMenuProjection::Ready {
                                     world_from_panel: poses.world_from_panel,
                                     surface_style: XrSurfaceStyle::for_anchor(panel.anchor),
-                                    tracking_from_panel: poses.tracking_from_panel,
                                     canvas_size: canvas_size(paint.size, 1536.0),
                                     paint: Box::new(paint),
                                     cursors: cursors

@@ -20,7 +20,7 @@ pub struct ApplicationRenderQuality {
 }
 
 /// Actual renderer creation and drawing-buffer observations.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ApplicationGpuTimingCapability {
@@ -34,7 +34,7 @@ pub enum ApplicationGpuTimingCapability {
 }
 
 /// Actual renderer creation and drawing-buffer observations.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct ApplicationRendererObservation {
@@ -82,7 +82,7 @@ pub struct ApplicationGpuQuery {
 }
 
 /// Raw graphics API observations.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ApplicationGraphicsObservation {
@@ -121,7 +121,7 @@ pub struct ApplicationGraphicsTarget {
 }
 
 /// Actual values observed after an authorized atomic resource binding.
-#[derive(Clone, Copy, Debug, Deserialize)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct ApplicationResourceCommit {

@@ -80,6 +80,8 @@ pub struct ApplicationLightingAssets {
 #[derive(Clone, Debug, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ApplicationWaterAssets {
+    /// Dark, mid-tone and bright colours for direct material submission.
+    pub palette_srgb: [u32; 3],
     /// Final render X/Z wind velocity for texture drift and micro-normal sampling.
     pub wind_velocity_render: [f64; 2],
     /// Complete final-axis water meshes and conservative culling bounds.
@@ -364,6 +366,7 @@ impl AssetsOwner {
                 haze_range_meters: [haze.near_m, haze.far_m],
             },
             water: ApplicationWaterAssets {
+                palette_srgb: birdman_game_scene::lake_water::LAKE_WATER_PALETTE_SRGB,
                 wind_velocity_render: [wave.wind_velocity_ne_mps[1], -wave.wind_velocity_ne_mps[0]],
                 geometry: water_geometry,
                 projection,

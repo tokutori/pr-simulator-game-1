@@ -78,7 +78,7 @@ pub enum RecordWriteRequest {
 }
 
 /// Raw request results delivered synchronously within an active transaction callback.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum RecordWriteObservation {
@@ -391,7 +391,7 @@ fn positive_record_key(value: Value) -> Result<u32, String> {
 }
 
 /// Raw rows retrieved by a bounded descending metadata cursor in one read transaction.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct RecordPreviewRow {
@@ -420,7 +420,7 @@ pub enum RecordPreviewRequest {
 }
 
 /// Raw results from one bounded record preview transaction.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum RecordPreviewObservation {

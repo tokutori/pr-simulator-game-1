@@ -65,6 +65,8 @@ pub(crate) fn platform(world: &mut World) -> ApplicationPlatformObservation {
 
 pub(crate) fn initialize(world: &mut World) {
     let observation = platform(world);
+    #[cfg(feature = "verify-harness")]
+    super::verification::trace::initialize(world, &observation);
     match NativeRuntime::new(observation) {
         Ok(runtime) => {
             world.insert_resource(runtime);
@@ -107,20 +109,41 @@ pub(crate) fn update(world: &mut World) {
         spatial: Default::default(),
     });
     while let Some(input) = queue.pop_front() {
-        let output = runtime.0.update(
-            ApplicationObservation {
-                observed_ms: now,
-                input,
-            },
-            &mut |_| Err(birdman_game_presentation::xr::MenuLayoutFailure::MeasurementUnavailable),
-        );
+        let observation = ApplicationObservation {
+            observed_ms: now,
+            input,
+        };
+        #[cfg(feature = "verify-harness")]
+        let trace_input = super::verification::trace::observation(world, &observation);
+        #[cfg(feature = "verify-harness")]
+        let mut trace_fonts = Vec::new();
+        let output = runtime.0.update(observation, &mut |probe| {
+            let result: Result<birdman_game_runtime::ApplicationGlyphMetrics, _> =
+                Err(birdman_game_presentation::xr::MenuLayoutFailure::MeasurementUnavailable);
+            #[cfg(feature = "verify-harness")]
+            if trace_input.is_some() {
+                trace_fonts.push(serde_json::json!({ "probe": probe, "result": result }));
+            }
+            #[cfg(not(feature = "verify-harness"))]
+            let _ = probe;
+            result
+        });
         let output = match output {
             Ok(output) => output,
             Err(cause) => {
+                #[cfg(feature = "verify-harness")]
+                super::verification::trace::failed(
+                    world,
+                    trace_input,
+                    trace_fonts,
+                    format!("{cause:?}"),
+                );
                 error!("Native application observation: {cause:?}");
                 continue;
             }
         };
+        #[cfg(feature = "verify-harness")]
+        super::verification::trace::output(world, trace_input, trace_fonts, &output);
         if let Some(cause) = output.diagnostic {
             warn!("Native application: {cause}");
         }

@@ -6,7 +6,7 @@ use birdman_game_app::record_persistence::{
     RecordWriteObservation,
 };
 use birdman_game_core::SessionPhase;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 use super::{ApplicationRequest, ApplicationRuntimeError};
@@ -31,7 +31,7 @@ struct LoadJob {
 }
 
 /// Raw result of a platform record read.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ApplicationRecordLoadCompletion {

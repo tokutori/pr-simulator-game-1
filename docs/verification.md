@@ -39,6 +39,8 @@ npm run verify
 ~~~
 
 - cross-target接続は`npm run test:cross-target -- target/cross-target-check`で検査する。Nativeとfresh WASMの同じApplicationRuntimeへ生観測とI/O完了を渡し、集約出力・保存原文・終了分類を照合する。入力接続世代・不規則なframe時刻・遅延回復は共有ownerの代表接続で確認する。
+- Nativeの`--verify`は本番updateが受けた観測・文字計測結果・I/O要求を`application-trace.jsonl`へ記録する。描画はcapture境界だけを比較点とし、WASM再生へ同じ文字計測の成功・失敗を返す。
+- 新規保存のJSONは実build来歴のtarget/profileを個別に記録し、それ以外の内容を比較する。公開Title操作からNativeの保存原文を読み戻し、同原文のJSON/CSV出力をbyte一致で検査する。
 - cross-targetの浮動小数点値は絶対許容差 $10^{-9}$ と相対許容差 $10^{-10}$ の和で比較する。identity・比較key・source fingerprint・終了分類は完全一致、保存原文とそのCSV再出力はbyte一致とする。実行結果にはsourceとWASMのhashを記録する。
 - Rustdocでは `RUSTDOCFLAGS=-D warnings` を設定する。
 - Windows CIは共有・Web側のworkspace試験とNative単独試験を分離し、Native実行ファイルもビルドする。
@@ -414,40 +416,22 @@ npm run measure:web-auto -- http://127.0.0.1:4202/pr-simulator-game-1/ target/we
 
 ### 画面遷移と実download
 
-- browserはrAFの生timestampと、コールバック受信時の`performance.now()`を別々に通知する。共有ownerはScreen/Phoneのframe時刻、HMDの受信時刻を進行時計に使い、予測表示時刻を安全停止の経過時間と区別する。
-  飛行は100 Hz固定更新と150 ms安全停止を共有し、ResumeとRetry後の最初の観測を新しい基点とする。
-- `test:web-ui` は専用BrowserContextから本番ページ・Rust/WASM・Three.jsへ接続する。
-  - `--without-gpu-timer`は計測拡張が非対応の経路を再現し、軽量Autoの実適用を確認する。`--allow-dirty`は変更差分とSHA-256を保存してローカル開発中のsourceを識別する。
-  - 初期texture生成、uploadのCPU投入、非同期material compileの待機、初回drawのCPU投入を個別に記録する。
-- Setup/Briefing/Countdown/HUD/Pause/Resume/Result、Analysis3図・凡例、Replay・技術情報、 実CSV/JSON出力、同条件Retryを操作する。
-- browser・page・console・HTTP・WebGLのエラーを保持し、非同期body取得とcleanupを有界化する。
-- JSON原文、CSV、条件、画像、実WASM hashを結果へ保存する。
-- 統合前のローカル差分は`test:web-ui`へ`--allow-dirty`を指定し、基準HEAD・repository全体の`source.patch`・差分SHA-256を保存する。新規sourceはindexへ認識させ、検査前後のHEAD・差分・新規source集合を照合する。出力先はrepository外またはignored directoryを使用する。
-- 水面はLow/Medium/Highを実操作で切り替え、4方位と左右眼で4×4のchunkをカリングする。同じ時刻・camera・materialの単一meshとのRGBA差を各channelで1/255以内とし、可視draw数・送信頂点数・WebGL診断を記録する。
-- 本番画面のUI更新で天空textureを再利用し、気象切替で交換することを検査する。背景・近景/遠景水面のtexture共用と雲専用geometryの撤去を照合する。
-- 上空の雲は独立した本番rendererで雲量0/25/100%と太陽高度5°/55°/90°を含む5条件を描画し、4方位・天頂・左右眼のHD画像を35枚保存する。並進による画素差は1/255以内とし、同値条件でのtexture再利用と本番画面の資源保持を検査する。
-- `--water-reference=FILE`は`sourceHead`・`vertexShader`・`fragmentShader`を持つ固定版JSONを保存し、3時刻の旧/新shaderを同条件で比較する。GPU計測対応時は本番loopを一時停止し、640×360・shadow更新固定のdrawを旧/新交互に6回ずつ測定する。query非対応と無効観測は原因を記録する。
-  - 描画buffer寸法・pixel ratio、GPU timer/parallel compile拡張、fragment highp精度を記録する。描画命令の送信と同期readbackのCPU実時間を分けて採取する。
-- Screenの配置はUI倍率適用後の1280×720以上で検査し、1920×1080以上を推奨する。全Scene・overlay・Information・Customの64種類のcueと文字拡大で、要素の保持、最低文字高、非重複、前方中央の空きを確認する。
-- HUDは下端へ配置し、全体背景とスクロールを使用しない。VRの視角・両眼への収まりはScreenの解像度とは別に検査する。
-
-予期しない初期Pauseはfindingとして保持する。
-公開Resumeを一度実行して後段を調べる場合も、最終結果は失敗のままとする。
+- browserはrAFの生timestampとコールバック受信時の`performance.now()`を別々に通知する。共有ownerはScreen/Phoneのframe時刻、HMDの受信時刻を進行時計に使い、予測表示時刻を安全停止の経過時間と区別する。
+- `test:web-ui`は専用BrowserContextから本番ページ・集約Rust/WASM owner・実DOM/Canvas/Three/WebGL2へ接続する。Title、Calm Setup、Briefing、Flight、Pause、Result、Analysis3図、Replayを実操作し、HD1280×720・FHD1920×1080の画像を保存する。
+- 水面品質Low/Medium/Highを公開UIで切り替え、準備完了後の描画を確認する。`--without-gpu-timer`は実拡張取得を非対応へ置き換えるI/O条件である。Autoの採否と準備認可は共有Rustが所有する。
+- downloadは実browserからJSON原文とCSVを保存し、Replayからの再出力とbyte一致を確認する。RetryからBriefing、SetupからTitleへの操作到達性を検査する。
+- 画面のWebGL2画素、context loss、console、全HTTP失敗URL、配信WASMのHTTP200とSHA-256を記録する。視覚的な品質は保存画像の確認と合わせて受け入れる。
+- `--allow-dirty`は基準HEAD・repository全体の`source.patch`・差分SHA-256を保存する。新規sourceはindexへ認識させ、検査前後のHEAD・差分・untracked集合・WASM hashを照合する。出力先はrepository外またはignored directoryを使用する。
+- 共有波・天空・機体・座標・clip・実測文字の数値契約はRustの担当moduleで検査する。WebXRのengine境界は実WebXRManagerと集約ownerの代表結合試験で検査し、本番の内部ownerや描画producerへCUI専用操作を追加しない。
+- ScreenはUI倍率適用後1280×720以上を検査対象とし、1920×1080以上を推奨する。HUDは下端の透明面として表示し、前方中央の空きとVRの両眼可読性を各担当の数値・実機受入で確認する。
 
 ### Autoのsource窓と性能
 
-- `measure:web-auto` は1280×720・DPR1の実Flightで、Typical/Manualを準備し、 PauseでHigh/Autoを選び、準備を最大8秒待ち、Resume後の2秒Running窓を観測する。
-- 観測中の停止・終端は不完全とし、Resumeでつなぎ直さない。
-- 撮影要求は窓外だけで行う。
-
-- bridge観測は元method・this・引数・戻り値を保持し、実GPU値を変更しない。
-- production decoderを通したRust tickと、epoch/frame/time付きGPU標本を保存する。
-  適用scale/shadowはsource epochへ対応させ、受信時の値へ付け替えない。
-- 履歴上限は4096件、source spanは窓の90%以上、端gapは100 ms以内、unique frameは20件以上を要求する。
-  epochごと20件未満はlimitedとし、12.5 ms判定は欠損値として保持する。
-- 重複・逆順・stale・未知epoch・不足標本は0や成功へ置換しない。
-  coverageは観測source span内のframe番号であり、全issued queryのcensusではない。
-- 500 msのbounded drain後に結果を確定する。実canvas寸法・RAF間隔・Rust tick・停止理由を併記する。
+- `measure:web-auto`は1280×720・DPR1の実FlightでTypical/Manualを準備し、Pause中にHigh/Autoを選んでResume後の2秒窓を観測する。停止・終端を含む窓は不完全として保持し、Resumeでつなぎ直さない。
+- 観測器は本番`ApplicationRuntimeBridge.update`の引数・this・戻り値を保持し、生成契約の生入力と返却値、実rAF、GPU完了値を記録する。共有ownerのAuto・epoch・ACK・stale判定をTSへ複写しない。
+- 履歴上限は4096件、受信drainは500msとし、source時刻が窓内のGPU完了値を抽出する。GPU標本、owner診断、返却された資源identity、framebuffer寸法、更新CPU時間、rAF間隔と観測器費用を保存する。
+- 統計はcount・非有限件数・mean・nearest-rank p95・maxで示す。取得標本0はunavailableとして扱い、raw完了値の統計とownerが受理した値を区別する。撮影要求は観測窓の外で行う。
+- sourceと配信WASMの来歴照合は画面CUIと同じ条件を使用する。
 
 Vite開発serverとproduction bundle、headlessと通常表示の性能は個別に計測する。
 observer費用、headlessの表示上限、CPU/GPU競合を記録し、補正で差し引かない。
@@ -544,10 +528,9 @@ CASEは `calm-low` / `calm-medium` / `calm-high` / `typical-low` / `typical-medi
 ## 11. VR・性能・配布の受入
 
 - XRの光学計算はpresentationのRust数値試験で非対称・canted眼、clip-depth 2規約とreversed Z、near/far、Information・Custom mask、前方clear region、実測glyphの視角を検査する。Webの結合試験は実WASM・フォント観測・両眼描画への接続を確認する。
-- `npm run test:xr -- target/xr-comparison`は同一観測のMenu・Head HUD・実測glyph、Stationary/Pilot/Externalのcamera・World/Cockpit/Head anchor・両眼pose・連続resetを直接Rustと実WASMへ渡し、構造一致と数値誤差`1e-10 × max(1, |Rust値|, |WASM値|)`を検査する。観測・双方の結果・source patch・source/WASM hashを出力し、検査前後のHEADとsourceの一致を確認する。
-- Head HUDは保持済みView/Frameからの一括準備を使い、正常な実測ink、視角不足、非有限値の拒否を確認する。方位目盛と飛行経路マーカーの描画命令は共有値・比率から独立照合する。Web CUIでは横・縦の実Canvas画像と狭幅時のUnavailableを確認する。
-- pointerは直接Rustと実WASMへ同じ観測・triggerを渡し、交点・focus・dwell・発火の一致を検査する。実WebXRManagerの結合試験では左右sourceの順序交換・切断、非等方panel scale、focus喪失を挟むrAF停止、予測表示時刻と受信時計の差を検査する。
-- `npm run test:web-ui -- VITE_URL OUTPUT_DIRECTORY --pointer-only`は共有pointerと実Three/WebGLを使い、左右controllerの選択先・両眼4箇所の照準pixel・非等方scaleを検査し、画像とWASM/source hashを保存する。
+- `tools/presentation-check/three-webxr-mount.test.ts`は実集約WASM ownerと実WebXRManagerを接続し、非対称眼のengine提出行列、float32揺れとreference reset後のMenu保持、描画cursorとtriggerのAction到達を確認する。
+- Head HUDとMenuは同ownerの実font観測を介した最終paintを使い、共有Rustで実測ink・clip・可読性を検査する。Canvas adapterは最終命令の描画、WebXR adapterは最終pose・projection・入力面の提出を担当する。
+- GPU準備取消とcleanup失敗、Commit rollback不能、終了時のlate I/Oは既存の代表adapter試験へ集約し、ownerがDrainedとなった後のfree一回を確認する。
 - 全Sceneとoverlayでanchor、左右眼、視線/controllerのhit、focus・scroll・退出・中断復帰を確認する。
   WebXRの実pose/projection/IPD/reference reset、Phone VRの重力基準pitch/roll・yaw-only recenter・権限/不正sample・非表示時input破棄を含める。
 - 実機確認はHTTPS、HMD/browser、スマートフォン/viewerの組合せを明記する。模擬sensorや合成backendと分ける。

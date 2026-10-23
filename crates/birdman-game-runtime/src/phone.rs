@@ -4,7 +4,7 @@ use birdman_game_presentation::camera::{
 use serde::{Deserialize, Serialize};
 
 /// Browser event source, before selection of a gravity reference.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum PhoneOrientationSource {
@@ -15,7 +15,7 @@ pub enum PhoneOrientationSource {
 }
 
 /// Unmodified orientation angles and screen rotation from one sensor callback.
-#[derive(Clone, Copy, Debug, Deserialize)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct PhoneOrientationObservation {
@@ -38,7 +38,7 @@ pub struct PhoneOrientationObservation {
 }
 
 /// Raw motion components from one platform sensor observation.
-#[derive(Clone, Copy, Debug, Deserialize)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct PhoneMotionObservation {

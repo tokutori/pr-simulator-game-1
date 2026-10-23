@@ -1517,13 +1517,21 @@ fn spatial_trigger_uses_submitted_painting_and_the_canonical_ui_action_owner() {
             _ => None,
         })
         .unwrap();
-    let opening = opening.drawing.unwrap().spatial.unwrap();
+    let drawing = opening.drawing.unwrap();
+    let tracking_from_world = birdman_game_presentation::camera::inverse_pose(
+        drawing.scene.camera.unwrap().world_from_head.unwrap(),
+    )
+    .unwrap();
+    let opening = drawing.spatial.unwrap();
     let (panel, paint) = match &opening.menu {
         ApplicationMenuProjection::Ready {
-            tracking_from_panel,
+            world_from_panel,
             paint,
             ..
-        } => (*tracking_from_panel, paint),
+        } => (
+            compose_pose(tracking_from_world, *world_from_panel).unwrap(),
+            paint,
+        ),
         other => panic!("Expected title painting: {other:?}"),
     };
     let anchor = paint

@@ -1,9 +1,9 @@
 use birdman_game_app::flight_input::{FlightDeviceIdentity, FlightGamepadObservation};
 use birdman_game_presentation::xr::XrGamepadObservation;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// Unfiltered platform gamepad data in the standard browser/OpenXR mapping vocabulary.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct ApplicationGamepadObservation {

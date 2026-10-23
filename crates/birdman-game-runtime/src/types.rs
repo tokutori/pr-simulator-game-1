@@ -17,7 +17,7 @@ use birdman_game_presentation::xr::XrViewerObservation;
 use serde::{Deserialize, Serialize};
 
 /// Capabilities implemented by the platform's I/O and drawing adapters.
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct ApplicationCapabilities {
@@ -38,7 +38,7 @@ pub struct ApplicationCapabilities {
 }
 
 /// External metrics and API availability, without derived UI state.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct ApplicationPlatformObservation {
@@ -55,7 +55,7 @@ pub struct ApplicationPlatformObservation {
 }
 
 /// Completion state of the display and scene resources needed for launch.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ApplicationResourceObservation {
@@ -88,7 +88,7 @@ pub enum ApplicationResourceObservation {
 }
 
 /// One external observation delivered to the shared application owner.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct ApplicationObservation {
@@ -99,7 +99,7 @@ pub struct ApplicationObservation {
 }
 
 /// Payload of one externally observed event.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct ApplicationXrFrameObservation {
@@ -112,7 +112,7 @@ pub struct ApplicationXrFrameObservation {
 }
 
 /// Unmodified tracked controller pose in the active runtime reference space.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct ApplicationPointerObservation {
@@ -128,7 +128,7 @@ pub struct ApplicationPointerObservation {
 }
 
 /// Same-frame spatial input sampled by the platform I/O adapter.
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct ApplicationSpatialObservation {
@@ -141,7 +141,7 @@ pub struct ApplicationSpatialObservation {
 }
 
 /// Payload of one externally observed event.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ApplicationInput {

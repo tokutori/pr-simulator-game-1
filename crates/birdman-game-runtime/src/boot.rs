@@ -1,9 +1,9 @@
 use crate::{ApplicationRendererObservation, ApplicationRequest};
 use birdman_game_presentation::game_ui::*;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// Completion of an owner-requested graphics context creation.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ApplicationRendererCreation {

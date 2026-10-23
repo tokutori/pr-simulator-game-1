@@ -44,18 +44,10 @@ pub struct ApplicationCameraProjection {
     pub culling_projection: Option<[f64; 16]>,
     /// Final monoscopic OpenGL projection, absent for stereo displays.
     pub screen_projection: Option<[f64; 16]>,
-    /// Runtime tracking origin mounted in render world.
-    pub world_from_tracking: Pose,
     /// Current centre camera, absent while tracking has no valid head observation.
     pub world_from_head: Option<Pose>,
     /// Final left and right eye transforms, empty for Screen or unavailable optics.
     pub eyes: Vec<ApplicationEyeProjection>,
-    /// Screen or configured phone vertical field of view, in degrees.
-    pub vertical_field_of_view_degrees: f64,
-    /// Screen or configured phone near plane in metres.
-    pub near_m: f64,
-    /// Screen or configured phone far plane in metres.
-    pub far_m: f64,
 }
 
 /// Physical display metadata and its final render-space placement.
@@ -446,12 +438,8 @@ impl SceneOwner {
                     } else {
                         None
                     },
-                    world_from_tracking: rig.world_from_tracking,
                     world_from_head,
                     eyes,
-                    vertical_field_of_view_degrees: fov,
-                    near_m: 0.05,
-                    far_m: 100_000.0,
                 }),
             },
             viewer,

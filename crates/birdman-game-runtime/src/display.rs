@@ -104,7 +104,7 @@ pub enum DisplayRequest {
 }
 
 /// Identity and outcome of an actual requested I/O operation.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum DisplayCompletion {

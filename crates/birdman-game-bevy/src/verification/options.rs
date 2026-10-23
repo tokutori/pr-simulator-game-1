@@ -142,6 +142,7 @@ impl Options {
                         .before(super::project_observer),
                 );
         }
+        let trace_directory = directory.clone();
         let (verification, completion) = Verification::try_new(
             directory,
             app.world().resource::<AssetServer>(),
@@ -149,7 +150,8 @@ impl Options {
             offscreen::output_target(app.world()),
             self.replay_cameras,
         )?;
-        app.insert_resource(verification)
+        app.insert_resource(super::trace::ApplicationTrace::create(&trace_directory)?)
+            .insert_resource(verification)
             .add_plugins(super::render_readiness::VerificationRenderPlugin)
             .add_systems(PreUpdate, super::supply_input.after(read_input))
             .add_systems(

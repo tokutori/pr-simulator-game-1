@@ -13,6 +13,8 @@ use metrics::{MotionSourceWindow, SourceBoundary, report_motion_sources, report_
 #[path = "verification/render_readiness.rs"]
 mod render_readiness;
 use render_readiness::RenderReadiness;
+#[path = "verification/trace.rs"]
+pub(crate) mod trace;
 #[path = "verification/ui_validation.rs"]
 mod ui_validation;
 use super::{
@@ -203,6 +205,7 @@ enum Check {
     Motion(WaterMotion, MotionEndpoint),
     Range(GameUiRangeTarget),
     RetainRecord,
+    OpenStoredRecord,
 }
 
 #[derive(Resource)]
@@ -385,6 +388,18 @@ impl Verification {
             session(SessionCommand::Retry {}),
             Check::Capture("16-retry.png".into()),
         ]);
+        if water_case.is_none() && !replay_cameras {
+            checks.extend([
+                session(SessionCommand::CancelBriefing {}),
+                session(SessionCommand::ReturnToTitle {}),
+                Check::OpenStoredRecord,
+                Check::Range(GameUiRangeTarget::Replay),
+                Check::Capture("17-stored-replay.png".into()),
+                platform(GameUiPlatformCommand::DownloadRecordJson {}),
+                platform(GameUiPlatformCommand::DownloadFlightCsv {}),
+                session(SessionCommand::LeaveReplay {}),
+            ]);
+        }
         let (sender, completion) = VerificationCompletion::channel();
         let now = Instant::now();
         Ok((
@@ -615,6 +630,7 @@ fn advance_step(world: &mut World, verification: &mut Verification) -> Result<()
                 .resource_mut::<super::water::verification::WaterShaderVerification>()
                 .ready(pipelines_ready)?;
             if pipelines_ready && probes_ready && world.resource::<NativeIo>().drawing.as_ref().is_some_and(|drawing| drawing.presentation.scene_visible) {
+                trace::capture(world, &filename)?;
                 verification.capture(&mut world.commands(), &filename);
             }
         }
@@ -651,6 +667,16 @@ fn advance_step(world: &mut World, verification: &mut Verification) -> Result<()
             }
         }
         Check::RetainRecord => { verification.replay_record = Some(ReplayCaptureRecord::retain(runtime)?); verification.next(); }
+        Check::OpenStoredRecord => {
+            let action = super::ui::submitted_view(world).and_then(|view| view.panels.iter().flat_map(|panel| &panel.controls).find_map(|control| match &control.content {
+                GameUiControlContent::Button { action: action @ GameUiAction::Platform { command: GameUiPlatformCommand::OpenStoredRecord { .. } }, .. } if control.enabled => Some(action.clone()),
+                _ => None,
+            }));
+            if let Some(input) = action.and_then(|action| action_input(world, &action)) {
+                world.resource_mut::<NativeInputs>().0.push(input);
+                verification.next();
+            }
+        }
     }
     Ok(())
 }

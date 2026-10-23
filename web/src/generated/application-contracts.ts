@@ -782,10 +782,6 @@ export type ApplicationMenuProjection = {
      */
     readonly surface_style: XrSurfaceStyle;
     /**
-     * Panel pose below a runtime-tracking parent.
-     */
-    readonly tracking_from_panel: Pose;
-    /**
      * Final render-world panel pose.
      */
     readonly world_from_panel: Pose;
@@ -2314,14 +2310,6 @@ export interface ApplicationCameraProjection {
      */
     readonly eyes: readonly ApplicationEyeProjection[];
     /**
-     * Screen or configured phone far plane in metres.
-     */
-    readonly far_m: number;
-    /**
-     * Screen or configured phone near plane in metres.
-     */
-    readonly near_m: number;
-    /**
      * Final monoscopic OpenGL projection, absent for stereo displays.
      *
      * @minItems 16
@@ -2346,17 +2334,9 @@ export interface ApplicationCameraProjection {
         number
     ] | null;
     /**
-     * Screen or configured phone vertical field of view, in degrees.
-     */
-    readonly vertical_field_of_view_degrees: number;
-    /**
      * Current centre camera, absent while tracking has no valid head observation.
      */
     readonly world_from_head?: Pose | null;
-    /**
-     * Runtime tracking origin mounted in render world.
-     */
-    readonly world_from_tracking: Pose;
     readonly [k: string]: unknown | undefined;
 }
 /**
@@ -4148,6 +4128,17 @@ export interface ApplicationWaterAssets {
      * Complete final-axis water meshes and conservative culling bounds.
      */
     readonly geometry: ApplicationWaterGeometry;
+    /**
+     * Dark, mid-tone and bright colours for direct material submission.
+     *
+     * @minItems 3
+     * @maxItems 3
+     */
+    readonly palette_srgb: readonly [
+        number,
+        number,
+        number
+    ];
     /**
      * Complete GPU wave coefficients, counts and non-inversion bounds.
      */
