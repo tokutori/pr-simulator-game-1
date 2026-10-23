@@ -1,8 +1,4 @@
-export interface FlightLogDownload {
-  readonly text: string;
-  readonly format: "csv" | "json";
-  readonly filename: string;
-}
+import type { ApplicationRequest } from "../generated/application-contracts.js";
 
 export interface ObjectUrlPort {
   createObjectURL(blob: Blob): string;
@@ -33,18 +29,17 @@ export class BrowserFlightLogDownload {
     private readonly scheduler: DownloadSchedulerPort = browserDownloadScheduler
   ) {}
 
-  download(log: FlightLogDownload): void {
+  download(log: Extract<ApplicationRequest, { kind: "download_file" }>): void {
     if (this.resource.kind === "disposed") throw new Error("Flight log download resource is disposed");
-    if (this.resource.urls.size >= 8) throw new Error("飛行ログのdownload要求が上限8件に達した。60秒後に再操作する。");
-    const type = log.format === "csv" ? "text/csv;charset=utf-8" : "application/json;charset=utf-8";
-    const url = this.urls.createObjectURL(new Blob([log.text], { type }));
+    if (this.resource.urls.size >= 8) throw new Error("Object URL capacity exhausted");
+    const url = this.urls.createObjectURL(new Blob([Uint8Array.from(log.bytes)], { type: log.mime_type }));
     const owner = this.resource;
     owner.urls.set(url, () => undefined);
     try {
       const anchor = this.document.createElement("a");
       try {
         anchor.href = url;
-        anchor.download = sanitizeFlightLogFilename(log.filename, log.format);
+        anchor.download = log.file_name;
         anchor.hidden = true;
         this.document.body.append(anchor);
         anchor.click();
@@ -70,16 +65,14 @@ export class BrowserFlightLogDownload {
     const previous = this.resource;
     this.resource = { kind: "disposed" };
     if (previous.kind === "active") {
-      for (const [url, cancel] of previous.urls) {
-        cancel();
-        this.urls.revokeObjectURL(url);
-      }
+      const resources = [...previous.urls];
       previous.urls.clear();
+      const failures: unknown[] = [];
+      for (const [url, cancel] of resources) {
+        try { cancel(); } catch (cause) { failures.push(cause); }
+        try { this.urls.revokeObjectURL(url); } catch (cause) { failures.push(cause); }
+      }
+      if (failures.length > 0) throw new AggregateError(failures, "Download cleanup failed");
     }
   }
-}
-
-export function sanitizeFlightLogFilename(filename: string, format: FlightLogDownload["format"]): string {
-  const stem = filename.replace(/\.[^.]*$/, "").replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 80);
-  return `${stem || "flight-log"}.${format}`;
 }

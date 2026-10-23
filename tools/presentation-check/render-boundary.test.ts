@@ -28,7 +28,7 @@ describe("engine import boundary", () => {
   it("allows Three.js imports inside its adapter and a factory import from the composition root", () => {
     expect(() => { assertRenderImportBoundary([
       { path: "web/src/render/engines/three/three-renderer.ts", text: "import * as THREE from 'three';" },
-      { path: "web/src/main.ts", text: "import { createThreeRenderer } from './render/engines/three/three-renderer.js';" }
+      { path: "web/src/browser-application.ts", text: "import { createThreeRenderer } from './render/engines/three/three-renderer.js';" }
     ]); }).not.toThrow();
   });
 
@@ -106,7 +106,7 @@ describe("engine import boundary", () => {
     expect(() => { assertRenderImportBoundary([
       { path: resolve("web/src/render/engines/three/three-renderer.ts").replaceAll("/", "\\"), text: "export type Vector = import('three').Vector3;" },
       { path: "web/src/render/engines/three/resource.ts", text: "import './three-renderer.js';" },
-      { path: resolve("web/src/./main.ts"), text: "const renderer = import('./render/contracts/../engines/three/three-renderer.js');" },
+      { path: resolve("web/src/./browser-application.ts"), text: "const renderer = import('./render/contracts/../engines/three/three-renderer.js');" },
       { path: "web/src/presentation/valid.ts", text: "import '../render/engines/three/../../contracts/runtime.js';" },
       { path: "web/src/presentation/valid.ts", text: "import '../render/engines/three-compatible/runtime.js';" }
     ]); }).not.toThrow();

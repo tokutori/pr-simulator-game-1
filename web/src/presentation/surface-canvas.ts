@@ -1,4 +1,4 @@
-import type { MenuRect, SurfacePaintItem } from "../generated/surface-paint-item.js";
+import type { MenuRect, SurfacePaintItem } from "../generated/application-contracts.js";
 import type { SurfaceDrawingContext } from "./browser-canvas.js";
 
 export function paintSurface(context: SurfaceDrawingContext, items: readonly SurfacePaintItem[], scaleX: number, scaleY: number): void {
@@ -9,7 +9,7 @@ export function paintSurface(context: SurfaceDrawingContext, items: readonly Sur
         case "rectangle": {
           context.setGlobalAlpha(item.opacity);
           const bounds = item.bounds;
-          if (item.gradient === null) {
+          if (item.gradient == null) {
             context.setFillStyle(item.color);
             context.fillRect(bounds.x * scaleX, bounds.y * scaleY, bounds.width * scaleX, bounds.height * scaleY);
           } else context.fillGradientRect(bounds.x * scaleX, bounds.y * scaleY, bounds.width * scaleX, bounds.height * scaleY, item.gradient);

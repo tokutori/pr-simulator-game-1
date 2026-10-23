@@ -18,7 +18,7 @@ export function assertRenderImportBoundary(
     directoryExists: (path) => [...files.keys()].some((file) => file.startsWith(`${normalizedPath(path)}/`)) || ts.sys.directoryExists(path)
   };
   const adapter = `${normalizedPath("web/src/render/engines/three")}/`;
-  const root = normalizedPath("web/src/main.ts");
+  const root = normalizedPath("web/src/browser-application.ts");
   for (const source of sources) {
     const path = normalizedPath(source.path);
     const inThreeAdapter = path.startsWith(adapter);

@@ -1,17 +1,13 @@
+import type { ApplicationGpuQuery } from "../../../generated/application-contracts.js";
+
 interface TimerExtension {
   readonly TIME_ELAPSED_EXT: number;
   readonly GPU_DISJOINT_EXT: number;
   readonly QUERY_COUNTER_BITS_EXT: number;
 }
 
-export interface GpuQuerySource {
-  readonly epoch: number;
-  readonly frame: number;
-  readonly source: number;
-}
-
 export type GpuQueryObservation =
-  | { readonly kind: "sample"; readonly source: GpuQuerySource; readonly milliseconds: number }
+  | { readonly kind: "sample"; readonly source: ApplicationGpuQuery; readonly milliseconds: number }
   | { readonly kind: "disjoint" }
   | { readonly kind: "unsupported"; readonly cause: string };
 
@@ -20,8 +16,8 @@ type TimerCapability = { readonly kind: "supported"; readonly extension: TimerEx
 
 export class GpuWorkTimer {
   private capability: { readonly kind: "unchecked" } | TimerCapability = { kind: "unchecked" };
-  private pending: { readonly query: WebGLQuery; readonly source: GpuQuerySource }[] = [];
-  private active: { readonly query: WebGLQuery; readonly source: GpuQuerySource } | null = null;
+  private pending: { readonly query: WebGLQuery; readonly source: ApplicationGpuQuery }[] = [];
+  private active: { readonly query: WebGLQuery; readonly source: ApplicationGpuQuery } | null = null;
 
   constructor(private readonly gl: WebGL2RenderingContext) {}
 
@@ -49,7 +45,7 @@ export class GpuWorkTimer {
     return observations;
   }
 
-  availability(): GpuQueryObservation | null {
+  availability(): Extract<GpuQueryObservation, { kind: "unsupported" }> | null {
     const capability = this.resolveCapability();
     return capability.kind === "unsupported" ? capability : null;
   }
@@ -68,7 +64,7 @@ export class GpuWorkTimer {
     return this.capability;
   }
 
-  begin(source: GpuQuerySource): GpuQueryObservation | null {
+  begin(source: ApplicationGpuQuery): GpuQueryObservation | null {
     const capability = this.resolveCapability();
     if (capability.kind === "unsupported") return capability;
     const extension = capability.extension;

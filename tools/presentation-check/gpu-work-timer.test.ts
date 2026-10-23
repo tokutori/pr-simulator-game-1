@@ -7,7 +7,7 @@ describe("WebGL GPU-work timer boundary", () => {
     for (const boundary of ["disjoint", "availability"] as const) {
       const { gl, context } = gpuTimerFixture();
       const timer = new GpuWorkTimer(context);
-      timer.begin({ epoch: 1, frame: 1, source: 0 }); timer.end(true);
+      timer.begin({ renderer_resource_id: 100, epoch: 1, frame: 1, source_ms: 0 }); timer.end(true);
       if (boundary === "disjoint") gl.getParameter.mockReturnValue(null);
       else gl.getQueryParameter.mockImplementation((_query, parameter) => parameter === 2 ? 1 : 20_000_000);
       expect(() => timer.poll()).toThrow(`invalid ${boundary} state`);
@@ -19,7 +19,7 @@ describe("WebGL GPU-work timer boundary", () => {
   it("defers pending results and preserves nanosecond precision without a 32-bit cast", () => {
     const { gl, context } = gpuTimerFixture();
     const timer = new GpuWorkTimer(context);
-    const source = { epoch: 1, frame: 2, source: 10 };
+    const source = { renderer_resource_id: 100, epoch: 1, frame: 2, source_ms: 10 };
     timer.begin(source);
     timer.end(true);
     gl.getQueryParameter.mockImplementation((_query, parameter) => parameter === 2 ? false : 8_000_000_000);
@@ -35,14 +35,14 @@ describe("WebGL GPU-work timer boundary", () => {
     const timer = new GpuWorkTimer(context);
     const query = {} as WebGLQuery;
     foreign(query);
-    timer.begin({ epoch: 1, frame: 1, source: 0 });
+    timer.begin({ renderer_resource_id: 100, epoch: 1, frame: 1, source_ms: 0 });
     timer.end(true);
     expect(gl.beginQuery).not.toHaveBeenCalled();
     expect(gl.endQuery).not.toHaveBeenCalled();
     expect(gl.deleteQuery).not.toHaveBeenCalled();
     foreign(null);
     for (let frame = 2; frame < 10; frame++) {
-      timer.begin({ epoch: 1, frame, source: frame });
+      timer.begin({ renderer_resource_id: 100, epoch: 1, frame, source_ms: frame });
       timer.end(true);
     }
     expect(gl.createQuery).toHaveBeenCalledTimes(4);
@@ -53,7 +53,7 @@ describe("WebGL GPU-work timer boundary", () => {
   it("discards all owned results on disjoint and reports unsupported again after reselection", () => {
     const { gl, context } = gpuTimerFixture();
     const timer = new GpuWorkTimer(context);
-    timer.begin({ epoch: 1, frame: 1, source: 0 });
+    timer.begin({ renderer_resource_id: 100, epoch: 1, frame: 1, source_ms: 0 });
     timer.end(true);
     gl.getParameter.mockReturnValue(true);
     expect(timer.poll()).toEqual([{ kind: "disjoint" }]);
@@ -61,7 +61,7 @@ describe("WebGL GPU-work timer boundary", () => {
     timer.restored();
     gl.getExtension.mockReturnValue(null);
     for (let frame = 2; frame < 4; frame++) {
-      expect(timer.begin({ epoch: 2, frame, source: frame })).toMatchObject({ kind: "unsupported" });
+      expect(timer.begin({ renderer_resource_id: 100, epoch: 2, frame, source_ms: frame })).toMatchObject({ kind: "unsupported" });
     }
     expect(gl.getExtension).toHaveBeenCalledTimes(2);
   });
@@ -69,10 +69,10 @@ describe("WebGL GPU-work timer boundary", () => {
   it("deletes its owned query after an interrupted render or end failure", () => {
     const { gl, context } = gpuTimerFixture();
     const timer = new GpuWorkTimer(context);
-    timer.begin({ epoch: 1, frame: 1, source: 0 });
+    timer.begin({ renderer_resource_id: 100, epoch: 1, frame: 1, source_ms: 0 });
     timer.end(false);
     expect(gl.deleteQuery).toHaveBeenCalledTimes(1);
-    timer.begin({ epoch: 1, frame: 2, source: 1 });
+    timer.begin({ renderer_resource_id: 100, epoch: 1, frame: 2, source_ms: 1 });
     gl.endQuery.mockImplementationOnce(() => { throw new Error("context failure"); });
     expect(() => { timer.end(true); }).toThrow("context failure");
     expect(gl.deleteQuery).toHaveBeenCalledTimes(2);

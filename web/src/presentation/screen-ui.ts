@@ -1,6 +1,5 @@
 import { APP_BUILD_LABEL } from "./build-info.js";
-import type { GameUiChartExtent } from "../generated/game-ui-input.js";
-import type { UiActionDispatcher, UiControl, UiPanel, UiViewModel } from "../render/contracts/ui.js";
+import type { GameUiChart, GameUiChartExtent, GameUiControl, GameUiControlInput, GameUiFrame, GameUiPanel, GameUiView } from "../generated/application-contracts.js";
 import {
   attributesModule,
   classModule,
@@ -26,15 +25,16 @@ interface RetainedScreenDom {
 export class ScreenUiAdapter {
   private readonly mount: HTMLElement;
   private currentVNode: VNode;
-  private controls = new Map<string, UiControl>();
+  private controls = new Map<string, GameUiControl>();
   private visible = true;
   private retainedDom: RetainedScreenDom | null = null;
-  private currentViewModel: UiViewModel | null = null;
+  private currentViewModel: GameUiView | null = null;
+  private frame: GameUiFrame | null = null;
   private readonly chartViewports = new Map<string, GameUiChartExtent>();
   private readonly observedCharts = new Set<Element>();
   private readonly chartObserver: ResizeObserver | null;
 
-  constructor(private readonly root: HTMLElement, private readonly dispatch: UiActionDispatcher,
+  constructor(private readonly root: HTMLElement, private readonly dispatch: (input: GameUiControlInput) => void,
     private readonly chartExtentChanged: () => void = () => undefined) {
     this.mount = root.ownerDocument.createElement("div");
     this.mount.className = "screen-ui-mount";
@@ -50,13 +50,39 @@ export class ScreenUiAdapter {
   chartExtent(): GameUiChartExtent | null {
     if (!this.visible) return null;
     for (const [id, extent] of this.chartViewports) {
-      if (this.controls.get(id)?.kind === "chart") return extent;
+      if (this.controls.get(id)?.content.kind === "chart") return extent;
     }
     return null;
   }
 
-  render(viewModel: UiViewModel, visible = true): void {
-    const scopeChanged = this.currentViewModel !== null && (this.currentViewModel.interactionScope !== viewModel.interactionScope);
+  dispose(): void {
+    this.chartObserver?.disconnect();
+    this.discardRetainedDom();
+    this.root.removeEventListener("click", this.onClick);
+    this.root.removeEventListener("change", this.onChange);
+    this.root.removeEventListener("input", this.onInput);
+    this.observedCharts.clear();
+    this.chartViewports.clear();
+    this.controls.clear();
+    this.currentViewModel = null;
+    this.frame = null;
+    this.mount.remove();
+  }
+
+  render(viewModel: GameUiView, visible = true): void {
+    this.frame = null;
+    this.renderDom(viewModel, visible);
+  }
+
+  renderFrame(frame: GameUiFrame, visible = true): void {
+    const view = this.currentViewModel;
+    if (view === null || view.view_revision !== frame.view_revision) throw new Error("The UI frame has no retained structural view");
+    this.frame = frame;
+    this.renderDom(view, visible);
+  }
+
+  private renderDom(viewModel: GameUiView, visible: boolean): void {
+    const scopeChanged = this.currentViewModel !== null && (this.currentViewModel.interaction_scope !== viewModel.interaction_scope);
     this.currentViewModel = viewModel;
     const wasVisible = this.visible;
     if (wasVisible && !visible) {
@@ -71,14 +97,10 @@ export class ScreenUiAdapter {
         && controlId !== null && controlId !== undefined && this.controls.get(controlId)?.enabled === false) {
       this.retainDom("disabled");
     }
-    const data = viewModel.sharedPresentation === undefined ? {} : sharedPresentationData(viewModel.sharedPresentation);
+    const data = sharedPresentationData(viewModel);
     const dataset: NonNullable<VNodeData["dataset"]> = { ...data.dataset, scene: viewModel.scene };
-    if (viewModel.sharedPresentation === undefined) {
-      if (viewModel.panels.some((panel) => panel.controls.some((control) => control.kind === "chart"))) dataset.mode = "analysis";
-      else if (viewModel.presentationStyle === "cinematic") dataset.mode = "cinematic";
-    }
-    dataset.scope = viewModel.interactionScope;
-    if (viewModel.activeOverlay !== null) dataset.overlay = viewModel.activeOverlay;
+    dataset.scope = viewModel.interaction_scope;
+    if (viewModel.active_overlay != null) dataset.overlay = viewModel.active_overlay;
     const shell = h("section.screen-ui-shell", { ...data, key: "screen-shell", dataset }, [
       h("h1", viewModel.title),
       h("p.screen-ui-description", viewModel.description),
@@ -116,7 +138,7 @@ export class ScreenUiAdapter {
       }
     }
     for (const id of this.chartViewports.keys()) {
-      if (this.controls.get(id)?.kind !== "chart") this.chartViewports.delete(id);
+      if (this.controls.get(id)?.content.kind !== "chart") this.chartViewports.delete(id);
     }
   }
 
@@ -128,8 +150,8 @@ export class ScreenUiAdapter {
       const id = entry.target.getAttribute("data-chart-control-id");
       const { width, height } = entry.contentRect;
       const control = id === null ? undefined : this.controls.get(id);
-      if (id === null || control?.kind !== "chart" || !Number.isFinite(width) || !Number.isFinite(height)
-          || width < control.presentation.measurement_minimum.width || height < control.presentation.measurement_minimum.height) continue;
+      if (id === null || control?.content.kind !== "chart" || !Number.isFinite(width) || !Number.isFinite(height)
+          || width < control.content.plot.presentation.measurement_minimum.width || height < control.content.plot.presentation.measurement_minimum.height) continue;
       const previous = this.chartViewports.get(id);
       if (previous !== undefined && Math.abs(previous.width - width) < 0.5 && Math.abs(previous.height - height) < 0.5) continue;
       this.chartViewports.set(id, Object.freeze({ width, height }));
@@ -200,7 +222,7 @@ export class ScreenUiAdapter {
     const controlId = button?.getAttribute("data-control-id");
     if (controlId === null || controlId === undefined) return;
     const control = this.controls.get(controlId);
-    if (control?.kind !== "button" || !control.enabled) return;
+    if (control?.content.kind !== "button" || !control.enabled) return;
     this.dispatch({ type: "activate", controlId: control.id });
   };
 
@@ -211,7 +233,7 @@ export class ScreenUiAdapter {
     const controlId = input.getAttribute("data-control-id");
     if (controlId === null) return;
     const control = this.controls.get(controlId);
-    if (control?.kind !== "toggle" || !control.enabled) return;
+    if (control?.content.kind !== "toggle" || !control.enabled) return;
     const checked = (input as HTMLInputElement).checked;
     this.dispatch({ type: "set-toggle", controlId: control.id, value: checked });
   };
@@ -223,94 +245,78 @@ export class ScreenUiAdapter {
     const controlId = input.getAttribute("data-control-id");
     if (controlId === null) return;
     const control = this.controls.get(controlId);
-    if (control?.kind !== "range" || !control.enabled) return;
+    if (control?.content.kind !== "range" || !control.enabled) return;
     const value = Number((input as HTMLInputElement).value);
     if (Number.isFinite(value)) this.dispatch({ type: "set-range", controlId: control.id, value });
   };
 
-  private createPanel(panel: UiPanel): VNode {
+  private createPanel(panel: GameUiPanel): VNode {
     const data: VNodeData = { key: panel.id, dataset: { anchor: panel.anchor }, attrs: { "aria-label": panel.title } };
     const children: VNode[] = [];
-    if (panel.sections !== undefined) {
-      for (const section of panel.sections) {
-        const content = h("div.screen-ui-section-controls", panel.controls.filter((control) => control.section === section.id).map((control) => this.createControl(control)));
-        children.push(h(section.label.length > 0 ? "fieldset.screen-ui-section" : "div.screen-ui-section", {
-          key: `${panel.id}-section-${section.id}`, dataset: { sectionId: section.id, layout: section.layout }
-        }, section.label.length > 0 ? [h("legend", section.label), content] : [content]));
-      }
-    } else {
-      let choices: VNode[] | null = null;
-      let previousChoiceGroup = "";
-      for (const control of panel.controls) {
-        const node = this.createControl(control);
-        if (control.kind === "button" && control.presentation?.kind === "choice") {
-          if (choices === null || previousChoiceGroup !== control.presentation.group) {
-            choices = [];
-            children.push(h("fieldset.screen-ui-choice-group", { key: `${panel.id}-choices-${control.presentation.group}` }, [
-              h("legend", control.presentation.groupLabel), h("div.screen-ui-choice-options", choices)
-            ]));
-            previousChoiceGroup = control.presentation.group;
-          }
-          choices.push(node);
-        } else {
-          choices = null;
-          previousChoiceGroup = "";
-          children.push(node);
-        }
-      }
+    for (const section of panel.sections) {
+      const content = h("div.screen-ui-section-controls", panel.controls.filter((control) => control.section === section.id).map((control) => this.createControl(control)));
+      children.push(h(section.label.length > 0 ? "fieldset.screen-ui-section" : "div.screen-ui-section", {
+        key: `${panel.id}-section-${section.id}`, dataset: { sectionId: section.id, layout: section.layout }
+      }, section.label.length > 0 ? [h("legend", section.label), content] : [content]));
     }
     return h("section.screen-ui-panel", data, [h("h2", panel.title), h("div.screen-ui-controls", children)]);
   }
 
-  private createControl(control: UiControl): VNode {
-    if (control.kind === "button") {
+  private createControl(control: GameUiControl): VNode {
+    const content = control.content;
+    const label = this.frame?.button_labels.find(button => button.id === control.id)?.label ?? control.label;
+    if (content.kind === "button") {
       const data: VNodeData = { key: control.id, attrs: { type: "button" }, dataset: { controlId: control.id }, props: { disabled: !control.enabled } };
-      const presentation = control.presentation;
+      const presentation = content.presentation;
       let selector = "button";
-      let children: string | VNode[] = control.label;
-      if (presentation?.kind === "action") data.dataset = { ...data.dataset, emphasis: presentation.emphasis };
-      if (presentation?.kind === "choice") {
+      let children: string | VNode[] = label;
+      if (presentation.kind === "action") data.dataset = { ...data.dataset, emphasis: presentation.emphasis };
+      if (presentation.kind === "choice") {
         selector = "button.screen-ui-choice";
         data.attrs = { ...data.attrs, "aria-pressed": String(presentation.selected) };
         children = [
-          h("span.screen-ui-choice-label", `${presentation.selected ? "● " : ""}${control.label}`),
+          h("span.screen-ui-choice-label", `${presentation.selected ? "● " : ""}${label}`),
           ...(presentation.description.length > 0 ? [h("small", presentation.description)] : [])
         ];
       }
-      if (presentation?.kind === "disclosure") {
+      if (presentation.kind === "disclosure") {
         data.dataset = { ...data.dataset, emphasis: "secondary" };
         data.attrs = { ...data.attrs, "aria-expanded": String(presentation.expanded), "aria-controls": `${control.id}-content` };
-        children = `${presentation.expanded ? "▾" : "▸"} ${control.label}`;
+        children = `${presentation.expanded ? "▾" : "▸"} ${label}`;
       }
       return h(selector, data, children);
     }
-    if (control.kind === "toggle") {
+    if (content.kind === "toggle") {
       return h("label.screen-ui-toggle", { key: control.id }, [
-        h("input", { key: `${control.id}-input`, attrs: { type: "checkbox" }, dataset: { controlId: control.id }, props: { checked: control.value, disabled: !control.enabled } }),
+        h("input", { key: `${control.id}-input`, attrs: { type: "checkbox" }, dataset: { controlId: control.id }, props: { checked: content.value, disabled: !control.enabled } }),
         h("span", control.label)
       ]);
     }
-    if (control.kind === "range") {
+    if (content.kind === "range") {
+      const range = this.frame?.ranges.find(value => value.id === control.id) ?? content;
       return h("label.screen-ui-range", { key: control.id }, [
-        h("span", `${control.label}: ${control.displayValue}`),
-        h("input", { key: `${control.id}-input`, attrs: { type: "range", min: String(control.minimum), max: String(control.maximum), step: String(control.step) }, dataset: { controlId: control.id }, props: { value: String(control.value), disabled: !control.enabled } })
+        h("span", `${control.label}: ${range.display_value}`),
+        h("input", { key: `${control.id}-input`, attrs: { type: "range", min: String(content.minimum), max: String(content.maximum), step: String(content.step) }, dataset: { controlId: control.id }, props: { value: String(range.value), disabled: !control.enabled } })
       ]);
     }
-    if (control.kind === "chart") return this.createChart(control);
-    return h("output.screen-ui-status", { key: control.id, attrs: { id: control.id, "aria-live": "polite" } }, control.label.length === 0 ? control.value : `${control.label}: ${control.value}`);
+    if (content.kind === "chart") return this.createChart(control, content.plot);
+    const value = this.frame?.readouts.find(readout => readout.id === control.id)?.value ?? content.value;
+    return h("output.screen-ui-status", { key: control.id, attrs: { id: control.id, "aria-live": "polite" } }, control.label.length === 0 ? value : `${control.label}: ${value}`);
   }
 
-  private createChart(control: Extract<UiControl, { readonly kind: "chart" }>): VNode {
+  private createChart(control: GameUiControl, plot: GameUiChart): VNode {
     const caption = h("figcaption", control.label);
     const svg: VNode[] = [];
     const svgAttributes: Record<string, string> = {};
     const svgStyle: NonNullable<VNodeData["style"]> = {};
-    const layout = control.presentation;
+    const layout = plot.presentation;
+    const cursor = this.frame?.chart_cursor;
+    const selectedCursor = cursor?.id === control.id ? cursor : null;
     svgAttributes["viewBox"] = `0 0 ${String(layout.viewport.width)} ${String(layout.viewport.height)}`;
     svgStyle["--screen-chart-tick-font"] = `${String(layout.tick_font_size)}px`;
     svgStyle["--screen-chart-axis-font"] = `${String(layout.axis_font_size)}px`;
     svgAttributes["role"] = "img";
-    svgAttributes["aria-label"] = `${control.label}; ${control.x_axis_label}; ${control.y_axis_label}`;
+    svgAttributes["aria-label"] = `${control.label}; ${plot.x_axis_label}; ${plot.y_axis_label}`;
     svgAttributes["preserveAspectRatio"] = "xMidYMid meet";
     const [plotLeft, plotTop, plotRight, plotBottom] = layout.plot;
     svg.push(svgElement("path", {
@@ -330,7 +336,7 @@ export class ScreenUiAdapter {
     }
     for (const tick of layout.x_ticks) svg.push(chartText(tick.text, "screen-ui-chart-tick"));
     for (const tick of layout.y_ticks) svg.push(chartText(tick.text, "screen-ui-chart-tick screen-ui-chart-y-tick"));
-    control.reference_lines.forEach((line, index) => {
+    plot.reference_lines.forEach((line, index) => {
       const y = line.position_y_px;
       svg.push(svgElement("path", {
         d: `M ${String(plotLeft)} ${String(y)} H ${String(plotRight)}`,
@@ -342,7 +348,7 @@ export class ScreenUiAdapter {
       const label = layout.reference_labels[index];
       if (label !== undefined) svg.push(chartText(label, "screen-ui-chart-reference"));
     });
-    control.series.forEach((series) => {
+    plot.series.forEach((series) => {
       if (series.segment_colors.length > 0 && series.points.length > 1) {
         series.segment_colors.forEach((color, index) => {
           const first = series.points[index];
@@ -372,8 +378,9 @@ export class ScreenUiAdapter {
         "stroke-linecap": "round"
       }));
     });
-    if (control.cursor_x !== null) {
-      const x = control.cursor_x;
+    const cursorX = selectedCursor === null ? plot.cursor_x : selectedCursor.cursor_x;
+    if (cursorX != null) {
+      const x = cursorX;
       svg.push(svgElement("path", {
         d: `M ${String(x)} ${String(plotTop)} V ${String(plotBottom)}`,
         fill: "none",
@@ -382,14 +389,14 @@ export class ScreenUiAdapter {
         "stroke-dasharray": "7 6"
       }));
     }
-    control.cursor_points.forEach((cursor) => {
+    (selectedCursor?.cursor_points ?? plot.cursor_points).forEach((cursor) => {
       const coordinateX = cursor.point.x;
       const coordinateY = cursor.point.y;
       svg.push(svgElement("circle", {
         cx: String(coordinateX), cy: String(coordinateY), r: "4", fill: cursor.color
       }));
     });
-    control.markers.forEach((marker, index) => {
+    plot.markers.forEach((marker, index) => {
       const x = marker.point.x;
       const y = marker.point.y;
       svg.push(svgElement("circle", {
@@ -398,7 +405,7 @@ export class ScreenUiAdapter {
       const label = layout.marker_labels[index];
       if (label !== undefined) svg.push(chartText(label, "screen-ui-chart-marker"));
     });
-    control.time_markers.forEach((marker, index) => {
+    plot.time_markers.forEach((marker, index) => {
       const x = marker.point.x;
       const y = marker.point.y;
       svg.push(svgElement("circle", {
@@ -407,7 +414,8 @@ export class ScreenUiAdapter {
       const label = layout.time_marker_labels[index];
       if (label !== undefined) svg.push(chartText(label, "screen-ui-chart-time-marker"));
     });
-    control.vectors.forEach((vector) => {
+    plot.vectors.forEach((retained, index) => {
+      const vector = index === 0 ? selectedCursor?.selected_wind_vector ?? retained : retained;
       if (vector.segments.length === 0) return;
       svg.push(svgElement("path", {
         d: vector.segments.map(([from, to]) =>
@@ -418,7 +426,7 @@ export class ScreenUiAdapter {
         "stroke-linecap": "round"
       }));
     });
-    if (layout.map_guides !== null) {
+    if (layout.map_guides != null) {
       const guides = layout.map_guides;
       svg.push(svgElement("path", {
         d: [...guides.scale_segments, ...guides.north_segments].map(([start, end]) =>
@@ -433,7 +441,7 @@ export class ScreenUiAdapter {
       const item = h("span", { style: {}, dataset: {} }, "");
       item.text = entry.label;
       setNodeStyle(item, "--chart-series-color", entry.color);
-      if (entry.segment_gradient !== null) {
+      if (entry.segment_gradient != null) {
         setNodeDataset(item, "progressScale", "true");
         setNodeStyle(item, "--chart-series-start", entry.segment_gradient[0]);
         setNodeStyle(item, "--chart-series-end", entry.segment_gradient[1]);
@@ -462,7 +470,7 @@ export class ScreenUiAdapter {
   }
 }
 
-function chartText(label: Extract<UiControl, { readonly kind: "chart" }>["presentation"]["x_axis"], className: string): VNode {
+function chartText(label: GameUiChart["presentation"]["x_axis"], className: string): VNode {
   const { x: coordinateX, y: coordinateY } = label.position;
   const node = svgElement("text", { x: String(coordinateX), y: String(coordinateY), class: className,
     "text-anchor": label.anchor, fill: label.color,
@@ -472,7 +480,7 @@ function chartText(label: Extract<UiControl, { readonly kind: "chart" }>["presen
   return node;
 }
 
-function sharedPresentationData(presentation: NonNullable<UiViewModel["sharedPresentation"]>): VNodeData {
+function sharedPresentationData(presentation: GameUiView): VNodeData {
   const { layout, theme } = presentation;
   return {
     dataset: {

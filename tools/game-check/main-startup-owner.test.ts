@@ -1,178 +1,159 @@
-import { readFileSync } from "node:fs";
 import { IDBFactory } from "fake-indexeddb";
-import { Window as BrowserWindow } from "happy-dom";
+import { Window } from "happy-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { RendererAdapter, RuntimeResult } from "../../web/src/render/contracts/runtime.js";
-import type { PresentationRuntime } from "../../web/src/presentation/runtime.js";
+import { ApplicationRuntimeBridge } from "../../web/pkg/birdman_game_wasm.js";
+import type { ApplicationDrawingOutput, ApplicationInput, ApplicationRendererObservation, ApplicationRequest, DisplayRequest } from "../../web/src/generated/application-contracts.js";
+import { applicationPlatformFixture } from "./application-fixture.js";
+import { BrowserFlightLogDownload } from "../../web/src/app/browser-flight-log-download.js";
 
-const teardowns: (() => Promise<void>)[] = [];
+type Prepare = Extract<ApplicationRequest, { kind: "prepare_resources" }>;
+type Resource = Extract<ApplicationRequest, { kind: "commit_resources" | "cancel_resources" | "release_resources" }>;
+interface Driver {
+  readonly requests: Prepare[];
+  readonly dispose: ReturnType<typeof vi.fn>;
+  readonly apply: ReturnType<typeof vi.fn>;
+  finish(): void;
+}
+const capture = vi.hoisted(() => ({ driver: null as Driver | null, permission: (): void => undefined }));
 
-afterEach(async () => {
-  for (const teardown of teardowns.splice(0)) await teardown();
-  vi.restoreAllMocks();
-  vi.unstubAllGlobals();
-  vi.doUnmock("../../web/src/render/engines/three/three-renderer.js");
-});
-
-async function fixture(options: { readonly deferScreenStart?: boolean; readonly failStart?: boolean; readonly failCleanup?: boolean; readonly failStopLoop?: boolean } = {}) {
-  vi.resetModules();
-  const browser = new BrowserWindow({ url: "http://localhost/" });
-  browser.document.body.innerHTML = '<main id="app"></main>';
-  browser.document.documentElement.lang = "ja";
-  browser.document.documentElement.style.fontSize = "16px";
-  Object.defineProperty(browser.document, "fonts", { value: Object.assign(new browser.EventTarget(), { status: "loaded", ready: Promise.resolve() }) });
-  vi.stubGlobal("window", browser);
-  vi.stubGlobal("document", browser.document);
-  vi.stubGlobal("navigator", browser.navigator);
-  vi.stubGlobal("HTMLElement", browser.HTMLElement);
-  vi.stubGlobal("HTMLInputElement", browser.HTMLInputElement);
-  vi.stubGlobal("HTMLSelectElement", browser.HTMLSelectElement);
-  const persistence = new IDBFactory();
-  Object.defineProperty(browser, "indexedDB", { value: persistence });
-  vi.stubGlobal("indexedDB", persistence);
-  vi.spyOn(browser.HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
-  const renderer = {
-    startLoop: vi.fn<RendererAdapter["startLoop"]>(() => {
-      if (options.failStart === true) throw new Error("Injected renderer start failure");
-    }),
-    beginViewFrame: vi.fn(), stopLoop: vi.fn(() => {
-      if (options.failStopLoop === true) throw new Error("Injected renderer loop stop failure");
-    }), render: vi.fn(), setFlightPose: vi.fn(), setPreparedFlightPose: vi.fn(),
-    setLakeVisualCondition: vi.fn(), setLakeSkyCondition: vi.fn(), setLakeVenueVisible: vi.fn(), setFlightCameraMode: vi.fn(), setCinematicCameraView: vi.fn(),
-    setLakeWaterQuality: vi.fn<RendererAdapter["setLakeWaterQuality"]>(() => Promise.resolve({ kind: "complete" })),
-    projectTrackingFrame: vi.fn<RendererAdapter["projectTrackingFrame"]>((pose) => referenceFrameFixture(pose)),
-    resize: vi.fn(), setStereoPresentation: vi.fn(), setScreenRenderScale: vi.fn(), setScreenRenderAuto: vi.fn(), setSelectRayHandler: vi.fn(),
-    dispose: vi.fn(() => {
-      if (options.failCleanup === true) throw new Error("Injected renderer cleanup failure");
-    })
-  } satisfies RendererAdapter;
-  vi.doMock("../../web/src/render/engines/three/three-renderer.js", () => ({
-    createThreeRenderer: () => ({
-      renderer,
-      prepare: () => Promise.resolve(),
-      webxr: { checkAvailability: () => Promise.resolve({ supported: false, message: "Headless WebXR is unavailable" }) }
-    })
-  }));
-  const wasm = await import("../../web/pkg/birdman_game_wasm.js");
-  wasm.initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url))) });
-  const free = vi.spyOn(wasm.HybridGameSessionBridge.prototype, "free");
-  const { TailAppSessionFacade } = await import("../../web/src/app/session-facade.js");
-  const facadeDispose = vi.spyOn(TailAppSessionFacade.prototype, "dispose");
-  const { PresentationRuntime } = await import("../../web/src/presentation/runtime.js");
-  const runtimeDispose = vi.spyOn(PresentationRuntime.prototype, "dispose");
-  const { ScreenPresentationBackend } = await import("../../web/src/presentation/screen-backend.js");
-  const backendStop = vi.spyOn(ScreenPresentationBackend.prototype, "stop");
-  let releaseInitialization: () => void = () => undefined;
-  let initializationPaused = false;
-  if (options.deferScreenStart === true) {
-    const gate = new Promise<void>((resolve) => { releaseInitialization = resolve; });
-    vi.spyOn(ScreenPresentationBackend.prototype, "start").mockImplementation(() => {
-      initializationPaused = true;
-      return gate;
-    });
+vi.mock("../../web/src/render/engines/three/application-renderer.js", () => ({
+  ThreeApplicationRenderer: class {
+    readonly requests: Prepare[] = [];
+    readonly apply = vi.fn<(drawing: ApplicationDrawingOutput) => void>();
+    readonly dispose = vi.fn();
+    private readonly candidates = new Map<number, Prepare>();
+    private readonly pending = new Map<number, { request: Prepare; cancelled: boolean }>();
+    constructor(_canvas: HTMLCanvasElement, private readonly id: number, _bytes: (id: number) => Uint8Array,
+      private readonly notify: (input: ApplicationInput) => void) { capture.driver = this; }
+    observation(): ApplicationRendererObservation {
+      return { resource_id: this.id, initial_quality: { scale: "100", shadow: "full", water_quality: "high" },
+        extent_px: [1280, 720], screen_extent_px: [1280, 720], xr_extent_px: null,
+        gpu_timing: { kind: "unsupported", cause: "physical timer is unavailable" } };
+    }
+    prepare(request: Prepare): void {
+      this.requests.push(request);
+      this.pending.set(request.request_id, { request, cancelled: false });
+    }
+    finish(): void {
+      for (const [id, preparation] of this.pending) {
+        this.pending.delete(id);
+        if (!preparation.cancelled) this.candidates.set(id, preparation.request);
+        this.notify({ kind: "resources", request_id: id, observation: preparation.cancelled
+          ? { kind: "cancelled" } : { kind: "prepared", resource_id: id } });
+      }
+    }
+    owns(request: Resource): boolean {
+      return request.kind === "cancel_resources" ? this.pending.has(request.request_id) : this.candidates.has(request.resource_id);
+    }
+    ownsDisplay(): boolean { return false; }
+    execute(request: Resource): void {
+      if (request.kind === "cancel_resources") {
+        const preparation = this.pending.get(request.request_id);
+        if (preparation !== undefined) preparation.cancelled = true;
+      } else if (request.kind === "release_resources") {
+        this.candidates.delete(request.resource_id);
+        this.notify({ kind: "resources_released", resource_id: request.resource_id, failure: null });
+      } else {
+        const candidate = this.candidates.get(request.resource_id);
+        if (candidate === undefined) throw new Error("Missing physical GPU candidate");
+        this.notify({ kind: "resources", request_id: request.request_id, observation: { kind: "committed", resource_id: request.resource_id,
+          actual: { applied: candidate.graphics.quality, extent_px: candidate.graphics.extent_px } } });
+      }
+    }
+    display(request: DisplayRequest): void {
+      if (request.kind !== "permission") throw new Error("Unexpected display I/O in this fixture");
+      capture.permission();
+      this.notify({ kind: "display_completed", request_id: request.request_id, completion: { kind: "failed", cause: "Permission denied by platform" } });
+    }
   }
-  const pageHide = (persisted: boolean): void => {
-    const event = new browser.Event("pagehide");
+}));
+
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); capture.driver = null; });
+
+async function browserFixture() {
+  const browser = new Window({ url: "http://localhost/" });
+  browser.document.documentElement.lang = "ja";
+  browser.document.documentElement.style.font = "400 16px Arial";
+  Object.defineProperty(browser.document, "fonts", { value: Object.assign(new browser.EventTarget(), { ready: Promise.resolve() }) });
+  Object.defineProperty(browser, "indexedDB", { value: new IDBFactory() });
+  for (const [key, value] of Object.entries({ window: browser, document: browser.document, navigator: browser.navigator,
+    HTMLElement: browser.HTMLElement, HTMLInputElement: browser.HTMLInputElement, HTMLSelectElement: browser.HTMLSelectElement,
+    MutationObserver: browser.MutationObserver, getComputedStyle: browser.getComputedStyle.bind(browser) })) vi.stubGlobal(key, value);
+  vi.spyOn(browser.HTMLCanvasElement.prototype, "getContext").mockImplementation(function (this: HTMLCanvasElement) {
+    const context = { canvas: this, font: "16px Arial", measureText(value: string) {
+      const size = Number.parseFloat(context.font.match(/([\d.]+)px/)?.[1] ?? "16");
+      const width = Array.from(value).length * size * 0.7;
+      return { width, actualBoundingBoxLeft: 0, actualBoundingBoxRight: width, actualBoundingBoxAscent: size * 0.8, actualBoundingBoxDescent: size * 0.2 };
+    } };
+    return context as unknown as ReturnType<typeof browser.HTMLCanvasElement.prototype.getContext>;
+  });
+  const { BrowserApplication } = await import("../../web/src/browser-application.js");
+  const mount = browser.document.createElement("main") as unknown as HTMLElement;
+  browser.document.body.append(mount as unknown as import("happy-dom").HTMLElement);
+  const free = vi.spyOn(ApplicationRuntimeBridge.prototype, "free");
+  const update = vi.spyOn(ApplicationRuntimeBridge.prototype, "update");
+  new BrowserApplication(mount, applicationPlatformFixture().capabilities);
+  const driver = capture.driver;
+  if (driver === null) throw new Error("Main did not execute CreateRenderer");
+  const page = (type: "pagehide" | "pageshow", persisted: boolean) => {
+    const event = new browser.PageTransitionEvent(type);
     Object.defineProperty(event, "persisted", { value: persisted });
     browser.dispatchEvent(event);
   };
-  teardowns.push(async () => {
-    releaseInitialization();
-    pageHide(false);
-    await Promise.allSettled(runtimeDispose.mock.results.map((result) => result.value as Promise<unknown>));
-    await browser.happyDOM.abort();
-  });
-  await import("../../web/src/main.js");
-  return { browser, renderer, free, facadeDispose, runtimeDispose, backendStop, pageHide, releaseInitialization,
-    initializationPaused: () => initializationPaused,
-    scene: () => browser.document.querySelector(".screen-ui-shell")?.getAttribute("data-scene") };
+  return { browser, mount, free, update, driver, page };
 }
 
-describe("Tail main startup resource ownership", () => {
-  it("disposes the runtime and Rust session once when pagehide interrupts deferred Screen start", async () => {
-    const trial = await fixture({ deferScreenStart: true });
-    await vi.waitFor(() => { expect(trial.initializationPaused()).toBe(true); });
-    trial.pageHide(false);
-    expect(trial.facadeDispose).toHaveBeenCalledTimes(1);
-    expect(trial.free).toHaveBeenCalledTimes(1);
-    expect(trial.renderer.dispose).not.toHaveBeenCalled();
-    trial.releaseInitialization();
-    await vi.waitFor(() => { expect(trial.runtimeDispose).toHaveBeenCalledTimes(2); });
-    await Promise.all(trial.runtimeDispose.mock.results.map((result) => result.value as Promise<unknown>));
-    await vi.waitFor(() => { expect(trial.renderer.dispose).toHaveBeenCalledTimes(1); });
-    expect(trial.free).toHaveBeenCalledTimes(1);
-    expect(trial.scene()).toBe("Boot");
-    expect(trial.browser.document.querySelector(".screen-ui-mount")?.hasAttribute("hidden")).toBe(true);
-    expect(trial.browser.document.querySelector('button[data-control-id^="game-"]')).toBeNull();
+describe("Single browser runtime ownership", () => {
+  it("retains an in-flight preparation through BFCache and executes permission inside the originating click", async () => {
+    const fixture = await browserFixture();
+    try {
+      expect(fixture.driver.requests).toHaveLength(1);
+      expect(fixture.driver.requests[0]?.graphics.quality).toEqual({ scale: "50", shadow: "quarter", water_quality: "low" });
+      fixture.page("pagehide", true);
+      fixture.driver.finish();
+      expect(fixture.free).not.toHaveBeenCalled();
+      expect(fixture.driver.dispose).not.toHaveBeenCalled();
+      fixture.page("pageshow", true);
+      fixture.driver.finish();
+      const hmd = fixture.mount.querySelector<HTMLButtonElement>('[data-control-id="boot-enter-hmd"]');
+      if (hmd === null) throw new Error("Retained Title is not interactive");
+      let inClick = false;
+      const permission = vi.fn(() => { expect(inClick).toBe(true); });
+      capture.permission = permission;
+      inClick = true;
+      hmd.click();
+      inClick = false;
+      expect(permission).toHaveBeenCalledOnce();
+      const start = fixture.mount.querySelector<HTMLButtonElement>('[data-control-id="game-title-start"]');
+      if (start === null) throw new Error("Permission failure did not restore Title controls");
+      start.click();
+      expect(fixture.mount.querySelector('[data-control-id="game-setup-start"]')).not.toBeNull();
+      fixture.page("pagehide", false);
+      fixture.driver.finish();
+      expect(fixture.driver.dispose).toHaveBeenCalledOnce();
+      expect(fixture.free).toHaveBeenCalledOnce();
+      const updates = fixture.update.mock.calls.length;
+      fixture.browser.document.documentElement.style.fontSize = "20px";
+      fixture.page("pageshow", true);
+      await Promise.resolve();
+      expect(fixture.update).toHaveBeenCalledTimes(updates);
+    } finally { fixture.page("pagehide", false); fixture.driver.finish(); await fixture.browser.happyDOM.abort(); }
   });
 
-  it("retains ownership until non-BFCache teardown after normal Tail initialization", async () => {
-    const trial = await fixture();
-    await vi.waitFor(() => { expect(trial.scene()).toBe("Title"); });
-    expect(trial.renderer.dispose).not.toHaveBeenCalled();
-    expect(trial.free).not.toHaveBeenCalled();
-    expect(trial.facadeDispose).not.toHaveBeenCalled();
-    trial.pageHide(false);
-    await Promise.all(trial.runtimeDispose.mock.results.map((result) => result.value as Promise<unknown>));
-    expect(trial.renderer.dispose).toHaveBeenCalledTimes(1);
-    expect(trial.free).toHaveBeenCalledTimes(1);
-    expect(trial.facadeDispose).toHaveBeenCalledTimes(1);
-  });
-
-  it("preserves the start failure and frees the Rust session despite renderer cleanup failure", async () => {
-    const trial = await fixture({ failStart: true, failCleanup: true });
-    await vi.waitFor(() => {
-      expect(trial.browser.document.body.textContent).toContain("Injected renderer start failure");
-    });
-    expect(trial.browser.document.body.textContent).toContain("Injected renderer cleanup failure");
-    expect(trial.renderer.dispose).toHaveBeenCalledTimes(1);
-    expect(trial.free).toHaveBeenCalledTimes(1);
-    expect(trial.facadeDispose).toHaveBeenCalledTimes(1);
-  });
-
-  it.each(["loop", "backend", "renderer", "all"] as const)("reports %s cleanup failure after pagehide while attempting every release once", async (failure) => {
+  it("waits for the actual cancelled preparation and frees once after every cleanup has been attempted", async () => {
+    const fixture = await browserFixture();
+    const cleanup = vi.spyOn(BrowserFlightLogDownload.prototype, "dispose").mockImplementation(() => { throw new Error("download cleanup failed"); });
     const diagnostic = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const trial = await fixture({ failStopLoop: failure === "loop" || failure === "all", failCleanup: failure === "renderer" || failure === "all" });
-    await vi.waitFor(() => { expect(trial.scene()).toBe("Title"); });
-    const backendCause = new Error("Injected Screen backend stop failure");
-    if (failure === "backend" || failure === "all") trial.backendStop.mockRejectedValueOnce(backendCause);
-    trial.pageHide(false);
-    await vi.waitFor(() => { expect(diagnostic).toHaveBeenCalledTimes(1); });
-    expect(trial.runtimeDispose).toHaveBeenCalledTimes(1);
-    const disposalCall = trial.runtimeDispose.mock.results[0];
-    if (disposalCall === undefined) throw new Error("Runtime disposal was not invoked");
-    const result = await disposalCall.value as RuntimeResult;
-    if (result.ok || result.error.type !== "cleanup-failed") throw new Error("Expected a reported typed cleanup result");
-    expect(diagnostic).toHaveBeenCalledWith("Presentation cleanup failed", result.error);
-    expect(result.error.failures.map((entry) => entry.operation)).toEqual(failure === "all"
-      ? ["stop-loop", "stop-backend", "dispose-renderer"]
-      : [failure === "loop" ? "stop-loop" : failure === "backend" ? "stop-backend" : "dispose-renderer"]);
-    if (failure === "backend" || failure === "all") expect(result.error.failures.find((entry) => entry.operation === "stop-backend")?.cause).toBe(backendCause);
-    trial.pageHide(false);
-    expect(trial.renderer.stopLoop).toHaveBeenCalledTimes(1);
-    expect(trial.backendStop).toHaveBeenCalledTimes(1);
-    expect(trial.renderer.dispose).toHaveBeenCalledTimes(1);
-    expect(trial.free).toHaveBeenCalledTimes(1);
-    expect(trial.facadeDispose).toHaveBeenCalledTimes(1);
-    expect(trial.runtimeDispose).toHaveBeenCalledTimes(1);
-    expect(diagnostic).toHaveBeenCalledTimes(1);
-  });
-
-  it("recovers the pagehide disposal rejection at the effect boundary", async () => {
-    const diagnostic = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const trial = await fixture();
-    await vi.waitFor(() => { expect(trial.scene()).toBe("Title"); });
-    const cause = new Error("Injected disposal rejection");
-    trial.runtimeDispose.mockRejectedValueOnce(cause);
-    trial.pageHide(false);
-    await vi.waitFor(() => { expect(diagnostic).toHaveBeenCalledWith("Presentation cleanup failed", cause); });
-    expect(trial.free).toHaveBeenCalledTimes(1);
-    expect(trial.facadeDispose).toHaveBeenCalledTimes(1);
-    const receiver = trial.runtimeDispose.mock.contexts[0] as PresentationRuntime | undefined;
-    if (receiver === undefined) throw new Error("Runtime disposal owner is missing");
-    trial.runtimeDispose.mockRestore();
-    await receiver.dispose();
-    expect(trial.renderer.dispose).toHaveBeenCalledTimes(1);
+    try {
+      fixture.page("pagehide", false);
+      expect(fixture.free).not.toHaveBeenCalled();
+      fixture.driver.finish();
+      expect(fixture.driver.dispose).toHaveBeenCalledOnce();
+      expect(cleanup).toHaveBeenCalledOnce();
+      expect(fixture.free).toHaveBeenCalledOnce();
+      expect(diagnostic).toHaveBeenCalledWith(expect.any(AggregateError));
+      fixture.page("pagehide", false);
+      expect(fixture.free).toHaveBeenCalledOnce();
+    } finally { await fixture.browser.happyDOM.abort(); }
   });
 });
-import { referenceFrameFixture } from "../presentation-check/menu-fixture.js";

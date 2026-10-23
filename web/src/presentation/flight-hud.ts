@@ -3,7 +3,7 @@ import { h } from "snabbdom/build/h.js";
 import { htmlDomApi } from "snabbdom/build/htmldomapi.js";
 import { init } from "snabbdom/build/init.js";
 import type { VNode } from "snabbdom";
-import type { FlightHudModel, FlightHudNode } from "./flight-hud-model.js";
+import type { GameUiHud, GameUiHudNode, GameUiTheme } from "../generated/application-contracts.js";
 
 let nextHudId = 0;
 
@@ -31,33 +31,33 @@ export class FlightHudAdapter {
     this.setVisible(false);
   }
 
-  render(model: FlightHudModel | null): void {
-    if (model === null) {
+  render(hud: GameUiHud | null, theme: GameUiTheme): void {
+    if (hud === null) {
       this.setVisible(false);
       return;
     }
-    const layout = model.layout;
-    const layoutKey = JSON.stringify([layout, model.theme.text, model.theme.panel_background]);
+    const layout = hud.layout;
+    const layoutKey = JSON.stringify([layout, theme.text, theme.panel_background]);
     if (layoutKey !== this.layoutKey) {
       this.root.dataset.shared = "true";
       Object.assign(this.root.style, {
       width: `${String(layout.width_px)}px`, height: `${String(layout.height_px)}px`,
-      fontSize: `${String(layout.font_size_px)}px`, color: model.theme.text
+      fontSize: `${String(layout.font_size_px)}px`, color: theme.text
       });
       this.root.style.setProperty("--hud-left", `${String(layout.offset_px[0])}px`);
       this.root.style.setProperty("--hud-bottom", `${String(layout.offset_px[1])}px`);
-      this.root.style.setProperty("--hud-card-background", `color-mix(in srgb, ${model.theme.panel_background} ${String(layout.opacity * 100)}%, transparent)`);
+      this.root.style.setProperty("--hud-card-background", `color-mix(in srgb, ${theme.panel_background} ${String(layout.opacity * 100)}%, transparent)`);
       this.root.style.setProperty("--hud-padding-x", `${String(layout.padding_px[0])}px`);
       this.root.style.setProperty("--hud-padding-y", `${String(layout.padding_px[1])}px`);
       this.layoutKey = layoutKey;
     }
     this.tree = this.patch(this.tree, h("div.flight-hud-content", [
-      ...model.groups.map((group) => h("section.flight-hud-group", {
+      ...hud.groups.map((group) => h("section.flight-hud-group", {
         key: group.id,
         attrs: {
           "data-group": group.id, "data-placement": group.placement
         }
-      }, group.nodes.map((node) => hudNode(node, model, this.clipPrefix))))
+      }, group.nodes.map((node) => hudNode(node, hud, theme, this.clipPrefix))))
     ]));
   }
 
@@ -67,7 +67,7 @@ export class FlightHudAdapter {
   }
 }
 
-function hudNode(node: FlightHudNode, model: FlightHudModel, clipPrefix: string): VNode {
+function hudNode(node: GameUiHudNode, hud: GameUiHud, theme: GameUiTheme, clipPrefix: string): VNode {
   const content = node.content;
   return h("div.flight-hud-node", {
     key: node.id,
@@ -78,11 +78,11 @@ function hudNode(node: FlightHudNode, model: FlightHudModel, clipPrefix: string)
       ...(node.label === "" ? [] : [h("span.flight-hud-caption", node.label), " "]),
       h("output.flight-hud-value", { attrs: { "aria-label": node.label || content.value, "aria-live": content.kind === "text" && content.tone === "warning" ? "polite" : "off" } }, content.value)
     ]),
-    ...widget(node, model, clipPrefix)
+    ...widget(node, hud, theme, clipPrefix)
   ]);
 }
 
-function widget(node: FlightHudNode, model: FlightHudModel, clipPrefix: string): VNode[] {
+function widget(node: GameUiHudNode, hud: GameUiHud, theme: GameUiTheme, clipPrefix: string): VNode[] {
   const content = node.content;
   switch (content.kind) {
     case "text": return [];
@@ -96,46 +96,46 @@ function widget(node: FlightHudNode, model: FlightHudModel, clipPrefix: string):
         h("g", { attrs: { transform: `rotate(${String(horizon.rotation_degrees)} 120 90) translate(0 ${String(90 + horizon.pitch_offset_ratio * 180)})` } }, [
           ...horizon.pitch_ticks.flatMap((tick) => {
             const half = tick.half_width_ratio * 240;
-            return [shape("path", { d: `M ${String(120 - half)} ${String(tick.offset_ratio * 180)} H ${String(120 + half)}`, stroke: model.theme.text, "stroke-width": 2 }),
-              ...(tick.label_degrees === null ? [] : [shape("text", { x: 138 + half, y: tick.offset_ratio * 180 + 4, fill: model.theme.text, "text-anchor": "middle", "font-size": "var(--hud-instrument-font-size)" }, String(tick.label_degrees))])];
+            return [shape("path", { d: `M ${String(120 - half)} ${String(tick.offset_ratio * 180)} H ${String(120 + half)}`, stroke: theme.text, "stroke-width": 2 }),
+              ...(tick.label_degrees === null ? [] : [shape("text", { x: 138 + half, y: tick.offset_ratio * 180 + 4, fill: theme.text, "text-anchor": "middle", "font-size": "var(--hud-instrument-font-size)" }, String(tick.label_degrees))])];
           })
         ])
       ]));
-      shapes.push(shape("rect", { x: 26, y: 18, width: 188, height: 144, rx: 72, fill: "none", stroke: model.theme.text, "stroke-width": 3 }),
-        shape("path", { d: "M 72 91 H 108 L 113 82 H 127 L 132 91 H 168 M 120 86 V 96", fill: "none", stroke: model.theme.focus_outline, "stroke-width": 5 }));
-      if (flightPath !== null) shapes.push(shape("circle", { cx: 120, cy: flightPath * 180, r: 5, fill: "none", stroke: "#7df4c5", "stroke-width": 3 }));
-      return [gauge(node, model, [240, 180], shapes)];
+      shapes.push(shape("rect", { x: 26, y: 18, width: 188, height: 144, rx: 72, fill: "none", stroke: theme.text, "stroke-width": 3 }),
+        shape("path", { d: "M 72 91 H 108 L 113 82 H 127 L 132 91 H 168 M 120 86 V 96", fill: "none", stroke: theme.focus_outline, "stroke-width": 5 }));
+      if (flightPath != null) shapes.push(shape("circle", { cx: 120, cy: flightPath * 180, r: 5, fill: "none", stroke: "#7df4c5", "stroke-width": 3 }));
+      return [gauge(node, hud, [240, 180], shapes)];
     }
-    case "heading_tape": return [gauge(node, model, [220, 50], [
+    case "heading_tape": return [gauge(node, hud, [220, 50], [
       ...content.ticks.map((tick, index) => h("g", { key: index }, [
-        shape("path", { d: `M ${String(tick.position_ratio * 220)} ${tick.major ? "28" : "33"} V 40`, stroke: model.theme.text, "stroke-width": tick.major ? 1.5 : 1 }),
-        shape("text", { x: tick.position_ratio * 220, y: 22, "text-anchor": "middle", fill: model.theme.text, "font-size": "var(--hud-instrument-font-size)" }, tick.label)
-      ])), shape("path", { d: "M 110 28 L 104 38 H 116 Z", fill: model.theme.focus_outline })
+        shape("path", { d: `M ${String(tick.position_ratio * 220)} ${tick.major ? "28" : "33"} V 40`, stroke: theme.text, "stroke-width": tick.major ? 1.5 : 1 }),
+        shape("text", { x: tick.position_ratio * 220, y: 22, "text-anchor": "middle", fill: theme.text, "font-size": "var(--hud-instrument-font-size)" }, tick.label)
+      ])), shape("path", { d: "M 110 28 L 104 38 H 116 Z", fill: theme.focus_outline })
     ])];
-    case "direction": return [gauge(node, model, [72, 72], [
-      shape("circle", { cx: 36, cy: 36, r: 27, fill: "none", stroke: model.theme.muted_text, "stroke-width": 1.5 }),
-      shape("path", { d: "M 36 9 V 63 M 9 36 H 63", stroke: model.theme.muted_text }),
-      shape("text", { x: 36, y: 20, "text-anchor": "middle", fill: model.theme.text, "font-size": "var(--hud-instrument-font-size)" }, "N"),
+    case "direction": return [gauge(node, hud, [72, 72], [
+      shape("circle", { cx: 36, cy: 36, r: 27, fill: "none", stroke: theme.muted_text, "stroke-width": 1.5 }),
+      shape("path", { d: "M 36 9 V 63 M 9 36 H 63", stroke: theme.muted_text }),
+      shape("text", { x: 36, y: 20, "text-anchor": "middle", fill: theme.text, "font-size": "var(--hud-instrument-font-size)" }, "N"),
       ...(content.rotation_degrees === null ? [] : [h("g", { attrs: { transform: `rotate(${String(content.rotation_degrees)} 36 36)` } }, [
-        shape("path", { d: "M 36 15 L 31 38 L 36 34 L 41 38 Z", fill: model.theme.focus_outline })
+        shape("path", { d: "M 36 15 L 31 38 L 36 34 L 41 38 Z", fill: theme.focus_outline })
       ])])
     ])];
-    case "linear_gauge": return [gauge(node, model, [200, 42], [
-      shape("path", { d: "M 10 16 H 190", stroke: model.theme.muted_text, "stroke-width": 3 }),
-      ...Array.from({ length: 7 }, (_, index) => shape("path", { d: `M ${String(10 + index * 30)} 12 V 21`, stroke: model.theme.muted_text })),
-      shape("text", { x: 10, y: 39, fill: model.theme.text, "font-size": "var(--hud-instrument-font-size)" }, content.minimum_label),
-      shape("text", { x: 190, y: 39, "text-anchor": "end", fill: model.theme.text, "font-size": "var(--hud-instrument-font-size)" }, content.maximum_label),
-      ...(content.position_ratio === null ? [] : [shape("polygon", { points: `${String(10 + content.position_ratio * 180)},5 ${String(4 + content.position_ratio * 180)},1 ${String(16 + content.position_ratio * 180)},1`, fill: model.theme.focus_outline })])
+    case "linear_gauge": return [gauge(node, hud, [200, 42], [
+      shape("path", { d: "M 10 16 H 190", stroke: theme.muted_text, "stroke-width": 3 }),
+      ...Array.from({ length: 7 }, (_, index) => shape("path", { d: `M ${String(10 + index * 30)} 12 V 21`, stroke: theme.muted_text })),
+      shape("text", { x: 10, y: 39, fill: theme.text, "font-size": "var(--hud-instrument-font-size)" }, content.minimum_label),
+      shape("text", { x: 190, y: 39, "text-anchor": "end", fill: theme.text, "font-size": "var(--hud-instrument-font-size)" }, content.maximum_label),
+      ...(content.position_ratio == null ? [] : [shape("polygon", { points: `${String(10 + content.position_ratio * 180)},5 ${String(4 + content.position_ratio * 180)},1 ${String(16 + content.position_ratio * 180)},1`, fill: theme.focus_outline })])
     ])];
   }
 }
 
-function gauge(node: FlightHudNode, model: FlightHudModel, [width, height]: readonly [number, number], children: VNode[]): VNode {
-  const drawingWidth = node.bounds.width * model.layout.width_px - model.layout.padding_px[0] * 2;
-  const drawingHeight = node.instrument_height_em * model.layout.font_size_px;
+function gauge(node: GameUiHudNode, hud: GameUiHud, [width, height]: readonly [number, number], children: VNode[]): VNode {
+  const drawingWidth = node.bounds.width * hud.layout.width_px - hud.layout.padding_px[0] * 2;
+  const drawingHeight = node.instrument_height_em * hud.layout.font_size_px;
   const scale = Math.min(drawingWidth / width, drawingHeight / height);
   return h("svg", { attrs: { viewBox: `0 0 ${String(width)} ${String(height)}`, role: "img", "aria-label": node.label || node.content.value, "data-instrument": node.content.kind,
-    style: `height: ${String(node.instrument_height_em)}em; --hud-instrument-font-size: ${String(model.layout.font_size_px / scale)}px` } }, children);
+    style: `height: ${String(node.instrument_height_em)}em; --hud-instrument-font-size: ${String(hud.layout.font_size_px / scale)}px` } }, children);
 }
 
 function shape(tag: string, attributes: Record<string, string | number>, text = ""): VNode {

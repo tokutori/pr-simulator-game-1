@@ -1,372 +1,176 @@
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { IDBFactory, IDBObjectStore as FakeObjectStore } from "fake-indexeddb";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { HybridGameSessionBridge, initSync } from "../../web/pkg/birdman_game_wasm.js";
-import { createArchivedPersonalBestSelection, personalBestComparisonVersion } from "../../web/src/game/archived-personal-best.js";
-import {
-  FlightRecordRepository, IndexedDbFlightRecordPersistence,
-  type FlightRecordPersistencePort, type PersonalBestSelectionPort,
-  type StoredFlightRecord, type StoredFlightRecordSummary
-} from "../../web/src/game/flight-record-store.js";
-import { currentRecordFixture } from "./current-session-fixture.js";
-import { gameUiInputQuery } from "../../web/src/generated/game-ui-input-query.js";
-import { encodeGameUiPlatformInput } from "../../web/src/app/game-ui-codec.js";
-import { createSharedGameUiSession, sharedGameUiPlatform } from "./shared-game-ui-fixture.js";
+import { IDBFactory, IDBObjectStore } from "fake-indexeddb";
+import { describe, expect, it, vi } from "vitest";
+import { BrowserFlightRecordStore } from "../../web/src/game/flight-record-store.js";
+import type { ApplicationInput, ApplicationRequest } from "../../web/src/generated/application-contracts.js";
 
-initSync({ module: new Uint8Array(readFileSync(fileURLToPath(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url)))) });
-afterEach(() => { vi.restoreAllMocks(); });
-
-class MemoryFlightRecordPersistence implements FlightRecordPersistencePort {
-  readonly records: StoredFlightRecord[] = [];
-  private readonly personalBestIds = new Map<string, number>();
-  add(json: string, savedAt: string, selection: PersonalBestSelectionPort): Promise<number> {
-    for (const record of this.records) selection.consider_existing(record.id, record.json);
-    const id = this.records.length + 1;
-    this.records.push(Object.freeze({ id, savedAt, json }));
-    if (selection.is_eligible()) {
-      this.personalBestIds.set(selection.key_hex(), selection.candidate_is_best() ? id : selection.selected_existing_id());
-    }
-    return Promise.resolve(id);
-  }
-  get(id: number): Promise<StoredFlightRecord | null> {
-    return Promise.resolve(this.records.find((record) => record.id === id) ?? null);
-  }
-  getRecent(limit: number): Promise<readonly StoredFlightRecordSummary[]> {
-    const best = new Set(this.personalBestIds.values());
-    return Promise.resolve([...this.records].sort((left, right) => right.id - left.id).slice(0, limit)
-      .map(({ id, savedAt }) => ({ id, savedAt, personalBest: best.has(id) })));
-  }
-}
-
-class TestPersonalBestSelection implements PersonalBestSelectionPort {
-  readonly consideredIds: number[] = [];
-  freed = false;
-  private existingId = 0;
-  constructor(private readonly candidateWins = false, private readonly eligible = true) {}
-  candidate_is_best(): boolean { return this.existingId === 0 || this.candidateWins; }
-  consider_existing(id: number): void { this.consideredIds.push(id); this.existingId ||= id; }
-  free(): void { this.freed = true; }
-  is_eligible(): boolean { return this.eligible; }
-  key_hex(): string { return "a".repeat(64); }
-  selected_existing_id(): number { return this.existingId; }
-}
-
-function ineligibleSelection(): PersonalBestSelectionPort { return new TestPersonalBestSelection(false, false); }
-function requestResult<Value>(request: IDBRequest<Value>): Promise<Value> {
+function result<Value>(request: IDBRequest<Value>): Promise<Value> {
   return new Promise((resolve, reject) => {
     request.onsuccess = () => { resolve(request.result); };
-    request.onerror = () => { reject(request.error ?? new Error("Test IndexedDB request failed")); };
+    request.onerror = () => { reject(request.error ?? new Error("IndexedDB request failed")); };
   });
 }
-function completed(transaction: IDBTransaction): Promise<void> {
-  return new Promise((resolve, reject) => {
-    transaction.oncomplete = () => { resolve(); };
-    transaction.onabort = () => { reject(transaction.error ?? new Error("Test IndexedDB transaction aborted")); };
-  });
-}
-async function databaseFixture(records: readonly unknown[] = [], metadata: readonly unknown[] = [],
-  personalBests: readonly unknown[] = []) {
+
+async function databaseFixture() {
   const factory = new IDBFactory();
-  const name = "current-flight-records";
+  const name = "primitive-record-io";
   const request = factory.open(name, 4);
   request.onupgradeneeded = () => {
     request.result.createObjectStore("records", { keyPath: "id", autoIncrement: true });
     request.result.createObjectStore("recordMetadata", { keyPath: "id" });
     request.result.createObjectStore("personalBests", { keyPath: "key" });
   };
-  const database = await requestResult(request);
-  try {
-    const transaction = database.transaction(["records", "recordMetadata", "personalBests"], "readwrite");
-    const done = completed(transaction);
-    for (const record of records) transaction.objectStore("records").put(record);
-    for (const entry of metadata) transaction.objectStore("recordMetadata").put(entry);
-    for (const entry of personalBests) transaction.objectStore("personalBests").put(entry);
-    await done;
-  } finally { database.close(); }
-  return {
-    factory, name, persistence: new IndexedDbFlightRecordPersistence(factory, personalBestComparisonVersion(), name),
-    async rows(store: string): Promise<unknown[]> {
-      const connection = await requestResult(factory.open(name));
-      try {
-        const transaction = connection.transaction(store, "readonly");
-        const done = completed(transaction);
-        const rows = await requestResult(transaction.objectStore(store).getAll()) as unknown[];
-        await done;
-        return rows;
-      } finally { connection.close(); }
-    },
-    async dispose(): Promise<void> { await requestResult(factory.deleteDatabase(name)); }
-  };
+  const database = await result(request);
+  return { factory, name, database };
 }
 
-describe("Current FlightRecord persistence", () => {
-  it("keeps the Title query bounded with 2000 saved records while retaining an older Personal Best", async () => {
-    const json = currentRecordFixture();
-    const selection = createArchivedPersonalBestSelection(json);
-    let key: string;
-    try { key = selection.key_hex(); } finally { selection.free(); }
-    const records = Array.from({ length: 2000 }, (_, index) => ({
-      id: index + 1, savedAt: "2026-10-19T00:00:00.000Z", json
-    }));
-    const fixture = await databaseFixture(records, records.map(({ id, savedAt }) => ({ id, savedAt })), [{ key, recordId: 1, comparisonVersion: personalBestComparisonVersion() }]);
-    try {
-      const repository = new FlightRecordRepository(fixture.persistence, undefined, createArchivedPersonalBestSelection);
-      const getAll = vi.spyOn(FakeObjectStore.prototype, "getAll");
-      const recent = await repository.recent(gameUiInputQuery.storedRecordLimit);
-      expect(recent.map(({ id }) => id)).toEqual([2000, 1999, 1998]);
-      expect(getAll.mock.contexts.filter((store) => store instanceof FakeObjectStore).map((store) => store.name)).not.toContain("recordMetadata");
-      const platform = { ...sharedGameUiPlatform(), stored_records: recent.map(({ id, savedAt, personalBest }) => ({
-        id, saved_at: savedAt, personal_best: personalBest
-      })) };
-      const input = encodeGameUiPlatformInput(platform);
-      expect(new TextEncoder().encode(input).byteLength).toBeLessThan(gameUiInputQuery.maximumBytes);
-      const unbounded = JSON.stringify({ ...platform, stored_records: records.map(({ id, savedAt }) => ({
-        id, saved_at: savedAt, personal_best: id === 1
-      })) });
-      expect(new TextEncoder().encode(unbounded).byteLength).toBeGreaterThan(gameUiInputQuery.maximumBytes);
-      const boundary = new HybridGameSessionBridge(0, 21, 22);
-      try {
-        expect(() => boundary.game_ui_view_json(unbounded)).toThrow("shared UI input exceeds the boundary limit");
-        expect(() => boundary.game_ui_view_json(input)).not.toThrow();
-      } finally { boundary.free(); }
-      const title = createSharedGameUiSession("title");
-      try {
-        const view = title.session.readSharedUi(platform);
-        const recordIds = view.panels.flatMap((panel) => panel.controls)
-          .filter((control) => control.id.startsWith("game-title-open-record-")).map(({ id }) => id);
-        expect(recordIds).toEqual([2000, 1999, 1998].map((id) => `game-title-open-record-${String(id)}`));
-        expect(title.session.readSharedUi(platform).scene).toBe("Title");
-        expect(title.session.updateSharedUi({ kind: "platform", command: { kind: "open_stored_record", id: 2000 } }, platform).effects)
-          .toEqual([{ kind: "platform", command: { kind: "open_stored_record", id: 2000 } }]);
-      } finally { title.session.dispose(); }
-      const flight = createSharedGameUiSession("flight_running");
-      try {
-        const before = flight.session.readSnapshot();
-        expect(flight.session.readSharedUi(platform).scene).toBe("Flight");
-        expect(flight.session.readSharedUi(platform).scene).toBe("Flight");
-        expect(flight.session.readSnapshot()).toEqual(before);
-        expect(flight.session.updateSharedUi({ kind: "session", command: { kind: "pause" } }, platform).effects)
-          .toEqual([{ kind: "session", command: { kind: "pause" } }]);
-      } finally { flight.session.dispose(); }
-      expect((await repository.saveFrom({ export_flight_record_json: () => json })).personalBest)
-        .toMatchObject({ kind: "existing", id: 1 });
-      expect(await fixture.rows("personalBests")).toEqual([{ key, recordId: 1, comparisonVersion: personalBestComparisonVersion() }]);
-      expect(await repository.load(1)).toBe(json);
-      expect(await fixture.rows("recordMetadata")).toHaveLength(2001);
-    } finally { await fixture.dispose(); }
-  });
-
-  it("bounds Unicode display diagnostics without changing the original platform observations", () => {
-    const text = "🛩\u0000日本語".repeat(100_000);
-    const platform = sharedGameUiPlatform({ notification: text, flight_controller_failure: text, head_hud_failure: text,
-      water_quality_operation: { kind: "failed", requested: "high", cause: text },
-      screen_render_scale: { ...sharedGameUiPlatform().screen_render_scale, status: { kind: "unsupported", cause: text } },
-      stored_records: [{ id: 1, saved_at: text, personal_best: false }] });
-    const input = encodeGameUiPlatformInput(platform);
-    expect(new TextEncoder().encode(input).byteLength).toBeLessThan(gameUiInputQuery.maximumBytes);
-    expect(platform.notification).toBe(text);
-    expect(platform.stored_records[0]?.saved_at).toBe(text);
-    const owner = createSharedGameUiSession("title");
-    try {
-      expect(owner.session.readSharedUi(platform).scene).toBe("Title");
-    } finally { owner.session.dispose(); }
-    const oversizedPreview = encodeGameUiPlatformInput({ ...sharedGameUiPlatform(),
-      stored_records: Array.from({ length: 4 }, (_, index) => ({ id: index + 1, saved_at: "saved", personal_best: false }))
+describe("Browser record primitive I/O", () => {
+  it("enqueues owner requests synchronously in transaction callbacks and retains exact stored bytes", async () => {
+    const factory = new IDBFactory();
+    const json = " {\n  \"source\": \"原文\", \"samples\": []\n}\n";
+    const savedAt = "2026-10-23T00:00:00.000Z";
+    const key = "a".repeat(64);
+    const observations: ApplicationInput[] = [];
+    let complete: (() => void) | undefined;
+    let fail: ((cause: unknown) => void) | undefined;
+    const done = new Promise<void>((resolve, reject) => { complete = resolve; fail = reject; });
+    const store = new BrowserFlightRecordStore(factory, input => {
+      observations.push(input);
+      if (input.kind === "record_save_opened") {
+        expect(Number.isFinite(input.unix_milliseconds)).toBe(true);
+        store.execute({ kind: "record_write", request_id: input.request_id, requests: [{ kind: "insert_record", json, saved_at: savedAt }] });
+      }
+      if (input.kind !== "record_save_observed") return;
+      const observation = input.observation;
+      const requests: Extract<ApplicationRequest, { kind: "record_write" }>["requests"] = observation.kind === "inserted"
+        ? [{ kind: "write_metadata", id: 1, saved_at: savedAt }]
+        : observation.kind === "metadata_written"
+          ? [{ kind: "write_best", entry: { key, recordId: 1, comparisonVersion: 1 } }]
+          : observation.kind === "best_written" ? [{ kind: "finish" }] : [];
+      if (observation.kind === "inserted") expect(observation.key).toBe(1);
+      if (requests.length > 0) store.execute({ kind: "record_write", request_id: input.request_id, requests });
+      if (observation.kind === "committed") complete?.();
+      if (observation.kind === "failed") fail?.(new Error(observation.cause));
     });
-    const boundary = new HybridGameSessionBridge(0, 21, 22);
     try {
-      expect(() => boundary.game_ui_view_json(oversizedPreview)).toThrow();
-    } finally { boundary.free(); }
+      store.execute({ kind: "begin_record_save", request_id: 7 });
+      await done;
+      expect(observations.map(input => input.kind === "record_save_observed" ? input.observation.kind : input.kind))
+        .toEqual(["record_save_opened", "inserted", "metadata_written", "best_written", "committed"]);
+      const database = await result(factory.open("birdman-flight-records", 4));
+      try {
+        const transaction = database.transaction(["records", "recordMetadata", "personalBests"], "readonly");
+        const record = result(transaction.objectStore("records").get(1));
+        const metadata = result(transaction.objectStore("recordMetadata").get(1));
+        const best = result(transaction.objectStore("personalBests").get(key));
+        expect(await record).toEqual({ id: 1, savedAt, json });
+        expect(await metadata).toEqual({ id: 1, savedAt });
+        expect(await best).toEqual({ key, recordId: 1, comparisonVersion: 1 });
+      } finally { database.close(); }
+    } finally { store.dispose(); }
   });
 
-  it("rejects invalid preview limits and retains metadata/index errors on the bounded query", async () => {
-    const fixture = await databaseFixture([], [{ id: 1, savedAt: 7 }]);
-    try {
-      const repository = new FlightRecordRepository(fixture.persistence, undefined, createArchivedPersonalBestSelection);
-      for (const limit of [0, -1, 0.5, Number.POSITIVE_INFINITY]) await expect(repository.recent(limit)).rejects.toThrow("positive integer");
-      await expect(repository.recent(gameUiInputQuery.storedRecordLimit)).rejects.toThrow("metadata is malformed");
-    } finally { await fixture.dispose(); }
-    const badIndex = await databaseFixture([], [], [{ key: "invalid", recordId: 1 }]);
-    try {
-      await expect(badIndex.persistence.getRecent(3)).rejects.toThrow("Personal Best index is malformed");
-    } finally { await badIndex.dispose(); }
-  });
-
-  it("preserves the Rust export and lists metadata newest first", async () => {
-    const json = currentRecordFixture(false);
-    const persistence = new MemoryFlightRecordPersistence();
-    const repository = new FlightRecordRepository(persistence, () => new Date("2026-09-28T00:00:00.000Z"), createArchivedPersonalBestSelection);
-    const first = await repository.saveFrom({ export_flight_record_json: () => json });
-    const second = await repository.saveFrom({ export_flight_record_json: () => json });
-    expect(first).toMatchObject({ id: 1, json, personalBest: { kind: "ineligible" } });
-    expect(second.id).toBe(2);
-    expect(await repository.load(1)).toBe(json);
-    expect(await repository.recent(gameUiInputQuery.storedRecordLimit)).toEqual([
-      { id: 2, savedAt: "2026-09-28T00:00:00.000Z", personalBest: false },
-      { id: 1, savedAt: "2026-09-28T00:00:00.000Z", personalBest: false }
-    ]);
-  });
-
-  it("uses the selection port and frees every candidate exactly once", async () => {
-    const persistence = new MemoryFlightRecordPersistence();
-    const selections: TestPersonalBestSelection[] = [];
-    const repository = new FlightRecordRepository(persistence, undefined, () => {
-      const selection = new TestPersonalBestSelection();
-      selections.push(selection);
-      return selection;
-    });
-    const json = currentRecordFixture();
-    expect((await repository.saveFrom({ export_flight_record_json: () => json })).personalBest)
-      .toEqual({ kind: "candidate", id: 1, key: "a".repeat(64) });
-    expect((await repository.saveFrom({ export_flight_record_json: () => json })).personalBest)
-      .toEqual({ kind: "existing", id: 1, key: "a".repeat(64) });
-    expect(selections.map(({ consideredIds, freed }) => ({ consideredIds, freed }))).toEqual([
-      { consideredIds: [], freed: true }, { consideredIds: [1], freed: true }
-    ]);
-  });
-
-  it("scans current records once, then reuses the indexed Personal Best", async () => {
-    const json = currentRecordFixture();
-    const fixture = await databaseFixture([{ id: 1, savedAt: "first", json }], [{ id: 1, savedAt: "first" }]);
-    try {
-      const first = new TestPersonalBestSelection(true);
-      expect(await fixture.persistence.add(json, "second", first)).toBe(2);
-      expect(first.consideredIds).toEqual([1]);
-      expect(await fixture.rows("personalBests")).toEqual([{ key: "a".repeat(64), recordId: 2, comparisonVersion: personalBestComparisonVersion() }]);
-      const second = new TestPersonalBestSelection();
-      expect(await fixture.persistence.add(json, "third", second)).toBe(3);
-      expect(second.consideredIds).toEqual([2]);
-      expect(await fixture.rows("records")).toHaveLength(3);
-      expect(await fixture.rows("recordMetadata")).toHaveLength(3);
-      expect(await fixture.rows("personalBests")).toEqual([{ key: "a".repeat(64), recordId: 2, comparisonVersion: personalBestComparisonVersion() }]);
-    } finally { await fixture.dispose(); }
-  });
-
-  it("preserves the first current Rust Personal Best on equal scores", async () => {
+  it("forwards bounded descending rows and raw index/record values without interpreting schemas", async () => {
     const fixture = await databaseFixture();
-    try {
-      const repository = new FlightRecordRepository(fixture.persistence, undefined, createArchivedPersonalBestSelection);
-      const json = currentRecordFixture();
-      expect((await repository.saveFrom({ export_flight_record_json: () => json })).personalBest).toMatchObject({ kind: "candidate", id: 1 });
-      expect((await repository.saveFrom({ export_flight_record_json: () => json })).personalBest).toMatchObject({ kind: "existing", id: 1 });
-      expect((await repository.recent(gameUiInputQuery.storedRecordLimit)).filter(({ personalBest }) => personalBest).map(({ id }) => id)).toEqual([1]);
-    } finally { await fixture.dispose(); }
-  });
-
-  it.each([undefined, 999])("keeps old or unknown index revisions unranked and scans current candidates (revision=%s)", async (revision) => {
-    const json = currentRecordFixture();
-    const selection = createArchivedPersonalBestSelection(json);
-    let key: string;
-    try { key = selection.key_hex(); } finally { selection.free(); }
-    const old = JSON.parse(json) as Record<string, unknown>;
-    delete old.identity_metadata;
-    const unknown = { ...old, identity_metadata: { comparison_version: 999, future: "原文を保持する" } };
-    const records = [
-      { id: 1, savedAt: "old", json: JSON.stringify(old) },
-      { id: 2, savedAt: "unknown", json: JSON.stringify(unknown) },
-      { id: 3, savedAt: "current", json }
-    ];
-    const index = revision === undefined ? { key, recordId: 1 } : { key, recordId: 1, comparisonVersion: revision };
-    const fixture = await databaseFixture(records, records.map(({ id, savedAt }) => ({ id, savedAt })), [index]);
-    try {
-      const repository = new FlightRecordRepository(fixture.persistence, undefined, createArchivedPersonalBestSelection);
-      expect((await repository.recent(3)).every(({ personalBest }) => !personalBest)).toBe(true);
-      expect(await fixture.rows("personalBests")).toEqual([index]);
-      expect((await repository.saveFrom({ export_flight_record_json: () => json })).personalBest).toMatchObject({ kind: "existing", id: 3 });
-      expect((await repository.recent(3)).filter(({ personalBest }) => personalBest).map(({ id }) => id)).toEqual([3]);
-      expect(await repository.load(1)).toBe(records[0]?.json);
-      expect(await repository.load(2)).toBe(records[1]?.json);
-      expect(await fixture.rows("personalBests")).toEqual([{ key, recordId: 3, comparisonVersion: personalBestComparisonVersion() }]);
-    } finally { await fixture.dispose(); }
-  });
-
-  it.each([false, true])("retains unsupported stored bytes without blocking a current save (indexed=%s)", async (indexed) => {
-    const json = JSON.stringify({ schema_version: 5, unused: "preserve stored bytes" });
-    const current = currentRecordFixture();
-    const selection = createArchivedPersonalBestSelection(current);
-    let key: string;
-    try { key = selection.key_hex(); } finally { selection.free(); }
-    const fixture = await databaseFixture([{ id: 1, savedAt: "unsupported", json }],
-      [{ id: 1, savedAt: "unsupported" }], indexed ? [{ key, recordId: 1, comparisonVersion: personalBestComparisonVersion() }] : []);
-    try {
-      const repository = new FlightRecordRepository(fixture.persistence, undefined, createArchivedPersonalBestSelection);
-      expect((await repository.saveFrom({ export_flight_record_json: () => current })).personalBest).toMatchObject({ kind: "candidate", id: 2 });
-      expect(await repository.load(1)).toBe(json);
-      expect(await fixture.rows("records")).toHaveLength(2);
-      await expect(repository.saveFrom({ export_flight_record_json: () => json })).rejects.toThrow(/Unsupported/);
-    } finally { await fixture.dispose(); }
-  });
-
-  it("rolls back records, metadata and Personal Best when metadata insertion fails", async () => {
-    const fixture = await databaseFixture();
-    const json = currentRecordFixture();
-    const add = Object.getOwnPropertyDescriptor(FakeObjectStore.prototype, "add")?.value as IDBObjectStore["add"];
-    const spy = vi.spyOn(FakeObjectStore.prototype, "add").mockImplementation(function (this: IDBObjectStore, value: unknown, key?: IDBValidKey) {
-      if (this.name === "recordMetadata") throw new Error("Injected metadata insertion failure");
-      return add.call(this, value, key);
+    const transaction = fixture.database.transaction(["records", "recordMetadata", "personalBests"], "readwrite");
+    transaction.objectStore("records").put({ id: 1, json: "old schema bytes", savedAt: "first" });
+    transaction.objectStore("records").put({ id: 2, unexpected: [null, false, 3] });
+    transaction.objectStore("recordMetadata").put({ id: 1, savedAt: "first" });
+    transaction.objectStore("recordMetadata").put({ id: 2, invalid: true });
+    transaction.objectStore("personalBests").put({ key: "raw-key", unexpected: "retained" });
+    await new Promise<void>((resolve, reject) => {
+      transaction.oncomplete = () => { resolve(); };
+      transaction.onabort = () => { reject(transaction.error ?? new Error("IndexedDB transaction aborted")); };
     });
+    fixture.database.close();
+    const inputs: ApplicationInput[] = [];
+    let finish: (() => void) | undefined;
+    const completed = new Promise<void>(resolve => { finish = resolve; });
+    const store = new BrowserFlightRecordStore(fixture.factory, input => {
+      inputs.push(input);
+      if (input.kind !== "record_preview_observed") return;
+      if (input.observation.kind === "rows") store.execute({ kind: "record_preview", request_id: input.request_id, requests: [{ kind: "read_best", keys: ["raw-key", "missing"] }] });
+      if (input.observation.kind === "bests") store.execute({ kind: "record_preview", request_id: input.request_id, requests: [{ kind: "finish" }] });
+      if (input.observation.kind === "committed" || input.observation.kind === "failed") finish?.();
+    }, fixture.name);
     try {
-      const repository = new FlightRecordRepository(fixture.persistence, undefined, createArchivedPersonalBestSelection);
-      await expect(repository.saveFrom({ export_flight_record_json: () => json })).rejects.toThrow("Injected metadata insertion failure");
-      spy.mockRestore();
-      for (const store of ["records", "recordMetadata", "personalBests"]) expect(await fixture.rows(store)).toEqual([]);
-      await expect(repository.saveFrom({ export_flight_record_json: () => json })).resolves.toMatchObject({ id: 1 });
-    } finally { spy.mockRestore(); await fixture.dispose(); }
-  });
-
-  it.each([
-    "not-json", JSON.stringify({ schema_version: 5 }),
-    JSON.stringify({ schema_version: 6, header: [], samples: [{}], finalization: {} }),
-    JSON.stringify({ schema_version: 6, header: {}, samples: [], finalization: {} }),
-    JSON.stringify({ schema_version: 6, header: {}, samples: [{}], finalization: null })
-  ])("rejects malformed or unsupported documents before storage", async (json) => {
-    const persistence = new MemoryFlightRecordPersistence();
-    const repository = new FlightRecordRepository(persistence, undefined, ineligibleSelection);
-    await expect(repository.saveFrom({ export_flight_record_json: () => json })).rejects.toThrow();
-    expect(persistence.records).toEqual([]);
-  });
-
-  it("preserves legacy bytes and indexes while ranking only current eligible records", async () => {
-    const json = ` \n${readFileSync(new URL("./fixtures/legacy-physics-three-record.json", import.meta.url), "utf8")}\n `;
-    const legacy = JSON.parse(json) as { header: { personal_best_key: number[] } };
-    const key = Buffer.from(legacy.header.personal_best_key).toString("hex");
-    const index = { key, recordId: 1, comparisonVersion: personalBestComparisonVersion() };
-    const fixture = await databaseFixture([{ id: 1, savedAt: "legacy", json }], [{ id: 1, savedAt: "legacy" }], [index]);
-    try {
-      const repository = new FlightRecordRepository(fixture.persistence, undefined, createArchivedPersonalBestSelection);
-      expect(await repository.recent(3)).toEqual([{ id: 1, savedAt: "legacy", personalBest: false }]);
-      const saved = await repository.saveFrom({ export_flight_record_json: () => currentRecordFixture() });
-      expect(saved.personalBest.kind).toBe("candidate");
-      expect((await repository.recent(3)).map(({ id, personalBest }) => ({ id, personalBest }))).toEqual([
-        { id: 2, personalBest: true }, { id: 1, personalBest: false }
+      store.execute({ kind: "begin_record_preview", request_id: 8, limit: 1 });
+      await completed;
+      expect(inputs).toEqual([
+        { kind: "record_preview_observed", request_id: 8, observation: { kind: "rows", rows: [{ key: 2, metadata: { id: 2, invalid: true }, record: { id: 2, unexpected: [null, false, 3] } }] } },
+        { kind: "record_preview_observed", request_id: 8, observation: { kind: "bests", values: [{ key: "raw-key", unexpected: "retained" }, null] } },
+        { kind: "record_preview_observed", request_id: 8, observation: { kind: "committed" } }
       ]);
-      expect(await repository.load(1)).toBe(json);
-      expect(await fixture.rows("personalBests")).toEqual(expect.arrayContaining([index]));
-    } finally { await fixture.dispose(); }
+    } finally { store.dispose(); }
   });
 
-  it("rejects oversized documents and invalid identifiers", async () => {
-    const repository = new FlightRecordRepository(new MemoryFlightRecordPersistence(), undefined, ineligibleSelection);
-    const oversized = currentRecordFixture(false) + " ".repeat(16 * 1024 * 1024);
-    await expect(repository.saveFrom({ export_flight_record_json: () => oversized })).rejects.toThrow(RangeError);
-    for (const id of [0, -1, 1.5, Number.NaN]) await expect(repository.load(id)).rejects.toThrow(RangeError);
+  it("reports transaction aborts to the owner and releases an open transaction exactly once", async () => {
+    const inputs: ApplicationInput[] = [];
+    let aborted: (() => void) | undefined;
+    const done = new Promise<void>(resolve => { aborted = resolve; });
+    const store = new BrowserFlightRecordStore(new IDBFactory(), input => {
+      inputs.push(input);
+      if (input.kind === "record_save_opened") {
+        store.execute({ kind: "record_write", request_id: input.request_id, requests: [{ kind: "abort" }] });
+      }
+      if (input.kind === "record_save_observed" && input.observation.kind === "failed") aborted?.();
+    });
+    store.execute({ kind: "begin_record_save", request_id: 3 });
+    await done;
+    expect(inputs).toHaveLength(2);
+    const failure = inputs[1];
+    expect(failure).toMatchObject({ kind: "record_save_observed", request_id: 3, observation: { kind: "failed" } });
+    if (failure?.kind !== "record_save_observed" || failure.observation.kind !== "failed") throw new Error("Missing transaction abort observation");
+    expect(failure.observation.cause).toContain("aborted");
+    store.dispose();
+    store.dispose();
+    expect(() => { store.execute({ kind: "read_record", request_id: 4, record_id: 1 }); }).toThrow("disposed");
   });
 
-  it("lists only valid metadata and marks the current indexed record", async () => {
-    const fixture = await databaseFixture([], [{ id: 3, savedAt: "saved" }], [{ key: "a".repeat(64), recordId: 3, comparisonVersion: personalBestComparisonVersion() }]);
+  it.each(["opening", "transaction"] as const)("acknowledges cancellation after the real %s I/O reaches its terminal event", async phase => {
+    const inputs: ApplicationInput[] = [];
+    let finish: (() => void) | undefined;
+    const done = new Promise<void>(resolve => { finish = resolve; });
+    const store = new BrowserFlightRecordStore(new IDBFactory(), input => {
+      inputs.push(input);
+      if (input.kind === "record_save_opened") store.cancel(input.request_id);
+      if (input.kind === "record_io_cancelled") finish?.();
+    });
     try {
-      expect(await fixture.persistence.getRecent(3)).toEqual([{ id: 3, savedAt: "saved", personalBest: true }]);
-      expect(await fixture.persistence.get(3)).toBeNull();
-    } finally { await fixture.dispose(); }
+      store.execute({ kind: "begin_record_save", request_id: 12 });
+      if (phase === "opening") {
+        store.cancel(12);
+        expect(inputs).toEqual([]);
+      }
+      await done;
+      expect(inputs.map(input => input.kind)).toEqual(phase === "opening" ? ["record_io_cancelled"] : ["record_save_opened", "record_io_cancelled"]);
+      expect(inputs.at(-1)).toEqual({ kind: "record_io_cancelled", request_id: 12, failure: null });
+    } finally { store.dispose(); }
   });
 
-  it("reports malformed metadata and stored records", async () => {
-    const metadata = await databaseFixture([], [{ id: "invalid", savedAt: "saved" }]);
-    try { await expect(metadata.persistence.getRecent(3)).rejects.toThrow("IndexedDB record metadata is malformed"); }
-    finally { await metadata.dispose(); }
-    const records = await databaseFixture([{ id: 3, savedAt: 42, json: currentRecordFixture(false) }]);
-    try { await expect(records.persistence.get(3)).rejects.toThrow("IndexedDB flight record is malformed"); }
-    finally { await records.dispose(); }
+  it.each([false, true])("notifies a single read only after transaction termination, cancelled=%s", async cancelled => {
+    const inputs: ApplicationInput[] = [];
+    let finish: (() => void) | undefined;
+    const done = new Promise<void>(resolve => { finish = resolve; });
+    let enqueue: (() => unknown) | undefined;
+    const store = new BrowserFlightRecordStore(new IDBFactory(), input => {
+      inputs.push(input);
+      expect(enqueue).toBeDefined();
+      expect(() => { enqueue?.(); }).toThrow();
+      finish?.();
+    });
+    const original = Reflect.get(IDBObjectStore.prototype, "get");
+    const read = vi.spyOn(IDBObjectStore.prototype, "get").mockImplementation(function (this: IDBObjectStore, query) {
+      enqueue = () => original.call(this, query);
+      const request = original.call(this, query);
+      if (cancelled) request.addEventListener("success", () => { store.cancel(18); });
+      return request;
+    });
+    try {
+      store.execute({ kind: "read_record", request_id: 18, record_id: 1 });
+      await done;
+      expect(inputs).toEqual(cancelled
+        ? [{ kind: "record_io_cancelled", request_id: 18, failure: null }]
+        : [{ kind: "record_loaded", request_id: 18, completion: { kind: "missing" } }]);
+    } finally { read.mockRestore(); store.dispose(); }
   });
 });
