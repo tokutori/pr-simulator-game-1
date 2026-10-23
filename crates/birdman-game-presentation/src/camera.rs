@@ -101,7 +101,8 @@ impl Pose {
         })
     }
 
-    pub(crate) fn rotate(self, point: Vector3) -> Vector3 {
+    /// Rotates a vector by this pose's unit orientation, independently of its translation.
+    pub fn rotate(self, point: Vector3) -> Vector3 {
         let rotation = self.orientation;
         let cross = [
             2.0 * (rotation.y * point.z - rotation.z * point.y),

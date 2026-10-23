@@ -1,0 +1,443 @@
+use super::scene::ApplicationSceneProjection;
+use super::surface::{ApplicationSpatialProjection, ApplicationSurfaceObservation};
+use super::{
+    ApplicationGraphicsCompletion, ApplicationGraphicsObservation, ApplicationGraphicsProjection,
+    ApplicationGraphicsResource, ApplicationRenderQuality, ApplicationRendererObservation,
+    DisplayCompletion, DisplayRequest, DisplayState, PhoneMotionObservation,
+    PhoneOrientationObservation,
+};
+use birdman_game_app::application::{ApplicationError, FlightFrameError, XrVisibility};
+use birdman_game_app::environment_snapshot::{EnvironmentIdentity, EnvironmentSnapshotError};
+use birdman_game_app::flight_input::FlightGamepadObservation;
+use birdman_game_core::GameSessionError;
+use birdman_game_presentation::camera::Pose;
+use birdman_game_presentation::game_ui::{
+    GameUiChartExtent, GameUiControlInput, GameUiError, GameUiFrame, GameUiReplayCamera,
+    GameUiView, GameUiViewport,
+};
+use birdman_game_presentation::xr::{XrGamepadObservation, XrViewerObservation};
+use serde::{Deserialize, Serialize};
+
+/// Capabilities implemented by the platform's I/O and drawing adapters.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ApplicationCapabilities {
+    /// Runtime can create a tracked head-mounted display.
+    pub hmd_available: bool,
+    /// Browser provides the required phone sensor APIs.
+    pub phone_vr_available: bool,
+    /// Drawing adapter supports record plots.
+    pub analysis_available: bool,
+    /// Drawing adapter supports recorded playback.
+    pub replay_available: bool,
+    /// Camera rigs supported by the drawing adapter.
+    pub supported_replay_cameras: Vec<GameUiReplayCamera>,
+    /// Platform provides persistent record I/O.
+    pub stored_records_available: bool,
+    /// Platform can save an exported file.
+    pub flight_log_available: bool,
+}
+
+/// External metrics and API availability, without derived UI state.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ApplicationPlatformObservation {
+    /// Live renderer and its startup resources; None retires that lifetime and replacement uses a new creation identity.
+    pub renderer: Option<ApplicationRendererObservation>,
+    /// Actual loaded surface font and shaping locale, absent while font I/O is pending.
+    pub surface: Option<ApplicationSurfaceObservation>,
+    /// Physical logical-pixel viewport and root font size.
+    pub viewport: GameUiViewport,
+    /// Measured chart host, absent before measurement.
+    pub chart_extent: Option<GameUiChartExtent>,
+    /// Actual API and drawing support.
+    pub capabilities: ApplicationCapabilities,
+}
+
+/// Completion state of the display and scene resources needed for launch.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ApplicationResourceObservation {
+    /// All required resources have been committed.
+    Ready,
+    /// Resource preparation failed with its original diagnostic.
+    Failed {
+        #[doc = "Original preparation failure."]
+        cause: String,
+    },
+}
+
+/// One external observation delivered to the shared application owner.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ApplicationObservation {
+    /// Monotonic receipt time in milliseconds; source clocks are converted to this origin at I/O.
+    pub observed_ms: f64,
+    /// Raw frame, event or I/O completion received at this time.
+    pub input: ApplicationInput,
+}
+
+/// Payload of one externally observed event.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ApplicationXrFrameObservation {
+    /// Unmodified same-reference head and eye observations.
+    pub observation: XrViewerObservation,
+    /// Runtime visibility observed with this frame.
+    pub visibility: XrVisibility,
+    /// Runtime input-focus observation.
+    pub input_focused: bool,
+}
+
+/// Unmodified tracked controller pose in the active runtime reference space.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ApplicationPointerObservation {
+    /// Platform input-source identity, retired when that source disconnects.
+    pub source_id: u32,
+    /// Runtime target-ray-space pose in tracking coordinates.
+    pub tracking_from_ray: Pose,
+}
+
+/// Same-frame spatial input sampled by the platform I/O adapter.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ApplicationSpatialObservation {
+    /// Identity of the spatial projection actually submitted by the drawing adapter.
+    pub presented_id: Option<u32>,
+    /// Connected tracked pointers with an available pose.
+    pub pointers: Vec<ApplicationPointerObservation>,
+    /// Connected standard gamepads, before device selection or dead-zone filtering.
+    pub gamepads: Vec<XrGamepadObservation>,
+}
+
+/// Payload of one externally observed event.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ApplicationInput {
+    /// Raw results from a bounded atomic record preview.
+    RecordPreviewObserved {
+        /// Owner-issued read transaction identity.
+        request_id: u32,
+        /// Unmodified transaction or request result.
+        observation: birdman_game_app::record_persistence::RecordPreviewObservation,
+    },
+    /// Observable file creation or submission result, rather than user save completion.
+    DownloadCompleted {
+        /// Owner-issued file operation identity.
+        request_id: u32,
+        /// Original platform failure, or None after successful submission.
+        failure: Option<String>,
+    },
+    /// Raw completion of a specific record read.
+    RecordLoaded {
+        /// Owner-issued read identity.
+        request_id: u32,
+        /// Raw storage result.
+        completion: super::ApplicationRecordLoadCompletion,
+    },
+    /// An atomic record transaction is active and can accept immediate requests.
+    RecordSaveOpened {
+        /// Owner-issued transaction identity.
+        request_id: u32,
+        /// Raw platform wall clock at transaction creation.
+        unix_milliseconds: i64,
+    },
+    /// One raw storage result delivered in the transaction's active callback.
+    RecordSaveObserved {
+        /// Owner-issued transaction identity.
+        request_id: u32,
+        /// Unmodified operation or transaction result.
+        observation: birdman_game_app::record_persistence::RecordWriteObservation,
+    },
+    /// Raw GPU or graphics-context observation for one renderer lifetime.
+    Graphics {
+        /// Renderer that produced the observation.
+        renderer_resource_id: u32,
+        /// Original hardware or API result.
+        observation: ApplicationGraphicsObservation,
+    },
+    /// Completion of one owner-issued atomic resource application.
+    GraphicsCompleted {
+        /// Owner-issued application identity.
+        request_id: u32,
+        /// Renderer receiving the application.
+        renderer_resource_id: u32,
+        /// Actual application and cleanup outcome.
+        completion: ApplicationGraphicsCompletion,
+    },
+    /// Explicit trigger observation targeting the last submitted spatial painting.
+    XrSelect {
+        /// Active display resource that emitted the trigger.
+        display_resource_id: Option<u32>,
+        /// Opaque identity returned with the submitted spatial projection.
+        presentation_id: u32,
+        /// Raw controller pose sampled for the trigger.
+        pointer: ApplicationPointerObservation,
+        /// Source event time on the common monotonic clock.
+        timestamp_ms: f64,
+    },
+    /// Raw passive reference-space reset supplied by the active HMD runtime.
+    XrReferenceReset {
+        /// Runtime resource that emitted the reset.
+        resource_id: u32,
+        /// New reference coordinates expressed in the previous tracking frame.
+        previous_from_new: Option<Pose>,
+    },
+    /// Pointer movement while the platform's camera-look button is held.
+    CameraLook {
+        /// Display resource receiving the pointer event.
+        display_resource_id: Option<u32>,
+        /// Raw logical-pixel movement along the two screen axes.
+        delta_px: [f64; 2],
+    },
+    /// Runtime visibility or focus changed between frames.
+    XrSessionState {
+        /// Runtime resource that emitted the event.
+        resource_id: u32,
+        /// Raw runtime visibility.
+        visibility: XrVisibility,
+        /// Raw runtime input-focus state.
+        input_focused: bool,
+    },
+    /// Document or native window visibility changed.
+    PageVisibility {
+        /// Whether the platform currently presents the application window.
+        visible: bool,
+    },
+    /// Raw orientation callback for the identified sensor subscription.
+    PhoneOrientation {
+        /// Platform resource owning the callback.
+        resource_id: u32,
+        /// Unmodified angles and source metadata.
+        observation: PhoneOrientationObservation,
+    },
+    /// Raw motion callback for the identified sensor subscription.
+    PhoneMotion {
+        /// Platform resource owning the callback.
+        resource_id: u32,
+        /// Unmodified acceleration components.
+        observation: PhoneMotionObservation,
+    },
+    /// Browser screen rotation changed for the active sensor subscription.
+    PhoneScreenRotation {
+        /// Platform resource owning the callback.
+        resource_id: u32,
+        /// Observed screen angle in degrees.
+        angle_degrees: Option<f64>,
+    },
+    /// A timer requested by this owner reached its deadline.
+    Wake {
+        /// Identity of the scheduled wake request.
+        request_id: u32,
+    },
+    /// Same-frame clock and raw flight devices.
+    Frame {
+        /// Active display that supplied the callback; absent for the initial Screen resource.
+        display_resource_id: Option<u32>,
+        /// Monotonic presentation timestamp in milliseconds.
+        timestamp_ms: f64,
+        /// Unfiltered same-frame flight device samples.
+        gamepads: Vec<FlightGamepadObservation>,
+        /// Same-frame HMD poses and runtime observations, when supplied by the active runtime.
+        xr: Option<ApplicationXrFrameObservation>,
+        /// Unfiltered spatial pointer and standard gamepad samples.
+        spatial: ApplicationSpatialObservation,
+    },
+    /// A widget event from the last displayed structural view.
+    Control {
+        /// Revision of the structure that received the event.
+        view_revision: u32,
+        /// Observed widget interaction.
+        input: GameUiControlInput,
+    },
+    /// A raw keyboard binding transition.
+    Keyboard {
+        /// Physical key identifier in the DOM KeyboardEvent.code vocabulary.
+        code: String,
+        /// Whether the key is pressed.
+        pressed: bool,
+        /// Whether this press repeats an existing hold.
+        repeat: bool,
+    },
+    /// Confirmed viewport, capabilities and renderer resource observations.
+    Platform {
+        #[doc = "Viewport and API capabilities."]
+        observation: ApplicationPlatformObservation,
+    },
+    /// Completion of the resources required by the current display.
+    Resources {
+        /// Identity of the resource preparation request being completed.
+        request_id: u32,
+        #[doc = "Completion state of the required drawing resources."]
+        observation: ApplicationResourceObservation,
+    },
+    /// Completion of a specific display I/O request.
+    DisplayCompleted {
+        /// Identity issued by this owner for the completed I/O operation.
+        request_id: u32,
+        /// Actual outcome and acquired resource identity.
+        completion: DisplayCompletion,
+    },
+}
+
+/// Ordered platform operations produced by the application owner.
+#[derive(Clone, Debug, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ApplicationRequest {
+    /// Opens one atomic read transaction with a descending metadata cursor and same-key records.
+    BeginRecordPreview {
+        /// Owner-issued read transaction identity.
+        request_id: u32,
+        /// Exact maximum number of cursor rows to retrieve.
+        limit: usize,
+    },
+    /// Bounded index reads to enqueue synchronously in the active read callback.
+    RecordPreview {
+        /// Owner-issued read transaction identity.
+        request_id: u32,
+        /// Ordered primitive reads selected by shared Rust.
+        requests: Vec<birdman_game_app::record_persistence::RecordPreviewRequest>,
+    },
+    /// Opens one atomic record transaction; the adapter immediately reports its creation.
+    BeginRecordSave {
+        /// Owner-issued transaction identity.
+        request_id: u32,
+    },
+    /// Primitive storage operations to enqueue synchronously in the active callback.
+    RecordWrite {
+        /// Owner-issued transaction identity.
+        request_id: u32,
+        /// Ordered operations selected by the shared application policy.
+        requests: Vec<birdman_game_app::record_persistence::RecordWriteRequest>,
+    },
+    /// Atomically replace this renderer's owned quality resources, retaining prior resources on failure.
+    ApplyGraphics {
+        /// Owner-issued application identity.
+        request_id: u32,
+        /// Graphics context or device receiving the application.
+        renderer_resource_id: u32,
+        /// Complete desired resource configuration.
+        quality: ApplicationRenderQuality,
+    },
+    /// Notify this owner when its deadline is reached.
+    ScheduleWake {
+        /// Owner-issued timer identity.
+        request_id: u32,
+        /// Deadline on the shared receipt clock, in milliseconds.
+        at_ms: f64,
+    },
+    /// Cancel a timer whose observation is no longer needed.
+    CancelWake {
+        /// Identity of the previously scheduled timer.
+        request_id: u32,
+    },
+    /// Prepare scene resources for one confirmed display and environment.
+    PrepareResources {
+        /// Exact confirmed renderer resource generation to prepare.
+        graphics: ApplicationGraphicsResource,
+        /// Owner-issued identity to echo in the completion.
+        request_id: u32,
+        /// Canonical environment to render.
+        environment: EnvironmentIdentity,
+        /// Active platform display resource receiving the scene.
+        display_resource_id: Option<u32>,
+    },
+    /// A single permission, resource stop or resource start operation.
+    Display {
+        #[doc = "One primitive platform display operation."]
+        request: DisplayRequest,
+    },
+    /// Reads one raw record envelope by key.
+    ReadRecord {
+        /// Owner-issued read identity.
+        request_id: u32,
+        /// Selected persistence key.
+        record_id: u32,
+    },
+    /// Saves the exact bytes prepared by the shared owner.
+    DownloadFile {
+        /// Owner-issued file operation identity.
+        request_id: u32,
+        /// Suggested file name.
+        file_name: String,
+        /// Media type for the file bytes.
+        mime_type: String,
+        /// Exact output bytes, including preserved original archive JSON.
+        bytes: Vec<u8>,
+    },
+}
+
+/// Structure is transferred only when its shared revision changes.
+#[derive(Debug, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ApplicationUiProjection {
+    /// Complete replacement for the retained visible structure.
+    View {
+        #[doc = "New structure carrying its shared revision."]
+        view: Box<GameUiView>,
+    },
+    /// Lightweight values for the retained structure.
+    Frame {
+        #[doc = "Dynamic values for the retained structural revision."]
+        frame: Box<GameUiFrame>,
+    },
+}
+
+/// One shared update's rendering and I/O work.
+#[derive(Debug, Serialize)]
+pub struct ApplicationOutput {
+    /// Technical failure details for the platform diagnostic sink, separate from UI wording.
+    pub diagnostic: Option<String>,
+    /// Confirmed graphics resources and optional query for this frame.
+    pub graphics: ApplicationGraphicsProjection,
+    /// Aircraft and camera poses ready for direct drawing-engine transfer.
+    pub scene: ApplicationSceneProjection,
+    /// Spatial painting for an admitted frame; other notifications retain submitted painting.
+    pub spatial: Option<ApplicationSpatialProjection>,
+    /// Structural replacement or dynamic UI values.
+    pub ui: ApplicationUiProjection,
+    /// Confirmed active display and pending I/O stage.
+    pub display: DisplayState,
+    /// Ordered I/O requests to execute at the platform boundary.
+    pub requests: Vec<ApplicationRequest>,
+    /// Whether the observed key belongs to the active flight input.
+    pub keyboard_consumed: bool,
+}
+
+/// Finite failures from the same domain and presentation implementations.
+#[derive(Debug)]
+pub enum ApplicationRuntimeError {
+    /// The canonical finalized result could not be exported.
+    RecordExport(birdman_game_app::record_archive::RecordExportError),
+    /// A record document failed the shared external-data contract.
+    RecordFormat(birdman_game_format::FlightRecordFormatError),
+    /// Shared rendering policy rejected a raw observation or resource completion.
+    Graphics(birdman_game_presentation::screen_render_auto::ScreenRenderAutoError),
+    /// Spatial input or prepared geometry could not be admitted.
+    SpatialInput(&'static str),
+    /// The submitted spatial presentation identity space has been consumed.
+    PresentationExhausted,
+    /// The live or prepared display projection failed.
+    Snapshot(birdman_game_presentation::session_snapshot::SnapshotProjectionError),
+    /// The recorded display camera could not be projected.
+    ReplayCamera(birdman_game_presentation::replay_camera::ReplayCameraError),
+    /// The registered exhibition venue is invalid.
+    Venue(birdman_game_app::LaunchVenueError),
+    /// Head or tracking-space composition failed.
+    Camera(birdman_game_presentation::camera::CameraError),
+    /// Canonical display environment could not be resolved.
+    Environment(EnvironmentSnapshotError),
+    /// Clock is negative, non-finite or moves backwards.
+    InvalidTimestamp,
+    /// Canonical application operation failed.
+    Application(ApplicationError),
+    /// Canonical session progression failed.
+    Session(GameSessionError),
+    /// Physical frame driver failed.
+    Flight(FlightFrameError),
+    /// Shared UI observation or action admission failed.
+    Ui(GameUiError),
+    /// The request identity space has been consumed.
+    RequestExhausted,
+}

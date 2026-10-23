@@ -14,6 +14,7 @@ birdman-game-app.workspace = true
 birdman-game-core.workspace = true
 birdman-game-format.workspace = true
 birdman-game-presentation.workspace = true
+birdman-game-runtime.workspace = true
 birdman-game-scene.workspace = true
 serde.workspace = true
 serde_json.workspace = true

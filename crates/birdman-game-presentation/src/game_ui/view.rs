@@ -914,10 +914,11 @@ fn water_quality(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
             ..
         } => manual_water_quality,
     };
-    let automatic = matches!(
-        context.platform.screen_render_scale.selection,
-        ScreenRenderSelection::Auto { .. }
-    );
+    let automatic = context.platform.presentation_mode == GameUiPresentationMode::Screen
+        && matches!(
+            context.platform.screen_render_scale.selection,
+            ScreenRenderSelection::Auto { .. }
+        );
     menu.status(
         "presentation-water-quality-status",
         "水面画質",
@@ -987,6 +988,8 @@ fn screen_render_scale(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
     }
     let render = &context.platform.screen_render_scale;
     let automatic = matches!(render.selection, ScreenRenderSelection::Auto { .. });
+    let enabled = context.platform.flight_controller_failure.is_none()
+        && !matches!(render.status, ScreenRenderAutoStatus::Applying { .. });
     let status = match &render.status {
         ScreenRenderAutoStatus::Manual => "手動設定".to_owned(),
         ScreenRenderAutoStatus::Measuring => "負荷を計測中".to_owned(),
@@ -1024,7 +1027,7 @@ fn screen_render_scale(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
     menu.push(
         "presentation-render-scale-auto",
         "Auto",
-        context.platform.flight_controller_failure.is_none(),
+        enabled,
         "render-scale",
         GameUiControlContent::Button {
             action: GameUiAction::Platform {
@@ -1048,7 +1051,7 @@ fn screen_render_scale(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
         menu.push(
             &format!("presentation-render-scale-{}", scale.percent()),
             scale.label(),
-            context.platform.flight_controller_failure.is_none(),
+            enabled,
             "render-scale",
             GameUiControlContent::Button {
                 action: GameUiAction::Platform {

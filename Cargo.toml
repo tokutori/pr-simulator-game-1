@@ -19,6 +19,7 @@ birdman-game-core = { path = "crates/birdman-game-core" }
 birdman-game-content = { path = "crates/birdman-game-content" }
 birdman-game-format = { path = "crates/birdman-game-format" }
 birdman-game-presentation = { path = "crates/birdman-game-presentation" }
+birdman-game-runtime = { path = "crates/birdman-game-runtime" }
 birdman-game-scene = { path = "crates/birdman-game-scene" }
 libm = "=0.2.16"
 wasm-bindgen = "=0.2.129"

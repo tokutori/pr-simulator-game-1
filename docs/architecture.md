@@ -17,13 +17,14 @@
 ## crateと依存方向
 
 ```text
-Web / Native ── presentation ── app ── content ── format ── core
-      └──────── scene ──────────┘
+WASM ── runtime ── presentation ── app ── content ── format ── core
+          └─────── scene ──────────┘
+Native ─────────── presentation / scene
 CLI ────────────────────────── app
 CLI --features schema ──────── presentation
 ```
 
-adapter・presentation・scene・app・contentは責務に応じて下位のcore・format・contentを直接参照し、依存DAGを形成する。CLIはschema出力時だけoptionalなpresentation依存を有効にする。
+adapter・runtime・presentation・scene・app・contentは責務に応じて下位のcore・format・contentを直接参照し、依存DAGを形成する。CLIはschema出力時だけoptionalなpresentation依存を有効にする。
 
 | 層 | 所有する責務 |
 | --- | --- |
@@ -33,6 +34,7 @@ adapter・presentation・scene・app・contentは責務に応じて下位のcore
 | `birdman-game-app` | ApplicationSession、共有command実行、scenario準備・資源所有、実行状態・入力profile・環境観測、会場・地物の登録整合と共有storage、archive・記録query・ビルド来歴の生成 |
 | `birdman-game-presentation` | 共有UI・camera・XR layout・適応画質の方針と、appの観測からの描画pose・live/prepared表示snapshotの導出 |
 | `birdman-game-scene` | contentから導出する機体・地形mesh、水面・天空・画像の描画資産生成 |
+| `birdman-game-runtime` | app・presentation・sceneを束ねる単一application owner、入力・frame進行・XR・記録I/O・資源準備と完了認可、最終描画データとprimitive I/O要求の出力 |
 | `birdman-game-wasm` | JavaScript ABI、入力のdecode、共有処理の呼出し、DTOのencode |
 | `birdman-game-cli` | CLI/WASIのI/O、offline検査・出力・計測入口 |
 | `birdman-game-bevy` | nativeウィンドウ、ECS・入力・時刻、共有Viewの投影、GPU資源 |
@@ -40,7 +42,7 @@ adapter・presentation・scene・app・contentは責務に応じて下位のcore
 | `tools` | offline asset処理、schema生成、境界検査、再現可能な検証コマンド |
 
 - core・format・contentは`no_std + alloc`を維持する。
-- appとsceneは登録storageの一度限りの初期化に`std::sync::OnceLock`を使う。sceneは`image`・`earcut`による画像処理・地形三角化を所有し、presentationは日時組版等に`std`を利用する。
+- appとsceneは登録storageの一度限りの初期化に`std::sync::OnceLock`を使う。sceneは`image`・`earcut`による画像処理・地形三角化を所有し、app・presentation・runtimeは日時処理や資源所有に`std`を利用する。
 - CLIの通常実行とschema出力はapp・presentationの利用範囲に対応する。cameraと機体形状の整合はpresentationからsceneへのdev-dependencyで検査する。
 - coreにfilesystem、network、OS時計、乱数取得、GIS、serde、WASM ABI、描画engineを持ち込まない。
 - 乱数seed、環境、入力、時刻観測は外部から明示的に渡す。

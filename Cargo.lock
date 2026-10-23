@@ -1561,6 +1561,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "birdman-game-runtime"
+version = "0.1.0"
+dependencies = [
+ "birdman-game-app",
+ "birdman-game-core",
+ "birdman-game-format",
+ "birdman-game-presentation",
+ "birdman-game-scene",
+ "serde",
+ "serde_json",
+ "time",
+]
+
+[[package]]
 name = "birdman-game-scene"
 version = "0.1.0"
 dependencies = [
@@ -1583,6 +1597,7 @@ dependencies = [
  "birdman-game-core",
  "birdman-game-format",
  "birdman-game-presentation",
+ "birdman-game-runtime",
  "birdman-game-scene",
  "serde",
  "serde_json",

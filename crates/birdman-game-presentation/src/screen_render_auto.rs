@@ -213,6 +213,8 @@ pub enum ScreenRenderAutoError {
 /// Selects whether retained flight settings or background Auto controls rendering.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ScreenRenderScope {
+    /// Keeps runtime framebuffer dimensions and applies the retained manual water quality.
+    Immersive,
     /// Applies the user's retained flight rendering settings.
     FlightSettings,
     /// Automatically adapts rendering outside flight preparation and flight.
@@ -525,8 +527,8 @@ impl ScreenRenderAutoController {
         }
         if self.automatic() && matches!(self.measurement, MeasurementState::Unsupported(_)) {
             self.request_unsupported_quality()
-        } else if scope == ScreenRenderScope::FlightSettings {
-            self.request(self.selection.desired(self.applied))
+        } else if scope != ScreenRenderScope::Background {
+            self.request(self.desired_quality())
         } else {
             Ok(None)
         }
@@ -583,8 +585,8 @@ impl ScreenRenderAutoController {
         self.selection = selection;
         self.resource = ResourceState::Ready;
         self.measurement = MeasurementState::Measuring;
-        if self.scope == ScreenRenderScope::FlightSettings {
-            self.request(selection.desired(self.applied))
+        if self.scope != ScreenRenderScope::Background {
+            self.request(self.desired_quality())
         } else {
             Ok(None)
         }
@@ -610,6 +612,49 @@ impl ScreenRenderAutoController {
             }
             (false, true) => self.select_manual(self.selection.manual.scale, now_ms),
             _ => Ok(self.requested()),
+        }
+    }
+
+    /// Restores retained user choices after adopting a replacement renderer's confirmed resources.
+    pub fn restore_selection(
+        &mut self,
+        selection: ScreenRenderSelection,
+        now_ms: f64,
+    ) -> Result<Option<ScreenRenderResourceRequest>, ScreenRenderAutoError> {
+        let (automatic, scale, shadow, water_quality) = match selection {
+            ScreenRenderSelection::Manual {
+                scale,
+                shadow,
+                water_quality,
+            } => (false, scale, shadow, water_quality),
+            ScreenRenderSelection::Auto {
+                manual_scale,
+                manual_shadow,
+                manual_water_quality,
+            } => (true, manual_scale, manual_shadow, manual_water_quality),
+        };
+        self.check_time(now_ms)?;
+        self.replace_selection(
+            QualitySelection {
+                automatic,
+                manual: RenderQuality {
+                    scale,
+                    shadow,
+                    water_quality,
+                },
+            },
+            now_ms,
+        )
+    }
+
+    fn desired_quality(&self) -> RenderQuality {
+        if self.scope == ScreenRenderScope::Immersive {
+            RenderQuality {
+                water_quality: self.selection.manual.water_quality,
+                ..self.applied
+            }
+        } else {
+            self.selection.desired(self.applied)
         }
     }
 
@@ -773,7 +818,8 @@ impl ScreenRenderAutoController {
     }
 
     fn automatic(&self) -> bool {
-        self.scope == ScreenRenderScope::Background || self.selection.automatic
+        self.scope == ScreenRenderScope::Background
+            || self.scope == ScreenRenderScope::FlightSettings && self.selection.automatic
     }
 
     /// Projects whether the policy currently accepts a new GPU measurement.

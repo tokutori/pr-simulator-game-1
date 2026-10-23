@@ -6,11 +6,12 @@ export const NATIVE_LINUX_WINDOW_TARGET = 'cfg(target_os = "linux")';
 
 const allowed = new Map<string, readonly string[]>([
   ["birdman-game-core", ["libm"]],
-  ["birdman-game-app", ["birdman-game-content", "birdman-game-core", "birdman-game-format", "serde", "serde_json", "sha2"]],
+  ["birdman-game-app", ["birdman-game-content", "birdman-game-core", "birdman-game-format", "serde", "serde_json", "sha2", "time"]],
   ["birdman-game-content", ["birdman-game-core", "birdman-game-format", "libm"]],
   ["birdman-game-format", ["birdman-game-core", "serde", "serde_json", "sha2"]],
   ["birdman-game-cli", ["birdman-game-app", "birdman-game-content", "birdman-game-core", "birdman-game-format", "birdman-game-presentation", "serde", "serde_json"]],
-  ["birdman-game-wasm", ["birdman-game-app", "birdman-game-core", "birdman-game-format", "birdman-game-presentation", "birdman-game-scene", "serde", "serde_json", "sha2", "wasm-bindgen"]],
+  ["birdman-game-wasm", ["birdman-game-app", "birdman-game-core", "birdman-game-format", "birdman-game-presentation", "birdman-game-runtime", "birdman-game-scene", "serde", "serde_json", "sha2", "wasm-bindgen"]],
+  ["birdman-game-runtime", ["birdman-game-app", "birdman-game-core", "birdman-game-format", "birdman-game-presentation", "birdman-game-scene", "serde", "serde_json", "time"]],
   ["birdman-game-presentation", ["birdman-game-app", "birdman-game-core", "birdman-game-format", "serde", "serde_json", "time", "unicode-width"]],
   ["birdman-game-scene", ["birdman-game-app", "birdman-game-content", "birdman-game-core", "birdman-game-format", "serde", "serde_json", "sha2", "earcut"]],
   ["birdman-game-bevy", ["birdman-game-app", "birdman-game-core", "birdman-game-format", "birdman-game-presentation", "birdman-game-scene", "bevy", "serde", "serde_json"]]

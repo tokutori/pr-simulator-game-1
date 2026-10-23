@@ -6,6 +6,7 @@ use birdman_game_format::{AssistanceLevel, DifficultyPreset, InformationLevel, W
 use wasm_bindgen::{JsValue, prelude::*};
 
 mod airframe_structure;
+mod application_runtime;
 mod camera;
 mod cockpit_geometry;
 mod hybrid_bridge;
@@ -21,6 +22,7 @@ mod wing_texture;
 mod xr;
 
 pub use airframe_structure::{AirframeAttachment, AirframeMemberKind, AirframeStructureBridge};
+pub use application_runtime::{ApplicationRuntimeBridge, ApplicationTextMeasurer};
 pub use camera::*;
 pub use cockpit_geometry::CockpitGeometryBridge;
 pub use hybrid_bridge::{HybridGameSessionBridge, TailPersonalBestSelectionBridge};

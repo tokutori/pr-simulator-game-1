@@ -495,6 +495,17 @@ impl XrPointerSession {
 
     /// Uses the same panel geometry for explicit trigger selection.
     pub fn select(&mut self, pointer: XrPointerRay, timestamp_ms: f64) -> Option<XrPointerHit> {
+        let panel_pose = self.observation.as_ref()?.panel_pose;
+        self.select_on_panel(pointer, timestamp_ms, panel_pose)
+    }
+
+    /// Selects against the actual submitted panel pose using the retained shared hit surface.
+    pub fn select_on_panel(
+        &mut self,
+        pointer: XrPointerRay,
+        timestamp_ms: f64,
+        panel_pose: Pose,
+    ) -> Option<XrPointerHit> {
         let observation = self.observation.as_ref()?;
         if !observation.focused
             || matches!(pointer.source, XrPointerSource::Gamepad { .. })
@@ -507,7 +518,7 @@ impl XrPointerSession {
         {
             return None;
         }
-        let hit = pointer_hit(self.surface.as_ref()?, observation.panel_pose, pointer)?;
+        let hit = pointer_hit(self.surface.as_ref()?, panel_pose, pointer)?;
         if !self.admit(&hit, timestamp_ms) {
             return None;
         }
