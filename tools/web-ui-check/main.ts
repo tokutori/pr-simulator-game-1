@@ -49,11 +49,11 @@ async function snapshot(page: Page, name: string, graphics = true): Promise<void
     const observed = await page.evaluate(() => new Promise<{ width: number; height: number; colors: number; nonblack: number; error: number; lost: boolean; losses: number }>((complete, reject) => {
       let frame = 0;
       const timer = setTimeout(() => { cancelAnimationFrame(frame); reject(new Error("Production scene preparation timed out")); }, 30_000);
-      const sample = (): void => {
+      const sample: [FrameRequestCallback] = [() => {
         try {
           if (window.__graphicsLosses !== 0) throw new Error("Production WebGL2 context was lost");
           const canvas = document.querySelector<HTMLCanvasElement>(".presentation-canvas");
-          if (canvas == null || canvas.hidden) { frame = requestAnimationFrame(sample); return; }
+          if (canvas == null || canvas.hidden) { frame = requestAnimationFrame(sample[0]); return; }
           const gl = canvas.getContext("webgl2");
           if (gl == null) throw new Error("Production WebGL2 context is unavailable");
           const colors = new Set<string>();
@@ -67,8 +67,8 @@ async function snapshot(page: Page, name: string, graphics = true): Promise<void
           clearTimeout(timer);
           complete({ width: canvas.width, height: canvas.height, colors: colors.size, nonblack, error: gl.getError(), lost: gl.isContextLost(), losses: window.__graphicsLosses });
         } catch (cause) { clearTimeout(timer); reject(cause instanceof Error ? cause : new Error(String(cause))); }
-      };
-      frame = requestAnimationFrame(sample);
+      }];
+      frame = requestAnimationFrame(sample[0]);
     }));
     captures.push({ name, viewport: page.viewportSize(), graphics: observed });
     assert.ok(observed.nonblack > 8 && observed.colors > 4, `${name}: missing scene pixels`);
