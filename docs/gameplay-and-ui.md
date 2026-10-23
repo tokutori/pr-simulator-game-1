@@ -18,9 +18,8 @@
 | Replay | 確定記録を時刻指定で再生する。現行記録はResult、保存archiveはTitleへ戻る |
 
 - SummaryとAnalysisはResult内のtabである。
-- 結果画面の上部は「概要 / 分析」tabと通知、下部はReplay・同条件の再試行・設定変更・Titleへの共通操作列とする。
+- 結果画面は通知、「概要 / 分析」の選択tab、選択した内容の順に表示する。下部にはReplay・同条件の再試行・設定変更・Titleへの共通操作列を配置する。
 - 概要は距離・時間・終了理由と副指標を二段に分ける。「詳細・ログ出力」で飛行条件・CSV/JSON・技術情報を展開する。
-- 分析は軌跡・高度・速度のchartと「選択地点の値」を表示する。凡例は色と記号の意味、地点欄は時刻・位置・速度・風の数値を示す。
 - camera種類、解析グラフ、Retry、AttractごとのSceneは追加しない。
 - 描画worldはSceneと独立して保持し、通常遷移では共有assetを再生成しない。
 - world交換、context復旧、終了時の解放は資源所有者が実行する。
@@ -181,6 +180,9 @@ Retryはsealed configuration、初期状態、scenario seed、波の位相基準
 
 ### AnalysisとReplay
 
+- Screenの分析画面は基準フォントサイズの72倍を最大幅とする中央カードとし、外周余白と縦スクロール領域を設ける。共有Rustが画面高・文字高からチャートの目標高さを決め、adapterの実測値から表示座標を更新する。
+- 「軌跡 / 高度 / 速度」は共通の選択tabで切り替える。「選択地点の値」は時刻・北/東位置・高度・対気/対地速度・風の3成分を、ラベル・数値・単位に分けて表示する。
+
 | グラフ | 意味 |
 |---|---|
 | Horizontal map | 合成重心の軌跡、Start・終端、方位、scale、会場地物、風 |
@@ -195,12 +197,14 @@ Retryはsealed configuration、初期状態、scenario seed、波の位相基準
 
 - 静止・極短・一直線の軌跡でも表示範囲を退化させない。
 - 距離目盛・scale bar・time marker・legendを備え、色だけに依存しない。
+- Y軸名は等縮尺プロットの左側に揃え、方位とscale barはプロット上部の専用余白に配置する。近接する時刻ラベルは表示を間引く。
 - 会場地物は同じorigin/versionを使用する。
 - 地図tile取得を必須にせず、未登録の地理原点を実会場へ補完しない。
 
 - 風断面は高度と範囲を明示した固定NED水平面のqueryである。
 - 初期条件では発進時重心高度の5×5 gridを使用する。
 - 矢印は空気の移動先を示し、鉛直流を別記する。
+- 選択地点の風矢印の縮尺は凡例に表示し、時刻選択に合わせて更新する。
 - 時刻・位置・高度の異なる局所風を同一断面へ混合しない。
 - 登録環境が欠ける場合は疎gridを非表示とし、記録上の重心風を使用する。
 
@@ -210,6 +214,7 @@ Retryはsealed configuration、初期状態、scenario seed、波の位相基準
 - 追加の力・局所迎角等は対応diagnosticがある記録だけで表示する。
 
 - ResultとReplayは秒単位の単一record-time cursorを使用する。
+- 時刻スライダーに加え、高度・速度チャートのプロット内から主ボタンでドラッグして時刻を選択できる。捕捉中は左右の範囲外を先頭・末尾へ丸め、ボタン解放・取消・捕捉喪失・画面切替で操作を終える。
 - seek範囲、補間sample、再生速度・状態はcore queryを正本とし、adapterは時計の起床と入力だけを担当する。
 - Resultの時刻照会はReplay遷移を必要とせず、phase、score、record、physics、再生clockを変更しない。
 - clock操作はReplay/Attractへ限定する。
@@ -224,7 +229,7 @@ Retryはsealed configuration、初期状態、scenario seed、波の位相基準
 
 - 共有Rustが文言、値、単位、可視条件、許可されたaction、相対順序を所有する。
 - 通常menuは順序付きsectionのColumn・Row・ChoiceGridを正本とし、座標やID文字列からgroupや順序を復元しない。
-- Statusは型付きsourceから動的値へ接続する。
+- Statusと数値項目は型付きsourceから動的値へ接続する。数値項目は桁位置が安定する書体で描画する。
 
 - HUDは画面下端を基準とする透明な領域へ配置する。主要数値と計器を横並びの行へまとめ、右下の操作領域と前方中央を空ける。
 - 共有RustがReadouts・Instrumentsの行、領域全体の寸法、各nodeの正規化boundsと文字高に対する計器の高さを決定する。
@@ -238,7 +243,7 @@ Retryはsealed configuration、初期状態、scenario seed、波の位相基準
 - chartは系列、色、gradient、legend、cursorの意味を保持し、全backendでswatchと系列の対応を維持する。
 
 - ScreenはDOM/SVG、VRはCanvasとpanel、Nativeはretained ECSへ投影する。
-- viewport、文字計測、pixel/meter変換、focus、menuのscroll、pointer捕捉、GPU資源はadapterの責務である。
+- adapterは実viewport・文字計測・入力・focus・pointer捕捉とGPU資源のI/Oを担当する。共有Rustは論理pxとpanel寸法への配置、scroll・入力の認可、実矩形からチャート時刻への変換を所有し、adapterは実提示revisionと要素IDを添えて観測を返す。
 - 同じSceneの値更新でnode・focus・scrollを保持し、Scene変更で適切に初期化する。
 - menu内の画面外の操作はscrollとkeyboard focusで到達可能にする。HUDはスクロールを使用しない。
 - Screenの最低対応解像度はUI倍率適用後の1280×720、推奨は1920×1080以上とする。
