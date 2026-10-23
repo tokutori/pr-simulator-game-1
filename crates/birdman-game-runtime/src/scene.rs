@@ -24,6 +24,8 @@ use birdman_game_presentation::xr::{
 #[derive(Clone, Debug, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ApplicationEyeProjection {
+    /// Exact configured Phone framebuffer viewport; HMD viewports come from the runtime.
+    pub viewport_px: Option<[u32; 4]>,
     /// Primary eye identity.
     pub eye: XrEye,
     /// Eye-to-render-world transform.
@@ -58,6 +60,8 @@ pub struct ApplicationCameraProjection {
 #[derive(Clone, Debug, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ApplicationSceneProjection {
+    /// Whether the registered world geometry belongs to this admitted environment.
+    pub venue_visible: bool,
     /// Final render-world water translation, independent of aircraft rotation and altitude.
     pub water_world_from_surface: Pose,
     /// Final horizontal centre used by the far-water overlap clip.
@@ -80,6 +84,8 @@ pub(super) struct SceneContext<'a> {
     pub display: Option<(GameUiPresentationMode, Option<u32>)>,
     pub xr_viewer: Option<&'a XrViewerFrame>,
     pub phone_head: Option<Pose>,
+    pub render_extent_px: Option<[u32; 2]>,
+    pub venue_visible: bool,
 }
 
 pub(super) struct SceneFrame {
@@ -230,6 +236,7 @@ impl SceneOwner {
             return Ok(SceneFrame {
                 aircraft,
                 projection: ApplicationSceneProjection {
+                    venue_visible: context.venue_visible,
                     water_world_from_surface: Pose {
                         position: Vector3 {
                             x: world_from_aircraft.position.x,
@@ -367,6 +374,17 @@ impl SceneOwner {
                 .iter()
                 .map(|eye| {
                     Ok(ApplicationEyeProjection {
+                        viewport_px: if mode == GameUiPresentationMode::PhoneVr {
+                            context.render_extent_px.map(|[width, height]| {
+                                let left = width / 2;
+                                match eye.eye {
+                                    XrEye::Left => [0, 0, left, height],
+                                    XrEye::Right => [left, 0, width - left, height],
+                                }
+                            })
+                        } else {
+                            None
+                        },
                         eye: eye.eye,
                         world_from_eye: compose_pose(head, eye.head_from_eye)?,
                         projection: eye.projection,
@@ -382,6 +400,7 @@ impl SceneOwner {
         Ok(SceneFrame {
             aircraft,
             projection: ApplicationSceneProjection {
+                venue_visible: context.venue_visible,
                 water_world_from_surface: Pose {
                     position: Vector3 {
                         x: world_from_aircraft.position.x,

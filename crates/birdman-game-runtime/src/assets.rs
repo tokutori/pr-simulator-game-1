@@ -140,6 +140,7 @@ struct DetailAssets {
 }
 
 struct PreparedAssets {
+    venue_visible: bool,
     sky: Arc<SkyAsset>,
     detail: Option<Arc<DetailAssets>>,
 }
@@ -185,6 +186,7 @@ impl PendingAssets {
 
 #[derive(Default)]
 pub(super) struct AssetCompletion {
+    pub invalidated_renderer: Option<u32>,
     pub committed: Option<AssetCommit>,
     pub failed: Option<AssetFailure>,
     pub requests: Vec<ApplicationRequest>,
@@ -204,6 +206,11 @@ pub(super) struct AssetsOwner {
 }
 
 impl AssetsOwner {
+    pub(super) fn venue_visible(&self) -> bool {
+        self.active
+            .as_ref()
+            .is_some_and(|active| active.venue_visible)
+    }
     pub(super) fn prepare(
         &mut self,
         revision: u32,
@@ -343,7 +350,11 @@ impl AssetsOwner {
         self.pending.insert(
             revision,
             PendingAssets {
-                bundle: PreparedAssets { sky, detail },
+                bundle: PreparedAssets {
+                    sky,
+                    detail,
+                    venue_visible: venue.is_visible(),
+                },
                 stage: PreparationStage::Building,
                 target,
                 policy_request,
@@ -392,6 +403,15 @@ impl AssetsOwner {
     ) -> AssetCompletion {
         let mut output = AssetCompletion::default();
         match observation {
+            ApplicationResourceObservation::BindingLost { resource_id, cause } => {
+                if self.committing == Some(request_id) && self.pending.get(&request_id).is_some_and(|pending| matches!(pending.stage, PreparationStage::Committing(id) if id == resource_id)) {
+                    let pending = self.pending.remove(&request_id).unwrap();
+                    self.committing = None;
+                    output.invalidated_renderer = Some(pending.target.renderer_resource_id);
+                    output.requests.push(ApplicationRequest::ReleaseResources { resource_id });
+                    output.failed = Some(pending.failed(request_id, cause));
+                }
+            }
             ApplicationResourceObservation::Prepared { resource_id } => {
                 let protected = self.retired.contains(&resource_id) || self.active_resource == Some(resource_id) || self.pending.values().any(|pending| matches!(pending.stage, PreparationStage::Candidate(id) | PreparationStage::Committing(id) if id == resource_id));
                 if resource_id == 0 || protected {
@@ -577,6 +597,8 @@ mod tests {
                 water_quality: quality,
             },
             extent_px: [1280, 720],
+            shadow_extent_px: [2048, 2048],
+            reflection_extent_px: [640, 360],
         }
     }
 
@@ -710,5 +732,32 @@ mod tests {
                 .scene
                 .is_some()
         );
+        owner.select(Some(4));
+        owner.observe(
+            4,
+            ApplicationResourceObservation::Prepared { resource_id: 104 },
+        );
+        assert_eq!(owner.continue_commit().len(), 1);
+        let stale = owner.observe(
+            4,
+            ApplicationResourceObservation::BindingLost {
+                resource_id: 105,
+                cause: "stale bind".to_owned(),
+            },
+        );
+        assert!(stale.invalidated_renderer.is_none());
+        let lost = owner.observe(
+            4,
+            ApplicationResourceObservation::BindingLost {
+                resource_id: 104,
+                cause: "bind and rollback failed".to_owned(),
+            },
+        );
+        assert_eq!(lost.invalidated_renderer, Some(101));
+        assert_eq!(lost.failed.unwrap().cause, "bind and rollback failed");
+        assert!(matches!(
+            lost.requests.as_slice(),
+            [ApplicationRequest::ReleaseResources { resource_id: 104 }]
+        ));
     }
 }

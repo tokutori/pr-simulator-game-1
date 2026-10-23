@@ -92,6 +92,7 @@ pub struct ApplicationRuntime {
     phone: phone::PhoneTracking,
     phone_wake: Option<u32>,
     page_visible: bool,
+    document_focused: bool,
     xr_resource: Option<u32>,
     xr_viewer: Option<XrViewerFrame>,
     xr_visibility: XrVisibility,
@@ -179,6 +180,7 @@ impl ApplicationRuntime {
             phone: phone::PhoneTracking::default(),
             phone_wake: None,
             page_visible: true,
+            document_focused: true,
             xr_resource: None,
             xr_viewer: None,
             xr_visibility: XrVisibility::Visible,
@@ -275,6 +277,26 @@ impl ApplicationRuntime {
         let mut spatial_frame = None;
         let mut render_spatial = false;
         match input {
+            ApplicationInput::RendererFailed {
+                renderer_resource_id,
+                cause,
+            } => {
+                if self.graphics.invalidate_renderer(renderer_resource_id) {
+                    self.diagnostic = Some(cause);
+                    if self.boot.active() {
+                        self.boot = boot::BootOwner::Failed;
+                    }
+                    self.platform.flight_controller_failure =
+                        Some("描画を続けられない。ページを再読み込みして再試行する。".to_owned());
+                }
+            }
+            ApplicationInput::DocumentFocus { focused } => {
+                self.document_focused = focused;
+                if !focused {
+                    self.application.invalidate_flight_input();
+                    self.surface.retire_input();
+                }
+            }
             ApplicationInput::DisplayEnded { resource_id } => {
                 if self.display.active_resource() == Some(resource_id) {
                     let next_id = self.allocate_request()?;
@@ -513,7 +535,17 @@ impl ApplicationRuntime {
                 if self.display.state().active_mode().is_some()
                     && self.display.active_resource() == display_resource_id
                 {
-                    if timestamp_ms > observed_ms {
+                    if !timestamp_ms.is_finite() || timestamp_ms < 0.0 {
+                        return Err(ApplicationRuntimeError::InvalidTimestamp);
+                    }
+                    let progression_ms = if self.display.state().active_mode()
+                        == Some(GameUiPresentationMode::Hmd)
+                    {
+                        observed_ms
+                    } else {
+                        timestamp_ms
+                    };
+                    if progression_ms > observed_ms {
                         return Err(ApplicationRuntimeError::InvalidTimestamp);
                     }
                     self.frame_rate.observe(timestamp_ms);
@@ -534,10 +566,11 @@ impl ApplicationRuntime {
                     if !self.display.state().pending() {
                         let flight_gamepads: Vec<_> = gamepads
                             .iter()
+                            .filter(|_| self.document_focused)
                             .filter_map(ApplicationGamepadObservation::flight)
                             .collect();
-                        self.advance_frame(timestamp_ms, &flight_gamepads, self.page_visible)?;
-                        spatial_frame = Some((spatial, timestamp_ms));
+                        self.advance_frame(progression_ms, &flight_gamepads, self.page_visible)?;
+                        spatial_frame = Some((spatial, observed_ms));
                     }
                     render_spatial = true;
                 }
@@ -567,7 +600,7 @@ impl ApplicationRuntime {
                     "KeyL" => Some(FlightControl::PilotIncrease),
                     _ => None,
                 };
-                if self.page_visible && !self.display.state().pending() {
+                if self.page_visible && self.document_focused && !self.display.state().pending() {
                     if let Some(control) = control {
                         keyboard_consumed =
                             self.application.observe_flight_key(FlightKeyObservation {
@@ -615,6 +648,10 @@ impl ApplicationRuntime {
                 let completion = self.assets.observe(request_id, observation);
                 requests.extend(completion.requests);
                 let mut commit_failed = false;
+                if let Some(renderer) = completion.invalidated_renderer {
+                    self.graphics.invalidate_renderer(renderer);
+                    commit_failed = true;
+                }
                 if let Some(committed) = &completion.committed
                     && let Err(error) = self.graphics.committed(
                         committed.target,
@@ -824,6 +861,8 @@ impl ApplicationRuntime {
                 .map(|mode| (mode, self.display.active_resource())),
             xr_viewer: self.xr_viewer.as_ref(),
             phone_head: self.phone.projection().last_valid_head,
+            render_extent_px: self.graphics.resource().map(|resource| resource.extent_px),
+            venue_visible: self.assets.venue_visible(),
         })?;
         scene_frame.projection.geometry = self
             .assets
@@ -918,6 +957,7 @@ impl ApplicationRuntime {
 
     fn spatial_input_focused(&self) -> bool {
         self.page_visible
+            && self.document_focused
             && !self.display.state().pending()
             && match self.display.state().active_mode() {
                 Some(GameUiPresentationMode::Hmd) => {

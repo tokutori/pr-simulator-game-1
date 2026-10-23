@@ -114,6 +114,10 @@ pub struct ApplicationGraphicsTarget {
     pub quality: ApplicationRenderQuality,
     /// Exact target framebuffer dimensions in physical pixels.
     pub extent_px: [u32; 2],
+    /// Final square shadow allocation in physical pixels.
+    pub shadow_extent_px: [u32; 2],
+    /// Final reflection allocation in physical pixels.
+    pub reflection_extent_px: [u32; 2],
 }
 
 /// Actual values observed after an authorized atomic resource binding.
@@ -334,12 +338,23 @@ impl GraphicsOwner {
                 self.prepared = false;
             }
             ApplicationGraphicsObservation::ContextLost => {
-                self.context.as_mut().unwrap().available = false;
-                self.prepared = false;
-                self.eligible = false;
+                self.invalidate_renderer(renderer);
             }
         }
         Ok(())
+    }
+
+    pub(super) fn invalidate_renderer(&mut self, renderer: u32) -> bool {
+        let Some(context) = &mut self.context else {
+            return false;
+        };
+        if context.id != renderer || !context.available {
+            return false;
+        }
+        context.available = false;
+        self.prepared = false;
+        self.eligible = false;
+        true
     }
 
     pub(super) fn requested(&self) -> Option<ScreenRenderResourceRequest> {
@@ -377,6 +392,11 @@ impl GraphicsOwner {
                 renderer_resource_id: context.id,
                 quality,
                 extent_px,
+                shadow_extent_px: [quality.shadow.size(); 2],
+                reflection_extent_px: [
+                    extent_px[0].div_ceil(2).clamp(256, 1024),
+                    extent_px[1].div_ceil(2).clamp(128, 1024),
+                ],
             })
     }
 

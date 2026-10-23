@@ -7,6 +7,22 @@ export type MenuFontStyle = "normal" | "italic";
  * Payload of one externally observed event.
  */
 export type ApplicationInput = {
+    /**
+     * Original platform diagnostic.
+     */
+    readonly cause: string;
+    readonly kind: "renderer_failed";
+    /**
+     * Actual renderer lifetime reporting the failure.
+     */
+    readonly renderer_resource_id: number;
+} | {
+    /**
+     * Whether the platform currently grants keyboard/pointer focus.
+     */
+    readonly focused: boolean;
+    readonly kind: "document_focus";
+} | {
     readonly kind: "display_ended";
     /**
      * Ended session or sensor subscription identity.
@@ -511,6 +527,16 @@ export type GameUiReplayCamera = "auto" | "pilot" | "chase" | "orbit" | "platfor
  * Completion state of the display and scene resources needed for launch.
  */
 export type ApplicationResourceObservation = {
+    /**
+     * Original drawing and rollback diagnostic.
+     */
+    readonly cause: string;
+    readonly kind: "binding_lost";
+    /**
+     * Candidate belonging to the failed commit request.
+     */
+    readonly resource_id: number;
+} | {
     readonly kind: "prepared";
     /**
      * New opaque GPU resource identity.
@@ -2245,6 +2271,10 @@ export interface ApplicationSceneProjection {
      */
     readonly geometry?: ApplicationGeometryFrame | null;
     /**
+     * Whether the registered world geometry belongs to this admitted environment.
+     */
+    readonly venue_visible: boolean;
+    /**
      * Final horizontal centre used by the far-water overlap clip.
      *
      * @minItems 2
@@ -2358,6 +2388,18 @@ export interface ApplicationEyeProjection {
         number,
         number
     ];
+    /**
+     * Exact configured Phone framebuffer viewport; HMD viewports come from the runtime.
+     *
+     * @minItems 4
+     * @maxItems 4
+     */
+    readonly viewport_px?: readonly [
+        number,
+        number,
+        number,
+        number
+    ] | null;
     /**
      * Eye-to-render-world transform.
      */
@@ -4404,8 +4446,28 @@ export interface ApplicationGraphicsTarget {
      */
     readonly quality: ApplicationRenderQuality;
     /**
+     * Final reflection allocation in physical pixels.
+     *
+     * @minItems 2
+     * @maxItems 2
+     */
+    readonly reflection_extent_px: readonly [
+        number,
+        number
+    ];
+    /**
      * Graphics context or device lifetime.
      */
     readonly renderer_resource_id: number;
+    /**
+     * Final square shadow allocation in physical pixels.
+     *
+     * @minItems 2
+     * @maxItems 2
+     */
+    readonly shadow_extent_px: readonly [
+        number,
+        number
+    ];
     readonly [k: string]: unknown | undefined;
 }

@@ -59,6 +59,13 @@ pub struct ApplicationPlatformObservation {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ApplicationResourceObservation {
+    /// Atomic binding failed and the previous binding could not be restored.
+    BindingLost {
+        /// Candidate belonging to the failed commit request.
+        resource_id: u32,
+        /// Original drawing and rollback diagnostic.
+        cause: String,
+    },
     /// GPU resources have been created as an unbound candidate.
     Prepared {
         /// New opaque GPU resource identity.
@@ -133,6 +140,18 @@ pub struct ApplicationSpatialObservation {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ApplicationInput {
+    /// A drawing API operation failed independently of a graphics-context loss event.
+    RendererFailed {
+        #[doc = "Actual renderer lifetime reporting the failure."]
+        renderer_resource_id: u32,
+        #[doc = "Original platform diagnostic."]
+        cause: String,
+    },
+    /// Raw document or native-window input focus, independent of page visibility.
+    DocumentFocus {
+        #[doc = "Whether the platform currently grants keyboard/pointer focus."]
+        focused: bool,
+    },
     /// The actual platform display ended independently of a requested stop.
     DisplayEnded {
         #[doc = "Ended session or sensor subscription identity."]

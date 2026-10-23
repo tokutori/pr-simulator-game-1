@@ -984,13 +984,19 @@ fn hmd_frame_and_focus_use_the_confirmed_display_resource_and_shared_viewer_capt
         .unwrap();
     assert!(!runtime.application().presentation_available());
     let current = runtime
-        .observe_test(ApplicationInput::Frame {
-            display_resource_id: Some(50),
-            timestamp_ms: 10_020.0,
-            gamepads: Vec::new(),
-            xr: Some(observation.clone()),
-            spatial: Default::default(),
-        })
+        .update(
+            ApplicationObservation {
+                observed_ms: 10_020.0,
+                input: ApplicationInput::Frame {
+                    display_resource_id: Some(50),
+                    timestamp_ms: 10_070.0,
+                    gamepads: Vec::new(),
+                    xr: Some(observation.clone()),
+                    spatial: Default::default(),
+                },
+            },
+            &mut no_text_metrics,
+        )
         .unwrap();
     let camera = current.drawing.unwrap().scene.camera.unwrap();
     assert_eq!(camera.world_from_head, Some(head));

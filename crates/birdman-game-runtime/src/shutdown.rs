@@ -87,7 +87,9 @@ impl ShutdownOwner {
             } => Some(Operation::Prepare(*request_id)),
             ApplicationInput::Resources {
                 request_id,
-                observation: ApplicationResourceObservation::Committed { resource_id, .. },
+                observation:
+                    ApplicationResourceObservation::Committed { resource_id, .. }
+                    | ApplicationResourceObservation::BindingLost { resource_id, .. },
             } => Some(Operation::Commit(*request_id, *resource_id)),
             ApplicationInput::Resources {
                 request_id,
