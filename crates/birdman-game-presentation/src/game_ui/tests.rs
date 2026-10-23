@@ -1586,6 +1586,12 @@ fn structured_boundary_rejects_unknown_fields_and_exclusive_variant_payloads() {
     )
     .unwrap();
     let encoded = serde_json::to_string(&view).unwrap();
+    assert!(
+        serde_json::from_str::<serde_json::Value>(&encoded)
+            .unwrap()
+            .get("selections")
+            .is_none()
+    );
     assert_eq!(serde_json::from_str::<GameUiView>(&encoded).unwrap(), view);
 }
 
@@ -2991,7 +2997,6 @@ fn cached_replay_rate_labels_match_fresh_view_for_all_clock_rates() {
             1
         );
         assert_eq!(session.playback_clock(), clock);
-        assert_eq!(frame.selections, state);
     }
 }
 

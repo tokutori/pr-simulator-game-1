@@ -15,7 +15,6 @@ pub fn game_ui_frame(
     }
     let mut frame = GameUiFrame {
         view_revision: retained.view_revision,
-        selections: state.clone(),
         hud: super::hud::game_ui_hud(state, context)?,
         ranges: Vec::new(),
         readouts: Vec::new(),

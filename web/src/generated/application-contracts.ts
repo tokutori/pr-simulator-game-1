@@ -2895,10 +2895,6 @@ export interface GameUiView {
      */
     readonly schema_version: number;
     /**
-     * Readonly observation of the Rust-owned UI selections.
-     */
-    readonly selections: GameUiState;
-    /**
      * Shared visual hierarchy.
      */
     readonly theme: GameUiTheme;
@@ -3657,43 +3653,6 @@ export interface GameUiSection {
     readonly layout: GameUiSectionLayout;
 }
 /**
- * UI-only selections; physical state and domain phase remain in GameSession.
- */
-export interface GameUiState {
-    /**
-     * Selected record plot.
-     */
-    readonly analysis_chart: GameUiAnalysisChart;
-    /**
-     * Read-only analysis query position in seconds.
-     */
-    readonly analysis_time_seconds: number;
-    /**
-     * Shared credits shown without changing the domain phase.
-     */
-    readonly credits_open: boolean;
-    /**
-     * Paused menu selection.
-     */
-    readonly pause_overlay: GameUiPauseOverlay;
-    /**
-     * Shared replay camera selection; adapters only apply its geometry.
-     */
-    readonly replay_camera: GameUiReplayCamera;
-    /**
-     * Replay presentation selection.
-     */
-    readonly replay_view: GameUiReplayView;
-    /**
-     * Result presentation selection.
-     */
-    readonly result_tab: GameUiResultTab;
-    /**
-     * Expanded preparation diagnostics.
-     */
-    readonly technical_open: boolean;
-}
-/**
  * Engine-independent colors, opacity and minimum hit dimensions.
  */
 export interface GameUiTheme {
@@ -3766,10 +3725,6 @@ export interface GameUiFrame {
      * Fixed record-clock and analysis-cursor readouts.
      */
     readonly readouts: readonly GameUiReadoutValue[];
-    /**
-     * Readonly observation of the Rust-owned UI selections.
-     */
-    readonly selections: GameUiState;
     /**
      * Structural view revision retained by the query adapter.
      */

@@ -600,7 +600,9 @@ pub struct GameUiView {
     pub schema_version: u32,
     /// Adapter query-cache revision; pure projections use zero until published.
     pub view_revision: u32,
-    /// Readonly observation of the Rust-owned UI selections.
+    /// Internal selections used by Rust action admission and interaction scope.
+    #[serde(skip)]
+    #[cfg_attr(feature = "schema", schemars(skip))]
     pub selections: GameUiState,
     /// Domain-derived scene.
     pub scene: GameUiScene,
@@ -629,8 +631,6 @@ pub struct GameUiView {
 pub struct GameUiFrame {
     /// Structural view revision retained by the query adapter.
     pub view_revision: u32,
-    /// Readonly observation of the Rust-owned UI selections.
-    pub selections: GameUiState,
     /// Shared HUD projection, never a second physical state.
     pub hud: Option<GameUiHud>,
     /// Existing range values that advance without a structural change.

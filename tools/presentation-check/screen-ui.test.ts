@@ -63,7 +63,7 @@ describe("Screen DOM adapter", () => {
       const view = adapterView();
       adapter.render(view);
       const button = required(root, "button");
-      const frame: GameUiFrame = { view_revision: view.view_revision, selections: view.selections, hud: null, chart_cursor: null,
+      const frame: GameUiFrame = { view_revision: view.view_revision, hud: null, chart_cursor: null,
         ranges: [{ id: "range", value: 2.5, display_value: "2.5" }], button_labels: [{ id: "button", label: "一時停止" }], readouts: [{ id: "notice", value: "更新済み" }] };
       adapter.renderFrame(frame);
       expect(required(root, "button")).toBe(button);
