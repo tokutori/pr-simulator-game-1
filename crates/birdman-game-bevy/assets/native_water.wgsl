@@ -179,6 +179,11 @@ fn vertex(vertex: Vertex) -> VertexOutput {
 #endif
     }
     output.position = position_world_to_clip(output.world_position.xyz);
+    if waves_sky.w > 0.5 {
+        output.position = vec4<f32>(vertex.position.xy, 0.0, 1.0);
+        let direction = view_bindings::view.world_from_clip * vec4<f32>(vertex.position.xy, 0.5, 1.0);
+        output.world_position = vec4<f32>(direction.xyz / direction.w, 1.0);
+    }
 #ifdef VERTEX_UVS_A
     output.uv = base_position.xz;
 #endif
@@ -284,6 +289,9 @@ fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
     let footprint_x = dpdx(position);
     let footprint_y = dpdy(position);
     if waves_sky.w > 0.5 { return vec4<f32>(lake_sky_radiance(-view), 1.0); }
+    if reflection_parameters.y > 0.5 && max(abs(position.x - geometry_patch.x), abs(position.y - geometry_patch.y)) < reflection_parameters.z {
+        discard;
+    }
     var spacing = 1200.0;
 #ifdef VERTEX_UVS_B
     spacing = mesh.uv_b.x;

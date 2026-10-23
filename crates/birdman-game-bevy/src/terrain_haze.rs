@@ -5,7 +5,6 @@ use bevy::{
     render::render_resource::AsBindGroup,
     shader::ShaderRef,
 };
-use birdman_game_scene::lake_sky::LakeSceneHaze;
 
 pub(crate) type TerrainMaterial = ExtendedMaterial<StandardMaterial, TerrainHazeExtension>;
 
@@ -18,16 +17,13 @@ pub(crate) struct TerrainHazeExtension {
 }
 
 impl TerrainHazeExtension {
-    pub(crate) fn try_new(visibility_m: Option<f64>) -> Result<Self, String> {
-        let haze = LakeSceneHaze::try_new(visibility_m)
-            .map_err(|cause| format!("共有terrain hazeを準備できない: {cause:?}"))?;
-        let color = haze.color_srgb;
-        Ok(Self {
+    pub(crate) fn prepared(color: u32, range: [f64; 2]) -> Self {
+        Self {
             color_srgb: Color::srgb_u8((color >> 16) as u8, (color >> 8) as u8, color as u8)
                 .to_srgba()
                 .to_vec4(),
-            range: Vec4::new(haze.near_m as f32, haze.far_m as f32, 0.0, 0.0),
-        })
+            range: Vec4::new(range[0] as f32, range[1] as f32, 0.0, 0.0),
+        }
     }
 }
 

@@ -1,51 +1,54 @@
 #[path = "world/environment.rs"]
 mod environment;
+#[path = "world/readiness.rs"]
+pub(crate) mod readiness;
 
-#[cfg(feature = "verify-harness")]
-use super::projection::VerificationObserver;
 use super::{
-    CameraMode,
-    native_session::NativeSession,
-    projection::{camera_transform, render_aircraft_transform, replay_camera_transform},
-    terrain_haze::TerrainMaterial,
-    water::{WaterMaterial, patch_center},
+    projection::SubmittedProjection,
+    screen_render,
+    terrain_haze::{TerrainHazeExtension, TerrainMaterial},
+    water::{NearWaterSurface, WaterMaterial},
 };
 use bevy::ecs as bevy_ecs;
 use bevy::{
-    asset::RenderAssetUsages,
     camera::{
-        Exposure,
+        Exposure, RenderTarget,
+        primitives::Aabb,
         visibility::{NoFrustumCulling, RenderLayers},
     },
-    core_pipeline::tonemapping::Tonemapping,
-    image::{CompressedImageFormats, ImageSampler, ImageSamplerDescriptor, ImageType},
-    light::NotShadowCaster,
-    mesh::Indices,
+    core_pipeline::{mip_generation::MipGenerationPlugin, tonemapping::Tonemapping},
+    light::{
+        CascadeShadowConfig, Cascades, DirectionalLightShadowMap, NotShadowCaster,
+        SimulationLightSystems, cascade::Cascade,
+    },
+    pbr::MaterialPlugin,
     prelude::*,
-    render::render_resource::{Extent3d, PrimitiveTopology, TextureDimension, TextureFormat},
+    render::renderer::RenderDevice,
+    window::PrimaryWindow,
 };
-use birdman_game_app::{LaunchPlatform, launch_venue};
-#[cfg(test)]
-use birdman_game_core::HybridSurfaceRole;
-use birdman_game_core::WingBendingFactor;
-use birdman_game_presentation::render_pose::{RenderTailGeometry, RenderWingDeformation};
-use birdman_game_scene::airframe_structure::{
-    AirframeStructure, StructuralAttachment, StructuralPartKind,
+use birdman_game_runtime::{
+    ApplicationDrawingOutput, ApplicationEnvironmentAssets, ApplicationGeometryAssets,
+    ApplicationGpuQuery, ApplicationGpuTimingCapability, ApplicationGraphicsTarget,
+    ApplicationInput, ApplicationMeshAttachment, ApplicationRenderQuality,
+    ApplicationRendererObservation, ApplicationRequest, ApplicationResourceCommit,
+    ApplicationResourceObservation, ApplicationRuntime,
 };
-use birdman_game_scene::cockpit_geometry::{CockpitGeometry, CockpitMaterial};
-use birdman_game_scene::lake_sky::LAKE_SCENE_LIGHTING;
-use birdman_game_scene::tail_geometry::{TailGeometry, TailMaterial};
-use birdman_game_scene::wing_geometry::{WingFrame, WingGeometry, WingMaterial, WingSurface};
-use birdman_game_scene::wing_texture;
+use std::collections::BTreeMap;
 
-pub(super) const SCENE_SUN_ILLUMINANCE_LUX: f32 = 18_000.0;
-const SCENE_EXPOSURE_SCALE: f32 =
-    LAKE_SCENE_LIGHTING.sunlight_irradiance as f32 / SCENE_SUN_ILLUMINANCE_LUX;
+pub(crate) use super::projection::pose_transform;
 
-pub(super) fn scene_exposure() -> Exposure {
+pub(crate) const SCENE_SUN_ILLUMINANCE_LUX: f32 = 18_000.0;
+const SCENE_EXPOSURE_SCALE: f32 = birdman_game_scene::lake_sky::LAKE_SCENE_LIGHTING
+    .sunlight_irradiance as f32
+    / SCENE_SUN_ILLUMINANCE_LUX;
+
+pub(crate) fn scene_exposure() -> Exposure {
     Exposure {
         ev100: (1.0 / (1.2 * SCENE_EXPOSURE_SCALE)).log2(),
     }
+}
+pub(crate) fn color_srgb(color: u32) -> Color {
+    Color::srgb_u8((color >> 16) as u8, (color >> 8) as u8, color as u8)
 }
 
 #[derive(Component, PartialEq, Eq)]
@@ -58,749 +61,1318 @@ pub(crate) enum WorldProjection {
     LakeSurface,
 }
 
-#[derive(Component)]
-pub(crate) struct RegisteredVenue;
+#[derive(Clone, Copy)]
+enum ResourceStage {
+    Preparing,
+    Prepared,
+    Committing { request_id: u32, after: u64 },
+    Bound,
+    Cancelling { after: u64 },
+}
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct RenderSample {
-    aircraft: Transform,
-    pose: birdman_game_presentation::render_pose::FlightRenderPose,
-    elevator_rad: f64,
-    rudder_rad: f64,
-    simulation_time_seconds: f64,
+enum BindFailure {
+    Unchanged(String),
+    Lost(String),
 }
-impl RenderSample {
-    fn from_pose(pose: birdman_game_presentation::render_pose::FlightRenderPose) -> Self {
-        Self {
-            aircraft: render_aircraft_transform(&pose),
-            pose,
-            elevator_rad: pose.controls.physical_incidence.horizontal_tail_radians,
-            rudder_rad: pose.controls.physical_incidence.vertical_tail_radians,
-            simulation_time_seconds: pose.simulation_time_seconds,
-        }
-    }
+
+#[derive(Component)]
+struct SubmittedShadow {
+    bounds: [f64; 6],
+    extent: u32,
 }
-fn rectangular_surface(vertices: [[f32; 3]; 4]) -> Mesh {
-    let mut mesh = Mesh::new(
-        PrimitiveTopology::TriangleList,
-        RenderAssetUsages::RENDER_WORLD,
-    );
-    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, vertices.to_vec());
-    mesh.insert_attribute(
-        Mesh::ATTRIBUTE_UV_0,
-        vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
-    );
-    mesh.insert_indices(Indices::U32(vec![0, 2, 1, 0, 3, 2]));
-    mesh.compute_normals();
-    mesh
+
+struct Candidate {
+    stage: ResourceStage,
+    target: ApplicationGraphicsTarget,
+    root: Entity,
+    attachments: [Entity; 4],
+    preview: Entity,
+    reflection_camera: Entity,
+    water_root: Entity,
+    sun: Entity,
+    illuminance: f32,
+    initial_shadow: Option<birdman_game_scene::lake_sky::LakeSceneShadow>,
+    output: Handle<Image>,
+    reflection: Handle<Image>,
+    materials: Vec<Handle<TerrainMaterial>>,
+    water: [Handle<WaterMaterial>; 3],
+    images: Vec<u32>,
+    meshes: Vec<Handle<Mesh>>,
+    sky_mesh: Handle<Mesh>,
 }
 
 #[derive(Resource)]
-pub(crate) struct MainWingProjection {
-    geometry: WingGeometry,
-    frame: WingFrame,
-    surfaces: Vec<MainWingSurface>,
-    structure: AirframeStructure<'static>,
-    members: Vec<StructuralProjection>,
-    projection_failed: bool,
+pub(crate) struct NativeGpu {
+    manifest: Option<ApplicationGeometryAssets>,
+    meshes: BTreeMap<u32, Vec<Handle<Mesh>>>,
+    water_meshes: BTreeMap<u32, Handle<Mesh>>,
+    textures: BTreeMap<u32, Handle<Image>>,
+    images: BTreeMap<u32, (Handle<Image>, usize)>,
+    candidates: BTreeMap<u32, Candidate>,
+    active: Option<u32>,
+    pub(crate) main_camera: Option<Entity>,
+    pub(crate) query: Option<ApplicationGpuQuery>,
+    pub(crate) quality: ApplicationRenderQuality,
+    initial_failure: Option<String>,
+    pub(crate) renderer_id: u32,
+    revision: u64,
 }
 
-#[derive(Component)]
-pub(crate) struct MainWingPart;
-
-type MainWingVisibility<'world, 'state> =
-    Query<'world, 'state, &'static mut Visibility, With<MainWingPart>>;
-type TailVisibility<'world, 'state> =
-    Query<'world, 'state, (&'static WorldProjection, &'static mut Visibility)>;
-
-struct StructuralProjection {
-    entity: Entity,
-    handle: Handle<Mesh>,
-    candidate: Mesh,
-}
-
-struct MainWingSurface {
-    complete_mesh: Mesh,
-    material_meshes: Vec<Handle<Mesh>>,
-}
-
-fn main_wing_mesh(surface: &WingSurface, positions: &[[f32; 3]]) -> Mesh {
-    let mut mesh = Mesh::new(
-        PrimitiveTopology::TriangleList,
-        RenderAssetUsages::default(),
-    );
-    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions.to_vec());
-    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, surface.uvs().to_vec());
-    mesh.insert_indices(Indices::U32(surface.indices().to_vec()));
-    mesh.compute_area_weighted_normals();
-    mesh
-}
-
-fn wing_cover_images() -> [Image; 2] {
-    let mut pixels = wing_texture::indigo_wing_textures();
-    let decal = Image::from_buffer(
-        include_bytes!("../../../assets/indigo-resist-decal.png"),
-        ImageType::Extension("png"),
-        CompressedImageFormats::NONE,
-        true,
-        ImageSampler::Default,
-        RenderAssetUsages::default(),
-    );
-    let applied = decal.map_err(|cause| cause.to_string()).and_then(|image| {
-        if image.texture_descriptor.format != TextureFormat::Rgba8UnormSrgb {
-            return Err("Registered wing decal must decode to sRGB RGBA8".into());
-        }
-        let alpha: Vec<_> = image
-            .data
-            .as_deref()
-            .unwrap_or_default()
-            .chunks_exact(4)
-            .map(|pixel| pixel[3])
-            .collect();
-        wing_texture::apply_indigo_wing_decal(&mut pixels, image.width(), image.height(), &alpha)
-            .map_err(|cause| format!("Registered wing decal is invalid: {cause:?}"))
-    });
-    if let Err(cause) = applied {
-        warn!("Wing dye decal could not be applied; using the procedural pattern: {cause}");
-    }
-    std::array::from_fn(|side| {
-        let start = side * wing_texture::SIDE_BYTES;
-        let rgba = &pixels[start..start + wing_texture::SIDE_BYTES];
-        let mut image = Image::new(
-            Extent3d {
-                width: wing_texture::WIDTH,
-                height: wing_texture::HEIGHT,
-                depth_or_array_layers: 1,
+impl Default for NativeGpu {
+    fn default() -> Self {
+        Self {
+            manifest: None,
+            meshes: BTreeMap::new(),
+            water_meshes: BTreeMap::new(),
+            textures: BTreeMap::new(),
+            images: BTreeMap::new(),
+            candidates: BTreeMap::new(),
+            active: None,
+            main_camera: None,
+            query: None,
+            quality: ApplicationRenderQuality {
+                scale: Default::default(),
+                shadow: Default::default(),
+                water_quality: Default::default(),
             },
-            TextureDimension::D2,
-            rgba.to_vec(),
-            TextureFormat::Rgba8UnormSrgb,
-            RenderAssetUsages::default(),
-        );
-        image.data = Some(
-            wing_texture::indigo_wing_mipmaps(rgba)
-                .expect("Shared opaque sRGB wing texture supports linear-light mip generation"),
-        );
-        image.texture_descriptor.mip_level_count = wing_texture::WIDTH.ilog2() + 1;
-        image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor::linear());
-        image
-    })
-}
-
-pub(crate) fn project_main_wing(
-    mut session: ResMut<NativeSession>,
-    mut wing: ResMut<MainWingProjection>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut visibility: ParamSet<(MainWingVisibility, TailVisibility)>,
-) {
-    let (pose, valid) = match session.render_pose() {
-        Ok(pose) => (pose, true),
-        Err(error) => {
-            if session.game.flight_failure().is_none() {
-                session.game.fail_flight_adapter();
-                eprintln!("Native render pose failed: {error}");
-                session.notice = Some("表示を更新できないため飛行を停止した。".into());
-            }
-            (None, false)
-        }
-    };
-    let geometry_visible = valid
-        && pose
-            .is_none_or(|pose| matches!(pose.tail_geometry, RenderTailGeometry::Available { .. }));
-    let deformation = pose.map_or(RenderWingDeformation::Accepted { factor: 1.0 }, |pose| {
-        pose.wing_deformation
-    });
-    for (projection, mut visible) in &mut visibility.p1() {
-        if matches!(
-            projection,
-            WorldProjection::Aircraft
-                | WorldProjection::HorizontalTail
-                | WorldProjection::VerticalTail
-        ) {
-            *visible = if !geometry_visible {
-                Visibility::Hidden
-            } else if *projection == WorldProjection::Aircraft {
-                Visibility::Visible
-            } else {
-                Visibility::Inherited
-            };
-        }
-    }
-    let MainWingProjection {
-        geometry,
-        frame,
-        surfaces,
-        structure,
-        members,
-        projection_failed,
-    } = &mut *wing;
-    let update = match deformation {
-        RenderWingDeformation::Accepted { factor } => {
-            let factor =
-                WingBendingFactor::try_new(factor).expect("shared adopted coefficient is finite");
-            match prepare_main_wing_projection(
-                geometry,
-                frame,
-                surfaces,
-                structure,
-                members,
-                factor,
-                *projection_failed,
-            ) {
-                Ok(updated) => {
-                    *projection_failed = false;
-                    Some(updated)
-                }
-                Err(cause) => {
-                    if !*projection_failed {
-                        warn!("主翼変形を表示できない: {cause:?}");
-                    }
-                    *projection_failed = true;
-                    None
-                }
-            }
-        }
-        RenderWingDeformation::Unavailable { .. } => None,
-    };
-    for mut visible in &mut visibility.p0() {
-        *visible = if update.is_some() {
-            Visibility::Inherited
-        } else {
-            Visibility::Hidden
-        };
-    }
-    if !update.unwrap_or(false) {
-        return;
-    }
-    for (surface, positions) in surfaces.iter().zip(frame.surface_positions()) {
-        for handle in &surface.material_meshes {
-            publish_mesh_positions(
-                &mut meshes.get_mut(handle).expect("主翼meshがない"),
-                &surface.complete_mesh,
-                positions,
-            );
-        }
-    }
-    for (source, target) in structure.meshes().iter().zip(members) {
-        if source.attachment() == StructuralAttachment::MainWing {
-            publish_mesh_positions(
-                &mut meshes.get_mut(&target.handle).expect("構造meshがない"),
-                &target.candidate,
-                source.positions(),
-            );
+            initial_failure: None,
+            renderer_id: 0,
+            revision: 0,
         }
     }
 }
 
-fn prepare_main_wing_projection(
-    geometry: &WingGeometry,
-    frame: &mut WingFrame,
-    surfaces: &mut [MainWingSurface],
-    structure: &mut AirframeStructure<'_>,
-    members: &mut [StructuralProjection],
-    factor: WingBendingFactor,
-    previously_failed: bool,
-) -> Result<bool, &'static str> {
-    let skin_updated = geometry
-        .update_frame_with_factor(frame, factor)
-        .map_err(|_| "主翼座標を表現できない")?;
-    let members_updated = structure
-        .update_with_factor(factor)
-        .map_err(|_| "主翼構造を表現できない")?;
-    if !skin_updated && !members_updated {
-        return if previously_failed {
-            Err("主翼のGPU投影を表現できない")
-        } else {
-            Ok(false)
-        };
+pub(crate) fn install(app: &mut App) {
+    let mode = app
+        .world()
+        .get_resource::<screen_render::timing::TimingMode>()
+        .copied()
+        .unwrap_or_default();
+    if !app.is_plugin_added::<MipGenerationPlugin>() {
+        app.add_plugins(MipGenerationPlugin);
     }
-    for (surface, positions) in surfaces.iter_mut().zip(frame.surface_positions()) {
-        prepare_mesh_positions(&mut surface.complete_mesh, positions)?;
-    }
-    for (source, target) in structure.meshes().iter().zip(members) {
-        if source.attachment() == StructuralAttachment::MainWing {
-            prepare_mesh_positions(&mut target.candidate, source.positions())?;
-        }
-    }
-    Ok(true)
-}
-
-fn prepare_mesh_positions(mesh: &mut Mesh, positions: &[[f32; 3]]) -> Result<(), &'static str> {
-    let bevy::mesh::VertexAttributeValues::Float32x3(values) = mesh
-        .attribute_mut(Mesh::ATTRIBUTE_POSITION)
-        .expect("mesh positionsがない")
-    else {
-        panic!("mesh positionsはFloat32x3を要する");
-    };
-    values.copy_from_slice(positions);
-    mesh.compute_area_weighted_normals();
-    let normals = mesh
-        .attribute(Mesh::ATTRIBUTE_NORMAL)
-        .unwrap()
-        .as_float3()
-        .unwrap();
-    if normals.iter().any(|normal| {
-        let normal = Vec3::from_array(*normal);
-        !normal.is_finite() || normal.length_squared() < 0.5
-    }) {
-        return Err("主翼法線を表現できない");
-    }
-    Ok(())
-}
-
-fn publish_mesh_positions(mesh: &mut Mesh, candidate: &Mesh, positions: &[[f32; 3]]) {
-    let bevy::mesh::VertexAttributeValues::Float32x3(values) = mesh
-        .attribute_mut(Mesh::ATTRIBUTE_POSITION)
-        .expect("mesh positionsがない")
-    else {
-        panic!("mesh positionsはFloat32x3を要する");
-    };
-    values.copy_from_slice(positions);
-    mesh.insert_attribute(
-        Mesh::ATTRIBUTE_NORMAL,
-        candidate.attribute(Mesh::ATTRIBUTE_NORMAL).unwrap().clone(),
-    );
-}
-
-fn structural_mesh(source: &birdman_game_scene::airframe_structure::StructuralMesh) -> Mesh {
-    let mut mesh = Mesh::new(
-        PrimitiveTopology::TriangleList,
-        RenderAssetUsages::default(),
-    )
-    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, source.positions().to_vec())
-    .with_inserted_indices(Indices::U32(source.indices().to_vec()));
-    mesh.compute_area_weighted_normals();
-    mesh
-}
-
-fn structural_name(kind: StructuralPartKind) -> &'static str {
-    match kind {
-        StructuralPartKind::Spar => "main-wing-spar",
-        StructuralPartKind::Rib => "airframe-rib",
-        StructuralPartKind::Stringer => "balsa-stringer",
-        StructuralPartKind::Foam => "airframe-foam",
-        StructuralPartKind::MainBeam => "single-carbon-main-beam",
-        StructuralPartKind::CockpitFrame => "cockpit-frame",
-        StructuralPartKind::CanopyRim => "canopy-rim",
-    }
-}
-
-fn color_srgb(value: u32) -> Color {
-    Color::srgb_u8((value >> 16) as u8, (value >> 8) as u8, value as u8)
-}
-
-pub(crate) fn setup_world(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut water: ResMut<Assets<WaterMaterial>>,
-    mut images: ResMut<Assets<Image>>,
-    mut terrain_materials: ResMut<Assets<TerrainMaterial>>,
-) {
-    let platform = launch_venue().expect("登録launch venueが不正").platform;
-    environment::setup(
-        &mut commands,
-        &mut meshes,
-        &mut materials,
-        &mut water,
-        &mut images,
-        &mut terrain_materials,
-        platform,
-    );
-    let tail_materials = TailMaterial::ALL.map(|kind| {
-        let color = kind.color();
-        let opacity = kind.opacity();
-        materials.add(StandardMaterial {
-            base_color: Color::srgba(
-                ((color >> 16) & 255) as f32 / 255.0,
-                ((color >> 8) & 255) as f32 / 255.0,
-                (color & 255) as f32 / 255.0,
-                opacity,
-            ),
-            alpha_mode: if opacity < 1.0 {
-                AlphaMode::Blend
-            } else {
-                AlphaMode::Opaque
-            },
-            double_sided: true,
-            cull_mode: None,
-            ..default()
-        })
-    });
-    let wing_cover = wing_cover_images().map(|image| {
-        materials.add(StandardMaterial {
-            base_color: Color::WHITE,
-            base_color_texture: Some(images.add(image)),
-            reflectance: 0.0,
-            double_sided: true,
-            cull_mode: None,
-            ..default()
-        })
-    });
-    let wing_underside = materials.add(StandardMaterial {
-        base_color: Color::srgb_u8(242, 243, 237),
-        double_sided: true,
-        cull_mode: None,
-        ..default()
-    });
-    let wing_film = tail_materials[TailMaterial::Film as usize].clone();
-    let wing_geometry = WingGeometry::new();
-    let wing_frame = wing_geometry.frame();
-    let cockpit = CockpitGeometry::new();
-    let cockpit_materials = CockpitMaterial::ALL.map(|kind| {
-        let color = kind.color();
-        let opacity = kind.opacity();
-        materials.add(StandardMaterial {
-            base_color: Color::srgba(
-                ((color >> 16) & 255) as f32 / 255.0,
-                ((color >> 8) & 255) as f32 / 255.0,
-                (color & 255) as f32 / 255.0,
-                opacity,
-            ),
-            alpha_mode: if opacity < 1.0 {
-                AlphaMode::Blend
-            } else {
-                AlphaMode::Opaque
-            },
-            double_sided: true,
-            cull_mode: None,
-            ..default()
-        })
-    });
-    let mut wing_surfaces = Vec::new();
-    let structure =
-        AirframeStructure::new(birdman_game_app::registered_aircraft().expect("登録機体が不正"))
-            .expect("登録構造geometryが不正");
-    let mut members: Vec<_> = structure
-        .meshes()
-        .iter()
-        .map(|source| {
-            let candidate = structural_mesh(source);
-            StructuralProjection {
-                entity: Entity::PLACEHOLDER,
-                handle: meshes.add(candidate.clone()),
-                candidate,
-            }
-        })
-        .collect();
-    let structural_materials: Vec<_> = structure
-        .meshes()
-        .iter()
-        .map(|source| {
-            materials.add(StandardMaterial {
-                base_color: color_srgb(source.color()),
-                double_sided: true,
-                cull_mode: None,
-                ..default()
-            })
-        })
-        .collect();
-    let tails = TailGeometry::registered().expect("登録尾翼表示geometryが不正");
-    commands
-        .spawn((
-            WorldProjection::Aircraft,
-            exhibition_aircraft_transform(platform),
-            Visibility::Visible,
+    app.init_resource::<NativeGpu>()
+        .add_plugins((
+            MaterialPlugin::<WaterMaterial>::default(),
+            MaterialPlugin::<TerrainMaterial>::default(),
+            screen_render::timing::ScreenTimingPlugin { mode },
         ))
-        .with_children(|parent| {
-            for (index, source) in structure.meshes().iter().enumerate() {
-                if !matches!(
-                    source.attachment(),
-                    StructuralAttachment::Rigid | StructuralAttachment::MainWing
-                ) {
+        .add_systems(PreStartup, setup_world)
+        .add_systems(
+            PostUpdate,
+            bind_shadow
+                .after(SimulationLightSystems::UpdateDirectionalLightCascades)
+                .before(SimulationLightSystems::UpdateLightFrusta),
+        );
+    if let Some(render) = app.get_sub_app_mut(bevy::render::RenderApp) {
+        render
+            .init_resource::<super::water::detail_mips::LakeDetailMips>()
+            .add_systems(
+                bevy::render::ExtractSchedule,
+                super::water::detail_mips::extract_detail_mips,
+            )
+            .add_systems(
+                bevy::core_pipeline::schedule::Core3d,
+                super::water::detail_mips::generate_detail_mips
+                    .before(bevy::core_pipeline::schedule::Core3dSystems::MainPass),
+            );
+    }
+    readiness::install(app);
+}
+
+pub(crate) fn setup_world(world: &mut World) {
+    screen_render::setup(world);
+    let camera = world
+        .spawn((
+            WorldProjection::FlightCamera,
+            Camera3d::default(),
+            Camera {
+                is_active: false,
+                ..default()
+            },
+            Tonemapping::None,
+            scene_exposure(),
+            Msaa::Off,
+            Transform::IDENTITY,
+        ))
+        .id();
+    world.resource_mut::<NativeGpu>().main_camera = Some(camera);
+    world.resource_mut::<NativeGpu>().renderer_id = 1;
+    if let Err(cause) = super::mip_filter::configure(world) {
+        world.resource_mut::<NativeGpu>().initial_failure = Some(cause);
+    }
+}
+
+pub(crate) fn platform(world: &mut World) -> ApplicationRendererObservation {
+    let screen_extent = world
+        .query_filtered::<&Window, With<PrimaryWindow>>()
+        .single(world)
+        .map_or([0, 0], |window| {
+            window.resolution.physical_size().to_array()
+        });
+    let extent = world
+        .resource::<NativeGpu>()
+        .main_camera
+        .and_then(|camera| world.get::<RenderTarget>(camera))
+        .and_then(|target| match target {
+            RenderTarget::Image(image) => world
+                .get_resource::<Assets<Image>>()?
+                .get(image.handle.id()),
+            _ => None,
+        })
+        .map_or(screen_extent, |image| [image.width(), image.height()]);
+    let gpu_timing = if world
+        .get_resource::<RenderDevice>()
+        .is_some_and(|device| screen_render::timing::supported(device.features()))
+    {
+        ApplicationGpuTimingCapability::Available
+    } else {
+        ApplicationGpuTimingCapability::Unsupported {
+            cause: "GPU timestamp queries inside command encoders are unavailable".into(),
+        }
+    };
+    ApplicationRendererObservation {
+        resource_id: world.resource::<NativeGpu>().renderer_id,
+        initial_quality: world.resource::<NativeGpu>().quality,
+        extent_px: extent,
+        screen_extent_px: screen_extent,
+        xr_extent_px: None,
+        gpu_timing,
+    }
+}
+
+pub(crate) fn execute(
+    world: &mut World,
+    runtime: &ApplicationRuntime,
+    request: &ApplicationRequest,
+) -> Result<Option<Vec<ApplicationInput>>, String> {
+    let Some(mut gpu) = world.remove_resource::<NativeGpu>() else {
+        let cause = "Native GPU handle owner is unavailable".to_string();
+        let terminal = match request {
+            ApplicationRequest::CreateRenderer { request_id } => {
+                ApplicationInput::RendererCreated {
+                    request_id: *request_id,
+                    result: birdman_game_runtime::ApplicationRendererCreation::Failed { cause },
+                }
+            }
+            ApplicationRequest::PrepareResources { request_id, .. } => {
+                ApplicationInput::Resources {
+                    request_id: *request_id,
+                    observation: ApplicationResourceObservation::Failed { cause },
+                }
+            }
+            ApplicationRequest::CommitResources {
+                request_id,
+                resource_id,
+            } => ApplicationInput::Resources {
+                request_id: *request_id,
+                observation: ApplicationResourceObservation::BindingLost {
+                    resource_id: *resource_id,
+                    cause,
+                },
+            },
+            ApplicationRequest::CancelResources { request_id } => ApplicationInput::Resources {
+                request_id: *request_id,
+                observation: ApplicationResourceObservation::Cancelled,
+            },
+            ApplicationRequest::ReleaseResources { resource_id } => {
+                ApplicationInput::ResourcesReleased {
+                    resource_id: *resource_id,
+                    failure: Some(cause),
+                }
+            }
+            ApplicationRequest::ReleaseRenderer {
+                renderer_resource_id,
+            } => ApplicationInput::RendererReleased {
+                renderer_resource_id: *renderer_resource_id,
+                failure: Some(cause),
+            },
+            _ => return Ok(None),
+        };
+        return Ok(Some(vec![terminal]));
+    };
+    let result = match request {
+        ApplicationRequest::CreateRenderer { request_id } => {
+            if let Some(camera) = gpu.main_camera.take() {
+                world.despawn(camera);
+            }
+            let camera = world
+                .spawn((
+                    WorldProjection::FlightCamera,
+                    Camera3d::default(),
+                    Camera {
+                        is_active: false,
+                        ..default()
+                    },
+                    Tonemapping::None,
+                    scene_exposure(),
+                    Msaa::Off,
+                    Transform::IDENTITY,
+                ))
+                .id();
+            gpu.main_camera = Some(camera);
+            gpu.renderer_id = *request_id;
+            world.insert_resource(gpu);
+            let observation = platform(world);
+            gpu = world.remove_resource::<NativeGpu>().unwrap();
+            vec![ApplicationInput::RendererCreated {
+                request_id: *request_id,
+                result: birdman_game_runtime::ApplicationRendererCreation::Ready {
+                    renderer: observation,
+                },
+            }]
+        }
+        ApplicationRequest::PrepareResources {
+            request_id,
+            graphics,
+            assets,
+            ..
+        } => {
+            let result = if graphics.renderer_resource_id != gpu.renderer_id {
+                Err("Requested renderer handle is unavailable".into())
+            } else {
+                gpu.initial_failure
+                    .clone()
+                    .map_or_else(|| gpu.prepare(world, runtime, *graphics, assets), Err)
+            };
+            match result {
+                Ok(candidate) => {
+                    gpu.candidates.insert(*request_id, candidate);
+                    Vec::new()
+                }
+                Err(cause) => vec![ApplicationInput::Resources {
+                    request_id: *request_id,
+                    observation: ApplicationResourceObservation::Failed { cause },
+                }],
+            }
+        }
+        ApplicationRequest::CommitResources {
+            request_id,
+            resource_id,
+        } => {
+            let result = gpu.commit(world, *request_id, *resource_id);
+            match result {
+                Ok(()) => Vec::new(),
+                Err(failure) => vec![ApplicationInput::Resources {
+                    request_id: *request_id,
+                    observation: match failure {
+                        BindFailure::Unchanged(cause) => {
+                            ApplicationResourceObservation::Failed { cause }
+                        }
+                        BindFailure::Lost(cause) => ApplicationResourceObservation::BindingLost {
+                            resource_id: *resource_id,
+                            cause,
+                        },
+                    },
+                }],
+            }
+        }
+        ApplicationRequest::CancelResources { request_id } => {
+            if let Some(mut candidate) = gpu.candidates.remove(request_id) {
+                let after = gpu.next_revision();
+                let failure = gpu.release(world, &candidate);
+                candidate.stage = ResourceStage::Cancelling { after };
+                gpu.candidates.insert(*request_id, candidate);
+                if let Err(cause) = failure {
+                    world
+                        .resource_mut::<readiness::GpuReadback>()
+                        .failures
+                        .insert(*request_id, cause);
+                }
+                Vec::new()
+            } else {
+                vec![ApplicationInput::Resources {
+                    request_id: *request_id,
+                    observation: ApplicationResourceObservation::Cancelled,
+                }]
+            }
+        }
+        ApplicationRequest::ReleaseResources { resource_id } => {
+            let failure = gpu.candidates.remove(resource_id).map_or_else(
+                || Some("Prepared GPU handle is unavailable".into()),
+                |candidate| gpu.release(world, &candidate).err(),
+            );
+            if gpu.active == Some(*resource_id) {
+                gpu.active = None;
+            }
+            vec![ApplicationInput::ResourcesReleased {
+                resource_id: *resource_id,
+                failure,
+            }]
+        }
+        ApplicationRequest::ReleaseRenderer {
+            renderer_resource_id,
+        } => {
+            if *renderer_resource_id != gpu.renderer_id {
+                world.insert_resource(gpu);
+                return Ok(Some(vec![ApplicationInput::RendererReleased {
+                    renderer_resource_id: *renderer_resource_id,
+                    failure: Some("Requested renderer handle is unavailable".into()),
+                }]));
+            }
+            let mut failures = Vec::new();
+            for candidate in std::mem::take(&mut gpu.candidates).into_values() {
+                if let Err(cause) = gpu.release(world, &candidate) {
+                    failures.push(cause);
+                }
+            }
+            for handles in std::mem::take(&mut gpu.meshes).into_values() {
+                for handle in handles {
+                    world.resource_mut::<Assets<Mesh>>().remove(handle.id());
+                }
+            }
+            for handle in std::mem::take(&mut gpu.water_meshes).into_values() {
+                world.resource_mut::<Assets<Mesh>>().remove(handle.id());
+            }
+            for handle in std::mem::take(&mut gpu.textures).into_values() {
+                world.resource_mut::<Assets<Image>>().remove(handle.id());
+            }
+            if let Some(camera) = gpu.main_camera.take() {
+                world.despawn(camera);
+            }
+            gpu.active = None;
+            vec![ApplicationInput::RendererReleased {
+                renderer_resource_id: *renderer_resource_id,
+                failure: (!failures.is_empty()).then(|| failures.join("; ")),
+            }]
+        }
+        _ => {
+            world.insert_resource(gpu);
+            return Ok(None);
+        }
+    };
+    world.insert_resource(gpu);
+    Ok(Some(result))
+}
+
+fn attachment_index(attachment: ApplicationMeshAttachment) -> usize {
+    match attachment {
+        ApplicationMeshAttachment::World => 0,
+        ApplicationMeshAttachment::Aircraft => 1,
+        ApplicationMeshAttachment::HorizontalTail => 2,
+        ApplicationMeshAttachment::VerticalTail => 3,
+    }
+}
+
+impl NativeGpu {
+    fn prepare(
+        &mut self,
+        world: &mut World,
+        runtime: &ApplicationRuntime,
+        target: ApplicationGraphicsTarget,
+        assets: &ApplicationEnvironmentAssets,
+    ) -> Result<Candidate, String> {
+        if let Some(manifest) = &assets.scene {
+            self.manifest = Some(manifest.clone());
+        }
+        let manifest = self
+            .manifest
+            .clone()
+            .ok_or("Static scene upload is unavailable")?;
+        let layer = readiness::free_layer(world)?;
+        if !world.contains_resource::<Assets<Mesh>>()
+            || !world.contains_resource::<Assets<Image>>()
+            || !world.contains_resource::<Assets<WaterMaterial>>()
+            || !world.contains_resource::<Assets<TerrainMaterial>>()
+        {
+            return Err("Native GPU asset stores are unavailable".into());
+        }
+        let new_meshes = manifest
+            .meshes
+            .iter()
+            .filter(|asset| !self.meshes.contains_key(&asset.mesh_id))
+            .map(|asset| {
+                asset
+                    .materials
+                    .iter()
+                    .map(|source| environment::mesh(runtime, asset, source.start, source.count))
+                    .collect::<Result<Vec<_>, _>>()
+                    .map(|meshes| (asset.mesh_id, meshes))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let new_water = assets
+            .water
+            .geometry
+            .near
+            .iter()
+            .chain(std::iter::once(&assets.water.geometry.far))
+            .filter(|chunk| !self.water_meshes.contains_key(&chunk.index.buffer_id))
+            .map(|chunk| {
+                environment::water_mesh(runtime, chunk).map(|mesh| (chunk.index.buffer_id, mesh))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let new_textures = manifest
+            .wing_textures
+            .iter()
+            .filter(|texture| !self.textures.contains_key(&texture.buffer.buffer_id))
+            .map(|texture| {
+                environment::wing_image(runtime, texture)
+                    .map(|image| (texture.buffer.buffer_id, image))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let image_descriptors = [
+            assets.water.detail[0].image.clone(),
+            assets.water.detail[1].image.clone(),
+            assets.sky.clone(),
+        ];
+        let mut new_images = BTreeMap::new();
+        for image in &image_descriptors {
+            if !self.images.contains_key(&image.buffer_id)
+                && !new_images.contains_key(&image.buffer_id)
+            {
+                new_images.insert(image.buffer_id, environment::image(runtime, image.clone())?);
+            }
+        }
+        let output_image = screen_render::image(target.extent_px)?;
+        let reflection_image = super::water_reflection::image(target.reflection_extent_px)?;
+        for (id, meshes) in new_meshes {
+            self.meshes.insert(
+                id,
+                meshes
+                    .into_iter()
+                    .map(|mesh| world.resource_mut::<Assets<Mesh>>().add(mesh))
+                    .collect(),
+            );
+        }
+        for (id, mesh) in new_water {
+            self.water_meshes
+                .insert(id, world.resource_mut::<Assets<Mesh>>().add(mesh));
+        }
+        for (id, image) in new_textures {
+            self.textures
+                .insert(id, world.resource_mut::<Assets<Image>>().add(image));
+        }
+        for (id, image) in new_images {
+            self.images
+                .insert(id, (world.resource_mut::<Assets<Image>>().add(image), 0));
+        }
+        let root = world
+            .spawn((
+                Transform::IDENTITY,
+                Visibility::Visible,
+                readiness::CandidateLayer(layer),
+            ))
+            .id();
+        let attachments =
+            std::array::from_fn(|_| world.spawn((Transform::IDENTITY, Visibility::Visible)).id());
+        world.entity_mut(root).add_children(&attachments[..2]);
+        world
+            .entity_mut(attachments[1])
+            .add_children(&attachments[2..]);
+        world
+            .entity_mut(attachments[1])
+            .insert(WorldProjection::Aircraft);
+        world
+            .entity_mut(attachments[2])
+            .insert(WorldProjection::HorizontalTail);
+        world
+            .entity_mut(attachments[3])
+            .insert(WorldProjection::VerticalTail);
+        let output = world.resource_mut::<Assets<Image>>().add(output_image);
+        let reflection = world.resource_mut::<Assets<Image>>().add(reflection_image);
+        let mut acquired = Vec::new();
+        let images: [Handle<Image>; 3] = image_descriptors.map(|image| {
+            let (handle, count) = self.images.get_mut(&image.buffer_id).unwrap();
+            *count += 1;
+            acquired.push(image.buffer_id);
+            handle.clone()
+        });
+        let water =
+            WaterMaterial::prepared(&assets.water, assets.lighting, &images, reflection.clone());
+        let water = [water.clone(), water.far_surface(), water.sky_surface()]
+            .map(|material| world.resource_mut::<Assets<WaterMaterial>>().add(material));
+        let mut materials = Vec::new();
+        let mut meshes = Vec::new();
+        for asset in &manifest.meshes {
+            for (source, mesh) in asset.materials.iter().zip(&self.meshes[&asset.mesh_id]) {
+                let texture = source
+                    .texture_buffer_id
+                    .and_then(|id| self.textures.get(&id).cloned());
+                let material =
+                    world
+                        .resource_mut::<Assets<TerrainMaterial>>()
+                        .add(TerrainMaterial {
+                            base: StandardMaterial {
+                                base_color: color_srgb(source.color_srgb)
+                                    .with_alpha(source.opacity),
+                                base_color_texture: texture,
+                                alpha_mode: if source.transparent {
+                                    AlphaMode::Blend
+                                } else {
+                                    AlphaMode::Opaque
+                                },
+                                double_sided: source.double_sided,
+                                cull_mode: if source.double_sided {
+                                    None
+                                } else {
+                                    Some(bevy::render::render_resource::Face::Back)
+                                },
+                                unlit: !source.lit,
+                                ..default()
+                            },
+                            extension: TerrainHazeExtension::prepared(
+                                assets.lighting.haze_color_srgb,
+                                assets.lighting.haze_range_meters,
+                            ),
+                        });
+                let layers = RenderLayers::layer(layer);
+                let layers = if asset.attachment == ApplicationMeshAttachment::World {
+                    layers
+                } else {
+                    layers.with(layer + 1)
+                };
+                let entity = world
+                    .spawn((
+                        Name::new(asset.name.clone()),
+                        Mesh3d(mesh.clone()),
+                        MeshMaterial3d(material.clone()),
+                        pose_transform(asset.local_pose),
+                        Visibility::Visible,
+                        layers,
+                    ))
+                    .id();
+                if !source.cast_shadow {
+                    world.entity_mut(entity).insert(NotShadowCaster);
+                }
+                if !source.receive_shadow {
+                    world
+                        .entity_mut(entity)
+                        .insert(bevy::light::NotShadowReceiver);
+                }
+                if !asset.frustum_culled {
+                    world.entity_mut(entity).insert(NoFrustumCulling);
+                }
+                world
+                    .entity_mut(attachments[attachment_index(asset.attachment)])
+                    .add_child(entity);
+                materials.push(material);
+                meshes.push(mesh.clone());
+            }
+        }
+        let water_root = world.spawn((Transform::IDENTITY, Visibility::Visible)).id();
+        world.entity_mut(root).add_child(water_root);
+        for (index, chunk) in assets
+            .water
+            .geometry
+            .near
+            .iter()
+            .chain(std::iter::once(&assets.water.geometry.far))
+            .enumerate()
+        {
+            let mesh = self.water_meshes[&chunk.index.buffer_id].clone();
+            let far = index == assets.water.geometry.near.len();
+            let entity = world
+                .spawn((
+                    WorldProjection::LakeSurface,
+                    Mesh3d(mesh.clone()),
+                    MeshMaterial3d(water[usize::from(far)].clone()),
+                    Transform::IDENTITY,
+                    Visibility::Visible,
+                    RenderLayers::layer(layer),
+                    NotShadowCaster,
+                    Aabb::from_min_max(
+                        Vec3::from_array(chunk.bounds.minimum.map(|value| value as f32)),
+                        Vec3::from_array(chunk.bounds.maximum.map(|value| value as f32)),
+                    ),
+                ))
+                .id();
+            if !chunk.frustum_culled {
+                world.entity_mut(entity).insert(NoFrustumCulling);
+            }
+            if index == 0 {
+                world.entity_mut(entity).insert(NearWaterSurface);
+            }
+            world.entity_mut(water_root).add_child(entity);
+            meshes.push(mesh);
+        }
+        let sky = world
+            .resource_mut::<Assets<Mesh>>()
+            .add(readiness::sky_mesh());
+        let sky_entity = world
+            .spawn((
+                WorldProjection::SkyDome,
+                Mesh3d(sky.clone()),
+                MeshMaterial3d(water[2].clone()),
+                Transform::IDENTITY,
+                Visibility::Visible,
+                RenderLayers::layer(layer),
+                NoFrustumCulling,
+                NotShadowCaster,
+                bevy::light::NotShadowReceiver,
+            ))
+            .id();
+        world.entity_mut(root).add_child(sky_entity);
+        meshes.push(sky.clone());
+        let illuminance = assets.lighting.sunlight_irradiance as f32 / SCENE_EXPOSURE_SCALE;
+        let sun = world
+            .spawn((
+                DirectionalLight {
+                    color: color_srgb(assets.lighting.sunlight_color_srgb),
+                    illuminance,
+                    shadow_maps_enabled: assets.lighting.sunlight_direction[3] > 0.0,
+                    ..default()
+                },
+                CascadeShadowConfig {
+                    bounds: Vec::new(),
+                    minimum_distance: 0.0,
+                    overlap_proportion: 0.0,
+                },
+                RenderLayers::layer(layer).with(layer + 1),
+                Transform::IDENTITY,
+            ))
+            .id();
+        world.entity_mut(root).add_child(sun);
+        let preview = world
+            .spawn((
+                Camera3d::default(),
+                Camera {
+                    order: -3,
+                    ..default()
+                },
+                RenderTarget::Image(output.clone().into()),
+                RenderLayers::layer(layer),
+                Tonemapping::None,
+                scene_exposure(),
+                Msaa::Off,
+                Transform::IDENTITY,
+                AmbientLight {
+                    color: color_srgb(assets.lighting.ambient_color_srgb),
+                    brightness: assets.lighting.ambient_irradiance as f32
+                        / (std::f32::consts::PI * SCENE_EXPOSURE_SCALE),
+                    affects_lightmapped_meshes: true,
+                },
+            ))
+            .id();
+        let reflection_camera = super::water_reflection::spawn(world, reflection.clone(), layer);
+        if let Some(ambient) = world.get::<AmbientLight>(preview).cloned() {
+            world.entity_mut(reflection_camera).insert(ambient);
+        }
+        Ok(Candidate {
+            stage: ResourceStage::Preparing,
+            target,
+            root,
+            attachments,
+            preview,
+            reflection_camera,
+            water_root,
+            sun,
+            illuminance,
+            initial_shadow: assets.lighting.initial_shadow,
+            output,
+            reflection,
+            materials,
+            water,
+            images: acquired,
+            meshes,
+            sky_mesh: sky,
+        })
+    }
+
+    fn commit(
+        &mut self,
+        world: &mut World,
+        request_id: u32,
+        resource_id: u32,
+    ) -> Result<(), BindFailure> {
+        let after = self.next_revision();
+        let candidate = self
+            .candidates
+            .get_mut(&resource_id)
+            .ok_or_else(|| BindFailure::Lost("Prepared GPU handle is unavailable".into()))?;
+        if candidate.target.renderer_resource_id != self.renderer_id {
+            return Err(BindFailure::Unchanged(
+                "Requested renderer handle is unavailable".into(),
+            ));
+        }
+        if !matches!(candidate.stage, ResourceStage::Prepared) {
+            return Err(BindFailure::Unchanged(
+                "GPU candidate has not completed preparation".into(),
+            ));
+        }
+        let camera = self
+            .main_camera
+            .ok_or_else(|| BindFailure::Lost("Flight camera handle is unavailable".into()))?;
+        if world.get::<Camera>(camera).is_none()
+            || world.get::<RenderLayers>(candidate.preview).is_none()
+            || world.get_resource::<DirectionalLightShadowMap>().is_none()
+        {
+            return Err(BindFailure::Lost(
+                "GPU binding handles are unavailable".into(),
+            ));
+        }
+        screen_render::bind(world, candidate.output.clone()).map_err(BindFailure::Lost)?;
+        let layers = world
+            .get::<RenderLayers>(candidate.preview)
+            .unwrap()
+            .clone();
+        world
+            .entity_mut(camera)
+            .insert((RenderTarget::Image(candidate.output.clone().into()), layers));
+        if let Some(ambient) = world.get::<AmbientLight>(candidate.preview).cloned() {
+            world.entity_mut(camera).insert(ambient);
+        }
+        world.get_mut::<Camera>(camera).unwrap().is_active = true;
+        world
+            .get_mut::<Camera>(candidate.preview)
+            .unwrap()
+            .is_active = false;
+        world.resource_mut::<DirectionalLightShadowMap>().size =
+            candidate.target.shadow_extent_px[0] as usize;
+        candidate.stage = ResourceStage::Committing { request_id, after };
+        self.active = Some(resource_id);
+        Ok(())
+    }
+
+    fn next_revision(&mut self) -> u64 {
+        self.revision = self
+            .revision
+            .checked_add(1)
+            .expect("GPU binding revision exhausted");
+        self.revision
+    }
+
+    fn release(&mut self, world: &mut World, candidate: &Candidate) -> Result<(), String> {
+        let mut failure = Vec::new();
+        for entity in [
+            candidate.root,
+            candidate.preview,
+            candidate.reflection_camera,
+        ] {
+            if !world.despawn(entity) {
+                failure.push(format!("GPU entity {entity:?} is unavailable"));
+            }
+        }
+        for material in &candidate.materials {
+            world
+                .resource_mut::<Assets<TerrainMaterial>>()
+                .remove(material.id());
+        }
+        for material in &candidate.water {
+            world
+                .resource_mut::<Assets<WaterMaterial>>()
+                .remove(material.id());
+        }
+        world
+            .resource_mut::<Assets<Mesh>>()
+            .remove(candidate.sky_mesh.id());
+        for image in [&candidate.output, &candidate.reflection] {
+            world.resource_mut::<Assets<Image>>().remove(image.id());
+        }
+        for id in &candidate.images {
+            if let Some((_, count)) = self.images.get_mut(id) {
+                *count -= 1;
+                if *count > 0 {
                     continue;
                 }
-                let mut child = parent.spawn((
-                    Name::new(structural_name(source.kind())),
-                    Mesh3d(members[index].handle.clone()),
-                    MeshMaterial3d(structural_materials[index].clone()),
-                    Transform::IDENTITY,
-                    NoFrustumCulling,
-                    RenderLayers::layer(0).with(1),
-                ));
-                if source.attachment() == StructuralAttachment::MainWing {
-                    child.insert((MainWingPart, Visibility::Inherited));
-                }
-                members[index].entity = child.id();
             }
-            for surface in &cockpit.surfaces {
-                let mut mesh = Mesh::new(
-                    PrimitiveTopology::TriangleList,
-                    RenderAssetUsages::default(),
-                )
-                .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, surface.positions.clone())
-                .with_inserted_indices(Indices::U32(surface.indices.clone()));
-                mesh.compute_area_weighted_normals();
-                let transparent = surface.material == CockpitMaterial::Canopy;
-                let mut child = parent.spawn((
-                    Name::new(if transparent {
-                        "transparent-canopy"
-                    } else {
-                        "rear-cockpit-fairing"
-                    }),
-                    Mesh3d(meshes.add(mesh)),
-                    MeshMaterial3d(cockpit_materials[surface.material as usize].clone()),
-                    Transform::IDENTITY,
-                    RenderLayers::layer(0).with(1),
-                ));
-                if transparent {
-                    child.insert((NoFrustumCulling, NotShadowCaster));
+            if let Some((handle, _)) = self.images.remove(id) {
+                world.resource_mut::<Assets<Image>>().remove(handle.id());
+            }
+        }
+        if failure.is_empty() {
+            Ok(())
+        } else {
+            Err(failure.join("; "))
+        }
+    }
+}
+
+pub(crate) fn submit(
+    world: &mut World,
+    runtime: &ApplicationRuntime,
+    drawing: &ApplicationDrawingOutput,
+) -> Result<(), String> {
+    let gpu = world
+        .remove_resource::<NativeGpu>()
+        .ok_or("Native GPU handles are unavailable")?;
+    let result = (|| {
+        if let Some(geometry) = &drawing.scene.geometry {
+            for update in &geometry.updates {
+                let Some(handles) = gpu.meshes.get(&update.mesh_id) else {
+                    if gpu.active.is_none() {
+                        continue;
+                    }
+                    return Err("Dynamic mesh upload has no static GPU mesh".into());
+                };
+                for handle in handles {
+                    let mut meshes = world.resource_mut::<Assets<Mesh>>();
+                    let mut mesh = meshes
+                        .get_mut(handle.id())
+                        .ok_or("Dynamic GPU mesh is unavailable")?;
+                    environment::update_mesh(runtime, &mut mesh, update.position, update.normal)?;
                 }
             }
-            for (surface_index, (surface, positions)) in wing_geometry
-                .surfaces()
-                .iter()
-                .zip(wing_frame.surface_positions())
-                .enumerate()
+        }
+        for candidate in gpu.candidates.values() {
+            if matches!(candidate.stage, ResourceStage::Cancelling { .. }) {
+                continue;
+            }
+            world
+                .entity_mut(candidate.water_root)
+                .insert(pose_transform(drawing.scene.water_world_from_surface));
+            world
+                .entity_mut(candidate.attachments[0])
+                .insert(if drawing.scene.venue_visible {
+                    Visibility::Visible
+                } else {
+                    Visibility::Hidden
+                });
+            world.entity_mut(candidate.attachments[1]).insert((
+                pose_transform(drawing.scene.world_from_aircraft),
+                if drawing
+                    .scene
+                    .geometry
+                    .as_ref()
+                    .is_some_and(|geometry| geometry.aircraft_visible)
+                {
+                    Visibility::Visible
+                } else {
+                    Visibility::Hidden
+                },
+            ));
+            if let Some(geometry) = &drawing.scene.geometry {
+                for part in &geometry.part_poses {
+                    world
+                        .entity_mut(candidate.attachments[attachment_index(part.attachment)])
+                        .insert(pose_transform(part.pose));
+                }
+            }
+            let light = if matches!(candidate.stage, ResourceStage::Bound) {
+                drawing.scene.lighting.as_ref()
+            } else {
+                candidate.initial_shadow.as_ref()
+            };
+            if let Some(light) = light {
+                let position = Vec3::from_array(light.sun_world_position.map(|value| value as f32));
+                let target =
+                    Vec3::from_array(light.sun_target_world_position.map(|value| value as f32));
+                world.entity_mut(candidate.sun).insert((
+                    Transform::from_translation(position).looking_at(target, Vec3::Y),
+                    SubmittedShadow {
+                        bounds: light.shadow_bounds,
+                        extent: candidate.target.shadow_extent_px[0],
+                    },
+                ));
+                if let Some(mut sun) = world.get_mut::<DirectionalLight>(candidate.sun) {
+                    let texel = (light.shadow_bounds[1] - light.shadow_bounds[0])
+                        .max(light.shadow_bounds[3] - light.shadow_bounds[2])
+                        / f64::from(candidate.target.shadow_extent_px[0]);
+                    sun.illuminance = candidate.illuminance;
+                    sun.shadow_maps_enabled = light.shadow_enabled;
+                    sun.shadow_normal_bias =
+                        (light.normal_bias / (std::f64::consts::SQRT_2 * texel)) as f32;
+                    sun.shadow_depth_bias = (-light.depth_bias
+                        * (light.shadow_bounds[5] - light.shadow_bounds[4]))
+                        as f32;
+                }
+            } else if let Some(mut sun) = world.get_mut::<DirectionalLight>(candidate.sun) {
+                sun.illuminance = 0.0;
+                sun.shadow_maps_enabled = false;
+            }
+            if let Some(camera) = &drawing.scene.camera
+                && let Some(pose) = camera.world_from_head
             {
-                let side_index = surface_index / 2;
-                let complete_mesh = main_wing_mesh(surface, positions);
-                let mut material_meshes = Vec::new();
-                for range in surface.material_ranges() {
-                    let mut mesh = complete_mesh.clone();
-                    mesh.insert_indices(Indices::U32(
-                        surface.indices()[range.start..range.start + range.count].to_vec(),
-                    ));
-                    let handle = meshes.add(mesh);
-                    material_meshes.push(handle.clone());
-                    let material = match range.material {
-                        WingMaterial::Cover => wing_cover[side_index].clone(),
-                        WingMaterial::Underside => wing_underside.clone(),
-                        WingMaterial::Film => wing_film.clone(),
-                    };
-                    let mut child = parent.spawn((
-                        MainWingPart,
-                        Visibility::Inherited,
-                        Mesh3d(handle),
-                        MeshMaterial3d(material),
-                        Transform::IDENTITY,
-                        NoFrustumCulling,
-                        RenderLayers::layer(0).with(1),
-                    ));
-                    if range.material == WingMaterial::Film {
-                        child.insert(NotShadowCaster);
+                let transform = pose_transform(pose);
+                #[cfg(feature = "verify-harness")]
+                let transform = world
+                    .get_resource::<super::projection::VerificationObserver>()
+                    .map_or(transform, |observer| observer.0);
+                for entity in [Some(candidate.preview), gpu.main_camera]
+                    .into_iter()
+                    .flatten()
+                {
+                    world.entity_mut(entity).insert(transform);
+                    if let Some(matrix) = camera.screen_projection {
+                        world
+                            .entity_mut(entity)
+                            .insert(Projection::custom(SubmittedProjection::new(matrix)));
                     }
                 }
-                wing_surfaces.push(MainWingSurface {
-                    complete_mesh,
-                    material_meshes,
+                let center = drawing.scene.water_clip_center;
+                for (index, handle) in candidate.water.iter().enumerate() {
+                    if let Some(mut material) = world
+                        .resource_mut::<Assets<WaterMaterial>>()
+                        .get_mut(handle.id())
+                    {
+                        material.project_camera(
+                            transform.translation,
+                            drawing.scene.water_time_seconds,
+                        );
+                        material.geometry_patch.x = center[0] as f32;
+                        material.geometry_patch.y = center[1] as f32;
+                        material.reflection_parameters.x =
+                            f32::from(index == 0 && drawing.scene.reflection.is_some());
+                        if let Some(reflection) = &drawing.scene.reflection {
+                            material.reflection_clip_from_world = Mat4::from_cols_array(
+                                &reflection.projection_from_world.map(|value| value as f32),
+                            );
+                        }
+                    }
+                }
+            }
+            if matches!(
+                candidate.stage,
+                ResourceStage::Preparing | ResourceStage::Prepared
+            ) && let Some(camera) = &drawing.scene.camera
+                && let Some(pose) = camera.world_from_head
+                && let Some(matrix) = camera.screen_projection
+            {
+                world.entity_mut(candidate.reflection_camera).insert((
+                    pose_transform(pose),
+                    Projection::custom(SubmittedProjection::new(matrix)),
+                ));
+                if let Some(mut camera) = world.get_mut::<Camera>(candidate.reflection_camera) {
+                    camera.is_active = true;
+                }
+            } else {
+                super::water_reflection::submit(
+                    world,
+                    candidate.reflection_camera,
+                    drawing.scene.reflection.as_ref(),
+                );
+            }
+        }
+        if let Some(camera) = gpu.main_camera
+            && let Some(mut camera) = world.get_mut::<Camera>(camera)
+        {
+            let committing = gpu
+                .active
+                .and_then(|id| gpu.candidates.get(&id))
+                .is_some_and(|candidate| {
+                    matches!(candidate.stage, ResourceStage::Committing { .. })
+                });
+            camera.is_active =
+                gpu.active.is_some() && (drawing.presentation.scene_visible || committing);
+        }
+        screen_render::visible(
+            world,
+            drawing.presentation.scene_visible && gpu.active.is_some(),
+        );
+        Ok(())
+    })();
+    let mut gpu = gpu;
+    gpu.query = drawing.graphics.query;
+    if let Some(resource) = drawing.graphics.resource {
+        gpu.quality = resource.quality;
+    }
+    world.insert_resource(gpu);
+    result
+}
+
+fn bind_shadow(
+    cameras: Query<(Entity, &Camera, &Projection)>,
+    mut lights: Query<(
+        &GlobalTransform,
+        &SubmittedShadow,
+        &mut Cascades,
+        &mut CascadeShadowConfig,
+    )>,
+) {
+    let views: Vec<_> = cameras
+        .iter()
+        .filter(|(_, camera, _)| camera.is_active)
+        .map(|(entity, _, projection)| (entity, projection.far()))
+        .collect();
+    let far = views.iter().map(|(_, far)| *far).fold(0.0, f32::max);
+    for (transform, shadow, mut cascades, mut configuration) in &mut lights {
+        let [left, right, bottom, top, near, far_shadow] = shadow.bounds;
+        let clip = bevy::math::DMat4::orthographic_rh(left, right, bottom, top, far_shadow, near);
+        let world_from_cascade = transform.to_matrix();
+        let cascade = Cascade {
+            world_from_cascade,
+            clip_from_cascade: clip.as_mat4(),
+            clip_from_world: (clip * world_from_cascade.as_dmat4().inverse()).as_mat4(),
+            texel_size: ((right - left).max(top - bottom) / f64::from(shadow.extent)) as f32,
+        };
+        configuration.bounds = vec![far];
+        cascades.cascades = views
+            .iter()
+            .map(|(entity, _)| (*entity, vec![cascade.clone()]))
+            .collect();
+    }
+}
+
+pub(crate) fn poll(world: &mut World) -> Vec<ApplicationInput> {
+    let Some(mut gpu) = world.remove_resource::<NativeGpu>() else {
+        return Vec::new();
+    };
+    let readback = world.resource::<readiness::GpuReadback>().clone();
+    let mut inputs = Vec::new();
+    for id in gpu.candidates.keys().copied().collect::<Vec<_>>() {
+        let candidate = gpu.candidates.get_mut(&id).unwrap();
+        match candidate.stage {
+            ResourceStage::Preparing => match readback.results.get(&id) {
+                Some(observation)
+                    if observation.commit_request.is_none()
+                        && observation.camera == candidate.preview
+                        && observation.output == candidate.output.id() =>
+                {
+                    match &observation.result {
+                        Ok(_) => {
+                            candidate.stage = ResourceStage::Prepared;
+                            inputs.push(ApplicationInput::Resources {
+                                request_id: id,
+                                observation: ApplicationResourceObservation::Prepared {
+                                    resource_id: id,
+                                },
+                            });
+                        }
+                        Err(cause) => {
+                            let mut cause = cause.clone();
+                            let candidate = gpu.candidates.remove(&id).unwrap();
+                            if let Err(cleanup) = gpu.release(world, &candidate) {
+                                cause.push_str(&format!("; cleanup: {cleanup}"));
+                            }
+                            inputs.push(ApplicationInput::Resources {
+                                request_id: id,
+                                observation: ApplicationResourceObservation::Failed { cause },
+                            });
+                        }
+                    }
+                }
+                Some(_) => {}
+                None => {}
+            },
+            ResourceStage::Committing { request_id, after } if readback.revision >= after => {
+                if let Some(observation) = readback.results.get(&id)
+                    && observation.commit_request == Some(request_id)
+                    && Some(observation.camera) == gpu.main_camera
+                    && observation.output == candidate.output.id()
+                {
+                    candidate.stage = ResourceStage::Bound;
+                    inputs.push(ApplicationInput::Resources {
+                        request_id,
+                        observation: match &observation.result {
+                            Ok(extent) => ApplicationResourceObservation::Committed {
+                                resource_id: id,
+                                actual: ApplicationResourceCommit {
+                                    applied: candidate.target.quality,
+                                    extent_px: *extent,
+                                },
+                            },
+                            Err(cause) => ApplicationResourceObservation::BindingLost {
+                                resource_id: id,
+                                cause: cause.clone(),
+                            },
+                        },
+                    });
+                }
+            }
+            ResourceStage::Cancelling { after } if readback.revision >= after => {
+                gpu.candidates.remove(&id);
+                let failure = world
+                    .resource_mut::<readiness::GpuReadback>()
+                    .failures
+                    .remove(&id);
+                inputs.push(ApplicationInput::Resources {
+                    request_id: id,
+                    observation: failure
+                        .map_or(ApplicationResourceObservation::Cancelled, |cause| {
+                            ApplicationResourceObservation::Failed { cause }
+                        }),
                 });
             }
-            for (projection, geometry) in [
-                WorldProjection::HorizontalTail,
-                WorldProjection::VerticalTail,
-            ]
-            .into_iter()
-            .zip(tails)
-            {
-                let attachment = match projection {
-                    WorldProjection::HorizontalTail => StructuralAttachment::HorizontalTail,
-                    WorldProjection::VerticalTail => StructuralAttachment::VerticalTail,
-                    _ => unreachable!(),
-                };
-                parent
-                    .spawn((
-                        projection,
-                        Transform::from_translation(Vec3::from_array(
-                            geometry.origin.map(|value| value as f32),
-                        )),
-                        Visibility::Inherited,
-                    ))
-                    .with_children(|tail| {
-                        for patch in geometry.patches {
-                            let mut mesh = tail.spawn((
-                                Name::new(match patch.material {
-                                    TailMaterial::Cover => "physical-tail-cover",
-                                    TailMaterial::Film => "physical-tail-film",
-                                }),
-                                Mesh3d(meshes.add(rectangular_surface(patch.vertices))),
-                                MeshMaterial3d(tail_materials[patch.material as usize].clone()),
-                                RenderLayers::layer(0).with(1),
-                            ));
-                            if patch.material == TailMaterial::Film {
-                                mesh.insert(NotShadowCaster);
-                            }
-                        }
-                        for (index, source) in structure.meshes().iter().enumerate() {
-                            if source.attachment() != attachment {
-                                continue;
-                            }
-                            members[index].entity = tail
-                                .spawn((
-                                    Name::new(structural_name(source.kind())),
-                                    Mesh3d(members[index].handle.clone()),
-                                    MeshMaterial3d(structural_materials[index].clone()),
-                                    Transform::IDENTITY,
-                                    RenderLayers::layer(0).with(1),
-                                ))
-                                .id();
-                        }
-                    });
-            }
-        });
-    commands.insert_resource(MainWingProjection {
-        geometry: wing_geometry,
-        frame: wing_frame,
-        surfaces: wing_surfaces,
-        structure,
-        members,
-        projection_failed: false,
-    });
-    commands.spawn((
-        WorldProjection::FlightCamera,
-        Camera3d::default(),
-        IsDefaultUiCamera,
-        Tonemapping::None,
-        scene_exposure(),
-        Projection::Perspective(PerspectiveProjection {
-            far: 200_000.0,
-            fov: birdman_game_presentation::SCREEN_VERTICAL_FIELD_OF_VIEW_DEGREES.to_radians()
-                as f32,
-            ..default()
-        }),
-        Transform::from_xyz(15.0, 14.0, 22.0).looking_at(Vec3::new(0.0, 8.0, 0.0), Vec3::Y),
-    ));
-}
-
-pub(crate) fn project_world(
-    mut session: ResMut<NativeSession>,
-    camera: Res<CameraMode>,
-    #[cfg(feature = "verify-harness")] observer: Option<Res<VerificationObserver>>,
-    mut transforms: Query<(&WorldProjection, &mut Transform, Option<&mut Projection>)>,
-    mut water: ResMut<Assets<WaterMaterial>>,
-) {
-    let display_active = matches!(
-        session.game.core_session().snapshot().phase(),
-        birdman_game_core::SessionPhase::FlightRunning
-            | birdman_game_core::SessionPhase::FlightPaused { .. }
-            | birdman_game_core::SessionPhase::Result
-            | birdman_game_core::SessionPhase::Replay
-            | birdman_game_core::SessionPhase::Attract
-    );
-    #[cfg(feature = "verify-harness")]
-    let running = session.game.core_session().snapshot().phase()
-        == birdman_game_core::SessionPhase::FlightRunning;
-    let render_sample = match session.render_pose() {
-        Ok(pose) => pose.map(RenderSample::from_pose),
-        Err(error) => {
-            if session.game.flight_failure().is_none() {
-                session.game.fail_flight_adapter();
-                eprintln!("Native render pose failed: {error}");
-                session.notice = Some("表示を更新できないため飛行を停止した。".into());
-            }
-            None
-        }
-    };
-    let projected = render_sample.map_or_else(
-        || exhibition_aircraft_transform(launch_venue().expect("登録launch venueが不正").platform),
-        |sample| sample.aircraft,
-    );
-    let record_camera = if matches!(
-        session.game.core_session().snapshot().phase(),
-        birdman_game_core::SessionPhase::Replay | birdman_game_core::SessionPhase::Attract
-    ) {
-        session
-            .game
-            .core_session()
-            .playback_record()
-            .zip(session.game.core_session().playback_clock())
-            .map(|(record, clock)| {
-                birdman_game_presentation::replay_camera::replay_camera_view(
-                    record,
-                    session.game.display_control_identity(),
-                    clock.time_seconds(),
-                    session.ui.replay_camera,
-                    birdman_game_presentation::game_ui::GameUiPresentationMode::Screen,
-                    session.game.core_session().snapshot().phase()
-                        == birdman_game_core::SessionPhase::Attract,
-                )
-            })
-    } else {
-        None
-    };
-    let record_camera = match record_camera.transpose() {
-        Ok(view) => view,
-        Err(cause) => {
-            session.notice = Some(format!("記録cameraを表示できない: {cause:?}"));
-            None
-        }
-    };
-    let fov = record_camera
-        .as_ref()
-        .and_then(|view| view.cinematic())
-        .map_or(
-            birdman_game_presentation::SCREEN_VERTICAL_FIELD_OF_VIEW_DEGREES,
-            |view| view.vertical_field_of_view_degrees(),
-        )
-        .to_radians() as f32;
-    let projected_camera = display_active
-        .then_some(render_sample)
-        .flatten()
-        .map_or_else(
-            || {
-                Ok(Transform::from_xyz(15.0, 14.0, 22.0)
-                    .looking_at(Vec3::new(0.0, 8.0, 0.0), Vec3::Y))
-            },
-            |sample| {
-                if let Some(ref view) = record_camera {
-                    return replay_camera_transform(view, camera.look);
-                }
-                camera_transform(&sample.pose, camera.chase, camera.look)
-            },
-        );
-    let projected_camera = match projected_camera {
-        Ok(pose) => pose,
-        Err(cause) => {
-            session.game.fail_flight_adapter();
-            session.notice = Some(format!("視点の更新に失敗した: {cause}"));
-            return;
-        }
-    };
-    #[cfg(feature = "verify-harness")]
-    let projected_camera = observer
-        .as_ref()
-        .filter(|_| running)
-        .map_or(projected_camera, |observer| observer.0);
-    for (projection, mut transform, lens) in &mut transforms {
-        match projection {
-            WorldProjection::Aircraft => *transform = projected,
-            WorldProjection::FlightCamera => {
-                *transform = projected_camera;
-                if let Some(mut lens) = lens
-                    && let Projection::Perspective(perspective) = &mut *lens
-                    && perspective.fov != fov
-                {
-                    perspective.fov = fov;
-                }
-            }
-            WorldProjection::HorizontalTail => {
-                transform.rotation = Quat::from_rotation_x(
-                    render_sample.map_or(0.0, |sample| sample.elevator_rad as f32),
-                )
-            }
-            WorldProjection::VerticalTail => {
-                transform.rotation = Quat::from_rotation_y(
-                    -render_sample.map_or(0.0, |sample| sample.rudder_rad as f32),
-                )
-            }
-            WorldProjection::SkyDome => transform.translation = projected_camera.translation,
-            WorldProjection::LakeSurface => {
-                let center = patch_center(projected_camera.translation);
-                transform.translation = Vec3::new(center.x, 0.0, center.y);
-            }
+            _ => {}
         }
     }
-    let time = render_sample.map_or(0.0, |sample| sample.simulation_time_seconds as f32);
-    for (_, material) in water.iter_mut() {
-        material.project_camera(projected_camera.translation, time);
-    }
-}
-
-fn exhibition_aircraft_transform(platform: LaunchPlatform) -> Transform {
-    Transform::from_xyz(0.0, platform.front_lip_above_water_meters as f32, 0.0)
-        .with_rotation(Quat::from_rotation_y(-platform.heading_rad() as f32))
+    world.insert_resource(gpu);
+    inputs.extend(screen_render::timing::poll(world));
+    inputs
 }
 
 #[cfg(test)]
-#[path = "world/tests/mod.rs"]
-mod tests;
+mod tests {
+    use super::*;
+
+    #[test]
+    fn actual_binding_rejects_preview_ack_and_waits_for_retirement_extract() {
+        let mut world = World::new();
+        world.init_resource::<Assets<Image>>();
+        world.init_resource::<Assets<Mesh>>();
+        world.init_resource::<Assets<WaterMaterial>>();
+        world.init_resource::<Assets<TerrainMaterial>>();
+        world.init_resource::<readiness::GpuReadback>();
+        world.init_resource::<DirectionalLightShadowMap>();
+        world.spawn((
+            Window {
+                resolution: bevy::window::WindowResolution::new(1280, 720),
+                ..default()
+            },
+            PrimaryWindow,
+        ));
+        screen_render::setup(&mut world);
+        let main = world.spawn((Camera3d::default(), Camera::default())).id();
+        let preview = world
+            .spawn((
+                Camera3d::default(),
+                Camera::default(),
+                RenderLayers::layer(2),
+            ))
+            .id();
+        let root = world.spawn_empty().id();
+        let attachments = std::array::from_fn(|_| world.spawn_empty().id());
+        world.entity_mut(root).add_children(&attachments);
+        let reflection_camera = world.spawn_empty().id();
+        let output = world
+            .resource_mut::<Assets<Image>>()
+            .add(screen_render::image([640, 360]).unwrap());
+        let reflection = world
+            .resource_mut::<Assets<Image>>()
+            .add(super::super::water_reflection::image([320, 180]).unwrap());
+        let sky = world
+            .resource_mut::<Assets<Mesh>>()
+            .add(readiness::sky_mesh());
+        let mut gpu = NativeGpu {
+            main_camera: Some(main),
+            renderer_id: 7,
+            ..default()
+        };
+        let mut quality = gpu.quality;
+        quality.scale = birdman_game_presentation::screen_render_scale::ScreenRenderScale::Half;
+        gpu.candidates.insert(
+            3,
+            Candidate {
+                stage: ResourceStage::Prepared,
+                target: ApplicationGraphicsTarget {
+                    renderer_resource_id: 7,
+                    quality,
+                    extent_px: [640, 360],
+                    shadow_extent_px: [2048, 2048],
+                    reflection_extent_px: [320, 180],
+                },
+                root,
+                attachments,
+                preview,
+                reflection_camera,
+                water_root: root,
+                sun: root,
+                illuminance: 0.0,
+                initial_shadow: None,
+                output: output.clone(),
+                reflection,
+                materials: Vec::new(),
+                water: std::array::from_fn(|_| Handle::default()),
+                images: Vec::new(),
+                meshes: Vec::new(),
+                sky_mesh: sky,
+            },
+        );
+        gpu.commit(&mut world, 5, 3)
+            .unwrap_or_else(|_| panic!("Valid GPU binding"));
+        let revision = gpu.revision;
+        world.insert_resource(gpu);
+        for _ in 0..2 {
+            let actual = platform(&mut world);
+            assert_eq!(actual.extent_px, [640, 360]);
+            assert_eq!(actual.screen_extent_px, [1280, 720]);
+        }
+        let preview_result = readiness::BindingObservation {
+            commit_request: None,
+            camera: preview,
+            output: output.id(),
+            result: Ok([640, 360]),
+        };
+        world.resource_mut::<readiness::GpuReadback>().revision = revision;
+        world
+            .resource_mut::<readiness::GpuReadback>()
+            .results
+            .insert(3, preview_result);
+        assert!(poll(&mut world).is_empty());
+        world
+            .resource_mut::<readiness::GpuReadback>()
+            .results
+            .insert(
+                3,
+                readiness::BindingObservation {
+                    commit_request: Some(5),
+                    camera: main,
+                    output: output.id(),
+                    result: Ok([640, 360]),
+                },
+            );
+        assert!(
+            matches!(poll(&mut world).as_slice(), [ApplicationInput::Resources { request_id: 5,
+            observation: ApplicationResourceObservation::Committed { resource_id: 3, actual } }] if actual.extent_px == [640, 360])
+        );
+        assert!(poll(&mut world).is_empty());
+        let runtime = ApplicationRuntime::new(
+            birdman_game_app::application::ApplicationSession::default(),
+            birdman_game_runtime::ApplicationPlatformObservation {
+                renderer: None,
+                surface: None,
+                viewport: birdman_game_presentation::game_ui::GameUiViewport {
+                    width: 1280.0,
+                    height: 720.0,
+                    root_font_size: 16.0,
+                },
+                chart_extent: None,
+                capabilities: Default::default(),
+            },
+        )
+        .unwrap();
+        assert!(
+            execute(
+                &mut world,
+                &runtime,
+                &ApplicationRequest::CancelResources { request_id: 3 }
+            )
+            .unwrap()
+            .unwrap()
+            .is_empty()
+        );
+        assert!(poll(&mut world).is_empty());
+        let retired = world.resource::<NativeGpu>().revision;
+        world.resource_mut::<readiness::GpuReadback>().revision = retired;
+        assert!(matches!(
+            poll(&mut world).as_slice(),
+            [ApplicationInput::Resources {
+                request_id: 3,
+                observation: ApplicationResourceObservation::Cancelled
+            }]
+        ));
+        assert!(!world.resource::<NativeGpu>().candidates.contains_key(&3));
+        let bounds = birdman_game_scene::lake_sky::LakeSceneShadow::for_aircraft(
+            [0.0; 3],
+            birdman_game_scene::lake_sky::LakeSunlight {
+                direction: [0.0, 1.0, 0.0],
+                daylight: true,
+            },
+        )
+        .unwrap()
+        .shadow_bounds;
+        let light = world
+            .spawn((
+                GlobalTransform::IDENTITY,
+                SubmittedShadow {
+                    bounds,
+                    extent: 2048,
+                },
+                Cascades::default(),
+                CascadeShadowConfig {
+                    bounds: Vec::new(),
+                    minimum_distance: 0.0,
+                    overlap_proportion: 0.0,
+                },
+            ))
+            .id();
+        world.run_system_cached(bind_shadow).unwrap();
+        let cascade = &world.get::<Cascades>(light).unwrap().cascades[&main][0];
+        assert!(
+            (cascade
+                .clip_from_world
+                .project_point3(Vec3::new(-28.0, 28.0, -0.5))
+                - Vec3::new(-1.0, 1.0, 1.0))
+            .length()
+                < 1.0e-6
+        );
+        assert!(
+            cascade
+                .clip_from_world
+                .project_point3(Vec3::new(0.0, 0.0, -160.0))
+                .z
+                .abs()
+                < 1.0e-6
+        );
+        assert_eq!(cascade.texel_size, 56.0 / 2048.0);
+    }
+}

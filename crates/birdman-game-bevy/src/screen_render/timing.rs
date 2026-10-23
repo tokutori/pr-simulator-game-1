@@ -1,16 +1,16 @@
-use super::NativeScreenRender;
-#[cfg(any(test, feature = "verify-harness"))]
+use super::super::world::NativeGpu;
+#[cfg(feature = "verify-harness")]
 use bevy::diagnostic::Diagnostic;
 use bevy::ecs as bevy_ecs;
 use bevy::{
     core_pipeline::core_3d::{AlphaMask3d, Opaque3d, Transparent3d},
-    diagnostic::{DiagnosticMeasurement, DiagnosticPath, DiagnosticsStore, FrameCount},
+    diagnostic::{DiagnosticMeasurement, DiagnosticPath, DiagnosticsStore},
     ecs::{schedule::ConditionWithAccess, system::IntoSystem},
-    pbr::{PendingMeshMaterialQueues, Shadow},
+    pbr::Shadow,
     platform::time::Instant,
     prelude::*,
     render::{
-        Extract, ExtractSchedule, GpuResourceAppExt, MainWorld, Render, RenderApp, RenderSystems,
+        Extract, ExtractSchedule, GpuResourceAppExt, Render, RenderApp, RenderSystems,
         diagnostic::{
             DiagnosticsRecorder, RecordDiagnostics, RenderDiagnosticsPlugin,
             begin_diagnostics_frame, resolve_encoder,
@@ -25,21 +25,22 @@ use bevy::{
         },
     },
     shader::ShaderCacheError,
-    window::PrimaryWindow,
 };
 use birdman_game_format::WaterQuality;
 use birdman_game_presentation::{
     screen_render_auto::{ScreenGpuSample, ScreenShadowMap},
     screen_render_scale::ScreenRenderScale,
 };
-#[cfg(any(test, feature = "verify-harness"))]
+use birdman_game_runtime::{ApplicationGpuQuery, ApplicationGraphicsObservation, ApplicationInput};
+#[cfg(feature = "verify-harness")]
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
 pub(crate) const GPU_WORK: DiagnosticPath =
     DiagnosticPath::const_new("render/screen_work/elapsed_gpu");
-const METADATA_WORDS: usize = 7;
+const METADATA_WORDS: usize = 8;
 const METADATA: [DiagnosticPath; METADATA_WORDS] = [
+    DiagnosticPath::const_new("render/screen_renderer"),
     DiagnosticPath::const_new("render/screen_epoch"),
     DiagnosticPath::const_new("render/screen_frame"),
     DiagnosticPath::const_new("render/screen_source_low"),
@@ -49,6 +50,7 @@ const METADATA: [DiagnosticPath; METADATA_WORDS] = [
     DiagnosticPath::const_new("render/screen_water"),
 ];
 const METADATA_NAMES: [&str; METADATA_WORDS] = [
+    "screen_renderer",
     "screen_epoch",
     "screen_frame",
     "screen_source_low",
@@ -102,10 +104,7 @@ impl Plugin for ScreenTimingPlugin {
                 .init_resource::<ParkedRecorder>()
                 .init_resource::<TimingPacket>()
                 .init_gpu_resource::<MetadataBuffer>()
-                .add_systems(
-                    ExtractSchedule,
-                    (observe_preparation, extract_packet).chain(),
-                )
+                .add_systems(ExtractSchedule, extract_packet)
                 .add_systems(
                     Render,
                     select_recorder
@@ -174,32 +173,15 @@ pub(crate) enum PipelinePreparation {
 #[derive(Resource, Default, Clone)]
 struct TimingPacket {
     active: bool,
+    renderer: u32,
     epoch: u32,
     frame: u32,
-    source_ms: u64,
+    source_ms: f64,
+    camera: Option<Entity>,
     scale: ScreenRenderScale,
     shadow: ScreenShadowMap,
     water_quality: WaterQuality,
     preparation: PipelinePreparation,
-    #[cfg(feature = "verify-harness")]
-    eligible: bool,
-    #[cfg(feature = "verify-harness")]
-    pending_materials: usize,
-}
-
-fn observe_preparation(packet: Res<TimingPacket>, mut main: ResMut<MainWorld>) {
-    if let Some(mut readout) = main.get_resource_mut::<TimingReadout>() {
-        #[cfg(feature = "verify-harness")]
-        {
-            readout.eligible = packet.eligible;
-            readout.pending_materials = packet.pending_materials;
-        }
-        readout.preparation_epoch = packet.epoch;
-        if readout.preparation != packet.preparation {
-            readout.preparation = packet.preparation.clone();
-            readout.preparation_changed = true;
-        }
-    }
 }
 
 #[derive(Resource)]
@@ -222,30 +204,22 @@ impl FromWorld for MetadataBuffer {
 
 fn extract_packet(
     mut commands: Commands,
-    rendering: Extract<Res<NativeScreenRender>>,
+    rendering: Extract<Res<NativeGpu>>,
     mode: Extract<Res<TimingMode>>,
-    time: Extract<Res<Time<Real>>>,
-    frame: Extract<Res<FrameCount>>,
-    windows: Extract<Query<&Window, With<PrimaryWindow>>>,
 ) {
-    let active = (**mode != TimingMode::Automatic || rendering.measuring())
-        && windows.single().is_ok_and(|window| {
-            window.focused && window.visible && window.resolution.physical_size().min_element() > 0
-        })
-        && time.delta() <= super::super::MAX_FRAME_DELTA;
+    let query = rendering.query;
+    let quality = rendering.quality;
     commands.insert_resource(TimingPacket {
-        active,
-        epoch: rendering.controller.epoch(),
-        frame: frame.0,
-        source_ms: time.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
-        scale: rendering.snapshot().applied,
-        shadow: rendering.snapshot().shadow,
-        water_quality: rendering.snapshot().water_quality,
+        active: query.is_some() || mode.full_diagnostics(),
+        renderer: query.map_or(1, |query| query.renderer_resource_id),
+        epoch: query.map_or(0, |query| query.epoch),
+        frame: query.map_or(0, |query| query.frame),
+        source_ms: query.map_or(0.0, |query| query.source_ms),
+        camera: rendering.main_camera,
+        scale: quality.scale,
+        shadow: quality.shadow,
+        water_quality: quality.water_quality,
         preparation: PipelinePreparation::Pending,
-        #[cfg(feature = "verify-harness")]
-        eligible: active,
-        #[cfg(feature = "verify-harness")]
-        pending_materials: 0,
     });
 }
 
@@ -264,7 +238,7 @@ fn select_recorder(world: &mut World) {
     }
 }
 
-pub(super) fn supported(features: WgpuFeatures) -> bool {
+pub(crate) fn supported(features: WgpuFeatures) -> bool {
     features.contains(WgpuFeatures::TIMESTAMP_QUERY | WgpuFeatures::TIMESTAMP_QUERY_INSIDE_ENCODERS)
 }
 
@@ -273,7 +247,11 @@ fn begin_work(world: &mut World) {
     if !packet.active {
         return;
     }
-    packet.preparation = scene_preparation(world, &mut packet);
+    packet.preparation = packet
+        .camera
+        .map_or(PipelinePreparation::Pending, |camera| {
+            camera_preparation(world, camera)
+        });
     if packet.preparation != PipelinePreparation::Ready
         && !world.resource::<TimingMode>().full_diagnostics()
     {
@@ -293,10 +271,11 @@ fn begin_work(world: &mut World) {
     }
     let metadata = world.resource::<MetadataBuffer>();
     let words = [
+        packet.renderer,
         packet.epoch,
         packet.frame,
-        packet.source_ms as u32,
-        (packet.source_ms >> 32) as u32,
+        packet.source_ms.to_bits() as u32,
+        (packet.source_ms.to_bits() >> 32) as u32,
         packet.scale.percent(),
         packet.shadow.size(),
         birdman_game_scene::lake_water::water_quality_profile(packet.water_quality)
@@ -329,9 +308,15 @@ fn begin_work(world: &mut World) {
 fn add_binned_pipelines<B: BinnedPhaseItem>(
     ids: &mut BTreeSet<CachedRenderPipelineId>,
     phases: Option<&ViewBinnedRenderPhases<B>>,
+    camera: Entity,
     pipeline: impl Fn(&B::BatchSetKey) -> CachedRenderPipelineId,
 ) {
-    for phase in phases.into_iter().flat_map(|phases| phases.values()) {
+    for phase in phases
+        .into_iter()
+        .flat_map(|phases| phases.iter())
+        .filter(|(view, _)| view.main_entity.id() == camera || view.auxiliary_entity.id() == camera)
+        .map(|(_, phase)| phase)
+    {
         ids.extend(phase.multidrawable_meshes.keys().map(&pipeline));
         ids.extend(phase.batchable_meshes.keys().map(|(key, _)| pipeline(key)));
         ids.extend(
@@ -344,22 +329,7 @@ fn add_binned_pipelines<B: BinnedPhaseItem>(
     }
 }
 
-fn scene_preparation(world: &World, _packet: &mut TimingPacket) -> PipelinePreparation {
-    let pending = world
-        .get_resource::<PendingMeshMaterialQueues>()
-        .map_or(0, |queues| {
-            queues
-                .values()
-                .map(|queue| queue.current_frame.len())
-                .sum::<usize>()
-        });
-    #[cfg(feature = "verify-harness")]
-    {
-        _packet.pending_materials = pending;
-    }
-    if pending > 0 {
-        return PipelinePreparation::Pending;
-    }
+pub(crate) fn camera_preparation(world: &World, camera: Entity) -> PipelinePreparation {
     let Some(cache) = world.get_resource::<PipelineCache>() else {
         return PipelinePreparation::Pending;
     };
@@ -367,23 +337,27 @@ fn scene_preparation(world: &World, _packet: &mut TimingPacket) -> PipelinePrepa
     add_binned_pipelines(
         &mut ids,
         world.get_resource::<ViewBinnedRenderPhases<Opaque3d>>(),
+        camera,
         |key| key.pipeline,
     );
     add_binned_pipelines(
         &mut ids,
         world.get_resource::<ViewBinnedRenderPhases<AlphaMask3d>>(),
+        camera,
         |key| key.pipeline,
     );
     add_binned_pipelines(
         &mut ids,
         world.get_resource::<ViewBinnedRenderPhases<Shadow>>(),
+        camera,
         |key| key.pipeline,
     );
     if let Some(phases) = world.get_resource::<ViewSortedRenderPhases<Transparent3d>>() {
         ids.extend(
             phases
-                .values()
-                .flat_map(|phase| phase.items.values().map(|item| item.pipeline)),
+                .iter()
+                .filter(|(view, _)| view.main_entity.id() == camera)
+                .flat_map(|(_, phase)| phase.items.values().map(|item| item.pipeline)),
         );
     }
     selected_preparation(ids, |id| cache.get_render_pipeline_state(id))
@@ -451,17 +425,6 @@ fn end_work(world: &mut World) {
 #[derive(Resource, Default)]
 pub(crate) struct TimingReadout {
     arrival: Option<Instant>,
-    previous: Option<(u32, u32)>,
-    pub(crate) source_frame: Option<u32>,
-    pub(super) window_extent: Option<UVec2>,
-    pub(super) interrupted: bool,
-    pub(crate) preparation: PipelinePreparation,
-    pub(crate) preparation_epoch: u32,
-    pub(super) preparation_changed: bool,
-    #[cfg(feature = "verify-harness")]
-    pub(crate) eligible: bool,
-    #[cfg(feature = "verify-harness")]
-    pub(crate) pending_materials: usize,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -469,18 +432,18 @@ pub(crate) enum TimingFailure {
     IncompleteBatch,
     InvalidMetadata,
     InvalidWork,
-    SourceOverflow,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct SourceWork {
+    pub(crate) renderer_resource_id: u32,
     pub(crate) sample: ScreenGpuSample,
     pub(crate) scale: ScreenRenderScale,
     pub(crate) shadow: ScreenShadowMap,
     pub(crate) water_quality: WaterQuality,
 }
 
-#[cfg(any(test, feature = "verify-harness"))]
+#[cfg(feature = "verify-harness")]
 pub(crate) fn source_history(
     store: &DiagnosticsStore,
 ) -> impl Iterator<Item = (Instant, Result<SourceWork, TimingFailure>)> + '_ {
@@ -550,7 +513,7 @@ fn decode_work(
     words: [u32; METADATA_WORDS],
     gpu_work_ms: f64,
 ) -> Result<SourceWork, TimingFailure> {
-    let [epoch, frame, low, high, scale, shadow, water] = words;
+    let [renderer, epoch, frame, low, high, scale, shadow, water] = words;
     let scale = ScreenRenderScale::ALL
         .into_iter()
         .find(|value| value.percent() == scale)
@@ -559,7 +522,7 @@ fn decode_work(
         .into_iter()
         .find(|value| value.size() == shadow)
         .ok_or(TimingFailure::InvalidMetadata)?;
-    let source_ms = u64::from(low) | (u64::from(high) << 32);
+    let source_ms = f64::from_bits(u64::from(low) | (u64::from(high) << 32));
     let water_quality = WaterQuality::ALL
         .into_iter()
         .find(|quality| {
@@ -567,17 +530,15 @@ fn decode_work(
                 == water as usize
         })
         .ok_or(TimingFailure::InvalidMetadata)?;
-    if source_ms > (1_u64 << 53) {
-        return Err(TimingFailure::SourceOverflow);
-    }
-    if !gpu_work_ms.is_finite() || gpu_work_ms < 0.0 {
+    if !source_ms.is_finite() || source_ms < 0.0 || !gpu_work_ms.is_finite() || gpu_work_ms < 0.0 {
         return Err(TimingFailure::InvalidWork);
     }
     Ok(SourceWork {
+        renderer_resource_id: renderer,
         sample: ScreenGpuSample {
             epoch,
             frame,
-            source_ms: source_ms as f64,
+            source_ms,
             gpu_work_ms,
         },
         scale,
@@ -586,115 +547,57 @@ fn decode_work(
     })
 }
 
-impl TimingReadout {
-    pub(super) fn read(
-        &mut self,
-        store: &DiagnosticsStore,
-        epoch: u32,
-    ) -> Result<Option<ScreenGpuSample>, TimingFailure> {
-        let Some(gpu) = store.get_measurement(&GPU_WORK) else {
-            return Ok(None);
-        };
-        if self.arrival.is_some_and(|arrival| gpu.time <= arrival) {
-            return Ok(None);
-        }
-        self.arrival = Some(gpu.time);
-        let words = metadata_words(store, gpu)?;
-        if words[0] != epoch {
-            return Ok(None);
-        }
-        let source = decode_work(words, gpu.value)?;
-        let sample = source.sample;
-        let frame = sample.frame;
-        if self
-            .previous
-            .is_some_and(|(previous_epoch, previous_frame)| {
-                previous_epoch == epoch && frame <= previous_frame
-            })
-        {
-            return Ok(None);
-        }
-        self.previous = Some((epoch, frame));
-        Ok(Some(sample))
-    }
-}
-
 fn word(value: f64) -> Option<u32> {
     (value.is_finite() && value >= 0.0 && value <= f64::from(u32::MAX) && value.fract() == 0.0)
         .then_some(value as u32)
 }
 
+pub(crate) fn poll(world: &mut World) -> Vec<ApplicationInput> {
+    let Some(mut readout) = world.remove_resource::<TimingReadout>() else {
+        return Vec::new();
+    };
+    let result = (|| {
+        let store = world.get_resource::<DiagnosticsStore>()?;
+        let gpu = store.get_measurement(&GPU_WORK)?;
+        if readout.arrival.is_some_and(|arrival| gpu.time <= arrival) {
+            return None;
+        }
+        readout.arrival = Some(gpu.time);
+        let source =
+            match metadata_words(store, gpu).and_then(|words| decode_work(words, gpu.value)) {
+                Ok(source) => source,
+                Err(cause) => {
+                    return Some(ApplicationInput::RendererFailed {
+                        renderer_resource_id: world.resource::<NativeGpu>().renderer_id,
+                        cause: format!("GPU query metadata: {cause:?}"),
+                    });
+                }
+            };
+        Some(ApplicationInput::Graphics {
+            renderer_resource_id: source.renderer_resource_id,
+            observation: ApplicationGraphicsObservation::GpuCompleted {
+                query: ApplicationGpuQuery {
+                    renderer_resource_id: source.renderer_resource_id,
+                    epoch: source.sample.epoch,
+                    frame: source.sample.frame,
+                    source_ms: source.sample.source_ms,
+                },
+                gpu_work_ms: source.sample.gpu_work_ms,
+            },
+        })
+    })();
+    world.insert_resource(readout);
+    result.into_iter().collect()
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use bevy::{
-        app::SubApp,
-        diagnostic::{Diagnostic, DiagnosticMeasurement},
-    };
-    use std::time::Duration;
 
-    #[test]
-    fn active_phase_states_exclude_pending_work_and_do_not_consult_unused_pipelines() {
-        let queued = CachedPipelineState::Queued;
-        let pool = bevy::tasks::TaskPool::new();
-        let creating = CachedPipelineState::Creating(pool.spawn(std::future::pending()));
-        let importing = CachedPipelineState::Err(ShaderCacheError::ShaderImportNotYetAvailable);
-        let failure = CachedPipelineState::Err(ShaderCacheError::CreateShaderModule(
-            "invalid scene shader".into(),
-        ));
-        for state in [&queued, &creating, &importing] {
-            let selected = std::cell::Cell::new(0);
-            assert_eq!(
-                selected_preparation([CachedRenderPipelineId::new(7)], |id| {
-                    assert_eq!(id, CachedRenderPipelineId::new(7));
-                    selected.set(selected.get() + 1);
-                    state
-                }),
-                PipelinePreparation::Pending
-            );
-            assert_eq!(selected.get(), 1);
-        }
-        assert!(
-            matches!(selected_preparation([CachedRenderPipelineId::new(7)], |_| &failure),
-            PipelinePreparation::Failed(cause) if cause.contains("invalid scene shader"))
-        );
-        assert_eq!(
-            selected_preparation([], |_| panic!("No active pipeline")),
-            PipelinePreparation::Pending
-        );
-    }
-
-    #[test]
-    fn production_begin_rejects_an_unprepared_scene_before_using_gpu_resources() {
-        let modes = [
-            TimingMode::Automatic,
-            #[cfg(feature = "verify-harness")]
-            TimingMode::Root,
-        ];
-        for mode in modes {
-            let mut world = World::new();
-            world.insert_resource(TimingPacket {
-                active: true,
-                ..default()
-            });
-            world.insert_resource(mode);
-            world.init_resource::<ParkedRecorder>();
-            begin_work(&mut world);
-            assert!(!world.resource::<TimingPacket>().active);
-            assert_eq!(
-                world.resource::<TimingPacket>().preparation,
-                PipelinePreparation::Pending
-            );
-            assert!(!world.contains_resource::<RenderDevice>());
-            world.insert_resource(TimingPacket::default());
-            world.remove_resource::<TimingMode>();
-            begin_work(&mut world);
-        }
-    }
-
+    #[cfg(feature = "verify-harness")]
     pub(crate) fn packet(
         store: &mut DiagnosticsStore,
-        time: Instant,
+        arrival: Instant,
         epoch: u32,
         frame: u32,
         source: u64,
@@ -702,7 +605,7 @@ pub(crate) mod tests {
     ) {
         packet_quality(
             store,
-            time,
+            arrival,
             epoch,
             frame,
             source,
@@ -715,479 +618,92 @@ pub(crate) mod tests {
         );
     }
 
+    #[cfg(feature = "verify-harness")]
     pub(crate) fn packet_quality(
         store: &mut DiagnosticsStore,
-        time: Instant,
+        arrival: Instant,
         epoch: u32,
         frame: u32,
         source: u64,
         work: f64,
         quality: (ScreenRenderScale, ScreenShadowMap, WaterQuality),
     ) {
-        for (path, value) in std::iter::once((GPU_WORK, work)).chain(
-            METADATA
-                .into_iter()
-                .zip([
-                    epoch,
-                    frame,
-                    source as u32,
-                    (source >> 32) as u32,
-                    quality.0.percent(),
-                    quality.1.size(),
-                    birdman_game_scene::lake_water::water_quality_profile(quality.2)
-                        .component_count() as u32,
-                ])
-                .map(|(path, word)| (path, f64::from(word))),
-        ) {
+        let bits = (source as f64).to_bits();
+        let values = [
+            1,
+            epoch,
+            frame,
+            bits as u32,
+            (bits >> 32) as u32,
+            quality.0.percent(),
+            quality.1.size(),
+            birdman_game_scene::lake_water::water_quality_profile(quality.2).component_count()
+                as u32,
+        ];
+        for (path, value) in METADATA
+            .into_iter()
+            .zip(values.into_iter().map(f64::from))
+            .chain([(GPU_WORK, work)])
+        {
             if store.get(&path).is_none() {
-                store.add(Diagnostic::new(path.clone()));
+                store.add(Diagnostic::new(path.clone()).with_max_history_length(1024));
             }
             store
                 .get_mut(&path)
                 .unwrap()
-                .add_measurement(DiagnosticMeasurement { time, value });
+                .add_measurement(DiagnosticMeasurement {
+                    time: arrival,
+                    value,
+                });
         }
     }
 
     #[test]
-    fn historical_batches_keep_source_quality_instead_of_the_latest_pair() {
-        let mut store = DiagnosticsStore::default();
-        let arrival = Instant::now();
-        packet(&mut store, arrival, 7, 10, 100, 18.0);
-        let first = DiagnosticMeasurement {
-            time: arrival,
-            value: 18.0,
-        };
-        packet_quality(
-            &mut store,
-            arrival + Duration::from_millis(20),
-            8,
-            11,
-            120,
-            9.0,
-            (
-                ScreenRenderScale::Half,
-                ScreenShadowMap::Quarter,
-                WaterQuality::Low,
-            ),
-        );
-        let old = source_history(&store)
-            .find(|(time, _)| *time == first.time)
-            .unwrap()
-            .1
-            .unwrap();
+    fn selected_gpu_pipelines_preserve_pending_and_original_failures() {
         assert_eq!(
-            (old.sample.epoch, old.scale, old.shadow, old.water_quality),
-            (
-                7,
-                ScreenRenderScale::Full,
-                ScreenShadowMap::Full,
-                WaterQuality::High
-            )
+            selected_preparation([], |_| panic!("No selected pipeline")),
+            PipelinePreparation::Pending
         );
-        let latest = source_history(&store).last().unwrap().1.unwrap();
+        let queued = CachedPipelineState::Queued;
         assert_eq!(
-            (
-                latest.sample.epoch,
-                latest.scale,
-                latest.shadow,
-                latest.water_quality
-            ),
-            (
-                8,
-                ScreenRenderScale::Half,
-                ScreenShadowMap::Quarter,
-                WaterQuality::Low
-            )
+            selected_preparation([CachedRenderPipelineId::new(1)], |_| &queued),
+            PipelinePreparation::Pending
         );
-        assert_eq!(
-            decode_work([7, 10, 100, 0, 80, 2048, 18], 1.0),
-            Err(TimingFailure::InvalidMetadata)
-        );
-        assert_eq!(
-            decode_work([7, 10, 100, 0, 100, 1000, 18], 1.0),
-            Err(TimingFailure::InvalidMetadata)
-        );
-        packet(
-            &mut store,
-            arrival + Duration::from_millis(30),
-            9,
-            12,
-            (1_u64 << 53) + 1,
-            f64::NAN,
-        );
-        assert!(TimingReadout::default().read(&store, 8).unwrap().is_none());
-    }
-
-    #[test]
-    fn completed_batches_preserve_epoch_source_time_and_delivery_gaps() {
-        let mut store = DiagnosticsStore::default();
-        let mut readout = TimingReadout::default();
-        let arrival = Instant::now();
-        let source = (1_u64 << 32) + 123;
-        packet(&mut store, arrival, 7, 10, source, 18.0);
-        let first = readout.read(&store, 7).unwrap().unwrap();
-        assert_eq!(
-            first,
-            ScreenGpuSample {
-                epoch: 7,
-                frame: 10,
-                source_ms: source as f64,
-                gpu_work_ms: 18.0,
-            }
-        );
-        assert!(readout.read(&store, 7).unwrap().is_none());
-        packet(
-            &mut store,
-            arrival + Duration::from_millis(10),
-            7,
-            13,
-            source + 10,
-            19.0,
-        );
-        let gapped = readout.read(&store, 7).unwrap().unwrap();
-        assert_eq!(gapped.frame, 13);
-        assert_eq!(gapped.gpu_work_ms, 19.0);
-        packet(
-            &mut store,
-            arrival + Duration::from_millis(20),
-            7,
-            14,
-            source + 20,
-            20.0,
-        );
-        assert!(readout.read(&store, 8).unwrap().is_none());
-        packet(
-            &mut store,
-            arrival + Duration::from_millis(30),
-            8,
-            15,
-            source + 30,
-            21.0,
-        );
-        assert_eq!(readout.read(&store, 8).unwrap().unwrap().epoch, 8);
-    }
-
-    #[test]
-    fn mismatched_batches_and_invalid_values_are_never_reused_as_zero_work() {
-        let mut store = DiagnosticsStore::default();
-        let mut readout = TimingReadout::default();
-        let arrival = Instant::now();
-        packet(&mut store, arrival, 1, 10, 100, 15.0);
-        store
-            .get_mut(&METADATA[1])
-            .unwrap()
-            .add_measurement(DiagnosticMeasurement {
-                time: arrival + Duration::from_millis(1),
-                value: 11.0,
-            });
-        assert_eq!(readout.read(&store, 1).unwrap().unwrap().frame, 10);
-        *store.get_mut(&METADATA[1]).unwrap() = Diagnostic::new(METADATA[1].clone());
-        assert_eq!(
-            TimingReadout::default().read(&store, 1),
-            Err(TimingFailure::IncompleteBatch)
-        );
-        for (index, work) in [f64::NAN, f64::INFINITY, -1.0].into_iter().enumerate() {
-            packet(
-                &mut store,
-                arrival + Duration::from_millis(index as u64 + 2),
-                1,
-                12 + index as u32,
-                102 + index as u64,
-                work,
-            );
-            assert_eq!(readout.read(&store, 1), Err(TimingFailure::InvalidWork));
-        }
-        packet(
-            &mut store,
-            arrival + Duration::from_millis(6),
-            1,
-            20,
-            (1_u64 << 53) + 1,
-            15.0,
-        );
-        assert_eq!(readout.read(&store, 1), Err(TimingFailure::SourceOverflow));
-        for value in [
-            f64::NAN,
-            f64::INFINITY,
-            -1.0,
-            0.5,
-            f64::from(u32::MAX) + 1.0,
-        ] {
-            assert_eq!(word(value), None);
-        }
-        assert_eq!(word(f64::from(u32::MAX)), Some(u32::MAX));
-        assert!(!supported(WgpuFeatures::TIMESTAMP_QUERY));
-        assert!(supported(
-            WgpuFeatures::TIMESTAMP_QUERY | WgpuFeatures::TIMESTAMP_QUERY_INSIDE_ENCODERS
+        let failed = CachedPipelineState::Err(ShaderCacheError::CreateShaderModule(
+            "original GPU error".into(),
         ));
-    }
-
-    #[test]
-    fn explicit_diagnostics_measure_manual_without_changing_auto_policy_or_safety_gates() {
-        use bevy::render::MainWorld;
-
-        let modes = [
-            TimingMode::Automatic,
-            #[cfg(feature = "verify-harness")]
-            TimingMode::Root,
-            #[cfg(feature = "verify-harness")]
-            TimingMode::Full,
-        ];
-        for mode in modes {
-            for (automatic, focused, visible, area, delta_ms, expected) in [
-                (false, true, true, true, 16, mode != TimingMode::Automatic),
-                (true, true, true, true, 16, true),
-                (false, false, true, true, 16, false),
-                (false, true, false, true, 16, false),
-                (false, true, true, false, 16, false),
-                (false, true, true, true, 1_000, false),
-            ] {
-                let mut source = MainWorld::default();
-                let mut rendering = NativeScreenRender::default();
-                rendering.controller.select_auto(automatic, 0.0).unwrap();
-                let before = rendering.snapshot();
-                let mut time = Time::<Real>::default();
-                time.advance_by(Duration::from_millis(delta_ms));
-                source.insert_resource(rendering);
-                source.insert_resource(mode);
-                source.insert_resource(time);
-                source.insert_resource(FrameCount(42));
-                source.spawn((
-                    Window {
-                        focused,
-                        visible,
-                        resolution: if area { (1280, 720) } else { (0, 0) }.into(),
-                        ..default()
-                    },
-                    PrimaryWindow,
-                ));
-                let mut app = App::new();
-                app.insert_resource(source)
-                    .add_systems(Update, extract_packet);
-                app.update();
-                let packet = app.world().resource::<TimingPacket>();
-                assert_eq!(packet.active, expected);
-                assert_eq!(packet.frame, 42);
-                assert_eq!(packet.source_ms, delta_ms);
-                assert_eq!(
-                    app.world()
-                        .resource::<MainWorld>()
-                        .resource::<NativeScreenRender>()
-                        .snapshot(),
-                    before
-                );
-            }
-        }
-    }
-
-    #[derive(Resource, Default)]
-    struct UnrelatedRuns(u32);
-
-    fn unrelated_begin(mut count: ResMut<UnrelatedRuns>) {
-        count.0 += 1;
-    }
-
-    #[test]
-    fn parked_recorder_gates_only_standard_diagnostics_and_keeps_render_setup_running() {
-        let mut app = App::new();
-        let mut render_app = SubApp::new();
-        render_app.add_schedule(RenderGraph::base_schedule());
-        render_app.init_resource::<UnrelatedRuns>().add_systems(
-            RenderGraph,
-            unrelated_begin.in_set(RenderGraphSystems::Begin),
-        );
-        app.insert_sub_app(RenderApp, render_app);
-        let plugin = ScreenTimingPlugin {
-            mode: TimingMode::Automatic,
-        };
-        plugin.build(&mut app);
-        plugin.finish(&mut app);
-        let render_app = app.get_sub_app_mut(RenderApp).unwrap();
-        render_app.world_mut().run_schedule(RenderGraph);
-        assert_eq!(render_app.world().resource::<UnrelatedRuns>().0, 1);
         assert!(
-            !render_app
-                .world()
-                .contains_resource::<DiagnosticsRecorder>()
+            matches!(selected_preparation([CachedRenderPipelineId::new(1)], |_| &failed),
+            PipelinePreparation::Failed(cause) if cause.contains("original GPU error"))
         );
-        render_app.world_mut().run_schedule(RenderGraph);
-        assert_eq!(render_app.world().resource::<UnrelatedRuns>().0, 2);
     }
-
-    #[cfg(feature = "verify-harness")]
-    #[derive(Resource, Default)]
-    struct RecorderStages {
-        render_present: Option<bool>,
-        resolve_present: Option<bool>,
-        fail_render: bool,
-    }
-
-    #[cfg(feature = "verify-harness")]
-    fn record_probe(
-        mut context: bevy::render::renderer::RenderContext,
-        mut stages: ResMut<RecorderStages>,
-    ) -> Result<(), BevyError> {
-        let recorder = context.diagnostic_recorder();
-        stages.render_present = Some(recorder.is_some());
-        let recorder_ref = recorder.as_deref();
-        let span = recorder_ref.time_span(context.command_encoder(), "root_only_probe");
-        span.end(context.command_encoder());
-        if stages.fail_render {
-            return Err("expected render failure".into());
-        }
-        Ok(())
-    }
-
-    #[cfg(feature = "verify-harness")]
-    fn observe_resolve(
-        recorder: Option<Res<DiagnosticsRecorder>>,
-        mut stages: ResMut<RecorderStages>,
-    ) {
-        stages.resolve_present = Some(recorder.is_some());
-    }
-
-    #[cfg(feature = "verify-harness")]
-    fn submit_probe(mut commands: bevy::render::renderer::FlushCommands) {
-        commands.flush();
-    }
-
-    #[cfg(feature = "verify-harness")]
     #[test]
-    #[ignore = "requires a native GPU with encoder timestamp queries"]
-    fn real_recorder_preserves_root_only_full_and_failure_schedule_paths() {
-        use bevy::render::{
-            RenderStartup,
-            render_resource::PollType,
-            renderer::initialize_renderer,
-            settings::{Backends, WgpuSettings},
-        };
-
-        for timestamp_queries in [true, false] {
-            let options = WgpuSettings {
-                disabled_features: (!timestamp_queries).then_some(
-                    WgpuFeatures::TIMESTAMP_QUERY
-                        | WgpuFeatures::TIMESTAMP_QUERY_INSIDE_ENCODERS
-                        | WgpuFeatures::TIMESTAMP_QUERY_INSIDE_PASSES,
-                ),
-                ..default()
-            };
-            let resources =
-                bevy::tasks::block_on(initialize_renderer(Backends::VULKAN, None, &options));
-            println!(
-                "Recorder regression adapter={} backend={:?} driver={} features={:?}",
-                resources.2.name,
-                resources.2.backend,
-                resources.2.driver_info,
-                resources.0.features()
-            );
-            assert_eq!(supported(resources.0.features()), timestamp_queries);
-            for (mode, active, fail_render) in [
-                (TimingMode::Automatic, false, false),
-                (TimingMode::Automatic, true, false),
-                (TimingMode::Root, false, false),
-                (TimingMode::Root, true, false),
-                (TimingMode::Full, false, false),
-                (TimingMode::Automatic, true, true),
-                (TimingMode::Root, true, true),
-                (TimingMode::Full, true, false),
-                (TimingMode::Full, true, true),
-            ] {
-                let full_diagnostics = mode == TimingMode::Full;
-                let enabled = full_diagnostics;
-                let mut app = App::new();
-                app.init_resource::<DiagnosticsStore>();
-                let mut render_app = SubApp::new();
-                render_app
-                    .add_schedule(Render::base_schedule())
-                    .add_schedule(RenderGraph::base_schedule())
-                    .add_schedule(Schedule::new(RenderStartup));
-                render_app.world_mut().insert_resource(resources.0.clone());
-                render_app.world_mut().insert_resource(resources.1.clone());
-                render_app.world_mut().insert_resource(resources.2.clone());
-                render_app.init_resource::<PendingCommandBuffers>();
-                render_app.world_mut().insert_resource(RecorderStages {
-                    fail_render,
-                    ..default()
-                });
-                app.insert_sub_app(RenderApp, render_app);
-                app.set_error_handler(|error, _| {
-                    assert_eq!(error.to_string().trim_end(), "expected render failure")
-                });
-                let plugin = ScreenTimingPlugin { mode };
-                plugin.build(&mut app);
-                plugin.finish(&mut app);
-                let render_app = app.get_sub_app_mut(RenderApp).unwrap();
-                render_app.add_systems(
-                    RenderGraph,
-                    (
-                        record_probe.in_set(RenderGraphSystems::Render),
-                        observe_resolve.after(end_work).before(resolve_encoder),
-                        submit_probe.in_set(RenderGraphSystems::Submit),
-                    ),
-                );
-                render_app.world_mut().run_schedule(RenderStartup);
-                render_app.world_mut().insert_resource(TimingPacket {
-                    active,
-                    epoch: 7,
-                    frame: 42,
-                    source_ms: (1_u64 << 32) + 123,
-                    scale: ScreenRenderScale::Full,
-                    shadow: ScreenShadowMap::Full,
-                    water_quality: WaterQuality::High,
-                    preparation: PipelinePreparation::Pending,
-                    #[cfg(feature = "verify-harness")]
-                    eligible: active,
-                    #[cfg(feature = "verify-harness")]
-                    pending_materials: 0,
-                });
-                for _ in 0..2 {
-                    let render_app = app.get_sub_app_mut(RenderApp).unwrap();
-                    render_app.world_mut().run_schedule(Render);
-                    render_app.world_mut().run_schedule(RenderGraph);
-                    resources
-                        .0
-                        .poll(PollType::Wait {
-                            submission_index: None,
-                            timeout: Some(Duration::from_secs(2)),
-                        })
-                        .expect("bounded recorder GPU completion");
-                    app.world_mut().run_schedule(PreUpdate);
-                }
-                let render_world = app.get_sub_app(RenderApp).unwrap().world();
-                let stages = render_world.resource::<RecorderStages>();
-                assert_eq!(stages.render_present, Some(full_diagnostics));
-                assert_eq!(stages.resolve_present, Some(enabled));
-                assert_eq!(
-                    render_world.contains_resource::<DiagnosticsRecorder>(),
-                    enabled
-                );
-                assert_eq!(
-                    render_world.resource::<ParkedRecorder>().0.is_some(),
-                    !enabled
-                );
-                let store = app.world().resource::<DiagnosticsStore>();
-                assert_eq!(
-                    store
-                        .iter()
-                        .any(|diagnostic| diagnostic.path().as_str().contains("root_only_probe")),
-                    full_diagnostics
-                );
-                if full_diagnostics && active && timestamp_queries {
-                    let sample = TimingReadout::default()
-                        .read(store, 7)
-                        .unwrap()
-                        .expect("actual root GPU batch");
-                    assert_eq!(sample.epoch, 7);
-                    assert_eq!(sample.frame, 42);
-                    assert_eq!(sample.source_ms, ((1_u64 << 32) + 123) as f64);
-                    assert!(sample.gpu_work_ms.is_finite() && sample.gpu_work_ms >= 0.0);
-                    assert!(TimingReadout::default().read(store, 8).unwrap().is_none());
-                    assert_eq!(store.iter().count(), METADATA.len() + 4);
-                } else {
-                    assert!(store.get(&GPU_WORK).is_none());
-                }
-            }
-        }
+    fn source_metadata_retains_fractional_clock_bits_and_actual_quality() {
+        let source = 1234.56789_f64;
+        let water = birdman_game_scene::lake_water::water_quality_profile(WaterQuality::Low)
+            .component_count() as u32;
+        let words = [
+            7,
+            3,
+            21,
+            source.to_bits() as u32,
+            (source.to_bits() >> 32) as u32,
+            50,
+            512,
+            water,
+        ];
+        let result = decode_work(words, 9.5).unwrap();
+        assert_eq!(result.renderer_resource_id, 7);
+        assert_eq!(result.sample.source_ms.to_bits(), source.to_bits());
+        assert_eq!(result.sample.epoch, 3);
+        assert_eq!(result.sample.frame, 21);
+        assert_eq!(result.sample.gpu_work_ms, 9.5);
+        assert_eq!(result.scale, ScreenRenderScale::Half);
+        assert_eq!(result.shadow, ScreenShadowMap::Quarter);
+        assert_eq!(result.water_quality, WaterQuality::Low);
+        assert_eq!(
+            decode_work(words, f64::NAN),
+            Err(TimingFailure::InvalidWork)
+        );
     }
 }

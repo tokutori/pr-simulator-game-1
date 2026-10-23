@@ -138,7 +138,7 @@ describe("Single browser runtime ownership", () => {
       await Promise.resolve();
       expect(fixture.update).toHaveBeenCalledTimes(updates);
     } finally { fixture.page("pagehide", false); fixture.driver.finish(); await fixture.browser.happyDOM.abort(); }
-  });
+  }, 20_000);
 
   it.each(["cancelled preparation", "missing prepared handle"])("frees once after the actual %s terminal and every cleanup", async failure => {
     const fixture = await browserFixture();

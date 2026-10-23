@@ -15,7 +15,9 @@ use bevy::{
     },
     shader::ShaderDefVal,
 };
+use birdman_game_app::environment_snapshot::{EnvironmentProjection, EnvironmentSelection};
 use birdman_game_format::WaterQuality;
+use birdman_game_scene::lake_water::{LakeVisualCondition, LakeWaveProjection};
 
 const SIDE: u32 = 16;
 const CASES: [(&str, WaterQuality, bool, bool, bool); 6] = [
@@ -83,6 +85,12 @@ impl MaterialExtension for ProbeExtension {
 }
 
 type ProbeMaterial = ExtendedMaterial<WaterMaterial, ProbeExtension>;
+type ProbeAssets<'world> = (
+    Res<'world, Assets<WaterMaterial>>,
+    ResMut<'world, Assets<ProbeMaterial>>,
+    ResMut<'world, Assets<Mesh>>,
+    ResMut<'world, Assets<Image>>,
+);
 
 #[derive(Default)]
 enum ProbeState {
@@ -115,34 +123,77 @@ impl WaterShaderVerification {
 pub(crate) fn install(app: &mut App) {
     app.init_resource::<WaterShaderVerification>()
         .add_plugins(MaterialPlugin::<ProbeMaterial>::default())
-        .add_systems(Startup, setup.after(super::super::world::setup_world));
+        .add_systems(Update, setup);
 }
 
 fn setup(
     mut commands: Commands,
     source: Query<&MeshMaterial3d<WaterMaterial>, With<NearWaterSurface>>,
-    source_materials: Res<Assets<WaterMaterial>>,
-    mut materials: ResMut<Assets<ProbeMaterial>>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut images: ResMut<Assets<Image>>,
+    assets: ProbeAssets,
     mut verification: ResMut<WaterShaderVerification>,
+    runtime: Option<Res<super::super::native_runtime::NativeRuntime>>,
+    mut configured: Local<bool>,
 ) {
+    let (source_materials, mut materials, mut meshes, mut images) = assets;
+    if *configured {
+        return;
+    }
     let Some(source) = source
-        .single()
-        .ok()
+        .iter()
+        .next()
         .and_then(|handle| source_materials.get(&handle.0))
     else {
-        verification.state =
-            ProbeState::Failed("Shader probe requires the production near-water material".into());
         return;
     };
-    let camera = Transform::from_xyz(0.0, 30.0, 0.0).looking_at(Vec3::ZERO, Vec3::NEG_Z);
-    for (case_index, (label, quality, flat, far, detail_cutoff)) in CASES.into_iter().enumerate() {
-        let mut base = source.clone();
-        if let Err(cause) = base.apply_profile(quality) {
+    let Some(runtime) = runtime else {
+        return;
+    };
+    let condition = (|| {
+        let EnvironmentProjection::Available { metadata, .. } =
+            EnvironmentSelection::for_session(runtime.0.application())
+                .map_err(|cause| format!("Shader probe environment: {cause:?}"))?
+                .resolve()
+                .map_err(|cause| format!("Shader probe environment: {cause:?}"))?
+        else {
+            return Err("Shader probe environment is unavailable".to_string());
+        };
+        let waves = metadata.waves;
+        LakeVisualCondition::try_new(
+            waves.wind_velocity_ne_mps[0],
+            waves.wind_velocity_ne_mps[1],
+            waves.fetch_m,
+            waves.detail_amplitude_scale,
+            u64::from(waves.pattern_seed),
+        )
+        .map_err(|cause| format!("Shader probe waves: {cause:?}"))
+    })();
+    let condition = match condition {
+        Ok(condition) => condition,
+        Err(cause) => {
             verification.state = ProbeState::Failed(cause);
             return;
         }
+    };
+    *configured = true;
+    let camera = Transform::from_xyz(0.0, 30.0, 0.0).looking_at(Vec3::ZERO, Vec3::NEG_Z);
+    for (case_index, (label, quality, flat, far, detail_cutoff)) in CASES.into_iter().enumerate() {
+        let mut base = source.clone();
+        let projection = match LakeWaveProjection::try_new(condition, quality) {
+            Ok(projection) => projection,
+            Err(cause) => {
+                verification.state =
+                    ProbeState::Failed(format!("Shader probe projection: {cause:?}"));
+                return;
+            }
+        };
+        base.geometry_waves = projection.wave_k_amplitude().map(Vec4::from_array);
+        base.geometry_motion = projection.wave_omega_phase().map(Vec4::from_array);
+        base.geometry_parameters = Vec4::new(
+            projection.wave_count() as f32,
+            projection.choppiness(),
+            projection.visual_wave_height() as f32,
+            projection.spacing().gradient_magnitude() as f32,
+        );
         base.project_camera(camera.translation, 7.0);
         if far {
             base.geometry_patch = Vec4::ZERO;
@@ -154,9 +205,19 @@ fn setup(
         if detail_cutoff {
             base.geometry_parameters.x = 0.0;
         }
-        let bounds = base.displacement_bounds;
+        let geometry = match birdman_game_scene::lake_water_mesh::PreparedWaterGeometry::try_new(
+            quality,
+            &projection,
+        ) {
+            Ok(geometry) => geometry,
+            Err(cause) => {
+                verification.state = ProbeState::Failed(format!("Shader probe bounds: {cause:?}"));
+                return;
+            }
+        };
+        let bounds = Vec2::from_array(geometry.displacement_meters.map(|value| value as f32));
         for (output_index, output) in ProbeOutput::ALL.into_iter().enumerate() {
-            let layers = RenderLayers::layer(2 + case_index * 3 + output_index);
+            let layers = RenderLayers::layer(128 + case_index * 3 + output_index);
             let mut image = Image::new_target_texture(SIDE, SIDE, TextureFormat::Rgba32Float, None);
             image.texture_descriptor.usage |= TextureUsages::COPY_SRC;
             let image = images.add(image);

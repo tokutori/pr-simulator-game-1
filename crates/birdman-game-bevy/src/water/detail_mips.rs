@@ -1,4 +1,4 @@
-use super::{DetailMipFailure, NativeEnvironment, WaterMaterial};
+use super::WaterMaterial;
 use bevy::{
     asset::AssetId,
     core_pipeline::mip_generation::{
@@ -8,7 +8,7 @@ use bevy::{
     ecs as bevy_ecs,
     prelude::*,
     render::{
-        Extract, MainWorld,
+        Extract,
         render_asset::RenderAssets,
         render_resource::{
             CachedPipelineState, ComputePipelineDescriptor, PipelineCache, PipelineDescriptor,
@@ -22,6 +22,14 @@ use bevy::{
 
 const MIP_PHASE: MipGenerationPhaseId = MipGenerationPhaseId(0x4c414b45);
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct DetailMipFailure {
+    images: Vec<AssetId<Image>>,
+    shader: AssetId<Shader>,
+    entry: &'static str,
+    cause: String,
+}
+
 #[derive(Resource, Default)]
 pub(crate) struct LakeDetailMips {
     active: Vec<AssetId<Image>>,
@@ -30,6 +38,19 @@ pub(crate) struct LakeDetailMips {
 }
 
 impl LakeDetailMips {
+    pub(crate) fn ready(&self, images: &[AssetId<Image>]) -> Result<bool, String> {
+        if let Some(failure) = &self.failure
+            && images.iter().any(|image| failure.images.contains(image))
+        {
+            return Err(format!(
+                "GPU mip shader {:?}/{}: {}",
+                failure.shader, failure.entry, failure.cause
+            ));
+        }
+        Ok(images
+            .iter()
+            .all(|image| self.recorded.iter().any(|(recorded, _)| recorded == image)))
+    }
     fn retain_active(&mut self) {
         self.recorded
             .retain(|(image, _)| self.active.contains(image));
@@ -88,20 +109,6 @@ fn mip_pipeline_ready(
     }
 }
 
-pub(crate) fn report_detail_mip_failure(
-    state: Res<LakeDetailMips>,
-    mut main_world: ResMut<MainWorld>,
-) {
-    let Some(environment) = main_world.get_resource::<NativeEnvironment>() else {
-        return;
-    };
-    if environment.detail_mip_failure() != state.failure.as_ref() {
-        main_world
-            .resource_mut::<NativeEnvironment>()
-            .report_detail_mip_failure(state.failure.clone());
-    }
-}
-
 pub(crate) fn extract_detail_mips(
     materials: Extract<Res<Assets<WaterMaterial>>>,
     gpu_images: Res<RenderAssets<GpuImage>>,
@@ -127,12 +134,19 @@ pub(crate) fn extract_detail_mips(
     if state.failure.is_some() {
         return;
     }
-    for image in &state.active {
-        if gpu_images
-            .get(*image)
-            .is_none_or(|gpu| state.pending(*image, gpu.texture.id()))
+    for image in state.active.clone() {
+        if let Some(gpu) = gpu_images.get(image)
+            && gpu.texture_descriptor.mip_level_count == 1
         {
-            jobs.add(MIP_PHASE, *image);
+            state.recorded.retain(|(recorded, _)| *recorded != image);
+            state.recorded.push((image, gpu.texture.id()));
+            continue;
+        }
+        if gpu_images
+            .get(image)
+            .is_none_or(|gpu| state.pending(image, gpu.texture.id()))
+        {
+            jobs.add(MIP_PHASE, image);
         }
     }
 }
