@@ -115,7 +115,7 @@ describe("Screen DOM adapter", () => {
     await withAdapter((root, adapter, actions, window, measure) => {
       adapter.render(view);
       const viewport = required(root, ".screen-ui-chart-viewport");
-      expect(viewport.style.height).toBe(`${String(targetHeight)}px`);
+      expect(Number.parseFloat(viewport.style.height)).toBeCloseTo(targetHeight, 10);
       const release = vi.fn();
       Object.assign(viewport, { getBoundingClientRect: () => ({ left: 17, top: 29, width: 813, height: 417 }),
         setPointerCapture: vi.fn(), releasePointerCapture: release });

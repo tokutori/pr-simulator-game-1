@@ -37,14 +37,32 @@ const checks: string[] = [];
 const wasm: { url: string; status: number; sha256: string }[] = [];
 const pendingResponses: Promise<void>[] = [];
 const captures: unknown[] = [];
+const chartInteractions: { chart: string; before: string; after: string }[] = [];
 const report: Record<string, unknown> = { status: "failed", sourceHead, sourceDiffSha256: hash(sourcePatch), wasmSha256,
   execution: "Production page, aggregate Rust/WASM owner, actual DOM/Canvas/Three/WebGL2; HD/FHD at DPR 1",
   limits: "Synthetic WebXR engine submission is covered separately. Physical HMD/phone input and presentation-rate acceptance require their own runs.",
-  withoutGpuTimer: options.includes("--without-gpu-timer"), errors, warnings, checks, wasm, captures };
+  withoutGpuTimer: options.includes("--without-gpu-timer"), errors, warnings, checks, wasm, captures, chartInteractions };
 let browser: Browser | undefined;
 
 async function snapshot(page: Page, name: string, graphics = true): Promise<void> {
   await page.evaluate(() => new Promise<void>(complete => { requestAnimationFrame(() => { requestAnimationFrame(() => { complete(); }); }); }));
+  const chart = await page.evaluate(() => {
+    const shell = document.querySelector<HTMLElement>(".screen-ui-shell");
+    const viewport = document.querySelector<HTMLElement>(".screen-ui-chart-viewport");
+    if (shell == null || viewport == null) return null;
+    const shellRect = shell.getBoundingClientRect();
+    const chartRect = viewport.getBoundingClientRect();
+    return {
+      shell: { left: shellRect.left, top: shellRect.top, width: shellRect.width, height: shellRect.height },
+      viewport: { left: chartRect.left, top: chartRect.top, width: chartRect.width, height: chartRect.height },
+      coordinateExtent: viewport.querySelector("svg")?.getAttribute("viewBox"),
+      fields: Array.from(document.querySelectorAll<HTMLElement>(".screen-ui-field"), element => ({
+        id: element.dataset.fieldId, label: element.querySelector("dt")?.textContent,
+        value: element.querySelector(".screen-ui-field-value")?.textContent,
+        unit: element.querySelector(".screen-ui-field-unit")?.textContent
+      }))
+    };
+  });
   if (graphics) {
     const observed = await page.evaluate(() => new Promise<{ width: number; height: number; colors: number; nonblack: number; error: number; lost: boolean; losses: number }>((complete, reject) => {
       let frame = 0;
@@ -70,12 +88,12 @@ async function snapshot(page: Page, name: string, graphics = true): Promise<void
       }];
       frame = requestAnimationFrame(sample[0]);
     }));
-    captures.push({ name, viewport: page.viewportSize(), graphics: observed });
+    captures.push({ name, viewport: page.viewportSize(), graphics: observed, chart });
     assert.ok(observed.nonblack > 8 && observed.colors > 4, `${name}: missing scene pixels`);
     assert.equal(observed.error, 0, `${name}: WebGL error`);
     assert.equal(observed.lost, false, `${name}: context lost`);
     assert.equal(observed.losses, 0, `${name}: context loss event`);
-  } else captures.push({ name, viewport: page.viewportSize() });
+  } else captures.push({ name, viewport: page.viewportSize(), chart });
   if (graphics) await page.locator(".presentation-canvas").waitFor({ state: "visible" });
   await page.screenshot({ path: resolve(output, `${name}.png`), fullPage: false });
 }
@@ -182,6 +200,24 @@ async function verify(activeBrowser: Browser): Promise<void> {
     for (const chart of ["map", "altitude", "speed"]) {
       await click(`game-analysis-${chart}`);
       await pair(`analysis-${chart}`, false);
+      if (chart !== "map") {
+        const cursor = control("game-analysis-cursor");
+        await cursor.press("Home");
+        const before = await cursor.inputValue();
+        const viewport = page.locator(".screen-ui-chart-viewport");
+        await viewport.scrollIntoViewIfNeeded();
+        const bounds = await viewport.boundingBox();
+        assert.ok(bounds !== null, `${chart}: chart viewport is unavailable`);
+        await page.mouse.move(bounds.x + bounds.width * 0.35, bounds.y + bounds.height * 0.5);
+        await page.mouse.down();
+        await page.mouse.move(bounds.x + bounds.width * 0.7, bounds.y + bounds.height * 0.5, { steps: 4 });
+        await page.mouse.up();
+        await page.waitForFunction(previous => {
+          const range = document.querySelector<HTMLInputElement>('[data-control-id="game-analysis-cursor"]');
+          return range != null && range.value !== previous;
+        }, before);
+        chartInteractions.push({ chart, before, after: await cursor.inputValue() });
+      }
     }
     await click("game-result-replay");
     await scene("Replay");
