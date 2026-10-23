@@ -479,11 +479,11 @@ pub(crate) fn source_history(
         })
 }
 
-fn metadata_words(
+fn metadata_values(
     store: &DiagnosticsStore,
     gpu: &DiagnosticMeasurement,
-) -> Result<[u32; METADATA_WORDS], TimingFailure> {
-    decode_metadata(METADATA.map(|path| {
+) -> [Option<f64>; METADATA_WORDS] {
+    METADATA.map(|path| {
         store
             .get_measurement(&path)
             .filter(|value| value.time == gpu.time)
@@ -495,7 +495,7 @@ fn metadata_words(
                 })
             })
             .map(|value| value.value)
-    }))
+    })
 }
 
 fn decode_metadata(
@@ -563,16 +563,22 @@ pub(crate) fn poll(world: &mut World) -> Vec<ApplicationInput> {
             return None;
         }
         readout.arrival = Some(gpu.time);
-        let source =
-            match metadata_words(store, gpu).and_then(|words| decode_work(words, gpu.value)) {
-                Ok(source) => source,
-                Err(cause) => {
-                    return Some(ApplicationInput::RendererFailed {
-                        renderer_resource_id: world.resource::<NativeGpu>().renderer_id,
-                        cause: format!("GPU query metadata: {cause:?}"),
-                    });
-                }
-            };
+        let metadata = metadata_values(store, gpu);
+        let source = match decode_metadata(metadata).and_then(|words| decode_work(words, gpu.value))
+        {
+            Ok(source) => source,
+            Err(cause) => {
+                return Some(ApplicationInput::Graphics {
+                    renderer_resource_id: world.resource::<NativeGpu>().renderer_id,
+                    observation: ApplicationGraphicsObservation::Unsupported {
+                        cause: format!(
+                            "GPU query: {cause:?}; gpu_work_ms={:?}; metadata={metadata:?}",
+                            gpu.value
+                        ),
+                    },
+                });
+            }
+        };
         Some(ApplicationInput::Graphics {
             renderer_resource_id: source.renderer_resource_id,
             observation: ApplicationGraphicsObservation::GpuCompleted {
@@ -701,9 +707,36 @@ pub(crate) mod tests {
         assert_eq!(result.scale, ScreenRenderScale::Half);
         assert_eq!(result.shadow, ScreenShadowMap::Quarter);
         assert_eq!(result.water_quality, WaterQuality::Low);
+        assert_eq!(decode_work(words, 0.0).unwrap().sample.gpu_work_ms, 0.0);
+        assert_eq!(decode_work(words, -1.0), Err(TimingFailure::InvalidWork));
         assert_eq!(
             decode_work(words, f64::NAN),
             Err(TimingFailure::InvalidWork)
         );
+        #[cfg(feature = "verify-harness")]
+        {
+            let mut world = World::new();
+            world.init_resource::<NativeGpu>();
+            world.resource_mut::<NativeGpu>().renderer_id = 7;
+            world.init_resource::<TimingReadout>();
+            world.init_resource::<DiagnosticsStore>();
+            packet(
+                &mut world.resource_mut::<DiagnosticsStore>(),
+                Instant::now(),
+                3,
+                21,
+                1234,
+                -1.0,
+            );
+            assert!(matches!(
+                poll(&mut world).as_slice(),
+                [ApplicationInput::Graphics {
+                    renderer_resource_id: 7,
+                    observation: ApplicationGraphicsObservation::Unsupported { cause }
+                }] if cause.contains("InvalidWork") && cause.contains("gpu_work_ms=-1.0") && cause.contains("metadata=[")
+            ));
+            assert!(poll(&mut world).is_empty());
+            assert_eq!(world.resource::<NativeGpu>().renderer_id, 7);
+        }
     }
 }
