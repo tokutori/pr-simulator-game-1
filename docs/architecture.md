@@ -159,6 +159,7 @@ GameUiView / GameUiFrame → platform renderer → DOM / VR panel / Bevy entity
 - ボタンIDや表示文字列から意味を再推定しない。
 
 - menuは順序付きsectionとrow/column/gridを持つ。
+- controlは意味・操作・sectionを持ち、配置は各surfaceの実測寸法から解決する。ScreenはDOM/Bevyのflow、空間Menuは共有Rustの文字計測・配置結果を利用する。
 - section見出し、control順序、chart legendのsolid色・gradientを各rendererへ転送する。
 - 動的readoutは型付きproviderを用いる。
 - HUDは順序付きgroupとText・Attitude・HeadingTape・Direction・LinearGauge等のnodeを持ち、adapterはkindを網羅的に投影する。
