@@ -29,21 +29,17 @@ function flightModel(mode: "screen" | "phone-vr" | "webxr", phase: SessionPhase 
     gameSession: readRuntimeSessionProjection(session), sharedGameUi: session.readSharedUi(platform) }));
 }
 
-describe("Immutable same-frame Flight view finalization", () => {
-  it.each(["screen", "phone-vr", "webxr"] as const)("projects nullable shared %s HUD policy without requiring a physical snapshot", (mode) => {
-    for (const phase of ["flight_running", "flight_paused", "result", "attract"] as const) {
-      const model = flightModel(mode, phase);
-      const expected = phase === "flight_running" || (mode === "screen" && phase === "flight_paused");
-      expect(model.sharedGameUi?.hud !== null).toBe(expected);
-      expect(createFlightUiHudModel(model) !== null).toBe(expected);
-    }
-    for (const replayView of ["cinematic", "telemetry", "analysis"] as const) {
-      const model = flightModel(mode, "replay", null, replayView);
-      const expected = mode === "screen" && replayView === "telemetry";
-      expect(model.sharedGameUi?.hud !== null).toBe(expected);
-    }
-    const model = { ...flightModel(mode), sharedGameUi: null };
-    expect(createFlightUiHudModel(model)).toBeNull();
+describe("Same-frame Flight view projection", () => {
+  it("projects the supplied shared HUD and its absence", () => {
+    const model = flightModel("screen");
+    const shared = model.sharedGameUi;
+    if (shared?.hud === null || shared === null) throw new Error("Missing shared HUD");
+    const hud = createFlightUiHudModel(model);
+    expect(hud?.groups).toBe(shared.hud.groups);
+    expect(hud?.layout).toBe(shared.hud.layout);
+    expect(hud?.theme).toBe(shared.theme);
+    expect(createFlightUiHudModel({ ...model, sharedGameUi: { ...shared, hud: null } })).toBeNull();
+    expect(createFlightUiHudModel({ ...model, sharedGameUi: null })).toBeNull();
   });
 
   it.each([

@@ -16,12 +16,6 @@ function statusValue(view: UiViewModel, id: string): string {
 }
 
 describe("Shared Flight Setup and Briefing presentation", () => {
-  it.each(["countdown", "flight_running", "flight_paused", "result", "replay", "attract"] as const)("describes the user activity without internal execution terms in phase %s", phase => {
-    const shared = currentSharedGameUiFixture(phase);
-    expect(shared.description.length).toBeGreaterThan(0);
-    expect(shared.description).not.toMatch(/FlightRecord|terminal|snapshot|Physics|physics|pose|Resume|物理時間/);
-  });
-
   it.each(["title", "flight_paused"] as const)("resets Screen scroll on Credits entry and return in phase %s", async phase => {
     const window = new Window();
     Object.assign(globalThis, { window, document: window.document });

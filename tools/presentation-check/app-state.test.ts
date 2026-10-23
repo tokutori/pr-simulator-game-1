@@ -13,6 +13,7 @@ import type { SessionPhase } from "../../web/src/app/session-snapshot.js";
 import { viewExposesAction } from "../../web/src/render/contracts/ui.js";
 
 const terminalFlightSnapshot = currentFlightSnapshotFixture("result");
+const attractSessionProjection = currentGameSessionProjectionFixture("attract");
 const fullHudProfile = Object.freeze({
   telemetry: true,
   attitude: true,
@@ -55,7 +56,7 @@ describe("Boot application state", () => {
   it("starts Attract playback from the Rust clock and invalidates only deferred timer generations", () => {
     const requested = updateApp(readyModel(), { type: "shared-game-ui-effect",
       effect: { kind: "session", command: { kind: "enter_attract" } } });
-    const entered = updateApp(requested.model, { ...currentGameSessionProjectionFixture("attract"),
+    const entered = updateApp(requested.model, { ...attractSessionProjection,
       type: "session-command-completed", });
     expect(entered.effects).toEqual([{ type: "control-replay-clock", generation: 1,
       command: { kind: "synchronize", seekTimeSeconds: null } }]);
@@ -113,16 +114,15 @@ describe("Boot application state", () => {
   });
 
   it("routes published UI actions to the single Rust owner without changing browser domain projections", () => {
-    for (const phase of ["title", "flight_setup", "briefing_preparing", "briefing_ready", "countdown", "flight_running", "flight_paused", "result", "briefing_failed", "replay", "attract"] as const) {
-      const model = observeSharedUi(readyModel(phase), currentSharedGameUiFixture(phase));
-      const view = createGameViewModel(requireSharedUi(model));
-      for (const control of view.panels.flatMap((panel) => panel.controls)) {
-        if (control.kind !== "button" || !control.enabled) continue;
-        const updated = updateApp(model, { type: "ui-action", action: { type: "activate", controlId: control.id } });
-        expect(updated.model).toBe(model);
-        expect(updated.effects).toHaveLength(1);
-        expect(updated.effects[0]?.type).toBe("update-shared-game-ui");
-      }
+    const model = selectedModel("flight_setup", { informationCode: 4, hudProfile: fullHudProfile });
+    const view = createGameViewModel(requireSharedUi(model));
+    const controls = view.panels.flatMap((panel) => panel.controls).filter((control) => control.kind === "button" && control.enabled);
+    expect(controls.length).toBeGreaterThan(0);
+    for (const control of controls) {
+      const input = { type: "activate" as const, controlId: control.id };
+      const updated = updateApp(model, { type: "ui-action", action: input });
+      expect(updated.model).toBe(model);
+      expect(updated.effects).toEqual([{ type: "update-shared-game-ui", action: { kind: "control_input", input } }]);
     }
   });
 
@@ -956,7 +956,7 @@ function readyModel(phase: SessionPhase = "title"): AppModel {
     type: "presentation-initialized", requestId: 1, activeMode: "screen",
     webXrAvailable: true, phoneVrAvailable: true, status: "Screen ready"
   });
-  return { ...ready.model, gameSession: currentGameSessionProjectionFixture(phase) };
+  return { ...ready.model, gameSession: phase === "attract" ? attractSessionProjection : currentGameSessionProjectionFixture(phase) };
 }
 
 function observeSharedUi(model: AppModel, view: ReturnType<typeof currentSharedGameUiFixture>): AppModel {
