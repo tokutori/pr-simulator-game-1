@@ -59,6 +59,21 @@ pub(super) fn project_frame(
             .ok_or_else(|| format!("UI button entityが存在しない: {}", button.id))?;
         set_text(world, widget.text, button.label.clone());
     }
+    for group in &frame.fields {
+        let widget = retained
+            .widgets
+            .get(&group.id)
+            .ok_or_else(|| format!("UI numeric fields entityが存在しない: {}", group.id))?;
+        for field in &group.fields {
+            let entities = widget
+                .field_text
+                .get(&field.id)
+                .ok_or_else(|| format!("UI numeric field entityが存在しない: {}", field.id))?;
+            set_text(world, entities[0], field.label.clone());
+            set_text(world, entities[1], field.value.clone());
+            set_text(world, entities[2], field.unit.clone());
+        }
+    }
     if let Some(cursor) = &frame.chart_cursor {
         let widget = retained
             .widgets
@@ -121,7 +136,10 @@ pub(super) fn project_view(
         } else {
             Pickable::default()
         },
-        if view.layout.shell == GameUiShell::Center {
+        if matches!(
+            view.layout.shell,
+            GameUiShell::Center | GameUiShell::Analysis
+        ) {
             UiTransform::from_translation(Val2::percent(-50, -50))
         } else {
             UiTransform::IDENTITY
@@ -231,9 +249,14 @@ pub(super) fn project_view(
                     world.entity_mut(node).observe(scroll_content);
                 }
                 let text = spawn_text(world, node, "", font, 16.0, text_color);
-                retained
-                    .widgets
-                    .insert(control.id.clone(), Widget { node, text });
+                retained.widgets.insert(
+                    control.id.clone(),
+                    Widget {
+                        node,
+                        text,
+                        field_text: BTreeMap::new(),
+                    },
+                );
             }
         }
         if let Some(id) = focus_id
@@ -248,7 +271,7 @@ pub(super) fn project_view(
         for control in &panel.controls {
             let widget = retained
                 .widgets
-                .get(&control.id)
+                .get_mut(&control.id)
                 .ok_or_else(|| format!("UI controlを取得できない: {}", control.id))?;
             let previous = retained.view.as_ref().and_then(|previous| {
                 previous
@@ -275,8 +298,17 @@ pub(super) fn project_view(
                     &view.theme,
                     font,
                     section_layout,
-                    view.layout.shell,
+                    &view.layout,
                 )?;
+            }
+            if let Some(surface) = world
+                .get::<RetainedChart>(widget.node)
+                .map(|chart| chart.viewport)
+                && let Some(mut viewport) = world.get_mut::<ChartViewport>(surface)
+                && viewport.view_revision != view.view_revision
+            {
+                viewport.view_revision = view.view_revision;
+                viewport.measured = None;
             }
         }
     }
@@ -299,9 +331,17 @@ fn structure(view: &GameUiView) -> Vec<String> {
                 GameUiControlContent::Toggle { .. } => "toggle",
                 GameUiControlContent::Range { .. } => "range",
                 GameUiControlContent::Status { .. } => "status",
+                GameUiControlContent::Fields { .. } => "fields",
                 GameUiControlContent::Chart { .. } => "chart",
             };
             result.push(format!("{}/{}/{kind}", control.id, control.section));
+            if let GameUiControlContent::Fields { fields, .. } = &control.content {
+                result.extend(
+                    fields
+                        .iter()
+                        .map(|field| format!("{}/{}", control.id, field.id)),
+                );
+            }
         }
     }
     result
@@ -336,8 +376,8 @@ fn shell_node(layout: &GameUiLayout) -> Node {
             node.right = px(12);
         }
         GameUiShell::Analysis => {
-            node.left = px(0);
-            node.top = px(0);
+            node.left = percent(50);
+            node.top = percent(50);
             node.height = px(layout.maximum_height_px);
         }
     }
@@ -388,12 +428,12 @@ pub(super) fn section_node(section: GameUiSectionLayout, layout: &GameUiLayout) 
 
 fn project_control(
     world: &mut World,
-    widget: &Widget,
+    widget: &mut Widget,
     control: &GameUiControl,
     theme: &GameUiTheme,
     font: &Handle<Font>,
     section_layout: GameUiSectionLayout,
-    shell: GameUiShell,
+    layout: &GameUiLayout,
 ) -> Result<(), String> {
     let mut node = Node {
         width: percent(100),
@@ -407,7 +447,10 @@ fn project_control(
     if section_layout == GameUiSectionLayout::Row {
         node.width = auto();
         node.max_width = percent(100);
-        node.flex_grow = if matches!(shell, GameUiShell::FlightBar | GameUiShell::PauseSettings) {
+        node.flex_grow = if matches!(
+            layout.shell,
+            GameUiShell::FlightBar | GameUiShell::PauseSettings
+        ) {
             0.0
         } else {
             1.0
@@ -521,6 +564,82 @@ fn project_control(
                     .insert(UiText::TechnicalDetails);
             }
         }
+        GameUiControlContent::Fields { fields, .. } => {
+            let ink = color(&theme.text, 1.0)?;
+            let muted = color(&theme.muted_text, 1.0)?;
+            let grid = if let Some(children) = world.get::<Children>(widget.node)
+                && let Some(grid) = children.iter().find(|child| *child != widget.text)
+            {
+                grid
+            } else {
+                world.spawn((ChildOf(widget.node), Node::default())).id()
+            };
+            world.entity_mut(grid).insert(Node {
+                width: percent(100),
+                display: Display::Grid,
+                grid_template_columns: vec![RepeatedGridTrack::flex(
+                    layout.choice_columns as u16,
+                    1.0,
+                )],
+                row_gap: px(layout.gap_px),
+                column_gap: px(layout.gap_px),
+                ..default()
+            });
+            for field in fields {
+                let entities = if let Some(entities) = widget.field_text.get(&field.id) {
+                    *entities
+                } else {
+                    let card = world
+                        .spawn((
+                            ChildOf(grid),
+                            Node {
+                                min_width: px(0),
+                                padding: UiRect::all(px(8)),
+                                flex_direction: FlexDirection::Column,
+                                row_gap: px(4),
+                                ..default()
+                            },
+                            BackgroundColor(color(&theme.choice_background, 1.0)?),
+                        ))
+                        .id();
+                    let heading = spawn_text(world, card, &field.label, font, 14.0, muted);
+                    let row = world
+                        .spawn((
+                            ChildOf(card),
+                            Node {
+                                justify_content: JustifyContent::FlexEnd,
+                                align_items: AlignItems::Baseline,
+                                flex_wrap: FlexWrap::Wrap,
+                                column_gap: px(5.6),
+                                ..default()
+                            },
+                        ))
+                        .id();
+                    let value = spawn_text(world, row, &field.value, font, 16.0, ink);
+                    world
+                        .get_mut::<TextFont>(value)
+                        .expect("numeric text font exists")
+                        .font_features = FontFeatures::builder()
+                        .enable(FontFeatureTag::TABULAR_FIGURES)
+                        .build();
+                    let unit = spawn_text(world, row, &field.unit, font, 14.0, muted);
+                    let entities = [heading, value, unit];
+                    widget.field_text.insert(field.id.clone(), entities);
+                    entities
+                };
+                set_text(world, entities[0], field.label.clone());
+                set_text(world, entities[1], field.value.clone());
+                set_text(world, entities[2], field.unit.clone());
+                world.entity_mut(entities[0]).insert(TextColor(muted));
+                world.entity_mut(entities[1]).insert(TextColor(ink));
+                world.entity_mut(entities[2]).insert(TextColor(muted));
+                if let Some(card) = world.get::<ChildOf>(entities[0]).map(ChildOf::parent) {
+                    world
+                        .entity_mut(card)
+                        .insert(BackgroundColor(color(&theme.choice_background, 1.0)?));
+                }
+            }
+        }
         GameUiControlContent::Chart { plot, .. } => {
             label = control.label.clone();
             background = color(&theme.panel_background, theme.panel_opacity)?;
@@ -534,7 +653,7 @@ fn project_control(
                     .entity_mut(widget.node)
                     .insert(ScrollPosition::default());
             }
-            let root_font_size = viewport(world).0.root_font_size;
+            let root_font_size = viewport(world).root_font_size;
             let legend_ink = color(&theme.text, 1.0)?;
             project_chart(
                 world,
@@ -545,6 +664,18 @@ fn project_control(
                 legend_ink,
                 font,
             )?;
+            let chart = world
+                .get::<RetainedChart>(widget.node)
+                .expect("projected chart exists");
+            let (viewport, canvas) = (chart.viewport, chart.surface);
+            if world.get::<ChartViewport>(viewport).is_none() {
+                world.entity_mut(viewport).insert(ChartViewport {
+                    canvas,
+                    control_id: control.id.clone(),
+                    view_revision: 0,
+                    measured: None,
+                });
+            }
         }
     }
     world
@@ -553,7 +684,9 @@ fn project_control(
     if control.enabled
         && !matches!(
             control.content,
-            GameUiControlContent::Status { .. } | GameUiControlContent::Chart { .. }
+            GameUiControlContent::Status { .. }
+                | GameUiControlContent::Fields { .. }
+                | GameUiControlContent::Chart { .. }
         )
     {
         world.entity_mut(widget.node).insert(TabIndex(0));
@@ -570,7 +703,9 @@ fn project_control(
             if control.enabled
                 || matches!(
                     control.content,
-                    GameUiControlContent::Status { .. } | GameUiControlContent::Chart { .. }
+                    GameUiControlContent::Status { .. }
+                        | GameUiControlContent::Fields { .. }
+                        | GameUiControlContent::Chart { .. }
                 )
             {
                 1.0

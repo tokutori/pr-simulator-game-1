@@ -114,6 +114,18 @@ fn chart_measurement_converges_and_raw_pointer_scrubs_only_its_admitted_range() 
         ))
         .unwrap();
     assert_eq!(runtime.ui.analysis_time_seconds, plot.x_maximum);
+    for (phase, buttons) in [
+        (ApplicationChartPointerPhase::Down, 3),
+        (ApplicationChartPointerPhase::Up, 1),
+    ] {
+        let mut chord = pointer(revision, phase, left, buttons);
+        if let ApplicationInput::ChartPointer { button, .. } = &mut chord {
+            *button = 2;
+        }
+        runtime.observe_test(chord).unwrap();
+        assert_eq!(runtime.ui.analysis_time_seconds, plot.x_maximum);
+        assert!(runtime.chart_pointer.is_some());
+    }
     runtime
         .observe_test(pointer(
             revision,

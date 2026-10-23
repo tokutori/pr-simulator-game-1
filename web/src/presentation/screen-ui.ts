@@ -1,4 +1,4 @@
-import type { GameUiChart, GameUiChartExtent, GameUiControl, GameUiControlInput, GameUiFrame, GameUiPanel, GameUiView } from "../generated/application-contracts.js";
+import type { ApplicationInput, GameUiChart, GameUiControl, GameUiControlInput, GameUiFrame, GameUiPanel, GameUiView } from "../generated/application-contracts.js";
 import {
   attributesModule,
   classModule,
@@ -17,6 +17,7 @@ const APP_BUILD_LABEL = typeof __APP_BUILD_LABEL__ === "string"
   : "v0.1.0 · test";
 
 const patch = init([attributesModule, classModule, datasetModule, propsModule, styleModule]);
+type ChartPointer = Extract<ApplicationInput, { kind: "chart_pointer" }>;
 
 interface RetainedScreenDom {
   readonly reason: "hidden" | "disabled";
@@ -35,12 +36,11 @@ export class ScreenUiAdapter {
   private retainedDom: RetainedScreenDom | null = null;
   private currentViewModel: GameUiView | null = null;
   private frame: GameUiFrame | null = null;
-  private readonly chartViewports = new Map<string, GameUiChartExtent>();
-  private readonly observedCharts = new Set<Element>();
+  private readonly observedCharts = new Map<Element, number>();
+  private readonly capturedPointers = new Map<number, { element: Element; last: ChartPointer }>();
   private readonly chartObserver: ResizeObserver | null;
 
-  constructor(private readonly root: HTMLElement, private readonly dispatch: (input: GameUiControlInput) => void,
-    private readonly chartExtentChanged: () => void = () => undefined) {
+  constructor(private readonly root: HTMLElement, private readonly dispatch: (input: ApplicationInput) => void) {
     this.mount = root.ownerDocument.createElement("div");
     this.mount.className = "screen-ui-mount";
     this.root.append(this.mount);
@@ -48,30 +48,33 @@ export class ScreenUiAdapter {
     this.root.addEventListener("click", this.onClick);
     this.root.addEventListener("change", this.onChange);
     this.root.addEventListener("input", this.onInput);
+    this.root.addEventListener("pointerdown", this.onPointerDown);
+    this.root.addEventListener("pointermove", this.onPointerMove);
+    this.root.addEventListener("pointerup", this.onPointerUp);
+    this.root.addEventListener("pointercancel", this.onPointerCancel);
+    this.root.addEventListener("lostpointercapture", this.onPointerLost);
     const ResizeObserverConstructor = root.ownerDocument.defaultView?.ResizeObserver;
     this.chartObserver = ResizeObserverConstructor === undefined ? null : new ResizeObserverConstructor(this.onChartResize);
   }
 
-  chartExtent(): GameUiChartExtent | null {
-    if (!this.visible) return null;
-    for (const [id, extent] of this.chartViewports) {
-      if (this.controls.get(id)?.content.kind === "chart") return extent;
-    }
-    return null;
-  }
-
   dispose(): void {
+    const released = this.releasePointers();
     this.chartObserver?.disconnect();
     this.discardRetainedDom();
     this.root.removeEventListener("click", this.onClick);
     this.root.removeEventListener("change", this.onChange);
     this.root.removeEventListener("input", this.onInput);
+    this.root.removeEventListener("pointerdown", this.onPointerDown);
+    this.root.removeEventListener("pointermove", this.onPointerMove);
+    this.root.removeEventListener("pointerup", this.onPointerUp);
+    this.root.removeEventListener("pointercancel", this.onPointerCancel);
+    this.root.removeEventListener("lostpointercapture", this.onPointerLost);
     this.observedCharts.clear();
-    this.chartViewports.clear();
     this.controls.clear();
     this.currentViewModel = null;
     this.frame = null;
     this.mount.remove();
+    for (const input of released) this.dispatch(input);
   }
 
   render(viewModel: GameUiView, visible = true): void {
@@ -88,6 +91,7 @@ export class ScreenUiAdapter {
 
   private renderDom(viewModel: GameUiView, visible: boolean): void {
     const scopeChanged = this.currentViewModel !== null && (this.currentViewModel.interaction_scope !== viewModel.interaction_scope);
+    const released = !visible || scopeChanged || this.currentViewModel?.view_revision !== viewModel.view_revision ? this.releasePointers() : [];
     this.currentViewModel = viewModel;
     const wasVisible = this.visible;
     if (wasVisible && !visible) {
@@ -125,45 +129,98 @@ export class ScreenUiAdapter {
     }
     this.restoreDom();
     this.observeCharts();
+    for (const input of released) this.dispatch(input);
   }
 
   private observeCharts(): void {
     if (this.chartObserver === null) return;
     const targets = this.visible ? new Set(this.mount.querySelectorAll(".screen-ui-chart-viewport")) : new Set<Element>();
-    for (const target of this.observedCharts) {
-      if (!targets.has(target)) {
+    const revision = this.currentViewModel?.view_revision;
+    if (revision === undefined) return;
+    for (const [target, observedRevision] of this.observedCharts) {
+      if (!targets.has(target) || observedRevision !== revision) {
         this.chartObserver.unobserve(target);
         this.observedCharts.delete(target);
       }
     }
     for (const target of targets) {
       if (!this.observedCharts.has(target)) {
-        this.observedCharts.add(target);
+        this.observedCharts.set(target, revision);
         this.chartObserver.observe(target);
       }
-    }
-    for (const id of this.chartViewports.keys()) {
-      if (this.controls.get(id)?.content.kind !== "chart") this.chartViewports.delete(id);
     }
   }
 
   private readonly onChartResize: ResizeObserverCallback = (entries): void => {
     if (!this.visible || this.currentViewModel === null) return;
-    let changed = false;
+    const revision = this.currentViewModel.view_revision;
     for (const entry of entries) {
       if (!this.observedCharts.has(entry.target) || !this.mount.contains(entry.target)) continue;
       const id = entry.target.getAttribute("data-chart-control-id");
       const { width, height } = entry.contentRect;
-      const control = id === null ? undefined : this.controls.get(id);
-      if (id === null || control?.content.kind !== "chart" || !Number.isFinite(width) || !Number.isFinite(height)
-          || width < control.content.plot.presentation.measurement_minimum.width || height < control.content.plot.presentation.measurement_minimum.height) continue;
-      const previous = this.chartViewports.get(id);
-      if (previous !== undefined && Math.abs(previous.width - width) < 0.5 && Math.abs(previous.height - height) < 0.5) continue;
-      this.chartViewports.set(id, Object.freeze({ width, height }));
-      changed = true;
+      if (id === null || this.controls.get(id)?.content.kind !== "chart") continue;
+      this.dispatch({ kind: "chart_measured", view_revision: revision, control_id: id, extent: { width, height } });
     }
-    if (changed) this.chartExtentChanged();
   };
+
+  private controlInput(input: GameUiControlInput): void {
+    if (this.currentViewModel !== null) this.dispatch({ kind: "control", view_revision: this.currentViewModel.view_revision, input });
+  }
+
+  private chartPointer(event: PointerEvent, phase: ChartPointer["phase"], element: Element, controlId: string, revision: number): ChartPointer {
+    const rect = element.getBoundingClientRect();
+    return { kind: "chart_pointer", view_revision: revision, control_id: controlId, pointer_id: event.pointerId, phase,
+      button: event.button, buttons: event.buttons, is_primary: event.isPrimary, position: [event.clientX, event.clientY],
+      rect: [rect.left, rect.top, rect.width, rect.height] };
+  }
+
+  private readonly onPointerDown = (event: PointerEvent): void => {
+    if (!this.visible || this.currentViewModel === null) return;
+    const element = eventElement(event, this.root)?.closest(".screen-ui-chart-viewport");
+    const controlId = element?.getAttribute("data-chart-control-id");
+    if (element == null || controlId == null) return;
+    const handle = { element, last: this.chartPointer(event, "down", element, controlId, this.currentViewModel.view_revision) };
+    this.capturedPointers.set(event.pointerId, handle);
+    let failure = false;
+    try { element.setPointerCapture(event.pointerId); } catch { failure = true; }
+    this.dispatch(handle.last);
+    if (failure && this.capturedPointers.get(event.pointerId) === handle) {
+      this.capturedPointers.delete(event.pointerId);
+      this.dispatch({ ...handle.last, phase: "lost_capture" });
+    }
+  };
+
+  private pointerEvent(event: PointerEvent, phase: ChartPointer["phase"], release: boolean): void {
+    const handle = this.capturedPointers.get(event.pointerId);
+    if (handle === undefined) return;
+    handle.last = this.chartPointer(event, phase, handle.element, handle.last.control_id, handle.last.view_revision);
+    if (release) {
+      this.capturedPointers.delete(event.pointerId);
+      if (phase !== "lost_capture") {
+        try { handle.element.releasePointerCapture(event.pointerId); } catch {
+          this.dispatch(handle.last);
+          this.dispatch({ ...handle.last, phase: "lost_capture" });
+          return;
+        }
+      }
+    }
+    this.dispatch(handle.last);
+  }
+
+  private readonly onPointerMove = (event: PointerEvent): void => { this.pointerEvent(event, "move", false); };
+  private readonly onPointerUp = (event: PointerEvent): void => { this.pointerEvent(event, "up", true); };
+  private readonly onPointerCancel = (event: PointerEvent): void => { this.pointerEvent(event, "cancel", true); };
+  private readonly onPointerLost = (event: PointerEvent): void => { this.pointerEvent(event, "lost_capture", true); };
+
+  private releasePointers(): ChartPointer[] {
+    const released = [...this.capturedPointers.values()];
+    this.capturedPointers.clear();
+    return released.map(handle => {
+      const input: ChartPointer = { ...handle.last, phase: "lost_capture" };
+      try { handle.element.releasePointerCapture(handle.last.pointer_id); } catch { return input; }
+      return input;
+    });
+  }
 
   private retainDom(reason: RetainedScreenDom["reason"]): void {
     this.discardRetainedDom();
@@ -228,7 +285,7 @@ export class ScreenUiAdapter {
     if (controlId === null || controlId === undefined) return;
     const control = this.controls.get(controlId);
     if (control?.content.kind !== "button" || !control.enabled) return;
-    this.dispatch({ type: "activate", controlId: control.id });
+    this.controlInput({ type: "activate", controlId: control.id });
   };
 
   private readonly onChange = (event: Event): void => {
@@ -240,7 +297,7 @@ export class ScreenUiAdapter {
     const control = this.controls.get(controlId);
     if (control?.content.kind !== "toggle" || !control.enabled) return;
     const checked = (input as HTMLInputElement).checked;
-    this.dispatch({ type: "set-toggle", controlId: control.id, value: checked });
+    this.controlInput({ type: "set-toggle", controlId: control.id, value: checked });
   };
 
   private readonly onInput = (event: Event): void => {
@@ -252,7 +309,7 @@ export class ScreenUiAdapter {
     const control = this.controls.get(controlId);
     if (control?.content.kind !== "range" || !control.enabled) return;
     const value = Number((input as HTMLInputElement).value);
-    if (Number.isFinite(value)) this.dispatch({ type: "set-range", controlId: control.id, value });
+    if (Number.isFinite(value)) this.controlInput({ type: "set-range", controlId: control.id, value });
   };
 
   private createPanel(panel: GameUiPanel): VNode {
@@ -305,6 +362,15 @@ export class ScreenUiAdapter {
       ]);
     }
     if (content.kind === "chart") return this.createChart(control, content.plot);
+    if (content.kind === "fields") {
+      const fields = this.frame?.fields.find(group => group.id === control.id)?.fields ?? content.fields;
+      return h("section.screen-ui-fields", { key: control.id, attrs: { id: control.id, "aria-label": control.label } }, [
+        ...(control.label.length === 0 ? [] : [h("h3", control.label)]),
+        h("dl.screen-ui-fields-grid", fields.map(field => h("div.screen-ui-field", { key: field.id, dataset: { fieldId: field.id } }, [
+          h("dt", field.label), h("dd", [h("span.screen-ui-field-value", field.value), h("span.screen-ui-field-unit", field.unit)])
+        ])))
+      ]);
+    }
     const value = this.frame?.readouts.find(readout => readout.id === control.id)?.value ?? content.value;
     return h("output.screen-ui-status", { key: control.id, attrs: { id: control.id, "aria-live": "polite" } }, control.label.length === 0 ? value : `${control.label}: ${value}`);
   }
@@ -444,7 +510,7 @@ export class ScreenUiAdapter {
     const legend: VNode[] = [];
     layout.legend.forEach((entry) => {
       const item = h("span", { style: {}, dataset: {} }, "");
-      item.text = entry.label;
+      item.text = entry.source === "analysis_cursor" ? selectedCursor?.selected_wind_vector?.label ?? entry.label : entry.label;
       setNodeStyle(item, "--chart-series-color", entry.color);
       if (entry.segment_gradient != null) {
         setNodeDataset(item, "progressScale", "true");
@@ -467,7 +533,7 @@ export class ScreenUiAdapter {
       "--chart-legend-gradient-radius": `${String(layout.legend_gradient_radius_rem)}rem`
     } }, [
       caption,
-      h("div.screen-ui-chart-viewport", { dataset: { chartControlId: control.id } }, [
+      h("div.screen-ui-chart-viewport", { dataset: { chartControlId: control.id }, style: { height: `${String(layout.target_height_px)}px`, flex: "0 0 auto" } }, [
         h("svg", { attrs: svgAttributes, style: svgStyle }, svg)
       ]),
       h("div.screen-ui-chart-legend", legend)

@@ -678,7 +678,12 @@ impl ApplicationRuntime {
                     if self.chart_pointer.as_ref() == Some(&identity) {
                         self.chart_pointer = None;
                     }
-                } else if self.presentation_input_focused() {
+                } else if self.presentation_input_focused()
+                    && (phase != ApplicationChartPointerPhase::Down || button == 0)
+                    && (phase != ApplicationChartPointerPhase::Up
+                        || button == 0
+                        || buttons & 1 == 0)
+                {
                     let chart = self
                         .retained
                         .as_ref()

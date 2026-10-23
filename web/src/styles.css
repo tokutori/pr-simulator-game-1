@@ -256,17 +256,11 @@ body {
 
 .screen-ui-shell[data-mode="analysis"] {
   position: fixed;
-  inset: 0;
+  inset: auto;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
   display: block;
-  width: 100vw;
-  height: 100dvh;
-  max-height: none;
-  overflow: hidden;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
 }
 
 .screen-ui-shell[data-mode="cinematic"] {
@@ -551,6 +545,54 @@ body {
   flex: 1 0 var(--chart-minimum-height);
   min-width: var(--chart-minimum-width);
   min-height: var(--chart-minimum-height);
+  touch-action: none;
+  user-select: none;
+}
+
+.screen-ui-fields {
+  min-width: 0;
+}
+
+.screen-ui-fields h3 {
+  margin: 0 0 var(--game-ui-gap);
+}
+
+.screen-ui-fields-grid {
+  display: grid;
+  grid-template-columns: repeat(var(--game-ui-columns), minmax(0, 1fr));
+  gap: var(--game-ui-gap);
+  margin: 0;
+}
+
+.screen-ui-field {
+  min-width: 0;
+  padding: 0.5rem;
+  border-radius: 0.35rem;
+  background: var(--game-ui-choice);
+}
+
+.screen-ui-field dt {
+  color: var(--game-ui-muted-text);
+  font-size: 0.85em;
+}
+
+.screen-ui-field dd {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: baseline;
+  gap: 0.35em;
+  margin: 0;
+}
+
+.screen-ui-field-value {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.screen-ui-field-unit {
+  color: var(--game-ui-muted-text);
+  font-size: 0.85em;
 }
 
 .screen-ui-chart svg {

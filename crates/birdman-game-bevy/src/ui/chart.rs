@@ -12,24 +12,26 @@ pub(super) fn project_chart(
     let retained_surface = world
         .get::<RetainedChart>(parent)
         .map(|chart| chart.surface);
+    let retained_viewport = world
+        .get::<RetainedChart>(parent)
+        .map(|chart| chart.viewport);
     let children = world
         .entity(parent)
         .get::<Children>()
         .map(|children| {
             children
                 .iter()
-                .filter(|entity| *entity != title && Some(*entity) != retained_surface)
+                .filter(|entity| *entity != title && Some(*entity) != retained_viewport)
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
     for child in children {
         world.despawn(child);
     }
-    let surface = retained_surface.unwrap_or_else(|| {
-        world
-            .spawn((ChildOf(parent), Node::default(), ChartViewport))
-            .id()
-    });
+    let viewport =
+        retained_viewport.unwrap_or_else(|| world.spawn((ChildOf(parent), Node::default())).id());
+    let surface =
+        retained_surface.unwrap_or_else(|| world.spawn((ChildOf(viewport), Node::default())).id());
     let children = world
         .get::<Children>(surface)
         .map(|children| children.iter().collect::<Vec<_>>())
@@ -38,14 +40,19 @@ pub(super) fn project_chart(
         world.despawn(child);
     }
     let presentation = &chart.presentation;
-    world.entity_mut(surface).insert(Node {
+    world.entity_mut(viewport).insert(Node {
         width: percent(100),
         min_width: px(presentation.viewport_minimum_rem[0] * root_font_size),
         min_height: px(presentation.viewport_minimum_rem[1] * root_font_size),
-        flex_grow: 1.0,
-        flex_basis: px(presentation.viewport_minimum_rem[1] * root_font_size),
+        height: px(presentation.target_height_px),
         flex_shrink: 0.0,
         overflow: Overflow::clip(),
+        ..default()
+    });
+    world.entity_mut(surface).insert(Node {
+        position_type: PositionType::Absolute,
+        width: px(presentation.viewport.width),
+        height: px(presentation.viewport.height),
         ..default()
     });
     let plot = presentation.plot;
@@ -170,6 +177,7 @@ pub(super) fn project_chart(
             },
         ))
         .id();
+    let mut wind_legend = None;
     for entry in &presentation.legend {
         let item = world
             .spawn((
@@ -223,15 +231,20 @@ pub(super) fn project_chart(
             legend_ink,
         );
         world.entity_mut(text).insert(TextLayout::no_wrap());
+        if entry.source == birdman_game_presentation::game_ui::GameUiReadoutSource::AnalysisCursor {
+            wind_legend = Some(text);
+        }
     }
     let cursor = chart_line(world, surface, Vec2::ZERO, Vec2::ZERO, Color::WHITE);
     let wind =
         std::array::from_fn(|_| chart_line(world, surface, Vec2::ZERO, Vec2::ZERO, Color::WHITE));
     world.entity_mut(parent).insert(RetainedChart {
+        viewport,
         surface,
         cursor,
         points: Vec::new(),
         wind,
+        wind_legend,
         plot,
     });
     project_chart_cursor(
@@ -415,6 +428,9 @@ pub(super) fn project_chart_cursor(
         }
     }
     if let Some(vector) = &cursor.selected_wind_vector {
+        if let Some(legend) = retained.wind_legend {
+            set_text(world, legend, vector.label.clone());
+        }
         let ink = color(&vector.color, 1.0)?;
         for (index, entity) in retained.wind.iter().enumerate() {
             let [start, end] = vector

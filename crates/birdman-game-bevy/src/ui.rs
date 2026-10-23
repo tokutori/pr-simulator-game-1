@@ -6,9 +6,13 @@ use bevy::{
         FocusCause, InputFocus,
         tab_navigation::{TabGroup, TabIndex},
     },
-    picking::Pickable,
+    picking::{
+        Pickable,
+        hover::HoverMap,
+        pointer::{PointerAction, PointerButton, PointerId, PointerInput},
+    },
     prelude::*,
-    text::{ComputedTextBlock, TextLayoutInfo},
+    text::{ComputedTextBlock, FontFeatureTag, FontFeatures, TextLayoutInfo},
     ui::ColorStop,
     ui::RelativeCursorPosition,
 };
@@ -18,7 +22,10 @@ use birdman_game_presentation::game_ui::{
     GameUiControlInput, GameUiEmphasis, GameUiFrame, GameUiLayout, GameUiPlatformCommand,
     GameUiSectionLayout, GameUiShell, GameUiTheme, GameUiView, GameUiViewport,
 };
-use birdman_game_runtime::{ApplicationDrawingOutput, ApplicationInput, ApplicationUiProjection};
+use birdman_game_runtime::{
+    ApplicationChartPointerPhase, ApplicationDrawingOutput, ApplicationInput,
+    ApplicationUiProjection,
+};
 use std::collections::BTreeMap;
 
 #[path = "ui/chart.rs"]
@@ -64,6 +71,7 @@ pub(crate) enum UiPanel {
 struct Widget {
     node: Entity,
     text: Entity,
+    field_text: BTreeMap<String, [Entity; 3]>,
 }
 
 #[derive(Resource)]
@@ -85,21 +93,42 @@ pub(crate) fn submitted_view(world: &World) -> Option<&GameUiView> {
 
 #[derive(Component, Clone)]
 struct RetainedChart {
+    viewport: Entity,
     surface: Entity,
     cursor: Entity,
     points: Vec<Entity>,
     wind: [Entity; 3],
+    wind_legend: Option<Entity>,
     plot: [f64; 4],
 }
 
 #[derive(Component)]
-struct ChartViewport;
+struct ChartViewport {
+    canvas: Entity,
+    control_id: String,
+    view_revision: u32,
+    measured: Option<GameUiChartExtent>,
+}
+
+#[derive(Resource, Default)]
+struct ChartPointerIo {
+    cursor: bevy::ecs::message::MessageCursor<PointerInput>,
+    buttons: u16,
+    capture: Option<ChartCapture>,
+}
+
+struct ChartCapture {
+    viewport: Entity,
+    canvas: Entity,
+    last: ApplicationInput,
+}
 
 #[derive(Component)]
 struct ChartTextBaseline;
 
 pub(crate) fn setup_ui(mut commands: Commands, font: Res<NativeFont>) {
     commands.init_resource::<InputFocus>();
+    commands.init_resource::<ChartPointerIo>();
     commands.spawn((
         UiText::FrameRate,
         Text::new("FPS —"),
@@ -169,7 +198,7 @@ fn frame_rate_node() -> Node {
     }
 }
 
-pub(crate) fn viewport(world: &mut World) -> (GameUiViewport, Option<GameUiChartExtent>) {
+pub(crate) fn viewport(world: &mut World) -> GameUiViewport {
     let scale = world.get_resource::<UiScale>().map_or(1.0, |scale| scale.0);
     let viewport = world
         .query::<&Window>()
@@ -178,46 +207,15 @@ pub(crate) fn viewport(world: &mut World) -> (GameUiViewport, Option<GameUiChart
         .map_or((1280.0, 720.0), |window| {
             (window.width() / scale, window.height() / scale)
         });
-    let chart_minimum = world
-        .get_resource::<RetainedUi>()
-        .and_then(|retained| retained.view.as_ref())
-        .and_then(|view| {
-            view.panels
-                .iter()
-                .flat_map(|panel| &panel.controls)
-                .find_map(|control| match &control.content {
-                    GameUiControlContent::Chart { plot, .. } => {
-                        Some(plot.presentation.measurement_minimum)
-                    }
-                    _ => None,
-                })
-        });
-    let chart_extent = world
-        .query_filtered::<(&ComputedNode, Option<&InheritedVisibility>), With<ChartViewport>>()
-        .iter(world)
-        .find_map(|(node, visibility)| {
-            let size = node.size() * node.inverse_scale_factor;
-            (size.is_finite()
-                && chart_minimum.is_some_and(|minimum| {
-                    f64::from(size.x) >= minimum.width && f64::from(size.y) >= minimum.height
-                })
-                && visibility.is_none_or(|visibility| visibility.get()))
-            .then_some(GameUiChartExtent {
-                width: f64::from(size.x),
-                height: f64::from(size.y),
-            })
-        });
-    (
-        GameUiViewport {
-            width: f64::from(viewport.0),
-            height: f64::from(viewport.1),
-            root_font_size: 16.0,
-        },
-        chart_extent,
-    )
+    GameUiViewport {
+        width: f64::from(viewport.0),
+        height: f64::from(viewport.1),
+        root_font_size: 16.0,
+    }
 }
 
 pub(crate) fn button_actions(world: &mut World) {
+    chart_inputs(world);
     let revision = world
         .resource::<RetainedUi>()
         .view
@@ -313,6 +311,198 @@ pub(crate) fn button_actions(world: &mut World) {
                 input,
             });
     }
+}
+
+fn chart_inputs(world: &mut World) {
+    let Some(retained) = world.get_resource::<RetainedUi>() else {
+        return;
+    };
+    let visible = world
+        .get::<Visibility>(retained.shell)
+        .is_none_or(|visibility| *visibility != Visibility::Hidden);
+    let revision = retained.view.as_ref().map(|view| view.view_revision);
+    let scale = world.get_resource::<UiScale>().map_or(1.0, |scale| scale.0);
+    let mut inputs = Vec::new();
+    for (node, mut viewport, visibility) in world
+        .query::<(
+            &ComputedNode,
+            &mut ChartViewport,
+            Option<&InheritedVisibility>,
+        )>()
+        .iter_mut(world)
+    {
+        if !visible || visibility.is_some_and(|visibility| !visibility.get()) {
+            continue;
+        }
+        let size = node.size() * node.inverse_scale_factor;
+        let extent = GameUiChartExtent {
+            width: f64::from(size.x),
+            height: f64::from(size.y),
+        };
+        if viewport.measured != Some(extent) {
+            viewport.measured = Some(extent);
+            inputs.push(ApplicationInput::ChartMeasured {
+                view_revision: viewport.view_revision,
+                control_id: viewport.control_id.clone(),
+                extent,
+            });
+        }
+    }
+    let Some(mut io) = world.remove_resource::<ChartPointerIo>() else {
+        return;
+    };
+    if io.capture.as_ref().is_some_and(|capture| {
+        !visible || world.get::<ChartViewport>(capture.viewport).is_none_or(|viewport| {
+            Some(viewport.view_revision) != revision || viewport.canvas != capture.canvas
+        }) || !matches!(&capture.last, ApplicationInput::ChartPointer { view_revision, .. } if Some(*view_revision) == revision)
+    }) && let Some(mut capture) = io.capture.take() {
+        if let ApplicationInput::ChartPointer { phase, .. } = &mut capture.last {
+            *phase = ApplicationChartPointerPhase::LostCapture;
+        }
+        inputs.push(capture.last);
+    }
+    let events = world
+        .get_resource::<Messages<PointerInput>>()
+        .map(|messages| io.cursor.read(messages).cloned().collect::<Vec<_>>())
+        .unwrap_or_default();
+    for event in events {
+        if event.pointer_id != PointerId::Mouse {
+            continue;
+        }
+        let button_value = |button| match button {
+            PointerButton::Primary => (0, 1),
+            PointerButton::Secondary => (2, 2),
+            PointerButton::Middle => (1, 4),
+        };
+        let (phase, button) = match event.action {
+            PointerAction::Press(button) => {
+                let (button, bit) = button_value(button);
+                let first = io.buttons == 0;
+                io.buttons |= bit;
+                (
+                    if first {
+                        ApplicationChartPointerPhase::Down
+                    } else {
+                        ApplicationChartPointerPhase::Move
+                    },
+                    button,
+                )
+            }
+            PointerAction::Release(button) => {
+                let (button, bit) = button_value(button);
+                io.buttons &= !bit;
+                (
+                    if io.buttons == 0 {
+                        ApplicationChartPointerPhase::Up
+                    } else {
+                        ApplicationChartPointerPhase::Move
+                    },
+                    button,
+                )
+            }
+            PointerAction::Move { .. } => (ApplicationChartPointerPhase::Move, -1),
+            PointerAction::Cancel => {
+                io.buttons = 0;
+                (ApplicationChartPointerPhase::Cancel, -1)
+            }
+            PointerAction::Scroll { .. } => continue,
+        };
+        if !visible {
+            continue;
+        }
+        if phase == ApplicationChartPointerPhase::Down {
+            let charts = world
+                .query::<(Entity, &ChartViewport)>()
+                .iter(world)
+                .map(|(entity, viewport)| {
+                    (
+                        entity,
+                        viewport.canvas,
+                        viewport.control_id.clone(),
+                        viewport.view_revision,
+                    )
+                })
+                .collect::<Vec<_>>();
+            let hit = charts.into_iter().find(|(entity, ..)| {
+                world
+                    .get_resource::<HoverMap>()
+                    .and_then(|hover| hover.0.get(&event.pointer_id))
+                    .is_some_and(|hovered| {
+                        hovered.keys().any(|hit| {
+                            let mut hit = *hit;
+                            loop {
+                                if hit == *entity {
+                                    return true;
+                                }
+                                let Some(parent) = world.get::<ChildOf>(hit) else {
+                                    return false;
+                                };
+                                hit = parent.parent();
+                            }
+                        })
+                    })
+            });
+            let Some((viewport, canvas, control_id, view_revision)) = hit else {
+                continue;
+            };
+            io.capture = Some(ChartCapture {
+                viewport,
+                canvas,
+                last: ApplicationInput::ChartPointer {
+                    view_revision,
+                    control_id,
+                    pointer_id: 0,
+                    phase,
+                    button,
+                    buttons: io.buttons,
+                    is_primary: true,
+                    position: [0.0; 2],
+                    rect: [0.0; 4],
+                },
+            });
+        }
+        let Some(capture) = io.capture.as_mut() else {
+            continue;
+        };
+        let (Some(node), Some(transform)) = (
+            world.get::<ComputedNode>(capture.canvas),
+            world.get::<UiGlobalTransform>(capture.canvas),
+        ) else {
+            continue;
+        };
+        let size = node.size() * node.inverse_scale_factor;
+        let corner = (transform.translation - node.size() * 0.5) * node.inverse_scale_factor;
+        let position = event.location.position / scale;
+        if let ApplicationInput::ChartPointer {
+            phase: input_phase,
+            button: input_button,
+            buttons,
+            position: input_position,
+            rect,
+            ..
+        } = &mut capture.last
+        {
+            *input_phase = phase;
+            *input_button = button;
+            *buttons = io.buttons;
+            *input_position = [f64::from(position.x), f64::from(position.y)];
+            *rect = [
+                f64::from(corner.x),
+                f64::from(corner.y),
+                f64::from(size.x),
+                f64::from(size.y),
+            ];
+        }
+        inputs.push(capture.last.clone());
+        if matches!(
+            phase,
+            ApplicationChartPointerPhase::Up | ApplicationChartPointerPhase::Cancel
+        ) {
+            io.capture = None;
+        }
+    }
+    world.insert_resource(io);
+    world.resource_mut::<NativeInputs>().0.extend(inputs);
 }
 
 pub(crate) fn submit(world: &mut World, drawing: &ApplicationDrawingOutput) -> Result<(), String> {

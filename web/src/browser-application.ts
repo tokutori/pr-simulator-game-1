@@ -41,9 +41,7 @@ export class BrowserApplication {
     const measurement = documentRef.createElement("canvas").getContext("2d");
     if (measurement === null) throw new Error("Canvas text measurement is unavailable");
     this.measurement = measurement;
-    this.screen = new ScreenUiAdapter(uiRoot, input => {
-      if (this.view !== null) this.observe({ kind: "control", view_revision: this.view.view_revision, input });
-    }, () => { this.observe({ kind: "platform", observation: this.platform() }); });
+    this.screen = new ScreenUiAdapter(uiRoot, input => { this.observe(input); });
     this.hud = new FlightHudAdapter(hudRoot);
     this.download = new BrowserFlightLogDownload(documentRef);
     this.records = new BrowserFlightRecordStore(window.indexedDB, input => { this.observe(input); });
@@ -69,7 +67,6 @@ export class BrowserApplication {
       renderer: this.renderer?.observation() ?? null,
       viewport: { width: window.innerWidth, height: window.innerHeight, root_font_size: Number.parseFloat(style.fontSize) },
       capabilities: this.capabilities,
-      chart_extent: this.screen.chartExtent(),
       surface: { font: { family: style.fontFamily, weight: Number.parseFloat(style.fontWeight),
         style: style.fontStyle === "italic" ? "italic" : "normal", generation: this.fontGeneration }, locale: this.mount.ownerDocument.documentElement.lang }
     };

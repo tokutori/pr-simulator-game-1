@@ -1305,7 +1305,6 @@ mod tests {
                     height: 720.0,
                     root_font_size: 16.0,
                 },
-                chart_extent: None,
                 capabilities: Default::default(),
             },
         )
@@ -1323,7 +1322,6 @@ mod tests {
                                 height: 720.0,
                                 root_font_size: 16.0,
                             },
-                            chart_extent: None,
                             capabilities: Default::default(),
                         },
                     },
