@@ -18,6 +18,7 @@ const APP_BUILD_LABEL = typeof __APP_BUILD_LABEL__ === "string"
 
 const patch = init([attributesModule, classModule, datasetModule, propsModule, styleModule]);
 type ChartPointer = Extract<ApplicationInput, { kind: "chart_pointer" }>;
+type ChartMeasurement = Extract<ApplicationInput, { kind: "chart_measured" }>;
 
 interface RetainedScreenDom {
   readonly reason: "hidden" | "disabled";
@@ -37,6 +38,8 @@ export class ScreenUiAdapter {
   private currentViewModel: GameUiView | null = null;
   private frame: GameUiFrame | null = null;
   private readonly observedCharts = new Map<Element, number>();
+  private readonly chartMeasurements = new Map<Element, ChartMeasurement>();
+  private chartFrame: number | null = null;
   private readonly capturedPointers = new Map<number, { element: Element; last: ChartPointer }>();
   private readonly chartObserver: ResizeObserver | null;
 
@@ -60,6 +63,8 @@ export class ScreenUiAdapter {
   dispose(): void {
     const released = this.releasePointers();
     this.chartObserver?.disconnect();
+    this.chartMeasurements.clear();
+    this.cancelChartFrame();
     this.discardRetainedDom();
     this.root.removeEventListener("click", this.onClick);
     this.root.removeEventListener("change", this.onChange);
@@ -141,6 +146,7 @@ export class ScreenUiAdapter {
       if (!targets.has(target) || observedRevision !== revision) {
         this.chartObserver.unobserve(target);
         this.observedCharts.delete(target);
+        this.chartMeasurements.delete(target);
       }
     }
     for (const target of targets) {
@@ -149,19 +155,37 @@ export class ScreenUiAdapter {
         this.chartObserver.observe(target);
       }
     }
+    if (this.chartMeasurements.size === 0) this.cancelChartFrame();
   }
 
   private readonly onChartResize: ResizeObserverCallback = (entries): void => {
     if (!this.visible || this.currentViewModel === null) return;
-    const revision = this.currentViewModel.view_revision;
     for (const entry of entries) {
-      if (!this.observedCharts.has(entry.target) || !this.mount.contains(entry.target)) continue;
+      const revision = this.observedCharts.get(entry.target);
+      if (revision === undefined || !this.mount.contains(entry.target)) continue;
       const id = entry.target.getAttribute("data-chart-control-id");
       const { width, height } = entry.contentRect;
       if (id === null || this.controls.get(id)?.content.kind !== "chart") continue;
-      this.dispatch({ kind: "chart_measured", view_revision: revision, control_id: id, extent: { width, height } });
+      this.chartMeasurements.set(entry.target, { kind: "chart_measured", view_revision: revision, control_id: id, extent: { width, height } });
+    }
+    if (this.chartFrame === null && this.chartMeasurements.size > 0) {
+      this.chartFrame = this.root.ownerDocument.defaultView?.requestAnimationFrame(this.deliverChartMeasurements) ?? null;
     }
   };
+
+  private readonly deliverChartMeasurements = (): void => {
+    this.chartFrame = null;
+    const measurements = [...this.chartMeasurements];
+    this.chartMeasurements.clear();
+    for (const [element, input] of measurements) {
+      if (this.observedCharts.get(element) === input.view_revision && this.mount.contains(element)) this.dispatch(input);
+    }
+  };
+
+  private cancelChartFrame(): void {
+    if (this.chartFrame !== null) this.root.ownerDocument.defaultView?.cancelAnimationFrame(this.chartFrame);
+    this.chartFrame = null;
+  }
 
   private controlInput(input: GameUiControlInput): void {
     if (this.currentViewModel !== null) this.dispatch({ kind: "control", view_revision: this.currentViewModel.view_revision, input });

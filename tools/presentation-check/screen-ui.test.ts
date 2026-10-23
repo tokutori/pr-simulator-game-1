@@ -26,8 +26,19 @@ function required(root: HTMLElement, selector: string): HTMLElement {
 }
 
 async function withAdapter(observe: (root: HTMLElement, adapter: import("../../web/src/presentation/screen-ui.js").ScreenUiAdapter,
-  actions: ApplicationInput[], window: Window, measure: (element: Element, width: number, height: number) => void) => void) {
+  actions: ApplicationInput[], window: Window, measure: (element: Element, width: number, height: number) => void,
+  frame: { flush(): void; pending(): number }) => void) {
   const window = new Window();
+  const frames = new Map<number, FrameRequestCallback>();
+  let nextFrame = 1;
+  Object.assign(window, {
+    requestAnimationFrame: (callback: FrameRequestCallback) => {
+      const id = nextFrame++;
+      frames.set(id, callback);
+      return id;
+    },
+    cancelAnimationFrame: (id: number) => { frames.delete(id); }
+  });
   let resize: ResizeObserverCallback | undefined;
   Object.assign(window, { ResizeObserver: class {
     constructor(callback: ResizeObserverCallback) { resize = callback; }
@@ -44,7 +55,11 @@ async function withAdapter(observe: (root: HTMLElement, adapter: import("../../w
   const adapter = new ScreenUiAdapter(root, input => { actions.push(input); });
   try { observe(root, adapter, actions, window, (element, width, height) => {
     resize?.([{ target: element, contentRect: { width, height } } as ResizeObserverEntry], {} as ResizeObserver);
-  }); }
+  }, { pending: () => frames.size, flush: () => {
+    const pending = [...frames.values()];
+    frames.clear();
+    for (const callback of pending) callback(0);
+  } }); }
   finally {
     adapter.dispose();
     await window.happyDOM.abort();
@@ -112,15 +127,38 @@ describe("Screen DOM adapter", () => {
     const control = view.panels.flatMap(panel => panel.controls).find(control => control.content.kind === "chart");
     if (control?.content.kind !== "chart") throw new Error("Missing shared Analysis chart");
     const targetHeight = control.content.plot.presentation.target_height_px;
-    await withAdapter((root, adapter, actions, window, measure) => {
+    await withAdapter((root, adapter, actions, window, measure, frame) => {
       adapter.render(view);
       const viewport = required(root, ".screen-ui-chart-viewport");
       expect(Number.parseFloat(viewport.style.height)).toBeCloseTo(targetHeight, 10);
       const release = vi.fn();
       Object.assign(viewport, { getBoundingClientRect: () => ({ left: 17, top: 29, width: 813, height: 417 }),
         setPointerCapture: vi.fn(), releasePointerCapture: release });
+      measure(viewport, 812, 416);
       measure(viewport, 813, 417);
+      expect(actions).toEqual([]);
+      expect(frame.pending()).toBe(1);
+      frame.flush();
       expect(actions.pop()).toEqual({ kind: "chart_measured", view_revision: view.view_revision, control_id: control.id, extent: { width: 813, height: 417 } });
+      let reenter = true;
+      const notify = vi.spyOn(actions, "push").mockImplementation((...inputs) => {
+        const count = Array.prototype.push.apply(actions, inputs);
+        if (reenter && inputs.some(input => input.kind === "chart_measured")) {
+          reenter = false;
+          view = { ...view, view_revision: view.view_revision + 1 };
+          adapter.render(view);
+          measure(viewport, 913, 517);
+        }
+        return count;
+      });
+      measure(viewport, 814, 418);
+      frame.flush();
+      expect(frame.pending()).toBe(1);
+      frame.flush();
+      expect(actions.at(-1)).toEqual({ kind: "chart_measured", view_revision: view.view_revision, control_id: control.id, extent: { width: 913, height: 517 } });
+      expect(frame.pending()).toBe(0);
+      notify.mockRestore();
+      actions.length = 0;
       const pointer = (type: string, x: number, buttons: number) => viewport.dispatchEvent(new window.PointerEvent(type, {
         bubbles: true, pointerId: 7, button: 0, buttons, isPrimary: true, clientX: x, clientY: 51
       }) as unknown as PointerEvent);
@@ -144,6 +182,19 @@ describe("Screen DOM adapter", () => {
       actions.length = 0;
       pointer("pointerdown", 73, 1);
       expect(actions.map(input => input.kind === "chart_pointer" ? input.phase : input.kind)).toEqual(["down", "lost_capture"]);
+      actions.length = 0;
+      measure(viewport, 900, 450);
+      adapter.render(view, false);
+      expect(frame.pending()).toBe(0);
+      frame.flush();
+      expect(actions).toEqual([]);
+      adapter.render(view);
+      measure(viewport, 901, 451);
+      expect(frame.pending()).toBe(1);
+      adapter.dispose();
+      expect(frame.pending()).toBe(0);
+      frame.flush();
+      expect(actions).toEqual([]);
     });
   }, 20000);
 

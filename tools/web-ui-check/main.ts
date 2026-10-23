@@ -104,6 +104,14 @@ async function verify(activeBrowser: Browser): Promise<void> {
   try {
     await context.addInitScript(withoutTimer => {
       window.__graphicsLosses = 0;
+      window.addEventListener("error", event => {
+        console.error("window.error", JSON.stringify({ at: performance.now(),
+          message: event instanceof ErrorEvent ? event.message : String(event),
+          filename: event instanceof ErrorEvent ? event.filename : null,
+          line: event instanceof ErrorEvent ? event.lineno : null,
+          column: event instanceof ErrorEvent ? event.colno : null
+        }));
+      }, true);
       document.addEventListener("webglcontextlost", () => { window.__graphicsLosses++; }, true);
       if (withoutTimer) {
         const original = Object.getOwnPropertyDescriptor(WebGL2RenderingContext.prototype, "getExtension")?.value as WebGL2RenderingContext["getExtension"] | undefined;
