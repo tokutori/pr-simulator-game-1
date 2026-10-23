@@ -2,7 +2,7 @@ use std::sync::OnceLock;
 
 use birdman_game_core::{
     FlightRecord, FlightRecordPlaybackSample, FlightRecordQueryError, FlightRecordSample, NedPoint,
-    SessionEndReason, WindError,
+    WindError,
 };
 
 use super::{environment, types::*};
@@ -584,7 +584,11 @@ fn data_cursor(
             };
             let end = point(start.x + east * scale, start.y + north * scale);
             cursor.selected_wind_vector = Some(ChartWindVector {
-                label: format!("選択地点の風の矢印: 1 m/s あたり {scale:.1} m"),
+                label: if speed > 0.0 {
+                    format!("選択地点の風の矢印: 1 m/s あたり {scale:.1} m")
+                } else {
+                    "選択地点の水平風: 0.0 m/s".to_owned()
+                },
                 color: "#f2b35e".to_owned(),
                 segment: if speed > 0.0 {
                     clip_segment(start, end, bounds)
@@ -648,15 +652,9 @@ fn map_chart(chart: &mut ChartData, record: &FlightRecord) -> Result<(), GameUiE
         points: points.clone(),
         segment_colors: colors,
     });
-    let terminal = record
-        .finalization()
-        .map_or("End", |value| match value.reason {
-            SessionEndReason::WaterContact => "Splash",
-            SessionEndReason::TimeLimit => "TimeLimit",
-            SessionEndReason::ManualAbort => "ManualAbort",
-            SessionEndReason::OutOfValidEnvelope => "OutsideEnvelope",
-            SessionEndReason::FatalSimulationError => "SimulationError",
-        });
+    let terminal = record.finalization().map_or("終了", |value| {
+        super::game_ui_result_reason_label(value.reason)
+    });
     if let (Some(first), Some(last)) = (points.first(), points.last()) {
         chart.markers.push(marker("Start", "#f3f4e8", *first));
         chart.markers.push(marker(terminal, "#f29c78", *last));

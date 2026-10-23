@@ -1204,6 +1204,18 @@ fn full_chart_projection_matches_record_queries_and_preserves_the_finalized_reco
         };
         if chart == GameUiAnalysisChart::Map {
             assert!(plot.equal_axis_scale);
+            assert!(plot.markers.iter().any(|marker| {
+                marker.label
+                    == game_ui_result_reason_label(
+                        session
+                            .flight_record()
+                            .unwrap()
+                            .finalization()
+                            .unwrap()
+                            .reason,
+                    )
+            }));
+            assert_eq!(plot.vectors[0].label, "選択地点の水平風: 0.0 m/s");
             assert_eq!(
                 plot.cursor_points[0].point.y,
                 expected_y(queried.telemetry.composite_cg_position_ned_m.components()[0])
