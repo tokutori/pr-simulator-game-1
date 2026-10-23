@@ -3,6 +3,9 @@ import initializeWasm from "../pkg/birdman_game_wasm.js";
 import { APPLICATION_FAILURE_HTML, APPLICATION_LOADING_HTML } from "./generated/application-startup.js";
 import { BrowserApplication } from "./browser-application.js";
 
+const icon = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
+if (icon !== null) icon.href = new URL("../../assets/favicon.svg", import.meta.url).href;
+
 const mount = document.getElementById("app");
 if (!(mount instanceof HTMLElement)) throw new Error("Required app element is missing");
 

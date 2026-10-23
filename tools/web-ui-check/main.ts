@@ -44,6 +44,7 @@ const report: Record<string, unknown> = { status: "failed", sourceHead, sourceDi
 let browser: Browser | undefined;
 
 async function snapshot(page: Page, name: string, graphics = true): Promise<void> {
+  if (graphics) await page.locator(".presentation-canvas").waitFor({ state: "visible" });
   await page.evaluate(() => new Promise<void>(complete => { requestAnimationFrame(() => { requestAnimationFrame(() => { complete(); }); }); }));
   if (graphics) {
     const observed = await page.evaluate(() => new Promise<{ width: number; height: number; colors: number; nonblack: number; error: number; lost: boolean; losses: number }>((complete, reject) => {
