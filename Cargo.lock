@@ -1569,6 +1569,7 @@ dependencies = [
  "birdman-game-format",
  "birdman-game-presentation",
  "birdman-game-scene",
+ "schemars",
  "serde",
  "serde_json",
  "time",

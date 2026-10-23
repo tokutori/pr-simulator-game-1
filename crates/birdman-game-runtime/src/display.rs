@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 
 /// Lifecycle stage owned by the shared application.
 #[derive(Clone, Debug, PartialEq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum DisplayState {
     /// A confirmed display resource is active.
@@ -65,6 +66,7 @@ impl DisplayState {
 
 /// Primitive I/O operation; Rust chooses the next stage from its completion.
 #[derive(Clone, Debug, PartialEq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum DisplayRequest {
     /// Acquire permission in the current user activation event.
@@ -101,6 +103,7 @@ pub enum DisplayRequest {
 
 /// Identity and outcome of an actual requested I/O operation.
 #[derive(Clone, Debug, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum DisplayCompletion {
     /// Permission was granted, optionally creating a runtime session.

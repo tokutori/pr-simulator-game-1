@@ -1,6 +1,7 @@
 //! Shared application owner for platform observations, progression and UI effects.
 
 mod assets;
+mod boot;
 mod display;
 mod graphics;
 mod phone;
@@ -14,6 +15,7 @@ pub use assets::{
     ApplicationImageEncoding, ApplicationLightingAssets, ApplicationWaterAssets,
     ApplicationWaterDetailAsset,
 };
+pub use boot::{ApplicationRendererCreation, application_startup_html};
 pub use graphics::{
     ApplicationGpuQuery, ApplicationGraphicsObservation, ApplicationGraphicsProjection,
     ApplicationGraphicsResource, ApplicationGraphicsTarget, ApplicationRenderQuality,
@@ -89,6 +91,7 @@ pub struct ApplicationRuntime {
     storage: storage::StorageOwner,
     assets: assets::AssetsOwner,
     diagnostic: Option<String>,
+    boot: boot::BootOwner,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -111,6 +114,7 @@ impl ApplicationRuntime {
         application: ApplicationSession,
         observation: ApplicationPlatformObservation,
     ) -> Result<Self, ApplicationRuntimeError> {
+        let boot = boot::BootOwner::new(observation.renderer.is_some());
         let mut graphics = graphics::GraphicsOwner::default();
         graphics
             .adopt(
@@ -172,6 +176,7 @@ impl ApplicationRuntime {
             storage: storage::StorageOwner::default(),
             assets: assets::AssetsOwner::default(),
             diagnostic: None,
+            boot,
         })
     }
 
@@ -204,6 +209,30 @@ impl ApplicationRuntime {
         let mut spatial_frame = None;
         let mut render_spatial = false;
         match input {
+            ApplicationInput::RendererCreated { request_id, result } => {
+                if self.boot.accepts(request_id) {
+                    match result {
+                        ApplicationRendererCreation::Ready { renderer } => {
+                            self.graphics
+                                .adopt(Some(&renderer), self.render_scope(), observed_ms)
+                                .map_err(ApplicationRuntimeError::Graphics)?;
+                            self.boot = boot::BootOwner::Preparing;
+                        }
+                        ApplicationRendererCreation::Failed { cause } => {
+                            self.diagnostic = Some(cause);
+                            self.boot = boot::BootOwner::Failed;
+                        }
+                    }
+                } else if let ApplicationRendererCreation::Ready { renderer } = result
+                    && self.graphics.resource().is_none_or(|resource| {
+                        resource.renderer_resource_id != renderer.resource_id
+                    })
+                {
+                    requests.push(ApplicationRequest::ReleaseRenderer {
+                        renderer_resource_id: renderer.resource_id,
+                    });
+                }
+            }
             ApplicationInput::RecordPreviewObserved {
                 request_id,
                 observation,
@@ -535,6 +564,11 @@ impl ApplicationRuntime {
                     if matches!(self.resource_readiness, BackendReadiness::Ready) {
                         self.last_ready_resources = Some(resources.key);
                     }
+                    if self.boot.active()
+                        && matches!(self.resource_readiness, BackendReadiness::Failed(_))
+                    {
+                        self.boot = boot::BootOwner::Failed;
+                    }
                 }
                 if matches!(
                     self.application.core_session().snapshot().phase(),
@@ -565,7 +599,25 @@ impl ApplicationRuntime {
         self.synchronize_phone(&mut requests)?;
         self.synchronize_xr()?;
         self.synchronize_graphics()?;
-        self.synchronize_resources(&mut requests)?;
+        if let Err(error) = self.synchronize_resources(&mut requests) {
+            if self.boot.active() {
+                self.diagnostic = Some(format!("{error:?}"));
+                self.boot = boot::BootOwner::Failed;
+            } else {
+                return Err(error);
+            }
+        }
+        if matches!(self.boot, boot::BootOwner::Initial) {
+            let request_id = self.allocate_request()?;
+            requests.push(self.boot.start(request_id));
+        }
+        if matches!(self.boot, boot::BootOwner::Preparing) {
+            self.boot = match self.resource_readiness {
+                BackendReadiness::Ready => boot::BootOwner::Ready,
+                BackendReadiness::Failed(_) => boot::BootOwner::Failed,
+                BackendReadiness::Preparing => boot::BootOwner::Preparing,
+            };
+        }
         if !self.spatial_input_focused() {
             self.surface.retire_input();
         } else if let Some((spatial, timestamp_ms)) = spatial_frame {
@@ -623,6 +675,9 @@ impl ApplicationRuntime {
         {
             let mut view = game_ui_view(&self.ui, &self.context(&environment)?)
                 .map_err(ApplicationRuntimeError::Ui)?;
+            if self.boot.active() {
+                view = self.boot.view(view);
+            }
             view.view_revision = revision;
             self.retained = Some(view.clone());
             ApplicationUiProjection::View {
@@ -746,6 +801,36 @@ impl ApplicationRuntime {
         action: GameUiAction,
         requests: &mut Vec<ApplicationRequest>,
     ) -> Result<(), ApplicationRuntimeError> {
+        if self.boot.active() {
+            if self
+                .retained
+                .as_ref()
+                .is_none_or(|view| view.view_revision != view_revision)
+            {
+                return Err(ApplicationRuntimeError::Ui(GameUiError::StaleView));
+            }
+            if let GameUiAction::ControlInput {
+                input:
+                    birdman_game_presentation::game_ui::GameUiControlInput::Activate { control_id },
+            } = action
+                && matches!(self.boot, boot::BootOwner::Failed)
+            {
+                match control_id.as_str() {
+                    "game-boot-reload" => requests.push(ApplicationRequest::ReloadApplication),
+                    "game-boot-retry" => {
+                        self.resources = None;
+                        self.resource_readiness = BackendReadiness::Preparing;
+                        self.boot = if self.graphics.resource().is_some() {
+                            boot::BootOwner::Preparing
+                        } else {
+                            boot::BootOwner::Initial
+                        };
+                    }
+                    _ => {}
+                }
+            }
+            return Ok(());
+        }
         let environment = self.environment()?;
         let revision = self.structure_revision(&environment)?;
         if self
@@ -1028,6 +1113,11 @@ impl ApplicationRuntime {
         &mut self,
         requests: &mut Vec<ApplicationRequest>,
     ) -> Result<(), ApplicationRuntimeError> {
+        if matches!(self.boot, boot::BootOwner::Failed) {
+            requests.extend(self.assets.select(None));
+            self.resources = None;
+            return Ok(());
+        }
         let state = self.display.state();
         let Some(graphics) = state
             .active_mode()
@@ -1171,7 +1261,12 @@ impl ApplicationRuntime {
     }
 
     fn structure_revision(&mut self, environment: &str) -> Result<u32, ApplicationRuntimeError> {
-        let key = GameUiStructureKey::new(&self.ui, &self.context(environment)?);
+        let environment = if self.boot.active() {
+            format!("{environment}\n{}", self.boot.scope())
+        } else {
+            environment.to_owned()
+        };
+        let key = GameUiStructureKey::new(&self.ui, &self.context(&environment)?);
         self.structure
             .observe(key, self.application.record_source_id())
             .map_err(ApplicationRuntimeError::Ui)

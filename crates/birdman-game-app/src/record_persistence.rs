@@ -9,6 +9,7 @@ use serde_json::Value;
 
 /// Exact existing persisted record representation.
 #[derive(Debug, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PersistedRecord {
     /// Positive persistence key.
@@ -21,6 +22,7 @@ pub struct PersistedRecord {
 
 /// Existing Personal Best index entry.
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PersistedBest {
     /// Canonical comparison key.
@@ -33,6 +35,7 @@ pub struct PersistedBest {
 
 /// Record-store operations within one already opened atomic save transaction.
 #[derive(Clone, Debug, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RecordWriteRequest {
     /// Reads the existing index under the write transaction's lock.
@@ -76,6 +79,7 @@ pub enum RecordWriteRequest {
 
 /// Raw request results delivered synchronously within an active transaction callback.
 #[derive(Clone, Debug, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum RecordWriteObservation {
     /// Raw index value, with missing data represented by null.
@@ -388,6 +392,7 @@ fn positive_record_key(value: Value) -> Result<u32, String> {
 
 /// Raw rows retrieved by a bounded descending metadata cursor in one read transaction.
 #[derive(Clone, Debug, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct RecordPreviewRow {
     /// Unmodified metadata primary key.
@@ -400,6 +405,7 @@ pub struct RecordPreviewRow {
 
 /// Primitive reads following the initial bounded cursor.
 #[derive(Clone, Debug, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RecordPreviewRequest {
     /// Reads only the canonical comparison keys selected by Rust.
@@ -415,6 +421,7 @@ pub enum RecordPreviewRequest {
 
 /// Raw results from one bounded record preview transaction.
 #[derive(Clone, Debug, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum RecordPreviewObservation {
     /// Cursor rows and matching record values, delivered within the active callback.
@@ -514,6 +521,7 @@ impl RecordPreviewTransaction {
                     return Err("保存記録一覧が要求件数を超えている".to_owned());
                 }
                 #[derive(Deserialize)]
+                #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
                 #[serde(rename_all = "camelCase", deny_unknown_fields)]
                 struct Metadata {
                     id: u32,

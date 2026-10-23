@@ -3,7 +3,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import ts from "typescript";
-import { generateGameUiFiles, parseSchemaBundle, readonlyDeclarations, schemaEntries, typeReferenceSchema } from "./generator.js";
+import { generateApplicationFiles, generateGameUiFiles, parseSchemaBundle, readonlyDeclarations, schemaEntries, typeReferenceSchema } from "./generator.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const nestedDeclaration = "export interface Nested { values: { position: number[] }[] }";
@@ -174,5 +174,19 @@ describe("Rust game UI schema generation", () => {
     ]);
     expect(files.some((file) => file.path.endsWith("validators.js") || file.path.endsWith("validators.d.ts")
       || file.path.endsWith("validators.LICENSE.txt"))).toBe(false);
+  });
+
+  it("preserves aggregate references and fixed framebuffer tuples", async () => {
+    const files = await generateApplicationFiles({
+      schema: { type: "object", properties: { output: { $ref: "#/definitions/ApplicationOutput" } }, required: ["output"], additionalProperties: false,
+        definitions: { ApplicationOutput: { type: "object", properties: { raw: { description: "Unmodified JSON value" }, extent_px: { type: "array", items: [{ type: "number" }, { type: "number" }], minItems: 2, maxItems: 2 } }, required: ["raw", "extent_px"], additionalProperties: false } } },
+      startup: { loading_html: "<p>起動中</p>", failure_html: "<button>再読み込み</button>" }
+    });
+    const source = files[0]?.content ?? "";
+    expect(source).toContain("export interface ApplicationOutput");
+    expect(source).toMatch(/readonly extent_px: readonly \[\s*number,\s*number\s*\]/);
+    expect(source).toContain("readonly raw: unknown");
+    expect(typeReferenceSchema({ type: "object", additionalProperties: false })).toEqual({ type: "object", additionalProperties: false });
+    expect(files[1]?.content).toContain("APPLICATION_FAILURE_HTML");
   });
 });

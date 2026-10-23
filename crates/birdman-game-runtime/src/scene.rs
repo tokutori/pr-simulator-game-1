@@ -22,6 +22,7 @@ use birdman_game_presentation::xr::{
 
 /// One eye's final render-world pose and unchanged projection convention.
 #[derive(Clone, Debug, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ApplicationEyeProjection {
     /// Primary eye identity.
     pub eye: XrEye,
@@ -35,6 +36,7 @@ pub struct ApplicationEyeProjection {
 
 /// Camera geometry ready for direct transfer to a drawing engine.
 #[derive(Clone, Debug, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ApplicationCameraProjection {
     /// Runtime tracking origin mounted in render world.
     pub world_from_tracking: Pose,
@@ -52,6 +54,7 @@ pub struct ApplicationCameraProjection {
 
 /// Physical display metadata and its final render-space placement.
 #[derive(Clone, Debug, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ApplicationSceneProjection {
     /// Live, prepared or recorded aircraft deformation and controls.
     pub aircraft: Option<FlightRenderPose>,

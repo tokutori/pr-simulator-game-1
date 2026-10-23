@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 
 /// Actual font resource and shaping locale reported by platform font I/O.
 #[derive(Clone, Debug, PartialEq, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct ApplicationSurfaceObservation {
     /// Loaded font resource identity.
@@ -18,6 +19,7 @@ pub struct ApplicationSurfaceObservation {
 
 /// A direct platform text-measurement request in logical pixels.
 #[derive(Clone, Debug, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ApplicationTextProbe {
     /// Font resource to select for this measurement.
     pub font: MenuFont,
@@ -31,6 +33,7 @@ pub struct ApplicationTextProbe {
 
 /// Unmodified platform text metrics in logical pixels.
 #[derive(Clone, Copy, Debug, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct ApplicationGlyphMetrics {
     /// Horizontal advance.
@@ -47,6 +50,7 @@ pub struct ApplicationGlyphMetrics {
 
 /// Spatial menu painting and final mounted poses.
 #[derive(Clone, Debug, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ApplicationMenuProjection {
     /// This display has no spatial menu.
@@ -75,6 +79,7 @@ pub enum ApplicationMenuProjection {
 
 /// Spatial menu drawing commands ready for a Canvas or native surface adapter.
 #[derive(Clone, Debug, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ApplicationMenuPaint {
     /// Surface dimensions in metres.
     pub size: MenuSize,
@@ -92,6 +97,7 @@ pub struct ApplicationMenuPaint {
 
 /// One cursor's final visible position and dwell indicator.
 #[derive(Clone, Debug, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ApplicationMenuCursor {
     /// Panel-local right/up coordinates in metres.
     pub point: [f64; 2],
@@ -101,6 +107,7 @@ pub struct ApplicationMenuCursor {
 
 /// Head-fixed painting with its final world anchor.
 #[derive(Clone, Debug, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ApplicationHeadHudProjection {
     /// This display has no head-fixed surface.
@@ -123,6 +130,7 @@ pub enum ApplicationHeadHudProjection {
 
 /// Complete spatial UI produced alongside the same camera observation.
 #[derive(Clone, Debug, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ApplicationSpatialProjection {
     /// Opaque identity to echo after this projection has actually been submitted.
     pub presentation_id: u32,

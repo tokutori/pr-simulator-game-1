@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 /// Browser event source, before selection of a gravity reference.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum PhoneOrientationSource {
     /// The deviceorientation event.
@@ -15,6 +16,7 @@ pub enum PhoneOrientationSource {
 
 /// Unmodified orientation angles and screen rotation from one sensor callback.
 #[derive(Clone, Copy, Debug, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct PhoneOrientationObservation {
     /// Provider's coherent acquisition ID; absent for independent DOM events.
@@ -37,6 +39,7 @@ pub struct PhoneOrientationObservation {
 
 /// Raw motion components from one platform sensor observation.
 #[derive(Clone, Copy, Debug, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct PhoneMotionObservation {
     /// Provider's coherent acquisition ID; absent for independent DOM events.
@@ -51,6 +54,7 @@ pub struct PhoneMotionObservation {
 
 /// Reason why current phone tracking is waiting or unavailable.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum PhoneTrackingReason {
     /// An initial usable sample has not arrived.
@@ -71,6 +75,7 @@ pub enum PhoneTrackingReason {
 
 /// Tracking availability and the last valid head transform for drawing continuity.
 #[derive(Clone, Debug, PartialEq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct PhoneTrackingProjection {
     /// Current samples admit tracking and interaction.
     pub available: bool,

@@ -32,6 +32,7 @@ struct LoadJob {
 
 /// Raw result of a platform record read.
 #[derive(Clone, Debug, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ApplicationRecordLoadCompletion {
     /// Unmodified persisted record envelope.

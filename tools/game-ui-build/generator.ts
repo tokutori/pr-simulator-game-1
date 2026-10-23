@@ -60,6 +60,25 @@ const schemaGroups = ["serialize", "deserialize"] as const;
 export type GameUiSchemas = Readonly<Record<typeof schemaGroups[number], Readonly<Record<string, unknown>>>>;
 export type GeneratedFile = Readonly<{ path: string; content: string }>;
 
+export async function generateApplicationFiles(document: unknown): Promise<readonly GeneratedFile[]> {
+  if (!isObject(document) || !isObject(document["schema"]) || !isObject(document["startup"])) {
+    throw new Error("Invalid shared application contracts");
+  }
+  const schema = document["schema"];
+  const startup = document["startup"];
+  if (typeof startup["loading_html"] !== "string" || typeof startup["failure_html"] !== "string") {
+    throw new Error("Missing shared startup markup");
+  }
+  const declarations = await compile(typeReferenceSchema(schema), "ApplicationContract", {
+    bannerComment: "", unknownAny: true, strictIndexSignatures: true,
+    style: { singleQuote: false, tabWidth: 2, printWidth: 120, trailingComma: "none", semi: true }
+  });
+  return [
+    { path: "web/src/generated/application-contracts.ts", content: `/* Generated from birdman-game-runtime. */\n${readonlyDeclarations(declarations)}` },
+    { path: "web/src/generated/application-startup.ts", content: `/* Generated from birdman-game-runtime. */\nexport const APPLICATION_LOADING_HTML = ${JSON.stringify(startup["loading_html"])};\nexport const APPLICATION_FAILURE_HTML = ${JSON.stringify(startup["failure_html"])};\n` }
+  ];
+}
+
 const generatedBanner = "Generated from birdman-game-presentation::game_ui. Edit the Rust contract and regenerate.";
 
 export function parseSchemaBundle(text: string): GameUiSchemas {
@@ -143,7 +162,10 @@ export async function generateGameUiFiles(schemas: GameUiSchemas): Promise<reado
 }
 
 export function typeReferenceSchema(schema: Record<string, unknown>): Record<string, unknown> {
-  if (typeof schema["$ref"] === "string" && schema["$ref"].startsWith("#/$defs/")
+  if (Object.keys(schema).every((key) => ["title", "description", "default", "examples", "readOnly", "writeOnly", "deprecated"].includes(key))) {
+    return { ...schema, tsType: "unknown" };
+  }
+  if (typeof schema["$ref"] === "string" && (schema["$ref"].startsWith("#/$defs/") || schema["$ref"].startsWith("#/definitions/"))
     && Object.keys(schema).every(key => key === "$ref" || key === "description")) return { $ref: schema["$ref"] };
   const result = { ...schema };
   for (const key of ["$defs", "definitions", "properties", "patternProperties", "dependentSchemas"]) {

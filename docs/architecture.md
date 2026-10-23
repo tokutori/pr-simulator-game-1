@@ -67,6 +67,8 @@ adapter・runtime・presentation・scene・app・contentは責務に応じて下
 - GPU資源は候補作成、ownerのcommit認可、atomicなbinding完了の順に進む。ownerはcommitを直列化し、確認した適用状態から次の候補と旧資源の解放を決定する。
 - 画質変更は環境資源と同じ準備・commit経路へ投入する。共有policyの要求は最初の適用確認で確定し、各commitの実適用品質・framebuffer寸法・世代を記録する。Screenの未縮小物理解像度とHMD runtimeのframebuffer寸法は別の生観測とする。
 - preparationの取消は完了通知までCPU bufferを保持する。取消中に作成が完了した候補もownerが解放し、adapterは要求されたGPU操作と結果通知を実行する。
+- 初期rendererが未取得の場合、runtimeは`CreateRenderer`を要求し、request IDで`RendererCreated`を認可する。空と会場のcommit完了までBoot Viewを表示し、初期化失敗の再試行と再読み込みも同じ入力・I/O要求へ統合する。取得済みrendererを渡すnative起動はその資源を採用する。
+- WASM読込前の初期表示・失敗表示は、共有Rustからbuild時に生成した静的HTMLを使う。実行開始後のView・操作認可・初期化世代はruntimeが所有する。
 
 ### GameSessionとApplicationSession
 

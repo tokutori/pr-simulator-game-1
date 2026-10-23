@@ -22,6 +22,7 @@ use serde::Serialize;
 
 /// Pixel encoding submitted directly to a graphics API.
 #[derive(Clone, Copy, Debug, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum ApplicationImageEncoding {
     /// Four unsigned bytes per texel, with sRGB colour channels.
@@ -32,6 +33,7 @@ pub enum ApplicationImageEncoding {
 
 /// An immutable image descriptor; bytes travel through the common asset-buffer channel.
 #[derive(Clone, Debug, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ApplicationImageAsset {
     /// Owner-issued buffer identity, stable while the same image is reused.
     pub buffer_id: u32,
@@ -43,6 +45,7 @@ pub struct ApplicationImageAsset {
 
 /// One prepared periodic normal/variance/height image.
 #[derive(Clone, Debug, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ApplicationWaterDetailAsset {
     /// Linear-data RGBA texture.
     pub image: ApplicationImageAsset,
@@ -52,6 +55,7 @@ pub struct ApplicationWaterDetailAsset {
 
 /// Final display-light and distance-fog values in the shared render convention.
 #[derive(Clone, Copy, Debug, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ApplicationLightingAssets {
     /// Ambient sRGB 0xRRGGBB colour.
     pub ambient_color_srgb: u32,
@@ -71,6 +75,7 @@ pub struct ApplicationLightingAssets {
 
 /// Prepared wave uniforms and immutable detail images.
 #[derive(Clone, Debug, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ApplicationWaterAssets {
     /// Complete GPU wave coefficients, counts and non-inversion bounds.
     pub projection: LakeWaveProjection,
@@ -86,6 +91,7 @@ pub struct ApplicationWaterAssets {
 
 /// Revision-scoped drawing resources prepared by the shared application owner.
 #[derive(Clone, Debug, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ApplicationEnvironmentAssets {
     /// The resource-preparation request owning this bundle.
     pub revision: u32,

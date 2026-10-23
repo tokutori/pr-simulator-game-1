@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 
 /// Capabilities implemented by the platform's I/O and drawing adapters.
 #[derive(Clone, Debug, Default, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct ApplicationCapabilities {
     /// Runtime can create a tracked head-mounted display.
@@ -39,6 +40,7 @@ pub struct ApplicationCapabilities {
 
 /// External metrics and API availability, without derived UI state.
 #[derive(Clone, Debug, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct ApplicationPlatformObservation {
     /// Live renderer and its startup resources; None retires that lifetime and replacement uses a new creation identity.
@@ -55,6 +57,7 @@ pub struct ApplicationPlatformObservation {
 
 /// Completion state of the display and scene resources needed for launch.
 #[derive(Clone, Debug, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ApplicationResourceObservation {
     /// GPU resources have been created as an unbound candidate.
@@ -80,6 +83,7 @@ pub enum ApplicationResourceObservation {
 
 /// One external observation delivered to the shared application owner.
 #[derive(Clone, Debug, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct ApplicationObservation {
     /// Monotonic receipt time in milliseconds; source clocks are converted to this origin at I/O.
@@ -90,6 +94,7 @@ pub struct ApplicationObservation {
 
 /// Payload of one externally observed event.
 #[derive(Clone, Debug, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct ApplicationXrFrameObservation {
     /// Unmodified same-reference head and eye observations.
@@ -102,6 +107,7 @@ pub struct ApplicationXrFrameObservation {
 
 /// Unmodified tracked controller pose in the active runtime reference space.
 #[derive(Clone, Debug, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct ApplicationPointerObservation {
     /// Platform input-source identity, retired when that source disconnects.
@@ -112,6 +118,7 @@ pub struct ApplicationPointerObservation {
 
 /// Same-frame spatial input sampled by the platform I/O adapter.
 #[derive(Clone, Debug, Default, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct ApplicationSpatialObservation {
     /// Identity of the spatial projection actually submitted by the drawing adapter.
@@ -124,8 +131,16 @@ pub struct ApplicationSpatialObservation {
 
 /// Payload of one externally observed event.
 #[derive(Clone, Debug, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ApplicationInput {
+    /// Completion of the current owner-issued graphics context creation.
+    RendererCreated {
+        /// Initialization request being completed.
+        request_id: u32,
+        /// Raw graphics API result.
+        result: super::ApplicationRendererCreation,
+    },
     /// Raw results from a bounded atomic record preview.
     RecordPreviewObserved {
         /// Owner-issued read transaction identity.
@@ -292,8 +307,21 @@ pub enum ApplicationInput {
 
 /// Ordered platform operations produced by the application owner.
 #[derive(Clone, Debug, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ApplicationRequest {
+    /// Creates the platform graphics context and reports its actual startup resources.
+    CreateRenderer {
+        #[doc = "Owner-issued initialization identity."]
+        request_id: u32,
+    },
+    /// Releases a graphics context acquired by an obsolete initialization request.
+    ReleaseRenderer {
+        #[doc = "Acquired graphics context identity."]
+        renderer_resource_id: u32,
+    },
+    /// Reloads the application document or restarts the native process.
+    ReloadApplication,
     /// Cancels an obsolete preparation; its CPU buffers remain retained until completion.
     CancelResources {
         /// Preparation identity to cancel.
@@ -389,6 +417,7 @@ pub enum ApplicationRequest {
 
 /// Structure is transferred only when its shared revision changes.
 #[derive(Debug, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ApplicationUiProjection {
     /// Complete replacement for the retained visible structure.
@@ -405,6 +434,7 @@ pub enum ApplicationUiProjection {
 
 /// One shared update's rendering and I/O work.
 #[derive(Debug, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ApplicationOutput {
     /// Technical failure details for the platform diagnostic sink, separate from UI wording.
     pub diagnostic: Option<String>,

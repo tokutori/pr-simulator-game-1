@@ -9,6 +9,122 @@ fn no_text_metrics(_: &ApplicationTextProbe) -> Result<ApplicationGlyphMetrics, 
 }
 
 #[test]
+fn boot_retries_renderer_creation_releases_late_resources_and_enters_title_after_commit() {
+    let platform = ApplicationPlatformObservation {
+        renderer: None,
+        surface: None,
+        viewport: GameUiViewport {
+            width: 1280.0,
+            height: 720.0,
+            root_font_size: 16.0,
+        },
+        chart_extent: None,
+        capabilities: ApplicationCapabilities::default(),
+    };
+    let mut runtime =
+        ApplicationRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
+    let initial = runtime
+        .observe_test(ApplicationInput::Platform {
+            observation: platform,
+        })
+        .unwrap();
+    let first = initial
+        .requests
+        .iter()
+        .find_map(|request| match request {
+            ApplicationRequest::CreateRenderer { request_id } => Some(*request_id),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(
+        structure(initial).scene,
+        birdman_game_presentation::game_ui::GameUiScene::Boot
+    );
+    let failed = runtime
+        .observe_test(ApplicationInput::RendererCreated {
+            request_id: first,
+            result: ApplicationRendererCreation::Failed {
+                cause: "GPU unavailable".to_owned(),
+            },
+        })
+        .unwrap();
+    assert_eq!(failed.diagnostic.as_deref(), Some("GPU unavailable"));
+    let failed = structure(failed);
+    let next_request = runtime.next_request_id;
+    let held = runtime
+        .observe_test(ApplicationInput::Frame {
+            display_resource_id: None,
+            timestamp_ms: 10.0,
+            gamepads: Vec::new(),
+            xr: None,
+            spatial: Default::default(),
+        })
+        .unwrap();
+    assert!(held.requests.is_empty());
+    assert_eq!(runtime.next_request_id, next_request);
+    let retried = runtime
+        .observe_test(ApplicationInput::Control {
+            view_revision: failed.view_revision,
+            input: GameUiControlInput::Activate {
+                control_id: "game-boot-retry".to_owned(),
+            },
+        })
+        .unwrap();
+    let second = retried
+        .requests
+        .iter()
+        .find_map(|request| match request {
+            ApplicationRequest::CreateRenderer { request_id } => Some(*request_id),
+            _ => None,
+        })
+        .unwrap();
+    let stale = runtime
+        .observe_test(ApplicationInput::RendererCreated {
+            request_id: first,
+            result: ApplicationRendererCreation::Ready {
+                renderer: renderer_observation(),
+            },
+        })
+        .unwrap();
+    assert!(stale.requests.iter().any(|request| matches!(
+        request,
+        ApplicationRequest::ReleaseRenderer {
+            renderer_resource_id: 100
+        }
+    )));
+    assert!(runtime.graphics.resource().is_none());
+    let mut renderer = renderer_observation();
+    renderer.resource_id = 101;
+    let preparing = runtime
+        .observe_test(ApplicationInput::RendererCreated {
+            request_id: second,
+            result: ApplicationRendererCreation::Ready { renderer },
+        })
+        .unwrap();
+    let preparation = preparing
+        .requests
+        .iter()
+        .find_map(|request| match request {
+            ApplicationRequest::PrepareResources { request_id, .. } => Some(*request_id),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(
+        structure(preparing).scene,
+        birdman_game_presentation::game_ui::GameUiScene::Boot
+    );
+    let ready = resources_ready(&mut runtime, preparation).unwrap();
+    assert_eq!(
+        structure(ready).scene,
+        birdman_game_presentation::game_ui::GameUiScene::Title
+    );
+    assert_eq!(
+        runtime.application().core_session().snapshot().phase(),
+        SessionPhase::Title
+    );
+}
+
+#[test]
 fn briefing_retry_restarts_failed_resource_preparation_through_the_shared_action() {
     let platform = ApplicationPlatformObservation {
         renderer: Some(renderer_observation()),
@@ -21,26 +137,29 @@ fn briefing_retry_restarts_failed_resource_preparation_through_the_shared_action
         chart_extent: None,
         capabilities: ApplicationCapabilities::default(),
     };
-    let mut application = ApplicationSession::default();
-    for command in [SessionCommand::OpenSetup {}, SessionCommand::Prepare {}] {
-        application
-            .execute(command, BackendReadiness::Preparing)
-            .unwrap();
-    }
-    let mut runtime = ApplicationRuntime::new(application, platform.clone()).unwrap();
+    let mut runtime =
+        ApplicationRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
     let initial = runtime
         .observe_test(ApplicationInput::Platform {
             observation: platform,
         })
         .unwrap();
-    let request_id = initial
-        .requests
-        .iter()
-        .find_map(|request| match request {
-            ApplicationRequest::PrepareResources { request_id, .. } => Some(*request_id),
-            _ => None,
-        })
-        .unwrap();
+    let title = structure(finish_boot(&mut runtime, initial));
+    let setup = activate(&mut runtime, &title, SessionCommand::OpenSetup {});
+    let setup = structure(setup);
+    let changed = activate(
+        &mut runtime,
+        &setup,
+        SessionCommand::SelectWeather {
+            weather: birdman_game_format::WeatherClass::Calm,
+        },
+    );
+    activate(
+        &mut runtime,
+        &structure(changed),
+        SessionCommand::Prepare {},
+    );
+    let request_id = runtime.resources.as_ref().unwrap().request_id;
     let failed = runtime
         .observe_test(ApplicationInput::Resources {
             request_id,
@@ -87,6 +206,26 @@ fn resources_ready(
         let target = runtime.resources.as_ref().unwrap().key.graphics;
         runtime.observe_test(ApplicationInput::Resources { request_id, observation: ApplicationResourceObservation::Committed { resource_id, actual: ApplicationResourceCommit { applied: target.quality, extent_px: target.extent_px } } })
     } else { Ok(prepared) }
+}
+
+fn finish_boot(
+    runtime: &mut ApplicationRuntime,
+    mut initial: ApplicationOutput,
+) -> ApplicationOutput {
+    let request_id = initial
+        .requests
+        .iter()
+        .find_map(|request| match request {
+            ApplicationRequest::PrepareResources { request_id, .. } => Some(*request_id),
+            _ => None,
+        })
+        .unwrap();
+    initial
+        .requests
+        .retain(|request| !matches!(request, ApplicationRequest::PrepareResources { .. }));
+    let mut ready = resources_ready(runtime, request_id).unwrap();
+    ready.requests.extend(initial.requests);
+    ready
 }
 
 fn finalized_application() -> ApplicationSession {
@@ -158,6 +297,7 @@ fn saved_result_owns_transaction_and_rejects_notifications_after_leaving_result(
             _ => None,
         })
         .unwrap();
+    let initial = finish_boot(&mut runtime, initial);
     let result = structure(initial);
     let opened = runtime
         .observe_test(ApplicationInput::RecordSaveOpened {
@@ -258,6 +398,7 @@ fn stored_record_preview_load_retry_and_original_download_share_owner() {
             _ => None,
         })
         .unwrap();
+    finish_boot(&mut runtime, initial);
     runtime
         .observe_test(ApplicationInput::RecordPreviewObserved {
             request_id: preview_id,
@@ -438,13 +579,12 @@ fn started_display(mode: GameUiPresentationMode) -> (ApplicationRuntime, Applica
     };
     let mut runtime =
         ApplicationRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
-    let title = structure(
-        runtime
-            .observe_test(ApplicationInput::Platform {
-                observation: platform,
-            })
-            .unwrap(),
-    );
+    let initial = runtime
+        .observe_test(ApplicationInput::Platform {
+            observation: platform,
+        })
+        .unwrap();
+    let title = structure(finish_boot(&mut runtime, initial));
     let permission = activate_action(
         &mut runtime,
         &title,

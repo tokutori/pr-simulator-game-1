@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 
 /// Renderer resource configuration; Screen scale is independent of runtime XR framebuffer size.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct ApplicationRenderQuality {
     /// Retained Screen drawing resolution.
@@ -20,6 +21,7 @@ pub struct ApplicationRenderQuality {
 
 /// Actual renderer creation and drawing-buffer observations.
 #[derive(Clone, Debug, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct ApplicationRendererObservation {
     /// Creation/restoration identity, replaced after context loss or device replacement.
@@ -36,6 +38,7 @@ pub struct ApplicationRendererObservation {
 
 /// Identity of the committed resources used for scene preparation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ApplicationGraphicsResource {
     /// Graphics context or device lifetime.
     pub renderer_resource_id: u32,
@@ -49,6 +52,7 @@ pub struct ApplicationGraphicsResource {
 
 /// Tag to attach unchanged to a raw GPU query result.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct ApplicationGpuQuery {
     /// Graphics context or device lifetime.
@@ -63,6 +67,7 @@ pub struct ApplicationGpuQuery {
 
 /// Raw graphics API observations.
 #[derive(Clone, Debug, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ApplicationGraphicsObservation {
     /// Completed hardware query, preserving its original owner-issued tag.
@@ -85,6 +90,7 @@ pub enum ApplicationGraphicsObservation {
 
 /// Final desired resource configuration, independent of a confirmed commit counter.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ApplicationGraphicsTarget {
     /// Graphics context or device lifetime.
     pub renderer_resource_id: u32,
@@ -96,6 +102,7 @@ pub struct ApplicationGraphicsTarget {
 
 /// Actual values observed after an authorized atomic resource binding.
 #[derive(Clone, Copy, Debug, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct ApplicationResourceCommit {
     /// Quality actually applied by the drawing API.
@@ -106,6 +113,7 @@ pub struct ApplicationResourceCommit {
 
 /// Drawing resource identity and optional GPU query for one output.
 #[derive(Clone, Debug, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ApplicationGraphicsProjection {
     /// Current drawable resources, absent while the renderer is unavailable.
     pub resource: Option<ApplicationGraphicsResource>,
