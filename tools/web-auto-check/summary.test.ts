@@ -13,5 +13,5 @@ it("summarizes raw source-window durations and retains owner diagnostics without
   expect(result.gpu.map(sample => sample.diagnostic)).toEqual(["original owner diagnostic", "original owner diagnostic"]);
   expect(result.gpuWork).toMatchObject({ count: 2, meanMs: 11.5, p95Ms: 12 });
   expect(distribution([]).p95Ms).toBeNull();
-  expect(distribution([1, Number.NaN, -1])).toMatchObject({ count: 3, invalid: 2, meanMs: 1 });
+  expect(distribution([1, Number.NaN, -1, null])).toMatchObject({ count: 4, invalid: 3, meanMs: 1 });
 });

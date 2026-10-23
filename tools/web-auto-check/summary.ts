@@ -1,7 +1,7 @@
 import type { LiveObservation } from "./browser-observer.js";
 
-export function distribution(values: readonly number[]) {
-  const valid = values.filter(value => Number.isFinite(value) && value >= 0).sort((first, second) => first - second);
+export function distribution(values: readonly (number | null)[]) {
+  const valid = values.filter((value): value is number => value !== null && Number.isFinite(value) && value >= 0).sort((first, second) => first - second);
   return { count: values.length, invalid: values.length - valid.length,
     meanMs: valid.length === 0 ? null : valid.reduce((sum, value) => sum + value, 0) / valid.length,
     p95Ms: valid[Math.ceil(valid.length * 0.95) - 1] ?? null, maximumMs: valid.at(-1) ?? null };
