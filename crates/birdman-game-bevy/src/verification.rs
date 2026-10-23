@@ -669,7 +669,7 @@ fn advance_step(world: &mut World, verification: &mut Verification) -> Result<()
                 .resource_mut::<super::water::verification::WaterShaderVerification>()
                 .ready(pipelines_ready)?;
             if pipelines_ready && probes_ready && world.resource::<NativeIo>().drawing.as_ref().is_some_and(|drawing| drawing.presentation.scene_visible) {
-                verification.capture_source = world.resource::<NativeIo>().drawing.as_ref().map(serde_json::to_value).transpose().map_err(|cause| format!("Capture source serialization: {cause}"))?;
+                verification.capture_source = world.resource::<NativeIo>().drawing.as_ref().map(trace::wire_value).transpose()?;
                 verification.capture(&mut world.commands(), &filename);
                 trace::capture_started(world, &filename, verification.capture_serial)?;
             }

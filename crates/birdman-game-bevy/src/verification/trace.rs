@@ -40,7 +40,13 @@ fn write(world: &mut World, value: Value, flush: bool) -> Result<(), String> {
     result.map_err(|cause| format!("Native application trace: {cause}"))
 }
 
-fn report(world: &mut World, result: Result<(), String>) {
+pub(crate) fn wire_value(value: &impl Serialize) -> Result<Value, String> {
+    let bytes = serde_json::to_vec(value)
+        .map_err(|cause| format!("Native trace serialization: {cause}"))?;
+    serde_json::from_slice(&bytes).map_err(|cause| format!("Native trace JSON: {cause}"))
+}
+
+pub(crate) fn report(world: &mut World, result: Result<(), String>) {
     if let Err(cause) = result {
         if let Some(mut verification) = world.get_resource_mut::<Verification>() {
             verification.complete(Err(cause.clone()));
@@ -71,11 +77,11 @@ pub(crate) fn output(
     output: &ApplicationOutput,
 ) {
     if let Some(observation) = observation {
-        let result = write(
+        let result = wire_value(&output.requests).and_then(|requests| write(
             world,
-            json!({ "observation": observation, "fonts": fonts, "requests": output.requests, "lifecycle": output.lifecycle }),
+            json!({ "observation": observation, "fonts": fonts, "requests": requests, "lifecycle": output.lifecycle }),
             output.lifecycle == birdman_game_runtime::ApplicationLifecycle::Drained,
-        );
+        ));
         report(world, result);
     }
 }
@@ -123,6 +129,13 @@ mod tests {
 
     #[test]
     fn trace_retains_actual_observations_failures_and_capture_boundaries() {
+        let value = 0.22_f32;
+        let recorded = wire_value(&value).unwrap();
+        assert_eq!(
+            serde_json::to_string(&recorded).unwrap(),
+            serde_json::to_string(&value).unwrap()
+        );
+        assert_ne!(recorded, serde_json::to_value(value).unwrap());
         let directory = crate::app::native_storage::tests::Directory::new();
         let mut world = World::new();
         world.insert_resource(ApplicationTrace::create(&directory.0).unwrap());

@@ -122,7 +122,14 @@ pub(crate) fn update(world: &mut World) {
                 Err(birdman_game_presentation::xr::MenuLayoutFailure::MeasurementUnavailable);
             #[cfg(feature = "verify-harness")]
             if trace_input.is_some() {
-                trace_fonts.push(serde_json::json!({ "probe": probe, "result": result }));
+                let font = super::verification::trace::wire_value(&probe).and_then(|probe| {
+                    super::verification::trace::wire_value(&result)
+                        .map(|result| serde_json::json!({ "probe": probe, "result": result }))
+                });
+                match font {
+                    Ok(font) => trace_fonts.push(font),
+                    Err(cause) => super::verification::trace::report(world, Err(cause)),
+                }
             }
             #[cfg(not(feature = "verify-harness"))]
             let _ = probe;
