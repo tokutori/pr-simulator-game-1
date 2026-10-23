@@ -33,7 +33,6 @@ pub(super) struct RenderReadiness {
     pub(super) observed_frames: usize,
     pub(super) pending_pipelines: usize,
     pub(super) water_pipelines: usize,
-    pub(super) material_pipelines: usize,
     pub(super) terrain_pipelines: usize,
     pub(super) assets_loaded: bool,
     pub(super) confirmation_frames: usize,
@@ -44,7 +43,6 @@ impl RenderReadiness {
     pub(super) fn confirm_frame(&mut self) {
         if self.assets_loaded
             && self.water_pipelines > 0
-            && self.material_pipelines > 0
             && self.terrain_pipelines > 0
             && self.pending_pipelines == 0
             && self.error.is_none()
@@ -118,9 +116,6 @@ fn observe_render_readiness(
                             readiness.water_pipelines += 1;
                         }
                         if fragment.shader.id() == scene_shaders[1].id() {
-                            readiness.material_pipelines += 1;
-                        }
-                        if fragment.shader.id() == scene_shaders[2].id() {
                             readiness.terrain_pipelines += 1;
                         }
                     }

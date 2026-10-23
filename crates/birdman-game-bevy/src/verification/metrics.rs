@@ -8,7 +8,7 @@ use birdman_game_format::WaterQuality;
 use birdman_game_runtime::ApplicationGraphicsResource;
 use std::{
     collections::{BTreeMap, BTreeSet},
-    time::{Duration, Instant},
+    time::Instant,
 };
 
 pub(super) const TIMING_HISTORY_LIMIT: usize = 4096;

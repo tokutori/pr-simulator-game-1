@@ -114,7 +114,6 @@ pub(super) struct VerificationUiHierarchy<'w, 's> {
         ),
     >,
     pub(super) parents: Query<'w, 's, &'static ChildOf, Without<OverrideClip>>,
-    pub(super) names: Query<'w, 's, &'static Name>,
     pub(super) windows: Query<'w, 's, &'static Window>,
 }
 
@@ -221,7 +220,7 @@ pub(super) fn verify_ui_layout(
         Ok(())
     })();
     if let Err(error) = result {
-        error!("Native UI verification: {error}; capture={identity:?}, phase={phase:?}");
+        error!("Native UI verification: {error}; capture={identity:?}");
         verification.complete(Err(error.clone()));
         verification.failure = Some(error);
         inputs

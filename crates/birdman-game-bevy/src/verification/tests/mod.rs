@@ -1,10 +1,9 @@
 use super::{
-    CaptureState, MOTION_DURATION, MotionEndpoint, MotionInterval, MotionMetrics,
-    VerificationCompletion, VerificationStage, WaterMotion, WaterVerificationCase,
-    capture::{CaptureCompletion, CaptureIdentity, SavedCapture, save_capture},
+    CaptureState, MOTION_DURATION, MotionEndpoint, VerificationCompletion, VerificationStage,
+    WaterMotion, WaterVerificationCase,
+    capture::{CaptureCompletion, CaptureIdentity, save_capture},
 };
 use bevy::prelude::{Image, Quat, Transform, Vec3};
-use birdman_game_core::SessionPhase;
 use std::time::Duration;
 
 fn timing_diagnostic(

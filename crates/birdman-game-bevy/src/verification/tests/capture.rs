@@ -1,5 +1,6 @@
 use super::*;
 use crate::app::verification as driver;
+use bevy::tasks::TaskPoolBuilder;
 
 #[test]
 fn stale_or_failed_capture_callbacks_cannot_complete_the_next_case_or_stage() {

@@ -22,11 +22,7 @@ use super::{
     screen_render::timing::TimingMode,
 };
 use bevy::{
-    camera::RenderTarget,
-    diagnostic::DiagnosticsStore,
-    ecs as bevy_ecs,
-    prelude::*,
-    shader::{Shader, ShaderRef},
+    camera::RenderTarget, diagnostic::DiagnosticsStore, ecs as bevy_ecs, prelude::*, shader::Shader,
 };
 use birdman_game_app::application::SessionCommand;
 use birdman_game_core::SessionPhase;
@@ -217,7 +213,7 @@ pub(crate) struct Verification {
     started: Instant,
     checks: Vec<Check>,
     index: usize,
-    scene_shaders: [Handle<Shader>; 3],
+    scene_shaders: [Handle<Shader>; 2],
     readiness: RenderReadiness,
     capture: CaptureState,
     capture_serial: u64,
@@ -250,15 +246,6 @@ impl Verification {
         replay_cameras: bool,
     ) -> Result<(Self, VerificationCompletion), std::io::Error> {
         std::fs::create_dir_all(&directory)?;
-        let material_shader = match StandardMaterial::fragment_shader() {
-            ShaderRef::Path(path) => asset_server.load(path),
-            ShaderRef::Handle(handle) => handle,
-            ShaderRef::Default => {
-                return Err(std::io::Error::other(
-                    "StandardMaterial shader is unavailable",
-                ));
-            }
-        };
         let mut checks = vec![
             Check::Capture("00-title.png".into()),
             session(SessionCommand::OpenSetup {}),
@@ -410,7 +397,6 @@ impl Verification {
                 index: 0,
                 scene_shaders: [
                     asset_server.load(super::native_assets::water_shader_path()),
-                    material_shader,
                     asset_server.load(super::native_assets::terrain_shader_path()),
                 ],
                 readiness: RenderReadiness::default(),
@@ -464,17 +450,22 @@ pub(crate) fn supply_input(
     }
 }
 
+type ObserverTiming<'w, 's> = (
+    Res<'w, Time<Real>>,
+    Option<Res<'w, DiagnosticsStore>>,
+    Query<'w, 's, &'static Window>,
+    Res<'w, TimingMode>,
+);
+
 pub(crate) fn project_observer(
     mut verification: ResMut<Verification>,
     runtime: Option<Res<NativeRuntime>>,
     io: Res<NativeIo>,
-    time: Res<Time<Real>>,
     observer: Option<ResMut<VerificationObserver>>,
-    diagnostics: Option<Res<DiagnosticsStore>>,
-    windows: Query<&Window>,
-    mode: Res<TimingMode>,
+    timing: ObserverTiming,
     mut commands: Commands,
 ) {
+    let (time, diagnostics, windows, mode) = timing;
     let Some(runtime) = runtime else {
         return;
     };
@@ -619,7 +610,11 @@ fn advance_step(world: &mut World, verification: &mut Verification) -> Result<()
             if let Some(input) = action_input(world, &action) { world.resource_mut::<NativeInputs>().0.push(input); verification.next(); }
         }
         Check::Capture(filename) => {
-            if verification.readiness.can_capture() && world.resource::<NativeIo>().drawing.as_ref().is_some_and(|drawing| drawing.presentation.scene_visible) {
+            let pipelines_ready = verification.readiness.can_capture();
+            let probes_ready = world
+                .resource_mut::<super::water::verification::WaterShaderVerification>()
+                .ready(pipelines_ready)?;
+            if pipelines_ready && probes_ready && world.resource::<NativeIo>().drawing.as_ref().is_some_and(|drawing| drawing.presentation.scene_visible) {
                 verification.capture(&mut world.commands(), &filename);
             }
         }

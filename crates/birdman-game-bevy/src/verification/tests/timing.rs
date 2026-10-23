@@ -1,5 +1,7 @@
 use super::*;
 use crate::app::verification as driver;
+use birdman_game_format::WaterQuality;
+use birdman_game_presentation::screen_render_auto::ScreenShadowMap;
 
 #[test]
 fn observer_endpoints_are_continuous_and_only_the_selected_component_moves() {

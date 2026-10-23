@@ -1,7 +1,5 @@
 #![doc = "Native input, I/O and drawing submission for the shared application runtime."]
 
-#[path = "environment.rs"]
-mod environment;
 #[path = "flight_devices.rs"]
 mod flight_devices;
 #[path = "mip_filter.rs"]
@@ -28,8 +26,6 @@ mod ui;
 mod verification;
 #[path = "water.rs"]
 mod water;
-#[path = "water_quality.rs"]
-mod water_quality;
 #[path = "water_reflection.rs"]
 mod water_reflection;
 #[path = "world.rs"]
