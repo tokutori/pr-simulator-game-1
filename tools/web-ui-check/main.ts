@@ -53,6 +53,7 @@ async function snapshot(page: Page, name: string, graphics = true): Promise<void
     const shellRect = shell.getBoundingClientRect();
     const chartRect = viewport.getBoundingClientRect();
     return {
+      rootFontSize: getComputedStyle(document.documentElement).fontSize,
       shell: { left: shellRect.left, top: shellRect.top, width: shellRect.width, height: shellRect.height },
       viewport: { left: chartRect.left, top: chartRect.top, width: chartRect.width, height: chartRect.height },
       coordinateExtent: viewport.querySelector("svg")?.getAttribute("viewBox"),
@@ -129,9 +130,19 @@ async function verify(activeBrowser: Browser): Promise<void> {
     const control = (id: string) => page.locator(`[data-control-id="${id}"]`);
     const click = async (id: string) => { await control(id).scrollIntoViewIfNeeded(); await control(id).click(); };
     const scene = async (name: string) => page.waitForFunction(value => document.querySelector(".screen-ui-shell")?.getAttribute("data-scene") === value, name);
+    const chartSettled = () => page.waitForFunction(() => {
+      const viewport = document.querySelector<HTMLElement>(".screen-ui-chart-viewport");
+      if (viewport === null) return true;
+      const svg = viewport.querySelector("svg");
+      if (svg === null) return false;
+      const bounds = viewport.getBoundingClientRect();
+      const extent = svg.viewBox.baseVal;
+      return bounds.width > 0 && bounds.height > 0 && Math.abs(bounds.width - extent.width) < 0.5 && Math.abs(bounds.height - extent.height) < 0.5;
+    });
     const pair = async (name: string, graphics = true) => {
       for (const [width, height, size] of [[1280, 720, "hd"], [1920, 1080, "fhd"]] as const) {
         await page.setViewportSize({ width, height });
+        await chartSettled();
         await snapshot(page, `${name}-${size}`, graphics);
       }
     };
@@ -200,6 +211,23 @@ async function verify(activeBrowser: Browser): Promise<void> {
     for (const chart of ["map", "altitude", "speed"]) {
       await click(`game-analysis-${chart}`);
       await pair(`analysis-${chart}`, false);
+      if (chart === "map") {
+        const previousFont = await page.evaluate(() => {
+          const previous = document.documentElement.style.fontSize;
+          document.documentElement.style.fontSize = "150%";
+          return previous;
+        });
+        await chartSettled();
+        await snapshot(page, "analysis-map-font150", false);
+        await page.setViewportSize({ width: 1379, height: 821 });
+        await chartSettled();
+        await snapshot(page, "analysis-map-resized-font150", false);
+        await click("game-analysis-altitude");
+        await click("game-analysis-map");
+        await page.evaluate(previous => { document.documentElement.style.fontSize = previous; }, previousFont);
+        await page.setViewportSize({ width: 1920, height: 1080 });
+        await chartSettled();
+      }
       if (chart !== "map") {
         const cursor = control("game-analysis-cursor");
         await cursor.press("Home");
