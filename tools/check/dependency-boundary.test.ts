@@ -66,29 +66,55 @@ it("keeps the registered triangulator in the shared scene layer", () => {
   expect(() => { assertDependencyBoundary([{ name: "birdman-game-bevy", dependencies: [earcut] }]); }).toThrow("Forbidden dependency");
 });
 
-describe("core proof dependency boundary", () => {
+describe("shared proof dependency boundary", () => {
   const proof = { ...schemaDependency, name: "vstd", req: "=0.0.0-2026-10-04-0306", features: ["alloc"] };
-  const features = { "verus-proof": ["dep:vstd"] };
-  const provider = (dependency: unknown = proof, definitions: unknown = features): unknown[] => [
-    { name: "birdman-game-core", dependencies: [dependency], features: definitions }
+  const forwarding = {
+    "birdman-game-core": [],
+    "birdman-game-presentation": ["birdman-game-core"],
+    "birdman-game-runtime": ["birdman-game-core", "birdman-game-presentation"]
+  } as const;
+  const names = ["birdman-game-core", "birdman-game-presentation", "birdman-game-runtime"] as const;
+  const features = (name: typeof names[number]) => ({ "verus-proof": ["dep:vstd", ...forwarding[name].map(target => `${target}/verus-proof`)] });
+  const provider = (name: typeof names[number], dependency: unknown = proof, definitions: unknown = features(name)): unknown[] => [
+    { name, dependencies: [dependency, ...forwarding[name].map(target => ({ name: target, kind: null, target: null, rename: null, optional: false, features: [] }))], features: definitions }
   ];
   it("allows an explicit alloc-only optional proof dependency", () => {
-    expect(() => { assertDependencyBoundary(provider()); }).not.toThrow();
+    for (const name of names) expect(() => { assertDependencyBoundary(provider(name)); }).not.toThrow();
   });
-  it.each([{ optional: false }, { uses_default_features: true }, { features: ["std"] }, { target: "cfg(verus_only)" }])(
+  it.each([{ optional: false }, { uses_default_features: true }, { features: ["std"] }, { features: ["alloc", "std"] },
+    { target: "cfg(verus_only)" }, { kind: "dev" }, { req: "^0.0.0-2026-10-04-0306" }, { source: "git+https://example.invalid/vstd" }, { rename: "proof" }])(
     "rejects runtime or implicit proof dependencies %j", (difference) => {
-      expect(() => { assertDependencyBoundary(provider({ ...proof, ...difference })); }).toThrow("Forbidden dependency");
+      for (const name of names) expect(() => { assertDependencyBoundary(provider(name, { ...proof, ...difference })); }).toThrow("Forbidden dependency");
     }
   );
-  it.each([{ default: ["verus-proof"] }, { default: ["dep:vstd"] }, { runtime: ["vstd/std"] }])(
+  it.each([{ default: ["verus-proof"] }, { default: ["dep:vstd"] }, { runtime: ["vstd/std"] },
+    { schema: ["birdman-game-core/verus-proof"] }, { alias: ["verus-proof"], default: ["alias"] },
+    { audit: ["vstd?/alloc"] }, { schema: ["birdman-game-presentation?/verus-proof"] }])(
     "rejects indirect proof activation %j", (difference) => {
-      expect(() => { assertDependencyBoundary(provider(proof, { ...features, ...difference })); }).toThrow("Forbidden dependency");
+      for (const name of names) expect(() => { assertDependencyBoundary(provider(name, proof, { ...features(name), ...difference })); }).toThrow("Forbidden normal proof activation");
+    }
+  );
+  it.each([{ enabled: [] }, { enabled: ["dep:vstd", "vstd/alloc"] }, { enabled: ["dep:vstd", "birdman-game-core?/verus-proof"] },
+    { enabled: ["dep:vstd", "birdman-game-app/verus-proof"] }, { enabled: ["dep:vstd", "birdman-game-core/verus-proof", "birdman-game-core/verus-proof"] }])(
+    "rejects a different proof propagation graph %j", ({ enabled }) => {
+      for (const name of names) expect(() => { assertDependencyBoundary(provider(name, proof, { "verus-proof": enabled })); }).toThrow("Forbidden proof feature boundary");
     }
   );
   it("rejects application activation of the proof feature", () => {
-    expect(() => { assertDependencyBoundary([{ name: "birdman-game-format", dependencies: [
-      { name: "birdman-game-core", features: ["verus-proof"] }
-    ] }]); }).toThrow("Forbidden normal proof activation");
+    for (const name of ["birdman-game-format", "birdman-game-app", "birdman-game-cli", "birdman-game-wasm", "birdman-game-bevy", ...names]) {
+      expect(() => { assertDependencyBoundary([{ name, dependencies: [
+        { name: "birdman-game-core", features: ["verus-proof"] }
+      ] }]); }).toThrow("Forbidden normal proof activation");
+    }
+    for (const name of ["birdman-game-format", "birdman-game-app", "birdman-game-scene", "birdman-game-cli", "birdman-game-wasm", "birdman-game-bevy"]) {
+      expect(() => { assertDependencyBoundary([{ name, dependencies: [proof], features: { "verus-proof": ["dep:vstd"] } }]); })
+        .toThrow("Forbidden proof feature boundary");
+    }
+    for (const difference of [{ kind: "dev" }, { target: HOST_NUMERICAL_TEST_TARGET }, { rename: "core" }, { optional: true }]) {
+      expect(() => { assertDependencyBoundary([{ name: "birdman-game-presentation", dependencies: [proof,
+        { name: "birdman-game-core", kind: null, target: null, rename: null, optional: false, ...difference }
+      ], features: features("birdman-game-presentation") }]); }).toThrow("Forbidden proof feature boundary");
+    }
   });
   it.each(["birdman-game-core/verus-proof", "birdman-game-core?/verus-proof"])(
     "rejects indirect application activation through %s", (feature) => {

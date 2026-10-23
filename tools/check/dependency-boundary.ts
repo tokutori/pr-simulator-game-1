@@ -145,8 +145,21 @@ function isCorePolynomialDependency(crate: string, dependency: Record<string, un
     && dependency.features[0] === "libm";
 }
 
-function isCoreProofDependency(crate: string, dependency: Record<string, unknown>, features: unknown): boolean {
-  if (crate !== "birdman-game-core" || features === undefined) return false;
+function proofFeatures(crate: string): readonly string[] | undefined {
+  return crate === "birdman-game-core" ? ["dep:vstd"]
+    : crate === "birdman-game-presentation" ? ["dep:vstd", "birdman-game-core/verus-proof"]
+    : crate === "birdman-game-runtime" ? ["dep:vstd", "birdman-game-core/verus-proof", "birdman-game-presentation/verus-proof"]
+    : undefined;
+}
+
+function activatesProof(feature: unknown): boolean {
+  return typeof feature === "string" && (["verus-proof", "dep:vstd", "vstd"].includes(feature)
+    || feature.startsWith("vstd/") || feature.startsWith("vstd?/") || feature.endsWith("/verus-proof"));
+}
+
+function isProofDependency(crate: string, dependency: Record<string, unknown>, features: unknown): boolean {
+  const expected = proofFeatures(crate);
+  if (expected === undefined || features === undefined) return false;
   const definitions = record(features);
   const proof = definitions["verus-proof"];
   return dependency.name === "vstd" && dependency.kind === null && dependency.target === null
@@ -154,10 +167,32 @@ function isCoreProofDependency(crate: string, dependency: Record<string, unknown
     && dependency.path === undefined && dependency.rename === null && dependency.optional === true
     && dependency.uses_default_features === false && Array.isArray(dependency.features)
     && dependency.features.length === 1 && dependency.features[0] === "alloc"
-    && Array.isArray(proof) && proof.length === 1 && proof[0] === "dep:vstd"
-    && Object.entries(definitions).every(([name, enabled]) => name === "verus-proof"
-      || Array.isArray(enabled) && enabled.every((feature: unknown) => typeof feature === "string"
-        && !["verus-proof", "dep:vstd", "vstd"].includes(feature) && !feature.startsWith("vstd/")));
+    && Array.isArray(proof) && proof.length === expected.length && expected.every(feature => proof.includes(feature));
+}
+
+function assertProofFeatureBoundary(crate: string, features: unknown, dependencies: readonly unknown[]): void {
+  if (features === undefined) return;
+  const definitions = record(features);
+  if (Object.entries(definitions).some(([name, enabled]) => name !== "verus-proof"
+    && Array.isArray(enabled) && enabled.some(activatesProof))) {
+    throw new Error(`Forbidden normal proof activation in ${crate}`);
+  }
+  if (!("verus-proof" in definitions)) return;
+  const expected = proofFeatures(crate);
+  const proof = definitions["verus-proof"];
+  if (expected === undefined || !Array.isArray(proof) || proof.length !== expected.length
+    || !expected.every(feature => proof.includes(feature))
+    || !dependencies.some(value => record(value).name === "vstd")
+    || expected.filter(feature => feature !== "dep:vstd").some(feature => {
+      const target = feature.split("/")[0];
+      return !dependencies.some(value => {
+        const dependency = record(value);
+        return dependency.name === target && dependency.kind === null && dependency.target === null
+          && dependency.rename === null && dependency.optional === false;
+      });
+    })) {
+    throw new Error(`Forbidden proof feature boundary in ${crate}`);
+  }
 }
 
 function activatesSchema(feature: unknown): boolean {
@@ -218,11 +253,7 @@ export function assertDependencyBoundary(packages: readonly unknown[]): void {
     const permitted = allowed.get(name);
     if (permitted === undefined || !Array.isArray(pkg.dependencies)) throw new Error(`Unexpected crate: ${name}`);
     assertSchemaFeatureBoundary(name, pkg.features);
-    if (name !== "birdman-game-core" && pkg.features !== undefined
-      && Object.values(record(pkg.features)).some((enabled) => Array.isArray(enabled)
-        && enabled.some((feature: unknown) => typeof feature === "string" && feature.endsWith("/verus-proof")))) {
-      throw new Error(`Forbidden normal proof activation in ${name}`);
-    }
+    assertProofFeatureBoundary(name, pkg.features, pkg.dependencies);
     for (const value of pkg.dependencies) {
       const dependency = record(value);
       const dependencyName = nonEmpty(dependency.name);
@@ -243,7 +274,7 @@ export function assertDependencyBoundary(packages: readonly unknown[]): void {
         && !isPresentationSceneTestDependency(name, dependency)
         && !isHostNumericalTestDependency(name, dependency)
         && !isCorePolynomialDependency(name, dependency)
-        && !isCoreProofDependency(name, dependency, pkg.features)
+        && !isProofDependency(name, dependency, pkg.features)
         && !isSchemaGenerationDependency(name, dependency, pkg.features)) {
         throw new Error(`Forbidden dependency in ${name}: ${dependencyName}`);
       }
