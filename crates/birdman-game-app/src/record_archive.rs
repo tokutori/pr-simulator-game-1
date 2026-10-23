@@ -258,6 +258,37 @@ mod tests {
     }
 
     #[test]
+    fn atomic_record_preview_reads_only_eligible_keys_and_waits_for_commit() {
+        use crate::record_persistence::{
+            RecordPreviewObservation as Seen, RecordPreviewRequest as Io, RecordPreviewRow,
+            RecordPreviewTransaction,
+        };
+        use serde_json::json;
+        let document = contact_application().flight_record_document().unwrap();
+        let mut preview = RecordPreviewTransaction::new(3);
+        let record = json!({ "id": 7, "savedAt": "2026-10-23T00:00:00Z", "json": String::from_utf8(document.encode_json().unwrap()).unwrap() });
+        let requests = preview.observe(Seen::Rows {
+            rows: vec![RecordPreviewRow {
+                key: json!(7),
+                metadata: json!({ "id": 7, "savedAt": "2026-10-23T00:00:00Z" }),
+                record,
+            }],
+        });
+        let key = match requests.as_slice() {
+            [Io::ReadBest { keys }] if keys.len() == 1 => keys[0].clone(),
+            other => panic!("Expected one canonical key read: {other:?}"),
+        };
+        let requests = preview.observe(Seen::Bests { values: vec![json!({ "key": key, "recordId": 7, "comparisonVersion": birdman_game_format::PERSONAL_BEST_COMPARISON_VERSION })] });
+        assert!(matches!(requests.as_slice(), [Io::Finish]));
+        assert!(preview.items().is_none());
+        preview.observe(Seen::Committed);
+        let items = preview.items().unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id, 7);
+        assert!(items[0].personal_best);
+    }
+
+    #[test]
     fn atomic_record_save_aborts_on_invalid_storage_and_write_failure() {
         use crate::record_persistence::{
             RecordSaveTransaction, RecordWriteObservation as Seen, RecordWriteRequest as Io,

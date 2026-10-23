@@ -385,3 +385,220 @@ fn positive_record_key(value: Value) -> Result<u32, String> {
         .filter(|id| *id > 0)
         .ok_or_else(|| "保存記録の識別子が正の整数ではない".to_owned())
 }
+
+/// Raw rows retrieved by a bounded descending metadata cursor in one read transaction.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecordPreviewRow {
+    /// Unmodified metadata primary key.
+    pub key: Value,
+    /// Unmodified metadata row.
+    pub metadata: Value,
+    /// Unmodified record retrieved under the same primary key.
+    pub record: Value,
+}
+
+/// Primitive reads following the initial bounded cursor.
+#[derive(Clone, Debug, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RecordPreviewRequest {
+    /// Reads only the canonical comparison keys selected by Rust.
+    ReadBest {
+        /// Keys in the order expected by the next observation.
+        keys: Vec<String>,
+    },
+    /// Completes request production and waits for transaction completion.
+    Finish,
+    /// Aborts an invalid preview transaction.
+    Abort,
+}
+
+/// Raw results from one bounded record preview transaction.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum RecordPreviewObservation {
+    /// Cursor rows and matching record values, delivered within the active callback.
+    Rows {
+        /// Rows in descending primary-key order.
+        rows: Vec<RecordPreviewRow>,
+    },
+    /// Values returned for the requested keys; absent entries are null.
+    Bests {
+        /// Exactly one raw value per requested key, in request order.
+        values: Vec<Value>,
+    },
+    /// The read transaction completed successfully.
+    Committed,
+    /// The transaction or a request failed.
+    Failed {
+        /// Original platform failure.
+        cause: String,
+    },
+}
+
+/// Validated record-list item, independent of a rendering platform.
+#[derive(Clone, Debug)]
+pub struct RecordPreviewItem {
+    /// Positive persistence key.
+    pub id: u32,
+    /// Original validated RFC 3339 timestamp.
+    pub saved_at: String,
+    /// Current comparison-index membership after record eligibility validation.
+    pub personal_best: bool,
+}
+
+enum PreviewState {
+    Rows,
+    Bests(Vec<String>),
+    Commit,
+    Ready,
+    Failed(String),
+}
+
+/// Owns bounded preview validation and comparison-index admission in one read transaction.
+pub struct RecordPreviewTransaction {
+    limit: usize,
+    state: PreviewState,
+    items: Vec<RecordPreviewItem>,
+    item_keys: Vec<Option<String>>,
+}
+
+impl RecordPreviewTransaction {
+    /// Adopts a transaction opened with this exact descending cursor limit.
+    pub fn new(limit: usize) -> Self {
+        Self {
+            limit,
+            state: PreviewState::Rows,
+            items: Vec::new(),
+            item_keys: Vec::new(),
+        }
+    }
+
+    /// Advances the finite read protocol with unmodified platform results.
+    pub fn observe(&mut self, observation: RecordPreviewObservation) -> Vec<RecordPreviewRequest> {
+        if matches!(self.state, PreviewState::Ready | PreviewState::Failed(_)) {
+            return Vec::new();
+        }
+        match self.advance(observation) {
+            Ok(requests) => requests,
+            Err(cause) => {
+                self.state = PreviewState::Failed(cause);
+                vec![RecordPreviewRequest::Abort]
+            }
+        }
+    }
+
+    /// Exposes only a successfully completed transaction's list.
+    pub fn items(&self) -> Option<&[RecordPreviewItem]> {
+        matches!(self.state, PreviewState::Ready).then_some(self.items.as_slice())
+    }
+
+    /// Retains the original I/O or shared validation error.
+    pub fn failure(&self) -> Option<&str> {
+        match &self.state {
+            PreviewState::Failed(cause) => Some(cause),
+            _ => None,
+        }
+    }
+
+    fn advance(
+        &mut self,
+        observation: RecordPreviewObservation,
+    ) -> Result<Vec<RecordPreviewRequest>, String> {
+        if let RecordPreviewObservation::Failed { cause } = observation {
+            return Err(cause);
+        }
+        match (&self.state, observation) {
+            (PreviewState::Rows, RecordPreviewObservation::Rows { rows }) => {
+                if rows.len() > self.limit {
+                    return Err("保存記録一覧が要求件数を超えている".to_owned());
+                }
+                #[derive(Deserialize)]
+                #[serde(rename_all = "camelCase", deny_unknown_fields)]
+                struct Metadata {
+                    id: u32,
+                    saved_at: String,
+                }
+                let mut previous = None;
+                let mut keys = Vec::new();
+                for row in rows {
+                    let id = positive_record_key(row.key)?;
+                    if previous.is_some_and(|previous| previous <= id) {
+                        return Err("保存記録一覧の走査順序が不正である".to_owned());
+                    }
+                    previous = Some(id);
+                    let metadata: Metadata = serde_json::from_value(row.metadata)
+                        .map_err(|_| "保存記録のメタデータを読み取れない")?;
+                    let record = decode_persisted_record(row.record)?;
+                    if id != record.id || id != metadata.id || record.saved_at != metadata.saved_at
+                    {
+                        return Err("保存記録とメタデータが一致しない".to_owned());
+                    }
+                    let key = match TailFlightRecordDocument::decode_json(record.json.as_bytes()) {
+                        Ok(document) => TailPersonalBestSelection::try_new(&document)
+                            .map_err(|error| format!("{error:?}"))?
+                            .map(|selection| {
+                                selection
+                                    .key()
+                                    .digest()
+                                    .iter()
+                                    .map(|byte| format!("{byte:02x}"))
+                                    .collect::<String>()
+                            }),
+                        Err(FlightRecordFormatError::UnsupportedSchemaVersion) => None,
+                        Err(error) => return Err(format!("{error:?}")),
+                    };
+                    if let Some(key) = &key
+                        && !keys.contains(key)
+                    {
+                        keys.push(key.clone());
+                    }
+                    self.item_keys.push(key);
+                    self.items.push(RecordPreviewItem {
+                        id,
+                        saved_at: record.saved_at,
+                        personal_best: false,
+                    });
+                }
+                if keys.is_empty() {
+                    self.state = PreviewState::Commit;
+                    Ok(vec![RecordPreviewRequest::Finish])
+                } else {
+                    self.state = PreviewState::Bests(keys.clone());
+                    Ok(vec![RecordPreviewRequest::ReadBest { keys }])
+                }
+            }
+            (PreviewState::Bests(keys), RecordPreviewObservation::Bests { values }) => {
+                if keys.len() != values.len() {
+                    return Err("自己ベスト索引の取得件数が一致しない".to_owned());
+                }
+                for (key, value) in keys.iter().zip(values) {
+                    if value.is_null() {
+                        continue;
+                    }
+                    let entry: PersistedBest = serde_json::from_value(value)
+                        .map_err(|_| "自己ベスト索引を読み取れない")?;
+                    if entry.key != *key || entry.record_id == 0 {
+                        return Err("自己ベスト索引が要求と一致しない".to_owned());
+                    }
+                    if entry.comparison_version == Some(PERSONAL_BEST_COMPARISON_VERSION) {
+                        for (item, item_key) in self.items.iter_mut().zip(&self.item_keys) {
+                            item.personal_best |=
+                                item.id == entry.record_id && item_key.as_ref() == Some(key);
+                        }
+                    }
+                }
+                self.state = PreviewState::Commit;
+                Ok(vec![RecordPreviewRequest::Finish])
+            }
+            (PreviewState::Commit, RecordPreviewObservation::Committed) => {
+                self.state = PreviewState::Ready;
+                Ok(Vec::new())
+            }
+            (_, RecordPreviewObservation::Committed) => {
+                Err("保存記録一覧の取得が完了していない".to_owned())
+            }
+            _ => Ok(Vec::new()),
+        }
+    }
+}
