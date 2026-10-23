@@ -6,6 +6,15 @@ use birdman_game_presentation::screen_render_auto::*;
 use birdman_game_presentation::screen_render_scale::ScreenRenderScale;
 use serde::{Deserialize, Serialize};
 
+fn deserialize_gpu_work<'de, D: serde::Deserializer<'de>>(decoder: D) -> Result<f64, D::Error> {
+    Option::<f64>::deserialize(decoder).map(|value| value.unwrap_or(f64::NAN))
+}
+
+#[cfg(feature = "schema")]
+fn gpu_work_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    generator.subschema_for::<Option<f64>>()
+}
+
 /// Renderer resource configuration; Screen scale is independent of runtime XR framebuffer size.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -91,6 +100,8 @@ pub enum ApplicationGraphicsObservation {
         /// Unmodified query tag.
         query: ApplicationGpuQuery,
         /// Measured command-span duration in milliseconds.
+        #[serde(deserialize_with = "deserialize_gpu_work")]
+        #[cfg_attr(feature = "schema", schemars(schema_with = "gpu_work_schema"))]
         gpu_work_ms: f64,
     },
     /// Hardware timing is unavailable for this renderer.
@@ -307,19 +318,19 @@ impl GraphicsOwner {
         renderer: u32,
         observation: ApplicationGraphicsObservation,
         now: f64,
-    ) -> Result<(), ScreenRenderAutoError> {
+    ) -> Result<Option<String>, ScreenRenderAutoError> {
         if self
             .context
             .as_ref()
             .is_none_or(|context| context.id != renderer || !context.available)
         {
-            return Ok(());
+            return Ok(None);
         }
         let policy = self.policy.as_mut().unwrap();
         match observation {
             ApplicationGraphicsObservation::GpuCompleted { query, gpu_work_ms } => {
                 if query.renderer_resource_id == renderer && self.eligible && self.prepared {
-                    policy.observe(
+                    let result = policy.observe(
                         ScreenGpuSample {
                             epoch: query.epoch,
                             frame: query.frame,
@@ -327,7 +338,14 @@ impl GraphicsOwner {
                             gpu_work_ms,
                         },
                         now,
-                    )?;
+                    );
+                    if result == Err(ScreenRenderAutoError::InvalidSample) {
+                        policy.invalidate(ScreenRenderInvalidation::Disjoint, now)?;
+                        return Ok(Some(format!(
+                            "GPU timing sample rejected: query={query:?}, gpu_work_ms={gpu_work_ms:?}"
+                        )));
+                    }
+                    result?;
                 }
             }
             ApplicationGraphicsObservation::Unsupported { cause } => {
@@ -335,13 +353,12 @@ impl GraphicsOwner {
             }
             ApplicationGraphicsObservation::Disjoint => {
                 policy.invalidate(ScreenRenderInvalidation::Disjoint, now)?;
-                self.prepared = false;
             }
             ApplicationGraphicsObservation::ContextLost => {
                 self.invalidate_renderer(renderer);
             }
         }
-        Ok(())
+        Ok(None)
     }
 
     pub(super) fn invalidate_renderer(&mut self, renderer: u32) -> bool {
@@ -592,6 +609,76 @@ mod tests {
             owner.target(GameUiPresentationMode::Hmd).unwrap().extent_px,
             [1832, 1920]
         );
+        owner
+            .policy
+            .as_mut()
+            .unwrap()
+            .select_auto(true, 0.0)
+            .unwrap();
+        owner.prepared = true;
+        owner.eligible = true;
+        let resource = owner.resource();
+        let query = ApplicationGpuQuery {
+            renderer_resource_id: 1,
+            epoch: owner.policy.as_ref().unwrap().epoch(),
+            frame: 1,
+            source_ms: 0.0,
+        };
+        let observation: ApplicationGraphicsObservation = serde_json::from_str(&format!(
+            r#"{{"kind":"gpu_completed","query":{},"gpu_work_ms":null}}"#,
+            serde_json::to_string(&query).unwrap()
+        ))
+        .unwrap();
+        assert!(
+            owner
+                .observe(9, observation.clone(), 0.0)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(owner.policy.as_ref().unwrap().epoch(), query.epoch);
+        let cause = owner.observe(1, observation.clone(), 0.0).unwrap().unwrap();
+        assert!(cause.contains("gpu_work_ms=NaN"));
+        assert_eq!(owner.resource(), resource);
+        assert!(owner.prepared);
+        assert!(owner.policy.as_ref().unwrap().measurement_enabled());
+        let epoch = owner.policy.as_ref().unwrap().epoch();
+        assert_ne!(epoch, query.epoch);
+        assert!(owner.observe(1, observation, 0.0).unwrap().is_none());
+        assert_eq!(owner.policy.as_ref().unwrap().epoch(), epoch);
+        assert!(
+            owner
+                .observe(
+                    1,
+                    ApplicationGraphicsObservation::GpuCompleted {
+                        query: ApplicationGpuQuery { epoch, ..query },
+                        gpu_work_ms: -1.0
+                    },
+                    0.0
+                )
+                .unwrap()
+                .unwrap()
+                .contains("gpu_work_ms=-1.0")
+        );
+        assert!(
+            owner
+                .observe(
+                    1,
+                    ApplicationGraphicsObservation::GpuCompleted {
+                        query: ApplicationGpuQuery {
+                            epoch: owner.policy.as_ref().unwrap().epoch(),
+                            ..query
+                        },
+                        gpu_work_ms: 0.0
+                    },
+                    0.0
+                )
+                .unwrap()
+                .is_none()
+        );
+        owner
+            .observe(1, ApplicationGraphicsObservation::Disjoint, 0.0)
+            .unwrap();
+        assert!(owner.prepared);
         owner
             .select(
                 &GameUiPlatformCommand::SetWaterQuality {

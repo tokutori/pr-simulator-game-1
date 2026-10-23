@@ -452,7 +452,7 @@ export type ApplicationGraphicsObservation = {
     /**
      * Measured command-span duration in milliseconds.
      */
-    readonly gpu_work_ms: number;
+    readonly gpu_work_ms: number | null;
     readonly kind: "gpu_completed";
     /**
      * Unmodified query tag.

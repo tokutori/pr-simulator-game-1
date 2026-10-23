@@ -431,7 +431,7 @@ pub(crate) struct TimingReadout {
 pub(crate) enum TimingFailure {
     IncompleteBatch,
     InvalidMetadata,
-    InvalidWork,
+    InvalidSource,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -530,8 +530,8 @@ fn decode_work(
                 == water as usize
         })
         .ok_or(TimingFailure::InvalidMetadata)?;
-    if !source_ms.is_finite() || source_ms < 0.0 || !gpu_work_ms.is_finite() || gpu_work_ms < 0.0 {
-        return Err(TimingFailure::InvalidWork);
+    if !source_ms.is_finite() || source_ms < 0.0 {
+        return Err(TimingFailure::InvalidSource);
     }
     Ok(SourceWork {
         renderer_resource_id: renderer,
@@ -708,10 +708,21 @@ pub(crate) mod tests {
         assert_eq!(result.shadow, ScreenShadowMap::Quarter);
         assert_eq!(result.water_quality, WaterQuality::Low);
         assert_eq!(decode_work(words, 0.0).unwrap().sample.gpu_work_ms, 0.0);
-        assert_eq!(decode_work(words, -1.0), Err(TimingFailure::InvalidWork));
+        assert_eq!(decode_work(words, -1.0).unwrap().sample.gpu_work_ms, -1.0);
+        assert!(
+            decode_work(words, f64::NAN)
+                .unwrap()
+                .sample
+                .gpu_work_ms
+                .is_nan()
+        );
+        let invalid_source = f64::NAN.to_bits();
+        let mut invalid_words = words;
+        invalid_words[3] = invalid_source as u32;
+        invalid_words[4] = (invalid_source >> 32) as u32;
         assert_eq!(
-            decode_work(words, f64::NAN),
-            Err(TimingFailure::InvalidWork)
+            decode_work(invalid_words, 0.0),
+            Err(TimingFailure::InvalidSource)
         );
         #[cfg(feature = "verify-harness")]
         {
@@ -720,22 +731,33 @@ pub(crate) mod tests {
             world.resource_mut::<NativeGpu>().renderer_id = 7;
             world.init_resource::<TimingReadout>();
             world.init_resource::<DiagnosticsStore>();
-            packet(
-                &mut world.resource_mut::<DiagnosticsStore>(),
-                Instant::now(),
-                3,
-                21,
-                1234,
-                -1.0,
-            );
-            assert!(matches!(
-                poll(&mut world).as_slice(),
-                [ApplicationInput::Graphics {
-                    renderer_resource_id: 7,
-                    observation: ApplicationGraphicsObservation::Unsupported { cause }
-                }] if cause.contains("InvalidWork") && cause.contains("gpu_work_ms=-1.0") && cause.contains("metadata=[")
-            ));
-            assert!(poll(&mut world).is_empty());
+            for work in [0.0, -1.0, f64::NAN] {
+                packet(
+                    &mut world.resource_mut::<DiagnosticsStore>(),
+                    Instant::now(),
+                    3,
+                    21,
+                    1234,
+                    work,
+                );
+                let observed = poll(&mut world);
+                let [
+                    ApplicationInput::Graphics {
+                        renderer_resource_id: 1,
+                        observation:
+                            ApplicationGraphicsObservation::GpuCompleted { query, gpu_work_ms },
+                    },
+                ] = observed.as_slice()
+                else {
+                    panic!("Original GPU query observation")
+                };
+                assert_eq!(query.renderer_resource_id, 1);
+                assert_eq!(query.epoch, 3);
+                assert_eq!(query.frame, 21);
+                assert_eq!(query.source_ms, 1234.0);
+                assert_eq!(gpu_work_ms.to_bits(), work.to_bits());
+                assert!(poll(&mut world).is_empty());
+            }
             assert_eq!(world.resource::<NativeGpu>().renderer_id, 7);
         }
     }

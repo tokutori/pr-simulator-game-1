@@ -674,10 +674,13 @@ impl ScreenRenderAutoController {
         {
             return Ok(None);
         }
-        if !sample.source_ms.is_finite()
-            || sample.source_ms < 0.0
-            || sample.source_ms > now_ms
-            || !sample.gpu_work_ms.is_finite()
+        if !sample.source_ms.is_finite() || sample.source_ms < 0.0 || sample.source_ms > now_ms {
+            return Err(ScreenRenderAutoError::InvalidSample);
+        }
+        if now_ms - sample.source_ms > MAX_SOURCE_AGE_MS {
+            return self.pending(now_ms);
+        }
+        if !sample.gpu_work_ms.is_finite()
             || sample.gpu_work_ms < 0.0
             || self
                 .window
@@ -685,9 +688,6 @@ impl ScreenRenderAutoController {
                 .is_some_and(|stamp| sample.source_ms < stamp.source_ms)
         {
             return Err(ScreenRenderAutoError::InvalidSample);
-        }
-        if now_ms - sample.source_ms > MAX_SOURCE_AGE_MS {
-            return self.pending(now_ms);
         }
         self.window.push(sample);
         self.evaluate(now_ms)

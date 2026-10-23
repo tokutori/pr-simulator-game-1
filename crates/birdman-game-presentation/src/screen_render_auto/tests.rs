@@ -674,7 +674,7 @@ fn stale_duplicate_regressive_and_unavailable_observations_cannot_raise_quality(
         controller.pending(1.0),
         Err(ScreenRenderAutoError::InvalidTime)
     );
-    let stale = sample(&controller, 2, 2.0, 0.0);
+    let stale = sample(&controller, 2, 0.0, f64::NAN);
     assert_eq!(controller.observe(stale, 1_000.0).unwrap(), None);
     controller
         .unsupported("timestamp queries unavailable".to_owned(), 1_001.0)

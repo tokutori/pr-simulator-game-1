@@ -293,7 +293,12 @@ pub(super) fn summarize_source_timing(
             key,
             TimingSummary {
                 received_count: samples.len(),
-                invalid_count: 0,
+                invalid_count: samples
+                    .iter()
+                    .filter(|value| {
+                        !value.sample.gpu_work_ms.is_finite() || value.sample.gpu_work_ms < 0.0
+                    })
+                    .count(),
                 sample_span_ms: Some(maximum - minimum),
                 history_limit,
                 history_incomplete: summary.history_incomplete,
@@ -305,6 +310,7 @@ pub(super) fn summarize_source_timing(
                 samples
                     .iter()
                     .map(|value| value.sample.gpu_work_ms)
+                    .filter(|value| value.is_finite() && *value >= 0.0)
                     .collect(),
             ),
         );

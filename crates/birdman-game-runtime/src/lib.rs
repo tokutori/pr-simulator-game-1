@@ -417,9 +417,13 @@ impl ApplicationRuntime {
                 renderer_resource_id,
                 observation,
             } => {
-                self.graphics
+                if let Some(cause) = self
+                    .graphics
                     .observe(renderer_resource_id, observation, observed_ms)
-                    .map_err(ApplicationRuntimeError::Graphics)?;
+                    .map_err(ApplicationRuntimeError::Graphics)?
+                {
+                    self.diagnostic = Some(cause);
+                }
             }
             ApplicationInput::ResourcesReleased {
                 resource_id,
