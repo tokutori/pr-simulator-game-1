@@ -1656,6 +1656,67 @@
         }
       ]
     },
+    "ObservedQuaternion": {
+      "additionalProperties": false,
+      "properties": {
+        "w": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "x": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "y": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "z": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "ObservedVector": {
+      "additionalProperties": false,
+      "properties": {
+        "x": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "y": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "z": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
     "Pose": {
       "additionalProperties": false,
       "description": "Rigid child-to-parent transform; the caller names both reference spaces.",
@@ -2736,6 +2797,23 @@
       ],
       "type": "object"
     },
+    "XrObservedPose": {
+      "additionalProperties": false,
+      "description": "Nullable components received from an unvalidated tracking API observation.",
+      "properties": {
+        "orientation": {
+          "$ref": "#/$defs/ObservedQuaternion"
+        },
+        "position": {
+          "$ref": "#/$defs/ObservedVector"
+        }
+      },
+      "required": [
+        "position",
+        "orientation"
+      ],
+      "type": "object"
+    },
     "XrPanelGeometry": {
       "additionalProperties": false,
       "description": "Measured panel geometry in metres, independent of its drawing backend.",
@@ -3203,12 +3281,15 @@
           "description": "Unmodified column-major runtime projection values.",
           "items": {
             "format": "double",
-            "type": "number"
+            "type": [
+              "number",
+              "null"
+            ]
           },
           "type": "array"
         },
         "trackingFromEye": {
-          "$ref": "#/$defs/Pose",
+          "$ref": "#/$defs/XrObservedPose",
           "description": "Eye pose in the same reference space as the centre head."
         }
       },
@@ -3323,12 +3404,13 @@
         "trackingFromHead": {
           "anyOf": [
             {
-              "$ref": "#/$defs/Pose"
+              "$ref": "#/$defs/XrObservedPose"
             },
             {
               "type": "null"
             }
           ],
+          "default": null,
           "description": "Centre-head pose, or absent when runtime tracking is unavailable."
         },
         "views": {
