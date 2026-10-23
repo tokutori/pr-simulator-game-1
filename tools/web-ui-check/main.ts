@@ -245,6 +245,10 @@ async function verify(activeBrowser: Browser): Promise<void> {
           return range != null && range.value !== previous;
         }, before);
         chartInteractions.push({ chart, before, after: await cursor.inputValue() });
+        if (chart === "speed") {
+          await page.locator("#game-analysis-cursor-values").scrollIntoViewIfNeeded();
+          await snapshot(page, "analysis-speed-fields", false);
+        }
       }
     }
     await click("game-result-replay");
