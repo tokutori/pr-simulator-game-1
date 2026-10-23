@@ -71,7 +71,9 @@ try {
   await click("game-flight-pause");
   await click("game-pause-open-settings");
   await click("presentation-water-quality-high");
-  await click("presentation-render-scale-auto");
+  if (await control("presentation-render-scale-auto").getAttribute("aria-pressed") !== "true") {
+    await click("presentation-render-scale-auto");
+  }
   await page.waitForFunction(() => {
     const choice = document.querySelector<HTMLButtonElement>('[data-control-id="presentation-render-scale-auto"]');
     return choice?.getAttribute("aria-pressed") === "true" && !choice.disabled;
