@@ -47,7 +47,14 @@ $negativeAssertions = @('initial_running', 'changed_on_failure', 'changed_at_con
 $proofInputs = @(
     $productToolchain, $negativeDriver, $PSCommandPath,
     (Join-Path $repository 'Cargo.lock'),
-    (Join-Path $repository 'crates/birdman-game-core/Cargo.toml')
+    (Join-Path $repository 'crates/birdman-game-core/Cargo.toml'),
+    (Join-Path $repository 'crates/birdman-game-presentation/Cargo.toml'),
+    (Join-Path $repository 'crates/birdman-game-presentation/src/lib.rs'),
+    (Join-Path $repository 'crates/birdman-game-presentation/src/game_ui.rs'),
+    (Join-Path $repository 'crates/birdman-game-presentation/src/game_ui/presentation_mode.rs'),
+    (Join-Path $repository 'crates/birdman-game-runtime/Cargo.toml'),
+    (Join-Path $repository 'crates/birdman-game-runtime/src/lib.rs'),
+    (Join-Path $repository 'crates/birdman-game-runtime/src/display.rs')
 ) + @(Get-ChildItem -LiteralPath (Join-Path $repository 'crates/birdman-game-core/src') -Recurse -Filter '*.rs' -File).FullName
 $sourceHashes = @{}
 foreach ($path in $proofInputs) {
@@ -126,22 +133,34 @@ try {
     $env:PATH = "$binaryDirectory;$oldPath"
     $env:RUSTUP_TOOLCHAIN = $proofToolchain
     $env:CARGO_BUILD_JOBS = '1'
-    $clean = Invoke-NativeCapture 'cargo' @('clean', '-p', 'birdman-game-core', '--target-dir', $coreTarget)
-    if ($clean.ExitCode -ne 0) { throw 'Dedicated core proof artifacts could not be refreshed.' }
-    $coreProof = Invoke-NativeCapture $cargoVerifier @(
-        'verify', '-p', 'birdman-game-core', '--features', 'verus-proof', '--locked',
+    $clean = Invoke-NativeCapture 'cargo' @('clean', '-p', 'birdman-game-core', '-p', 'birdman-game-runtime', '--target-dir', $coreTarget)
+    if ($clean.ExitCode -ne 0) { throw 'Production proof artifacts could not be refreshed.' }
+    $productionProof = Invoke-NativeCapture $cargoVerifier @(
+        'verify', '-p', 'birdman-game-core', '-p', 'birdman-game-runtime',
+        '--features', 'birdman-game-core/verus-proof,birdman-game-runtime/verus-proof', '--locked',
         '--target-dir', $coreTarget, '--check-toolchain', '--fwd-verus-args-to', 'roots', '--',
         '--no-cheating', '--num-threads', '1', '--output-json', '--time'
     ) -JsonOutput
-    if ($coreProof.ExitCode -ne 0) { throw 'Production core crate verification failed.' }
-    $jsonStart = $coreProof.Output.IndexOf('{')
-    if ($jsonStart -lt 0) { throw 'The core verification report is missing.' }
-    $coreReport = $coreProof.Output.Substring($jsonStart) | ConvertFrom-Json
-    $coreSummary = $coreReport.'verification-results'
-    if ($coreSummary.success -ne $true -or $coreSummary.'is-verifying-entire-crate' -ne $true -or
-        $coreSummary.Verified -le 0 -or $coreSummary.Errors -ne 0) {
-        throw 'Production core requires entire-crate success, verified obligations, and zero errors.'
+    if ($productionProof.ExitCode -ne 0) { throw 'Production core or Display verification failed.' }
+    $reports = @([regex]::Matches($productionProof.Output, '(?ms)^\{.*?^\}') | ForEach-Object {
+        $_.Value | ConvertFrom-Json
+    })
+    if ($reports.Count -ne 2) { throw 'Expected one verification report per selected production root.' }
+    $summaries = @{}
+    foreach ($name in @('birdman_game_core', 'birdman_game_runtime')) {
+        $matching = @($reports | Where-Object {
+            @($_.'func-details'.PSObject.Properties.Name | Where-Object { $_.StartsWith($name + '::') }).Count -gt 0
+        })
+        if ($matching.Count -ne 1) { throw "Missing or ambiguous production verification report: $name" }
+        $summary = $matching[0].'verification-results'
+        if ($summary.success -ne $true -or $summary.'is-verifying-entire-crate' -ne $true -or
+            $summary.Verified -le 0 -or $summary.Errors -ne 0) {
+            throw "Production verification requires success, verified obligations, and zero errors: $name"
+        }
+        $summaries[$name] = $summary
     }
+    $coreSummary = $summaries['birdman_game_core']
+    $displaySummary = $summaries['birdman_game_runtime']
     $dependencies = Join-Path $coreTarget 'debug/deps'
     $artifacts = @{}
     foreach ($entry in @(
@@ -180,7 +199,7 @@ try {
             throw "Missing intended verification failure at assert($assertion), line $line."
         }
     }
-    Write-Host "Production core: $($coreSummary.Verified) verified; consolidated negative assertions rejected."
+    Write-Host "Production core: $($coreSummary.Verified) verified; Display ownership: $($displaySummary.Verified) verified; consolidated negative assertions rejected."
 }
 finally {
     $env:PATH = $oldPath
@@ -194,5 +213,5 @@ finally {
     }
 }
 $timer.Stop()
-Write-Host "Verus completed: one production-crate verification and one negative-control invocation in $($timer.Elapsed.TotalSeconds.ToString('F2', [System.Globalization.CultureInfo]::InvariantCulture)) seconds."
+Write-Host "Verus completed: one two-root production verification and one negative-control invocation in $($timer.Elapsed.TotalSeconds.ToString('F2', [System.Globalization.CultureInfo]::InvariantCulture)) seconds."
 exit 0

@@ -12,9 +12,9 @@
 
 ## 本番コードとの接続
 
-- `cargo-verus`で実core crate全体を直接検証する。単体契約を同じ事後条件のラッパーから呼び直す方式は用いない。
+- `cargo-verus`で実core crateとruntimeのDisplay所有操作を直接検証する。単体契約を同じ事後条件のラッパーから呼び直す方式は用いない。
 - private fieldの仕様はghost-onlyのclosed predicate/viewから実ownerを参照する。ghost sequenceは実Vecのviewであり、別の記録storageを持たない。
-- getterと純粋な分類関数には`dual_spec`を用い、実bodyからspecを生成する。手書きの模倣modelへ置き換えない。
+- getterと純粋な分類関数は`dual_spec`、または上位の所有契約に必要な意味観測へ接続する。ghost参照は実ownerのfieldを読み、独立した更新modelを持たない。
 - 複数操作を跨ぐ保持条件は、同じcrate内の証明専用clientで実際の操作列へ接続する。
 
 - 検証注釈とghost-onlyの参照は`cfg(verus_only)`へ限定する。
@@ -87,6 +87,20 @@
 - 値の物理妥当性、実reserve、allocator、record新規化の全仕様をfactoryの契約へ仮定していない。
 - 具体factoryとの接続は通常Rust回帰も用いて確認する。
 
+### Displayの非同期認可と資源所有
+
+本番runtimeの`DisplayWorkflow`が所有するstate・active資源・permission資源と、同じ`request`・`complete`・`close`・`release_unused`の更新bodyを直接検証する。modeはpresentationの実`GameUiPresentationMode`を共有し、その構造的な等値関係を固定Verusの`Structural`で接続する。
+
+- 要求待機中または同じ表示modeへの要求は、stateと保持資源を変更せずI/O要求を返さない。
+- 受理した要求は入力modeとrequest IDを次のpending stageへ保持し、返すprimitive要求と一致させる。Stopはactive資源、Startは保持permission資源を参照し、Screenはpermissionなしで開始できる。
+- request ID不一致または成功completionのstage不一致は、stateと両保持資源を変更しない。Failedは各pending stageの合法な失敗遷移として扱う。
+- 認可されたStartedは実資源IDをactiveとして保持し、permissionの所有を解消する。同IDの引継ぎを許容し、保持中IDをReleaseへ返さない。
+- 不一致completionが取得した未保持資源は、そのIDのReleaseを1件返す。`release_unused`も未保持Someに対して1件、保持IDに対して0件を返す。
+- closeは旧保持IDだけを昇順・重複なしでReleaseし、Closedと空の所有へ移る。
+
+- 検証接続: 証明時のcfgはDisplayの実型・更新・返却を選び、通常ビルドは同じ更新bodyと既存serde/schemaを使う。
+- 外部I/O: aggregate入力、shutdown ledger、Releaseの実行と終端、重複遅着通知を跨ぐexactly-once、browser/OSの実handle寿命は、通常接続試験と実環境の受入で確認する。
+
 ### FlightRecordの容量・確定
 
 `FlightRecordStorage`は実header、Vec sample、論理capacity、finalizationを所有する。低水準push/finalizeはprivateであり、公開操作が時刻・有限値・metadataを検査する。
@@ -147,7 +161,7 @@
 ./tools/verus/check-verus.ps1
 ```
 
-runnerは本番coreの直接検証と、統合した負例の確認を一回ずつ実行する。PauseReasons、Countdown、FlightExecution、ConfiguredPhase、ConfiguredSession、FlightRecordStorage、GameSessionの本番契約と操作列を同じ直接検証に含める。
+runnerは一回の`cargo-verus verify`でcoreとruntimeをrootとして選択し、各rootのJSON成功を確認する。coreの本番契約・操作列とDisplayの実所有操作は同じtargetの依存を共有し、coreの検証を重複実行しない。その後、直接検証したcoreを使う統合負例を一回実行する。
 
 | 項目 | 固定値 |
 | --- | --- |
@@ -164,7 +178,7 @@ runnerは本番coreの直接検証と、統合した負例の確認を一回ず�
 
 runnerは以下を要求する。
 
-- `--no-cheating --num-threads 1`で本番crate全体を検証する。
+- `--no-cheating --num-threads 1`で、各rootの証明対象を一括検証する。coreは本番crate、runtimeはcfgで分離したDisplay所有操作を対象とする。
 - positiveはexit 0、正のverified件数、0 errorsを要求する。
 - compiler出力でcrate全体が対象となったことを確認する。内部補助関数名の固定表や関数ごとの別プロセスへ依存しない。
 - 統合negativeは非zero exitと、指定した三つのassertionのファイル・行・診断を要求する。構文・起動・別assertの失敗を成功に数えない。
@@ -191,7 +205,8 @@ Vector3/Point3のgeneric derived Cloneは固定Verusで等価仕様を生成で�
 | --- | --- |
 | 認可・離散遷移・本番record保持 | 上記の実bodyと公開callerへ限定して証明する |
 | Duration、Replay clock、allocator、数値callback、wrapper全分岐 | 未証明の境界を保持し、通常回帰を併用する |
-| record codec、PB identity、非同期generation・外部資源寿命 | 証明拡張の候補であり、現状の試験を形式証明済みと扱わない |
+| Displayのrequest認可・保持ID・返却Release | 上記の実所有操作と契約を直接証明する |
+| record codec、PB identity、他の非同期generation・外部資源の実寿命 | 証明拡張の候補であり、現状の試験を形式証明済みと扱わない |
 | 浮動小数点収束、局所安定性、空力適用域、保護候補の存在 | 解析解、量別誤差、刻み・domain検査を用いる |
 | model fidelity、実GPU・入力・保存、VR、FPS | 実データ・実行環境・性能計測を必要とする |
 
