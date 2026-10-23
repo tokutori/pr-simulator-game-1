@@ -50,16 +50,7 @@ pub(super) fn project_chart(
     });
     let plot = presentation.plot;
     let screen_position = |point: GameUiChartPoint| Vec2::new(point.x as f32, point.y as f32);
-    let position = |point: GameUiChartPoint| {
-        Vec2::new(
-            (plot[0]
-                + (point.x - chart.x_minimum) / (chart.x_maximum - chart.x_minimum)
-                    * (plot[2] - plot[0])) as f32,
-            (plot[3]
-                - (point.y - chart.y_minimum) / (chart.y_maximum - chart.y_minimum)
-                    * (plot[3] - plot[1])) as f32,
-        )
-    };
+    let position = screen_position;
     let axes = color(&presentation.axes_color, 1.0)?;
     for [start, end] in &presentation.grid_lines {
         chart_line(
@@ -102,10 +93,9 @@ pub(super) fn project_chart(
             let start = position(start);
             let end = position(end);
             chart_line(world, surface, start, end, ink);
-            let direction = (end - start).normalize_or_zero();
-            let side = Vec2::new(-direction.y, direction.x);
-            chart_line(world, surface, end, end - direction * 7.0 + side * 3.0, ink);
-            chart_line(world, surface, end, end - direction * 7.0 - side * 3.0, ink);
+            for [start, end] in vector.head_segments.iter().flatten() {
+                chart_line(world, surface, position(*start), position(*end), ink);
+            }
         }
     }
     for marker in chart.markers.iter().chain(&chart.time_markers) {
@@ -132,8 +122,8 @@ pub(super) fn project_chart(
     }
     for reference in &chart.reference_lines {
         let point = position(GameUiChartPoint {
-            x: chart.x_minimum,
-            y: reference.value,
+            x: plot[0],
+            y: reference.position_y_px,
         });
         let ink = color(&reference.color, 1.0)?;
         chart_line(
@@ -141,8 +131,8 @@ pub(super) fn project_chart(
             surface,
             point,
             position(GameUiChartPoint {
-                x: chart.x_maximum,
-                y: reference.value,
+                x: plot[2],
+                y: reference.position_y_px,
             }),
             ink,
         );
@@ -248,8 +238,6 @@ pub(super) fn project_chart(
         points: Vec::new(),
         wind,
         plot,
-        x: [chart.x_minimum, chart.x_maximum],
-        y: [chart.y_minimum, chart.y_maximum],
     });
     project_chart_cursor(
         world,
@@ -384,25 +372,16 @@ pub(super) fn project_chart_cursor(
         .get::<RetainedChart>(parent)
         .cloned()
         .ok_or_else(|| "Chart静的投影が存在しない".to_owned())?;
-    let position = |point: GameUiChartPoint| {
-        Vec2::new(
-            (retained.plot[0]
-                + (point.x - retained.x[0]) / (retained.x[1] - retained.x[0])
-                    * (retained.plot[2] - retained.plot[0])) as f32,
-            (retained.plot[3]
-                - (point.y - retained.y[0]) / (retained.y[1] - retained.y[0])
-                    * (retained.plot[3] - retained.plot[1])) as f32,
-        )
-    };
+    let position = |point: GameUiChartPoint| Vec2::new(point.x as f32, point.y as f32);
     let (start, end) = cursor.cursor_x.map_or((Vec2::ZERO, Vec2::ZERO), |x| {
         (
             position(GameUiChartPoint {
                 x,
-                y: retained.y[0],
+                y: retained.plot[3],
             }),
             position(GameUiChartPoint {
                 x,
-                y: retained.y[1],
+                y: retained.plot[1],
             }),
         )
     });
@@ -446,25 +425,19 @@ pub(super) fn project_chart_cursor(
         .and_then(|vector| vector.segment);
     if let (Some(vector), Some([start, end])) = (&cursor.selected_wind_vector, wind) {
         let ink = color(&vector.color, 1.0)?;
-        let start = position(start);
-        let end = position(end);
-        let direction = (end - start).normalize_or_zero();
-        let side = Vec2::new(-direction.y, direction.x);
-        set_chart_line(world, retained.wind[0], start, end, ink);
-        set_chart_line(
-            world,
-            retained.wind[1],
-            end,
-            end - direction * 7.0 + side * 3.0,
-            ink,
-        );
-        set_chart_line(
-            world,
-            retained.wind[2],
-            end,
-            end - direction * 7.0 - side * 3.0,
-            ink,
-        );
+        set_chart_line(world, retained.wind[0], position(start), position(end), ink);
+        for (entity, segment) in retained.wind[1..]
+            .iter()
+            .zip(vector.head_segments.unwrap_or([[end, end]; 2]))
+        {
+            set_chart_line(
+                world,
+                *entity,
+                position(segment[0]),
+                position(segment[1]),
+                ink,
+            );
+        }
     } else {
         for entity in retained.wind {
             set_chart_line(world, entity, Vec2::ZERO, Vec2::ZERO, Color::WHITE);

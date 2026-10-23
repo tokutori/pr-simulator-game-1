@@ -96,8 +96,6 @@ struct RetainedChart {
     points: Vec<Entity>,
     wind: [Entity; 3],
     plot: [f64; 4],
-    x: [f64; 2],
-    y: [f64; 2],
 }
 
 #[derive(Component)]

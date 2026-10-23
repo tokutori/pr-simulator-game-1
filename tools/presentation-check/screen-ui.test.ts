@@ -377,14 +377,16 @@ describe("screen UI DOM patching", () => {
     expect(button?.style.position).toBe("");
     expect(figure?.style.position).toBe("");
     expect((button?.compareDocumentPosition(figure as Node) ?? 0) & 4).toBe(4);
+    const cursor = analysisChart(null, 0.1).cursor_x;
     const updated: UiViewModel = { ...view, panels: view.panels.map((entry) => ({
-      ...entry, controls: entry.controls.map((control) => control.kind === "chart" ? { ...control, cursor_x: 0.1 } : control)
+      ...entry, controls: entry.controls.map((control) => control.kind === "chart" ? { ...control, cursor_x: cursor } : control)
     })) };
     adapter.render(updated, false);
     expect(required(root, ".screen-ui-mount").hidden).toBe(true);
     expect(root.querySelector("svg")).toBe(svg);
     expect(svg?.isConnected).toBe(true);
-    expect(svg?.querySelector('path[stroke-dasharray="7 6"]')?.getAttribute("d")).toBe("M 522 26 V 472");
+    expect(svg?.querySelector('path[stroke-dasharray="7 6"]')?.getAttribute("d"))
+      .toBe(`M ${String(cursor)} ${String(chart.presentation.plot[1])} V ${String(chart.presentation.plot[3])}`);
     adapter.render(updated, true);
     expect(root.querySelector(".screen-ui-chart")).toBe(figure);
     expect(root.querySelector("svg")).toBe(svg);
@@ -766,8 +768,8 @@ describe("screen UI DOM patching", () => {
     let view: UiViewModel;
     const adapter = new ScreenUiAdapter(root, (action) => actions.push(action), () => {
       view = { ...view, panels: view.panels.map((panel) => ({ ...panel, controls: panel.controls.map((control) =>
-        control.kind === "chart" ? { ...analysisChart(adapter.chartExtent()), id: control.id,
-          ...(control.section === undefined ? {} : { section: control.section }), rect: control.rect, cursor_x: 0.1 } : control) })) };
+        control.kind === "chart" ? { ...analysisChart(adapter.chartExtent(), 0.1), id: control.id,
+          ...(control.section === undefined ? {} : { section: control.section }), rect: control.rect } : control) })) };
       adapter.render(view);
     });
     const fixture = createSceneFixture("Result");
@@ -777,7 +779,7 @@ describe("screen UI DOM patching", () => {
         ...panel.controls.map((control) => ({ ...control, section: "measured" })),
         { kind: "status", id: "long-notice", section: "measured", label: "通知", value: "元のfailure原因\n2行目\n3行目\n4行目", enabled: false, rect: { x: 0.04, y: 0.72, width: 0.92, height: 0.085 } },
         {
-          ...analysisChart(), id: "measured-chart", section: "measured", cursor_x: 0.1,
+          ...analysisChart(null, 0.1), id: "measured-chart", section: "measured",
           enabled: false, rect: { x: 0.04, y: 0.105, width: 0.92, height: 0.49 }
         }
       ] }))
@@ -798,7 +800,9 @@ describe("screen UI DOM patching", () => {
     expect(adapter.chartExtent()).toEqual({ width: 298, height: 160 });
     expect(svg.getAttribute("viewBox")).toBe("0 0 298 160");
     expect(svg.style.getPropertyValue("--screen-chart-tick-font")).toBe("14px");
-    expect(svg.querySelector('path[stroke-dasharray="7 6"]')?.getAttribute("d")).toBe("M 171 26 V 112");
+    const measuredChart = analysisChart(adapter.chartExtent(), 0.1);
+    expect(svg.querySelector('path[stroke-dasharray="7 6"]')?.getAttribute("d"))
+      .toBe(`M ${String(measuredChart.cursor_x)} ${String(measuredChart.presentation.plot[1])} V ${String(measuredChart.presentation.plot[3])}`);
     expect(svg.querySelector(".screen-ui-chart-axis")?.textContent).toBe(analysisChart().x_axis_label);
     const notice = required(root, "#long-notice");
     expect(notice.style.position).toBe("");
@@ -831,9 +835,9 @@ describe("screen UI DOM patching", () => {
   });
 });
 
-function analysisChart(chart_extent: GameUiPlatformInput["chart_extent"] = null): Extract<UiViewModel["panels"][number]["controls"][number], { kind: "chart" }> {
+function analysisChart(chart_extent: GameUiPlatformInput["chart_extent"] = null, time_seconds = 0): Extract<UiViewModel["panels"][number]["controls"][number], { kind: "chart" }> {
   const view = createGameViewModel(currentSharedGameUiFixture("result", { ticks: 20, platform: { chart_extent }, actions: [
-    { kind: "set_result_tab", tab: "analysis" }, { kind: "set_analysis_chart", chart: "altitude" }
+    { kind: "set_result_tab", tab: "analysis" }, { kind: "set_analysis_chart", chart: "altitude" }, { kind: "seek_analysis", time_seconds }
   ] }));
   const chart = view.panels.flatMap((panel) => panel.controls).find((control) => control.kind === "chart");
   if (chart?.kind !== "chart") throw new Error("Missing current shared chart fixture");

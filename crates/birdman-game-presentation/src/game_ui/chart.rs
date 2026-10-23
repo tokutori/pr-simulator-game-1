@@ -7,6 +7,11 @@ use birdman_game_core::{
 
 use super::{environment, types::*};
 
+mod projection;
+use projection::{
+    ChartData, ChartDataCursor, ChartProjection, ChartReferenceLine, ChartWindVector,
+};
+
 pub(super) fn record_chart(
     record: &FlightRecord,
     kind: GameUiAnalysisChart,
@@ -24,7 +29,7 @@ pub(super) fn record_chart(
         .duration_seconds()
         .map_err(GameUiError::Record)?
         .max(0.01);
-    let mut chart = GameUiChart {
+    let mut chart = ChartData {
         presentation: initial_presentation(extent)?,
         x_axis_label: "飛行時間 (s)".to_owned(),
         y_axis_label: String::new(),
@@ -62,12 +67,12 @@ pub(super) fn record_chart(
                     .collect(),
             ));
             chart.reference_lines = vec![
-                GameUiChartReferenceLine {
+                ChartReferenceLine {
                     value: 0.0,
                     label: "静水面".to_owned(),
                     color: "#85c7e8".to_owned(),
                 },
-                GameUiChartReferenceLine {
+                ChartReferenceLine {
                     value: first.telemetry.altitude_m,
                     label: format!("発進高度 {:.1} m", first.telemetry.altitude_m),
                     color: "#f2b35e".to_owned(),
@@ -106,14 +111,26 @@ pub(super) fn record_chart(
             }
         }
     }
-    let cursor = chart_cursor("game-analysis-plot", kind, &chart, cursor, time);
+    let cursor = data_cursor(
+        "game-analysis-plot",
+        kind,
+        [
+            chart.x_minimum,
+            chart.x_maximum,
+            chart.y_minimum,
+            chart.y_maximum,
+        ],
+        &chart.series,
+        cursor,
+        time,
+    );
     chart.cursor_x = cursor.cursor_x;
     chart.cursor_points = cursor.cursor_points;
     if let Some(selected) = cursor.selected_wind_vector {
         chart.vectors.insert(0, selected);
     }
     complete_presentation(&mut chart);
-    Ok(chart)
+    Ok(chart.into_projected())
 }
 
 fn initial_presentation(
@@ -172,7 +189,7 @@ fn initial_presentation(
     })
 }
 
-fn complete_presentation(chart: &mut GameUiChart) {
+fn complete_presentation(chart: &mut ChartData) {
     let presentation = &mut chart.presentation;
     if chart.equal_axis_scale {
         let [left, top, right, bottom] = presentation.plot;
@@ -189,12 +206,16 @@ fn complete_presentation(chart: &mut GameUiChart) {
     let [left, top, right, bottom] = presentation.plot;
     let width = right - left;
     let height = bottom - top;
-    let project = |position: GameUiChartPoint| {
-        point(
-            left + (position.x - chart.x_minimum) / (chart.x_maximum - chart.x_minimum) * width,
-            bottom - (position.y - chart.y_minimum) / (chart.y_maximum - chart.y_minimum) * height,
-        )
-    };
+    let projection = ChartProjection::new(
+        [
+            chart.x_minimum,
+            chart.x_maximum,
+            chart.y_minimum,
+            chart.y_maximum,
+        ],
+        presentation.plot,
+    );
+    let project = |position| projection.point(position);
     let tick_count_x = (width / 80.0).floor().clamp(1.0, 4.0) as u32;
     let tick_count_y = (height / 32.0).floor().clamp(1.0, 4.0) as u32;
     presentation.x_ticks = (0..=tick_count_x)
@@ -460,7 +481,31 @@ pub(super) fn chart_cursor(
     sample: FlightRecordPlaybackSample,
     time: f64,
 ) -> GameUiChartCursor {
-    let mut cursor = GameUiChartCursor {
+    let bounds = [
+        plot.x_minimum,
+        plot.x_maximum,
+        plot.y_minimum,
+        plot.y_maximum,
+    ];
+    ChartProjection::new(bounds, plot.presentation.plot).cursor(data_cursor(
+        id,
+        kind,
+        bounds,
+        &plot.series,
+        sample,
+        time,
+    ))
+}
+
+fn data_cursor(
+    id: &str,
+    kind: GameUiAnalysisChart,
+    bounds: [f64; 4],
+    series: &[GameUiChartSeries],
+    sample: FlightRecordPlaybackSample,
+    time: f64,
+) -> ChartDataCursor {
+    let mut cursor = ChartDataCursor {
         id: id.to_owned(),
         cursor_x: Some(time),
         cursor_points: Vec::new(),
@@ -473,31 +518,22 @@ pub(super) fn chart_cursor(
             let start = point(position[1], position[0]);
             cursor.cursor_points.push(GameUiChartCursorPoint {
                 point: start,
-                color: plot.series[0].color.clone(),
+                color: series[0].color.clone(),
             });
             let [north, east, _] = sample.telemetry.wind_velocity_ned_mps.components();
             let speed = north.hypot(east);
-            let half_range = (plot.x_maximum - plot.x_minimum) * 0.75 / 2.0;
+            let half_range = (bounds[1] - bounds[0]) * 0.75 / 2.0;
             let scale = if speed > 0.0 {
                 half_range * 0.2 / speed
             } else {
                 0.0
             };
             let end = point(start.x + east * scale, start.y + north * scale);
-            cursor.selected_wind_vector = Some(GameUiChartVector {
+            cursor.selected_wind_vector = Some(ChartWindVector {
                 label: format!("選択地点の風の矢印: 1 m/s あたり {scale:.1} m"),
                 color: "#f2b35e".to_owned(),
                 segment: if speed > 0.0 {
-                    clip_segment(
-                        start,
-                        end,
-                        [
-                            plot.x_minimum,
-                            plot.x_maximum,
-                            plot.y_minimum,
-                            plot.y_maximum,
-                        ],
-                    )
+                    clip_segment(start, end, bounds)
                 } else {
                     None
                 },
@@ -505,23 +541,23 @@ pub(super) fn chart_cursor(
         }
         GameUiAnalysisChart::Altitude => cursor.cursor_points.push(GameUiChartCursorPoint {
             point: point(time, sample.telemetry.altitude_m),
-            color: plot.series[0].color.clone(),
+            color: series[0].color.clone(),
         }),
         GameUiAnalysisChart::Speed => {
             cursor.cursor_points.push(GameUiChartCursorPoint {
                 point: point(time, sample.telemetry.airspeed_mps),
-                color: plot.series[0].color.clone(),
+                color: series[0].color.clone(),
             });
             cursor.cursor_points.push(GameUiChartCursorPoint {
                 point: point(time, sample.telemetry.groundspeed_mps),
-                color: plot.series[1].color.clone(),
+                color: series[1].color.clone(),
             });
         }
     }
     cursor
 }
 
-fn map_chart(chart: &mut GameUiChart, record: &FlightRecord) -> Result<(), GameUiError> {
+fn map_chart(chart: &mut ChartData, record: &FlightRecord) -> Result<(), GameUiError> {
     let samples = record.samples();
     let points: Vec<_> = samples.iter().map(map_point).collect();
     let east = range(points.iter().map(|position| position.x));
@@ -597,7 +633,7 @@ fn map_chart(chart: &mut GameUiChart, record: &FlightRecord) -> Result<(), GameU
 }
 
 fn wind_grid(
-    chart: &mut GameUiChart,
+    chart: &mut ChartData,
     record: &FlightRecord,
     north: f64,
     east: f64,
@@ -646,7 +682,7 @@ fn wind_grid(
     for (index, (position, velocity)) in samples.into_iter().enumerate() {
         let start = point(position[1], position[0]);
         let end = point(start.x + velocity[1] * scale, start.y + velocity[0] * scale);
-        chart.vectors.push(GameUiChartVector {
+        chart.vectors.push(ChartWindVector {
             label: if index == 0 {
                 "周辺の風".to_owned()
             } else {
@@ -669,7 +705,7 @@ struct VenueGeometry {
 }
 static VENUE: OnceLock<Result<VenueGeometry, GameUiError>> = OnceLock::new();
 
-fn venue(chart: &mut GameUiChart, bounds: [f64; 4]) -> Result<(), GameUiError> {
+fn venue(chart: &mut ChartData, bounds: [f64; 4]) -> Result<(), GameUiError> {
     let geometry = VENUE
         .get_or_init(build_venue)
         .as_ref()

@@ -188,7 +188,7 @@ Retryはsealed configuration、初期状態、scenario seed、波の位相基準
 | Airspeed / Groundspeed vs time | 重心の対気・対地3D速度norm、共有cursor |
 
 - 地図は東を右、北を上とする等縮尺local NED平面である。
-- 2Dのy反転はadapterで行う。
+- 共有Rustが記録座標を論理pxへ投影し、2Dのy反転と風矢印の線分を導出する。Screen・Bevyはその座標を描画し、空間Menuは同じgeometryをpanel矩形へ配置する。
 - 軌跡は記録済み合成重心を使用し、body stateから再計算しない。
 - 接触時の機体重心位置と物理接触点を区別する。
 - 着水はSplash、それ以外は理由付きEndを表示する。

@@ -2318,7 +2318,7 @@
           "type": "array"
         },
         "cursor_x": {
-          "description": "Time cursor; maps use cursor points only.",
+          "description": "Horizontal cursor position in logical pixels; absent for maps.",
           "format": "double",
           "type": [
             "number",
@@ -2348,7 +2348,7 @@
           "type": "array"
         },
         "series": {
-          "description": "Ordered curves including registered venue geometry.",
+          "description": "Ordered curves in logical display pixels, including venue geometry.",
           "items": {
             "$ref": "#/$defs/GameUiChartSeries"
           },
@@ -2428,7 +2428,7 @@
           "type": "array"
         },
         "cursor_x": {
-          "description": "Time-axis cursor, absent for a horizontal map.",
+          "description": "Horizontal position in logical display pixels, absent for a map.",
           "format": "double",
           "type": [
             "number",
@@ -2469,7 +2469,7 @@
         },
         "point": {
           "$ref": "#/$defs/GameUiChartPoint",
-          "description": "Position in the chart axes."
+          "description": "Position in logical display pixels."
         }
       },
       "required": [
@@ -2600,7 +2600,7 @@
         },
         "point": {
           "$ref": "#/$defs/GameUiChartPoint",
-          "description": "Chart coordinates."
+          "description": "Position in logical display pixels."
         }
       },
       "required": [
@@ -2612,7 +2612,7 @@
     },
     "GameUiChartPoint": {
       "additionalProperties": false,
-      "description": "One chart-space point with units defined by the axes.",
+      "description": "Two-dimensional chart point; exported geometry uses logical display pixels.",
       "properties": {
         "x": {
           "description": "Horizontal component.",
@@ -2846,14 +2846,14 @@
           "description": "Shared label.",
           "type": "string"
         },
-        "value": {
-          "description": "Vertical-axis coordinate.",
+        "position_y_px": {
+          "description": "Vertical position in logical display pixels.",
           "format": "double",
           "type": "number"
         }
       },
       "required": [
-        "value",
+        "position_y_px",
         "label",
         "color"
       ],
@@ -2872,7 +2872,7 @@
           "type": "string"
         },
         "points": {
-          "description": "Ordered chart coordinates.",
+          "description": "Ordered positions in logical display pixels.",
           "items": {
             "$ref": "#/$defs/GameUiChartPoint"
           },
@@ -2997,12 +2997,29 @@
           "description": "Shared colour.",
           "type": "string"
         },
+        "head_segments": {
+          "description": "Arrowhead line segments in logical display pixels.",
+          "items": {
+            "items": {
+              "$ref": "#/$defs/GameUiChartPoint"
+            },
+            "maxItems": 2,
+            "minItems": 2,
+            "type": "array"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": [
+            "array",
+            "null"
+          ]
+        },
         "label": {
           "description": "Legend label.",
           "type": "string"
         },
         "segment": {
-          "description": "Visible segment, absent for zero wind or outside the chart.",
+          "description": "Visible logical-pixel segment, absent for zero wind or outside the chart.",
           "items": {
             "$ref": "#/$defs/GameUiChartPoint"
           },
@@ -3017,7 +3034,8 @@
       "required": [
         "label",
         "color",
-        "segment"
+        "segment",
+        "head_segments"
       ],
       "type": "object"
     },

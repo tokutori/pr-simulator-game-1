@@ -152,7 +152,7 @@ export interface GameUiChartCursor {
      */
     readonly cursor_points: readonly GameUiChartCursorPoint[];
     /**
-     * Time-axis cursor, absent for a horizontal map.
+     * Horizontal position in logical display pixels, absent for a map.
      */
     readonly cursor_x: number | null;
     /**
@@ -175,7 +175,7 @@ export interface GameUiChartCursorPoint {
     readonly point: GameUiChartPoint;
 }
 /**
- * One chart-space point with units defined by the axes.
+ * Two-dimensional chart point; exported geometry uses logical display pixels.
  */
 export interface GameUiChartPoint {
     /**
@@ -196,11 +196,27 @@ export interface GameUiChartVector {
      */
     readonly color: string;
     /**
+     * Arrowhead line segments in logical display pixels.
+     *
+     * @minItems 2
+     * @maxItems 2
+     */
+    readonly head_segments: readonly [
+        readonly [
+            GameUiChartPoint,
+            GameUiChartPoint
+        ],
+        readonly [
+            GameUiChartPoint,
+            GameUiChartPoint
+        ]
+    ] | null;
+    /**
      * Legend label.
      */
     readonly label: string;
     /**
-     * Visible segment, absent for zero wind or outside the chart.
+     * Visible logical-pixel segment, absent for zero wind or outside the chart.
      *
      * @minItems 2
      * @maxItems 2

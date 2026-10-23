@@ -1198,27 +1198,34 @@ fn full_chart_projection_matches_record_queries_and_preserves_the_finalized_reco
             .unwrap()
             .sample_at_seconds(0.015)
             .unwrap();
+        let [_, top, _, bottom] = plot.presentation.plot;
+        let expected_y = |value| {
+            bottom - (value - plot.y_minimum) / (plot.y_maximum - plot.y_minimum) * (bottom - top)
+        };
         if chart == GameUiAnalysisChart::Map {
             assert!(plot.equal_axis_scale);
             assert_eq!(
                 plot.cursor_points[0].point.y,
-                queried.telemetry.composite_cg_position_ned_m.components()[0]
+                expected_y(queried.telemetry.composite_cg_position_ned_m.components()[0])
             );
         }
         if chart == GameUiAnalysisChart::Altitude {
             assert!(!plot.equal_axis_scale);
-            assert_eq!(plot.cursor_points[0].point.y, queried.telemetry.altitude_m);
-            assert_eq!(plot.reference_lines[0].value, 0.0);
+            assert_eq!(
+                plot.cursor_points[0].point.y,
+                expected_y(queried.telemetry.altitude_m)
+            );
+            assert_eq!(plot.reference_lines[0].position_y_px, expected_y(0.0));
         }
         if chart == GameUiAnalysisChart::Speed {
             assert_eq!(plot.series.len(), 2);
             assert_eq!(
                 plot.cursor_points[0].point.y,
-                queried.telemetry.airspeed_mps
+                expected_y(queried.telemetry.airspeed_mps)
             );
             assert_eq!(
                 plot.cursor_points[1].point.y,
-                queried.telemetry.groundspeed_mps
+                expected_y(queried.telemetry.groundspeed_mps)
             );
         }
         for (cursor, series) in plot.cursor_points.iter().zip(&plot.series) {

@@ -685,7 +685,7 @@ pub struct GameUiButtonLabel {
 pub struct GameUiChartCursor {
     /// Retained chart control identity.
     pub id: String,
-    /// Time-axis cursor, absent for a horizontal map.
+    /// Horizontal position in logical display pixels, absent for a map.
     pub cursor_x: Option<f64>,
     /// Shared plot-space sample points.
     pub cursor_points: Vec<GameUiChartCursorPoint>,
@@ -1117,7 +1117,7 @@ pub struct GameUiChart {
     pub y_maximum: f64,
     /// Preserves metre-for-metre map scale.
     pub equal_axis_scale: bool,
-    /// Ordered curves including registered venue geometry.
+    /// Ordered curves in logical display pixels, including venue geometry.
     pub series: Vec<GameUiChartSeries>,
     /// Clipped ambient-wind arrows.
     pub vectors: Vec<GameUiChartVector>,
@@ -1127,7 +1127,7 @@ pub struct GameUiChart {
     pub time_markers: Vec<GameUiChartMarker>,
     /// Horizontal reference lines.
     pub reference_lines: Vec<GameUiChartReferenceLine>,
-    /// Time cursor; maps use cursor points only.
+    /// Horizontal cursor position in logical pixels; absent for maps.
     pub cursor_x: Option<f64>,
     /// Record-interpolated cursor positions.
     pub cursor_points: Vec<GameUiChartCursorPoint>,
@@ -1280,7 +1280,7 @@ pub struct GameUiChartMapGuides {
     pub north_label: GameUiChartText,
 }
 
-/// One chart-space point with units defined by the axes.
+/// Two-dimensional chart point; exported geometry uses logical display pixels.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
@@ -1296,7 +1296,7 @@ pub struct GameUiChartPoint {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct GameUiChartCursorPoint {
-    /// Position in the chart axes.
+    /// Position in logical display pixels.
     pub point: GameUiChartPoint,
     /// Colour of the corresponding shared series.
     pub color: String,
@@ -1311,7 +1311,7 @@ pub struct GameUiChartSeries {
     pub label: String,
     /// Shared base colour.
     pub color: String,
-    /// Ordered chart coordinates.
+    /// Ordered positions in logical display pixels.
     pub points: Vec<GameUiChartPoint>,
     /// Per-segment colours; empty means the base colour.
     pub segment_colors: Vec<String>,
@@ -1326,8 +1326,10 @@ pub struct GameUiChartVector {
     pub label: String,
     /// Shared colour.
     pub color: String,
-    /// Visible segment, absent for zero wind or outside the chart.
+    /// Visible logical-pixel segment, absent for zero wind or outside the chart.
     pub segment: Option<[GameUiChartPoint; 2]>,
+    /// Arrowhead line segments in logical display pixels.
+    pub head_segments: Option<[[GameUiChartPoint; 2]; 2]>,
 }
 
 /// One labelled chart location.
@@ -1339,7 +1341,7 @@ pub struct GameUiChartMarker {
     pub label: String,
     /// Shared colour.
     pub color: String,
-    /// Chart coordinates.
+    /// Position in logical display pixels.
     pub point: GameUiChartPoint,
 }
 
@@ -1348,8 +1350,8 @@ pub struct GameUiChartMarker {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct GameUiChartReferenceLine {
-    /// Vertical-axis coordinate.
-    pub value: f64,
+    /// Vertical position in logical display pixels.
+    pub position_y_px: f64,
     /// Shared label.
     pub label: String,
     /// Shared colour.

@@ -570,7 +570,7 @@ export interface GameUiChart {
      */
     readonly cursor_points: readonly GameUiChartCursorPoint[];
     /**
-     * Time cursor; maps use cursor points only.
+     * Horizontal cursor position in logical pixels; absent for maps.
      */
     readonly cursor_x: number | null;
     /**
@@ -587,7 +587,7 @@ export interface GameUiChart {
      */
     readonly reference_lines: readonly GameUiChartReferenceLine[];
     /**
-     * Ordered curves including registered venue geometry.
+     * Ordered curves in logical display pixels, including venue geometry.
      */
     readonly series: readonly GameUiChartSeries[];
     /**
@@ -634,7 +634,7 @@ export interface GameUiChartCursorPoint {
     readonly point: GameUiChartPoint;
 }
 /**
- * One chart-space point with units defined by the axes.
+ * Two-dimensional chart point; exported geometry uses logical display pixels.
  */
 export interface GameUiChartPoint {
     /**
@@ -927,9 +927,9 @@ export interface GameUiChartReferenceLine {
      */
     readonly label: string;
     /**
-     * Vertical-axis coordinate.
+     * Vertical position in logical display pixels.
      */
-    readonly value: number;
+    readonly position_y_px: number;
 }
 /**
  * One curve and its shared visual identity.
@@ -944,7 +944,7 @@ export interface GameUiChartSeries {
      */
     readonly label: string;
     /**
-     * Ordered chart coordinates.
+     * Ordered positions in logical display pixels.
      */
     readonly points: readonly GameUiChartPoint[];
     /**
@@ -961,11 +961,27 @@ export interface GameUiChartVector {
      */
     readonly color: string;
     /**
+     * Arrowhead line segments in logical display pixels.
+     *
+     * @minItems 2
+     * @maxItems 2
+     */
+    readonly head_segments: readonly [
+        readonly [
+            GameUiChartPoint,
+            GameUiChartPoint
+        ],
+        readonly [
+            GameUiChartPoint,
+            GameUiChartPoint
+        ]
+    ] | null;
+    /**
      * Legend label.
      */
     readonly label: string;
     /**
-     * Visible segment, absent for zero wind or outside the chart.
+     * Visible logical-pixel segment, absent for zero wind or outside the chart.
      *
      * @minItems 2
      * @maxItems 2

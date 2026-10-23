@@ -164,7 +164,7 @@ GameUiView / GameUiFrame → platform renderer → DOM / VR panel / Bevy entity
 - HUDは順序付きgroupとText・Attitude・HeadingTape・Direction・LinearGauge等のnodeを持ち、adapterはkindを網羅的に投影する。
 - IDは差分追跡に用い、計器項目の個別再実装に用いない。
 
-- chartの軸、series、segment、風、marker、cursorはRustのrecord queryから導出する。
+- chartの軸、series、segment、風、marker、cursorはRustのrecord queryから導出する。生成途中の記録座標はpresentation内部へ閉じ、公開View/Frameは論理pxへ投影した点・参照線・矢印線分を返す。静的geometryとシーク時のcursorは同じ投影を使う。
 - 記録queryが保存sampleの状態・telemetry・物理舵角のwire投影を所有し、Replay cameraは同じsample投影を利用して視点を導出する。
 - TypeScriptやBevy UIで飛行物理・scoreを再計算しない。
 - 未提供の警報producerは利用不可として表示し、Custom設定値の保持と実装済み警報の提供を区別する。

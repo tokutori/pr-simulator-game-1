@@ -494,19 +494,12 @@ fn paint_chart(
     translate: &impl Fn(MenuPoint) -> MenuPoint,
 ) -> Vec<SurfacePaintItem> {
     use crate::game_ui::GameUiChartPoint as Point;
+    let [left, top, right, bottom] = chart.presentation.plot;
     let project = |point: Point| {
         translate(MenuPoint {
-            x: plot.x
-                + (point.x - chart.x_minimum) / (chart.x_maximum - chart.x_minimum) * plot.width,
-            y: plot.y
-                + (chart.y_maximum - point.y) / (chart.y_maximum - chart.y_minimum) * plot.height,
+            x: plot.x + (point.x - left) / (right - left) * plot.width,
+            y: plot.y + (point.y - top) / (bottom - top) * plot.height,
         })
-    };
-    let [left, top, right, bottom] = chart.presentation.plot;
-    let descriptor = |point: Point| Point {
-        x: chart.x_minimum
-            + (point.x - left) / (right - left) * (chart.x_maximum - chart.x_minimum),
-        y: chart.y_maximum - (point.y - top) / (bottom - top) * (chart.y_maximum - chart.y_minimum),
     };
     let mut items = Vec::new();
     let mut segment = |start, end, color: &str, width_px, opacity| {
@@ -520,34 +513,25 @@ fn paint_chart(
     };
     for [start, end] in &chart.presentation.grid_lines {
         segment(
-            descriptor(*start),
-            descriptor(*end),
+            *start,
+            *end,
             &chart.presentation.grid_color,
             1.0,
             chart.presentation.grid_opacity,
         );
     }
     segment(
-        Point {
-            x: chart.x_minimum,
-            y: chart.y_maximum,
-        },
-        Point {
-            x: chart.x_minimum,
-            y: chart.y_minimum,
-        },
+        Point { x: left, y: top },
+        Point { x: left, y: bottom },
         &chart.presentation.axes_color,
         1.5,
         1.0,
     );
     segment(
+        Point { x: left, y: bottom },
         Point {
-            x: chart.x_minimum,
-            y: chart.y_minimum,
-        },
-        Point {
-            x: chart.x_maximum,
-            y: chart.y_minimum,
+            x: right,
+            y: bottom,
         },
         &chart.presentation.axes_color,
         1.5,
@@ -556,12 +540,12 @@ fn paint_chart(
     for reference in &chart.reference_lines {
         segment(
             Point {
-                x: chart.x_minimum,
-                y: reference.value,
+                x: left,
+                y: reference.position_y_px,
             },
             Point {
-                x: chart.x_maximum,
-                y: reference.value,
+                x: right,
+                y: reference.position_y_px,
             },
             &reference.color,
             2.0,
@@ -570,7 +554,7 @@ fn paint_chart(
     }
     if let Some(guides) = &chart.presentation.map_guides {
         for [start, end] in guides.scale_segments.iter().chain(&guides.north_segments) {
-            segment(descriptor(*start), descriptor(*end), "#f3f4e8", 1.5, 1.0);
+            segment(*start, *end, "#f3f4e8", 1.5, 1.0);
         }
     }
     for series in &chart.series {
@@ -587,19 +571,8 @@ fn paint_chart(
     for vector in &chart.vectors {
         if let Some([start, end]) = vector.segment {
             segment(start, end, &vector.color, 2.0, 1.0);
-            let dx = end.x - start.x;
-            let dy = end.y - start.y;
-            for sign in [-1.0, 1.0] {
-                segment(
-                    end,
-                    Point {
-                        x: end.x - dx * 0.25 + sign * dy * 0.15,
-                        y: end.y - dy * 0.25 - sign * dx * 0.15,
-                    },
-                    &vector.color,
-                    2.0,
-                    1.0,
-                );
+            for [start, end] in vector.head_segments.iter().flatten() {
+                segment(*start, *end, &vector.color, 2.0, 1.0);
             }
         }
     }
@@ -614,12 +587,9 @@ fn paint_chart(
         items.push(SurfacePaintItem::Line {
             start: project(Point {
                 x: cursor,
-                y: chart.y_minimum,
+                y: bottom,
             }),
-            end: project(Point {
-                x: cursor,
-                y: chart.y_maximum,
-            }),
+            end: project(Point { x: cursor, y: top }),
             color: "#ffd45c".into(),
             width_px: 2.0,
             opacity: 1.0,

@@ -313,9 +313,6 @@ export class ScreenUiAdapter {
     svgAttributes["aria-label"] = `${control.label}; ${control.x_axis_label}; ${control.y_axis_label}`;
     svgAttributes["preserveAspectRatio"] = "xMidYMid meet";
     const [plotLeft, plotTop, plotRight, plotBottom] = layout.plot;
-    const plotWidth = plotRight - plotLeft;
-    const plotX = (value: number): number => plotLeft + (value - control.x_minimum) / (control.x_maximum - control.x_minimum) * plotWidth;
-    const plotY = (value: number): number => plotBottom - (value - control.y_minimum) / (control.y_maximum - control.y_minimum) * (plotBottom - plotTop);
     svg.push(svgElement("path", {
       d: `M ${String(plotLeft)} ${String(plotTop)} V ${String(plotBottom)} H ${String(plotRight)}`,
       fill: "none",
@@ -334,7 +331,7 @@ export class ScreenUiAdapter {
     for (const tick of layout.x_ticks) svg.push(chartText(tick.text, "screen-ui-chart-tick"));
     for (const tick of layout.y_ticks) svg.push(chartText(tick.text, "screen-ui-chart-tick screen-ui-chart-y-tick"));
     control.reference_lines.forEach((line, index) => {
-      const y = plotY(line.value);
+      const y = line.position_y_px;
       svg.push(svgElement("path", {
         d: `M ${String(plotLeft)} ${String(y)} H ${String(plotRight)}`,
         fill: "none",
@@ -352,7 +349,7 @@ export class ScreenUiAdapter {
           const second = series.points[index + 1];
           if (first === undefined || second === undefined) return;
           svg.push(svgElement("path", {
-            d: `M ${String(plotX(first.x))} ${String(plotY(first.y))} L ${String(plotX(second.x))} ${String(plotY(second.y))}`,
+            d: `M ${String(first.x)} ${String(first.y)} L ${String(second.x)} ${String(second.y)}`,
             fill: "none",
             stroke: color,
             "stroke-width": "2.5",
@@ -362,8 +359,8 @@ export class ScreenUiAdapter {
         return;
       }
       const points = series.points.map((point, index) => {
-        const x = plotX(point.x);
-        const y = plotY(point.y);
+        const x = point.x;
+        const y = point.y;
         return `${index === 0 ? "M" : "L"} ${String(x)} ${String(y)}`;
       }).join(" ");
       svg.push(svgElement("path", {
@@ -376,7 +373,7 @@ export class ScreenUiAdapter {
       }));
     });
     if (control.cursor_x !== null) {
-      const x = plotX(control.cursor_x);
+      const x = control.cursor_x;
       svg.push(svgElement("path", {
         d: `M ${String(x)} ${String(plotTop)} V ${String(plotBottom)}`,
         fill: "none",
@@ -386,15 +383,15 @@ export class ScreenUiAdapter {
       }));
     }
     control.cursor_points.forEach((cursor) => {
-      const coordinateX = plotX(cursor.point.x);
-      const coordinateY = plotY(cursor.point.y);
+      const coordinateX = cursor.point.x;
+      const coordinateY = cursor.point.y;
       svg.push(svgElement("circle", {
         cx: String(coordinateX), cy: String(coordinateY), r: "4", fill: cursor.color
       }));
     });
     control.markers.forEach((marker, index) => {
-      const x = plotX(marker.point.x);
-      const y = plotY(marker.point.y);
+      const x = marker.point.x;
+      const y = marker.point.y;
       svg.push(svgElement("circle", {
         cx: String(x), cy: String(y), r: "4", fill: marker.color, stroke: "#10242b", "stroke-width": "1"
       }));
@@ -402,8 +399,8 @@ export class ScreenUiAdapter {
       if (label !== undefined) svg.push(chartText(label, "screen-ui-chart-marker"));
     });
     control.time_markers.forEach((marker, index) => {
-      const x = plotX(marker.point.x);
-      const y = plotY(marker.point.y);
+      const x = marker.point.x;
+      const y = marker.point.y;
       svg.push(svgElement("circle", {
         cx: String(x), cy: String(y), r: "2.5", fill: marker.color, stroke: "#10242b", "stroke-width": "1"
       }));
@@ -412,15 +409,9 @@ export class ScreenUiAdapter {
     });
     control.vectors.forEach((vector) => {
       if (vector.segment === null) return;
-      const [start, end] = vector.segment;
-      const startX = plotX(start.x);
-      const startY = plotY(start.y);
-      const endX = plotX(end.x);
-      const endY = plotY(end.y);
-      const angle = Math.atan2(endY - startY, endX - startX);
-      const arrowLength = 12;
       svg.push(svgElement("path", {
-        d: `M ${String(startX)} ${String(startY)} L ${String(endX)} ${String(endY)} M ${String(endX)} ${String(endY)} L ${String(endX - arrowLength * Math.cos(angle - Math.PI / 6))} ${String(endY - arrowLength * Math.sin(angle - Math.PI / 6))} M ${String(endX)} ${String(endY)} L ${String(endX - arrowLength * Math.cos(angle + Math.PI / 6))} ${String(endY - arrowLength * Math.sin(angle + Math.PI / 6))}`,
+        d: [vector.segment, ...(vector.head_segments ?? [])].map(([from, to]) =>
+          `M ${String(from.x)} ${String(from.y)} L ${String(to.x)} ${String(to.y)}`).join(" "),
         fill: "none",
         stroke: vector.color,
         "stroke-width": "2",
