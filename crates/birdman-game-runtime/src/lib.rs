@@ -15,9 +15,9 @@ pub use assets::{
     ApplicationWaterDetailAsset,
 };
 pub use graphics::{
-    ApplicationGpuQuery, ApplicationGraphicsCompletion, ApplicationGraphicsObservation,
-    ApplicationGraphicsProjection, ApplicationGraphicsResource, ApplicationRenderQuality,
-    ApplicationRendererObservation,
+    ApplicationGpuQuery, ApplicationGraphicsObservation, ApplicationGraphicsProjection,
+    ApplicationGraphicsResource, ApplicationGraphicsTarget, ApplicationRenderQuality,
+    ApplicationRendererObservation, ApplicationResourceCommit,
 };
 pub use scene::{
     ApplicationCameraProjection, ApplicationEyeProjection, ApplicationSceneProjection,
@@ -93,7 +93,7 @@ pub struct ApplicationRuntime {
 
 #[derive(Clone, Copy, PartialEq)]
 struct ResourceKey {
-    graphics: ApplicationGraphicsResource,
+    graphics: ApplicationGraphicsTarget,
     environment: EnvironmentIdentity,
     mode: GameUiPresentationMode,
     display_resource_id: Option<u32>,
@@ -276,14 +276,16 @@ impl ApplicationRuntime {
                     .observe(renderer_resource_id, observation, observed_ms)
                     .map_err(ApplicationRuntimeError::Graphics)?;
             }
-            ApplicationInput::GraphicsCompleted {
-                request_id,
-                renderer_resource_id,
-                completion,
+            ApplicationInput::ResourcesReleased {
+                resource_id,
+                failure,
             } => {
-                self.graphics
-                    .completed(request_id, renderer_resource_id, completion, observed_ms)
-                    .map_err(ApplicationRuntimeError::Graphics)?;
+                if self.assets.released(resource_id, failure.is_some())
+                    && let Some(cause) = failure
+                {
+                    self.diagnostic = Some(cause);
+                    self.graphics.cleanup_failed();
+                }
             }
             ApplicationInput::XrSelect {
                 display_resource_id,
@@ -479,11 +481,38 @@ impl ApplicationRuntime {
             } => {
                 let completion = self.assets.observe(request_id, observation);
                 requests.extend(completion.requests);
-                let terminal = completion.committed == Some(request_id)
+                let mut commit_failed = false;
+                if let Some(committed) = &completion.committed
+                    && let Err(error) = self.graphics.committed(
+                        committed.target,
+                        committed.policy_request,
+                        committed.actual,
+                        observed_ms,
+                    )
+                {
+                    self.diagnostic = Some(format!("描画資源の確定値を受理できない: {error:?}"));
+                    commit_failed = true;
+                }
+                if let Some(failed) = &completion.failed
+                    && !self
+                        .assets
+                        .has_policy_request(failed.target, failed.policy_request)
+                {
+                    self.graphics
+                        .failed(failed.target, failed.policy_request, observed_ms)
+                        .map_err(ApplicationRuntimeError::Graphics)?;
+                }
+                if !commit_failed {
+                    requests.extend(self.assets.continue_commit());
+                }
+                let terminal = completion
+                    .committed
+                    .as_ref()
+                    .is_some_and(|committed| committed.request_id == request_id)
                     || completion
                         .failed
                         .as_ref()
-                        .is_some_and(|(failed, _)| *failed == request_id);
+                        .is_some_and(|failed| failed.request_id == request_id);
                 if let Some(resources) = self.resources.as_mut()
                     && resources.request_id == request_id
                     && !resources.completed
@@ -491,9 +520,12 @@ impl ApplicationRuntime {
                 {
                     resources.completed = true;
                     self.resource_readiness = match completion.failed {
-                        None => BackendReadiness::Ready,
-                        Some((_, cause)) => {
-                            self.diagnostic = Some(cause);
+                        None if !commit_failed => BackendReadiness::Ready,
+                        None => BackendReadiness::Failed(
+                            birdman_game_core::BriefingFailure::AssetUnavailable,
+                        ),
+                        Some(failed) => {
+                            self.diagnostic = Some(failed.cause);
                             self.platform.notification = "描画資源を準備できない。".to_owned();
                             BackendReadiness::Failed(
                                 birdman_game_core::BriefingFailure::AssetUnavailable,
@@ -532,7 +564,7 @@ impl ApplicationRuntime {
         }
         self.synchronize_phone(&mut requests)?;
         self.synchronize_xr()?;
-        self.synchronize_graphics(&mut requests)?;
+        self.synchronize_graphics()?;
         self.synchronize_resources(&mut requests)?;
         if !self.spatial_input_focused() {
             self.surface.retire_input();
@@ -551,7 +583,7 @@ impl ApplicationRuntime {
                 self.apply_surface_action(action, &mut requests)?;
                 self.synchronize_phone(&mut requests)?;
                 self.synchronize_xr()?;
-                self.synchronize_graphics(&mut requests)?;
+                self.synchronize_graphics()?;
                 self.synchronize_resources(&mut requests)?;
             }
         }
@@ -964,31 +996,13 @@ impl ApplicationRuntime {
         }
     }
 
-    fn synchronize_graphics(
-        &mut self,
-        requests: &mut Vec<ApplicationRequest>,
-    ) -> Result<(), ApplicationRuntimeError> {
+    fn synchronize_graphics(&mut self) -> Result<(), ApplicationRuntimeError> {
         let eligible = self.page_visible
             && !self.display.state().pending()
             && self.display.state().active_mode() == Some(GameUiPresentationMode::Screen);
-        if let Some(request) = self
-            .graphics
+        self.graphics
             .synchronize(self.render_scope(), eligible, self.observed_ms)
-            .map_err(ApplicationRuntimeError::Graphics)?
-        {
-            let request_id = self.allocate_request()?;
-            let renderer_resource_id = self.graphics.resource().unwrap().renderer_resource_id;
-            self.graphics.sent(request_id, request);
-            requests.push(ApplicationRequest::ApplyGraphics {
-                request_id,
-                renderer_resource_id,
-                quality: ApplicationRenderQuality {
-                    scale: request.scale,
-                    shadow: request.shadow,
-                    water_quality: request.water_quality,
-                },
-            });
-        }
+            .map_err(ApplicationRuntimeError::Graphics)?;
         Ok(())
     }
 
@@ -1015,7 +1029,10 @@ impl ApplicationRuntime {
         requests: &mut Vec<ApplicationRequest>,
     ) -> Result<(), ApplicationRuntimeError> {
         let state = self.display.state();
-        let Some(graphics) = self.graphics.resource() else {
+        let Some(graphics) = state
+            .active_mode()
+            .and_then(|mode| self.graphics.target(mode))
+        else {
             requests.extend(self.assets.select(None));
             self.resources = None;
             self.resource_readiness = BackendReadiness::Preparing;
@@ -1042,7 +1059,6 @@ impl ApplicationRuntime {
         {
             self.graphics
                 .prepared(
-                    key.graphics,
                     matches!(self.resource_readiness, BackendReadiness::Ready),
                     self.observed_ms,
                 )
@@ -1052,7 +1068,7 @@ impl ApplicationRuntime {
         let request_id = self.allocate_request()?;
         let assets = self
             .assets
-            .prepare(request_id, environment, graphics.quality.water_quality)
+            .prepare(request_id, environment, graphics, self.graphics.requested())
             .map_err(ApplicationRuntimeError::Assets)?;
         requests.extend(self.assets.select(Some(request_id)));
         self.resources = Some(ResourcePreparation {
@@ -1062,7 +1078,7 @@ impl ApplicationRuntime {
         });
         self.resource_readiness = BackendReadiness::Preparing;
         self.graphics
-            .prepared(key.graphics, false, self.observed_ms)
+            .prepared(false, self.observed_ms)
             .map_err(ApplicationRuntimeError::Graphics)?;
         requests.push(ApplicationRequest::PrepareResources {
             assets: Box::new(assets),

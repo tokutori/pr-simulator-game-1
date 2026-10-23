@@ -84,7 +84,8 @@ fn resources_ready(
         observation: ApplicationResourceObservation::Prepared { resource_id },
     })?;
     if prepared.requests.iter().any(|request| matches!(request, ApplicationRequest::CommitResources { request_id: expected, resource_id: candidate } if *expected == request_id && *candidate == resource_id)) {
-        runtime.observe_test(ApplicationInput::Resources { request_id, observation: ApplicationResourceObservation::Committed { resource_id } })
+        let target = runtime.resources.as_ref().unwrap().key.graphics;
+        runtime.observe_test(ApplicationInput::Resources { request_id, observation: ApplicationResourceObservation::Committed { resource_id, actual: ApplicationResourceCommit { applied: target.quality, extent_px: target.extent_px } } })
     } else { Ok(prepared) }
 }
 
@@ -1196,22 +1197,16 @@ fn graphics_commit_tracks_actual_resources_cleanup_and_renderer_lifetimes() {
             observation: platform.clone(),
         })
         .unwrap();
-    let old_preparation = match initial.requests.as_slice() {
-        [ApplicationRequest::PrepareResources { request_id, .. }] => *request_id,
-        other => panic!("Expected resource preparation: {other:?}"),
-    };
-    resources_ready(&mut runtime, old_preparation).unwrap();
-    let frame = runtime
-        .observe_test(ApplicationInput::Frame {
-            display_resource_id: None,
-            timestamp_ms: 20.0,
-            gamepads: Vec::new(),
-            xr: None,
-            spatial: Default::default(),
+    let initial_id = initial
+        .requests
+        .iter()
+        .find_map(|request| match request {
+            ApplicationRequest::PrepareResources { request_id, .. } => Some(*request_id),
+            _ => None,
         })
         .unwrap();
-    let old_query = frame.graphics.query.unwrap();
-    assert_eq!(old_query.renderer_resource_id, 100);
+    resources_ready(&mut runtime, initial_id).unwrap();
+    let initial_generation = runtime.graphics.resource().unwrap().commit;
     let unsupported = runtime
         .observe_test(ApplicationInput::Graphics {
             renderer_resource_id: 100,
@@ -1220,55 +1215,7 @@ fn graphics_commit_tracks_actual_resources_cleanup_and_renderer_lifetimes() {
             },
         })
         .unwrap();
-    let (request_id, quality) = match unsupported.requests.as_slice() {
-        [
-            ApplicationRequest::ApplyGraphics {
-                request_id,
-                renderer_resource_id: 100,
-                quality,
-            },
-        ] => (*request_id, *quality),
-        other => panic!("Expected one atomic graphics request: {other:?}"),
-    };
-    assert_eq!(quality.water_quality, WaterQuality::Low);
-    assert_eq!(
-        unsupported.graphics.resource.unwrap().quality.water_quality,
-        WaterQuality::High
-    );
-    let setup = activate(
-        &mut runtime,
-        &structure(unsupported),
-        SessionCommand::OpenSetup {},
-    );
-    assert!(
-        !setup
-            .requests
-            .iter()
-            .any(|request| matches!(request, ApplicationRequest::ApplyGraphics { .. }))
-    );
-    assert!(matches!(
-        runtime.platform.screen_render_scale.status,
-        birdman_game_presentation::screen_render_auto::ScreenRenderAutoStatus::Applying { .. }
-    ));
-    let committed = runtime
-        .observe_test(ApplicationInput::GraphicsCompleted {
-            request_id,
-            renderer_resource_id: 100,
-            completion: ApplicationGraphicsCompletion::Committed {
-                applied: quality,
-                extent_px: [640, 360],
-                cleanup_failure: Some("retired mesh release failed".to_owned()),
-            },
-        })
-        .unwrap();
-    let resource = committed.graphics.resource.unwrap();
-    assert_eq!(resource.quality, quality);
-    assert_eq!(resource.commit, 1);
-    assert!(matches!(
-        runtime.platform.water_quality_operation,
-        GameUiWaterQualityOperation::CleanupFailed { .. }
-    ));
-    let new_preparation = committed
+    let (first_id, target) = unsupported
         .requests
         .iter()
         .find_map(|request| match request {
@@ -1276,27 +1223,182 @@ fn graphics_commit_tracks_actual_resources_cleanup_and_renderer_lifetimes() {
                 request_id,
                 graphics,
                 ..
-            } if *graphics == resource => Some(*request_id),
+            } => Some((*request_id, *graphics)),
             _ => None,
         })
         .unwrap();
-    assert_ne!(old_preparation, new_preparation);
-    resources_ready(&mut runtime, old_preparation).unwrap();
+    assert_eq!(target.quality.water_quality, WaterQuality::Low);
+    assert_eq!(target.extent_px, [640, 360]);
+    assert_eq!(
+        unsupported.graphics.resource.unwrap().quality.water_quality,
+        WaterQuality::High
+    );
+    let prepared = runtime
+        .observe_test(ApplicationInput::Resources {
+            request_id: first_id,
+            observation: ApplicationResourceObservation::Prepared { resource_id: 700 },
+        })
+        .unwrap();
+    assert!(prepared.requests.iter().any(|request| matches!(request, ApplicationRequest::CommitResources { request_id, resource_id: 700 } if *request_id == first_id)));
+    let mut resized = platform.clone();
+    resized.renderer.as_mut().unwrap().screen_extent_px = [1282, 722];
+    let resized_output = runtime
+        .observe_test(ApplicationInput::Platform {
+            observation: resized,
+        })
+        .unwrap();
+    let (second_id, second_target) = resized_output
+        .requests
+        .iter()
+        .find_map(|request| match request {
+            ApplicationRequest::PrepareResources {
+                request_id,
+                graphics,
+                ..
+            } => Some((*request_id, *graphics)),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(second_target.extent_px, [641, 361]);
+    let waiting = runtime
+        .observe_test(ApplicationInput::Resources {
+            request_id: second_id,
+            observation: ApplicationResourceObservation::Prepared { resource_id: 701 },
+        })
+        .unwrap();
+    assert!(
+        !waiting
+            .requests
+            .iter()
+            .any(|request| matches!(request, ApplicationRequest::CommitResources { .. }))
+    );
+    let first_commit = runtime
+        .observe_test(ApplicationInput::Resources {
+            request_id: first_id,
+            observation: ApplicationResourceObservation::Committed {
+                resource_id: 700,
+                actual: ApplicationResourceCommit {
+                    applied: target.quality,
+                    extent_px: target.extent_px,
+                },
+            },
+        })
+        .unwrap();
+    assert_eq!(
+        first_commit.graphics.resource.unwrap().commit,
+        initial_generation + 1
+    );
+    assert!(first_commit.requests.iter().any(|request| matches!(request, ApplicationRequest::CommitResources { request_id, resource_id: 701 } if *request_id == second_id)));
     assert!(matches!(
         runtime.resource_readiness,
         BackendReadiness::Preparing
     ));
-    resources_ready(&mut runtime, new_preparation).unwrap();
-    runtime
-        .observe_test(ApplicationInput::Graphics {
-            renderer_resource_id: 100,
-            observation: ApplicationGraphicsObservation::GpuCompleted {
-                query: old_query,
-                gpu_work_ms: 0.1,
+    let committed = runtime
+        .observe_test(ApplicationInput::Resources {
+            request_id: second_id,
+            observation: ApplicationResourceObservation::Committed {
+                resource_id: 701,
+                actual: ApplicationResourceCommit {
+                    applied: second_target.quality,
+                    extent_px: second_target.extent_px,
+                },
             },
         })
         .unwrap();
+    let resource = committed.graphics.resource.unwrap();
+    assert_eq!(resource.quality, second_target.quality);
+    assert_eq!(resource.extent_px, [641, 361]);
+    assert_eq!(resource.commit, initial_generation + 2);
+    assert!(
+        !committed
+            .requests
+            .iter()
+            .any(|request| matches!(request, ApplicationRequest::PrepareResources { .. }))
+    );
+    let cleanup = runtime
+        .observe_test(ApplicationInput::ResourcesReleased {
+            resource_id: 700,
+            failure: Some("retired mesh release failed".to_owned()),
+        })
+        .unwrap();
+    assert_eq!(
+        cleanup.diagnostic.as_deref(),
+        Some("retired mesh release failed")
+    );
+    assert!(matches!(
+        runtime.platform.water_quality_operation,
+        GameUiWaterQualityOperation::CleanupFailed { .. }
+    ));
     assert_eq!(runtime.graphics.resource(), Some(resource));
+    runtime
+        .application
+        .execute(SessionCommand::OpenSetup {}, BackendReadiness::Ready)
+        .unwrap();
+    runtime
+        .observe_test(ApplicationInput::Frame {
+            display_resource_id: None,
+            timestamp_ms: 30.0,
+            gamepads: Vec::new(),
+            xr: None,
+            spatial: Default::default(),
+        })
+        .unwrap();
+    runtime
+        .graphics
+        .select(
+            &GameUiPlatformCommand::SetScreenRenderScale {
+                scale: birdman_game_presentation::screen_render_scale::ScreenRenderScale::Full,
+            },
+            runtime.observed_ms,
+        )
+        .unwrap();
+    let changed = runtime
+        .observe_test(ApplicationInput::Frame {
+            display_resource_id: None,
+            timestamp_ms: 40.0,
+            gamepads: Vec::new(),
+            xr: None,
+            spatial: Default::default(),
+        })
+        .unwrap();
+    let obsolete = changed
+        .requests
+        .iter()
+        .find_map(|request| match request {
+            ApplicationRequest::PrepareResources { request_id, .. } => Some(*request_id),
+            _ => None,
+        })
+        .unwrap();
+    let mut next_extent = platform.clone();
+    next_extent.renderer.as_mut().unwrap().screen_extent_px = [1284, 724];
+    let changed = runtime
+        .observe_test(ApplicationInput::Platform {
+            observation: next_extent,
+        })
+        .unwrap();
+    let desired = changed
+        .requests
+        .iter()
+        .find_map(|request| match request {
+            ApplicationRequest::PrepareResources { request_id, .. } => Some(*request_id),
+            _ => None,
+        })
+        .unwrap();
+    runtime
+        .observe_test(ApplicationInput::Resources {
+            request_id: obsolete,
+            observation: ApplicationResourceObservation::Failed {
+                cause: "obsolete preparation failed".to_owned(),
+            },
+        })
+        .unwrap();
+    assert!(runtime.graphics.requested().is_some());
+    resources_ready(&mut runtime, desired).unwrap();
+    assert!(runtime.graphics.requested().is_none());
+    assert_eq!(
+        runtime.graphics.resource().unwrap().quality.water_quality,
+        WaterQuality::High
+    );
     let mut replacement = platform;
     replacement.renderer.as_mut().unwrap().resource_id = 101;
     let replaced = runtime
@@ -1305,20 +1407,74 @@ fn graphics_commit_tracks_actual_resources_cleanup_and_renderer_lifetimes() {
         })
         .unwrap();
     let new_resource = replaced.graphics.resource.unwrap();
-    assert_eq!(new_resource.renderer_resource_id, 101);
-    assert_eq!(new_resource.quality.water_quality, WaterQuality::High);
     runtime
-        .observe_test(ApplicationInput::GraphicsCompleted {
-            request_id,
-            renderer_resource_id: 100,
-            completion: ApplicationGraphicsCompletion::Committed {
-                applied: quality,
-                extent_px: [640, 360],
-                cleanup_failure: None,
+        .observe_test(ApplicationInput::Resources {
+            request_id: second_id,
+            observation: ApplicationResourceObservation::Committed {
+                resource_id: 701,
+                actual: ApplicationResourceCommit {
+                    applied: second_target.quality,
+                    extent_px: second_target.extent_px,
+                },
             },
         })
         .unwrap();
     assert_eq!(runtime.graphics.resource(), Some(new_resource));
+    let first = runtime.resources.as_ref().unwrap().request_id;
+    runtime
+        .observe_test(ApplicationInput::Resources {
+            request_id: first,
+            observation: ApplicationResourceObservation::Prepared { resource_id: 800 },
+        })
+        .unwrap();
+    let mut platform = ApplicationPlatformObservation {
+        renderer: Some(renderer_observation()),
+        surface: None,
+        viewport: GameUiViewport {
+            width: 1280.0,
+            height: 720.0,
+            root_font_size: 16.0,
+        },
+        chart_extent: None,
+        capabilities: ApplicationCapabilities::default(),
+    };
+    platform.renderer.as_mut().unwrap().resource_id = 101;
+    platform.renderer.as_mut().unwrap().screen_extent_px = [1286, 726];
+    runtime
+        .observe_test(ApplicationInput::Platform {
+            observation: platform,
+        })
+        .unwrap();
+    let second = runtime.resources.as_ref().unwrap().request_id;
+    runtime
+        .observe_test(ApplicationInput::Resources {
+            request_id: second,
+            observation: ApplicationResourceObservation::Prepared { resource_id: 801 },
+        })
+        .unwrap();
+    let invalid = runtime
+        .observe_test(ApplicationInput::Resources {
+            request_id: first,
+            observation: ApplicationResourceObservation::Committed {
+                resource_id: 800,
+                actual: ApplicationResourceCommit {
+                    applied: new_resource.quality,
+                    extent_px: [0, 0],
+                },
+            },
+        })
+        .unwrap();
+    assert!(invalid.graphics.resource.is_none());
+    assert!(invalid.diagnostic.is_some());
+    assert!(
+        !invalid
+            .requests
+            .iter()
+            .any(|request| matches!(request, ApplicationRequest::CommitResources { .. }))
+    );
+    for expected in [800, 801] {
+        assert!(invalid.requests.iter().any(|request| matches!(request, ApplicationRequest::ReleaseResources { resource_id } if *resource_id == expected)));
+    }
 }
 
 #[test]
@@ -1356,6 +1512,8 @@ fn renderer_observation() -> ApplicationRendererObservation {
     ApplicationRendererObservation {
         resource_id: 100,
         extent_px: [1280, 720],
+        screen_extent_px: [1280, 720],
+        xr_extent_px: Some([1280, 720]),
         initial_quality: ApplicationRenderQuality {
             scale: birdman_game_presentation::screen_render_scale::ScreenRenderScale::Full,
             shadow: birdman_game_presentation::screen_render_auto::ScreenShadowMap::Full,

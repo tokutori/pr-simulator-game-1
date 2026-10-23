@@ -1,5 +1,7 @@
 use birdman_game_format::WaterQuality;
-use birdman_game_presentation::game_ui::{GameUiPlatformCommand, GameUiWaterQualityOperation};
+use birdman_game_presentation::game_ui::{
+    GameUiPlatformCommand, GameUiPresentationMode, GameUiWaterQualityOperation,
+};
 use birdman_game_presentation::screen_render_auto::*;
 use birdman_game_presentation::screen_render_scale::ScreenRenderScale;
 use serde::{Deserialize, Serialize};
@@ -24,6 +26,10 @@ pub struct ApplicationRendererObservation {
     pub resource_id: u32,
     /// Actual drawable extent; XR extents come directly from the runtime.
     pub extent_px: [u32; 2],
+    /// Unscaled physical Screen surface dimensions.
+    pub screen_extent_px: [u32; 2],
+    /// Actual HMD runtime framebuffer dimensions when available.
+    pub xr_extent_px: Option<[u32; 2]>,
     /// Confirmed resources at this renderer's creation, before owner-issued changes.
     pub initial_quality: ApplicationRenderQuality,
 }
@@ -77,24 +83,25 @@ pub enum ApplicationGraphicsObservation {
     ContextLost,
 }
 
-/// Result of one atomic renderer-resource application.
-#[derive(Clone, Debug, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum ApplicationGraphicsCompletion {
-    /// All replacement resources are committed; cleanup is a separate result.
-    Committed {
-        /// Configuration actually committed by the adapter.
-        applied: ApplicationRenderQuality,
-        /// Actual drawable extent following the atomic application.
-        extent_px: [u32; 2],
-        /// Failure releasing superseded resources, after the successful commit.
-        cleanup_failure: Option<String>,
-    },
-    /// Preparation or atomic application failed while previous resources remain committed.
-    Failed {
-        /// Original resource failure.
-        cause: String,
-    },
+/// Final desired resource configuration, independent of a confirmed commit counter.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub struct ApplicationGraphicsTarget {
+    /// Graphics context or device lifetime.
+    pub renderer_resource_id: u32,
+    /// Complete resource quality selected by the shared policy.
+    pub quality: ApplicationRenderQuality,
+    /// Exact target framebuffer dimensions in physical pixels.
+    pub extent_px: [u32; 2],
+}
+
+/// Actual values observed after an authorized atomic resource binding.
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ApplicationResourceCommit {
+    /// Quality actually applied by the drawing API.
+    pub applied: ApplicationRenderQuality,
+    /// Actual framebuffer dimensions after binding.
+    pub extent_px: [u32; 2],
 }
 
 /// Drawing resource identity and optional GPU query for one output.
@@ -109,21 +116,16 @@ pub struct ApplicationGraphicsProjection {
 struct Context {
     id: u32,
     extent: [u32; 2],
+    screen_extent: [u32; 2],
+    xr_extent: Option<[u32; 2]>,
     commit: u32,
     available: bool,
-}
-
-struct Applying {
-    id: u32,
-    renderer: u32,
-    request: ScreenRenderResourceRequest,
 }
 
 pub(super) struct GraphicsOwner {
     context: Option<Context>,
     policy: Option<ScreenRenderAutoController>,
     retained: ScreenRenderAutoSnapshot,
-    applying: Option<Applying>,
     prepared: bool,
     eligible: bool,
     frame: u32,
@@ -136,7 +138,6 @@ impl Default for GraphicsOwner {
             context: None,
             policy: None,
             retained: ScreenRenderAutoSnapshot::default(),
-            applying: None,
             prepared: false,
             eligible: false,
             frame: 0,
@@ -163,8 +164,13 @@ impl GraphicsOwner {
         if let Some(context) = &mut self.context
             && context.id == observation.resource_id
         {
-            if context.extent != observation.extent_px {
+            if context.extent != observation.extent_px
+                || context.screen_extent != observation.screen_extent_px
+                || context.xr_extent != observation.xr_extent_px
+            {
                 context.extent = observation.extent_px;
+                context.screen_extent = observation.screen_extent_px;
+                context.xr_extent = observation.xr_extent_px;
                 self.prepared = false;
                 self.policy
                     .as_mut()
@@ -183,10 +189,11 @@ impl GraphicsOwner {
         self.context = Some(Context {
             id: observation.resource_id,
             extent: observation.extent_px,
+            screen_extent: observation.screen_extent_px,
+            xr_extent: observation.xr_extent_px,
             commit: 0,
             available: true,
         });
-        self.applying = None;
         self.prepared = false;
         self.eligible = false;
         self.frame = 0;
@@ -235,7 +242,7 @@ impl GraphicsOwner {
         command: &GameUiPlatformCommand,
         now: f64,
     ) -> Result<(), ScreenRenderAutoError> {
-        if self.applying.is_some() {
+        if self.requested().is_some() {
             return Err(ScreenRenderAutoError::StaleRequest);
         }
         let Some(policy) = &mut self.policy else {
@@ -301,17 +308,55 @@ impl GraphicsOwner {
         Ok(())
     }
 
+    pub(super) fn requested(&self) -> Option<ScreenRenderResourceRequest> {
+        self.policy
+            .as_ref()
+            .and_then(ScreenRenderAutoController::requested)
+    }
+
+    pub(super) fn target(&self, mode: GameUiPresentationMode) -> Option<ApplicationGraphicsTarget> {
+        let resource = self.resource()?;
+        let context = self.context.as_ref()?;
+        let quality =
+            self.requested()
+                .map_or(resource.quality, |request| ApplicationRenderQuality {
+                    scale: request.scale,
+                    shadow: request.shadow,
+                    water_quality: request.water_quality,
+                });
+        let extent_px = match mode {
+            GameUiPresentationMode::Screen => {
+                if context.screen_extent.into_iter().any(|value| value == 0) {
+                    return None;
+                }
+                quality
+                    .scale
+                    .physical_size(context.screen_extent[0], context.screen_extent[1])
+            }
+            GameUiPresentationMode::PhoneVr => context.screen_extent,
+            GameUiPresentationMode::Hmd => context.xr_extent?,
+        };
+        extent_px
+            .into_iter()
+            .all(|value| value > 0)
+            .then_some(ApplicationGraphicsTarget {
+                renderer_resource_id: context.id,
+                quality,
+                extent_px,
+            })
+    }
+
     pub(super) fn synchronize(
         &mut self,
         scope: ScreenRenderScope,
         eligible: bool,
         now: f64,
-    ) -> Result<Option<ScreenRenderResourceRequest>, ScreenRenderAutoError> {
+    ) -> Result<(), ScreenRenderAutoError> {
         if self.resource().is_none() {
-            return Ok(None);
+            return Ok(());
         }
         let policy = self.policy.as_mut().unwrap();
-        if self.applying.is_none() {
+        if policy.requested().is_none() {
             policy.set_scope(scope, now)?;
         }
         if eligible != self.eligible {
@@ -322,95 +367,93 @@ impl GraphicsOwner {
         if eligible && self.prepared {
             policy.pending(now)?;
         }
-        Ok(self
-            .applying
-            .is_none()
-            .then(|| policy.requested())
-            .flatten())
+        Ok(())
     }
 
-    pub(super) fn sent(&mut self, id: u32, request: ScreenRenderResourceRequest) {
-        self.applying = Some(Applying {
-            id,
-            renderer: self.context.as_ref().unwrap().id,
-            request,
-        });
-    }
-
-    pub(super) fn completed(
+    pub(super) fn committed(
         &mut self,
-        id: u32,
-        renderer: u32,
-        completion: ApplicationGraphicsCompletion,
+        target: ApplicationGraphicsTarget,
+        request: Option<ScreenRenderResourceRequest>,
+        actual: ApplicationResourceCommit,
         now: f64,
     ) -> Result<(), ScreenRenderAutoError> {
-        let Some(applying) = self
-            .applying
-            .as_ref()
-            .filter(|request| request.id == id && request.renderer == renderer)
+        let Some(context) = self
+            .context
+            .as_mut()
+            .filter(|context| context.id == target.renderer_resource_id && context.available)
         else {
             return Ok(());
         };
-        if self
-            .context
-            .as_ref()
-            .is_none_or(|context| context.id != renderer || !context.available)
-        {
-            return Ok(());
+        if actual.applied != target.quality || actual.extent_px != target.extent_px {
+            context.available = false;
+            return Err(ScreenRenderAutoError::StaleRequest);
         }
-        let request = applying.request;
+        let Some(next_commit) = context.commit.checked_add(1) else {
+            context.available = false;
+            return Err(ScreenRenderAutoError::EpochExhausted);
+        };
         let policy = self.policy.as_mut().unwrap();
-        match completion {
-            ApplicationGraphicsCompletion::Committed {
-                applied,
-                extent_px,
-                cleanup_failure,
-            } => {
-                let expected = ApplicationRenderQuality {
-                    scale: request.scale,
-                    shadow: request.shadow,
-                    water_quality: request.water_quality,
-                };
-                if applied != expected {
-                    self.context.as_mut().unwrap().available = false;
-                    return Err(ScreenRenderAutoError::StaleRequest);
-                }
-                let commit = self
-                    .context
-                    .as_ref()
-                    .unwrap()
-                    .commit
-                    .checked_add(1)
-                    .ok_or(ScreenRenderAutoError::EpochExhausted)?;
-                policy.applied(request, now, cleanup_failure.clone())?;
-                self.context.as_mut().unwrap().commit = commit;
-                self.context.as_mut().unwrap().extent = extent_px;
-                self.prepared = false;
-                self.water_operation = cleanup_failure
-                    .map_or(GameUiWaterQualityOperation::Idle {}, |cause| {
-                        GameUiWaterQualityOperation::CleanupFailed { cause }
-                    });
-            }
-            ApplicationGraphicsCompletion::Failed { cause } => {
-                policy.failed(request, cause.clone(), now)?;
-                self.water_operation = GameUiWaterQualityOperation::Failed {
-                    requested: request.water_quality,
-                    cause,
-                };
+        if let Some(request) = request
+            && policy.requested() == Some(request)
+        {
+            policy.applied(request, now, None)?;
+            self.water_operation = GameUiWaterQualityOperation::Idle {};
+        } else {
+            let applied = policy.snapshot();
+            if actual.applied
+                != (ApplicationRenderQuality {
+                    scale: applied.applied,
+                    shadow: applied.shadow,
+                    water_quality: applied.water_quality,
+                })
+            {
+                context.available = false;
+                return Err(ScreenRenderAutoError::StaleRequest);
             }
         }
-        self.applying = None;
+        context.commit = next_commit;
+        context.extent = actual.extent_px;
+        self.prepared = false;
         self.retained = policy.snapshot();
         Ok(())
     }
 
-    pub(super) fn prepared(
+    pub(super) fn failed(
         &mut self,
-        resource: ApplicationGraphicsResource,
-        ready: bool,
+        target: ApplicationGraphicsTarget,
+        request: Option<ScreenRenderResourceRequest>,
         now: f64,
     ) -> Result<(), ScreenRenderAutoError> {
-        if self.resource() == Some(resource) && self.prepared != ready {
+        if self
+            .context
+            .as_ref()
+            .is_none_or(|context| context.id != target.renderer_resource_id || !context.available)
+        {
+            return Ok(());
+        }
+        if let Some(request) = request
+            && self.requested() == Some(request)
+        {
+            let cause = "描画資源を準備できない。".to_owned();
+            let policy = self.policy.as_mut().unwrap();
+            policy.failed(request, cause.clone(), now)?;
+            self.water_operation = GameUiWaterQualityOperation::Failed {
+                requested: request.water_quality,
+                cause,
+            };
+            self.retained = policy.snapshot();
+        }
+        Ok(())
+    }
+
+    pub(super) fn cleanup_failed(&mut self) {
+        self.water_operation = GameUiWaterQualityOperation::CleanupFailed {
+            cause: "旧描画資源を解放できない。".to_owned(),
+        };
+    }
+
+    pub(super) fn prepared(&mut self, ready: bool, now: f64) -> Result<(), ScreenRenderAutoError> {
+        if self.resource().is_some() && self.prepared != ready {
             self.prepared = ready;
             self.policy
                 .as_mut()
@@ -450,5 +493,75 @@ impl GraphicsOwner {
             None
         };
         Ok(ApplicationGraphicsProjection { resource, query })
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn framebuffer_targets_use_raw_surfaces_and_commit_exhaustion_closes_the_context() {
+        let mut owner = GraphicsOwner::default();
+        owner
+            .adopt(
+                Some(&ApplicationRendererObservation {
+                    resource_id: 1,
+                    extent_px: [640, 360],
+                    screen_extent_px: [1283, 723],
+                    xr_extent_px: Some([1832, 1920]),
+                    initial_quality: ApplicationRenderQuality {
+                        scale: ScreenRenderScale::Half,
+                        shadow: ScreenShadowMap::Full,
+                        water_quality: WaterQuality::High,
+                    },
+                }),
+                ScreenRenderScope::FlightSettings,
+                0.0,
+            )
+            .unwrap();
+        assert_eq!(
+            owner
+                .target(GameUiPresentationMode::Screen)
+                .unwrap()
+                .extent_px,
+            [641, 361]
+        );
+        assert_eq!(
+            owner
+                .target(GameUiPresentationMode::PhoneVr)
+                .unwrap()
+                .extent_px,
+            [1283, 723]
+        );
+        assert_eq!(
+            owner.target(GameUiPresentationMode::Hmd).unwrap().extent_px,
+            [1832, 1920]
+        );
+        owner
+            .select(
+                &GameUiPlatformCommand::SetWaterQuality {
+                    quality: WaterQuality::Low,
+                },
+                1.0,
+            )
+            .unwrap();
+        let target = owner.target(GameUiPresentationMode::Screen).unwrap();
+        let request = owner.requested();
+        owner.context.as_mut().unwrap().commit = u32::MAX;
+        assert!(matches!(
+            owner.committed(
+                target,
+                request,
+                ApplicationResourceCommit {
+                    applied: target.quality,
+                    extent_px: target.extent_px
+                },
+                2.0
+            ),
+            Err(ScreenRenderAutoError::EpochExhausted)
+        ));
+        assert!(owner.resource().is_none());
+        assert_eq!(owner.requested(), request);
+        assert_eq!(owner.snapshot().water_quality, WaterQuality::High);
     }
 }

@@ -1,12 +1,16 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use crate::{ApplicationRequest, ApplicationResourceObservation};
+use crate::{
+    ApplicationGraphicsTarget, ApplicationRequest, ApplicationResourceCommit,
+    ApplicationResourceObservation,
+};
 use birdman_game_app::environment_snapshot::{
     Defined, EnvironmentProjection, EnvironmentSelection, EnvironmentSnapshotError,
     EnvironmentVenueProjection,
 };
-use birdman_game_format::{EnvironmentFormatError, WaterQuality};
+use birdman_game_format::EnvironmentFormatError;
+use birdman_game_presentation::screen_render_auto::ScreenRenderResourceRequest;
 use birdman_game_scene::lake_sky::{
     LAKE_SCENE_LIGHTING, LakeSceneHaze, LakeSkyRenderCondition, LakeSunlight, generate_lake_sky,
 };
@@ -140,12 +144,39 @@ enum PreparationStage {
 struct PendingAssets {
     bundle: PreparedAssets,
     stage: PreparationStage,
+    target: ApplicationGraphicsTarget,
+    policy_request: Option<ScreenRenderResourceRequest>,
+}
+
+pub(super) struct AssetCommit {
+    pub request_id: u32,
+    pub target: ApplicationGraphicsTarget,
+    pub policy_request: Option<ScreenRenderResourceRequest>,
+    pub actual: ApplicationResourceCommit,
+}
+
+pub(super) struct AssetFailure {
+    pub request_id: u32,
+    pub target: ApplicationGraphicsTarget,
+    pub policy_request: Option<ScreenRenderResourceRequest>,
+    pub cause: String,
+}
+
+impl PendingAssets {
+    fn failed(self, request_id: u32, cause: String) -> AssetFailure {
+        AssetFailure {
+            request_id,
+            target: self.target,
+            policy_request: self.policy_request,
+            cause,
+        }
+    }
 }
 
 #[derive(Default)]
 pub(super) struct AssetCompletion {
-    pub committed: Option<u32>,
-    pub failed: Option<(u32, String)>,
+    pub committed: Option<AssetCommit>,
+    pub failed: Option<AssetFailure>,
     pub requests: Vec<ApplicationRequest>,
 }
 
@@ -157,6 +188,7 @@ pub(super) struct AssetsOwner {
     desired: Option<u32>,
     committing: Option<u32>,
     pending: BTreeMap<u32, PendingAssets>,
+    retired: BTreeSet<u32>,
 }
 
 impl AssetsOwner {
@@ -164,8 +196,10 @@ impl AssetsOwner {
         &mut self,
         revision: u32,
         selection: EnvironmentSelection,
-        quality: WaterQuality,
+        target: ApplicationGraphicsTarget,
+        policy_request: Option<ScreenRenderResourceRequest>,
     ) -> Result<ApplicationEnvironmentAssets, ApplicationAssetError> {
+        let quality = target.quality.water_quality;
         let EnvironmentProjection::Available {
             metadata, venue, ..
         } = selection
@@ -285,6 +319,8 @@ impl AssetsOwner {
             PendingAssets {
                 bundle: PreparedAssets { sky, detail },
                 stage: PreparationStage::Building,
+                target,
+                policy_request,
             },
         );
         Ok(output)
@@ -319,6 +355,7 @@ impl AssetsOwner {
             requests.push(ApplicationRequest::ReleaseResources { resource_id });
         }
         self.schedule_commit(&mut requests);
+        self.track_releases(&requests);
         requests
     }
 
@@ -330,11 +367,11 @@ impl AssetsOwner {
         let mut output = AssetCompletion::default();
         match observation {
             ApplicationResourceObservation::Prepared { resource_id } => {
-                let protected = self.active_resource == Some(resource_id) || self.pending.values().any(|pending| matches!(pending.stage, PreparationStage::Candidate(id) | PreparationStage::Committing(id) if id == resource_id));
+                let protected = self.retired.contains(&resource_id) || self.active_resource == Some(resource_id) || self.pending.values().any(|pending| matches!(pending.stage, PreparationStage::Candidate(id) | PreparationStage::Committing(id) if id == resource_id));
                 if resource_id == 0 || protected {
                     if self.pending.get(&request_id).is_some_and(|pending| matches!(pending.stage, PreparationStage::Building)) {
-                        self.pending.remove(&request_id);
-                        output.failed = Some((request_id, "描画資源の識別子が無効または重複している".to_owned()));
+                        let pending = self.pending.remove(&request_id).unwrap();
+                        output.failed = Some(pending.failed(request_id, "描画資源の識別子が無効または重複している".to_owned()));
                     }
                     return output;
                 }
@@ -345,9 +382,10 @@ impl AssetsOwner {
                     if self.pending.get(&request_id).is_some_and(|pending| matches!(pending.stage, PreparationStage::Building | PreparationStage::Cancelling)) { self.pending.remove(&request_id); }
                 }
             }
-            ApplicationResourceObservation::Committed { resource_id } => {
+            ApplicationResourceObservation::Committed { resource_id, actual } => {
                 if self.committing == Some(request_id) && self.pending.get(&request_id).is_some_and(|pending| matches!(pending.stage, PreparationStage::Committing(id) if id == resource_id)) {
                     let pending = self.pending.remove(&request_id).unwrap();
+                    output.committed = Some(AssetCommit { request_id, target: pending.target, policy_request: pending.policy_request, actual });
                     self.active = Some(pending.bundle);
                     if let Some(previous) = self.active_resource.replace(resource_id) && previous != resource_id {
                         output.requests.push(ApplicationRequest::ReleaseResources { resource_id: previous });
@@ -357,7 +395,6 @@ impl AssetsOwner {
                         self.active_resource = None;
                         output.requests.push(ApplicationRequest::ReleaseResources { resource_id });
                     }
-                    output.committed = Some(request_id);
                 }
             }
             ApplicationResourceObservation::Failed { cause } => {
@@ -366,18 +403,54 @@ impl AssetsOwner {
                         output.requests.push(ApplicationRequest::ReleaseResources { resource_id });
                     }
                     if self.committing == Some(request_id) { self.committing = None; }
-                    output.failed = Some((request_id, cause));
+                    output.failed = Some(pending.failed(request_id, cause));
                 }
             }
             ApplicationResourceObservation::Cancelled => {
                 if self.pending.get(&request_id).is_some_and(|pending| matches!(pending.stage, PreparationStage::Building | PreparationStage::Cancelling)) {
-                    self.pending.remove(&request_id);
-                    output.failed = Some((request_id, "描画資源の準備が中止された".to_owned()));
+                    let pending = self.pending.remove(&request_id).unwrap();
+                    output.failed = Some(pending.failed(request_id, "描画資源の準備が中止された".to_owned()));
                 }
             }
         }
-        self.schedule_commit(&mut output.requests);
+        self.track_releases(&output.requests);
         output
+    }
+
+    pub(super) fn continue_commit(&mut self) -> Vec<ApplicationRequest> {
+        let mut requests = Vec::new();
+        self.schedule_commit(&mut requests);
+        requests
+    }
+
+    pub(super) fn has_policy_request(
+        &self,
+        target: ApplicationGraphicsTarget,
+        request: Option<ScreenRenderResourceRequest>,
+    ) -> bool {
+        self.pending.values().any(|pending| {
+            pending.target.renderer_resource_id == target.renderer_resource_id
+                && pending.policy_request == request
+                && !matches!(pending.stage, PreparationStage::Cancelling)
+        })
+    }
+
+    pub(super) fn released(&mut self, resource_id: u32, failed: bool) -> bool {
+        if !self.retired.contains(&resource_id) {
+            return false;
+        }
+        if !failed {
+            self.retired.remove(&resource_id);
+        }
+        true
+    }
+
+    fn track_releases(&mut self, requests: &[ApplicationRequest]) {
+        for request in requests {
+            if let ApplicationRequest::ReleaseResources { resource_id } = request {
+                self.retired.insert(*resource_id);
+            }
+        }
     }
 
     fn schedule_commit(&mut self, requests: &mut Vec<ApplicationRequest>) {
@@ -444,13 +517,41 @@ impl AssetsOwner {
 mod tests {
     use super::*;
     use birdman_game_app::{HybridSessionPreparation, identity_for_selection};
-    use birdman_game_format::WeatherClass;
+    use birdman_game_format::{WaterQuality, WeatherClass};
+
+    fn target(quality: WaterQuality) -> ApplicationGraphicsTarget {
+        ApplicationGraphicsTarget {
+            renderer_resource_id: 100,
+            quality: crate::ApplicationRenderQuality {
+                scale: birdman_game_presentation::screen_render_scale::ScreenRenderScale::Full,
+                shadow: birdman_game_presentation::screen_render_auto::ScreenShadowMap::Full,
+                water_quality: quality,
+            },
+            extent_px: [1280, 720],
+        }
+    }
+
+    fn commit_observation(
+        resource_id: u32,
+        quality: WaterQuality,
+    ) -> ApplicationResourceObservation {
+        let target = target(quality);
+        ApplicationResourceObservation::Committed {
+            resource_id,
+            actual: ApplicationResourceCommit {
+                applied: target.quality,
+                extent_px: target.extent_px,
+            },
+        }
+    }
 
     #[test]
     fn immutable_images_survive_serial_commits_and_obsolete_candidates_are_released() {
         let exhibition = EnvironmentSelection::exhibition().unwrap();
         let mut owner = AssetsOwner::default();
-        let first = owner.prepare(1, exhibition, WaterQuality::High).unwrap();
+        let first = owner
+            .prepare(1, exhibition, target(WaterQuality::High), None)
+            .unwrap();
         let sky_id = first.sky.buffer_id;
         let detail_id = first.water.detail.as_ref().unwrap()[0].image.buffer_id;
         assert_eq!(
@@ -462,14 +563,17 @@ mod tests {
             1,
             ApplicationResourceObservation::Prepared { resource_id: 101 },
         );
+        assert!(prepared.requests.is_empty());
         assert!(matches!(
-            prepared.requests.as_slice(),
+            owner.continue_commit().as_slice(),
             [ApplicationRequest::CommitResources {
                 request_id: 1,
                 resource_id: 101
             }]
         ));
-        let second = owner.prepare(2, exhibition, WaterQuality::Low).unwrap();
+        let second = owner
+            .prepare(2, exhibition, target(WaterQuality::Low), None)
+            .unwrap();
         assert_eq!(second.sky.buffer_id, sky_id);
         assert_eq!(
             second.water.detail.as_ref().unwrap()[0].image.buffer_id,
@@ -486,21 +590,16 @@ mod tests {
                 .requests
                 .is_empty()
         );
-        let committed = owner.observe(
-            1,
-            ApplicationResourceObservation::Committed { resource_id: 101 },
-        );
+        let committed = owner.observe(1, commit_observation(101, WaterQuality::High));
+        assert!(committed.committed.is_some());
         assert!(matches!(
-            committed.requests.as_slice(),
+            owner.continue_commit().as_slice(),
             [ApplicationRequest::CommitResources {
                 request_id: 2,
                 resource_id: 102
             }]
         ));
-        let committed = owner.observe(
-            2,
-            ApplicationResourceObservation::Committed { resource_id: 102 },
-        );
+        let committed = owner.observe(2, commit_observation(102, WaterQuality::Low));
         assert!(matches!(
             committed.requests.as_slice(),
             [ApplicationRequest::ReleaseResources { resource_id: 101 }]
@@ -515,7 +614,9 @@ mod tests {
             identity: identity_for_selection(selection).into(),
             ..exhibition
         };
-        let third = owner.prepare(3, calm, WaterQuality::Low).unwrap();
+        let third = owner
+            .prepare(3, calm, target(WaterQuality::Low), None)
+            .unwrap();
         let abandoned_id = third.water.detail.as_ref().unwrap()[0].image.buffer_id;
         owner.select(Some(3));
         let cancelled = owner.select(None);

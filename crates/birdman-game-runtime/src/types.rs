@@ -1,10 +1,9 @@
 use super::scene::ApplicationSceneProjection;
 use super::surface::{ApplicationSpatialProjection, ApplicationSurfaceObservation};
 use super::{
-    ApplicationGraphicsCompletion, ApplicationGraphicsObservation, ApplicationGraphicsProjection,
-    ApplicationGraphicsResource, ApplicationRenderQuality, ApplicationRendererObservation,
-    DisplayCompletion, DisplayRequest, DisplayState, PhoneMotionObservation,
-    PhoneOrientationObservation,
+    ApplicationGraphicsObservation, ApplicationGraphicsProjection, ApplicationGraphicsTarget,
+    ApplicationRendererObservation, ApplicationResourceCommit, DisplayCompletion, DisplayRequest,
+    DisplayState, PhoneMotionObservation, PhoneOrientationObservation,
 };
 use birdman_game_app::application::{ApplicationError, FlightFrameError, XrVisibility};
 use birdman_game_app::environment_snapshot::{EnvironmentIdentity, EnvironmentSnapshotError};
@@ -67,6 +66,8 @@ pub enum ApplicationResourceObservation {
     Committed {
         /// Exact candidate identity from the commit request.
         resource_id: u32,
+        /// Actual framebuffer and quality after the authorized binding.
+        actual: ApplicationResourceCommit,
     },
     /// Cancellation completed and no further asset reads will occur for this request.
     Cancelled,
@@ -167,14 +168,12 @@ pub enum ApplicationInput {
         /// Original hardware or API result.
         observation: ApplicationGraphicsObservation,
     },
-    /// Completion of one owner-issued atomic resource application.
-    GraphicsCompleted {
-        /// Owner-issued application identity.
-        request_id: u32,
-        /// Renderer receiving the application.
-        renderer_resource_id: u32,
-        /// Actual application and cleanup outcome.
-        completion: ApplicationGraphicsCompletion,
+    /// Result of releasing an explicitly retired GPU resource.
+    ResourcesReleased {
+        /// Identity from the release request.
+        resource_id: u32,
+        /// Original API diagnostic when release failed.
+        failure: Option<String>,
     },
     /// Explicit trigger observation targeting the last submitted spatial painting.
     XrSelect {
@@ -338,15 +337,6 @@ pub enum ApplicationRequest {
         /// Ordered operations selected by the shared application policy.
         requests: Vec<birdman_game_app::record_persistence::RecordWriteRequest>,
     },
-    /// Atomically replace this renderer's owned quality resources, retaining prior resources on failure.
-    ApplyGraphics {
-        /// Owner-issued application identity.
-        request_id: u32,
-        /// Graphics context or device receiving the application.
-        renderer_resource_id: u32,
-        /// Complete desired resource configuration.
-        quality: ApplicationRenderQuality,
-    },
     /// Notify this owner when its deadline is reached.
     ScheduleWake {
         /// Owner-issued timer identity.
@@ -363,8 +353,8 @@ pub enum ApplicationRequest {
     PrepareResources {
         /// Revision-scoped CPU drawing data; image bytes use the common buffer channel.
         assets: Box<super::ApplicationEnvironmentAssets>,
-        /// Exact confirmed renderer resource generation to prepare.
-        graphics: ApplicationGraphicsResource,
+        /// Complete desired renderer configuration to prepare and bind atomically.
+        graphics: ApplicationGraphicsTarget,
         /// Owner-issued identity to echo in the completion.
         request_id: u32,
         /// Canonical environment to render.
