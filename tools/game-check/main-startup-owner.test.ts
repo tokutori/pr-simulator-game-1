@@ -12,7 +12,7 @@ interface Driver {
   readonly requests: Prepare[];
   readonly dispose: ReturnType<typeof vi.fn>;
   readonly apply: ReturnType<typeof vi.fn>;
-  finish(): void;
+  finish(missing?: boolean): void;
 }
 const capture = vi.hoisted(() => ({ driver: null as Driver | null, permission: (): void => undefined }));
 
@@ -34,10 +34,10 @@ vi.mock("../../web/src/render/engines/three/application-renderer.js", () => ({
       this.requests.push(request);
       this.pending.set(request.request_id, { request, cancelled: false });
     }
-    finish(): void {
+    finish(missing = false): void {
       for (const [id, preparation] of this.pending) {
         this.pending.delete(id);
-        if (!preparation.cancelled) this.candidates.set(id, preparation.request);
+        if (!preparation.cancelled && !missing) this.candidates.set(id, preparation.request);
         this.notify({ kind: "resources", request_id: id, observation: preparation.cancelled
           ? { kind: "cancelled" } : { kind: "prepared", resource_id: id } });
       }
@@ -140,13 +140,17 @@ describe("Single browser runtime ownership", () => {
     } finally { fixture.page("pagehide", false); fixture.driver.finish(); await fixture.browser.happyDOM.abort(); }
   });
 
-  it("waits for the actual cancelled preparation and frees once after every cleanup has been attempted", async () => {
+  it.each(["cancelled preparation", "missing prepared handle"])("frees once after the actual %s terminal and every cleanup", async failure => {
     const fixture = await browserFixture();
     const cleanup = vi.spyOn(BrowserFlightLogDownload.prototype, "dispose").mockImplementation(() => { throw new Error("download cleanup failed"); });
     const diagnostic = vi.spyOn(console, "error").mockImplementation(() => undefined);
     try {
+      if (failure === "missing prepared handle") {
+        fixture.driver.finish(true);
+        expect(fixture.update.mock.calls.some(([json]) => json.includes('"binding_lost"'))).toBe(true);
+      }
       fixture.page("pagehide", false);
-      expect(fixture.free).not.toHaveBeenCalled();
+      if (failure === "cancelled preparation") expect(fixture.free).not.toHaveBeenCalled();
       fixture.driver.finish();
       expect(fixture.driver.dispose).toHaveBeenCalledOnce();
       expect(cleanup).toHaveBeenCalledOnce();

@@ -161,30 +161,41 @@ export class BrowserApplication {
         const renderer = this.renderers.get(request.renderer_resource_id);
         this.renderers.delete(request.renderer_resource_id);
         if (this.renderer === renderer) this.renderer = null;
-        let failure: string | null = null;
+        let failure: string | null = renderer === undefined ? "Requested graphics context is unavailable" : null;
         try { renderer?.dispose(); } catch (cause) { failure = errorMessage(cause); }
         this.observe({ kind: "renderer_released", renderer_resource_id: request.renderer_resource_id, failure });
         break;
       }
-      case "prepare_resources":
-        this.requiredRenderer(request.graphics.renderer_resource_id).prepare(request);
+      case "prepare_resources": {
+        const renderer = this.renderers.get(request.graphics.renderer_resource_id);
+        if (renderer === undefined) this.observe({ kind: "resources", request_id: request.request_id,
+          observation: { kind: "failed", cause: "Requested graphics context is unavailable" } });
+        else renderer.prepare(request);
         break;
+      }
       case "commit_resources":
       case "cancel_resources":
       case "release_resources": {
         const renderer = [...this.renderers.values()].find(candidate => candidate.owns(request));
-        if (renderer === undefined) throw new Error("The requested GPU resource handle is unavailable");
-        renderer.execute(request);
+        if (renderer !== undefined) renderer.execute(request);
+        else if (request.kind === "release_resources") this.observe({ kind: "resources_released", resource_id: request.resource_id,
+          failure: "Requested GPU resource handle is unavailable" });
+        else this.observe({ kind: "resources", request_id: request.request_id, observation: request.kind === "cancel_resources"
+          ? { kind: "cancelled" } : { kind: "binding_lost", resource_id: request.resource_id, cause: "Requested GPU resource binding is unavailable" } });
         break;
       }
       case "display": {
         const operation = request.request;
         const id = operation.kind === "release" || operation.kind === "stop" ? operation.resource_id
           : operation.kind === "start" ? operation.permission_resource_id : null;
-        const renderer = id == null ? this.requiredRenderer(drawing?.graphics.resource?.renderer_resource_id)
+        const rendererId = drawing?.graphics.resource?.renderer_resource_id;
+        const renderer = id == null ? rendererId == null ? this.renderer : this.renderers.get(rendererId)
           : [...this.renderers.values()].find(candidate => candidate.ownsDisplay(id));
-        if (renderer === undefined) throw new Error("Requested display resource handle is unavailable");
-        renderer.display(operation);
+        if (renderer != null) renderer.display(operation);
+        else if (operation.kind === "release") this.observe({ kind: "display_released", resource_id: operation.resource_id,
+          failure: "Requested display resource handle is unavailable" });
+        else this.observe({ kind: "display_completed", request_id: operation.request_id,
+          completion: { kind: "failed", cause: "Requested display resource handle is unavailable" } });
         break;
       }
       case "read_record":
@@ -217,12 +228,6 @@ export class BrowserApplication {
       }
       case "reload_application": window.location.reload(); break;
     }
-  }
-
-  private requiredRenderer(id: number | null | undefined): ThreeApplicationRenderer {
-    const renderer = id == null ? this.renderer : this.renderers.get(id);
-    if (renderer == null) throw new Error("Requested graphics context is unavailable");
-    return renderer;
   }
 
   private readonly onPlatform = (): void => { this.observe({ kind: "platform", observation: this.platform() }); };
