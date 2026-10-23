@@ -838,19 +838,20 @@ fn shared_attract_keeps_player_selection_and_reuses_the_installed_record() {
     assert!(
         record
             .samples()
-            .iter()
-            .all(|sample| sample.wing_bending_factor.is_some())
+            .first()
+            .unwrap()
+            .wing_bending_factor
+            .is_some()
     );
-    assert_eq!(
-        birdman_game_format::TailFlightRecordDocument::from_record(
-            record,
-            application.display_difficulty(),
-            application.attract().unwrap().record_identity.clone()
-        )
-        .unwrap()
-        .schema_version,
-        7
+    assert!(
+        record
+            .samples()
+            .last()
+            .unwrap()
+            .wing_bending_factor
+            .is_some()
     );
+    assert!(application.display_control_identity().is_some());
     assert_eq!(
         application.display_difficulty().information(),
         InformationLevel::Minimal

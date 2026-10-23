@@ -50,11 +50,11 @@ impl ExternalPauseReason {
 }
 
 /// Metadata of the existing independent Title demonstration.
-pub struct AttractMetadata {
+struct AttractMetadata {
     /// Demonstration model and controller identity.
-    pub record_identity: FlightRecordTailIdentityDocument,
+    record_identity: FlightRecordTailIdentityDocument,
     /// Display configuration of the demonstration, independent of player selections.
-    pub difficulty: DifficultySettings,
+    difficulty: DifficultySettings,
 }
 
 /// Runtime visibility observed independently of input focus and tracking.
@@ -206,11 +206,6 @@ impl ApplicationSession {
     /// Borrows metadata produced by the same successful physical preparation.
     pub fn prepared(&self) -> Option<&PreparedFlight> {
         self.prepared.as_ref()
-    }
-
-    /// Borrows the installed demonstration metadata.
-    pub fn attract(&self) -> Option<&AttractMetadata> {
-        self.attract.as_ref()
     }
 
     /// Borrows model and controller names from the currently displayed record or flight.

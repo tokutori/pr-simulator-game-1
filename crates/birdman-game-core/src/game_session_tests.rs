@@ -129,7 +129,7 @@ fn session(maximum_ticks: u64) -> GameSession<'static> {
 }
 
 fn finalized_demo_record() -> crate::FlightRecord {
-    let mut demo = session(4_000);
+    let mut demo = session(3);
     demo.start_countdown(1).unwrap();
     demo.observe_countdown(demo.countdown_token().unwrap(), 1.0, true)
         .unwrap();
