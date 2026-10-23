@@ -122,7 +122,7 @@ async function verify(activeBrowser: Browser): Promise<void> {
       return { renderer: String(gl.getParameter(debug?.UNMASKED_RENDERER_WEBGL ?? gl.RENDERER)), version: String(gl.getParameter(gl.VERSION)), userAgent: navigator.userAgent };
     });
     await pair("title");
-    checks.push("Title: actual sky, water and aircraft at HD/FHD");
+    checks.push("Title: production scene pixels and controls at HD/FHD");
     await click("game-title-start");
     await scene("FlightSetup");
     await click("game-setup-select-weather-0");
