@@ -15,6 +15,11 @@ const MAX_SAMPLES: usize = 512;
 const COOLDOWN_MS: f64 = 3_000.0;
 const MAX_SOURCE_AGE_MS: f64 = 500.0;
 
+/// Accepts GPU work within the same validity horizon as its source observation.
+pub fn is_valid_gpu_work_ms(value: f64) -> bool {
+    value.is_finite() && (0.0..=MAX_SOURCE_AGE_MS).contains(&value)
+}
+
 /// Directional shadow-map resolutions supported by both Screen adapters.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -663,9 +668,10 @@ impl ScreenRenderAutoController {
         &mut self,
         sample: ScreenGpuSample,
         now_ms: f64,
+        diagnostic_requested: bool,
     ) -> Result<Option<ScreenRenderResourceRequest>, ScreenRenderAutoError> {
         self.check_time(now_ms)?;
-        if !self.measurement_enabled()
+        if !self.measurement_requested(diagnostic_requested)
             || sample.epoch != self.epoch
             || self
                 .window
@@ -680,8 +686,7 @@ impl ScreenRenderAutoController {
         if now_ms - sample.source_ms > MAX_SOURCE_AGE_MS {
             return self.pending(now_ms);
         }
-        if !sample.gpu_work_ms.is_finite()
-            || sample.gpu_work_ms < 0.0
+        if !is_valid_gpu_work_ms(sample.gpu_work_ms)
             || self
                 .window
                 .latest
@@ -822,9 +827,9 @@ impl ScreenRenderAutoController {
             || self.scope == ScreenRenderScope::FlightSettings && self.selection.automatic
     }
 
-    /// Projects whether the policy currently accepts a new GPU measurement.
-    pub fn measurement_enabled(&self) -> bool {
-        self.automatic()
+    /// Requests raw measurements for Auto control or explicit diagnostics.
+    pub fn measurement_requested(&self, diagnostic_requested: bool) -> bool {
+        (self.automatic() || diagnostic_requested)
             && matches!(self.resource, ResourceState::Ready)
             && !matches!(self.measurement, MeasurementState::Unsupported(_))
     }
@@ -885,7 +890,7 @@ impl ScreenRenderAutoController {
         &mut self,
         now_ms: f64,
     ) -> Result<Option<ScreenRenderResourceRequest>, ScreenRenderAutoError> {
-        if !self.measurement_enabled() {
+        if !self.measurement_requested(false) {
             return Ok(None);
         }
         if !self.window.begin_evaluation(now_ms) {

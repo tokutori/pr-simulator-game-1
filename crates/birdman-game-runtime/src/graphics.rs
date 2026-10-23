@@ -167,6 +167,7 @@ pub(super) struct GraphicsOwner {
     retained: ScreenRenderAutoSnapshot,
     prepared: bool,
     eligible: bool,
+    gpu_timing_requested: bool,
     frame: u32,
     water_operation: GameUiWaterQualityOperation,
 }
@@ -179,6 +180,7 @@ impl Default for GraphicsOwner {
             retained: ScreenRenderAutoSnapshot::default(),
             prepared: false,
             eligible: false,
+            gpu_timing_requested: false,
             frame: 0,
             water_operation: GameUiWaterQualityOperation::Idle {},
         }
@@ -186,6 +188,20 @@ impl Default for GraphicsOwner {
 }
 
 impl GraphicsOwner {
+    pub(super) fn request_gpu_timing(
+        &mut self,
+        requested: bool,
+        now: f64,
+    ) -> Result<(), ScreenRenderAutoError> {
+        if self.gpu_timing_requested != requested {
+            if let Some(policy) = &mut self.policy {
+                policy.invalidate(ScreenRenderInvalidation::Interrupted, now)?;
+            }
+            self.gpu_timing_requested = requested;
+        }
+        Ok(())
+    }
+
     pub(super) fn retire(&mut self) -> Option<u32> {
         self.retained = self.snapshot();
         self.policy = None;
@@ -338,6 +354,7 @@ impl GraphicsOwner {
                             gpu_work_ms,
                         },
                         now,
+                        self.gpu_timing_requested,
                     );
                     if result == Err(ScreenRenderAutoError::InvalidSample) {
                         policy.invalidate(ScreenRenderInvalidation::Disjoint, now)?;
@@ -544,7 +561,11 @@ impl GraphicsOwner {
             && let Some(resource) = resource
             && self.eligible
             && self.prepared
-            && self.policy.as_ref().unwrap().measurement_enabled()
+            && self
+                .policy
+                .as_ref()
+                .unwrap()
+                .measurement_requested(self.gpu_timing_requested)
         {
             if self.frame == u32::MAX {
                 self.policy
@@ -640,7 +661,7 @@ mod tests {
         assert!(cause.contains("gpu_work_ms=NaN"));
         assert_eq!(owner.resource(), resource);
         assert!(owner.prepared);
-        assert!(owner.policy.as_ref().unwrap().measurement_enabled());
+        assert!(owner.policy.as_ref().unwrap().measurement_requested(false));
         let epoch = owner.policy.as_ref().unwrap().epoch();
         assert_ne!(epoch, query.epoch);
         assert!(owner.observe(1, observation, 0.0).unwrap().is_none());
@@ -676,7 +697,53 @@ mod tests {
                 .is_none()
         );
         owner
-            .observe(1, ApplicationGraphicsObservation::Disjoint, 0.0)
+            .select(
+                &GameUiPlatformCommand::SetScreenRenderScale {
+                    scale: ScreenRenderScale::Half,
+                },
+                0.0,
+            )
+            .unwrap();
+        assert!(owner.projection(true, 0.0).unwrap().query.is_none());
+        owner.request_gpu_timing(true, 0.0).unwrap();
+        for frame in 0..=10 {
+            let now = f64::from(frame) * 200.0;
+            let query = owner.projection(true, now).unwrap().query.unwrap();
+            owner
+                .observe(
+                    1,
+                    ApplicationGraphicsObservation::GpuCompleted {
+                        query,
+                        gpu_work_ms: 30.0,
+                    },
+                    now,
+                )
+                .unwrap();
+            assert!(owner.requested().is_none());
+        }
+        assert_eq!(owner.resource(), resource);
+        assert_eq!(owner.snapshot().status, ScreenRenderAutoStatus::Manual);
+        let query = owner.projection(true, 2_000.0).unwrap().query.unwrap();
+        let observation = ApplicationGraphicsObservation::GpuCompleted {
+            query,
+            gpu_work_ms: 500.1,
+        };
+        assert!(
+            owner
+                .observe(1, observation.clone(), 2_000.0)
+                .unwrap()
+                .unwrap()
+                .contains("gpu_work_ms=500.1")
+        );
+        assert!(owner.prepared);
+        assert_eq!(owner.resource(), resource);
+        owner.request_gpu_timing(false, 2_000.0).unwrap();
+        let epoch = owner.policy.as_ref().unwrap().epoch();
+        assert!(owner.projection(true, 2_000.0).unwrap().query.is_none());
+        assert!(owner.observe(1, observation, 2_000.0).unwrap().is_none());
+        assert_eq!(owner.policy.as_ref().unwrap().epoch(), epoch);
+        owner
+            .observe(1, ApplicationGraphicsObservation::Disjoint, 2_000.0)
             .unwrap();
         assert!(owner.prepared);
         owner
@@ -684,7 +751,7 @@ mod tests {
                 &GameUiPlatformCommand::SetWaterQuality {
                     quality: WaterQuality::Low,
                 },
-                1.0,
+                2_001.0,
             )
             .unwrap();
         let target = owner.target(GameUiPresentationMode::Screen).unwrap();
@@ -698,7 +765,7 @@ mod tests {
                     applied: target.quality,
                     extent_px: target.extent_px
                 },
-                2.0
+                2_002.0
             ),
             Err(ScreenRenderAutoError::EpochExhausted)
         ));

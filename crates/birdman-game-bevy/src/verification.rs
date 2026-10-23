@@ -514,7 +514,7 @@ pub(crate) fn project_observer(
                 ) {
                     verification.motion_source = Some(window.finish(SourceBoundary {
                         frame: query.frame,
-                        milliseconds: query.source_ms as u64,
+                        milliseconds: query.source_ms,
                     }));
                 }
                 if let Some(resource) = io
@@ -694,7 +694,7 @@ fn advance_step(world: &mut World, verification: &mut Verification) -> Result<()
                 verification.motion_interval = None;
             } else {
                 verification.motion_interval = Some(MotionInterval::Observing(MotionMetrics::default()));
-                verification.motion_source = world.resource::<NativeIo>().drawing.as_ref().and_then(|drawing| drawing.graphics.query).map(|query| MotionSourceWindow::Observing { start: SourceBoundary { frame: query.frame, milliseconds: query.source_ms as u64 } });
+                verification.motion_source = world.resource::<NativeIo>().drawing.as_ref().and_then(|drawing| drawing.graphics.query).map(|query| MotionSourceWindow::Observing { start: SourceBoundary { frame: query.frame, milliseconds: query.source_ms } });
             }
             verification.next();
             verification.stage = VerificationStage::WaterMotion(motion, endpoint);

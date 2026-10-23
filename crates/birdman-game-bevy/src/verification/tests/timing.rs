@@ -44,13 +44,13 @@ fn source_summary_uses_frames_across_epoch_changes_and_retains_missing_or_duplic
     use driver::metrics::{MotionSourceWindow, SourceBoundary, summarize_source_timing};
     let arrival = std::time::Instant::now();
     let mut store = DiagnosticsStore::default();
-    packet(&mut store, arrival, 1, 10, 16_123, 50.0);
+    packet(&mut store, arrival, 1, 10, 16_123.0, 50.0);
     packet(
         &mut store,
         arrival + Duration::from_millis(1),
         1,
         11,
-        16_123,
+        16_123.0,
         20.0,
     );
     packet_quality(
@@ -58,7 +58,7 @@ fn source_summary_uses_frames_across_epoch_changes_and_retains_missing_or_duplic
         arrival + Duration::from_millis(4),
         2,
         12,
-        16_150,
+        16_150.0,
         10.0,
         (
             driver::ScreenRenderScale::Half,
@@ -71,7 +71,7 @@ fn source_summary_uses_frames_across_epoch_changes_and_retains_missing_or_duplic
         arrival + Duration::from_millis(5),
         2,
         12,
-        16_150,
+        16_150.0,
         100.0,
         (
             driver::ScreenRenderScale::Half,
@@ -84,24 +84,36 @@ fn source_summary_uses_frames_across_epoch_changes_and_retains_missing_or_duplic
         arrival + Duration::from_millis(6),
         2,
         14,
-        16_190,
+        16_190.0,
         1.0,
+    );
+    packet(
+        &mut store,
+        arrival + Duration::from_millis(8),
+        1,
+        13,
+        16_180.9,
+        1e12,
     );
     let window = MotionSourceWindow::Observing {
         start: SourceBoundary {
             frame: 10,
-            milliseconds: 16_123,
+            milliseconds: 16_123.0,
         },
     }
     .finish(SourceBoundary {
         frame: 13,
-        milliseconds: 16_180,
+        milliseconds: 16_180.9,
     });
     let summary = summarize_source_timing(&store, window, arrival).unwrap();
     assert_eq!(summary.expected_frames, 3);
-    assert_eq!(summary.received_frames, 2);
+    assert_eq!(summary.received_frames, 3);
     assert_eq!(summary.duplicate_frames, 1);
     assert_eq!(summary.groups.len(), 2);
+    assert_eq!(
+        summary.groups[&(1, 100, 2048, WaterQuality::High)].invalid_count,
+        1
+    );
     assert_eq!(
         summary.groups[&(1, 100, 2048, WaterQuality::High)].mean_ms,
         Some(20.0)
@@ -119,7 +131,7 @@ fn source_summary_uses_frames_across_epoch_changes_and_retains_missing_or_duplic
         });
     let summary = summarize_source_timing(&store, window, arrival).unwrap();
     assert_eq!(summary.unassigned_arrivals, 1);
-    assert_eq!(summary.received_frames, 2);
+    assert_eq!(summary.received_frames, 3);
     for diagnostic in store.iter_mut() {
         let placeholder = bevy::diagnostic::Diagnostic::new(diagnostic.path().clone());
         let owned = std::mem::replace(diagnostic, placeholder);
@@ -136,7 +148,7 @@ fn source_summary_uses_frames_across_epoch_changes_and_retains_missing_or_duplic
             MotionSourceWindow::Observing {
                 start: SourceBoundary {
                     frame: 10,
-                    milliseconds: 0
+                    milliseconds: 0.0
                 }
             },
             arrival
@@ -146,11 +158,11 @@ fn source_summary_uses_frames_across_epoch_changes_and_retains_missing_or_duplic
     let wrapped = MotionSourceWindow::Complete {
         start: SourceBoundary {
             frame: u32::MAX,
-            milliseconds: 0,
+            milliseconds: 0.0,
         },
         end: SourceBoundary {
             frame: 2,
-            milliseconds: 100,
+            milliseconds: 100.0,
         },
     };
     assert!(summarize_source_timing(&store, wrapped, arrival).is_err());
@@ -233,6 +245,18 @@ fn timing_summary_keeps_invalid_samples_and_unavailable_distinct() {
     assert_eq!(summary.mean_ms, None);
     assert_eq!(summary.p95_ms, None);
     assert_eq!(summary.maximum_ms, None);
+    assert!(!summary.is_complete());
+    let mut gpu = bevy::diagnostic::Diagnostic::new(crate::app::screen_render::timing::GPU_WORK);
+    for (index, value) in [0.0, 500.0, 1e12].into_iter().enumerate() {
+        gpu.add_measurement(bevy::diagnostic::DiagnosticMeasurement {
+            time: start + Duration::from_millis(index as u64),
+            value,
+        });
+    }
+    let summary = driver::metrics::summarize_timing(&gpu, start, start + MOTION_DURATION);
+    assert_eq!(summary.received_count, 3);
+    assert_eq!(summary.invalid_count, 1);
+    assert_eq!(summary.maximum_ms, Some(500.0));
     assert!(!summary.is_complete());
 }
 

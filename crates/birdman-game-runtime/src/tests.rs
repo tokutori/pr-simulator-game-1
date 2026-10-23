@@ -12,6 +12,7 @@ fn no_text_metrics(_: &ApplicationTextProbe) -> Result<ApplicationGlyphMetrics, 
 #[test]
 fn chart_measurement_converges_and_raw_pointer_scrubs_only_its_admitted_range() {
     let platform = ApplicationPlatformObservation {
+        gpu_timing_requested: false,
         renderer: Some(renderer_observation()),
         surface: None,
         viewport: GameUiViewport {
@@ -189,6 +190,7 @@ fn chart_measurement_converges_and_raw_pointer_scrubs_only_its_admitted_range() 
 fn dispose_drains_atomic_bind_record_cancellation_and_release_before_renderer_destruction() {
     for binding_lost in [false, true] {
         let mut platform = ApplicationPlatformObservation {
+            gpu_timing_requested: false,
             renderer: Some(renderer_observation()),
             surface: None,
             viewport: GameUiViewport {
@@ -438,6 +440,7 @@ fn dispose_drains_atomic_bind_record_cancellation_and_release_before_renderer_de
 #[test]
 fn boot_retries_renderer_creation_releases_late_resources_and_enters_title_after_commit() {
     let platform = ApplicationPlatformObservation {
+        gpu_timing_requested: false,
         renderer: None,
         surface: None,
         viewport: GameUiViewport {
@@ -691,6 +694,7 @@ fn boot_retries_renderer_creation_releases_late_resources_and_enters_title_after
 #[test]
 fn briefing_retry_restarts_failed_resource_preparation_through_the_shared_action() {
     let platform = ApplicationPlatformObservation {
+        gpu_timing_requested: false,
         renderer: Some(renderer_observation()),
         surface: None,
         viewport: GameUiViewport {
@@ -834,6 +838,7 @@ fn saved_result_owns_transaction_and_rejects_notifications_after_leaving_result(
     };
     let application = finalized_application();
     let platform = ApplicationPlatformObservation {
+        gpu_timing_requested: false,
         renderer: Some(renderer_observation()),
         surface: None,
         viewport: GameUiViewport {
@@ -933,6 +938,7 @@ fn stored_record_preview_load_retry_and_original_download_share_owner() {
     let replacement_record =
         json!({ "id": 8, "savedAt": "2026-10-23T00:00:01Z", "json": replacement_original });
     let platform = ApplicationPlatformObservation {
+        gpu_timing_requested: false,
         renderer: Some(renderer_observation()),
         surface: None,
         viewport: GameUiViewport {
@@ -1174,6 +1180,7 @@ fn structure(output: ApplicationOutput) -> Box<GameUiView> {
 
 fn started_display(mode: GameUiPresentationMode) -> (ApplicationRuntime, ApplicationOutput) {
     let platform = ApplicationPlatformObservation {
+        gpu_timing_requested: false,
         renderer: Some(renderer_observation()),
         surface: None,
         viewport: GameUiViewport {
@@ -1330,6 +1337,7 @@ fn phone_start_deadline_requests_screen_recovery_without_an_adapter_timer_policy
 #[test]
 fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_state() {
     let platform = ApplicationPlatformObservation {
+        gpu_timing_requested: false,
         renderer: Some(renderer_observation()),
         surface: None,
         viewport: GameUiViewport {
@@ -1538,6 +1546,7 @@ fn hmd_frame_and_focus_use_the_confirmed_display_resource_and_shared_viewer_capt
                 observed_ms: 10_020.0,
                 input: ApplicationInput::Platform {
                     observation: ApplicationPlatformObservation {
+                        gpu_timing_requested: false,
                         renderer: Some(renderer_observation()),
                         surface: Some(ApplicationSurfaceObservation {
                             font: birdman_game_presentation::xr::MenuFont {
@@ -1839,6 +1848,7 @@ fn spatial_trigger_uses_submitted_painting_and_the_canonical_ui_action_owner() {
                 observed_ms: 10_000.0,
                 input: ApplicationInput::Platform {
                     observation: ApplicationPlatformObservation {
+                        gpu_timing_requested: false,
                         renderer: Some(renderer_observation()),
                         surface: Some(ApplicationSurfaceObservation {
                             font: MenuFont {
@@ -2052,6 +2062,7 @@ fn spatial_trigger_uses_submitted_painting_and_the_canonical_ui_action_owner() {
 #[test]
 fn graphics_commit_tracks_actual_resources_cleanup_and_renderer_lifetimes() {
     let platform = ApplicationPlatformObservation {
+        gpu_timing_requested: false,
         renderer: Some(renderer_observation()),
         surface: None,
         viewport: GameUiViewport {
@@ -2312,6 +2323,7 @@ fn graphics_commit_tracks_actual_resources_cleanup_and_renderer_lifetimes() {
         })
         .unwrap();
     let mut platform = ApplicationPlatformObservation {
+        gpu_timing_requested: false,
         renderer: Some(renderer_observation()),
         surface: None,
         viewport: GameUiViewport {
@@ -2384,7 +2396,7 @@ fn immersive_quality_retains_screen_configuration_and_uses_manual_water() {
     assert_eq!(immersive.shadow, fallback.shadow);
     assert_eq!(immersive.water_quality, WaterQuality::High);
     policy.applied(immersive, 3.0, None).unwrap();
-    assert!(!policy.measurement_enabled());
+    assert!(!policy.measurement_requested(false));
     policy
         .unsupported("unused in immersive".to_owned(), 4.0)
         .unwrap();

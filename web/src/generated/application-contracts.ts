@@ -2125,6 +2125,10 @@ export interface ApplicationPlatformObservation {
      */
     readonly capabilities: ApplicationCapabilities;
     /**
+     * Explicit GPU diagnostic demand, independent of automatic quality selection.
+     */
+    readonly gpu_timing_requested: boolean;
+    /**
      * Live renderer and its startup resources; None retires that lifetime and replacement uses a new creation identity.
      */
     readonly renderer?: ApplicationRendererObservation | null;

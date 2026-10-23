@@ -42,6 +42,8 @@ pub struct ApplicationCapabilities {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct ApplicationPlatformObservation {
+    /// Explicit GPU diagnostic demand, independent of automatic quality selection.
+    pub gpu_timing_requested: bool,
     /// Live renderer and its startup resources; None retires that lifetime and replacement uses a new creation identity.
     pub renderer: Option<ApplicationRendererObservation>,
     /// Actual loaded surface font and shaping locale, absent while font I/O is pending.

@@ -48,6 +48,9 @@ impl NativeRuntime {
 pub(crate) fn platform(world: &mut World) -> ApplicationPlatformObservation {
     let viewport = super::ui::viewport(world);
     ApplicationPlatformObservation {
+        gpu_timing_requested: world
+            .get_resource::<super::screen_render::timing::TimingMode>()
+            .is_some_and(|mode| mode.diagnostic_requested()),
         renderer: Some(super::world::platform(world)),
         surface: None,
         viewport,

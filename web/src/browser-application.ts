@@ -64,6 +64,7 @@ export class BrowserApplication {
   private platform(): ApplicationPlatformObservation {
     const style = getComputedStyle(this.mount.ownerDocument.documentElement);
     return {
+      gpu_timing_requested: false,
       renderer: this.renderer?.observation() ?? null,
       viewport: { width: window.innerWidth, height: window.innerHeight, root_font_size: Number.parseFloat(style.fontSize) },
       capabilities: this.capabilities,

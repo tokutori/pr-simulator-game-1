@@ -519,7 +519,8 @@ CASEは `calm-low` / `calm-medium` / `calm-high` / `typical-low` / `typical-medi
 
 - rootはRenderGraph描画命令区間だけを計測し、準備・upload・readback・present待機を含まない。
 - fullは追加pass診断を収集する。
-- 通常Manualへ診断費用を追加せず、検証queryの費用は残す。
+- GPU診断需要: Nativeのroot/fullだけが明示し、Manualでも共有ownerの同じquery・epoch・sourceを取得する。通常ManualのWeb/Nativeは診断を要求せず、Manual診断は選択画質を保持する。
+- GPU値の有効期間: sourceの鮮度と測定区間に同じ500 msを適用する。非有限・負値・期間超過は原値を保持して計測窓を失効し、描画資源を保持する。ブラウザ時計の量子化を含むため、callback到着までの時間との差を物理的な厳密上限とは扱わない。
 - 履歴4096件からcount/span/mean/nearest-rank p95/maxを出力し、容量不足・非有限・未取得を分ける。
 - pass時間を合算しない。
 - 受領時刻とGPU source時刻、epoch・frame・適用scale/shadow/water品質を区分する。

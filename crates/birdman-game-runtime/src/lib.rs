@@ -173,6 +173,9 @@ impl ApplicationRuntime {
         let boot = boot::BootOwner::new(observation.renderer.is_some());
         let mut graphics = graphics::GraphicsOwner::default();
         graphics
+            .request_gpu_timing(observation.gpu_timing_requested, 0.0)
+            .map_err(ApplicationRuntimeError::Graphics)?;
+        graphics
             .adopt(
                 observation.renderer.as_ref(),
                 birdman_game_presentation::game_ui::game_ui_scene(
@@ -835,6 +838,9 @@ impl ApplicationRuntime {
                 }
             }
             ApplicationInput::Platform { observation } => {
+                self.graphics
+                    .request_gpu_timing(observation.gpu_timing_requested, observed_ms)
+                    .map_err(ApplicationRuntimeError::Graphics)?;
                 self.graphics
                     .adopt(
                         observation.renderer.as_ref(),

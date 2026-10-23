@@ -76,6 +76,10 @@ pub(crate) enum TimingMode {
 }
 
 impl TimingMode {
+    pub(crate) fn diagnostic_requested(self) -> bool {
+        self != Self::Automatic
+    }
+
     fn full_diagnostics(self) -> bool {
         #[cfg(feature = "verify-harness")]
         {
@@ -202,15 +206,11 @@ impl FromWorld for MetadataBuffer {
     }
 }
 
-fn extract_packet(
-    mut commands: Commands,
-    rendering: Extract<Res<NativeGpu>>,
-    mode: Extract<Res<TimingMode>>,
-) {
+fn extract_packet(mut commands: Commands, rendering: Extract<Res<NativeGpu>>) {
     let query = rendering.query;
     let quality = rendering.quality;
     commands.insert_resource(TimingPacket {
-        active: query.is_some() || mode.full_diagnostics(),
+        active: query.is_some(),
         renderer: query.map_or(1, |query| query.renderer_resource_id),
         epoch: query.map_or(0, |query| query.epoch),
         frame: query.map_or(0, |query| query.frame),
@@ -606,7 +606,7 @@ pub(crate) mod tests {
         arrival: Instant,
         epoch: u32,
         frame: u32,
-        source: u64,
+        source: f64,
         work: f64,
     ) {
         packet_quality(
@@ -630,11 +630,11 @@ pub(crate) mod tests {
         arrival: Instant,
         epoch: u32,
         frame: u32,
-        source: u64,
+        source: f64,
         work: f64,
         quality: (ScreenRenderScale, ScreenShadowMap, WaterQuality),
     ) {
-        let bits = (source as f64).to_bits();
+        let bits = source.to_bits();
         let values = [
             1,
             epoch,
@@ -737,7 +737,7 @@ pub(crate) mod tests {
                     Instant::now(),
                     3,
                     21,
-                    1234,
+                    1234.0,
                     work,
                 );
                 let observed = poll(&mut world);

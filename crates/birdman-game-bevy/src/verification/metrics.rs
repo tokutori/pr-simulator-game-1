@@ -5,6 +5,7 @@ use bevy::{
     prelude::{Query, ResMut, Window},
 };
 use birdman_game_format::WaterQuality;
+use birdman_game_presentation::screen_render_auto::is_valid_gpu_work_ms;
 use birdman_game_runtime::ApplicationGraphicsResource;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -13,13 +14,13 @@ use std::{
 
 pub(super) const TIMING_HISTORY_LIMIT: usize = 4096;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) struct SourceBoundary {
     pub(super) frame: u32,
-    pub(super) milliseconds: u64,
+    pub(super) milliseconds: f64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) enum MotionSourceWindow {
     Observing {
         start: SourceBoundary,
@@ -112,7 +113,12 @@ pub(super) fn summarize_timing(
         received_count += 1;
         first.get_or_insert(measurement.time);
         last = Some(measurement.time);
-        if measurement.value.is_finite() && measurement.value >= 0.0 {
+        let valid = if timing_kind(diagnostic) == Some("render_gpu") {
+            is_valid_gpu_work_ms(measurement.value)
+        } else {
+            measurement.value.is_finite() && measurement.value >= 0.0
+        };
+        if valid {
             values.push(measurement.value);
         } else {
             invalid_count += 1;
@@ -257,8 +263,8 @@ pub(super) fn summarize_source_timing(
         if source.sample.frame <= start.frame || source.sample.frame > end.frame {
             continue;
         }
-        if source.sample.source_ms < start.milliseconds as f64
-            || source.sample.source_ms > end.milliseconds as f64
+        if source.sample.source_ms < start.milliseconds
+            || source.sample.source_ms > end.milliseconds
         {
             summary.unassigned_arrivals += 1;
             continue;
@@ -295,9 +301,7 @@ pub(super) fn summarize_source_timing(
                 received_count: samples.len(),
                 invalid_count: samples
                     .iter()
-                    .filter(|value| {
-                        !value.sample.gpu_work_ms.is_finite() || value.sample.gpu_work_ms < 0.0
-                    })
+                    .filter(|value| !is_valid_gpu_work_ms(value.sample.gpu_work_ms))
                     .count(),
                 sample_span_ms: Some(maximum - minimum),
                 history_limit,
@@ -310,7 +314,7 @@ pub(super) fn summarize_source_timing(
                 samples
                     .iter()
                     .map(|value| value.sample.gpu_work_ms)
-                    .filter(|value| value.is_finite() && *value >= 0.0)
+                    .filter(|value| is_valid_gpu_work_ms(*value))
                     .collect(),
             ),
         );
@@ -341,7 +345,7 @@ pub(super) fn report_motion_sources(
         Ok(summary) => {
             let missing = summary.expected_frames as usize - summary.received_frames;
             println!(
-                "Motion source timing motion={} window={window:?} missing_frames={missing} duplicate_frames={} unassigned_arrivals={} history_incomplete={}; End capture-save is the arrival cutoff, not query-drain confirmation; frame inclusion is (start,end], source_ms is truncated to whole milliseconds",
+                "Motion source timing motion={} window={window:?} missing_frames={missing} duplicate_frames={} unassigned_arrivals={} history_incomplete={}; End capture-save is the arrival cutoff, not query-drain confirmation; frame inclusion is (start,end], source_ms retains the owner clock value",
                 motion.label(),
                 summary.duplicate_frames,
                 summary.unassigned_arrivals,

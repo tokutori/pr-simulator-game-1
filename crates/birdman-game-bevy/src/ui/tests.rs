@@ -16,6 +16,7 @@ fn shared_widgets_retain_values_and_forward_controls_and_chart_io_with_their_sou
     let mut runtime = ApplicationRuntime::new(
         birdman_game_app::application::ApplicationSession::default(),
         ApplicationPlatformObservation {
+            gpu_timing_requested: false,
             renderer: None,
             surface: None,
             viewport: GameUiViewport {

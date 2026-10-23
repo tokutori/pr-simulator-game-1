@@ -1298,6 +1298,7 @@ mod tests {
         let mut runtime = ApplicationRuntime::new(
             birdman_game_app::application::ApplicationSession::default(),
             birdman_game_runtime::ApplicationPlatformObservation {
+                gpu_timing_requested: false,
                 renderer: None,
                 surface: None,
                 viewport: birdman_game_presentation::game_ui::GameUiViewport {
@@ -1315,6 +1316,7 @@ mod tests {
                     observed_ms: 0.0,
                     input: ApplicationInput::Platform {
                         observation: birdman_game_runtime::ApplicationPlatformObservation {
+                            gpu_timing_requested: false,
                             renderer: Some(platform(&mut world)),
                             surface: None,
                             viewport: birdman_game_presentation::game_ui::GameUiViewport {

@@ -25,7 +25,11 @@ fn evaluated_window(
     for frame in 0..=100 {
         let now = start + f64::from(frame) * 20.0;
         if let Some(request) = controller
-            .observe(sample(controller, frame * frame_step, now, 20.0), now)
+            .observe(
+                sample(controller, frame * frame_step, now, 20.0),
+                now,
+                false,
+            )
             .unwrap()
         {
             return Some(request);
@@ -43,7 +47,7 @@ fn default_auto_and_scene_scope_preserve_the_flight_selection() {
         WaterQuality::High,
     );
     assert_eq!(controller.snapshot(), ScreenRenderAutoSnapshot::default());
-    assert!(controller.measurement_enabled());
+    assert!(controller.measurement_requested(false));
     controller
         .select_manual(ScreenRenderScale::Full, 0.0)
         .unwrap();
@@ -62,7 +66,7 @@ fn default_auto_and_scene_scope_preserve_the_flight_selection() {
             .set_scope(scene.screen_render_scope(), index as f64)
             .unwrap();
         assert_eq!(controller.epoch(), epoch + u32::from(index == 0));
-        assert!(controller.measurement_enabled(), "{scene:?}");
+        assert!(controller.measurement_requested(false), "{scene:?}");
         assert_eq!(controller.snapshot().selection, selection);
     }
     for (index, scene) in [
@@ -79,7 +83,7 @@ fn default_auto_and_scene_scope_preserve_the_flight_selection() {
             .set_scope(scene.screen_render_scope(), 4.0 + index as f64)
             .unwrap();
         assert_eq!(controller.epoch(), epoch + u32::from(index == 0));
-        assert!(!controller.measurement_enabled(), "{scene:?}");
+        assert!(!controller.measurement_requested(false), "{scene:?}");
         assert_eq!(controller.snapshot().selection, selection);
         assert_eq!(controller.snapshot().status, ScreenRenderAutoStatus::Manual);
     }
@@ -193,7 +197,7 @@ fn sparse_high_load_can_degrade_without_resetting_evidence_for_pending_or_gaps()
     for index in 0..=10 {
         let now_ms = f64::from(index) * 200.0;
         let observation = sample(&controller, index * 3, now_ms, 20.0);
-        request = controller.observe(observation, now_ms).unwrap();
+        request = controller.observe(observation, now_ms, false).unwrap();
         if request.is_some() {
             break;
         }
@@ -218,7 +222,10 @@ fn sparse_high_load_can_degrade_without_resetting_evidence_for_pending_or_gaps()
     for index in 0..=13 {
         let now_ms = applied_ms + 100.0 + f64::from(index) * 200.0;
         let observation = sample(&controller, index, now_ms, 20.0);
-        assert_eq!(controller.observe(observation, now_ms).unwrap(), None);
+        assert_eq!(
+            controller.observe(observation, now_ms, false).unwrap(),
+            None
+        );
     }
 }
 
@@ -235,7 +242,7 @@ fn initial_window_starts_at_the_first_valid_gpu_source_after_preparation() {
         let now = 10_000.0 + f64::from(frame) * 100.0;
         assert_eq!(
             controller
-                .observe(sample(&controller, frame, now, 20.0), now)
+                .observe(sample(&controller, frame, now, 20.0), now, false)
                 .unwrap(),
             None
         );
@@ -245,7 +252,7 @@ fn initial_window_starts_at_the_first_valid_gpu_source_after_preparation() {
         );
     }
     controller
-        .observe(sample(&controller, 20, 12_000.0, 20.0), 12_000.0)
+        .observe(sample(&controller, 20, 12_000.0, 20.0), 12_000.0, false)
         .unwrap();
     let request = controller.pending(12_250.0).unwrap().unwrap();
     assert_eq!(request.scale, ScreenRenderScale::ThreeQuarters);
@@ -269,13 +276,13 @@ fn ready_is_derived_from_a_complete_valid_window_and_old_epochs_cannot_start_it(
     controller
         .invalidate(ScreenRenderInvalidation::QualityChanged, 2.0)
         .unwrap();
-    assert_eq!(controller.observe(obsolete, 10_000.0).unwrap(), None);
+    assert_eq!(controller.observe(obsolete, 10_000.0, false).unwrap(), None);
     assert!(controller.window.latest.is_none());
     for frame in 0..=100 {
         let now = 10_000.0 + f64::from(frame) * 20.0;
         assert_eq!(
             controller
-                .observe(sample(&controller, frame, now, 11.0), now)
+                .observe(sample(&controller, frame, now, 11.0), now, false)
                 .unwrap(),
             None
         );
@@ -333,7 +340,7 @@ fn complete_initial_window_survives_ack_and_continuous_adaptation_without_snapsh
         );
         start = now + 1_200.0;
         controller
-            .observe(sample(&controller, 0, start, 20.0), start)
+            .observe(sample(&controller, 0, start, 20.0), start, false)
             .unwrap();
         assert_eq!(controller.initial_observation_epoch(), Some(initial_epoch));
     }
@@ -354,10 +361,12 @@ fn insufficient_coverage_and_obsolete_sources_never_create_initial_completion() 
     controller
         .applied(request, controller.now_ms, None)
         .unwrap();
-    controller.observe(obsolete, controller.now_ms).unwrap();
+    controller
+        .observe(obsolete, controller.now_ms, false)
+        .unwrap();
     let now = controller.now_ms + 20.0;
     controller
-        .observe(sample(&controller, 0, now, 20.0), now)
+        .observe(sample(&controller, 0, now, 20.0), now, false)
         .unwrap();
     assert_eq!(controller.initial_observation_epoch(), None);
 }
@@ -383,7 +392,7 @@ fn external_invalidation_and_failed_ack_cannot_recreate_initial_completion() {
         controller.invalidate(reason, now + 1.0).unwrap();
         controller.applied(request, now + 2.0, None).unwrap();
         controller
-            .observe(sample(&controller, 0, now + 3.0, 20.0), now + 3.0)
+            .observe(sample(&controller, 0, now + 3.0, 20.0), now + 3.0, false)
             .unwrap();
         assert_eq!(controller.initial_observation_epoch(), None, "{reason:?}");
     }
@@ -438,7 +447,10 @@ fn missing_low_load_never_increases_quality() {
     for index in 0..=100 {
         let now_ms = f64::from(index) * 20.0;
         let observation = sample(&controller, index * 2, now_ms, 4.0);
-        assert_eq!(controller.observe(observation, now_ms).unwrap(), None);
+        assert_eq!(
+            controller.observe(observation, now_ms, false).unwrap(),
+            None
+        );
     }
     assert_eq!(controller.snapshot().applied, ScreenRenderScale::Half);
     assert_eq!(
@@ -459,7 +471,7 @@ fn high_rate_valid_delivery_preserves_the_full_observation_span_and_coverage() {
     for frame in 0..=2_000 {
         let now_ms = f64::from(frame);
         let observation = sample(&controller, frame, now_ms, 4.0);
-        request = controller.observe(observation, now_ms).unwrap();
+        request = controller.observe(observation, now_ms, false).unwrap();
         if request.is_some() {
             break;
         }
@@ -481,7 +493,7 @@ fn interval_maximum_prevents_sampling_from_discarding_high_gpu_work() {
         let now_ms = f64::from(frame);
         let work = if frame % 8 == 0 { 4.0 } else { 20.0 };
         let observation = sample(&controller, frame, now_ms, work);
-        request = controller.observe(observation, now_ms).unwrap();
+        request = controller.observe(observation, now_ms, false).unwrap();
         if request.is_some() {
             break;
         }
@@ -504,7 +516,7 @@ fn production_auto_decision_reserves_ack_capacity_or_stops_with_a_visible_cause(
         for frame in 0..=125 {
             let now_ms = f64::from(frame) * 20.0;
             decision_time = now_ms;
-            decision = controller.observe(sample(&controller, frame, now_ms, 20.0), now_ms);
+            decision = controller.observe(sample(&controller, frame, now_ms, 20.0), now_ms, false);
             if !matches!(decision, Ok(None)) {
                 break;
             }
@@ -526,7 +538,7 @@ fn production_auto_decision_reserves_ack_capacity_or_stops_with_a_visible_cause(
             assert_eq!(controller.epoch(), u32::MAX - 1);
             assert_eq!(controller.snapshot().applied, ScreenRenderScale::Full);
         }
-        assert!(!controller.measurement_enabled());
+        assert!(!controller.measurement_requested(false));
         assert!(matches!(
             controller.snapshot().status,
             ScreenRenderAutoStatus::Unsupported { .. }
@@ -569,7 +581,7 @@ fn pending_acknowledgment_retains_epoch_capacity_across_invalidation() {
     controller.applied(request, 3.0, None).unwrap();
     assert_eq!(controller.epoch(), u32::MAX);
     assert_eq!(controller.snapshot().applied, ScreenRenderScale::Half);
-    assert!(!controller.measurement_enabled());
+    assert!(!controller.measurement_requested(false));
     assert!(
         matches!(controller.snapshot().status, ScreenRenderAutoStatus::Unsupported { cause } if cause.contains("epoch exhausted"))
     );
@@ -637,7 +649,7 @@ fn quantized_source_time_accepts_distinct_frames_without_fabricating_duplicates(
     controller.select_auto(true, 0.0).unwrap();
     for frame in [1, 2, 2] {
         controller
-            .observe(sample(&controller, frame, 10.0, 20.0), 10.0)
+            .observe(sample(&controller, frame, 10.0, 20.0), 10.0, false)
             .unwrap();
     }
     assert_eq!(controller.window.samples.len(), 1);
@@ -645,7 +657,7 @@ fn quantized_source_time_accepts_distinct_frames_without_fabricating_duplicates(
     assert_eq!(controller.window.samples[0].last.frame, 2);
     assert_eq!(controller.window.samples[0].last.source_ms, 10.0);
     assert_eq!(
-        controller.observe(sample(&controller, 3, 9.0, 20.0), 11.0),
+        controller.observe(sample(&controller, 3, 9.0, 20.0), 11.0, false),
         Err(ScreenRenderAutoError::InvalidSample)
     );
 }
@@ -662,10 +674,10 @@ fn stale_duplicate_regressive_and_unavailable_observations_cannot_raise_quality(
     controller
         .invalidate(ScreenRenderInvalidation::Disjoint, 1.0)
         .unwrap();
-    assert_eq!(controller.observe(old, 1.0).unwrap(), None);
+    assert_eq!(controller.observe(old, 1.0, false).unwrap(), None);
     let fresh = sample(&controller, 1, 1.0, 4.0);
-    controller.observe(fresh, 1.0).unwrap();
-    assert_eq!(controller.observe(fresh, 2.0).unwrap(), None);
+    controller.observe(fresh, 1.0, false).unwrap();
+    assert_eq!(controller.observe(fresh, 2.0, false).unwrap(), None);
     assert_eq!(
         controller.pending(f64::NAN),
         Err(ScreenRenderAutoError::InvalidTime)
@@ -674,8 +686,17 @@ fn stale_duplicate_regressive_and_unavailable_observations_cannot_raise_quality(
         controller.pending(1.0),
         Err(ScreenRenderAutoError::InvalidTime)
     );
-    let stale = sample(&controller, 2, 0.0, f64::NAN);
-    assert_eq!(controller.observe(stale, 1_000.0).unwrap(), None);
+    for work in [f64::NAN, 1e12] {
+        let stale = sample(&controller, 2, 0.0, work);
+        assert_eq!(controller.observe(stale, 1_000.0, false).unwrap(), None);
+    }
+    controller
+        .observe(sample(&controller, 2, 1_000.0, 500.0), 1_000.0, false)
+        .unwrap();
+    assert_eq!(
+        controller.observe(sample(&controller, 3, 1_000.0, 500.1), 1_000.0, false),
+        Err(ScreenRenderAutoError::InvalidSample)
+    );
     controller
         .unsupported("timestamp queries unavailable".to_owned(), 1_001.0)
         .unwrap();
@@ -689,6 +710,7 @@ fn stale_duplicate_regressive_and_unavailable_observations_cannot_raise_quality(
     assert_eq!(request.shadow, ScreenShadowMap::Quarter);
     assert_eq!(request.water_quality, WaterQuality::Low);
     controller.applied(request, 1_002.0, None).unwrap();
+    assert!(!controller.measurement_requested(true));
     assert!(matches!(
         controller.snapshot().status,
         ScreenRenderAutoStatus::Unsupported { .. }
@@ -734,7 +756,7 @@ fn unsupported_auto_applies_the_lightweight_profile_and_restores_manual_resource
             cause: "GPU timer unavailable".into()
         }
     );
-    assert!(!controller.measurement_enabled());
+    assert!(!controller.measurement_requested(false));
     assert_eq!(controller.initial_observation_epoch(), None);
     let manual = controller.select_auto(false, 3.0).unwrap().unwrap();
     assert_eq!(manual.scale, ScreenRenderScale::Full);
@@ -867,7 +889,7 @@ fn received_frame_coverage_allows_small_loss_and_rejects_insufficient_delivery()
             }
             let now_ms = f64::from(frame) * 20.0;
             request = controller
-                .observe(sample(&controller, frame, now_ms, 4.0), now_ms)
+                .observe(sample(&controller, frame, now_ms, 4.0), now_ms, false)
                 .unwrap();
             if request.is_some() {
                 break;
@@ -892,7 +914,7 @@ fn threshold_boundaries_hold_and_cooldown_limits_each_step_and_bounds() {
         for frame in 0..=120 {
             let now_ms = f64::from(frame) * 20.0;
             request = controller
-                .observe(sample(&controller, frame, now_ms, work), now_ms)
+                .observe(sample(&controller, frame, now_ms, work), now_ms, false)
                 .unwrap();
             if request.is_some() {
                 break;
@@ -911,7 +933,7 @@ fn threshold_boundaries_hold_and_cooldown_limits_each_step_and_bounds() {
         let now_ms = f64::from(frame) * 50.0;
         let work = if now_ms < 8_000.0 { 20.0 } else { 4.0 };
         if let Some(request) = controller
-            .observe(sample(&controller, frame, now_ms, work), now_ms)
+            .observe(sample(&controller, frame, now_ms, work), now_ms, false)
             .unwrap()
         {
             changes.push((now_ms, request.scale));
@@ -949,7 +971,7 @@ fn water_reduction_follows_resolution_and_shadow_and_recovers_in_reverse_order()
         let now = f64::from(frame) * 50.0;
         let work = if now < 22_000.0 { 20.0 } else { 4.0 };
         if let Some(request) = controller
-            .observe(sample(&controller, frame, now, work), now)
+            .observe(sample(&controller, frame, now, work), now, false)
             .unwrap()
         {
             changes.push((now, request.scale, request.shadow, request.water_quality));
@@ -1042,7 +1064,7 @@ fn manual_shadow_is_retained_and_partial_ack_cannot_commit_a_resource_pair() {
     for frame in 0..=120 {
         let now = f64::from(frame) * 50.0;
         if let Some(request) = controller
-            .observe(sample(&controller, frame, now, 20.0), now)
+            .observe(sample(&controller, frame, now, 20.0), now, false)
             .unwrap()
         {
             controller.applied(request, now, None).unwrap();
@@ -1118,7 +1140,7 @@ fn cleanup_failure_keeps_the_new_resources_and_the_original_cause() {
             cause: "retired shadow map cleanup failed".to_owned(),
         }
     );
-    assert!(!controller.measurement_enabled());
+    assert!(!controller.measurement_requested(false));
 }
 
 #[test]
@@ -1149,7 +1171,7 @@ fn water_cap_changes_preserve_lower_auto_quality_and_restore_the_manual_triple()
     for frame in 0..=120 {
         let now = 5_300.0 + f64::from(frame) * 20.0;
         recovered = controller
-            .observe(sample(&controller, frame, now, 4.0), now)
+            .observe(sample(&controller, frame, now, 4.0), now, false)
             .unwrap();
         if recovered.is_some() {
             break;
