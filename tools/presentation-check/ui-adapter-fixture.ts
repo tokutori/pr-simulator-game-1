@@ -1,7 +1,6 @@
 import { IDENTITY_POSE, pose, vec3 } from "../../web/src/render/contracts/math.js";
 import { NO_HEAD_HUD } from "../../web/src/render/contracts/head-hud.js";
 import type { VisibleHeadHud } from "../../web/src/render/contracts/head-hud.js";
-import type { GameUiView } from "../../web/src/generated/game-ui-view.js";
 import type { AnchorKind, GameScene, UiPanel, UiViewModel } from "../../web/src/render/contracts/ui.js";
 
 const PANEL_SIZE = Object.freeze({ width: 2.4, height: 1.8 });
@@ -75,23 +74,10 @@ export function createAnchorFixture(anchor: AnchorKind): UiPanel {
   });
 }
 
-export function createHeadHudFixture(theme: GameUiView["theme"]): VisibleHeadHud {
-  return Object.freeze({
-    kind: "visible",
-    locale: "ja",
-    anchor: "head",
-    localPose: pose(vec3(0, 0, -2.4), IDENTITY_POSE.orientation),
-    size: Object.freeze({ width: 1.8, height: 1.2 }),
-    clearRegion: Object.freeze({ left: 0.25, top: 0.1, width: 0.5, height: 0.5 }),
-    backgroundAlpha: 0.3,
-    foregroundAlpha: 1,
-    theme,
-    elements: Object.freeze([Object.freeze({
-      id: "flight-status",
-      label: "FLIGHT",
-      instrument_height_em: 0,
-      content: Object.freeze({ kind: "text", value: "合成HUD fixture", tone: "normal" }),
-      bounds: Object.freeze({ left: 0.1, top: 0.7, width: 0.8, height: 0.2 })
-    })])
-  });
+export function createHeadHudFixture(): VisibleHeadHud {
+  return {
+    kind: "visible", localPose: pose(vec3(0, 0, -2.4), IDENTITY_POSE.orientation),
+    size: { width: 1.8, height: 1.2 }, canvasSize: [2048, 1365],
+    clearRegion: { x: 0.25, y: 0.1, width: 0.5, height: 0.5 }, items: []
+  };
 }

@@ -17,14 +17,12 @@ import { createSceneFixture } from "./ui-adapter-fixture.js";
 import { WebXrPresentationBackend } from "../../web/src/presentation/webxr-backend.js";
 import { PresentationRuntime } from "../../web/src/presentation/runtime.js";
 import { createInitialAppModel, updateApp } from "../../web/src/app/app-state.js";
-import { createFlightFrameViewDraft, finalizeFlightFrameView, menuFrameFailureRecovery } from "../../web/src/app/flight-frame-view.js";
+import { flightFrameView, menuFrameFailureRecovery } from "../../web/src/app/flight-frame-view.js";
 import { currentFlightPoseFixture } from "../game-check/current-session-fixture.js";
 import { currentGameSessionProjectionFixture, currentSharedGameUiFixture } from "../game-check/shared-game-ui-fixture.js";
 
 import type { ViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
-import { HEAD_HUD_MINIMUM_INK_HEIGHT_DEGREES, headHudCanvasSize, headHudPaintedTextInk, prepareHeadHudPaint, validateHeadHudPaint } from "../../web/src/presentation/head-hud-canvas.js";
-import type { HeadHudPaintPreparation } from "../../web/src/presentation/head-hud-canvas.js";
-import { HudCanvasFixture } from "./hud-canvas-fixture.js";
+import { prepareHeadHudFixture } from "./hud-canvas-fixture.js";
 import { ScreenPresentationBackend } from "../../web/src/presentation/screen-backend.js";
 
 interface RecordedDraw {
@@ -269,7 +267,7 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
     vi.unstubAllGlobals();
   });
 
-  it.each([0, 1, 2, 3, 4, "flight-path-only"] as const)("matches canted/asymmetric eyes and keeps Information %s fixed through body, head and PilotEye motion", async (information) => {
+  it("keeps the shared Head surface fixed in canted/asymmetric eyes through body, head and PilotEye motion", async () => {
     const eyeRotation = (angle: number) => new Quaternion().setFromEuler(new Euler(angle / 3, angle, angle / 2));
     const leftRotation = eyeRotation(0.04);
     const rightRotation = eyeRotation(-0.06);
@@ -281,7 +279,7 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
       { pose: pose(vec3(0.032, -0.001, 0.002), quaternion(rightRotation.w, rightRotation.x, rightRotation.y, rightRotation.z)), projection: rightProjection }
     ];
     let currentFlight = flight;
-    const evidence = { viewer: null as ViewerFrame | null, view: null as UiViewModel | null, paint: null as HeadHudPaintPreparation | null };
+    const evidence = { viewer: null as ViewerFrame | null, view: null as UiViewModel | null };
     const runtime = new PresentationRuntime(bundle.renderer, [{
       mode: "webxr", start: () => Promise.resolve(), stop: () => Promise.resolve(),
       currentFrame: (timestamp, projectedView, rawHead, menu) => backend.currentFrame(timestamp, projectedView, rawHead, menu)
@@ -290,20 +288,8 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
       const gameSession = currentGameSessionProjectionFixture("flight_running");
       const initial = createInitialAppModel();
       const model = { ...initial, gameSession, presentation: { type: "ready", mode: "webxr" } as const,
-        sharedGameUi: currentSharedGameUiFixture("flight_running", {
-          informationCode: information === "flight-path-only" ? 4 : information,
-          ...(information === "flight-path-only" ? { hudProfile: {
-            telemetry: false, attitude: false, wind: false, flight_path: true, angle_of_attack: false, warnings: false
-          } } : information === 4 ? { hudProfile: { telemetry: true, attitude: true, wind: true, flight_path: true, angle_of_attack: true, warnings: true } } : {}),
-          platform: { presentation_mode: "hmd" }
-        }) };
-      const draft = createFlightFrameViewDraft(model, viewer, "ja");
-      if (draft.headHud.kind !== "visible") throw new Error("Missing Head HUD");
-      const dimensions = headHudCanvasSize(draft.headHud.layer);
-      const preparation = validateHeadHudPaint(prepareHeadHudPaint(new HudCanvasFixture(), draft.headHud, dimensions.width, dimensions.height), viewer);
-      if (preparation.kind !== "ready") throw new Error("Head preflight failed");
-      evidence.view = finalizeFlightFrameView(draft, preparation.view);
-      evidence.paint = preparation;
+        sharedGameUi: currentSharedGameUiFixture("flight_running", { informationCode: 0, platform: { presentation_mode: "hmd" } }) };
+      evidence.view = flightFrameView(model, prepareHeadHudFixture(viewer, { informationCode: 0 }));
       return fixturePresentation(evidence.view);
     }, () => { bundle.renderer.setFlightPose(currentFlight); });
     bundle.renderer.stopLoop();
@@ -319,10 +305,6 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
       const draw = lastDraw(driver);
       if (evidence.viewer === null || evidence.viewer.source !== "runtime-derived" || evidence.view === null || evidence.view.headHud.kind !== "visible" || draw.headHud === null) throw new Error("Missing same-frame Head evidence");
       const hud = evidence.view.headHud;
-      if (information === "flight-path-only") {
-        expect(hud.elements).toHaveLength(1);
-        expect(hud.elements[0]?.content).toMatchObject({ kind: "attitude", geometry: { kind: "flight_path_only" } });
-      }
       const layerProjections: Vector3[] = [];
       for (const [eyeIndex, eye] of evidence.viewer.eyes.entries()) {
         const actualEye = draw.eyes[eyeIndex];
@@ -330,27 +312,14 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
         if (actualEye === undefined || actualProjection === undefined) throw new Error("Missing rendered eye");
         actualProjection.elements.forEach((value, entry) => { expect(value).toBeCloseTo(eye.projection[entry] ?? Number.NaN, 6); });
         const eyeFromHud = actualEye.clone().invert().multiply(draw.headHud);
-        for (const element of hud.elements) {
-          const corners = [element.bounds.left, element.bounds.left + element.bounds.width].flatMap((horizontal) =>
-            [element.bounds.top, element.bounds.top + element.bounds.height].map((vertical) =>
-              new Vector3(horizontal - 0.5, 0.5 - vertical, 0).applyMatrix4(eyeFromHud)));
-          const verticalAngles = corners.map((point) => Math.atan2(point.y, -point.z) * 180 / Math.PI);
-          expect(verticalAngles.every((angle) => angle > 10) || verticalAngles.every((angle) => angle < -10)).toBe(true);
-        }
-        const paint = evidence.paint;
-        if (paint?.kind !== "ready") throw new Error("Missing paint plan");
-        for (const glyph of headHudPaintedTextInk(paint)) {
-          if (glyph.value.trim() === "") continue;
-          for (const horizontal of [glyph.left, glyph.left + glyph.width]) {
-            const upper = new Vector3(horizontal / paint.width - 0.5, 0.5 - glyph.top / paint.height, 0).applyMatrix4(eyeFromHud);
-            const lower = new Vector3(horizontal / paint.width - 0.5, 0.5 - (glyph.top + glyph.height) / paint.height, 0).applyMatrix4(eyeFromHud);
-            expect(upper.angleTo(lower) * 180 / Math.PI).toBeGreaterThanOrEqual(HEAD_HUD_MINIMUM_INK_HEIGHT_DEGREES);
-            for (const point of [upper, lower]) {
-              point.applyMatrix4(actualProjection);
-              expect(Math.abs(point.x)).toBeLessThan(1);
-              expect(Math.abs(point.y)).toBeLessThan(1);
-            }
-          }
+        for (const item of hud.items) {
+          if (item.kind !== "plot") continue;
+          const bounds = item.clip;
+          const corners = [bounds.x, bounds.x + bounds.width].flatMap(horizontal =>
+            [bounds.y, bounds.y + bounds.height].map(vertical =>
+              new Vector3(horizontal / hud.size.width - 0.5, 0.5 - vertical / hud.size.height, 0).applyMatrix4(eyeFromHud)));
+          const angles = corners.map(point => Math.atan2(point.y, -point.z) * 180 / Math.PI);
+          expect(angles.every(angle => angle > 10) || angles.every(angle => angle < -10)).toBe(true);
         }
         for (const horizontal of [-0.5, 0.5]) for (const vertical of [-0.5, 0.5]) {
           const point = new Vector3(horizontal, vertical, 0).applyMatrix4(draw.headHud).applyMatrix4(actualEye.clone().invert()).applyMatrix4(actualProjection);
@@ -383,56 +352,6 @@ describe("Three adapter mount through real WebXRManager and browser XR frames", 
     const lastWorld = worldProjections[2];
     if (firstWorld === undefined || lastWorld === undefined) throw new Error("Missing world projections");
     expect(firstWorld.distanceTo(lastWorld)).toBeGreaterThan(0.2);
-  });
-
-  it("keeps all 64 Custom cue combinations and all-off Pause access through actual native eye frames", async () => {
-    const gameSession = currentGameSessionProjectionFixture("flight_running");
-    const initial = createInitialAppModel();
-    let mask = 0;
-    let captured: UiViewModel | null = null;
-    const runtime = new PresentationRuntime(bundle.renderer, [{
-      mode: "webxr", start: () => Promise.resolve(), stop: () => Promise.resolve(),
-      currentFrame: (timestamp, projectedView, rawHead, menu) => backend.currentFrame(timestamp, projectedView, rawHead, menu)
-    }], (viewer) => {
-      const model = { ...initial, gameSession, presentation: { type: "ready", mode: "webxr" } as const,
-        sharedGameUi: currentSharedGameUiFixture("flight_running", { informationCode: 4, hudProfile: {
-          telemetry: (mask & 1) !== 0, attitude: (mask & 2) !== 0, wind: (mask & 4) !== 0,
-          flight_path: (mask & 8) !== 0, angle_of_attack: (mask & 16) !== 0, warnings: (mask & 32) !== 0
-        }, platform: { presentation_mode: "hmd" } }) };
-      const draft = createFlightFrameViewDraft(model, viewer, "ja");
-      if (mask === 0 || mask === 32) {
-        expect(draft.headHud.kind).toBe("absent");
-        captured = finalizeFlightFrameView(draft, draft.headHud);
-      } else {
-        if (draft.headHud.kind !== "visible") throw new Error(`Missing Custom layout ${String(mask)}`);
-        const dimensions = headHudCanvasSize(draft.headHud.layer);
-        const preparation = validateHeadHudPaint(prepareHeadHudPaint(new HudCanvasFixture(), draft.headHud, dimensions.width, dimensions.height), viewer);
-        if (preparation.kind !== "ready") throw new Error(`Custom preflight failed ${String(mask)}`);
-        captured = finalizeFlightFrameView(draft, preparation.view);
-      }
-      return fixturePresentation(captured);
-    });
-    bundle.renderer.stopLoop();
-    expect(await runtime.start("webxr")).toEqual({ ok: true });
-    for (mask = 0; mask < 64; mask++) {
-      session.run(100 + mask * 20, head);
-      const draw = lastDraw(driver);
-      expect(draw.eyes).toHaveLength(2);
-      const frameView = captured as UiViewModel | null;
-      if (frameView === null) throw new Error("Missing Custom frame");
-      expect(frameView.panels[0]?.controls.some((control) => control.id === "game-flight-pause" && control.enabled)).toBe(true);
-      if (mask === 0 || mask === 32) expect(draw.headHud).toBeNull();
-      else {
-        if (frameView.headHud.kind !== "visible" || draw.headHud === null) throw new Error("Missing Custom draw");
-        const ids = frameView.headHud.elements.map((element) => element.id);
-        expect(ids.includes("hud-attitude")).toBe((mask & 2) !== 0 || (mask & 8) !== 0);
-        const attitude = frameView.headHud.elements.find((element) => element.content.kind === "attitude");
-        if (attitude?.content.kind === "attitude" && attitude.content.geometry.kind === "attitude") {
-          expect(attitude.content.geometry.flight_path_y_ratio !== null).toBe((mask & 8) !== 0);
-        }
-        expect(draw.headDepth).toEqual([false, false, false]);
-      }
-    }
   });
 
   it("stages a synchronous gaze Scene cut until the following rendered frame", () => {

@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { currentSharedHeadHudFixture, withSharedGameUiSession } from "../game-check/shared-game-ui-fixture.js";
+import { withSharedGameUiSession } from "../game-check/shared-game-ui-fixture.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
 import { prepareMenuPresentation } from "../../web/src/presentation/menu-preparation.js";
 import type { MenuPreparationInput } from "../../web/src/generated/menu-preparation-input.js";
@@ -11,10 +11,12 @@ import { HudCanvasFixture } from "./hud-canvas-fixture.js";
 import type { MenuLayoutReply } from "../../web/src/generated/menu-layout-reply.js";
 import { configuredViewerFixture } from "./viewer-fixture.js";
 import { DEFAULT_XR_HEAD_HUD_PROFILE } from "../../web/src/generated/xr-head-hud-profile.js";
-import type { FlightRecordHudProfileDocument } from "../../web/src/generated/record-difficulty.js";
+import { prepareHeadHudPresentation } from "../../web/src/presentation/head-hud-canvas.js";
+import type { HeadHudPreparationInput } from "../../web/src/generated/head-hud-preparation-input.js";
+import type { HeadHudPaintReply } from "../../web/src/generated/head-hud-paint-reply.js";
 import type { ViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
 import { IDENTITY_POSE, composePose, pose, quaternion, vec3 } from "../../web/src/render/contracts/math.js";
-import { xr_head_hud_projection_json, xr_text_ink_fit_json, XrCameraBridge, XrSpatialBridge,
+import { XrCameraBridge, XrSpatialBridge,
   xr_reference_frame_json, pose_chain_json, inverse_pose_json, xr_panel_camera_poses_json, XrPointerBridge } from "../../web/pkg/birdman_game_wasm.js";
 import type { XrPointerObservation } from "../../web/src/generated/xr-pointer-observation.js";
 import type { XrPointerSurface } from "../../web/src/generated/xr-pointer-surface.js";
@@ -41,28 +43,15 @@ const wasmHash = createHash("sha256").update(await readFile(wasmPath)).digest("h
 const optics: { name: string; observation: ReturnType<typeof observation> }[] = [];
 type TextProbe = { value: string; font_meters: number; weight: number; size: { width: number; height: number }; metrics: number[] };
 const menus = menuObservations();
-for (const informationCode of [0, 1, 2, 3, 4] as const) {
-  const model = currentSharedHeadHudFixture({ informationCode });
-  for (const [width, height] of [[1280, 720], [720, 1280]] as const) {
-    for (const depth of ["negative-one-to-one", "zero-to-one", "reversed-zero-to-one"] as const) {
-      const viewer = opticalViewer(width, height, depth, informationCode === 0);
-      optics.push({ name: `${String(informationCode)}-${String(width)}x${String(height)}-${depth}`, observation: observation(viewer, model) });
-    }
+for (const [width, height] of [[1280, 720], [720, 1280]] as const) {
+  for (const depth of ["negative-one-to-one", "zero-to-one", "reversed-zero-to-one"] as const) {
+    optics.push({ name: `${String(width)}x${String(height)}-${depth}`,
+      observation: observation(opticalViewer(width, height, depth, true)) });
   }
 }
-const customHuds: { name: string; hud: ReturnType<typeof observation>["hud"] }[] = [];
-for (let mask = 0; mask < 64; mask += 1) {
-  const cueNames = ["telemetry", "attitude", "wind", "flight_path", "angle_of_attack", "warnings"] as const;
-  const hudProfile = Object.fromEntries(cueNames.map((cue, index) => [cue, (mask & 2 ** index) !== 0])) as unknown as FlightRecordHudProfileDocument;
-  const model = currentSharedHeadHudFixture({ informationCode: 4, hudProfile });
-  customHuds.push({ name: `custom-${String(mask)}`, hud: { layout: model.layout, groups: model.groups } });
-}
+const heads = headObservations();
 const batch = { optics: optics.map(candidate => candidate.observation),
-  custom_hud: { viewer: opticalViewer(1280, 720, "negative-one-to-one", false),
-    profile: DEFAULT_XR_HEAD_HUD_PROFILE, huds: customHuds.map(candidate => candidate.hud) },
-  interaction: pointerScenario(), menu: menus.observations };
-assert.equal(optics.length, 30);
-assert.equal(customHuds.length, 64);
+  head: heads.observations, interaction: pointerScenario(), menu: menus.observations };
 const input = JSON.stringify(batch);
 await writeFile(resolve(output, "observations.json"), input, "utf8");
 let maximumAbsoluteError = 0;
@@ -75,13 +64,8 @@ try {
   await writeFile(resolve(output, "native.json"), native, "utf8");
   const expected: unknown = JSON.parse(native);
   const actual = {
-    optics: batch.optics.map(candidate => ({
-      head: JSON.parse(xr_head_hud_projection_json(JSON.stringify(candidate.hud), JSON.stringify(candidate.viewer), JSON.stringify(candidate.profile), "FPS 72.0")) as unknown,
-      ink: JSON.parse(xr_text_ink_fit_json(JSON.stringify(candidate.viewer), JSON.stringify(candidate.ink), JSON.stringify(candidate.head_from_surface), 0.35)) as unknown,
-      spatial: spatialResults(candidate)
-    })),
-    custom_hud: batch.custom_hud.huds.map(hud => JSON.parse(xr_head_hud_projection_json(JSON.stringify(hud),
-      JSON.stringify(batch.custom_hud.viewer), JSON.stringify(batch.custom_hud.profile), "FPS 72.0")) as unknown),
+    optics: batch.optics.map(candidate => ({ spatial: spatialResults(candidate) })),
+    head: heads.results,
     interaction: pointerResults(batch.interaction),
     menu: menus.results
   };
@@ -91,14 +75,44 @@ try {
   assert.equal(execFileSync("git", sourceArguments, gitOptions), patch, "Source changed during comparison");
   assert.equal(execFileSync("git", untrackedArguments, gitOptions), "", "New source appeared during comparison");
   assert.equal(createHash("sha256").update(await readFile(wasmPath)).digest("hex"), wasmHash, "WASM changed during comparison");
-  const report = { status: "passed", ...provenance, cases: [...optics.map(candidate => candidate.name), ...customHuds.map(candidate => candidate.name)], batches: { optics: optics.length, customHud: customHuds.length, interaction: 1, menuPreparations: batch.menu.length }, comparedNumbers, maximumAbsoluteError,
+  const report = { status: "passed", ...provenance, cases: [...optics.map(candidate => candidate.name), ...heads.names], batches: { optics: optics.length, headPreparations: heads.results.length, interaction: 1, menuPreparations: batch.menu.length }, comparedNumbers, maximumAbsoluteError,
     tolerance: "error <= 1e-10 * max(1, abs(native), abs(wasm))" };
   await writeFile(resolve(output, "result.json"), `${JSON.stringify(report, null, 2)}\n`, "utf8");
-  console.log(JSON.stringify({ status: report.status, cases: optics.length + customHuds.length, batches: report.batches, comparedNumbers, maximumAbsoluteError, output }));
+  console.log(JSON.stringify({ status: report.status, cases: optics.length + heads.results.length, batches: report.batches, comparedNumbers, maximumAbsoluteError, output }));
 } catch (cause) {
   await writeFile(resolve(output, "result.json"), `${JSON.stringify({ status: "failed", ...provenance,
     failure: cause instanceof Error ? { message: cause.message, stack: cause.stack } : String(cause) }, null, 2)}\n`, "utf8");
   throw cause;
+}
+
+function headObservations() {
+  const observations: { view: import("../../web/src/generated/game-ui-view.js").GameUiView;
+    frame: import("../../web/src/generated/game-ui-frame.js").GameUiFrame; input: HeadHudPreparationInput; probes: TextProbe[] }[] = [];
+  const results: HeadHudPaintReply[] = [];
+  const names: string[] = [];
+  for (const informationCode of [0, 1, 2, 3, 4] as const) {
+    for (const [width, height] of [[1280, 720], [720, 1280]] as const) {
+      withSharedGameUiSession("flight_running", { informationCode, ticks: 20, platform: { presentation_mode: "hmd" } }, (session, platform, bridge) => {
+        const view = session.readSharedUi(platform);
+        const frame = JSON.parse(bridge.game_ui_frame_json(view.view_revision, JSON.stringify(platform))) as import("../../web/src/generated/game-ui-frame.js").GameUiFrame;
+        const input: HeadHudPreparationInput = { viewRevision: view.view_revision, viewer: configuredViewerFixture(width, height),
+          locale: "ja", profile: DEFAULT_XR_HEAD_HUD_PROFILE, frameRateLabel: "FPS 72.0",
+          font: { family: "sans-serif", weight: 600, style: "normal", generation: 0 } };
+        const probes: TextProbe[] = [];
+        const reply = prepareHeadHudPresentation(new HudCanvasFixture(), input, (request, measure) =>
+          session.prepareSharedHeadHud(request, platform, (value, fontMeters, weight, surfaceWidth, surfaceHeight) => {
+            const metrics = measure(value, fontMeters, weight, surfaceWidth, surfaceHeight);
+            probes.push({ value, font_meters: fontMeters, weight, size: { width: surfaceWidth, height: surfaceHeight }, metrics: Array.from(metrics) });
+            return metrics;
+          }));
+        assert.equal(reply.kind, "ready");
+        observations.push({ view, frame, input, probes });
+        results.push(reply);
+        names.push(`head-${String(informationCode)}-${String(width)}x${String(height)}`);
+      });
+    }
+  }
+  return { observations, results, names };
 }
 
 function menuObservations() {
@@ -187,11 +201,9 @@ function pointerResults(scenario: ReturnType<typeof pointerScenario>): unknown[]
   } finally { owner.free(); }
 }
 
-function observation(viewer: ViewerFrame, model: ReturnType<typeof currentSharedHeadHudFixture>) {
-  return { viewer, hud: { layout: model.layout, groups: model.groups }, profile: DEFAULT_XR_HEAD_HUD_PROFILE,
+function observation(viewer: ViewerFrame) {
+  return { viewer,
     panel_pose: pose(vec3(0.1, -0.2, 0), IDENTITY_POSE.orientation), panel_size: [2.4, 1.8] as const,
-    head_from_surface: pose(vec3(0, -0.2, -2.4), IDENTITY_POSE.orientation),
-    ink: [{ start: vec3(-0.1, 0.025, 0), end: vec3(-0.1, -0.025, 0) }, { start: vec3(0.1, 0.025, 0), end: vec3(0.1, -0.025, 0) }],
     spatial: { aircraft: pose(vec3(10, 20, -30), quaternion(Math.cos(0.2), Math.sin(0.2), 0, 0)),
       head: pose(vec3(0.1, 0.2, -0.3), quaternion(Math.cos(0.15), 0, Math.sin(0.15), 0)),
       mounts: [{ kind: "stationary", worldFromTracking: pose(vec3(1, 2, 3), IDENTITY_POSE.orientation) },

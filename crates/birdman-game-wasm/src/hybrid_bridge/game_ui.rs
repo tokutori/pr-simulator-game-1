@@ -43,7 +43,7 @@ impl HybridGameSessionBridge {
         &mut self,
         platform_json: &str,
         input_json: &str,
-        measure: &crate::xr::MenuTextMeasurer,
+        measure: &crate::xr::SurfaceTextMeasurer,
     ) -> Result<String, JsValue> {
         let platform: GameUiPlatformInput = decode(platform_json)?;
         let input: birdman_game_presentation::xr::MenuPreparationInput = decode(input_json)?;
@@ -56,8 +56,32 @@ impl HybridGameSessionBridge {
             view,
             &frame,
             input,
-            &mut self.ui_menu_fonts,
-            |request, size, value| crate::xr::measure_menu_glyph(measure, request, size, value),
+            &mut self.ui_surface_fonts,
+            |request, size, value| crate::xr::measure_surface_glyph(measure, request, size, value),
+        );
+        serde_json::to_string(&reply).map_err(ui_error)
+    }
+
+    /// Prepares head-fixed painting from the retained shared UI and live font observations.
+    pub fn game_ui_head_hud_json(
+        &mut self,
+        platform_json: &str,
+        input_json: &str,
+        measure: &crate::xr::SurfaceTextMeasurer,
+    ) -> Result<String, JsValue> {
+        let platform: GameUiPlatformInput = decode(platform_json)?;
+        let input: birdman_game_presentation::xr::HeadHudPreparationInput = decode(input_json)?;
+        let frame = self.current_ui_frame(input.view_revision, &platform)?;
+        let view = self
+            .ui_view_cache
+            .as_ref()
+            .ok_or_else(|| ui_error(birdman_game_presentation::game_ui::GameUiError::StaleView))?;
+        let reply = birdman_game_presentation::xr::prepare_game_ui_head_hud(
+            view,
+            &frame,
+            input,
+            &mut self.ui_surface_fonts,
+            |request, size, value| crate::xr::measure_surface_glyph(measure, request, size, value),
         );
         serde_json::to_string(&reply).map_err(ui_error)
     }

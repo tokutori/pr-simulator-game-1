@@ -13,6 +13,8 @@ import type { SessionCommand } from "./game-ui-types.js";
 import type { GameUiView } from "../generated/game-ui-view.js";
 import type { MenuPreparationInput } from "../generated/menu-preparation-input.js";
 import type { MenuLayoutReply } from "../generated/menu-layout-reply.js";
+import type { HeadHudPreparationInput } from "../generated/head-hud-preparation-input.js";
+import type { HeadHudPaintReply } from "../generated/head-hud-paint-reply.js";
 import type { MenuFontMeasurer } from "../render/contracts/menu-layout.js";
 import type { GameUiFrame } from "../generated/game-ui-frame.js";
 import type { TailSnapshotDocument } from "../generated/tail-snapshot.js";
@@ -76,6 +78,7 @@ export interface TailAppSessionPort extends SessionResourcePort {
   game_ui_view_json(platformJson: string): string;
   game_ui_frame_json(expectedRevision: number, platformJson: string): string;
   game_ui_menu_json(platformJson: string, inputJson: string, measure: MenuFontMeasurer): string;
+  game_ui_head_hud_json(platformJson: string, inputJson: string, measure: MenuFontMeasurer): string;
   game_ui_action_json(actionJson: string, platformJson: string): string;
   apply_game_ui_session_command_json(commandJson: string): void;
   apply_game_ui_record_action_json(actionJson: string): void;
@@ -223,6 +226,12 @@ export class TailAppSessionFacade extends SessionResourceOwner {
     const platformJson = encodeGameUiPlatformInput(platform);
     const inputJson = JSON.stringify(input);
     return this.readOutput(() => this.port.game_ui_menu_json(platformJson, inputJson, measure));
+  }
+
+  prepareSharedHeadHud(input: HeadHudPreparationInput, platform: GameUiPlatformObservation, measure: MenuFontMeasurer): HeadHudPaintReply {
+    const platformJson = encodeGameUiPlatformInput(platform);
+    const inputJson = JSON.stringify(input);
+    return this.readOutput(() => this.port.game_ui_head_hud_json(platformJson, inputJson, measure));
   }
 
   updateSharedUi(action: GameUiAction, platform: GameUiPlatformObservation): GameUiUpdate {

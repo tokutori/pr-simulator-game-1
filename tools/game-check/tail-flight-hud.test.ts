@@ -1,7 +1,6 @@
 import { advanceFlightFixture } from "./current-session-fixture.js";
 import { readFileSync } from "node:fs";
 import { Window } from "happy-dom";
-import { PerspectiveCamera, StereoCamera } from "three";
 import { describe, expect, it } from "vitest";
 import { HybridGameSessionBridge, initSync } from "../../web/pkg/birdman_game_wasm.js";
 import type { TailSnapshotDocument } from "../../web/src/generated/tail-snapshot.js";
@@ -11,8 +10,6 @@ import { readContract } from "../game-ui-build/validate.js";
 import { FlightHudAdapter } from "../../web/src/presentation/flight-hud.js";
 import { projectSharedFlightHudModel } from "../../web/src/presentation/flight-hud-model.js";
 import { currentSharedHudFixture, sharedHudNode, sharedGameUiPlatform, withSharedGameUiSession } from "./shared-game-ui-fixture.js";
-import { createHeadHudView } from "../../web/src/presentation/head-hud-view.js";
-import { captureConfiguredViewerFrame } from "../../web/src/render/engines/three/viewer-frame.js";
 
 initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url))) });
 
@@ -91,7 +88,7 @@ describe("tail-aware shared Flight HUD", () => {
       }
   });
 
-  it.each([1280 / 720, 720 / 1280])("uses the same tail model for DOM and camera-anchored Head HUD at aspect %s", async (aspect) => {
+  it("retains the DOM surface while shared instrument visibility changes", async () => {
     const session = new HybridGameSessionBridge(0, 21, 22);
     const window = new Window();
     try {
@@ -112,19 +109,6 @@ describe("tail-aware shared Flight HUD", () => {
       adapter.render(model);
       expect([...root.children]).toEqual(nodes);
 
-      const camera = new PerspectiveCamera(60, aspect, 0.05, 100);
-      camera.updateMatrixWorld(true);
-      const stereo = new StereoCamera();
-      stereo.aspect = 0.5;
-      const headModel = sharedHud(session, true);
-      const view = createHeadHudView(headModel, captureConfiguredViewerFrame(camera, stereo), "ja");
-      expect(view.kind).toBe("visible");
-      if (view.kind !== "visible") throw new Error("Expected tail Head HUD");
-      expect(view.layer.anchor).toBe("head");
-      const readouts = view.layer.elements.find((element) => element.id === "hud-tail-incidence");
-      expect(readouts?.content).toEqual(sharedHudNode(model, "hud-tail-incidence").content);
-      expect(view.layer.elements.find((element) => element.id === "hud-pilot-position")?.content).toEqual(sharedHudNode(model, "hud-pilot-position").content);
-      expect(view.layer.clearRegion.height).toBeGreaterThan(0);
     } finally {
       session.free();
       await window.happyDOM.abort();

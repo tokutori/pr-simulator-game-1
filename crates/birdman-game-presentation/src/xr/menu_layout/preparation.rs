@@ -8,8 +8,39 @@ use crate::xr::{
 
 /// Bounded font observations owned with the platform UI resource.
 #[derive(Debug, Default)]
-pub struct MenuFontCache {
+pub struct SurfaceFontCache {
     entries: Vec<Vec<MenuTextMeasurement>>,
+}
+
+impl SurfaceFontCache {
+    pub(crate) fn measure(
+        &mut self,
+        requests: &[MenuTextRequest],
+        size: MenuSize,
+        measure: &mut impl FnMut(
+            &MenuTextRequest,
+            MenuSize,
+            &str,
+        ) -> Result<MenuGlyphMetrics, MenuLayoutFailure>,
+    ) -> Result<Vec<MenuTextMeasurement>, MenuLayoutFailure> {
+        if let Some(cached) = self.entries.iter().find(|entry| {
+            entry.len() == requests.len()
+                && entry
+                    .iter()
+                    .zip(requests)
+                    .all(|(metric, text)| metric.identity == text.identity)
+        }) {
+            return Ok(cached.clone());
+        }
+        let measured = measure_menu_text(requests, |index, value| {
+            measure(&requests[index], size, value)
+        })?;
+        if self.entries.len() >= 32 {
+            self.entries.remove(0);
+        }
+        self.entries.push(measured.clone());
+        Ok(measured)
+    }
 }
 
 /// Prepares the published shared UI with current frame values and platform font observations.
@@ -17,7 +48,7 @@ pub fn prepare_game_ui_menu(
     view: &GameUiView,
     frame: &GameUiFrame,
     input: MenuPreparationInput,
-    cache: &mut MenuFontCache,
+    cache: &mut SurfaceFontCache,
     mut measure: impl FnMut(
         &MenuTextRequest,
         MenuSize,
@@ -52,25 +83,8 @@ pub fn prepare_game_ui_menu(
                 observation.as_ref(),
             )? {
                 PreparationStep::Measure { plan, attempt } => {
-                    let cached = cache.entries.iter().find(|entry| {
-                        entry.len() == plan.texts.len()
-                            && entry
-                                .iter()
-                                .zip(&plan.texts)
-                                .all(|(metric, text)| metric.identity == text.identity)
-                    });
-                    let measurements = if let Some(cached) = cached {
-                        cached.clone()
-                    } else {
-                        let measured = measure_menu_text(&plan.texts, |index, value| {
-                            measure(&plan.texts[index], plan.source.surface_size, value)
-                        })?;
-                        if cache.entries.len() >= 32 {
-                            cache.entries.remove(0);
-                        }
-                        cache.entries.push(measured.clone());
-                        measured
-                    };
+                    let measurements =
+                        cache.measure(&plan.texts, plan.source.surface_size, &mut measure)?;
                     requested = Some(plan);
                     observation = Some(MenuPreparationObservation {
                         attempt,

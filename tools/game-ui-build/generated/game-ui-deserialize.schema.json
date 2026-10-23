@@ -1145,6 +1145,49 @@
         }
       ]
     },
+    "HeadHudPreparationInput": {
+      "additionalProperties": false,
+      "description": "Same-frame observations for the retained head-fixed UI.",
+      "properties": {
+        "font": {
+          "$ref": "#/$defs/MenuFont",
+          "description": "Platform font resource."
+        },
+        "frameRateLabel": {
+          "description": "Optional observed frame-rate label.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "locale": {
+          "description": "Text-shaping locale.",
+          "type": "string"
+        },
+        "profile": {
+          "$ref": "#/$defs/XrHeadHudProfile",
+          "description": "Optical HUD limits."
+        },
+        "viewRevision": {
+          "description": "Structural UI revision supplied by the owner.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "viewer": {
+          "$ref": "#/$defs/XrViewerFrame",
+          "description": "Current stereo observation."
+        }
+      },
+      "required": [
+        "viewRevision",
+        "viewer",
+        "profile",
+        "font",
+        "locale"
+      ],
+      "type": "object"
+    },
     "HudCue": {
       "description": "Stable identity for one independently configurable HUD cue.",
       "oneOf": [
@@ -2610,22 +2653,60 @@
       ],
       "type": "object"
     },
-    "XrInkSegment": {
+    "XrHeadHudProfile": {
       "additionalProperties": false,
-      "description": "One measured vertical glyph segment in its drawing surface's local metres.",
+      "description": "Shared optical limits and appearance of the head-fixed instrument layer.",
       "properties": {
-        "end": {
-          "$ref": "#/$defs/Vector3",
-          "description": "Opposite glyph boundary."
+        "clearHorizontalHalfAngleDegrees": {
+          "description": "Clear forward region's horizontal half-angle.",
+          "format": "double",
+          "type": "number"
         },
-        "start": {
-          "$ref": "#/$defs/Vector3",
-          "description": "First glyph boundary."
+        "clearVerticalHalfAngleDegrees": {
+          "description": "Clear forward region's vertical half-angle.",
+          "format": "double",
+          "type": "number"
+        },
+        "clipMargin": {
+          "description": "Normalized clip-space side margin.",
+          "format": "double",
+          "type": "number"
+        },
+        "distanceMeters": {
+          "description": "Head-to-plane distance in metres.",
+          "format": "double",
+          "type": "number"
+        },
+        "foregroundAlpha": {
+          "description": "Foreground alpha used by drawing adapters.",
+          "format": "double",
+          "type": "number"
+        },
+        "maximumHeightMeters": {
+          "description": "Maximum plane height in metres.",
+          "format": "double",
+          "type": "number"
+        },
+        "maximumWidthMeters": {
+          "description": "Maximum plane width in metres.",
+          "format": "double",
+          "type": "number"
+        },
+        "textHeightDegrees": {
+          "description": "Requested text height as a visual angle.",
+          "format": "double",
+          "type": "number"
         }
       },
       "required": [
-        "start",
-        "end"
+        "distanceMeters",
+        "maximumWidthMeters",
+        "maximumHeightMeters",
+        "clearHorizontalHalfAngleDegrees",
+        "clearVerticalHalfAngleDegrees",
+        "textHeightDegrees",
+        "clipMargin",
+        "foregroundAlpha"
       ],
       "type": "object"
     },

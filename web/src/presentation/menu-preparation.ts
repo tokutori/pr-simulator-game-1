@@ -5,9 +5,9 @@ import type { ViewerFrame } from "../render/contracts/viewer-frame.js";
 import type { MenuPreparationInput } from "../generated/menu-preparation-input.js";
 import type { MenuLayoutReply } from "../generated/menu-layout-reply.js";
 import { menuCanvasSize } from "./menu-canvas.js";
-import type { MenuDrawingContext } from "./menu-canvas.js";
+import type { SurfaceDrawingContext } from "./browser-canvas.js";
 
-export function prepareMenuPresentation(context: MenuDrawingContext, panel: UiPanel, scroll: MenuScrollContext,
+export function prepareMenuPresentation(context: SurfaceDrawingContext, panel: UiPanel, scroll: MenuScrollContext,
   progress: number, viewer: ViewerFrame, style: Readonly<{ locale: string; font: MenuFontIdentity; viewRevision: number }>,
   prepare: (input: MenuPreparationInput, measure: MenuFontMeasurer) => MenuLayoutReply): MenuPresentation {
   if (panel.anchor !== "menu") return { kind: "absent" };

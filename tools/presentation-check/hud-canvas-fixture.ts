@@ -1,6 +1,24 @@
-import type { HeadHudDrawingContext, HeadHudTextMetrics } from "../../web/src/presentation/head-hud-canvas.js";
+import type { SurfaceDrawingContext, SurfaceTextMetrics } from "../../web/src/presentation/browser-canvas.js";
+import { prepareHeadHudPresentation } from "../../web/src/presentation/head-hud-canvas.js";
+import { DEFAULT_XR_HEAD_HUD_PROFILE } from "../../web/src/generated/xr-head-hud-profile.js";
+import type { ViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
+import type { HeadHudLayer } from "../../web/src/render/contracts/head-hud.js";
+import { withSharedGameUiSession } from "../game-check/shared-game-ui-fixture.js";
+import type { SharedGameUiFixtureOptions } from "../game-check/shared-game-ui-fixture.js";
 
-export class HudCanvasFixture implements HeadHudDrawingContext {
+export function prepareHeadHudFixture(viewer: ViewerFrame, options: SharedGameUiFixtureOptions = {}): HeadHudLayer {
+  return withSharedGameUiSession("flight_running", { ...options, platform: { ...options.platform, presentation_mode: "hmd" } }, (session, platform) => {
+    const view = session.readSharedUi(platform);
+    const reply = prepareHeadHudPresentation(new HudCanvasFixture(), { viewRevision: view.view_revision, viewer,
+      profile: DEFAULT_XR_HEAD_HUD_PROFILE, locale: "ja", frameRateLabel: null,
+      font: { family: "Arial, sans-serif", weight: 600, style: "normal", generation: 0 } },
+      (input, measure) => session.prepareSharedHeadHud(input, platform, measure));
+    if (reply.kind === "unavailable") throw new Error(JSON.stringify(reply));
+    return reply.kind === "absent" ? reply : { kind: "visible", ...reply.projection };
+  });
+}
+
+export class HudCanvasFixture implements SurfaceDrawingContext {
   readonly locales: string[] = [];
   readonly painted: string[] = [];
   readonly clears: number[][] = [];
@@ -13,7 +31,7 @@ export class HudCanvasFixture implements HeadHudDrawingContext {
   fillRect(...dimensions: [number, number, number, number]): void { this.fills.push(dimensions); }
   fillGradientRect(): void {}
   fillText(value: string): void { this.painted.push(value); }
-  measureText(value: string): HeadHudTextMetrics {
+  measureText(value: string): SurfaceTextMetrics {
     const width = Array.from(value).reduce((sum, character) => sum + this.fontSize * (character.charCodeAt(0) > 255 ? 1 : 0.65), 0);
     return { width, left: 0, right: width, ascent: this.invalidMetrics ? Number.NaN : this.fontSize * 0.7, descent: this.fontSize * 0.2 };
   }

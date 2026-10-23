@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 mod types;
 pub use types::*;
 mod preparation;
-pub use preparation::{MenuFontCache, prepare_game_ui_menu};
+pub use preparation::{SurfaceFontCache, prepare_game_ui_menu};
 mod text;
 pub use text::*;
 mod projection;

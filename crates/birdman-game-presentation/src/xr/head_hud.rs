@@ -230,13 +230,13 @@ pub fn project_xr_head_hud(
         } else {
             frame_rate_height + gap
         };
+        if frame_rate_height > top_band_height {
+            break;
+        }
         let space = GameUiHeadHudSpace {
             size_m: [width, height],
             text_height_m: text_height,
-            top_band_m: [
-                padding + frame_rate_offset,
-                (top_band_height - frame_rate_offset).max(0.0),
-            ],
+            top_band_m: [padding, (top_band_height - frame_rate_offset).max(0.0)],
             bottom_band_m: [height / 2.0 - clear_bottom + gap, bottom_band_height],
         };
         let fit = hud.map_or_else(
@@ -253,7 +253,7 @@ pub fn project_xr_head_hud(
             let label_width = card_width.min((label.chars().count() as f64 + 2.0) * text_height);
             GameUiRect {
                 x: (width - padding - label_width) / width,
-                y: padding / height,
+                y: (height / 2.0 - clear_top - gap - frame_rate_height) / height,
                 width: label_width / width,
                 height: frame_rate_height / height,
             }

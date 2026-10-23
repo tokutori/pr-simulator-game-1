@@ -37,8 +37,6 @@ pub fn export_game_ui_schema(name: &str) -> Result<String, String> {
     output.subschema_for::<crate::xr::XrViewerFrame>();
     output.subschema_for::<crate::xr::XrHeadHudProfile>();
     output.subschema_for::<crate::xr::XrFlightMenuGeometry>();
-    output.subschema_for::<crate::xr::XrHeadHudProjection>();
-    output.subschema_for::<crate::xr::XrInkFit>();
     output.subschema_for::<crate::xr::XrCameraRig>();
     output.subschema_for::<crate::camera::PilotEyePose>();
     output.subschema_for::<crate::camera::FrdPose>();
@@ -48,6 +46,7 @@ pub fn export_game_ui_schema(name: &str) -> Result<String, String> {
     output.subschema_for::<crate::xr::XrPointerProjection>();
     output.subschema_for::<crate::xr::MenuSessionState>();
     output.subschema_for::<crate::xr::MenuLayoutReply>();
+    output.subschema_for::<crate::xr::HeadHudPaintReply>();
     output.subschema_for::<crate::screen_render_auto::ScreenRenderAutoSnapshot>();
     output.subschema_for::<crate::replay_camera::ReplayCameraView>();
     output.subschema_for::<birdman_game_app::record_query::PlaybackContext<'_>>();
@@ -67,7 +66,6 @@ pub fn export_game_ui_schema(name: &str) -> Result<String, String> {
         .into_generator();
     input.subschema_for::<GameUiAction>();
     input.subschema_for::<GameUiPlatformInput>();
-    input.subschema_for::<crate::xr::XrInkSegment>();
     input.subschema_for::<crate::xr::XrViewerObservation>();
     input.subschema_for::<crate::xr::XrCameraMount>();
     input.subschema_for::<crate::xr::XrPanelObservation>();
@@ -75,6 +73,7 @@ pub fn export_game_ui_schema(name: &str) -> Result<String, String> {
     input.subschema_for::<crate::xr::XrPointerObservation>();
     input.subschema_for::<crate::xr::MenuSessionInput>();
     input.subschema_for::<crate::xr::MenuPreparationInput>();
+    input.subschema_for::<crate::xr::HeadHudPreparationInput>();
     input.subschema_for::<birdman_game_app::application::PresentationObservation>();
     input.subschema_for::<birdman_game_app::flight_input::FlightKeyObservation>();
     input.subschema_for::<birdman_game_app::flight_input::FlightGamepadObservation>();
@@ -120,9 +119,6 @@ pub fn export_game_ui_schema(name: &str) -> Result<String, String> {
         "xr-viewer-frame" => ("serialize", "XrViewerFrame"),
         "xr-head-hud-profile" => ("serialize", "XrHeadHudProfile"),
         "xr-flight-menu-geometry" => ("serialize", "XrFlightMenuGeometry"),
-        "xr-head-hud-projection" => ("serialize", "XrHeadHudProjection"),
-        "xr-ink-fit" => ("serialize", "XrInkFit"),
-        "xr-ink-segment" => ("deserialize", "XrInkSegment"),
         "screen-render-auto" => ("serialize", "ScreenRenderAutoSnapshot"),
         "replay-camera" => ("serialize", "ReplayCameraView"),
         "tail-snapshot" => ("serialize", "TailSnapshotDocument"),

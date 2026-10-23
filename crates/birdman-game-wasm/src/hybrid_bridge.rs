@@ -97,7 +97,7 @@ pub struct HybridGameSessionBridge {
     ui: birdman_game_presentation::game_ui::GameUiState,
     ui_structure: birdman_game_presentation::game_ui::GameUiStructureCache,
     ui_view_cache: Option<birdman_game_presentation::game_ui::GameUiView>,
-    ui_menu_fonts: birdman_game_presentation::xr::MenuFontCache,
+    ui_surface_fonts: birdman_game_presentation::xr::SurfaceFontCache,
 }
 
 #[wasm_bindgen]
@@ -281,7 +281,7 @@ impl HybridGameSessionBridge {
             ui: birdman_game_presentation::game_ui::GameUiState::default(),
             ui_structure: birdman_game_presentation::game_ui::GameUiStructureCache::default(),
             ui_view_cache: None,
-            ui_menu_fonts: birdman_game_presentation::xr::MenuFontCache::default(),
+            ui_surface_fonts: birdman_game_presentation::xr::SurfaceFontCache::default(),
         }
     }
 

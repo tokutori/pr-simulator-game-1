@@ -1,9 +1,9 @@
+import { NO_HEAD_HUD } from "../../web/src/render/contracts/head-hud.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { PerspectiveCamera, StereoCamera } from "three";
 import { createInitialAppModel, updateApp } from "../../web/src/app/app-state.js";
 import type { AppMessage, AppModel } from "../../web/src/app/app-state.js";
 import { FlightControllerUiBindings } from "../../web/src/app/flight-controller-port.js";
-import { createFlightFrameViewDraft, createFlightUiHudModel, finalizeFlightFrameView } from "../../web/src/app/flight-frame-view.js";
+import { createFlightUiHudModel, flightFrameView } from "../../web/src/app/flight-frame-view.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
 import { readFileSync } from "node:fs";
 import { initSync } from "../../web/pkg/birdman_game_wasm.js";
@@ -11,7 +11,6 @@ import { createAppSession } from "../../web/src/app/session-factory.js";
 import type { FlightGamepadObservation } from "../../web/src/generated/flight-gamepad.js";
 import { TailFlightController } from "../../web/src/game/tail-flight-controller.js";
 import { sharedGameUiPlatform, sharedHudNode } from "./shared-game-ui-fixture.js";
-import { captureConfiguredViewerFrame } from "../../web/src/render/engines/three/viewer-frame.js";
 import { viewExposesAction } from "../../web/src/render/contracts/ui.js";
 
 initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url))) });
@@ -34,17 +33,16 @@ describe("Flight controller shared stop diagnosis", () => {
         expect(sharedHudNode(hud, "hud-controller-failure").content.value).toContain("Gamepad permission denied");
         expect(sharedHudNode(hud, "hud-last-valid-state")).toMatchObject({ label: "最後の有効状態", content: { value: "0.01 s" } });
       } else expect(hud).toBeNull();
-      const draft = createFlightFrameViewDraft(model, viewer(), "ja");
+
       if (model.flightExecution.kind !== "stopped") throw new Error("Missing retained controller state");
-      expect(draft.model.flightExecution).toBe(model.flightExecution);
-      const view = finalizeFlightFrameView(draft, draft.headHud);
+      const view = flightFrameView(model, NO_HEAD_HUD);
       expect(view.description).toContain("停止");
       const diagnosis = view.panels[0]?.controls.find((control) => control.id === "game-controller-stopped");
       if (diagnosis?.kind !== "status") throw new Error("Missing stop diagnosis");
       expect(diagnosis.value).toContain("Gamepad permission denied");
       expect(viewExposesAction(view, { type: "activate", controlId: "game-paused-abort" })).toBe(true);
       if (mode !== "screen") {
-        expect(draft.headHud.kind).toBe("absent");
+        expect(view.headHud.kind).toBe("absent");
         expect(view.panels.flatMap(panel => panel.controls).some(control => control.id === "game-controller-stopped")).toBe(true);
       }
     }
@@ -265,12 +263,4 @@ function fixture(mode: "screen" | "phone-vr" | "webxr", informationCode = 0) {
       return retained;
     }
   };
-}
-
-function viewer() {
-  const camera = new PerspectiveCamera(60, 1280 / 720, 0.05, 100_000);
-  const stereo = new StereoCamera();
-  stereo.aspect = 0.5;
-  camera.updateMatrixWorld(true);
-  return captureConfiguredViewerFrame(camera, stereo);
 }

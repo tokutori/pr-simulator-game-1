@@ -2,7 +2,7 @@
 
 use birdman_game_presentation::{
     camera::{compose_pose, inverse_pose},
-    game_ui::{GameUiAnchor, GameUiHud},
+    game_ui::GameUiAnchor,
     xr::*,
 };
 use serde::Deserialize;
@@ -12,12 +12,8 @@ use std::io::{Read, Write};
 #[serde(deny_unknown_fields)]
 struct Observation {
     viewer: XrViewerFrame,
-    hud: Option<GameUiHud>,
-    profile: XrHeadHudProfile,
     panel_pose: Pose,
     panel_size: [f64; 2],
-    head_from_surface: Pose,
-    ink: Vec<XrInkSegment>,
     spatial: SpatialObservation,
 }
 
@@ -25,17 +21,57 @@ struct Observation {
 #[serde(deny_unknown_fields)]
 struct Batch {
     optics: Vec<Observation>,
-    custom_hud: CustomHudBatch,
+    head: Vec<HeadObservation>,
     interaction: PointerScenario,
     menu: Vec<MenuObservation>,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct CustomHudBatch {
-    viewer: XrViewerFrame,
-    profile: XrHeadHudProfile,
-    huds: Vec<GameUiHud>,
+struct HeadObservation {
+    view: birdman_game_presentation::game_ui::GameUiView,
+    frame: birdman_game_presentation::game_ui::GameUiFrame,
+    input: HeadHudPreparationInput,
+    probes: Vec<TextProbe>,
+}
+
+fn head_results(observations: Vec<HeadObservation>) -> Vec<HeadHudPaintReply> {
+    observations
+        .into_iter()
+        .map(|observation| {
+            let mut probes = observation.probes.iter();
+            let reply = prepare_game_ui_head_hud(
+                &observation.view,
+                &observation.frame,
+                observation.input,
+                &mut SurfaceFontCache::default(),
+                |request, size, value| {
+                    let probe = probes.next().ok_or(MenuLayoutFailure::InvalidTextMetrics)?;
+                    if probe.value != value
+                        || probe.weight != request.font.weight
+                        || (probe.font_meters - request.font_meters).abs() > 1.0e-12
+                        || (probe.size.width - size.width).abs() > 1.0e-12
+                        || (probe.size.height - size.height).abs() > 1.0e-12
+                    {
+                        return Err(MenuLayoutFailure::InvalidTextMetrics);
+                    }
+                    let [advance, left, right, ascent, descent] = probe.metrics;
+                    Ok(MenuGlyphMetrics {
+                        advance,
+                        left,
+                        right,
+                        ascent,
+                        descent,
+                    })
+                },
+            );
+            assert!(
+                probes.next().is_none(),
+                "Native Head HUD consumed a different font observation trace"
+            );
+            reply
+        })
+        .collect()
 }
 
 #[derive(Deserialize)]
@@ -66,7 +102,7 @@ fn menu_results(observations: Vec<MenuObservation>) -> Vec<serde_json::Value> {
                 &observation.view,
                 &observation.frame,
                 observation.input,
-                &mut MenuFontCache::default(),
+                &mut SurfaceFontCache::default(),
                 |request, size, value| {
                     let probe = probes.next().ok_or(MenuLayoutFailure::InvalidTextMetrics)?;
                     if probe.value != value
@@ -126,29 +162,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut optics = Vec::with_capacity(batch.optics.len());
     for observation in batch.optics {
         optics.push(serde_json::json!({
-            "head": project_xr_head_hud(observation.hud.as_ref(), &observation.viewer,
-                observation.profile, Some("FPS 72.0"))?,
-            "ink": fit_xr_text_ink(&observation.viewer, &observation.ink,
-                observation.head_from_surface, 0.35),
             "spatial": spatial_results(&observation)?,
         }));
     }
-    let custom_hud = batch
-        .custom_hud
-        .huds
-        .iter()
-        .map(|hud| {
-            project_xr_head_hud(
-                Some(hud),
-                &batch.custom_hud.viewer,
-                batch.custom_hud.profile,
-                Some("FPS 72.0"),
-            )
-        })
-        .collect::<Result<Vec<_>, _>>()?;
     let output = serde_json::to_vec(&serde_json::json!({
         "optics": optics,
-        "custom_hud": custom_hud,
+        "head": head_results(batch.head),
         "interaction": pointer_results(&batch.interaction)?,
         "menu": menu_results(batch.menu),
     }))?;

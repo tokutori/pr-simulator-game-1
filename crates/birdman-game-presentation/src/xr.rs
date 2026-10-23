@@ -5,6 +5,7 @@ pub use crate::camera::{Pose, Quaternion, Vector3};
 
 mod geometry;
 mod head_hud;
+mod head_hud_paint;
 mod interaction;
 mod menu;
 mod menu_layout;
@@ -14,6 +15,7 @@ mod spatial_menu;
 
 pub use geometry::*;
 pub use head_hud::*;
+pub use head_hud_paint::*;
 pub use interaction::*;
 pub use menu::*;
 pub use menu_layout::*;

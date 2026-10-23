@@ -1,10 +1,11 @@
+import { NO_HEAD_HUD } from "./render/contracts/head-hud.js";
 import type { GamePhase } from "./app/session-snapshot.js";
 import "./styles.css";
 import { installBrowserPageLifecycle } from "./app/browser-page-lifecycle.js";
 import { BrowserFlightLogDownload } from "./app/browser-flight-log-download.js";
 import { createBootViewModel } from "./app/boot-view.js";
 import { createGameViewModel } from "./app/game-view.js";
-import { createFlightFrameViewDraft, createFlightUiHudModel, finalizeFlightFrameView, menuFrameFailureRecovery } from "./app/flight-frame-view.js";
+import { createFlightUiHudModel, flightFrameView, menuFrameFailureRecovery } from "./app/flight-frame-view.js";
 import { FlightControllerUiBindings } from "./app/flight-controller-port.js";
 import { screenUiVisible } from "./app/presentation-visibility.js";
 import { createAppSession, initializeWasmRuntime } from "./app/session-factory.js";
@@ -27,8 +28,12 @@ import { gameUiInputQuery } from "./generated/game-ui-input-query.js";
 import type { GameUiUpdate } from "./generated/game-ui-effects.js";
 import { ScreenPresentationBackend } from "./presentation/screen-backend.js";
 import { ScreenUiAdapter } from "./presentation/screen-ui.js";
-import { browserHeadHudContext, drawHeadHud, headHudCanvasSize, prepareHeadHudPaint, validateHeadHudPaint } from "./presentation/head-hud-canvas.js";
-import { browserMenuContext, drawMeasuredMenu, menuCanvasSize } from "./presentation/menu-canvas.js";
+import { drawHeadHud, prepareHeadHudPresentation } from "./presentation/head-hud-canvas.js";
+import { browserSurfaceContext } from "./presentation/browser-canvas.js";
+import { DEFAULT_XR_HEAD_HUD_PROFILE } from "./generated/xr-head-hud-profile.js";
+import type { HeadHudPaintReply } from "./generated/head-hud-paint-reply.js";
+import { formatFrameRate } from "./presentation/frame-rate.js";
+import { drawMeasuredMenu, menuCanvasSize } from "./presentation/menu-canvas.js";
 import { prepareMenuPresentation } from "./presentation/menu-preparation.js";
 import { MenuSession } from "./presentation/menu-session.js";
 import { menuContextCanInteract, menuExposesControl, menuInputGeometry, menuInputGeometryChanged } from "./presentation/menu-interaction.js";
@@ -53,7 +58,7 @@ import { FlightHudAdapter } from "./presentation/flight-hud.js";
 import type { MenuScrollScope, UiAction } from "./render/contracts/ui.js";
 import type { MenuPresentation, PreparedPresentationView, PresentationMode, RendererAdapter, RuntimeResult, ViewportSize } from "./render/contracts/runtime.js";
 import type { ViewerFrame } from "./render/contracts/viewer-frame.js";
-import type { HeadHudView } from "./presentation/head-hud-view.js";
+
 
 const mount = document.getElementById("app");
 if (!(mount instanceof HTMLElement)) throw new Error("Required app element is missing");
@@ -170,30 +175,28 @@ function currentFrameViewModel(viewer: ViewerFrame): PreparedPresentationView {
   synchronizeSharedGameUi();
   let frameModel = model;
   frameRateDisplay.render(runtime?.framesPerSecond ?? null, runtime?.currentMode === "screen");
-  let draft = createFlightFrameViewDraft(frameModel, viewer, displayLocale, runtime?.framesPerSecond ?? null);
-  let headView: HeadHudView = draft.headHud;
-  if (headView.kind === "visible") {
-    const dimensions = headHudCanvasSize(headView.layer);
-    if (headHudCanvas.width !== dimensions.width) headHudCanvas.width = dimensions.width;
-    if (headHudCanvas.height !== dimensions.height) headHudCanvas.height = dimensions.height;
-  }
   const headContext = headHudCanvas.getContext("2d");
-  const headDrawingContext = headContext === null ? null : browserHeadHudContext(headContext);
-  const preparation = headDrawingContext === null ? null : validateHeadHudPaint(
-    prepareHeadHudPaint(headDrawingContext, headView, headHudCanvas.width, headHudCanvas.height), viewer);
-  if (preparation !== null) {
-    if (preparation.kind === "unavailable") headView = Object.freeze({ kind: "unavailable", reason: preparation.reason });
-  } else if (headView.kind === "visible") {
-    headView = Object.freeze({ kind: "unavailable", reason: "text-overflow" });
-  }
+  const headDrawingContext = headContext === null ? null : browserSurfaceContext(headContext);
+  const headOwner = gameSession;
+  const headUi = frameModel.sharedGameUi;
+  const headRequested = frameModel.presentation.type === "ready" && frameModel.presentation.mode !== "screen";
+  const preparation: HeadHudPaintReply = !headRequested || headUi === null || headOwner === null
+    ? { kind: "absent" }
+    : headDrawingContext === null ? { kind: "unavailable", reason: "measurement-unavailable" }
+    : prepareHeadHudPresentation(headDrawingContext, {
+      viewRevision: headUi.view_revision, viewer, locale: displayLocale, profile: DEFAULT_XR_HEAD_HUD_PROFILE,
+      font: { family: "Arial, sans-serif", weight: 600, style: "normal", generation: menuFontGeneration },
+      frameRateLabel: formatFrameRate(runtime?.framesPerSecond ?? null)
+    }, (input, measure) => headOwner.prepareSharedHeadHud(input, sharedGameUiPlatformInput(), measure));
+  const headView = preparation.kind === "ready"
+    ? { kind: "visible" as const, ...preparation.projection } : preparation;
   const observedHeadHudFailure = headView.kind === "unavailable" ? headView.reason : null;
   if (headHudResourceFailure !== observedHeadHudFailure) {
     headHudResourceFailure = observedHeadHudFailure;
     synchronizeSharedGameUi();
     frameModel = model;
-    draft = Object.freeze({ ...draft, model: frameModel });
   }
-  const viewModel = finalizeFlightFrameView(draft, headView);
+  const viewModel = flightFrameView(frameModel, headView.kind === "visible" ? headView : NO_HEAD_HUD);
   const panel = viewModel.panels[0];
   const panelContext = panelCanvas.getContext("2d");
   const scroll = frameModel.menuScroll;
@@ -202,7 +205,7 @@ function currentFrameViewModel(viewer: ViewerFrame): PreparedPresentationView {
     : menuOwner === null || frameModel.sharedGameUi === null ? Object.freeze({ kind: "pending" })
     : document.fonts.status === "loading" ? Object.freeze({ kind: "pending" })
     : panelContext === null ? Object.freeze({ kind: "unavailable", reason: "context-unavailable" })
-    : prepareMenuPresentation(browserMenuContext(panelContext), panel, { scope: scroll.scope, generation: scroll.generation }, scroll.progress,
+    : prepareMenuPresentation(browserSurfaceContext(panelContext), panel, { scope: scroll.scope, generation: scroll.generation }, scroll.progress,
       viewer, { locale: displayLocale, viewRevision: frameModel.sharedGameUi.view_revision, font: { family: "Arial, sans-serif", weight: 600, style: "normal", generation: menuFontGeneration } }, (input, measure) => menuOwner.prepareSharedMenu(input, sharedGameUiPlatformInput(), measure));
   if (preparedMenu.kind === "ready") {
     if (menuInputGeometryChanged(presentedMenuGeometry, preparedMenu)) {
@@ -211,14 +214,19 @@ function currentFrameViewModel(viewer: ViewerFrame): PreparedPresentationView {
       queueMicrotask(() => { dispatch({ type: "menu-scroll-invalidated", context: observedContext }); });
     } else presentedMenuGeometry = menuInputGeometry(preparedMenu);
   } else if (preparedMenu.kind === "absent") presentedMenuGeometry = Object.freeze({ kind: "none" });
-  if (headDrawingContext !== null && preparation !== null) drawHeadHud(headDrawingContext,
-    viewModel.headHud.kind === "visible" ? preparation : { kind: "absent", width: preparation.width, height: preparation.height });
+  if (preparation.kind === "ready") {
+    const [width, height] = preparation.projection.canvasSize;
+    if (headHudCanvas.width !== width) headHudCanvas.width = width;
+    if (headHudCanvas.height !== height) headHudCanvas.height = height;
+  }
+  if (headContext !== null) drawHeadHud(browserSurfaceContext(headContext),
+    viewModel.headHud.kind === "visible" ? preparation : { kind: "absent" }, headHudCanvas.width, headHudCanvas.height);
   if (preparedMenu.kind === "ready" && panelContext !== null) {
     const dimensions = menuCanvasSize(preparedMenu.panel.size);
     if (panelCanvas.width !== dimensions.width) panelCanvas.width = dimensions.width;
     if (panelCanvas.height !== dimensions.height) panelCanvas.height = dimensions.height;
     try {
-      drawMeasuredMenu(browserMenuContext(panelContext), preparedMenu.viewport, panelCanvas.width, panelCanvas.height);
+      drawMeasuredMenu(browserSurfaceContext(panelContext), preparedMenu.viewport, panelCanvas.width, panelCanvas.height);
     } catch {
       preparedMenu = Object.freeze({ kind: "unavailable", reason: "drawing-unavailable" });
     }

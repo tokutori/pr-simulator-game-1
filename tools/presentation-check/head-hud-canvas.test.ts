@@ -1,356 +1,130 @@
 import { describe, expect, it } from "vitest";
-import { PerspectiveCamera, StereoCamera } from "three";
-import { currentSharedHeadHudFixture as currentSharedHudFixture, mapSharedHudNodes } from "../game-check/shared-game-ui-fixture.js";
-import { browserHeadHudContext, drawHeadHud, headHudCanvasSize, headHudPaintedTextInk, prepareHeadHudPaint, validateHeadHudPaint } from "../../web/src/presentation/head-hud-canvas.js";
-import type { HeadHudDrawingContext, HeadHudTextMetrics } from "../../web/src/presentation/head-hud-canvas.js";
-import { createHeadHudView } from "../../web/src/presentation/head-hud-view.js";
-import type { HeadHudView } from "../../web/src/presentation/head-hud-view.js";
-import type { FlightHudModel } from "../../web/src/presentation/flight-hud-model.js";
-import { captureConfiguredViewerFrame } from "../../web/src/render/engines/three/viewer-frame.js";
-import { projectHeadPoint } from "./viewer-fixture.js";
-import { IDENTITY_POSE, pose, transformPoint, vec3 } from "../../web/src/render/contracts/math.js";
-import { FLIGHT_MENU_GEOMETRY } from "../../web/src/render/contracts/ui.js";
-import { convexQuadsOverlap } from "./hud-canvas-fixture.js";
+import { withSharedGameUiSession } from "../game-check/shared-game-ui-fixture.js";
+import { prepareHeadHudPresentation, drawHeadHud } from "../../web/src/presentation/head-hud-canvas.js";
+import { DEFAULT_XR_HEAD_HUD_PROFILE } from "../../web/src/generated/xr-head-hud-profile.js";
+import { configuredViewerFixture } from "./viewer-fixture.js";
+import { HudCanvasFixture } from "./hud-canvas-fixture.js";
+import type { GameUiFrame } from "../../web/src/generated/game-ui-frame.js";
 
-class RecordingHeadContext implements HeadHudDrawingContext {
-  readonly locales: string[] = [];
-  negativeAscent = false;
-  negativeDescent = false;
-  readonly typography: { kind: "measure" | "draw"; locale: string; font: string; baseline: string; align: string }[] = [];
-  private locale = "";
-  private font = "";
-  private baseline = "";
-  private align = "";
-  readonly texts: { value: string; alpha: number; arguments: number; x: number; baseline: number; color: string }[] = [];
-  readonly fills: { alpha: number; left: number; top: number; width: number; height: number; color: string }[] = [];
-  readonly strokes: { startX: number; startY: number; endX: number; endY: number; color: string; alpha: number }[] = [];
-  readonly clears: number[][] = [];
-  readonly clips: number[][] = [];
-  readonly fonts: string[] = [];
-  private alpha = 1;
-  private fontSize = 1;
-  private fillColor = "";
-  private strokeColor = "";
-  private start = { x: 0, y: 0 };
-  private end = { x: 0, y: 0 };
-  private readonly states: { alpha: number; fontSize: number; fillColor: string; strokeColor: string }[] = [];
-  invalidMetrics = false;
-  excessiveInk = false;
-  tinyInk = false;
-  degreeFallback = false;
-
-  clearRect(...dimensions: [number, number, number, number]): void { this.clears.push(dimensions); }
-  fillRect(left: number, top: number, width: number, height: number): void { this.fills.push({ alpha: this.alpha, left, top, width, height, color: this.fillColor }); }
-  fillText(...args: [string, number, number]): void {
-    this.typography.push({ kind: "draw", locale: this.locale, font: this.font, baseline: this.baseline, align: this.align });
-    this.texts.push({ value: args[0], alpha: this.alpha, arguments: args.length, x: args[1], baseline: args[2], color: this.fillColor });
-  }
-  measureText(value: string): HeadHudTextMetrics {
-    this.typography.push({ kind: "measure", locale: this.locale, font: this.font, baseline: this.baseline, align: this.align });
-    const width = Array.from(value).reduce((sum, character) => sum + this.fontSize * (character === "°" && this.degreeFallback ? 1.1 : character.charCodeAt(0) > 255 ? 1 : 0.65), 0);
-    return { width, left: this.excessiveInk ? width * 10 : 0, right: width,
-      ascent: this.invalidMetrics ? Number.NaN : this.fontSize * (this.tinyInk || this.degreeFallback && value.trim() === "°" ? 0.1 : this.negativeAscent ? -0.1 : this.negativeDescent ? 1 : 0.7),
-      descent: this.fontSize * (this.tinyInk || this.degreeFallback && value.trim() === "°" ? 0.05 : this.negativeAscent ? 1 : this.negativeDescent ? -0.1 : 0.2) };
-  }
-  save(): void { this.states.push({ alpha: this.alpha, fontSize: this.fontSize, fillColor: this.fillColor, strokeColor: this.strokeColor }); }
-  restore(): void {
-    const state = this.states.pop();
-    if (state === undefined) throw new Error("Unbalanced Canvas restore");
-    this.alpha = state.alpha;
-    this.fontSize = state.fontSize;
-    this.fillColor = state.fillColor;
-    this.strokeColor = state.strokeColor;
-  }
-  setFont(value: string): void { this.fonts.push(value); this.font = value; this.fontSize = Number(value.match(/([\d.]+)px/)?.[1] ?? 1); }
-  setGlobalAlpha(value: number): void { this.alpha = value; }
-  rect(...dimensions: [number, number, number, number]): void { this.clips.push(dimensions); }
-  setFillStyle(value: string): void { this.fillColor = value; }
-  setLocale(locale: string): void { this.locales.push(locale); this.locale = locale; }
-  setStrokeStyle(value: string): void { this.strokeColor = value; }
-  setTextBaseline(value: "top" | "middle"): void { this.baseline = value; }
-  setTextAlign(value: "left"): void { this.align = value; }
-  setLineWidth(): void {}
-  strokeRect(): void {}
-  beginPath(): void {}
-  closePath(): void {}
-  clip(): void {}
-  fill(): void {}
-  moveTo(x: number, y: number): void { this.start = { x, y }; }
-  lineTo(x: number, y: number): void { this.end = { x, y }; }
-  stroke(): void { this.strokes.push({ startX: this.start.x, startY: this.start.y, endX: this.end.x, endY: this.end.y,
-    color: this.strokeColor, alpha: this.alpha }); }
-}
-
-function flightView(aspect = 1280 / 720, model: FlightHudModel = currentSharedHudFixture({ informationCode: 4 })): Extract<HeadHudView, { kind: "visible" }> {
-  const camera = new PerspectiveCamera(60, aspect, 0.05, 100);
-  camera.updateMatrixWorld(true);
-  const stereo = new StereoCamera();
-  stereo.aspect = 0.5;
-  const view = createHeadHudView(model, captureConfiguredViewerFrame(camera, stereo), "ja");
-  if (view.kind !== "visible") throw new Error("Expected visible fixture");
-  return view;
-}
-
-describe("Head HUD Canvas preflight and painting", () => {
-  it("keeps a wide fallback degree sign with the numeric heading and angle in portrait", () => {
-    const context = new RecordingHeadContext();
-    context.degreeFallback = true;
-    const camera = new PerspectiveCamera(60, 720 / 1280, 0.05, 100);
-    camera.updateMatrixWorld(true);
-    const stereo = new StereoCamera();
-    stereo.aspect = 0.5;
-    const viewer = captureConfiguredViewerFrame(camera, stereo);
-    const view = createHeadHudView(currentSharedHudFixture({ informationCode: 0 }), viewer, "ja");
-    if (view.kind !== "visible") throw new Error("Missing portrait HUD");
-    const size = headHudCanvasSize(view.layer);
-    const prepared = prepareHeadHudPaint(context, view, size.width, size.height);
-    expect(validateHeadHudPaint(prepared, viewer).kind).toBe("ready");
-    expect(headHudPaintedTextInk(prepared).some(line => line.value.trim() === "°")).toBe(false);
-  });
-
-  it.each([0.5, 0.17])("paints shared ADI, heading labels and AoA +5 at shared ratio %s with theme and opacity", (ratio) => {
-    const shared = currentSharedHudFixture({ informationCode: 0 });
-    const theme = { ...shared.theme, text: "#123456", panel_background: "#234567", muted_text: "#345678", focus_outline: "#456789" };
-    const headingTicks = [
-          { position_ratio: 0.24, major: true, label: "N" },
-          { position_ratio: 0.51, major: false, label: "NE" },
-          { position_ratio: 0.76, major: true, label: "E" }
-        ];
-    const model = mapSharedHudNodes({ ...shared, theme, layout: { ...shared.layout, opacity: 0.41 } }, (node) => {
-      switch (node.content.kind) {
-        case "attitude": return node.content.geometry.kind !== "attitude" ? node : { ...node, content: { ...node.content, geometry: { ...node.content.geometry, horizon: { ...node.content.geometry.horizon, rotation_degrees: 17, pitch_offset_ratio: 0.21 }, flight_path_y_ratio: 0.73 } } };
-        case "heading_tape": return { ...node, content: { ...node.content, value: "SHARED 125.75°", ticks: headingTicks } };
-        case "linear_gauge": return { ...node, content: { ...node.content, value: "5.0°", position_ratio: ratio } };
-        case "text":
-        case "direction": return node;
+describe("Retained Head HUD surface", () => {
+  it.each([["title", 1280, 720], ["flight_running", 1280, 720], ["flight_running", 720, 1280]] as const)("prepares and draws the current %s owner frame at %sx%s with cached platform font observations", (phase, width, height) => {
+    withSharedGameUiSession(phase, { informationCode: 0, platform: { presentation_mode: "hmd" } }, (session, platform, bridge) => {
+      const view = session.readSharedUi(platform);
+      const context = new HudCanvasFixture();
+      const observeText = context.measureText.bind(context);
+      context.measureText = (value: string) => {
+        const metric = observeText(value);
+        return value.startsWith("FPS") ? { ...metric, descent: 0 } : metric;
+      };
+      const input = { viewRevision: view.view_revision, viewer: configuredViewerFixture(width, height),
+        locale: "ja", profile: DEFAULT_XR_HEAD_HUD_PROFILE, frameRateLabel: "FPS 72.0",
+        font: { family: "Arial, sans-serif", weight: 600, style: "normal" as const, generation: 0 } };
+      const prepare = () => prepareHeadHudPresentation(context, input, (request, measure) => session.prepareSharedHeadHud(request, platform, measure));
+      const reply = prepare();
+      expect(reply.kind).toBe("ready");
+      if (reply.kind !== "ready") throw new Error(JSON.stringify(reply));
+      const measured = context.fonts.length;
+      expect(prepare()).toEqual(reply);
+      expect(context.fonts).toHaveLength(measured);
+      const [canvasWidth, canvasHeight] = reply.projection.canvasSize;
+      drawHeadHud(context, reply, canvasWidth, canvasHeight);
+      expect(context.painted).toContain("FPS 72.0");
+      expect(context.painted.length > 1).toBe(phase === "flight_running");
+      expect(context.clears).toEqual([[0, 0, canvasWidth, canvasHeight]]);
+      expect(context.locales.every(locale => locale === "ja")).toBe(true);
+      const clips = reply.projection.items.filter(item => item.kind === "plot").map(item => item.clip);
+      const reservation = reply.projection.clearRegion;
+      const clear = { x: reservation.x * reply.projection.size.width, y: reservation.y * reply.projection.size.height,
+        width: reservation.width * reply.projection.size.width, height: reservation.height * reply.projection.size.height };
+      const overlaps = (first: typeof clear, second: typeof clear) => Math.min(first.x + first.width, second.x + second.width) - Math.max(first.x, second.x) > 1e-10
+        && Math.min(first.y + first.height, second.y + second.height) - Math.max(first.y, second.y) > 1e-10;
+      for (const [index, clip] of clips.entries()) {
+        expect(overlaps(clip, clear)).toBe(false);
+        for (const other of clips.slice(index + 1)) expect(overlaps(clip, other)).toBe(false);
+      }
+      if (phase === "flight_running") {
+        const frame = JSON.parse(bridge.game_ui_frame_json(view.view_revision, JSON.stringify(platform))) as GameUiFrame;
+        const nodes = frame.hud?.groups.flatMap(group => group.nodes) ?? [];
+        const index = nodes.findIndex(node => node.content.kind === "heading_tape");
+        const node = nodes[index];
+        const plot = reply.projection.items[index + 1];
+        if (node?.content.kind !== "heading_tape" || plot?.kind !== "plot") throw new Error("Missing heading projection");
+        const texts = plot.items.filter(item => item.kind === "text");
+        const font = texts[0]?.fontMeters;
+        if (font === undefined) throw new Error("Missing measured font");
+        const padding = font * 0.5;
+        const textRows = texts.length - node.content.ticks.filter(tick => tick.label !== "").length;
+        const top = plot.clip.y + padding + textRows * font * 1.5;
+        const height = node.instrument_height_em * font;
+        const lines = plot.items.filter(item => item.kind === "line");
+        expect(lines).toHaveLength(node.content.ticks.length + 1);
+        for (const [tickIndex, tick] of node.content.ticks.entries()) {
+          const line = lines[tickIndex];
+          const horizontal = plot.clip.x + padding + tick.position_ratio * (plot.clip.width - padding * 2);
+          expect(line?.start.x).toBeCloseTo(horizontal, 12);
+          expect(line?.end.x).toBeCloseTo(horizontal, 12);
+          expect(line?.start.y).toBeCloseTo(top + height * (tick.major ? 0.5 : 0.75), 12);
+          expect(line?.end.y).toBeCloseTo(top + height, 12);
+          expect(line?.color).toBe(tick.major ? view.theme.text : view.theme.muted_text);
+          expect(line?.opacity).toBe(input.profile.foregroundAlpha);
+          expect(horizontal).toBeGreaterThanOrEqual(plot.clip.x);
+          expect(horizontal).toBeLessThanOrEqual(plot.clip.x + plot.clip.width);
+        }
       }
     });
-    const view = flightView(1280 / 720, model);
-    const size = headHudCanvasSize(view.layer);
-    const context = new RecordingHeadContext();
-    const preparation = prepareHeadHudPaint(context, view, size.width, size.height);
-    if (preparation.kind !== "ready") throw new Error("Missing shared geometry paint plan");
-    const instrument = (id: string) => {
-      const card = preparation.cards.find((candidate) => candidate.element.id === id);
-      if (card === undefined) throw new Error(`Missing ${id} card`);
-      return { left: card.left + card.padding, top: card.top + card.padding + card.value.length * preparation.fontSize * 1.5,
-        width: card.width - card.padding * 2, height: card.instrumentHeight };
-    };
-    drawHeadHud(context, preparation);
-    expect(context.fills.every((fill) => fill.alpha === 0.41 && fill.color === theme.panel_background)).toBe(true);
-    expect(context.texts.every((text) => text.alpha === view.layer.foregroundAlpha)).toBe(true);
-    expect(context.texts.map((text) => text.value).join("")).toContain("SHARED 125.75°");
-    const attitude = instrument("hud-attitude");
-    const horizon = context.strokes.find((stroke) => stroke.color === theme.text &&
-      Math.abs((stroke.startX + stroke.endX) / 2 - (attitude.left + attitude.width / 2 - Math.sin(17 * Math.PI / 180) * 0.21 * attitude.height)) < 1e-6);
-    expect(horizon).toBeDefined();
-    expect(((horizon?.startY ?? 0) + (horizon?.endY ?? 0)) / 2)
-      .toBeCloseTo(attitude.top + attitude.height / 2 + Math.cos(17 * Math.PI / 180) * 0.21 * attitude.height, 9);
-    expect(context.strokes.some((stroke) => stroke.color === "#7df4c5" &&
-      Math.abs(stroke.startY - (attitude.top + 0.73 * attitude.height)) < 1e-6 &&
-      Math.abs(stroke.endX - (attitude.left + attitude.width / 2)) < 1e-6)).toBe(true);
-    const heading = instrument("hud-heading");
-    for (const tick of headingTicks) {
-      const x = heading.left + tick.position_ratio * heading.width;
-      expect(context.strokes).toContainEqual({ startX: x, endX: x, startY: heading.top + heading.height * (tick.major ? 0.5 : 0.75),
-        endY: heading.top + heading.height, color: tick.major ? theme.text : theme.muted_text, alpha: view.layer.foregroundAlpha });
-      if (tick.label !== "") {
-        const ink = headHudPaintedTextInk(preparation).find((candidate) => candidate.value === tick.label);
-        expect(ink).toBeDefined();
-        expect((ink?.left ?? 0) + (ink?.width ?? 0) / 2).toBeCloseTo(x, 9);
-        expect(context.texts).toContainEqual({ value: tick.label, alpha: view.layer.foregroundAlpha, arguments: 3,
-          x: ink?.x, baseline: ink?.baseline, color: theme.text });
+  });
+
+  it("projects the flight-path-only marker from the shared ratio into its clipped instrument surface", () => {
+    withSharedGameUiSession("flight_running", { informationCode: 4, hudProfile: {
+      telemetry: false, attitude: false, wind: false, flight_path: true, angle_of_attack: false, warnings: false
+    }, platform: { presentation_mode: "hmd" } }, (session, platform) => {
+      const view = session.readSharedUi(platform);
+      const reply = prepareHeadHudPresentation(new HudCanvasFixture(), { viewRevision: view.view_revision,
+        viewer: configuredViewerFixture(1280, 720), locale: "ja", profile: DEFAULT_XR_HEAD_HUD_PROFILE,
+        frameRateLabel: null, font: { family: "Arial", weight: 600, style: "normal", generation: 0 } },
+        (request, measure) => session.prepareSharedHeadHud(request, platform, measure));
+      if (reply.kind !== "ready") throw new Error(JSON.stringify(reply));
+      const node = view.hud?.groups.flatMap(group => group.nodes)[0];
+      const plot = reply.projection.items[0];
+      if (node?.content.kind !== "attitude" || node.content.geometry.kind !== "flight_path_only" || plot?.kind !== "plot") throw new Error("Missing path-only surface");
+      expect(reply.projection.items).toHaveLength(1);
+      const texts = plot.items.filter(item => item.kind === "text");
+      const font = texts[0]?.fontMeters;
+      if (font === undefined) throw new Error("Missing marker font scale");
+      const center = plot.clip.x + plot.clip.width / 2;
+      const baseline = plot.clip.y + font * 0.5 + texts.length * font * 1.5
+        + node.content.geometry.y_ratio * node.instrument_height_em * font;
+      const radius = font * 0.35;
+      const lines = plot.items.filter(item => item.kind === "line");
+      expect(lines).toHaveLength(2);
+      for (const [index, line] of lines.entries()) {
+        expect(line.start.x).toBeCloseTo(center + (index === 0 ? -radius : 0), 12);
+        expect(line.start.y).toBeCloseTo(baseline + (index === 0 ? 0 : -radius), 12);
+        expect(line.end.x).toBeCloseTo(center + (index === 0 ? 0 : radius), 12);
+        expect(line.end.y).toBeCloseTo(baseline + (index === 0 ? -radius : 0), 12);
+        expect(line.color).toBe("#7df4c5");
       }
-    }
-    const aoa = instrument("hud-angle-of-attack");
-    const markerX = aoa.left + aoa.width * (0.05 + ratio * 0.9);
-    expect(context.strokes.some((stroke) => stroke.color === theme.focus_outline &&
-      Math.abs(stroke.startX - markerX) < 1e-6 && Math.abs(stroke.endX - markerX) < 1e-6 &&
-      Math.abs(stroke.startY - (aoa.top + aoa.height * 0.35)) < 1e-6 &&
-      Math.abs(stroke.endY - (aoa.top + aoa.height * 0.85)) < 1e-6)).toBe(true);
-  });
-
-  it("paints FlightPathOnly at the shared ADI vertical ratio without an attitude horizon", () => {
-    const shared = currentSharedHudFixture({ informationCode: 4,
-      hudProfile: { telemetry: false, attitude: false, wind: false, flight_path: true, angle_of_attack: false, warnings: false } });
-    const model = mapSharedHudNodes(shared, (node) => node.content.kind === "attitude"
-      ? { ...node, content: { ...node.content, value: "28°", geometry: { kind: "flight_path_only", y_ratio: 0.37 } } } : node);
-    const view = flightView(1280 / 720, model);
-    const size = headHudCanvasSize(view.layer);
-    const context = new RecordingHeadContext();
-    const preparation = prepareHeadHudPaint(context, view, size.width, size.height);
-    if (preparation.kind !== "ready") throw new Error("Missing FlightPathOnly paint plan");
-    const card = preparation.cards.find((candidate) => candidate.element.content.kind === "attitude");
-    if (card === undefined) throw new Error("Missing FlightPathOnly card");
-    const markerY = card.top + card.padding + card.value.length * preparation.fontSize * 1.5 + 0.37 * card.instrumentHeight;
-    drawHeadHud(context, preparation);
-    expect(context.strokes).toHaveLength(2);
-    expect(context.strokes[0]?.startY).toBeCloseTo(markerY, 9);
-    expect(context.strokes[1]?.endY).toBeCloseTo(markerY, 9);
-  });
-
-  it.each([true, false])("sets detached canvas language with context language support %s", (contextLanguageSupported) => {
-    const canvas = { lang: "" };
-    const context = contextLanguageSupported ? { canvas, lang: "inherit" } : { canvas };
-    const adapter = browserHeadHudContext(context as unknown as CanvasRenderingContext2D);
-    adapter.setLocale("ja");
-    expect(canvas.lang).toBe("ja");
-    if ("lang" in context) expect(context.lang).toBe("ja");
-    else expect(Object.hasOwn(context, "lang")).toBe(false);
-  });
-
-  it("uses the explicit view locale for measurement and painting", () => {
-    const view = flightView();
-    const size = headHudCanvasSize(view.layer);
-    const context = new RecordingHeadContext();
-    const preparation = prepareHeadHudPaint(context, view, size.width, size.height);
-    expect(context.locales).toEqual(["ja"]);
-    drawHeadHud(context, preparation);
-    expect(context.locales).toEqual(["ja", "ja"]);
-    expect(context.fonts.at(-1)).toBe(context.fonts[0]);
-    expect(context.typography.some((state) => state.kind === "measure")).toBe(true);
-    expect(context.typography.some((state) => state.kind === "draw")).toBe(true);
-    expect(context.typography.every((state) => state.locale === "ja" && state.font === context.fonts[0] && state.baseline === "middle" && state.align === "left")).toBe(true);
-  });
-
-  it.each(["negativeAscent", "negativeDescent"] as const)("preserves valid %s metrics and their actual ink bounds", (field) => {
-    const view = flightView();
-    const size = headHudCanvasSize(view.layer);
-    const context = new RecordingHeadContext();
-    context[field] = true;
-    const preparation = prepareHeadHudPaint(context, view, size.width, size.height);
-    expect(preparation.kind).toBe("ready");
-    if (preparation.kind !== "ready") throw new Error("Signed ink plan missing");
-    expect(preparation.cards.every((card) => card.value.every((line) => (field === "negativeAscent" ? line.metrics.ascent : line.metrics.descent) < 0))).toBe(true);
-    expect(headHudPaintedTextInk(preparation).every((ink) => ink.height > 0 && (field === "negativeAscent" ? ink.top > ink.baseline : ink.top + ink.height < ink.baseline))).toBe(true);
-    drawHeadHud(context, preparation);
-    expect(context.texts.length).toBeGreaterThan(0);
-  });
-
-  it.each([1280 / 720, 720 / 1280].flatMap((aspect) => [0, 4].map((code) => ({ aspect, code }))))("fits all cues with envelope warning and long values for Information $code at aspect $aspect", ({ aspect, code }) => {
-      const camera = new PerspectiveCamera(60, aspect, 0.05, 100); camera.updateMatrixWorld(true);
-    const stereo = new StereoCamera(); stereo.aspect = 0.5;
-    const viewer = captureConfiguredViewerFrame(camera, stereo);
-    const model = mapSharedHudNodes(currentSharedHudFixture({ informationCode: code as 0 | 4,
-      platform: { flight_controller_failure: "モデルの適用範囲を超えたため終了した" } }), (node) => {
-      if (node.id === "hud-primary-readouts") return { ...node, content: { ...node.content, value: "ALT 123.4 m · IAS 12.3 m/s · GS 23.4 m/s\n123.40 s · distance 1234.5 m" } };
-      return node.content.kind === "direction" ? { ...node, content: { ...node.content, value: "N -12.3 · E +5.6 · D -8.9 m/s" } } : node;
     });
-    const view = createHeadHudView(model, viewer, "ja");
-    if (view.kind !== "visible") throw new Error("Missing warning-and-long-values layout");
-    expect(view.layer.elements.some((element) => element.id === "hud-controller-failure")).toBe(true);
-    const size = headHudCanvasSize(view.layer);
-    expect(validateHeadHudPaint(prepareHeadHudPaint(new RecordingHeadContext(), view, size.width, size.height), viewer).kind).toBe("ready");
-  });
-  it.each([1280 / 720, 720 / 1280].flatMap((aspect) => [0, 1, 2, 3, 4].map((code) => ({ aspect, code }))))("fits Information $code with nominal Menu and measured ink at aspect $aspect", ({ aspect, code }) => {
-      const camera = new PerspectiveCamera(60, aspect, 0.05, 100); camera.updateMatrixWorld(true);
-    const stereo = new StereoCamera(); stereo.aspect = 0.5;
-    const viewer = captureConfiguredViewerFrame(camera, stereo);
-    if (viewer.source === "unavailable") throw new Error("Missing binocular fixture");
-    const hudModel = currentSharedHudFixture({ informationCode: code as 0 | 1 | 2 | 3 | 4 });
-    const view = createHeadHudView(hudModel, viewer, "ja");
-    if (view.kind !== "visible") throw new Error("Missing Information layout");
-    const size = headHudCanvasSize(view.layer);
-    expect(validateHeadHudPaint(prepareHeadHudPaint(new RecordingHeadContext(), view, size.width, size.height), viewer).kind).toBe("ready");
-    const menuPose = pose(vec3(0, FLIGHT_MENU_GEOMETRY.centerY, -FLIGHT_MENU_GEOMETRY.distanceMeters), IDENTITY_POSE.orientation);
-    const corners = [[-1, 1], [1, 1], [1, -1], [-1, -1]] as const;
-    for (const eye of viewer.eyes) {
-      const menuProjection = corners.map(([horizontal, vertical]) => projectHeadPoint(eye,
-        transformPoint(menuPose, vec3(horizontal * FLIGHT_MENU_GEOMETRY.width / 2, vertical * FLIGHT_MENU_GEOMETRY.height / 2, 0))));
-      if (menuProjection.some((point) => point === null)) throw new Error("Missing Menu projection");
-      for (const element of view.layer.elements) {
-        const bounds = element.bounds;
-        const cardProjection = corners.map(([horizontal, vertical]) => projectHeadPoint(eye, transformPoint(view.layer.localPose,
-          vec3((bounds.left + (horizontal + 1) * bounds.width / 2 - 0.5) * view.layer.size.width,
-            (0.5 - bounds.top - (1 - vertical) * bounds.height / 2) * view.layer.size.height, 0))));
-        if (cardProjection.some((point) => point === null)) throw new Error("Missing card projection");
-        expect(convexQuadsOverlap(cardProjection.filter((point) => point !== null), menuProjection.filter((point) => point !== null))).toBe(false);
-      }
-    }
   });
 
-  it.each([1280 / 720, 720 / 1280].flatMap((aspect) => Array.from({ length: 64 }, (_, mask) => ({ aspect, mask }))))("preflights independent Custom mask $mask at aspect $aspect", ({ aspect, mask }) => {
-      const camera = new PerspectiveCamera(60, aspect, 0.05, 100); camera.updateMatrixWorld(true);
-    const stereo = new StereoCamera(); stereo.aspect = 0.5;
-    const viewer = captureConfiguredViewerFrame(camera, stereo);
-    const custom = { telemetry: (mask & 1) !== 0, attitude: (mask & 2) !== 0, wind: (mask & 4) !== 0,
-      flight_path: (mask & 8) !== 0, angle_of_attack: (mask & 16) !== 0, warnings: (mask & 32) !== 0 };
-    const view = createHeadHudView(currentSharedHudFixture({ informationCode: 4, hudProfile: custom }), viewer, "ja");
-    if (mask === 0 || mask === 32) { expect(view.kind).toBe("absent"); return; }
-    if (view.kind !== "visible") throw new Error("Missing Custom layout");
-    const size = headHudCanvasSize(view.layer);
-    expect(validateHeadHudPaint(prepareHeadHudPaint(new RecordingHeadContext(), view, size.width, size.height), viewer).kind).toBe("ready");
-  });
-  it("rejects small measured ink before painting even if font em and wrapping fit", () => {
-    const camera = new PerspectiveCamera(60, 1280 / 720, 0.05, 100);
-    camera.updateMatrixWorld(true);
-    const stereo = new StereoCamera(); stereo.aspect = 0.5;
-    const viewer = captureConfiguredViewerFrame(camera, stereo);
-    const view = flightView();
-    const size = headHudCanvasSize(view.layer);
-    const context = new RecordingHeadContext();
-    const ready = prepareHeadHudPaint(context, view, size.width, size.height);
-    expect(validateHeadHudPaint(ready, viewer).kind).toBe("ready");
-    expect(headHudPaintedTextInk(ready).length).toBeGreaterThan(0);
-    context.tinyInk = true;
-    const small = prepareHeadHudPaint(context, view, size.width, size.height);
-    expect(small.kind).toBe("ready");
-    const rejected = validateHeadHudPaint(small, viewer);
-    expect(rejected.kind).toBe("unavailable");
-    drawHeadHud(context, rejected);
-    expect(context.texts).toEqual([]);
-  });
-  it.each([1280 / 720, 720 / 1280])("preserves physical aspect and font-em height at aspect %s", (aspect) => {
-    const view = flightView(aspect);
-    const size = headHudCanvasSize(view.layer);
-    expect(Math.abs(size.width / size.height - view.layer.size.width / view.layer.size.height)).toBeLessThan(1 / size.height);
-    const context = new RecordingHeadContext();
-    const preparation = prepareHeadHudPaint(context, view, size.width, size.height);
-    expect(preparation.kind).toBe("ready");
-    expect(context.clears).toHaveLength(0);
-    expect(context.fills).toHaveLength(0);
-    expect(context.texts).toHaveLength(0);
-    if (preparation.kind !== "ready") throw new Error("Missing ready plan");
-    expect(Object.isFrozen(preparation.cards)).toBe(true);
-    expect(preparation.fontSize * view.layer.size.height / size.height).toBeCloseTo(view.textHeightMeters, 12);
-    drawHeadHud(context, preparation);
-    expect(context.clears).toEqual([[0, 0, size.width, size.height]]);
-    expect(context.fills).toHaveLength(view.layer.elements.length);
-    expect(context.fills.every((fill) => fill.alpha === view.layer.backgroundAlpha && fill.color === view.layer.theme.panel_background)).toBe(true);
-    expect(context.texts.every((text) => text.alpha === 1 && text.arguments === 3)).toBe(true);
-    expect(context.fonts.at(-1)).toBe(context.fonts[0]);
-    for (const fill of context.fills) {
-      const clear = view.layer.clearRegion;
-      expect(fill.left + fill.width <= clear.left * size.width || fill.left >= (clear.left + clear.width) * size.width ||
-        fill.top + fill.height <= clear.top * size.height || fill.top >= (clear.top + clear.height) * size.height).toBe(true);
-    }
-    const wind = preparation.cards.find((card) => card.element.content.kind === "direction");
-    if (wind === undefined) throw new Error("Missing wind card");
-    expect(wind.value.map((line) => line.value).join(""))
-      .toBe(`${wind.element.label} ${wind.element.content.value}`.replaceAll("\n", ""));
-  });
-
-  it.each(["invalidMetrics", "excessiveInk"] as const)("rejects %s before painting any card", (field) => {
-    const context = new RecordingHeadContext();
-    context[field] = true;
-    const view = flightView();
-    const size = headHudCanvasSize(view.layer);
-    const preparation = prepareHeadHudPaint(context, view, size.width, size.height);
-    expect(preparation).toMatchObject({ kind: "unavailable", reason: "text-overflow" });
-    drawHeadHud(context, preparation);
-    expect(context.clears).toHaveLength(1);
-    expect(context.fills).toHaveLength(0);
-    expect(context.texts).toHaveLength(0);
-  });
-
-  it("clears absent and geometry-unavailable frames without reusing the preceding paint plan", () => {
-    const context = new RecordingHeadContext();
-    for (const view of [{ kind: "absent" }, { kind: "unavailable", reason: "viewer-unavailable" }] as const) {
-      const preparation = prepareHeadHudPaint(context, view, 1024, 768);
-      expect(preparation.kind).toBe(view.kind);
-      drawHeadHud(context, preparation);
-    }
-    expect(context.clears).toEqual([[0, 0, 1024, 768], [0, 0, 1024, 768]]);
-    expect(context.fills).toHaveLength(0);
+  it.each(["nonfinite", "tiny"] as const)("rejects %s live font ink through the owner boundary", (kind) => {
+    withSharedGameUiSession("flight_running", { platform: { presentation_mode: "hmd" } }, (session, platform) => {
+      const view = session.readSharedUi(platform);
+      const context = new HudCanvasFixture();
+      context.invalidMetrics = kind === "nonfinite";
+      const measureText = context.measureText.bind(context);
+      context.measureText = (value: string) => {
+        const measured = measureText(value);
+        return kind === "tiny" ? { ...measured, ascent: measured.ascent / 7, descent: measured.descent / 4 } : measured;
+      };
+      const reply = prepareHeadHudPresentation(context, { viewRevision: view.view_revision,
+        viewer: configuredViewerFixture(1280, 720), locale: "ja", profile: DEFAULT_XR_HEAD_HUD_PROFILE,
+        frameRateLabel: null, font: { family: "Arial", weight: 600, style: "normal", generation: 0 } },
+        (request, measure) => session.prepareSharedHeadHud(request, platform, measure));
+      expect(reply).toEqual({ kind: "unavailable", reason: kind === "tiny" ? "insufficient-ink-angle" : "invalid-text-metrics" });
+      drawHeadHud(context, reply, 1024, 512);
+      expect(context.painted).toEqual([]);
+      expect(context.clears).toEqual([[0, 0, 1024, 512]]);
+    });
   });
 });

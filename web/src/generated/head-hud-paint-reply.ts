@@ -1,41 +1,43 @@
 /* Generated from birdman-game-presentation::game_ui. Edit the Rust contract and regenerate. */
 /**
- * Complete same-frame optical HUD fit.
+ * Complete head-fixed painting or its rejection.
  */
-export type XrHeadHudProjection = {
-    readonly kind: "unavailable";
-    readonly reason: XrFitReason;
+export type HeadHudPaintReply = {
+    readonly kind: "absent";
 } | {
-    readonly clearRegion: GameUiRect;
+    readonly kind: "unavailable";
+    readonly reason: MenuLayoutFailure;
+} | {
+    readonly kind: "ready";
+    readonly projection: HeadHudPaintProjection;
+};
+/**
+ * Rejection class of a measured menu document.
+ */
+export type MenuLayoutFailure = "stale-view" | "measurement-unavailable" | "not-stereo" | "viewer-unavailable" | "unsupported-view-configuration" | "invalid-view-geometry" | "insufficient-view-area" | "insufficient-ink-angle" | "missing-text-metrics" | "stale-text-metrics" | "invalid-text-metrics" | "invalid-layout";
+export type SurfacePaintItem = import("./surface-paint-item.js").SurfacePaintItem;
+/**
+ * Head-fixed surface whose text ink has passed the binocular readability check.
+ */
+export interface HeadHudPaintProjection {
     /**
-     * Optional hardware frame-rate label rectangle.
-     */
-    readonly frameRateBounds: GameUiRect | null;
-    readonly kind: "visible";
-    readonly localPose: Pose;
-    /**
-     * Every unchanged shared source node in its original order.
-     */
-    readonly nodes: readonly GameUiHeadHudNode[];
-    /**
-     * Plane width and height in metres.
+     * Texture allocation required by the drawing observations.
      *
      * @minItems 2
      * @maxItems 2
      */
-    readonly sizeM: readonly [
+    readonly canvasSize: readonly [
         number,
         number
     ];
+    readonly clearRegion: GameUiRect;
     /**
-     * Required text height in metres.
+     * Ordered drawing commands in surface metres.
      */
-    readonly textHeightMeters: number;
-};
-/**
- * Optical rejection reason shared by layout and measured text checks.
- */
-export type XrFitReason = "not-stereo" | "viewer-unavailable" | "unsupported-view-configuration" | "invalid-view-geometry" | "insufficient-view-area";
+    readonly items: readonly SurfacePaintItem[];
+    readonly localPose: Pose;
+    readonly size: MenuSize;
+}
 /**
  * Normalized control position for spatial and chart rendering.
  */
@@ -103,16 +105,15 @@ export interface Vector3 {
     readonly z: number;
 }
 /**
- * Shared placement of one retained element in the head-fixed plane.
+ * Measured surface dimensions in metres.
  */
-export interface GameUiHeadHudNode {
-    readonly bounds: GameUiRect;
+export interface MenuSize {
     /**
-     * Identity of the unchanged source node.
+     * Height in metres.
      */
-    readonly id: string;
+    readonly height: number;
     /**
-     * Shared instrument height in multiples of the required text height.
+     * Width in metres.
      */
-    readonly instrument_height_em: number;
+    readonly width: number;
 }

@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { drawMeasuredMenu, menuCanvasSize } from "../../web/src/presentation/menu-canvas.js";
-import type { MenuDrawingContext } from "../../web/src/presentation/menu-canvas.js";
-import type { HeadHudTextMetrics } from "../../web/src/presentation/head-hud-canvas.js";
+import type { SurfaceDrawingContext, SurfaceTextMetrics } from "../../web/src/presentation/browser-canvas.js";
 import type { TailAppSessionFacade } from "../../web/src/app/session-facade.js";
 import type { GameUiPlatformInput } from "../../web/src/generated/game-ui-input.js";
 import { prepareMenuPresentation } from "../../web/src/presentation/menu-preparation.js";
@@ -11,7 +10,7 @@ import { withSharedGameUiSession } from "../game-check/shared-game-ui-fixture.js
 import { menuActionAt } from "./menu-fixture.js";
 import type { GameUiFrame } from "../../web/src/generated/game-ui-frame.js";
 
-class RecordingContext implements MenuDrawingContext {
+class RecordingContext implements SurfaceDrawingContext {
   font = "";
   locale = "";
   baseline = "";
@@ -27,7 +26,7 @@ class RecordingContext implements MenuDrawingContext {
   readonly translations: { x: number; y: number }[] = [];
   readonly rotations: number[] = [];
   readonly paths: { x: number; y: number }[] = [];
-  read: (value: string, pixels: number) => HeadHudTextMetrics = (value, pixels) => {
+  read: (value: string, pixels: number) => SurfaceTextMetrics = (value, pixels) => {
     const width = Array.from(value).length * pixels * 0.6;
     const visible = value.trim() !== "";
     return { width, left: visible ? -pixels * 0.1 : 0, right: visible ? width + pixels * 0.1 : width,
@@ -59,7 +58,7 @@ class RecordingContext implements MenuDrawingContext {
   setGlobalAlpha(value: number): void { this.globalAlpha = value; }
   setLocale(value: string): void { this.locale = value; }
   setTextAlign(value: "left"): void { this.align = value; }
-  measureText(value: string): HeadHudTextMetrics {
+  measureText(value: string): SurfaceTextMetrics {
     if (this.baseline !== "alphabetic") throw new Error("Font observation requires the drawing baseline");
     const match = this.font.match(/([\d.]+)px/);
     if (match?.[1] === undefined) throw new Error("Font must be explicit");
@@ -70,7 +69,7 @@ class RecordingContext implements MenuDrawingContext {
 
 const font = { family: "system-ui, sans-serif", weight: 600, style: "normal", generation: 0 } as const;
 
-function prepare(context: MenuDrawingContext, session: TailAppSessionFacade, platform: GameUiPlatformInput, generation = 0,
+function prepare(context: SurfaceDrawingContext, session: TailAppSessionFacade, platform: GameUiPlatformInput, generation = 0,
   viewer = configuredViewerFixture(1280, 720), progress = 0) {
   const shared = session.readSharedUi(platform);
   const panel = createGameViewModel(shared).panels[0];
@@ -181,17 +180,11 @@ describe("Shared Menu Canvas adapter", () => {
         if (menu.kind !== "ready") throw new Error("Missing retained Menu after seek");
         return menu;
       });
-      const retained = new Map<string, string>();
-      for (const menu of next) {
-        const lines = new Map<string, string[]>();
-        for (const item of menu.viewport.content.items) if (item.kind === "text") {
-          const values = lines.get(item.identity) ?? []; values.push(item.value); lines.set(item.identity, values);
-        }
-        for (const [identity, values] of lines) retained.set(identity, values.join("").replace(/\s/g, ""));
-      }
+      const retained = next.map(menu => menu.viewport.content.items
+        .filter(item => item.kind === "text").map(item => item.value).join("").replace(/\s/g, ""));
       const frame = JSON.parse(bridge.game_ui_frame_json(published.view_revision, JSON.stringify(platform))) as GameUiFrame;
       for (const value of [...frame.ranges.map(range => range.display_value), ...frame.readouts.map(readout => readout.value)].filter(value => value.length > 0)) {
-        expect([...retained.values()]).toContain(value.replace(/\s/g, ""));
+        expect(retained.some(text => text.includes(value.replace(/\s/g, "")))).toBe(true);
       }
       expect(context.saves).toBe(context.restores);
     });

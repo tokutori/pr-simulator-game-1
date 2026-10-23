@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { currentSharedGameUiFixture } from "../game-check/shared-game-ui-fixture.js";
+import { initializeWasmFixture } from "../game-check/wasm-fixture.js";
 import { Matrix4, PerspectiveCamera, Quaternion, Scene, StereoCamera, Vector3 } from "three";
 import { createHeadHudSurface } from "../../web/src/render/engines/three/head-hud-surface.js";
 import { createHeadHudFixture } from "./ui-adapter-fixture.js";
@@ -7,12 +7,14 @@ import { NO_HEAD_HUD, resolveHeadHudFrame } from "../../web/src/render/contracts
 import { composePose, IDENTITY_POSE, pose, quaternion, vec3 } from "../../web/src/render/contracts/math.js";
 import type { Pose } from "../../web/src/render/contracts/math.js";
 
+initializeWasmFixture();
+
 describe("Independent transparent Head HUD surface", () => {
   it("keeps material opacity independent of background alpha and disables depth writes and reflections", () => {
     const surface = createHeadHudSurface(canvas());
     const scene = new Scene();
     scene.add(surface.mesh);
-    const view = createHeadHudFixture(currentSharedGameUiFixture().theme);
+    const view = createHeadHudFixture();
     surface.update(resolveHeadHudFrame(view, IDENTITY_POSE), IDENTITY_POSE);
     expect(surface.mesh.material).toMatchObject({ transparent: true, opacity: 1, depthWrite: false, depthTest: false, toneMapped: false });
     expect(surface.mesh.layers.isEnabled(0)).toBe(true);
@@ -28,13 +30,13 @@ describe("Independent transparent Head HUD surface", () => {
     const mesh = surface.mesh;
     const texture = mesh.material.map;
     if (texture === null) throw new Error("Missing HUD texture");
-    const view = createHeadHudFixture(currentSharedGameUiFixture().theme);
+    const view = createHeadHudFixture();
     const frame = resolveHeadHudFrame(view, IDENTITY_POSE);
     surface.update(frame, IDENTITY_POSE);
     const firstVersion = texture.version;
     surface.update(frame, pose(vec3(1, 2, 3), IDENTITY_POSE.orientation));
     expect(texture.version).toBe(firstVersion);
-    surface.update(resolveHeadHudFrame({ ...view, backgroundAlpha: 0.5 }, IDENTITY_POSE), IDENTITY_POSE);
+    surface.update(resolveHeadHudFrame({ ...view, items: [...view.items] }, IDENTITY_POSE), IDENTITY_POSE);
     expect(texture.version).toBeGreaterThan(firstVersion);
     surface.update(NO_HEAD_HUD, IDENTITY_POSE);
     expect(mesh.visible).toBe(false);
@@ -48,7 +50,7 @@ describe("Independent transparent Head HUD surface", () => {
     const surface = createHeadHudSurface(canvas());
     const scene = new Scene();
     scene.add(surface.mesh);
-    const view = createHeadHudFixture(currentSharedGameUiFixture().theme);
+    const view = createHeadHudFixture();
     const aircraft = pose(vec3(15, 12, -30), quaternion(Math.cos(0.2), 0, Math.sin(0.2), 0));
     const eye = pose(vec3(0, 0.15, -0.55 - pilotOffset), IDENTITY_POSE.orientation);
     const worldFromTracking = composePose(aircraft, eye);

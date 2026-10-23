@@ -24,7 +24,7 @@ pub struct MenuProjection {
     /// Clipped document painting.
     pub content: MenuPaintLayer,
     /// Fixed page-control painting.
-    pub footer: Vec<MenuPaintItem>,
+    pub footer: Vec<SurfacePaintItem>,
     /// Enabled targets in the same surface coordinates as the painting.
     pub surface: XrPointerSurface,
     /// Normalized increment for one visible page.
@@ -77,7 +77,7 @@ pub struct MenuPaintLayer {
     /// Surface-space clipping bounds in metres.
     pub clip: MenuRect,
     /// Ordered paint operations.
-    pub items: Vec<MenuPaintItem>,
+    pub items: Vec<SurfacePaintItem>,
 }
 
 /// Engine-independent paint operation in surface coordinates.
@@ -89,20 +89,20 @@ pub struct MenuPaintLayer {
     rename_all_fields = "camelCase",
     deny_unknown_fields
 )]
-pub enum MenuPaintItem {
+pub enum SurfacePaintItem {
     /// Filled rectangle or horizontal colour gradient.
     Rectangle {
         /// Surface bounds in metres.
         bounds: MenuRect,
         /// Fill colour.
         color: String,
+        /// Fill opacity.
+        opacity: f64,
         /// Optional left-to-right gradient.
         gradient: Option<[String; 2]>,
     },
     /// Measured line with its resolved alphabetic baseline.
     Text {
-        /// Font-measurement identity.
-        identity: String,
         /// Visible line content.
         value: String,
         /// Observed font resource.
@@ -117,6 +117,8 @@ pub enum MenuPaintItem {
         rotation_degrees: f64,
         /// Text colour.
         color: String,
+        /// Text opacity.
+        opacity: f64,
     },
     /// Chart or guide segment.
     Line {
@@ -145,7 +147,7 @@ pub enum MenuPaintItem {
         /// Plot clipping rectangle in surface metres.
         clip: MenuRect,
         /// Ordered plot operations.
-        items: Vec<MenuPaintItem>,
+        items: Vec<SurfacePaintItem>,
     },
 }
 
@@ -200,7 +202,8 @@ pub(super) fn project(
             .get(placement.control_index)
             .ok_or(MenuLayoutFailure::StaleView)?;
         if let Some(visible) = projected.visible {
-            content.push(MenuPaintItem::Rectangle {
+            content.push(SurfacePaintItem::Rectangle {
+                opacity: 1.0,
                 bounds: visible,
                 color: control_background(&control.content, theme).into(),
                 gradient: None,
@@ -229,7 +232,7 @@ pub(super) fn project(
                 });
                 clip.x = origin.x;
                 clip.y = origin.y;
-                content.push(MenuPaintItem::Plot {
+                content.push(SurfacePaintItem::Plot {
                     clip,
                     items: paint_chart(&chart, bounds, &translate),
                 });
@@ -241,7 +244,8 @@ pub(super) fn project(
                         x: text.bounds.x - plan.source.font_meters * 2.0,
                         y: text.bounds.y + plan.line_height_meters * 0.35,
                     });
-                    content.push(MenuPaintItem::Rectangle {
+                    content.push(SurfacePaintItem::Rectangle {
+                        opacity: 1.0,
                         bounds: MenuRect {
                             x: origin.x,
                             y: origin.y,
@@ -307,7 +311,8 @@ pub(super) fn project(
                 viewport.offset_meters < viewport.maximum_offset_meters,
             ),
         ] {
-            footer.push(MenuPaintItem::Rectangle {
+            footer.push(SurfacePaintItem::Rectangle {
+                opacity: 1.0,
                 bounds,
                 color: theme.normal_background.clone(),
                 gradient: None,
@@ -436,7 +441,7 @@ fn control_background<'theme>(
 }
 
 fn paint_text(
-    output: &mut Vec<MenuPaintItem>,
+    output: &mut Vec<SurfacePaintItem>,
     text: &MenuTextPlacement,
     plan: &MenuLayoutPlan,
     measurements: &[MenuTextMeasurement],
@@ -463,8 +468,8 @@ fn paint_text(
                     + (line.ascent_meters - line.descent_meters) / 2.0,
             }
         };
-        output.push(MenuPaintItem::Text {
-            identity: request.identity.clone(),
+        output.push(SurfacePaintItem::Text {
+            opacity: 1.0,
             value: line.value.clone(),
             font: request.font.clone(),
             font_meters: request.font_meters,
@@ -487,7 +492,7 @@ fn paint_chart(
     chart: &GameUiChart,
     plot: MenuRect,
     translate: &impl Fn(MenuPoint) -> MenuPoint,
-) -> Vec<MenuPaintItem> {
+) -> Vec<SurfacePaintItem> {
     use crate::game_ui::GameUiChartPoint as Point;
     let project = |point: Point| {
         translate(MenuPoint {
@@ -505,7 +510,7 @@ fn paint_chart(
     };
     let mut items = Vec::new();
     let mut segment = |start, end, color: &str, width_px, opacity| {
-        items.push(MenuPaintItem::Line {
+        items.push(SurfacePaintItem::Line {
             start: project(start),
             end: project(end),
             color: color.into(),
@@ -599,14 +604,14 @@ fn paint_chart(
         }
     }
     for marker in chart.markers.iter().chain(&chart.time_markers) {
-        items.push(MenuPaintItem::Marker {
+        items.push(SurfacePaintItem::Marker {
             point: project(marker.point),
             size_px: 6.0,
             color: marker.color.clone(),
         });
     }
     if let Some(cursor) = chart.cursor_x {
-        items.push(MenuPaintItem::Line {
+        items.push(SurfacePaintItem::Line {
             start: project(Point {
                 x: cursor,
                 y: chart.y_minimum,
@@ -621,7 +626,7 @@ fn paint_chart(
         });
     }
     for cursor in &chart.cursor_points {
-        items.push(MenuPaintItem::Marker {
+        items.push(SurfacePaintItem::Marker {
             point: project(cursor.point),
             size_px: 8.0,
             color: cursor.color.clone(),

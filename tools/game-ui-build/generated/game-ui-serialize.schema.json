@@ -3433,31 +3433,6 @@
       ],
       "type": "object"
     },
-    "GameUiHeadHudNode": {
-      "additionalProperties": false,
-      "description": "Shared placement of one retained element in the head-fixed plane.",
-      "properties": {
-        "bounds": {
-          "$ref": "#/$defs/GameUiRect",
-          "description": "Normalized left/top rectangle within the complete HUD plane."
-        },
-        "id": {
-          "description": "Identity of the unchanged source node.",
-          "type": "string"
-        },
-        "instrument_height_em": {
-          "description": "Shared instrument height in multiples of the required text height.",
-          "format": "double",
-          "type": "number"
-        }
-      },
-      "required": [
-        "id",
-        "bounds",
-        "instrument_height_em"
-      ],
-      "type": "object"
-    },
     "GameUiHud": {
       "additionalProperties": false,
       "description": "Shared Web-baseline HUD model; no adapter rederives flight values or labels.",
@@ -4992,6 +4967,107 @@
       ],
       "type": "object"
     },
+    "HeadHudPaintProjection": {
+      "additionalProperties": false,
+      "description": "Head-fixed surface whose text ink has passed the binocular readability check.",
+      "properties": {
+        "canvasSize": {
+          "description": "Texture allocation required by the drawing observations.",
+          "items": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "clearRegion": {
+          "$ref": "#/$defs/GameUiRect",
+          "description": "Normalized forward-view reservation."
+        },
+        "items": {
+          "description": "Ordered drawing commands in surface metres.",
+          "items": {
+            "$ref": "#/$defs/SurfacePaintItem"
+          },
+          "type": "array"
+        },
+        "localPose": {
+          "$ref": "#/$defs/Pose",
+          "description": "Head-to-surface pose."
+        },
+        "size": {
+          "$ref": "#/$defs/MenuSize",
+          "description": "Physical drawing extent in metres."
+        }
+      },
+      "required": [
+        "localPose",
+        "size",
+        "canvasSize",
+        "clearRegion",
+        "items"
+      ],
+      "type": "object"
+    },
+    "HeadHudPaintReply": {
+      "description": "Complete head-fixed painting or its rejection.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "No requested instruments or frame-rate label.",
+          "properties": {
+            "kind": {
+              "const": "absent",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Failed optical or font observation.",
+          "properties": {
+            "kind": {
+              "const": "unavailable",
+              "type": "string"
+            },
+            "reason": {
+              "$ref": "#/$defs/MenuLayoutFailure",
+              "description": "Rejection reason."
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Final engine-independent drawing.",
+          "properties": {
+            "kind": {
+              "const": "ready",
+              "type": "string"
+            },
+            "projection": {
+              "$ref": "#/$defs/HeadHudPaintProjection",
+              "description": "Head anchor and surface-space commands."
+            }
+          },
+          "required": [
+            "kind",
+            "projection"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "HudCue": {
       "description": "Stable identity for one independently configurable HUD cue.",
       "oneOf": [
@@ -5656,202 +5732,6 @@
         }
       ]
     },
-    "MenuPaintItem": {
-      "description": "Engine-independent paint operation in surface coordinates.",
-      "oneOf": [
-        {
-          "additionalProperties": false,
-          "description": "Filled rectangle or horizontal colour gradient.",
-          "properties": {
-            "bounds": {
-              "$ref": "#/$defs/MenuRect",
-              "description": "Surface bounds in metres."
-            },
-            "color": {
-              "description": "Fill colour.",
-              "type": "string"
-            },
-            "gradient": {
-              "description": "Optional left-to-right gradient.",
-              "items": {
-                "type": "string"
-              },
-              "maxItems": 2,
-              "minItems": 2,
-              "type": [
-                "array",
-                "null"
-              ]
-            },
-            "kind": {
-              "const": "rectangle",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind",
-            "bounds",
-            "color",
-            "gradient"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Measured line with its resolved alphabetic baseline.",
-          "properties": {
-            "anchor": {
-              "$ref": "#/$defs/MenuPoint",
-              "description": "Alphabetic baseline in surface metres."
-            },
-            "color": {
-              "description": "Text colour.",
-              "type": "string"
-            },
-            "font": {
-              "$ref": "#/$defs/MenuFont",
-              "description": "Observed font resource."
-            },
-            "fontMeters": {
-              "description": "Font size in metres.",
-              "format": "double",
-              "type": "number"
-            },
-            "identity": {
-              "description": "Font-measurement identity.",
-              "type": "string"
-            },
-            "kind": {
-              "const": "text",
-              "type": "string"
-            },
-            "locale": {
-              "description": "Text-shaping locale.",
-              "type": "string"
-            },
-            "rotationDegrees": {
-              "description": "Rotation about the baseline.",
-              "format": "double",
-              "type": "number"
-            },
-            "value": {
-              "description": "Visible line content.",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind",
-            "identity",
-            "value",
-            "font",
-            "fontMeters",
-            "locale",
-            "anchor",
-            "rotationDegrees",
-            "color"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Chart or guide segment.",
-          "properties": {
-            "color": {
-              "description": "Stroke colour.",
-              "type": "string"
-            },
-            "end": {
-              "$ref": "#/$defs/MenuPoint",
-              "description": "Segment end in metres."
-            },
-            "kind": {
-              "const": "line",
-              "type": "string"
-            },
-            "opacity": {
-              "description": "Stroke opacity.",
-              "format": "double",
-              "type": "number"
-            },
-            "start": {
-              "$ref": "#/$defs/MenuPoint",
-              "description": "Segment start in metres."
-            },
-            "widthPx": {
-              "description": "Stroke width in texture pixels.",
-              "format": "double",
-              "type": "number"
-            }
-          },
-          "required": [
-            "kind",
-            "start",
-            "end",
-            "color",
-            "widthPx",
-            "opacity"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Screen-sized sample marker.",
-          "properties": {
-            "color": {
-              "description": "Fill colour.",
-              "type": "string"
-            },
-            "kind": {
-              "const": "marker",
-              "type": "string"
-            },
-            "point": {
-              "$ref": "#/$defs/MenuPoint",
-              "description": "Marker centre in surface metres."
-            },
-            "sizePx": {
-              "description": "Square side in texture pixels.",
-              "format": "double",
-              "type": "number"
-            }
-          },
-          "required": [
-            "kind",
-            "point",
-            "sizePx",
-            "color"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Nested clipping for plot primitives.",
-          "properties": {
-            "clip": {
-              "$ref": "#/$defs/MenuRect",
-              "description": "Plot clipping rectangle in surface metres."
-            },
-            "items": {
-              "description": "Ordered plot operations.",
-              "items": {
-                "$ref": "#/$defs/MenuPaintItem"
-              },
-              "type": "array"
-            },
-            "kind": {
-              "const": "plot",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind",
-            "clip",
-            "items"
-          ],
-          "type": "object"
-        }
-      ]
-    },
     "MenuPaintLayer": {
       "additionalProperties": false,
       "description": "Clipped spatial UI paint layer.",
@@ -5863,7 +5743,7 @@
         "items": {
           "description": "Ordered paint operations.",
           "items": {
-            "$ref": "#/$defs/MenuPaintItem"
+            "$ref": "#/$defs/SurfacePaintItem"
           },
           "type": "array"
         }
@@ -5910,7 +5790,7 @@
         "footer": {
           "description": "Fixed page-control painting.",
           "items": {
-            "$ref": "#/$defs/MenuPaintItem"
+            "$ref": "#/$defs/SurfacePaintItem"
           },
           "type": "array"
         },
@@ -7574,6 +7454,209 @@
       ],
       "type": "object"
     },
+    "SurfacePaintItem": {
+      "description": "Engine-independent paint operation in surface coordinates.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Filled rectangle or horizontal colour gradient.",
+          "properties": {
+            "bounds": {
+              "$ref": "#/$defs/MenuRect",
+              "description": "Surface bounds in metres."
+            },
+            "color": {
+              "description": "Fill colour.",
+              "type": "string"
+            },
+            "gradient": {
+              "description": "Optional left-to-right gradient.",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "kind": {
+              "const": "rectangle",
+              "type": "string"
+            },
+            "opacity": {
+              "description": "Fill opacity.",
+              "format": "double",
+              "type": "number"
+            }
+          },
+          "required": [
+            "kind",
+            "bounds",
+            "color",
+            "opacity",
+            "gradient"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Measured line with its resolved alphabetic baseline.",
+          "properties": {
+            "anchor": {
+              "$ref": "#/$defs/MenuPoint",
+              "description": "Alphabetic baseline in surface metres."
+            },
+            "color": {
+              "description": "Text colour.",
+              "type": "string"
+            },
+            "font": {
+              "$ref": "#/$defs/MenuFont",
+              "description": "Observed font resource."
+            },
+            "fontMeters": {
+              "description": "Font size in metres.",
+              "format": "double",
+              "type": "number"
+            },
+            "kind": {
+              "const": "text",
+              "type": "string"
+            },
+            "locale": {
+              "description": "Text-shaping locale.",
+              "type": "string"
+            },
+            "opacity": {
+              "description": "Text opacity.",
+              "format": "double",
+              "type": "number"
+            },
+            "rotationDegrees": {
+              "description": "Rotation about the baseline.",
+              "format": "double",
+              "type": "number"
+            },
+            "value": {
+              "description": "Visible line content.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "value",
+            "font",
+            "fontMeters",
+            "locale",
+            "anchor",
+            "rotationDegrees",
+            "color",
+            "opacity"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Chart or guide segment.",
+          "properties": {
+            "color": {
+              "description": "Stroke colour.",
+              "type": "string"
+            },
+            "end": {
+              "$ref": "#/$defs/MenuPoint",
+              "description": "Segment end in metres."
+            },
+            "kind": {
+              "const": "line",
+              "type": "string"
+            },
+            "opacity": {
+              "description": "Stroke opacity.",
+              "format": "double",
+              "type": "number"
+            },
+            "start": {
+              "$ref": "#/$defs/MenuPoint",
+              "description": "Segment start in metres."
+            },
+            "widthPx": {
+              "description": "Stroke width in texture pixels.",
+              "format": "double",
+              "type": "number"
+            }
+          },
+          "required": [
+            "kind",
+            "start",
+            "end",
+            "color",
+            "widthPx",
+            "opacity"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Screen-sized sample marker.",
+          "properties": {
+            "color": {
+              "description": "Fill colour.",
+              "type": "string"
+            },
+            "kind": {
+              "const": "marker",
+              "type": "string"
+            },
+            "point": {
+              "$ref": "#/$defs/MenuPoint",
+              "description": "Marker centre in surface metres."
+            },
+            "sizePx": {
+              "description": "Square side in texture pixels.",
+              "format": "double",
+              "type": "number"
+            }
+          },
+          "required": [
+            "kind",
+            "point",
+            "sizePx",
+            "color"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Nested clipping for plot primitives.",
+          "properties": {
+            "clip": {
+              "$ref": "#/$defs/MenuRect",
+              "description": "Plot clipping rectangle in surface metres."
+            },
+            "items": {
+              "description": "Ordered plot operations.",
+              "items": {
+                "$ref": "#/$defs/SurfacePaintItem"
+              },
+              "type": "array"
+            },
+            "kind": {
+              "const": "plot",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "clip",
+            "items"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "TailControlAxesDocument": {
       "additionalProperties": false,
       "description": "Pitch and yaw values in the units declared by their containing field.",
@@ -9019,163 +9102,6 @@
         "foregroundAlpha"
       ],
       "type": "object"
-    },
-    "XrHeadHudProjection": {
-      "description": "Complete same-frame optical HUD fit.",
-      "oneOf": [
-        {
-          "additionalProperties": false,
-          "description": "Optical or reserved-space rejection.",
-          "properties": {
-            "kind": {
-              "const": "unavailable",
-              "type": "string"
-            },
-            "reason": {
-              "$ref": "#/$defs/XrFitReason",
-              "description": "Exhaustive rejection reason."
-            }
-          },
-          "required": [
-            "kind",
-            "reason"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Complete projected source-node layout.",
-          "properties": {
-            "clearRegion": {
-              "$ref": "#/$defs/GameUiRect",
-              "description": "Normalized clear forward region, in left/top coordinates."
-            },
-            "frameRateBounds": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/GameUiRect"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Optional hardware frame-rate label rectangle."
-            },
-            "kind": {
-              "const": "visible",
-              "type": "string"
-            },
-            "localPose": {
-              "$ref": "#/$defs/Pose",
-              "description": "Head-to-HUD transform in metres."
-            },
-            "nodes": {
-              "description": "Every unchanged shared source node in its original order.",
-              "items": {
-                "$ref": "#/$defs/GameUiHeadHudNode"
-              },
-              "type": "array"
-            },
-            "sizeM": {
-              "description": "Plane width and height in metres.",
-              "items": {
-                "format": "double",
-                "type": "number"
-              },
-              "maxItems": 2,
-              "minItems": 2,
-              "type": "array"
-            },
-            "textHeightMeters": {
-              "description": "Required text height in metres.",
-              "format": "double",
-              "type": "number"
-            }
-          },
-          "required": [
-            "kind",
-            "localPose",
-            "sizeM",
-            "textHeightMeters",
-            "clearRegion",
-            "frameRateBounds",
-            "nodes"
-          ],
-          "type": "object"
-        }
-      ]
-    },
-    "XrInkFit": {
-      "description": "Actual glyph-boundary fit and angular readability in both eyes.",
-      "oneOf": [
-        {
-          "additionalProperties": false,
-          "description": "The painter reported no non-whitespace glyphs.",
-          "properties": {
-            "kind": {
-              "const": "empty",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Measured text falls below its required angular height.",
-          "properties": {
-            "kind": {
-              "const": "too-small",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Every measured boundary is visible and readable.",
-          "properties": {
-            "kind": {
-              "const": "ready",
-              "type": "string"
-            },
-            "minimumInkAngleDegrees": {
-              "description": "Smallest actual boundary angle in degrees.",
-              "format": "double",
-              "type": "number"
-            }
-          },
-          "required": [
-            "kind",
-            "minimumInkAngleDegrees"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Rejected measured ink.",
-          "properties": {
-            "kind": {
-              "const": "unavailable",
-              "type": "string"
-            },
-            "reason": {
-              "$ref": "#/$defs/XrFitReason",
-              "description": "Optical or readability reason."
-            }
-          },
-          "required": [
-            "kind",
-            "reason"
-          ],
-          "type": "object"
-        }
-      ]
     },
     "XrPanelCameraPoses": {
       "additionalProperties": false,

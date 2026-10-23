@@ -5,7 +5,7 @@ import { captureXrViewerFrame } from "../../web/src/render/engines/three/viewer-
 import { unavailableViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
 import { projectHeadPoint } from "./viewer-fixture.js";
 import { IDENTITY_POSE, vec3 } from "../../web/src/render/contracts/math.js";
-import { xr_capture_viewer_frame_json, xr_text_ink_fit_json } from "../../web/pkg/birdman_game_wasm.js";
+import { xr_capture_viewer_frame_json } from "../../web/pkg/birdman_game_wasm.js";
 
 initializeWasmFixture();
 
@@ -79,8 +79,6 @@ describe("Same-frame platform view capture", () => {
 
   it("classifies malformed, oversized and unknown-field runtime observations before fitting", () => {
     for (const packet of ["{", " ".repeat(16_385), JSON.stringify({ source: "unavailable", reason: "viewer-unavailable", trackingFromHead: null, stale: true })]) {
-      expect(JSON.parse(xr_text_ink_fit_json(packet, "[]", JSON.stringify(IDENTITY_POSE), 0.35)))
-        .toEqual({ kind: "unavailable", reason: "invalid-view-geometry" });
       expect(JSON.parse(xr_capture_viewer_frame_json(packet)))
         .toEqual({ source: "unavailable", reason: "invalid-view-geometry", trackingFromHead: null });
     }

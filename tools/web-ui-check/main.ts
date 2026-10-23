@@ -352,6 +352,7 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
       if (window.__uiViewJson === null) throw new Error("The production shared Setup View was not captured");
       const viewModule = await import(addresses.view) as typeof import("../../web/src/app/game-view.js");
       const canvasModule = await import(addresses.canvas) as typeof import("../../web/src/presentation/menu-canvas.js");
+      const { browserSurfaceContext } = await import(addresses.browser) as typeof import("../../web/src/presentation/browser-canvas.js");
       const preparationModule = await import(addresses.preparation) as typeof import("../../web/src/presentation/menu-preparation.js");
       const platform = JSON.stringify({ ...JSON.parse(window.__uiPlatformJson) as Record<string, unknown>, presentation_mode: "hmd" });
       const shared = JSON.parse(window.__uiBridge.game_ui_view_json(platform)) as GameUiView;
@@ -363,7 +364,7 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
       if (context === null) throw new Error("Browser Canvas measurement is unavailable");
       const prepared = addresses.viewers.map(viewer => {
         const spatial = panel;
-        const observer = canvasModule.browserMenuContext(context);
+        const observer = browserSurfaceContext(context);
         let fontQueries = 0;
         const measuredContext = { ...observer, measureText(value: string) { fontQueries++; return observer.measureText(value); } };
         const started = performance.now();
@@ -396,13 +397,14 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
         if (checkedChoices === 0) throw new Error("Missing painted empty-description choices");
         const dimensions = canvasModule.menuCanvasSize(ready.panel.size);
         canvas.width = dimensions.width; canvas.height = dimensions.height;
-        canvasModule.drawMeasuredMenu(canvasModule.browserMenuContext(context), ready.viewport, canvas.width, canvas.height);
+        canvasModule.drawMeasuredMenu(browserSurfaceContext(context), ready.viewport, canvas.width, canvas.height);
         return { emptyDescriptions: checkedChoices, widthMeters: ready.panel.size.width, textLines: text.length, controls: panel.controls.length,
           fontQueries, preparationMilliseconds: performance.now() - started };
       });
       return { emptyDescriptions: prepared[0]?.emptyDescriptions, prepared, measuredIn: "production VR Menu layout and browser Canvas" };
     }, { view: new URL("../src/app/game-view.ts", moduleUrl).href,
       canvas: new URL("../src/presentation/menu-canvas.ts", moduleUrl).href,
+      browser: new URL("../src/presentation/browser-canvas.ts", moduleUrl).href,
       preparation: new URL("../src/presentation/menu-preparation.ts", moduleUrl).href, viewers: menuViewers });
     report.portraitViewport = { width: 360, height: 640, selectedDescriptions };
     await screenshot("01-setup-portrait");
@@ -519,75 +521,64 @@ async function verifyScreen(activeBrowser: Browser): Promise<void> {
       stereo.aspect = 0.5;
       return { ...scenario, viewer: captureConfiguredViewerFrame(camera, stereo) };
     });
-    const profiler = await context.newCDPSession(page);
-    try {
-      await profiler.send("Profiler.enable");
-      const headResults: { name: string; coverageEnabled: boolean; outcome: string; samples: number; medianMilliseconds: number; p95Milliseconds: number;
-        hudBytes: number; wasmCallsPerFrame: number | null; maximumInputBytesPerFrame: number | null }[] = [];
-      report.headHud = { measurements: headResults, measurement: "30 calls per scenario and coverage mode; query bytes include HUD, viewer and profile; layout-query timing" };
-      for (const coverageEnabled of [false, true]) {
-      if (coverageEnabled) await profiler.send("Profiler.startPreciseCoverage", { callCount: true, detailed: false });
-      for (const scenario of headScenarios) {
-      const headMeasurement = await page.evaluate(async input => {
-        if (window.__uiViewJson === null) throw new Error("Missing shared HUD View");
-        const shared = JSON.parse(window.__uiViewJson) as GameUiView;
-        if (shared.hud === null) throw new Error("Missing shared HUD");
-        const modelModule = await import(input.model) as typeof import("../../web/src/presentation/flight-hud-model.js");
-        const viewModule = await import(input.view) as typeof import("../../web/src/presentation/head-hud-view.js");
-        const canvasModule = await import(input.canvas) as typeof import("../../web/src/presentation/head-hud-canvas.js");
-        const model = modelModule.projectSharedFlightHudModel(shared.hud, shared.theme);
-        const scenario = input.scenario;
-        let image: string | null = null;
-          const elapsed = [];
-          let last: ReturnType<typeof viewModule.createHeadHudView> = { kind: "absent" };
-          for (let iteration = 0; iteration < 30; iteration++) {
-            const start = performance.now();
-            last = viewModule.createHeadHudView(model, scenario.viewer, "ja", { ...viewModule.DEFAULT_HEAD_HUD_PROFILE, maximumWidthMeters: scenario.maximumWidthMeters });
-            elapsed.push(performance.now() - start);
+    const headResults = await page.evaluate(async input => {
+      const wasm = await import(input.wasm) as typeof import("../../web/pkg/birdman_game_wasm.js");
+      const { prepareHeadHudPresentation, drawHeadHud } = await import(input.canvas) as typeof import("../../web/src/presentation/head-hud-canvas.js");
+      const { browserSurfaceContext } = await import(input.browser) as typeof import("../../web/src/presentation/browser-canvas.js");
+      const { DEFAULT_XR_HEAD_HUD_PROFILE } = await import(input.profile) as typeof import("../../web/src/generated/xr-head-hud-profile.js");
+      const live = { owner: window.__uiBridge, view: window.__uiViewJson, platform: window.__uiPlatformJson };
+      const owner = wasm.HybridGameSessionBridge.public_default();
+      try {
+        owner.open_setup(); owner.set_information_level(0); owner.prepare(); owner.mark_briefing_ready();
+        owner.start_countdown(1); owner.observe_countdown(owner.countdown_token(), 1, true);
+        const platform = JSON.stringify({ ...JSON.parse(window.__uiPlatformJson) as Record<string, unknown>,
+          presentation_mode: "hmd", head_hud_failure: null });
+        const shared = JSON.parse(owner.game_ui_view_json(platform)) as GameUiView;
+        return input.scenarios.map(scenario => {
+          const canvas = document.createElement("canvas");
+          const context = canvas.getContext("2d");
+          if (context === null) throw new Error("Missing Head Canvas");
+          const drawing = browserSurfaceContext(context);
+          let fontQueries = 0;
+          const observer = { ...drawing, measureText(value: string) {
+            if (context.fontKerning !== "normal") throw new Error("Head measurement kerning was reset");
+            fontQueries++;
+            return drawing.measureText(value);
+          } };
+          const started = performance.now();
+          const reply = prepareHeadHudPresentation(observer, { viewRevision: shared.view_revision,
+            viewer: scenario.viewer, locale: "ja", frameRateLabel: "FPS 72.0",
+            profile: { ...DEFAULT_XR_HEAD_HUD_PROFILE, maximumWidthMeters: scenario.maximumWidthMeters },
+            font: { family: "Arial, sans-serif", weight: 600, style: "normal", generation: 0 } },
+            (request, measure) => JSON.parse(owner.game_ui_head_hud_json(platform, JSON.stringify(request), measure)) as import("../../web/src/generated/head-hud-paint-reply.js").HeadHudPaintReply);
+          const milliseconds = performance.now() - started;
+          if (scenario.name === "narrow-fallback") {
+            if (reply.kind !== "unavailable" || reply.reason !== "insufficient-view-area") throw new Error("Invalid narrow Head result");
+          } else if (reply.kind !== "ready") throw new Error(`Head HUD ${scenario.name}: ${JSON.stringify(reply)}`);
+          if (reply.kind === "ready") {
+            [canvas.width, canvas.height] = reply.projection.canvasSize;
+            drawHeadHud(browserSurfaceContext(context), reply, canvas.width, canvas.height);
+            if (context.fontKerning !== "normal") throw new Error("Head drawing kerning differs from measurement");
           }
-          elapsed.sort((first, second) => first - second);
-          const lowerMedian = elapsed[14];
-          const upperMedian = elapsed[15];
-          const p95 = elapsed[28];
-          if (lowerMedian === undefined || upperMedian === undefined || p95 === undefined) throw new Error("Missing Head fit measurement samples");
-          if (scenario.name !== "narrow-fallback" && last.kind !== "visible") throw new Error(`Head HUD ${scenario.name}: ${last.kind}`);
-          if (last.kind === "visible") {
-            const size = canvasModule.headHudCanvasSize(last.layer);
-            const canvas = document.createElement("canvas");
-            canvas.width = size.width; canvas.height = size.height;
-            const drawing = canvas.getContext("2d");
-            if (drawing === null) throw new Error("Missing Head Canvas");
-            const drawingContext = canvasModule.browserHeadHudContext(drawing);
-            const prepared = canvasModule.prepareHeadHudPaint(drawingContext, last, size.width, size.height);
-            const validated = canvasModule.validateHeadHudPaint(prepared, scenario.viewer);
-            if (validated.kind !== "ready") throw new Error(`Head Canvas ${scenario.name}: ${validated.kind}`);
-            canvasModule.drawHeadHud(drawingContext, validated);
-            image = canvas.toDataURL("image/png");
-          }
-        return { measurement: { name: scenario.name, outcome: last.kind, samples: elapsed.length, medianMilliseconds: (lowerMedian + upperMedian) / 2, p95Milliseconds: p95 },
-          image, hudBytes: [JSON.stringify({ layout: model.layout, groups: model.groups }), JSON.stringify(scenario.viewer),
-            JSON.stringify({ ...viewModule.DEFAULT_HEAD_HUD_PROFILE, maximumWidthMeters: scenario.maximumWidthMeters })]
-            .reduce((sum, packet) => sum + new TextEncoder().encode(packet).length, 0) };
-      }, { scenario, model: new URL("../src/presentation/flight-hud-model.ts", moduleUrl).href,
-        view: new URL("../src/presentation/head-hud-view.ts", moduleUrl).href, canvas: new URL("../src/presentation/head-hud-canvas.ts", moduleUrl).href });
-      let calls: number | null = null;
-      if (coverageEnabled) {
-        const coverage = await profiler.send("Profiler.takePreciseCoverage");
-        calls = coverage.result.flatMap(script => script.functions).filter(item => item.functionName === "xr_head_hud_projection_json")
-          .reduce((sum, item) => sum + (item.ranges[0]?.count ?? 0), 0) / 30;
-        assert.ok(calls > 0, "The production shared Head fit was not profiled");
-        if (scenario.name === "narrow-fallback") assert.equal(calls, 1, "An impossible maximum-width fit must not repeat shared queries");
+          return { name: scenario.name, outcome: reply.kind, fontQueries, milliseconds,
+            image: reply.kind === "ready" ? canvas.toDataURL("image/png") : null };
+        });
+      } finally {
+        owner.free();
+        window.__uiBridge = live.owner;
+        window.__uiViewJson = live.view;
+        window.__uiPlatformJson = live.platform;
       }
-      headResults.push({ ...headMeasurement.measurement, coverageEnabled, hudBytes: headMeasurement.hudBytes, wasmCallsPerFrame: calls,
-        maximumInputBytesPerFrame: calls === null ? null : calls * headMeasurement.hudBytes });
-      if (headMeasurement.image !== null) {
-        const name = scenario.name === "landscape" ? "03-head-hud.png" : `03-head-hud-${scenario.name}.png`;
-        await writeFile(resolve(output, name), Buffer.from(headMeasurement.image.slice("data:image/png;base64,".length), "base64"));
-      }
-      }
-      if (coverageEnabled) await profiler.send("Profiler.stopPreciseCoverage");
-      }
-    } finally { await profiler.detach(); }
+    }, { scenarios: headScenarios, wasm: new URL("../pkg/birdman_game_wasm.js", moduleUrl).href,
+      canvas: new URL("../src/presentation/head-hud-canvas.ts", moduleUrl).href,
+      browser: new URL("../src/presentation/browser-canvas.ts", moduleUrl).href,
+      profile: new URL("../src/generated/xr-head-hud-profile.ts", moduleUrl).href });
+    report.headHud = { measurements: headResults.map(({ name, outcome, fontQueries, milliseconds }) => ({ name, outcome, fontQueries, milliseconds })),
+      measurement: "one retained-owner preparation per optical scenario using browser font observations" };
+    for (const result of headResults) if (result.image !== null) {
+      const name = result.name === "landscape" ? "03-head-hud.png" : `03-head-hud-${result.name}.png`;
+      await writeFile(resolve(output, name), Buffer.from(result.image.slice("data:image/png;base64,".length), "base64"));
+    }
     checks.push("HD/FHD・文字拡大の下端HUDは全値・14px文字高・非重複を保持し、実CanvasのHead HUDは両眼と前方中央へ収まる");
     const pausedTick = await page.evaluate(() => window.__liveAuto.tick);
     report.pausedCreditsScroll = await creditsScroll("flight_paused", "03-paused-credits");
@@ -742,7 +733,8 @@ async function verifyPointers(activeBrowser: Browser): Promise<void> {
       const { IDENTITY_POSE, composePose, rotateVec3, pose, vec3 } = await import(modules.math) as typeof import("../../web/src/render/contracts/math.js");
       const { createGameViewModel } = await import(modules.view) as typeof import("../../web/src/app/game-view.js");
       const { prepareMenuPresentation } = await import(modules.preparation) as typeof import("../../web/src/presentation/menu-preparation.js");
-      const { browserMenuContext, drawMeasuredMenu, menuCanvasSize } = await import(modules.canvas) as typeof import("../../web/src/presentation/menu-canvas.js");
+      const { drawMeasuredMenu, menuCanvasSize } = await import(modules.canvas) as typeof import("../../web/src/presentation/menu-canvas.js");
+      const { browserSurfaceContext } = await import(modules.browser) as typeof import("../../web/src/presentation/browser-canvas.js");
       const session = wasm.HybridGameSessionBridge.public_default();
       const platform = JSON.stringify(modules.platform);
       const shared = JSON.parse(session.game_ui_view_json(platform)) as GameUiView;
@@ -753,14 +745,14 @@ async function verifyPointers(activeBrowser: Browser): Promise<void> {
       const texture = document.createElement("canvas");
       const drawing = texture.getContext("2d");
       if (drawing === null) throw new Error("Missing panel canvas");
-      const menu = prepareMenuPresentation(browserMenuContext(drawing), source,
+      const menu = prepareMenuPresentation(browserSurfaceContext(drawing), source,
         { generation: 1, scope: { panelId: source.id, viewKey: shared.interaction_scope } }, 0, modules.viewer,
         { locale: "ja", viewRevision: shared.view_revision, font: { family: "sans-serif", weight: 600, style: "normal", generation: 0 } },
         (input, measure) => JSON.parse(session.game_ui_menu_json(platform, JSON.stringify(input), measure)) as import("../../web/src/generated/menu-layout-reply.js").MenuLayoutReply);
       if (menu.kind !== "ready") throw new Error("Missing prepared Title Menu");
       const dimensions = menuCanvasSize(menu.panel.size);
       texture.width = dimensions.width; texture.height = dimensions.height;
-      drawMeasuredMenu(browserMenuContext(drawing), menu.viewport, texture.width, texture.height);
+      drawMeasuredMenu(browserSurfaceContext(drawing), menu.viewport, texture.width, texture.height);
       const panel = menu.panel;
       const targets = menu.viewport.surface.regions.filter(region => region.target.kind === "control").slice(0, 2).map(region => ({
         id: region.target.kind === "control" ? region.target.id : "",
@@ -806,7 +798,8 @@ async function verifyPointers(activeBrowser: Browser): Promise<void> {
     }, { wasm: new URL("pkg/birdman_game_wasm.js", url).href, renderer: new URL("src/render/engines/three/three-renderer.ts", url).href,
       pointer: new URL("src/presentation/xr-pointer-session.ts", url).href, math: new URL("src/render/contracts/math.ts", url).href,
       view: new URL("src/app/game-view.ts", url).href, preparation: new URL("src/presentation/menu-preparation.ts", url).href,
-      canvas: new URL("src/presentation/menu-canvas.ts", url).href, platform: sharedGameUiPlatform({ presentation_mode: "hmd" }), viewer });
+      canvas: new URL("src/presentation/menu-canvas.ts", url).href,
+      browser: new URL("src/presentation/browser-canvas.ts", url).href, platform: sharedGameUiPlatform({ presentation_mode: "hmd" }), viewer });
     assert.ok(result.cursors.cursor !== null);
     assert.equal(result.cursors.secondaryCursors.length, 1);
     assert.ok(Math.abs(result.cursors.cursor.point.x - (result.targets[0]?.x ?? Number.NaN)) < 1e-10);

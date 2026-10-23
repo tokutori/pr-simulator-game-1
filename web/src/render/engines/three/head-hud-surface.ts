@@ -1,7 +1,6 @@
 import { CanvasTexture, LinearFilter, Mesh, MeshBasicMaterial, PlaneGeometry, SRGBColorSpace } from "three";
 import { composeSpatialPose } from "../../camera/spatial.js";
 import type { Pose } from "../../contracts/math.js";
-import { validateHeadHudLayer } from "../../contracts/head-hud.js";
 import type { HeadHudFrame, VisibleHeadHud } from "../../contracts/head-hud.js";
 
 export function createHeadHudSurface(canvas: HTMLCanvasElement) {
@@ -36,7 +35,6 @@ export function createHeadHudSurface(canvas: HTMLCanvasElement) {
       }
       const view = frame.view;
       if (view !== currentView) {
-        validateHeadHudLayer(view);
         texture.needsUpdate = true;
         currentView = view;
       }

@@ -1,3 +1,4 @@
+import { NO_HEAD_HUD } from "../../web/src/render/contracts/head-hud.js";
 import { configuredViewerFixture, panelFrameCursor, visiblePanelFrame, projectHeadPoint } from "./viewer-fixture.js";
 import { readFileSync } from "node:fs";
 import { fixtureBackendFrame, fixturePresentation, fixtureSemanticAction } from "./menu-fixture.js";
@@ -23,12 +24,11 @@ import { sharedPanelHit } from "./menu-fixture.js";
 import { createInitialAppModel, updateApp } from "../../web/src/app/app-state.js";
 import type { AppModel } from "../../web/src/app/app-state.js";
 import { createGameViewModel } from "../../web/src/app/game-view.js";
-import { createFlightFrameViewDraft, finalizeFlightFrameView } from "../../web/src/app/flight-frame-view.js";
+import { flightFrameView } from "../../web/src/app/flight-frame-view.js";
 import { currentFlightPoseFixture } from "../game-check/current-session-fixture.js";
 import { currentGameSessionProjectionFixture, currentSharedGameUiFixture, screenRenderAutoSnapshotReader } from "../game-check/shared-game-ui-fixture.js";
-import { headHudCanvasSize, prepareHeadHudPaint, validateHeadHudPaint } from "../../web/src/presentation/head-hud-canvas.js";
+import { prepareHeadHudFixture } from "./hud-canvas-fixture.js";
 import { PresentationRuntime } from "../../web/src/presentation/runtime.js";
-import { HudCanvasFixture } from "./hud-canvas-fixture.js";
 import { gpuTimerFixture } from "./gpu-timer-fixture.js";
 import { LakeSkyImageBridge, ScreenRenderAutoBridge, lake_scene_ambient_color_srgb, lake_scene_ambient_irradiance,
   lake_scene_sunlight_color_srgb, lake_scene_sunlight_irradiance } from "../../web/pkg/birdman_game_wasm.js";
@@ -1018,12 +1018,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
     const runtime = new PresentationRuntime({ ...bundle.renderer, dispose() {} }, [{ mode: "phone-vr", start: () => Promise.resolve(), stop: () => Promise.resolve(),
       currentFrame: (timestamp, view, viewer, menu) => phone.backend.currentFrame(timestamp, view, viewer, menu) }], (viewer) => {
       evidence.viewer = viewer;
-      const draft = createFlightFrameViewDraft(model, viewer, "ja");
-      if (draft.headHud.kind !== "visible") throw new Error("Missing Phone Head layout");
-      const size = headHudCanvasSize(draft.headHud.layer);
-      const paint = validateHeadHudPaint(prepareHeadHudPaint(new HudCanvasFixture(), draft.headHud, size.width, size.height), viewer);
-      if (paint.kind !== "ready") throw new Error("Missing Phone Head plan");
-      evidence.view = finalizeFlightFrameView(draft, paint.view);
+      evidence.view = flightFrameView(model, prepareHeadHudFixture(viewer));
       return fixturePresentation(evidence.view);
     }, () => { bundle.renderer.setFlightPose(currentFlight); });
     const projections: Vector3[][] = [];
@@ -1394,8 +1389,7 @@ describe("Three adapter panel reference with real StereoEffect", () => {
         currentFrame: (timestamp, view, viewer, menu) => { observed.frame = phone.backend.currentFrame(timestamp, view, viewer, menu); return observed.frame; } }], (viewer) => {
         observed.viewer = viewer;
         if (!paused) return fixturePresentation(createSceneFixture("Title"));
-        const draft = createFlightFrameViewDraft(model, viewer, "ja");
-        return fixturePresentation(finalizeFlightFrameView(draft, draft.headHud));
+        return fixturePresentation(flightFrameView(model, NO_HEAD_HUD));
       });
       try {
         expect(await runtime.start("phone-vr")).toEqual({ ok: true });

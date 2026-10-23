@@ -8,6 +8,7 @@ import { sharedGameUiPlatform } from "./shared-game-ui-fixture.js";
 import type { GameUiUpdate } from "../../web/src/generated/game-ui-effects.js";
 import { readContract } from "../game-ui-build/validate.js";
 import type { MenuPreparationInput } from "../../web/src/generated/menu-preparation-input.js";
+import { DEFAULT_XR_HEAD_HUD_PROFILE } from "../../web/src/generated/xr-head-hud-profile.js";
 import { unavailableViewerFrame } from "../../web/src/render/contracts/viewer-frame.js";
 
 initSync({ module: new Uint8Array(readFileSync(new URL("../../web/pkg/birdman_game_wasm_bg.wasm", import.meta.url))) });
@@ -56,13 +57,13 @@ describe("layout-discriminated application session facade", () => {
     } finally { facade.dispose(); }
   });
 
-  it.each(["action", "platform", "session", "record", "wind", "flight-frame", "flight-key", "menu-platform", "menu-input"] as const)("checks owner liveness after input serialization (%s)", (boundary) => {
+  it.each(["action", "platform", "session", "record", "wind", "flight-frame", "flight-key", "menu-platform", "menu-input", "head-input"] as const)("checks owner liveness after input serialization (%s)", (boundary) => {
     const bridge = new HybridGameSessionBridge(0, 21, 22);
     const facade = new TailAppSessionFacade(bridge, physics_hz());
     const methods = { action: "game_ui_action_json", platform: "game_ui_view_revision",
       session: "apply_game_ui_session_command_json", record: "apply_game_ui_record_action_json", wind: "flight_wind_grid_json",
       "flight-frame": "advance_flight_frame_json", "flight-key": "observe_flight_key_json",
-      "menu-platform": "game_ui_menu_json", "menu-input": "game_ui_menu_json" } as const;
+      "menu-platform": "game_ui_menu_json", "menu-input": "game_ui_menu_json", "head-input": "game_ui_head_hud_json" } as const;
     const call = vi.spyOn(bridge, methods[boundary]);
     const free = vi.spyOn(bridge, "free");
     const dispose = (): void => { facade.dispose(); };
@@ -78,6 +79,9 @@ describe("layout-discriminated application session facade", () => {
           case "flight-key": facade.flightPort.observeFlightKey({ get control() { dispose(); return "nose_up" as const; }, pressed: true, repeat: false }); break;
           case "menu-platform": facade.prepareSharedMenu(menuInput, { ...sharedGameUiPlatform(), get notification() { dispose(); return ""; } }, () => new Float64Array(5)); break;
           case "menu-input": facade.prepareSharedMenu({ ...menuInput, get panelId() { dispose(); return "fixture"; } }, sharedGameUiPlatform(), () => new Float64Array(5)); break;
+          case "head-input": facade.prepareSharedHeadHud({ viewRevision: 0, viewer: menuInput.viewer,
+            font: menuInput.font, profile: DEFAULT_XR_HEAD_HUD_PROFILE, frameRateLabel: null,
+            get locale() { dispose(); return "ja"; } }, sharedGameUiPlatform(), () => new Float64Array(5)); break;
         }
       }).toThrow("disposed");
       expect(call).not.toHaveBeenCalled();

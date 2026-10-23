@@ -300,7 +300,7 @@ Nativeは既存DirectionalLightの2048 texel・30〜600 mの3段cascadeから、
 - Result、Replay Cinematic/Analysis、Attractは共有HUD観測に従って非表示とする。
 - FPSはHUD観測の有無から独立する。
 - Screen HUDは下端の透明な領域へ配置し、主要数値、計器、右下の操作を分離する。各cardは共有boundsへ投影し、全体背景とスクロールを使用しない。姿勢計は透明な線画と共有ピッチ目盛を描く。
-- Head HUDは両眼の前方中央と操作panelを避け、下側の帯へ優先して配置する。下側に収まらない場合は行単位で先頭の情報を上側へ移し、共有Rustのfit結果を投影する。
+- Head HUDは両眼の前方中央と操作panelを避け、下側の帯へ優先して配置する。下側に収まらない場合は行単位で先頭の情報を上側へ移す。FPSは前方clear領域の直上へ右寄せし、上側の情報行とはgapで分離する。
 
 ## VRの座標・anchor
 
@@ -375,7 +375,7 @@ T_{eye,object}=T_{R,eye}^{-1}T_{R,object}
 - scope/geometry変更・閉じる/再表示では古い入力を拒否する。
 - 通常head motionやtelemetryでgenerationを更新しない。
 
-- `project_xr_head_hud`が光学面の探索と共有groupのpackingを一度の呼出しで実行し、Head情報板の順序・placement・FPS領域を返す。既定profileと予約Menu寸法はRustから生成する。
+- `prepare_game_ui_head_hud`が保持済みView/Frameと実フォント観測から光学面・group配置・描画命令・実測ink視角を一括で導出する。既定profileと予約Menu寸法はRustから生成する。
 - 左右眼の前方水平±15°・垂直±10°を保護領域として写像し、cardと予約Menu領域を分離する。
 - 背景alphaとforeground alphaを独立に保持する。
 - painterが実測したglyph端をsurface-local metreで共有Rustの`fit_xr_text_ink`へ一括入力し、両眼clipと角高さ0.35°以上を検査する。Canvasの文字計測・描画とGPU資源はadapterが所有する。
