@@ -260,7 +260,7 @@ describe("Aggregate runtime through the real Three WebXRManager", () => {
         menu.paint.size.height / 2 - label.anchor.y + label.fontMeters * 0.3, 0).applyMatrix4(before);
       const origin = new Vector3().setFromMatrixPosition(poseMatrix(opening.scene.camera.world_from_head ?? state.session.head));
       const ray = new Matrix4().compose(origin, new Quaternion().setFromUnitVectors(new Vector3(0, 0, -1), point.sub(origin).normalize()), new Vector3(1, 1, 1));
-      state.session.pointer = matrixPose(poseMatrix(opening.scene.camera.world_from_tracking).invert().multiply(ray));
+      state.session.pointer = matrixPose(poseMatrix(state.session.head).multiply(poseMatrix(opening.scene.camera.world_from_head ?? state.session.head).invert()).multiply(ray));
       state.session.inputSources.push({ targetRayMode: "tracked-pointer", targetRaySpace: {}, profiles: [], handedness: "right", gripSpace: null, gamepad: null, hand: null } as unknown as XRInputSource);
       state.frame(20);
       const hovered = state.drawing();

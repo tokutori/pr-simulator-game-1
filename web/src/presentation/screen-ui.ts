@@ -1,4 +1,3 @@
-import { APP_BUILD_LABEL } from "./build-info.js";
 import type { GameUiChart, GameUiChartExtent, GameUiControl, GameUiControlInput, GameUiFrame, GameUiPanel, GameUiView } from "../generated/application-contracts.js";
 import {
   attributesModule,
@@ -10,6 +9,12 @@ import {
   styleModule
 } from "snabbdom";
 import type { VNode, VNodeData } from "snabbdom";
+
+declare const __APP_BUILD_LABEL__: string;
+
+const APP_BUILD_LABEL = typeof __APP_BUILD_LABEL__ === "string"
+  ? __APP_BUILD_LABEL__
+  : "v0.1.0 · test";
 
 const patch = init([attributesModule, classModule, datasetModule, propsModule, styleModule]);
 

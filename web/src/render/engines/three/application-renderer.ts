@@ -13,6 +13,20 @@ import { lakeFilteredWaterVertexShader, lakeWaterFragmentShader, lakeWaterVertex
 type PrepareRequest = Extract<ApplicationRequest, { kind: "prepare_resources" }>;
 type ResourceRequest = Extract<ApplicationRequest, { kind: "commit_resources" | "cancel_resources" | "release_resources" }>;
 
+function submitSun(sun: DirectionalLight, light: ApplicationDrawingOutput["scene"]["lighting"], intensity: number): void {
+  sun.intensity = light == null ? 0 : intensity;
+  sun.castShadow = light?.shadow_enabled === true;
+  if (light == null) return;
+  sun.position.fromArray(light.sun_world_position);
+  sun.target.position.fromArray(light.sun_target_world_position);
+  sun.shadow.normalBias = light.normal_bias;
+  sun.shadow.bias = light.depth_bias;
+  sun.shadow.radius = 5;
+  const [left, right, bottom, top, near, far] = light.shadow_bounds;
+  Object.assign(sun.shadow.camera, { left, right, bottom, top, near, far });
+  sun.shadow.camera.updateProjectionMatrix();
+}
+
 interface PreparedResources {
   readonly request: PrepareRequest;
   readonly scene: Scene;
@@ -136,7 +150,12 @@ export class ThreeApplicationRenderer {
   }
 
   private async compile(candidate: PreparedResources): Promise<void> {
-    const surfaces = [this.menu_mesh, this.head_mesh, this.cursor_meshes[0]].flatMap(mesh => mesh == null ? [] : [mesh.clone()]);
+    const surfaces = [this.menu_mesh, this.head_mesh, this.cursor_meshes[0]].flatMap(mesh => {
+      if (mesh == null) return [];
+      const surface = mesh.clone();
+      surface.visible = true;
+      return [surface];
+    });
     const xr = this.renderer.xr.enabled;
     const target = this.renderer.getRenderTarget();
     const background = candidate.scene.background;
@@ -227,7 +246,7 @@ export class ThreeApplicationRenderer {
     const images = [assets.sky.buffer_id];
     for (const texture of this.manifest.wing_textures) this.buffers.wingTexture(texture);
     const sun = new DirectionalLight(lighting.sunlight_color_srgb, lighting.sunlight_irradiance);
-    sun.castShadow = lighting.sunlight_direction[3] !== 0;
+    submitSun(sun, lighting.initial_shadow, lighting.sunlight_irradiance);
     sun.shadow.mapSize.fromArray(request.graphics.shadow_extent_px);
     const ambient = new AmbientLight(lighting.ambient_color_srgb, lighting.ambient_irradiance);
     ambient.layers.enable(1);
@@ -286,7 +305,7 @@ export class ThreeApplicationRenderer {
       uWaveOmegaPhase: { value: projection.waveOmegaPhase.map(wave => new Vector4(...wave)) },
       uWaveCount: { value: projection.waveCount }, uChoppiness: { value: projection.choppiness },
       uGridSpacingGradient: { value: projection.spacing.gradientMagnitude }, uVisualWaveHeight: { value: projection.visualWaveHeight },
-      uWaterDark: { value: new Color(0x172831) }, uWaterMid: { value: new Color(0x293b43) }, uWaterLight: { value: new Color(0x50636a) },
+      uWaterDark: { value: new Color(assets.water.palette_srgb[0]) }, uWaterMid: { value: new Color(assets.water.palette_srgb[1]) }, uWaterLight: { value: new Color(assets.water.palette_srgb[2]) },
       uHazeColor: { value: new Color(lighting.haze_color_srgb) }, uHazeRange: { value: new Vector4(...lighting.haze_range_meters, 0, 0) },
       uSunDirection: { value: new Vector4(...lighting.sunlight_direction) }, uReflectionTexture: { value: reflection.texture },
       uReflectionMatrix: { value: new Matrix4() }, uReflectionEnabled: { value: 0 }, uWaterBackingClip: { value: 0 },
@@ -382,22 +401,8 @@ export class ThreeApplicationRenderer {
       candidate.attachments.world.visible = drawing.scene.venue_visible;
       for (const part of geometry?.part_poses ?? []) setPose(candidate.attachments[part.attachment], part.pose);
       setPose(candidate.water, drawing.scene.water_world_from_surface);
-      const light = drawing.scene.lighting;
-      if (light == null) {
-        candidate.sun.castShadow = false;
-        candidate.sun.intensity = 0;
-      } else {
-        candidate.sun.intensity = candidate.request.assets.lighting.sunlight_irradiance;
-        candidate.sun.position.fromArray(light.sun_world_position);
-        candidate.sun.target.position.fromArray(light.sun_target_world_position);
-        candidate.sun.castShadow = light.shadow_enabled;
-        candidate.sun.shadow.normalBias = light.normal_bias;
-        candidate.sun.shadow.bias = light.depth_bias;
-        candidate.sun.shadow.radius = 5;
-        const [left, right, bottom, top, near, far] = light.shadow_bounds;
-        Object.assign(candidate.sun.shadow.camera, { left, right, bottom, top, near, far });
-        candidate.sun.shadow.camera.updateProjectionMatrix();
-      }
+      submitSun(candidate.sun, candidate === this.active ? drawing.scene.lighting : candidate.request.assets.lighting.initial_shadow,
+        candidate.request.assets.lighting.sunlight_irradiance);
       for (const material of candidate.water_materials) {
         uniform(material, "uTimeSeconds", drawing.scene.water_time_seconds);
         uniform(material, "uWaterBackingCenter", new Vector4(...drawing.scene.water_clip_center, 0, 0));

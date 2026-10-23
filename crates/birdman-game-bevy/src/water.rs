@@ -108,8 +108,13 @@ impl WaterMaterial {
             detail_near: Some(images[0].clone()),
             detail_far: Some(images[1].clone()),
             sky_texture: Some(images[2].clone()),
-            water_palette: [0x172831, 0x293b43, 0x50636a, lighting.haze_color_srgb]
-                .map(|color| super::world::color_srgb(color).to_linear().to_vec4()),
+            water_palette: [
+                water.palette_srgb[0],
+                water.palette_srgb[1],
+                water.palette_srgb[2],
+                lighting.haze_color_srgb,
+            ]
+            .map(|color| super::world::color_srgb(color).to_linear().to_vec4()),
             haze_parameters: Vec4::new(
                 lighting.haze_range_meters[0] as f32,
                 lighting.haze_range_meters[1] as f32,
