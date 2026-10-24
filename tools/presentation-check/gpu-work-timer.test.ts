@@ -3,14 +3,14 @@ import { GpuWorkTimer } from "../../web/src/render/engines/three/gpu-work-timer.
 import { gpuTimerFixture } from "./gpu-timer-fixture.js";
 
 describe("WebGL GPU-work timer boundary", () => {
-  it("rejects missing disjoint and non-boolean availability without accepting a sample", () => {
-    for (const boundary of ["disjoint", "availability"] as const) {
+  it("rejects malformed API result types without accepting a sample", () => {
+    for (const boundary of ["disjoint state", "availability state", "elapsed duration"] as const) {
       const { gl, context } = gpuTimerFixture();
       const timer = new GpuWorkTimer(context);
       timer.begin({ renderer_resource_id: 100, epoch: 1, frame: 1, source_ms: 0 }); timer.end(true);
-      if (boundary === "disjoint") gl.getParameter.mockReturnValue(null);
-      else gl.getQueryParameter.mockImplementation((_query, parameter) => parameter === 2 ? 1 : 20_000_000);
-      expect(() => timer.poll()).toThrow(`invalid ${boundary} state`);
+      if (boundary === "disjoint state") gl.getParameter.mockReturnValue(null);
+      else gl.getQueryParameter.mockImplementation((_query, parameter) => parameter === 2 ? boundary === "elapsed duration" ? true : 1 : null);
+      expect(() => timer.poll()).toThrow(`invalid ${boundary}`);
       timer.clear();
       expect(gl.deleteQuery).toHaveBeenCalledTimes(1);
     }
@@ -28,6 +28,17 @@ describe("WebGL GPU-work timer boundary", () => {
     gl.getQueryParameter.mockImplementation((_query, parameter) => parameter === 2 ? true : 8_000_000_000);
     expect(timer.poll()).toEqual([{ kind: "sample", source, milliseconds: 8000 }]);
     expect(gl.deleteQuery).toHaveBeenCalledTimes(1);
+    expect(timer.poll()).toEqual([]);
+    for (const [nanoseconds, milliseconds] of [[-1_000_000, -1], [Number.NaN, null]] as const) {
+      gl.deleteQuery.mockClear();
+      gl.getQueryParameter.mockImplementation((_query, parameter) => parameter === 2 ? true : nanoseconds);
+      timer.begin(source);
+      timer.end(true);
+      expect(timer.poll()).toEqual([{ kind: "sample", source, milliseconds }]);
+      expect(gl.deleteQuery).toHaveBeenCalledTimes(1);
+      expect(timer.poll()).toEqual([]);
+      expect(gl.deleteQuery).toHaveBeenCalledTimes(1);
+    }
   });
 
   it("never modifies a foreign query and bounds owned pending queries", () => {

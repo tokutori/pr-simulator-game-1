@@ -5,8 +5,9 @@ import { Camera, Color, Matrix4, PerspectiveCamera, Quaternion, Vector2, Vector3
 import type { ArrayCamera, Scene, WebGLRenderer } from "three";
 import { WebXRManager } from "three/src/renderers/webxr/WebXRManager.js";
 import { ApplicationRuntimeBridge } from "../../web/pkg/birdman_game_wasm.js";
-import type { ApplicationDrawingOutput, ApplicationOutput, Pose, SurfacePaintItem } from "../../web/src/generated/application-contracts.js";
+import type { ApplicationDrawingOutput, ApplicationObservation, ApplicationOutput, Pose, SurfacePaintItem } from "../../web/src/generated/application-contracts.js";
 import { applicationPlatformFixture } from "../game-check/application-fixture.js";
+import { gpuTimerFixture } from "./gpu-timer-fixture.js";
 
 interface Draw {
   readonly eyes: Matrix4[];
@@ -19,6 +20,8 @@ interface Driver {
   readonly xr: WebXRManager;
   readonly draws: Draw[];
   readonly disposed: ReturnType<typeof vi.fn>;
+  readonly timer: ReturnType<typeof gpuTimerFixture>;
+  frame: ((now: number, frame?: XRFrame) => void) | null;
   compile: Promise<void>;
   sizeFaults: number;
   reflectionFault: boolean;
@@ -26,7 +29,7 @@ interface Driver {
   getClearAlpha(): number;
   getScissorTest(): boolean;
 }
-const capture = vi.hoisted(() => ({ driver: null as Driver | null, compilation: null as Promise<void> | null }));
+const capture = vi.hoisted(() => ({ driver: null as Driver | null, compilation: null as Promise<void> | null, timing: false }));
 
 vi.mock("three", async importOriginal => {
   const actual = await importOriginal<typeof import("three")>();
@@ -34,6 +37,8 @@ vi.mock("three", async importOriginal => {
     readonly xr: WebXRManager;
     readonly draws: Draw[] = [];
     readonly disposed = vi.fn();
+    readonly timer = gpuTimerFixture();
+    frame: ((now: number, frame?: XRFrame) => void) | null = null;
     readonly shadowMap = { enabled: false, autoUpdate: true, needsUpdate: false };
     outputColorSpace = actual.SRGBColorSpace;
     compile = capture.compilation ?? Promise.resolve();
@@ -47,7 +52,9 @@ vi.mock("three", async importOriginal => {
     private pixelRatio = 1;
     private scissorTest = false;
     private target: WebGLRenderTarget | null = null;
-    private readonly gl = { getContextAttributes: () => ({ xrCompatible: true, antialias: false, depth: false, stencil: false }), getExtension: () => null };
+    private readonly gl = { ...this.timer.gl,
+      getContextAttributes: () => ({ xrCompatible: true, antialias: false, depth: false, stencil: false }),
+      getExtension: (name: string) => capture.timing && name === "EXT_disjoint_timer_query_webgl2" ? this.timer.gl.getExtension() : null };
     constructor() {
       this.xr = new WebXRManager(this as unknown as WebGLRenderer, this.gl as unknown as WebGLRenderingContext);
       capture.driver = this;
@@ -62,7 +69,7 @@ vi.mock("three", async importOriginal => {
     }
     getSize(target: Vector2): Vector2 { return target.copy(this.size); }
     getDrawingBufferSize(target: Vector2): Vector2 { return target.copy(this.size).multiplyScalar(this.pixelRatio); }
-    setAnimationLoop(callback: XRFrameRequestCallback | null): void { this.xr.setAnimationLoop(callback); }
+    setAnimationLoop(callback: ((now: number, frame?: XRFrame) => void) | null): void { this.frame = callback; this.xr.setAnimationLoop(callback); }
     setRenderTarget(target: WebGLRenderTarget | null): void { this.target = target; }
     getRenderTarget(): WebGLRenderTarget | null { return this.target; }
     setRenderTargetFramebuffer(): void {}
@@ -166,7 +173,7 @@ class XrSession extends EventTarget {
   }
 }
 
-afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); capture.driver = null; capture.compilation = null; });
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); capture.driver = null; capture.compilation = null; capture.timing = false; });
 
 async function fixture() {
   const browser = new Window({ url: "http://localhost/" });
@@ -239,11 +246,25 @@ function text(items: readonly SurfacePaintItem[], label: string): Extract<Surfac
 describe("Aggregate runtime through the real Three WebXRManager", () => {
   describe("tracked presentation", () => {
   let prepared: Awaited<ReturnType<typeof fixture>> | null = null;
-  beforeAll(async () => { prepared = await fixture(); await prepared.ready(); });
+  beforeAll(async () => { capture.timing = true; prepared = await fixture(); await prepared.ready(); });
   it("submits asymmetric eyes, stable reset placement, painted cursors and a real trigger action", async () => {
     const state = prepared;
     if (state === null) throw new Error("Browser setup did not complete");
     try {
+      if (state.driver.frame === null) throw new Error("Screen animation was not started");
+      state.driver.frame(1);
+      const query = state.drawing().graphics.query;
+      expect(query).not.toBeNull();
+      const renderer = state.drawing().graphics.resource;
+      const observed = state.updates.mock.calls.length;
+      state.driver.timer.gl.getQueryParameter.mockImplementationOnce(() => true).mockImplementationOnce(() => -1_000_000);
+      state.driver.frame(2);
+      const inputs = state.updates.mock.calls.slice(observed).map(([json]) => (JSON.parse(json) as ApplicationObservation).input);
+      const completion = inputs.find(input => input.kind === "graphics" && input.observation.kind === "gpu_completed");
+      expect(completion?.kind === "graphics" ? completion.observation : null).toEqual({ kind: "gpu_completed", query, gpu_work_ms: -1 });
+      expect(inputs.some(input => input.kind === "renderer_failed")).toBe(false);
+      expect(state.drawing().graphics.resource).toEqual(renderer);
+      expect(state.driver.disposed).not.toHaveBeenCalled();
       state.click("boot-enter-hmd");
       await flush();
       expect(state.driver.xr.isPresenting).toBe(true);

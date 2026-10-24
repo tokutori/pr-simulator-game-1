@@ -7,7 +7,7 @@ interface TimerExtension {
 }
 
 export type GpuQueryObservation =
-  | { readonly kind: "sample"; readonly source: ApplicationGpuQuery; readonly milliseconds: number }
+  | { readonly kind: "sample"; readonly source: ApplicationGpuQuery; readonly milliseconds: number | null }
   | { readonly kind: "disjoint" }
   | { readonly kind: "unsupported"; readonly cause: string };
 
@@ -37,10 +37,10 @@ export class GpuWorkTimer {
       const nanoseconds: unknown = this.gl.getQueryParameter(pending.query, this.gl.QUERY_RESULT);
       this.gl.deleteQuery(pending.query);
       this.pending = this.pending.filter((item) => item !== pending);
-      if (typeof nanoseconds !== "number" || !Number.isFinite(nanoseconds) || nanoseconds < 0) {
+      if (typeof nanoseconds !== "number") {
         throw new Error("GPU timer returned an invalid elapsed duration");
       }
-      observations.push({ kind: "sample", source: pending.source, milliseconds: nanoseconds / 1_000_000 });
+      observations.push({ kind: "sample", source: pending.source, milliseconds: Number.isFinite(nanoseconds) ? nanoseconds / 1_000_000 : null });
     }
     return observations;
   }
