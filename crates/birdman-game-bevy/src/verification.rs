@@ -713,8 +713,8 @@ fn advance_step(world: &mut World, verification: &mut Verification) -> Result<()
         Check::RetainRecord => { verification.replay_record = Some(ReplayCaptureRecord::retain(runtime)?); verification.next(); }
         Check::Camera(camera) => {
             let action = GameUiAction::CycleReplayCamera {};
-            if let Some(view) = super::ui::submitted_view(world) && let Some(control) = view.panels.iter().flat_map(|panel| &panel.controls).find(|control| control.enabled && matches!(&control.content, GameUiControlContent::Button { action: actual, .. } if actual == &action)) {
-                if control.label == format!("Camera: {}", camera.label()) {
+            if let Some(view) = super::ui::submitted_view(world) && view.panels.iter().flat_map(|panel| &panel.controls).any(|control| control.enabled && matches!(&control.content, GameUiControlContent::Button { action: actual, .. } if actual == &action)) {
+                if view.selections.replay_camera == camera {
                     verification.next();
                 } else if let Some(input) = action_input(world, &action) {
                     world.resource_mut::<NativeInputs>().0.push(input);

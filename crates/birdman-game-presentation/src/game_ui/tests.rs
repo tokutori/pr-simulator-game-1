@@ -1724,6 +1724,13 @@ fn replay_camera_order_and_clock_effects_are_shared_ui_state_only() {
         )
         .unwrap();
         assert_eq!(update.state.replay_camera, expected);
+        assert_eq!(
+            game_ui_view(&update.state, &context(&session, difficulty(), &platform))
+                .unwrap()
+                .selections
+                .replay_camera,
+            expected
+        );
         assert_eq!(session.playback_clock(), before);
         state = update.state;
     }
