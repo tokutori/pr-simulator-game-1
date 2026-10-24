@@ -218,7 +218,7 @@ pub(crate) struct Verification {
     started: Instant,
     checks: Vec<Check>,
     index: usize,
-    scene_shaders: [Handle<Shader>; 2],
+    scene_shaders: [Handle<Shader>; 3],
     readiness: RenderReadiness,
     capture: CaptureState,
     capture_serial: u64,
@@ -424,6 +424,7 @@ impl Verification {
                 scene_shaders: [
                     asset_server.load(super::native_assets::water_shader_path()),
                     asset_server.load(super::native_assets::terrain_shader_path()),
+                    asset_server.load(super::native_assets::direction_shader_path()),
                 ],
                 readiness: RenderReadiness::default(),
                 capture: CaptureState::Idle,

@@ -146,6 +146,7 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
         plugins
     };
     app.add_plugins(plugins)
+        .add_plugins(UiMaterialPlugin::<ui::DirectionMaterial>::default())
         .add_plugins(bevy::input_focus::tab_navigation::TabNavigationPlugin)
         .insert_resource(storage)
         .init_resource::<native_runtime::NativeInputs>()

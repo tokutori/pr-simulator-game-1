@@ -1,5 +1,5 @@
 use super::super::NativeFont;
-use super::{color, retained_node, retained_ui_transform, set_text, spawn_text};
+use super::{DirectionMaterial, color, retained_node, retained_ui_transform, set_text, spawn_text};
 use bevy::{picking::Pickable, prelude::*};
 use birdman_game_presentation::game_ui::{
     GameUiChartPoint, GameUiHud, GameUiHudNode, GameUiHudNodeContent, GameUiHudTone, GameUiTheme,
@@ -41,7 +41,7 @@ enum HudWidget {
         ring: Entity,
         cross: [Entity; 2],
         north: (Entity, Entity),
-        arrow: [(Entity, Entity); 2],
+        arrow: Entity,
     },
     LinearGauge {
         surface: Entity,
@@ -460,13 +460,19 @@ fn spawn_node(
             let ring = shape(world, canvas, Node::default(), Color::NONE);
             let cross = std::array::from_fn(|_| shape(world, canvas, Node::default(), Color::NONE));
             let north = instrument_text(world, canvas, font);
-            let arrow = std::array::from_fn(|_| {
-                let anchor = shape(world, canvas, Node::default(), Color::NONE);
-                world.entity_mut(anchor).insert(LayoutConfig {
-                    use_rounding: false,
-                });
-                (anchor, shape(world, anchor, Node::default(), Color::NONE))
-            });
+            let material = world
+                .resource_mut::<Assets<DirectionMaterial>>()
+                .add(DirectionMaterial::default());
+            let arrow = shape(
+                world,
+                canvas,
+                Node {
+                    display: Display::None,
+                    ..default()
+                },
+                Color::NONE,
+            );
+            world.entity_mut(arrow).insert(MaterialNode(material));
             HudWidget::Direction {
                 surface,
                 canvas,
@@ -634,59 +640,6 @@ fn project_triangle(
     });
 }
 
-fn project_direction_triangle(
-    world: &mut World,
-    (anchor, triangle): (Entity, Entity),
-    points: Option<[GameUiChartPoint; 3]>,
-    ink: Color,
-) {
-    let Some(points) = points else {
-        retained_node(world, anchor).display = Display::None;
-        return;
-    };
-    let base = (0..3)
-        .max_by(|&left, &right| {
-            let length_squared = |index: usize| {
-                let start = points[index];
-                let end = points[(index + 1) % 3];
-                (end.x - start.x).powi(2) + (end.y - start.y).powi(2)
-            };
-            length_squared(left).total_cmp(&length_squared(right))
-        })
-        .expect("triangle has three edges");
-    let start = points[base];
-    let end = points[(base + 1) % 3];
-    let tip = points[(base + 2) % 3];
-    let delta = (end.x - start.x, end.y - start.y);
-    let length = delta.0.hypot(delta.1);
-    let (cos, sin) = (delta.0 / length, delta.1 / length);
-    let relative = (tip.x - start.x, tip.y - start.y);
-    retained_node(world, anchor).set_if_neq(Node {
-        position_type: PositionType::Absolute,
-        left: px(start.x),
-        top: px(start.y),
-        width: px(0),
-        height: px(0),
-        ..default()
-    });
-    retained_ui_transform(world, anchor).set_if_neq(UiTransform::from_rotation(Rot2::radians(
-        delta.1.atan2(delta.0) as f32,
-    )));
-    project_triangle(
-        world,
-        triangle,
-        Some([
-            GameUiChartPoint {
-                x: relative.0 * cos + relative.1 * sin,
-                y: relative.1 * cos - relative.0 * sin,
-            },
-            GameUiChartPoint { x: 0.0, y: 0.0 },
-            GameUiChartPoint { x: length, y: 0.0 },
-        ]),
-        ink,
-    );
-}
-
 fn project_widget(
     world: &mut World,
     node: &mut HudNode,
@@ -830,7 +783,7 @@ fn project_widget(
                 ring,
                 cross,
                 north,
-                arrow: triangles,
+                arrow: arrow_entity,
                 ..
             } = node.widget
             else {
@@ -859,13 +812,43 @@ fn project_widget(
                 north_label,
                 (-50.0, 0.0, hud.layout.font_size_px / scale, ink),
             );
-            for (entities, indices) in triangles.into_iter().zip([[0, 1, 2], [0, 2, 3]]) {
-                project_direction_triangle(
-                    world,
-                    entities,
-                    arrow.map(|points| indices.map(|index| points[index])),
-                    focus,
-                );
+            retained_node(world, arrow_entity).set_if_neq(Node {
+                position_type: PositionType::Absolute,
+                width: px(canvas_size[0]),
+                height: px(canvas_size[1]),
+                display: if arrow.is_some() {
+                    Display::Flex
+                } else {
+                    Display::None
+                },
+                ..default()
+            });
+            if let Some(points) = arrow {
+                let material = DirectionMaterial {
+                    points01: Vec4::new(
+                        points[0].x as f32,
+                        points[0].y as f32,
+                        points[1].x as f32,
+                        points[1].y as f32,
+                    ),
+                    points23: Vec4::new(
+                        points[2].x as f32,
+                        points[2].y as f32,
+                        points[3].x as f32,
+                        points[3].y as f32,
+                    ),
+                    canvas: Vec4::new(canvas_size[0] as f32, canvas_size[1] as f32, 0.0, 0.0),
+                    color: focus.to_linear().to_vec4(),
+                };
+                let id = world
+                    .get::<MaterialNode<DirectionMaterial>>(arrow_entity)
+                    .expect("Direction material")
+                    .0
+                    .id();
+                let mut materials = world.resource_mut::<Assets<DirectionMaterial>>();
+                if materials.get(id) != Some(&material) {
+                    *materials.get_mut(id).expect("retained Direction material") = material;
+                }
             }
         }
         GameUiHudNodeContent::LinearGauge {
@@ -923,6 +906,7 @@ mod tests {
     #[test]
     fn transparent_flight_path_widget_applies_final_shared_geometry_and_retains_its_entities() {
         let mut world = World::new();
+        world.init_resource::<Assets<DirectionMaterial>>();
         let parent = world.spawn_empty().id();
         let mut source = GameUiHudNode {
             id: "hud-attitude".into(),
@@ -1079,50 +1063,6 @@ mod tests {
         assert_eq!(world.get::<BorderColor>(pointer).unwrap().top, Color::WHITE);
         project_triangle(&mut world, pointer, None, Color::WHITE);
         assert_eq!(world.get::<Node>(pointer).unwrap().display, Display::None);
-        let anchor = shape(&mut world, parent, Node::default(), Color::NONE);
-        let triangle = shape(&mut world, anchor, Node::default(), Color::NONE);
-        for points in [
-            [
-                GameUiChartPoint { x: 36.0, y: 15.0 },
-                GameUiChartPoint { x: 31.0, y: 38.0 },
-                GameUiChartPoint { x: 36.0, y: 34.0 },
-            ],
-            [
-                GameUiChartPoint { x: 57.0, y: 36.0 },
-                GameUiChartPoint { x: 38.0, y: 36.0 },
-                GameUiChartPoint { x: 34.0, y: 41.0 },
-            ],
-        ] {
-            project_direction_triangle(&mut world, (anchor, triangle), Some(points), Color::WHITE);
-            let border = world.get::<Node>(triangle).unwrap().border;
-            assert!(matches!(border.left, Val::Px(value) if value > 0.0));
-            assert!(matches!(border.right, Val::Px(value) if value > 0.0));
-            assert_eq!(world.get::<Node>(anchor).unwrap().width, px(0));
-            let pixels = |value| match value {
-                Val::Px(value) => value,
-                _ => panic!("logical pixel binding"),
-            };
-            let origin = world.get::<Node>(anchor).unwrap();
-            let origin = Vec2::new(pixels(origin.left), pixels(origin.top));
-            let rotation = world.get::<UiTransform>(anchor).unwrap().rotation;
-            let height = if world.get::<BorderColor>(triangle).unwrap().top == Color::WHITE {
-                pixels(border.top)
-            } else {
-                -pixels(border.bottom)
-            };
-            for local in [
-                Vec2::ZERO,
-                Vec2::new(pixels(border.left) + pixels(border.right), 0.0),
-                Vec2::new(pixels(border.left), height),
-            ] {
-                let actual = origin + rotation * local;
-                assert!(points.iter().any(|point| {
-                    actual.distance(Vec2::new(point.x as f32, point.y as f32)) < 1.0e-4
-                }));
-            }
-        }
-        project_direction_triangle(&mut world, (anchor, triangle), None, Color::WHITE);
-        assert_eq!(world.get::<Node>(anchor).unwrap().display, Display::None);
         source.content = GameUiHudNodeContent::Direction {
             value: String::new(),
             canvas_size: [72.0, 72.0],
@@ -1151,11 +1091,7 @@ mod tests {
         )
         .unwrap();
         let HudWidget::Direction {
-            canvas,
-            ring,
-            north,
-            arrow,
-            ..
+            ring, north, arrow, ..
         } = direction.widget
         else {
             unreachable!()
@@ -1172,21 +1108,85 @@ mod tests {
                 .get::<super::super::ChartTextBaseline>(north.1)
                 .is_some()
         );
-        assert!(
-            arrow
-                .iter()
-                .all(|(anchor, _)| world.get::<Node>(*anchor).unwrap().display == Display::None)
-        );
-        assert!(arrow.iter().all(|(anchor, triangle)| {
-            world
-                .get::<LayoutConfig>(*anchor)
-                .is_some_and(|config| !config.use_rounding)
-                && world.get::<LayoutConfig>(*triangle).is_none()
-        }));
-        assert!(
-            [canvas, ring, north.0, north.1]
-                .into_iter()
-                .all(|entity| world.get::<LayoutConfig>(entity).is_none())
+        assert_eq!(world.get::<Node>(arrow).unwrap().display, Display::None);
+        let id = world
+            .get::<MaterialNode<DirectionMaterial>>(arrow)
+            .unwrap()
+            .0
+            .id();
+        for offset in [0.0, 1.0] {
+            let points = [
+                GameUiChartPoint {
+                    x: 36.0 + offset,
+                    y: 15.0,
+                },
+                GameUiChartPoint { x: 31.0, y: 38.0 },
+                GameUiChartPoint { x: 36.0, y: 34.0 },
+                GameUiChartPoint { x: 41.0, y: 38.0 },
+            ];
+            let GameUiHudNodeContent::Direction {
+                arrow: source_arrow,
+                ..
+            } = &mut source.content
+            else {
+                unreachable!()
+            };
+            *source_arrow = Some(points);
+            project_widget(
+                &mut world,
+                &mut direction,
+                &source,
+                &hud,
+                &font,
+                [Color::WHITE; 3],
+            )
+            .unwrap();
+            assert_eq!(
+                world
+                    .get::<MaterialNode<DirectionMaterial>>(arrow)
+                    .unwrap()
+                    .0
+                    .id(),
+                id
+            );
+            let materials = world.resource::<Assets<DirectionMaterial>>();
+            assert_eq!(materials.len(), 1);
+            assert_eq!(
+                materials.get(id).unwrap(),
+                &DirectionMaterial {
+                    points01: Vec4::new(36.0 + offset as f32, 15.0, 31.0, 38.0),
+                    points23: Vec4::new(36.0, 34.0, 41.0, 38.0),
+                    canvas: Vec4::new(72.0, 72.0, 0.0, 0.0),
+                    color: Color::WHITE.to_linear().to_vec4(),
+                }
+            );
+        }
+        let retained = world
+            .resource::<Assets<DirectionMaterial>>()
+            .get(id)
+            .unwrap()
+            .clone();
+        let GameUiHudNodeContent::Direction {
+            arrow: source_arrow,
+            ..
+        } = &mut source.content
+        else {
+            unreachable!()
+        };
+        *source_arrow = None;
+        project_widget(
+            &mut world,
+            &mut direction,
+            &source,
+            &hud,
+            &font,
+            [Color::WHITE; 3],
+        )
+        .unwrap();
+        assert_eq!(world.get::<Node>(arrow).unwrap().display, Display::None);
+        assert_eq!(
+            world.resource::<Assets<DirectionMaterial>>().get(id),
+            Some(&retained)
         );
     }
 }

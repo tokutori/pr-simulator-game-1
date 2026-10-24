@@ -6,6 +6,7 @@ use bevy::{
 pub(crate) fn register(app: &mut App) {
     embedded_asset!(app, "../assets/native_water.wgsl");
     embedded_asset!(app, "../assets/native_terrain_haze.wgsl");
+    embedded_asset!(app, "../assets/native_direction.wgsl");
 }
 
 pub(crate) fn bundled_font() -> &'static [u8] {
@@ -21,17 +22,22 @@ pub(crate) fn terrain_shader_path() -> AssetPath<'static> {
         .with_source("embedded")
 }
 
+pub(crate) fn direction_shader_path() -> AssetPath<'static> {
+    AssetPath::from_path_buf(embedded_path!("../assets/native_direction.wgsl"))
+        .with_source("embedded")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::app::{
         native_storage::tests::Directory as TestDirectory, terrain_haze::TerrainHazeExtension,
-        water::WaterMaterial,
+        ui::DirectionMaterial, water::WaterMaterial,
     };
     use bevy::{
         asset::{AssetApp, AssetPlugin, AssetServer, Assets, LoadState},
         pbr::MaterialExtension,
-        prelude::{Material, MinimalPlugins},
+        prelude::{Material, MinimalPlugins, UiMaterial},
         shader::{Shader, ShaderLoader, ShaderRef},
     };
     use std::time::{Duration, Instant};
@@ -55,11 +61,13 @@ mod tests {
             WaterMaterial::vertex_shader(),
             WaterMaterial::fragment_shader(),
             TerrainHazeExtension::fragment_shader(),
+            DirectionMaterial::fragment_shader(),
         ];
         let expected = [
             include_str!("../assets/native_water.wgsl"),
             include_str!("../assets/native_water.wgsl"),
             include_str!("../assets/native_terrain_haze.wgsl"),
+            include_str!("../assets/native_direction.wgsl"),
         ];
         let server = app.world().resource::<AssetServer>();
         let handles = references.map(|reference| match reference {

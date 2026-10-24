@@ -1,5 +1,6 @@
 use super::{NativeFont, native_runtime::NativeInputs};
 use bevy::ecs as bevy_ecs;
+use bevy::{asset as bevy_asset, reflect as bevy_reflect, render as bevy_render};
 use bevy::{
     input::mouse::MouseScrollUnit,
     input_focus::{
@@ -12,6 +13,8 @@ use bevy::{
         pointer::{PointerAction, PointerButton, PointerId, PointerInput},
     },
     prelude::*,
+    render::render_resource::{AsBindGroup, encase},
+    shader::ShaderRef,
     text::{ComputedTextBlock, FontFeatureTag, FontFeatures, TextLayoutInfo},
     ui::ColorStop,
     ui::RelativeCursorPosition,
@@ -37,6 +40,24 @@ mod projection;
 use chart::*;
 use hud::{RetainedHud, project_hud, setup_hud};
 use projection::*;
+
+#[derive(AsBindGroup, Asset, TypePath, Clone, Debug, Default, PartialEq)]
+pub(super) struct DirectionMaterial {
+    #[uniform(0)]
+    pub(super) points01: Vec4,
+    #[uniform(0)]
+    pub(super) points23: Vec4,
+    #[uniform(0)]
+    pub(super) canvas: Vec4,
+    #[uniform(0)]
+    pub(super) color: Vec4,
+}
+
+impl UiMaterial for DirectionMaterial {
+    fn fragment_shader() -> ShaderRef {
+        super::native_assets::direction_shader_path().into()
+    }
+}
 
 #[derive(Component)]
 pub(crate) struct MenuButton {
