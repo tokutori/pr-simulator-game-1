@@ -216,16 +216,6 @@ pub fn update_game_ui(
             if entering_replay {
                 next.replay_view = GameUiReplayView::Cinematic;
                 next.technical_open = false;
-                if !context
-                    .platform
-                    .supported_replay_cameras
-                    .contains(&state.replay_camera)
-                {
-                    next.replay_camera = GameUiReplayCamera::ALL
-                        .into_iter()
-                        .find(|camera| context.platform.supported_replay_cameras.contains(camera))
-                        .ok_or(GameUiError::ActionUnavailable)?;
-                }
             }
             if matches!(
                 command,
@@ -260,12 +250,8 @@ pub fn update_game_ui(
                 .iter()
                 .position(|camera| *camera == state.replay_camera)
                 .ok_or(GameUiError::ActionUnavailable)?;
-            next.replay_camera = (1..=GameUiReplayCamera::ALL.len())
-                .map(|offset| {
-                    GameUiReplayCamera::ALL[(current + offset) % GameUiReplayCamera::ALL.len()]
-                })
-                .find(|camera| context.platform.supported_replay_cameras.contains(camera))
-                .ok_or(GameUiError::ActionUnavailable)?;
+            next.replay_camera =
+                GameUiReplayCamera::ALL[(current + 1) % GameUiReplayCamera::ALL.len()];
             effects.push(GameUiEffect::Platform {
                 command: GameUiPlatformCommand::SetReplayCamera {
                     camera: next.replay_camera,

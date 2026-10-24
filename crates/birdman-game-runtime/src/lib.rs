@@ -199,7 +199,6 @@ impl ApplicationRuntime {
             menu_recenter_available: false,
             analysis_available: capabilities.analysis_available,
             replay_available: capabilities.replay_available,
-            supported_replay_cameras: capabilities.supported_replay_cameras,
             stored_records_available: capabilities.stored_records_available,
             flight_log_available: capabilities.flight_log_available,
             water_quality: WaterQuality::High,
@@ -855,7 +854,6 @@ impl ApplicationRuntime {
                 self.phone.configure(capabilities.phone_sensors);
                 self.platform.analysis_available = capabilities.analysis_available;
                 self.platform.replay_available = capabilities.replay_available;
-                self.platform.supported_replay_cameras = capabilities.supported_replay_cameras;
                 self.platform.stored_records_available = capabilities.stored_records_available;
                 self.platform.flight_log_available = capabilities.flight_log_available;
             }

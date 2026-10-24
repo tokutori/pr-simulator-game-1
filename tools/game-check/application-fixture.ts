@@ -13,8 +13,7 @@ export function applicationPlatformFixture(): ApplicationPlatformObservation {
     viewport: { width: 1280, height: 720, root_font_size: 16 },
     capabilities: {
       analysis_available: true, flight_log_available: true, hmd_available: true,
-      phone_sensors: null, replay_available: true, stored_records_available: false,
-      supported_replay_cameras: ["auto", "pilot", "chase", "orbit", "platform", "shore", "overhead", "side", "front", "telephoto"]
+      phone_sensors: null, replay_available: true, stored_records_available: false
     }
   };
 }

@@ -1413,21 +1413,8 @@ fn replay(
         "game-replay-camera",
         &format!("Camera: {camera}"),
         GameUiAction::CycleReplayCamera {},
-        context.platform.replay_available && !context.platform.supported_replay_cameras.is_empty(),
+        context.platform.replay_available,
     );
-    let unavailable = GameUiReplayCamera::ALL
-        .iter()
-        .filter(|camera| !context.platform.supported_replay_cameras.contains(camera))
-        .map(|camera| camera.label())
-        .collect::<Vec<_>>();
-    if !unavailable.is_empty() {
-        menu.section("replay-diagnostics", "", GameUiSectionLayout::Column);
-        menu.status(
-            "game-replay-camera-support",
-            "Camera対応",
-            &format!("この表示環境の未実装camera: {}", unavailable.join(" / ")),
-        );
-    }
     let title_return = matches!(
         context.session.snapshot(),
         SessionSnapshot::Replay {

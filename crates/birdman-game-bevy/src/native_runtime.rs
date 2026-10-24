@@ -1,7 +1,7 @@
 use bevy::ecs as bevy_ecs;
 use bevy::prelude::*;
 use birdman_game_app::application::ApplicationSession;
-use birdman_game_presentation::game_ui::{GameUiPresentationMode, GameUiReplayCamera};
+use birdman_game_presentation::game_ui::GameUiPresentationMode;
 use birdman_game_runtime::{
     ApplicationCapabilities, ApplicationDrawingOutput, ApplicationInput, ApplicationLifecycle,
     ApplicationObservation, ApplicationPlatformObservation, ApplicationRequest, ApplicationRuntime,
@@ -59,7 +59,6 @@ pub(crate) fn platform(world: &mut World) -> ApplicationPlatformObservation {
             replay_available: true,
             stored_records_available: true,
             flight_log_available: true,
-            supported_replay_cameras: GameUiReplayCamera::ALL.to_vec(),
             ..Default::default()
         },
     }

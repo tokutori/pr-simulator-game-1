@@ -610,10 +610,6 @@ export type GameUiControlInput = {
  */
 export type ApplicationChartPointerPhase = "down" | "move" | "up" | "cancel" | "lost_capture";
 /**
- * Current Web replay camera candidates in their shared selection order.
- */
-export type GameUiReplayCamera = "auto" | "pilot" | "chase" | "orbit" | "platform" | "shore" | "overhead" | "side" | "front" | "telephoto";
-/**
  * Completion state of the display and scene resources needed for launch.
  */
 export type ApplicationResourceObservation = {
@@ -1111,6 +1107,10 @@ export type GameUiPlatformCommand = {
     readonly camera: GameUiReplayCamera;
     readonly kind: "set_replay_camera";
 };
+/**
+ * Replay camera candidates in their shared selection order.
+ */
+export type GameUiReplayCamera = "auto" | "pilot" | "chase" | "orbit" | "platform" | "shore" | "overhead" | "side" | "front" | "telephoto";
 /**
  * Result presentation mode.
  */
@@ -2169,10 +2169,6 @@ export interface ApplicationCapabilities {
      * Platform provides persistent record I/O.
      */
     readonly stored_records_available: boolean;
-    /**
-     * Camera rigs supported by the drawing adapter.
-     */
-    readonly supported_replay_cameras: readonly GameUiReplayCamera[];
 }
 /**
  * Browser orientation API observations before a sensor sample is available.

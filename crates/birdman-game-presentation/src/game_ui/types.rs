@@ -105,7 +105,7 @@ pub enum GameUiReplayView {
     Analysis,
 }
 
-/// Current Web replay camera candidates in their shared selection order.
+/// Replay camera candidates in their shared selection order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
@@ -133,7 +133,7 @@ pub enum GameUiReplayCamera {
 }
 
 impl GameUiReplayCamera {
-    /// Web-baseline camera candidate order.
+    /// Shared camera candidate order.
     pub const ALL: [Self; 10] = [
         Self::Auto,
         Self::Pilot,
@@ -228,7 +228,7 @@ pub enum GameUiPlatformCommand {
         /// Platform persistence key.
         id: u32,
     },
-    /// Advances the supported replay camera selection.
+    /// Advances the replay camera selection.
     SetReplayCamera {
         /// Shared UI selection to apply.
         camera: GameUiReplayCamera,
@@ -391,8 +391,6 @@ pub struct GameUiPlatformInput {
     pub analysis_available: bool,
     /// Platform supports recorded scenic playback.
     pub replay_available: bool,
-    /// Implemented camera rigs; shared ordering remains the Web ordering.
-    pub supported_replay_cameras: Vec<GameUiReplayCamera>,
     /// Platform supports persisted record lookup.
     pub stored_records_available: bool,
     /// Platform supports record downloads.

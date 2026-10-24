@@ -29,8 +29,7 @@ try {
       screen_angle_degrees: screen.orientation.angle
     } : null,
     replay_available: true,
-    stored_records_available: "indexedDB" in window,
-    supported_replay_cameras: ["auto", "pilot", "chase", "orbit", "platform", "shore", "overhead", "side", "front", "telephoto"]
+    stored_records_available: "indexedDB" in window
   });
 } catch (cause) {
   console.error(cause);

@@ -10,8 +10,7 @@ use birdman_game_app::environment_snapshot::{EnvironmentIdentity, EnvironmentSna
 use birdman_game_core::GameSessionError;
 use birdman_game_presentation::camera::Pose;
 use birdman_game_presentation::game_ui::{
-    GameUiChartExtent, GameUiControlInput, GameUiError, GameUiFrame, GameUiReplayCamera,
-    GameUiView, GameUiViewport,
+    GameUiChartExtent, GameUiControlInput, GameUiError, GameUiFrame, GameUiView, GameUiViewport,
 };
 use birdman_game_presentation::xr::XrViewerObservation;
 use serde::{Deserialize, Serialize};
@@ -29,8 +28,6 @@ pub struct ApplicationCapabilities {
     pub analysis_available: bool,
     /// Drawing adapter supports recorded playback.
     pub replay_available: bool,
-    /// Camera rigs supported by the drawing adapter.
-    pub supported_replay_cameras: Vec<GameUiReplayCamera>,
     /// Platform provides persistent record I/O.
     pub stored_records_available: bool,
     /// Platform can save an exported file.

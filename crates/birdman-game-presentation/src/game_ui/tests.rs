@@ -29,7 +29,6 @@ pub(super) fn platform() -> GameUiPlatformInput {
         menu_recenter_available: false,
         analysis_available: true,
         replay_available: true,
-        supported_replay_cameras: GameUiReplayCamera::ALL.to_vec(),
         stored_records_available: false,
         flight_log_available: true,
         water_quality: WaterQuality::High,
@@ -1617,7 +1616,7 @@ fn same_responsive_view_owns_compact_columns_and_scroll_limits_for_both_adapters
 fn replay_camera_order_and_clock_effects_are_shared_ui_state_only() {
     let mut session = finalized();
     session.enter_replay().unwrap();
-    let platform = platform();
+    let mut platform = platform();
     let mut state = GameUiState::default();
     let before = session.playback_clock();
     for expected in [
@@ -1654,6 +1653,14 @@ fn replay_camera_order_and_clock_effects_are_shared_ui_state_only() {
             action: RecordCommand::ToggleReplayPlaying {}
         }]
     );
+    platform.replay_available = false;
+    let context = context(&session, difficulty(), &platform);
+    let view = game_ui_view(&state, &context).unwrap();
+    assert!(!control(&view, "game-replay-camera").enabled);
+    assert_eq!(
+        update_game_ui(&state, GameUiAction::CycleReplayCamera {}, &context),
+        Err(GameUiError::ActionUnavailable)
+    );
 }
 
 #[test]
@@ -1689,46 +1696,6 @@ fn structured_boundary_rejects_unknown_fields_and_exclusive_variant_payloads() {
             .is_none()
     );
     assert_eq!(serde_json::from_str::<GameUiView>(&encoded).unwrap(), view);
-}
-
-#[test]
-fn unsupported_camera_rigs_are_reported_and_never_selected() {
-    let mut session = finalized();
-    session.enter_replay().unwrap();
-    let mut platform = platform();
-    platform.supported_replay_cameras = vec![GameUiReplayCamera::Pilot, GameUiReplayCamera::Chase];
-    let mut state = GameUiState::default();
-    let view = game_ui_view(&state, &context(&session, difficulty(), &platform)).unwrap();
-    assert_eq!(view.selections, state);
-    let GameUiControlContent::Status { value, .. } =
-        &control(&view, "game-replay-camera-support").content
-    else {
-        panic!("missing camera support readout")
-    };
-    assert!(value.contains("Orbit"));
-    for expected in [
-        GameUiReplayCamera::Pilot,
-        GameUiReplayCamera::Chase,
-        GameUiReplayCamera::Pilot,
-    ] {
-        state = update_game_ui(
-            &state,
-            GameUiAction::CycleReplayCamera {},
-            &context(&session, difficulty(), &platform),
-        )
-        .unwrap()
-        .state;
-        assert_eq!(state.replay_camera, expected);
-    }
-    platform.supported_replay_cameras.clear();
-    assert_eq!(
-        update_game_ui(
-            &state,
-            GameUiAction::CycleReplayCamera {},
-            &context(&session, difficulty(), &platform)
-        ),
-        Err(GameUiError::ActionUnavailable)
-    );
 }
 
 #[test]
@@ -2075,81 +2042,6 @@ fn range_display_text_matches_initial_and_retained_views_at_rounding_boundaries(
             }
         }
     }
-}
-
-#[test]
-fn replay_entry_selects_the_first_supported_camera_and_preserves_supported_choices() {
-    let session = finalized();
-    let mut platform = platform();
-    let action = GameUiAction::Session {
-        command: SessionCommand::EnterReplay {},
-    };
-    let initial = GameUiState::default();
-    let web = update_game_ui(
-        &initial,
-        action.clone(),
-        &context(&session, difficulty(), &platform),
-    )
-    .unwrap();
-    assert_eq!(web.state.replay_camera, GameUiReplayCamera::Auto);
-    assert_eq!(
-        web.effects,
-        vec![
-            GameUiEffect::Session {
-                command: SessionCommand::EnterReplay {},
-            },
-            GameUiEffect::Platform {
-                command: GameUiPlatformCommand::SetReplayCamera {
-                    camera: GameUiReplayCamera::Auto
-                },
-            },
-        ]
-    );
-    platform.supported_replay_cameras = vec![GameUiReplayCamera::Chase, GameUiReplayCamera::Pilot];
-    let native = update_game_ui(
-        &initial,
-        action.clone(),
-        &context(&session, difficulty(), &platform),
-    )
-    .unwrap();
-    assert_eq!(native.state.replay_camera, GameUiReplayCamera::Pilot);
-    assert_eq!(
-        native.effects,
-        vec![
-            GameUiEffect::Session {
-                command: SessionCommand::EnterReplay {},
-            },
-            GameUiEffect::Platform {
-                command: GameUiPlatformCommand::SetReplayCamera {
-                    camera: GameUiReplayCamera::Pilot,
-                },
-            },
-        ]
-    );
-    let selected = GameUiState {
-        replay_camera: GameUiReplayCamera::Chase,
-        ..initial
-    };
-    let retained = update_game_ui(
-        &selected,
-        action,
-        &context(&session, difficulty(), &platform),
-    )
-    .unwrap();
-    assert_eq!(retained.state.replay_camera, GameUiReplayCamera::Chase);
-    assert_eq!(
-        retained.effects,
-        vec![
-            GameUiEffect::Session {
-                command: SessionCommand::EnterReplay {}
-            },
-            GameUiEffect::Platform {
-                command: GameUiPlatformCommand::SetReplayCamera {
-                    camera: GameUiReplayCamera::Chase
-                }
-            },
-        ]
-    );
 }
 
 #[test]
