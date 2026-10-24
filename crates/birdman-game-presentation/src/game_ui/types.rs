@@ -339,8 +339,8 @@ pub enum GameUiControlInput {
         /// Horizontal ratio from the track's left edge to its right edge.
         ratio: f64,
     },
-    /// Observes keys newly pressed while an enabled range has focus.
-    RangeKeys {
+    /// Observes keys newly pressed while an enabled interactive control has focus.
+    ControlKeys {
         /// Published control identifier.
         control_id: String,
         /// Platform key codes observed in the same input frame.

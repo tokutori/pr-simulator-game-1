@@ -275,21 +275,17 @@ pub(crate) fn button_actions(world: &mut World) {
     if let Some(focused) = world.resource::<InputFocus>().get()
         && let Some(keys) = world.get_resource::<ButtonInput<KeyCode>>()
     {
-        if (keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::Space))
-            && let Some(button) = world.get::<MenuButton>(focused)
-            && button.enabled
-            && !inputs.iter().any(|(entity, _)| *entity == focused)
-        {
-            inputs.push((
-                focused,
-                GameUiControlInput::Activate {
-                    control_id: button.control_id.clone(),
-                },
-            ));
-        }
-        if let Some(range) = world.get::<MenuRange>(focused)
-            && range.enabled
-        {
+        let control_id = world
+            .get::<MenuButton>(focused)
+            .filter(|button| button.enabled && !inputs.iter().any(|(entity, _)| *entity == focused))
+            .map(|button| &button.control_id)
+            .or_else(|| {
+                world
+                    .get::<MenuRange>(focused)
+                    .filter(|range| range.enabled)
+                    .map(|range| &range.control_id)
+            });
+        if let Some(control_id) = control_id {
             let codes = keys
                 .get_just_pressed()
                 .map(|code| format!("{code:?}"))
@@ -297,8 +293,8 @@ pub(crate) fn button_actions(world: &mut World) {
             if !codes.is_empty() {
                 inputs.push((
                     focused,
-                    GameUiControlInput::RangeKeys {
-                        control_id: range.control_id.clone(),
+                    GameUiControlInput::ControlKeys {
+                        control_id: control_id.clone(),
                         codes,
                     },
                 ));

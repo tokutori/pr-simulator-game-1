@@ -14,7 +14,7 @@ impl GameUiView {
             | GameUiControlInput::SetToggle { control_id, .. }
             | GameUiControlInput::SetRange { control_id, .. }
             | GameUiControlInput::SetRangeRatio { control_id, .. }
-            | GameUiControlInput::RangeKeys { control_id, .. } => control_id,
+            | GameUiControlInput::ControlKeys { control_id, .. } => control_id,
         };
         let control = self
             .panels
@@ -23,8 +23,24 @@ impl GameUiView {
             .find(|control| control.enabled && &control.id == control_id)
             .ok_or(GameUiError::ActionUnavailable)?;
         let action = match (&control.content, input) {
-            (GameUiControlContent::Button { action, .. }, GameUiControlInput::Activate { .. }) => {
-                action.clone()
+            (
+                content @ (GameUiControlContent::Button { .. }
+                | GameUiControlContent::Toggle { .. }),
+                GameUiControlInput::Activate { .. },
+            ) => content
+                .activation_action()
+                .ok_or(GameUiError::ActionUnavailable)?,
+            (
+                content @ (GameUiControlContent::Button { .. }
+                | GameUiControlContent::Toggle { .. }),
+                GameUiControlInput::ControlKeys { codes, .. },
+            ) => {
+                if !codes.iter().any(|code| code == "Enter" || code == "Space") {
+                    return Ok(None);
+                }
+                content
+                    .activation_action()
+                    .ok_or(GameUiError::ActionUnavailable)?
             }
             (
                 GameUiControlContent::Toggle { cue, .. },
@@ -52,7 +68,7 @@ impl GameUiView {
                         range_value(*minimum, *maximum, *step, *ratio)
                             .ok_or(GameUiError::ActionUnavailable)?
                     }
-                    GameUiControlInput::RangeKeys { codes, .. } => {
+                    GameUiControlInput::ControlKeys { codes, .. } => {
                         let pressed = |code| codes.iter().any(|actual| actual == code);
                         let desired = if pressed("Home") {
                             *minimum

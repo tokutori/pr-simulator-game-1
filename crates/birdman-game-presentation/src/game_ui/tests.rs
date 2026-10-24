@@ -1147,6 +1147,39 @@ fn custom_cues_and_native_selection_use_the_same_existing_settings_resolver() {
             .count(),
         6
     );
+    let toggle = view.panels[0]
+        .controls
+        .iter()
+        .find(|control| matches!(control.content, GameUiControlContent::Toggle { .. }))
+        .unwrap();
+    for input in [
+        GameUiControlInput::Activate {
+            control_id: toggle.id.clone(),
+        },
+        GameUiControlInput::ControlKeys {
+            control_id: toggle.id.clone(),
+            codes: vec!["Enter".into(), "Space".into()],
+        },
+    ] {
+        assert_eq!(
+            view.control_input_action(&input),
+            Ok(toggle.content.activation_action())
+        );
+    }
+    if let GameUiControlContent::Toggle { cue, value } = toggle.content {
+        assert_eq!(
+            view.control_input_action(&GameUiControlInput::SetToggle {
+                control_id: toggle.id.clone(),
+                value,
+            }),
+            Ok(Some(GameUiAction::Session {
+                command: SessionCommand::SetCue {
+                    cue,
+                    visible: value,
+                },
+            }))
+        );
+    }
 }
 
 #[test]
@@ -2103,7 +2136,7 @@ fn range_display_text_matches_initial_and_retained_views_at_rounding_boundaries(
             (vec!["ArrowRight"], Some(0.38)),
             (vec!["KeyA"], None),
         ] {
-            let input = GameUiControlInput::RangeKeys {
+            let input = GameUiControlInput::ControlKeys {
                 control_id: id.clone(),
                 codes: codes.into_iter().map(str::to_owned).collect(),
             };
@@ -2112,7 +2145,7 @@ fn range_display_text_matches_initial_and_retained_views_at_rounding_boundaries(
                 Ok(expected.map(|time_seconds| GameUiAction::SeekReplay { time_seconds }))
             );
         }
-        let unknown = GameUiControlInput::RangeKeys {
+        let unknown = GameUiControlInput::ControlKeys {
             control_id: "game-analysis-cursor".into(),
             codes: vec!["KeyA".into()],
         };
@@ -2138,26 +2171,56 @@ fn range_display_text_matches_initial_and_retained_views_at_rounding_boundaries(
             Err(GameUiError::ActionUnavailable)
         );
         assert_eq!(
-            view.control_input_action(&GameUiControlInput::RangeKeys {
+            view.control_input_action(&GameUiControlInput::ControlKeys {
                 control_id: "missing".into(),
                 codes: vec!["KeyA".into()]
             }),
             Err(GameUiError::ActionUnavailable)
         );
-        let button_id = view
+        let button = view
             .panels
             .iter()
             .flat_map(|panel| &panel.controls)
             .find(|control| {
                 control.enabled && matches!(control.content, GameUiControlContent::Button { .. })
             })
-            .unwrap()
-            .id
-            .clone();
+            .unwrap();
+        let button_id = button.id.clone();
+        for code in ["Enter", "Space"] {
+            assert_eq!(
+                view.control_input_action(&GameUiControlInput::ControlKeys {
+                    control_id: button_id.clone(),
+                    codes: vec![code.into()],
+                }),
+                Ok(button.content.activation_action())
+            );
+        }
         assert_eq!(
-            view.control_input_action(&GameUiControlInput::RangeKeys {
+            view.control_input_action(&GameUiControlInput::ControlKeys {
                 control_id: button_id,
                 codes: vec!["KeyA".into()]
+            }),
+            Ok(None)
+        );
+        let noninteractive = view
+            .panels
+            .iter_mut()
+            .flat_map(|panel| &mut panel.controls)
+            .find(|control| {
+                !matches!(
+                    control.content,
+                    GameUiControlContent::Button { .. }
+                        | GameUiControlContent::Toggle { .. }
+                        | GameUiControlContent::Range { .. }
+                )
+            })
+            .unwrap();
+        noninteractive.enabled = true;
+        let noninteractive_id = noninteractive.id.clone();
+        assert_eq!(
+            view.control_input_action(&GameUiControlInput::ControlKeys {
+                control_id: noninteractive_id,
+                codes: vec!["Enter".into()]
             }),
             Err(GameUiError::ActionUnavailable)
         );

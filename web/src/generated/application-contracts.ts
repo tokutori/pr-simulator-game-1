@@ -627,7 +627,7 @@ export type GameUiControlInput = {
      * Published control identifier.
      */
     readonly controlId: string;
-    readonly type: "range-keys";
+    readonly type: "control-keys";
 };
 /**
  * Raw stage of a platform chart pointer event.

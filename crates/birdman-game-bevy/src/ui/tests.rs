@@ -75,6 +75,16 @@ fn shared_widgets_retain_values_and_forward_controls_and_chart_io_with_their_sou
         "再試行"
     );
     app.world_mut()
+        .resource_mut::<InputFocus>()
+        .set(node, FocusCause::Pressed);
+    app.world_mut()
+        .resource_mut::<ButtonInput<KeyCode>>()
+        .press(KeyCode::Space);
+    button_actions(app.world_mut());
+    assert!(
+        matches!(app.world_mut().resource_mut::<NativeInputs>().0.pop(), Some(ApplicationInput::Control { input: GameUiControlInput::ControlKeys { codes, .. }, .. }) if codes == ["Space"])
+    );
+    app.world_mut()
         .entity_mut(node)
         .insert(Interaction::Pressed);
     button_actions(app.world_mut());
@@ -87,6 +97,10 @@ fn shared_widgets_retain_values_and_forward_controls_and_chart_io_with_their_sou
     assert!(
         matches!(&input, ApplicationInput::Control { view_revision, input: GameUiControlInput::Activate { control_id } } if *view_revision == revision && control_id == "game-boot-retry")
     );
+    assert!(app.world().resource::<NativeInputs>().0.is_empty());
+    app.world_mut()
+        .resource_mut::<ButtonInput<KeyCode>>()
+        .clear();
     let retry = runtime
         .update(
             ApplicationObservation {
@@ -131,7 +145,7 @@ fn shared_widgets_retain_values_and_forward_controls_and_chart_io_with_their_sou
     }
     button_actions(app.world_mut());
     assert!(
-        matches!(app.world_mut().resource_mut::<NativeInputs>().0.pop(), Some(ApplicationInput::Control { view_revision, input: GameUiControlInput::RangeKeys { codes, .. } }) if view_revision == revision && codes.len() == 3 && ["Home", "End", "KeyA"].iter().all(|code| codes.iter().any(|actual| actual == code)))
+        matches!(app.world_mut().resource_mut::<NativeInputs>().0.pop(), Some(ApplicationInput::Control { view_revision, input: GameUiControlInput::ControlKeys { codes, .. } }) if view_revision == revision && codes.len() == 3 && ["Home", "End", "KeyA"].iter().all(|code| codes.iter().any(|actual| actual == code)))
     );
     app.world_mut()
         .resource_mut::<ButtonInput<KeyCode>>()
