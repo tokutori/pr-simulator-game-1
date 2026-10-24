@@ -377,10 +377,12 @@ fn spawn_node(
             );
             let ticks = Box::new(std::array::from_fn(|_| {
                 let anchor = shape(world, horizon, Node::default(), Color::NONE);
+                let label = text(world, anchor, font, 12.0);
+                world.entity_mut(label).insert(TextLayout::no_wrap());
                 (
                     shape(world, horizon, Node::default(), Color::WHITE),
                     anchor,
-                    text(world, anchor, font, 12.0),
+                    label,
                 )
             }));
             let outline = shape(world, horizon, Node::default(), Color::NONE);
@@ -970,6 +972,10 @@ mod tests {
         assert_eq!(world.get::<Node>(ticks[3].0).unwrap().width, px(188));
         assert_eq!(world.get::<Node>(ticks[3].0).unwrap().top, px(111));
         assert_eq!(world.get::<Node>(ticks[3].1).unwrap().top, px(116));
+        assert_eq!(
+            world.get::<TextLayout>(ticks[3].2).unwrap().linebreak,
+            bevy::text::LineBreak::NoWrap
+        );
         assert!(world.get_entity(surface).is_ok());
     }
 }
