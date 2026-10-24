@@ -654,7 +654,13 @@ fn advance_step(world: &mut World, verification: &mut Verification) -> Result<()
                 && matches!(phase, SessionPhase::FlightPaused { .. })
                 || selected_auto
             { verification.next(); }
-            else if let Some(input) = action_input(world, &action) { world.resource_mut::<NativeInputs>().0.push(input); verification.next(); }
+            else if let Some(input) = action_input(world, &action) {
+                if action == (GameUiAction::Session { command: SessionCommand::Retry {} }) {
+                    verification.replay_record = None;
+                }
+                world.resource_mut::<NativeInputs>().0.push(input);
+                verification.next();
+            }
         }
         Check::Capture(filename) | Check::FlightCapture(filename) => {
             if matches!(verification.checks.get(verification.index), Some(Check::FlightCapture(_)))

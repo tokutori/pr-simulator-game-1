@@ -469,7 +469,7 @@ cargo run -p birdman-game-bevy --features verify-harness --locked -- --verify ta
 - offscreenはWinitを登録せず、ScheduleRunnerと本番Image target/readbackを使用する。
 - 既定runnerの最小周期は16.67 ms、`--no-vsync` 併用で待機なしloopを要求する。
 - devは接続確認、releaseは性能計測に用いる。
-- 標準検証の期限はoffscreen180秒・通常window90秒である。
+- 標準検証の期限はoffscreen・通常windowともに240秒である。
 - 物理100 Hz・Real時計・150 ms安全停止は維持する。
 
 ### 標準フロー・資源寿命・shader

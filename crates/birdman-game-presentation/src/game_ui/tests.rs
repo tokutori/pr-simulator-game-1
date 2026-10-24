@@ -1734,6 +1734,12 @@ fn same_responsive_view_owns_compact_columns_and_scroll_limits_for_both_adapters
 #[test]
 fn replay_camera_order_and_clock_effects_are_shared_ui_state_only() {
     let mut session = finalized();
+    let record = session.flight_record().unwrap();
+    let retained = (
+        record.header(),
+        record.samples().to_vec(),
+        record.finalization(),
+    );
     session.enter_replay().unwrap();
     let mut platform = platform();
     let mut state = GameUiState::default();
@@ -1787,6 +1793,16 @@ fn replay_camera_order_and_clock_effects_are_shared_ui_state_only() {
         update_game_ui(&state, GameUiAction::CycleReplayCamera {}, &context),
         Err(GameUiError::ActionUnavailable)
     );
+    session.leave_replay().unwrap();
+    let record = session.flight_record().unwrap();
+    assert_eq!(
+        (record.header(), record.samples(), record.finalization()),
+        (retained.0, retained.1.as_slice(), retained.2)
+    );
+    session.retry().unwrap();
+    let record = session.flight_record().unwrap();
+    assert!(record.samples().is_empty());
+    assert!(record.finalization().is_none());
 }
 
 #[test]
