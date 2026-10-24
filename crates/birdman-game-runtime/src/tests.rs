@@ -1970,10 +1970,16 @@ fn spatial_trigger_uses_submitted_painting_and_the_canonical_ui_action_owner() {
                     display_resource_id: Some(50),
                     timestamp_ms: 10_020.0,
                     gamepads: Vec::new(),
-                    xr: Some(viewer),
+                    xr: Some(viewer.clone()),
                     spatial: ApplicationSpatialObservation {
                         presented_id: Some(opening.presentation_id),
-                        pointers: vec![pointer.clone()],
+                        sources: vec![birdman_game_presentation::xr::XrInputSourceObservation {
+                            source_id: pointer.source_id,
+                            target_ray_mode: "tracked-pointer".into(),
+                            handedness: "right".into(),
+                            tracking_from_ray: Some(pointer.tracking_from_ray),
+                            gamepad: None,
+                        }],
                         gamepads: Vec::new(),
                     },
                 },
@@ -2046,7 +2052,7 @@ fn spatial_trigger_uses_submitted_painting_and_the_canonical_ui_action_owner() {
                 input: ApplicationInput::XrSelect {
                     display_resource_id: Some(50),
                     presentation_id: opening.presentation_id,
-                    pointer,
+                    pointer: pointer.clone(),
                     timestamp_ms: 10_023.0,
                 },
             },
@@ -2056,6 +2062,93 @@ fn spatial_trigger_uses_submitted_painting_and_the_canonical_ui_action_owner() {
     assert_eq!(
         runtime.application().core_session().snapshot().phase(),
         SessionPhase::FlightSetup
+    );
+    use birdman_game_presentation::xr::{
+        XrInputButtonObservation, XrInputGamepadObservation, XrInputSourceObservation,
+    };
+    let mut controller = XrInputSourceObservation {
+        source_id: pointer.source_id,
+        target_ray_mode: "tracked-pointer".into(),
+        handedness: "right".into(),
+        tracking_from_ray: Some(pointer.tracking_from_ray),
+        gamepad: Some(XrInputGamepadObservation {
+            mapping: "xr-standard".into(),
+            axes: vec![Some(0.0); 4],
+            buttons: vec![
+                XrInputButtonObservation {
+                    pressed: false,
+                    touched: false
+                };
+                3
+            ],
+        }),
+    };
+    let mut frame = |runtime: &mut ApplicationRuntime,
+                     timestamp_ms,
+                     presented_id,
+                     controller: &XrInputSourceObservation| {
+        let spatial = runtime
+            .update(
+                ApplicationObservation {
+                    observed_ms: timestamp_ms,
+                    input: ApplicationInput::Frame {
+                        display_resource_id: Some(50),
+                        timestamp_ms,
+                        gamepads: Vec::new(),
+                        xr: Some(viewer.clone()),
+                        spatial: ApplicationSpatialObservation {
+                            presented_id: Some(presented_id),
+                            sources: vec![controller.clone()],
+                            gamepads: Vec::new(),
+                        },
+                    },
+                },
+                &mut measure,
+            )
+            .unwrap()
+            .drawing
+            .unwrap()
+            .spatial
+            .unwrap();
+        let ApplicationMenuProjection::Ready { paint, .. } = spatial.menu else {
+            panic!("Expected submitted menu");
+        };
+        (spatial.presentation_id, paint.content.items)
+    };
+    let (offered, _) = frame(&mut runtime, 10_030.0, opening.presentation_id, &controller);
+    let (submitted, before_scroll) = frame(&mut runtime, 10_040.0, offered, &controller);
+    controller.gamepad.as_mut().unwrap().axes[3] = Some(1.0);
+    let (scrolled, after_scroll) = frame(&mut runtime, 10_050.0, submitted, &controller);
+    assert_ne!(before_scroll, after_scroll);
+    let before_stale = (runtime.ui.clone(), runtime.application().difficulty());
+    runtime
+        .update(
+            ApplicationObservation {
+                observed_ms: 10_051.0,
+                input: ApplicationInput::XrSelect {
+                    display_resource_id: Some(50),
+                    presentation_id: submitted,
+                    pointer: pointer.clone(),
+                    timestamp_ms: 10_051.0,
+                },
+            },
+            &mut no_text_metrics,
+        )
+        .unwrap();
+    assert_eq!(
+        (runtime.ui.clone(), runtime.application().difficulty()),
+        before_stale
+    );
+    assert_eq!(
+        runtime.application().core_session().snapshot().phase(),
+        SessionPhase::FlightSetup
+    );
+    controller.gamepad.as_mut().unwrap().axes[3] = Some(0.0);
+    controller.gamepad.as_mut().unwrap().buttons[1].pressed = true;
+    frame(&mut runtime, 10_060.0, scrolled, &controller);
+    assert_eq!(
+        runtime.application().core_session().snapshot().phase(),
+        SessionPhase::Title
     );
 }
 

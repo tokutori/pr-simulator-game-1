@@ -209,6 +209,72 @@ pub struct XrPointerRay {
     pub direction: Vector3,
 }
 
+/// Button state copied from the active XR frame.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct XrInputButtonObservation {
+    /// Platform pressed state.
+    pub pressed: bool,
+    /// Platform touch state.
+    pub touched: bool,
+}
+
+/// Unfiltered gamepad values associated with one XR input source.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct XrInputGamepadObservation {
+    /// Platform mapping declaration.
+    pub mapping: String,
+    /// Raw axes; non-finite observations are None.
+    pub axes: Vec<Option<f64>>,
+    /// Raw button order, including placeholder buttons.
+    pub buttons: Vec<XrInputButtonObservation>,
+}
+
+/// One source's same-frame tracking and physical inputs.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct XrInputSourceObservation {
+    /// Platform handle for this source's connection lifetime.
+    pub source_id: u32,
+    /// Raw target-ray mode.
+    pub target_ray_mode: String,
+    /// Raw handedness, independent of the source handle.
+    pub handedness: String,
+    /// Tracking-space target-ray pose; absent tracking retains button observations.
+    #[serde(deserialize_with = "super::deserialize_xr_optional_pose")]
+    #[cfg_attr(feature = "schema", schemars(with = "Option<super::XrObservedPose>"))]
+    pub tracking_from_ray: Option<Pose>,
+    /// Actual gamepad, absent when the source has no gamepad API.
+    pub gamepad: Option<XrInputGamepadObservation>,
+}
+
+impl XrInputSourceObservation {
+    fn ray(&self) -> Option<XrPointerRay> {
+        if self.target_ray_mode != "tracked-pointer" {
+            return None;
+        }
+        let pose = self.tracking_from_ray?.normalized()?;
+        Some(XrPointerRay {
+            source: XrPointerSource::Controller { id: self.source_id },
+            reference_from_space: pose,
+            origin: Vector3 {
+                x: 0.0,
+                y: 0.0,
+                z: 0.0,
+            },
+            direction: Vector3 {
+                x: 0.0,
+                y: 0.0,
+                z: -1.0,
+            },
+        })
+    }
+}
+
 /// One same-frame input observation.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -222,8 +288,8 @@ pub struct XrPointerObservation {
     pub panel_pose: Pose,
     /// Reference-from-head pose used to derive the forward gaze ray.
     pub head_pose: Option<Pose>,
-    /// Tracked controller rays observed in the same frame.
-    pub pointers: Vec<XrPointerRay>,
+    /// Raw connected XR sources, including sources without current tracking.
+    pub sources: Vec<XrInputSourceObservation>,
     /// Connected standard gamepad observed with the rays.
     #[serde(default)]
     pub gamepad: Option<XrGamepadObservation>,
@@ -302,6 +368,11 @@ struct GamepadInput {
     cursor: [f64; 2],
 }
 
+struct ControllerInput {
+    source_id: u32,
+    squeeze: Option<bool>,
+}
+
 /// Owns source handover, one-second dwell and duplicate activation admission.
 #[derive(Default)]
 pub struct XrPointerSession {
@@ -310,10 +381,18 @@ pub struct XrPointerSession {
     previous_activation: Option<(XrPointerTarget, f64)>,
     observation: Option<XrPointerObservation>,
     gamepad: Option<GamepadInput>,
+    controllers: Vec<ControllerInput>,
     last_timestamp_ms: Option<f64>,
 }
 
 impl XrPointerSession {
+    /// Retires hit and dwell admission while retaining physical input history.
+    pub fn invalidate_selection(&mut self) {
+        self.focus = None;
+        self.previous_activation = None;
+        self.observation = None;
+    }
+
     /// Replaces measured geometry atomically and resets input on scope/layout changes.
     pub fn set_surface(&mut self, surface: Option<XrPointerSurface>) -> Result<(), &'static str> {
         if surface.as_ref().is_some_and(|value| !value.valid()) {
@@ -321,15 +400,19 @@ impl XrPointerSession {
         }
         if self.surface != surface {
             let mut gamepad = self.gamepad.take();
-            if self.surface.as_ref().map(|value| &value.scope)
-                != surface.as_ref().map(|value| &value.scope)
-                && let Some(input) = &mut gamepad
-            {
+            let scope_changed = self.surface.as_ref().map(|value| &value.scope)
+                != surface.as_ref().map(|value| &value.scope);
+            if scope_changed && let Some(input) = &mut gamepad {
                 input.cursor = [0.5; 2];
             }
             *self = Self {
                 surface,
                 gamepad,
+                controllers: if scope_changed {
+                    Vec::new()
+                } else {
+                    core::mem::take(&mut self.controllers)
+                },
                 last_timestamp_ms: self.last_timestamp_ms,
                 ..Self::default()
             };
@@ -340,24 +423,34 @@ impl XrPointerSession {
     /// Projects all source intersections, focus handover and dwell from one frame.
     pub fn observe(
         &mut self,
-        mut observation: XrPointerObservation,
+        observation: XrPointerObservation,
     ) -> Result<XrPointerProjection, &'static str> {
         if !observation.timestamp_ms.is_finite()
             || observation.timestamp_ms < 0.0
-            || observation.pointers.len() > 16
+            || observation.sources.len() > 16
             || observation
-                .pointers
+                .sources
                 .iter()
-                .any(|pointer| !matches!(pointer.source, XrPointerSource::Controller { .. }))
+                .enumerate()
+                .any(|(index, source)| {
+                    observation.sources[..index]
+                        .iter()
+                        .any(|previous| previous.source_id == source.source_id)
+                })
             || self
                 .last_timestamp_ms
                 .is_some_and(|previous| observation.timestamp_ms < previous)
         {
             return Err("Invalid XR pointer observation");
         }
+        let mut pointers: Vec<_> = observation
+            .sources
+            .iter()
+            .filter_map(XrInputSourceObservation::ray)
+            .collect();
         if let Some(head) = observation.head_pose {
             let head = head.normalized().ok_or("Invalid XR head pose")?;
-            observation.pointers.push(XrPointerRay {
+            pointers.push(XrPointerRay {
                 source: XrPointerSource::Gaze,
                 reference_from_space: Pose::IDENTITY,
                 origin: head.position,
@@ -370,11 +463,15 @@ impl XrPointerSession {
         }
         let mut result = XrPointerProjection::default();
         let gamepad = self.observe_gamepad(&observation);
+        let navigation = self.observe_controllers(&observation);
         if observation.focused
             && let Some(surface) = &self.surface
         {
-            let mut hits: Vec<_> = observation
-                .pointers
+            if let Some((_, _, back, scroll)) = &gamepad {
+                result.back = *back;
+                result.scroll_pages = if *back { 0.0 } else { *scroll };
+            }
+            let mut hits: Vec<_> = pointers
                 .iter()
                 .filter_map(|pointer| pointer_hit(surface, observation.panel_pose, *pointer))
                 .collect();
@@ -413,6 +510,11 @@ impl XrPointerSession {
                 .into_iter()
                 .filter(|hit| matches!(hit.source, XrPointerSource::Controller { .. }))
                 .collect();
+            if let Some((back, scroll)) = navigation {
+                result.back |= back;
+                result.scroll_pages = if result.back { 0.0 } else { scroll };
+                result.activation = None;
+            }
         }
         result.focus_changed = self
             .focus
@@ -438,6 +540,10 @@ impl XrPointerSession {
                 .clone()
                 .expect("focus requires a primary cursor");
             if focus.hit.source == XrPointerSource::Gaze && focus.hit.target.is_some() {
+                if result.back || result.scroll_pages != 0.0 {
+                    focus.started_ms = timestamp;
+                    focus.activated = false;
+                }
                 result.progress = ((timestamp - focus.started_ms) / 1000.0).clamp(0.0, 1.0);
                 if result.progress >= 1.0 && !focus.activated {
                     focus.activated = true;
@@ -448,9 +554,80 @@ impl XrPointerSession {
                 }
             }
         }
+        if result.back {
+            result.activation = None;
+            result.scroll_pages = 0.0;
+        }
         self.observation = Some(observation);
         self.last_timestamp_ms = Some(timestamp);
         Ok(result)
+    }
+
+    fn observe_controllers(&mut self, observation: &XrPointerObservation) -> Option<(bool, f64)> {
+        if !observation.focused {
+            self.controllers.clear();
+            return None;
+        }
+        self.controllers.retain(|previous| {
+            observation.sources.iter().any(|source| {
+                source.source_id == previous.source_id
+                    && source.target_ray_mode == "tracked-pointer"
+                    && source
+                        .gamepad
+                        .as_ref()
+                        .is_some_and(|pad| pad.mapping == "xr-standard")
+            })
+        });
+        let elapsed = self.last_timestamp_ms.map_or(0.0, |previous| {
+            ((observation.timestamp_ms - previous) / 1000.0).clamp(0.0, 0.05)
+        });
+        let mut selected: Option<(bool, u32, bool, f64)> = None;
+        for source in &observation.sources {
+            let Some(pad) = source.gamepad.as_ref().filter(|pad| {
+                source.target_ray_mode == "tracked-pointer" && pad.mapping == "xr-standard"
+            }) else {
+                continue;
+            };
+            let squeeze = pad.buttons.get(1).map(|button| button.pressed);
+            let previous = self
+                .controllers
+                .iter_mut()
+                .find(|previous| previous.source_id == source.source_id);
+            let back = if let Some(previous) = previous {
+                let back = squeeze == Some(true) && previous.squeeze == Some(false);
+                previous.squeeze = squeeze;
+                back
+            } else {
+                self.controllers.push(ControllerInput {
+                    source_id: source.source_id,
+                    squeeze,
+                });
+                false
+            };
+            let thumbstick = gamepad_axis(pad.axes.get(3).copied().flatten().unwrap_or(0.0));
+            let touchpad = if pad.buttons.get(2).is_some_and(|button| button.touched) {
+                gamepad_axis(pad.axes.get(1).copied().flatten().unwrap_or(0.0))
+            } else {
+                0.0
+            };
+            let scroll = if thumbstick != 0.0 {
+                thumbstick
+            } else {
+                touchpad
+            } * elapsed
+                * 2.0;
+            if !back && scroll == 0.0 {
+                continue;
+            }
+            let candidate = (source.handedness == "right", source.source_id, back, scroll);
+            if selected.is_none_or(|previous| {
+                (candidate.2, candidate.0, core::cmp::Reverse(candidate.1))
+                    > (previous.2, previous.0, core::cmp::Reverse(previous.1))
+            }) {
+                selected = Some(candidate);
+            }
+        }
+        selected.map(|(_, _, back, scroll)| (back, scroll))
     }
 
     fn observe_gamepad(
@@ -511,10 +688,14 @@ impl XrPointerSession {
             || matches!(pointer.source, XrPointerSource::Gamepad { .. })
             || !timestamp_ms.is_finite()
             || timestamp_ms < observation.timestamp_ms
-            || !observation
-                .pointers
-                .iter()
-                .any(|value| value.source == pointer.source)
+            || !match pointer.source {
+                XrPointerSource::Controller { id } => observation
+                    .sources
+                    .iter()
+                    .any(|value| value.source_id == id && value.ray().is_some()),
+                XrPointerSource::Gaze => observation.head_pose.is_some(),
+                XrPointerSource::Gamepad { .. } => false,
+            }
         {
             return None;
         }

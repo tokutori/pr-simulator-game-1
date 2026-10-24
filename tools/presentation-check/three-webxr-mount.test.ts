@@ -289,8 +289,17 @@ describe("Aggregate runtime through the real Three WebXRManager", () => {
       const origin = new Vector3().setFromMatrixPosition(poseMatrix(opening.scene.camera.world_from_head ?? state.session.head));
       const ray = new Matrix4().compose(origin, new Quaternion().setFromUnitVectors(new Vector3(0, 0, -1), point.sub(origin).normalize()), new Vector3(1, 1, 1));
       state.session.pointer = matrixPose(poseMatrix(state.session.head).multiply(poseMatrix(opening.scene.camera.world_from_head ?? state.session.head).invert()).multiply(ray));
-      state.session.inputSources.push({ targetRayMode: "tracked-pointer", targetRaySpace: {}, profiles: [], handedness: "right", gripSpace: null, gamepad: null, hand: null } as unknown as XRInputSource);
+      const squeeze = { pressed: false, touched: false };
+      const xrPad = { mapping: "xr-standard", axes: [Number.NaN, 0.1, 0, 0.15],
+        buttons: [{ pressed: true, touched: true }, squeeze, { pressed: false, touched: true }] };
+      state.session.inputSources.push({ targetRayMode: "tracked-pointer", targetRaySpace: {}, profiles: [], handedness: "right", gripSpace: {}, gamepad: xrPad, hand: null } as unknown as XRInputSource);
       state.frame(20);
+      const rawFrame = state.updates.mock.calls.map(([json]) => (JSON.parse(json) as ApplicationObservation).input)
+        .findLast(input => input.kind === "frame");
+      expect(rawFrame?.kind === "frame" ? rawFrame.spatial.sources : null).toEqual([{
+        source_id: 1, target_ray_mode: "tracked-pointer", handedness: "right", tracking_from_ray: state.session.pointer,
+        gamepad: { mapping: xrPad.mapping, axes: [null, 0.1, 0, 0.15], buttons: xrPad.buttons }
+      }]);
       const hovered = state.drawing();
       const hoveredMenu = hovered.spatial?.menu;
       if (hoveredMenu?.kind !== "ready" || hoveredMenu.cursors.length !== 1) throw new Error("Real controller ray did not produce a shared cursor");
@@ -323,13 +332,18 @@ describe("Aggregate runtime through the real Three WebXRManager", () => {
       state.frame(31);
       state.select(32);
       expect(state.browser.document.querySelector('[data-control-id="game-setup-start"]')).not.toBeNull();
+      state.frame(33);
+      state.frame(34);
+      squeeze.pressed = true;
+      state.frame(35);
+      expect(state.browser.document.querySelector('[data-control-id="game-title-start"]')).not.toBeNull();
       const target = state.driver.getRenderTarget();
       const alpha = state.driver.getClearAlpha();
       const scissor = state.driver.getScissorTest();
       const submitted = state.driver.draws.length;
       const diagnostic = vi.spyOn(console, "error").mockImplementation(() => undefined);
       state.driver.reflectionFault = true;
-      state.frame(33);
+      state.frame(36);
       expect(state.driver.getRenderTarget()).toBe(target);
       expect(state.driver.getClearAlpha()).toBe(alpha);
       expect(state.driver.getScissorTest()).toBe(scissor);

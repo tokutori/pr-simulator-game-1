@@ -583,13 +583,16 @@ export class ThreeApplicationRenderer {
     const handle = this.display_id === null ? undefined : this.sessions.get(this.display_id);
     const reference = handle?.reference;
     const viewer = reference == null || frame === undefined ? null : frame.getViewerPose(reference);
-    const pointers = reference == null || frame === undefined || handle === undefined ? [] : Array.from(handle.session.inputSources).flatMap(source => {
-      if (source.targetRayMode !== "tracked-pointer") return [];
+    const sources = reference == null || frame === undefined || handle === undefined ? [] : Array.from(handle.session.inputSources).map(source => {
       const pose = frame.getPose(source.targetRaySpace, reference);
-      return pose == null ? [] : [{ source_id: this.sourceId(source), tracking_from_ray: xrPose(pose.transform) }];
+      return { source_id: this.sourceId(source), target_ray_mode: source.targetRayMode, handedness: source.handedness,
+        tracking_from_ray: pose == null ? null : xrPose(pose.transform),
+        gamepad: source.gamepad == null ? null : { mapping: source.gamepad.mapping,
+          axes: source.gamepad.axes.map(axis => Number.isFinite(axis) ? axis : null),
+          buttons: source.gamepad.buttons.map(button => ({ pressed: button.pressed, touched: button.touched })) } };
     });
     this.notify({ kind: "frame", display_resource_id: this.display_id, timestamp_ms: now, gamepads,
-      spatial: { gamepads, pointers, presented_id: this.presented_id }, xr: handle === undefined ? null : {
+      spatial: { gamepads, sources, presented_id: this.presented_id }, xr: handle === undefined ? null : {
         visibility: xrVisibility(handle.session), input_focused: handle.session.visibilityState === "visible",
         observation: { source: "runtime-derived", trackingFromHead: viewer == null ? null : xrPose(viewer.transform),
           views: viewer == null ? [] : viewer.views.map(view => ({ eye: view.eye === "left" || view.eye === "right" ? view.eye : null,

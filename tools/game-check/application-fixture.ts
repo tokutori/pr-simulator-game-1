@@ -95,7 +95,7 @@ export function flightDrawingFixture(): { view: GameUiView; drawing: Application
       fixture.activate({ kind: "session", command });
     }
     for (let now = 0; now <= 3010; now += 10) fixture.observe({ kind: "frame", timestamp_ms: now, gamepads: [],
-      display_resource_id: null, spatial: { gamepads: [], pointers: [], presented_id: null }, xr: null }, now);
+      display_resource_id: null, spatial: { gamepads: [], sources: [], presented_id: null }, xr: null }, now);
     return { view: fixture.view, drawing: fixture.drawing };
   } finally { fixture.owner.free(); }
 }

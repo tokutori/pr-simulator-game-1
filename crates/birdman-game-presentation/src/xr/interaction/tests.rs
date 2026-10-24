@@ -98,13 +98,30 @@ fn observe(
                     position: pointer.origin,
                     ..Pose::IDENTITY
                 }),
-            pointers: pointers
+            sources: pointers
                 .into_iter()
                 .filter(|pointer| matches!(pointer.source, XrPointerSource::Controller { .. }))
+                .map(source)
                 .collect(),
             gamepad: None,
         })
         .unwrap()
+}
+
+fn source(pointer: XrPointerRay) -> XrInputSourceObservation {
+    let XrPointerSource::Controller { id } = pointer.source else {
+        panic!("Expected controller")
+    };
+    XrInputSourceObservation {
+        source_id: id,
+        target_ray_mode: "tracked-pointer".into(),
+        handedness: "right".into(),
+        tracking_from_ray: Some(Pose {
+            position: pointer.reference_from_space.transform(pointer.origin),
+            orientation: pointer.reference_from_space.orientation,
+        }),
+        gamepad: None,
+    }
 }
 
 #[test]
@@ -153,7 +170,7 @@ fn focus_loss_scope_exchange_and_stale_sources_invalidate_selection() {
         focused: false,
         panel_pose: Pose::IDENTITY,
         head_pose: Some(Pose::IDENTITY),
-        pointers: vec![],
+        sources: vec![],
         gamepad: None,
     };
     assert!(owner.observe(observation).unwrap().primary.is_none());
@@ -179,7 +196,7 @@ fn transformed_panel_intersection_and_front_face_admission_match_trigger() {
     assert!(observe(&mut owner, 10.0, vec![outside]).primary.is_none());
     let mut invalid = controller;
     invalid.direction.x = f64::NAN;
-    assert!(observe(&mut owner, 20.0, vec![invalid]).primary.is_none());
+    assert!(owner.select(invalid, 20.0).is_none());
 
     let head = Pose {
         orientation: crate::camera::Quaternion {
@@ -201,7 +218,7 @@ fn transformed_panel_intersection_and_front_face_admission_match_trigger() {
             ..head
         },
         head_pose: Some(head),
-        pointers: vec![],
+        sources: vec![],
         gamepad: None,
     };
     let hit = owner.observe(observation.clone()).unwrap().primary.unwrap();
@@ -213,12 +230,14 @@ fn transformed_panel_intersection_and_front_face_admission_match_trigger() {
     };
     let mut tracked_observation = observation.clone();
     tracked_observation.head_pose = None;
-    tracked_observation.pointers = vec![tracked];
+    tracked_observation.sources = vec![source(tracked)];
     let tracked_hit = owner.observe(tracked_observation.clone()).unwrap().primary;
     assert!((tracked_hit.unwrap().point[0] - 0.25).abs() < 1e-12);
     tracked_observation.timestamp_ms = 30.75;
-    tracked_observation.pointers[0]
-        .reference_from_space
+    tracked_observation.sources[0]
+        .tracking_from_ray
+        .as_mut()
+        .unwrap()
         .position
         .x = f64::NAN;
     assert!(
@@ -271,7 +290,7 @@ fn gamepad_frame(
                 ..Pose::IDENTITY
             },
             head_pose: Some(Pose::IDENTITY),
-            pointers: vec![],
+            sources: vec![],
             gamepad,
         })
         .unwrap()
@@ -343,11 +362,139 @@ fn gamepad_connection_cursor_edges_scroll_and_focus_share_one_owner() {
                 focused: true,
                 panel_pose: Pose::IDENTITY,
                 head_pose: None,
-                pointers: vec![],
+                sources: vec![],
                 gamepad: Some(pad),
             })
             .is_err()
     );
+
+    let frame = |owner: &mut XrPointerSession, timestamp_ms, sources, focused| {
+        owner
+            .observe(XrPointerObservation {
+                timestamp_ms,
+                sources,
+                focused,
+                gamepad: None,
+                head_pose: Some(Pose::IDENTITY),
+                panel_pose: Pose {
+                    position: Vector3 {
+                        x: 0.0,
+                        y: 0.0,
+                        z: -2.0,
+                    },
+                    ..Pose::IDENTITY
+                },
+            })
+            .unwrap()
+    };
+    let mut controller = source(pointer(XrPointerSource::Controller { id: 1 }, -0.25));
+    controller.gamepad = Some(XrInputGamepadObservation {
+        mapping: "xr-standard".into(),
+        axes: vec![Some(0.0); 4],
+        buttons: vec![
+            XrInputButtonObservation {
+                pressed: true,
+                touched: false
+            };
+            3
+        ],
+    });
+    let first = frame(&mut owner, 6000.0, vec![controller.clone()], true);
+    assert!(first.activation.is_none() && !first.back);
+    assert_eq!(
+        first.primary.unwrap().source,
+        XrPointerSource::Controller { id: 1 }
+    );
+    controller.gamepad.as_mut().unwrap().buttons[1].pressed = false;
+    frame(&mut owner, 6050.0, vec![controller.clone()], true);
+    controller.gamepad.as_mut().unwrap().buttons[1].pressed = true;
+    controller.gamepad.as_mut().unwrap().axes[3] = Some(1.0);
+    let back = frame(&mut owner, 6100.0, vec![controller.clone()], true);
+    assert!(back.back && back.activation.is_none() && back.scroll_pages == 0.0);
+    let held = frame(&mut owner, 6150.0, vec![controller.clone()], true);
+    assert!(!held.back && held.activation.is_none());
+    assert_eq!(held.scroll_pages, 0.1);
+    controller.gamepad.as_mut().unwrap().axes[3] = Some(0.2);
+    controller.gamepad.as_mut().unwrap().axes[1] = Some(-1.0);
+    assert_eq!(
+        frame(&mut owner, 6200.0, vec![controller.clone()], true).scroll_pages,
+        0.0
+    );
+    controller.gamepad.as_mut().unwrap().buttons[2].touched = true;
+    assert_eq!(
+        frame(&mut owner, 6250.0, vec![controller.clone()], true).scroll_pages,
+        -0.1
+    );
+    controller.gamepad.as_mut().unwrap().axes[3] = Some(1.0);
+    assert_eq!(
+        frame(&mut owner, 6300.0, vec![controller.clone()], true).scroll_pages,
+        0.1
+    );
+    controller.tracking_from_ray = None;
+    let untracked = frame(&mut owner, 6350.0, vec![controller.clone()], true);
+    assert_eq!(untracked.primary.unwrap().source, XrPointerSource::Gaze);
+    assert_eq!(untracked.scroll_pages, 0.1);
+    controller.gamepad.as_mut().unwrap().mapping.clear();
+    let unknown = frame(&mut owner, 6400.0, vec![controller.clone()], true);
+    assert!(!unknown.back && unknown.scroll_pages == 0.0);
+    controller.gamepad.as_mut().unwrap().mapping = "xr-standard".into();
+    controller.source_id += 1;
+    assert!(!frame(&mut owner, 6450.0, vec![controller.clone()], true).back);
+    frame(&mut owner, 6500.0, vec![], true);
+    assert!(!frame(&mut owner, 6550.0, vec![controller.clone()], true).back);
+    frame(&mut owner, 6600.0, vec![controller.clone()], false);
+    assert!(!frame(&mut owner, 6650.0, vec![controller.clone()], true).back);
+    owner
+        .set_surface(Some(XrPointerSurface {
+            scope: "other".into(),
+            ..surface()
+        }))
+        .unwrap();
+    assert!(!frame(&mut owner, 6700.0, vec![controller.clone()], true).back);
+    let mut left = controller.clone();
+    left.source_id += 1;
+    left.handedness = "left".into();
+    left.gamepad.as_mut().unwrap().axes[3] = Some(-1.0);
+    left.gamepad.as_mut().unwrap().buttons[1].pressed = false;
+    assert_eq!(
+        frame(
+            &mut owner,
+            6750.0,
+            vec![left.clone(), controller.clone()],
+            true
+        )
+        .scroll_pages,
+        0.1
+    );
+    left.gamepad.as_mut().unwrap().buttons[1].pressed = true;
+    let back = frame(&mut owner, 6800.0, vec![controller, left], true);
+    assert!(back.back && back.scroll_pages == 0.0 && back.activation.is_none());
+    let mut combined = owner.observation.clone().unwrap();
+    combined.timestamp_ms = 6850.0;
+    combined.sources[0].tracking_from_ray =
+        source(pointer(XrPointerSource::Controller { id: 2 }, -0.25)).tracking_from_ray;
+    combined.gamepad = Some(XrGamepadObservation {
+        buttons: [false; 2],
+        ..pad
+    });
+    owner.observe(combined.clone()).unwrap();
+    combined.timestamp_ms = 6900.0;
+    combined.gamepad.as_mut().unwrap().buttons[1] = true;
+    let back = owner.observe(combined.clone()).unwrap();
+    assert!(matches!(
+        back.primary.unwrap().source,
+        XrPointerSource::Controller { .. }
+    ));
+    assert!(back.back && back.scroll_pages == 0.0 && back.activation.is_none());
+    combined.gamepad = None;
+    combined.sources[0].tracking_from_ray = None;
+    combined.timestamp_ms = 6950.0;
+    owner.observe(combined.clone()).unwrap();
+    combined.timestamp_ms = 7950.0;
+    let scrolling = owner.observe(combined).unwrap();
+    assert_eq!(scrolling.primary.unwrap().source, XrPointerSource::Gaze);
+    assert!(scrolling.scroll_pages > 0.0 && scrolling.activation.is_none());
+    assert_eq!(scrolling.progress, 0.0);
 }
 
 #[test]

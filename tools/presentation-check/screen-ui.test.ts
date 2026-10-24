@@ -118,7 +118,7 @@ describe("Screen DOM adapter", () => {
         fixture.activate({ kind: "session", command });
       }
       for (let now = 0; now <= 3050; now += 10) fixture.observe({ kind: "frame", timestamp_ms: now, gamepads: [],
-        display_resource_id: null, spatial: { gamepads: [], pointers: [], presented_id: null }, xr: null }, now);
+        display_resource_id: null, spatial: { gamepads: [], sources: [], presented_id: null }, xr: null }, now);
       fixture.activate({ kind: "session", command: { kind: "abort" } }, 3050);
       fixture.activate({ kind: "set_result_tab", tab: "analysis" }, 3050);
       fixture.activate({ kind: "set_analysis_chart", chart: "altitude" }, 3050);

@@ -213,7 +213,7 @@ impl SurfaceOwner {
         }
         let menu = self.offered.take().unwrap();
         if self.published.as_ref().is_some_and(|old| {
-            old.context != menu.context || old.view_revision != menu.view_revision
+            old.context.scope != menu.context.scope || old.view_revision != menu.view_revision
         }) {
             self.pointer = XrPointerSession::default();
             self.cursors.clear();
@@ -233,13 +233,7 @@ impl SurfaceOwner {
         timestamp_ms: f64,
     ) -> Result<Option<SurfaceAction>, ApplicationRuntimeError> {
         if !self.acknowledge(observation.presented_id)? {
-            self.pointer = XrPointerSession::default();
-            if let Some(menu) = &self.published {
-                self.pointer
-                    .set_surface(Some(menu.surface.clone()))
-                    .map_err(ApplicationRuntimeError::SpatialInput)?;
-            }
-            self.gamepad = None;
+            self.pointer.invalidate_selection();
             self.cursors.clear();
             return Ok(None);
         }
@@ -266,11 +260,7 @@ impl SurfaceOwner {
                 focused,
                 panel_pose: menu.panel_pose,
                 head_pose: head,
-                pointers: observation
-                    .pointers
-                    .into_iter()
-                    .filter_map(pointer_ray)
-                    .collect(),
+                sources: observation.sources,
                 gamepad,
             })
             .map_err(ApplicationRuntimeError::SpatialInput)?;
@@ -294,15 +284,15 @@ impl SurfaceOwner {
                 _ => MenuFocus::None,
             },
         });
-        if let Some(hit) = projection.activation {
-            return Ok(self.activate(hit));
-        }
         if projection.back {
             return Ok(Some(SurfaceAction {
                 view_revision: menu.view_revision,
                 input: None,
                 back: true,
             }));
+        }
+        if let Some(hit) = projection.activation {
+            return Ok(self.activate(hit));
         }
         if projection.scroll_pages != 0.0 {
             self.scroll(MenuScrollIntent::Delta {
@@ -360,7 +350,9 @@ impl SurfaceOwner {
                 context: menu.context.clone(),
                 intent,
             });
-            self.retire_input();
+            self.pointer.invalidate_selection();
+            self.offered = None;
+            self.cursors.clear();
         }
     }
 

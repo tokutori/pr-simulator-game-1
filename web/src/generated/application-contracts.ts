@@ -2157,13 +2157,68 @@ export interface ApplicationSpatialObservation {
      */
     readonly gamepads: readonly ApplicationGamepadObservation[];
     /**
-     * Connected tracked pointers with an available pose.
-     */
-    readonly pointers: readonly ApplicationPointerObservation[];
-    /**
      * Identity of the spatial projection actually submitted by the drawing adapter.
      */
     readonly presented_id?: number | null;
+    /**
+     * Same-frame raw XR sources, including temporarily untracked controllers.
+     */
+    readonly sources: readonly XrInputSourceObservation[];
+}
+/**
+ * One source's same-frame tracking and physical inputs.
+ */
+export interface XrInputSourceObservation {
+    /**
+     * Actual gamepad, absent when the source has no gamepad API.
+     */
+    readonly gamepad?: XrInputGamepadObservation | null;
+    /**
+     * Raw handedness, independent of the source handle.
+     */
+    readonly handedness: string;
+    /**
+     * Platform handle for this source's connection lifetime.
+     */
+    readonly source_id: number;
+    /**
+     * Raw target-ray mode.
+     */
+    readonly target_ray_mode: string;
+    /**
+     * Tracking-space target-ray pose; absent tracking retains button observations.
+     */
+    readonly tracking_from_ray?: XrObservedPose | null;
+}
+/**
+ * Unfiltered gamepad values associated with one XR input source.
+ */
+export interface XrInputGamepadObservation {
+    /**
+     * Raw axes; non-finite observations are None.
+     */
+    readonly axes: readonly (number | null)[];
+    /**
+     * Raw button order, including placeholder buttons.
+     */
+    readonly buttons: readonly XrInputButtonObservation[];
+    /**
+     * Platform mapping declaration.
+     */
+    readonly mapping: string;
+}
+/**
+ * Button state copied from the active XR frame.
+ */
+export interface XrInputButtonObservation {
+    /**
+     * Platform pressed state.
+     */
+    readonly pressed: boolean;
+    /**
+     * Platform touch state.
+     */
+    readonly touched: boolean;
 }
 /**
  * Payload of one externally observed event.

@@ -148,8 +148,8 @@ pub struct ApplicationPointerObservation {
 pub struct ApplicationSpatialObservation {
     /// Identity of the spatial projection actually submitted by the drawing adapter.
     pub presented_id: Option<u32>,
-    /// Connected tracked pointers with an available pose.
-    pub pointers: Vec<ApplicationPointerObservation>,
+    /// Same-frame raw XR sources, including temporarily untracked controllers.
+    pub sources: Vec<birdman_game_presentation::xr::XrInputSourceObservation>,
     /// Connected standard gamepads, before device selection or dead-zone filtering.
     pub gamepads: Vec<super::ApplicationGamepadObservation>,
 }
