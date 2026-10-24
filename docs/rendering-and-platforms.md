@@ -271,6 +271,7 @@ Nativeは既存DirectionalLightの2048 texel・30〜600 mの3段cascadeから、
 | Phone VR | 左右分割、Device Orientationによる3DoF。位置追跡・reprojection・XR compositorを提供しない |
 | Native Screen | Bevyのデスクトップ描画 |
 
+- Native OpenXRは未接続であり、runtime・frame提出・swapchain、pose/FOVと入力の観測、共有描画の提出を接続対象とする。
 - Webでは全8 SceneとSettings・Pause・Help・Credits・HUDを同じ共通UIから表示する。
 - XR sessionはScene間で共有する。
 - DOM Overlayは任意機能であり、非対応機種でも装着中の主要操作をpanelで完結できるようにする。

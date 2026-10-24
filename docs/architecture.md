@@ -283,13 +283,14 @@ GameUiView / GameUiFrame → platform renderer → DOM / VR panel / Bevy entity
 
 ## nativeの独立性と検証境界
 
-- native版は同じApplicationSession、共有UI、記録producer/selectorを直接利用する。
+- native版は同じApplicationRuntimeを介してApplicationSession、共有UI、記録producer/selectorを利用する。
 - 起動にNode.js、JavaScript、browser、WebView、WASM実行環境を要求しない。
 - OS/GPU・window systemの通常の依存はnative環境の前提とする。
 
 - native実装と配布対象はWindows/macOS/Linuxのx86_64/arm64、表示対象はScreenである。
 - Webの全Scene/overlayへのScreen/VR契約を維持する。
-- nativeへのXR追加や署名・notarizationの達成は別途検証する。
+- Native OpenXRの接続範囲は[描画とplatform](rendering-and-platforms.md)、ソフト接続と実HMDの受入は[検証](verification.md)に定める。
+- 署名・notarizationは配布条件として別途検証する。
 
 - build成功、ソース外のCLI smoke、offscreen GPU、実画面の操作、性能、OSごとの受入を区別する。
 - CPUのadapter testだけでshader・描画を確認済みとしない。

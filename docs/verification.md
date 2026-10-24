@@ -531,6 +531,7 @@ CASEは `calm-low` / `calm-medium` / `calm-high` / `typical-low` / `typical-medi
 
 ## 11. VR・性能・配布の受入
 
+- Native OpenXRの残る受入は、runtime・frame提出・swapchainの共有ownerへのソフトウェア接続と、実HMDでの描画・操作・停止復帰に分け、独立した証拠を記録する。
 - XRの光学計算はpresentationのRust数値試験で非対称・canted眼、clip-depth 2規約とreversed Z、near/far、Information・Custom mask、前方clear region、実測glyphの視角を検査する。Webの結合試験は実WASM・フォント観測・両眼描画への接続を確認する。
 - `tools/presentation-check/three-webxr-mount.test.ts`は実集約WASM ownerと実WebXRManagerを接続し、非対称眼のengine提出行列、float32揺れとreference reset後のMenu保持、描画cursorとtriggerのAction到達を確認する。
 - Head HUDとMenuは同ownerの実font観測を介した最終paintを使い、共有Rustで実測ink・clip・可読性を検査する。Canvas adapterは最終命令の描画、WebXR adapterは最終pose・projection・入力面の提出を担当する。
