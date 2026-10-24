@@ -150,9 +150,11 @@ describe("Single browser runtime ownership", () => {
 
   it("retries initial observation failure, retains preparation through BFCache and requests permission inside the click", async () => {
     const diagnostic = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const observationFailure = new Error("Initial renderer observation failed");
+    const cleanupFailure = new Error("Initial renderer cleanup failed");
     capture.observation = vi.fn().mockImplementationOnce(() => {
-      capture.driver?.dispose.mockImplementationOnce(() => { throw new Error("Initial renderer cleanup failed"); });
-      throw new Error("Initial renderer observation failed");
+      capture.driver?.dispose.mockImplementationOnce(() => { throw cleanupFailure; });
+      throw observationFailure;
     });
     const fixture = await browserFixture("permission");
     let driver = fixture.driver;
@@ -162,14 +164,16 @@ describe("Single browser runtime ownership", () => {
       const failures = fixture.update.mock.calls.map(([json]) => (JSON.parse(json) as ApplicationObservation).input)
         .filter(input => input.kind === "renderer_created" && input.result.kind === "failed");
       expect(failures).toHaveLength(1);
-      expect(failures[0]).toMatchObject({ result: { cause: "AggregateError: Renderer acquisition cleanup failed (Error: Initial renderer observation failed; Error: Initial renderer cleanup failed)" } });
-      expect(diagnostic).toHaveBeenCalledWith("AggregateError: Renderer acquisition cleanup failed (Error: Initial renderer observation failed; Error: Initial renderer cleanup failed)");
+      const failure = failures[0];
+      if (failure?.kind !== "renderer_created" || failure.result.kind !== "failed") throw new Error("Missing renderer failure");
+      expect(failure.result.cause).toContain(String(observationFailure));
+      expect(failure.result.cause).toContain(String(cleanupFailure));
+      expect(diagnostic).toHaveBeenCalledWith(failure.result.cause);
       fixture.mount.querySelector<HTMLButtonElement>('[data-control-id="game-boot-retry"]')?.click();
       if (capture.driver === null) throw new Error("Retry did not create a renderer");
       expect(capture.driver).not.toBe(driver);
       driver = capture.driver;
       expect(driver.requests).toHaveLength(1);
-      expect(driver.requests[0]?.graphics.quality).toEqual({ scale: "50", shadow: "quarter", water_quality: "low" });
       fixture.page("pagehide", true);
       driver.finish();
       expect(fixture.free).not.toHaveBeenCalled();

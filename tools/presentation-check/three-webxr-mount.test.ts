@@ -275,7 +275,14 @@ describe("Aggregate runtime through the real Three WebXRManager", () => {
       const menu = opening.spatial?.menu;
       if (menu?.kind !== "ready" || opening.scene.camera == null) throw new Error("Current tracked Menu is unavailable");
       const before = poseMatrix(menu.world_from_panel);
-      const label = text(menu.paint.content.items, "飛行を設定");
+      const currentView = state.updates.mock.results
+        .filter(result => result.type === "return")
+        .map(result => (JSON.parse(result.value) as ApplicationOutput).drawing?.ui)
+        .findLast(ui => ui?.kind === "view");
+      if (currentView?.kind !== "view") throw new Error("Current shared View is unavailable");
+      const start = currentView.view.panels.flatMap(panel => panel.controls).find(control => control.id === "game-title-start");
+      if (start === undefined) throw new Error("Current shared View omitted its start control");
+      const label = text(menu.paint.content.items, start.label);
       if (label === undefined) throw new Error("Shared painting omitted its start label");
       const point = new Vector3(label.anchor.x + label.fontMeters * 0.3 - menu.paint.size.width / 2,
         menu.paint.size.height / 2 - label.anchor.y + label.fontMeters * 0.3, 0).applyMatrix4(before);
