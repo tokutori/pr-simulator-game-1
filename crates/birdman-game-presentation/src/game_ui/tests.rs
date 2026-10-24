@@ -49,6 +49,7 @@ pub(super) fn context<'view>(
     platform: &'view GameUiPlatformInput,
 ) -> GameUiContext<'view, 'static> {
     GameUiContext {
+        record_notification: None,
         archived_identity: None,
         session,
         resume_available: session.can_resume(),

@@ -494,6 +494,8 @@ pub struct GameUiViewport {
 
 /// Borrowed domain and query inputs. This value owns no game state.
 pub struct GameUiContext<'view, 'session> {
+    /// Save completion feedback belonging to the displayed record.
+    pub record_notification: Option<&'view str>,
     /// Existing game session owner.
     pub session: &'view GameSession<'session>,
     /// Resume admission from the application-owned live driver and domain session.

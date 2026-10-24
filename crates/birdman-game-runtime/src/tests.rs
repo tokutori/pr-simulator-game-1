@@ -832,88 +832,188 @@ fn finalized_application() -> ApplicationSession {
 }
 
 #[test]
-fn saved_result_owns_transaction_and_rejects_notifications_after_leaving_result() {
+fn saved_result_owns_transaction_and_scopes_notifications_to_its_record() {
     use birdman_game_app::record_persistence::{
         RecordWriteObservation as Seen, RecordWriteRequest as Io,
     };
-    let application = finalized_application();
-    let platform = ApplicationPlatformObservation {
-        gpu_timing_requested: false,
-        renderer: Some(renderer_observation()),
-        surface: None,
-        viewport: GameUiViewport {
-            width: 1280.0,
-            height: 720.0,
-            root_font_size: 16.0,
-        },
-        capabilities: ApplicationCapabilities {
-            stored_records_available: true,
-            ..Default::default()
-        },
-    };
-    let mut runtime = ApplicationRuntime::new(application, platform.clone()).unwrap();
-    let initial = runtime
-        .observe_test(ApplicationInput::Platform {
-            observation: platform,
-        })
-        .unwrap();
-    let request_id = initial
-        .requests
-        .iter()
-        .find_map(|request| match request {
-            ApplicationRequest::BeginRecordSave { request_id } => Some(*request_id),
-            _ => None,
-        })
-        .unwrap();
-    let initial = finish_boot(&mut runtime, initial);
-    let result = structure(initial);
-    let opened = runtime
-        .observe_test(ApplicationInput::RecordSaveOpened {
-            request_id,
-            unix_milliseconds: 0,
-        })
-        .unwrap();
-    assert!(
-        matches!(opened.requests.as_slice(), [ApplicationRequest::RecordWrite { requests, .. }] if matches!(requests.as_slice(), [Io::InsertRecord { saved_at, .. }] if saved_at == "1970-01-01T00:00:00Z"))
-    );
-    assert!(opened.drawing.is_none());
-    let duplicate = runtime
-        .observe_test(ApplicationInput::RecordSaveOpened {
-            request_id,
-            unix_milliseconds: i64::MAX,
-        })
-        .unwrap();
-    assert!(duplicate.requests.is_empty());
-    activate(&mut runtime, &result, SessionCommand::ReturnToTitle {});
-    for observation in [
-        Seen::Inserted {
-            key: serde_json::json!(7),
-        },
-        Seen::MetadataWritten,
-        Seen::Committed,
+    for (failure, delayed) in [
+        (None, false),
+        (Some("record transaction aborted"), false),
+        (None, true),
+        (Some("record transaction aborted"), true),
     ] {
-        runtime
-            .observe_test(ApplicationInput::RecordSaveObserved {
-                request_id,
-                observation,
+        let application = finalized_application();
+        let platform = ApplicationPlatformObservation {
+            gpu_timing_requested: false,
+            renderer: Some(renderer_observation()),
+            surface: None,
+            viewport: GameUiViewport {
+                width: 1280.0,
+                height: 720.0,
+                root_font_size: 16.0,
+            },
+            capabilities: ApplicationCapabilities {
+                stored_records_available: true,
+                replay_available: true,
+                ..Default::default()
+            },
+        };
+        let mut runtime = ApplicationRuntime::new(application, platform.clone()).unwrap();
+        let initial = runtime
+            .observe_test(ApplicationInput::Platform {
+                observation: platform,
             })
             .unwrap();
-    }
-    assert!(runtime.platform.notification.is_empty());
-    assert_eq!(
-        runtime.application().core_session().snapshot().phase(),
-        SessionPhase::Title
-    );
-    assert!(
-        runtime
-            .observe_test(ApplicationInput::RecordSaveObserved {
-                request_id,
-                observation: Seen::Committed
-            })
-            .unwrap()
+        let request_id = initial
             .requests
-            .is_empty()
-    );
+            .iter()
+            .find_map(|request| match request {
+                ApplicationRequest::BeginRecordSave { request_id } => Some(*request_id),
+                _ => None,
+            })
+            .unwrap();
+        let initial = finish_boot(&mut runtime, initial);
+        let result = structure(initial);
+        let opened = runtime
+            .observe_test(ApplicationInput::RecordSaveOpened {
+                request_id,
+                unix_milliseconds: 0,
+            })
+            .unwrap();
+        assert!(
+            matches!(opened.requests.as_slice(), [ApplicationRequest::RecordWrite { requests, .. }] if matches!(requests.as_slice(), [Io::InsertRecord { saved_at, .. }] if saved_at == "1970-01-01T00:00:00Z"))
+        );
+        assert!(opened.drawing.is_none());
+        let duplicate = runtime
+            .observe_test(ApplicationInput::RecordSaveOpened {
+                request_id,
+                unix_milliseconds: i64::MAX,
+            })
+            .unwrap();
+        assert!(duplicate.requests.is_empty());
+        let replay = structure(activate(
+            &mut runtime,
+            &result,
+            SessionCommand::EnterReplay {},
+        ));
+        let observations = if let Some(cause) = failure {
+            vec![Seen::Failed {
+                cause: cause.to_owned(),
+            }]
+        } else {
+            vec![
+                Seen::Inserted {
+                    key: serde_json::json!(7),
+                },
+                Seen::MetadataWritten,
+                Seen::Committed,
+            ]
+        };
+        let complete = |runtime: &mut ApplicationRuntime| {
+            let mut completed = None;
+            for observation in observations.iter().cloned() {
+                completed = Some(
+                    runtime
+                        .observe_test(ApplicationInput::RecordSaveObserved {
+                            request_id,
+                            observation,
+                        })
+                        .unwrap(),
+                );
+            }
+            completed.unwrap()
+        };
+        let displayed = |view: &GameUiView, notice: &str| {
+            view.panels.iter().flat_map(|panel| &panel.controls).any(|control| {
+            matches!(&control.content, GameUiControlContent::Status { value, .. } if value.contains(notice))
+        })
+        };
+        let (replay, notice) = if delayed {
+            (replay, None)
+        } else {
+            let completed = complete(&mut runtime);
+            assert_eq!(completed.diagnostic.as_deref(), failure);
+            let replay = structure(completed);
+            let notice = runtime
+                .storage
+                .save_notification(&runtime.application)
+                .unwrap()
+                .to_owned();
+            assert!(displayed(&replay, &notice));
+            (replay, Some(notice))
+        };
+        let result = structure(activate(
+            &mut runtime,
+            &replay,
+            SessionCommand::LeaveReplay {},
+        ));
+        if let Some(notice) = &notice {
+            assert!(displayed(&result, notice));
+        }
+        assert!(runtime.platform.notification.is_empty());
+        let retried = activate(&mut runtime, &result, SessionCommand::Retry {});
+        assert!(
+            runtime
+                .storage
+                .save_notification(&runtime.application)
+                .is_none()
+        );
+        let briefing = if retried
+            .requests
+            .iter()
+            .any(|request| matches!(request, ApplicationRequest::PrepareResources { .. }))
+        {
+            finish_boot(&mut runtime, retried)
+        } else {
+            retried
+        };
+        let briefing = structure(briefing);
+        activate(&mut runtime, &briefing, SessionCommand::StartCountdown {});
+        let mut next_result = None;
+        for frame in 0..=45 {
+            let output = runtime
+                .observe_test(ApplicationInput::Frame {
+                    display_resource_id: None,
+                    timestamp_ms: 10_000.0 + f64::from(frame) * 100.0,
+                    gamepads: Vec::new(),
+                    xr: None,
+                    spatial: Default::default(),
+                })
+                .unwrap();
+            if runtime.application().core_session().snapshot().phase() == SessionPhase::Result {
+                next_result = Some(structure(output));
+                break;
+            }
+        }
+        let next_result = next_result.unwrap();
+        if let Some(notice) = &notice {
+            assert!(!displayed(&next_result, notice));
+        }
+        if delayed {
+            let completed = complete(&mut runtime);
+            assert_eq!(completed.diagnostic.as_deref(), failure);
+            assert!(
+                runtime
+                    .storage
+                    .save_notification(&runtime.application)
+                    .is_none()
+            );
+            assert!(matches!(
+                completed.drawing.unwrap().ui,
+                ApplicationUiProjection::Frame { .. }
+            ));
+        }
+        assert!(
+            runtime
+                .observe_test(ApplicationInput::RecordSaveObserved {
+                    request_id,
+                    observation: Seen::Committed
+                })
+                .unwrap()
+                .requests
+                .is_empty()
+        );
+    }
 }
 
 #[test]

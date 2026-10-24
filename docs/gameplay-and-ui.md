@@ -176,7 +176,7 @@ Retryはsealed configuration、初期状態、scenario seed、波の位相基準
 - Personal Bestは検査済み完全recordのWaterContactを対象とする。
 - 比較条件とbuild来歴の定義、JSON/CSVと保存一覧の境界は[データ形式](data-and-formats.md)へ集約する。
 - 画質やbackendを物理比較条件に含めない。
-- 保存失敗は原因付きで通知し、成功と表示しない。
+- 保存結果は記録単位で保持し、同じ記録の結果画面とリプレイへ表示する。資源の再準備中も保持し、記録の交代と終了時に退役する。保存失敗の原原因は診断へ保持する。
 
 ### AnalysisとReplay
 

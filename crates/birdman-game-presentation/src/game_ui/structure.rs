@@ -17,6 +17,7 @@ pub struct GameUiStructureKey {
     identity: Option<birdman_game_core::SessionScenarioIdentity>,
     record_available: bool,
     environment_readout: String,
+    record_notification: Option<String>,
     platform: GameUiPlatformInput,
 }
 
@@ -47,6 +48,7 @@ impl GameUiStructureKey {
             identity: context.identity,
             record_available: context.record.is_some(),
             environment_readout: context.environment_readout.to_owned(),
+            record_notification: context.record_notification.map(str::to_owned),
             platform: context.platform.clone(),
         }
     }

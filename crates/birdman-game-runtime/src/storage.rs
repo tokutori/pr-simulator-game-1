@@ -14,6 +14,7 @@ use super::{ApplicationRequest, ApplicationRuntimeError};
 #[derive(Default)]
 pub(super) struct StorageOwner {
     observed_source: Option<RecordSourceId>,
+    save_notification: Option<(RecordSourceId, String)>,
     saves: BTreeMap<u32, SaveJob>,
     load: Option<LoadJob>,
     downloads: BTreeSet<u32>,
@@ -58,6 +59,7 @@ struct SaveJob {
 impl StorageOwner {
     pub(super) fn close(&mut self) {
         self.saves.clear();
+        self.save_notification = None;
         self.load = None;
         self.preview = None;
         self.downloads.clear();
@@ -126,6 +128,13 @@ impl StorageOwner {
     }
 
     pub(super) fn reconcile(&mut self, application: &ApplicationSession) {
+        if self
+            .save_notification
+            .as_ref()
+            .is_some_and(|(source, _)| application.record_source_id() != Some(*source))
+        {
+            self.save_notification = None;
+        }
         let title = application.core_session().snapshot().phase() == SessionPhase::Title;
         if title && !self.title {
             self.preview_stale = true;
@@ -304,14 +313,26 @@ impl StorageOwner {
         }]
     }
 
+    pub(super) fn save_notification(&self, application: &ApplicationSession) -> Option<&str> {
+        let (source, notification) = self.save_notification.as_ref()?;
+        (application.record_source_id() == Some(*source)
+            && matches!(
+                application.core_session().snapshot().phase(),
+                SessionPhase::Result | SessionPhase::Replay
+            ))
+        .then_some(notification.as_str())
+    }
+
     pub(super) fn observe(
         &mut self,
         request_id: u32,
         observation: RecordWriteObservation,
         application: &ApplicationSession,
         requests: &mut Vec<ApplicationRequest>,
-    ) -> Option<String> {
-        let job = self.saves.get_mut(&request_id)?;
+    ) {
+        let Some(job) = self.saves.get_mut(&request_id) else {
+            return;
+        };
         let writes = job.transaction.observe(observation);
         if !writes.is_empty() {
             requests.push(ApplicationRequest::RecordWrite {
@@ -333,10 +354,12 @@ impl StorageOwner {
                 "飛行記録を保存できない。記録をファイルへ出力して保存できる。".to_owned()
             })
         };
-        let notification = notification?;
-        let current = application.record_source_id() == Some(job.source)
-            && application.core_session().snapshot().phase() == SessionPhase::Result;
+        let Some(notification) = notification else {
+            return;
+        };
+        if application.record_source_id() == Some(job.source) {
+            self.save_notification = Some((job.source, notification));
+        }
         self.saves.remove(&request_id);
-        current.then_some(notification)
     }
 }

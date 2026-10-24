@@ -471,12 +471,8 @@ impl ApplicationRuntime {
                 request_id,
                 observation,
             } => {
-                if let Some(notification) =
-                    self.storage
-                        .observe(request_id, observation, &self.application, &mut requests)
-                {
-                    self.platform.notification = notification;
-                }
+                self.storage
+                    .observe(request_id, observation, &self.application, &mut requests);
             }
             ApplicationInput::Graphics {
                 renderer_resource_id,
@@ -1757,6 +1753,7 @@ impl ApplicationRuntime {
         environment: &'view str,
     ) -> Result<GameUiContext<'view, 'static>, ApplicationRuntimeError> {
         Ok(GameUiContext {
+            record_notification: self.storage.save_notification(&self.application),
             session: self.application.core_session(),
             resume_available: self.application.can_resume(),
             presentation_available: self.application.presentation_available(),

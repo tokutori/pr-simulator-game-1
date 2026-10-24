@@ -1159,6 +1159,12 @@ fn configuration(context: &GameUiContext<'_, '_>) -> String {
 
 fn notification(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
     let mut message = context.platform.notification.clone();
+    if let Some(notification) = context.record_notification {
+        if !message.is_empty() {
+            message.push('\n');
+        }
+        message.push_str(notification);
+    }
     if context.session.snapshot().phase() == SessionPhase::Replay
         && context.identity.is_some_and(|identity| {
             matches!(
