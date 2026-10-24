@@ -253,8 +253,29 @@ pub(super) fn game_ui_hud(
                     if wind_down < 0.0 { "上昇" } else { "下降" },
                     wind_down.abs()
                 ),
-                rotation_degrees: (wind_north != 0.0 || wind_east != 0.0)
-                    .then(|| wind_east.atan2(wind_north).to_degrees().rem_euclid(360.0)),
+                canvas_size: [72.0, 72.0],
+                circle_bounds: GameUiRect {
+                    x: 9.0,
+                    y: 9.0,
+                    width: 54.0,
+                    height: 54.0,
+                },
+                circle_radius: 27.0,
+                circle_stroke_width: 1.5,
+                cross_segments: [
+                    [
+                        GameUiChartPoint { x: 36.0, y: 9.0 },
+                        GameUiChartPoint { x: 36.0, y: 63.0 },
+                    ],
+                    [
+                        GameUiChartPoint { x: 9.0, y: 36.0 },
+                        GameUiChartPoint { x: 63.0, y: 36.0 },
+                    ],
+                ],
+                cross_stroke_width: 1.0,
+                north_label: "N".to_owned(),
+                north_anchor: GameUiChartPoint { x: 36.0, y: 24.0 },
+                arrow: direction_arrow(wind_north, wind_east),
             },
         ));
     }
@@ -319,6 +340,19 @@ fn text_node(id: &str, label: &str, value: String) -> GameUiHudNode {
             value,
             tone: GameUiHudTone::Normal,
         },
+    )
+}
+
+fn direction_arrow(north: f64, east: f64) -> Option<[GameUiChartPoint; 4]> {
+    if north == 0.0 && east == 0.0 {
+        return None;
+    }
+    let (sin, cos) = east.atan2(north).sin_cos();
+    Some(
+        [(0.0, -21.0), (-5.0, 2.0), (0.0, -2.0), (5.0, 2.0)].map(|(x, y)| GameUiChartPoint {
+            x: 36.0 + x * cos - y * sin,
+            y: 36.0 + x * sin + y * cos,
+        }),
     )
 }
 
@@ -850,6 +884,15 @@ mod geometry_tests {
 
     #[test]
     fn instrument_projection_preserves_web_baseline_and_clamping() {
+        assert_eq!(direction_arrow(0.0, 0.0), None);
+        assert_eq!(
+            direction_arrow(1.0, 0.0).unwrap()[0],
+            GameUiChartPoint { x: 36.0, y: 15.0 }
+        );
+        let east = direction_arrow(0.0, 1.0).unwrap()[0];
+        assert!((east.x - 57.0).abs() < 1.0e-12 && (east.y - 36.0).abs() < 1.0e-12);
+        let diagonal = direction_arrow(3.0, 4.0).unwrap()[0];
+        assert!((diagonal.x - 52.8).abs() < 1.0e-12 && (diagonal.y - 23.4).abs() < 1.0e-12);
         let geometry = hud_geometry(
             Some(GameUiHudAttitude {
                 roll_degrees: 11.0,

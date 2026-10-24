@@ -37,7 +37,11 @@ enum HudWidget {
     },
     Direction {
         surface: Entity,
-        needle: Entity,
+        canvas: Entity,
+        ring: Entity,
+        cross: [Entity; 2],
+        north: (Entity, Entity),
+        arrow: [(Entity, Entity); 2],
     },
     LinearGauge {
         surface: Entity,
@@ -294,10 +298,9 @@ fn project_structure(
                     HudWidget::Attitude { .. } => {
                         px(node.bounds.width * layout.width_px - layout.padding_px[0] * 2.0)
                     }
-                    HudWidget::Direction { .. } => {
-                        px(node.instrument_height_em * layout.font_size_px)
-                    }
-                    HudWidget::HeadingTape { .. } | HudWidget::LinearGauge { .. } => percent(100),
+                    HudWidget::Direction { .. }
+                    | HudWidget::HeadingTape { .. }
+                    | HudWidget::LinearGauge { .. } => percent(100),
                     HudWidget::Text => unreachable!(),
                 };
                 let mut surface = world.get_mut::<Node>(surface).expect("HUD surface exists");
@@ -448,65 +451,27 @@ fn spawn_node(
                 world,
                 card,
                 Node {
-                    width: px(56),
-                    height: px(56),
                     align_self: AlignSelf::Center,
                     ..default()
                 },
                 Color::NONE,
             );
-            let ring = shape(
-                world,
+            let canvas = shape(world, surface, Node::default(), Color::NONE);
+            let ring = shape(world, canvas, Node::default(), Color::NONE);
+            let cross = std::array::from_fn(|_| shape(world, canvas, Node::default(), Color::NONE));
+            let north = instrument_text(world, canvas, font);
+            let arrow = std::array::from_fn(|_| {
+                let anchor = shape(world, canvas, Node::default(), Color::NONE);
+                (anchor, shape(world, anchor, Node::default(), Color::NONE))
+            });
+            HudWidget::Direction {
                 surface,
-                Node {
-                    position_type: PositionType::Absolute,
-                    left: percent(12.5),
-                    top: percent(12.5),
-                    width: percent(75),
-                    height: percent(75),
-                    border: UiRect::all(px(1)),
-                    border_radius: BorderRadius::MAX,
-                    ..default()
-                },
-                Color::NONE,
-            );
-            world
-                .entity_mut(ring)
-                .insert(BorderColor::all(Color::srgb(0.725, 0.788, 0.761)));
-            let needle = shape(
-                world,
-                surface,
-                Node {
-                    position_type: PositionType::Absolute,
-                    width: percent(100),
-                    height: percent(100),
-                    ..default()
-                },
-                Color::NONE,
-            );
-            for (left, top, width, height, rotation) in [
-                (48.5, 22.0, 3.0, 32.0, 0.0),
-                (40.0, 25.0, 13.0, 3.0, -45.0),
-                (48.0, 25.0, 13.0, 3.0, 45.0),
-            ] {
-                let arm = shape(
-                    world,
-                    needle,
-                    Node {
-                        position_type: PositionType::Absolute,
-                        left: percent(left),
-                        top: percent(top),
-                        width: percent(width),
-                        height: percent(height),
-                        ..default()
-                    },
-                    Color::srgb(1.0, 0.85, 0.25),
-                );
-                world
-                    .entity_mut(arm)
-                    .insert(UiTransform::from_rotation(Rot2::degrees(rotation)));
+                canvas,
+                ring,
+                cross,
+                north,
+                arrow,
             }
-            HudWidget::Direction { surface, needle }
         }
         GameUiHudNodeContent::LinearGauge { .. } => {
             let surface = shape(
@@ -666,6 +631,59 @@ fn project_triangle(
     });
 }
 
+fn project_direction_triangle(
+    world: &mut World,
+    (anchor, triangle): (Entity, Entity),
+    points: Option<[GameUiChartPoint; 3]>,
+    ink: Color,
+) {
+    let Some(points) = points else {
+        retained_node(world, anchor).display = Display::None;
+        return;
+    };
+    let base = (0..3)
+        .max_by(|&left, &right| {
+            let length_squared = |index: usize| {
+                let start = points[index];
+                let end = points[(index + 1) % 3];
+                (end.x - start.x).powi(2) + (end.y - start.y).powi(2)
+            };
+            length_squared(left).total_cmp(&length_squared(right))
+        })
+        .expect("triangle has three edges");
+    let start = points[base];
+    let end = points[(base + 1) % 3];
+    let tip = points[(base + 2) % 3];
+    let delta = (end.x - start.x, end.y - start.y);
+    let length = delta.0.hypot(delta.1);
+    let (cos, sin) = (delta.0 / length, delta.1 / length);
+    let relative = (tip.x - start.x, tip.y - start.y);
+    retained_node(world, anchor).set_if_neq(Node {
+        position_type: PositionType::Absolute,
+        left: px(start.x),
+        top: px(start.y),
+        width: px(0),
+        height: px(0),
+        ..default()
+    });
+    retained_ui_transform(world, anchor).set_if_neq(UiTransform::from_rotation(Rot2::radians(
+        delta.1.atan2(delta.0) as f32,
+    )));
+    project_triangle(
+        world,
+        triangle,
+        Some([
+            GameUiChartPoint {
+                x: relative.0 * cos + relative.1 * sin,
+                y: relative.1 * cos - relative.0 * sin,
+            },
+            GameUiChartPoint { x: 0.0, y: 0.0 },
+            GameUiChartPoint { x: length, y: 0.0 },
+        ]),
+        ink,
+    );
+}
+
 fn project_widget(
     world: &mut World,
     node: &mut HudNode,
@@ -793,21 +811,59 @@ fn project_widget(
             }
         }
         GameUiHudNodeContent::Direction {
-            rotation_degrees, ..
+            canvas_size,
+            circle_bounds,
+            circle_radius,
+            circle_stroke_width,
+            cross_segments,
+            cross_stroke_width,
+            north_label,
+            north_anchor,
+            arrow,
+            ..
         } => {
-            let HudWidget::Direction { needle, .. } = node.widget else {
+            let HudWidget::Direction {
+                canvas,
+                ring,
+                cross,
+                north,
+                arrow: triangles,
+                ..
+            } = node.widget
+            else {
                 return Err("HUD widget kindが一致しない".to_owned());
             };
-            retained_node(world, needle)
-                .map_unchanged(|node| &mut node.display)
-                .set_if_neq(if rotation_degrees.is_some() {
-                    Display::Flex
-                } else {
-                    Display::None
-                });
-            retained_ui_transform(world, needle).set_if_neq(UiTransform::from_rotation(
-                Rot2::degrees(rotation_degrees.unwrap_or(0.0) as f32),
-            ));
+            let scale = fit_instrument(world, canvas, source, hud, *canvas_size);
+            let half_stroke = circle_stroke_width / 2.0;
+            retained_node(world, ring).set_if_neq(Node {
+                position_type: PositionType::Absolute,
+                left: px(circle_bounds.x - half_stroke),
+                top: px(circle_bounds.y - half_stroke),
+                width: px(circle_bounds.width + circle_stroke_width),
+                height: px(circle_bounds.height + circle_stroke_width),
+                border: UiRect::all(px(*circle_stroke_width)),
+                border_radius: BorderRadius::all(px(circle_radius + half_stroke)),
+                ..default()
+            });
+            world.entity_mut(ring).insert(BorderColor::all(muted));
+            for (entity, segment) in cross.into_iter().zip(cross_segments) {
+                adi_line(world, entity, Some(*segment), *cross_stroke_width, muted);
+            }
+            project_instrument_label(
+                world,
+                north,
+                Some(*north_anchor),
+                north_label,
+                (-50.0, 0.0, hud.layout.font_size_px / scale, ink),
+            );
+            for (entities, indices) in triangles.into_iter().zip([[0, 1, 2], [0, 2, 3]]) {
+                project_direction_triangle(
+                    world,
+                    entities,
+                    arrow.map(|points| indices.map(|index| points[index])),
+                    focus,
+                );
+            }
         }
         GameUiHudNodeContent::LinearGauge {
             minimum_label,
@@ -1020,5 +1076,99 @@ mod tests {
         assert_eq!(world.get::<BorderColor>(pointer).unwrap().top, Color::WHITE);
         project_triangle(&mut world, pointer, None, Color::WHITE);
         assert_eq!(world.get::<Node>(pointer).unwrap().display, Display::None);
+        let anchor = shape(&mut world, parent, Node::default(), Color::NONE);
+        let triangle = shape(&mut world, anchor, Node::default(), Color::NONE);
+        for points in [
+            [
+                GameUiChartPoint { x: 36.0, y: 15.0 },
+                GameUiChartPoint { x: 31.0, y: 38.0 },
+                GameUiChartPoint { x: 36.0, y: 34.0 },
+            ],
+            [
+                GameUiChartPoint { x: 57.0, y: 36.0 },
+                GameUiChartPoint { x: 38.0, y: 36.0 },
+                GameUiChartPoint { x: 34.0, y: 41.0 },
+            ],
+        ] {
+            project_direction_triangle(&mut world, (anchor, triangle), Some(points), Color::WHITE);
+            let border = world.get::<Node>(triangle).unwrap().border;
+            assert!(matches!(border.left, Val::Px(value) if value > 0.0));
+            assert!(matches!(border.right, Val::Px(value) if value > 0.0));
+            assert_eq!(world.get::<Node>(anchor).unwrap().width, px(0));
+            let pixels = |value| match value {
+                Val::Px(value) => value,
+                _ => panic!("logical pixel binding"),
+            };
+            let origin = world.get::<Node>(anchor).unwrap();
+            let origin = Vec2::new(pixels(origin.left), pixels(origin.top));
+            let rotation = world.get::<UiTransform>(anchor).unwrap().rotation;
+            let height = if world.get::<BorderColor>(triangle).unwrap().top == Color::WHITE {
+                pixels(border.top)
+            } else {
+                -pixels(border.bottom)
+            };
+            for local in [
+                Vec2::ZERO,
+                Vec2::new(pixels(border.left) + pixels(border.right), 0.0),
+                Vec2::new(pixels(border.left), height),
+            ] {
+                let actual = origin + rotation * local;
+                assert!(points.iter().any(|point| {
+                    actual.distance(Vec2::new(point.x as f32, point.y as f32)) < 1.0e-4
+                }));
+            }
+        }
+        project_direction_triangle(&mut world, (anchor, triangle), None, Color::WHITE);
+        assert_eq!(world.get::<Node>(anchor).unwrap().display, Display::None);
+        source.content = GameUiHudNodeContent::Direction {
+            value: String::new(),
+            canvas_size: [72.0, 72.0],
+            circle_bounds: GameUiRect {
+                x: 9.0,
+                y: 9.0,
+                width: 54.0,
+                height: 54.0,
+            },
+            circle_radius: 27.0,
+            circle_stroke_width: 1.5,
+            cross_segments: [[GameUiChartPoint { x: 0.0, y: 0.0 }; 2]; 2],
+            cross_stroke_width: 1.0,
+            north_label: "N".to_owned(),
+            north_anchor: GameUiChartPoint { x: 36.0, y: 24.0 },
+            arrow: None,
+        };
+        let mut direction = spawn_node(&mut world, parent, &source, &font);
+        project_widget(
+            &mut world,
+            &mut direction,
+            &source,
+            &hud,
+            &font,
+            [Color::WHITE; 3],
+        )
+        .unwrap();
+        let HudWidget::Direction {
+            ring, north, arrow, ..
+        } = direction.widget
+        else {
+            unreachable!()
+        };
+        assert_eq!(world.get::<Node>(ring).unwrap().left, px(8.25));
+        assert_eq!(world.get::<Node>(ring).unwrap().width, px(55.5));
+        assert_eq!(world.get::<Node>(north.0).unwrap().top, px(24));
+        assert_eq!(
+            world.get::<TextLayout>(north.1).unwrap().linebreak,
+            bevy::text::LineBreak::NoWrap
+        );
+        assert!(
+            world
+                .get::<super::super::ChartTextBaseline>(north.1)
+                .is_some()
+        );
+        assert!(
+            arrow
+                .iter()
+                .all(|(anchor, _)| world.get::<Node>(*anchor).unwrap().display == Display::None)
+        );
     }
 }

@@ -33,7 +33,7 @@ describe("HUD DOM execution", () => {
       const changed = mapNodes(hud, node => {
         switch (node.content.kind) {
           case "heading_tape": return { ...node, content: { ...node.content, ticks: [{ segment: [{ x: 110, y: 28 }, { x: 110, y: 40 }], stroke_width: 1.5, label: "CUSTOM", label_anchor: { x: 110, y: 22 } }] } };
-          case "direction": return { ...node, content: { ...node.content, rotation_degrees: 90 } };
+          case "direction": return { ...node, content: { ...node.content, arrow: [{ x: 57, y: 36 }, { x: 34, y: 31 }, { x: 38, y: 36 }, { x: 34, y: 41 }] } };
           case "linear_gauge": return { ...node, content: { ...node.content, marker: [{ x: 145, y: 5 }, { x: 139, y: 1 }, { x: 151, y: 1 }], minimum_label: "LOW", maximum_label: "HIGH" } };
           case "attitude": {
             const tick = { segment: [{ x: 30, y: 40 }, { x: 210, y: 60 }] as const, label_anchor: { x: 160, y: 80 }, label_degrees: 20 };
@@ -47,7 +47,7 @@ describe("HUD DOM execution", () => {
       adapter.render(changed, flight.view.theme);
       expect([...root.querySelectorAll("[data-node]")]).toEqual(nodes);
       expect(root.querySelector('[data-instrument="heading_tape"] text')?.textContent).toBe("CUSTOM");
-      expect(root.querySelector('[data-instrument="direction"] g')?.getAttribute("transform")).toBe("rotate(90 36 36)");
+      expect(root.querySelector('[data-instrument="direction"] polygon')?.getAttribute("points")).toBe("57,36 34,31 38,36 34,41");
       expect(root.querySelector('[data-instrument="linear_gauge"] polygon')?.getAttribute("points")).toBe("145,5 139,1 151,1");
       const attitude = root.querySelector('[data-instrument="attitude"]');
       expect(attitude?.getAttribute("viewBox")).toBe("0 0 240 180");
@@ -71,8 +71,9 @@ describe("HUD DOM execution", () => {
       expect(root.hidden).toBe(false);
       expect(root.style.width).toBe(`${String(hud.layout.width_px)}px`);
       adapter.render(mapNodes(changed, node => node.content.kind === "direction"
-        ? { ...node, content: { ...node.content, rotation_degrees: null } } : node), flight.view.theme);
-      expect(root.querySelector('[data-instrument="direction"] g')).toBeNull();
+        ? { ...node, content: { ...node.content, arrow: null } } : node), flight.view.theme);
+      expect(root.querySelector('[data-instrument="direction"] polygon')).toBeNull();
+      expect(root.querySelector('[data-instrument="direction"] rect')).not.toBeNull();
     } finally { await window.happyDOM.abort(); }
   });
 });

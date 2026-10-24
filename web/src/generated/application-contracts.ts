@@ -1225,11 +1225,69 @@ export type GameUiHudNodeContent = {
      */
     readonly value: string;
 } | {
+    /**
+     * Completed filled arrow polygon, absent when no direction is defined.
+     *
+     * @minItems 4
+     * @maxItems 4
+     */
+    readonly arrow?: readonly [
+        GameUiChartPoint,
+        GameUiChartPoint,
+        GameUiChartPoint,
+        GameUiChartPoint
+    ] | null;
+    /**
+     * Logical instrument canvas dimensions.
+     *
+     * @minItems 2
+     * @maxItems 2
+     */
+    readonly canvas_size: readonly [
+        number,
+        number
+    ];
+    /**
+     * Circle outline bounds and corner radius.
+     */
+    readonly circle_bounds: GameUiRect;
+    /**
+     * Circle outline radius in logical pixels.
+     */
+    readonly circle_radius: number;
+    /**
+     * Circle stroke width in logical pixels.
+     */
+    readonly circle_stroke_width: number;
+    /**
+     * Fixed compass reference segments.
+     *
+     * @minItems 2
+     * @maxItems 2
+     */
+    readonly cross_segments: readonly [
+        readonly [
+            GameUiChartPoint,
+            GameUiChartPoint
+        ],
+        readonly [
+            GameUiChartPoint,
+            GameUiChartPoint
+        ]
+    ];
+    /**
+     * Reference segment stroke width in logical pixels.
+     */
+    readonly cross_stroke_width: number;
     readonly kind: "direction";
     /**
-     * Clockwise display rotation, absent when no direction is defined.
+     * North label's middle baseline anchor.
      */
-    readonly rotation_degrees?: number | null;
+    readonly north_anchor: GameUiChartPoint;
+    /**
+     * North reference label.
+     */
+    readonly north_label: string;
     /**
      * Formatted direction and magnitude reading.
      */

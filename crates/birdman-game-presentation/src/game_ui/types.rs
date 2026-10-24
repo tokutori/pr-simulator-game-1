@@ -783,8 +783,24 @@ pub enum GameUiHudNodeContent {
     Direction {
         /// Formatted direction and magnitude reading.
         value: String,
-        /// Clockwise display rotation, absent when no direction is defined.
-        rotation_degrees: Option<f64>,
+        /// Logical instrument canvas dimensions.
+        canvas_size: [f64; 2],
+        /// Circle outline bounds and corner radius.
+        circle_bounds: GameUiRect,
+        /// Circle outline radius in logical pixels.
+        circle_radius: f64,
+        /// Circle stroke width in logical pixels.
+        circle_stroke_width: f64,
+        /// Fixed compass reference segments.
+        cross_segments: [[GameUiChartPoint; 2]; 2],
+        /// Reference segment stroke width in logical pixels.
+        cross_stroke_width: f64,
+        /// North reference label.
+        north_label: String,
+        /// North label's middle baseline anchor.
+        north_anchor: GameUiChartPoint,
+        /// Completed filled arrow polygon, absent when no direction is defined.
+        arrow: Option<[GameUiChartPoint; 4]>,
     },
     /// Linear gauge with a shared scale and explicit unavailable value.
     LinearGauge {

@@ -351,19 +351,31 @@ fn head_hud_fits_complete_shared_rows_in_lower_band_before_using_upper_space() {
     ) else {
         panic!("head HUD paint did not fit")
     };
+    let (north_label, arrow) = hud
+        .groups
+        .iter()
+        .flat_map(|group| &group.nodes)
+        .find_map(|node| {
+            if let GameUiHudNodeContent::Direction {
+                north_label, arrow, ..
+            } = &node.content
+            {
+                Some((north_label, arrow))
+            } else {
+                None
+            }
+        })
+        .unwrap();
+    let wind = projection.items.iter().find_map(|item| match item {
+        SurfacePaintItem::Plot { items, .. }
+            if items.iter().any(|item| matches!(item, SurfacePaintItem::Text { value, .. } if value == north_label))
+            && items.iter().any(|item| matches!(item, SurfacePaintItem::RoundedOutline { .. })) => Some(items),
+        _ => None,
+    }).unwrap();
     assert_eq!(
-        projection
-            .items
-            .iter()
-            .flat_map(|item| match item {
-                SurfacePaintItem::Plot { items, .. } => items.as_slice(),
-                _ => &[],
-            })
-            .fold((0, 0), |(outlines, triangles), item| (
-                outlines + usize::from(matches!(item, SurfacePaintItem::RoundedOutline { .. })),
-                triangles + usize::from(matches!(item, SurfacePaintItem::Triangle { .. })),
-            )),
-        (2, 2)
+        wind.iter()
+            .any(|item| matches!(item, SurfacePaintItem::Triangle { .. })),
+        arrow.is_some()
     );
     let expected = hud
         .groups

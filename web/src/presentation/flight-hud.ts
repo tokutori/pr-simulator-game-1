@@ -111,13 +111,11 @@ function widget(node: GameUiHudNode, hud: GameUiHud, theme: GameUiTheme, clipPre
         ...(tick.label_anchor == null ? [] : [shape("text", { x: tick.label_anchor.x, y: tick.label_anchor.y, "text-anchor": "middle", fill: theme.text, "font-size": "var(--hud-instrument-font-size)" }, tick.label)])
       ])), shape("polygon", { points: content.pointer.map(point => `${String(point.x)},${String(point.y)}`).join(" "), fill: theme.focus_outline })
     ])];
-    case "direction": return [gauge(node, hud, [72, 72], [
-      shape("circle", { cx: 36, cy: 36, r: 27, fill: "none", stroke: theme.muted_text, "stroke-width": 1.5 }),
-      shape("path", { d: "M 36 9 V 63 M 9 36 H 63", stroke: theme.muted_text }),
-      shape("text", { x: 36, y: 20, "text-anchor": "middle", fill: theme.text, "font-size": "var(--hud-instrument-font-size)" }, "N"),
-      ...(content.rotation_degrees === null ? [] : [h("g", { attrs: { transform: `rotate(${String(content.rotation_degrees)} 36 36)` } }, [
-        shape("path", { d: "M 36 15 L 31 38 L 36 34 L 41 38 Z", fill: theme.focus_outline })
-      ])])
+    case "direction": return [gauge(node, hud, content.canvas_size, [
+      shape("rect", { ...content.circle_bounds, rx: content.circle_radius, fill: "none", stroke: theme.muted_text, "stroke-width": content.circle_stroke_width }),
+      ...content.cross_segments.map(([start, end]) => shape("line", { x1: start.x, y1: start.y, x2: end.x, y2: end.y, stroke: theme.muted_text, "stroke-width": content.cross_stroke_width })),
+      shape("text", { x: content.north_anchor.x, y: content.north_anchor.y, "text-anchor": "middle", fill: theme.text, "font-size": "var(--hud-instrument-font-size)" }, content.north_label),
+      ...(content.arrow == null ? [] : [shape("polygon", { points: content.arrow.map(point => `${String(point.x)},${String(point.y)}`).join(" "), fill: theme.focus_outline })])
     ])];
     case "linear_gauge": return [gauge(node, hud, content.canvas_size, [
       shape("line", { x1: content.track[0].x, y1: content.track[0].y, x2: content.track[1].x, y2: content.track[1].y, stroke: theme.muted_text, "stroke-width": 3 }),

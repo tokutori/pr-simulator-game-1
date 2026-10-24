@@ -468,6 +468,20 @@ where
                     )?;
                 }
             }
+            GameUiHudNodeContent::Direction {
+                canvas_size,
+                north_label,
+                north_anchor,
+                ..
+            } => {
+                self.instrument_label(
+                    &node.id,
+                    north_label.clone(),
+                    (*north_anchor, *canvas_size, GameUiChartTextAnchor::Middle),
+                    instrument,
+                    items,
+                )?;
+            }
             _ => {}
         }
         Ok(())
@@ -531,10 +545,6 @@ where
         bounds: MenuRect,
         items: &mut Vec<SurfacePaintItem>,
     ) {
-        let [center_x, center_y] = [
-            bounds.x + bounds.width / 2.0,
-            bounds.y + bounds.height / 2.0,
-        ];
         match content {
             GameUiHudNodeContent::Text { .. } => {}
             GameUiHudNodeContent::Attitude { geometry, .. } => {
@@ -640,25 +650,48 @@ where
                 }
             }
             GameUiHudNodeContent::Direction {
-                rotation_degrees, ..
+                canvas_size,
+                circle_bounds,
+                circle_radius,
+                circle_stroke_width,
+                cross_segments,
+                cross_stroke_width,
+                arrow,
+                ..
             } => {
-                if let Some(angle) = rotation_degrees.map(f64::to_radians) {
-                    let radius = (bounds.width * 0.3).min(bounds.height * 0.4);
-                    let end = [
-                        center_x + angle.sin() * radius,
-                        center_y - angle.cos() * radius,
-                    ];
-                    self.line(items, [center_x, center_y], end, &self.theme.focus_outline);
-                    for delta in [-0.5, 0.5] {
-                        self.line(
-                            items,
-                            end,
-                            [
-                                end[0] - (angle + delta).sin() * radius * 0.35,
-                                end[1] + (angle + delta).cos() * radius * 0.35,
-                            ],
-                            &self.theme.focus_outline,
-                        );
+                let (scale, origin) = instrument_fit(bounds, *canvas_size);
+                let point = |source: GameUiChartPoint| MenuPoint {
+                    x: origin.x + source.x * scale,
+                    y: origin.y + source.y * scale,
+                };
+                items.push(SurfacePaintItem::RoundedOutline {
+                    bounds: MenuRect {
+                        x: origin.x + circle_bounds.x * scale,
+                        y: origin.y + circle_bounds.y * scale,
+                        width: circle_bounds.width * scale,
+                        height: circle_bounds.height * scale,
+                    },
+                    radius: circle_radius * scale,
+                    color: self.theme.muted_text.clone(),
+                    width_px: circle_stroke_width * scale * self.pixels_per_meter,
+                    opacity: self.input.profile.foreground_alpha,
+                });
+                for [start, end] in cross_segments {
+                    items.push(SurfacePaintItem::Line {
+                        start: point(*start),
+                        end: point(*end),
+                        color: self.theme.muted_text.clone(),
+                        width_px: cross_stroke_width * scale * self.pixels_per_meter,
+                        opacity: self.input.profile.foreground_alpha,
+                    });
+                }
+                if let Some([tip, left, notch, right]) = arrow {
+                    for triangle in [[*tip, *left, *notch], [*tip, *notch, *right]] {
+                        items.push(SurfacePaintItem::Triangle {
+                            points: triangle.map(point),
+                            color: self.theme.focus_outline.clone(),
+                            opacity: self.input.profile.foreground_alpha,
+                        });
                     }
                 }
             }
