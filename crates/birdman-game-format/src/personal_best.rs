@@ -8,7 +8,7 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     AssistanceLevel, DifficultySettings, FlightRecordBuildProvenance, FlightRecordFormatError,
-    FlightRecordIdentityMetadata, FlightRecordTailIdentityDocument, InformationLevel,
+    FlightRecordIdentityMetadata, FlightRecordTailIdentityDocument,
     PERSONAL_BEST_COMPARISON_VERSION, TailFlightRecordControlsDocument, TailFlightRecordDocument,
     TailPersonalBestConditions, TailPersonalBestIdentity, WeatherClass,
 };
@@ -138,7 +138,7 @@ fn key_for_validated_record(
         return Err(FlightRecordFormatError::InvalidRecord);
     }
     let mut hasher = Sha256::new();
-    hasher.update(b"birdman-game/personal-best-key/tail-incidence/v2\0");
+    hasher.update(b"birdman-game/personal-best-key/tail-incidence/v3\0");
     hash_u32(&mut hasher, PERSONAL_BEST_COMPARISON_VERSION);
     hash_u32(&mut hasher, record.schema_version);
     for name in [
@@ -156,8 +156,7 @@ fn key_for_validated_record(
     hash_u32(&mut hasher, header.controller_profile_version);
     hash_u64(&mut hasher, header.seed);
     let difficulty = header.difficulty.resolved_settings();
-    hash_information(&mut hasher, difficulty.information());
-    hash_hud_profile(&mut hasher, difficulty.hud_profile());
+    hash_effective_hud(&mut hasher, difficulty);
     hash_assistance(&mut hasher, difficulty.assistance());
     hash_weather(&mut hasher, difficulty.weather());
     hash_controller_mode(&mut hasher, mode);
@@ -202,7 +201,7 @@ fn key_for_validated_record(
 }
 
 impl TailFlightRecordDocument {
-    /// Captures sealed conditions and build observations, then derives and validates their v2 key.
+    /// Captures sealed conditions and build observations, then derives and validates their current-method key.
     pub fn with_personal_best_configuration(
         mut self,
         configuration: TailPersonalBestConfiguration<'_>,
@@ -265,24 +264,17 @@ fn hash_controller_mode(hasher: &mut Sha256, mode: ControlMode) {
     }
 }
 
-fn hash_information(hasher: &mut Sha256, information: InformationLevel) {
-    hasher.update([match information {
-        InformationLevel::Full => 0,
-        InformationLevel::Standard => 1,
-        InformationLevel::Minimal => 2,
-        InformationLevel::Realistic => 3,
-        InformationLevel::Custom => 4,
-    }]);
-}
-
-fn hash_hud_profile(hasher: &mut Sha256, profile: crate::HudProfile) {
+fn hash_effective_hud(hasher: &mut Sha256, difficulty: DifficultySettings) {
+    let profile = difficulty.effective_hud_profile();
     hasher.update([
         u8::from(profile.telemetry()),
         u8::from(profile.attitude()),
         u8::from(profile.wind()),
         u8::from(profile.flight_path()),
         u8::from(profile.angle_of_attack()),
-        u8::from(profile.warnings()),
+        u8::from(difficulty.hud_basic_readouts()),
+        u8::from(difficulty.hud_auxiliary_readouts() && profile.attitude()),
+        u8::from(difficulty.hud_auxiliary_readouts() && profile.telemetry()),
     ]);
 }
 

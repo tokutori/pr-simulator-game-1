@@ -347,7 +347,7 @@ L(t)-z(t)=\frac{g(t-a)(b-t)}2\le\frac{g\,dt^2}8,
 | input/frame | キー・Gamepad観測の生成型とRust受理、接続世代・入力解放、frame時刻と停止・補間、実Native/WASMの同一観測・記録・Replay・CSVの一致 |
 | 集約入出力 | 実Rust/WASM ownerからの描画・I/O要求、同観測の受理と失効、共有時刻・quaternion・終端/score契約 |
 | FlightRecord | 全保存sample・finalization・capacity・終端fraction・元cause、CSV/JSON出力、保存key検証 |
-| PB | 比較方式v2、同条件・来歴差・条件差、未知方式の未順位、元JSON/key保持、Web/Nativeの共有selector |
+| PB | 比較方式v3、有効HUD表示の同値・表示差・来歴差、旧v2を含むその他方式の未順位、元JSON/key保持、Web/Nativeの共有selector |
 | Replay/Attract | Rust clock・seek・補間・最短quaternion、確定record不変、独立demoとplayer記録の分離 |
 | 所有権/I/O | query世代とrecord-source世代、stale結果破棄、独立cleanup全試行、IndexedDB transaction、ファイル非上書き |
 | UI | Setup/Briefing、typed HUD/availability、共通Action、group順・凡例色、全表示先、focus/scroll/拒否後の回復 |

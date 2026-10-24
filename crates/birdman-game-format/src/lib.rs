@@ -296,6 +296,39 @@ impl DifficultySettings {
         self.hud_profile
     }
 
+    /// Returns the HUD cues currently presented by the shared UI, with unused warnings neutralized.
+    pub const fn effective_hud_profile(self) -> HudProfile {
+        match self.information {
+            InformationLevel::Custom => HudProfile::new(
+                self.hud_profile.telemetry(),
+                self.hud_profile.attitude(),
+                self.hud_profile.wind(),
+                self.hud_profile.flight_path(),
+                self.hud_profile.angle_of_attack(),
+                false,
+            ),
+            InformationLevel::Full => HudProfile::new(true, true, true, true, true, false),
+            InformationLevel::Standard | InformationLevel::Realistic => {
+                HudProfile::new(true, true, false, false, false, false)
+            }
+            InformationLevel::Minimal => HudProfile::new(false, false, false, false, false, false),
+        }
+    }
+
+    /// Returns whether altitude, distance and elapsed time are presented.
+    pub const fn hud_basic_readouts(self) -> bool {
+        self.effective_hud_profile().telemetry()
+            || matches!(self.information, InformationLevel::Minimal)
+    }
+
+    /// Returns whether selected cues include their supplementary numeric readouts.
+    pub const fn hud_auxiliary_readouts(self) -> bool {
+        matches!(
+            self.information,
+            InformationLevel::Full | InformationLevel::Custom
+        )
+    }
+
     /// Returns the assistance axis.
     pub const fn assistance(self) -> AssistanceLevel {
         self.assistance

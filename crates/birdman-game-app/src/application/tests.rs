@@ -241,7 +241,7 @@ fn archive_owner_preserves_saved_settings_text_and_player_selection_without_rein
         document.header.aircraft_model_version = 999;
         document.identity_metadata =
             birdman_game_format::FlightRecordIdentityMetadata::Unrecognized(
-                serde_json::json!({"comparison_version": 900, "retained": {"description": "未知の来歴"}}),
+                serde_json::json!({"comparison_version": if custom { 2 } else { 900 }, "retained": {"description": "保存された来歴"}}),
             );
         let json = format!(
             "\n{}\n ",

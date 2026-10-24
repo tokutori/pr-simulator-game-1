@@ -7,7 +7,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use crate::FlightRecordFormatError;
 
 /// Version of the resolved-condition Personal Best comparison contract.
-pub const PERSONAL_BEST_COMPARISON_VERSION: u32 = 2;
+pub const PERSONAL_BEST_COMPARISON_VERSION: u32 = 3;
 
 /// Exact source identities retained independently of comparison compatibility.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -216,7 +216,7 @@ impl TailPersonalBestConditions {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TailPersonalBestIdentity {
-    /// Once-resolved conditions used by comparison version two.
+    /// Once-resolved conditions used by the current comparison method.
     pub conditions: TailPersonalBestConditions,
     /// Exact observations of the producing build.
     pub build: FlightRecordBuildProvenance,
@@ -248,7 +248,7 @@ impl FlightRecordIdentityMetadata {
         matches!(self, Self::Unspecified)
     }
 
-    /// Returns saved v2 data only; unknown methods are never interpreted as current conditions.
+    /// Returns saved current-method data only; other methods retain their raw conditions.
     pub fn resolved(&self) -> Option<&TailPersonalBestIdentity> {
         match self {
             Self::Resolved(identity) => Some(identity),

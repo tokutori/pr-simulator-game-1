@@ -266,12 +266,19 @@ mod tests {
         use serde_json::json;
         let document = contact_application().flight_record_document().unwrap();
         let mut preview = RecordPreviewTransaction::new(3);
+        let mut previous = serde_json::to_value(&document).unwrap();
+        previous["identity_metadata"]["comparison_version"] = json!(2);
+        let previous_json = format!("\n{}\n ", serde_json::to_string(&previous).unwrap());
         let record = json!({ "id": 7, "savedAt": "2026-10-23T00:00:00Z", "json": String::from_utf8(document.encode_json().unwrap()).unwrap() });
         let requests = preview.observe(Seen::Rows {
             rows: vec![RecordPreviewRow {
                 key: json!(7),
                 metadata: json!({ "id": 7, "savedAt": "2026-10-23T00:00:00Z" }),
                 record,
+            }, RecordPreviewRow {
+                key: json!(6),
+                metadata: json!({ "id": 6, "savedAt": "2026-10-22T00:00:00Z" }),
+                record: json!({ "id": 6, "savedAt": "2026-10-22T00:00:00Z", "json": previous_json }),
             }],
         });
         let key = match requests.as_slice() {
@@ -283,9 +290,23 @@ mod tests {
         assert!(preview.items().is_none());
         preview.observe(Seen::Committed);
         let items = preview.items().unwrap();
-        assert_eq!(items.len(), 1);
+        assert_eq!(items.len(), 2);
         assert_eq!(items[0].id, 7);
         assert!(items[0].personal_best);
+        assert_eq!(items[1].id, 6);
+        assert!(!items[1].personal_best);
+        let mut viewer = crate::application::ApplicationSession::default();
+        viewer.open_archived_record_json(&previous_json).unwrap();
+        assert_eq!(viewer.archive().unwrap().original_json(), previous_json);
+        assert_eq!(
+            viewer
+                .archive()
+                .unwrap()
+                .identity_metadata()
+                .comparison_version(),
+            Some(2)
+        );
+        viewer.seek_playback(0.0).unwrap();
     }
 
     #[test]

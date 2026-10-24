@@ -987,14 +987,14 @@ fn previous_physics_four_archive_retains_its_key_and_original_json() {
     for sample in &mut previous.samples {
         sample.wing_bending_factor = Some(1.0);
     }
-    let previous = keyed(previous);
-    assert_eq!(
-        previous.header.personal_best_key,
-        Some([
-            99, 248, 110, 33, 196, 207, 121, 204, 161, 168, 60, 249, 24, 208, 74, 193, 71, 91, 225,
-            154, 43, 48, 99, 125, 5, 95, 126, 211, 240, 181, 147, 73,
-        ])
-    );
+    let mut previous = keyed(previous);
+    let mut metadata = serde_json::to_value(&previous.identity_metadata).unwrap();
+    metadata["comparison_version"] = serde_json::json!(2);
+    previous.identity_metadata = crate::FlightRecordIdentityMetadata::Unrecognized(metadata);
+    previous.header.personal_best_key = Some([
+        99, 248, 110, 33, 196, 207, 121, 204, 161, 168, 60, 249, 24, 208, 74, 193, 71, 91, 225,
+        154, 43, 48, 99, 125, 5, 95, 126, 211, 240, 181, 147, 73,
+    ]);
     let original = previous.encode_json().unwrap();
     let restored = TailFlightRecordDocument::decode_json(&original).unwrap();
     assert_eq!(restored.encode_json().unwrap(), original);
@@ -1035,15 +1035,15 @@ fn previous_physics_four_archive_retains_its_key_and_original_json() {
 fn personal_best_initial_shape_separates_schema_seven_and_preserves_schema_six_key() {
     let mut legacy = document();
     legacy.header.physics_model_version = 3;
-    let legacy = keyed(legacy);
+    let mut legacy = keyed(legacy);
     assert_eq!(legacy.schema_version, 6);
-    assert_eq!(
-        legacy.header.personal_best_key,
-        Some([
-            174, 242, 124, 128, 134, 113, 202, 217, 195, 246, 85, 74, 192, 93, 89, 122, 93, 235,
-            77, 100, 244, 101, 87, 227, 166, 248, 160, 89, 62, 108, 0, 0,
-        ])
-    );
+    let mut metadata = serde_json::to_value(&legacy.identity_metadata).unwrap();
+    metadata["comparison_version"] = serde_json::json!(2);
+    legacy.identity_metadata = crate::FlightRecordIdentityMetadata::Unrecognized(metadata);
+    legacy.header.personal_best_key = Some([
+        174, 242, 124, 128, 134, 113, 202, 217, 195, 246, 85, 74, 192, 93, 89, 122, 93, 235, 77,
+        100, 244, 101, 87, 227, 166, 248, 160, 89, 62, 108, 0, 0,
+    ]);
     let mut current = document();
     current.schema_version = TAIL_FLIGHT_RECORD_SCHEMA_VERSION;
     for sample in &mut current.samples {
@@ -1290,7 +1290,7 @@ fn tail_canonical_key_distinguishes_guard_presence_and_every_policy_value() {
 }
 
 #[test]
-fn tail_key_ignores_preset_name_and_selected_key_and_selection_uses_identity() {
+fn tail_key_groups_equivalent_settings_and_selection_uses_identity() {
     use birdman_game_core::{ControlMode, TailControlProfile};
     let mut source = document();
     let profile = TailControlProfile::try_new(0.2, 0.2, 1.0).unwrap();
@@ -1316,6 +1316,47 @@ fn tail_key_ignores_preset_name_and_selected_key_and_selection_uses_identity() {
     assert_eq!(
         tail_key(&equivalent, profile, ControlMode::Manual, hashes).unwrap(),
         Some(key)
+    );
+    let hud_key = |settings: DifficultySettings| {
+        let mut record = source.clone();
+        record.header.difficulty = settings.into();
+        tail_key(&record, profile, ControlMode::Manual, hashes).unwrap()
+    };
+    let full = DifficultySettings::custom(
+        InformationLevel::Full,
+        AssistanceLevel::Manual,
+        WeatherClass::Typical,
+    );
+    let custom = full.with_information(InformationLevel::Custom);
+    assert_eq!(hud_key(full), hud_key(custom));
+    assert_eq!(
+        hud_key(full),
+        hud_key(custom.with_hud_cue(crate::HudCue::Warnings, false))
+    );
+    for cue in [
+        crate::HudCue::Telemetry,
+        crate::HudCue::Attitude,
+        crate::HudCue::Wind,
+        crate::HudCue::FlightPath,
+        crate::HudCue::AngleOfAttack,
+    ] {
+        assert_ne!(hud_key(full), hud_key(custom.with_hud_cue(cue, false)));
+    }
+    let standard = full.with_information(InformationLevel::Standard);
+    assert_eq!(
+        hud_key(standard),
+        hud_key(full.with_information(InformationLevel::Realistic))
+    );
+    assert_ne!(
+        hud_key(standard),
+        hud_key(standard.with_information(InformationLevel::Custom))
+    );
+    let minimal = full.with_information(InformationLevel::Minimal);
+    assert_ne!(
+        hud_key(minimal),
+        hud_key(minimal.with_hud_profile(crate::HudProfile::new(
+            false, false, false, false, false, false
+        )))
     );
     let candidate = keyed(source);
     assert_eq!(
@@ -1364,11 +1405,14 @@ fn comparison_metadata_preserves_unranked_archives_and_rejects_forged_current_ke
         .as_object_mut()
         .unwrap()
         .remove("angle_of_attack_guard");
+    let mut previous_method = serde_json::to_value(&current.identity_metadata).unwrap();
+    previous_method["comparison_version"] = serde_json::json!(2);
     for metadata in [
         serde_json::Value::Null,
         serde_json::json!({"future": [1, 2, 3]}),
         serde_json::json!({"comparison_version": 999, "future": {"name": "未対応方式"}}),
-        serde_json::json!({"comparison_version": 2}),
+        serde_json::json!({"comparison_version": crate::PERSONAL_BEST_COMPARISON_VERSION}),
+        previous_method,
         missing_guard,
         serde_json::json!({"comparison_version": "長".repeat(150_000)}),
     ] {
@@ -1475,7 +1519,10 @@ fn build_provenance_changes_do_not_split_comparisons_and_resolved_authority_does
         Some(PersonalBestComparison::EqualScore)
     );
     let rows = tail_csv_rows(&other_build);
-    assert_eq!(csv_value(&rows, 1, "personal_best_comparison_version"), "2");
+    assert_eq!(
+        csv_value(&rows, 1, "personal_best_comparison_version"),
+        alloc::format!("{}", crate::PERSONAL_BEST_COMPARISON_VERSION)
+    );
     assert_eq!(
         csv_value(&rows, 1, "build_target_json"),
         "\"wasm32-unknown-unknown\""

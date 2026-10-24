@@ -176,6 +176,36 @@ fn bottom_hud_preserves_all_information_and_shared_nonoverlapping_rows() {
 #[test]
 fn screen_hud_information_profiles_fit_hd_with_overlays_and_enlarged_text() {
     let running = launched();
+    let observed_hud = |settings| {
+        game_ui_view(
+            &GameUiState::default(),
+            &context(&running, settings, &platform()),
+        )
+        .unwrap()
+        .hud
+        .unwrap()
+    };
+    let full = difficulty().with_information(InformationLevel::Full);
+    let custom = full.with_information(InformationLevel::Custom);
+    assert_eq!(observed_hud(full), observed_hud(custom));
+    assert_eq!(
+        observed_hud(full),
+        observed_hud(custom.with_hud_cue(HudCue::Warnings, false))
+    );
+    let standard = full.with_information(InformationLevel::Standard);
+    assert_ne!(
+        observed_hud(standard),
+        observed_hud(standard.with_information(InformationLevel::Custom))
+    );
+    let minimal = full.with_information(InformationLevel::Minimal);
+    assert_ne!(
+        observed_hud(minimal),
+        observed_hud(
+            minimal.with_hud_profile(birdman_game_format::HudProfile::new(
+                false, false, false, false, false, false
+            ))
+        )
+    );
     let mut paused = launched();
     paused.pause(PauseReason::Manual).unwrap();
     let mut replay = finalized();

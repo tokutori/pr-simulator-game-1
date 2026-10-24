@@ -83,18 +83,10 @@ pub(super) fn game_ui_hud(
     };
     let telemetry = sample.telemetry;
     let information = context.difficulty.information();
-    let profile = context.difficulty.hud_profile();
-    let full = information == InformationLevel::Full;
-    let custom = information == InformationLevel::Custom;
+    let profile = context.difficulty.effective_hud_profile();
     let minimal = information == InformationLevel::Minimal;
-    let attitude_visible = if custom { profile.attitude() } else { !minimal };
-    let telemetry_visible = if custom {
-        profile.telemetry()
-    } else {
-        !minimal
-    };
-    let wind_visible = full || custom && profile.wind();
-    let alpha_visible = full || custom && profile.angle_of_attack();
+    let attitude_visible = profile.attitude();
+    let telemetry_visible = profile.telemetry();
     let roll = telemetry.roll_rad.to_degrees();
     let pitch = telemetry.pitch_rad.to_degrees();
     let heading = telemetry.heading_rad.to_degrees().rem_euclid(360.0);
@@ -105,7 +97,7 @@ pub(super) fn game_ui_hud(
     let [wind_north, wind_east, wind_down] = telemetry.wind_velocity_ned_mps.components();
     let velocity = sample.flight_state.datum_velocity_ned().components();
     let horizontal_speed = velocity[0].hypot(velocity[1]);
-    let path_angle = if full || custom && profile.flight_path() {
+    let path_angle = if profile.flight_path() {
         if horizontal_speed == 0.0 {
             None
         } else {
@@ -119,7 +111,7 @@ pub(super) fn game_ui_hud(
         pitch_degrees: pitch,
     });
     let heading_degrees = attitude_visible.then_some(heading);
-    let angle_of_attack_degrees = alpha_visible.then_some(alpha).flatten();
+    let angle_of_attack_degrees = profile.angle_of_attack().then_some(alpha).flatten();
     let menu_layout = super::view::layout(state, context, phase)?;
     let mut layout = hud_layout(context.platform, phase, &menu_layout);
     let geometry = hud_geometry(
@@ -159,7 +151,7 @@ pub(super) fn game_ui_hud(
             format!("{:.1} m/s", telemetry.airspeed_mps),
         ));
     }
-    if telemetry_visible || minimal || failure.is_some() {
+    if context.difficulty.hud_basic_readouts() || failure.is_some() {
         primary.push(text_node(
             if minimal && failure.is_none() {
                 "hud-primary-readouts"
@@ -179,7 +171,7 @@ pub(super) fn game_ui_hud(
         primary.push(text_node("hud-distance", "距離", distance));
         primary.push(text_node("hud-elapsed", "時間", format!("{time:.1} s")));
     }
-    if full || custom {
+    if context.difficulty.hud_auxiliary_readouts() {
         if attitude_visible {
             let [roll_rate, pitch_rate, yaw_rate] =
                 sample.flight_state.angular_velocity_body().components();
@@ -244,7 +236,7 @@ pub(super) fn game_ui_hud(
             },
         ));
     }
-    if wind_visible {
+    if profile.wind() {
         instruments.push(hud_node(
             "hud-wind",
             "風 m/s",
@@ -260,7 +252,7 @@ pub(super) fn game_ui_hud(
             },
         ));
     }
-    if alpha_visible {
+    if profile.angle_of_attack() {
         instruments.push(hud_node(
             "hud-angle-of-attack",
             "迎角",

@@ -17,7 +17,7 @@
 | 環境JSON | `EnvironmentDocument`、schema 1、最大8 MiB |
 | 飛行記録JSON | `TailFlightRecordDocument`、schema 6/7、最大16 MiB |
 | 飛行ログCSV | schema 6はexport version 3、schema 7はversion 4 |
-| Personal Best | 比較方式v2、Rustによるkey再生成・選定 |
+| Personal Best | 比較方式v3、Rustによるkey再生成・選定 |
 | 物理・積分・接触 | physics model 5 |
 | 既定機体・scenario | aircraft model 5、catalog 8、scenario 8、controller profile 3 |
 
@@ -210,7 +210,7 @@ Analysis用の発進台・湖岸・望遠camera点はOSMとAW3D30に基づく試
 
 - `asset_bytes`の環境JSON hashと、preset実装等の`source_fingerprint`を区別する。
 - 前者は特定assetの識別、後者はbuild来歴である。
-- source hashを比較方式v2の条件へ混入させない。
+- source hashは比較条件と独立したbuild来歴として保持する。
 - 環境定義の有無とrendererでの適用成功も別の観測として扱う。
 
 ## 飛行記録とログ出力
@@ -293,26 +293,27 @@ Analysis用の発進台・湖岸・望遠camera点はOSMとAW3D30に基づく試
 
 ## Personal Bestと保存
 
-### 比較方式v2
+### 比較方式v3
 
 Personal BestはcompleteなWaterContact、score、現行physics/score version、既知の解決済み条件、有効canonical keyを要求する。共有`TailPersonalBestSelection`が比較を所有し、同点は最初の既存recordを保持する。
 
 keyは次の条件をSHA-256へ入力する。
 
 - 明示identity、catalog・aircraft・controller・scenario・environment・physics・scoreのversion。
-- seed、tick上限、Hz、解決済みInformation/HUD、Assistance、Weather。
+- seed、tick上限、Hz、有効なHUD表示条件、Assistance、Weather。
 - 実ControlModeとShared authority、二軸gain、slew、optional alpha guard、course。
 - 初期datum位置・速度、quaternion、角速度、wind、尾翼取付角、pilot位置・速度、およびschema 7の初期曲げ係数。
 
 - finite f64は負zeroをpositive zeroへ正規化してbig-endian IEEE-754で符号化する。
-- 画質、presentation、build来歴は比較条件へ含めない。
+- 画質、presentation、build来歴は比較条件と独立して保持する。
 - 記録自身からkeyを再生成し、保存keyとの一致を検査する。
-- 現在のpresetから過去のcontrollerを再解決しない。
+- 過去のcontrollerは保存済みの解決条件から再構築する。
 
-- 任意`identity_metadata`は、未指定・既知v2・未知rawを排他的に保持する。
-- block欠落、未知方式、構造情報不足の記録は未順位で閲覧し、元key・原文を保持する。
-- 既知v2の数値不正・保存key不一致は拒否する。
-- 新旧方式の横断比較、key補完、既存JSONの書換えを行わない。
+- HUD表示条件は主要telemetry、姿勢・方位、風、flight-path、迎角、基本数値群、角速度、尾翼・pilot補助数値群の有効性で比較する。Fullと同じ内容のCustomは同じ比較群となり、表示効果のないWarnings設定は中立値へ正規化する。
+- 必須異常表示はWarnings設定と独立して表示する。保存したInformationと各cue設定はそのまま保持する。
+- 任意`identity_metadata`は、未指定・既知v3・その他方式のrawを排他的に保持する。
+- 現方式の記録だけを順位付けする。block欠落、旧v2を含むその他方式、構造情報不足の記録は未順位で一覧・Replayへ読み戻し、元key・原文を保持する。
+- 既知v3は数値と保存keyの整合を検証して受理する。
 
 - build来歴は4種のsource fingerprint、Cargo.lock SHA-256、観測したrustc・target・profileを保持する。
 - 機体・環境・scenarioのsource fingerprintは共有実装と登録データから導出し、各adapterはその来歴を記録へ付与する。
