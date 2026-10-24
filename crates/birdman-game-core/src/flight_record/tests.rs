@@ -130,10 +130,14 @@ fn record_headers_enforce_bounded_capacity_and_current_tick_frequency() {
         FlightRecord::try_new(invalid),
         Err(FlightRecordError::InvalidHeader)
     ));
-    let record = FlightRecord::try_new(header(MAX_FLIGHT_RECORD_TICKS as u64)).unwrap();
-    assert_eq!(record.samples.capacity(), MAX_FLIGHT_RECORD_SAMPLES);
-    assert_eq!(record.sample_count(), 0);
-    assert_eq!(record.summary(), Err(FlightRecordQueryError::EmptyRecord));
+    for maximum in [1, MAX_FLIGHT_RECORD_TICKS as u64] {
+        let record = FlightRecord::try_new(header(maximum)).unwrap();
+        assert_eq!(record.sample_capacity, maximum as usize + 1);
+        assert!(record.samples.capacity() >= record.sample_capacity);
+        assert_eq!(record.sample_count(), 0);
+        assert!(record.finalization.is_none());
+        assert_eq!(record.summary(), Err(FlightRecordQueryError::EmptyRecord));
+    }
 }
 
 #[test]

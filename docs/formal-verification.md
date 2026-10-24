@@ -20,7 +20,7 @@
 - 検証注釈とghost-onlyの参照は`cfg(verus_only)`へ限定する。
 - 通常Cargoで注釈・vstd importを除去し、coreの`no_std`、I/O分離、製品toolchainと依存DAGを維持する。
 - `verus-proof`は固定vstdのallocを有効にする明示的optional featureである。
-- closure仕様に必要な`proc_macro_hygiene`も証明時だけ有効にする。
+- closure仕様の`proc_macro_hygiene`と、同じconstructor impl内の条件付き注釈を先に展開する[`cfg_eval`](https://doc.rust-lang.org/std/prelude/v1/attr.cfg_eval.html)を証明時だけ有効にする。
 
 本番bodyへ`assume`・`admit`・`external_body`・`assume_specification`による免除を追加しない。証明対象の追加時は実body、事前条件、公開事後条件、未証明の境界を明示する。
 
@@ -53,11 +53,12 @@
 - GameSessionの準備・Ready・Countdown開始・観測は、認可拒否時のowner保持、同じconfiguration・独立demo・attempt tokenの保持を接続する。
 - 実header validatorは`dual_spec`で参照する。
 - 記録factory成功後だけrecordを交換し、factory失敗では旧ownerを保持する。
+- 公開`prepare_flight`は本番`FlightRecord::try_new`へ接続し、同じheader・空sample列・未確定状態・最大tick数に1を加えた論理上限を持つrecordだけをPreparingへ格納する。
 
 - Countdown観測の本番callerは、同じconfigurationから得た初期状態・telemetryを`record.begin_tail`へ渡し、その成功後だけRunningへcommitする。
 - 非Countdownと古いtokenは数値callbackを呼ばない。
 - 発進後の再観測で再発進しない。
-- 初期状態・telemetryの数値関数、allocatorが生成する空record、公開closureの具体bindは未証明の境界である。
+- 初期状態・telemetryの数値関数と、その具体callbackの接続は通常回帰で確認する。
 
 ### Result・Replay・保存済み記録
 
@@ -84,8 +85,7 @@
 - Result以外はfactoryの前提を要求せず、呼出し前に拒否する。
 
 - scenario・seed・初期状態・tick上限の保持は同じconfigurationの構造的保持である。
-- 値の物理妥当性、実reserve、allocator、record新規化の全仕様をfactoryの契約へ仮定していない。
-- 具体factoryとの接続は通常Rust回帰も用いて確認する。
+- 公開`retry`と`retry_briefing`は本番constructorを同じfactoryへ渡し、同じconfigurationから生成した空recordをそれぞれReadyとPreparingへ格納する。InvalidHeader・AllocationFailedと認可拒否は旧owner全体を保持する。
 
 ### Displayの非同期認可と資源所有
 
@@ -112,7 +112,8 @@
 
 - 検査callbackは不変なsample参照だけを受け取り、recordへの可変参照を持たない。
 - 実Vecの論理更新は固定vstdの仕様へ依存する。
-- allocation、`try_reserve_exact`、WASM codegenは別の検証対象である。
+- 本番`try_new`はheaderの検査後に`try_reserve`を一度実行し、成功時の同じheader・空列・未確定状態・論理上限と、失敗の分類を直接検証する。Headerのエラー分類は同じ`dual_spec`本体から証明した補題でmodule間へ渡す。
+- 物理容量は標準Vecの予約保証に従って論理上限以上を確保する。予約容量は通常容量試験、飛行中の追加割当は既存allocation計測、WASM codegenは通常ビルドで確認する。予約の成否と物理割当量は実行環境のallocatorに従う。
 
 - 公開`begin_tail`と`append_tail_report`は実bodyの認可、state/control/telemetry転送、bounded Vecへの追加、拒否時のowner保持を検証する。
 - NoElapsedIntervalでは成功・失敗にかかわらずrecord全体を保持する。

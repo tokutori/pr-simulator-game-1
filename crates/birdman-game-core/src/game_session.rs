@@ -580,6 +580,55 @@ verus! {
             self.attract_record == before.attract_record && self.countdown_token == before.countdown_token
         }
 
+        /// Public preparation installs an empty record only after allocation succeeds.
+        pub closed spec fn prepared_fresh(self, before: Self, configuration: GameSessionConfiguration<'a>,
+            outcome: Result<(), GameSessionError>) -> bool {
+            self.lifecycle_globals_preserved(before) && self.projection_valid()
+            && (outcome.is_err() ==> self == before)
+            && match outcome {
+                Ok(()) => before.phase() == SessionPhase::FlightSetup
+                    && match self.lifecycle {
+                        SessionLifecycle::Configured(next) => next.configuration == configuration
+                            && next.phase == ConfiguredPhase::Preparing
+                            && match FlightRecordHeader::try_new(configuration.identity, configuration.maximum_flight_ticks) {
+                                Ok(header) => next.record.empty_for(header),
+                                Err(_) => false,
+                            },
+                        _ => false,
+                    },
+                Err(GameSessionError::InvalidTransition) => before.phase() != SessionPhase::FlightSetup,
+                Err(GameSessionError::Record(error)) => before.phase() == SessionPhase::FlightSetup
+                    && matches!(error, FlightRecordError::InvalidHeader | FlightRecordError::AllocationFailed),
+                _ => false,
+            }
+        }
+
+        /// Public retries keep the sealed configuration and install an empty record.
+        pub closed spec fn retried_fresh(self, before: Self, briefing: bool, outcome: Result<(), GameSessionError>) -> bool {
+            let authorized = if briefing { matches!(before.phase(), SessionPhase::BriefingFailed { .. }) }
+                else { before.phase() == SessionPhase::Result };
+            self.lifecycle_globals_preserved(before) && self.projection_valid()
+            && (outcome.is_err() ==> self == before)
+            && match outcome {
+                Ok(()) => match (before.lifecycle, self.lifecycle) {
+                    (SessionLifecycle::Configured(previous), SessionLifecycle::Configured(next)) =>
+                        (if briefing { matches!(previous.phase, ConfiguredPhase::Failed { .. }) }
+                            else { previous.phase.is_result() })
+                        && next.phase == (if briefing { ConfiguredPhase::Preparing } else { ConfiguredPhase::Ready })
+                        && next.configuration == previous.configuration
+                        && match FlightRecordHeader::try_new(previous.configuration.identity, previous.configuration.maximum_flight_ticks) {
+                            Ok(header) => next.record.empty_for(header),
+                            Err(_) => false,
+                        },
+                    _ => false,
+                },
+                Err(GameSessionError::InvalidTransition) => !authorized,
+                Err(GameSessionError::Record(error)) => authorized
+                    && matches!(error, FlightRecordError::InvalidHeader | FlightRecordError::AllocationFailed),
+                _ => false,
+            }
+        }
+
         /// Setup is admitted only from the actual public lifecycle phases.
         pub closed spec fn opened_setup(self, before: Self, outcome: Result<(), GameSessionError>) -> bool {
             self.lifecycle_globals_preserved(before) && self.projection_valid()
@@ -1209,10 +1258,22 @@ impl<'a> GameSession<'a> {
     }
 
     /// Seals the validated physical configuration and begins Briefing preparation.
+    #[cfg_attr(verus_only, vstd::prelude::verus_verify)]
+    #[cfg_attr(verus_only, verus_spec(outcome =>
+        requires old(self).projection_valid(),
+        ensures final(self).prepared_fresh(*old(self), configuration, outcome),
+    ))]
     pub fn prepare_flight(
         &mut self,
         configuration: GameSessionConfiguration<'a>,
     ) -> Result<(), GameSessionError> {
+        #[cfg(verus_only)]
+        proof! {
+            reveal(GameSession::prepared_fresh);
+            FlightRecordHeader::construction_error_is_invalid_header(
+                configuration.identity, configuration.maximum_flight_ticks,
+            );
+        }
         self.prepare_flight_with_record_factory(configuration, FlightRecord::try_new)
     }
 
@@ -1261,7 +1322,22 @@ impl<'a> GameSession<'a> {
     }
 
     /// Retries preparation after a classified failure.
+    #[cfg_attr(verus_only, vstd::prelude::verus_verify)]
+    #[cfg_attr(verus_only, verus_spec(outcome =>
+        requires old(self).projection_valid(),
+        ensures final(self).retried_fresh(*old(self), true, outcome),
+    ))]
     pub fn retry_briefing(&mut self) -> Result<(), GameSessionError> {
+        #[cfg(verus_only)]
+        proof! {
+            reveal(GameSession::retried_fresh);
+            let ghost before = *self;
+            if let SessionLifecycle::Configured(previous) = before.lifecycle {
+                FlightRecordHeader::construction_error_is_invalid_header(
+                    previous.configuration.identity, previous.configuration.maximum_flight_ticks,
+                );
+            }
+        }
         self.retry_briefing_with_record_factory(FlightRecord::try_new)
     }
 
@@ -1467,7 +1543,22 @@ impl<'a> GameSession<'a> {
 
     /// Retries with the identical sealed scenario, seed, initial state, and tick limit.
     /// A failed record reservation preserves the finalized result and record.
+    #[cfg_attr(verus_only, vstd::prelude::verus_verify)]
+    #[cfg_attr(verus_only, verus_spec(outcome =>
+        requires old(self).projection_valid(),
+        ensures final(self).retried_fresh(*old(self), false, outcome),
+    ))]
     pub fn retry(&mut self) -> Result<(), GameSessionError> {
+        #[cfg(verus_only)]
+        proof! {
+            reveal(GameSession::retried_fresh);
+            let ghost before = *self;
+            if let SessionLifecycle::Configured(previous) = before.lifecycle {
+                FlightRecordHeader::construction_error_is_invalid_header(
+                    previous.configuration.identity, previous.configuration.maximum_flight_ticks,
+                );
+            }
+        }
         self.retry_with_record_factory(FlightRecord::try_new)
     }
 

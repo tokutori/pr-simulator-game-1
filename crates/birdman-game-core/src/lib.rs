@@ -1,5 +1,5 @@
 #![no_std]
-#![cfg_attr(verus_only, feature(proc_macro_hygiene))]
+#![cfg_attr(verus_only, feature(proc_macro_hygiene, cfg_eval))]
 //! Platform-independent simulation contracts and deterministic flight dynamics.
 //!
 //! The core owns no clock, I/O, random generator, or platform interface. It

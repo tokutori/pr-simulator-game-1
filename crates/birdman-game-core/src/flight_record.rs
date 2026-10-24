@@ -211,6 +211,16 @@ verus! {
     impl FlightRecordHeader {
         /// Projects the executable header validator without exposing its implementation.
         pub closed spec fn valid(self) -> bool { self.is_valid() }
+
+        /// Exposes the error classification of the same executable header constructor.
+        pub proof fn construction_error_is_invalid_header(
+            scenario: SessionScenarioIdentity, maximum_flight_ticks: u64,
+        )
+            ensures match Self::try_new(scenario, maximum_flight_ticks) {
+                Err(error) => error == FlightRecordError::InvalidHeader,
+                Ok(_) => true,
+            },
+        { }
     }
 
     impl FlightRecord {
@@ -228,6 +238,13 @@ verus! {
         /// Returns the logical sample limit stored by the actual record owner.
         pub closed spec fn sample_limit(self) -> usize {
             self.sample_capacity
+        }
+
+        /// Describes the empty logical record created for a validated header.
+        pub closed spec fn empty_for(self, header: FlightRecordHeader) -> bool {
+            header.valid() && self.header == header && self.samples@.len() == 0
+                && self.finalization.is_none()
+                && self.sample_capacity as int == header.maximum_flight_ticks as int + 1
         }
 
         pub open spec fn latest_matches_tail_state(self, state: crate::TailFlightTickState) -> bool {
@@ -253,20 +270,27 @@ verus! {
     }
 }
 
+#[cfg_attr(verus_only, cfg_eval)]
+#[cfg_attr(verus_only, verus_verify)]
 impl FlightRecord {
     /// Validates the public header before reserving all samples for the configured duration.
+    #[cfg_attr(verus_only, verus_spec(outcome =>
+        ensures match outcome {
+            Ok(record) => record.empty_for(header),
+            Err(FlightRecordError::InvalidHeader) => !header.valid(),
+            Err(FlightRecordError::AllocationFailed) => header.valid(),
+            _ => false,
+        },
+    ))]
     pub fn try_new(header: FlightRecordHeader) -> Result<Self, FlightRecordError> {
         if !header.is_valid() {
             return Err(FlightRecordError::InvalidHeader);
         }
-        let sample_capacity = usize::try_from(header.maximum_flight_ticks)
-            .ok()
-            .and_then(|ticks| ticks.checked_add(1))
-            .ok_or(FlightRecordError::InvalidHeader)?;
+        let sample_capacity = header.maximum_flight_ticks as usize + 1;
         let mut samples = Vec::new();
-        samples
-            .try_reserve_exact(sample_capacity)
-            .map_err(|_| FlightRecordError::AllocationFailed)?;
+        if samples.try_reserve(sample_capacity).is_err() {
+            return Err(FlightRecordError::AllocationFailed);
+        }
         Ok(Self {
             header,
             samples,
@@ -274,7 +298,9 @@ impl FlightRecord {
             finalization: None,
         })
     }
+}
 
+impl FlightRecord {
     /// Restores an immutable finalized record after validating core invariants.
     pub fn try_from_finalized_samples(
         header: FlightRecordHeader,
