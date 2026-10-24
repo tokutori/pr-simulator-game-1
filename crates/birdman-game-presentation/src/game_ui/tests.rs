@@ -6,8 +6,8 @@ use birdman_game_app::application::{
 use birdman_game_core::{
     AeroError, AerodynamicEvaluationError, AerodynamicStage, ControlMode, DynamicsError,
     GameSession, HybridError, HybridLimit, HybridSite, HybridSurfaceRole, LoadError, PauseReason,
-    SessionEndReason, SessionPhase, TailFlightTickError, TailFlightTickInput, TailPilotIntent,
-    TailPilotPositionCommand, TailRateTarget, WindError,
+    SessionEndReason, SessionPhase, SessionSnapshot, TailFlightTickError, TailFlightTickInput,
+    TailPilotIntent, TailPilotPositionCommand, TailRateTarget, WindError,
 };
 use birdman_game_format::WaterQuality;
 use birdman_game_format::{
@@ -2815,13 +2815,17 @@ fn hud_scene_policy_is_shared_by_full_and_frame_projection_in_screen_and_vr() {
         state.result_tab = GameUiResultTab::Summary;
         state.technical_open = true;
         let result = game_ui_view(&state, &context(&session, difficulty(), &platform)).unwrap();
+        let SessionSnapshot::Result(outcome) = session.snapshot() else {
+            panic!("missing result snapshot")
+        };
+        let reason = game_ui_result_reason_label(outcome.reason);
         assert!(matches!(
             &control(&result, "game-result-analysis").content,
-            GameUiControlContent::Status { value, .. } if value.contains("操作により飛行を終了した")
+            GameUiControlContent::Status { value, .. } if value.contains(reason)
         ));
         assert!(matches!(
             &control(&result, "game-result-technical-content").content,
-            GameUiControlContent::Status { value, .. } if value.contains("終了理由: ManualAbort")
+            GameUiControlContent::Status { value, .. } if value.contains(reason)
         ));
         session.enter_replay().unwrap();
         for view in [
@@ -3515,9 +3519,12 @@ fn shared_result_diagnostics_preserve_reason_site_limit_stage_and_raw_cause() {
     .unwrap()
     .state;
     let view = game_ui_view(&state, &context(&session, difficulty(), &platform)).unwrap();
+    let SessionSnapshot::Result(outcome) = session.snapshot() else {
+        panic!("missing result snapshot")
+    };
     assert!(
         matches!(&control(&view, "game-result-technical-content").content, GameUiControlContent::Status { value, .. }
-        if value.contains("終了理由: TimeLimit") && value.contains("失敗したtickの診断:"))
+        if value.contains(game_ui_result_reason_label(outcome.reason)) && value.contains("失敗したtickの診断:"))
     );
 }
 
