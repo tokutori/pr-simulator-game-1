@@ -344,17 +344,17 @@ T_{eye,object}=T_{R,eye}^{-1}T_{R,object}
 - 取得後のcamera cut、FOV、viewport、光学profile、明示pose取消、View開始後のpose/lake入力は次frameへ送る。
 
 - presentationの`XrViewerFrame`はconfigured・runtime-derived・unavailableを区別し、同一frameのraw center-headと各眼のheadFromEye/projectionを保持する。Webは生成された同じ型へ観測をコピーする。
-- WebXRのcenter-headと各viewは、同じ`getViewerPose()`から`XrViewerObservation`へコピーする。共有Rustの`capture_xr_viewer`が眼構成・pose・projectionを検査し、左右眼を順序付けてHead相対poseを導出する。Phone VRも同じ入口へ実StereoCameraの観測を渡す。
+- WebXRのcenter-headと各viewは、同じ`getViewerPose()`から`XrViewerObservation`へコピーする。共有Rustの`capture_xr_viewer`が眼構成・pose・projectionを検査し、左右眼を順序付けてHead相対poseを導出する。
 - 16要素column-major projectionを保持し、非対称frustum、眼回転、shearをそのまま扱う。clip-depthはWebGLの`[-1, 1]`とVulkan等の`[0, 1]`を型で区別し、reversed Zも同じ区間で判定する。
 
 - 初期対応はleft/right各1眼である。
 - 重複・未知の眼編成、非有限値、非単位pose、退化projectionは原因付きで利用不能とする。
-- geometry失敗時も有効なcenter trackingを保持する。各frameのgeometryはbrowserの配列から所有データへ取得する。
+- geometry失敗時も有効なcenter trackingを保持する。WebXRの眼geometryは各frameのbrowser配列から所有データへ取得する。
 
-- Phone VRは実StereoCameraと同じprojection、aspect倍率0.5、eye separationを使用し、親cameraのaspectはcanvas全体のwidth/heightとする。
-- 眼別FOV、zoom、near/far、focusを近似せず、world matrixを更新して描く。
-- 終了時はviewport/scissor等を復元する。
-- StereoEffectはlens distortionを含まない。
+- Phone VRの眼配置とprojectionはruntimeの`phone_viewer`が生成する。描画幅の切捨て半分を左眼、残りを右眼へ割り当て、各眼の実幅と高さから非対称projectionを導出する。
+- Web adapterは共有の完成eye pose・projectionとviewportをcamera・viewport/scissorへ転写する。
+- 両眼の描画後はviewport/scissor等を復元する。
+- Phone VRの左右分割表示はlens distortionを含まない。
 
 ### MenuとHeadのlayout
 
