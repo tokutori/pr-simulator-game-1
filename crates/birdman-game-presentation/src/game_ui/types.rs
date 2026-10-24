@@ -332,6 +332,20 @@ pub enum GameUiControlInput {
         /// Finite selected value within the published bounds.
         value: f64,
     },
+    /// Observes a pointer position relative to an enabled range's horizontal track.
+    SetRangeRatio {
+        /// Published control identifier.
+        control_id: String,
+        /// Horizontal ratio from the track's left edge to its right edge.
+        ratio: f64,
+    },
+    /// Observes keys newly pressed while an enabled range has focus.
+    RangeKeys {
+        /// Published control identifier.
+        control_id: String,
+        /// Platform key codes observed in the same input frame.
+        codes: Vec<String>,
+    },
 }
 
 /// Side-effect request produced after pure action admission.

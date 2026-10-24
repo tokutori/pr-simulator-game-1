@@ -608,6 +608,26 @@ export type GameUiControlInput = {
      * Finite selected value within the published bounds.
      */
     readonly value: number;
+} | {
+    /**
+     * Published control identifier.
+     */
+    readonly controlId: string;
+    /**
+     * Horizontal ratio from the track's left edge to its right edge.
+     */
+    readonly ratio: number;
+    readonly type: "set-range-ratio";
+} | {
+    /**
+     * Platform key codes observed in the same input frame.
+     */
+    readonly codes: readonly string[];
+    /**
+     * Published control identifier.
+     */
+    readonly controlId: string;
+    readonly type: "range-keys";
 };
 /**
  * Raw stage of a platform chart pointer event.

@@ -5,48 +5,88 @@ use birdman_game_core::FlightRecordQueryError;
 
 impl GameUiView {
     /// Resolves a widget observation using this view's enabled controls.
-    pub fn control_input_action(&self, input: &GameUiControlInput) -> Option<GameUiAction> {
+    pub fn control_input_action(
+        &self,
+        input: &GameUiControlInput,
+    ) -> Result<Option<GameUiAction>, GameUiError> {
         let control_id = match input {
             GameUiControlInput::Activate { control_id }
             | GameUiControlInput::SetToggle { control_id, .. }
-            | GameUiControlInput::SetRange { control_id, .. } => control_id,
+            | GameUiControlInput::SetRange { control_id, .. }
+            | GameUiControlInput::SetRangeRatio { control_id, .. }
+            | GameUiControlInput::RangeKeys { control_id, .. } => control_id,
         };
         let control = self
             .panels
             .iter()
             .flat_map(|panel| &panel.controls)
-            .find(|control| control.enabled && &control.id == control_id)?;
-        match (&control.content, input) {
+            .find(|control| control.enabled && &control.id == control_id)
+            .ok_or(GameUiError::ActionUnavailable)?;
+        let action = match (&control.content, input) {
             (GameUiControlContent::Button { action, .. }, GameUiControlInput::Activate { .. }) => {
-                Some(action.clone())
+                action.clone()
             }
             (
                 GameUiControlContent::Toggle { cue, .. },
                 GameUiControlInput::SetToggle { value, .. },
-            ) => Some(GameUiAction::Session {
+            ) => GameUiAction::Session {
                 command: SessionCommand::SetCue {
                     cue: *cue,
                     visible: *value,
                 },
-            }),
+            },
             (
                 GameUiControlContent::Range {
                     target,
+                    value: current,
                     minimum,
                     maximum,
+                    step,
                     ..
                 },
-                GameUiControlInput::SetRange { value, .. },
-            ) if value.is_finite() && value >= minimum && value <= maximum => Some(match target {
-                GameUiRangeTarget::Analysis => GameUiAction::SeekAnalysis {
-                    time_seconds: *value,
-                },
-                GameUiRangeTarget::Replay => GameUiAction::SeekReplay {
-                    time_seconds: *value,
-                },
-            }),
-            _ => None,
-        }
+                observation,
+            ) => {
+                let value = match observation {
+                    GameUiControlInput::SetRange { value, .. } => *value,
+                    GameUiControlInput::SetRangeRatio { ratio, .. } => {
+                        range_value(*minimum, *maximum, *step, *ratio)
+                            .ok_or(GameUiError::ActionUnavailable)?
+                    }
+                    GameUiControlInput::RangeKeys { codes, .. } => {
+                        let pressed = |code| codes.iter().any(|actual| actual == code);
+                        let desired = if pressed("Home") {
+                            *minimum
+                        } else if pressed("End") {
+                            *maximum
+                        } else if pressed("ArrowLeft") || pressed("ArrowDown") {
+                            current - step
+                        } else if pressed("ArrowRight") || pressed("ArrowUp") {
+                            current + step
+                        } else {
+                            return Ok(None);
+                        };
+                        if !minimum.is_finite() || !maximum.is_finite() || maximum < minimum {
+                            return Err(GameUiError::ActionUnavailable);
+                        }
+                        desired.clamp(*minimum, *maximum)
+                    }
+                    _ => return Err(GameUiError::ActionUnavailable),
+                };
+                if !(value.is_finite() && value >= *minimum && value <= *maximum) {
+                    return Err(GameUiError::ActionUnavailable);
+                }
+                match target {
+                    GameUiRangeTarget::Analysis => GameUiAction::SeekAnalysis {
+                        time_seconds: value,
+                    },
+                    GameUiRangeTarget::Replay => GameUiAction::SeekReplay {
+                        time_seconds: value,
+                    },
+                }
+            }
+            _ => return Err(GameUiError::ActionUnavailable),
+        };
+        Ok(Some(action))
     }
 
     /// Resolves Back from the enabled navigation actions published by this view.
@@ -110,25 +150,6 @@ impl GameUiControlContent {
             _ => None,
         }
     }
-
-    /// Projects a finite panel ratio onto the range's shared step grid.
-    pub fn range_action(&self, ratio: f64) -> Option<GameUiAction> {
-        let Self::Range {
-            target,
-            minimum,
-            maximum,
-            step,
-            ..
-        } = self
-        else {
-            return None;
-        };
-        let time_seconds = range_value(*minimum, *maximum, *step, ratio)?;
-        Some(match target {
-            GameUiRangeTarget::Analysis => GameUiAction::SeekAnalysis { time_seconds },
-            GameUiRangeTarget::Replay => GameUiAction::SeekReplay { time_seconds },
-        })
-    }
 }
 
 pub(crate) fn range_value(minimum: f64, maximum: f64, step: f64, ratio: f64) -> Option<f64> {
@@ -153,8 +174,13 @@ pub fn update_game_ui(
 ) -> Result<GameUiUpdate, GameUiError> {
     let view = game_ui_view(state, context)?;
     let action = if let GameUiAction::ControlInput { input } = action {
-        view.control_input_action(&input)
-            .ok_or(GameUiError::ActionUnavailable)?
+        let Some(action) = view.control_input_action(&input)? else {
+            return Ok(GameUiUpdate {
+                state: state.clone(),
+                effects: Vec::new(),
+            });
+        };
+        action
     } else {
         action
     };

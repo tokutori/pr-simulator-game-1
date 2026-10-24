@@ -102,6 +102,40 @@ fn shared_widgets_retain_values_and_forward_controls_and_chart_io_with_their_sou
             .iter()
             .any(|request| matches!(request, ApplicationRequest::CreateRenderer { .. }))
     );
+    let retained = app.world_mut().remove_resource::<RetainedUi>().unwrap();
+    app.world_mut().entity_mut(node).insert(Interaction::None);
+    let range = app
+        .world_mut()
+        .spawn((
+            Interaction::Pressed,
+            RelativeCursorPosition {
+                normalized: Some(Vec2::new(0.25, 0.0)),
+                ..default()
+            },
+            MenuRange {
+                control_id: "range".into(),
+                enabled: true,
+            },
+        ))
+        .id();
+    app.world_mut().insert_resource(retained);
+    button_actions(app.world_mut());
+    assert!(
+        matches!(app.world_mut().resource_mut::<NativeInputs>().0.pop(), Some(ApplicationInput::Control { view_revision, input: GameUiControlInput::SetRangeRatio { ratio: 0.75, .. } }) if view_revision == revision)
+    );
+    app.world_mut().entity_mut(range).insert(Interaction::None);
+    for code in [KeyCode::Home, KeyCode::End, KeyCode::KeyA] {
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(code);
+    }
+    button_actions(app.world_mut());
+    assert!(
+        matches!(app.world_mut().resource_mut::<NativeInputs>().0.pop(), Some(ApplicationInput::Control { view_revision, input: GameUiControlInput::RangeKeys { codes, .. } }) if view_revision == revision && codes.len() == 3 && ["Home", "End", "KeyA"].iter().all(|code| codes.iter().any(|actual| actual == code)))
+    );
+    app.world_mut()
+        .resource_mut::<ButtonInput<KeyCode>>()
+        .clear();
     let mut retained = app.world_mut().remove_resource::<RetainedUi>().unwrap();
     let mut view = retained.view.clone().unwrap();
     let numeric = birdman_game_presentation::game_ui::GameUiNumericField {

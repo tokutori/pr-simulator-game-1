@@ -68,10 +68,6 @@ pub(crate) struct MenuButton {
 #[derive(Component)]
 struct MenuRange {
     control_id: String,
-    value: f64,
-    minimum: f64,
-    maximum: f64,
-    step: f64,
     enabled: bool,
 }
 
@@ -267,13 +263,11 @@ pub(crate) fn button_actions(world: &mut World) {
             && range.enabled
             && let Some(position) = cursor.normalized
         {
-            let value = range.minimum
-                + f64::from((position.x + 0.5).clamp(0.0, 1.0)) * (range.maximum - range.minimum);
             inputs.push((
                 entity,
-                GameUiControlInput::SetRange {
+                GameUiControlInput::SetRangeRatio {
                     control_id: range.control_id.clone(),
-                    value,
+                    ratio: f64::from(position.x) + 0.5,
                 },
             ));
         }
@@ -296,25 +290,16 @@ pub(crate) fn button_actions(world: &mut World) {
         if let Some(range) = world.get::<MenuRange>(focused)
             && range.enabled
         {
-            let next = if keys.just_pressed(KeyCode::Home) {
-                Some(range.minimum)
-            } else if keys.just_pressed(KeyCode::End) {
-                Some(range.maximum)
-            } else if keys.just_pressed(KeyCode::ArrowLeft) || keys.just_pressed(KeyCode::ArrowDown)
-            {
-                Some(range.value - range.step)
-            } else if keys.just_pressed(KeyCode::ArrowRight) || keys.just_pressed(KeyCode::ArrowUp)
-            {
-                Some(range.value + range.step)
-            } else {
-                None
-            };
-            if let Some(value) = next {
+            let codes = keys
+                .get_just_pressed()
+                .map(|code| format!("{code:?}"))
+                .collect::<Vec<_>>();
+            if !codes.is_empty() {
                 inputs.push((
                     focused,
-                    GameUiControlInput::SetRange {
+                    GameUiControlInput::RangeKeys {
                         control_id: range.control_id.clone(),
-                        value: value.clamp(range.minimum, range.maximum),
+                        codes,
                     },
                 ));
             }

@@ -2033,12 +2033,9 @@ fn range_display_text_matches_initial_and_retained_views_at_rounding_boundaries(
         (0.375, 0.5),
         (2.0, 1.0),
     ] {
-        assert_eq!(
-            range.range_action(ratio),
-            Some(GameUiAction::SeekReplay { time_seconds })
-        );
+        assert_eq!(range_value(0.0, 1.0, 0.25, ratio), Some(time_seconds));
     }
-    assert_eq!(range.range_action(f64::NAN), None);
+    assert_eq!(range_value(0.0, 1.0, 0.25, f64::NAN), None);
     assert_eq!(range.activation_action(), None);
     for (value, expected) in [
         (0.0, "0.0"),
@@ -2066,6 +2063,98 @@ fn range_display_text_matches_initial_and_retained_views_at_rounding_boundaries(
         session.advance_tail_flight_tick(input).unwrap();
     }
     session.abort_flight().unwrap();
+    {
+        let state = GameUiState {
+            result_tab: GameUiResultTab::Analysis,
+            ..GameUiState::default()
+        };
+        let platform = platform();
+        let context = context(&session, difficulty(), &platform);
+        let mut view = game_ui_view(&state, &context).unwrap();
+        let selected = view
+            .panels
+            .iter_mut()
+            .flat_map(|panel| &mut panel.controls)
+            .find(|control| control.id == "game-analysis-cursor")
+            .unwrap();
+        selected.content = range;
+        if let GameUiControlContent::Range { value, maximum, .. } = &mut selected.content {
+            *value = 0.13;
+            *maximum = 1.12;
+        }
+        let id = selected.id.clone();
+        assert_eq!(
+            view.control_input_action(&GameUiControlInput::SetRangeRatio {
+                control_id: id.clone(),
+                ratio: 0.125
+            }),
+            Ok(Some(GameUiAction::SeekReplay { time_seconds: 0.25 }))
+        );
+        for (codes, expected) in [
+            (vec!["ArrowRight", "End", "Home"], Some(0.0)),
+            (vec!["End"], Some(1.12)),
+            (vec!["ArrowRight"], Some(0.38)),
+            (vec!["KeyA"], None),
+        ] {
+            let input = GameUiControlInput::RangeKeys {
+                control_id: id.clone(),
+                codes: codes.into_iter().map(str::to_owned).collect(),
+            };
+            assert_eq!(
+                view.control_input_action(&input),
+                Ok(expected.map(|time_seconds| GameUiAction::SeekReplay { time_seconds }))
+            );
+        }
+        let unknown = GameUiControlInput::RangeKeys {
+            control_id: "game-analysis-cursor".into(),
+            codes: vec!["KeyA".into()],
+        };
+        let unchanged = update_game_ui(
+            &state,
+            GameUiAction::ControlInput {
+                input: unknown.clone(),
+            },
+            &context,
+        )
+        .unwrap();
+        assert_eq!(unchanged.state, state);
+        assert!(unchanged.effects.is_empty());
+        let range_control = view
+            .panels
+            .iter_mut()
+            .flat_map(|panel| &mut panel.controls)
+            .find(|control| control.id == "game-analysis-cursor")
+            .unwrap();
+        range_control.enabled = false;
+        assert_eq!(
+            view.control_input_action(&unknown),
+            Err(GameUiError::ActionUnavailable)
+        );
+        assert_eq!(
+            view.control_input_action(&GameUiControlInput::RangeKeys {
+                control_id: "missing".into(),
+                codes: vec!["KeyA".into()]
+            }),
+            Err(GameUiError::ActionUnavailable)
+        );
+        let button_id = view
+            .panels
+            .iter()
+            .flat_map(|panel| &panel.controls)
+            .find(|control| {
+                control.enabled && matches!(control.content, GameUiControlContent::Button { .. })
+            })
+            .unwrap()
+            .id
+            .clone();
+        assert_eq!(
+            view.control_input_action(&GameUiControlInput::RangeKeys {
+                control_id: button_id,
+                codes: vec!["KeyA".into()]
+            }),
+            Err(GameUiError::ActionUnavailable)
+        );
+    }
     for replay_view in [
         None,
         Some(GameUiReplayView::Analysis),

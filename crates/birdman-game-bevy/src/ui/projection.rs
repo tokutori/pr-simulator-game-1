@@ -27,10 +27,6 @@ pub(super) fn project_frame(
             .widgets
             .get(&range.id)
             .ok_or_else(|| format!("UI range entityが存在しない: {}", range.id))?;
-        let mut input = world
-            .get_mut::<MenuRange>(widget.node)
-            .ok_or_else(|| format!("UI range componentが存在しない: {}", range.id))?;
-        input.value = range.value;
         set_text(
             world,
             widget.text,
@@ -528,14 +524,7 @@ fn project_control(
                 },
             ));
         }
-        GameUiControlContent::Range {
-            target: _,
-            value,
-            display_value,
-            minimum,
-            maximum,
-            step,
-        } => {
+        GameUiControlContent::Range { display_value, .. } => {
             node.min_height = px(theme.button_min_height_px);
             label = format!("{}: {display_value}", control.label);
             background = color(&theme.choice_background, 1.0)?;
@@ -544,10 +533,6 @@ fn project_control(
                 RelativeCursorPosition::default(),
                 MenuRange {
                     control_id: control.id.clone(),
-                    value: *value,
-                    minimum: *minimum,
-                    maximum: *maximum,
-                    step: *step,
                     enabled: control.enabled,
                 },
             ));
