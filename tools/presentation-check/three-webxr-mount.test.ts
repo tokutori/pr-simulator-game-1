@@ -265,6 +265,19 @@ describe("Aggregate runtime through the real Three WebXRManager", () => {
       expect(inputs.some(input => input.kind === "renderer_failed")).toBe(false);
       expect(state.drawing().graphics.resource).toEqual(renderer);
       expect(state.driver.disposed).not.toHaveBeenCalled();
+      const canvas = state.browser.document.querySelector(".presentation-canvas");
+      if (canvas === null) throw new Error("Renderer canvas is unavailable");
+      for (const buttons of [0, 2]) {
+        const event = new state.browser.PointerEvent("pointermove", { buttons });
+        Object.defineProperties(event, { movementX: { value: 3 }, movementY: { value: -4 } });
+        canvas.dispatchEvent(event);
+        const call = state.updates.mock.calls.at(-1);
+        expect(call === undefined ? null : (JSON.parse(call[0]) as ApplicationObservation).input).toEqual({
+          kind: "pointer_motion", display_resource_id: null, delta_px: [3, -4], buttons
+        });
+        const output = state.updates.mock.results.at(-1);
+        expect(output?.type === "return" ? (JSON.parse(output.value) as ApplicationOutput).drawing : undefined).toBeNull();
+      }
       state.click("boot-enter-hmd");
       await flush();
       expect(state.driver.xr.isPresenting).toBe(true);

@@ -300,6 +300,27 @@ impl ApplicationRuntime {
         } else {
             input
         };
+        if let ApplicationInput::PointerMotion {
+            display_resource_id,
+            buttons,
+            ..
+        } = &input
+            && !(buttons & 2 != 0
+                && self.display.state().active_mode() == Some(GameUiPresentationMode::Screen)
+                && self.display.active_resource() == *display_resource_id
+                && !self.display.state().pending()
+                && self.presentation_input_focused()
+                && matches!(
+                    self.application.core_session().snapshot().phase(),
+                    SessionPhase::FlightRunning
+                        | SessionPhase::FlightPaused { .. }
+                        | SessionPhase::Result
+                        | SessionPhase::Replay
+                        | SessionPhase::Attract
+                ))
+        {
+            return Ok(self.output(None, Vec::new(), false));
+        }
         let io_continuation = match &input {
             ApplicationInput::RecordSaveOpened { .. } => true,
             ApplicationInput::RecordSaveObserved { observation, .. } => !matches!(
@@ -531,27 +552,10 @@ impl ApplicationRuntime {
                     )?;
                 }
             }
-            ApplicationInput::CameraLook {
-                display_resource_id,
-                delta_px,
-            } => {
-                if self.display.state().active_mode() == Some(GameUiPresentationMode::Screen)
-                    && self.display.active_resource() == display_resource_id
-                    && !self.display.state().pending()
-                    && self.presentation_input_focused()
-                    && matches!(
-                        self.application.core_session().snapshot().phase(),
-                        SessionPhase::FlightRunning
-                            | SessionPhase::FlightPaused { .. }
-                            | SessionPhase::Result
-                            | SessionPhase::Replay
-                            | SessionPhase::Attract
-                    )
-                {
-                    self.scene
-                        .observe_look(delta_px)
-                        .map_err(ApplicationRuntimeError::Camera)?;
-                }
+            ApplicationInput::PointerMotion { delta_px, .. } => {
+                self.scene
+                    .observe_look(delta_px)
+                    .map_err(ApplicationRuntimeError::Camera)?
             }
             ApplicationInput::XrSessionState {
                 resource_id,

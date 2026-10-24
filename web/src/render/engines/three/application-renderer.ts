@@ -816,7 +816,7 @@ export class ThreeApplicationRenderer {
     this.notify({ kind: "graphics", renderer_resource_id: this.id, observation: { kind: "context_lost" } });
   };
   private readonly pointerMove = (event: PointerEvent): void => {
-    if ((event.buttons & 2) !== 0) this.notify({ kind: "camera_look", display_resource_id: this.display_id, delta_px: [event.movementX, event.movementY] });
+    this.notify({ kind: "pointer_motion", display_resource_id: this.display_id, delta_px: [event.movementX, event.movementY], buttons: event.buttons });
   };
   private readonly contextMenu = (event: Event): void => { event.preventDefault(); };
   private readonly gamepadConnection = (event: GamepadEvent): void => {

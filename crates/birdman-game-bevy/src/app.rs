@@ -241,13 +241,28 @@ fn read_input(
             repeat: event.repeat,
         });
     }
-    if ports.buttons.pressed(MouseButton::Right) && ports.motion.delta != Vec2::ZERO {
-        inputs.0.push(ApplicationInput::CameraLook {
+    if ports.motion.delta != Vec2::ZERO {
+        inputs.0.push(ApplicationInput::PointerMotion {
             display_resource_id: io.display_resource_id,
             delta_px: [
                 f64::from(ports.motion.delta.x),
                 f64::from(ports.motion.delta.y),
             ],
+            buttons: [
+                (MouseButton::Left, 1),
+                (MouseButton::Right, 2),
+                (MouseButton::Middle, 4),
+                (MouseButton::Back, 8),
+                (MouseButton::Forward, 16),
+            ]
+            .into_iter()
+            .fold(0, |mask, (button, bit)| {
+                mask | if ports.buttons.pressed(button) {
+                    bit
+                } else {
+                    0
+                }
+            }),
         });
     }
     if ports.keys.just_pressed(KeyCode::F12) {

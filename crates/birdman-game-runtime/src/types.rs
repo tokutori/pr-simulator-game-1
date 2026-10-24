@@ -300,12 +300,14 @@ pub enum ApplicationInput {
         )]
         previous_from_new: Option<Pose>,
     },
-    /// Pointer movement while the platform's camera-look button is held.
-    CameraLook {
+    /// Raw pointer movement and the currently observed standard buttons.
+    PointerMotion {
         /// Display resource receiving the pointer event.
         display_resource_id: Option<u32>,
-        /// Raw logical-pixel movement along the two screen axes.
+        /// Movement along the two screen axes as reported by the platform.
         delta_px: [f64; 2],
+        /// Standard button bits: primary=1, secondary=2, auxiliary=4, back=8, forward=16.
+        buttons: u16,
     },
     /// Runtime visibility or focus changed between frames.
     XrSessionState {

@@ -1546,6 +1546,15 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
             spatial: Default::default(),
         })
         .unwrap();
+    let camera = advanced
+        .drawing
+        .as_ref()
+        .unwrap()
+        .scene
+        .camera
+        .as_ref()
+        .unwrap()
+        .world_from_head;
     assert_eq!(
         advanced.drawing.unwrap().presentation.frame_rate_label,
         "FPS 10.0"
@@ -1559,6 +1568,83 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
             .samples()
             .len()
             > 1
+    );
+    for buttons in [0, 1] {
+        let ignored = runtime
+            .observe_test(ApplicationInput::PointerMotion {
+                display_resource_id: None,
+                delta_px: [20.0, -10.0],
+                buttons,
+            })
+            .unwrap();
+        assert!(ignored.drawing.is_none() && ignored.requests.is_empty());
+    }
+    let unchanged = runtime
+        .observe_test(ApplicationInput::Frame {
+            display_resource_id: None,
+            timestamp_ms: 13_200.0,
+            gamepads: Vec::new(),
+            xr: None,
+            spatial: Default::default(),
+        })
+        .unwrap();
+    assert_eq!(
+        unchanged
+            .drawing
+            .unwrap()
+            .scene
+            .camera
+            .unwrap()
+            .world_from_head,
+        camera
+    );
+    let moved = runtime
+        .observe_test(ApplicationInput::PointerMotion {
+            display_resource_id: None,
+            delta_px: [20.0, -10.0],
+            buttons: 2,
+        })
+        .unwrap()
+        .drawing
+        .unwrap()
+        .scene
+        .camera
+        .unwrap()
+        .world_from_head;
+    assert_ne!(moved, camera);
+    let unfocused = runtime
+        .observe_test(ApplicationInput::DocumentFocus { focused: false })
+        .unwrap()
+        .drawing
+        .unwrap()
+        .scene
+        .camera
+        .unwrap()
+        .world_from_head
+        .unwrap()
+        .orientation;
+    let ignored = runtime
+        .observe_test(ApplicationInput::PointerMotion {
+            display_resource_id: None,
+            delta_px: [20.0, -10.0],
+            buttons: 2,
+        })
+        .unwrap();
+    assert!(ignored.drawing.is_none());
+    let restored = runtime
+        .observe_test(ApplicationInput::DocumentFocus { focused: true })
+        .unwrap();
+    assert_eq!(
+        restored
+            .drawing
+            .unwrap()
+            .scene
+            .camera
+            .unwrap()
+            .world_from_head
+            .unwrap()
+            .orientation,
+        unfocused
     );
 }
 

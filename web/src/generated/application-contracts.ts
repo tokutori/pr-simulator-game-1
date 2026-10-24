@@ -196,7 +196,11 @@ export type ApplicationInput = {
     readonly resource_id: number;
 } | {
     /**
-     * Raw logical-pixel movement along the two screen axes.
+     * Standard button bits: primary=1, secondary=2, auxiliary=4, back=8, forward=16.
+     */
+    readonly buttons: number;
+    /**
+     * Movement along the two screen axes as reported by the platform.
      *
      * @minItems 2
      * @maxItems 2
@@ -209,7 +213,7 @@ export type ApplicationInput = {
      * Display resource receiving the pointer event.
      */
     readonly display_resource_id?: number | null;
-    readonly kind: "camera_look";
+    readonly kind: "pointer_motion";
 } | {
     /**
      * Raw runtime input-focus state.
