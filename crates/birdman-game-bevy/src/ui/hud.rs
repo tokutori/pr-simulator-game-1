@@ -31,7 +31,9 @@ enum HudWidget {
     },
     HeadingTape {
         surface: Entity,
-        ticks: Vec<(Entity, Entity)>,
+        canvas: Entity,
+        pointer: Entity,
+        ticks: Vec<(Entity, Entity, Entity)>,
     },
     Direction {
         surface: Entity,
@@ -39,9 +41,12 @@ enum HudWidget {
     },
     LinearGauge {
         surface: Entity,
+        canvas: Entity,
+        track: Entity,
+        ticks: [Entity; 7],
         indicator: Entity,
-        minimum: Entity,
-        maximum: Entity,
+        minimum: (Entity, Entity),
+        maximum: (Entity, Entity),
     },
 }
 
@@ -161,8 +166,7 @@ pub(super) fn project_hud(
                 node,
                 hud,
                 &font,
-                ink,
-                color(&theme.focus_outline, 1.0)?,
+                [ink, color(&theme.focus_outline, 1.0)?, muted],
             )?;
         }
     }
@@ -376,9 +380,7 @@ fn spawn_node(
                 Color::NONE,
             );
             let ticks = Box::new(std::array::from_fn(|_| {
-                let anchor = shape(world, horizon, Node::default(), Color::NONE);
-                let label = text(world, anchor, font, 12.0);
-                world.entity_mut(label).insert(TextLayout::no_wrap());
+                let (anchor, label) = instrument_text(world, horizon, font);
                 (
                     shape(world, horizon, Node::default(), Color::WHITE),
                     anchor,
@@ -432,26 +434,12 @@ fn spawn_node(
                 },
                 Color::NONE,
             );
-            let pointer = shape(
-                world,
-                surface,
-                Node {
-                    position_type: PositionType::Absolute,
-                    left: percent(50),
-                    top: px(23),
-                    width: px(5),
-                    height: px(5),
-                    ..default()
-                },
-                Color::srgb(1.0, 0.85, 0.25),
-            );
-            world.entity_mut(pointer).insert(UiTransform {
-                translation: Val2::percent(-50, 0),
-                rotation: Rot2::degrees(45.0),
-                ..default()
-            });
+            let canvas = shape(world, surface, Node::default(), Color::NONE);
+            let pointer = shape(world, canvas, Node::default(), Color::NONE);
             HudWidget::HeadingTape {
                 surface,
+                canvas,
+                pointer,
                 ticks: Vec::new(),
             }
         }
@@ -531,52 +519,17 @@ fn spawn_node(
                 },
                 Color::NONE,
             );
-            shape(
-                world,
-                surface,
-                Node {
-                    position_type: PositionType::Absolute,
-                    left: percent(5),
-                    top: px(16),
-                    width: percent(90),
-                    height: px(2),
-                    ..default()
-                },
-                Color::srgb(0.725, 0.788, 0.761),
-            );
-            let minimum = text(world, surface, font, 8.0);
-            let maximum = text(world, surface, font, 8.0);
-            for (entity, left, anchor) in [(minimum, 5, 0), (maximum, 95, -100)] {
-                retained_node(world, entity).set_if_neq(Node {
-                    position_type: PositionType::Absolute,
-                    left: percent(left),
-                    top: px(20),
-                    ..default()
-                });
-                world
-                    .entity_mut(entity)
-                    .insert(UiTransform::from_translation(Val2::percent(anchor, 0)));
-            }
-            let indicator = shape(
-                world,
-                surface,
-                Node {
-                    position_type: PositionType::Absolute,
-                    left: percent(5),
-                    top: px(3),
-                    width: px(7),
-                    height: px(7),
-                    ..default()
-                },
-                Color::srgb(1.0, 0.85, 0.25),
-            );
-            world.entity_mut(indicator).insert(UiTransform {
-                translation: Val2::percent(-50, 0),
-                rotation: Rot2::degrees(45.0),
-                ..default()
-            });
+            let canvas = shape(world, surface, Node::default(), Color::NONE);
+            let track = shape(world, canvas, Node::default(), Color::NONE);
+            let ticks = std::array::from_fn(|_| shape(world, canvas, Node::default(), Color::NONE));
+            let minimum = instrument_text(world, canvas, font);
+            let maximum = instrument_text(world, canvas, font);
+            let indicator = shape(world, canvas, Node::default(), Color::NONE);
             HudWidget::LinearGauge {
                 surface,
+                canvas,
+                track,
+                ticks,
                 indicator,
                 minimum,
                 maximum,
@@ -606,14 +559,120 @@ fn adi_line(
     super::chart::set_chart_line(world, entity, start, end, ink, width as f32);
 }
 
+fn instrument_text(world: &mut World, parent: Entity, font: &Handle<Font>) -> (Entity, Entity) {
+    let anchor = shape(world, parent, Node::default(), Color::NONE);
+    let label = text(world, anchor, font, 12.0);
+    world
+        .entity_mut(label)
+        .insert((TextLayout::no_wrap(), super::ChartTextBaseline));
+    (anchor, label)
+}
+
+fn fit_instrument(
+    world: &mut World,
+    canvas: Entity,
+    source: &GameUiHudNode,
+    hud: &GameUiHud,
+    size: [f64; 2],
+) -> f64 {
+    let height = source.instrument_height_em * hud.layout.font_size_px;
+    let width = source.bounds.width * hud.layout.width_px - hud.layout.padding_px[0] * 2.0;
+    let scale = (width / size[0]).min(height / size[1]);
+    retained_node(world, canvas).set_if_neq(Node {
+        position_type: PositionType::Absolute,
+        width: px(size[0]),
+        height: px(size[1]),
+        left: px((width - size[0]) / 2.0),
+        top: px((height - size[1]) / 2.0),
+        ..default()
+    });
+    retained_ui_transform(world, canvas).set_if_neq(UiTransform {
+        scale: Vec2::splat(scale as f32),
+        ..default()
+    });
+    scale
+}
+
+fn project_instrument_label(
+    world: &mut World,
+    (anchor, label): (Entity, Entity),
+    point: Option<GameUiChartPoint>,
+    value: &str,
+    (align, rotation, size, ink): (f32, f32, f64, Color),
+) {
+    let position = point.unwrap_or(GameUiChartPoint { x: 0.0, y: 0.0 });
+    retained_node(world, anchor).set_if_neq(Node {
+        position_type: PositionType::Absolute,
+        display: if point.is_some() {
+            Display::Flex
+        } else {
+            Display::None
+        },
+        left: px(position.x),
+        top: px(position.y),
+        width: px(0),
+        height: px(0),
+        ..default()
+    });
+    retained_ui_transform(world, anchor)
+        .set_if_neq(UiTransform::from_rotation(Rot2::degrees(rotation)));
+    retained_node(world, label).position_type = PositionType::Absolute;
+    retained_ui_transform(world, label)
+        .set_if_neq(UiTransform::from_translation(Val2::percent(align, 0)));
+    set_text(world, label, value.to_owned());
+    world
+        .get_mut::<TextColor>(label)
+        .expect("instrument label color exists")
+        .set_if_neq(TextColor(ink));
+    world
+        .get_mut::<TextFont>(label)
+        .expect("instrument label font exists")
+        .map_unchanged(|font| &mut font.font_size)
+        .set_if_neq(FontSize::Px(size as f32));
+}
+
+fn project_triangle(
+    world: &mut World,
+    entity: Entity,
+    points: Option<[GameUiChartPoint; 3]>,
+    ink: Color,
+) {
+    let Some([tip, left, right]) = points else {
+        retained_node(world, entity).display = Display::None;
+        return;
+    };
+    let height = (tip.y - left.y).abs();
+    let downward = tip.y > left.y;
+    retained_node(world, entity).set_if_neq(Node {
+        position_type: PositionType::Absolute,
+        box_sizing: BoxSizing::ContentBox,
+        left: px(left.x),
+        top: px(tip.y.min(left.y)),
+        width: px(0),
+        height: px(0),
+        border: UiRect {
+            left: px(tip.x - left.x),
+            right: px(right.x - tip.x),
+            top: px(if downward { height } else { 0.0 }),
+            bottom: px(if downward { 0.0 } else { height }),
+        },
+        ..default()
+    });
+    world.entity_mut(entity).insert(BorderColor {
+        top: if downward { ink } else { Color::NONE },
+        bottom: if downward { Color::NONE } else { ink },
+        left: Color::NONE,
+        right: Color::NONE,
+    });
+}
+
 fn project_widget(
     world: &mut World,
     node: &mut HudNode,
     source: &GameUiHudNode,
     hud: &GameUiHud,
     font: &Handle<Font>,
-    ink: Color,
-    focus: Color,
+    [ink, focus, muted]: [Color; 3],
 ) -> Result<(), String> {
     match &source.content {
         GameUiHudNodeContent::Text { .. } => {}
@@ -632,25 +691,11 @@ fn project_widget(
             let (surface, horizon, outline, aircraft, marker, ticks) =
                 (*surface, *horizon, *outline, *aircraft, *marker, **ticks);
             let layer = geometry.horizon;
-            let height = source.instrument_height_em * hud.layout.font_size_px;
-            let width = source.bounds.width * hud.layout.width_px - hud.layout.padding_px[0] * 2.0;
-            let scale = (width / geometry.canvas_size[0]).min(height / geometry.canvas_size[1]);
+            let scale = fit_instrument(world, horizon, source, hud, geometry.canvas_size);
             world
                 .get_mut::<BackgroundColor>(surface)
                 .expect("ADI background exists")
                 .set_if_neq(BackgroundColor(Color::NONE));
-            retained_node(world, horizon).set_if_neq(Node {
-                position_type: PositionType::Absolute,
-                width: px(geometry.canvas_size[0]),
-                height: px(geometry.canvas_size[1]),
-                left: px((width - geometry.canvas_size[0]) / 2.0),
-                top: px((height - geometry.canvas_size[1]) / 2.0),
-                ..default()
-            });
-            retained_ui_transform(world, horizon).set_if_neq(UiTransform {
-                scale: Vec2::splat(scale as f32),
-                ..default()
-            });
             retained_node(world, outline).set_if_neq(Node {
                 position_type: PositionType::Absolute,
                 left: px(geometry.clip.x - 1.5),
@@ -672,40 +717,20 @@ fn project_widget(
             if let Some(layer) = layer {
                 for ((line, anchor, label), tick) in ticks.into_iter().zip(layer.pitch_ticks) {
                     adi_line(world, line, tick.segment, 2.0, ink);
-                    let label_anchor = tick
-                        .label_anchor
-                        .unwrap_or(GameUiChartPoint { x: 0.0, y: 0.0 });
-                    retained_node(world, anchor).set_if_neq(Node {
-                        position_type: PositionType::Absolute,
-                        display: if tick.label_degrees.is_some() && tick.label_anchor.is_some() {
-                            Display::Flex
-                        } else {
-                            Display::None
-                        },
-                        left: px(label_anchor.x),
-                        top: px(label_anchor.y),
-                        width: px(0),
-                        height: px(0),
-                        ..default()
-                    });
-                    retained_ui_transform(world, anchor).set_if_neq(UiTransform::from_rotation(
-                        Rot2::degrees(layer.label_rotation_degrees as f32),
-                    ));
-                    retained_node(world, label).position_type = PositionType::Absolute;
-                    retained_ui_transform(world, label)
-                        .set_if_neq(UiTransform::from_translation(Val2::percent(-50, 0)));
-                    world.entity_mut(label).insert(super::ChartTextBaseline);
-                    set_text(
+                    project_instrument_label(
                         world,
-                        label,
-                        tick.label_degrees
+                        (anchor, label),
+                        tick.label_anchor.filter(|_| tick.label_degrees.is_some()),
+                        &tick
+                            .label_degrees
                             .map_or_else(String::new, |value| value.to_string()),
+                        (
+                            -50.0,
+                            layer.label_rotation_degrees as f32,
+                            hud.layout.font_size_px / scale,
+                            ink,
+                        ),
                     );
-                    world
-                        .get_mut::<TextFont>(label)
-                        .expect("pitch label font exists")
-                        .map_unchanged(|font| &mut font.font_size)
-                        .set_if_neq(FontSize::Px((hud.layout.font_size_px / scale) as f32));
                 }
             }
             retained_node(world, marker)
@@ -729,61 +754,42 @@ fn project_widget(
                 });
             }
         }
-        GameUiHudNodeContent::HeadingTape { ticks, .. } => {
+        GameUiHudNodeContent::HeadingTape {
+            canvas_size,
+            ticks,
+            pointer,
+            ..
+        } => {
             let HudWidget::HeadingTape {
-                surface,
+                canvas,
+                pointer: marker,
                 ticks: entities,
+                ..
             } = &mut node.widget
             else {
                 return Err("HUD widget kindが一致しない".to_owned());
             };
+            let scale = fit_instrument(world, *canvas, source, hud, *canvas_size);
+            project_triangle(world, *marker, Some(*pointer), focus);
             while entities.len() > ticks.len() {
-                let (line, label) = entities.pop().expect("extra tick exists");
+                let (line, anchor, _) = entities.pop().expect("extra tick exists");
                 world.despawn(line);
-                world.despawn(label);
+                world.despawn(anchor);
             }
             while entities.len() < ticks.len() {
-                let line = shape(world, *surface, Node::default(), ink);
-                let label = text(world, *surface, font, hud.layout.font_size_px as f32);
-                world
-                    .entity_mut(label)
-                    .insert(UiTransform::from_translation(Val2::percent(-50, 0)));
-                entities.push((line, label));
+                let line = shape(world, *canvas, Node::default(), ink);
+                let (anchor, label) = instrument_text(world, *canvas, font);
+                entities.push((line, anchor, label));
             }
-            for ((line, label), tick) in entities.iter().copied().zip(ticks) {
-                retained_node(world, line).set_if_neq(Node {
-                    position_type: PositionType::Absolute,
-                    left: percent(tick.position_ratio * 100.0),
-                    top: px(if tick.major { 19 } else { 23 }),
-                    width: px(1),
-                    height: px(if tick.major { 8 } else { 4 }),
-                    ..default()
-                });
-                retained_node(world, label).set_if_neq(Node {
-                    position_type: PositionType::Absolute,
-                    display: if !tick.label.is_empty() {
-                        Display::Flex
-                    } else {
-                        Display::None
-                    },
-                    left: percent(tick.position_ratio * 100.0),
-                    top: px(4),
-                    ..default()
-                });
-                set_text(world, label, tick.label.clone());
-                world
-                    .get_mut::<TextColor>(label)
-                    .expect("heading label color exists")
-                    .set_if_neq(TextColor(ink));
-                world
-                    .get_mut::<TextFont>(label)
-                    .expect("heading label font exists")
-                    .map_unchanged(|font| &mut font.font_size)
-                    .set_if_neq(FontSize::Px(hud.layout.font_size_px as f32));
-                world
-                    .get_mut::<BackgroundColor>(line)
-                    .expect("heading tick color exists")
-                    .set_if_neq(BackgroundColor(ink));
+            for ((line, anchor, label), tick) in entities.iter().copied().zip(ticks) {
+                adi_line(world, line, Some(tick.segment), tick.stroke_width, ink);
+                project_instrument_label(
+                    world,
+                    (anchor, label),
+                    tick.label_anchor,
+                    &tick.label,
+                    (-50.0, 0.0, hud.layout.font_size_px / scale, ink),
+                );
             }
         }
         GameUiHudNodeContent::Direction {
@@ -806,10 +812,17 @@ fn project_widget(
         GameUiHudNodeContent::LinearGauge {
             minimum_label,
             maximum_label,
-            position_ratio,
+            canvas_size,
+            track,
+            ticks,
+            label_anchors,
+            marker,
             ..
         } => {
             let HudWidget::LinearGauge {
+                canvas,
+                track: track_entity,
+                ticks: tick_entities,
                 indicator,
                 minimum,
                 maximum,
@@ -818,29 +831,26 @@ fn project_widget(
             else {
                 return Err("HUD widget kindが一致しない".to_owned());
             };
-            set_text(world, minimum, minimum_label.clone());
-            set_text(world, maximum, maximum_label.clone());
-            for label in [minimum, maximum] {
-                world
-                    .get_mut::<TextColor>(label)
-                    .expect("gauge label color exists")
-                    .set_if_neq(TextColor(ink));
-                world
-                    .get_mut::<TextFont>(label)
-                    .expect("gauge label font exists")
-                    .map_unchanged(|font| &mut font.font_size)
-                    .set_if_neq(FontSize::Px(hud.layout.font_size_px as f32));
+            let scale = fit_instrument(world, canvas, source, hud, *canvas_size);
+            adi_line(world, track_entity, Some(*track), 3.0, muted);
+            for (index, entity) in tick_entities.into_iter().enumerate() {
+                adi_line(world, entity, ticks.get(index).copied(), 1.0, muted);
             }
-            retained_node(world, indicator)
-                .map_unchanged(|node| &mut node.display)
-                .set_if_neq(if position_ratio.is_some() {
-                    Display::Flex
-                } else {
-                    Display::None
-                });
-            retained_node(world, indicator)
-                .map_unchanged(|node| &mut node.left)
-                .set_if_neq(percent(5.0 + position_ratio.unwrap_or(0.0) * 90.0));
+            project_triangle(world, indicator, *marker, focus);
+            project_instrument_label(
+                world,
+                minimum,
+                Some(label_anchors[0]),
+                minimum_label,
+                (0.0, 0.0, hud.layout.font_size_px / scale, ink),
+            );
+            project_instrument_label(
+                world,
+                maximum,
+                Some(label_anchors[1]),
+                maximum_label,
+                (-100.0, 0.0, hud.layout.font_size_px / scale, ink),
+            );
         }
     }
     Ok(())
@@ -904,8 +914,7 @@ mod tests {
             &source,
             &hud,
             &font,
-            Color::WHITE,
-            Color::WHITE,
+            [Color::WHITE; 3],
         )
         .unwrap();
         let HudWidget::Attitude {
@@ -933,8 +942,7 @@ mod tests {
             &source,
             &hud,
             &font,
-            Color::WHITE,
-            Color::WHITE,
+            [Color::WHITE; 3],
         )
         .unwrap();
         assert_eq!(world.get::<Node>(marker).unwrap().top, px(135));
@@ -962,8 +970,7 @@ mod tests {
             &source,
             &hud,
             &font,
-            Color::WHITE,
-            Color::WHITE,
+            [Color::WHITE; 3],
         )
         .unwrap();
         let HudWidget::Attitude { ticks, .. } = widget.widget else {
@@ -977,5 +984,41 @@ mod tests {
             bevy::text::LineBreak::NoWrap
         );
         assert!(world.get_entity(surface).is_ok());
+        let pointer = shape(&mut world, parent, Node::default(), Color::NONE);
+        project_triangle(
+            &mut world,
+            pointer,
+            Some([
+                GameUiChartPoint { x: 110.0, y: 28.0 },
+                GameUiChartPoint { x: 104.0, y: 38.0 },
+                GameUiChartPoint { x: 116.0, y: 38.0 },
+            ]),
+            Color::WHITE,
+        );
+        let projected = world.get::<Node>(pointer).unwrap();
+        assert_eq!(projected.left, px(104));
+        assert_eq!(projected.top, px(28));
+        assert_eq!(projected.border, UiRect::new(px(6), px(6), px(0), px(10)));
+        assert_eq!(
+            world.get::<BorderColor>(pointer).unwrap().bottom,
+            Color::WHITE
+        );
+        project_triangle(
+            &mut world,
+            pointer,
+            Some([
+                GameUiChartPoint { x: 145.0, y: 5.0 },
+                GameUiChartPoint { x: 139.0, y: 1.0 },
+                GameUiChartPoint { x: 151.0, y: 1.0 },
+            ]),
+            Color::WHITE,
+        );
+        assert_eq!(
+            world.get::<Node>(pointer).unwrap().border,
+            UiRect::new(px(6), px(6), px(4), px(0))
+        );
+        assert_eq!(world.get::<BorderColor>(pointer).unwrap().top, Color::WHITE);
+        project_triangle(&mut world, pointer, None, Color::WHITE);
+        assert_eq!(world.get::<Node>(pointer).unwrap().display, Display::None);
     }
 }

@@ -770,8 +770,12 @@ pub enum GameUiHudNodeContent {
     HeadingTape {
         /// Formatted central reading.
         value: String,
-        /// Ordered normalized marks and labels.
+        /// Logical instrument canvas dimensions.
+        canvas_size: [f64; 2],
+        /// Ordered completed marks and labels.
         ticks: Vec<GameUiHudHeadingTick>,
+        /// Fixed pointer, ordered tip and base corners.
+        pointer: [GameUiChartPoint; 3],
     },
     /// Direction arrow with an explicit absence for calm or unavailable direction.
     Direction {
@@ -788,8 +792,16 @@ pub enum GameUiHudNodeContent {
         minimum_label: String,
         /// Right endpoint label.
         maximum_label: String,
-        /// Normalized marker position, absent when the reading is undefined.
-        position_ratio: Option<f64>,
+        /// Logical instrument canvas dimensions.
+        canvas_size: [f64; 2],
+        /// Scale track endpoints.
+        track: [GameUiChartPoint; 2],
+        /// Ordered tick endpoints.
+        ticks: Box<[[GameUiChartPoint; 2]; 7]>,
+        /// Left-start and right-end alphabetic label baselines.
+        label_anchors: [GameUiChartPoint; 2],
+        /// Reading pointer, ordered tip and base corners; absent for an undefined reading.
+        marker: Option<[GameUiChartPoint; 3]>,
     },
 }
 
@@ -887,17 +899,19 @@ pub struct GameUiHudPitchTick {
     pub label_degrees: Option<u32>,
 }
 
-/// One heading tape mark in normalized instrument coordinates.
+/// One completed heading tape mark in logical canvas pixels.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct GameUiHudHeadingTick {
-    /// Position relative to the complete tape width.
-    pub position_ratio: f64,
-    /// Major marks receive the long tick and a compass label.
-    pub major: bool,
+    /// Tick endpoints.
+    pub segment: [GameUiChartPoint; 2],
+    /// Tick stroke width in logical pixels.
+    pub stroke_width: f64,
     /// Compass label, empty for a minor tick.
     pub label: String,
+    /// Centred alphabetic label baseline, present for visible labels.
+    pub label_anchor: Option<GameUiChartPoint>,
 }
 
 /// Normalized control position for spatial and chart rendering.

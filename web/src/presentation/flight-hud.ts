@@ -105,11 +105,11 @@ function widget(node: GameUiHudNode, hud: GameUiHud, theme: GameUiTheme, clipPre
       if (geometry.flight_path_center != null) shapes.push(shape("circle", { cx: geometry.flight_path_center.x, cy: geometry.flight_path_center.y, r: geometry.flight_path_radius, fill: "none", stroke: "#7df4c5", "stroke-width": 3 }));
       return [gauge(node, hud, geometry.canvas_size, shapes)];
     }
-    case "heading_tape": return [gauge(node, hud, [220, 50], [
+    case "heading_tape": return [gauge(node, hud, content.canvas_size, [
       ...content.ticks.map((tick, index) => h("g", { key: index }, [
-        shape("path", { d: `M ${String(tick.position_ratio * 220)} ${tick.major ? "28" : "33"} V 40`, stroke: theme.text, "stroke-width": tick.major ? 1.5 : 1 }),
-        shape("text", { x: tick.position_ratio * 220, y: 22, "text-anchor": "middle", fill: theme.text, "font-size": "var(--hud-instrument-font-size)" }, tick.label)
-      ])), shape("path", { d: "M 110 28 L 104 38 H 116 Z", fill: theme.focus_outline })
+        shape("line", { x1: tick.segment[0].x, y1: tick.segment[0].y, x2: tick.segment[1].x, y2: tick.segment[1].y, stroke: theme.text, "stroke-width": tick.stroke_width }),
+        ...(tick.label_anchor == null ? [] : [shape("text", { x: tick.label_anchor.x, y: tick.label_anchor.y, "text-anchor": "middle", fill: theme.text, "font-size": "var(--hud-instrument-font-size)" }, tick.label)])
+      ])), shape("polygon", { points: content.pointer.map(point => `${String(point.x)},${String(point.y)}`).join(" "), fill: theme.focus_outline })
     ])];
     case "direction": return [gauge(node, hud, [72, 72], [
       shape("circle", { cx: 36, cy: 36, r: 27, fill: "none", stroke: theme.muted_text, "stroke-width": 1.5 }),
@@ -119,12 +119,12 @@ function widget(node: GameUiHudNode, hud: GameUiHud, theme: GameUiTheme, clipPre
         shape("path", { d: "M 36 15 L 31 38 L 36 34 L 41 38 Z", fill: theme.focus_outline })
       ])])
     ])];
-    case "linear_gauge": return [gauge(node, hud, [200, 42], [
-      shape("path", { d: "M 10 16 H 190", stroke: theme.muted_text, "stroke-width": 3 }),
-      ...Array.from({ length: 7 }, (_, index) => shape("path", { d: `M ${String(10 + index * 30)} 12 V 21`, stroke: theme.muted_text })),
-      shape("text", { x: 10, y: 39, fill: theme.text, "font-size": "var(--hud-instrument-font-size)" }, content.minimum_label),
-      shape("text", { x: 190, y: 39, "text-anchor": "end", fill: theme.text, "font-size": "var(--hud-instrument-font-size)" }, content.maximum_label),
-      ...(content.position_ratio == null ? [] : [shape("polygon", { points: `${String(10 + content.position_ratio * 180)},5 ${String(4 + content.position_ratio * 180)},1 ${String(16 + content.position_ratio * 180)},1`, fill: theme.focus_outline })])
+    case "linear_gauge": return [gauge(node, hud, content.canvas_size, [
+      shape("line", { x1: content.track[0].x, y1: content.track[0].y, x2: content.track[1].x, y2: content.track[1].y, stroke: theme.muted_text, "stroke-width": 3 }),
+      ...content.ticks.map(([start, end]) => shape("line", { x1: start.x, y1: start.y, x2: end.x, y2: end.y, stroke: theme.muted_text })),
+      shape("text", { x: content.label_anchors[0].x, y: content.label_anchors[0].y, fill: theme.text, "font-size": "var(--hud-instrument-font-size)" }, content.minimum_label),
+      shape("text", { x: content.label_anchors[1].x, y: content.label_anchors[1].y, "text-anchor": "end", fill: theme.text, "font-size": "var(--hud-instrument-font-size)" }, content.maximum_label),
+      ...(content.marker == null ? [] : [shape("polygon", { points: content.marker.map(point => `${String(point.x)},${String(point.y)}`).join(" "), fill: theme.focus_outline })])
     ])];
   }
 }

@@ -770,6 +770,27 @@ export type SurfacePaintItem = {
     readonly widthPx: number;
 } | {
     /**
+     * Fill colour.
+     */
+    readonly color: string;
+    readonly kind: "triangle";
+    /**
+     * Fill opacity.
+     */
+    readonly opacity: number;
+    /**
+     * Ordered triangle vertices in metres.
+     *
+     * @minItems 3
+     * @maxItems 3
+     */
+    readonly points: readonly [
+        MenuPoint,
+        MenuPoint,
+        MenuPoint
+    ];
+} | {
+    /**
      * Alphabetic baseline in surface metres.
      */
     readonly anchor: MenuPoint;
@@ -1173,9 +1194,30 @@ export type GameUiHudNodeContent = {
      */
     readonly value: string;
 } | {
+    /**
+     * Logical instrument canvas dimensions.
+     *
+     * @minItems 2
+     * @maxItems 2
+     */
+    readonly canvas_size: readonly [
+        number,
+        number
+    ];
     readonly kind: "heading_tape";
     /**
-     * Ordered normalized marks and labels.
+     * Fixed pointer, ordered tip and base corners.
+     *
+     * @minItems 3
+     * @maxItems 3
+     */
+    readonly pointer: readonly [
+        GameUiChartPoint,
+        GameUiChartPoint,
+        GameUiChartPoint
+    ];
+    /**
+     * Ordered completed marks and labels.
      */
     readonly ticks: readonly GameUiHudHeadingTick[];
     /**
@@ -1193,7 +1235,38 @@ export type GameUiHudNodeContent = {
      */
     readonly value: string;
 } | {
+    /**
+     * Logical instrument canvas dimensions.
+     *
+     * @minItems 2
+     * @maxItems 2
+     */
+    readonly canvas_size: readonly [
+        number,
+        number
+    ];
     readonly kind: "linear_gauge";
+    /**
+     * Left-start and right-end alphabetic label baselines.
+     *
+     * @minItems 2
+     * @maxItems 2
+     */
+    readonly label_anchors: readonly [
+        GameUiChartPoint,
+        GameUiChartPoint
+    ];
+    /**
+     * Reading pointer, ordered tip and base corners; absent for an undefined reading.
+     *
+     * @minItems 3
+     * @maxItems 3
+     */
+    readonly marker?: readonly [
+        GameUiChartPoint,
+        GameUiChartPoint,
+        GameUiChartPoint
+    ] | null;
     /**
      * Right endpoint label.
      */
@@ -1203,9 +1276,51 @@ export type GameUiHudNodeContent = {
      */
     readonly minimum_label: string;
     /**
-     * Normalized marker position, absent when the reading is undefined.
+     * Ordered tick endpoints.
+     *
+     * @minItems 7
+     * @maxItems 7
      */
-    readonly position_ratio?: number | null;
+    readonly ticks: readonly [
+        readonly [
+            GameUiChartPoint,
+            GameUiChartPoint
+        ],
+        readonly [
+            GameUiChartPoint,
+            GameUiChartPoint
+        ],
+        readonly [
+            GameUiChartPoint,
+            GameUiChartPoint
+        ],
+        readonly [
+            GameUiChartPoint,
+            GameUiChartPoint
+        ],
+        readonly [
+            GameUiChartPoint,
+            GameUiChartPoint
+        ],
+        readonly [
+            GameUiChartPoint,
+            GameUiChartPoint
+        ],
+        readonly [
+            GameUiChartPoint,
+            GameUiChartPoint
+        ]
+    ];
+    /**
+     * Scale track endpoints.
+     *
+     * @minItems 2
+     * @maxItems 2
+     */
+    readonly track: readonly [
+        GameUiChartPoint,
+        GameUiChartPoint
+    ];
     /**
      * Formatted reading including its unit.
      */
@@ -3215,7 +3330,7 @@ export interface GameUiHudPitchTick {
     ] | null;
 }
 /**
- * One heading tape mark in normalized instrument coordinates.
+ * One completed heading tape mark in logical canvas pixels.
  */
 export interface GameUiHudHeadingTick {
     /**
@@ -3223,13 +3338,23 @@ export interface GameUiHudHeadingTick {
      */
     readonly label: string;
     /**
-     * Major marks receive the long tick and a compass label.
+     * Centred alphabetic label baseline, present for visible labels.
      */
-    readonly major: boolean;
+    readonly label_anchor?: GameUiChartPoint | null;
     /**
-     * Position relative to the complete tape width.
+     * Tick endpoints.
+     *
+     * @minItems 2
+     * @maxItems 2
      */
-    readonly position_ratio: number;
+    readonly segment: readonly [
+        GameUiChartPoint,
+        GameUiChartPoint
+    ];
+    /**
+     * Tick stroke width in logical pixels.
+     */
+    readonly stroke_width: number;
 }
 /**
  * Instrument placement in logical pixels with platform safe-area insets applied by adapters.

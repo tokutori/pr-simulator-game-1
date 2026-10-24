@@ -6,6 +6,17 @@ export function paintSurface(context: SurfaceDrawingContext, items: readonly Sur
   const paint = (items: readonly SurfacePaintItem[]): void => {
     for (const item of items) {
       switch (item.kind) {
+        case "triangle":
+          context.setGlobalAlpha(item.opacity);
+          context.setFillStyle(item.color);
+          context.beginPath();
+          context.moveTo(item.points[0].x * scaleX, item.points[0].y * scaleY);
+          context.lineTo(item.points[1].x * scaleX, item.points[1].y * scaleY);
+          context.lineTo(item.points[2].x * scaleX, item.points[2].y * scaleY);
+          context.closePath();
+          context.fill();
+          context.setGlobalAlpha(1);
+          break;
         case "rounded_outline":
           context.setGlobalAlpha(item.opacity);
           context.setStrokeStyle(item.color);

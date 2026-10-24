@@ -114,6 +114,15 @@ pub enum SurfacePaintItem {
         /// Stroke opacity.
         opacity: f64,
     },
+    /// Filled triangle in surface coordinates.
+    Triangle {
+        /// Ordered triangle vertices in metres.
+        points: [MenuPoint; 3],
+        /// Fill colour.
+        color: String,
+        /// Fill opacity.
+        opacity: f64,
+    },
     /// Measured line with its resolved alphabetic baseline.
     Text {
         /// Visible line content.

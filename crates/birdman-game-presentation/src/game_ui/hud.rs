@@ -13,7 +13,7 @@ struct GameUiHudAttitude {
 struct GameUiHudGeometry {
     adi: Option<GameUiHudAdiGeometry>,
     heading_ticks: Vec<GameUiHudHeadingTick>,
-    angle_of_attack_ratio: Option<f64>,
+    angle_of_attack_marker: Option<[GameUiChartPoint; 3]>,
 }
 
 pub(super) fn game_ui_hud(
@@ -232,7 +232,13 @@ pub(super) fn game_ui_hud(
             "方位",
             GameUiHudNodeContent::HeadingTape {
                 value: format!("{heading:.0}°"),
+                canvas_size: [220.0, 50.0],
                 ticks: geometry.heading_ticks,
+                pointer: [
+                    GameUiChartPoint { x: 110.0, y: 28.0 },
+                    GameUiChartPoint { x: 104.0, y: 38.0 },
+                    GameUiChartPoint { x: 116.0, y: 38.0 },
+                ],
             },
         ));
     }
@@ -260,7 +266,29 @@ pub(super) fn game_ui_hud(
                 value: alpha.map_or_else(|| "—".to_owned(), |alpha| format!("{alpha:.1}°")),
                 minimum_label: "−10°".to_owned(),
                 maximum_label: "+20°".to_owned(),
-                position_ratio: geometry.angle_of_attack_ratio,
+                canvas_size: [200.0, 44.0],
+                track: [
+                    GameUiChartPoint { x: 10.0, y: 16.0 },
+                    GameUiChartPoint { x: 190.0, y: 16.0 },
+                ],
+                ticks: Box::new(core::array::from_fn(|index| {
+                    let position = 10.0 + index as f64 * 30.0;
+                    [
+                        GameUiChartPoint {
+                            x: position,
+                            y: 12.0,
+                        },
+                        GameUiChartPoint {
+                            x: position,
+                            y: 21.0,
+                        },
+                    ]
+                })),
+                label_anchors: [
+                    GameUiChartPoint { x: 10.0, y: 39.0 },
+                    GameUiChartPoint { x: 190.0, y: 39.0 },
+                ],
+                marker: geometry.angle_of_attack_marker,
             },
         ));
     }
@@ -371,9 +399,23 @@ fn hud_geometry(
                     let offset = index * 10;
                     let major = offset % 30 == 0;
                     let bearing = rounded_bearing(heading + f64::from(offset));
+                    let position = 110.0 + f64::from(offset) * 1.2;
                     GameUiHudHeadingTick {
-                        position_ratio: (110.0 + f64::from(offset) * 1.2) / 220.0,
-                        major,
+                        segment: [
+                            GameUiChartPoint {
+                                x: position,
+                                y: if major { 28.0 } else { 33.0 },
+                            },
+                            GameUiChartPoint {
+                                x: position,
+                                y: 40.0,
+                            },
+                        ],
+                        stroke_width: if major { 1.5 } else { 1.0 },
+                        label_anchor: (offset == 0).then_some(GameUiChartPoint {
+                            x: position,
+                            y: 22.0,
+                        }),
                         label: if offset == 0 {
                             match bearing {
                                 0 => "N".to_owned(),
@@ -389,8 +431,23 @@ fn hud_geometry(
                 })
                 .collect()
         }),
-        angle_of_attack_ratio: angle_of_attack
-            .map(|angle| (angle.clamp(-10.0, 20.0) + 10.0) / 30.0),
+        angle_of_attack_marker: angle_of_attack.map(|angle| {
+            let position = 10.0 + (angle.clamp(-10.0, 20.0) + 10.0) * 6.0;
+            [
+                GameUiChartPoint {
+                    x: position,
+                    y: 5.0,
+                },
+                GameUiChartPoint {
+                    x: position - 6.0,
+                    y: 1.0,
+                },
+                GameUiChartPoint {
+                    x: position + 6.0,
+                    y: 1.0,
+                },
+            ]
+        }),
     }
 }
 
@@ -806,11 +863,25 @@ mod geometry_tests {
         assert_eq!(adi.horizon.unwrap().label_rotation_degrees, -11.0);
         assert_eq!(adi.canvas_size, [240.0, 180.0]);
         assert!((adi.flight_path_center.unwrap().y - 96.6).abs() < 1.0e-12);
-        assert_eq!(geometry.angle_of_attack_ratio, Some(0.5));
+        assert_eq!(
+            geometry.angle_of_attack_marker.unwrap()[0],
+            GameUiChartPoint { x: 100.0, y: 5.0 }
+        );
         assert_eq!(geometry.heading_ticks.len(), 13);
-        assert!(geometry.heading_ticks[0].major && geometry.heading_ticks[0].label.is_empty());
+        assert_eq!(
+            geometry.heading_ticks[0].segment,
+            [
+                GameUiChartPoint { x: 38.0, y: 28.0 },
+                GameUiChartPoint { x: 38.0, y: 40.0 }
+            ]
+        );
+        assert!(geometry.heading_ticks[0].label.is_empty());
         assert_eq!(geometry.heading_ticks[6].label, "N");
-        assert!(geometry.heading_ticks[12].major && geometry.heading_ticks[12].label.is_empty());
+        assert_eq!(
+            geometry.heading_ticks[6].label_anchor,
+            Some(GameUiChartPoint { x: 110.0, y: 22.0 })
+        );
+        assert!(geometry.heading_ticks[12].label.is_empty());
         assert_eq!(
             adi.horizon
                 .unwrap()
@@ -820,9 +891,9 @@ mod geometry_tests {
                 .collect::<Vec<_>>(),
             vec![20, 20]
         );
-        for (angle, path, ratio) in [
-            (-100.0, (90.0 + 66.0) / 180.0, 0.0),
-            (100.0, (90.0 - 66.0) / 180.0, 1.0),
+        for (angle, path, position) in [
+            (-100.0, (90.0 + 66.0) / 180.0, 10.0),
+            (100.0, (90.0 - 66.0) / 180.0, 190.0),
         ] {
             let projected = hud_geometry(
                 Some(GameUiHudAttitude {
@@ -844,7 +915,7 @@ mod geometry_tests {
                 (projected.adi.unwrap().flight_path_center.unwrap().y / 180.0 - path).abs()
                     < 1.0e-12
             );
-            assert_eq!(projected.angle_of_attack_ratio, Some(ratio));
+            assert_eq!(projected.angle_of_attack_marker.unwrap()[0].x, position);
         }
         let attitude = |roll_degrees, pitch_degrees| {
             hud_geometry(
@@ -913,7 +984,7 @@ mod geometry_tests {
         assert!(
             hidden.adi.is_none()
                 && hidden.heading_ticks.is_empty()
-                && hidden.angle_of_attack_ratio.is_none()
+                && hidden.angle_of_attack_marker.is_none()
         );
     }
 

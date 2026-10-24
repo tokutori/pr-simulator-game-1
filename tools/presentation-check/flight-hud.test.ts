@@ -32,9 +32,9 @@ describe("HUD DOM execution", () => {
       expect([...heading?.children ?? []]).toEqual(ticks);
       const changed = mapNodes(hud, node => {
         switch (node.content.kind) {
-          case "heading_tape": return { ...node, content: { ...node.content, ticks: [{ position_ratio: 0.5, major: true, label: "CUSTOM" }] } };
+          case "heading_tape": return { ...node, content: { ...node.content, ticks: [{ segment: [{ x: 110, y: 28 }, { x: 110, y: 40 }], stroke_width: 1.5, label: "CUSTOM", label_anchor: { x: 110, y: 22 } }] } };
           case "direction": return { ...node, content: { ...node.content, rotation_degrees: 90 } };
-          case "linear_gauge": return { ...node, content: { ...node.content, position_ratio: 0.75, minimum_label: "LOW", maximum_label: "HIGH" } };
+          case "linear_gauge": return { ...node, content: { ...node.content, marker: [{ x: 145, y: 5 }, { x: 139, y: 1 }, { x: 151, y: 1 }], minimum_label: "LOW", maximum_label: "HIGH" } };
           case "attitude": {
             const tick = { segment: [{ x: 30, y: 40 }, { x: 210, y: 60 }] as const, label_anchor: { x: 160, y: 80 }, label_degrees: 20 };
             return { ...node, content: { ...node.content, geometry: { ...node.content.geometry,
@@ -55,13 +55,18 @@ describe("HUD DOM execution", () => {
       expect(attitude?.querySelector("g line")?.getAttribute("x2")).toBe("210");
       expect(attitude?.querySelector("g text")?.getAttribute("transform")).toBe("rotate(30 160 80)");
       expect(attitude?.querySelector("circle")?.getAttribute("cy")).toBe("100");
-      const canvas = { beginPath: vi.fn(), roundRect: vi.fn(), stroke: vi.fn() };
+      const canvas = { beginPath: vi.fn(), roundRect: vi.fn(), stroke: vi.fn(), moveTo: vi.fn(), lineTo: vi.fn(), closePath: vi.fn(), fill: vi.fn() };
       const context = canvas as unknown as CanvasRenderingContext2D;
       paintSurface(browserSurfaceContext(context), [{ kind: "rounded_outline", bounds: { x: 1, y: 2, width: 3, height: 4 },
         radius: 0.5, color: "#fff", widthPx: 2, opacity: 0.7 }], 10, 20);
       expect(canvas.roundRect).toHaveBeenCalledExactlyOnceWith(10, 40, 30, 80, { x: 5, y: 10 });
       expect(canvas.stroke).toHaveBeenCalledOnce();
       expect(context.lineWidth).toBe(2);
+      paintSurface(browserSurfaceContext(context), [{ kind: "triangle", points: [{ x: 1, y: 2 }, { x: 3, y: 4 }, { x: 5, y: 6 }], color: "#fff", opacity: 0.7 }], 10, 20);
+      expect(canvas.moveTo).toHaveBeenCalledExactlyOnceWith(10, 40);
+      expect(canvas.lineTo.mock.calls).toEqual([[30, 80], [50, 120]]);
+      expect(canvas.closePath).toHaveBeenCalledOnce();
+      expect(canvas.fill).toHaveBeenCalledOnce();
       adapter.setVisible(true);
       expect(root.hidden).toBe(false);
       expect(root.style.width).toBe(`${String(hud.layout.width_px)}px`);

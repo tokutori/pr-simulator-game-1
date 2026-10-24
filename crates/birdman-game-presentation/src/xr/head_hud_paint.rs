@@ -6,8 +6,8 @@ use super::{
 };
 use crate::camera::{Pose, Vector3};
 use crate::game_ui::{
-    GameUiFrame, GameUiHudNode, GameUiHudNodeContent, GameUiHudTone, GameUiRect, GameUiTheme,
-    GameUiView,
+    GameUiChartPoint, GameUiChartTextAnchor, GameUiFrame, GameUiHudNode, GameUiHudNodeContent,
+    GameUiHudTone, GameUiRect, GameUiTheme, GameUiView,
 };
 use serde::{Deserialize, Serialize};
 
@@ -135,6 +135,7 @@ pub fn prepare_game_ui_head_hud(
             font: text_height_meters,
             stroke_pixels: (text_height_meters * f64::from(canvas_size[1]) / size.height * 0.1)
                 .max(1.0),
+            pixels_per_meter: f64::from(canvas_size[1]) / size.height,
             cache,
             measure: &mut measure,
             theme: &view.theme,
@@ -198,6 +199,7 @@ struct HudPainter<'a, Measure> {
     size: MenuSize,
     font: f64,
     stroke_pixels: f64,
+    pixels_per_meter: f64,
     cache: &'a mut SurfaceFontCache,
     measure: &'a mut Measure,
     theme: &'a GameUiTheme,
@@ -379,17 +381,11 @@ where
         padding: f64,
         items: &mut Vec<SurfacePaintItem>,
     ) -> Result<(), MenuLayoutFailure> {
-        let line_height = self.font * 1.5;
         match &node.content {
             GameUiHudNodeContent::Attitude { geometry, .. } => {
                 if let Some(horizon) = geometry.horizon {
                     let angle = horizon.label_rotation_degrees.to_radians();
-                    let scale = (instrument.width / geometry.canvas_size[0])
-                        .min(instrument.height / geometry.canvas_size[1]);
-                    let origin = [
-                        instrument.x + (instrument.width - geometry.canvas_size[0] * scale) / 2.0,
-                        instrument.y + (instrument.height - geometry.canvas_size[1] * scale) / 2.0,
-                    ];
+                    let (scale, origin) = instrument_fit(instrument, geometry.canvas_size);
                     for tick in &horizon.pitch_ticks {
                         let (Some(value), Some(label_anchor)) =
                             (tick.label_degrees, tick.label_anchor)
@@ -397,9 +393,9 @@ where
                             continue;
                         };
                         let line = self.label(&node.id, value.to_string())?;
-                        let anchor_x = origin[0] + label_anchor.x * scale
+                        let anchor_x = origin.x + label_anchor.x * scale
                             - angle.cos() * line.advance_meters / 2.0;
-                        let baseline = origin[1] + label_anchor.y * scale
+                        let baseline = origin.y + label_anchor.y * scale
                             - angle.sin() * line.advance_meters / 2.0;
                         let inside =
                             [-line.left_meters, line.right_meters]
@@ -432,14 +428,18 @@ where
                     }
                 }
             }
-            GameUiHudNodeContent::HeadingTape { ticks, .. } => {
-                for tick in ticks.iter().filter(|tick| !tick.label.is_empty()) {
+            GameUiHudNodeContent::HeadingTape {
+                canvas_size, ticks, ..
+            } => {
+                for tick in ticks {
+                    let Some(anchor) = tick.label_anchor else {
+                        continue;
+                    };
                     self.instrument_label(
                         &node.id,
                         tick.label.clone(),
-                        tick.position_ratio,
+                        (anchor, *canvas_size, GameUiChartTextAnchor::Middle),
                         instrument,
-                        line_height,
                         items,
                     )?;
                 }
@@ -447,15 +447,23 @@ where
             GameUiHudNodeContent::LinearGauge {
                 minimum_label,
                 maximum_label,
+                canvas_size,
+                label_anchors,
                 ..
             } => {
-                for (value, ratio) in [(minimum_label, 0.0), (maximum_label, 1.0)] {
+                for (value, anchor, align) in [
+                    (
+                        minimum_label,
+                        label_anchors[0],
+                        GameUiChartTextAnchor::Start,
+                    ),
+                    (maximum_label, label_anchors[1], GameUiChartTextAnchor::End),
+                ] {
                     self.instrument_label(
                         &node.id,
                         value.clone(),
-                        ratio,
+                        (anchor, *canvas_size, align),
                         instrument,
-                        line_height,
                         items,
                     )?;
                 }
@@ -469,17 +477,20 @@ where
         &mut self,
         id: &str,
         value: String,
-        ratio: f64,
+        (anchor, canvas_size, align): (GameUiChartPoint, [f64; 2], GameUiChartTextAnchor),
         bounds: MenuRect,
-        line_height: f64,
         items: &mut Vec<SurfacePaintItem>,
     ) -> Result<(), MenuLayoutFailure> {
         let line = self.label(id, value)?;
-        let anchor_x = (bounds.x + ratio * bounds.width - line.advance_meters / 2.0)
-            .min(bounds.x + bounds.width - line.right_meters)
-            .max(bounds.x + line.left_meters.max(0.0));
-        let baseline =
-            bounds.y + line_height / 2.0 + (line.ascent_meters - line.descent_meters) / 2.0;
+        let (scale, origin) = instrument_fit(bounds, canvas_size);
+        let anchor_x = origin.x + anchor.x * scale
+            - line.advance_meters
+                * match align {
+                    GameUiChartTextAnchor::Start => 0.0,
+                    GameUiChartTextAnchor::Middle => 0.5,
+                    GameUiChartTextAnchor::End => 1.0,
+                };
+        let baseline = origin.y + anchor.y * scale;
         if anchor_x - line.left_meters < bounds.x
             || anchor_x + line.right_meters > bounds.x + bounds.width
             || baseline - line.ascent_meters < bounds.y
@@ -527,15 +538,9 @@ where
         match content {
             GameUiHudNodeContent::Text { .. } => {}
             GameUiHudNodeContent::Attitude { geometry, .. } => {
-                let scale = (bounds.width / geometry.canvas_size[0])
-                    .min(bounds.height / geometry.canvas_size[1]);
-                let origin = [
-                    bounds.x + (bounds.width - geometry.canvas_size[0] * scale) / 2.0,
-                    bounds.y + (bounds.height - geometry.canvas_size[1] * scale) / 2.0,
-                ];
-                let point = |source: [f64; 2]| {
-                    [origin[0] + source[0] * scale, origin[1] + source[1] * scale]
-                };
+                let (scale, origin) = instrument_fit(bounds, geometry.canvas_size);
+                let point =
+                    |source: [f64; 2]| [origin.x + source[0] * scale, origin.y + source[1] * scale];
                 if let Some(horizon) = geometry.horizon {
                     for tick in &horizon.pitch_ticks {
                         if let Some([start, end]) = tick.segment {
@@ -559,8 +564,8 @@ where
                 let clip = geometry.clip;
                 items.push(SurfacePaintItem::RoundedOutline {
                     bounds: MenuRect {
-                        x: origin[0] + clip.x * scale,
-                        y: origin[1] + clip.y * scale,
+                        x: origin.x + clip.x * scale,
+                        y: origin.y + clip.y * scale,
                         width: clip.width * scale,
                         height: clip.height * scale,
                     },
@@ -586,29 +591,53 @@ where
                     });
                 }
             }
-            GameUiHudNodeContent::HeadingTape { ticks, .. } => {
-                for tick in ticks {
-                    let tick_x = bounds.x + tick.position_ratio * bounds.width;
-                    self.line(
-                        items,
-                        [
-                            tick_x,
-                            bounds.y + bounds.height * if tick.major { 0.5 } else { 0.75 },
-                        ],
-                        [tick_x, bounds.y + bounds.height],
-                        if tick.major {
-                            &self.theme.text
-                        } else {
-                            &self.theme.muted_text
-                        },
-                    );
+            GameUiHudNodeContent::HeadingTape { canvas_size, .. }
+            | GameUiHudNodeContent::LinearGauge { canvas_size, .. } => {
+                let (scale, origin) = instrument_fit(bounds, *canvas_size);
+                let point = |source: GameUiChartPoint| MenuPoint {
+                    x: origin.x + source.x * scale,
+                    y: origin.y + source.y * scale,
+                };
+                let line = |items: &mut Vec<SurfacePaintItem>,
+                            segment: [GameUiChartPoint; 2],
+                            color: &str,
+                            width: f64| {
+                    items.push(SurfacePaintItem::Line {
+                        start: point(segment[0]),
+                        end: point(segment[1]),
+                        color: color.into(),
+                        width_px: width * scale * self.pixels_per_meter,
+                        opacity: self.input.profile.foreground_alpha,
+                    });
+                };
+                let marker = match content {
+                    GameUiHudNodeContent::HeadingTape { ticks, pointer, .. } => {
+                        for tick in ticks.iter() {
+                            line(items, tick.segment, &self.theme.text, tick.stroke_width);
+                        }
+                        Some(*pointer)
+                    }
+                    GameUiHudNodeContent::LinearGauge {
+                        track,
+                        ticks,
+                        marker,
+                        ..
+                    } => {
+                        line(items, *track, &self.theme.muted_text, 3.0);
+                        for tick in ticks.iter() {
+                            line(items, *tick, &self.theme.muted_text, 1.0);
+                        }
+                        *marker
+                    }
+                    _ => unreachable!(),
+                };
+                if let Some(marker) = marker {
+                    items.push(SurfacePaintItem::Triangle {
+                        points: marker.map(point),
+                        color: self.theme.focus_outline.clone(),
+                        opacity: self.input.profile.foreground_alpha,
+                    });
                 }
-                self.line(
-                    items,
-                    [center_x - self.font * 0.2, bounds.y + bounds.height * 0.9],
-                    [center_x + self.font * 0.2, bounds.y + bounds.height * 0.9],
-                    &self.theme.focus_outline,
-                );
             }
             GameUiHudNodeContent::Direction {
                 rotation_degrees, ..
@@ -633,32 +662,19 @@ where
                     }
                 }
             }
-            GameUiHudNodeContent::LinearGauge { position_ratio, .. } => {
-                let left = bounds.x + bounds.width * 0.05;
-                let width = bounds.width * 0.9;
-                self.line(
-                    items,
-                    [left, center_y],
-                    [left + width, center_y],
-                    &self.theme.text,
-                );
-                self.line(
-                    items,
-                    [center_x, bounds.y + bounds.height * 0.3],
-                    [center_x, bounds.y + bounds.height * 0.7],
-                    &self.theme.muted_text,
-                );
-                if let Some(ratio) = position_ratio {
-                    self.line(
-                        items,
-                        [left + ratio * width, bounds.y + bounds.height * 0.35],
-                        [left + ratio * width, bounds.y + bounds.height * 0.85],
-                        &self.theme.focus_outline,
-                    );
-                }
-            }
         }
     }
+}
+
+fn instrument_fit(bounds: MenuRect, canvas: [f64; 2]) -> (f64, MenuPoint) {
+    let scale = (bounds.width / canvas[0]).min(bounds.height / canvas[1]);
+    (
+        scale,
+        MenuPoint {
+            x: bounds.x + (bounds.width - canvas[0] * scale) / 2.0,
+            y: bounds.y + (bounds.height - canvas[1] * scale) / 2.0,
+        },
+    )
 }
 
 fn optical_failure(reason: XrFitReason) -> MenuLayoutFailure {

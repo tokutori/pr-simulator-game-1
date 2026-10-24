@@ -354,17 +354,15 @@ fn head_hud_fits_complete_shared_rows_in_lower_band_before_using_upper_space() {
         projection
             .items
             .iter()
-            .filter_map(|item| match item {
-                SurfacePaintItem::Plot { items, .. } => Some(
-                    items
-                        .iter()
-                        .filter(|item| matches!(item, SurfacePaintItem::RoundedOutline { .. }))
-                        .count()
-                ),
-                _ => None,
+            .flat_map(|item| match item {
+                SurfacePaintItem::Plot { items, .. } => items.as_slice(),
+                _ => &[],
             })
-            .sum::<usize>(),
-        2
+            .fold((0, 0), |(outlines, triangles), item| (
+                outlines + usize::from(matches!(item, SurfacePaintItem::RoundedOutline { .. })),
+                triangles + usize::from(matches!(item, SurfacePaintItem::Triangle { .. })),
+            )),
+        (2, 2)
     );
     let expected = hud
         .groups
@@ -2928,13 +2926,19 @@ fn hud_uses_the_authoritative_telemetry_and_existing_information_cue_policy() {
     assert_eq!(ticks.len(), 13);
     let GameUiHudNodeContent::LinearGauge {
         value,
-        position_ratio,
+        marker,
+        ticks: gauge_ticks,
+        canvas_size,
+        label_anchors,
         ..
     } = &hud_node(&hud, "hud-angle-of-attack").content
     else {
         panic!("missing angle gauge")
     };
-    assert!(position_ratio.is_some());
+    assert!(marker.is_some());
+    assert_eq!(gauge_ticks.len(), 7);
+    assert_eq!(*canvas_size, [200.0, 44.0]);
+    assert_eq!(label_anchors[1], GameUiChartPoint { x: 190.0, y: 39.0 });
     assert_eq!(
         value,
         &format!(
@@ -3032,7 +3036,7 @@ fn hud_uses_the_authoritative_telemetry_and_existing_information_cue_policy() {
     assert!(matches!(
         hud_node(&custom, "hud-angle-of-attack").content,
         GameUiHudNodeContent::LinearGauge {
-            position_ratio: Some(_),
+            marker: Some(_),
             ..
         }
     ));
