@@ -462,6 +462,9 @@ fn spawn_node(
             let north = instrument_text(world, canvas, font);
             let arrow = std::array::from_fn(|_| {
                 let anchor = shape(world, canvas, Node::default(), Color::NONE);
+                world.entity_mut(anchor).insert(LayoutConfig {
+                    use_rounding: false,
+                });
                 (anchor, shape(world, anchor, Node::default(), Color::NONE))
             });
             HudWidget::Direction {
@@ -1148,7 +1151,11 @@ mod tests {
         )
         .unwrap();
         let HudWidget::Direction {
-            ring, north, arrow, ..
+            canvas,
+            ring,
+            north,
+            arrow,
+            ..
         } = direction.widget
         else {
             unreachable!()
@@ -1169,6 +1176,17 @@ mod tests {
             arrow
                 .iter()
                 .all(|(anchor, _)| world.get::<Node>(*anchor).unwrap().display == Display::None)
+        );
+        assert!(arrow.iter().all(|(anchor, triangle)| {
+            world
+                .get::<LayoutConfig>(*anchor)
+                .is_some_and(|config| !config.use_rounding)
+                && world.get::<LayoutConfig>(*triangle).is_none()
+        }));
+        assert!(
+            [canvas, ring, north.0, north.1]
+                .into_iter()
+                .all(|entity| world.get::<LayoutConfig>(entity).is_none())
         );
     }
 }
