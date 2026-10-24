@@ -58,9 +58,9 @@ pub(super) fn result(
                     "game-result-technical-content",
                     "",
                     &format!(
-                        "{}\n終了理由: {:?}\n失敗したtickの診断:\n{:#?}",
+                        "{}\n終了理由: {}\n失敗したtickの診断:\n{:#?}",
                         technical_configuration(context),
-                        result.reason,
+                        super::super::game_ui_result_reason_label(result.reason),
                         result.failure
                     ),
                 );
@@ -71,7 +71,7 @@ pub(super) fn result(
     for (id, label, command, enabled) in [
         (
             "game-result-replay",
-            "Replayを見る",
+            "リプレイを見る",
             SessionCommand::EnterReplay {},
             context.platform.replay_available && context.record.is_some(),
         ),
@@ -89,7 +89,7 @@ pub(super) fn result(
         ),
         (
             "game-result-title",
-            "Titleへ戻る",
+            TITLE_RETURN_LABEL,
             SessionCommand::ReturnToTitle {},
             true,
         ),

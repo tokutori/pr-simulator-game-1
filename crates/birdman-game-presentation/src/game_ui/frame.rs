@@ -100,14 +100,10 @@ pub fn game_ui_frame(
             }
             GameUiControlContent::Button { action, .. } if phase == SessionPhase::Replay => {
                 let label = match action {
-                    GameUiAction::ToggleReplayPlaying {} => {
-                        if clock.ok_or(GameUiError::ActionUnavailable)?.is_playing() {
-                            "Pause"
-                        } else {
-                            "Play"
-                        }
-                        .to_owned()
-                    }
+                    GameUiAction::ToggleReplayPlaying {} => view::replay_playing_label(
+                        clock.ok_or(GameUiError::ActionUnavailable)?.is_playing(),
+                    )
+                    .to_owned(),
                     GameUiAction::SetReplayRate { code } => {
                         let label = match code {
                             0 => "0.5×",

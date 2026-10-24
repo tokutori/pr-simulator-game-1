@@ -3059,7 +3059,7 @@ fn hud_uses_the_authoritative_telemetry_and_existing_information_cue_policy() {
 }
 
 #[test]
-fn cached_replay_rate_labels_match_fresh_view_for_all_clock_rates() {
+fn cached_replay_labels_match_fresh_view_for_clock_rate_and_playing() {
     let mut session = finalized();
     session.enter_replay().unwrap();
     let platform = platform();
@@ -3070,6 +3070,7 @@ fn cached_replay_rate_labels_match_fresh_view_for_all_clock_rates() {
     let retained = game_ui_view(&state, &context(&session, difficulty(), &platform)).unwrap();
     for code in 0..3 {
         session.set_playback_rate_code(code).unwrap();
+        session.set_playback_playing(code != 1).unwrap();
         let clock = session.playback_clock();
         let frame = game_ui_frame(
             &state,
@@ -3079,8 +3080,12 @@ fn cached_replay_rate_labels_match_fresh_view_for_all_clock_rates() {
         )
         .unwrap();
         let fresh = game_ui_view(&state, &context(&session, difficulty(), &platform)).unwrap();
-        for suffix in ["0_5", "1", "2"] {
-            let id = format!("game-replay-speed-{suffix}");
+        for id in [
+            "game-replay-speed-0_5",
+            "game-replay-speed-1",
+            "game-replay-speed-2",
+            "game-replay-play-pause",
+        ] {
             assert_eq!(
                 frame
                     .button_labels
@@ -3088,7 +3093,7 @@ fn cached_replay_rate_labels_match_fresh_view_for_all_clock_rates() {
                     .find(|button| button.id == id)
                     .unwrap()
                     .label,
-                control(&fresh, &id).label
+                control(&fresh, id).label
             );
         }
         assert_eq!(

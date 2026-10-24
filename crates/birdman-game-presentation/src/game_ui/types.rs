@@ -150,16 +150,16 @@ impl GameUiReplayCamera {
     /// Shared camera label.
     pub const fn label(self) -> &'static str {
         match self {
-            Self::Auto => "Auto",
-            Self::Pilot => "Pilot",
-            Self::Chase => "Chase",
-            Self::Orbit => "Orbit",
-            Self::Platform => "Platform",
-            Self::Shore => "Shore",
-            Self::Overhead => "Overhead",
-            Self::Side => "Side",
-            Self::Front => "Front",
-            Self::Telephoto => "Telephoto",
+            Self::Auto => "自動",
+            Self::Pilot => "操縦席",
+            Self::Chase => "追従",
+            Self::Orbit => "周回",
+            Self::Platform => "発進台",
+            Self::Shore => "湖岸",
+            Self::Overhead => "上空",
+            Self::Side => "側面",
+            Self::Front => "正面",
+            Self::Telephoto => "望遠",
         }
     }
 }

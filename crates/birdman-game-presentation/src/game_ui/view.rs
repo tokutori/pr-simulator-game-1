@@ -9,6 +9,9 @@ use birdman_game_format::{
 
 mod result;
 
+const PLAYBACK_TIME_LABEL: &str = "再生時間";
+const TITLE_RETURN_LABEL: &str = "タイトルへ戻る";
+
 /// Projects shared menu content, action admission, groups, layout and record charts.
 pub fn game_ui_view(
     state: &GameUiState,
@@ -340,7 +343,7 @@ pub fn game_ui_view(
                 let duration = record.duration_seconds().map_err(GameUiError::Record)?;
                 menu.live_status(
                     "game-attract-time",
-                    "Record time",
+                    PLAYBACK_TIME_LABEL,
                     &format!("{:.2} / {duration:.2} s", clock.time_seconds()),
                     GameUiReadoutSource::PlaybackTime,
                 );
@@ -361,7 +364,7 @@ pub fn game_ui_view(
             }
             menu.session(
                 "game-attract-return",
-                "Titleへ戻る",
+                TITLE_RETURN_LABEL,
                 SessionCommand::LeaveAttract {},
                 GameUiEmphasis::Normal,
                 true,
@@ -1182,23 +1185,23 @@ fn logs(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
     let enabled = context.platform.flight_log_available && context.record.is_some();
     menu.platform(
         "game-flight-log-csv",
-        "飛行ログ CSV",
+        "CSVを保存",
         GameUiPlatformCommand::DownloadFlightCsv {},
         enabled,
     );
     menu.platform(
         "game-flight-log-json",
-        "元記録 JSON",
+        "元のJSONを保存",
         GameUiPlatformCommand::DownloadRecordJson {},
         enabled,
     );
     let notice = if context.platform.flight_log_available {
-        "CSVには速度の差から推定した加速度を含む。JSONには飛行記録をそのまま保存する。".to_owned()
+        "CSVの加速度には速度差からの推定値を含む。".to_owned()
     } else {
         "この表示環境では飛行ログのダウンロードに対応していない。".to_owned()
     };
     menu.section("flight-log-notice", "", GameUiSectionLayout::Column);
-    menu.status("game-flight-log-notice", "ログ出力", &notice);
+    menu.status("game-flight-log-notice", "", &notice);
 }
 
 fn analysis(
@@ -1352,9 +1355,9 @@ fn replay(
         &format!(
             "表示: {}",
             match state.replay_view {
-                GameUiReplayView::Cinematic => "Cinematic",
-                GameUiReplayView::Telemetry => "Telemetry",
-                GameUiReplayView::Analysis => "Analysis",
+                GameUiReplayView::Cinematic => "映像",
+                GameUiReplayView::Telemetry => "計器",
+                GameUiReplayView::Analysis => "分析",
             }
         ),
         GameUiAction::SetReplayView { view: next },
@@ -1368,7 +1371,7 @@ fn replay(
             menu.section("replay-status", "", GameUiSectionLayout::Column);
             menu.live_status(
                 "game-replay-time",
-                "Record time",
+                PLAYBACK_TIME_LABEL,
                 &format!("{:.2} / {duration:.2} s", clock.time_seconds()),
                 GameUiReadoutSource::PlaybackTime,
             );
@@ -1376,7 +1379,7 @@ fn replay(
                 menu.section("replay-cursor", "", GameUiSectionLayout::Column);
                 menu.push(
                     "game-replay-cursor",
-                    "Replay time (s)",
+                    "再生時刻 (s)",
                     context.platform.replay_available,
                     "replay",
                     GameUiControlContent::Range {
@@ -1393,7 +1396,7 @@ fn replay(
         menu.section("replay-actions", "", GameUiSectionLayout::Row);
         menu.action(
             "game-replay-play-pause",
-            if clock.is_playing() { "Pause" } else { "Play" },
+            replay_playing_label(clock.is_playing()),
             GameUiAction::ToggleReplayPlaying {},
             context.platform.replay_available && context.presentation_available,
         );
@@ -1411,7 +1414,7 @@ fn replay(
     let camera = state.replay_camera.label();
     menu.action(
         "game-replay-camera",
-        &format!("Camera: {camera}"),
+        &format!("視点: {camera}"),
         GameUiAction::CycleReplayCamera {},
         context.platform.replay_available,
     );
@@ -1438,7 +1441,7 @@ fn replay(
     if state.technical_open {
         menu.status(
             "game-replay-technical-content",
-            "技術情報",
+            "",
             &technical_configuration(context),
         );
     }
@@ -1446,15 +1449,19 @@ fn replay(
     menu.session(
         "game-replay-return",
         if title_return {
-            "Titleへ戻る"
+            TITLE_RETURN_LABEL
         } else {
-            "Resultへ戻る"
+            "結果へ戻る"
         },
         SessionCommand::LeaveReplay {},
         GameUiEmphasis::Normal,
         true,
     );
     Ok(())
+}
+
+pub(super) fn replay_playing_label(is_playing: bool) -> &'static str {
+    if is_playing { "一時停止" } else { "再生" }
 }
 
 pub(super) fn replay_rate_label(code: u32, current: u32, label: &str) -> String {
@@ -1483,8 +1490,8 @@ fn title(scene: GameUiScene) -> &'static str {
         GameUiScene::Briefing => "発進前の確認",
         GameUiScene::Countdown => "発進準備",
         GameUiScene::Flight => "Flight",
-        GameUiScene::Result => "Flight Result",
-        GameUiScene::Replay => "Flight Replay",
+        GameUiScene::Result => "飛行結果",
+        GameUiScene::Replay => "飛行リプレイ",
     }
 }
 
