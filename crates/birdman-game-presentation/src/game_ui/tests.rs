@@ -282,15 +282,60 @@ fn screen_hud_information_profiles_fit_hd_with_overlays_and_enlarged_text() {
 
 #[test]
 fn head_hud_fits_complete_shared_rows_in_lower_band_before_using_upper_space() {
+    use crate::xr::*;
     let session = launched();
     let platform = platform();
-    let hud = game_ui_view(
-        &GameUiState::default(),
-        &context(&session, difficulty(), &platform),
-    )
-    .unwrap()
-    .hud
-    .unwrap();
+    let state = GameUiState::default();
+    let context = context(&session, difficulty(), &platform);
+    let view = game_ui_view(&state, &context).unwrap();
+    let hud = view.hud.as_ref().unwrap();
+    let frame = game_ui_frame(&state, &context, &view, view.view_revision).unwrap();
+    let HeadHudPaintReply::Ready { projection } = prepare_game_ui_head_hud(
+        &view,
+        &frame,
+        HeadHudPreparationInput {
+            view_revision: view.view_revision,
+            viewer: Box::new(crate::xr::tests::viewer(XrDepthRange::NegativeOneToOne)),
+            profile: XrHeadHudProfile::default(),
+            font: MenuFont {
+                family: "sans-serif".into(),
+                weight: 400,
+                style: MenuFontStyle::Normal,
+                generation: 0,
+            },
+            locale: "ja".into(),
+            frame_rate_label: None,
+        },
+        &mut SurfaceFontCache::default(),
+        |request, _, value| {
+            let advance = value.chars().count() as f64 * request.font_meters * 0.5;
+            Ok(MenuGlyphMetrics {
+                advance,
+                left: 0.0,
+                right: advance,
+                ascent: request.font_meters * 0.8,
+                descent: request.font_meters * 0.2,
+            })
+        },
+    ) else {
+        panic!("head HUD paint did not fit")
+    };
+    assert_eq!(
+        projection
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                SurfacePaintItem::Plot { items, .. } => Some(
+                    items
+                        .iter()
+                        .filter(|item| matches!(item, SurfacePaintItem::RoundedOutline { .. }))
+                        .count()
+                ),
+                _ => None,
+            })
+            .sum::<usize>(),
+        2
+    );
     let expected = hud
         .groups
         .iter()
@@ -304,7 +349,7 @@ fn head_hud_fits_complete_shared_rows_in_lower_band_before_using_upper_space() {
             bottom_band_m: [1.5, bottom_height],
             text_height_m: 0.025,
         };
-        let GameUiHeadHudFit::Fitted { nodes } = fit_game_ui_head_hud(&hud, space) else {
+        let GameUiHeadHudFit::Fitted { nodes } = fit_game_ui_head_hud(hud, space) else {
             panic!("complete head HUD did not fit")
         };
         assert_eq!(
@@ -326,7 +371,7 @@ fn head_hud_fits_complete_shared_rows_in_lower_band_before_using_upper_space() {
     }
     assert_eq!(
         fit_game_ui_head_hud(
-            &hud,
+            hud,
             GameUiHeadHudSpace {
                 size_m: [0.2, 2.4],
                 top_band_m: [0.05, 0.01],
@@ -353,7 +398,7 @@ fn head_hud_fits_complete_shared_rows_in_lower_band_before_using_upper_space() {
     for tiny_height in [f64::from_bits(1), f64::MIN_POSITIVE] {
         assert_eq!(
             fit_game_ui_head_hud(
-                &hud,
+                hud,
                 GameUiHeadHudSpace {
                     text_height_m: tiny_height,
                     ..valid_space
@@ -2834,10 +2879,10 @@ fn hud_uses_the_authoritative_telemetry_and_existing_information_cue_policy() {
         panic!("missing typed ADI")
     };
     assert_eq!(
-        geometry.horizon().unwrap().rotation_degrees,
+        geometry.horizon.unwrap().label_rotation_degrees,
         -telemetry.roll_rad.to_degrees()
     );
-    assert!(geometry.flight_path_y_ratio().is_some());
+    assert!(geometry.flight_path_center.is_some());
     assert_eq!(
         value,
         &format!(
@@ -2952,11 +2997,8 @@ fn hud_uses_the_authoritative_telemetry_and_existing_information_cue_policy() {
     else {
         panic!("missing flight path region")
     };
-    assert!(matches!(
-        geometry,
-        GameUiHudAdiGeometry::FlightPathOnly { .. }
-    ));
-    assert!(geometry.flight_path_y_ratio().is_some());
+    assert!(geometry.horizon.is_none());
+    assert!(geometry.flight_path_center.is_some());
     assert!(matches!(
         hud_node(&custom, "hud-angle-of-attack").content,
         GameUiHudNodeContent::LinearGauge {

@@ -426,6 +426,7 @@ npm run measure:web-auto -- http://127.0.0.1:4202/pr-simulator-game-1/ target/we
 - `--allow-dirty`は基準HEAD・repository全体の`source.patch`・差分SHA-256を保存する。新規sourceはindexへ認識させ、検査前後のHEAD・差分・untracked集合・WASM hashを照合する。出力先はrepository外またはignored directoryを使用する。
 - 共有波・天空・機体・座標・clip・実測文字の数値契約はRustの担当moduleで検査する。WebXRのengine境界は実WebXRManagerと集約ownerの代表結合試験で検査し、本番の内部ownerや描画producerへCUI専用操作を追加しない。
 - ScreenはUI倍率適用後1280×720以上を検査対象とし、1920×1080以上を推奨する。HUDは下端の透明面として表示し、前方中央の空きとVRの両眼可読性を各担当の数値・実機受入で確認する。
+- ADIの線分・pitch/roll・飛行経路円は共有完成幾何の数値代表と各adapterへの転写で検査する。Nativeの文字glyphは矩形clipを使うため、Web SVGの丸角clipとの境界付近の表示差は実描画受入で確認する。
 
 ### Autoのsource窓と性能
 

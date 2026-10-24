@@ -101,6 +101,19 @@ pub enum SurfacePaintItem {
         /// Optional left-to-right gradient.
         gradient: Option<[String; 2]>,
     },
+    /// Rounded rectangular outline; a square with half-width radius draws a circle.
+    RoundedOutline {
+        /// Outline centre-line bounds in surface metres.
+        bounds: MenuRect,
+        /// Corner radius in surface metres.
+        radius: f64,
+        /// Stroke colour.
+        color: String,
+        /// Stroke width in texture pixels.
+        width_px: f64,
+        /// Stroke opacity.
+        opacity: f64,
+    },
     /// Measured line with its resolved alphabetic baseline.
     Text {
         /// Visible line content.

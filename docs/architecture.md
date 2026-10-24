@@ -174,7 +174,7 @@ GameUiView / GameUiFrame → platform renderer → DOM / VR panel / Bevy entity
 - controlは意味・操作・sectionを持ち、配置は各surfaceの実測寸法から解決する。ScreenはDOM/Bevyのflow、空間Menuは共有Rustの文字計測・配置結果を利用する。
 - section見出し、control順序、chart legendのsolid色・gradientを各rendererへ転送する。
 - 動的readoutは型付きproviderを用いる。
-- HUDは順序付きgroupとText・Attitude・HeadingTape・Direction・LinearGauge等のnodeを持ち、adapterはkindを網羅的に投影する。
+- HUDは順序付きgroupとText・Attitude・HeadingTape・Direction・LinearGauge等のnodeを持ち、adapterはkindを網羅的に投影する。ADIは固定logical canvasの完成目盛線分・文字anchor・丸角clip・機体記号・飛行経路円を共有Rustが確定し、Screen・Native・Head HUDは同じ幾何を各描画領域へ縦横同率で拡縮して配置する。
 - IDは差分追跡に用い、計器項目の個別再実装に用いない。
 
 - chartの軸、series、segment、風、marker、cursorはRustのrecord queryから導出する。生成途中の記録座標はpresentation内部へ閉じ、公開View/Frameは論理pxへ投影した点・参照線・矢印線分を返す。静的geometryとシーク時のcursorは同じ投影を使う。

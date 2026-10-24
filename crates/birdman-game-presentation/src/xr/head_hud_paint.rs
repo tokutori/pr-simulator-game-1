@@ -269,20 +269,19 @@ where
         anchor_x: f64,
         baseline: f64,
         color: &str,
+        rotation_degrees: f64,
     ) {
+        let angle = rotation_degrees.to_radians();
+        let position = |across: f64, down: f64| Vector3 {
+            x: anchor_x + across * angle.cos() - down * angle.sin() - self.size.width / 2.0,
+            y: self.size.height / 2.0 - (baseline + across * angle.sin() + down * angle.cos()),
+            z: 0.0,
+        };
         if !line.value.trim().is_empty() {
-            for edge in [anchor_x - line.left_meters, anchor_x + line.right_meters] {
+            for edge in [-line.left_meters, line.right_meters] {
                 self.ink.push(XrInkSegment {
-                    start: Vector3 {
-                        x: edge - self.size.width / 2.0,
-                        y: self.size.height / 2.0 - (baseline - line.ascent_meters),
-                        z: 0.0,
-                    },
-                    end: Vector3 {
-                        x: edge - self.size.width / 2.0,
-                        y: self.size.height / 2.0 - (baseline + line.descent_meters),
-                        z: 0.0,
-                    },
+                    start: position(edge, -line.ascent_meters),
+                    end: position(edge, line.descent_meters),
                 });
             }
         }
@@ -295,7 +294,7 @@ where
                 x: anchor_x,
                 y: baseline,
             },
-            rotation_degrees: 0.0,
+            rotation_degrees,
             color: color.into(),
             opacity: self.input.profile.foreground_alpha,
         });
@@ -356,7 +355,7 @@ where
                 + index as f64 * line_height
                 + line_height / 2.0
                 + (line.ascent_meters - line.descent_meters) / 2.0;
-            self.paint_text(&mut items, line, anchor_x, baseline, &text_color);
+            self.paint_text(&mut items, line, anchor_x, baseline, &text_color, 0.0);
         }
         let instrument = MenuRect {
             x: bounds.x + padding,
@@ -383,35 +382,51 @@ where
         let line_height = self.font * 1.5;
         match &node.content {
             GameUiHudNodeContent::Attitude { geometry, .. } => {
-                if let Some(horizon) = geometry.horizon() {
-                    let angle = horizon.rotation_degrees.to_radians();
+                if let Some(horizon) = geometry.horizon {
+                    let angle = horizon.label_rotation_degrees.to_radians();
+                    let scale = (instrument.width / geometry.canvas_size[0])
+                        .min(instrument.height / geometry.canvas_size[1]);
+                    let origin = [
+                        instrument.x + (instrument.width - geometry.canvas_size[0] * scale) / 2.0,
+                        instrument.y + (instrument.height - geometry.canvas_size[1] * scale) / 2.0,
+                    ];
                     for tick in &horizon.pitch_ticks {
-                        let Some(value) = tick.label_degrees else {
+                        let (Some(value), Some(label_anchor)) =
+                            (tick.label_degrees, tick.label_anchor)
+                        else {
                             continue;
                         };
                         let line = self.label(&node.id, value.to_string())?;
-                        let across = tick.half_width_ratio * instrument.width + self.font * 0.7;
-                        let down =
-                            (horizon.pitch_offset_ratio + tick.offset_ratio) * instrument.height;
-                        let anchor_x = card.x + card.width / 2.0 + angle.cos() * across
-                            - angle.sin() * down
-                            - line.advance_meters / 2.0;
-                        let baseline = instrument.y
-                            + instrument.height / 2.0
-                            + angle.sin() * across
-                            + angle.cos() * down
-                            + (line.ascent_meters - line.descent_meters) / 2.0;
-                        if anchor_x - line.left_meters >= card.x + padding
-                            && anchor_x + line.right_meters <= card.x + card.width - padding
-                            && baseline - line.ascent_meters >= instrument.y
-                            && baseline + line.descent_meters <= instrument.y + instrument.height
-                        {
+                        let anchor_x = origin[0] + label_anchor.x * scale
+                            - angle.cos() * line.advance_meters / 2.0;
+                        let baseline = origin[1] + label_anchor.y * scale
+                            - angle.sin() * line.advance_meters / 2.0;
+                        let inside =
+                            [-line.left_meters, line.right_meters]
+                                .into_iter()
+                                .all(|across| {
+                                    [-line.ascent_meters, line.descent_meters].into_iter().all(
+                                        |down| {
+                                            let position_x = anchor_x + across * angle.cos()
+                                                - down * angle.sin();
+                                            let position_y = baseline
+                                                + across * angle.sin()
+                                                + down * angle.cos();
+                                            position_x >= card.x + padding
+                                                && position_x <= card.x + card.width - padding
+                                                && position_y >= instrument.y
+                                                && position_y <= instrument.y + instrument.height
+                                        },
+                                    )
+                                });
+                        if inside {
                             self.paint_text(
                                 items,
                                 &line,
                                 anchor_x,
                                 baseline,
                                 &self.theme.text.clone(),
+                                horizon.label_rotation_degrees,
                             );
                         }
                     }
@@ -472,7 +487,14 @@ where
         {
             return Err(MenuLayoutFailure::InvalidTextMetrics);
         }
-        self.paint_text(items, &line, anchor_x, baseline, &self.theme.text.clone());
+        self.paint_text(
+            items,
+            &line,
+            anchor_x,
+            baseline,
+            &self.theme.text.clone(),
+            0.0,
+        );
         Ok(())
     }
 
@@ -492,22 +514,6 @@ where
         });
     }
 
-    fn flight_path(&self, items: &mut Vec<SurfacePaintItem>, center_x: f64, marker_y: f64) {
-        let radius = self.font * 0.35;
-        self.line(
-            items,
-            [center_x - radius, marker_y],
-            [center_x, marker_y - radius],
-            "#7df4c5",
-        );
-        self.line(
-            items,
-            [center_x, marker_y - radius],
-            [center_x + radius, marker_y],
-            "#7df4c5",
-        );
-    }
-
     fn instrument(
         &self,
         content: &GameUiHudNodeContent,
@@ -521,39 +527,63 @@ where
         match content {
             GameUiHudNodeContent::Text { .. } => {}
             GameUiHudNodeContent::Attitude { geometry, .. } => {
-                if let Some(horizon) = geometry.horizon() {
-                    let angle = horizon.rotation_degrees.to_radians();
-                    let length = (bounds.width * 0.43).min(bounds.height * 0.5);
+                let scale = (bounds.width / geometry.canvas_size[0])
+                    .min(bounds.height / geometry.canvas_size[1]);
+                let origin = [
+                    bounds.x + (bounds.width - geometry.canvas_size[0] * scale) / 2.0,
+                    bounds.y + (bounds.height - geometry.canvas_size[1] * scale) / 2.0,
+                ];
+                let point = |source: [f64; 2]| {
+                    [origin[0] + source[0] * scale, origin[1] + source[1] * scale]
+                };
+                if let Some(horizon) = geometry.horizon {
                     for tick in &horizon.pitch_ticks {
-                        let offset =
-                            (horizon.pitch_offset_ratio + tick.offset_ratio) * bounds.height;
-                        let [center_x, center_y] = [
-                            center_x - angle.sin() * offset,
-                            center_y + angle.cos() * offset,
-                        ];
-                        let half = tick.half_width_ratio * bounds.width;
-                        self.line(
-                            items,
-                            [center_x - angle.cos() * half, center_y - angle.sin() * half],
-                            [center_x + angle.cos() * half, center_y + angle.sin() * half],
-                            &self.theme.text,
-                        );
+                        if let Some([start, end]) = tick.segment {
+                            self.line(
+                                items,
+                                point([start.x, start.y]),
+                                point([end.x, end.y]),
+                                &self.theme.text,
+                            );
+                        }
                     }
+                }
+                for [start, end] in geometry.aircraft_segments {
                     self.line(
                         items,
-                        [center_x - length * 0.45, center_y],
-                        [center_x + length * 0.45, center_y],
-                        &self.theme.focus_outline,
-                    );
-                    self.line(
-                        items,
-                        [center_x, center_y - self.font * 0.25],
-                        [center_x, center_y + self.font * 0.25],
+                        point([start.x, start.y]),
+                        point([end.x, end.y]),
                         &self.theme.focus_outline,
                     );
                 }
-                if let Some(ratio) = geometry.flight_path_y_ratio() {
-                    self.flight_path(items, center_x, bounds.y + ratio * bounds.height);
+                let clip = geometry.clip;
+                items.push(SurfacePaintItem::RoundedOutline {
+                    bounds: MenuRect {
+                        x: origin[0] + clip.x * scale,
+                        y: origin[1] + clip.y * scale,
+                        width: clip.width * scale,
+                        height: clip.height * scale,
+                    },
+                    radius: geometry.clip_radius * scale,
+                    color: self.theme.text.clone(),
+                    width_px: self.stroke_pixels,
+                    opacity: self.input.profile.foreground_alpha,
+                });
+                if let Some(center) = geometry.flight_path_center {
+                    let radius = geometry.flight_path_radius * scale;
+                    let center = point([center.x, center.y]);
+                    items.push(SurfacePaintItem::RoundedOutline {
+                        bounds: MenuRect {
+                            x: center[0] - radius,
+                            y: center[1] - radius,
+                            width: radius * 2.0,
+                            height: radius * 2.0,
+                        },
+                        radius,
+                        color: "#7df4c5".into(),
+                        width_px: self.stroke_pixels,
+                        opacity: self.input.profile.foreground_alpha,
+                    });
                 }
             }
             GameUiHudNodeContent::HeadingTape { ticks, .. } => {

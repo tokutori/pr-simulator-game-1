@@ -219,18 +219,18 @@ pub(super) fn game_ui_hud(
     if let Some(adi) = geometry.adi {
         instruments.push(hud_node(
             "hud-attitude",
-            if adi.horizon().is_some() {
+            if adi.horizon.is_some() {
                 ""
             } else {
                 "飛行経路"
             },
             GameUiHudNodeContent::Attitude {
-                value: if adi.horizon().is_some() {
+                value: if adi.horizon.is_some() {
                     attitude_text
                 } else {
                     path_angle.map_or_else(String::new, |angle| format!("{angle:.1}°"))
                 },
-                geometry: adi,
+                geometry: Box::new(adi),
             },
         ));
     }
@@ -308,31 +308,71 @@ fn hud_geometry(
     heading: Option<f64>,
     angle_of_attack: Option<f64>,
 ) -> GameUiHudGeometry {
-    let horizon = attitude.map(|attitude| GameUiHudAttitudeGeometry {
-        rotation_degrees: -attitude.roll_degrees,
-        pitch_offset_ratio: (attitude.pitch_degrees * 2.2).clamp(-55.0, 55.0) / 180.0,
-        pitch_ticks: [-30_i32, -20, -10, 0, 10, 20, 30].map(|pitch| GameUiHudPitchTick {
-            offset_ratio: -f64::from(pitch) * 2.2 / 180.0,
-            half_width_ratio: if pitch == 0 {
-                94.0
-            } else if pitch.abs() % 20 == 0 {
-                27.0
-            } else {
-                17.0
-            } / 240.0,
-            label_degrees: (pitch.abs() == 20).then_some(pitch.unsigned_abs()),
-        }),
-    });
-    let flight_path_y_ratio = flight_path.map(|angle| 0.5 - angle.clamp(-30.0, 30.0) * 2.2 / 180.0);
-    GameUiHudGeometry {
-        adi: match (horizon, flight_path_y_ratio) {
-            (Some(horizon), flight_path_y_ratio) => Some(GameUiHudAdiGeometry::Attitude {
-                horizon,
-                flight_path_y_ratio,
+    let clip = GameUiRect {
+        x: 26.0,
+        y: 18.0,
+        width: 188.0,
+        height: 144.0,
+    };
+    let clip_radius = clip.height / 2.0;
+    let horizon = attitude.map(|attitude| {
+        let rotation = -attitude.roll_degrees.to_radians();
+        let (rotation_sin, rotation_cos) = rotation.sin_cos();
+        let pitch_offset = (attitude.pitch_degrees * 2.2).clamp(-55.0, 55.0);
+        let rotate = |across: f64, down: f64| GameUiChartPoint {
+            x: 120.0 + rotation_cos * across - rotation_sin * down,
+            y: 90.0 + rotation_sin * across + rotation_cos * down,
+        };
+        GameUiHudAttitudeGeometry {
+            label_rotation_degrees: -attitude.roll_degrees,
+            pitch_ticks: [-30_i32, -20, -10, 0, 10, 20, 30].map(|pitch| {
+                let offset = pitch_offset - f64::from(pitch) * 2.2;
+                let half_width = if pitch == 0 {
+                    94.0
+                } else if pitch.abs() % 20 == 0 {
+                    27.0
+                } else {
+                    17.0
+                };
+                GameUiHudPitchTick {
+                    segment: clip_adi_segment(
+                        [rotate(-half_width, offset), rotate(half_width, offset)],
+                        clip,
+                    ),
+                    label_anchor: (pitch.abs() == 20)
+                        .then(|| rotate(half_width + 18.0, offset + 4.0)),
+                    label_degrees: (pitch.abs() == 20).then_some(pitch.unsigned_abs()),
+                }
             }),
-            (None, Some(y_ratio)) => Some(GameUiHudAdiGeometry::FlightPathOnly { y_ratio }),
-            (None, None) => None,
-        },
+        }
+    });
+    let flight_path_center = flight_path.map(|angle| GameUiChartPoint {
+        x: 120.0,
+        y: 90.0 - angle.clamp(-30.0, 30.0) * 2.2,
+    });
+    GameUiHudGeometry {
+        adi: (horizon.is_some() || flight_path_center.is_some()).then_some(GameUiHudAdiGeometry {
+            canvas_size: [240.0, 180.0],
+            clip,
+            clip_radius,
+            horizon,
+            aircraft_segments: [
+                [[72.0, 91.0], [108.0, 91.0]],
+                [[108.0, 91.0], [113.0, 82.0]],
+                [[113.0, 82.0], [127.0, 82.0]],
+                [[127.0, 82.0], [132.0, 91.0]],
+                [[132.0, 91.0], [168.0, 91.0]],
+                [[120.0, 86.0], [120.0, 96.0]],
+            ]
+            .map(|segment| {
+                segment.map(|[horizontal, vertical]| GameUiChartPoint {
+                    x: horizontal,
+                    y: vertical,
+                })
+            }),
+            flight_path_center,
+            flight_path_radius: 5.0,
+        }),
         heading_ticks: heading.map_or_else(Vec::new, |heading| {
             (-6..=6)
                 .map(|index| {
@@ -360,6 +400,65 @@ fn hud_geometry(
         angle_of_attack_ratio: angle_of_attack
             .map(|angle| (angle.clamp(-10.0, 20.0) + 10.0) / 30.0),
     }
+}
+
+fn clip_adi_segment(
+    segment: [GameUiChartPoint; 2],
+    clip: GameUiRect,
+) -> Option<[GameUiChartPoint; 2]> {
+    let [start, end] = segment.map(|point| [point.x, point.y]);
+    let delta = [end[0] - start[0], end[1] - start[1]];
+    let radius = clip.height / 2.0;
+    let length_squared = delta[0] * delta[0] + delta[1] * delta[1];
+    if length_squared == 0.0 {
+        let nearest_x = start[0].clamp(clip.x + radius, clip.x + clip.width - radius);
+        return ((start[0] - nearest_x).hypot(start[1] - clip.y - radius) <= radius)
+            .then_some(segment);
+    }
+    let mut visible: Option<[f64; 2]> = None;
+    let mut include = |range: [f64; 2]| {
+        let entry = range[0].max(0.0);
+        let exit = range[1].min(1.0);
+        if entry <= exit {
+            visible = Some(visible.map_or([entry, exit], |previous| {
+                [previous[0].min(entry), previous[1].max(exit)]
+            }));
+        }
+    };
+    let mut rectangle = [0.0_f64, 1.0_f64];
+    let mut intersects_rectangle = true;
+    for (axis, limits) in [
+        (0, [clip.x + radius, clip.x + clip.width - radius]),
+        (1, [clip.y, clip.y + clip.height]),
+    ] {
+        if delta[axis] == 0.0 {
+            intersects_rectangle &= (limits[0]..=limits[1]).contains(&start[axis]);
+        } else {
+            let boundaries = limits.map(|edge| (edge - start[axis]) / delta[axis]);
+            rectangle[0] = rectangle[0].max(boundaries[0].min(boundaries[1]));
+            rectangle[1] = rectangle[1].min(boundaries[0].max(boundaries[1]));
+        }
+    }
+    if intersects_rectangle {
+        include(rectangle);
+    }
+    for center_x in [clip.x + radius, clip.x + clip.width - radius] {
+        let offset = [start[0] - center_x, start[1] - clip.y - radius];
+        let linear = offset[0] * delta[0] + offset[1] * delta[1];
+        let constant = offset[0] * offset[0] + offset[1] * offset[1] - radius * radius;
+        let discriminant = linear * linear - length_squared * constant;
+        if discriminant >= 0.0 {
+            let root = discriminant.sqrt();
+            include([
+                (-linear - root) / length_squared,
+                (-linear + root) / length_squared,
+            ]);
+        }
+    }
+    Some(visible?.map(|progress| GameUiChartPoint {
+        x: start[0] + delta[0] * progress,
+        y: start[1] + delta[1] * progress,
+    }))
 }
 
 fn rounded_bearing(value: f64) -> u32 {
@@ -712,16 +811,16 @@ mod geometry_tests {
             Some(5.0),
         );
         let adi = geometry.adi.unwrap();
-        assert_eq!(adi.horizon().unwrap().rotation_degrees, -11.0);
-        assert_eq!(adi.horizon().unwrap().pitch_offset_ratio, 4.4 / 180.0);
-        assert!((adi.flight_path_y_ratio().unwrap() - (90.0 + 6.6) / 180.0).abs() < 1.0e-12);
+        assert_eq!(adi.horizon.unwrap().label_rotation_degrees, -11.0);
+        assert_eq!(adi.canvas_size, [240.0, 180.0]);
+        assert!((adi.flight_path_center.unwrap().y - 96.6).abs() < 1.0e-12);
         assert_eq!(geometry.angle_of_attack_ratio, Some(0.5));
         assert_eq!(geometry.heading_ticks.len(), 13);
         assert!(geometry.heading_ticks[0].major && geometry.heading_ticks[0].label.is_empty());
         assert_eq!(geometry.heading_ticks[6].label, "N");
         assert!(geometry.heading_ticks[12].major && geometry.heading_ticks[12].label.is_empty());
         assert_eq!(
-            adi.horizon()
+            adi.horizon
                 .unwrap()
                 .pitch_ticks
                 .iter()
@@ -743,11 +842,51 @@ mod geometry_tests {
                 Some(angle),
             );
             assert_eq!(
-                projected.adi.unwrap().horizon().unwrap().pitch_offset_ratio,
-                angle.signum() * 55.0 / 180.0
+                projected.adi.unwrap().horizon.unwrap().pitch_ticks[1]
+                    .label_anchor
+                    .unwrap()
+                    .y,
+                138.0 + angle.signum() * 55.0
             );
-            assert!((projected.adi.unwrap().flight_path_y_ratio().unwrap() - path).abs() < 1.0e-12);
+            assert!(
+                (projected.adi.unwrap().flight_path_center.unwrap().y / 180.0 - path).abs()
+                    < 1.0e-12
+            );
             assert_eq!(projected.angle_of_attack_ratio, Some(ratio));
+        }
+        let attitude = |roll_degrees, pitch_degrees| {
+            hud_geometry(
+                Some(GameUiHudAttitude {
+                    roll_degrees,
+                    pitch_degrees,
+                }),
+                None,
+                None,
+                None,
+            )
+            .adi
+            .unwrap()
+        };
+        let level = attitude(0.0, 0.0);
+        assert_eq!(
+            level.horizon.unwrap().pitch_ticks[3].segment,
+            Some([
+                GameUiChartPoint { x: 26.0, y: 90.0 },
+                GameUiChartPoint { x: 214.0, y: 90.0 }
+            ])
+        );
+        let pitched = attitude(0.0, 10.0);
+        let segment = pitched.horizon.unwrap().pitch_ticks[3].segment.unwrap();
+        assert_eq!(segment[0].y, 112.0);
+        assert_eq!(segment[1].y, 112.0);
+        let rolled = attitude(90.0, 0.0);
+        let segment = rolled.horizon.unwrap().pitch_ticks[3].segment.unwrap();
+        for (actual, expected) in segment.into_iter().zip([
+            GameUiChartPoint { x: 120.0, y: 162.0 },
+            GameUiChartPoint { x: 120.0, y: 18.0 },
+        ]) {
+            assert!((actual.x - expected.x).abs() < 1.0e-12);
+            assert!((actual.y - expected.y).abs() < 1.0e-12);
         }
     }
 
@@ -789,11 +928,8 @@ mod geometry_tests {
     #[test]
     fn flight_path_only_retains_the_adi_region_without_an_attitude_layer() {
         let geometry = hud_geometry(None, Some(-3.0), None, None);
-        let Some(GameUiHudAdiGeometry::FlightPathOnly { y_ratio }) = geometry.adi else {
-            panic!("flight path cue requires its visible ADI region");
-        };
-        assert!((y_ratio - (90.0 + 6.6) / 180.0).abs() < 1.0e-12);
-        assert_eq!(geometry.adi.unwrap().horizon(), None);
-        assert_eq!(geometry.adi.unwrap().flight_path_y_ratio(), Some(y_ratio));
+        let adi = geometry.adi.unwrap();
+        assert!((adi.flight_path_center.unwrap().y - 96.6).abs() < 1.0e-12);
+        assert_eq!(geometry.adi.unwrap().horizon, None);
     }
 }

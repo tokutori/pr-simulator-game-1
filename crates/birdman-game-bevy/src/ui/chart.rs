@@ -345,11 +345,18 @@ fn chart_line(world: &mut World, parent: Entity, start: Vec2, end: Vec2, ink: Co
     let entity = world
         .spawn((ChildOf(parent), Node::default(), BackgroundColor(ink)))
         .id();
-    set_chart_line(world, entity, start, end, ink);
+    set_chart_line(world, entity, start, end, ink, 1.5);
     entity
 }
 
-fn set_chart_line(world: &mut World, entity: Entity, start: Vec2, end: Vec2, ink: Color) {
+pub(super) fn set_chart_line(
+    world: &mut World,
+    entity: Entity,
+    start: Vec2,
+    end: Vec2,
+    ink: Color,
+    width: f32,
+) {
     let difference = end - start;
     let midpoint = (start + end) * 0.5;
     retained_node(world, entity).set_if_neq(Node {
@@ -360,9 +367,9 @@ fn set_chart_line(world: &mut World, entity: Entity, start: Vec2, end: Vec2, ink
         },
         position_type: PositionType::Absolute,
         left: px(midpoint.x - difference.length() * 0.5),
-        top: px(midpoint.y - 0.75),
+        top: px(midpoint.y - width * 0.5),
         width: px(difference.length()),
-        height: px(1.5),
+        height: px(width),
         ..default()
     });
     retained_ui_transform(world, entity).set_if_neq(UiTransform::from_rotation(Rot2::radians(
@@ -393,7 +400,7 @@ pub(super) fn project_chart_cursor(
             }),
         )
     });
-    set_chart_line(world, retained.cursor, start, end, Color::WHITE);
+    set_chart_line(world, retained.cursor, start, end, Color::WHITE, 1.5);
     while retained.points.len() < cursor.cursor_points.len() {
         retained.points.push(
             world
@@ -438,11 +445,11 @@ pub(super) fn project_chart_cursor(
                 .get(index)
                 .copied()
                 .unwrap_or([GameUiChartPoint { x: 0.0, y: 0.0 }; 2]);
-            set_chart_line(world, *entity, position(start), position(end), ink);
+            set_chart_line(world, *entity, position(start), position(end), ink, 1.5);
         }
     } else {
         for entity in retained.wind {
-            set_chart_line(world, entity, Vec2::ZERO, Vec2::ZERO, Color::WHITE);
+            set_chart_line(world, entity, Vec2::ZERO, Vec2::ZERO, Color::WHITE, 1.5);
         }
     }
     world.entity_mut(parent).insert(retained);

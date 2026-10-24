@@ -88,23 +88,22 @@ function widget(node: GameUiHudNode, hud: GameUiHud, theme: GameUiTheme, clipPre
     case "text": return [];
     case "attitude": {
       const geometry = content.geometry;
-      const horizon = geometry.kind === "attitude" ? geometry.horizon : null;
-      const flightPath = geometry.kind === "attitude" ? geometry.flight_path_y_ratio : geometry.y_ratio;
+      const horizon = geometry.horizon;
       const clipId = `${clipPrefix}-${encodeURIComponent(node.id)}`;
-      const shapes: VNode[] = [h("defs", [h("clipPath", { attrs: { id: clipId } }, [shape("rect", { x: 26, y: 18, width: 188, height: 144, rx: 72 })])])];
-      if (horizon !== null) shapes.push(h("g", { attrs: { "clip-path": `url(#${clipId})` } }, [
-        h("g", { attrs: { transform: `rotate(${String(horizon.rotation_degrees)} 120 90) translate(0 ${String(90 + horizon.pitch_offset_ratio * 180)})` } }, [
-          ...horizon.pitch_ticks.flatMap((tick) => {
-            const half = tick.half_width_ratio * 240;
-            return [shape("path", { d: `M ${String(120 - half)} ${String(tick.offset_ratio * 180)} H ${String(120 + half)}`, stroke: theme.text, "stroke-width": 2 }),
-              ...(tick.label_degrees === null ? [] : [shape("text", { x: 138 + half, y: tick.offset_ratio * 180 + 4, fill: theme.text, "text-anchor": "middle", "font-size": "var(--hud-instrument-font-size)" }, String(tick.label_degrees))])];
-          })
+      const clip = geometry.clip;
+      const outline = { x: clip.x, y: clip.y, width: clip.width, height: clip.height, rx: geometry.clip_radius };
+      const shapes: VNode[] = [h("defs", [h("clipPath", { attrs: { id: clipId } }, [shape("rect", outline)])])];
+      if (horizon != null) shapes.push(h("g", { attrs: { "clip-path": `url(#${clipId})` } }, [
+        ...horizon.pitch_ticks.flatMap((tick) => [
+          ...(tick.segment == null ? [] : [shape("line", { x1: tick.segment[0].x, y1: tick.segment[0].y, x2: tick.segment[1].x, y2: tick.segment[1].y, stroke: theme.text, "stroke-width": 2 })]),
+          ...(tick.label_degrees == null || tick.label_anchor == null ? [] : [shape("text", { x: tick.label_anchor.x, y: tick.label_anchor.y, transform: `rotate(${String(horizon.label_rotation_degrees)} ${String(tick.label_anchor.x)} ${String(tick.label_anchor.y)})`, fill: theme.text, "text-anchor": "middle", "font-size": "var(--hud-instrument-font-size)" }, String(tick.label_degrees))])
         ])
       ]));
-      shapes.push(shape("rect", { x: 26, y: 18, width: 188, height: 144, rx: 72, fill: "none", stroke: theme.text, "stroke-width": 3 }),
-        shape("path", { d: "M 72 91 H 108 L 113 82 H 127 L 132 91 H 168 M 120 86 V 96", fill: "none", stroke: theme.focus_outline, "stroke-width": 5 }));
-      if (flightPath != null) shapes.push(shape("circle", { cx: 120, cy: flightPath * 180, r: 5, fill: "none", stroke: "#7df4c5", "stroke-width": 3 }));
-      return [gauge(node, hud, [240, 180], shapes)];
+      const aircraft = geometry.aircraft_segments.map(([start, end], index, segments) => `${index > 0 && segments[index - 1]?.[1].x === start.x && segments[index - 1]?.[1].y === start.y ? "" : `M ${String(start.x)} ${String(start.y)} `}L ${String(end.x)} ${String(end.y)}`).join(" ");
+      shapes.push(shape("rect", { ...outline, fill: "none", stroke: theme.text, "stroke-width": 3 }),
+        shape("path", { d: aircraft, fill: "none", stroke: theme.focus_outline, "stroke-width": 5 }));
+      if (geometry.flight_path_center != null) shapes.push(shape("circle", { cx: geometry.flight_path_center.x, cy: geometry.flight_path_center.y, r: geometry.flight_path_radius, fill: "none", stroke: "#7df4c5", "stroke-width": 3 }));
+      return [gauge(node, hud, geometry.canvas_size, shapes)];
     }
     case "heading_tape": return [gauge(node, hud, [220, 50], [
       ...content.ticks.map((tick, index) => h("g", { key: index }, [

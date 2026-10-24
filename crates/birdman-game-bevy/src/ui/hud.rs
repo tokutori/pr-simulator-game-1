@@ -2,7 +2,7 @@ use super::super::NativeFont;
 use super::{color, retained_node, retained_ui_transform, set_text, spawn_text};
 use bevy::{picking::Pickable, prelude::*};
 use birdman_game_presentation::game_ui::{
-    GameUiHud, GameUiHudNode, GameUiHudNodeContent, GameUiHudTone, GameUiTheme,
+    GameUiChartPoint, GameUiHud, GameUiHudNode, GameUiHudNodeContent, GameUiHudTone, GameUiTheme,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -24,8 +24,10 @@ enum HudWidget {
     Attitude {
         surface: Entity,
         horizon: Entity,
+        outline: Entity,
+        aircraft: [Entity; 6],
         marker: Entity,
-        ticks: [(Entity, Entity); 7],
+        ticks: Box<[(Entity, Entity, Entity); 7]>,
     },
     HeadingTape {
         surface: Entity,
@@ -153,7 +155,15 @@ pub(super) fn project_hud(
                 .get_mut::<TextColor>(retained.value)
                 .expect("HUD text color exists")
                 .set_if_neq(TextColor(tone_color));
-            project_widget(world, retained, node, hud, &font, ink)?;
+            project_widget(
+                world,
+                retained,
+                node,
+                hud,
+                &font,
+                ink,
+                color(&theme.focus_outline, 1.0)?,
+            )?;
         }
     }
     retained.previous = Some(hud.clone());
@@ -277,10 +287,9 @@ fn project_structure(
                 .set_if_neq(FontSize::Px(layout.font_size_px as f32));
             if let Some(surface) = retained_node.widget.surface() {
                 let surface_width = match retained_node.widget {
-                    HudWidget::Attitude { .. } => px(node.instrument_height_em
-                        * layout.font_size_px
-                        * layout.attitude_size_px[0]
-                        / layout.attitude_size_px[1]),
+                    HudWidget::Attitude { .. } => {
+                        px(node.bounds.width * layout.width_px - layout.padding_px[0] * 2.0)
+                    }
                     HudWidget::Direction { .. } => {
                         px(node.instrument_height_em * layout.font_size_px)
                     }
@@ -362,38 +371,27 @@ fn spawn_node(
                 surface,
                 Node {
                     position_type: PositionType::Absolute,
-                    width: percent(200),
-                    height: percent(200),
-                    left: percent(-50),
-                    top: percent(-50),
                     ..default()
                 },
                 Color::NONE,
             );
-            let ticks = std::array::from_fn(|_| {
+            let ticks = Box::new(std::array::from_fn(|_| {
+                let anchor = shape(world, horizon, Node::default(), Color::NONE);
                 (
                     shape(world, horizon, Node::default(), Color::WHITE),
-                    text(world, horizon, font, 12.0),
+                    anchor,
+                    text(world, anchor, font, 12.0),
                 )
-            });
-            for (left, width) in [(30.0, 15.0), (55.0, 15.0)] {
-                shape(
-                    world,
-                    surface,
-                    Node {
-                        position_type: PositionType::Absolute,
-                        left: percent(left),
-                        top: percent(50),
-                        width: percent(width),
-                        height: px(2),
-                        ..default()
-                    },
-                    Color::srgb(1.0, 0.85, 0.25),
-                );
-            }
+            }));
+            let outline = shape(world, horizon, Node::default(), Color::NONE);
+            world
+                .entity_mut(outline)
+                .insert(BorderColor::all(Color::WHITE));
+            let aircraft =
+                std::array::from_fn(|_| shape(world, horizon, Node::default(), Color::WHITE));
             let marker = shape(
                 world,
-                surface,
+                horizon,
                 Node {
                     position_type: PositionType::Absolute,
                     display: Display::None,
@@ -414,6 +412,8 @@ fn spawn_node(
             HudWidget::Attitude {
                 surface,
                 horizon,
+                outline,
+                aircraft,
                 marker,
                 ticks,
             }
@@ -588,6 +588,22 @@ fn spawn_node(
     }
 }
 
+fn adi_line(
+    world: &mut World,
+    entity: Entity,
+    segment: Option<[GameUiChartPoint; 2]>,
+    width: f64,
+    ink: Color,
+) {
+    let Some([start, end]) = segment else {
+        retained_node(world, entity).display = Display::None;
+        return;
+    };
+    let start = Vec2::new(start.x as f32, start.y as f32);
+    let end = Vec2::new(end.x as f32, end.y as f32);
+    super::chart::set_chart_line(world, entity, start, end, ink, width as f32);
+}
+
 fn project_widget(
     world: &mut World,
     node: &mut HudNode,
@@ -595,6 +611,7 @@ fn project_widget(
     hud: &GameUiHud,
     font: &Handle<Font>,
     ink: Color,
+    focus: Color,
 ) -> Result<(), String> {
     match &source.content {
         GameUiHudNodeContent::Text { .. } => {}
@@ -602,56 +619,80 @@ fn project_widget(
             let HudWidget::Attitude {
                 surface,
                 horizon,
+                outline,
+                aircraft,
                 marker,
                 ticks,
-            } = node.widget
+            } = &node.widget
             else {
                 return Err("HUD widget kindが一致しない".to_owned());
             };
-            let layer = geometry.horizon();
-            let marker_ratio = geometry.flight_path_y_ratio();
+            let (surface, horizon, outline, aircraft, marker, ticks) =
+                (*surface, *horizon, *outline, *aircraft, *marker, **ticks);
+            let layer = geometry.horizon;
             let height = source.instrument_height_em * hud.layout.font_size_px;
+            let width = source.bounds.width * hud.layout.width_px - hud.layout.padding_px[0] * 2.0;
+            let scale = (width / geometry.canvas_size[0]).min(height / geometry.canvas_size[1]);
             world
                 .get_mut::<BackgroundColor>(surface)
                 .expect("ADI background exists")
                 .set_if_neq(BackgroundColor(Color::NONE));
-            retained_node(world, horizon)
-                .map_unchanged(|node| &mut node.display)
-                .set_if_neq(if layer.is_some() {
-                    Display::Flex
-                } else {
-                    Display::None
-                });
+            retained_node(world, horizon).set_if_neq(Node {
+                position_type: PositionType::Absolute,
+                width: px(geometry.canvas_size[0]),
+                height: px(geometry.canvas_size[1]),
+                left: px((width - geometry.canvas_size[0]) / 2.0),
+                top: px((height - geometry.canvas_size[1]) / 2.0),
+                ..default()
+            });
+            retained_ui_transform(world, horizon).set_if_neq(UiTransform {
+                scale: Vec2::splat(scale as f32),
+                ..default()
+            });
+            retained_node(world, outline).set_if_neq(Node {
+                position_type: PositionType::Absolute,
+                left: px(geometry.clip.x - 1.5),
+                top: px(geometry.clip.y - 1.5),
+                width: px(geometry.clip.width + 3.0),
+                height: px(geometry.clip.height + 3.0),
+                border: UiRect::all(px(3.0)),
+                border_radius: BorderRadius::all(px(geometry.clip_radius + 1.5)),
+                ..default()
+            });
+            world.entity_mut(outline).insert(BorderColor::all(ink));
+            for (entity, segment) in aircraft.into_iter().zip(geometry.aircraft_segments) {
+                adi_line(world, entity, Some(segment), 5.0, focus);
+            }
+            for (line, anchor, _) in ticks {
+                retained_node(world, line).display = Display::None;
+                retained_node(world, anchor).display = Display::None;
+            }
             if let Some(layer) = layer {
-                let offset = layer.pitch_offset_ratio * height;
-                let rotation = layer.rotation_degrees.to_radians();
-                retained_ui_transform(world, horizon).set_if_neq(UiTransform {
-                    translation: Val2::px(-offset * rotation.sin(), offset * rotation.cos()),
-                    rotation: Rot2::degrees(layer.rotation_degrees as f32),
-                    ..default()
-                });
-                for ((line, label), tick) in ticks.into_iter().zip(layer.pitch_ticks) {
-                    retained_node(world, line).set_if_neq(Node {
+                for ((line, anchor, label), tick) in ticks.into_iter().zip(layer.pitch_ticks) {
+                    adi_line(world, line, tick.segment, 2.0, ink);
+                    let label_anchor = tick
+                        .label_anchor
+                        .unwrap_or(GameUiChartPoint { x: 0.0, y: 0.0 });
+                    retained_node(world, anchor).set_if_neq(Node {
                         position_type: PositionType::Absolute,
-                        left: percent(50.0 - tick.half_width_ratio * 50.0),
-                        top: percent(50.0 + tick.offset_ratio * 50.0),
-                        width: percent(tick.half_width_ratio * 100.0),
-                        height: px(1),
-                        ..default()
-                    });
-                    retained_node(world, label).set_if_neq(Node {
-                        position_type: PositionType::Absolute,
-                        display: if tick.label_degrees.is_some() {
+                        display: if tick.label_degrees.is_some() && tick.label_anchor.is_some() {
                             Display::Flex
                         } else {
                             Display::None
                         },
-                        left: percent(50.0 + tick.half_width_ratio * 50.0),
-                        top: percent(50.0 + tick.offset_ratio * 50.0),
+                        left: px(label_anchor.x),
+                        top: px(label_anchor.y),
+                        width: px(0),
+                        height: px(0),
                         ..default()
                     });
+                    retained_ui_transform(world, anchor).set_if_neq(UiTransform::from_rotation(
+                        Rot2::degrees(layer.label_rotation_degrees as f32),
+                    ));
+                    retained_node(world, label).position_type = PositionType::Absolute;
                     retained_ui_transform(world, label)
-                        .set_if_neq(UiTransform::from_translation(Val2::percent(0, -50)));
+                        .set_if_neq(UiTransform::from_translation(Val2::percent(-50, 0)));
+                    world.entity_mut(label).insert(super::ChartTextBaseline);
                     set_text(
                         world,
                         label,
@@ -662,19 +703,29 @@ fn project_widget(
                         .get_mut::<TextFont>(label)
                         .expect("pitch label font exists")
                         .map_unchanged(|font| &mut font.font_size)
-                        .set_if_neq(FontSize::Px(hud.layout.font_size_px as f32));
+                        .set_if_neq(FontSize::Px((hud.layout.font_size_px / scale) as f32));
                 }
             }
             retained_node(world, marker)
                 .map_unchanged(|node| &mut node.display)
-                .set_if_neq(if marker_ratio.is_some() {
+                .set_if_neq(if geometry.flight_path_center.is_some() {
                     Display::Flex
                 } else {
                     Display::None
                 });
-            retained_node(world, marker)
-                .map_unchanged(|node| &mut node.top)
-                .set_if_neq(percent(marker_ratio.unwrap_or(0.5) * 100.0));
+            if let Some(center) = geometry.flight_path_center {
+                let radius = geometry.flight_path_radius;
+                retained_node(world, marker).set_if_neq(Node {
+                    position_type: PositionType::Absolute,
+                    left: px(center.x),
+                    top: px(center.y),
+                    width: px(radius * 2.0 + 3.0),
+                    height: px(radius * 2.0 + 3.0),
+                    border: UiRect::all(px(3.0)),
+                    border_radius: BorderRadius::MAX,
+                    ..default()
+                });
+            }
         }
         GameUiHudNodeContent::HeadingTape { ticks, .. } => {
             let HudWidget::HeadingTape {
@@ -814,7 +865,20 @@ mod tests {
             instrument_height_em: 4.0,
             content: GameUiHudNodeContent::Attitude {
                 value: String::new(),
-                geometry: GameUiHudAdiGeometry::FlightPathOnly { y_ratio: 0.25 },
+                geometry: Box::new(GameUiHudAdiGeometry {
+                    canvas_size: [240.0, 180.0],
+                    clip: GameUiRect {
+                        x: 26.0,
+                        y: 18.0,
+                        width: 188.0,
+                        height: 144.0,
+                    },
+                    clip_radius: 72.0,
+                    horizon: None,
+                    aircraft_segments: [[GameUiChartPoint { x: 0.0, y: 0.0 }; 2]; 6],
+                    flight_path_center: Some(GameUiChartPoint { x: 120.0, y: 45.0 }),
+                    flight_path_radius: 5.0,
+                }),
             },
         };
         let font = Handle::default();
@@ -832,7 +896,16 @@ mod tests {
             },
             groups: Vec::new(),
         };
-        project_widget(&mut world, &mut widget, &source, &hud, &font, Color::WHITE).unwrap();
+        project_widget(
+            &mut world,
+            &mut widget,
+            &source,
+            &hud,
+            &font,
+            Color::WHITE,
+            Color::WHITE,
+        )
+        .unwrap();
         let HudWidget::Attitude {
             surface,
             horizon,
@@ -846,14 +919,57 @@ mod tests {
             world.get::<BackgroundColor>(surface).unwrap().0,
             Color::NONE
         );
-        assert_eq!(world.get::<Node>(horizon).unwrap().display, Display::None);
-        assert_eq!(world.get::<Node>(marker).unwrap().top, percent(25.0));
-        source.content = GameUiHudNodeContent::Attitude {
-            value: String::new(),
-            geometry: GameUiHudAdiGeometry::FlightPathOnly { y_ratio: 0.75 },
+        assert_eq!(world.get::<Node>(horizon).unwrap().width, px(240));
+        assert_eq!(world.get::<Node>(marker).unwrap().top, px(45));
+        let GameUiHudNodeContent::Attitude { geometry, .. } = &mut source.content else {
+            unreachable!()
         };
-        project_widget(&mut world, &mut widget, &source, &hud, &font, Color::WHITE).unwrap();
-        assert_eq!(world.get::<Node>(marker).unwrap().top, percent(75.0));
+        geometry.flight_path_center = Some(GameUiChartPoint { x: 120.0, y: 135.0 });
+        project_widget(
+            &mut world,
+            &mut widget,
+            &source,
+            &hud,
+            &font,
+            Color::WHITE,
+            Color::WHITE,
+        )
+        .unwrap();
+        assert_eq!(world.get::<Node>(marker).unwrap().top, px(135));
+        let GameUiHudNodeContent::Attitude { geometry, .. } = &mut source.content else {
+            unreachable!()
+        };
+        geometry.horizon = Some(
+            birdman_game_presentation::game_ui::GameUiHudAttitudeGeometry {
+                label_rotation_degrees: 0.0,
+                pitch_ticks: std::array::from_fn(|_| {
+                    birdman_game_presentation::game_ui::GameUiHudPitchTick {
+                        segment: Some([
+                            GameUiChartPoint { x: 26.0, y: 112.0 },
+                            GameUiChartPoint { x: 214.0, y: 112.0 },
+                        ]),
+                        label_anchor: Some(GameUiChartPoint { x: 165.0, y: 116.0 }),
+                        label_degrees: Some(20),
+                    }
+                }),
+            },
+        );
+        project_widget(
+            &mut world,
+            &mut widget,
+            &source,
+            &hud,
+            &font,
+            Color::WHITE,
+            Color::WHITE,
+        )
+        .unwrap();
+        let HudWidget::Attitude { ticks, .. } = widget.widget else {
+            unreachable!()
+        };
+        assert_eq!(world.get::<Node>(ticks[3].0).unwrap().width, px(188));
+        assert_eq!(world.get::<Node>(ticks[3].0).unwrap().top, px(111));
+        assert_eq!(world.get::<Node>(ticks[3].1).unwrap().top, px(116));
         assert!(world.get_entity(surface).is_ok());
     }
 }

@@ -748,6 +748,28 @@ export type SurfacePaintItem = {
     readonly opacity: number;
 } | {
     /**
+     * Outline centre-line bounds in surface metres.
+     */
+    readonly bounds: MenuRect;
+    /**
+     * Stroke colour.
+     */
+    readonly color: string;
+    readonly kind: "rounded_outline";
+    /**
+     * Stroke opacity.
+     */
+    readonly opacity: number;
+    /**
+     * Corner radius in surface metres.
+     */
+    readonly radius: number;
+    /**
+     * Stroke width in texture pixels.
+     */
+    readonly widthPx: number;
+} | {
+    /**
      * Alphabetic baseline in surface metres.
      */
     readonly anchor: MenuPoint;
@@ -1193,26 +1215,6 @@ export type GameUiHudNodeContent = {
  * Shared text priority; mandatory resource failures always use Warning.
  */
 export type GameUiHudTone = "normal" | "muted" | "warning";
-/**
- * Visible ADI region with an attitude layer or an independent flight path cue.
- */
-export type GameUiHudAdiGeometry = {
-    /**
-     * Flight path marker position relative to the ADI height.
-     */
-    readonly flight_path_y_ratio?: number | null;
-    /**
-     * Horizon rotation and translation.
-     */
-    readonly horizon: GameUiHudAttitudeGeometry;
-    readonly kind: "attitude";
-} | {
-    readonly kind: "flight_path_only";
-    /**
-     * Flight path marker position relative to the ADI height.
-     */
-    readonly y_ratio: number;
-};
 /**
  * HUD placement roles consumed identically by all adapters.
  */
@@ -3086,15 +3088,95 @@ export interface GameUiHudNode {
     readonly label: string;
 }
 /**
- * Web-baseline horizon rotation and translation.
+ * Completed ADI drawing in its fixed logical canvas.
+ */
+export interface GameUiHudAdiGeometry {
+    /**
+     * Fixed aircraft reference segments.
+     *
+     * @minItems 6
+     * @maxItems 6
+     */
+    readonly aircraft_segments: readonly [
+        readonly [
+            GameUiChartPoint,
+            GameUiChartPoint
+        ],
+        readonly [
+            GameUiChartPoint,
+            GameUiChartPoint
+        ],
+        readonly [
+            GameUiChartPoint,
+            GameUiChartPoint
+        ],
+        readonly [
+            GameUiChartPoint,
+            GameUiChartPoint
+        ],
+        readonly [
+            GameUiChartPoint,
+            GameUiChartPoint
+        ],
+        readonly [
+            GameUiChartPoint,
+            GameUiChartPoint
+        ]
+    ];
+    /**
+     * Complete logical drawing extent.
+     *
+     * @minItems 2
+     * @maxItems 2
+     */
+    readonly canvas_size: readonly [
+        number,
+        number
+    ];
+    /**
+     * Rounded horizon clipping and outline rectangle.
+     */
+    readonly clip: GameUiRect;
+    /**
+     * Radius of the rounded clipping corners.
+     */
+    readonly clip_radius: number;
+    /**
+     * Flight-path circle centre, absent when its direction is undefined.
+     */
+    readonly flight_path_center?: GameUiChartPoint | null;
+    /**
+     * Flight-path circle radius.
+     */
+    readonly flight_path_radius: number;
+    /**
+     * Final horizon marks, absent for a flight-path-only instrument.
+     */
+    readonly horizon?: GameUiHudAttitudeGeometry | null;
+}
+/**
+ * Two-dimensional display point in logical pixels.
+ */
+export interface GameUiChartPoint {
+    /**
+     * Horizontal component.
+     */
+    readonly x: number;
+    /**
+     * Vertical component.
+     */
+    readonly y: number;
+}
+/**
+ * Completed horizon marks and label orientation.
  */
 export interface GameUiHudAttitudeGeometry {
     /**
-     * Pre-rotation pitch translation relative to the ADI height.
+     * Clockwise rotation of each label about its final baseline anchor.
      */
-    readonly pitch_offset_ratio: number;
+    readonly label_rotation_degrees: number;
     /**
-     * Shared pitch ladder in the translated and rotated horizon coordinate system.
+     * Completed pitch ladder, clipped to the rounded horizon region.
      *
      * @minItems 7
      * @maxItems 7
@@ -3108,27 +3190,29 @@ export interface GameUiHudAttitudeGeometry {
         GameUiHudPitchTick,
         GameUiHudPitchTick
     ];
-    /**
-     * Clockwise horizon rotation in display coordinates.
-     */
-    readonly rotation_degrees: number;
 }
 /**
- * One pitch ladder mark relative to the complete ADI width and height.
+ * One final pitch ladder segment and its optional numeric label.
  */
 export interface GameUiHudPitchTick {
     /**
-     * Half of the horizontal mark width.
+     * Final baseline anchor with horizontal centre alignment, absent for an unlabelled mark.
      */
-    readonly half_width_ratio: number;
+    readonly label_anchor?: GameUiChartPoint | null;
     /**
      * Absolute pitch in degrees; the horizon has no numeric label.
      */
     readonly label_degrees?: number | null;
     /**
-     * Vertical offset from the zero-pitch horizon.
+     * Final segment endpoints, absent when the mark is outside the clip.
+     *
+     * @minItems 2
+     * @maxItems 2
      */
-    readonly offset_ratio: number;
+    readonly segment?: readonly [
+        GameUiChartPoint,
+        GameUiChartPoint
+    ] | null;
 }
 /**
  * One heading tape mark in normalized instrument coordinates.
@@ -3422,19 +3506,6 @@ export interface GameUiChartCursorPoint {
      * Position in logical display pixels.
      */
     readonly point: GameUiChartPoint;
-}
-/**
- * Two-dimensional chart point; exported geometry uses logical display pixels.
- */
-export interface GameUiChartPoint {
-    /**
-     * Horizontal component.
-     */
-    readonly x: number;
-    /**
-     * Vertical component.
-     */
-    readonly y: number;
 }
 /**
  * One labelled chart location.

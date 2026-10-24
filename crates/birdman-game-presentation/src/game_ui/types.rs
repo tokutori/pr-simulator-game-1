@@ -764,7 +764,7 @@ pub enum GameUiHudNodeContent {
         /// Fully formatted pitch, roll, or flight-path reading.
         value: String,
         /// Shared horizon and marker geometry.
-        geometry: GameUiHudAdiGeometry,
+        geometry: Box<GameUiHudAdiGeometry>,
     },
     /// Compass tape or another readout using the same tape primitive.
     HeadingTape {
@@ -842,68 +842,47 @@ pub struct GameUiHudLayout {
     pub opacity: f64,
 }
 
-/// Visible ADI region with an attitude layer or an independent flight path cue.
+/// Completed ADI drawing in its fixed logical canvas.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum GameUiHudAdiGeometry {
-    /// Attitude horizon with an optional flight path marker.
-    Attitude {
-        /// Horizon rotation and translation.
-        horizon: GameUiHudAttitudeGeometry,
-        /// Flight path marker position relative to the ADI height.
-        flight_path_y_ratio: Option<f64>,
-    },
-    /// Flight path marker without an attitude horizon.
-    FlightPathOnly {
-        /// Flight path marker position relative to the ADI height.
-        y_ratio: f64,
-    },
+#[serde(deny_unknown_fields)]
+pub struct GameUiHudAdiGeometry {
+    /// Complete logical drawing extent.
+    pub canvas_size: [f64; 2],
+    /// Rounded horizon clipping and outline rectangle.
+    pub clip: GameUiRect,
+    /// Radius of the rounded clipping corners.
+    pub clip_radius: f64,
+    /// Final horizon marks, absent for a flight-path-only instrument.
+    pub horizon: Option<GameUiHudAttitudeGeometry>,
+    /// Fixed aircraft reference segments.
+    pub aircraft_segments: [[GameUiChartPoint; 2]; 6],
+    /// Flight-path circle centre, absent when its direction is undefined.
+    pub flight_path_center: Option<GameUiChartPoint>,
+    /// Flight-path circle radius.
+    pub flight_path_radius: f64,
 }
 
-impl GameUiHudAdiGeometry {
-    /// Returns the attitude layer when it is visible.
-    pub const fn horizon(self) -> Option<GameUiHudAttitudeGeometry> {
-        match self {
-            Self::Attitude { horizon, .. } => Some(horizon),
-            Self::FlightPathOnly { .. } => None,
-        }
-    }
-
-    /// Returns the flight path marker position when it is visible.
-    pub const fn flight_path_y_ratio(self) -> Option<f64> {
-        match self {
-            Self::Attitude {
-                flight_path_y_ratio,
-                ..
-            } => flight_path_y_ratio,
-            Self::FlightPathOnly { y_ratio } => Some(y_ratio),
-        }
-    }
-}
-
-/// Web-baseline horizon rotation and translation.
+/// Completed horizon marks and label orientation.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct GameUiHudAttitudeGeometry {
-    /// Clockwise horizon rotation in display coordinates.
-    pub rotation_degrees: f64,
-    /// Pre-rotation pitch translation relative to the ADI height.
-    pub pitch_offset_ratio: f64,
-    /// Shared pitch ladder in the translated and rotated horizon coordinate system.
+    /// Clockwise rotation of each label about its final baseline anchor.
+    pub label_rotation_degrees: f64,
+    /// Completed pitch ladder, clipped to the rounded horizon region.
     pub pitch_ticks: [GameUiHudPitchTick; 7],
 }
 
-/// One pitch ladder mark relative to the complete ADI width and height.
+/// One final pitch ladder segment and its optional numeric label.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct GameUiHudPitchTick {
-    /// Vertical offset from the zero-pitch horizon.
-    pub offset_ratio: f64,
-    /// Half of the horizontal mark width.
-    pub half_width_ratio: f64,
+    /// Final segment endpoints, absent when the mark is outside the clip.
+    pub segment: Option<[GameUiChartPoint; 2]>,
+    /// Final baseline anchor with horizontal centre alignment, absent for an unlabelled mark.
+    pub label_anchor: Option<GameUiChartPoint>,
     /// Absolute pitch in degrees; the horizon has no numeric label.
     pub label_degrees: Option<u32>,
 }
@@ -1307,7 +1286,7 @@ pub struct GameUiChartMapGuides {
     pub north_label: GameUiChartText,
 }
 
-/// Two-dimensional chart point; exported geometry uses logical display pixels.
+/// Two-dimensional display point in logical pixels.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]

@@ -30,6 +30,7 @@ export interface SurfaceTextMetrics {
 }
 
 export interface SurfaceDrawingContext extends PanelDrawingContext {
+  roundRect(left: number, top: number, width: number, height: number, radiusX: number, radiusY: number): void;
   setLocale(locale: string): void;
   measureText(value: string): SurfaceTextMetrics;
   setTextAlign(value: "left"): void;
@@ -47,6 +48,7 @@ export function browserSurfaceContext(context: CanvasRenderingContext2D): Surfac
   context.wordSpacing = "0px";
   return {
     ...browserPanelContext(context),
+    roundRect: (left, top, width, height, radiusX, radiusY) => { context.roundRect(left, top, width, height, { x: radiusX, y: radiusY }); },
     setLocale: (locale) => {
       context.canvas.lang = locale;
       if ("lang" in context && typeof context.lang === "string") context.lang = locale;
