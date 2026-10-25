@@ -292,21 +292,26 @@ fn lake_micro_detail(position: vec2<f32>, footprint_x: vec2<f32>, footprint_y: v
     return vec3<f32>(filtered.xy * scaled_strength, filtered.z * scaled_strength * scaled_strength);
 }
 
-fn lake_wave_slope(position: vec2<f32>, spacing: f32) -> vec2<f32> {
+fn lake_wave_slope(position: vec2<f32>, spacing: f32, footprint_x: vec2<f32>, footprint_y: vec2<f32>) -> vec2<f32> {
     var slope = vec2<f32>(0.0);
     let component_count = min(u32(geometry_parameters.x), 24u);
     for (var component: u32 = 0u; component < component_count; component += 1u) {
         let wave = geometry_waves[component];
         let timing = geometry_motion[component];
+        let geometric_visibility = 1.0 - smoothstep(1.3, 2.5, wave.z * spacing);
+        let residual = 1.0 - geometric_visibility;
+        if residual == 0.0 || wave.w == 0.0 {
+            continue;
+        }
         let modulation = lake_wave_modulation(position, wave.xy, wave.z, timing.y);
         let warp = modulation[1];
         let phase = wave.z * dot(wave.xy, position) + warp.x - timing.x * camera_time.w + timing.y;
-        let geometric_visibility = 1.0 - smoothstep(1.3, 2.5, wave.z * spacing);
-        let pixel_visibility = 1.0 - smoothstep(2.0, 5.0, fwidth(phase));
-        let normal_weight = (1.0 - geometric_visibility) * pixel_visibility * 0.65;
+        let phase_gradient = wave.z * wave.xy + warp.yz;
+        let phase_width = abs(dot(phase_gradient, footprint_x)) + abs(dot(phase_gradient, footprint_y));
+        let pixel_visibility = 1.0 - smoothstep(2.0, 5.0, phase_width);
+        let normal_weight = residual * pixel_visibility * 0.65;
         if normal_weight != 0.0 {
             let packet = modulation[0];
-            let phase_gradient = wave.z * wave.xy + warp.yz;
             let crest_basis = 0.5 + 0.5 * sin(phase);
             slope += wave.w * (packet.x * 3.0 * crest_basis * crest_basis * cos(phase) * phase_gradient
                 + (2.0 * crest_basis * crest_basis * crest_basis - 0.625) * packet.yz) * normal_weight;
@@ -337,7 +342,7 @@ fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
     return vec4<f32>(mesh.world_position.xyz - vec3<f32>(position.x, 0.0, position.y), 1.0);
 #else
     let micro_detail = lake_micro_detail(position, footprint_x, footprint_y);
-    let wave_slope = lake_wave_slope(position, spacing);
+    let wave_slope = lake_wave_slope(position, spacing, footprint_x, footprint_y);
     let patches = 0.5 + 0.5 * lake_value_noise(mesh.world_position.xz * 0.17 + vec2<f32>(2.3, -7.1)).x;
     let unresolved_variance = max(micro_detail.z - dot(micro_detail.xy, micro_detail.xy), 0.0);
     var detail = vec4<f32>(wave_slope + micro_detail.xy, unresolved_variance, 0.0);

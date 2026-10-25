@@ -240,7 +240,7 @@ float lakeNoise(vec2 point) {
   return mix(mix(a, b, blend.x), mix(c, d, blend.x), blend.y);
 }
 
-vec2 lakeWaveSlope(vec2 worldXZ) {
+vec2 lakeWaveSlope(vec2 worldXZ, vec2 footprintX, vec2 footprintY) {
   // Add only wave detail that the vertex grid cannot resolve. Derivative based
   // filtering fades subpixel wavelengths smoothly as they recede from the eye.
   float waveSlopeX = 0.0;
@@ -251,14 +251,19 @@ vec2 lakeWaveSlope(vec2 worldXZ) {
     vec4 op = uWaveOmegaPhase[i];
     float k = ka.z;
     vec2 direction = ka.xy;
+    float geometricVisibility = 1.0 - smoothstep(1.3, 2.5, k * vSurfaceState.z);
+    float residual = 1.0 - geometricVisibility;
+    if (residual == 0.0 || ka.w == 0.0) {
+      continue;
+    }
     mat3 modulation = lakeWaveModulation(worldXZ, direction, k, op.y);
     vec3 warp = modulation[1];
     float phase = k * dot(direction, worldXZ) + warp.x - op.x * uTimeSeconds + op.y;
-    float geometricVisibility = 1.0 - smoothstep(1.3, 2.5, k * vSurfaceState.z);
-    float pixelVisibility = 1.0 - smoothstep(2.0, 5.0, fwidth(phase));
-    float normalWeight = (1.0 - geometricVisibility) * pixelVisibility * 0.65;
+    vec2 phaseGradient = k * direction + warp.yz;
+    float phaseWidth = abs(dot(phaseGradient, footprintX)) + abs(dot(phaseGradient, footprintY));
+    float pixelVisibility = 1.0 - smoothstep(2.0, 5.0, phaseWidth);
+    float normalWeight = residual * pixelVisibility * 0.65;
     if (normalWeight != 0.0) {
-      vec2 phaseGradient = k * direction + warp.yz;
       float crestBasis = 0.5 + 0.5 * sin(phase);
       vec3 packet = modulation[0];
       vec2 gradient = ka.w * (packet.x * 3.0 * crestBasis * crestBasis * cos(phase) * phaseGradient
@@ -442,7 +447,7 @@ void main() {
   if (uWaterBackingClip > 0.5 &&
       all(lessThan(abs(vSurfaceGradient.xy - uWaterBackingCenter.xy), vec2(uWaterBackingInnerExtent)))) discard;
   vec2 center = vSurfaceGradient.xy;
-  vec2 waveSlope = lakeWaveSlope(center);
+  vec2 waveSlope = lakeWaveSlope(center, footprintX, footprintY);
   vec3 microDetail = lakeMicroDetail(center, footprintX, footprintY);
   float sunVisibility = 1.0;
   #if defined( USE_SHADOWMAP ) && NUM_DIR_LIGHT_SHADOWS > 0
