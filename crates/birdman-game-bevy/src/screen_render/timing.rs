@@ -85,7 +85,9 @@ impl Plugin for ScreenTimingPlugin {
                         confirm_stop
                             .after(RenderSystems::ExtractCommands)
                             .before(RenderSystems::PrepareAssets),
-                        prepare_packet.after(RenderSystems::PrepareAssets),
+                        prepare_packet
+                            .after(RenderSystems::Prepare)
+                            .before(RenderSystems::Render),
                     ),
                 )
                 .add_systems(
