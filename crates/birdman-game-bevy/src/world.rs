@@ -1456,5 +1456,130 @@ mod tests {
                 < 1.0e-6
         );
         assert_eq!(cascade.texel_size, 56.0 / 2048.0);
+        let cascade = cascade.clone();
+        use bevy::{
+            pbr::{LightEntity, ViewLightEntities},
+            render::{
+                camera::{SortedCamera, SortedCameras},
+                view::{
+                    ExtractedView, RenderShadowMapVisibleEntities, RenderVisibleEntities,
+                    RetainedViewEntity,
+                },
+            },
+        };
+        let reflected = world.spawn(Camera3d::default()).id();
+        world
+            .entity_mut(reflected)
+            .insert(bevy::render::sync_world::MainEntity::from(reflected));
+        world
+            .entity_mut(main)
+            .insert(bevy::render::sync_world::MainEntity::from(main));
+        world
+            .entity_mut(light)
+            .insert(bevy::render::sync_world::MainEntity::from(light));
+        let mut visible = RenderShadowMapVisibleEntities::default();
+        let mut shadow_views = Vec::new();
+        for camera in [reflected, main] {
+            let retained_view_entity =
+                RetainedViewEntity::new(light.into(), Some(camera.into()), 0);
+            let mut entities = RenderVisibleEntities::default();
+            entities
+                .classes
+                .entry(std::any::TypeId::of::<Mesh3d>())
+                .or_default()
+                .entities_cpu_culling
+                .push((Entity::PLACEHOLDER, main.into()));
+            visible.subviews.insert(retained_view_entity, entities);
+            shadow_views.push(
+                world
+                    .spawn((
+                        LightEntity::Directional {
+                            light_entity: light,
+                            cascade_index: 0,
+                        },
+                        ExtractedView {
+                            retained_view_entity,
+                            clip_from_view: cascade.clip_from_cascade,
+                            world_from_view: GlobalTransform::from(cascade.world_from_cascade),
+                            clip_from_world: Some(cascade.clip_from_world),
+                            viewport: UVec4::new(0, 0, 2048, 2048),
+                            target_format: bevy::core_pipeline::core_3d::CORE_3D_DEPTH_FORMAT,
+                            color_grading: default(),
+                            invert_culling: false,
+                        },
+                        RenderLayers::layer(2),
+                    ))
+                    .id(),
+            );
+        }
+        world.entity_mut(light).insert(visible);
+        world.entity_mut(reflected).insert(ViewLightEntities {
+            lights: vec![shadow_views[0]],
+        });
+        world.entity_mut(main).insert(ViewLightEntities {
+            lights: vec![shadow_views[1]],
+        });
+        world.insert_resource(SortedCameras(
+            [(reflected, -4), (main, 0)]
+                .into_iter()
+                .map(|(entity, order)| SortedCamera {
+                    entity,
+                    order,
+                    target: None,
+                    hdr: false,
+                    output_mode: default(),
+                })
+                .collect(),
+        ));
+        world.init_resource::<readiness::Uploads>();
+        world.resource_mut::<readiness::Uploads>().shadow_pair = Some((main, reflected, light));
+        world
+            .run_system_cached(readiness::share_fixed_shadow)
+            .unwrap();
+        assert_eq!(
+            world.get::<ViewLightEntities>(reflected).unwrap().lights,
+            [shadow_views[0]]
+        );
+        assert!(
+            world
+                .get::<ViewLightEntities>(main)
+                .unwrap()
+                .lights
+                .is_empty()
+        );
+        assert_eq!(
+            world.resource::<readiness::GpuReadback>().shared_shadow,
+            Some((reflected, main))
+        );
+        world.get_mut::<ViewLightEntities>(main).unwrap().lights = vec![shadow_views[1]];
+        world
+            .get_mut::<ExtractedView>(shadow_views[1])
+            .unwrap()
+            .viewport
+            .z = 1024;
+        world
+            .run_system_cached(readiness::share_fixed_shadow)
+            .unwrap();
+        assert_eq!(
+            world.get::<ViewLightEntities>(main).unwrap().lights,
+            [shadow_views[1]]
+        );
+        assert_eq!(
+            world.resource::<readiness::GpuReadback>().shared_shadow,
+            None
+        );
+        world
+            .get_mut::<ExtractedView>(shadow_views[1])
+            .unwrap()
+            .viewport
+            .z = 2048;
+        world.resource_mut::<readiness::Uploads>().shadow_pair = None;
+        world
+            .run_system_cached(readiness::share_fixed_shadow)
+            .unwrap();
+        assert_eq!(
+            world.get::<ViewLightEntities>(main).unwrap().lights,
+            [shadow_views[1]]
+        );
     }
 }
