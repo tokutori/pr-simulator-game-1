@@ -625,7 +625,7 @@ fn advance_step(world: &mut World, verification: &mut Verification) -> Result<()
                 report_motion_sources(
                     verification,
                     motion,
-                    world.get_resource::<DiagnosticsStore>(),
+                    &super::screen_render::timing::history(world),
                 );
             }
             verification.next();

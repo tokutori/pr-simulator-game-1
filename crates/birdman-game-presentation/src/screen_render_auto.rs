@@ -670,32 +670,75 @@ impl ScreenRenderAutoController {
         now_ms: f64,
         diagnostic_requested: bool,
     ) -> Result<Option<ScreenRenderResourceRequest>, ScreenRenderAutoError> {
-        self.check_time(now_ms)?;
-        if !self.measurement_requested(diagnostic_requested)
-            || sample.epoch != self.epoch
-            || self
-                .window
-                .latest
-                .is_some_and(|stamp| sample.frame <= stamp.frame)
-        {
-            return Ok(None);
+        let (accepted, stale) = self.accepts_query(
+            sample.epoch,
+            sample.frame,
+            sample.source_ms,
+            now_ms,
+            diagnostic_requested,
+        )?;
+        if !accepted {
+            return if stale {
+                self.pending(now_ms)
+            } else {
+                Ok(None)
+            };
         }
-        if !sample.source_ms.is_finite() || sample.source_ms < 0.0 || sample.source_ms > now_ms {
-            return Err(ScreenRenderAutoError::InvalidSample);
-        }
-        if now_ms - sample.source_ms > MAX_SOURCE_AGE_MS {
-            return self.pending(now_ms);
-        }
-        if !is_valid_gpu_work_ms(sample.gpu_work_ms)
-            || self
-                .window
-                .latest
-                .is_some_and(|stamp| sample.source_ms < stamp.source_ms)
-        {
+        if !is_valid_gpu_work_ms(sample.gpu_work_ms) {
             return Err(ScreenRenderAutoError::InvalidSample);
         }
         self.window.push(sample);
         self.evaluate(now_ms)
+    }
+
+    /// Invalidates a current submitted query after a hardware failure, retaining applied quality.
+    pub fn observe_failure(
+        &mut self,
+        epoch: u32,
+        frame: u32,
+        source_ms: f64,
+        now_ms: f64,
+        diagnostic_requested: bool,
+    ) -> Result<bool, ScreenRenderAutoError> {
+        if !self
+            .accepts_query(epoch, frame, source_ms, now_ms, diagnostic_requested)?
+            .0
+        {
+            return Ok(false);
+        }
+        self.invalidate(ScreenRenderInvalidation::Disjoint, now_ms)?;
+        Ok(true)
+    }
+
+    fn accepts_query(
+        &mut self,
+        epoch: u32,
+        frame: u32,
+        source_ms: f64,
+        now_ms: f64,
+        diagnostic_requested: bool,
+    ) -> Result<(bool, bool), ScreenRenderAutoError> {
+        self.check_time(now_ms)?;
+        if !self.measurement_requested(diagnostic_requested)
+            || epoch != self.epoch
+            || self.window.latest.is_some_and(|stamp| frame <= stamp.frame)
+        {
+            return Ok((false, false));
+        }
+        if !source_ms.is_finite() || source_ms < 0.0 || source_ms > now_ms {
+            return Err(ScreenRenderAutoError::InvalidSample);
+        }
+        if now_ms - source_ms > MAX_SOURCE_AGE_MS {
+            return Ok((false, true));
+        }
+        if self
+            .window
+            .latest
+            .is_some_and(|stamp| source_ms < stamp.source_ms)
+        {
+            return Err(ScreenRenderAutoError::InvalidSample);
+        }
+        Ok((true, false))
     }
 
     /// Advances freshness without clearing valid high-load evidence for missing results.

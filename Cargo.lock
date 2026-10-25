@@ -1499,6 +1499,7 @@ dependencies = [
  "parley",
  "serde",
  "serde_json",
+ "wgpu",
 ]
 
 [[package]]

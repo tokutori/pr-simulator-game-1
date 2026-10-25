@@ -96,6 +96,12 @@ pub(crate) fn update(world: &mut World) {
         queue.push_back(ApplicationInput::Wake { request_id });
     }
     queue.extend(super::world::poll(world));
+    if let Some(cause) = super::screen_render::timing::shutdown_failure(world) {
+        error!("{cause}");
+        world.insert_resource(runtime);
+        world.write_message(AppExit::error());
+        return;
+    }
     queue.push_back(ApplicationInput::Platform {
         observation: platform(world),
     });

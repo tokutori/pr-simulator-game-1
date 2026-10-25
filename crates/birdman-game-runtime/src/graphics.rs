@@ -104,6 +104,13 @@ pub enum ApplicationGraphicsObservation {
         #[cfg_attr(feature = "schema", schemars(schema_with = "gpu_work_schema"))]
         gpu_work_ms: f64,
     },
+    /// A submitted hardware query failed, preserving its owner-issued tag and API cause.
+    GpuFailed {
+        /// Unmodified query tag.
+        query: ApplicationGpuQuery,
+        /// Original mapping, device, or API failure.
+        cause: String,
+    },
     /// Hardware timing is unavailable for this renderer.
     Unsupported {
         /// Original capability diagnostic.
@@ -363,6 +370,21 @@ impl GraphicsOwner {
                         )));
                     }
                     result?;
+                }
+            }
+            ApplicationGraphicsObservation::GpuFailed { query, cause } => {
+                if query.renderer_resource_id == renderer
+                    && self.eligible
+                    && self.prepared
+                    && policy.observe_failure(
+                        query.epoch,
+                        query.frame,
+                        query.source_ms,
+                        now,
+                        self.gpu_timing_requested,
+                    )?
+                {
+                    return Ok(Some(format!("GPU query failed: query={query:?}; {cause}")));
                 }
             }
             ApplicationGraphicsObservation::Unsupported { cause } => {
@@ -666,12 +688,37 @@ mod tests {
         assert_ne!(epoch, query.epoch);
         assert!(owner.observe(1, observation, 0.0).unwrap().is_none());
         assert_eq!(owner.policy.as_ref().unwrap().epoch(), epoch);
+        let failure = ApplicationGraphicsObservation::GpuFailed {
+            query: ApplicationGpuQuery {
+                epoch,
+                frame: query.frame + 1,
+                ..query
+            },
+            cause: "original map failure".into(),
+        };
+        assert!(owner.observe(9, failure.clone(), 0.0).unwrap().is_none());
+        assert_eq!(owner.policy.as_ref().unwrap().epoch(), epoch);
+        assert!(
+            owner
+                .observe(1, failure.clone(), 0.0)
+                .unwrap()
+                .unwrap()
+                .contains("original map failure")
+        );
+        let next_epoch = owner.policy.as_ref().unwrap().epoch();
+        assert_ne!(next_epoch, epoch);
+        assert!(owner.observe(1, failure, 0.0).unwrap().is_none());
+        assert_eq!(owner.policy.as_ref().unwrap().epoch(), next_epoch);
+        assert_eq!(owner.resource(), resource);
         assert!(
             owner
                 .observe(
                     1,
                     ApplicationGraphicsObservation::GpuCompleted {
-                        query: ApplicationGpuQuery { epoch, ..query },
+                        query: ApplicationGpuQuery {
+                            epoch: next_epoch,
+                            ..query
+                        },
                         gpu_work_ms: -1.0
                     },
                     0.0

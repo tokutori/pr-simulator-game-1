@@ -1,69 +1,47 @@
 use super::super::world::NativeGpu;
-#[cfg(feature = "verify-harness")]
-use bevy::diagnostic::Diagnostic;
 use bevy::ecs as bevy_ecs;
 use bevy::{
-    core_pipeline::core_3d::{AlphaMask3d, Opaque3d, Transparent3d},
-    diagnostic::{DiagnosticMeasurement, DiagnosticPath, DiagnosticsStore},
-    ecs::{schedule::ConditionWithAccess, system::IntoSystem},
+    core_pipeline::{
+        core_3d::{
+            AlphaMask3d, Opaque3d, Transparent3d, main_opaque_pass_3d, main_transparent_pass_3d,
+        },
+        schedule::{Core3d, Core3dSystems},
+    },
     pbr::Shadow,
     platform::time::Instant,
     prelude::*,
     render::{
-        Extract, ExtractSchedule, GpuResourceAppExt, Render, RenderApp, RenderSystems,
-        diagnostic::{
-            DiagnosticsRecorder, RecordDiagnostics, RenderDiagnosticsPlugin,
-            begin_diagnostics_frame, resolve_encoder,
-        },
+        Extract, ExtractSchedule, Render, RenderApp, RenderSystems,
         render_phase::{BinnedPhaseItem, ViewBinnedRenderPhases, ViewSortedRenderPhases},
         render_resource::{
-            Buffer, BufferDescriptor, BufferUsages, CachedPipelineState, CachedRenderPipelineId,
-            CommandEncoderDescriptor, PipelineCache, WgpuFeatures,
+            CachedPipelineState, CachedRenderPipelineId, PipelineCache, WgpuFeatures,
         },
         renderer::{
-            PendingCommandBuffers, RenderDevice, RenderGraph, RenderGraphSystems, RenderQueue,
+            CurrentView, RenderContext, RenderDevice, RenderGraph, RenderGraphSystems, RenderQueue,
         },
     },
     shader::ShaderCacheError,
 };
+#[cfg(feature = "verify-harness")]
 use birdman_game_format::WaterQuality;
+#[cfg(feature = "verify-harness")]
+use birdman_game_presentation::screen_render_auto::ScreenGpuSample;
+#[cfg(feature = "verify-harness")]
 use birdman_game_presentation::{
-    screen_render_auto::{ScreenGpuSample, ScreenShadowMap},
-    screen_render_scale::ScreenRenderScale,
+    screen_render_auto::ScreenShadowMap, screen_render_scale::ScreenRenderScale,
 };
-use birdman_game_runtime::{ApplicationGpuQuery, ApplicationGraphicsObservation, ApplicationInput};
-#[cfg(feature = "verify-harness")]
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
+use birdman_game_runtime::{
+    ApplicationGpuQuery, ApplicationGraphicsObservation, ApplicationInput, ApplicationRenderQuality,
+};
+use std::{
+    collections::{BTreeSet, VecDeque},
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
-pub(crate) const GPU_WORK: DiagnosticPath =
-    DiagnosticPath::const_new("render/screen_work/elapsed_gpu");
-const METADATA_WORDS: usize = 8;
-const METADATA: [DiagnosticPath; METADATA_WORDS] = [
-    DiagnosticPath::const_new("render/screen_renderer"),
-    DiagnosticPath::const_new("render/screen_epoch"),
-    DiagnosticPath::const_new("render/screen_frame"),
-    DiagnosticPath::const_new("render/screen_source_low"),
-    DiagnosticPath::const_new("render/screen_source_high"),
-    DiagnosticPath::const_new("render/screen_scale"),
-    DiagnosticPath::const_new("render/screen_shadow"),
-    DiagnosticPath::const_new("render/screen_water"),
-];
-const METADATA_NAMES: [&str; METADATA_WORDS] = [
-    "screen_renderer",
-    "screen_epoch",
-    "screen_frame",
-    "screen_source_low",
-    "screen_source_high",
-    "screen_scale",
-    "screen_shadow",
-    "screen_water",
-];
-
-#[cfg(feature = "verify-harness")]
-pub(crate) fn is_source_metadata(path: &DiagnosticPath) -> bool {
-    METADATA.contains(path)
-}
+const SLOT_LIMIT: usize = 8;
+pub(crate) const HISTORY_LIMIT: usize = 4096;
+const RELEASE_BUDGET: Duration = Duration::from_secs(5);
 
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum TimingMode {
@@ -98,73 +76,43 @@ pub(crate) struct ScreenTimingPlugin {
 
 impl Plugin for ScreenTimingPlugin {
     fn build(&self, app: &mut App) {
-        assert!(!app.is_plugin_added::<RenderDiagnosticsPlugin>());
-        RenderDiagnosticsPlugin.build(app);
-        app.init_resource::<TimingReadout>()
+        let readout = TimingReadout::default();
+        app.insert_resource(readout.clone())
             .insert_resource(self.mode);
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
             render_app
+                .insert_resource(readout)
                 .insert_resource(self.mode)
-                .init_resource::<ParkedRecorder>()
                 .init_resource::<TimingPacket>()
-                .init_gpu_resource::<MetadataBuffer>()
+                .init_resource::<QueryPool>()
+                .init_resource::<ActiveLease>()
                 .add_systems(ExtractSchedule, extract_packet)
-                .add_systems(
-                    Render,
-                    select_recorder
-                        .after(RenderSystems::ExtractCommands)
-                        .before(RenderSystems::PrepareAssets),
-                )
+                .add_systems(Render, prepare_packet.after(RenderSystems::PrepareAssets))
                 .add_systems(
                     RenderGraph,
                     (
                         begin_work
-                            .after(begin_diagnostics_frame)
                             .after(RenderGraphSystems::Begin)
                             .before(RenderGraphSystems::Render),
                         end_work
                             .after(RenderGraphSystems::Render)
-                            .before(resolve_encoder)
                             .before(RenderGraphSystems::Submit),
+                    ),
+                )
+                .add_systems(
+                    Core3d,
+                    (
+                        begin_opaque
+                            .after(Core3dSystems::Prepass)
+                            .before(main_opaque_pass_3d),
+                        end_opaque
+                            .after(main_opaque_pass_3d)
+                            .before(main_transparent_pass_3d),
                     ),
                 );
         }
     }
-
-    fn finish(&self, app: &mut App) {
-        let previous: Vec<_> = app
-            .get_sub_app(RenderApp)
-            .and_then(|render_app| render_app.get_schedule(RenderGraph))
-            .into_iter()
-            .flat_map(|schedule| schedule.graph().systems.iter().map(|(key, _, _)| key))
-            .collect();
-        RenderDiagnosticsPlugin.finish(app);
-        if let Some(schedule) = app
-            .get_sub_app_mut(RenderApp)
-            .and_then(|render_app| render_app.get_schedule_mut(RenderGraph))
-        {
-            let added: Vec<_> = schedule
-                .graph()
-                .systems
-                .iter()
-                .filter_map(|(key, _, _)| (!previous.contains(&key)).then_some(key))
-                .collect();
-            for key in added {
-                schedule
-                    .graph_mut()
-                    .systems
-                    .get_conditions_mut(key)
-                    .unwrap()
-                    .push(ConditionWithAccess::new(Box::new(IntoSystem::into_system(
-                        resource_exists::<DiagnosticsRecorder>,
-                    ))));
-            }
-        }
-    }
 }
-
-#[derive(Resource, Default)]
-struct ParkedRecorder(Option<DiagnosticsRecorder>);
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) enum PipelinePreparation {
@@ -174,134 +122,384 @@ pub(crate) enum PipelinePreparation {
     Failed(String),
 }
 
-#[derive(Resource, Default, Clone)]
+#[derive(Resource, Default)]
 struct TimingPacket {
-    active: bool,
-    renderer: u32,
-    epoch: u32,
-    frame: u32,
-    source_ms: f64,
     camera: Option<Entity>,
-    scale: ScreenRenderScale,
-    shadow: ScreenShadowMap,
-    water_quality: WaterQuality,
     preparation: PipelinePreparation,
+    views: u32,
 }
 
-#[derive(Resource)]
-struct MetadataBuffer(Buffer);
-
-impl FromWorld for MetadataBuffer {
-    fn from_world(world: &mut World) -> Self {
-        Self(
-            world
-                .resource::<RenderDevice>()
-                .create_buffer(&BufferDescriptor {
-                    label: Some("screen_auto_metadata"),
-                    size: (METADATA_WORDS * 4) as u64,
-                    usage: BufferUsages::COPY_SRC | BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                }),
-        )
-    }
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct TimingSource {
+    pub(crate) query: ApplicationGpuQuery,
+    pub(crate) quality: ApplicationRenderQuality,
 }
 
-fn extract_packet(mut commands: Commands, rendering: Extract<Res<NativeGpu>>) {
-    let query = rendering.query;
-    let quality = rendering.quality;
-    commands.insert_resource(TimingPacket {
-        active: query.is_some(),
-        renderer: query.map_or(1, |query| query.renderer_resource_id),
-        epoch: query.map_or(0, |query| query.epoch),
-        frame: query.map_or(0, |query| query.frame),
-        source_ms: query.map_or(0.0, |query| query.source_ms),
-        camera: rendering.main_camera,
-        scale: quality.scale,
-        shadow: quality.shadow,
-        water_quality: quality.water_quality,
-        preparation: PipelinePreparation::Pending,
-    });
+#[derive(Clone, Debug)]
+pub(crate) enum TimingOutcome {
+    Completed {
+        raw: Vec<u64>,
+        period_ns: f32,
+        scopes: Vec<(u64, f64)>,
+    },
+    Failed(String),
+    NotSubmitted(&'static str),
 }
 
-fn select_recorder(world: &mut World) {
-    let enabled = world.resource::<TimingMode>().full_diagnostics()
-        || (world.resource::<TimingPacket>().active
-            && supported(world.resource::<RenderDevice>().features()));
-    if enabled {
-        if world.contains_resource::<DiagnosticsRecorder>() {
-            world.resource_mut::<ParkedRecorder>().0 = None;
-        } else if let Some(recorder) = world.resource_mut::<ParkedRecorder>().0.take() {
-            world.insert_resource(recorder);
+#[derive(Clone, Debug)]
+pub(crate) struct TimingRecord {
+    pub(crate) arrival: Instant,
+    pub(crate) source: TimingSource,
+    pub(crate) outcome: TimingOutcome,
+}
+
+#[derive(Resource, Clone, Default)]
+pub(crate) struct TimingReadout(Arc<Mutex<TimingState>>);
+
+#[derive(Default)]
+struct TimingState {
+    pending: Option<TimingSource>,
+    completed: VecDeque<Completion>,
+    returned: Vec<QuerySlot>,
+    inflight: usize,
+    history: VecDeque<TimingRecord>,
+    release: Option<Release>,
+}
+
+struct Release {
+    renderer: u32,
+    started: Instant,
+    failure: Option<String>,
+    stopped: bool,
+}
+
+impl TimingState {
+    fn record(&mut self, source: TimingSource, outcome: TimingOutcome) {
+        if self.history.len() == HISTORY_LIMIT {
+            self.history.pop_front();
         }
-    } else if let Some(recorder) = world.remove_resource::<DiagnosticsRecorder>() {
-        world.resource_mut::<ParkedRecorder>().0 = Some(recorder);
+        let record = TimingRecord {
+            arrival: Instant::now(),
+            source,
+            outcome,
+        };
+        match &record.outcome {
+            TimingOutcome::Completed {
+                raw,
+                period_ns,
+                scopes,
+            } => {
+                debug!(
+                    "Native timestamp arrival={:?} source={:?} raw={raw:?} period_ns={period_ns} scopes={scopes:?}",
+                    record.arrival, record.source
+                );
+            }
+            TimingOutcome::Failed(cause) => debug!(
+                "Native timestamp source={:?} failed: {cause}",
+                record.source
+            ),
+            TimingOutcome::NotSubmitted(cause) => debug!(
+                "Native timestamp source={:?} not submitted: {cause}",
+                record.source
+            ),
+        }
+        #[cfg(feature = "verify-harness")]
+        println!(
+            "Native GPU record arrival={:?} source={:?} outcome={:?}",
+            record.arrival, record.source, record.outcome
+        );
+        self.history.push_back(record);
     }
+}
+
+pub(crate) fn observe_query(
+    world: &mut World,
+    query: Option<ApplicationGpuQuery>,
+    quality: ApplicationRenderQuality,
+) {
+    let Some(readout) = world.get_resource::<TimingReadout>() else {
+        return;
+    };
+    let mut state = readout.0.lock().unwrap();
+    if let Some(source) = state.pending.take() {
+        state.record(
+            source,
+            TimingOutcome::NotSubmitted("superseded before render admission"),
+        );
+    }
+    if state.release.is_none() {
+        state.pending = query.map(|query| TimingSource { query, quality });
+    }
+}
+
+pub(crate) fn release(world: &mut World, renderer: u32, failure: Option<String>) -> bool {
+    let Some(readout) = world.get_resource::<TimingReadout>() else {
+        return false;
+    };
+    let mut state = readout.0.lock().unwrap();
+    if let Some(source) = state.pending.take() {
+        state.record(source, TimingOutcome::NotSubmitted("renderer release"));
+    }
+    state.release = Some(Release {
+        renderer,
+        started: Instant::now(),
+        failure,
+        stopped: false,
+    });
+    true
+}
+
+pub(crate) fn shutdown_failure(world: &World) -> Option<String> {
+    let readout = world.get_resource::<TimingReadout>()?;
+    let state = readout.0.lock().unwrap();
+    let release = state.release.as_ref()?;
+    (release.started.elapsed() >= RELEASE_BUDGET).then(|| format!(
+        "Native GPU release exceeded 5s: renderer={} render_stopped={} pending_slots={} queued_completions={}; custody retained",
+        release.renderer, release.stopped, state.inflight, state.completed.len()
+    ))
+}
+
+#[derive(Resource, Default)]
+struct QueryPool(Vec<QuerySlot>);
+
+struct QuerySlot {
+    queries: wgpu::QuerySet,
+    resolve: wgpu::Buffer,
+    readback: wgpu::Buffer,
+    capacity: u32,
+}
+
+impl QuerySlot {
+    fn new(device: &wgpu::Device, capacity: u32) -> Self {
+        Self {
+            queries: device.create_query_set(&wgpu::QuerySetDescriptor {
+                label: Some("native_frame_timestamps"),
+                ty: wgpu::QueryType::Timestamp,
+                count: capacity,
+            }),
+            resolve: device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("native_timestamp_resolve"),
+                size: u64::from(capacity) * 8,
+                usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
+                mapped_at_creation: false,
+            }),
+            readback: device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("native_timestamp_readback"),
+                size: u64::from(capacity) * 8,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }),
+            capacity,
+        }
+    }
+}
+
+struct Lease {
+    slot: QuerySlot,
+    source: TimingSource,
+    scopes: Vec<(u64, u32)>,
+    period_ns: f32,
+}
+
+#[derive(Resource, Default)]
+struct ActiveLease(Option<Lease>);
+
+struct Completion {
+    lease: Lease,
+    mapped: Option<Result<Vec<u64>, String>>,
+    work_done: bool,
+}
+
+fn extract_packet(mut packet: ResMut<TimingPacket>, rendering: Extract<Res<NativeGpu>>) {
+    packet.camera = rendering.main_camera;
+}
+
+fn prepare_packet(world: &mut World) {
+    let device = world.resource::<RenderDevice>();
+    if let Err(cause) = device.wgpu_device().poll(wgpu::PollType::Poll) {
+        error!("Native timestamp device poll: {cause}");
+    }
+    let readout = world.resource::<TimingReadout>().clone();
+    let mut state = readout.0.lock().unwrap();
+    let mut pool = world.resource_mut::<QueryPool>();
+    pool.0.append(&mut state.returned);
+    if let Some(release) = &mut state.release {
+        pool.0.clear();
+        release.stopped = true;
+        return;
+    }
+    drop(state);
+    let camera = world.resource::<TimingPacket>().camera;
+    let preparation = camera.map_or(PipelinePreparation::Pending, |camera| {
+        camera_preparation(world, camera)
+    });
+    let views = world
+        .query_filtered::<Entity, With<Camera3d>>()
+        .iter(world)
+        .count() as u32;
+    let mut packet = world.resource_mut::<TimingPacket>();
+    packet.preparation = preparation;
+    packet.views = views;
 }
 
 pub(crate) fn supported(features: WgpuFeatures) -> bool {
     features.contains(WgpuFeatures::TIMESTAMP_QUERY | WgpuFeatures::TIMESTAMP_QUERY_INSIDE_ENCODERS)
 }
 
-fn begin_work(world: &mut World) {
-    let mut packet = world.resource::<TimingPacket>().clone();
-    if !packet.active {
+fn begin_work(
+    mut context: RenderContext,
+    packet: Res<TimingPacket>,
+    mode: Res<TimingMode>,
+    readout: Res<TimingReadout>,
+    mut pool: ResMut<QueryPool>,
+    mut active: ResMut<ActiveLease>,
+    queue: Res<RenderQueue>,
+) {
+    let mut state = readout.0.lock().unwrap();
+    if state.release.is_some() {
         return;
     }
-    packet.preparation = packet
-        .camera
-        .map_or(PipelinePreparation::Pending, |camera| {
-            camera_preparation(world, camera)
-        });
-    if packet.preparation != PipelinePreparation::Ready
-        && !world.resource::<TimingMode>().full_diagnostics()
-    {
-        packet.active = false;
-    }
-    world.insert_resource(packet.clone());
-    if !packet.active {
-        world.resource_mut::<ParkedRecorder>().0 = world.remove_resource::<DiagnosticsRecorder>();
+    let Some(source) = state.pending.take() else {
+        return;
+    };
+    let cause = if !supported(context.render_device().features()) {
+        Some("timestamp feature unavailable")
+    } else if packet.preparation != PipelinePreparation::Ready {
+        Some("pipeline preparation pending")
+    } else if state.inflight + state.returned.len() >= SLOT_LIMIT {
+        Some("timestamp slots busy")
+    } else {
+        None
+    };
+    if let Some(cause) = cause {
+        state.record(source, TimingOutcome::NotSubmitted(cause));
         return;
     }
-    if !world.contains_resource::<DiagnosticsRecorder>() {
+    let capacity = if mode.full_diagnostics() {
+        2 + packet.views * 2
+    } else {
+        2
+    };
+    if capacity > wgpu::QUERY_SET_MAX_QUERIES {
+        state.record(
+            source,
+            TimingOutcome::NotSubmitted("view query capacity exceeded"),
+        );
         return;
     }
-    let device = world.resource::<RenderDevice>();
-    if !supported(device.features()) {
-        return;
-    }
-    let metadata = world.resource::<MetadataBuffer>();
-    let words = [
-        packet.renderer,
-        packet.epoch,
-        packet.frame,
-        packet.source_ms.to_bits() as u32,
-        (packet.source_ms.to_bits() >> 32) as u32,
-        packet.scale.percent(),
-        packet.shadow.size(),
-        birdman_game_scene::lake_water::water_quality_profile(packet.water_quality)
-            .component_count() as u32,
-    ];
-    let mut bytes = [0_u8; METADATA_WORDS * 4];
-    for (chunk, word) in bytes.chunks_exact_mut(4).zip(words) {
-        chunk.copy_from_slice(&word.to_le_bytes());
-    }
-    world
-        .resource::<RenderQueue>()
-        .write_buffer(&metadata.0, 0, &bytes);
-    let mut encoder = device.create_command_encoder(&CommandEncoderDescriptor {
-        label: Some("screen_auto_begin"),
+    let slot = pool
+        .0
+        .pop()
+        .filter(|slot| slot.capacity >= capacity)
+        .unwrap_or_else(|| QuerySlot::new(context.render_device().wgpu_device(), capacity));
+    context.command_encoder().write_timestamp(&slot.queries, 0);
+    state.inflight += 1;
+    active.0 = Some(Lease {
+        slot,
+        source,
+        scopes: Vec::new(),
+        period_ns: queue.get_timestamp_period(),
     });
-    let recorder = world.resource::<DiagnosticsRecorder>();
-    for (index, name) in METADATA_NAMES.into_iter().enumerate() {
-        let offset = index as u64 * 4;
-        recorder.record_u32(&mut encoder, &metadata.0.slice(offset..offset + 4), name);
+}
+
+fn begin_opaque(
+    mut context: RenderContext,
+    view: Res<CurrentView>,
+    mut active: ResMut<ActiveLease>,
+) {
+    let Some(lease) = &mut active.0 else { return };
+    let index = 2 + lease.scopes.len() as u32 * 2;
+    if index + 1 >= lease.slot.capacity {
+        return;
     }
-    recorder.begin_time_span(&mut encoder, "screen_work".into());
-    world
-        .resource_mut::<PendingCommandBuffers>()
-        .push([encoder.finish()]);
-    if !world.resource::<TimingMode>().full_diagnostics() {
-        world.resource_mut::<ParkedRecorder>().0 = world.remove_resource::<DiagnosticsRecorder>();
+    context
+        .command_encoder()
+        .write_timestamp(&lease.slot.queries, index);
+    lease.scopes.push((view.0.to_bits(), index));
+}
+
+fn end_opaque(mut context: RenderContext, view: Res<CurrentView>, active: Res<ActiveLease>) {
+    let Some(lease) = &active.0 else { return };
+    if let Some((_, index)) = lease
+        .scopes
+        .iter()
+        .find(|(entity, _)| *entity == view.0.to_bits())
+    {
+        context
+            .command_encoder()
+            .write_timestamp(&lease.slot.queries, index + 1);
+    }
+}
+
+fn end_work(
+    mut context: RenderContext,
+    mut active: ResMut<ActiveLease>,
+    readout: Res<TimingReadout>,
+) {
+    let Some(lease) = active.0.take() else { return };
+    let count = 2 + lease.scopes.len() as u32 * 2;
+    context
+        .command_encoder()
+        .write_timestamp(&lease.slot.queries, 1);
+    context.command_encoder().resolve_query_set(
+        &lease.slot.queries,
+        0..count,
+        &lease.slot.resolve,
+        0,
+    );
+    let mut copy =
+        context
+            .render_device()
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("native_timestamp_separate_copy"),
+            });
+    let length = u64::from(count) * 8;
+    copy.copy_buffer_to_buffer(&lease.slot.resolve, 0, &lease.slot.readback, 0, length);
+    let readback = lease.slot.readback.clone();
+    let completion = Arc::new(Mutex::new(Some(Completion {
+        lease,
+        mapped: None,
+        work_done: false,
+    })));
+    let mapped_completion = Arc::clone(&completion);
+    let mapped_readout = readout.clone();
+    copy.map_buffer_on_submit(
+        &readback.clone(),
+        wgpu::MapMode::Read,
+        0..length,
+        move |result| {
+            let result = result
+                .map(|()| {
+                    let view = readback.slice(0..length).get_mapped_range();
+                    let words = view
+                        .chunks_exact(8)
+                        .map(|bytes| u64::from_le_bytes(bytes.try_into().unwrap()))
+                        .collect();
+                    drop(view);
+                    readback.unmap();
+                    words
+                })
+                .map_err(|cause| cause.to_string());
+            mapped_completion.lock().unwrap().as_mut().unwrap().mapped = Some(result);
+            drain_completion(&mapped_completion, &mapped_readout);
+        },
+    );
+    let done_readout = readout.clone();
+    copy.on_submitted_work_done(move || {
+        completion.lock().unwrap().as_mut().unwrap().work_done = true;
+        drain_completion(&completion, &done_readout);
+    });
+    context.add_command_buffer(copy.finish());
+}
+
+fn drain_completion(completion: &Arc<Mutex<Option<Completion>>>, readout: &TimingReadout) {
+    let mut terminal = completion.lock().unwrap();
+    if terminal
+        .as_ref()
+        .is_some_and(|terminal| terminal.work_done && terminal.mapped.is_some())
+    {
+        let completed = terminal.take().unwrap();
+        readout.0.lock().unwrap().completed.push_back(completed);
     }
 }
 
@@ -394,46 +592,7 @@ pub(crate) fn shader_is_pending(error: &ShaderCacheError) -> bool {
     )
 }
 
-fn end_work(world: &mut World) {
-    if !world.resource::<TimingPacket>().active
-        || !supported(world.resource::<RenderDevice>().features())
-    {
-        return;
-    }
-    if !world.contains_resource::<DiagnosticsRecorder>()
-        && let Some(recorder) = world.resource_mut::<ParkedRecorder>().0.take()
-    {
-        world.insert_resource(recorder);
-    }
-    if !world.contains_resource::<DiagnosticsRecorder>() {
-        return;
-    }
-    let mut encoder =
-        world
-            .resource::<RenderDevice>()
-            .create_command_encoder(&CommandEncoderDescriptor {
-                label: Some("screen_auto_end"),
-            });
-    world
-        .resource::<DiagnosticsRecorder>()
-        .end_time_span(&mut encoder);
-    world
-        .resource_mut::<PendingCommandBuffers>()
-        .push([encoder.finish()]);
-}
-
-#[derive(Resource, Default)]
-pub(crate) struct TimingReadout {
-    arrival: Option<Instant>,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) enum TimingFailure {
-    IncompleteBatch,
-    InvalidMetadata,
-    InvalidSource,
-}
-
+#[cfg(feature = "verify-harness")]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct SourceWork {
     pub(crate) renderer_resource_id: u32,
@@ -444,224 +603,166 @@ pub(crate) struct SourceWork {
 }
 
 #[cfg(feature = "verify-harness")]
-pub(crate) fn source_history(
-    store: &DiagnosticsStore,
-) -> impl Iterator<Item = (Instant, Result<SourceWork, TimingFailure>)> + '_ {
-    let mut batches = BTreeMap::new();
-    for (index, path) in METADATA.iter().enumerate() {
-        if let Some(diagnostic) = store.get(path) {
-            for measurement in diagnostic.measurements() {
-                let values = batches
-                    .entry(measurement.time)
-                    .or_insert([None; METADATA_WORDS]);
-                values[index] = Some(if values[index].is_none() {
-                    measurement.value
-                } else {
-                    f64::NAN
-                });
-            }
-        }
-    }
-    store
-        .get(&GPU_WORK)
-        .into_iter()
-        .flat_map(Diagnostic::measurements)
-        .map(move |gpu| {
-            let words = batches
-                .get(&gpu.time)
-                .copied()
-                .ok_or(TimingFailure::IncompleteBatch)
-                .and_then(decode_metadata);
-            (
-                gpu.time,
-                words.and_then(|words| decode_work(words, gpu.value)),
-            )
+pub(crate) fn history(world: &World) -> Vec<TimingRecord> {
+    world
+        .get_resource::<TimingReadout>()
+        .map_or_else(Vec::new, |readout| {
+            readout.0.lock().unwrap().history.iter().cloned().collect()
         })
 }
 
-fn metadata_values(
-    store: &DiagnosticsStore,
-    gpu: &DiagnosticMeasurement,
-) -> [Option<f64>; METADATA_WORDS] {
-    METADATA.map(|path| {
-        store
-            .get_measurement(&path)
-            .filter(|value| value.time == gpu.time)
-            .or_else(|| {
-                store.get(&path).and_then(|diagnostic| {
-                    diagnostic
-                        .measurements()
-                        .find(|value| value.time == gpu.time)
-                })
-            })
-            .map(|value| value.value)
-    })
-}
-
-fn decode_metadata(
-    values: [Option<f64>; METADATA_WORDS],
-) -> Result<[u32; METADATA_WORDS], TimingFailure> {
-    let mut words = [0; METADATA_WORDS];
-    for (destination, value) in words.iter_mut().zip(values) {
-        *destination = word(value.ok_or(TimingFailure::IncompleteBatch)?)
-            .ok_or(TimingFailure::InvalidMetadata)?;
-    }
-    Ok(words)
-}
-
-fn decode_work(
-    words: [u32; METADATA_WORDS],
-    gpu_work_ms: f64,
-) -> Result<SourceWork, TimingFailure> {
-    let [renderer, epoch, frame, low, high, scale, shadow, water] = words;
-    let scale = ScreenRenderScale::ALL
-        .into_iter()
-        .find(|value| value.percent() == scale)
-        .ok_or(TimingFailure::InvalidMetadata)?;
-    let shadow = ScreenShadowMap::ALL
-        .into_iter()
-        .find(|value| value.size() == shadow)
-        .ok_or(TimingFailure::InvalidMetadata)?;
-    let source_ms = f64::from_bits(u64::from(low) | (u64::from(high) << 32));
-    let water_quality = WaterQuality::ALL
-        .into_iter()
-        .find(|quality| {
-            birdman_game_scene::lake_water::water_quality_profile(*quality).component_count()
-                == water as usize
-        })
-        .ok_or(TimingFailure::InvalidMetadata)?;
-    if !source_ms.is_finite() || source_ms < 0.0 {
-        return Err(TimingFailure::InvalidSource);
-    }
-    Ok(SourceWork {
-        renderer_resource_id: renderer,
+#[cfg(feature = "verify-harness")]
+pub(crate) fn source_work(record: &TimingRecord) -> Option<SourceWork> {
+    let TimingOutcome::Completed { raw, period_ns, .. } = &record.outcome else {
+        return None;
+    };
+    Some(SourceWork {
+        renderer_resource_id: record.source.query.renderer_resource_id,
         sample: ScreenGpuSample {
-            epoch,
-            frame,
-            source_ms,
-            gpu_work_ms,
+            epoch: record.source.query.epoch,
+            frame: record.source.query.frame,
+            source_ms: record.source.query.source_ms,
+            gpu_work_ms: elapsed(raw[0], raw[1], *period_ns),
         },
-        scale,
-        shadow,
-        water_quality,
+        scale: record.source.quality.scale,
+        shadow: record.source.quality.shadow,
+        water_quality: record.source.quality.water_quality,
     })
 }
 
-fn word(value: f64) -> Option<u32> {
-    (value.is_finite() && value >= 0.0 && value <= f64::from(u32::MAX) && value.fract() == 0.0)
-        .then_some(value as u32)
+fn elapsed(start: u64, end: u64, period_ns: f32) -> f64 {
+    (i128::from(end) - i128::from(start)) as f64 * f64::from(period_ns) / 1e6
 }
 
 pub(crate) fn poll(world: &mut World) -> Vec<ApplicationInput> {
-    let Some(mut readout) = world.remove_resource::<TimingReadout>() else {
+    let Some(readout) = world.get_resource::<TimingReadout>().cloned() else {
         return Vec::new();
     };
-    let result = (|| {
-        let store = world.get_resource::<DiagnosticsStore>()?;
-        let gpu = store.get_measurement(&GPU_WORK)?;
-        if readout.arrival.is_some_and(|arrival| gpu.time <= arrival) {
-            return None;
-        }
-        readout.arrival = Some(gpu.time);
-        let metadata = metadata_values(store, gpu);
-        let source = match decode_metadata(metadata).and_then(|words| decode_work(words, gpu.value))
-        {
-            Ok(source) => source,
-            Err(cause) => {
-                return Some(ApplicationInput::Graphics {
-                    renderer_resource_id: world.resource::<NativeGpu>().renderer_id,
-                    observation: ApplicationGraphicsObservation::Unsupported {
-                        cause: format!(
-                            "GPU query: {cause:?}; gpu_work_ms={:?}; metadata={metadata:?}",
-                            gpu.value
-                        ),
+    let mut state = readout.0.lock().unwrap();
+    let mut inputs = Vec::new();
+    while let Some(completion) = state.completed.pop_front() {
+        let Completion { lease, mapped, .. } = completion;
+        let outcome = match mapped.unwrap() {
+            Ok(raw) => {
+                let scopes = lease
+                    .scopes
+                    .iter()
+                    .map(|(view, index)| {
+                        (
+                            *view,
+                            elapsed(
+                                raw[*index as usize],
+                                raw[*index as usize + 1],
+                                lease.period_ns,
+                            ),
+                        )
+                    })
+                    .collect();
+                let gpu_work_ms = elapsed(raw[0], raw[1], lease.period_ns);
+                inputs.push(ApplicationInput::Graphics {
+                    renderer_resource_id: lease.source.query.renderer_resource_id,
+                    observation: ApplicationGraphicsObservation::GpuCompleted {
+                        query: lease.source.query,
+                        gpu_work_ms,
                     },
                 });
+                TimingOutcome::Completed {
+                    raw,
+                    period_ns: lease.period_ns,
+                    scopes,
+                }
+            }
+            Err(cause) => {
+                inputs.push(ApplicationInput::Graphics {
+                    renderer_resource_id: lease.source.query.renderer_resource_id,
+                    observation: ApplicationGraphicsObservation::GpuFailed {
+                        query: lease.source.query,
+                        cause: cause.clone(),
+                    },
+                });
+                TimingOutcome::Failed(cause)
             }
         };
-        Some(ApplicationInput::Graphics {
-            renderer_resource_id: source.renderer_resource_id,
-            observation: ApplicationGraphicsObservation::GpuCompleted {
-                query: ApplicationGpuQuery {
-                    renderer_resource_id: source.renderer_resource_id,
-                    epoch: source.sample.epoch,
-                    frame: source.sample.frame,
-                    source_ms: source.sample.source_ms,
-                },
-                gpu_work_ms: source.sample.gpu_work_ms,
-            },
-        })
-    })();
-    world.insert_resource(readout);
-    result.into_iter().collect()
+        state.record(lease.source, outcome);
+        state.inflight -= 1;
+        state.returned.push(lease.slot);
+    }
+    if state
+        .release
+        .as_ref()
+        .is_some_and(|release| release.stopped)
+        && state.inflight == 0
+    {
+        state.returned.clear();
+        let release = state.release.take().unwrap();
+        inputs.push(ApplicationInput::RendererReleased {
+            renderer_resource_id: release.renderer,
+            failure: release.failure,
+        });
+    }
+    inputs
 }
 
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
 
-    #[cfg(feature = "verify-harness")]
-    pub(crate) fn packet(
-        store: &mut DiagnosticsStore,
-        arrival: Instant,
-        epoch: u32,
-        frame: u32,
-        source: f64,
-        work: f64,
-    ) {
-        packet_quality(
-            store,
-            arrival,
-            epoch,
-            frame,
-            source,
-            work,
-            (
-                ScreenRenderScale::Full,
-                ScreenShadowMap::Full,
-                WaterQuality::High,
-            ),
-        );
-    }
-
-    #[cfg(feature = "verify-harness")]
-    pub(crate) fn packet_quality(
-        store: &mut DiagnosticsStore,
-        arrival: Instant,
-        epoch: u32,
-        frame: u32,
-        source: f64,
-        work: f64,
-        quality: (ScreenRenderScale, ScreenShadowMap, WaterQuality),
-    ) {
-        let bits = source.to_bits();
-        let values = [
-            1,
-            epoch,
-            frame,
-            bits as u32,
-            (bits >> 32) as u32,
-            quality.0.percent(),
-            quality.1.size(),
-            birdman_game_scene::lake_water::water_quality_profile(quality.2).component_count()
-                as u32,
-        ];
-        for (path, value) in METADATA
-            .into_iter()
-            .zip(values.into_iter().map(f64::from))
-            .chain([(GPU_WORK, work)])
+    #[test]
+    fn source_tags_survive_not_submitted_and_release_waits_for_render_and_slot_terminal() {
+        let mut world = World::new();
+        world.init_resource::<TimingReadout>();
+        let query = ApplicationGpuQuery {
+            renderer_resource_id: 7,
+            epoch: 3,
+            frame: 21,
+            source_ms: 1234.56789,
+        };
+        let quality = ApplicationRenderQuality {
+            scale: birdman_game_presentation::screen_render_scale::ScreenRenderScale::Half,
+            shadow: birdman_game_presentation::screen_render_auto::ScreenShadowMap::Quarter,
+            water_quality: birdman_game_format::WaterQuality::Low,
+        };
+        observe_query(&mut world, Some(query), quality);
+        observe_query(&mut world, None, quality);
+        let readout = world.resource::<TimingReadout>().clone();
         {
-            if store.get(&path).is_none() {
-                store.add(Diagnostic::new(path.clone()).with_max_history_length(1024));
-            }
-            store
-                .get_mut(&path)
-                .unwrap()
-                .add_measurement(DiagnosticMeasurement {
-                    time: arrival,
-                    value,
-                });
+            let state = readout.0.lock().unwrap();
+            let record = state.history.back().unwrap();
+            assert_eq!(
+                record.source.query.source_ms.to_bits(),
+                query.source_ms.to_bits()
+            );
+            assert_eq!(record.source.query.renderer_resource_id, 7);
+            assert_eq!(record.source.quality, quality);
+            assert!(matches!(record.outcome, TimingOutcome::NotSubmitted(_)));
         }
+        assert!(poll(&mut world).is_empty());
+        assert_eq!(elapsed(20, 10, 10.0), -0.0001);
+        assert_eq!(elapsed(20, 20, 10.0), 0.0);
+        assert!(release(&mut world, 7, None));
+        assert!(poll(&mut world).is_empty());
+        {
+            let mut state = readout.0.lock().unwrap();
+            state.release.as_mut().unwrap().stopped = true;
+            state.inflight = 1;
+        }
+        assert!(poll(&mut world).is_empty());
+        readout.0.lock().unwrap().release.as_mut().unwrap().started -= Duration::from_secs(6);
+        assert!(
+            shutdown_failure(&world)
+                .unwrap()
+                .contains("pending_slots=1")
+        );
+        assert!(readout.0.lock().unwrap().release.is_some());
+        readout.0.lock().unwrap().inflight = 0;
+        assert!(matches!(
+            poll(&mut world).as_slice(),
+            [ApplicationInput::RendererReleased {
+                renderer_resource_id: 7,
+                failure: None
+            }]
+        ));
+        assert!(poll(&mut world).is_empty());
     }
 
     #[test]
@@ -682,83 +783,5 @@ pub(crate) mod tests {
             matches!(selected_preparation([CachedRenderPipelineId::new(1)], |_| &failed),
             PipelinePreparation::Failed(cause) if cause.contains("original GPU error"))
         );
-    }
-    #[test]
-    fn source_metadata_retains_fractional_clock_bits_and_actual_quality() {
-        let source = 1234.56789_f64;
-        let water = birdman_game_scene::lake_water::water_quality_profile(WaterQuality::Low)
-            .component_count() as u32;
-        let words = [
-            7,
-            3,
-            21,
-            source.to_bits() as u32,
-            (source.to_bits() >> 32) as u32,
-            50,
-            512,
-            water,
-        ];
-        let result = decode_work(words, 9.5).unwrap();
-        assert_eq!(result.renderer_resource_id, 7);
-        assert_eq!(result.sample.source_ms.to_bits(), source.to_bits());
-        assert_eq!(result.sample.epoch, 3);
-        assert_eq!(result.sample.frame, 21);
-        assert_eq!(result.sample.gpu_work_ms, 9.5);
-        assert_eq!(result.scale, ScreenRenderScale::Half);
-        assert_eq!(result.shadow, ScreenShadowMap::Quarter);
-        assert_eq!(result.water_quality, WaterQuality::Low);
-        assert_eq!(decode_work(words, 0.0).unwrap().sample.gpu_work_ms, 0.0);
-        assert_eq!(decode_work(words, -1.0).unwrap().sample.gpu_work_ms, -1.0);
-        assert!(
-            decode_work(words, f64::NAN)
-                .unwrap()
-                .sample
-                .gpu_work_ms
-                .is_nan()
-        );
-        let invalid_source = f64::NAN.to_bits();
-        let mut invalid_words = words;
-        invalid_words[3] = invalid_source as u32;
-        invalid_words[4] = (invalid_source >> 32) as u32;
-        assert_eq!(
-            decode_work(invalid_words, 0.0),
-            Err(TimingFailure::InvalidSource)
-        );
-        #[cfg(feature = "verify-harness")]
-        {
-            let mut world = World::new();
-            world.init_resource::<NativeGpu>();
-            world.resource_mut::<NativeGpu>().renderer_id = 7;
-            world.init_resource::<TimingReadout>();
-            world.init_resource::<DiagnosticsStore>();
-            for work in [0.0, -1.0, f64::NAN] {
-                packet(
-                    &mut world.resource_mut::<DiagnosticsStore>(),
-                    Instant::now(),
-                    3,
-                    21,
-                    1234.0,
-                    work,
-                );
-                let observed = poll(&mut world);
-                let [
-                    ApplicationInput::Graphics {
-                        renderer_resource_id: 1,
-                        observation:
-                            ApplicationGraphicsObservation::GpuCompleted { query, gpu_work_ms },
-                    },
-                ] = observed.as_slice()
-                else {
-                    panic!("Original GPU query observation")
-                };
-                assert_eq!(query.renderer_resource_id, 1);
-                assert_eq!(query.epoch, 3);
-                assert_eq!(query.frame, 21);
-                assert_eq!(query.source_ms, 1234.0);
-                assert_eq!(gpu_work_ms.to_bits(), work.to_bits());
-                assert!(poll(&mut world).is_empty());
-            }
-            assert_eq!(world.resource::<NativeGpu>().renderer_id, 7);
-        }
     }
 }

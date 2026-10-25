@@ -462,7 +462,7 @@ cargo run -p birdman-game-bevy --features verify-harness --locked -- --verify ta
 | `--verify-size WIDTHxHEIGHT` | `--verify` 必須。正の整数で検査viewportを指定する |
 | `--verify-replay-cameras` | 自然着水recordの中間時刻を共有UIの全10cameraで撮影する |
 | `--verify-water CASE` | Calm/Typical × Low/Medium/Highの1条件を観測する |
-| `--verify-timing root` / `--verify-timing full` | `--verify-water` 必須。rootはroot-only、fullは全pass診断。既定full |
+| `--verify-timing root` / `--verify-timing full` | `--verify-water` 必須。rootはRenderGraph区間、fullは各viewのCore3d opaque system区間も計測する。既定full |
 | `--verify-water-auto` | `--verify-water` 必須。実Auto policyで5 motionを観測する |
 
 - Replay cameraとwater検査の同時指定は拒否する。
@@ -519,14 +519,16 @@ CASEは `calm-low` / `calm-medium` / `calm-high` / `typical-low` / `typical-medi
 - 5 motion後はAuto解除で手動scale/shadow/水面の3値へ戻す。
 
 - rootはRenderGraph描画命令区間だけを計測し、準備・upload・readback・present待機を含まない。
-- fullは追加pass診断を収集する。
+- fullは各viewの公開Core3d opaque system前後を追加計測する。opaque・alpha mask・skyを含むsystem区間であり、旧pass内部の診断値とは別の測定範囲である。
 - GPU診断需要: Nativeのroot/fullだけが明示し、Manualでも共有ownerの同じquery・epoch・sourceを取得する。通常ManualのWeb/Nativeは診断を要求せず、Manual診断は選択画質を保持する。
 - GPU値の有効期間: sourceの鮮度と測定区間に同じ500 msを適用する。非有限・負値・期間超過は原値を保持して計測窓を失効し、描画資源を保持する。ブラウザ時計の量子化を含むため、callback到着までの時間との差を物理的な厳密上限とは扱わない。
 - 履歴4096件からcount/span/mean/nearest-rank p95/maxを出力し、容量不足・非有限・未取得を分ける。
-- pass時間を合算しない。
+- rootとview別system区間は重複するため、個別の分布として扱う。
 - 受領時刻とGPU source時刻、epoch・frame・適用scale/shadow/water品質を区分する。
 - Start保存frameを除きmotion終了frameまでをsource区間とし、End保存完了を受信cutoffとする。
-- 全queryのdrainは保証せず、frame wrap・欠損・重複・metadata不一致・pair別部分窓を明示する。
+- Nativeは8組のquery・resolve・readback資源を再利用し、所有するquery tagを原整数timestamp対へ直接対応付ける。resolveとcopyは別command bufferへ順序付きで提出し、map終端・unmap・work-doneと完了通知のdrain後に再利用する。
+- 準備中・slot使用中・描画前に置き換わったqueryはNativeの未提出履歴へ記録し、共有ownerの鮮度判定を継続する。発行済みqueryのAPI失敗は元tagとcauseを共有ownerが認可する。
+- 終了時は新queryを止め、RenderWorldの停止確認と全slotの終端後にrenderer解放を通知する。物理I/O終了期限は5秒とし、未終端時はClosingと資源所有を保持してNativeをエラー終了する。
 - offscreen throughput、通常windowの80 FPS表示、CPUとGPUの同frame合算は個別の確認対象である。
 
 ## 11. VR・性能・配布の受入

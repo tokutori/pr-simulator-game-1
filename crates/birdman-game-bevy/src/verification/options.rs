@@ -168,7 +168,7 @@ impl Options {
 
     pub(crate) fn print_help() {
         println!(
-            "検証feature有効: --verify DIR [--offscreen] [--verify-size WIDTHxHEIGHT] [--verify-water WEATHER-QUALITY [--verify-timing root|full] [--verify-water-auto] | --verify-replay-cameras]\n--verify: logical input/core loopとGPU画像保存を検査する。物理キー操作の検査ではない。\n--offscreen: --verifyをOSウィンドウなしで実行し、本番sceneとUIをImageへ描画する。--no-vsync併用時はrunnerの待機を解除する。\n--verify-size: 検査viewportの寸法を指定する。通常起動の寸法とOS表示倍率は変更しない。\n--verify-water: calm/typicalとlow/medium/highの6条件から1条件を検査する。例: typical-low。\n--verify-timing: --verify-waterの診断方式。rootはManualにもroot-only計測を許可し、fullは全pass診断を使用する。省略時はfull。\n--verify-water-auto: 水面の5 motionを通常UIと同じ実Auto policyで観測する。Auto指定のない水面比較はManual100を明示する。\n--verify-replay-cameras: 自然着水した実記録の中間時刻を共有UIの全cameraから撮影する。--verify-waterとの同時指定は不可。"
+            "検証feature有効: --verify DIR [--offscreen] [--verify-size WIDTHxHEIGHT] [--verify-water WEATHER-QUALITY [--verify-timing root|full] [--verify-water-auto] | --verify-replay-cameras]\n--verify: logical input/core loopとGPU画像保存を検査する。物理キー操作の検査ではない。\n--offscreen: --verifyをOSウィンドウなしで実行し、本番sceneとUIをImageへ描画する。--no-vsync併用時はrunnerの待機を解除する。\n--verify-size: 検査viewportの寸法を指定する。通常起動の寸法とOS表示倍率は変更しない。\n--verify-water: calm/typicalとlow/medium/highの6条件から1条件を検査する。例: typical-low。\n--verify-timing: --verify-waterの診断方式。rootはRenderGraph区間を、fullは各viewのCore3d opaque system区間も計測する。Manualでも計測し、終了時はGPU I/O終端を最大5秒待つ。省略時はfull。\n--verify-water-auto: 水面の5 motionを通常UIと同じ実Auto policyで観測する。Auto指定のない水面比較はManual100を明示する。\n--verify-replay-cameras: 自然着水した実記録の中間時刻を共有UIの全cameraから撮影する。--verify-waterとの同時指定は不可。"
         );
     }
 }

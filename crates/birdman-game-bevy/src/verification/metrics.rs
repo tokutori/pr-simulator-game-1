@@ -44,16 +44,12 @@ pub(super) fn timing_kind(diagnostic: &Diagnostic) -> Option<&'static str> {
     if diagnostic.path() == &FrameTimeDiagnosticsPlugin::FRAME_TIME {
         return Some("real_frame_cycle");
     }
-    match diagnostic.path().as_str().rsplit('/').next() {
-        Some("elapsed_cpu") => Some("render_cpu"),
-        Some("elapsed_gpu") => Some("render_gpu"),
-        _ => None,
-    }
+    None
 }
 
 pub(super) fn maintain_timing_history(mut diagnostics: ResMut<DiagnosticsStore>) {
     for diagnostic in diagnostics.iter_mut() {
-        if (timing_kind(diagnostic).is_some() || timing::is_source_metadata(diagnostic.path()))
+        if timing_kind(diagnostic).is_some()
             && diagnostic.get_max_history_length() < TIMING_HISTORY_LIMIT
         {
             let placeholder = Diagnostic::new(diagnostic.path().clone());
@@ -113,11 +109,7 @@ pub(super) fn summarize_timing(
         received_count += 1;
         first.get_or_insert(measurement.time);
         last = Some(measurement.time);
-        let valid = if timing_kind(diagnostic) == Some("render_gpu") {
-            is_valid_gpu_work_ms(measurement.value)
-        } else {
-            measurement.value.is_finite() && measurement.value >= 0.0
-        };
+        let valid = measurement.value.is_finite() && measurement.value >= 0.0;
         if valid {
             values.push(measurement.value);
         } else {
@@ -150,7 +142,7 @@ pub(super) fn report_motion_timings(
 ) {
     let end = Instant::now();
     println!(
-        "Motion timing case={:?} motion={} interval={interval:?} arrival_window_ms={:.3} debug_assertions={} mode={mode:?} applied_scale={:?} shadow_map_size={} water_quality={}; Real frame cycle includes VSync/OS waits; render CPU/GPU paths are not summed or mapped to the same source frame",
+        "Motion timing case={:?} motion={} interval={interval:?} arrival_window_ms={:.3} debug_assertions={} mode={mode:?} applied_scale={:?} shadow_map_size={} water_quality={}; Real frame cycle includes VSync/OS waits; GPU root and view-system scopes retain their submitted source tags",
         verification.water_case,
         motion.label(),
         end.duration_since(verification.stage_started).as_secs_f64() * 1000.0,
@@ -168,39 +160,14 @@ pub(super) fn report_motion_timings(
             window.present_mode,
         );
     }
-    let mut available = [false; 3];
-    if let Some(diagnostics) = diagnostics {
-        let mut paths: Vec<_> = diagnostics
-            .iter()
-            .filter(|diagnostic| timing_kind(diagnostic).is_some())
-            .collect();
-        paths.sort_unstable_by(|left, right| left.path().as_str().cmp(right.path().as_str()));
-        for diagnostic in paths {
-            let kind = timing_kind(diagnostic).unwrap();
-            let summary = summarize_timing(diagnostic, verification.stage_started, end);
-            if summary.received_count > summary.invalid_count {
-                available[match kind {
-                    "real_frame_cycle" => 0,
-                    "render_cpu" => 1,
-                    _ => 2,
-                }] = true;
-            }
-            println!(
-                "Motion timing path={} kind={kind} arrival_distribution_complete={} valid_only_statistics={summary:?}",
-                diagnostic.path().as_str(),
-                summary.is_complete(),
-            );
-        }
-    }
-    for (kind, available) in ["real_frame_cycle", "render_cpu", "render_gpu"]
-        .into_iter()
-        .zip(available)
+    if let Some(diagnostic) =
+        diagnostics.and_then(|store| store.get(&FrameTimeDiagnosticsPlugin::FRAME_TIME))
     {
-        if !available {
-            println!(
-                "Motion timing {kind} unavailable: no valid sample received within the interval; GPU timestamp features were not forced"
-            );
-        }
+        let summary = summarize_timing(diagnostic, verification.stage_started, end);
+        println!(
+            "Motion timing kind=real_frame_cycle arrival_distribution_complete={} valid_only_statistics={summary:?}",
+            summary.is_complete()
+        );
     }
 }
 
@@ -209,13 +176,15 @@ pub(super) struct SourceTimingSummary {
     pub(super) expected_frames: u32,
     pub(super) received_frames: usize,
     pub(super) duplicate_frames: usize,
+    pub(super) not_submitted: usize,
+    pub(super) failed: usize,
     pub(super) unassigned_arrivals: usize,
     pub(super) history_incomplete: bool,
     pub(super) groups: BTreeMap<(u32, u32, u32, WaterQuality), TimingSummary>,
 }
 
 pub(super) fn summarize_source_timing(
-    diagnostics: &DiagnosticsStore,
+    records: &[timing::TimingRecord],
     window: MotionSourceWindow,
     arrivals_since: Instant,
 ) -> Result<SourceTimingSummary, &'static str> {
@@ -234,41 +203,39 @@ pub(super) fn summarize_source_timing(
         expected_frames,
         received_frames: 0,
         duplicate_frames: 0,
+        not_submitted: 0,
+        failed: 0,
         unassigned_arrivals: 0,
         history_incomplete: false,
         groups: BTreeMap::new(),
     };
     let mut grouped: BTreeMap<_, Vec<timing::SourceWork>> = BTreeMap::new();
     let mut frames = BTreeSet::new();
-    let mut history_limit = TIMING_HISTORY_LIMIT;
-    for diagnostic in diagnostics.iter().filter(|diagnostic| {
-        diagnostic.path() == &timing::GPU_WORK || timing::is_source_metadata(diagnostic.path())
-    }) {
-        history_limit = history_limit.min(diagnostic.get_max_history_length());
-        summary.history_incomplete |= diagnostic.history_len()
-            >= diagnostic.get_max_history_length()
-            && diagnostic
-                .measurements()
-                .next()
-                .is_some_and(|value| value.time >= arrivals_since);
-    }
-    for (arrival, source) in timing::source_history(diagnostics) {
-        let source = match source {
-            Ok(source) => source,
-            Err(_) => {
-                summary.unassigned_arrivals += usize::from(arrival >= arrivals_since);
-                continue;
-            }
-        };
-        if source.sample.frame <= start.frame || source.sample.frame > end.frame {
+    let history_limit = timing::HISTORY_LIMIT;
+    summary.history_incomplete = records.len() >= history_limit
+        && records
+            .first()
+            .is_some_and(|record| record.arrival >= arrivals_since);
+    for record in records {
+        let query = record.source.query;
+        if query.frame <= start.frame || query.frame > end.frame {
             continue;
         }
-        if source.sample.source_ms < start.milliseconds
-            || source.sample.source_ms > end.milliseconds
-        {
+        if query.source_ms < start.milliseconds || query.source_ms > end.milliseconds {
             summary.unassigned_arrivals += 1;
             continue;
         }
+        let source = match &record.outcome {
+            timing::TimingOutcome::Completed { .. } => timing::source_work(record).unwrap(),
+            timing::TimingOutcome::NotSubmitted(_) => {
+                summary.not_submitted += 1;
+                continue;
+            }
+            timing::TimingOutcome::Failed(_) => {
+                summary.failed += 1;
+                continue;
+            }
+        };
         if !frames.insert(source.sample.frame) {
             summary.duplicate_frames += 1;
             continue;
@@ -325,7 +292,7 @@ pub(super) fn summarize_source_timing(
 pub(super) fn report_motion_sources(
     verification: &Verification,
     motion: WaterMotion,
-    diagnostics: Option<&DiagnosticsStore>,
+    records: &[timing::TimingRecord],
 ) {
     let Some(window) = verification.motion_source else {
         println!(
@@ -334,26 +301,69 @@ pub(super) fn report_motion_sources(
         );
         return;
     };
-    let Some(diagnostics) = diagnostics else {
-        println!(
-            "Motion source timing motion={} unavailable: DiagnosticsStore absent",
-            motion.label()
-        );
-        return;
-    };
-    match summarize_source_timing(diagnostics, window, verification.stage_started) {
+    match summarize_source_timing(records, window, verification.stage_started) {
         Ok(summary) => {
             let missing = summary.expected_frames as usize - summary.received_frames;
             println!(
-                "Motion source timing motion={} window={window:?} missing_frames={missing} duplicate_frames={} unassigned_arrivals={} history_incomplete={}; End capture-save is the arrival cutoff, not query-drain confirmation; frame inclusion is (start,end], source_ms retains the owner clock value",
+                "Motion source timing motion={} window={window:?} missing_frames={missing} duplicate_frames={} not_submitted={} failed={} unassigned_arrivals={} history_incomplete={}; End capture-save is the arrival cutoff; renderer release drains all admitted queries; frame inclusion is (start,end], source_ms retains the owner clock value",
                 motion.label(),
                 summary.duplicate_frames,
+                summary.not_submitted,
+                summary.failed,
                 summary.unassigned_arrivals,
                 summary.history_incomplete,
             );
+            let mut views: BTreeMap<_, Vec<f64>> = BTreeMap::new();
+            for record in records {
+                let query = record.source.query;
+                let MotionSourceWindow::Complete { start, end } = window else {
+                    unreachable!()
+                };
+                if query.frame <= start.frame || query.frame > end.frame {
+                    continue;
+                }
+                if let timing::TimingOutcome::Completed { scopes, .. } = &record.outcome {
+                    for (view, milliseconds) in scopes {
+                        views
+                            .entry((
+                                query.epoch,
+                                record.source.quality.scale.percent(),
+                                record.source.quality.shadow.size(),
+                                record.source.quality.water_quality,
+                                *view,
+                            ))
+                            .or_default()
+                            .push(*milliseconds);
+                    }
+                }
+            }
+            for (scope, values) in views {
+                let summary = TimingSummary {
+                    received_count: values.len(),
+                    invalid_count: values
+                        .iter()
+                        .filter(|value| !is_valid_gpu_work_ms(**value))
+                        .count(),
+                    sample_span_ms: None,
+                    history_limit: timing::HISTORY_LIMIT,
+                    history_incomplete: summary.history_incomplete,
+                    mean_ms: None,
+                    p95_ms: None,
+                    maximum_ms: None,
+                }
+                .with_values(
+                    values
+                        .into_iter()
+                        .filter(|value| is_valid_gpu_work_ms(*value))
+                        .collect(),
+                );
+                println!(
+                    "Motion source timing scope=core3d_opaque_system epoch_scale_shadow_water_view={scope:?} statistics={summary:?}"
+                );
+            }
             for ((epoch, scale, shadow, water), group) in summary.groups {
                 println!(
-                    "Motion source timing motion={} epoch={epoch} applied_scale={scale} shadow_map_size={shadow} water_quality={} root_gpu={group:?} partial_motion_group={} source_coverage_complete={}; each triple is a separate descriptive distribution, not an 80FPS acceptance",
+                    "Motion source timing motion={} epoch={epoch} applied_scale={scale} shadow_map_size={shadow} water_quality={} render_graph_gpu={group:?} partial_motion_group={} source_coverage_complete={}; each triple is a separate descriptive distribution, not an 80FPS acceptance",
                     motion.label(),
                     water.label(),
                     group.received_count < summary.expected_frames as usize,

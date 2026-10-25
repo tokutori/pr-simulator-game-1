@@ -410,31 +410,21 @@ pub(crate) fn execute(
                     failure: Some("Requested renderer handle is unavailable".into()),
                 }]));
             }
-            let mut failures = Vec::new();
-            for candidate in std::mem::take(&mut gpu.candidates).into_values() {
-                if let Err(cause) = gpu.release(world, &candidate) {
-                    failures.push(cause);
-                }
+            gpu.query = None;
+            for mut camera in world
+                .query_filtered::<&mut Camera, With<Camera3d>>()
+                .iter_mut(world)
+            {
+                camera.is_active = false;
             }
-            for handles in std::mem::take(&mut gpu.meshes).into_values() {
-                for handle in handles {
-                    world.resource_mut::<Assets<Mesh>>().remove(handle.id());
-                }
+            if screen_render::timing::release(world, *renderer_resource_id, None) {
+                Vec::new()
+            } else {
+                vec![ApplicationInput::RendererReleased {
+                    renderer_resource_id: *renderer_resource_id,
+                    failure: gpu.release_renderer(world),
+                }]
             }
-            for handle in std::mem::take(&mut gpu.water_meshes).into_values() {
-                world.resource_mut::<Assets<Mesh>>().remove(handle.id());
-            }
-            for handle in std::mem::take(&mut gpu.textures).into_values() {
-                world.resource_mut::<Assets<Image>>().remove(handle.id());
-            }
-            if let Some(camera) = gpu.main_camera.take() {
-                world.despawn(camera);
-            }
-            gpu.active = None;
-            vec![ApplicationInput::RendererReleased {
-                renderer_resource_id: *renderer_resource_id,
-                failure: (!failures.is_empty()).then(|| failures.join("; ")),
-            }]
         }
         _ => {
             world.insert_resource(gpu);
@@ -455,6 +445,31 @@ fn attachment_index(attachment: ApplicationMeshAttachment) -> usize {
 }
 
 impl NativeGpu {
+    fn release_renderer(&mut self, world: &mut World) -> Option<String> {
+        let mut failures = Vec::new();
+        for candidate in std::mem::take(&mut self.candidates).into_values() {
+            if let Err(cause) = self.release(world, &candidate) {
+                failures.push(cause);
+            }
+        }
+        for handles in std::mem::take(&mut self.meshes).into_values() {
+            for handle in handles {
+                world.resource_mut::<Assets<Mesh>>().remove(handle.id());
+            }
+        }
+        for handle in std::mem::take(&mut self.water_meshes).into_values() {
+            world.resource_mut::<Assets<Mesh>>().remove(handle.id());
+        }
+        for handle in std::mem::take(&mut self.textures).into_values() {
+            world.resource_mut::<Assets<Image>>().remove(handle.id());
+        }
+        if let Some(camera) = self.main_camera.take() {
+            world.despawn(camera);
+        }
+        self.active = None;
+        (!failures.is_empty()).then(|| failures.join("; "))
+    }
+
     fn prepare(
         &mut self,
         world: &mut World,
@@ -1055,6 +1070,7 @@ pub(crate) fn submit(
     if let Some(resource) = drawing.graphics.resource {
         gpu.quality = resource.quality;
     }
+    screen_render::timing::observe_query(world, gpu.query, gpu.quality);
     world.insert_resource(gpu);
     result
 }
@@ -1176,7 +1192,21 @@ pub(crate) fn poll(world: &mut World) -> Vec<ApplicationInput> {
         }
     }
     world.insert_resource(gpu);
-    inputs.extend(screen_render::timing::poll(world));
+    let mut completed = screen_render::timing::poll(world);
+    for input in &mut completed {
+        if let ApplicationInput::RendererReleased { failure, .. } = input {
+            let mut gpu = world.remove_resource::<NativeGpu>().unwrap();
+            if let Some(cause) = gpu.release_renderer(world) {
+                *failure = Some(
+                    failure
+                        .take()
+                        .map_or(cause.clone(), |prior| format!("{prior}; {cause}")),
+                );
+            }
+            world.insert_resource(gpu);
+        }
+    }
+    inputs.extend(completed);
     inputs
 }
 

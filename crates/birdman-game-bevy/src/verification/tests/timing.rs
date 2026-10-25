@@ -36,65 +36,53 @@ fn observer_endpoints_are_continuous_and_only_the_selected_component_moves() {
 
 #[test]
 fn source_summary_uses_frames_across_epoch_changes_and_retains_missing_or_duplicate_samples() {
-    use crate::app::screen_render::timing::{
-        self,
-        tests::{packet, packet_quality},
-    };
-    use bevy::diagnostic::{DiagnosticMeasurement, DiagnosticsStore};
+    use crate::app::screen_render::timing::{self, TimingOutcome, TimingRecord, TimingSource};
+    use birdman_game_runtime::{ApplicationGpuQuery, ApplicationRenderQuality};
     use driver::metrics::{MotionSourceWindow, SourceBoundary, summarize_source_timing};
     let arrival = std::time::Instant::now();
-    let mut store = DiagnosticsStore::default();
-    packet(&mut store, arrival, 1, 10, 16_123.0, 50.0);
-    packet(
-        &mut store,
-        arrival + Duration::from_millis(1),
-        1,
-        11,
-        16_123.0,
-        20.0,
-    );
-    packet_quality(
-        &mut store,
-        arrival + Duration::from_millis(4),
-        2,
-        12,
-        16_150.0,
-        10.0,
-        (
-            driver::ScreenRenderScale::Half,
-            ScreenShadowMap::Quarter,
-            WaterQuality::Low,
-        ),
-    );
-    packet_quality(
-        &mut store,
-        arrival + Duration::from_millis(5),
-        2,
-        12,
-        16_150.0,
-        100.0,
-        (
-            driver::ScreenRenderScale::Half,
-            ScreenShadowMap::Quarter,
-            WaterQuality::Low,
-        ),
-    );
-    packet(
-        &mut store,
-        arrival + Duration::from_millis(6),
-        2,
-        14,
-        16_190.0,
-        1.0,
-    );
-    packet(
-        &mut store,
-        arrival + Duration::from_millis(8),
-        1,
-        13,
-        16_180.9,
-        1e12,
-    );
+    let mut records: Vec<_> = [
+        (1, 10, 16_123.0, 50_u64, false),
+        (1, 11, 16_123.0, 20, false),
+        (2, 12, 16_150.0, 10, true),
+        (2, 12, 16_150.0, 100, true),
+        (2, 14, 16_190.0, 1, false),
+        (1, 13, 16_180.9, 1_000_000_000_000, false),
+    ]
+    .into_iter()
+    .map(|(epoch, frame, source_ms, ticks, low)| TimingRecord {
+        arrival,
+        source: TimingSource {
+            query: ApplicationGpuQuery {
+                renderer_resource_id: 1,
+                epoch,
+                frame,
+                source_ms,
+            },
+            quality: ApplicationRenderQuality {
+                scale: if low {
+                    driver::ScreenRenderScale::Half
+                } else {
+                    driver::ScreenRenderScale::Full
+                },
+                shadow: if low {
+                    ScreenShadowMap::Quarter
+                } else {
+                    ScreenShadowMap::Full
+                },
+                water_quality: if low {
+                    WaterQuality::Low
+                } else {
+                    WaterQuality::High
+                },
+            },
+        },
+        outcome: TimingOutcome::Completed {
+            raw: vec![0, ticks],
+            period_ns: 1_000_000.0,
+            scopes: Vec::new(),
+        },
+    })
+    .collect();
     let window = MotionSourceWindow::Observing {
         start: SourceBoundary {
             frame: 10,
@@ -105,7 +93,7 @@ fn source_summary_uses_frames_across_epoch_changes_and_retains_missing_or_duplic
         frame: 13,
         milliseconds: 16_180.9,
     });
-    let summary = summarize_source_timing(&store, window, arrival).unwrap();
+    let summary = summarize_source_timing(&records, window, arrival).unwrap();
     assert_eq!(summary.expected_frames, 3);
     assert_eq!(summary.received_frames, 3);
     assert_eq!(summary.duplicate_frames, 1);
@@ -122,29 +110,25 @@ fn source_summary_uses_frames_across_epoch_changes_and_retains_missing_or_duplic
         summary.groups[&(2, 50, 512, WaterQuality::Low)].mean_ms,
         Some(10.0)
     );
-    store
-        .get_mut(&timing::GPU_WORK)
-        .unwrap()
-        .add_measurement(DiagnosticMeasurement {
-            time: arrival + Duration::from_millis(7),
-            value: 8.0,
-        });
-    let summary = summarize_source_timing(&store, window, arrival).unwrap();
-    assert_eq!(summary.unassigned_arrivals, 1);
+    let mut not_submitted = records[1].clone();
+    not_submitted.outcome = TimingOutcome::NotSubmitted("timestamp slots busy");
+    records.push(not_submitted);
+    let mut failed = records[1].clone();
+    failed.outcome = TimingOutcome::Failed("original map cause".into());
+    records.push(failed);
+    let summary = summarize_source_timing(&records, window, arrival).unwrap();
+    assert_eq!(summary.not_submitted, 1);
+    assert_eq!(summary.failed, 1);
     assert_eq!(summary.received_frames, 3);
-    for diagnostic in store.iter_mut() {
-        let placeholder = bevy::diagnostic::Diagnostic::new(diagnostic.path().clone());
-        let owned = std::mem::replace(diagnostic, placeholder);
-        *diagnostic = owned.with_max_history_length(2);
-    }
+    records.resize(timing::HISTORY_LIMIT, records[0].clone());
     assert!(
-        summarize_source_timing(&store, window, arrival)
+        summarize_source_timing(&records, window, arrival)
             .unwrap()
             .history_incomplete
     );
     assert!(
         summarize_source_timing(
-            &store,
+            &records,
             MotionSourceWindow::Observing {
                 start: SourceBoundary {
                     frame: 10,
@@ -165,7 +149,7 @@ fn source_summary_uses_frames_across_epoch_changes_and_retains_missing_or_duplic
             milliseconds: 100.0,
         },
     };
-    assert!(summarize_source_timing(&store, wrapped, arrival).is_err());
+    assert!(summarize_source_timing(&records, wrapped, arrival).is_err());
 }
 
 #[test]
@@ -246,22 +230,10 @@ fn timing_summary_keeps_invalid_samples_and_unavailable_distinct() {
     assert_eq!(summary.p95_ms, None);
     assert_eq!(summary.maximum_ms, None);
     assert!(!summary.is_complete());
-    let mut gpu = bevy::diagnostic::Diagnostic::new(crate::app::screen_render::timing::GPU_WORK);
-    for (index, value) in [0.0, 500.0, 1e12].into_iter().enumerate() {
-        gpu.add_measurement(bevy::diagnostic::DiagnosticMeasurement {
-            time: start + Duration::from_millis(index as u64),
-            value,
-        });
-    }
-    let summary = driver::metrics::summarize_timing(&gpu, start, start + MOTION_DURATION);
-    assert_eq!(summary.received_count, 3);
-    assert_eq!(summary.invalid_count, 1);
-    assert_eq!(summary.maximum_ms, Some(500.0));
-    assert!(!summary.is_complete());
 }
 
 #[test]
-fn timing_history_extension_preserves_metadata_and_current_frame_deferred_measurement() {
+fn timing_history_extension_preserves_current_frame_deferred_measurement() {
     use bevy::{diagnostic::*, prelude::*};
     let mut app = App::new();
     app.add_plugins((MinimalPlugins, FrameTimeDiagnosticsPlugin::default()))
@@ -288,29 +260,16 @@ fn timing_history_extension_preserves_metadata_and_current_frame_deferred_measur
             })
             .after(driver::metrics::maintain_timing_history),
         );
-    let path = DiagnosticPath::const_new("render/test/elapsed_gpu");
-    let mut diagnostic = Diagnostic::new(path.clone()).with_suffix("ms");
-    diagnostic.add_measurement(DiagnosticMeasurement {
-        time: std::time::Instant::now(),
-        value: 3.0,
-    });
-    diagnostic.is_enabled = false;
-    app.world_mut()
-        .resource_mut::<DiagnosticsStore>()
-        .add(diagnostic);
     app.update();
     app.update();
     let store = app.world().resource::<DiagnosticsStore>();
-    let diagnostic = store.get(&path).unwrap();
     assert_eq!(
-        diagnostic.get_max_history_length(),
+        store
+            .get(&FrameTimeDiagnosticsPlugin::FRAME_TIME)
+            .unwrap()
+            .get_max_history_length(),
         driver::metrics::TIMING_HISTORY_LIMIT
     );
-    assert_eq!(diagnostic.history_len(), 1);
-    assert_eq!(diagnostic.suffix, "ms");
-    assert!(!diagnostic.is_enabled);
-    assert_eq!(diagnostic.average(), Some(3.0));
-    assert_eq!(diagnostic.smoothed(), Some(3.0));
     assert_eq!(
         store
             .get(&FrameTimeDiagnosticsPlugin::FPS)
@@ -324,37 +283,5 @@ fn timing_history_extension_preserves_metadata_and_current_frame_deferred_measur
             .unwrap()
             .get_max_history_length(),
         0
-    );
-    let late = DiagnosticPath::const_new("render/new/elapsed_cpu");
-    app.world_mut()
-        .resource_mut::<DiagnosticsStore>()
-        .add(Diagnostic::new(late.clone()));
-    app.update();
-    assert_eq!(
-        app.world()
-            .resource::<DiagnosticsStore>()
-            .get(&late)
-            .unwrap()
-            .get_max_history_length(),
-        driver::metrics::TIMING_HISTORY_LIMIT,
-    );
-    assert_eq!(
-        driver::metrics::timing_kind(&Diagnostic::new(DiagnosticPath::const_new(
-            "render/invalid_elapsed_gpu"
-        ))),
-        None,
-    );
-    let metadata = DiagnosticPath::const_new("render/screen_scale");
-    app.world_mut()
-        .resource_mut::<DiagnosticsStore>()
-        .add(Diagnostic::new(metadata.clone()));
-    app.update();
-    assert_eq!(
-        app.world()
-            .resource::<DiagnosticsStore>()
-            .get(&metadata)
-            .unwrap()
-            .get_max_history_length(),
-        driver::metrics::TIMING_HISTORY_LIMIT
     );
 }
