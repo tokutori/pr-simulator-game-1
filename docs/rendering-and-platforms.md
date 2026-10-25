@@ -134,7 +134,7 @@ visibilityと実空間勾配の両channelがすべて厳密0の成分は、packe
 - 帯域別の移流は深水重力波の$c\propto\sqrt{\lambda}$に近づけた視覚近似であり、帯域内の分散・水深変化を表さない。
 
 - near/farと回転・縮尺を変えたfine/rippleの4層micro-normalは、解像する帯域を4点で積分する。texel footprintの短軸を保守的に評価し、2〜4texelの区間で採取位置を中心へ連続的に縮め、十分に縮小された帯域はmipの平均傾斜と二次momentを1回採取して共用する。
-- Fragmentの波loopは実成分数を上限とし、頂点形状で全て表現する成分と振幅0の成分をmodulation評価前に除外する。残る成分は解析phase勾配と全laneで取得した位置微分から局所一次footprintを求め、画素幅による法線寄与の減衰へ用いる。
+- Fragmentの波loopは実成分数を上限とし、各成分の画素微分を全laneで評価する。法線寄与が0の画素では、その後のcrestとgradientの演算を省略する。
 - 回転は移動方向、texture勾配、法線勾配へ一貫して適用する。
 - mipmapに平均勾配と二次モーメントを保持し、頂点法線が表現した勾配を差し引いて二重計上を避ける。
 - 未解像varianceからroughnessを導出する。
