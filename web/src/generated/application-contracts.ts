@@ -550,6 +550,16 @@ export type ApplicationGraphicsObservation = {
     readonly query: ApplicationGpuQuery;
 } | {
     /**
+     * Original mapping, device, or API failure.
+     */
+    readonly cause: string;
+    readonly kind: "gpu_failed";
+    /**
+     * Unmodified query tag.
+     */
+    readonly query: ApplicationGpuQuery;
+} | {
+    /**
      * Original capability diagnostic.
      */
     readonly cause: string;

@@ -115,7 +115,7 @@ pub(crate) struct NativeGpu {
     pub(crate) quality: ApplicationRenderQuality,
     initial_failure: Option<String>,
     pub(crate) renderer_id: u32,
-    revision: u64,
+    pub(crate) revision: u64,
 }
 
 impl Default for NativeGpu {
@@ -417,7 +417,8 @@ pub(crate) fn execute(
             {
                 camera.is_active = false;
             }
-            if screen_render::timing::release(world, *renderer_resource_id, None) {
+            let after = gpu.next_revision();
+            if screen_render::timing::release(world, *renderer_resource_id, after, None) {
                 Vec::new()
             } else {
                 vec![ApplicationInput::RendererReleased {

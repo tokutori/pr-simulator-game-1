@@ -519,16 +519,16 @@ CASEは `calm-low` / `calm-medium` / `calm-high` / `typical-low` / `typical-medi
 - 5 motion後はAuto解除で手動scale/shadow/水面の3値へ戻す。
 
 - rootはRenderGraph描画命令区間だけを計測し、準備・upload・readback・present待機を含まない。
-- fullは各viewの公開Core3d opaque system前後を追加計測する。opaque・alpha mask・skyを含むsystem区間であり、旧pass内部の診断値とは別の測定範囲である。
+- fullは各viewの公開Core3d opaque system前後を追加計測する。opaque・alpha mask・skyを含むsystem区間であり、補助scopeの欠落は原因を記録してFull統計から除外する。root成功は独立して共有ownerへ渡し、旧pass内部の診断値とは別の測定範囲として扱う。
 - GPU診断需要: Nativeのroot/fullだけが明示し、Manualでも共有ownerの同じquery・epoch・sourceを取得する。通常ManualのWeb/Nativeは診断を要求せず、Manual診断は選択画質を保持する。
 - GPU値の有効期間: sourceの鮮度と測定区間に同じ500 msを適用する。非有限・負値・期間超過は原値を保持して計測窓を失効し、描画資源を保持する。ブラウザ時計の量子化を含むため、callback到着までの時間との差を物理的な厳密上限とは扱わない。
 - 履歴4096件からcount/span/mean/nearest-rank p95/maxを出力し、容量不足・非有限・未取得を分ける。
 - rootとview別system区間は重複するため、個別の分布として扱う。
 - 受領時刻とGPU source時刻、epoch・frame・適用scale/shadow/water品質を区分する。
 - Start保存frameを除きmotion終了frameまでをsource区間とし、End保存完了を受信cutoffとする。
-- Nativeは8組のquery・resolve・readback資源を再利用し、所有するquery tagを原整数timestamp対へ直接対応付ける。resolveとcopyは別command bufferへ順序付きで提出し、map終端・unmap・work-doneと完了通知のdrain後に再利用する。
+- Nativeはquery・適用品質・camera・revisionを同じExtractで凍結し、同tagを一度だけ発行する。8組のquery・resolve・readback資源を再利用し、原整数timestamp対を元tagへ直接対応付ける。resolveとcopyは別command bufferへ順序付きで提出し、map終端・unmap・work-doneと完了通知のdrain後に再利用する。API失敗slotは退役する。
 - 準備中・slot使用中・描画前に置き換わったqueryはNativeの未提出履歴へ記録し、共有ownerの鮮度判定を継続する。発行済みqueryのAPI失敗は元tagとcauseを共有ownerが認可する。
-- 終了時は新queryを止め、RenderWorldの停止確認と全slotの終端後にrenderer解放を通知する。物理I/O終了期限は5秒とし、未終端時はClosingと資源所有を保持してNativeをエラー終了する。
+- 終了時は新queryを止め、停止revisionのRenderWorld抽出確認と全slotの終端後にrenderer解放を通知する。Native I/O更新でcallbackを非blocking pollし、物理I/O終了期限5秒の未終端時はClosingと資源所有を保持してエラー終了する。
 - offscreen throughput、通常windowの80 FPS表示、CPUとGPUの同frame合算は個別の確認対象である。
 
 ## 11. VR・性能・配布の受入

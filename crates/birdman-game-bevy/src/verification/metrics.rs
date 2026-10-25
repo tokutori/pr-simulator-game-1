@@ -178,9 +178,11 @@ pub(super) struct SourceTimingSummary {
     pub(super) duplicate_frames: usize,
     pub(super) not_submitted: usize,
     pub(super) failed: usize,
+    pub(super) scope_incomplete: usize,
     pub(super) unassigned_arrivals: usize,
     pub(super) history_incomplete: bool,
     pub(super) groups: BTreeMap<(u32, u32, u32, WaterQuality), TimingSummary>,
+    pub(super) views: BTreeMap<(u32, u32, u32, WaterQuality, u64), TimingSummary>,
 }
 
 pub(super) fn summarize_source_timing(
@@ -199,92 +201,117 @@ pub(super) fn summarize_source_timing(
     if end.milliseconds < start.milliseconds {
         return Err("Source clock regressed");
     }
+    let history_limit = timing::HISTORY_LIMIT;
     let mut summary = SourceTimingSummary {
         expected_frames,
         received_frames: 0,
         duplicate_frames: 0,
         not_submitted: 0,
         failed: 0,
+        scope_incomplete: 0,
         unassigned_arrivals: 0,
-        history_incomplete: false,
+        history_incomplete: records.len() >= history_limit
+            && records
+                .first()
+                .is_some_and(|record| record.arrival >= arrivals_since),
         groups: BTreeMap::new(),
+        views: BTreeMap::new(),
     };
-    let mut grouped: BTreeMap<_, Vec<timing::SourceWork>> = BTreeMap::new();
+    let mut grouped = BTreeMap::<_, Vec<(f64, f64)>>::new();
     let mut frames = BTreeSet::new();
-    let history_limit = timing::HISTORY_LIMIT;
-    summary.history_incomplete = records.len() >= history_limit
-        && records
-            .first()
-            .is_some_and(|record| record.arrival >= arrivals_since);
     for record in records {
         let query = record.source.query;
         if query.frame <= start.frame || query.frame > end.frame {
             continue;
         }
-        if query.source_ms < start.milliseconds || query.source_ms > end.milliseconds {
+        if !query.source_ms.is_finite()
+            || query.source_ms < start.milliseconds
+            || query.source_ms > end.milliseconds
+        {
             summary.unassigned_arrivals += 1;
             continue;
         }
-        let source = match &record.outcome {
-            timing::TimingOutcome::Completed { .. } => timing::source_work(record).unwrap(),
+        let (raw, period, scopes, scope_failure) = match &record.outcome {
+            timing::TimingOutcome::Completed {
+                raw,
+                period_ns,
+                scopes,
+                scope_failure,
+            } => (raw, *period_ns, scopes, scope_failure),
             timing::TimingOutcome::NotSubmitted(_) => {
                 summary.not_submitted += 1;
                 continue;
             }
-            timing::TimingOutcome::Failed(_) => {
+            timing::TimingOutcome::Failed { .. } => {
                 summary.failed += 1;
                 continue;
             }
         };
-        if !frames.insert(source.sample.frame) {
+        if !frames.insert(query.frame) {
             summary.duplicate_frames += 1;
             continue;
         }
+        let quality = record.source.quality;
+        let key = (
+            query.epoch,
+            quality.scale.percent(),
+            quality.shadow.size(),
+            quality.water_quality,
+        );
         grouped
-            .entry((
-                source.sample.epoch,
-                source.scale.percent(),
-                source.shadow.size(),
-                source.water_quality,
-            ))
+            .entry((key, None))
             .or_default()
-            .push(source);
+            .push((query.source_ms, timing::elapsed(raw[0], raw[1], period)));
+        if scope_failure.is_some() {
+            summary.scope_incomplete += 1;
+        } else {
+            for (view, milliseconds) in scopes {
+                grouped
+                    .entry((key, Some(*view)))
+                    .or_default()
+                    .push((query.source_ms, *milliseconds));
+            }
+        }
     }
     summary.received_frames = frames.len();
-    for (key, samples) in grouped {
+    for ((key, view), samples) in grouped {
         let minimum = samples
             .iter()
-            .map(|value| value.sample.source_ms)
+            .map(|(source, _)| *source)
             .min_by(f64::total_cmp)
             .unwrap();
         let maximum = samples
             .iter()
-            .map(|value| value.sample.source_ms)
+            .map(|(source, _)| *source)
             .max_by(f64::total_cmp)
             .unwrap();
-        summary.groups.insert(
-            key,
-            TimingSummary {
-                received_count: samples.len(),
-                invalid_count: samples
-                    .iter()
-                    .filter(|value| !is_valid_gpu_work_ms(value.sample.gpu_work_ms))
-                    .count(),
-                sample_span_ms: Some(maximum - minimum),
-                history_limit,
-                history_incomplete: summary.history_incomplete,
-                mean_ms: None,
-                p95_ms: None,
-                maximum_ms: None,
-            }
-            .with_values(
-                samples
-                    .iter()
-                    .map(|value| value.sample.gpu_work_ms)
-                    .filter(|value| is_valid_gpu_work_ms(*value))
-                    .collect(),
-            ),
+        let distribution = TimingSummary {
+            received_count: samples.len(),
+            invalid_count: samples
+                .iter()
+                .filter(|(_, value)| !is_valid_gpu_work_ms(*value))
+                .count(),
+            sample_span_ms: Some(maximum - minimum),
+            history_limit,
+            history_incomplete: summary.history_incomplete,
+            mean_ms: None,
+            p95_ms: None,
+            maximum_ms: None,
+        }
+        .with_values(
+            samples
+                .into_iter()
+                .map(|(_, value)| value)
+                .filter(|value| is_valid_gpu_work_ms(*value))
+                .collect(),
         );
+        if let Some(view) = view {
+            summary
+                .views
+                .insert((key.0, key.1, key.2, key.3, view), distribution);
+        } else {
+            summary.groups.insert(key, distribution);
+        }
     }
     Ok(summary)
 }
@@ -313,52 +340,13 @@ pub(super) fn report_motion_sources(
                 summary.unassigned_arrivals,
                 summary.history_incomplete,
             );
-            let mut views: BTreeMap<_, Vec<f64>> = BTreeMap::new();
-            for record in records {
-                let query = record.source.query;
-                let MotionSourceWindow::Complete { start, end } = window else {
-                    unreachable!()
-                };
-                if query.frame <= start.frame || query.frame > end.frame {
-                    continue;
-                }
-                if let timing::TimingOutcome::Completed { scopes, .. } = &record.outcome {
-                    for (view, milliseconds) in scopes {
-                        views
-                            .entry((
-                                query.epoch,
-                                record.source.quality.scale.percent(),
-                                record.source.quality.shadow.size(),
-                                record.source.quality.water_quality,
-                                *view,
-                            ))
-                            .or_default()
-                            .push(*milliseconds);
-                    }
-                }
-            }
-            for (scope, values) in views {
-                let summary = TimingSummary {
-                    received_count: values.len(),
-                    invalid_count: values
-                        .iter()
-                        .filter(|value| !is_valid_gpu_work_ms(**value))
-                        .count(),
-                    sample_span_ms: None,
-                    history_limit: timing::HISTORY_LIMIT,
-                    history_incomplete: summary.history_incomplete,
-                    mean_ms: None,
-                    p95_ms: None,
-                    maximum_ms: None,
-                }
-                .with_values(
-                    values
-                        .into_iter()
-                        .filter(|value| is_valid_gpu_work_ms(*value))
-                        .collect(),
-                );
+            println!(
+                "Motion source timing incomplete_full_scopes={}",
+                summary.scope_incomplete
+            );
+            for (scope, distribution) in summary.views {
                 println!(
-                    "Motion source timing scope=core3d_opaque_system epoch_scale_shadow_water_view={scope:?} statistics={summary:?}"
+                    "Motion source timing scope=core3d_opaque_system epoch_scale_shadow_water_view={scope:?} statistics={distribution:?}"
                 );
             }
             for ((epoch, scale, shadow, water), group) in summary.groups {

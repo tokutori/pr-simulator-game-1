@@ -22,14 +22,6 @@ use bevy::{
     },
     shader::ShaderCacheError,
 };
-#[cfg(feature = "verify-harness")]
-use birdman_game_format::WaterQuality;
-#[cfg(feature = "verify-harness")]
-use birdman_game_presentation::screen_render_auto::ScreenGpuSample;
-#[cfg(feature = "verify-harness")]
-use birdman_game_presentation::{
-    screen_render_auto::ScreenShadowMap, screen_render_scale::ScreenRenderScale,
-};
 use birdman_game_runtime::{
     ApplicationGpuQuery, ApplicationGraphicsObservation, ApplicationInput, ApplicationRenderQuality,
 };
@@ -87,7 +79,15 @@ impl Plugin for ScreenTimingPlugin {
                 .init_resource::<QueryPool>()
                 .init_resource::<ActiveLease>()
                 .add_systems(ExtractSchedule, extract_packet)
-                .add_systems(Render, prepare_packet.after(RenderSystems::PrepareAssets))
+                .add_systems(
+                    Render,
+                    (
+                        confirm_stop
+                            .after(RenderSystems::ExtractCommands)
+                            .before(RenderSystems::PrepareAssets),
+                        prepare_packet.after(RenderSystems::PrepareAssets),
+                    ),
+                )
                 .add_systems(
                     RenderGraph,
                     (
@@ -124,7 +124,10 @@ pub(crate) enum PipelinePreparation {
 
 #[derive(Resource, Default)]
 struct TimingPacket {
+    source: Option<TimingSource>,
+    last_query: Option<(u32, u32, u32, u64)>,
     camera: Option<Entity>,
+    revision: u64,
     preparation: PipelinePreparation,
     views: u32,
 }
@@ -141,8 +144,13 @@ pub(crate) enum TimingOutcome {
         raw: Vec<u64>,
         period_ns: f32,
         scopes: Vec<(u64, f64)>,
+        scope_failure: Option<String>,
     },
-    Failed(String),
+    Failed {
+        cause: String,
+        raw: Option<Vec<u64>>,
+        period_ns: f32,
+    },
     NotSubmitted(&'static str),
 }
 
@@ -164,10 +172,12 @@ struct TimingState {
     inflight: usize,
     history: VecDeque<TimingRecord>,
     release: Option<Release>,
+    device_failure: Option<String>,
 }
 
 struct Release {
     renderer: u32,
+    after: u64,
     started: Instant,
     failure: Option<String>,
     stopped: bool,
@@ -188,14 +198,19 @@ impl TimingState {
                 raw,
                 period_ns,
                 scopes,
+                scope_failure,
             } => {
                 debug!(
-                    "Native timestamp arrival={:?} source={:?} raw={raw:?} period_ns={period_ns} scopes={scopes:?}",
-                    record.arrival, record.source
+                    "Native timestamp arrival={:?} source={:?} quality={:?} raw={raw:?} period_ns={period_ns} scopes={scopes:?} scope_failure={scope_failure:?}",
+                    record.arrival, record.source.query, record.source.quality
                 );
             }
-            TimingOutcome::Failed(cause) => debug!(
-                "Native timestamp source={:?} failed: {cause}",
+            TimingOutcome::Failed {
+                cause,
+                raw,
+                period_ns,
+            } => debug!(
+                "Native timestamp source={:?} failed: {cause}; raw={raw:?} period_ns={period_ns}",
                 record.source
             ),
             TimingOutcome::NotSubmitted(cause) => debug!(
@@ -232,7 +247,12 @@ pub(crate) fn observe_query(
     }
 }
 
-pub(crate) fn release(world: &mut World, renderer: u32, failure: Option<String>) -> bool {
+pub(crate) fn release(
+    world: &mut World,
+    renderer: u32,
+    after: u64,
+    failure: Option<String>,
+) -> bool {
     let Some(readout) = world.get_resource::<TimingReadout>() else {
         return false;
     };
@@ -242,6 +262,7 @@ pub(crate) fn release(world: &mut World, renderer: u32, failure: Option<String>)
     }
     state.release = Some(Release {
         renderer,
+        after,
         started: Instant::now(),
         failure,
         stopped: false,
@@ -254,8 +275,8 @@ pub(crate) fn shutdown_failure(world: &World) -> Option<String> {
     let state = readout.0.lock().unwrap();
     let release = state.release.as_ref()?;
     (release.started.elapsed() >= RELEASE_BUDGET).then(|| format!(
-        "Native GPU release exceeded 5s: renderer={} render_stopped={} pending_slots={} queued_completions={}; custody retained",
-        release.renderer, release.stopped, state.inflight, state.completed.len()
+        "Native GPU release exceeded 5s: renderer={} stop_revision={} render_stopped={} pending_slots={} queued_completions={} original_cause={:?}; custody retained",
+        release.renderer, release.after, release.stopped, state.inflight, state.completed.len(), state.device_failure
     ))
 }
 
@@ -297,7 +318,9 @@ impl QuerySlot {
 struct Lease {
     slot: QuerySlot,
     source: TimingSource,
-    scopes: Vec<(u64, u32)>,
+    full: bool,
+    scopes: Vec<(u64, u32, bool)>,
+    scope_failure: Option<String>,
     period_ns: f32,
 }
 
@@ -310,22 +333,55 @@ struct Completion {
     work_done: bool,
 }
 
-fn extract_packet(mut packet: ResMut<TimingPacket>, rendering: Extract<Res<NativeGpu>>) {
+fn extract_packet(
+    mut packet: ResMut<TimingPacket>,
+    rendering: Extract<Res<NativeGpu>>,
+    readout: Res<TimingReadout>,
+) {
+    let mut state = readout.0.lock().unwrap();
+    if let Some(source) = packet.source.take() {
+        state.record(
+            source,
+            TimingOutcome::NotSubmitted("render graph not submitted"),
+        );
+    }
+    if let Some(query) = rendering.query {
+        let stamp = (
+            query.renderer_resource_id,
+            query.epoch,
+            query.frame,
+            query.source_ms.to_bits(),
+        );
+        if packet.last_query != Some(stamp) {
+            packet.source = Some(TimingSource {
+                query,
+                quality: rendering.quality,
+            });
+            packet.last_query = Some(stamp);
+        }
+    }
+    state.pending = None;
     packet.camera = rendering.main_camera;
+    packet.revision = rendering.revision;
 }
 
-fn prepare_packet(world: &mut World) {
-    let device = world.resource::<RenderDevice>();
-    if let Err(cause) = device.wgpu_device().poll(wgpu::PollType::Poll) {
-        error!("Native timestamp device poll: {cause}");
-    }
-    let readout = world.resource::<TimingReadout>().clone();
+fn confirm_stop(
+    packet: Res<TimingPacket>,
+    readout: Res<TimingReadout>,
+    mut pool: ResMut<QueryPool>,
+) {
     let mut state = readout.0.lock().unwrap();
-    let mut pool = world.resource_mut::<QueryPool>();
     pool.0.append(&mut state.returned);
     if let Some(release) = &mut state.release {
         pool.0.clear();
-        release.stopped = true;
+        release.stopped |= packet.revision >= release.after;
+    }
+}
+
+fn prepare_packet(world: &mut World) {
+    let readout = world.resource::<TimingReadout>().clone();
+    let state = readout.0.lock().unwrap();
+    if state.release.is_some() {
         return;
     }
     drop(state);
@@ -348,7 +404,7 @@ pub(crate) fn supported(features: WgpuFeatures) -> bool {
 
 fn begin_work(
     mut context: RenderContext,
-    packet: Res<TimingPacket>,
+    mut packet: ResMut<TimingPacket>,
     mode: Res<TimingMode>,
     readout: Res<TimingReadout>,
     mut pool: ResMut<QueryPool>,
@@ -356,13 +412,16 @@ fn begin_work(
     queue: Res<RenderQueue>,
 ) {
     let mut state = readout.0.lock().unwrap();
-    if state.release.is_some() {
-        return;
-    }
-    let Some(source) = state.pending.take() else {
+    let Some(source) = packet.source.take() else {
         return;
     };
-    let cause = if !supported(context.render_device().features()) {
+    if state.release.is_some() {
+        state.record(source, TimingOutcome::NotSubmitted("renderer release"));
+        return;
+    }
+    let cause = if state.device_failure.is_some() {
+        Some("timestamp device polling failed")
+    } else if !supported(context.render_device().features()) {
         Some("timestamp feature unavailable")
     } else if packet.preparation != PipelinePreparation::Ready {
         Some("pipeline preparation pending")
@@ -397,7 +456,9 @@ fn begin_work(
     active.0 = Some(Lease {
         slot,
         source,
+        full: mode.full_diagnostics(),
         scopes: Vec::new(),
+        scope_failure: None,
         period_ns: queue.get_timestamp_period(),
     });
 }
@@ -408,26 +469,57 @@ fn begin_opaque(
     mut active: ResMut<ActiveLease>,
 ) {
     let Some(lease) = &mut active.0 else { return };
+    if !lease.full {
+        return;
+    }
+    let entity = view.0.to_bits();
+    if lease.scopes.iter().any(|(known, _, _)| *known == entity) {
+        lease
+            .scope_failure
+            .get_or_insert_with(|| format!("Duplicate Core3d opaque scope: view={entity}"));
+        return;
+    }
     let index = 2 + lease.scopes.len() as u32 * 2;
     if index + 1 >= lease.slot.capacity {
+        lease.scope_failure.get_or_insert_with(|| {
+            format!(
+                "Core3d scope capacity exceeded: view={entity} capacity={}",
+                lease.slot.capacity
+            )
+        });
         return;
     }
     context
         .command_encoder()
         .write_timestamp(&lease.slot.queries, index);
-    lease.scopes.push((view.0.to_bits(), index));
+    lease.scopes.push((entity, index, false));
 }
 
-fn end_opaque(mut context: RenderContext, view: Res<CurrentView>, active: Res<ActiveLease>) {
-    let Some(lease) = &active.0 else { return };
-    if let Some((_, index)) = lease
+fn end_opaque(mut context: RenderContext, view: Res<CurrentView>, mut active: ResMut<ActiveLease>) {
+    let Some(lease) = &mut active.0 else { return };
+    if !lease.full {
+        return;
+    }
+    let entity = view.0.to_bits();
+    if let Some((_, index, ended)) = lease
         .scopes
-        .iter()
-        .find(|(entity, _)| *entity == view.0.to_bits())
+        .iter_mut()
+        .find(|(known, _, _)| *known == entity)
     {
+        if *ended {
+            lease
+                .scope_failure
+                .get_or_insert_with(|| format!("Duplicate Core3d scope end: view={entity}"));
+            return;
+        }
         context
             .command_encoder()
-            .write_timestamp(&lease.slot.queries, index + 1);
+            .write_timestamp(&lease.slot.queries, *index + 1);
+        *ended = true;
+    } else {
+        lease
+            .scope_failure
+            .get_or_insert_with(|| format!("Core3d scope end without begin: view={entity}"));
     }
 }
 
@@ -436,7 +528,20 @@ fn end_work(
     mut active: ResMut<ActiveLease>,
     readout: Res<TimingReadout>,
 ) {
-    let Some(lease) = active.0.take() else { return };
+    let Some(mut lease) = active.0.take() else {
+        return;
+    };
+    for (view, index, ended) in &mut lease.scopes {
+        if !*ended {
+            lease
+                .scope_failure
+                .get_or_insert_with(|| format!("Unfinished Core3d opaque scope: view={view}"));
+            context
+                .command_encoder()
+                .write_timestamp(&lease.slot.queries, *index + 1);
+            *ended = true;
+        }
+    }
     let count = 2 + lease.scopes.len() as u32 * 2;
     context
         .command_encoder()
@@ -593,16 +698,6 @@ pub(crate) fn shader_is_pending(error: &ShaderCacheError) -> bool {
 }
 
 #[cfg(feature = "verify-harness")]
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct SourceWork {
-    pub(crate) renderer_resource_id: u32,
-    pub(crate) sample: ScreenGpuSample,
-    pub(crate) scale: ScreenRenderScale,
-    pub(crate) shadow: ScreenShadowMap,
-    pub(crate) water_quality: WaterQuality,
-}
-
-#[cfg(feature = "verify-harness")]
 pub(crate) fn history(world: &World) -> Vec<TimingRecord> {
     world
         .get_resource::<TimingReadout>()
@@ -611,26 +706,7 @@ pub(crate) fn history(world: &World) -> Vec<TimingRecord> {
         })
 }
 
-#[cfg(feature = "verify-harness")]
-pub(crate) fn source_work(record: &TimingRecord) -> Option<SourceWork> {
-    let TimingOutcome::Completed { raw, period_ns, .. } = &record.outcome else {
-        return None;
-    };
-    Some(SourceWork {
-        renderer_resource_id: record.source.query.renderer_resource_id,
-        sample: ScreenGpuSample {
-            epoch: record.source.query.epoch,
-            frame: record.source.query.frame,
-            source_ms: record.source.query.source_ms,
-            gpu_work_ms: elapsed(raw[0], raw[1], *period_ns),
-        },
-        scale: record.source.quality.scale,
-        shadow: record.source.quality.shadow,
-        water_quality: record.source.quality.water_quality,
-    })
-}
-
-fn elapsed(start: u64, end: u64, period_ns: f32) -> f64 {
+pub(crate) fn elapsed(start: u64, end: u64, period_ns: f32) -> f64 {
     (i128::from(end) - i128::from(start)) as f64 * f64::from(period_ns) / 1e6
 }
 
@@ -638,16 +714,28 @@ pub(crate) fn poll(world: &mut World) -> Vec<ApplicationInput> {
     let Some(readout) = world.get_resource::<TimingReadout>().cloned() else {
         return Vec::new();
     };
+    let failure = world.get_resource::<RenderDevice>().and_then(|device| {
+        device
+            .wgpu_device()
+            .poll(wgpu::PollType::Poll)
+            .err()
+            .map(|cause| cause.to_string())
+    });
     let mut state = readout.0.lock().unwrap();
+    if let Some(cause) = failure {
+        state.device_failure.get_or_insert(cause);
+    }
     let mut inputs = Vec::new();
     while let Some(completion) = state.completed.pop_front() {
         let Completion { lease, mapped, .. } = completion;
-        let outcome = match mapped.unwrap() {
-            Ok(raw) => {
+        let mapped = mapped.unwrap();
+        let reusable = mapped.is_ok() && state.device_failure.is_none();
+        let outcome = match (mapped, state.device_failure.clone()) {
+            (Ok(raw), None) => {
                 let scopes = lease
                     .scopes
                     .iter()
-                    .map(|(view, index)| {
+                    .map(|(view, index, _)| {
                         (
                             *view,
                             elapsed(
@@ -670,9 +758,17 @@ pub(crate) fn poll(world: &mut World) -> Vec<ApplicationInput> {
                     raw,
                     period_ns: lease.period_ns,
                     scopes,
+                    scope_failure: lease.scope_failure,
                 }
             }
-            Err(cause) => {
+            (mapped, device_failure) => {
+                let raw = mapped.as_ref().ok().cloned();
+                let mut causes = Vec::new();
+                if let Err(cause) = mapped {
+                    causes.push(cause);
+                }
+                causes.extend(device_failure);
+                let cause = causes.join("; ");
                 inputs.push(ApplicationInput::Graphics {
                     renderer_resource_id: lease.source.query.renderer_resource_id,
                     observation: ApplicationGraphicsObservation::GpuFailed {
@@ -680,12 +776,18 @@ pub(crate) fn poll(world: &mut World) -> Vec<ApplicationInput> {
                         cause: cause.clone(),
                     },
                 });
-                TimingOutcome::Failed(cause)
+                TimingOutcome::Failed {
+                    cause,
+                    raw,
+                    period_ns: lease.period_ns,
+                }
             }
         };
         state.record(lease.source, outcome);
         state.inflight -= 1;
-        state.returned.push(lease.slot);
+        if reusable {
+            state.returned.push(lease.slot);
+        }
     }
     if state
         .release
@@ -709,8 +811,10 @@ pub(crate) mod tests {
 
     #[test]
     fn source_tags_survive_not_submitted_and_release_waits_for_render_and_slot_terminal() {
+        use bevy::{ecs::system::RunSystemOnce, render::MainWorld};
         let mut world = World::new();
         world.init_resource::<TimingReadout>();
+        world.init_resource::<NativeGpu>();
         let query = ApplicationGpuQuery {
             renderer_resource_id: 7,
             epoch: 3,
@@ -722,9 +826,68 @@ pub(crate) mod tests {
             shadow: birdman_game_presentation::screen_render_auto::ScreenShadowMap::Quarter,
             water_quality: birdman_game_format::WaterQuality::Low,
         };
+        {
+            let mut gpu = world.resource_mut::<NativeGpu>();
+            gpu.query = Some(query);
+            gpu.quality = quality;
+        }
         observe_query(&mut world, Some(query), quality);
-        observe_query(&mut world, None, quality);
         let readout = world.resource::<TimingReadout>().clone();
+        let mut main = MainWorld::default();
+        *main = world;
+        let mut render = World::new();
+        render.insert_resource(main);
+        render.insert_resource(readout.clone());
+        render.init_resource::<TimingPacket>();
+        render.init_resource::<QueryPool>();
+        let mut extract = Schedule::new(ExtractSchedule);
+        extract.add_systems(extract_packet);
+        extract.run(&mut render);
+        let next_query = ApplicationGpuQuery { frame: 22, ..query };
+        let next_quality = ApplicationRenderQuality {
+            scale: birdman_game_presentation::screen_render_scale::ScreenRenderScale::Full,
+            ..quality
+        };
+        {
+            let mut main = render.resource_mut::<MainWorld>();
+            {
+                let mut gpu = main.resource_mut::<NativeGpu>();
+                gpu.query = Some(next_query);
+                gpu.quality = next_quality;
+            }
+            observe_query(&mut main, Some(next_query), next_quality);
+        }
+        let frozen = render.resource_mut::<TimingPacket>().source.take().unwrap();
+        assert_eq!(frozen.query.frame, query.frame);
+        assert_eq!(frozen.query.source_ms.to_bits(), query.source_ms.to_bits());
+        assert_eq!(frozen.quality, quality);
+        assert_eq!(
+            readout.0.lock().unwrap().pending.unwrap().query.frame,
+            next_query.frame
+        );
+        extract.run(&mut render);
+        assert_eq!(
+            render
+                .resource_mut::<TimingPacket>()
+                .source
+                .take()
+                .unwrap()
+                .query
+                .frame,
+            next_query.frame
+        );
+        extract.run(&mut render);
+        assert!(render.resource::<TimingPacket>().source.is_none());
+        {
+            let mut main = render.resource_mut::<MainWorld>();
+            observe_query(
+                &mut main,
+                Some(ApplicationGpuQuery { frame: 23, ..query }),
+                next_quality,
+            );
+            main.resource_mut::<NativeGpu>().query = None;
+            observe_query(&mut main, None, next_quality);
+        }
         {
             let state = readout.0.lock().unwrap();
             let record = state.history.back().unwrap();
@@ -732,37 +895,41 @@ pub(crate) mod tests {
                 record.source.query.source_ms.to_bits(),
                 query.source_ms.to_bits()
             );
-            assert_eq!(record.source.query.renderer_resource_id, 7);
-            assert_eq!(record.source.quality, quality);
+            assert_eq!(record.source.quality, next_quality);
             assert!(matches!(record.outcome, TimingOutcome::NotSubmitted(_)));
         }
-        assert!(poll(&mut world).is_empty());
+        assert!(poll(&mut render.resource_mut::<MainWorld>()).is_empty());
         assert_eq!(elapsed(20, 10, 10.0), -0.0001);
         assert_eq!(elapsed(20, 20, 10.0), 0.0);
-        assert!(release(&mut world, 7, None));
-        assert!(poll(&mut world).is_empty());
-        {
-            let mut state = readout.0.lock().unwrap();
-            state.release.as_mut().unwrap().stopped = true;
-            state.inflight = 1;
-        }
-        assert!(poll(&mut world).is_empty());
+        assert!(release(&mut render.resource_mut::<MainWorld>(), 7, 1, None));
+        render.run_system_once(confirm_stop).unwrap();
+        assert!(poll(&mut render.resource_mut::<MainWorld>()).is_empty());
+        assert!(!readout.0.lock().unwrap().release.as_ref().unwrap().stopped);
+        render
+            .resource_mut::<MainWorld>()
+            .resource_mut::<NativeGpu>()
+            .revision = 1;
+        extract.run(&mut render);
+        render.run_system_once(confirm_stop).unwrap();
+        assert!(readout.0.lock().unwrap().release.as_ref().unwrap().stopped);
+        readout.0.lock().unwrap().inflight = 1;
+        assert!(poll(&mut render.resource_mut::<MainWorld>()).is_empty());
         readout.0.lock().unwrap().release.as_mut().unwrap().started -= Duration::from_secs(6);
         assert!(
-            shutdown_failure(&world)
+            shutdown_failure(render.resource::<MainWorld>())
                 .unwrap()
                 .contains("pending_slots=1")
         );
         assert!(readout.0.lock().unwrap().release.is_some());
         readout.0.lock().unwrap().inflight = 0;
         assert!(matches!(
-            poll(&mut world).as_slice(),
+            poll(&mut render.resource_mut::<MainWorld>()).as_slice(),
             [ApplicationInput::RendererReleased {
                 renderer_resource_id: 7,
                 failure: None
             }]
         ));
-        assert!(poll(&mut world).is_empty());
+        assert!(poll(&mut render.resource_mut::<MainWorld>()).is_empty());
     }
 
     #[test]

@@ -79,7 +79,8 @@ fn source_summary_uses_frames_across_epoch_changes_and_retains_missing_or_duplic
         outcome: TimingOutcome::Completed {
             raw: vec![0, ticks],
             period_ns: 1_000_000.0,
-            scopes: Vec::new(),
+            scopes: vec![(4, ticks as f64)],
+            scope_failure: (frame == 13).then(|| "incomplete auxiliary scope".into()),
         },
     })
     .collect();
@@ -98,6 +99,16 @@ fn source_summary_uses_frames_across_epoch_changes_and_retains_missing_or_duplic
     assert_eq!(summary.received_frames, 3);
     assert_eq!(summary.duplicate_frames, 1);
     assert_eq!(summary.groups.len(), 2);
+    assert_eq!(summary.scope_incomplete, 1);
+    assert_eq!(summary.views.len(), 2);
+    assert_eq!(
+        summary
+            .views
+            .values()
+            .map(|summary| summary.received_count)
+            .sum::<usize>(),
+        2
+    );
     assert_eq!(
         summary.groups[&(1, 100, 2048, WaterQuality::High)].invalid_count,
         1
@@ -114,11 +125,27 @@ fn source_summary_uses_frames_across_epoch_changes_and_retains_missing_or_duplic
     not_submitted.outcome = TimingOutcome::NotSubmitted("timestamp slots busy");
     records.push(not_submitted);
     let mut failed = records[1].clone();
-    failed.outcome = TimingOutcome::Failed("original map cause".into());
+    failed.outcome = TimingOutcome::Failed {
+        cause: "original map cause".into(),
+        raw: None,
+        period_ns: 10.0,
+    };
     records.push(failed);
+    let mut unassigned = records[1].clone();
+    unassigned.source.query.source_ms = 20_000.0;
+    records.push(unassigned);
     let summary = summarize_source_timing(&records, window, arrival).unwrap();
     assert_eq!(summary.not_submitted, 1);
     assert_eq!(summary.failed, 1);
+    assert_eq!(summary.unassigned_arrivals, 1);
+    assert_eq!(
+        summary
+            .views
+            .values()
+            .map(|summary| summary.received_count)
+            .sum::<usize>(),
+        2
+    );
     assert_eq!(summary.received_frames, 3);
     records.resize(timing::HISTORY_LIMIT, records[0].clone());
     assert!(
