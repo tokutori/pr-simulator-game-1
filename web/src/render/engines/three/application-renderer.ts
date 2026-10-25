@@ -348,8 +348,8 @@ export class ThreeApplicationRenderer {
     let material = this.materials.get(key);
     if (material !== undefined) return material;
     const texture = this.manifest?.wing_textures.find(image => image.buffer.buffer_id === source.texture_buffer_id);
-    const values = { color: source.color_srgb, opacity: source.opacity, transparent: source.opacity < 1,
-      depthWrite: source.opacity >= 1, side: source.double_sided ? DoubleSide : FrontSide,
+    const values = { color: source.color_srgb, opacity: source.opacity, transparent: source.transparent,
+      depthWrite: source.depth_write, side: source.double_sided ? DoubleSide : FrontSide,
       vertexColors: asset.color != null, map: texture === undefined ? null : this.buffers.wingTexture(texture) };
     material = source.lit ? new MeshLambertMaterial(values) : new MeshBasicMaterial(values);
     this.materials.set(key, material);

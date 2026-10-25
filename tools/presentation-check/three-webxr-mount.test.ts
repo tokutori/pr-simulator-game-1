@@ -1,7 +1,7 @@
 import { IDBFactory } from "fake-indexeddb";
 import { Window } from "happy-dom";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { Camera, Color, Matrix4, PerspectiveCamera, Quaternion, Vector2, Vector3, Vector4, WebGLRenderTarget } from "three";
+import { Camera, Color, Material, Matrix4, Mesh, PerspectiveCamera, Quaternion, Vector2, Vector3, Vector4, WebGLRenderTarget } from "three";
 import type { ArrayCamera, Scene, WebGLRenderer } from "three";
 import { WebXRManager } from "three/src/renderers/webxr/WebXRManager.js";
 import { ApplicationRuntimeBridge } from "../../web/pkg/birdman_game_wasm.js";
@@ -23,6 +23,7 @@ interface Driver {
   readonly timer: ReturnType<typeof gpuTimerFixture>;
   frame: ((now: number, frame?: XRFrame) => void) | null;
   compile: Promise<void>;
+  scene: Scene | null;
   sizeFaults: number;
   reflectionFault: boolean;
   getRenderTarget(): WebGLRenderTarget | null;
@@ -42,6 +43,7 @@ vi.mock("three", async importOriginal => {
     readonly shadowMap = { enabled: false, autoUpdate: true, needsUpdate: false };
     outputColorSpace = actual.SRGBColorSpace;
     compile = capture.compilation ?? Promise.resolve();
+    scene: Scene | null = null;
     sizeFaults = 0;
     reflectionFault = false;
     private readonly size = new actual.Vector2(1280, 720);
@@ -91,7 +93,7 @@ vi.mock("three", async importOriginal => {
     initTexture(): void {}
     initRenderTarget(): void {}
     clear(): void {}
-    compileAsync(): Promise<void> { return this.compile; }
+    compileAsync(scene: Scene): Promise<void> { this.scene = scene; return this.compile; }
     dispose(): void { this.disposed(); }
     render(scene: Scene, camera: Camera): void {
       const reflected = !this.xr.enabled && this.target !== null && !("isXRRenderTarget" in this.target && this.target.isXRRenderTarget);
@@ -246,11 +248,30 @@ function text(items: readonly SurfacePaintItem[], label: string): Extract<Surfac
 describe("Aggregate runtime through the real Three WebXRManager", () => {
   describe("tracked presentation", () => {
   let prepared: Awaited<ReturnType<typeof fixture>> | null = null;
-  beforeAll(async () => { capture.timing = true; prepared = await fixture(); await prepared.ready(); });
+  let materialProbe: { name: string; transparent: boolean; depthWrite: boolean } | undefined;
+  beforeAll(async () => {
+    const { ThreeApplicationRenderer } = await import("../../web/src/render/engines/three/application-renderer.js");
+    const prepare = Object.getOwnPropertyDescriptor(ThreeApplicationRenderer.prototype, "prepare")?.value as InstanceType<typeof ThreeApplicationRenderer>["prepare"];
+    vi.spyOn(ThreeApplicationRenderer.prototype, "prepare").mockImplementation(function (this: InstanceType<typeof ThreeApplicationRenderer>, request) {
+      const asset = request.assets.scene?.meshes[0];
+      const source = asset?.materials[0];
+      if (materialProbe === undefined && asset !== undefined && source !== undefined) {
+        Object.assign(source, { transparent: !source.transparent, depth_write: !source.depth_write });
+        materialProbe = { name: asset.name, transparent: source.transparent, depthWrite: source.depth_write };
+      }
+      prepare.call(this, request);
+    });
+    capture.timing = true; prepared = await fixture(); await prepared.ready();
+  });
   it("submits asymmetric eyes, stable reset placement, painted cursors and a real trigger action", async () => {
     const state = prepared;
     if (state === null) throw new Error("Browser setup did not complete");
     try {
+      if (materialProbe === undefined) throw new Error("Material preparation was not observed");
+      const mesh = state.driver.scene?.getObjectByName(materialProbe.name);
+      if (!(mesh instanceof Mesh) || !(mesh.material instanceof Material)) throw new Error("Prepared material is unavailable");
+      expect(mesh.material.transparent).toBe(materialProbe.transparent);
+      expect(mesh.material.depthWrite).toBe(materialProbe.depthWrite);
       if (state.driver.frame === null) throw new Error("Screen animation was not started");
       state.driver.frame(1);
       const query = state.drawing().graphics.query;
