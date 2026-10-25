@@ -124,14 +124,19 @@ impl WingGeometry {
         }
         frame.bending_factor = None;
         for (surface, positions) in self.surfaces.iter().zip(&mut frame.surface_positions) {
-            for (base, position) in surface.positions.iter().zip(positions) {
-                let height = (f64::from(base[1])
-                    + deflection_with_factor(f64::from(base[0]), factor)?)
-                    as f32;
-                if !height.is_finite() {
-                    return Err(ShapeError::Math(MathError::NonFinite));
+            for (base_row, position_row) in surface
+                .positions
+                .chunks_exact(ROW_SIZE)
+                .zip(positions.chunks_exact_mut(ROW_SIZE))
+            {
+                let displacement = deflection_with_factor(f64::from(base_row[0][0]), factor)?;
+                for (base, position) in base_row.iter().zip(position_row) {
+                    let height = (f64::from(base[1]) + displacement) as f32;
+                    if !height.is_finite() {
+                        return Err(ShapeError::Math(MathError::NonFinite));
+                    }
+                    position[1] = height;
                 }
-                position[1] = height;
             }
         }
         frame.bending_factor = Some(factor);
@@ -377,12 +382,53 @@ mod tests {
         let geometry = WingGeometry::new();
         let mut frame = geometry.frame();
         for factor in [0.0, 0.9, 1.2] {
+            let factor = WingBendingFactor::try_new(factor).unwrap();
             geometry
-                .update_frame_with_factor(&mut frame, WingBendingFactor::try_new(factor).unwrap())
+                .update_frame_with_factor(&mut frame, factor)
                 .unwrap();
-            for surface in &geometry.surfaces {
+            for (surface, actual) in geometry.surfaces.iter().zip(&frame.surface_positions) {
                 let rows = wing().span_stations_m().filter(|span| *span >= 0.0).count();
                 assert_eq!(surface.positions.len(), rows * ROW_SIZE * 2);
+                assert_eq!(actual.len(), surface.positions.len());
+                for row in surface.positions.chunks_exact(ROW_SIZE) {
+                    assert!(
+                        row.iter()
+                            .all(|position| position[0].to_bits() == row[0][0].to_bits())
+                    );
+                }
+                let expected: Vec<_> = surface
+                    .positions
+                    .iter()
+                    .map(|base| {
+                        [
+                            base[0],
+                            (f64::from(base[1])
+                                + deflection_with_factor(f64::from(base[0]), factor).unwrap())
+                                as f32,
+                            base[2],
+                        ]
+                    })
+                    .collect();
+                assert!(
+                    actual
+                        .iter()
+                        .flatten()
+                        .map(|value| value.to_bits())
+                        .eq(expected.iter().flatten().map(|value| value.to_bits()))
+                );
+                let normals = crate::mesh::area_weighted_normals(actual, &surface.indices).unwrap();
+                let expected_normals =
+                    crate::mesh::area_weighted_normals(&expected, &surface.indices).unwrap();
+                assert!(
+                    normals
+                        .iter()
+                        .flatten()
+                        .map(|value| value.to_bits())
+                        .eq(expected_normals
+                            .iter()
+                            .flatten()
+                            .map(|value| value.to_bits()))
+                );
                 assert_eq!(
                     surface.indices.len(),
                     (rows - 1) * CHORD_STEPS * 12 + (rows - 1 + CHORD_STEPS) * 12

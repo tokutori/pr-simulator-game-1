@@ -246,7 +246,7 @@ Nativeは既存DirectionalLightの2048 texel・30〜600 mの3段cascadeから、
 - 外観と物理接触は同じ構造形状と採用済み曲げ係数・尾翼角からそれぞれ導出する。材質、UV、表示samplingは描画層が所有する。
 
 - 主翼のsurfaceは`WingFrame`、全構造材はcontentの固定頂点・三角形を投影する`AirframeStructure`を使用し、同じ採用係数を消費する。
-- live・prepared・Result・Replayは共有poseの採用済み曲げ係数を主翼へ渡す。係数が変化した場合だけ保持position bufferを更新し、topologyを保持する。
+- live・prepared・Result・Replayは共有poseの採用済み曲げ係数を主翼へ渡す。係数が変化した場合だけ、同じspanの頂点列でたわみ評価を共有して保持position bufferを更新し、topologyを保持する。
 - 描画補間では身体位置・姿勢を補間し、尾翼角と曲げ係数は記録queryと同じ区間保持を用いる。
 - 未記録係数は主翼の表示、未登録形状はcockpitと桁を含む機体全体の表示を利用不可にする。表現範囲を超える変形は失敗として通知し、次の有効な採用係数で表示を復元する。
 - 全構造材は共通のf64頂点からFloat32へ投影し、尾翼batchは物理pivotを原点とするlocal座標を保持する。
