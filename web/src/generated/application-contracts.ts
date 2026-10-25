@@ -4748,6 +4748,14 @@ export interface ApplicationWaterBounds {
  */
 export interface LakeWaveProjection {
     readonly choppiness: number;
+    /**
+     * @minItems 2
+     * @maxItems 2
+     */
+    readonly detailFilterMinification: readonly [
+        number,
+        number
+    ];
     readonly horizontalDerivativeBound: number;
     readonly spacing: LakeMeshSpacingDomain;
     readonly visualWaveHeight: number;

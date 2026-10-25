@@ -54,6 +54,8 @@ pub(crate) struct WaterMaterial {
     pub(crate) reflection_clip_from_world: Mat4,
     #[uniform(18)]
     pub(crate) reflection_parameters: Vec4,
+    #[uniform(19)]
+    detail_filter_minification: Vec2,
 }
 
 impl Material for WaterMaterial {
@@ -129,6 +131,7 @@ impl WaterMaterial {
                 water.geometry.backing_inner_extent_meters as f32,
                 0.0,
             ),
+            detail_filter_minification: Vec2::from_array(projection.detail_filter_minification()),
         }
     }
 

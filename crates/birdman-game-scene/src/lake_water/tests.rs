@@ -142,11 +142,12 @@ fn spectrum_and_float32_projection_match_fixed_web_reference() {
                 other => panic!("Unexpected fixture quality: {other}"),
             };
             let actual = LakeWaveProjection::try_new(condition, quality).unwrap();
-            assert_numeric_tree(
-                &serde_json::to_value(&actual).unwrap(),
-                &projection.projection,
-                "projection",
-            );
+            let mut actual = serde_json::to_value(&actual).unwrap();
+            actual
+                .as_object_mut()
+                .unwrap()
+                .remove("detailFilterMinification");
+            assert_numeric_tree(&actual, &projection.projection, "projection");
         }
     }
 }
@@ -277,6 +278,8 @@ fn spectrum_keeps_web_direction_bands_phase_and_steepness_contract() {
 fn projection_preserves_non_inversion_reserve_and_inactive_slots() {
     for quality in [WaterQuality::Low, WaterQuality::Medium, WaterQuality::High] {
         let projection = LakeWaveProjection::try_new(default_condition(0), quality).unwrap();
+        let [start, end] = projection.detail_filter_minification();
+        assert!(start.is_finite() && end.is_finite() && start > 1.0 && end > start);
         assert_eq!(
             projection.wave_count(),
             super::water_quality_profile(quality).component_count()

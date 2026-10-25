@@ -270,14 +270,42 @@ vec2 lakeWaveSlope(vec2 worldXZ) {
   return vec2(waveSlopeX, waveSlopeZ);
 }
 
-vec3 lakeMicroDetail(vec2 worldXZ) {
+uniform vec2 uDetailFilterMinification;
+
+mat4 lakeDetailSamples(sampler2D image, vec2 uv, vec2 gradientX, vec2 gradientY) {
+  vec2 dimensions = vec2(textureSize(image, 0));
+  vec2 texelX = gradientX * dimensions;
+  vec2 texelY = gradientY * dimensions;
+  float denominator = sqrt(dot(texelX, texelX) + dot(texelY, texelY));
+  float minorBound = 0.0;
+  if (denominator > 0.0) {
+    minorBound = abs(texelX.x * texelY.y - texelX.y * texelY.x) / denominator;
+  }
+  float spread = 1.0 - smoothstep(uDetailFilterMinification.x, uDetailFilterMinification.y, minorBound);
+  if (spread == 0.0) {
+    vec4 center = textureGrad(image, uv, gradientX, gradientY);
+    return mat4(center, center, center, center);
+  }
+  vec2 offsetX = gradientX * (0.25 * spread);
+  vec2 offsetY = gradientY * (0.25 * spread);
+  return mat4(
+    textureGrad(image, uv - offsetX - offsetY, gradientX, gradientY),
+    textureGrad(image, uv + offsetX - offsetY, gradientX, gradientY),
+    textureGrad(image, uv - offsetX + offsetY, gradientX, gradientY),
+    textureGrad(image, uv + offsetX + offsetY, gradientX, gradientY)
+  );
+}
+
+vec3 lakeMicroDetail(vec2 worldXZ, vec2 footprintX, vec2 footprintY) {
   const float fineAmplitude = 0.4;
   const float rippleAmplitude = 0.1;
   vec2 drift = uWindVelocity.xy * uTimeSeconds;
-  vec4 nearSample = texture2D(uDetailNear, (worldXZ - drift * 0.42) / uDetailExtents.x);
+  mat4 nearSamples = lakeDetailSamples(uDetailNear, (worldXZ - drift * 0.42) / uDetailExtents.x,
+    footprintX / uDetailExtents.x, footprintY / uDetailExtents.x);
   // These compact gravity-wave bands use phase-speed ratios proportional to
   // sqrt(wavelength): far/near/fine/ripple = 0.89/0.42/0.26/0.18.
-  vec4 farSample = texture2D(uDetailFar, (worldXZ - drift * 0.89) / uDetailExtents.y);
+  mat4 farSamples = lakeDetailSamples(uDetailFar, (worldXZ - drift * 0.89) / uDetailExtents.y,
+    footprintX / uDetailExtents.y, footprintY / uDetailExtents.y);
   // Each rotated octave advects along its rotated propagation direction.
   // Reusing the unrotated drift makes oblique crests slide sideways.
   vec2 fineDrift = vec2(
@@ -289,7 +317,9 @@ vec3 lakeMicroDetail(vec2 worldXZ) {
     0.6 * finePoint.x - 0.8 * finePoint.y,
     0.8 * finePoint.x + 0.6 * finePoint.y
   );
-  vec4 fineSample = texture2D(uDetailNear, fineRotated / uDetailExtents.x + vec2(0.217, 0.631));
+  mat2 fineRotation = mat2(vec2(0.6, 0.8), vec2(-0.8, 0.6));
+  mat4 fineSamples = lakeDetailSamples(uDetailNear, fineRotated / uDetailExtents.x + vec2(0.217, 0.631),
+    fineRotation * footprintX * (2.6 / uDetailExtents.x), fineRotation * footprintY * (2.6 / uDetailExtents.x));
   vec2 rippleDrift = vec2(
     0.8 * drift.x + 0.6 * drift.y,
     -0.6 * drift.x + 0.8 * drift.y
@@ -299,33 +329,43 @@ vec3 lakeMicroDetail(vec2 worldXZ) {
     0.8 * ripplePoint.x - 0.6 * ripplePoint.y,
     0.6 * ripplePoint.x + 0.8 * ripplePoint.y
   );
-  vec4 rippleSample = texture2D(uDetailNear, rippleRotated / uDetailExtents.x + vec2(0.683, 0.173));
-  vec2 nearSlope = (nearSample.rg * 255.0 - 128.0) / 127.0;
-  vec2 farSlope = (farSample.rg * 255.0 - 128.0) / 127.0;
-  vec2 fineRawSlope = (fineSample.rg * 255.0 - 128.0) / 127.0;
-  vec2 rippleRawSlope = (rippleSample.rg * 255.0 - 128.0) / 127.0;
-  vec2 fineSlope = vec2(
-    0.6 * fineRawSlope.x + 0.8 * fineRawSlope.y,
-    -0.8 * fineRawSlope.x + 0.6 * fineRawSlope.y
-  ) * 2.6 * fineAmplitude;
-  vec2 rippleSlope = vec2(
-    0.8 * rippleRawSlope.x + 0.6 * rippleRawSlope.y,
-    -0.6 * rippleRawSlope.x + 0.8 * rippleRawSlope.y
-  ) * 5.2 * rippleAmplitude;
-  vec2 microSlope = nearSlope * 0.6 + farSlope * 0.55 + fineSlope + rippleSlope;
-  // Blue stores slope squared. Mipmaps preserve the variance of unresolved
-  // wavelets even after their mean slope approaches zero.
-  float nearVariance = max(nearSample.b / 2.5 - dot(nearSlope, nearSlope), 0.0);
-  float farVariance = max(farSample.b / 2.5 - dot(farSlope, farSlope), 0.0);
-  float fineVariance = max(fineSample.b / 2.5 - dot(fineRawSlope, fineRawSlope), 0.0);
-  float rippleVariance = max(rippleSample.b / 2.5 - dot(rippleRawSlope, rippleRawSlope), 0.0);
-  float slopeMoment = dot(microSlope, microSlope)
-    + 0.6 * 0.6 * nearVariance + 0.55 * 0.55 * farVariance
-    + 2.6 * 2.6 * fineAmplitude * fineAmplitude * fineVariance
-    + 5.2 * 5.2 * rippleAmplitude * rippleAmplitude * rippleVariance;
+  mat2 rippleRotation = mat2(vec2(0.8, 0.6), vec2(-0.6, 0.8));
+  mat4 rippleSamples = lakeDetailSamples(uDetailNear, rippleRotated / uDetailExtents.x + vec2(0.683, 0.173),
+    rippleRotation * footprintX * (5.2 / uDetailExtents.x), rippleRotation * footprintY * (5.2 / uDetailExtents.x));
+  vec3 filtered = vec3(0.0);
+  for (int corner = 0; corner < 4; corner++) {
+    vec4 nearSample = nearSamples[corner];
+    vec4 farSample = farSamples[corner];
+    vec4 fineSample = fineSamples[corner];
+    vec4 rippleSample = rippleSamples[corner];
+    vec2 nearSlope = (nearSample.rg * 255.0 - 128.0) / 127.0;
+    vec2 farSlope = (farSample.rg * 255.0 - 128.0) / 127.0;
+    vec2 fineRawSlope = (fineSample.rg * 255.0 - 128.0) / 127.0;
+    vec2 rippleRawSlope = (rippleSample.rg * 255.0 - 128.0) / 127.0;
+    vec2 fineSlope = vec2(
+      0.6 * fineRawSlope.x + 0.8 * fineRawSlope.y,
+      -0.8 * fineRawSlope.x + 0.6 * fineRawSlope.y
+    ) * 2.6 * fineAmplitude;
+    vec2 rippleSlope = vec2(
+      0.8 * rippleRawSlope.x + 0.6 * rippleRawSlope.y,
+      -0.6 * rippleRawSlope.x + 0.8 * rippleRawSlope.y
+    ) * 5.2 * rippleAmplitude;
+    vec2 microSlope = nearSlope * 0.6 + farSlope * 0.55 + fineSlope + rippleSlope;
+    // Blue stores slope squared. Mipmaps preserve the variance of unresolved
+    // wavelets even after their mean slope approaches zero.
+    float nearVariance = max(nearSample.b / 2.5 - dot(nearSlope, nearSlope), 0.0);
+    float farVariance = max(farSample.b / 2.5 - dot(farSlope, farSlope), 0.0);
+    float fineVariance = max(fineSample.b / 2.5 - dot(fineRawSlope, fineRawSlope), 0.0);
+    float rippleVariance = max(rippleSample.b / 2.5 - dot(rippleRawSlope, rippleRawSlope), 0.0);
+    float slopeMoment = dot(microSlope, microSlope)
+      + 0.6 * 0.6 * nearVariance + 0.55 * 0.55 * farVariance
+      + 2.6 * 2.6 * fineAmplitude * fineAmplitude * fineVariance
+      + 5.2 * 5.2 * rippleAmplitude * rippleAmplitude * rippleVariance;
+    filtered += vec3(microSlope, slopeMoment) * 0.25;
+  }
   float strength = smoothstep(0.05, 0.6, uWindSpeed);
   float scaledStrength = strength * uDetailScale;
-  return vec3(microSlope * scaledStrength, slopeMoment * scaledStrength * scaledStrength);
+  return vec3(filtered.xy * scaledStrength, filtered.z * scaledStrength * scaledStrength);
 }
 
 vec3 sampleLakeColor(vec2 worldXZ, vec2 waveSlope, vec3 microDetail, float sunVisibility) {
@@ -397,19 +437,13 @@ void main() {
   // The 160 km calm backing supplies only the area beyond the 6 km animated
   // plane. Clipping its center prevents coplanar overlap from flattening wave
   // troughs or creating a visible square transition.
+  vec2 footprintX = dFdx(vSurfaceGradient.xy);
+  vec2 footprintY = dFdy(vSurfaceGradient.xy);
   if (uWaterBackingClip > 0.5 &&
       all(lessThan(abs(vSurfaceGradient.xy - uWaterBackingCenter.xy), vec2(uWaterBackingInnerExtent)))) discard;
-  vec2 footprintX = dFdx(vSurfaceGradient.xy) * 0.25;
-  vec2 footprintY = dFdy(vSurfaceGradient.xy) * 0.25;
   vec2 center = vSurfaceGradient.xy;
   vec2 waveSlope = lakeWaveSlope(center);
-  // Supersample subpixel normal detail, then shade the filtered normal once.
-  vec3 microDetail = (
-    lakeMicroDetail(center - footprintX - footprintY) +
-    lakeMicroDetail(center + footprintX - footprintY) +
-    lakeMicroDetail(center - footprintX + footprintY) +
-    lakeMicroDetail(center + footprintX + footprintY)
-  ) * 0.25;
+  vec3 microDetail = lakeMicroDetail(center, footprintX, footprintY);
   float sunVisibility = 1.0;
   #if defined( USE_SHADOWMAP ) && NUM_DIR_LIGHT_SHADOWS > 0
     sunVisibility = getShadow(directionalShadowMap[0], directionalLightShadows[0].shadowMapSize,

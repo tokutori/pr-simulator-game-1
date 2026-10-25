@@ -158,6 +158,7 @@ pub struct LakeWaveProjection {
     spacing: LakeMeshSpacingDomain,
     horizontal_derivative_bound: f64,
     choppiness: f32,
+    detail_filter_minification: [f32; 2],
 }
 
 impl LakeWaveProjection {
@@ -213,6 +214,7 @@ impl LakeWaveProjection {
             spacing,
             horizontal_derivative_bound,
             choppiness,
+            detail_filter_minification: [2.0, 4.0],
         })
     }
 
@@ -243,6 +245,11 @@ impl LakeWaveProjection {
     /// Returns the Float32 choppiness preserving the Web non-inversion margin.
     pub const fn choppiness(&self) -> f32 {
         self.choppiness
+    }
+
+    /// Returns the conservative minor-footprint interval for detail-filter contraction in texels.
+    pub const fn detail_filter_minification(&self) -> [f32; 2] {
+        self.detail_filter_minification
     }
 }
 

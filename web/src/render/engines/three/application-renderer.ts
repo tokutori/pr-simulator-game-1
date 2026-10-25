@@ -299,6 +299,7 @@ export class ThreeApplicationRenderer {
       uWindVelocity: { value: new Vector4(...assets.water.wind_velocity_render, 0, 0) },
       uDetailScale: { value: assets.water.detail_amplitude_scale }, uDetailNear: { value: nearTexture }, uDetailFar: { value: farTexture },
       uDetailExtents: { value: new Vector4(near.extent_meters, far.extent_meters, 0, 0) },
+      uDetailFilterMinification: { value: new Vector2(...projection.detailFilterMinification) },
       uSkyTexture: { value: scene.background },
       uWaveKAmplitude: { value: projection.waveKAmplitude.map(wave => new Vector4(...wave)) },
       uWaveOmegaPhase: { value: projection.waveOmegaPhase.map(wave => new Vector4(...wave)) },
