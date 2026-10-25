@@ -121,6 +121,14 @@ describe("Single browser runtime ownership", () => {
     };
     try {
       fixture.driver.finish();
+      const frameRate = fixture.mount.querySelector(".render-frame-rate");
+      if (frameRate === null) throw new Error("Frame rate output is missing");
+      frameRate.textContent = "";
+      const writes = vi.spyOn(frameRate, "textContent", "set");
+      fixture.browser.dispatchEvent(new fixture.browser.Event("focus"));
+      expect(writes).toHaveBeenCalledTimes(1);
+      fixture.browser.dispatchEvent(new fixture.browser.Event("focus"));
+      expect(writes).toHaveBeenCalledTimes(1);
       const started = inputs().find(input => input.kind === "phone_sensors_started");
       expect(started).toMatchObject({ failure: null });
       if (started?.kind !== "phone_sensors_started") throw new Error("Phone sensor subscription was not requested");

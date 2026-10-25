@@ -62,8 +62,36 @@ fn shared_widgets_retain_values_and_forward_controls_and_chart_io_with_their_sou
             &mut measure,
         )
         .unwrap();
-    let drawing = failed.drawing.unwrap();
+    let mut drawing = failed.drawing.unwrap();
     submit(app.world_mut(), &drawing).unwrap();
+    let frame_rate = app
+        .world_mut()
+        .query::<(Entity, &UiText)>()
+        .iter(app.world())
+        .find_map(|(entity, role)| matches!(role, UiText::FrameRate).then_some(entity))
+        .unwrap();
+    app.world_mut().clear_trackers();
+    submit(app.world_mut(), &drawing).unwrap();
+    assert!(
+        !app.world()
+            .entity(frame_rate)
+            .get_ref::<Text>()
+            .unwrap()
+            .is_changed()
+    );
+    drawing.presentation.frame_rate_label.push(' ');
+    submit(app.world_mut(), &drawing).unwrap();
+    assert!(
+        app.world()
+            .entity(frame_rate)
+            .get_ref::<Text>()
+            .unwrap()
+            .is_changed()
+    );
+    assert_eq!(
+        app.world().get::<Text>(frame_rate).unwrap().0,
+        drawing.presentation.frame_rate_label
+    );
     let retained = app.world().resource::<RetainedUi>();
     let revision = retained.view.as_ref().unwrap().view_revision;
     let node = retained.widgets["game-boot-retry"].node;

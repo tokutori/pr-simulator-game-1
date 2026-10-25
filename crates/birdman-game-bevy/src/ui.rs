@@ -531,9 +531,10 @@ pub(crate) fn submit(world: &mut World, drawing: &ApplicationDrawingOutput) -> R
         project_focus(world, &theme);
     }
     align_chart_text_baselines(world);
-    for (role, mut text) in world.query::<(&UiText, &mut Text)>().iter_mut(world) {
+    for (role, text) in world.query::<(&UiText, &mut Text)>().iter_mut(world) {
         if matches!(role, UiText::FrameRate) {
-            text.0.clone_from(&drawing.presentation.frame_rate_label);
+            text.map_unchanged(|text| &mut text.0)
+                .clone_from_if_neq(&drawing.presentation.frame_rate_label);
         }
     }
     Ok(())

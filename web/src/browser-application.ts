@@ -114,7 +114,9 @@ export class BrowserApplication {
           if (this.view !== null) this.hud.render(hud ?? null, this.view.theme);
           this.hud.setVisible(drawing.presentation.screen_hud_visible && hud != null);
           this.frameRate.hidden = !drawing.presentation.screen_ui_visible;
-          this.frameRate.textContent = drawing.presentation.frame_rate_label;
+          if (this.frameRate.textContent !== drawing.presentation.frame_rate_label) {
+            this.frameRate.textContent = drawing.presentation.frame_rate_label;
+          }
         } catch (cause) { failed(drawing.graphics.resource?.renderer_resource_id, cause); }
       }
       if (output.diagnostic != null) console.error(output.diagnostic);
