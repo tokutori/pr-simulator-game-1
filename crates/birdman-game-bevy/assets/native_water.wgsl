@@ -212,7 +212,11 @@ fn lake_sky_radiance(direction: vec3<f32>) -> vec3<f32> {
         atan2(ray.z, ray.x) / 6.2831853 + 0.5,
         asin(clamp(ray.y, -1.0, 1.0)) / 3.1415927 + 0.5
     );
-    return textureSample(sky_texture, sky_sampler, coordinate).xyz;
+    var gradient_x = dpdx(coordinate);
+    var gradient_y = dpdy(coordinate);
+    gradient_x.x -= round(gradient_x.x);
+    gradient_y.x -= round(gradient_y.x);
+    return textureSampleGrad(sky_texture, sky_sampler, coordinate, gradient_x, gradient_y).xyz;
 }
 
 fn lake_micro_detail(position: vec2<f32>, footprint_x: vec2<f32>, footprint_y: vec2<f32>) -> vec3<f32> {
