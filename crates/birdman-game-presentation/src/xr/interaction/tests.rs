@@ -1,5 +1,14 @@
 use super::*;
 
+const PANEL_POSE: Pose = Pose {
+    position: Vector3 {
+        x: 0.0,
+        y: 0.0,
+        z: -2.0,
+    },
+    ..Pose::IDENTITY
+};
+
 #[test]
 fn clipped_range_preserves_uncut_track_scale_and_toggle_uses_observed_value() {
     let mut region = XrPointerRegion {
@@ -83,14 +92,7 @@ fn observe(
         .observe(XrPointerObservation {
             timestamp_ms,
             focused: true,
-            panel_pose: Pose {
-                position: Vector3 {
-                    x: 0.0,
-                    y: 0.0,
-                    z: -2.0,
-                },
-                ..Pose::IDENTITY
-            },
+            panel_pose: PANEL_POSE,
             head_pose: pointers
                 .iter()
                 .find(|pointer| pointer.source == XrPointerSource::Gaze)
@@ -141,8 +143,14 @@ fn controller_handover_resets_dwell_and_disconnect_restores_a_fresh_gaze_interva
             .activation
             .is_none()
     );
-    assert_eq!(owner.select(right, 2001.0).unwrap().point, [0.5, 0.0]);
-    assert!(owner.select(left, 2001.0).is_none());
+    assert_eq!(
+        owner
+            .select_on_panel(right, 2001.0, PANEL_POSE)
+            .unwrap()
+            .point,
+        [0.5, 0.0]
+    );
+    assert!(owner.select_on_panel(left, 2001.0, PANEL_POSE).is_none());
     assert_eq!(
         observe(&mut owner, 2100.0, vec![gaze, left, right])
             .primary
@@ -162,9 +170,13 @@ fn focus_loss_scope_exchange_and_stale_sources_invalidate_selection() {
     let gaze = pointer(XrPointerSource::Gaze, 0.0);
     let controller = pointer(XrPointerSource::Controller { id: 4 }, 0.2);
     observe(&mut owner, 10.0, vec![gaze, controller]);
-    assert!(owner.select(controller, 9.0).is_none());
+    assert!(owner.select_on_panel(controller, 9.0, PANEL_POSE).is_none());
     observe(&mut owner, 20.0, vec![gaze]);
-    assert!(owner.select(controller, 21.0).is_none());
+    assert!(
+        owner
+            .select_on_panel(controller, 21.0, PANEL_POSE)
+            .is_none()
+    );
     let observation = XrPointerObservation {
         timestamp_ms: 30.0,
         focused: false,
@@ -174,14 +186,14 @@ fn focus_loss_scope_exchange_and_stale_sources_invalidate_selection() {
         gamepad: None,
     };
     assert!(owner.observe(observation).unwrap().primary.is_none());
-    assert!(owner.select(gaze, 31.0).is_none());
+    assert!(owner.select_on_panel(gaze, 31.0, PANEL_POSE).is_none());
     owner
         .set_surface(Some(XrPointerSurface {
             scope: "credits".into(),
             ..surface()
         }))
         .unwrap();
-    assert!(owner.select(gaze, 40.0).is_none());
+    assert!(owner.select_on_panel(gaze, 40.0, PANEL_POSE).is_none());
     assert_eq!(observe(&mut owner, 50.0, vec![gaze]).progress, 0.0);
 }
 
@@ -191,12 +203,15 @@ fn transformed_panel_intersection_and_front_face_admission_match_trigger() {
     owner.set_surface(Some(surface())).unwrap();
     let controller = pointer(XrPointerSource::Controller { id: 1 }, -0.25);
     let frame = observe(&mut owner, 0.0, vec![controller]);
-    assert_eq!(frame.primary, owner.select(controller, 1.0));
+    assert_eq!(
+        frame.primary,
+        owner.select_on_panel(controller, 1.0, PANEL_POSE)
+    );
     let outside = pointer(controller.source, 2.0);
     assert!(observe(&mut owner, 10.0, vec![outside]).primary.is_none());
     let mut invalid = controller;
     invalid.direction.x = f64::NAN;
-    assert!(owner.select(invalid, 20.0).is_none());
+    assert!(owner.select_on_panel(invalid, 20.0, PANEL_POSE).is_none());
 
     let head = Pose {
         orientation: crate::camera::Quaternion {
@@ -251,10 +266,11 @@ fn transformed_panel_intersection_and_front_face_admission_match_trigger() {
     owner.observe(observation.clone()).unwrap();
     observation.timestamp_ms = 31.0;
     observation.head_pose.as_mut().unwrap().orientation.w = f64::NAN;
+    let panel_pose = observation.panel_pose;
     assert!(owner.observe(observation).is_err());
     assert!(
         owner
-            .select(
+            .select_on_panel(
                 XrPointerRay {
                     source: XrPointerSource::Gaze,
                     reference_from_space: Pose::IDENTITY,
@@ -265,7 +281,8 @@ fn transformed_panel_intersection_and_front_face_admission_match_trigger() {
                         z: 0.0
                     },
                 },
-                532.0
+                532.0,
+                panel_pose
             )
             .is_some()
     );
@@ -281,14 +298,7 @@ fn gamepad_frame(
         .observe(XrPointerObservation {
             timestamp_ms,
             focused,
-            panel_pose: Pose {
-                position: Vector3 {
-                    x: 0.0,
-                    y: 0.0,
-                    z: -2.0,
-                },
-                ..Pose::IDENTITY
-            },
+            panel_pose: PANEL_POSE,
             head_pose: Some(Pose::IDENTITY),
             sources: vec![],
             gamepad,
@@ -376,14 +386,7 @@ fn gamepad_connection_cursor_edges_scroll_and_focus_share_one_owner() {
                 focused,
                 gamepad: None,
                 head_pose: Some(Pose::IDENTITY),
-                panel_pose: Pose {
-                    position: Vector3 {
-                        x: 0.0,
-                        y: 0.0,
-                        z: -2.0,
-                    },
-                    ..Pose::IDENTITY
-                },
+                panel_pose: PANEL_POSE,
             })
             .unwrap()
     };

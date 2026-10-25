@@ -670,12 +670,6 @@ impl XrPointerSession {
         ))
     }
 
-    /// Uses the same panel geometry for explicit trigger selection.
-    pub fn select(&mut self, pointer: XrPointerRay, timestamp_ms: f64) -> Option<XrPointerHit> {
-        let panel_pose = self.observation.as_ref()?.panel_pose;
-        self.select_on_panel(pointer, timestamp_ms, panel_pose)
-    }
-
     /// Selects against the actual submitted panel pose using the retained shared hit surface.
     pub fn select_on_panel(
         &mut self,

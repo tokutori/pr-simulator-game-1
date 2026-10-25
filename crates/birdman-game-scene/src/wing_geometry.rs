@@ -112,13 +112,6 @@ impl WingGeometry {
         frame
     }
 
-    #[doc = "Derives one shared bending coefficient from speed and updates retained geometry. Non-finite speed uses the reference load."]
-    #[cfg(test)]
-    fn update_frame(&self, frame: &mut WingFrame, speed: f64) -> bool {
-        self.update_frame_with_factor(frame, display_bending_factor(speed))
-            .expect("registered wing deformation must remain representable")
-    }
-
     #[doc = "Writes an accepted bending coefficient into retained skin buffers; equal coefficients reuse the frame."]
     #[doc = "Publish buffers after success. An arithmetic error clears the valid coefficient until a complete update succeeds."]
     pub fn update_frame_with_factor(
@@ -181,24 +174,6 @@ fn half_span() -> f64 {
         .fold(0.0, f64::max)
 }
 
-#[cfg(test)]
-fn reference_speed() -> f64 {
-    definition().document().trim.airspeed_mps
-}
-
-#[cfg(test)]
-fn display_bending_factor(speed: f64) -> WingBendingFactor {
-    let speed = if speed.is_finite() {
-        speed.max(0.0)
-    } else {
-        reference_speed()
-    };
-    definition()
-        .shape()
-        .wing_bending_factor(speed)
-        .expect("registered display speed must produce a finite bending coefficient")
-}
-
 fn deflection_with_factor(span: f64, factor: WingBendingFactor) -> Result<f64, ShapeError> {
     let [minimum, maximum] = wing().span_bounds_m();
     let span = span.clamp(minimum, maximum);
@@ -206,12 +181,6 @@ fn deflection_with_factor(span: f64, factor: WingBendingFactor) -> Result<f64, S
         .shape()
         .wing_displacement_with_factor(span, factor)
         .map(|displacement| -displacement.components()[2])
-}
-
-#[cfg(test)]
-fn deflection(span: f64, speed: f64) -> f64 {
-    deflection_with_factor(span, display_bending_factor(speed))
-        .expect("registered wing deformation must remain finite")
 }
 
 fn wing_point(span: f64, chord: f64, upper: bool) -> [f64; 3] {
@@ -389,32 +358,28 @@ mod tests {
                 - wing().section(span).unwrap().quarter_chord_frd_m[2]
         };
         let rises = [0.0, 0.0500712, 0.1439547, 0.3943107];
+        let factor = WingBendingFactor::try_new(1.0).unwrap();
         for (index, fraction) in [0.0, 0.6, 0.8, 1.0].into_iter().enumerate() {
             let span = half_span() * fraction;
-            assert!((deflection(span, 9.7) - deflections[index]).abs() < 1e-14);
+            assert!(
+                (deflection_with_factor(span, factor).unwrap() - deflections[index]).abs() < 1e-14
+            );
             assert!((dihedral(span) - rises[index]).abs() < 1e-14);
         }
         for fraction in [0.6, 0.8] {
             let boundary = half_span() * fraction;
             assert!((dihedral(boundary + 1e-9) - dihedral(boundary - 1e-9)).abs() < 3e-10);
         }
-        assert_eq!(deflection(half_span(), 0.0), deflection(half_span(), -1.0));
-        assert_eq!(
-            deflection(half_span(), 13.0),
-            deflection(half_span(), f64::MAX)
-        );
-        assert_eq!(
-            deflection(half_span(), f64::NAN),
-            deflection(half_span(), 9.7)
-        );
     }
 
     #[test]
     fn all_meshes_and_anchors_are_finite_symmetric_and_follow_one_load() {
         let geometry = WingGeometry::new();
         let mut frame = geometry.frame();
-        for speed in [0.0, 9.5, 13.0] {
-            geometry.update_frame(&mut frame, speed);
+        for factor in [0.0, 0.9, 1.2] {
+            geometry
+                .update_frame_with_factor(&mut frame, WingBendingFactor::try_new(factor).unwrap())
+                .unwrap();
             for surface in &geometry.surfaces {
                 let rows = wing().span_stations_m().filter(|span| *span >= 0.0).count();
                 assert_eq!(surface.positions.len(), rows * ROW_SIZE * 2);
@@ -466,12 +431,31 @@ mod tests {
             }
         }
         let positions = frame.surface_positions[0].as_ptr();
-        assert!(!geometry.update_frame(&mut frame, 13.0));
-        assert!(geometry.update_frame(&mut frame, 9.5));
+        let factor = WingBendingFactor::try_new(1.2).unwrap();
+        assert!(
+            !geometry
+                .update_frame_with_factor(&mut frame, factor)
+                .unwrap()
+        );
+        let factor = WingBendingFactor::try_new(0.9).unwrap();
+        assert!(
+            geometry
+                .update_frame_with_factor(&mut frame, factor)
+                .unwrap()
+        );
         let previous_tip = *frame.surface_positions[0].last().unwrap();
-        assert!(geometry.update_frame(&mut frame, 9.52));
+        let factor = WingBendingFactor::try_new(0.92).unwrap();
+        assert!(
+            geometry
+                .update_frame_with_factor(&mut frame, factor)
+                .unwrap()
+        );
         assert_ne!(previous_tip, *frame.surface_positions[0].last().unwrap());
-        assert!(!geometry.update_frame(&mut frame, 9.52));
+        assert!(
+            !geometry
+                .update_frame_with_factor(&mut frame, factor)
+                .unwrap()
+        );
         assert_eq!(positions, frame.surface_positions[0].as_ptr());
     }
 
