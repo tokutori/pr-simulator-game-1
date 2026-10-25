@@ -52,6 +52,7 @@ adapter・runtime・presentation・scene・app・contentは責務に応じて下
 - coreの数値依存は`libm`と`polycool`である。登録機体の局所線型化試験はcontentに置き、`nalgebra`をdesktopの検証用dev-dependencyに限定する。
 - 証明用`vstd`とschema生成用`schemars`は明示的な非default featureとし、通常のnative/WASM実行経路へ有効化しない。
 - Parleyのlocal patchはnative日本語組版に限定し、`vendor/parley`を独立したworkspace memberへ追加しない。
+- NativeのGPU I/Oは描画engineと同じ完全固定版の`wgpu`をdesktop targetへ限定し、default featureと追加featureを有効化せずに直接使用する。
 
 - 依存境界検査は設計上の禁止依存・feature・対象platformを検査する。
 - manifestの内容を別の一覧へ複写することを目的にしない。

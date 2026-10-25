@@ -431,6 +431,19 @@ describe("Cargo dependency boundary", () => {
     ]); }).toThrow("Forbidden native engine dependency");
   });
 
+  it("limits direct GPU I/O to a pinned feature-neutral native dependency", () => {
+    const dependency = { ...nativeTextDependency, name: "wgpu", req: "=29.0.4", features: [] };
+    expect(() => { assertDependencyBoundary([{ name: "birdman-game-bevy", dependencies: [dependency] }]); }).not.toThrow();
+    for (const name of ["birdman-game-runtime", "birdman-game-wasm"]) {
+      expect(() => { assertDependencyBoundary([{ name, dependencies: [dependency] }]); }).toThrow("Forbidden dependency");
+    }
+    for (const difference of [{ target: null }, { uses_default_features: true }, { features: ["vulkan"] }, { req: "^29.0.4" }]) {
+      expect(() => { assertDependencyBoundary([
+        { name: "birdman-game-bevy", dependencies: [{ ...dependency, ...difference }] }
+      ]); }).toThrow("Forbidden dependency");
+    }
+  });
+
   it("accepts desktop gamepad observation through the native engine", () => {
     expect(() => { assertDependencyBoundary([
       { name: "birdman-game-bevy", dependencies: [{ ...nativeEngineDependency, features: ["bevy_gilrs"] }] }

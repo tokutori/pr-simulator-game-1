@@ -58,6 +58,21 @@ function isNativeEngineDependency(crate: string, dependency: Record<string, unkn
     && dependency.features.every((feature) => typeof feature === "string" && !excludedNativeFeatures.has(feature));
 }
 
+function isNativeGpuIoDependency(crate: string, dependency: Record<string, unknown>): boolean {
+  return crate === "birdman-game-bevy"
+    && dependency.name === "wgpu"
+    && dependency.kind === null
+    && dependency.target === NATIVE_SCREEN_TARGET
+    && isCompleteVersionPin(dependency.req)
+    && isDefaultRegistrySource(dependency)
+    && dependency.path === undefined
+    && dependency.rename === null
+    && dependency.optional === false
+    && dependency.uses_default_features === false
+    && Array.isArray(dependency.features)
+    && dependency.features.length === 0;
+}
+
 function isNativeTextDependency(crate: string, dependency: Record<string, unknown>): boolean {
   return crate === "birdman-game-bevy"
     && dependency.name === "parley"
@@ -268,6 +283,7 @@ export function assertDependencyBoundary(packages: readonly unknown[]): void {
         throw new Error(`Forbidden normal proof activation in ${name}: ${dependencyName}`);
       }
       if (!permitted.includes(dependencyName)
+        && !isNativeGpuIoDependency(name, dependency)
         && !isNativeTextDependency(name, dependency)
         && !isSharedJsonNumberDependency(name, dependency)
         && !isSharedImageOperationsDependency(name, dependency)
