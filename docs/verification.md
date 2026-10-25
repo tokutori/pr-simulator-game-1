@@ -483,7 +483,7 @@ cargo run -p birdman-game-bevy --features verify-harness --locked -- --verify ta
 - Shadow ACKやAuto窓のtimeoutをfindingとして残して後段を調べる場合も、最終exit codeは1とする。
   GPU/asset/state異常は失敗として保持する。
 
-- 本番WaterMaterialと同じ19 bindings・shader・vertexを使う18 probeを16×16のRgba32Floatへ描画する。
+- 本番WaterMaterialと同じbindings・shader・vertexを使う18 probeを16×16のRgba32Floatへ描画する。
 - world position差の変位、本番導出の法線、最終fragment色をreadbackし、有限性・単位/上向き法線・共有変位上界、 平坦入力の零変位・波の空間変動・黒一色・異常輝度を検査する。
 - 通常variantへ検査専用bindingや処理を追加しない。
 
