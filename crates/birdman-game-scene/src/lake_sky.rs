@@ -31,14 +31,14 @@ pub struct LakeSceneHaze {
     pub color_srgb: u32,
     /// Distance at which the atmospheric fade starts, in metres.
     pub near_m: f64,
-    /// Recorded visibility, or the existing unrecorded display default, in metres.
+    /// Registered visibility in metres.
     pub far_m: f64,
 }
 
 impl LakeSceneHaze {
-    /// Retains absent metadata; GPU endpoints, span and reciprocal must be positive normal values.
-    pub fn try_new(visibility_m: Option<f64>) -> Result<Self, EnvironmentFormatError> {
-        let far_m = visibility_m.unwrap_or(80_000.0);
+    /// GPU endpoints, span and reciprocal must be positive normal values.
+    pub fn try_new(visibility_m: f64) -> Result<Self, EnvironmentFormatError> {
+        let far_m = visibility_m;
         let near_m = far_m * 0.175;
         let gpu_far = far_m as f32;
         let gpu_near = near_m as f32;
@@ -71,26 +71,18 @@ pub struct LakeSunlight {
 }
 
 impl LakeSunlight {
-    /// Projects validated sky metadata, with the neutral sky pointing upward.
-    pub fn for_condition(condition: Option<LakeSkyRenderCondition>) -> Self {
-        condition.map_or(
-            Self {
-                direction: [0.0, 1.0, 0.0],
-                daylight: false,
-            },
-            |sky| {
-                let azimuth = sky.sun_azimuth_degrees.to_radians();
-                let elevation = sky.sun_elevation_degrees.to_radians();
-                Self {
-                    direction: [
-                        elevation.cos() * azimuth.sin(),
-                        elevation.sin(),
-                        -elevation.cos() * azimuth.cos(),
-                    ],
-                    daylight: sky.sun_elevation_degrees >= 0.0,
-                }
-            },
-        )
+    /// Projects validated registered sky metadata.
+    pub fn for_condition(sky: LakeSkyRenderCondition) -> Self {
+        let azimuth = sky.sun_azimuth_degrees.to_radians();
+        let elevation = sky.sun_elevation_degrees.to_radians();
+        Self {
+            direction: [
+                elevation.cos() * azimuth.sin(),
+                elevation.sin(),
+                -elevation.cos() * azimuth.cos(),
+            ],
+            daylight: sky.sun_elevation_degrees >= 0.0,
+        }
     }
 }
 
@@ -384,11 +376,11 @@ fn clear_sky_pixel(longitude: f64, latitude: f64, sun: [f64; 3], daylight: f64) 
 }
 
 /// Generates the shared opaque sky and distant cloud panorama.
-pub fn generate_lake_sky(condition: Option<LakeSkyRenderCondition>) -> LakeSkyImage {
+pub fn generate_lake_sky(condition: LakeSkyRenderCondition) -> LakeSkyImage {
     let sunlight = LakeSunlight::for_condition(condition);
     let sun = sunlight.direction;
     let daylight = f64::from(sunlight.daylight);
-    let fraction = condition.map_or(0.0, |sky| sky.cloud_fraction);
+    let fraction = condition.cloud_fraction;
     let mut rgba = Vec::with_capacity((LAKE_SKY_IMAGE_WIDTH * LAKE_SKY_IMAGE_HEIGHT * 4) as usize);
     for row in 0..LAKE_SKY_IMAGE_HEIGHT {
         let latitude = if row + 1 == LAKE_SKY_IMAGE_HEIGHT {
@@ -418,7 +410,7 @@ mod tests {
             (135.0, 90.0, [0.0, 1.0, 0.0]),
         ] {
             let sky = LakeSkyRenderCondition::try_new(azimuth, elevation, 0.5, 25_000.0).unwrap();
-            let sunlight = LakeSunlight::for_condition(Some(sky));
+            let sunlight = LakeSunlight::for_condition(sky);
             assert!(sunlight.daylight);
             for (actual, expected) in sunlight.direction.into_iter().zip(direction) {
                 assert!((actual - expected).abs() < 1.0e-14);
@@ -435,47 +427,31 @@ mod tests {
             assert_eq!(shadow.shadow_bounds, [-28.0, 28.0, -28.0, 28.0, 0.5, 160.0]);
         }
         let night = LakeSkyRenderCondition::try_new(135.0, -0.1, 0.5, 25_000.0).unwrap();
-        assert!(!LakeSunlight::for_condition(Some(night)).daylight);
+        assert!(!LakeSunlight::for_condition(night).daylight);
         assert!(
-            !LakeSceneShadow::for_aircraft([0.0; 3], LakeSunlight::for_condition(Some(night)))
+            !LakeSceneShadow::for_aircraft([0.0; 3], LakeSunlight::for_condition(night))
                 .unwrap()
                 .shadow_enabled
         );
         assert!(
-            LakeSceneShadow::for_aircraft([f64::NAN, 0.0, 0.0], LakeSunlight::for_condition(None))
+            LakeSceneShadow::for_aircraft([f64::NAN, 0.0, 0.0], LakeSunlight::for_condition(night))
                 .is_none()
         );
         assert!(
-            LakeSceneShadow::for_aircraft([f64::MAX; 3], LakeSunlight::for_condition(None))
+            LakeSceneShadow::for_aircraft([f64::MAX; 3], LakeSunlight::for_condition(night))
                 .is_none()
-        );
-        assert_eq!(
-            LakeSunlight::for_condition(None),
-            LakeSunlight {
-                direction: [0.0, 1.0, 0.0],
-                daylight: false
-            }
         );
     }
 
     #[test]
-    fn scene_haze_retains_registered_and_unrecorded_web_bounds() {
-        assert_eq!(
-            LakeSceneHaze::try_new(None).unwrap(),
-            LakeSceneHaze {
-                color_srgb: 0x9aafb1,
-                near_m: 14_000.0,
-                far_m: 80_000.0,
-            }
-        );
+    fn scene_haze_uses_registered_visibility() {
         let sky = birdman_game_app::bundled_environment()
             .unwrap()
             .document()
             .sky;
-        let haze = LakeSceneHaze::try_new(Some(sky.visibility_m)).unwrap();
+        let haze = LakeSceneHaze::try_new(sky.visibility_m).unwrap();
         assert_eq!(haze.color_srgb, 0x9aafb1);
         assert_eq!([haze.near_m, haze.far_m], [4_375.0, 25_000.0]);
-        assert_ne!(haze, LakeSceneHaze::try_new(None).unwrap());
     }
 
     #[test]
@@ -495,29 +471,13 @@ mod tests {
             f64::from(f32::MAX) * 0.5,
         ] {
             assert_eq!(
-                LakeSceneHaze::try_new(Some(visibility)),
+                LakeSceneHaze::try_new(visibility),
                 Err(EnvironmentFormatError::InvalidSky)
             );
         }
         for visibility in [1e9, f64::from(f32::MIN_POSITIVE) * 8.0] {
-            assert!(LakeSceneHaze::try_new(Some(visibility)).is_ok());
+            assert!(LakeSceneHaze::try_new(visibility).is_ok());
         }
-    }
-
-    #[test]
-    fn missing_sky_preserves_the_web_neutral_horizon_and_zenith() {
-        assert_eq!(
-            clear_sky_pixel(0.5, 0.0, [0.0, 1.0, 0.0], 0.0),
-            [180, 205, 218, 255]
-        );
-        assert_eq!(
-            clear_sky_pixel(0.5, 0.5, [0.0, 1.0, 0.0], 0.0),
-            [180, 205, 218, 255]
-        );
-        assert_eq!(
-            clear_sky_pixel(0.5, 1.0, [0.0, 1.0, 0.0], 0.0),
-            [107, 164, 205, 255]
-        );
     }
 
     #[test]
@@ -534,7 +494,15 @@ mod tests {
 
     #[test]
     fn generated_panorama_is_fixed_size_opaque_srgb() {
-        let image = generate_lake_sky(None);
+        let image = generate_lake_sky(
+            LakeSkyRenderCondition::try_from(
+                birdman_game_app::bundled_environment()
+                    .unwrap()
+                    .document()
+                    .sky,
+            )
+            .unwrap(),
+        );
         assert_eq!((image.width(), image.height()), (1024, 512));
         assert_eq!(image.rgba().len(), 1024 * 512 * 4);
         assert!(image.rgba().chunks_exact(4).all(|texel| texel[3] == 255));
@@ -561,7 +529,7 @@ mod tests {
                 ],
             ),
         ] {
-            let image = generate_lake_sky(Some(condition));
+            let image = generate_lake_sky(condition);
             for (column, row, expected) in pixels {
                 let offset = ((row * image.width() + column) * 4) as usize;
                 for (channel, expected_byte) in expected.into_iter().enumerate() {
@@ -714,10 +682,10 @@ mod tests {
             cloud_fraction: 0.6,
             ..clear
         };
-        let clear_image = generate_lake_sky(Some(clear));
-        let image = generate_lake_sky(Some(clouded));
+        let clear_image = generate_lake_sky(clear);
+        let image = generate_lake_sky(clouded);
         assert_eq!((image.width(), image.height()), (1024, 512));
-        assert_eq!(image, generate_lake_sky(Some(clouded)));
+        assert_eq!(image, generate_lake_sky(clouded));
         let horizon = (image.width() * image.height() / 2 * 4) as usize;
         assert_eq!(&image.rgba()[..horizon], &clear_image.rgba()[..horizon]);
         assert!(

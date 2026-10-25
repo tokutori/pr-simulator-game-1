@@ -9,23 +9,14 @@ use birdman_game_format::{
 use serde::Serialize;
 
 use crate::record_archive::{ENVIRONMENT_SOURCE_FINGERPRINT, ENVIRONMENT_V6_SHA256};
-use crate::session_snapshot::SessionPhaseDocument;
 use crate::{
     HybridSessionPreparation, PresetEnvironment, application::ApplicationSession,
     bundled_environment, identity_for_selection, preset_environment_for_version,
 };
 
-const MAX_IDENTITY_JSON_BYTES: usize = 4_096;
-
-/// Typed failures from environment input, identity resolution and metadata projection.
+/// Typed failures from registered identity resolution and resource metadata projection.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EnvironmentSnapshotError {
-    /// The adapter did not receive JSON text.
-    InvalidInputType,
-    /// The identity JSON exceeds the bounded input contract.
-    InputTooLarge,
-    /// The identity JSON is malformed or has invalid fields.
-    InvalidJson,
     /// An identity version or registered preset is invalid.
     InvalidIdentity,
     /// A configured session phase has no retained scenario identity.
@@ -34,11 +25,9 @@ pub enum EnvironmentSnapshotError {
     Preparation(crate::HybridSessionPreparationError),
     /// The shared environment provider failed with its original cause.
     Environment(EnvironmentFormatError),
-    /// The adapter could not encode the projected document.
-    EncodingFailed,
 }
 
-/// Exact split-seed scenario identity shared by live and environment query boundaries.
+/// Exact split-seed scenario identity used by aggregate resource preparation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
@@ -97,7 +86,6 @@ impl From<EnvironmentIdentity> for birdman_game_core::SessionScenarioIdentity {
 
 /// Owner whose selected environment is being observed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum EnvironmentSource {
     /// Immutable title exhibition, independent of flight selection.
@@ -112,8 +100,6 @@ pub enum EnvironmentSource {
     Archive,
     /// Independent demonstration record.
     Attract,
-    /// Explicit immutable registry query.
-    Registry,
 }
 
 /// Lightweight identity key for display-resource synchronization.
@@ -183,36 +169,8 @@ impl EnvironmentSelection {
     }
 }
 
-/// Origin of one environment snapshot.
-#[derive(Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum EnvironmentContext {
-    /// One application session observation.
-    Session {
-        /// Named phase observed with the selected provider identity.
-        phase: SessionPhaseDocument,
-    },
-    /// Explicit immutable registry query.
-    Registry,
-}
-
-/// Versioned environment metadata without the full wind-grid samples.
-#[derive(Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(deny_unknown_fields)]
-pub struct EnvironmentSnapshot {
-    /// Current environment snapshot wire version.
-    pub schema_version: u32,
-    /// Session or registry origin.
-    pub context: EnvironmentContext,
-    /// Explicit availability of the requested registered environment.
-    pub projection: EnvironmentProjection,
-}
-
 /// Registered environment availability without fallback to another identity.
 #[derive(Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum EnvironmentProjection {
     /// The requested identity is not registered.
@@ -244,8 +202,6 @@ pub enum EnvironmentVenueProjection {
     SharedLaunch,
     /// The archive identity resolves an origin matching the registered venue.
     RegisteredOrigin,
-    /// The registered environment carries no geographic origin.
-    OriginNotRecorded,
     /// The geographic origin or water datum differs from the registered venue.
     UnregisteredOrigin,
 }
@@ -260,17 +216,11 @@ impl EnvironmentVenueProjection {
 /// Resolves venue admission from the selected owner and registered origin metadata.
 pub fn venue_for_environment(
     source: EnvironmentSource,
-    frame: &Defined<LocalNedFrameDocument>,
+    frame: &LocalNedFrameDocument,
 ) -> Result<EnvironmentVenueProjection, EnvironmentSnapshotError> {
-    if !matches!(
-        source,
-        EnvironmentSource::Archive | EnvironmentSource::Registry
-    ) {
+    if source != EnvironmentSource::Archive {
         return Ok(EnvironmentVenueProjection::SharedLaunch);
     }
-    let Defined::Defined(frame) = frame else {
-        return Ok(EnvironmentVenueProjection::OriginNotRecorded);
-    };
     let registered = &bundled_environment()
         .map_err(EnvironmentSnapshotError::Environment)?
         .document()
@@ -282,25 +232,8 @@ pub fn venue_for_environment(
     })
 }
 
-/// Explicitly recorded or unavailable metadata.
-#[derive(Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(
-    tag = "kind",
-    content = "value",
-    rename_all = "snake_case",
-    deny_unknown_fields
-)]
-pub enum Defined<T> {
-    /// No recorded value is available.
-    Unavailable,
-    /// Value supplied by the registered environment.
-    Defined(T),
-}
-
 /// Spatial coverage of the shared physical wind provider.
 #[derive(Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum WindDomain {
     /// Spatially uniform wind.
@@ -316,7 +249,6 @@ pub enum WindDomain {
 
 /// Asset identity or implementation provenance of an environment definition.
 #[derive(Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ContentHash {
     /// Exact registered JSON bytes.
@@ -333,15 +265,14 @@ pub enum ContentHash {
 
 /// Representative values, spatial domain and source provenance of one provider.
 #[derive(Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct EnvironmentMetadata {
     /// Registered human-readable environment name.
     pub name: String,
     /// Exact asset hash or implementation source fingerprint.
     pub content_hash: ContentHash,
-    /// Recorded geographic origin and water reference.
-    pub local_frame: Defined<LocalNedFrameDocument>,
+    /// Registered venue origin and water reference shared by every weather class.
+    pub local_frame: LocalNedFrameDocument,
     /// Physical wind coverage.
     pub wind_domain: WindDomain,
     /// Representative north/east/down position in metres.
@@ -352,53 +283,14 @@ pub struct EnvironmentMetadata {
     pub representative_velocity_ned_mps: [f64; 3],
     /// Shared display-only wave conditions.
     pub waves: WaveStateDocument,
-    /// Recorded sky conditions without renderer fallback values.
-    pub sky: Defined<SkyStateDocument>,
+    /// Registered illustrative sky conditions shared by every weather class.
+    pub sky: SkyStateDocument,
     /// Registered data sources and notices.
     pub sources: Vec<EnvironmentSourceDocument>,
     /// Recorded ground-wind normal observations.
     pub ground_wind_normals: Vec<GroundWindNormalDocument>,
     /// Distinction between observed, derived, assumed and game-tuned values.
     pub provenance: EnvironmentProvenanceDocument,
-}
-
-impl EnvironmentSnapshot {
-    fn new(context: EnvironmentContext, projection: EnvironmentProjection) -> Self {
-        Self {
-            schema_version: 1,
-            context,
-            projection,
-        }
-    }
-}
-
-/// Resolves an external, bounded complete identity without mutating a session.
-pub fn for_identity_json(json: &[u8]) -> Result<EnvironmentSnapshot, EnvironmentSnapshotError> {
-    if json.len() > MAX_IDENTITY_JSON_BYTES {
-        return Err(EnvironmentSnapshotError::InputTooLarge);
-    }
-    if json.iter().find(|byte| !byte.is_ascii_whitespace()) != Some(&b'{') {
-        return Err(EnvironmentSnapshotError::InvalidJson);
-    }
-    let identity: EnvironmentIdentity =
-        serde_json::from_slice(json).map_err(|_| EnvironmentSnapshotError::InvalidJson)?;
-    if [
-        identity.catalog_version,
-        identity.scenario_id,
-        identity.scenario_version,
-        identity.aircraft_model_version,
-        identity.environment_version,
-        identity.controller_profile_version,
-    ]
-    .contains(&0)
-    {
-        return Err(EnvironmentSnapshotError::InvalidIdentity);
-    }
-    let projection = for_identity(EnvironmentSource::Registry, identity)?;
-    Ok(EnvironmentSnapshot::new(
-        EnvironmentContext::Registry,
-        projection,
-    ))
 }
 
 /// Resolves metadata only when every registered identity component matches.
@@ -427,30 +319,6 @@ pub fn for_identity(
     })
 }
 
-/// Projects the selected or retained environment from one application session.
-pub fn for_session(
-    session: &ApplicationSession,
-) -> Result<EnvironmentSnapshot, EnvironmentSnapshotError> {
-    let phase = session.core_session().snapshot().phase();
-    let projection = EnvironmentSelection::for_session(session)?.resolve()?;
-    Ok(EnvironmentSnapshot::new(
-        EnvironmentContext::Session {
-            phase: phase.into(),
-        },
-        projection,
-    ))
-}
-
-/// Projects the immutable title environment before an application session is created.
-pub fn for_exhibition() -> Result<EnvironmentSnapshot, EnvironmentSnapshotError> {
-    Ok(EnvironmentSnapshot::new(
-        EnvironmentContext::Session {
-            phase: SessionPhaseDocument::Title,
-        },
-        EnvironmentSelection::exhibition()?.resolve()?,
-    ))
-}
-
 fn bundled_metadata() -> Result<EnvironmentMetadata, EnvironmentSnapshotError> {
     let owner = bundled_environment().map_err(EnvironmentSnapshotError::Environment)?;
     let document = owner.document();
@@ -463,7 +331,7 @@ fn bundled_metadata() -> Result<EnvironmentMetadata, EnvironmentSnapshotError> {
         content_hash: ContentHash::AssetBytes {
             sha256: ENVIRONMENT_V6_SHA256,
         },
-        local_frame: Defined::Defined(document.local_frame.clone()),
+        local_frame: document.local_frame.clone(),
         wind_domain: WindDomain::Grid {
             minimum_ned_m: grid.origin_ned_m,
             maximum_ned_m: core::array::from_fn(|axis| {
@@ -475,7 +343,7 @@ fn bundled_metadata() -> Result<EnvironmentMetadata, EnvironmentSnapshotError> {
         representative_altitude_m: -grid.representative_position_ned_m[2],
         representative_velocity_ned_mps: sample(field, grid.representative_position_ned_m)?,
         waves: document.waves,
-        sky: Defined::Defined(document.sky),
+        sky: document.sky,
         sources: document.sources.clone(),
         ground_wind_normals: document.ground_wind_normals.clone(),
         provenance: document.provenance.clone(),
@@ -485,6 +353,8 @@ fn bundled_metadata() -> Result<EnvironmentMetadata, EnvironmentSnapshotError> {
 fn preset_metadata(
     environment: &PresetEnvironment,
 ) -> Result<EnvironmentMetadata, EnvironmentSnapshotError> {
+    let shared = bundled_environment().map_err(EnvironmentSnapshotError::Environment)?;
+    let document = shared.document();
     let [north, east, down] = environment.wind_velocity_ned_mps;
     let velocity = NedVector::try_new(north, east, down).map_err(|_| {
         EnvironmentSnapshotError::Environment(EnvironmentFormatError::InvalidWindSample(0))
@@ -498,28 +368,24 @@ fn preset_metadata(
                 .map(|byte| format!("{byte:02x}"))
                 .collect(),
         },
-        local_frame: Defined::Unavailable,
+        local_frame: document.local_frame.clone(),
         wind_domain: WindDomain::Uniform,
         representative_position_ned_m: representative,
         representative_altitude_m: 10.5,
         representative_velocity_ned_mps: sample(WindField::uniform(velocity), representative)?,
         waves: environment.waves,
-        sky: Defined::Unavailable,
+        sky: document.sky,
         sources: Vec::new(),
         ground_wind_normals: Vec::new(),
         provenance: EnvironmentProvenanceDocument {
-            local_frame: EnvironmentBasisDocument::Assumed {
-                rationale: "Synthetic preset NED has no versioned geographic origin metadata.".into(),
-            },
+            local_frame: document.provenance.local_frame.clone(),
             wind_grid: EnvironmentBasisDocument::Assumed {
                 rationale: "Stationary uniform synthetic wind; no observed weather claim.".into(),
             },
             waves: EnvironmentBasisDocument::GameTuned {
                 rationale: "Render-only preset wind history, fetch and detail are independent of instantaneous flight wind.".into(),
             },
-            sky: EnvironmentBasisDocument::Assumed {
-                rationale: "Synthetic preset defines no sky inputs; sky metadata is unavailable.".into(),
-            },
+            sky: document.provenance.sky.clone(),
         },
     })
 }
@@ -540,7 +406,7 @@ fn sample(
 
 #[cfg(test)]
 mod tests {
-    use super::{EnvironmentIdentity, EnvironmentSnapshotError, for_identity_json};
+    use super::{EnvironmentIdentity, EnvironmentSource, for_identity};
     use serde_json::{Value, json};
 
     fn identity(version: u32) -> EnvironmentIdentity {
@@ -556,15 +422,14 @@ mod tests {
     }
 
     fn query(identity: EnvironmentIdentity) -> Value {
-        let json = serde_json::to_vec(&identity).unwrap();
-        serde_json::to_value(for_identity_json(&json).unwrap()).unwrap()
+        serde_json::to_value(for_identity(EnvironmentSource::Archive, identity).unwrap()).unwrap()
     }
 
     #[test]
     fn only_current_model_and_controller_identities_resolve_registered_metadata() {
         for version in [1, 2, 4, 5, 6] {
             let current = identity(version);
-            assert_eq!(query(current)["projection"]["kind"], "available");
+            assert_eq!(query(current)["kind"], "available");
             for component in 0..4 {
                 let mut retired = current;
                 match component {
@@ -574,20 +439,18 @@ mod tests {
                     3 => retired.controller_profile_version = 2,
                     _ => unreachable!(),
                 }
-                assert_eq!(query(retired)["projection"]["kind"], "unavailable");
+                assert_eq!(query(retired)["kind"], "unavailable");
             }
         }
-        assert_eq!(query(identity(3))["projection"]["kind"], "unavailable");
+        assert_eq!(query(identity(3))["kind"], "unavailable");
     }
 
     #[test]
     fn registered_env6_projects_asset_metadata_and_owned_grid_without_samples() {
         let snapshot = query(identity(6));
-        assert_eq!(snapshot["schema_version"], 1);
-        assert_eq!(snapshot["context"]["kind"], "registry");
-        let projection = &snapshot["projection"];
+        let projection = &snapshot;
         assert_eq!(projection["kind"], "available");
-        assert_eq!(projection["source"], "registry");
+        assert_eq!(projection["source"], "archive");
         assert_eq!(projection["identity"]["seed_low"], u32::MAX);
         assert_eq!(projection["identity"]["seed_high"], u32::MAX);
         let metadata = &projection["metadata"];
@@ -615,8 +478,12 @@ mod tests {
         assert!((wind[0].as_f64().unwrap() + 1.767_766_953).abs() <= 1e-14);
         assert!((wind[1].as_f64().unwrap() - 1.767_766_953).abs() <= 1e-14);
         assert_eq!(wind[2], 0.0);
-        assert_eq!(metadata["local_frame"]["kind"], "defined");
-        assert_eq!(metadata["sky"]["kind"], "defined");
+        let document = crate::bundled_environment().unwrap().document();
+        assert_eq!(
+            metadata["local_frame"],
+            serde_json::to_value(&document.local_frame).unwrap()
+        );
+        assert_eq!(metadata["sky"], serde_json::to_value(document.sky).unwrap());
         assert_eq!(metadata["sources"].as_array().unwrap().len(), 4);
         assert_eq!(metadata["ground_wind_normals"].as_array().unwrap().len(), 1);
         assert_eq!(metadata["provenance"]["wind_grid"]["kind"], "assumed");
@@ -625,7 +492,8 @@ mod tests {
     }
 
     #[test]
-    fn preset_metadata_preserves_physics_and_wave_history_without_fake_sky() {
+    fn preset_metadata_inherits_registered_scene_and_preserves_physics_and_wave_history() {
+        let reference = query(identity(6));
         let expected = [
             ([0.0, 0.0, 0.0], [0.54, 1.07], 1.0, 0),
             ([0.0, 0.25, 0.0], [0.0, 1.32], 1.10, 1),
@@ -634,15 +502,23 @@ mod tests {
         ];
         for (version, (wind, history, detail, seed)) in [1, 2, 4, 5].into_iter().zip(expected) {
             let snapshot = query(identity(version));
-            let metadata = &snapshot["projection"]["metadata"];
+            let metadata = &snapshot["metadata"];
             assert_eq!(metadata["wind_domain"]["kind"], "uniform");
             assert_eq!(metadata["representative_velocity_ned_mps"], json!(wind));
             assert_eq!(metadata["waves"]["wind_velocity_ne_mps"], json!(history));
             assert_eq!(metadata["waves"]["detail_amplitude_scale"], detail);
             assert_eq!(metadata["waves"]["pattern_seed"], seed);
             assert_eq!(metadata["waves"]["fetch_m"], 600.0);
-            assert_eq!(metadata["sky"]["kind"], "unavailable");
-            assert_eq!(metadata["local_frame"]["kind"], "unavailable");
+            assert_eq!(metadata["sky"], reference["metadata"]["sky"]);
+            assert_eq!(
+                metadata["local_frame"],
+                reference["metadata"]["local_frame"]
+            );
+            assert_eq!(
+                metadata["provenance"]["sky"],
+                reference["metadata"]["provenance"]["sky"]
+            );
+            assert_eq!(snapshot["venue"]["kind"], "registered_origin");
             assert_eq!(metadata["content_hash"]["kind"], "source_fingerprint");
             assert_eq!(metadata["provenance"]["waves"]["kind"], "game_tuned");
         }
@@ -663,71 +539,20 @@ mod tests {
                 _ => unreachable!(),
             }
             let snapshot = query(changed);
-            assert_eq!(snapshot["projection"]["kind"], "unavailable");
-            assert_eq!(
-                snapshot["projection"]["identity"],
-                serde_json::to_value(changed).unwrap()
-            );
-            assert!(snapshot["projection"].get("metadata").is_none());
+            assert_eq!(snapshot["kind"], "unavailable");
+            assert_eq!(snapshot["identity"], serde_json::to_value(changed).unwrap());
+            assert!(snapshot.get("metadata").is_none());
         }
         let mut removed = identity(3);
         removed.catalog_version = 2;
-        assert_eq!(query(removed)["projection"]["kind"], "unavailable");
+        assert_eq!(query(removed)["kind"], "unavailable");
         for version in [1, 2, 4, 5] {
             let current = identity(version);
-            assert_eq!(query(current)["projection"]["kind"], "available");
+            assert_eq!(query(current)["kind"], "available");
             let mut unsupported = current;
             unsupported.catalog_version = 2;
-            assert_eq!(query(unsupported)["projection"]["kind"], "unavailable");
+            assert_eq!(query(unsupported)["kind"], "unavailable");
         }
-    }
-
-    #[test]
-    fn bounded_identity_parser_classifies_invalid_json_ranges_and_zero_versions() {
-        for invalid in [
-            b"null".as_slice(),
-            b"[]".as_slice(),
-            b"[1,1,1,1,1,1,0,0]".as_slice(),
-            b"{".as_slice(),
-            b"{}".as_slice(),
-        ] {
-            assert_eq!(
-                for_identity_json(invalid).err(),
-                Some(EnvironmentSnapshotError::InvalidJson)
-            );
-        }
-        let mut document = serde_json::to_value(identity(6)).unwrap();
-        let duplicate =
-            serde_json::to_string(&document)
-                .unwrap()
-                .replacen('{', "{\"catalog_version\":2,", 1);
-        assert_eq!(
-            for_identity_json(duplicate.as_bytes()).err(),
-            Some(EnvironmentSnapshotError::InvalidJson)
-        );
-        for invalid in [json!(-1), json!(4_294_967_296_u64), json!(1.25), json!("1")] {
-            document["seed_low"] = invalid;
-            assert_eq!(
-                for_identity_json(&serde_json::to_vec(&document).unwrap()).err(),
-                Some(EnvironmentSnapshotError::InvalidJson)
-            );
-        }
-        document["seed_low"] = json!(0);
-        document["extra"] = json!(1);
-        assert_eq!(
-            for_identity_json(&serde_json::to_vec(&document).unwrap()).err(),
-            Some(EnvironmentSnapshotError::InvalidJson)
-        );
-        document.as_object_mut().unwrap().remove("extra");
-        document["environment_version"] = json!(0);
-        assert_eq!(
-            for_identity_json(&serde_json::to_vec(&document).unwrap()).err(),
-            Some(EnvironmentSnapshotError::InvalidIdentity)
-        );
-        assert_eq!(
-            for_identity_json(&vec![b' '; 4_097]).err(),
-            Some(EnvironmentSnapshotError::InputTooLarge)
-        );
     }
 
     #[test]
@@ -793,20 +618,14 @@ mod tests {
 
     #[test]
     fn archive_venue_uses_registered_origin_and_exact_water_datum() {
-        use super::{
-            Defined, EnvironmentSource, EnvironmentVenueProjection, venue_for_environment,
-        };
+        use super::{EnvironmentSource, EnvironmentVenueProjection, venue_for_environment};
         let registered = crate::bundled_environment()
             .unwrap()
             .document()
             .local_frame
             .clone();
         assert_eq!(
-            venue_for_environment(
-                EnvironmentSource::Archive,
-                &Defined::Defined(registered.clone())
-            )
-            .unwrap(),
+            venue_for_environment(EnvironmentSource::Archive, &registered).unwrap(),
             EnvironmentVenueProjection::RegisteredOrigin
         );
         for change in 0..3 {
@@ -817,15 +636,10 @@ mod tests {
                 _ => frame.water_level_datum.push_str(" altered"),
             }
             assert_eq!(
-                venue_for_environment(EnvironmentSource::Archive, &Defined::Defined(frame))
-                    .unwrap(),
+                venue_for_environment(EnvironmentSource::Archive, &frame).unwrap(),
                 EnvironmentVenueProjection::UnregisteredOrigin
             );
         }
-        assert_eq!(
-            venue_for_environment(EnvironmentSource::Archive, &Defined::Unavailable).unwrap(),
-            EnvironmentVenueProjection::OriginNotRecorded
-        );
         for source in [
             EnvironmentSource::Exhibition,
             EnvironmentSource::Selected,
@@ -834,7 +648,7 @@ mod tests {
             EnvironmentSource::Attract,
         ] {
             assert_eq!(
-                venue_for_environment(source, &Defined::Unavailable).unwrap(),
+                venue_for_environment(source, &registered).unwrap(),
                 EnvironmentVenueProjection::SharedLaunch
             );
         }
@@ -845,31 +659,40 @@ mod tests {
         use crate::application::{ApplicationSession, BackendReadiness, SessionCommand};
         let mut session = ApplicationSession::default();
         let before = session.core_session().snapshot();
-        let snapshot = serde_json::to_value(super::for_session(&session).unwrap()).unwrap();
-        assert_eq!(snapshot["context"]["phase"], "title");
-        assert_eq!(snapshot["projection"]["kind"], "available");
-        assert_eq!(snapshot["projection"]["source"], "exhibition");
-        assert_eq!(snapshot["projection"]["identity"]["environment_version"], 6);
-        assert_eq!(snapshot["projection"]["metadata"]["sky"]["kind"], "defined");
+        let snapshot = serde_json::to_value(
+            super::EnvironmentSelection::for_session(&session)
+                .unwrap()
+                .resolve()
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(snapshot["kind"], "available");
+        assert_eq!(snapshot["source"], "exhibition");
+        assert_eq!(snapshot["identity"]["environment_version"], 6);
         assert!(
-            snapshot["projection"]["metadata"]["sky"]["value"]["cloud_fraction"]
+            snapshot["metadata"]["sky"]["cloud_fraction"]
                 .as_f64()
                 .unwrap()
                 > 0.0
         );
         assert_eq!(session.core_session().snapshot(), before);
-        for (command, phase, source) in [
-            (SessionCommand::OpenSetup {}, "flight_setup", "selected"),
-            (SessionCommand::Prepare {}, "briefing_ready", "sealed"),
-            (SessionCommand::StartCountdown {}, "countdown", "sealed"),
+        for (command, source) in [
+            (SessionCommand::OpenSetup {}, "selected"),
+            (SessionCommand::Prepare {}, "sealed"),
+            (SessionCommand::StartCountdown {}, "sealed"),
         ] {
             session.execute(command, BackendReadiness::Ready).unwrap();
             let before = session.core_session().snapshot();
-            let snapshot = serde_json::to_value(super::for_session(&session).unwrap()).unwrap();
-            assert_eq!(snapshot["context"]["phase"], phase);
-            assert_eq!(snapshot["projection"]["kind"], "available");
-            assert_eq!(snapshot["projection"]["source"], source);
-            assert_eq!(snapshot["projection"]["identity"]["environment_version"], 6);
+            let snapshot = serde_json::to_value(
+                super::EnvironmentSelection::for_session(&session)
+                    .unwrap()
+                    .resolve()
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(snapshot["kind"], "available");
+            assert_eq!(snapshot["source"], source);
+            assert_eq!(snapshot["identity"]["environment_version"], 6);
             assert_eq!(session.core_session().snapshot(), before);
         }
     }

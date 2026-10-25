@@ -5,6 +5,7 @@ use birdman_game_core::{
     FlightTelemetry, NedPoint, NedVector, TailFlightTickInput, TailIncidence, TailPilotIntent,
     TailPilotPositionCommand, TailRateTarget, WingBendingFactor,
 };
+use birdman_game_format::WeatherClass;
 use birdman_game_scene::cockpit_geometry::CockpitGeometry;
 
 fn fixture_record(duration: f64, reason: SessionEndReason) -> FlightRecord {
@@ -473,23 +474,50 @@ fn director_preserves_opening_low_altitude_terminal_attract_and_vr_choices() {
 
 #[test]
 fn fixed_points_require_registered_origin_datum_and_identity() {
-    assert!(points_for_frame(None).unwrap().is_none());
     let mut frame = birdman_game_app::bundled_environment()
         .unwrap()
         .document()
         .local_frame
         .clone();
-    assert!(points_for_frame(Some(&frame)).unwrap().is_some());
+    assert!(points_for_frame(&frame).unwrap().is_some());
     frame.latitude_degrees += 0.1;
-    assert!(points_for_frame(Some(&frame)).unwrap().is_none());
+    assert!(points_for_frame(&frame).unwrap().is_none());
     let mut frame = birdman_game_app::bundled_environment()
         .unwrap()
         .document()
         .local_frame
         .clone();
     frame.water_level_datum.push_str("-foreign");
-    assert!(points_for_frame(Some(&frame)).unwrap().is_none());
+    assert!(points_for_frame(&frame).unwrap().is_none());
     let known = fixture_record(0.4, SessionEndReason::TimeLimit);
+    for weather in [
+        WeatherClass::Calm,
+        WeatherClass::Mild,
+        WeatherClass::Typical,
+        WeatherClass::Challenging,
+        WeatherClass::NearLimit,
+    ] {
+        let mut header = known.header();
+        let selection = birdman_game_app::HybridSessionPreparation::select_scenario(
+            weather,
+            header.scenario.seed,
+        )
+        .unwrap();
+        header.scenario = birdman_game_app::identity_for_selection(selection);
+        let record = FlightRecord::try_from_finalized_samples(
+            header,
+            known.samples().to_vec(),
+            known.finalization().unwrap(),
+        )
+        .unwrap();
+        for camera in [
+            GameUiReplayCamera::Platform,
+            GameUiReplayCamera::Shore,
+            GameUiReplayCamera::Telephoto,
+        ] {
+            assert!(view(&record, 0.0, camera).cinematic.is_some());
+        }
+    }
     let mut header = known.header();
     header.scenario.environment_version += 1;
     let unknown = FlightRecord::try_from_finalized_samples(

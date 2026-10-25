@@ -8,7 +8,6 @@ use birdman_game_core::{
 };
 use birdman_game_format::{
     FixedCameraId, FlightRecordTailIdentityDocument, LocalNedFrameDocument, VenueCameraPoint,
-    WeatherClass,
 };
 use serde::Serialize;
 
@@ -284,27 +283,23 @@ fn select_camera(
 fn registered_points(
     record: &FlightRecord,
 ) -> Result<Option<&'static [VenueCameraPoint]>, ReplayCameraError> {
-    let identity = record.header().scenario;
-    let Ok(selection) = birdman_game_app::HybridSessionPreparation::select_scenario(
-        WeatherClass::Typical,
-        identity.seed,
-    ) else {
-        return Ok(None);
-    };
-    if birdman_game_app::identity_for_selection(selection) != identity {
+    let weather = birdman_game_app::HybridSessionPreparation::weather_for_environment_identity(
+        record.header().scenario.into(),
+    )
+    .map_err(|_| ReplayCameraError::InvalidVenue)?;
+    if weather.is_none() {
         return Ok(None);
     }
     let frame = &birdman_game_app::bundled_environment()
         .map_err(|_| ReplayCameraError::InvalidVenue)?
         .document()
         .local_frame;
-    points_for_frame(Some(frame))
+    points_for_frame(frame)
 }
 
 fn points_for_frame(
-    frame: Option<&LocalNedFrameDocument>,
+    frame: &LocalNedFrameDocument,
 ) -> Result<Option<&'static [VenueCameraPoint]>, ReplayCameraError> {
-    let Some(frame) = frame else { return Ok(None) };
     let venue =
         birdman_game_app::registered_venue().map_err(|_| ReplayCameraError::InvalidVenue)?;
     Ok((frame == &venue.local_frame).then_some(venue.analysis.camera_points.as_slice()))

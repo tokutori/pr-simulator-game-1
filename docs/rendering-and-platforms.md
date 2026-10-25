@@ -192,7 +192,8 @@ Nativeは既存DirectionalLightの2048 texel・30〜600 mの3段cascadeから、
 
 - 環境交換は必要な全resourceを検証してから画像、material、bounds、太陽を一括更新する。
 - Titleの展示は共有appが選ぶTypical環境の波・天空・太陽・会場を使用する。Setupの選択と展示のidentityを分け、adapterは共有projectionの会場可用性を表示へ写す。
-- 登録環境の解決に失敗した場合は、以前の波・天空資源と元原因を保持し、未登録記録では背景保持の通知と技術情報の元identityを表示する。既知の合成気象で天空が未提供の場合は、雲・太陽光のない中立天空を生成する。
+- 全登録気象は同じ琵琶湖会場と時刻の登録天空・座標系を使用し、気象固有の物理風と波を重ねる。天空と座標系の由来は登録documentの仮定を継承し、保存記録は元identityと原文を保持して現在の登録providerから描画条件を解決する。
+- 登録環境の解決に失敗した場合は、以前の波・天空資源と元原因を保持し、未登録記録では背景保持の通知と技術情報の元identityを表示する。
 - 品質交換はnear/farへ同じ波投影を原子的に適用する。
 - 反射resizeは新targetをcameraと全materialへ接続してから旧targetだけを退役させる。
 - 非同期pipeline失敗はCPU準備失敗と区別し、対象shader・entry point・元原因を保持する。
@@ -202,10 +203,10 @@ Nativeは既存DirectionalLightの2048 texel・30〜600 mの3段cascadeから、
 - 太陽方位は北0°の時計回り、太陽高度は水平0°である。
 - 背景、水面、DirectionalLight、glitterへ同じ登録方向を適用する。
 - skyの入力は太陽方位・仰角、雲量、visibilityである。
-- 欠損・未知identityでは方位非依存の中立gradientと既定hazeを使用し、太陽照明・glitter・cloudを無効にする。
+- 全登録気象で同じ天空条件から太陽照明・glitter・cloudを投影する。未知identityは資源準備のUnavailableとして扱い、直前の背景と元原因を保持する。
 
 - `LakeSceneHaze`はsRGB`0x9aafb1`とvisibility由来のnear/farを所有する。
-- 未記録時は14 km/80 km、visibilityがある場合の開始距離は0.175倍という表示近似を使用する。
+- hazeの開始距離は登録visibilityの0.175倍、終端はvisibilityそのものという表示近似を使用する。
 - 地形はview-depth、水面はradial距離をsmoothstepへ渡す。
 - Native地形はPBR照明後にWeb通常Screen基準のsRGB hazeを混合してlinearへ戻す。
 - Web縮小targetのworking-linear fogとの差をpixel一致と扱わない。
@@ -213,9 +214,9 @@ Nativeは既存DirectionalLightの2048 texel・30〜600 mの3段cascadeから、
 - 上空の薄い雲層を無限遠の遠景として近似し、World方向固定の1024×512・sRGB RGBA天空画像へ合成する。
 - 初回投影の基準高さ6 kmに水平雲層を置き、視線rayとの交点のXZ座標で固定seed`0x4f5a2c91`のnoiseを評価する。代表3.6 kmの雲片・24 kmのまとまり・1.2 kmの輪郭変化を作り、地平線ほど細かく扁平に投影する。雲量は被覆と透明度へ対応する。
 - 天空画像のtexelが雲層上で覆う範囲から微細noiseを平均化し、地平線側の圧縮によるaliasを抑える。
-- 雲量0と天空metadata欠損は晴天gradientを使用する。下半球のhazeと、地平線・経度継ぎ目・天頂の連続性を保持する。
+- 雲量0は晴天gradientを使用する。下半球のhazeと、地平線・経度継ぎ目・天頂の連続性を保持する。
 - 背景・水面sky sampler・Web/Native・左右眼で同じ画像を参照する。雲専用のmesh・atlas・material・drawは持たない。
-- 天球用テクスチャは初回描画準備時に生成して保持し、通常frameで再利用する。気象変更時は再生成し、交換後に旧画像だけを退役させる。
+- 天球用テクスチャは同じ天空条件で再利用し、条件変更時だけ生成する。不要になった資源は退役させる。
 - 記録のcloud baseは気象metadataとして保持する。描画は遠景近似を使用する。
 
 - Nativeの照明は共通のWeb基準色・irradianceを使用する。
@@ -227,8 +228,8 @@ Nativeは既存DirectionalLightの2048 texel・30〜600 mの3段cascadeから、
 
 - Titleは明示的な会場展示である。
 - live session、Result、Replay、Attractは登録identityとlocal NED origin・water datumを照合する。
-- 保存archiveでidentity未知または原点未記録の場合は会場地形・湖岸・島・platformを隠し、水面・機体・記録再生を保持する。
-- 展示原点と記録に保存された地理原点を別に保持する。
+- 登録済みarchiveは全気象で同じ会場地形・湖岸・島・platformを表示する。未知identityでは直前の背景と元identityを保持して記録を再生する。
+- 展示と登録済み記録は同じ登録providerの会場座標系を使用する。
 
 - 地形、40岸線、17島、湖岸・構造物は共有Rustから完成NED位置/法線・linear色を取得する。
 - adapterは共有出力の標高と法線をそのまま投影する。

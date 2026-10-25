@@ -1839,8 +1839,6 @@ export type EnvironmentVenueProjection = {
 } | {
     readonly kind: "registered_origin";
 } | {
-    readonly kind: "origin_not_recorded";
-} | {
     readonly kind: "unregistered_origin";
 };
 /**
@@ -5056,7 +5054,7 @@ export interface LakeMeshSpacingDomain {
     readonly [k: string]: unknown | undefined;
 }
 /**
- * Exact split-seed scenario identity shared by live and environment query boundaries.
+ * Exact split-seed scenario identity used by aggregate resource preparation.
  */
 export interface EnvironmentIdentity {
     /**

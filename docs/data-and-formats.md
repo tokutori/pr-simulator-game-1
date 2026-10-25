@@ -194,19 +194,18 @@ Analysis用の発進台・湖岸・望遠camera点はOSMとAW3D30に基づく試
 - 物理接触面は変更しない。
 - 空は北0°・時計回りの方位、±90°の太陽高度、0–1の雲量、非負の雲底、正で有限の視程を持ち、飛行中は固定する。
 
-### metadata query
+### 環境資源の準備
 
-- WASMのenvironment snapshotはschema 1とし、Available・Unavailable・NoSelectionを排他的に返す。
-- TitleはNoSelection、Setupは選択preview、BriefingからResultは封印済み環境、Replayは対象record/archive、Attractはdemoの環境を参照する。
-- 未記録の値へ現在の環境を代入しない。
+- 合成ownerは登録identityを解決し、波・天空・照明・会場の完成資源を既存の準備要求でadapterへ渡す。
+- Titleは展示、Setupは選択preview、BriefingからResultは封印済み環境、Replayは対象record/archive、Attractはdemoの環境を参照する。
+- 全登録気象は既存の琵琶湖documentの天空・座標系とその仮定を継承し、気象固有の物理風・波を使用する。保存記録の原JSON・identity・PB keyを保持し、描画条件は現在の登録providerで解決する。
 
-- queryは名称、identity、hash、local frame、格子範囲、代表風、波・空・月統計・出典を返し、全風格子を送らない。
-- registry queryのJSON入力は最大4,096 byteで、未知field、不正範囲、zero versionを拒否する。
-- 未登録identityはUnavailableとし、aliasや再シミュレーションで補わない。
+- 資源producerは名称、identity、hash、local frame、格子範囲、代表風、波・空・月統計・出典を登録providerから取得する。全風格子は共有Rustが保持する。
+- 未登録identityはUnavailableとして元identityと原因を保持する。
 
 - 登録環境の準備成功・失敗は共有OnceLockへ保持し、metadataと物理WindFieldは同じowned storageを使う。
 - 64bit seedは境界でlow/highのu32へ分割する。
-- 独立したquery世代を追加せず、adapterの既存要求IDとsession照合を利用する。
+- 共有Rustが要求IDを発行し、sessionと照合して完了を認可する。adapterは要求された実I/Oを実行し、その完了を通知する。
 
 - `asset_bytes`の環境JSON hashと、preset実装等の`source_fingerprint`を区別する。
 - 前者は特定assetの識別、後者はbuild来歴である。

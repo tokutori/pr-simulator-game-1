@@ -6,7 +6,7 @@ use crate::{
     ApplicationResourceObservation,
 };
 use birdman_game_app::environment_snapshot::{
-    Defined, EnvironmentProjection, EnvironmentSelection, EnvironmentSnapshotError,
+    EnvironmentProjection, EnvironmentSelection, EnvironmentSnapshotError,
     EnvironmentVenueProjection,
 };
 use birdman_game_format::EnvironmentFormatError;
@@ -137,7 +137,7 @@ struct ImageBuffer {
 }
 
 struct SkyAsset {
-    condition: Option<LakeSkyRenderCondition>,
+    condition: LakeSkyRenderCondition,
     image: ImageBuffer,
 }
 
@@ -246,12 +246,8 @@ impl AssetsOwner {
         else {
             return Err(ApplicationAssetError::UnavailableEnvironment);
         };
-        let sky_condition = match metadata.sky {
-            Defined::Defined(sky) => {
-                Some(LakeSkyRenderCondition::try_from(sky).map_err(ApplicationAssetError::Sky)?)
-            }
-            Defined::Unavailable => None,
-        };
+        let sky_condition =
+            LakeSkyRenderCondition::try_from(metadata.sky).map_err(ApplicationAssetError::Sky)?;
         let existing_sky = self
             .bundles()
             .find(|bundle| bundle.sky.condition == sky_condition)
@@ -340,7 +336,7 @@ impl AssetsOwner {
             })
         };
         let sunlight = LakeSunlight::for_condition(sky_condition);
-        let haze = LakeSceneHaze::try_new(sky_condition.map(LakeSkyRenderCondition::visibility_m))
+        let haze = LakeSceneHaze::try_new(sky_condition.visibility_m())
             .map_err(ApplicationAssetError::Sky)?;
         let output = ApplicationEnvironmentAssets {
             scene,
@@ -741,6 +737,20 @@ mod tests {
         let third = owner
             .prepare(3, calm, target(WaterQuality::Low), None)
             .unwrap();
+        assert_eq!(third.sky.buffer_id, sky_id);
+        assert_eq!(
+            third.lighting.sunlight_direction,
+            first.lighting.sunlight_direction
+        );
+        assert_eq!(
+            third.lighting.sunlight_irradiance,
+            first.lighting.sunlight_irradiance
+        );
+        assert_eq!(
+            third.lighting.haze_range_meters,
+            first.lighting.haze_range_meters
+        );
+        assert!(third.venue.is_visible());
         let abandoned_id = third.water.detail[0].image.buffer_id;
         owner.select(Some(3));
         let cancelled = owner.select(None);
