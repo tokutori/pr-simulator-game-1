@@ -383,7 +383,11 @@ impl ApplicationRuntime {
                 renderer_resource_id,
                 cause,
             } => {
-                if self.graphics.invalidate_renderer(renderer_resource_id) {
+                if self
+                    .graphics
+                    .invalidate_renderer(renderer_resource_id, observed_ms)
+                    .map_err(ApplicationRuntimeError::Graphics)?
+                {
                     self.diagnostic = Some(cause);
                     if self.boot.active() {
                         self.boot = boot::BootOwner::Failed;
@@ -532,7 +536,9 @@ impl ApplicationRuntime {
                     && let Some(cause) = failure
                 {
                     self.diagnostic = Some(cause);
-                    self.graphics.cleanup_failed();
+                    self.graphics
+                        .cleanup_failed(observed_ms)
+                        .map_err(ApplicationRuntimeError::Graphics)?;
                 }
             }
             ApplicationInput::XrSelect {
@@ -882,7 +888,9 @@ impl ApplicationRuntime {
                 requests.extend(completion.requests);
                 let mut commit_failed = false;
                 if let Some(renderer) = completion.invalidated_renderer {
-                    self.graphics.invalidate_renderer(renderer);
+                    self.graphics
+                        .invalidate_renderer(renderer, observed_ms)
+                        .map_err(ApplicationRuntimeError::Graphics)?;
                     self.diagnostic = completion
                         .failed
                         .as_ref()
@@ -1696,11 +1704,23 @@ impl ApplicationRuntime {
             self.graphics
                 .prepared(
                     matches!(self.resource_readiness, BackendReadiness::Ready),
+                    false,
                     self.observed_ms,
                 )
                 .map_err(ApplicationRuntimeError::Graphics)?;
             return Ok(());
         }
+        let external_change = self
+            .resources
+            .as_ref()
+            .map(|resources| resources.key)
+            .or(self.last_ready_resources)
+            .is_some_and(|previous| {
+                previous.environment != key.environment
+                    || previous.mode != key.mode
+                    || previous.display_resource_id != key.display_resource_id
+                    || previous.graphics.renderer_resource_id != key.graphics.renderer_resource_id
+            });
         let request_id = self.allocate_request()?;
         let assets = self
             .assets
@@ -1714,7 +1734,7 @@ impl ApplicationRuntime {
         });
         self.resource_readiness = BackendReadiness::Preparing;
         self.graphics
-            .prepared(false, self.observed_ms)
+            .prepared(false, external_change, self.observed_ms)
             .map_err(ApplicationRuntimeError::Graphics)?;
         requests.push(ApplicationRequest::PrepareResources {
             assets: Box::new(assets),

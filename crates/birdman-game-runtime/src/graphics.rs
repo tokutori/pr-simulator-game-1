@@ -227,13 +227,17 @@ impl GraphicsOwner {
         now: f64,
     ) -> Result<(), ScreenRenderAutoError> {
         let Some(observation) = observation else {
-            if let Some(context) = &mut self.context {
-                context.available = false;
+            if let Some(context) = &self.context {
+                self.invalidate_renderer(context.id, now)?;
             }
             self.prepared = false;
             self.eligible = false;
             return Ok(());
         };
+        let expected_extent = self
+            .requested()
+            .and_then(|_| self.target(GameUiPresentationMode::Screen))
+            .map(|target| target.extent_px);
         if let Some(context) = &mut self.context
             && context.id == observation.resource_id
         {
@@ -241,14 +245,20 @@ impl GraphicsOwner {
                 || context.screen_extent != observation.screen_extent_px
                 || context.xr_extent != observation.xr_extent_px
             {
+                let own_commit = scope != ScreenRenderScope::Immersive
+                    && context.screen_extent == observation.screen_extent_px
+                    && context.xr_extent == observation.xr_extent_px
+                    && expected_extent == Some(observation.extent_px);
                 context.extent = observation.extent_px;
                 context.screen_extent = observation.screen_extent_px;
                 context.xr_extent = observation.xr_extent_px;
                 self.prepared = false;
-                self.policy
-                    .as_mut()
-                    .unwrap()
-                    .invalidate(ScreenRenderInvalidation::Resize, now)?;
+                if !own_commit {
+                    self.policy
+                        .as_mut()
+                        .unwrap()
+                        .invalidate(ScreenRenderInvalidation::Resize, now)?;
+                }
             }
             return Ok(());
         }
@@ -398,23 +408,31 @@ impl GraphicsOwner {
                 policy.invalidate(ScreenRenderInvalidation::Disjoint, now)?;
             }
             ApplicationGraphicsObservation::ContextLost => {
-                self.invalidate_renderer(renderer);
+                self.invalidate_renderer(renderer, now)?;
             }
         }
         Ok(None)
     }
 
-    pub(super) fn invalidate_renderer(&mut self, renderer: u32) -> bool {
+    pub(super) fn invalidate_renderer(
+        &mut self,
+        renderer: u32,
+        now: f64,
+    ) -> Result<bool, ScreenRenderAutoError> {
         let Some(context) = &mut self.context else {
-            return false;
+            return Ok(false);
         };
         if context.id != renderer || !context.available {
-            return false;
+            return Ok(false);
         }
         context.available = false;
         self.prepared = false;
         self.eligible = false;
-        true
+        self.policy
+            .as_mut()
+            .unwrap()
+            .invalidate(ScreenRenderInvalidation::BackendChanged, now)?;
+        Ok(true)
     }
 
     pub(super) fn requested(&self) -> Option<ScreenRenderResourceRequest> {
@@ -560,19 +578,32 @@ impl GraphicsOwner {
         Ok(())
     }
 
-    pub(super) fn cleanup_failed(&mut self) {
+    pub(super) fn cleanup_failed(&mut self, now: f64) -> Result<(), ScreenRenderAutoError> {
+        if let Some(policy) = &mut self.policy {
+            policy.invalidate(ScreenRenderInvalidation::QualityChanged, now)?;
+        }
         self.water_operation = GameUiWaterQualityOperation::CleanupFailed {
             cause: "旧描画資源を解放できない。".to_owned(),
         };
+        Ok(())
     }
 
-    pub(super) fn prepared(&mut self, ready: bool, now: f64) -> Result<(), ScreenRenderAutoError> {
-        if self.resource().is_some() && self.prepared != ready {
+    pub(super) fn prepared(
+        &mut self,
+        ready: bool,
+        external_change: bool,
+        now: f64,
+    ) -> Result<(), ScreenRenderAutoError> {
+        if self.resource().is_some() && (self.prepared != ready || external_change) {
             self.prepared = ready;
-            self.policy
-                .as_mut()
-                .unwrap()
-                .invalidate(ScreenRenderInvalidation::ScenePreparation { ready }, now)?;
+            self.policy.as_mut().unwrap().invalidate(
+                if external_change {
+                    ScreenRenderInvalidation::QualityChanged
+                } else {
+                    ScreenRenderInvalidation::ScenePreparation { ready }
+                },
+                now,
+            )?;
         }
         Ok(())
     }
@@ -823,5 +854,71 @@ mod tests {
         assert!(owner.resource().is_none());
         assert_eq!(owner.requested(), request);
         assert_eq!(owner.snapshot().water_quality, WaterQuality::High);
+        owner = GraphicsOwner::default();
+        let mut renderer = ApplicationRendererObservation {
+            gpu_timing: ApplicationGpuTimingCapability::Available,
+            resource_id: 2,
+            extent_px: [640, 360],
+            screen_extent_px: [1280, 720],
+            xr_extent_px: None,
+            initial_quality: ApplicationRenderQuality {
+                scale: ScreenRenderScale::Half,
+                shadow: ScreenShadowMap::Full,
+                water_quality: WaterQuality::High,
+            },
+        };
+        owner
+            .adopt(Some(&renderer), ScreenRenderScope::FlightSettings, 3_000.0)
+            .unwrap();
+        owner.request_gpu_timing(true, 3_000.0).unwrap();
+        owner.prepared(true, false, 3_000.0).unwrap();
+        owner.eligible = true;
+        for frame in 0..=120 {
+            let now = 3_000.0 + f64::from(frame) * 20.0;
+            let Some(query) = owner.projection(true, now).unwrap().query else {
+                panic!("ready Auto must issue a query");
+            };
+            owner
+                .observe(
+                    2,
+                    ApplicationGraphicsObservation::GpuCompleted {
+                        query,
+                        gpu_work_ms: 8.0,
+                    },
+                    now,
+                )
+                .unwrap();
+            if owner.requested().is_some() {
+                break;
+            }
+        }
+        let request = owner.requested().unwrap();
+        assert_eq!(request.scale, ScreenRenderScale::ThreeQuarters);
+        let target = owner.target(GameUiPresentationMode::Screen).unwrap();
+        renderer.extent_px = target.extent_px;
+        let epoch = owner.policy.as_ref().unwrap().epoch();
+        owner
+            .adopt(Some(&renderer), ScreenRenderScope::FlightSettings, 5_500.0)
+            .unwrap();
+        assert_eq!(owner.policy.as_ref().unwrap().epoch(), epoch);
+        owner
+            .committed(
+                target,
+                Some(request),
+                ApplicationResourceCommit {
+                    applied: target.quality,
+                    extent_px: target.extent_px,
+                },
+                5_500.0,
+            )
+            .unwrap();
+        assert_eq!(owner.snapshot().applied, ScreenRenderScale::ThreeQuarters);
+        let epoch = owner.policy.as_ref().unwrap().epoch();
+        renderer.screen_extent_px = [1920, 1080];
+        renderer.extent_px = [1440, 810];
+        owner
+            .adopt(Some(&renderer), ScreenRenderScope::FlightSettings, 5_501.0)
+            .unwrap();
+        assert!(owner.policy.as_ref().unwrap().epoch() > epoch);
     }
 }

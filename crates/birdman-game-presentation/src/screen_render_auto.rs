@@ -233,6 +233,23 @@ struct RenderQuality {
     water_quality: WaterQuality,
 }
 
+#[derive(Clone, Copy)]
+enum Recovery {
+    Trial {
+        from: RenderQuality,
+        to: RenderQuality,
+        lower_p95: f64,
+        backoff_step: u32,
+    },
+    Deferred {
+        from: RenderQuality,
+        to: RenderQuality,
+        lower_p95: f64,
+        backoff_step: u32,
+        retry_after_ms: f64,
+    },
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct QualitySelection {
     automatic: bool,
@@ -419,6 +436,7 @@ pub struct ScreenRenderAutoController {
     now_ms: f64,
     cooldown_until_ms: f64,
     initial_observation_epoch: Option<u32>,
+    recovery: Option<Recovery>,
 }
 
 impl ScreenRenderAutoController {
@@ -447,6 +465,7 @@ impl ScreenRenderAutoController {
             now_ms: 0.0,
             cooldown_until_ms: 0.0,
             initial_observation_epoch: None,
+            recovery: None,
         }
     }
 
@@ -526,6 +545,7 @@ impl ScreenRenderAutoController {
         self.reset_window(now_ms)?;
         self.initial_observation_epoch = None;
         self.scope = scope;
+        self.recovery = None;
         self.resource = ResourceState::Ready;
         if !matches!(self.measurement, MeasurementState::Unsupported(_)) {
             self.measurement = MeasurementState::Measuring;
@@ -588,6 +608,7 @@ impl ScreenRenderAutoController {
         self.reset_window(now_ms)?;
         self.initial_observation_epoch = None;
         self.selection = selection;
+        self.recovery = None;
         self.resource = ResourceState::Ready;
         self.measurement = MeasurementState::Measuring;
         if self.scope != ScreenRenderScope::Background {
@@ -609,6 +630,7 @@ impl ScreenRenderAutoController {
                 self.reset_window(now_ms)?;
                 self.initial_observation_epoch = None;
                 self.selection.automatic = true;
+                self.recovery = None;
                 if matches!(self.resource, ResourceState::Failed(_)) {
                     self.resource = ResourceState::Ready;
                 }
@@ -760,6 +782,7 @@ impl ScreenRenderAutoController {
         self.reset_window(now_ms)?;
         if !matches!(reason, ScreenRenderInvalidation::ScenePreparation { .. }) {
             self.initial_observation_epoch = None;
+            self.recovery = None;
         }
         let unsupported_retained = matches!(self.measurement, MeasurementState::Unsupported(_))
             && !matches!(
@@ -786,6 +809,7 @@ impl ScreenRenderAutoController {
     pub fn unsupported(&mut self, cause: String, now_ms: f64) -> Result<(), ScreenRenderAutoError> {
         self.check_time(now_ms)?;
         self.initial_observation_epoch = None;
+        self.recovery = None;
         if !matches!(self.measurement, MeasurementState::Unsupported(_)) {
             self.reset_window(now_ms)?;
         }
@@ -822,7 +846,8 @@ impl ScreenRenderAutoController {
             return Err(ScreenRenderAutoError::StaleRequest);
         }
         self.reset_window_reserving_ack(now_ms, false)?;
-        if cleanup_failure.is_some() {
+        let cleanup_failed = cleanup_failure.is_some();
+        if cleanup_failed {
             self.initial_observation_epoch = None;
         }
         self.resource = match cleanup_failure {
@@ -834,8 +859,31 @@ impl ScreenRenderAutoController {
             shadow: request.shadow,
             water_quality: request.water_quality,
         };
+        if cleanup_failed {
+            self.recovery = None;
+        } else if let Some(Recovery::Trial {
+            from,
+            to,
+            lower_p95,
+            backoff_step,
+        }) = self.recovery
+        {
+            if self.applied == from {
+                let backoff_step = (backoff_step + 1).min(3);
+                self.recovery = Some(Recovery::Deferred {
+                    from,
+                    to,
+                    lower_p95,
+                    backoff_step,
+                    retry_after_ms: now_ms + COOLDOWN_MS * f64::from(1 << backoff_step),
+                });
+            } else if self.applied != to {
+                self.recovery = None;
+            }
+        }
         if self.epoch == u32::MAX {
             self.initial_observation_epoch = None;
+            self.recovery = None;
             self.measurement =
                 MeasurementState::Unsupported("GPU timing epoch exhausted".to_owned());
         } else if !matches!(self.measurement, MeasurementState::Unsupported(_)) {
@@ -862,6 +910,7 @@ impl ScreenRenderAutoController {
         self.reset_window_reserving_ack(now_ms, false)?;
         self.initial_observation_epoch = None;
         self.resource = ResourceState::Failed(cause);
+        self.recovery = None;
         Ok(())
     }
 
@@ -922,6 +971,7 @@ impl ScreenRenderAutoController {
     fn check_epoch_capacity(&mut self, increments: u32) -> Result<(), ScreenRenderAutoError> {
         if self.epoch.checked_add(increments).is_none() {
             self.initial_observation_epoch = None;
+            self.recovery = None;
             self.measurement =
                 MeasurementState::Unsupported("GPU timing epoch exhausted".to_owned());
             return Err(ScreenRenderAutoError::EpochExhausted);
@@ -960,6 +1010,18 @@ impl ScreenRenderAutoController {
             return Ok(None);
         }
         let percentile = self.window.percentile();
+        if let Some(Recovery::Trial { from, to, .. }) = self.recovery
+            && self.applied == to
+        {
+            if percentile > 12.5 {
+                self.reset_window(now_ms)?;
+                return self.request(from);
+            }
+            if !complete {
+                return Ok(None);
+            }
+            self.recovery = None;
+        }
         let current = ScreenRenderScale::ALL
             .iter()
             .position(|scale| *scale == self.applied.scale)
@@ -978,6 +1040,7 @@ impl ScreenRenderAutoController {
             self.selection.manual.water_quality
         };
         let next = if percentile > 12.5 {
+            self.recovery = None;
             ScreenRenderScale::ALL
                 .get(current + 1)
                 .copied()
@@ -1028,6 +1091,31 @@ impl ScreenRenderAutoController {
             None
         };
         if let Some(quality) = next {
+            if percentile < 9.5 {
+                let backoff_step = if let Some(Recovery::Deferred {
+                    from,
+                    to,
+                    lower_p95,
+                    backoff_step,
+                    retry_after_ms,
+                }) = self.recovery
+                    && self.applied == from
+                    && quality == to
+                {
+                    if now_ms < retry_after_ms && percentile >= lower_p95 * (9.5 / 12.5) {
+                        return Ok(None);
+                    }
+                    backoff_step
+                } else {
+                    0
+                };
+                self.recovery = Some(Recovery::Trial {
+                    from: self.applied,
+                    to: quality,
+                    lower_p95: percentile,
+                    backoff_step,
+                });
+            }
             self.reset_window(now_ms)?;
             self.request(quality)
         } else {

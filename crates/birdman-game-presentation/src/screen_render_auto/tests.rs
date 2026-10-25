@@ -382,14 +382,26 @@ fn external_invalidation_and_failed_ack_cannot_recreate_initial_completion() {
         ScreenRenderInvalidation::QualityChanged,
     ] {
         let mut controller = ScreenRenderAutoController::new(
-            ScreenRenderScale::Full,
+            ScreenRenderScale::Half,
             ScreenShadowMap::Full,
             WaterQuality::High,
         );
         controller.select_auto(true, 0.0).unwrap();
-        let request = evaluated_window(&mut controller, 0.0, 1).unwrap();
+        let mut request = None;
+        for frame in 0..=120 {
+            let now = f64::from(frame) * 20.0;
+            request = controller
+                .observe(sample(&controller, frame, now, 8.0), now, false)
+                .unwrap();
+            if request.is_some() {
+                break;
+            }
+        }
+        let request = request.unwrap();
+        assert!(matches!(controller.recovery, Some(Recovery::Trial { .. })));
         let now = controller.now_ms;
         controller.invalidate(reason, now + 1.0).unwrap();
+        assert!(controller.recovery.is_none());
         controller.applied(request, now + 2.0, None).unwrap();
         controller
             .observe(sample(&controller, 0, now + 3.0, 20.0), now + 3.0, false)
@@ -398,12 +410,23 @@ fn external_invalidation_and_failed_ack_cannot_recreate_initial_completion() {
     }
     for failure in 0..4 {
         let mut controller = ScreenRenderAutoController::new(
-            ScreenRenderScale::Full,
+            ScreenRenderScale::Half,
             ScreenShadowMap::Full,
             WaterQuality::High,
         );
         controller.select_auto(true, 0.0).unwrap();
-        let request = evaluated_window(&mut controller, 0.0, 1).unwrap();
+        let mut request = None;
+        for frame in 0..=120 {
+            let now = f64::from(frame) * 20.0;
+            request = controller
+                .observe(sample(&controller, frame, now, 8.0), now, false)
+                .unwrap();
+            if request.is_some() {
+                break;
+            }
+        }
+        let request = request.unwrap();
+        assert!(matches!(controller.recovery, Some(Recovery::Trial { .. })));
         let now = controller.now_ms;
         match failure {
             0 => controller
@@ -423,6 +446,7 @@ fn external_invalidation_and_failed_ack_cannot_recreate_initial_completion() {
             }
         }
         let current_request = controller.requested();
+        assert!(controller.recovery.is_none());
         let stale = ScreenRenderResourceRequest {
             epoch: request.epoch - 1,
             ..request
@@ -956,6 +980,89 @@ fn threshold_boundaries_hold_and_cooldown_limits_each_step_and_bounds() {
             .windows(2)
             .all(|pair| pair[1].0 - pair[0].0 >= COOLDOWN_MS)
     );
+    let mut controller = ScreenRenderAutoController::new(
+        ScreenRenderScale::Full,
+        ScreenShadowMap::Quarter,
+        WaterQuality::Low,
+    );
+    controller
+        .select_water_quality(WaterQuality::High, 0.0)
+        .unwrap();
+    controller.select_auto(true, 0.0).unwrap();
+    let mut rollbacks = 0;
+    let mut retry_at = None;
+    let mut rollback_at = 0.0;
+    let mut recovered = false;
+    for frame in 0..=4_000 {
+        let now = f64::from(frame) * 20.0;
+        let work = match (controller.applied.water_quality, rollbacks >= 4) {
+            (WaterQuality::Low, false) => 8.0,
+            (WaterQuality::Low, true) => 4.0,
+            (_, false) => 16.0,
+            (_, true) => 10.0,
+        };
+        if let Some(request) = controller
+            .observe(sample(&controller, frame, now, work), now, false)
+            .unwrap()
+        {
+            assert_eq!(request.scale, ScreenRenderScale::Full);
+            assert_eq!(request.shadow, ScreenShadowMap::Quarter);
+            if request.water_quality == WaterQuality::Low {
+                rollbacks += 1;
+                rollback_at = now;
+                controller.applied(request, now, None).unwrap();
+                let Some(Recovery::Deferred {
+                    retry_after_ms,
+                    backoff_step,
+                    ..
+                }) = controller.recovery
+                else {
+                    panic!("rollback must defer the failed edge");
+                };
+                assert_eq!(backoff_step, rollbacks.min(3));
+                assert_eq!(
+                    retry_after_ms - now,
+                    [6_000.0, 12_000.0, 24_000.0][(backoff_step - 1) as usize]
+                );
+                retry_at = Some(retry_after_ms);
+                controller
+                    .invalidate(
+                        ScreenRenderInvalidation::ScenePreparation { ready: false },
+                        now,
+                    )
+                    .unwrap();
+                controller
+                    .invalidate(
+                        ScreenRenderInvalidation::ScenePreparation { ready: true },
+                        now,
+                    )
+                    .unwrap();
+                assert!(matches!(
+                    controller.recovery,
+                    Some(Recovery::Deferred { .. })
+                ));
+            } else {
+                assert_eq!(request.water_quality, WaterQuality::Medium);
+                if let Some(deadline) = retry_at.take() {
+                    if rollbacks < 4 {
+                        assert!(now >= deadline);
+                    } else {
+                        assert!(now >= rollback_at + COOLDOWN_MS && now < deadline);
+                    }
+                }
+                controller.applied(request, now, None).unwrap();
+                assert!(matches!(controller.recovery, Some(Recovery::Trial { .. })));
+            }
+        }
+        if rollbacks == 4
+            && controller.applied.water_quality == WaterQuality::Medium
+            && controller.recovery.is_none()
+        {
+            recovered = true;
+            break;
+        }
+    }
+    assert!(recovered);
 }
 
 #[test]
