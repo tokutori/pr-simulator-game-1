@@ -169,7 +169,7 @@ visibilityと実空間勾配の両channelがすべて厳密0の成分は、packe
 - Webの既存機体・雲反射passでは、shadow receiverがない範囲の再更新だけを抑え、例外時もrenderer共有flagを復元する。
 - 直後の主描画のshadow更新を維持する。
 
-Nativeは共有projectionの固定1 cascadeと適用済みshadow map寸法から、水面の変位後world positionとgeometric normalへBevyのshadow samplingを適用する。単一Bound資源のmain/reflectionで同じlight・caster集合・layer・cascade・寸法を持ち、reflectionが先行する2viewだけの場合は、同frameのshadow mapを主描画へ再利用する。準備並行や非同値のviewはそれぞれ描画する。
+Nativeは既存DirectionalLightの2048 texel・30〜600 mの3段cascadeから、水面の変位後world positionとgeometric normalへBevyのshadow samplingを適用する。水面はshadow receiverとして登録する。
 
 ### Adapterと資源交換
 
