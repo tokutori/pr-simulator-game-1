@@ -170,9 +170,6 @@ fn render_pose_matches_the_same_record_sample_and_retains_unknown_geometry() {
             reason: crate::render_pose::RenderWingDeformationUnavailable::Unrecorded
         }
     );
-    let document = serde_json::to_value(projection).unwrap();
-    assert!(document["sample"].get("render_pose").is_none());
-    assert!(document["render_pose"].is_object());
     let unknown = view(&record, 0.205, GameUiReplayCamera::Chase);
     assert!(matches!(
         unknown.render_pose.tail_geometry,
@@ -271,7 +268,6 @@ fn manual_rigs_preserve_web_geometry_fov_and_complete_sample_at_one_time() {
         let output = view(&record, 2.005, camera);
         let cinematic = output.cinematic.unwrap();
         let sample = record.sample_at_seconds(2.005).unwrap();
-        assert_eq!(output.sample, RecordedPlaybackSample::from(sample));
         assert_eq!(output.render_pose.initial_pilot_position_meters, 0.1);
         assert_eq!(cinematic.vertical_field_of_view_degrees, fov);
         let target = render_position(sample.flight_state.datum_position_ned().components());

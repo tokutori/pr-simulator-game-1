@@ -30,8 +30,8 @@ adapter・runtime・presentation・scene・app・contentは責務に応じて下
 | `birdman-game-core` | 座標・数学、運動方程式、空力、風場、制御、固定tick、接触、有限な曲げ係数と補間、GameSession、FlightRecord、集計・補間query |
 | `birdman-game-format` | 外部設定・環境・地物・記録のcodecと検証、解決済み設定・水面品質の共通型、比較identity、Personal Best選定 |
 | `birdman-game-content` | 登録機体・地物の原文JSON、検証済みの質量・空力storageと構造形状。sectionとstrip境界から荷重モデルと接触支持点を準備し、対気速度・物理尾翼角から固定順の変形点群を生成する |
-| `birdman-game-app` | ApplicationSession、共有command実行、scenario準備・資源所有、実行状態・入力profile・環境観測、会場・地物の登録整合と共有storage、archive・記録query・ビルド来歴の生成 |
-| `birdman-game-presentation` | 共有UI・camera・XR layout・適応画質の方針と、appの観測からの描画pose・live/prepared表示snapshotの導出 |
+| `birdman-game-app` | ApplicationSession、共有command実行、scenario準備・資源所有、実行状態・入力profile・環境観測、会場・地物の登録整合と共有storage、archive・記録cursor認可・ビルド来歴の生成 |
+| `birdman-game-presentation` | 共有UI・camera・XR layout・適応画質の方針と、live・prepared・記録状態からの描画poseの直接導出 |
 | `birdman-game-scene` | contentから導出する機体・地形mesh、水面・天空・画像の描画資産生成 |
 | `birdman-game-runtime` | app・presentation・sceneを束ねる単一application owner、入力・frame進行・XR・記録I/O・資源準備と完了認可、最終描画データとprimitive I/O要求の出力 |
 | `birdman-game-wasm` | JavaScript ABI、入力のdecode、共有処理の呼出し、DTOのencode |
@@ -72,7 +72,7 @@ adapter・runtime・presentation・scene・app・contentは責務に応じて下
 ### GameSessionとApplicationSession
 
 - `GameSession`はdomain phase、停止理由、封印済みconfiguration、飛行状態、終了理由、score、確定record、RetryとReplayを所有する。
-- appのsession_snapshotがphase・lifecycle・入力profile・状態/telemetry/progressの観測型を所有する。presentationは同じ状態からFlightRenderPoseとlive/prepared表示snapshotを導出し、WASMは共有結果をJSONへencodeする。
+- appはdomainの進行と入力を所有する。presentationは確定したlive・prepared状態と記録補間から`FlightRenderPose`を直接導出し、runtimeがUI・scene・I/O要求を合成してWASM境界へ返す。
 - Bevyの`Transform`、DOM、TypeScriptのScene名を飛行状態の正本にしない。
 
 - `SessionLifecycle`と`ConfiguredPhase`は、設定済み・飛行中・結果・再生に必要なpayloadをvariantへ結合する。
@@ -80,7 +80,7 @@ adapter・runtime・presentation・scene・app・contentは責務に応じて下
 - Title用demoのようにphaseをまたいで存続する資源は独立した所有領域に置く。
 
 - `ApplicationSession`はprivateなGameSessionと、難易度、seed、tick上限、準備metadata、archive原文、記録の制御identityを所有する。
-- appの記録queryが状態・telemetry・舵角の共通投影とcursorの時間範囲を定義し、Replay cameraと各adapterが参照する。
+- appは記録cursorの時間範囲を認可し、presentationはcoreの記録補間から描画poseとReplay cameraを導出する。
 - 準備・Retry・Briefing再準備・archive交換・初回demo登録はapplication単位の記録source識別子を更新する。tick・seek・再生速度の変更は同じsourceを保持する。
 - `HybridSessionPreparation`は機体・環境の共有storageを組み立て、Webとnativeへ同じconfigurationを渡す。
 - `PreparedFlight`は登録機体と準備時に確保した固定長の接触点bufferを所有する。通常飛行とAttractは同じprovider入口で、封印済み機体・荷重・接触設定を評価し、同じ係数・尾翼角の成功投影を再利用する。
@@ -177,8 +177,8 @@ GameUiView / GameUiFrame → platform renderer → DOM / VR panel / Bevy entity
 - HUDは順序付きgroupとText・Attitude・HeadingTape・Direction・LinearGauge等のnodeを持ち、adapterはkindを網羅的に投影する。ADIの目盛・文字anchor・丸角clip・機体記号・飛行経路円、HeadingTape・LinearGaugeの目盛線分・文字anchor・三角pointer、Directionの円・十字・北基準文字・矢印は、共有Rustが固定logical canvasの完成幾何として確定する。Screen・Native・Head HUDは同じ幾何を各描画領域へ縦横同率で拡縮し、実fontのbaselineと描画primitiveへ転写する。
 - IDは差分追跡に用い、計器項目の個別再実装に用いない。
 
-- chartの軸、series、segment、風、marker、cursorはRustのrecord queryから導出する。生成途中の記録座標はpresentation内部へ閉じ、公開View/Frameは論理pxへ投影した点・参照線・矢印線分を返す。静的geometryとシーク時のcursorは同じ投影を使う。
-- 記録queryが保存sampleの状態・telemetry・物理舵角のwire投影を所有し、Replay cameraは同じsample投影を利用して視点を導出する。
+- chartの軸、series、segment、風、marker、cursorはRustの保持記録から導出する。生成途中の記録座標はpresentation内部へ閉じ、公開View/Frameは論理pxへ投影した点・参照線・矢印線分を返す。静的geometryとシーク時のcursorは同じ投影を使う。
+- Replay cameraと描画poseはcoreの同じ記録補間から状態・telemetry・物理舵角を参照する。
 - TypeScriptやBevy UIで飛行物理・scoreを再計算しない。
 - 未提供の警報producerは利用不可として表示し、Custom設定値の保持と実装済み警報の提供を区別する。
 - 致命的なcontroller失敗は通常の情報量設定にかかわらず通知する。
@@ -250,7 +250,7 @@ GameUiView / GameUiFrame → platform renderer → DOM / VR panel / Bevy entity
 - 共有cameraの低位basisはapp/runtime型に依存しない。Rustのpresentation::cameraがPose合成・FRD変換・Pilot/Chase配置・Screenのyaw/pitch lookを所有し、XRは同じ型を用いて追跡・両眼・reference spaceを扱う。
 - WebとNativeはポインター移動量と標準button maskを共有ownerへ通知し、共有ownerがsecondary押下による視点操作を認可する。各adapterは出力された最終camera・部品pose・projectionをengine型へ転写する。
 - scene::lake_skyが太陽のEast/Up/negative-North方向と地平線以上のdaylight条件を導出し、天空画像・水面・照明へ共通適用する。
-- session選択・snapshotの共通観測型もapp所有型への逆参照を持たない。
+- coreのsession状態と記録補間結果はapp所有型への逆参照を持たない。
 - 型の複写によって循環を回避しない。
 
 ### cameraとpanel

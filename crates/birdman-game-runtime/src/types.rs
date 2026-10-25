@@ -635,7 +635,7 @@ pub enum ApplicationRuntimeError {
     /// The submitted spatial presentation identity space has been consumed.
     PresentationExhausted,
     /// The live or prepared display projection failed.
-    Snapshot(birdman_game_presentation::session_snapshot::SnapshotProjectionError),
+    RenderPose(birdman_game_presentation::render_pose::RenderPoseProjectionError),
     /// The recorded display camera could not be projected.
     ReplayCamera(birdman_game_presentation::replay_camera::ReplayCameraError),
     /// The registered exhibition venue is invalid.

@@ -150,33 +150,6 @@ fn deforming_sealed_configuration_rejects_a_fixed_shape_tick() {
 }
 
 #[test]
-fn fractional_projection_uses_one_terminal_time_without_integer_rounding() {
-    let mut application = prepared();
-    launch(&mut application);
-    let initial = application
-        .core_session()
-        .snapshot()
-        .tail_flight_state()
-        .unwrap();
-    let projected = crate::session_snapshot::TailStateDocument::try_from_state(
-        8,
-        0.375,
-        initial.flight_state(),
-        initial.incidence(),
-        initial.pilot_position_target(),
-        application
-            .core_session()
-            .tail_pilot_position_mapping()
-            .unwrap(),
-    )
-    .unwrap();
-    assert_eq!(projected.tick, 8);
-    assert_eq!(projected.fraction, 0.375);
-    assert_eq!(projected.flight_time_s, 0.08375);
-    assert_eq!(projected.pilot_position_target_normalized, 0.0);
-}
-
-#[test]
 fn public_defaults_select_light_without_reinterpreting_explicit_control_modes() {
     let mut application = ApplicationSession::default();
     assert_eq!(

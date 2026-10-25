@@ -9,17 +9,12 @@ use birdman_game_core::{
 use birdman_game_format::{
     FixedCameraId, FlightRecordTailIdentityDocument, LocalNedFrameDocument, VenueCameraPoint,
 };
-use serde::Serialize;
 
 use crate::game_ui::{GameUiPresentationMode, GameUiReplayCamera};
-use birdman_game_app::record_query::RecordedPlaybackSample;
 
 /// Recorded camera projection; unavailable fixed points retain the existing Chase fallback.
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ReplayCameraView {
-    sample: RecordedPlaybackSample,
     render_pose: FlightRenderPose,
     camera: GameUiReplayCamera,
     cinematic: Option<CinematicCameraView>,
@@ -43,9 +38,7 @@ impl ReplayCameraView {
 }
 
 /// Absolute pose in render axes `(east, up, -north)`, with local camera forward `-Z`.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CinematicCameraView {
     position_m: [f64; 3],
     orientation_wxyz: [f64; 4],
@@ -123,7 +116,6 @@ pub fn replay_camera_view(
     }))
     .map_err(ReplayCameraError::Geometry)?;
     let mut view = ReplayCameraView {
-        sample: sample.into(),
         render_pose: crate::render_pose::flight_render_pose(
             sample.flight_state,
             sample.actuators,

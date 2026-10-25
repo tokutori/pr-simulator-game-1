@@ -1495,6 +1495,13 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
         Err(ApplicationRuntimeError::Ui(GameUiError::StaleView))
     ));
     let _countdown = activate(&mut runtime, &briefing, SessionCommand::StartCountdown {});
+    assert_eq!(
+        birdman_game_presentation::render_pose::prepared_render_pose(runtime.application())
+            .unwrap()
+            .unwrap()
+            .simulation_time_seconds,
+        0.0
+    );
     for frame in 0..=30 {
         runtime
             .observe_test(ApplicationInput::Frame {
@@ -1612,17 +1619,60 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
         .unwrap()
         .world_from_head;
     assert_ne!(moved, camera);
-    let unfocused = runtime
+    runtime
+        .observe_test(ApplicationInput::Frame {
+            display_resource_id: None,
+            timestamp_ms: 13_205.0,
+            gamepads: Vec::new(),
+            xr: None,
+            spatial: Default::default(),
+        })
+        .unwrap();
+    let fraction = runtime.application().flight_interpolation_fraction();
+    assert!(runtime.application().flight_interpolation_ready() && fraction > 0.0);
+    let record = runtime
+        .application()
+        .core_session()
+        .flight_record()
+        .unwrap();
+    let sample = record
+        .sample_at_time(record.samples().last().unwrap().tick_index - 1, fraction)
+        .unwrap();
+    assert_eq!(
+        birdman_game_presentation::render_pose::live_render_pose(runtime.application())
+            .unwrap()
+            .unwrap()
+            .datum_position_ned,
+        sample.flight_state.datum_position_ned().components().into()
+    );
+    let paused = runtime
         .observe_test(ApplicationInput::DocumentFocus { focused: false })
-        .unwrap()
+        .unwrap();
+    let unfocused = paused
         .drawing
+        .as_ref()
         .unwrap()
         .scene
         .camera
+        .as_ref()
         .unwrap()
         .world_from_head
         .unwrap()
         .orientation;
+    let paused_view = structure(paused);
+    assert_eq!(
+        birdman_game_presentation::render_pose::live_render_pose(runtime.application())
+            .unwrap()
+            .unwrap()
+            .simulation_time_seconds,
+        runtime
+            .application()
+            .core_session()
+            .flight_record()
+            .unwrap()
+            .duration_seconds()
+            .unwrap()
+    );
     let ignored = runtime
         .observe_test(ApplicationInput::PointerMotion {
             display_resource_id: None,
@@ -1637,15 +1687,52 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
     assert_eq!(
         restored
             .drawing
+            .as_ref()
             .unwrap()
             .scene
             .camera
+            .as_ref()
             .unwrap()
             .world_from_head
             .unwrap()
             .orientation,
         unfocused
     );
+    let current_view = match restored.drawing.unwrap().ui {
+        ApplicationUiProjection::View { view } => view,
+        ApplicationUiProjection::Frame { .. } => paused_view,
+    };
+    activate(&mut runtime, &current_view, SessionCommand::Resume {});
+    for frame in 0..=400 {
+        let output = runtime
+            .observe_test(ApplicationInput::Frame {
+                display_resource_id: None,
+                timestamp_ms: 14_000.0 + f64::from(frame) * 100.0,
+                gamepads: Vec::new(),
+                xr: None,
+                spatial: Default::default(),
+            })
+            .unwrap();
+        if let Some(result) = runtime.application().core_session().snapshot().result() {
+            let birdman_game_core::SessionTerminalState::TailWaterContact(contact) = result.state
+            else {
+                panic!("Expected natural fractional water contact");
+            };
+            assert!(contact.fraction() > 0.0 && contact.fraction() < 1.0);
+            assert_eq!(
+                output.drawing.unwrap().scene.water_time_seconds,
+                runtime
+                    .application()
+                    .core_session()
+                    .flight_record()
+                    .unwrap()
+                    .duration_seconds()
+                    .unwrap()
+            );
+            return;
+        }
+    }
+    panic!("Natural water contact was not reached");
 }
 
 #[test]

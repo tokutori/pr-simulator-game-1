@@ -1,11 +1,177 @@
 //! Engine-independent projection of committed and recorded physical states.
 
-use birdman_game_app::session_snapshot::TailControlLayoutDocument;
+use birdman_game_app::application::ApplicationSession;
 use birdman_game_core::{
-    FlightState, FlightTelemetry, HybridSurfaceRole, TailIncidence, WingBendingFactor,
+    FlightState, FlightTelemetry, GameSessionError, HybridSurfaceRole, SessionSnapshot,
+    SessionTerminalState, TailIncidence, WingBendingFactor,
 };
 
 use std::sync::OnceLock;
+
+/// Physical control layout projected by the shared presentation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum TailControlLayoutDocument {
+    /// Independently controlled horizontal and vertical tail incidence.
+    TailIncidence,
+}
+
+/// Original cause of a live or prepared display-pose failure.
+#[derive(Debug)]
+pub enum RenderPoseProjectionError {
+    /// The phase uses recorded playback rather than a live state.
+    UnsupportedPhase,
+    /// Required canonical session state is unavailable or invalid.
+    Session(GameSessionError),
+    /// Registered aircraft presentation metadata is invalid.
+    Geometry(&'static str),
+    /// A retained physical interval could not provide a valid display sample.
+    Interpolation(birdman_game_core::FlightRecordQueryError),
+}
+
+/// Projects the live or terminal pose using the application's physical-time remainder.
+pub fn live_render_pose(
+    session: &ApplicationSession,
+) -> Result<Option<FlightRenderPose>, RenderPoseProjectionError> {
+    let core = session.core_session();
+    let (state, incidence, time, bending) = match core.snapshot() {
+        SessionSnapshot::TailFlightRunning { state, .. }
+        | SessionSnapshot::TailFlightPaused { state, .. } => (
+            state.flight_state(),
+            state.incidence(),
+            state.tick_index() as f64 / f64::from(birdman_game_core::PHYSICS_HZ),
+            state.wing_bending_factor(),
+        ),
+        SessionSnapshot::Result(result) => {
+            let (tick, fraction, incidence, bending) = match result.state {
+                SessionTerminalState::TailTick(state) => (
+                    state.tick_index(),
+                    0.0,
+                    state.incidence(),
+                    state.wing_bending_factor(),
+                ),
+                SessionTerminalState::TailWaterContact(sample) => (
+                    sample.interval_start_tick(),
+                    sample.fraction(),
+                    sample.incidence(),
+                    sample.wing_bending_factor(),
+                ),
+            };
+            (
+                result.state.flight_state(),
+                incidence,
+                (tick as f64 + fraction) / f64::from(birdman_game_core::PHYSICS_HZ),
+                bending,
+            )
+        }
+        SessionSnapshot::Replay { .. } | SessionSnapshot::Attract { .. } => {
+            return Err(RenderPoseProjectionError::UnsupportedPhase);
+        }
+        _ => return Ok(None),
+    };
+    let telemetry = core
+        .telemetry()
+        .map_err(|error| RenderPoseProjectionError::Session(GameSessionError::Telemetry(error)))?
+        .ok_or(RenderPoseProjectionError::Session(
+            GameSessionError::InvalidTransition,
+        ))?;
+    let exact = session_render_pose(session, state, incidence, time, Some(telemetry), bending)?;
+    if !session.flight_interpolation_ready() {
+        return Ok(Some(exact));
+    }
+    let record = core
+        .flight_record()
+        .ok_or(RenderPoseProjectionError::Session(
+            GameSessionError::InvalidTransition,
+        ))?;
+    let current = record
+        .samples()
+        .last()
+        .ok_or(RenderPoseProjectionError::Session(
+            GameSessionError::InvalidTransition,
+        ))?;
+    let tick = current
+        .tick_index
+        .checked_sub(1)
+        .ok_or(RenderPoseProjectionError::Session(
+            GameSessionError::InvalidTransition,
+        ))?;
+    let fraction = session.flight_interpolation_fraction();
+    let sample = record
+        .sample_at_time(tick, fraction)
+        .map_err(RenderPoseProjectionError::Interpolation)?;
+    session_render_pose(
+        session,
+        sample.flight_state,
+        sample.actuators,
+        (tick as f64 + fraction) / f64::from(birdman_game_core::PHYSICS_HZ),
+        Some(sample.telemetry),
+        sample.wing_bending_factor,
+    )
+    .map(Some)
+}
+
+/// Projects the sealed zero-tick state without advancing the simulation.
+pub fn prepared_render_pose(
+    session: &ApplicationSession,
+) -> Result<Option<FlightRenderPose>, RenderPoseProjectionError> {
+    session
+        .core_session()
+        .prepared_launch_state()
+        .map(|state| {
+            session_render_pose(
+                session,
+                state.flight_state(),
+                state.incidence(),
+                0.0,
+                None,
+                state.wing_bending_factor(),
+            )
+        })
+        .transpose()
+}
+
+fn session_render_pose(
+    session: &ApplicationSession,
+    state: FlightState,
+    incidence: TailIncidence,
+    simulation_time_seconds: f64,
+    telemetry: Option<FlightTelemetry>,
+    wing_bending_factor: Option<WingBendingFactor>,
+) -> Result<FlightRenderPose, RenderPoseProjectionError> {
+    let core = session.core_session();
+    let initial_pilot = core
+        .flight_record()
+        .and_then(|record| record.samples().first())
+        .map(|sample| sample.flight_state.pilot_position_m())
+        .or_else(|| {
+            core.prepared_launch_state()
+                .map(|state| state.flight_state().pilot_position_m())
+        })
+        .ok_or(RenderPoseProjectionError::Session(
+            GameSessionError::InvalidTransition,
+        ))?;
+    let identity = session
+        .display_control_identity()
+        .zip(core.configuration_identity())
+        .map(|(identity, scenario)| {
+            (
+                identity.aircraft_configuration_id.as_str(),
+                scenario.aircraft_model_version,
+            )
+        });
+    let geometry = render_tail_geometry(identity).map_err(RenderPoseProjectionError::Geometry)?;
+    Ok(flight_render_pose(
+        state,
+        incidence,
+        initial_pilot,
+        simulation_time_seconds,
+        telemetry,
+        geometry,
+        wing_bending_factor,
+    ))
+}
 
 /// Engine-independent presentation of one committed or recorded aircraft state.
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize)]

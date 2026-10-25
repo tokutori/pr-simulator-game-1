@@ -10,11 +10,10 @@ use birdman_game_presentation::camera::{
 use birdman_game_presentation::game_ui::{
     GameUiLayout, GameUiPresentationMode, GameUiReplayCamera, GameUiState, GameUiViewport,
 };
-use birdman_game_presentation::render_pose::FlightRenderPose;
-use birdman_game_presentation::replay_camera::replay_camera_view;
-use birdman_game_presentation::session_snapshot::{
-    TailPreparedLaunchFrame, live_render_pose, prepared_launch_snapshot,
+use birdman_game_presentation::render_pose::{
+    FlightRenderPose, live_render_pose, prepared_render_pose,
 };
+use birdman_game_presentation::replay_camera::replay_camera_view;
 use birdman_game_presentation::xr::{
     XrCameraMount, XrCameraRig, XrDepthRange, XrEye, XrEyeGeometry, XrReferenceFrame,
     XrTrackingOrigin, XrViewerFrame, xr_reference_change, xr_reference_frame,
@@ -193,15 +192,10 @@ impl SceneOwner {
             phase,
             SessionPhase::FlightRunning | SessionPhase::FlightPaused { .. } | SessionPhase::Result
         ) {
-            live_render_pose(context.application).map_err(ApplicationRuntimeError::Snapshot)?
+            live_render_pose(context.application).map_err(ApplicationRuntimeError::RenderPose)?
         } else {
-            match prepared_launch_snapshot(context.application)
-                .map_err(ApplicationRuntimeError::Snapshot)?
-                .preview
-            {
-                TailPreparedLaunchFrame::Prepared { render_pose, .. } => Some(*render_pose),
-                TailPreparedLaunchFrame::Unavailable => None,
-            }
+            prepared_render_pose(context.application)
+                .map_err(ApplicationRuntimeError::RenderPose)?
         };
         let world_from_aircraft = match aircraft {
             Some(flight) => {

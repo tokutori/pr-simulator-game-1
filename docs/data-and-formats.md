@@ -27,11 +27,10 @@
 
 ### 内部DTO
 
-- session/UI/queryの内部DTOは、同一buildの共有Rustから生成したreadonly TypeScript型を使う。外部保存JSONのschemaと受理契約を区別する。
-- lifecycleとsnapshotは名前付きphaseを返し、操縦profileと環境も共有producerの値を保持する。Webの起動準備状態はplatformが所有する。
-- `FlightRenderPose`はlive snapshotとprepared preview、`ReplayCameraView`の直下に置く。Analysisのsample列は記録queryのDTOを保持し、描画用metadataを各sampleへ重複させない。
+- 合成ownerの入力通知・UI/scene・I/O要求は、同一buildの共有Rustから生成したreadonly TypeScript型を使う。外部保存JSONのschemaと受理契約を区別する。
+- live・preparedの`FlightRenderPose`はdomainから直接投影する。Replay cameraも同じ記録sampleから完成poseを投影し、runtimeがsceneへ接続する。
 - 描画poseはNED位置、body→NED姿勢、pilot位置、表示時刻、controls、可用性を持つ速度・風を含む。尾翼の描画metadataは登録機体のpivotから導出し、未知機体は型付きの不在理由を返す。
-- 生成schemaはtoolsの実Rust/WASM接続試験で検査する。本番の内部出力は所有WASM instanceのfacadeで生成DTOへ接続する。
+- 生成schemaはtoolsの実Rust/WASM接続試験で検査する。WASM adapterは単一runtimeの完成出力を生成DTOとして返す。
 
 ## assetの登録・出典・利用条件
 
@@ -357,19 +356,12 @@ keyは次の条件をSHA-256へ入力する。
 - Pause、seek、再生速度は同じRustのclockへ作用し、graph cursorと3Dが同じrecord時刻を参照する。
 - Resultへ戻る際は元の確定状態を表示し、cursor状態へ置換しない。
 
-- 記録queryのwire形式はschema 2であり、保存JSONのschema 6/7と区別する。
 - 厳密な保存時刻はそのsample、区間内部は終点sampleが持つ尾翼角・入力・曲げ係数を用いる。確定終端時刻ではcanonicalなevent投影を使う。
-- Result・Replay・Attractの記録所有phaseだけを受理し、live Flightからの記録queryを拒否する。
-- Summary、Analysis、再生poseは同じsource contextを持ち、元のfinalization・terminal stamp・確定scoreと、cursor位置・時刻の投影値を別fieldとして保持する。
-- 値が存在しない角度・scoreには型付きの不在理由を返す。
-
-- 風queryは検証したnorth/east下限・水面上高度・正のspacing・5×5寸法をechoし、North行・East列の順で25地点すべてを返す。
-- 保存identityに対応する登録WindFieldを評価し、未登録identityはUnavailableとする。
-- 一点でもOutsideGridになる場合はOutsideRegisteredDomainとし、部分格子やzero風を返さない。
+- 共有UIの分析cursorとReplay操作は、ownerが保有するrecordの有効な時刻範囲へ認可する。
+- 結果・分析・再生poseは同じrecordを参照し、元のfinalization・terminal stamp・確定scoreと、cursor時刻の表示投影を区別する。
 
 - 同じrecordのseek・clock・再生速度の変更はdatasetを保持する。
-- Retry、設定変更、archive開閉、disposeではrecord source tokenを失効し、古い非同期query結果を拒否する。
-- 要求ごとの世代と、元recordの世代を区別する。
+- recordの交換とarchive開閉は共有ownerが管理し、保存・読戻し通知は要求IDと元record sourceを照合して認可する。
 
 - Attractはplayerの飛行と独立した有界record・clockを使う。
 - demo recordをplayerの結果・保存・exportへ混入させず、Attractからのplayer exportは拒否する。

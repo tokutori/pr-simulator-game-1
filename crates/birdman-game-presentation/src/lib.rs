@@ -13,8 +13,6 @@ pub mod screen_render_auto;
 #[cfg(not(verus_only))]
 pub mod screen_render_scale;
 #[cfg(not(verus_only))]
-pub mod session_snapshot;
-#[cfg(not(verus_only))]
 pub mod xr;
 
 /// Shared default vertical field of view in degrees for ordinary Screen presentation.
