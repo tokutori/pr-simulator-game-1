@@ -809,6 +809,7 @@ impl NativeGpu {
             .main_camera
             .ok_or_else(|| BindFailure::Lost("Flight camera handle is unavailable".into()))?;
         if world.get::<Camera>(camera).is_none()
+            || world.get::<Projection>(camera).is_none()
             || world.get::<RenderLayers>(candidate.preview).is_none()
             || world.get_resource::<DirectionalLightShadowMap>().is_none()
         {
@@ -821,9 +822,14 @@ impl NativeGpu {
             .get::<RenderLayers>(candidate.preview)
             .unwrap()
             .clone();
+        let target = candidate.output.clone().into();
+        let target_changed = !matches!(world.get::<RenderTarget>(camera), Some(RenderTarget::Image(current)) if current == &target);
         world
             .entity_mut(camera)
-            .insert((RenderTarget::Image(candidate.output.clone().into()), layers));
+            .insert((RenderTarget::Image(target), layers));
+        if target_changed {
+            world.get_mut::<Projection>(camera).unwrap().set_changed();
+        }
         if let Some(ambient) = world.get::<AmbientLight>(candidate.preview).cloned() {
             world.entity_mut(camera).insert(ambient);
         }
@@ -1216,6 +1222,11 @@ mod tests {
     #[test]
     fn actual_binding_rejects_preview_ack_and_waits_for_retirement_extract() {
         let mut world = World::new();
+        world.init_resource::<Messages<bevy::window::WindowResized>>();
+        world.init_resource::<Messages<bevy::window::WindowCreated>>();
+        world.init_resource::<Messages<bevy::window::WindowScaleFactorChanged>>();
+        world.init_resource::<Messages<AssetEvent<Image>>>();
+        world.init_resource::<bevy::render::texture::ManualTextureViews>();
         world.init_resource::<Assets<Image>>();
         world.init_resource::<Assets<Mesh>>();
         world.init_resource::<Assets<WaterMaterial>>();
@@ -1251,6 +1262,22 @@ mod tests {
         let sky = world
             .resource_mut::<Assets<Mesh>>()
             .add(readiness::sky_mesh());
+        let projection = Mat4::perspective_rh_gl(1.0, 1280.0 / 720.0, 0.05, 100_000.0)
+            .as_dmat4()
+            .to_cols_array();
+        SubmittedProjection::submit(&mut world, main, projection);
+        world.write_message(AssetEvent::<Image>::Added { id: output.id() });
+        world
+            .run_system_cached::<Result<(), bevy_ecs::error::BevyError>, _, _>(
+                bevy::render::camera::camera_system,
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            world.get::<Camera>(main).unwrap().physical_target_size(),
+            Some(UVec2::new(1280, 720))
+        );
+        world.clear_trackers();
         let mut gpu = NativeGpu {
             main_camera: Some(main),
             renderer_id: 7,
@@ -1288,6 +1315,17 @@ mod tests {
         );
         gpu.commit(&mut world, 5, 3)
             .unwrap_or_else(|_| panic!("Valid GPU binding"));
+        SubmittedProjection::submit(&mut world, main, projection);
+        world
+            .run_system_cached::<Result<(), bevy_ecs::error::BevyError>, _, _>(
+                bevy::render::camera::camera_system,
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            world.get::<Camera>(main).unwrap().physical_target_size(),
+            Some(UVec2::new(640, 360))
+        );
         let revision = gpu.revision;
         world.insert_resource(gpu);
         for _ in 0..2 {
