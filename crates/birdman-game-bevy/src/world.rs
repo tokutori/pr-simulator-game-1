@@ -999,9 +999,7 @@ pub(crate) fn submit(
                 {
                     world.entity_mut(entity).insert(transform);
                     if let Some(matrix) = camera.screen_projection {
-                        world
-                            .entity_mut(entity)
-                            .insert(Projection::custom(SubmittedProjection::new(matrix)));
+                        SubmittedProjection::submit(world, entity, matrix);
                     }
                 }
                 let center = drawing.scene.water_clip_center;
@@ -1033,10 +1031,10 @@ pub(crate) fn submit(
                 && let Some(pose) = camera.world_from_head
                 && let Some(matrix) = camera.screen_projection
             {
-                world.entity_mut(candidate.reflection_camera).insert((
-                    pose_transform(pose),
-                    Projection::custom(SubmittedProjection::new(matrix)),
-                ));
+                world
+                    .entity_mut(candidate.reflection_camera)
+                    .insert(pose_transform(pose));
+                SubmittedProjection::submit(world, candidate.reflection_camera, matrix);
                 if let Some(mut camera) = world.get_mut::<Camera>(candidate.reflection_camera) {
                     camera.is_active = true;
                 }

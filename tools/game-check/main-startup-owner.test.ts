@@ -2,7 +2,7 @@ import { IDBFactory } from "fake-indexeddb";
 import { Window } from "happy-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApplicationRuntimeBridge } from "../../web/pkg/birdman_game_wasm.js";
-import type { ApplicationDrawingOutput, ApplicationInput, ApplicationObservation, ApplicationRendererObservation, ApplicationRequest, DisplayRequest } from "../../web/src/generated/application-contracts.js";
+import type { ApplicationDrawingOutput, ApplicationInput, ApplicationObservation, ApplicationOutput, ApplicationRendererObservation, ApplicationRequest, DisplayRequest } from "../../web/src/generated/application-contracts.js";
 import { applicationPlatformFixture } from "./application-fixture.js";
 import { BrowserFlightLogDownload } from "../../web/src/app/browser-flight-log-download.js";
 
@@ -129,6 +129,12 @@ describe("Single browser runtime ownership", () => {
       expect(writes).toHaveBeenCalledTimes(1);
       fixture.browser.dispatchEvent(new fixture.browser.Event("focus"));
       expect(writes).toHaveBeenCalledTimes(1);
+      fixture.browser.dispatchEvent(new fixture.browser.Event("resize"));
+      fixture.driver.apply.mockClear();
+      fixture.browser.dispatchEvent(new fixture.browser.Event("resize"));
+      const continued = JSON.parse(fixture.update.mock.results.at(-1)?.value as string) as ApplicationOutput;
+      expect(continued.drawing).toBeNull();
+      expect(fixture.driver.apply).not.toHaveBeenCalled();
       const started = inputs().find(input => input.kind === "phone_sensors_started");
       expect(started).toMatchObject({ failure: null });
       if (started?.kind !== "phone_sensors_started") throw new Error("Phone sensor subscription was not requested");

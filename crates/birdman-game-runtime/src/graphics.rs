@@ -195,6 +195,10 @@ impl Default for GraphicsOwner {
 }
 
 impl GraphicsOwner {
+    pub(super) fn epoch(&self) -> Option<u32> {
+        self.policy.as_ref().map(|policy| policy.epoch())
+    }
+
     pub(super) fn request_gpu_timing(
         &mut self,
         requested: bool,

@@ -321,6 +321,23 @@ impl ApplicationRuntime {
         {
             return Ok(self.output(None, Vec::new(), false));
         }
+        let projection_baseline = (self.display.state().active_mode()
+            == Some(GameUiPresentationMode::Screen)
+            && (matches!(
+                &input,
+                ApplicationInput::Graphics {
+                    observation: ApplicationGraphicsObservation::GpuCompleted { .. },
+                    ..
+                }
+            ) || matches!(&input, ApplicationInput::Platform { observation }
+                if observation.surface == self.surface_observation)))
+        .then(|| {
+            (
+                self.graphics.resource(),
+                self.graphics.target(GameUiPresentationMode::Screen),
+                self.graphics.epoch(),
+            )
+        });
         let io_continuation = match &input {
             ApplicationInput::RecordSaveOpened { .. } => true,
             ApplicationInput::RecordSaveObserved { observation, .. } => !matches!(
@@ -1054,6 +1071,22 @@ impl ApplicationRuntime {
                 .is_some_and(|(retained, _, _)| *retained != revision)
         {
             self.chart_pointer = None;
+        }
+        if !self.boot.active()
+            && requests.is_empty()
+            && self.display.state().active_mode() == Some(GameUiPresentationMode::Screen)
+            && self
+                .retained
+                .as_ref()
+                .is_some_and(|view| view.view_revision == revision)
+            && projection_baseline
+                == Some((
+                    self.graphics.resource(),
+                    self.graphics.target(GameUiPresentationMode::Screen),
+                    self.graphics.epoch(),
+                ))
+        {
+            return Ok(self.output(None, requests, keyboard_consumed));
         }
         let projection = if self
             .retained

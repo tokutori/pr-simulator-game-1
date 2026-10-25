@@ -42,11 +42,9 @@ pub(crate) fn submit(world: &mut World, entity: Entity, reflection: Option<&Plan
         camera.is_active = reflection.is_some();
     }
     if let Some(reflection) = reflection {
-        world.entity_mut(entity).insert((
-            super::world::pose_transform(reflection.world_from_camera),
-            Projection::custom(super::projection::SubmittedProjection::new(
-                reflection.projection,
-            )),
-        ));
+        world
+            .entity_mut(entity)
+            .insert(super::world::pose_transform(reflection.world_from_camera));
+        super::projection::SubmittedProjection::submit(world, entity, reflection.projection);
     }
 }

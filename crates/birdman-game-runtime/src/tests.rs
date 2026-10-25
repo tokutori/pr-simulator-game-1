@@ -1437,7 +1437,7 @@ fn phone_start_deadline_requests_screen_recovery_without_an_adapter_timer_policy
 #[test]
 fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_state() {
     let platform = ApplicationPlatformObservation {
-        gpu_timing_requested: false,
+        gpu_timing_requested: true,
         renderer: Some(renderer_observation()),
         surface: None,
         viewport: GameUiViewport {
@@ -1451,7 +1451,7 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
         ApplicationRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
     let initial = runtime
         .observe_test(ApplicationInput::Platform {
-            observation: platform,
+            observation: platform.clone(),
         })
         .unwrap();
     let request_id = match initial.requests.as_slice() {
@@ -1562,6 +1562,25 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
         .as_ref()
         .unwrap()
         .world_from_head;
+    let query = advanced.drawing.as_ref().unwrap().graphics.query.unwrap();
+    let continuation = runtime
+        .observe_test(ApplicationInput::Platform {
+            observation: platform,
+        })
+        .unwrap();
+    assert!(continuation.drawing.is_none());
+    assert!(continuation.requests.is_empty());
+    let completed = runtime
+        .observe_test(ApplicationInput::Graphics {
+            renderer_resource_id: query.renderer_resource_id,
+            observation: ApplicationGraphicsObservation::GpuCompleted {
+                query,
+                gpu_work_ms: 8.0,
+            },
+        })
+        .unwrap();
+    assert!(completed.drawing.is_none());
+    assert!(completed.requests.is_empty());
     assert_eq!(
         advanced.drawing.unwrap().presentation.frame_rate_label,
         "FPS 10.0"
@@ -1595,6 +1614,9 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
             spatial: Default::default(),
         })
         .unwrap();
+    let next_query = unchanged.drawing.as_ref().unwrap().graphics.query.unwrap();
+    assert_eq!(next_query.frame, query.frame + 1);
+    assert_eq!(next_query.source_ms, 13_200.0);
     assert_eq!(
         unchanged
             .drawing
@@ -1605,6 +1627,19 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
             .world_from_head,
         camera
     );
+    let failed_epoch = runtime.graphics.epoch();
+    let invalid = runtime
+        .observe_test(ApplicationInput::Graphics {
+            renderer_resource_id: next_query.renderer_resource_id,
+            observation: ApplicationGraphicsObservation::GpuCompleted {
+                query: next_query,
+                gpu_work_ms: -1.0,
+            },
+        })
+        .unwrap();
+    assert!(invalid.drawing.is_some());
+    assert!(invalid.diagnostic.is_some());
+    assert_ne!(runtime.graphics.epoch(), failed_epoch);
     let moved = runtime
         .observe_test(ApplicationInput::PointerMotion {
             display_resource_id: None,
@@ -1619,7 +1654,7 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
         .unwrap()
         .world_from_head;
     assert_ne!(moved, camera);
-    runtime
+    let fractional = runtime
         .observe_test(ApplicationInput::Frame {
             display_resource_id: None,
             timestamp_ms: 13_205.0,
@@ -1628,6 +1663,16 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
             spatial: Default::default(),
         })
         .unwrap();
+    assert!(
+        fractional
+            .drawing
+            .unwrap()
+            .scene
+            .geometry
+            .unwrap()
+            .updates
+            .is_empty()
+    );
     let fraction = runtime.application().flight_interpolation_fraction();
     assert!(runtime.application().flight_interpolation_ready() && fraction > 0.0);
     let record = runtime
@@ -2454,6 +2499,35 @@ fn graphics_commit_tracks_actual_resources_cleanup_and_renderer_lifetimes() {
         })
         .unwrap();
     resources_ready(&mut runtime, initial_id).unwrap();
+    assert!(
+        runtime
+            .observe_test(ApplicationInput::Platform {
+                observation: platform.clone(),
+            })
+            .unwrap()
+            .drawing
+            .is_none()
+    );
+    let mut viewport = platform.clone();
+    viewport.viewport.width += 1.0;
+    assert!(
+        runtime
+            .observe_test(ApplicationInput::Platform {
+                observation: viewport,
+            })
+            .unwrap()
+            .drawing
+            .is_some()
+    );
+    assert!(
+        runtime
+            .observe_test(ApplicationInput::Platform {
+                observation: platform.clone(),
+            })
+            .unwrap()
+            .drawing
+            .is_some()
+    );
     let initial_generation = runtime.graphics.resource().unwrap().commit;
     let unsupported = runtime
         .observe_test(ApplicationInput::Graphics {
@@ -2502,6 +2576,7 @@ fn graphics_commit_tracks_actual_resources_cleanup_and_renderer_lifetimes() {
             observation: resized,
         })
         .unwrap();
+    assert!(resized_output.drawing.is_some());
     let (second_id, second_target) = resized_output
         .requests
         .iter()

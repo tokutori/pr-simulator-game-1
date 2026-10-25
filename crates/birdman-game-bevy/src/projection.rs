@@ -25,7 +25,7 @@ pub(crate) fn pose_transform(pose: Pose) -> Transform {
     ))
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct SubmittedProjection(Mat4);
 
 impl SubmittedProjection {
@@ -34,6 +34,22 @@ impl SubmittedProjection {
             column[2] = (column[3] - column[2]) * 0.5;
         }
         Self(Mat4::from_cols_array(&projection.map(|value| value as f32)))
+    }
+
+    pub(crate) fn submit(world: &mut World, entity: Entity, projection: [f64; 16]) {
+        let submitted = Self::new(projection);
+        let current = world.get::<Projection>(entity).and_then(|projection| {
+            if let Projection::Custom(projection) = projection {
+                projection.get::<Self>()
+            } else {
+                None
+            }
+        });
+        if current != Some(&submitted) {
+            world
+                .entity_mut(entity)
+                .insert(Projection::custom(submitted));
+        }
     }
 }
 
@@ -83,7 +99,7 @@ mod tests {
     fn submitted_clip_depth_and_subview_match_bevy_binding() {
         let near = 0.05;
         let far = 100_000.0;
-        let projection = SubmittedProjection::new([
+        let mut source = [
             1.0,
             0.0,
             0.0,
@@ -100,7 +116,8 @@ mod tests {
             0.0,
             -2.0 * far * near / (far - near),
             0.0,
-        ]);
+        ];
+        let projection = SubmittedProjection::new(source);
         let matrix = projection.get_clip_from_view();
         assert!((matrix.project_point3(Vec3::new(0.0, 0.0, -near as f32)).z - 1.0).abs() < 1.0e-6);
         assert!(
@@ -121,6 +138,33 @@ mod tests {
                 - Vec3::new(0.0, 0.0, matrix.project_point3(Vec3::NEG_Z).z))
             .length()
                 < 1.0e-6
+        );
+        let mut world = World::new();
+        let entity = world.spawn(Projection::custom(projection.clone())).id();
+        world.clear_trackers();
+        SubmittedProjection::submit(&mut world, entity, source);
+        assert!(
+            !world
+                .entity(entity)
+                .get_ref::<Projection>()
+                .unwrap()
+                .is_changed()
+        );
+        source[0] *= 2.0;
+        SubmittedProjection::submit(&mut world, entity, source);
+        assert!(
+            world
+                .entity(entity)
+                .get_ref::<Projection>()
+                .unwrap()
+                .is_changed()
+        );
+        assert_eq!(
+            world
+                .get::<Projection>(entity)
+                .unwrap()
+                .get_clip_from_view(),
+            SubmittedProjection::new(source).get_clip_from_view()
         );
     }
 }

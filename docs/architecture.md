@@ -188,6 +188,7 @@ GameUiView / GameUiFrame → platform renderer → DOM / VR panel / Bevy entity
 
 - 構造Viewと高頻度の動的Frameを分離する。
 - 構造revisionと依存keyの意味は共有側が所有し、adapterは変更時だけ構造を再投影する。
+- 不変なScreenのPlatform観測とGPU計測完了は、共有runtimeが認可・同期・I/O要求を処理した後に描画投影を省く。構造・資源の変化とFrame観測では完成描画を出力する。
 - `GameUiStructureCache`は表示側がapplication ownerと同じ寿命で所有し、構造keyと記録source識別子からrevisionを導出する。ApplicationSessionは記録所有を識別し、UIのcacheは表示側へ置く。
 - 数値更新ごとにNode・grid・背景・DOM全体を再構築しない。
 - DOMはrenderer境界で反映し、focus・caret・scrollの保持を検査する。
