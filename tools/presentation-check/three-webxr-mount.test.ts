@@ -67,16 +67,26 @@ vi.mock("three", async importOriginal => {
     private target: WebGLRenderTarget | null = null;
     private readonly gl = { ...this.timer.gl, NO_ERROR: 0, getError: () => 0,
       LINK_STATUS: 35714, COMPILE_STATUS: 35713,
+      VERSION: 7938, SHADING_LANGUAGE_VERSION: 35724,
+      MAX_VERTEX_UNIFORM_VECTORS: 36347, MAX_FRAGMENT_UNIFORM_VECTORS: 36349,
+      MAX_VARYING_VECTORS: 36348, MAX_VERTEX_TEXTURE_IMAGE_UNITS: 35660,
+      MAX_TEXTURE_IMAGE_UNITS: 34930, MAX_COMBINED_TEXTURE_IMAGE_UNITS: 35661,
       isProgram: (program: unknown) => program instanceof WebGLProgram,
       isShader: (shader: unknown) => shader !== null && typeof shader === "object",
       isContextLost: () => false,
-      getProgramParameter: () => !this.shaderFault,
+      getProgramParameter: (_program: WebGLProgram, name: number) => name === 0x91b1 || !this.shaderFault,
+      getParameter: (name: number) => {
+        const values: Readonly<Record<number, number | string>> = { 7938: "WebGL 2.0 test renderer", 35724: "WebGL GLSL ES 3.00 test", 36347: 256,
+          36349: 224, 36348: 15, 35660: 16, 34930: 16, 35661: 32 };
+        return values[name] ?? this.timer.gl.getParameter();
+      },
       getShaderParameter: () => true,
       getProgramInfoLog: () => this.shaderFault ? "mobile program link rejected" : "",
       getShaderInfoLog: (shader: WebGLShader) => this.shaderFault && shader === this.info.programs[0]?.fragmentShader ? "mobile shader compiler cause" : null,
       getShaderSource: () => "#define SHADER_NAME LakeWater\n#define LAKE_WAVE_COUNT 8",
       getContextAttributes: () => ({ xrCompatible: true, antialias: false, depth: false, stencil: false }),
-      getExtension: (name: string) => capture.timing && name === "EXT_disjoint_timer_query_webgl2" ? this.timer.gl.getExtension() : null };
+      getExtension: (name: string) => name === "KHR_parallel_shader_compile" ? { COMPLETION_STATUS_KHR: 0x91b1 }
+        : capture.timing && name === "EXT_disjoint_timer_query_webgl2" ? this.timer.gl.getExtension() : null };
     constructor() {
       this.xr = new WebXRManager(this as unknown as WebGLRenderer, this.gl as unknown as WebGLRenderingContext);
       capture.driver = this;
@@ -337,6 +347,7 @@ describe("Aggregate runtime through the real Three WebXRManager", () => {
         if (object instanceof Mesh && object.material instanceof ShaderMaterial) water.push(object.material);
       });
       expect(new Set(water).size).toBe(2);
+      expect(new Set(water.map(material => material.name))).toEqual(new Set(["LakeWaterNear", "LakeWaterFar"]));
       for (const material of water) {
         expect(material.defines["LAKE_WAVE_COUNT"]).toBe(waveCount);
         expect(material.uniforms["uWaveCount"]).toBeUndefined();
@@ -514,6 +525,10 @@ describe("Aggregate runtime through the real Three WebXRManager", () => {
           expect(details?.textContent).toContain('"vertexCompileStatus":true');
           expect(details?.textContent).toContain('"vertex":null');
           expect(details?.textContent).toContain('"contextLost":false');
+          expect(details?.textContent).toContain('"parallelShaderCompile":true,"completionStatus":true');
+          expect(details?.textContent).toContain('"version":"WebGL 2.0 test renderer"');
+          expect(details?.textContent).toContain('"shadingLanguageVersion":"WebGL GLSL ES 3.00 test"');
+          expect(details?.textContent).toContain('"limits":{"vertexUniformVectors":256,"fragmentUniformVectors":224,"varyingVectors":15,"vertexTextureUnits":16,"fragmentTextureUnits":16,"combinedTextureUnits":32}');
           expect(state.updates.mock.calls.some(([json]) => json.includes('"committed"'))).toBe(false);
           expect(state.updates.mock.calls.filter(([json]) => json.includes('"kind":"renderer_failed"'))).toHaveLength(1);
           expect(shaderError).not.toHaveBeenCalled();

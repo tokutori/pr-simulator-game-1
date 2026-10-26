@@ -293,8 +293,16 @@ export class ThreeApplicationRenderer {
     const linkStatus: unknown = gl.getProgramParameter(program, gl.LINK_STATUS);
     const vertexCompileStatus: unknown = gl.getShaderParameter(vertex, gl.COMPILE_STATUS);
     const fragmentCompileStatus: unknown = gl.getShaderParameter(fragment, gl.COMPILE_STATUS);
+    const parallel = gl.getExtension("KHR_parallel_shader_compile");
+    const completionStatus: unknown = parallel === null ? null : gl.getProgramParameter(program, parallel.COMPLETION_STATUS_KHR);
+    const parameter = (name: number): unknown => gl.getParameter(name);
     const cause = new Error(`GPU shader link failed: ${JSON.stringify({ pass,
       contextLost: gl.isContextLost(), glError: gl.getError(), linkStatus, vertexCompileStatus, fragmentCompileStatus,
+      parallelShaderCompile: parallel !== null, completionStatus,
+      version: parameter(gl.VERSION), shadingLanguageVersion: parameter(gl.SHADING_LANGUAGE_VERSION),
+      limits: { vertexUniformVectors: parameter(gl.MAX_VERTEX_UNIFORM_VECTORS), fragmentUniformVectors: parameter(gl.MAX_FRAGMENT_UNIFORM_VECTORS),
+        varyingVectors: parameter(gl.MAX_VARYING_VECTORS), vertexTextureUnits: parameter(gl.MAX_VERTEX_TEXTURE_IMAGE_UNITS),
+        fragmentTextureUnits: parameter(gl.MAX_TEXTURE_IMAGE_UNITS), combinedTextureUnits: parameter(gl.MAX_COMBINED_TEXTURE_IMAGE_UNITS) },
       vertexDefines: vertexSource?.match(/^#define (?:SHADER_NAME|SHADER_TYPE|LAKE_WAVE_COUNT).*$/gm) ?? null,
       fragmentDefines: fragmentSource?.match(/^#define (?:SHADER_NAME|SHADER_TYPE|LAKE_WAVE_COUNT).*$/gm) ?? null,
       program: gl.getProgramInfoLog(program), vertex: gl.getShaderInfoLog(vertex), fragment: gl.getShaderInfoLog(fragment) })}`);
@@ -463,10 +471,12 @@ export class ThreeApplicationRenderer {
     };
     const defines = { LAKE_WAVE_COUNT: projection.waveCount };
     const material = new ShaderMaterial({ lights: true, defines, uniforms, vertexShader: lakeWaterVertexShader, fragmentShader: lakeWaterFragmentShader });
+    material.name = "LakeWaterNear";
     cleanup.push(() => { material.dispose(); });
     const backing = new ShaderMaterial({ lights: true, defines, uniforms: { ...uniforms,
       uReflectionEnabled: { value: 0 } }, vertexShader: lakeFilteredWaterVertexShader, fragmentShader: lakeWaterFragmentShader,
       side: DoubleSide, depthWrite: false });
+    backing.name = "LakeWaterFar";
     cleanup.push(() => { backing.dispose(); });
     const water = new Group();
     const waterGeometries = [...assets.water.geometry.near, assets.water.geometry.far].map((chunk, index) => {
