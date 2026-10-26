@@ -514,6 +514,12 @@ body {
   white-space: pre-line;
 }
 
+.screen-ui-shell[data-scene="Boot"] .screen-ui-status {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
 .screen-ui-shell[data-shared="true"][data-shell="analysis"] .screen-ui-status {
   color: var(--game-ui-text);
   background: color-mix(in srgb, var(--game-ui-panel) calc(var(--game-ui-opacity) * 100%), transparent);

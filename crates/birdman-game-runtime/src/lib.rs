@@ -390,7 +390,7 @@ impl ApplicationRuntime {
                 {
                     self.diagnostic = Some(cause);
                     if self.boot.active() {
-                        self.boot = boot::BootOwner::Failed;
+                        self.boot.fail(self.diagnostic.as_deref());
                     }
                     self.platform.flight_controller_failure =
                         Some("描画を続けられない。ページを再読み込みして再試行する。".to_owned());
@@ -443,7 +443,7 @@ impl ApplicationRuntime {
                         }
                         ApplicationRendererCreation::Failed { cause } => {
                             self.diagnostic = Some(cause);
-                            self.boot = boot::BootOwner::Failed;
+                            self.boot.fail(self.diagnostic.as_deref());
                         }
                     }
                 } else if let ApplicationRendererCreation::Ready { renderer } = result
@@ -955,7 +955,7 @@ impl ApplicationRuntime {
                     if self.boot.active()
                         && matches!(self.resource_readiness, BackendReadiness::Failed(_))
                     {
-                        self.boot = boot::BootOwner::Failed;
+                        self.boot.fail(self.diagnostic.as_deref());
                     }
                 }
                 if !self.shutdown.closed()
@@ -995,7 +995,7 @@ impl ApplicationRuntime {
         if let Err(error) = self.synchronize_resources(&mut requests) {
             if self.boot.active() {
                 self.diagnostic = Some(format!("{error:?}"));
-                self.boot = boot::BootOwner::Failed;
+                self.boot.fail(self.diagnostic.as_deref());
             } else {
                 return Err(error);
             }
@@ -1005,11 +1005,11 @@ impl ApplicationRuntime {
             requests.push(self.boot.start(request_id));
         }
         if matches!(self.boot, boot::BootOwner::Preparing) {
-            self.boot = match self.resource_readiness {
-                BackendReadiness::Ready => boot::BootOwner::Ready,
-                BackendReadiness::Failed(_) => boot::BootOwner::Failed,
-                BackendReadiness::Preparing => boot::BootOwner::Preparing,
-            };
+            match self.resource_readiness {
+                BackendReadiness::Ready => self.boot = boot::BootOwner::Ready,
+                BackendReadiness::Failed(_) => self.boot.fail(self.diagnostic.as_deref()),
+                BackendReadiness::Preparing => {}
+            }
             if matches!(self.boot, boot::BootOwner::Ready) {
                 self.synchronize_phone(&mut requests)?;
             }
@@ -1349,7 +1349,7 @@ impl ApplicationRuntime {
                 input:
                     birdman_game_presentation::game_ui::GameUiControlInput::Activate { control_id },
             } = action
-                && matches!(self.boot, boot::BootOwner::Failed)
+                && matches!(self.boot, boot::BootOwner::Failed(_))
             {
                 match control_id.as_str() {
                     "game-boot-reload" => {
@@ -1667,7 +1667,10 @@ impl ApplicationRuntime {
         &mut self,
         requests: &mut Vec<ApplicationRequest>,
     ) -> Result<(), ApplicationRuntimeError> {
-        if matches!(self.boot, boot::BootOwner::Failed | boot::BootOwner::Closed) {
+        if matches!(
+            self.boot,
+            boot::BootOwner::Failed(_) | boot::BootOwner::Closed
+        ) {
             requests.extend(self.assets.select(None));
             self.resources = None;
             return Ok(());

@@ -443,6 +443,9 @@ describe("Aggregate runtime through the real Three WebXRManager", () => {
         if (fault === "commit rollback") expect(state.updates.mock.calls.some(([json]) => json.includes('"binding_lost"'))).toBe(true);
         else {
           expect(state.updates.mock.calls.some(([json]) => json.includes("mobile program link rejected") && json.includes("mobile shader compiler cause"))).toBe(true);
+          const details = state.browser.document.querySelector("#game-boot-diagnostic");
+          expect(details?.textContent).toContain("mobile program link rejected");
+          expect(details?.textContent).toContain("mobile shader compiler cause");
           expect(state.updates.mock.calls.some(([json]) => json.includes('"committed"'))).toBe(false);
           expect(state.updates.mock.calls.filter(([json]) => json.includes('"kind":"renderer_failed"'))).toHaveLength(1);
           expect(shaderError).toHaveBeenCalledOnce();

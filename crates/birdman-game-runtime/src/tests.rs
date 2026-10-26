@@ -490,6 +490,10 @@ fn boot_retries_renderer_creation_releases_late_resources_and_enters_title_after
         .unwrap();
     assert_eq!(failed.diagnostic.as_deref(), Some("GPU unavailable"));
     let failed = structure(failed);
+    assert!(failed.panels.iter().flat_map(|panel| &panel.controls).any(|control| {
+        control.id == "game-boot-diagnostic"
+            && matches!(&control.content, GameUiControlContent::Status { value, .. } if value == "GPU unavailable")
+    }));
     let next_request = runtime.next_request_id;
     let held = runtime
         .observe_test(ApplicationInput::Frame {
@@ -502,6 +506,14 @@ fn boot_retries_renderer_creation_releases_late_resources_and_enters_title_after
         .unwrap();
     assert!(held.requests.is_empty());
     assert_eq!(runtime.next_request_id, next_request);
+    assert!(matches!(
+        held.drawing.unwrap().ui,
+        ApplicationUiProjection::Frame { .. }
+    ));
+    assert!(runtime.retained.as_ref().unwrap().panels.iter().flat_map(|panel| &panel.controls).any(|control| {
+        control.id == "game-boot-diagnostic"
+            && matches!(&control.content, GameUiControlContent::Status { value, .. } if value == "GPU unavailable")
+    }));
     let retried = runtime
         .observe_test(ApplicationInput::Control {
             view_revision: failed.view_revision,
@@ -581,6 +593,10 @@ fn boot_retries_renderer_creation_releases_late_resources_and_enters_title_after
     );
     let failed = structure(failed);
     assert_eq!(failed.interaction_scope, "boot-failed");
+    assert!(failed.panels.iter().flat_map(|panel| &panel.controls).any(|control| {
+        control.id == "game-boot-diagnostic"
+            && matches!(&control.content, GameUiControlContent::Status { value, .. } if value == "initial pipeline creation failed")
+    }));
     assert_eq!(runtime.platform.notification, stored_notification);
     let retried = runtime
         .observe_test(ApplicationInput::Control {

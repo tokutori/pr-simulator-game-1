@@ -25,7 +25,7 @@ pub(super) enum BootOwner {
     Initial,
     Creating(u32),
     Preparing,
-    Failed,
+    Failed(String),
     Ready,
     Closed,
 }
@@ -52,9 +52,15 @@ impl BootOwner {
         matches!(self, Self::Creating(expected) if *expected == request_id)
     }
 
+    pub(super) fn fail(&mut self, cause: Option<&str>) {
+        if !matches!(self, Self::Failed(_)) {
+            *self = Self::Failed(cause.unwrap_or("描画資源の準備処理が失敗した。").to_owned());
+        }
+    }
+
     pub(super) fn description(&self) -> &'static str {
         match self {
-            Self::Failed => "表示を準備できない。再試行するか、ページを再読み込みする。",
+            Self::Failed(_) => "表示を準備できない。再試行するか、ページを再読み込みする。",
             Self::Closed => "ゲームを終了した。",
             Self::Preparing => "空と会場を準備している。",
             _ => "ゲームの表示を準備している。",
@@ -65,7 +71,7 @@ impl BootOwner {
         match self {
             Self::Initial | Self::Creating(_) => "boot-initializing",
             Self::Preparing => "boot-preparing",
-            Self::Failed => "boot-failed",
+            Self::Failed(_) => "boot-failed",
             Self::Ready => "boot-ready",
             Self::Closed => "boot-closed",
         }
@@ -89,7 +95,7 @@ impl BootOwner {
                 label: String::new(),
                 layout: GameUiSectionLayout::Row,
             }],
-            controls: if matches!(self, Self::Failed) {
+            controls: if matches!(self, Self::Failed(_)) {
                 [
                     ("game-boot-retry", "再試行"),
                     ("game-boot-reload", "ページを再読み込み"),
@@ -116,6 +122,23 @@ impl BootOwner {
                 Vec::new()
             },
         }];
+        if let Self::Failed(cause) = self {
+            view.panels[0].sections.push(GameUiSection {
+                id: "boot-diagnostic".to_owned(),
+                label: String::new(),
+                layout: GameUiSectionLayout::Column,
+            });
+            view.panels[0].controls.push(GameUiControl {
+                id: "game-boot-diagnostic".to_owned(),
+                label: "エラー詳細".to_owned(),
+                enabled: false,
+                section: "boot-diagnostic".to_owned(),
+                content: GameUiControlContent::Status {
+                    source: GameUiReadoutSource::Static,
+                    value: cause.clone(),
+                },
+            });
+        }
         view
     }
 }
