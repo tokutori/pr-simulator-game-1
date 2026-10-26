@@ -135,7 +135,7 @@ visibilityと実空間勾配の両channelがすべて厳密0の成分は、packe
 - 64 mと288 mの周期反復は残る。
 - 帯域別の移流は深水重力波の$c\propto\sqrt{\lambda}$に近づけた視覚近似であり、帯域内の分散・水深変化を表さない。
 
-- near/farと回転・縮尺を変えたfine/rippleの4層micro-normalは、解像する帯域を4点で積分する。texel footprintの短軸を保守的に評価し、2〜4texelの区間で採取位置を中心へ連続的に縮め、十分に縮小された帯域はmipの平均傾斜と二次momentを1回採取して共用する。
+- near/farと回転・縮尺を変えたfine/rippleの4層micro-normalは、解像する帯域を4点で積分する。texel footprintの短軸を保守的に評価し、2〜4texelの区間で採取位置を中心へ連続的に縮め、十分に縮小された帯域はmipの平均傾斜と二次momentを1回採取して共用する。UV・勾配・採取幅を先に固定し、各cornerの4帯域を順に合成してから二次momentを積算する。
 - Fragmentの波loopは実成分数を上限とし、各成分の画素微分を全laneで評価する。法線寄与が0の画素では、その後のcrestとgradientの演算を省略する。
 - 回転は移動方向、texture勾配、法線勾配へ一貫して適用する。
 - mipmapに平均勾配と二次モーメントを保持し、頂点法線が表現した勾配を差し引いて二重計上を避ける。

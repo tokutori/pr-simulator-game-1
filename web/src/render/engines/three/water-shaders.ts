@@ -272,7 +272,7 @@ vec2 lakeWaveSlope(vec2 worldXZ) {
 
 uniform vec2 uDetailFilterMinification;
 
-mat4 lakeDetailSamples(sampler2D image, vec2 uv, vec2 gradientX, vec2 gradientY) {
+float lakeDetailSpread(sampler2D image, vec2 gradientX, vec2 gradientY) {
   vec2 dimensions = vec2(textureSize(image, 0));
   vec2 texelX = gradientX * dimensions;
   vec2 texelY = gradientY * dimensions;
@@ -281,31 +281,31 @@ mat4 lakeDetailSamples(sampler2D image, vec2 uv, vec2 gradientX, vec2 gradientY)
   if (denominator > 0.0) {
     minorBound = abs(texelX.x * texelY.y - texelX.y * texelY.x) / denominator;
   }
-  float spread = 1.0 - smoothstep(uDetailFilterMinification.x, uDetailFilterMinification.y, minorBound);
-  if (spread == 0.0) {
-    vec4 center = textureGrad(image, uv, gradientX, gradientY);
-    return mat4(center, center, center, center);
-  }
-  vec2 offsetX = gradientX * (0.25 * spread);
-  vec2 offsetY = gradientY * (0.25 * spread);
-  return mat4(
-    textureGrad(image, uv - offsetX - offsetY, gradientX, gradientY),
-    textureGrad(image, uv + offsetX - offsetY, gradientX, gradientY),
-    textureGrad(image, uv - offsetX + offsetY, gradientX, gradientY),
-    textureGrad(image, uv + offsetX + offsetY, gradientX, gradientY)
-  );
+  return 1.0 - smoothstep(uDetailFilterMinification.x, uDetailFilterMinification.y, minorBound);
+}
+
+vec4 lakeDetailSample(sampler2D image, vec2 uv, vec2 gradientX, vec2 gradientY,
+    vec4 offsets, bool centered, int corner) {
+  if (centered) return textureGrad(image, uv, gradientX, gradientY);
+  vec2 point = uv - offsets.xy - offsets.zw;
+  if (corner == 1) point = uv + offsets.xy - offsets.zw;
+  if (corner == 2) point = uv - offsets.xy + offsets.zw;
+  if (corner == 3) point = uv + offsets.xy + offsets.zw;
+  return textureGrad(image, point, gradientX, gradientY);
 }
 
 vec3 lakeMicroDetail(vec2 worldXZ, vec2 footprintX, vec2 footprintY) {
   const float fineAmplitude = 0.4;
   const float rippleAmplitude = 0.1;
   vec2 drift = uWindVelocity.xy * uTimeSeconds;
-  mat4 nearSamples = lakeDetailSamples(uDetailNear, (worldXZ - drift * 0.42) / uDetailExtents.x,
-    footprintX / uDetailExtents.x, footprintY / uDetailExtents.x);
+  vec2 nearUv = (worldXZ - drift * 0.42) / uDetailExtents.x;
+  vec2 nearX = footprintX / uDetailExtents.x;
+  vec2 nearY = footprintY / uDetailExtents.x;
   // These compact gravity-wave bands use phase-speed ratios proportional to
   // sqrt(wavelength): far/near/fine/ripple = 0.89/0.42/0.26/0.18.
-  mat4 farSamples = lakeDetailSamples(uDetailFar, (worldXZ - drift * 0.89) / uDetailExtents.y,
-    footprintX / uDetailExtents.y, footprintY / uDetailExtents.y);
+  vec2 farUv = (worldXZ - drift * 0.89) / uDetailExtents.y;
+  vec2 farX = footprintX / uDetailExtents.y;
+  vec2 farY = footprintY / uDetailExtents.y;
   // Each rotated octave advects along its rotated propagation direction.
   // Reusing the unrotated drift makes oblique crests slide sideways.
   vec2 fineDrift = vec2(
@@ -318,8 +318,9 @@ vec3 lakeMicroDetail(vec2 worldXZ, vec2 footprintX, vec2 footprintY) {
     0.8 * finePoint.x + 0.6 * finePoint.y
   );
   mat2 fineRotation = mat2(vec2(0.6, 0.8), vec2(-0.8, 0.6));
-  mat4 fineSamples = lakeDetailSamples(uDetailNear, fineRotated / uDetailExtents.x + vec2(0.217, 0.631),
-    fineRotation * footprintX * (2.6 / uDetailExtents.x), fineRotation * footprintY * (2.6 / uDetailExtents.x));
+  vec2 fineUv = fineRotated / uDetailExtents.x + vec2(0.217, 0.631);
+  vec2 fineX = fineRotation * footprintX * (2.6 / uDetailExtents.x);
+  vec2 fineY = fineRotation * footprintY * (2.6 / uDetailExtents.x);
   vec2 rippleDrift = vec2(
     0.8 * drift.x + 0.6 * drift.y,
     -0.6 * drift.x + 0.8 * drift.y
@@ -330,14 +331,27 @@ vec3 lakeMicroDetail(vec2 worldXZ, vec2 footprintX, vec2 footprintY) {
     0.6 * ripplePoint.x + 0.8 * ripplePoint.y
   );
   mat2 rippleRotation = mat2(vec2(0.8, 0.6), vec2(-0.6, 0.8));
-  mat4 rippleSamples = lakeDetailSamples(uDetailNear, rippleRotated / uDetailExtents.x + vec2(0.683, 0.173),
-    rippleRotation * footprintX * (5.2 / uDetailExtents.x), rippleRotation * footprintY * (5.2 / uDetailExtents.x));
+  vec2 rippleUv = rippleRotated / uDetailExtents.x + vec2(0.683, 0.173);
+  vec2 rippleX = rippleRotation * footprintX * (5.2 / uDetailExtents.x);
+  vec2 rippleY = rippleRotation * footprintY * (5.2 / uDetailExtents.x);
+  float nearSpread = lakeDetailSpread(uDetailNear, nearX, nearY);
+  float farSpread = lakeDetailSpread(uDetailFar, farX, farY);
+  float fineSpread = lakeDetailSpread(uDetailNear, fineX, fineY);
+  float rippleSpread = lakeDetailSpread(uDetailNear, rippleX, rippleY);
+  vec4 nearOffsets = vec4(nearX, nearY) * (0.25 * nearSpread);
+  vec4 farOffsets = vec4(farX, farY) * (0.25 * farSpread);
+  vec4 fineOffsets = vec4(fineX, fineY) * (0.25 * fineSpread);
+  vec4 rippleOffsets = vec4(rippleX, rippleY) * (0.25 * rippleSpread);
+  vec4 nearSample = vec4(0.0);
+  vec4 farSample = vec4(0.0);
+  vec4 fineSample = vec4(0.0);
+  vec4 rippleSample = vec4(0.0);
   vec3 filtered = vec3(0.0);
   for (int corner = 0; corner < 4; corner++) {
-    vec4 nearSample = nearSamples[corner];
-    vec4 farSample = farSamples[corner];
-    vec4 fineSample = fineSamples[corner];
-    vec4 rippleSample = rippleSamples[corner];
+    if (corner == 0 || nearSpread != 0.0) nearSample = lakeDetailSample(uDetailNear, nearUv, nearX, nearY, nearOffsets, nearSpread == 0.0, corner);
+    if (corner == 0 || farSpread != 0.0) farSample = lakeDetailSample(uDetailFar, farUv, farX, farY, farOffsets, farSpread == 0.0, corner);
+    if (corner == 0 || fineSpread != 0.0) fineSample = lakeDetailSample(uDetailNear, fineUv, fineX, fineY, fineOffsets, fineSpread == 0.0, corner);
+    if (corner == 0 || rippleSpread != 0.0) rippleSample = lakeDetailSample(uDetailNear, rippleUv, rippleX, rippleY, rippleOffsets, rippleSpread == 0.0, corner);
     vec2 nearSlope = (nearSample.rg * 255.0 - 128.0) / 127.0;
     vec2 farSlope = (farSample.rg * 255.0 - 128.0) / 127.0;
     vec2 fineRawSlope = (fineSample.rg * 255.0 - 128.0) / 127.0;

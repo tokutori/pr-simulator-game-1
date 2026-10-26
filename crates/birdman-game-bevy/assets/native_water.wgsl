@@ -220,7 +220,7 @@ fn lake_sky_radiance(direction: vec3<f32>) -> vec3<f32> {
     return textureSampleGrad(sky_texture, sky_sampler, coordinate, gradient_x, gradient_y).xyz;
 }
 
-fn lake_detail_samples(image: texture_2d<f32>, image_sampler: sampler, uv: vec2<f32>, gradient_x: vec2<f32>, gradient_y: vec2<f32>) -> mat4x4<f32> {
+fn lake_detail_spread(image: texture_2d<f32>, gradient_x: vec2<f32>, gradient_y: vec2<f32>) -> f32 {
     let dimensions = vec2<f32>(textureDimensions(image, 0));
     let texel_x = gradient_x * dimensions;
     let texel_y = gradient_y * dimensions;
@@ -229,47 +229,58 @@ fn lake_detail_samples(image: texture_2d<f32>, image_sampler: sampler, uv: vec2<
     if denominator > 0.0 {
         minor_bound = abs(texel_x.x * texel_y.y - texel_x.y * texel_y.x) / denominator;
     }
-    let spread = 1.0 - smoothstep(detail_filter_minification.x, detail_filter_minification.y, minor_bound);
-    if spread == 0.0 {
-        let center = textureSampleGrad(image, image_sampler, uv, gradient_x, gradient_y);
-        return mat4x4<f32>(center, center, center, center);
-    }
-    let offset_x = gradient_x * (0.25 * spread);
-    let offset_y = gradient_y * (0.25 * spread);
-    return mat4x4<f32>(
-        textureSampleGrad(image, image_sampler, uv - offset_x - offset_y, gradient_x, gradient_y),
-        textureSampleGrad(image, image_sampler, uv + offset_x - offset_y, gradient_x, gradient_y),
-        textureSampleGrad(image, image_sampler, uv - offset_x + offset_y, gradient_x, gradient_y),
-        textureSampleGrad(image, image_sampler, uv + offset_x + offset_y, gradient_x, gradient_y),
-    );
+    return 1.0 - smoothstep(detail_filter_minification.x, detail_filter_minification.y, minor_bound);
+}
+
+fn lake_detail_sample(image: texture_2d<f32>, image_sampler: sampler, uv: vec2<f32>, gradient_x: vec2<f32>, gradient_y: vec2<f32>, offsets: vec4<f32>, centered: bool, corner: u32) -> vec4<f32> {
+    if centered { return textureSampleGrad(image, image_sampler, uv, gradient_x, gradient_y); }
+    var point = uv - offsets.xy - offsets.zw;
+    if corner == 1u { point = uv + offsets.xy - offsets.zw; }
+    if corner == 2u { point = uv - offsets.xy + offsets.zw; }
+    if corner == 3u { point = uv + offsets.xy + offsets.zw; }
+    return textureSampleGrad(image, image_sampler, point, gradient_x, gradient_y);
 }
 
 fn lake_micro_detail(position: vec2<f32>, footprint_x: vec2<f32>, footprint_y: vec2<f32>) -> vec3<f32> {
     let fine_amplitude = 0.4;
     let ripple_amplitude = 0.1;
     let drift = waves_sky.xy * camera_time.w;
-    let near_samples = lake_detail_samples(detail_near, detail_near_sampler,
-        (position - drift * 0.42) / 64.0, footprint_x / 64.0, footprint_y / 64.0);
-    let far_samples = lake_detail_samples(detail_far, detail_far_sampler,
-        (position - drift * 0.89) / 288.0, footprint_x / 288.0, footprint_y / 288.0);
+    let near_uv = (position - drift * 0.42) / 64.0;
+    let near_x = footprint_x / 64.0;
+    let near_y = footprint_y / 64.0;
+    let far_uv = (position - drift * 0.89) / 288.0;
+    let far_x = footprint_x / 288.0;
+    let far_y = footprint_y / 288.0;
     let fine_rotation = mat2x2<f32>(vec2<f32>(0.6, 0.8), vec2<f32>(-0.8, 0.6));
     let ripple_rotation = mat2x2<f32>(vec2<f32>(0.8, 0.6), vec2<f32>(-0.6, 0.8));
     let fine_drift = transpose(fine_rotation) * drift * 0.26;
     let ripple_drift = transpose(ripple_rotation) * drift * 0.18;
     let fine_point = fine_rotation * ((position - fine_drift) * 2.6);
     let ripple_point = ripple_rotation * ((position - ripple_drift) * 5.2);
-    let fine_samples = lake_detail_samples(detail_near, detail_near_sampler,
-        fine_point / 64.0 + vec2<f32>(0.217, 0.631),
-        fine_rotation * footprint_x * (2.6 / 64.0), fine_rotation * footprint_y * (2.6 / 64.0));
-    let ripple_samples = lake_detail_samples(detail_near, detail_near_sampler,
-        ripple_point / 64.0 + vec2<f32>(0.683, 0.173),
-        ripple_rotation * footprint_x * (5.2 / 64.0), ripple_rotation * footprint_y * (5.2 / 64.0));
+    let fine_uv = fine_point / 64.0 + vec2<f32>(0.217, 0.631);
+    let fine_x = fine_rotation * footprint_x * (2.6 / 64.0);
+    let fine_y = fine_rotation * footprint_y * (2.6 / 64.0);
+    let ripple_uv = ripple_point / 64.0 + vec2<f32>(0.683, 0.173);
+    let ripple_x = ripple_rotation * footprint_x * (5.2 / 64.0);
+    let ripple_y = ripple_rotation * footprint_y * (5.2 / 64.0);
+    let near_spread = lake_detail_spread(detail_near, near_x, near_y);
+    let far_spread = lake_detail_spread(detail_far, far_x, far_y);
+    let fine_spread = lake_detail_spread(detail_near, fine_x, fine_y);
+    let ripple_spread = lake_detail_spread(detail_near, ripple_x, ripple_y);
+    let near_offsets = vec4<f32>(near_x, near_y) * (0.25 * near_spread);
+    let far_offsets = vec4<f32>(far_x, far_y) * (0.25 * far_spread);
+    let fine_offsets = vec4<f32>(fine_x, fine_y) * (0.25 * fine_spread);
+    let ripple_offsets = vec4<f32>(ripple_x, ripple_y) * (0.25 * ripple_spread);
+    var near_sample = vec4<f32>(0.0);
+    var far_sample = vec4<f32>(0.0);
+    var fine_sample = vec4<f32>(0.0);
+    var ripple_sample = vec4<f32>(0.0);
     var filtered = vec3<f32>(0.0);
     for (var corner = 0u; corner < 4u; corner += 1u) {
-      let near_sample = near_samples[corner];
-      let far_sample = far_samples[corner];
-      let fine_sample = fine_samples[corner];
-      let ripple_sample = ripple_samples[corner];
+      if corner == 0u || near_spread != 0.0 { near_sample = lake_detail_sample(detail_near, detail_near_sampler, near_uv, near_x, near_y, near_offsets, near_spread == 0.0, corner); }
+      if corner == 0u || far_spread != 0.0 { far_sample = lake_detail_sample(detail_far, detail_far_sampler, far_uv, far_x, far_y, far_offsets, far_spread == 0.0, corner); }
+      if corner == 0u || fine_spread != 0.0 { fine_sample = lake_detail_sample(detail_near, detail_near_sampler, fine_uv, fine_x, fine_y, fine_offsets, fine_spread == 0.0, corner); }
+      if corner == 0u || ripple_spread != 0.0 { ripple_sample = lake_detail_sample(detail_near, detail_near_sampler, ripple_uv, ripple_x, ripple_y, ripple_offsets, ripple_spread == 0.0, corner); }
       let near_slope = (near_sample.xy * 255.0 - 128.0) / 127.0;
       let far_slope = (far_sample.xy * 255.0 - 128.0) / 127.0;
       let fine_raw_slope = (fine_sample.xy * 255.0 - 128.0) / 127.0;
