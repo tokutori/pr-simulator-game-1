@@ -118,15 +118,6 @@ impl FlightFrameClock {
         self.interpolation_ready && !self.suspended
     }
 
-    /// Queries the last accepted frame's freshness without advancing physical time.
-    pub fn frame_available_at(&self, timestamp_ms: f64) -> Result<bool, FlightClockError> {
-        self.validate_timestamp(timestamp_ms)?;
-        Ok(!self.processing_delayed
-            && self.previous_timestamp_ms.is_some_and(|previous| {
-                timestamp_ms - previous <= f64::from(crate::MAXIMUM_FLIGHT_FRAME_GAP_MILLISECONDS)
-            }))
-    }
-
     /// Returns the external delay observation that must clear before explicit resume.
     pub fn processing_delayed(&self) -> bool {
         self.processing_delayed

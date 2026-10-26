@@ -65,11 +65,6 @@ impl Default for CockpitGeometry {
 }
 
 impl CockpitGeometry {
-    #[doc = "Registered FRD eye mount; body displacement is applied by the camera adapter."]
-    pub fn pilot_eye_offset_frd() -> [f64; 3] {
-        definition().document().structure.pilot_eye_offset_frd_m
-    }
-
     #[doc = "Constructs the canopy and fairing from the registered shell stations and opening split."]
     pub fn new() -> Self {
         let stations = cockpit_stations();
@@ -194,7 +189,7 @@ mod tests {
                 .unwrap()
                 .position_m()
         });
-        let [forward, right, down] = CockpitGeometry::pilot_eye_offset_frd();
+        let [forward, right, down] = definition.document().structure.pilot_eye_offset_frd_m;
         assert_eq!([forward, right, down], [0.06, 0.0, 1.04]);
         let minimum_aft = -forward - (endpoints[1] - initial);
         let maximum_aft = -forward - (endpoints[0] - initial);

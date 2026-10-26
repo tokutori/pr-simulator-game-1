@@ -73,7 +73,10 @@ fn projection_preserves_runtime_matrix_and_respects_both_depth_conventions() {
             y: -0.2,
             z: -2.4,
         };
-        let projected = xr_project_head_point(&eyes[0], point).unwrap();
+        let projected = geometry::PreparedEye::new(&eyes[0])
+            .unwrap()
+            .project(point)
+            .unwrap();
         let focal = 1.0 / (30.0_f64.to_radians()).tan();
         assert!((projected.x - focal * (point.x + 0.032) / 2.4).abs() < 1.0e-14);
         assert!((projected.y - focal * point.y / 2.4).abs() < 1.0e-14);
@@ -122,17 +125,24 @@ fn projection_preserves_runtime_matrix_and_respects_both_depth_conventions() {
             for (expected, actual) in eyes.iter().zip(captured_eyes) {
                 assert_eq!(actual.eye, expected.eye);
                 assert_eq!(actual.projection, expected.projection);
-                let actual = xr_project_head_point(&actual, point).unwrap();
-                let expected = xr_project_head_point(expected, point).unwrap();
+                let actual = geometry::PreparedEye::new(&actual)
+                    .unwrap()
+                    .project(point)
+                    .unwrap();
+                let expected = geometry::PreparedEye::new(expected)
+                    .unwrap()
+                    .project(point)
+                    .unwrap();
                 assert!((actual.x - expected.x).abs() < 1.0e-12);
                 assert!((actual.y - expected.y).abs() < 1.0e-12);
                 assert!((actual.z - expected.z).abs() < 1.0e-12);
             }
         }
-        assert!(xr_head_plane_fits(&frame, plane(2.4), 2.0, 2.0, 0.035));
-        assert!(!xr_head_plane_fits(&frame, plane(0.025), 0.001, 0.001, 0.0));
-        assert!(!xr_head_plane_fits(&frame, plane(101.0), 0.001, 0.001, 0.0));
-        assert!(!xr_head_plane_fits(&frame, plane(-1.0), 0.1, 0.1, 0.0));
+        let prepared = geometry::PreparedViews::new(&frame).unwrap();
+        assert!(prepared.plane_fits(plane(2.4), 2.0, 2.0, 0.035));
+        assert!(!prepared.plane_fits(plane(0.025), 0.001, 0.001, 0.0));
+        assert!(!prepared.plane_fits(plane(101.0), 0.001, 0.001, 0.0));
+        assert!(!prepared.plane_fits(plane(-1.0), 0.1, 0.1, 0.0));
     }
     assert!(!xr_projection_matrix_is_valid(&[0.0; 16]));
     assert!(!xr_projection_matrix_is_valid(&[1.0; 15]));
@@ -176,7 +186,11 @@ fn menu_solver_fits_asymmetric_canted_views_and_physical_panel_offsets() {
             position: head_from_menu.transform(offset.position),
             orientation: offset.orientation,
         };
-        assert!(xr_head_plane_fits(&frame, pose, 2.4, 1.8, 0.035));
+        assert!(
+            geometry::PreparedViews::new(&frame)
+                .unwrap()
+                .plane_fits(pose, 2.4, 1.8, 0.035)
+        );
     }
 }
 
@@ -312,13 +326,11 @@ fn head_fit_preserves_forward_and_menu_clearance_with_shared_defaults() {
         panic!("Expected head fit")
     };
     assert_eq!(local_pose, plane(profile.distance_meters));
-    assert!(xr_head_plane_fits(
-        &viewer(XrDepthRange::NegativeOneToOne),
-        local_pose,
-        size_m[0],
-        size_m[1],
-        profile.clip_margin
-    ));
+    assert!(
+        geometry::PreparedViews::new(&viewer(XrDepthRange::NegativeOneToOne))
+            .unwrap()
+            .plane_fits(local_pose, size_m[0], size_m[1], profile.clip_margin)
+    );
     let bounds = frame_rate_bounds.unwrap();
     assert!(bounds.y + bounds.height < clear_region.y);
     assert!(
@@ -428,7 +440,7 @@ fn invalid_eye_identity_pose_and_projection_are_classified_before_layout() {
         unreachable!()
     };
     eyes[0].head_from_eye.orientation.w = 0.1;
-    assert!(!xr_head_plane_fits(&frame, plane(2.4), 1.0, 1.0, 0.0));
+    assert!(geometry::PreparedViews::new(&frame).is_err());
 }
 
 #[test]
@@ -464,13 +476,14 @@ fn camera_rig_applies_aircraft_pilot_head_and_eye_transforms_once() {
             z: -1.5
         }
     );
-    let rig = xr_camera_rig(
-        aircraft,
-        XrCameraMount::Aircraft {
-            aircraft_from_tracking: pilot.render,
-        },
-    )
-    .unwrap();
+    let rig = XrTrackingOrigin::default()
+        .camera_rig(
+            aircraft,
+            XrCameraMount::Aircraft {
+                aircraft_from_tracking: pilot.render,
+            },
+        )
+        .unwrap();
     let head = Pose {
         position: Vector3 {
             x: 0.1,
@@ -494,13 +507,14 @@ fn camera_rig_applies_aircraft_pilot_head_and_eye_transforms_once() {
     assert!((rig.world_from_reference.orientation.w - aircraft.orientation.w).abs() < 1e-14);
     assert!((rig.world_from_reference.orientation.y - aircraft.orientation.y).abs() < 1e-14);
     let external = plane(12.0);
-    let rig = xr_camera_rig(
-        aircraft,
-        XrCameraMount::External {
-            world_from_tracking: external,
-        },
-    )
-    .unwrap();
+    let rig = XrTrackingOrigin::default()
+        .camera_rig(
+            aircraft,
+            XrCameraMount::External {
+                world_from_tracking: external,
+            },
+        )
+        .unwrap();
     assert_eq!(rig.world_from_tracking, external);
     assert_eq!(rig.reference_from_tracking, external);
     assert_eq!(rig.world_from_reference, Pose::IDENTITY);
@@ -633,7 +647,9 @@ fn world_cockpit_and_head_keep_their_distinct_physical_owners() {
                 world_from_tracking: plane(-12.0),
             },
         ] {
-            let rig = xr_camera_rig(aircraft, mount).unwrap();
+            let rig = XrTrackingOrigin::default()
+                .camera_rig(aircraft, mount)
+                .unwrap();
             let reference = xr_reference_frame(rig, head).unwrap();
             for (anchor, expected) in [
                 (GameUiAnchor::World, local),

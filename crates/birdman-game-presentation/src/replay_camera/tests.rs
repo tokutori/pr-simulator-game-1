@@ -6,7 +6,6 @@ use birdman_game_core::{
     TailPilotPositionCommand, TailRateTarget, WingBendingFactor,
 };
 use birdman_game_format::WeatherClass;
-use birdman_game_scene::cockpit_geometry::CockpitGeometry;
 
 fn fixture_record(duration: f64, reason: SessionEndReason) -> FlightRecord {
     let ticks = (duration * f64::from(birdman_game_core::PHYSICS_HZ)) as u64;
@@ -571,7 +570,9 @@ fn frame_attaches_to_the_registered_beam_without_entering_the_pilot_view() {
         .iter()
         .map(|value| value * value)
         .sum::<f64>();
-    let [forward, right, down] = CockpitGeometry::pilot_eye_offset_frd();
+    let [forward, right, down] = crate::camera::registered_pilot_eye()
+        .unwrap()
+        .position_frd_m;
     let eye = [right, -down, -forward];
     let mut attachments = 0;
     for part in geometry

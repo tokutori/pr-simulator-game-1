@@ -308,15 +308,12 @@ fn driver_failure_retains_the_original_cause_until_a_new_flight_is_prepared() {
 }
 
 #[test]
-fn menus_observe_frame_freshness_without_consuming_live_flight_ticks() {
+fn menus_observe_frames_without_consuming_live_flight_ticks() {
     let mut application = ApplicationSession::default();
-    assert!(!application.flight_frame_available_at(1000.0).unwrap());
     assert_eq!(
         tick_count(application.advance_flight_frame(1000.0, &[], true).unwrap()),
         0
     );
-    assert!(application.flight_frame_available_at(1150.0).unwrap());
-    assert!(!application.flight_frame_available_at(1150.001).unwrap());
     assert_eq!(
         tick_count(application.advance_flight_frame(1100.0, &[], true).unwrap()),
         0
@@ -387,33 +384,4 @@ fn unavailable_frames_cancel_countdown_and_pause_live_flight_until_explicit_resu
         application.observe_countdown(token, 3.0, true),
         Ok(CountdownProgress::Ignored)
     );
-}
-
-#[test]
-fn fatal_adapter_failure_retires_admission_and_preserves_an_earlier_driver_cause() {
-    let mut application = launch(100);
-    application.advance_flight_frame(1000.0, &[], true).unwrap();
-    application.fail_flight_adapter();
-    assert_eq!(
-        application.flight_failure(),
-        Some(FlightFrameError::AdapterUnavailable)
-    );
-    assert!(!application.can_resume());
-    assert_eq!(
-        application.advance_flight_frame(1010.0, &[], true),
-        Err(FlightFrameError::AdapterUnavailable)
-    );
-    execute(&mut application, SessionCommand::Abort {});
-    execute(&mut application, SessionCommand::Retry {});
-    execute(&mut application, SessionCommand::StartCountdown {});
-    let token = application.core_session().countdown_token().unwrap();
-    application.observe_countdown(token, 3.0, true).unwrap();
-    application.advance_flight_frame(2000.0, &[], true).unwrap();
-    let original = FlightFrameError::Clock(FlightClockError::NonMonotonicTimestamp);
-    assert_eq!(
-        application.advance_flight_frame(1999.0, &[], true),
-        Err(original)
-    );
-    application.fail_flight_adapter();
-    assert_eq!(application.flight_failure(), Some(original));
 }

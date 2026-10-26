@@ -119,14 +119,6 @@ pub struct XrCameraRig {
     pub reference_from_tracking: Pose,
 }
 
-/// Derives both rendering and interaction mounts from the same camera policy.
-pub fn xr_camera_rig(
-    world_from_aircraft: Pose,
-    mount: XrCameraMount,
-) -> Result<XrCameraRig, CameraError> {
-    camera_rig(world_from_aircraft, mount, Pose::IDENTITY)
-}
-
 fn camera_rig(
     world_from_aircraft: Pose,
     mount: XrCameraMount,

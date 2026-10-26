@@ -1,4 +1,4 @@
-export const LAKE_WAVE_PACKET_GLSL = /* glsl */ `
+const LAKE_WAVE_PACKET_GLSL = /* glsl */ `
 float lakeWaveHash(vec2 cell) {
   return fract(sin(dot(cell, vec2(127.1, 311.7))) * 43758.5453);
 }
@@ -39,7 +39,7 @@ mat3 lakeWaveModulation(vec2 point, vec2 direction, float waveNumber, float seed
 }
 `;
 
-export const LAKE_WAVE_PROJECTION_GLSL = /* glsl */ `
+const LAKE_WAVE_PROJECTION_GLSL = /* glsl */ `
 #if LAKE_WAVE_COUNT > 0
 uniform vec4 uWaveKAmplitude[LAKE_WAVE_COUNT];
 uniform vec4 uWaveOmegaPhase[LAKE_WAVE_COUNT];

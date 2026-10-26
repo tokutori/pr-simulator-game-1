@@ -12,8 +12,6 @@ use crate::flight_input::{
 /// Original cause that stops live frame admission until the flight is replaced.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FlightFrameError {
-    /// The adapter reported a fatal input, presentation or feedback failure.
-    AdapterUnavailable,
     /// A presentation timestamp was negative, non-finite or non-monotonic.
     Clock(FlightClockError),
     /// The common input normalizer rejected an intent.
@@ -48,11 +46,6 @@ impl ApplicationSession {
         self.flight_input.invalidate();
     }
 
-    /// Stops the current driver after a fatal adapter failure; details stay with its I/O owner.
-    pub fn fail_flight_adapter(&mut self) {
-        self.retain_flight_failure(FlightFrameError::AdapterUnavailable);
-    }
-
     /// Reports the selected connection's neutral and pilot-target takeover state.
     pub fn flight_gamepad_acquisition(&self) -> FlightGamepadAcquisition {
         self.flight_input.gamepad_acquisition()
@@ -66,11 +59,6 @@ impl ApplicationSession {
     /// Reports whether the current run has a retained physical interval for display interpolation.
     pub fn flight_interpolation_ready(&self) -> bool {
         self.flight_clock.interpolation_ready()
-    }
-
-    /// Queries frame freshness at a timer observation without consuming a tick budget.
-    pub fn flight_frame_available_at(&self, timestamp_ms: f64) -> Result<bool, FlightClockError> {
-        self.flight_clock.frame_available_at(timestamp_ms)
     }
 
     /// Returns the original driver failure retained with the current flight or record.

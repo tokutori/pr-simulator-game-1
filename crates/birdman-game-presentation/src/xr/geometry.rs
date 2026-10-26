@@ -527,19 +527,3 @@ impl<'a> PreparedViews<'a> {
             })
     }
 }
-
-/// Projects one head-local point to finite normalized device coordinates.
-pub fn xr_project_head_point(eye: &XrEyeGeometry, point: Vector3) -> Option<Vector3> {
-    PreparedEye::new(eye)?.project(point)
-}
-
-/// Checks the complete rectangle against both unmodified runtime projections.
-pub fn xr_head_plane_fits(
-    frame: &XrViewerFrame,
-    pose: Pose,
-    width: f64,
-    height: f64,
-    margin: f64,
-) -> bool {
-    PreparedViews::new(frame).is_ok_and(|views| views.plane_fits(pose, width, height, margin))
-}

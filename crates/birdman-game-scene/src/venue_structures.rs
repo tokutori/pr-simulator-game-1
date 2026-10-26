@@ -31,11 +31,6 @@ impl ShoreStructureKind {
         }
     }
 
-    #[doc = "Recognizes only the three structure kinds, leaving other venue features untouched."]
-    pub fn from_name(name: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|kind| kind.name() == name)
-    }
-
     #[doc = "Original Web sRGB colour, without changing lighting or exposure."]
     pub const fn color_srgb(self) -> u32 {
         match self {
@@ -244,7 +239,6 @@ mod tests {
             ShoreStructureKind::ALL.map(ShoreStructureKind::color_srgb),
             [0x85765d, 0x777a73, 0x696e6a]
         );
-        assert!(ShoreStructureKind::from_name("woodland").is_none());
     }
 
     #[test]
