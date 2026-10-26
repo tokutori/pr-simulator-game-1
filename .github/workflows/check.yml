@@ -45,9 +45,10 @@ jobs:
           rustup toolchain uninstall stable
       - name: Install native Linux window dependencies
         if: runner.os == 'Linux'
+        timeout-minutes: 15
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends pkg-config libudev-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev libwayland-dev libxkbcommon-dev libxkbcommon-x11-0
+          sudo apt-get -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o Acquire::Retries=3 update --error-on=any
+          sudo apt-get -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o Acquire::Retries=3 install -y --no-install-recommends pkg-config libudev-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev libwayland-dev libxkbcommon-dev libxkbcommon-x11-0
       - name: Cache Rust dependencies and tools
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
         with:
