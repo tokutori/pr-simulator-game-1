@@ -212,9 +212,6 @@ uniform sampler2D uDetailNear;
 uniform sampler2D uDetailFar;
 uniform sampler2D uSkyTexture;
 uniform vec4 uDetailExtents;
-uniform float uWaterBackingClip;
-uniform vec4 uWaterBackingCenter;
-uniform float uWaterBackingInnerExtent;
 varying vec3 vWorldPosition;
 varying vec3 vWorldNormal;
 varying vec3 vSurfaceState;
@@ -418,7 +415,7 @@ vec3 sampleLakeColor(vec2 worldXZ, vec2 waveSlope, vec3 microDetail, float sunVi
       reflectedUv += totalSlope * 0.006;
       if (all(greaterThanEqual(reflectedUv, vec2(0.0))) &&
           all(lessThanEqual(reflectedUv, vec2(1.0)))) {
-        vec4 aircraftReflection = texture2D(uReflectionTexture, reflectedUv);
+        vec4 aircraftReflection = textureLod(uReflectionTexture, reflectedUv, 0.0);
         color = mix(color, aircraftReflection.rgb,
           aircraftReflection.a * clamp(0.16 + fresnel * 0.7, 0.0, 0.72));
       }
@@ -437,13 +434,8 @@ vec3 sampleLakeColor(vec2 worldXZ, vec2 waveSlope, vec3 microDetail, float sunVi
 }
 
 void main() {
-  // The 160 km calm backing supplies only the area beyond the 6 km animated
-  // plane. Clipping its center prevents coplanar overlap from flattening wave
-  // troughs or creating a visible square transition.
   vec2 footprintX = dFdx(vSurfaceGradient.xy);
   vec2 footprintY = dFdy(vSurfaceGradient.xy);
-  if (uWaterBackingClip > 0.5 &&
-      all(lessThan(abs(vSurfaceGradient.xy - uWaterBackingCenter.xy), vec2(uWaterBackingInnerExtent)))) discard;
   vec2 center = vSurfaceGradient.xy;
   vec2 waveSlope = lakeWaveSlope(center);
   vec3 microDetail = lakeMicroDetail(center, footprintX, footprintY);

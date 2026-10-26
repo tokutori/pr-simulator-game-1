@@ -208,8 +208,6 @@ pub struct ApplicationWaterGeometry {
     pub far: ApplicationWaterChunkAsset,
     /// Shared horizontal/vertical displacement budgets.
     pub displacement_meters: [f64; 2],
-    /// Final far-water inner clip half-extent.
-    pub backing_inner_extent_meters: f64,
 }
 
 /// One replacement attribute pair using retained mutable CPU buffers.
@@ -697,7 +695,6 @@ impl GeometryOwner {
                     near,
                     far,
                     displacement_meters: prepared.displacement_meters,
-                    backing_inner_extent_meters: prepared.backing_inner_extent_meters,
                 },
             );
         }

@@ -61,8 +61,6 @@ pub struct ApplicationSceneProjection {
     pub venue_visible: bool,
     /// Final render-world water translation, independent of aircraft rotation and altitude.
     pub water_world_from_surface: Pose,
-    /// Final horizontal centre used by the far-water overlap clip.
-    pub water_clip_center: [f64; 2],
     /// Complete accepted mutable attributes and final articulated part transforms.
     pub geometry: Option<crate::ApplicationGeometryFrame>,
     /// Accepted simulation time for water animation.
@@ -249,10 +247,6 @@ impl SceneOwner {
                         },
                         ..Pose::IDENTITY
                     },
-                    water_clip_center: [
-                        world_from_aircraft.position.x,
-                        world_from_aircraft.position.z,
-                    ],
                     geometry: None,
                     water_time_seconds: aircraft.map_or(0.0, |pose| pose.simulation_time_seconds),
                     world_from_aircraft,
@@ -416,10 +410,6 @@ impl SceneOwner {
                     },
                     ..Pose::IDENTITY
                 },
-                water_clip_center: [
-                    world_from_aircraft.position.x,
-                    world_from_aircraft.position.z,
-                ],
                 geometry: None,
                 water_time_seconds: aircraft.map_or(0.0, |pose| pose.simulation_time_seconds),
                 world_from_aircraft,

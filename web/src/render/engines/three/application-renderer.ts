@@ -448,13 +448,12 @@ export class ThreeApplicationRenderer {
       uWaterDark: { value: new Color(assets.water.palette_srgb[0]) }, uWaterMid: { value: new Color(assets.water.palette_srgb[1]) }, uWaterLight: { value: new Color(assets.water.palette_srgb[2]) },
       uHazeColor: { value: new Color(lighting.haze_color_srgb) }, uHazeRange: { value: new Vector4(...lighting.haze_range_meters, 0, 0) },
       uSunDirection: { value: new Vector4(...lighting.sunlight_direction) }, uReflectionTexture: { value: reflection.texture },
-      uReflectionMatrix: { value: new Matrix4() }, uReflectionEnabled: { value: 0 }, uWaterBackingClip: { value: 0 },
-      uWaterBackingCenter: { value: new Vector4() }, uWaterBackingInnerExtent: { value: assets.water.geometry.backing_inner_extent_meters }
+      uReflectionMatrix: { value: new Matrix4() }, uReflectionEnabled: { value: 0 }
     };
     const defines = { LAKE_WAVE_COUNT: projection.waveCount };
     const material = new ShaderMaterial({ lights: true, defines, uniforms, vertexShader: lakeWaterVertexShader, fragmentShader: lakeWaterFragmentShader });
     cleanup.push(() => { material.dispose(); });
-    const backing = new ShaderMaterial({ lights: true, defines, uniforms: { ...uniforms, uWaterBackingClip: { value: 1 },
+    const backing = new ShaderMaterial({ lights: true, defines, uniforms: { ...uniforms,
       uReflectionEnabled: { value: 0 } }, vertexShader: lakeFilteredWaterVertexShader, fragmentShader: lakeWaterFragmentShader,
       side: DoubleSide, depthWrite: false });
     cleanup.push(() => { backing.dispose(); });
@@ -546,7 +545,6 @@ export class ThreeApplicationRenderer {
         candidate.request.assets.lighting.sunlight_irradiance);
       for (const material of candidate.water_materials) {
         uniform(material, "uTimeSeconds", drawing.scene.water_time_seconds);
-        uniform(material, "uWaterBackingCenter", new Vector4(...drawing.scene.water_clip_center, 0, 0));
       }
     }
   }

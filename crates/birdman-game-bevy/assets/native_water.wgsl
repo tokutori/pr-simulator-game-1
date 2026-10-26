@@ -25,7 +25,7 @@
 @group(#{MATERIAL_BIND_GROUP}) @binding(15) var reflection_texture: texture_2d<f32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(16) var reflection_sampler: sampler;
 @group(#{MATERIAL_BIND_GROUP}) @binding(17) var<uniform> reflection_clip_from_world: mat4x4<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(18) var<uniform> reflection_parameters: vec4<f32>;
+@group(#{MATERIAL_BIND_GROUP}) @binding(18) var<uniform> reflection_enabled: f32;
 @group(#{MATERIAL_BIND_GROUP}) @binding(19) var<uniform> detail_filter_minification: vec2<f32>;
 
 struct SurfaceProjection {
@@ -326,9 +326,6 @@ fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
     let footprint_x = dpdx(position);
     let footprint_y = dpdy(position);
     if waves_sky.w > 0.5 { return vec4<f32>(lake_sky_radiance(-view), 1.0); }
-    if reflection_parameters.y > 0.5 && max(abs(position.x - geometry_patch.x), abs(position.y - geometry_patch.y)) < reflection_parameters.z {
-        discard;
-    }
     var spacing = 1200.0;
 #ifdef VERTEX_UVS_B
     spacing = mesh.uv_b.x;
@@ -390,7 +387,7 @@ fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
     base *= vec3<f32>(0.29, 0.34, 0.37);
     var color = mix(base, reflection, fresnel * 0.45);
     let reflected_clip = reflection_clip_from_world * mesh.world_position;
-    if reflection_parameters.x > 0.5 && reflected_clip.w > 0.0 {
+    if reflection_enabled > 0.5 && reflected_clip.w > 0.0 {
         let reflected_uv = reflected_clip.xy / reflected_clip.w * vec2<f32>(0.5, -0.5)
             + vec2<f32>(0.5) + total_slope * vec2<f32>(-0.006, -0.006);
         if all(reflected_uv >= vec2<f32>(0.0)) && all(reflected_uv <= vec2<f32>(1.0)) {

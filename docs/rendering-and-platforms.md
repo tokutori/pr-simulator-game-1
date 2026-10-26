@@ -177,6 +177,7 @@ Nativeは既存DirectionalLightの2048 texel・30〜600 mの3段cascadeから、
 
 - Webは環境・品質変更時にWASMからowned typed arrayをbulk取得し、bridgeを`finally`で解放する。
 - 通常frameは準備済み画像を再利用する。
+- 遠景水面は共有meshの中央5.8 kmを開口し、6 km近景gridと100 m重ねる。WebとNativeは同じ穴付きmeshを使用し、fragmentの領域clipを行わない。
 - Three.jsはDataTexture、sampler、GLSL、mesh、反射passを所有する。
 
 - Nativeは同じ24-slot uploadを使用し、近景gridのUV1へspacingを格納する。

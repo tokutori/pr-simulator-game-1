@@ -54,12 +54,10 @@ pub struct PreparedWaterChunk {
 pub struct PreparedWaterGeometry {
     /// Complete 4-by-4 foreground partition in row-major order.
     pub near: [PreparedWaterChunk; 16],
-    /// Flat 160-km distant water backing, with a 1200-m spacing attribute.
+    /// Flat 160-km backing with a 5.8-km central opening and 1200-m spacing.
     pub far: PreparedWaterChunk,
     /// Shader-space per-axis horizontal and vertical displacement budgets.
     pub displacement_meters: [f64; 2],
-    /// Inner backing clip half-extent, leaving a 100-m foreground overlap.
-    pub backing_inner_extent_meters: f64,
 }
 
 impl PreparedWaterGeometry {
@@ -90,8 +88,21 @@ impl PreparedWaterGeometry {
             WaterQuality::High => &HIGH,
         };
         let meshes = cache.get_or_init(|| foreground(segments as usize));
-        let far =
-            FAR.get_or_init(|| build_mesh(&[-80_000.0, 80_000.0], &[1200.0; 2], 0, 1, 0, 1, 1));
+        let far = FAR.get_or_init(|| {
+            let inner = (EXTENT_METERS / 2.0 - 100.0) as f32;
+            let mut mesh = build_mesh(
+                &[-80_000.0, -inner, inner, 80_000.0],
+                &[1200.0; 4],
+                0,
+                3,
+                0,
+                3,
+                3,
+            );
+            let middle_quad = 4;
+            mesh.indices.drain(middle_quad * 6..(middle_quad + 1) * 6);
+            mesh
+        });
         Ok(Self {
             near: core::array::from_fn(|index| PreparedWaterChunk {
                 mesh: &meshes[index],
@@ -104,7 +115,6 @@ impl PreparedWaterGeometry {
                 frustum_culled: false,
             },
             displacement_meters: displacement,
-            backing_inner_extent_meters: EXTENT_METERS / 2.0 - 100.0,
         })
     }
 }
@@ -364,17 +374,32 @@ mod tests {
         }
         assert!(!geometry.far.frustum_culled);
         assert!(core::ptr::eq(geometry.far.mesh, replacement.far.mesh));
-        assert_eq!(
-            geometry.far.mesh.positions,
-            vec![
-                [-80_000.0, 0.0, -80_000.0],
-                [80_000.0, 0.0, -80_000.0],
-                [-80_000.0, 0.0, 80_000.0],
-                [80_000.0, 0.0, 80_000.0]
-            ]
-        );
-        assert_eq!(geometry.far.mesh.grid_spacing, vec![1200.0; 4]);
-        assert_eq!(geometry.backing_inner_extent_meters, 2900.0);
+        let far = geometry.far.mesh;
+        assert_eq!(far.positions.len(), 16);
+        assert_eq!(far.indices.len(), 48);
+        assert_eq!(far.normals, vec![[0.0, 1.0, 0.0]; 16]);
+        assert_eq!(far.grid_spacing, vec![1200.0; 16]);
+        assert_eq!(far.neutral_bounds.minimum, [-80_000.0, 0.0, -80_000.0]);
+        assert_eq!(far.neutral_bounds.maximum, [80_000.0, 0.0, 80_000.0]);
+        let mut area = 0.0;
+        for triangle in far.indices.chunks_exact(3) {
+            let points: [[f32; 3]; 3] =
+                core::array::from_fn(|index| far.positions[triangle[index] as usize]);
+            assert!(
+                points.iter().all(|point| point[0] <= -2900.0)
+                    || points.iter().all(|point| point[0] >= 2900.0)
+                    || points.iter().all(|point| point[2] <= -2900.0)
+                    || points.iter().all(|point| point[2] >= 2900.0)
+            );
+            let [origin, second, third] = points;
+            let normal_y = (f64::from(second[2]) - f64::from(origin[2]))
+                * (f64::from(third[0]) - f64::from(origin[0]))
+                - (f64::from(second[0]) - f64::from(origin[0]))
+                    * (f64::from(third[2]) - f64::from(origin[2]));
+            assert!(normal_y > 0.0);
+            area += normal_y / 2.0;
+        }
+        assert_eq!(area, 160_000.0_f64.powi(2) - 5800.0_f64.powi(2));
         assert!(matches!(
             PreparedWaterGeometry::try_new(WaterQuality::Low, &projection),
             Err(LakeRenderModelError::InvalidMeshSpacing)

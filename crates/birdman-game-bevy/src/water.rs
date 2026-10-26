@@ -53,7 +53,7 @@ pub(crate) struct WaterMaterial {
     #[uniform(17)]
     pub(crate) reflection_clip_from_world: Mat4,
     #[uniform(18)]
-    pub(crate) reflection_parameters: Vec4,
+    pub(crate) reflection_enabled: f32,
     #[uniform(19)]
     detail_filter_minification: Vec2,
 }
@@ -93,12 +93,7 @@ impl WaterMaterial {
                 water.detail_amplitude_scale as f32,
                 0.0,
             ),
-            geometry_patch: Vec4::new(
-                0.0,
-                0.0,
-                0.0,
-                water.geometry.backing_inner_extent_meters as f32,
-            ),
+            geometry_patch: Vec4::new(0.0, 0.0, 0.0, 1.0),
             geometry_waves: projection.wave_k_amplitude().map(Vec4::from_array),
             geometry_motion: projection.wave_omega_phase().map(Vec4::from_array),
             geometry_parameters: Vec4::new(
@@ -125,12 +120,7 @@ impl WaterMaterial {
             ),
             reflection_texture: Some(reflection),
             reflection_clip_from_world: Mat4::IDENTITY,
-            reflection_parameters: Vec4::new(
-                0.0,
-                0.0,
-                water.geometry.backing_inner_extent_meters as f32,
-                0.0,
-            ),
+            reflection_enabled: 0.0,
             detail_filter_minification: Vec2::from_array(projection.detail_filter_minification()),
         }
     }
@@ -138,7 +128,6 @@ impl WaterMaterial {
     pub(crate) fn far_surface(&self) -> Self {
         let mut material = self.clone();
         material.geometry_patch.w = 0.0;
-        material.reflection_parameters.y = 1.0;
         material
     }
 
@@ -146,7 +135,7 @@ impl WaterMaterial {
         let mut material = self.clone();
         material.waves_sky.w = 1.0;
         material.geometry_patch = Vec4::ZERO;
-        material.reflection_parameters = Vec4::ZERO;
+        material.reflection_enabled = 0.0;
         material
     }
 

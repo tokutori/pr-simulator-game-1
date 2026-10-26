@@ -2639,16 +2639,6 @@ export interface ApplicationSceneProjection {
      */
     readonly venue_visible: boolean;
     /**
-     * Final horizontal centre used by the far-water overlap clip.
-     *
-     * @minItems 2
-     * @maxItems 2
-     */
-    readonly water_clip_center: readonly [
-        number,
-        number
-    ];
-    /**
      * Accepted simulation time for water animation.
      */
     readonly water_time_seconds: number;
@@ -4642,10 +4632,6 @@ export interface ApplicationWaterDetailAsset {
  * Complete water geometry selected by the shared quality policy.
  */
 export interface ApplicationWaterGeometry {
-    /**
-     * Final far-water inner clip half-extent.
-     */
-    readonly backing_inner_extent_meters: number;
     /**
      * Shared horizontal/vertical displacement budgets.
      *
