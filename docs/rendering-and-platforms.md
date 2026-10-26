@@ -69,7 +69,7 @@
 - GPU upload、screenshot/readback、present待機、CPU全体の時間と区別する。
 - 使用するpipelineの準備が完了したframeを有効sampleとする。Auto用queryはAuto選択中に発行する。
 - Webは最初の描画前にGPU計測能力を確認する。GPU計測非対応のAutoは解像度50%・shadow 512・水面Lowの軽量固定profileを要求し、交換ACK後に原因付きで表示する。Manualへ戻すと保持した三値を復元する。
-- Webの資源準備はtextureと反射targetを初期化し、`compileAsync`の完了後にdefault framebufferと反射targetで初回使用を確認する。ゼロ面積scissorで画素書込みを抑え、近景・遠景水面の使用とshader原原因を確認してから準備完了を返す。後発のXRなどのprogram失敗も実描画時に共有ownerへ通知する。
+- Webの資源準備はtextureと反射targetを初期化し、`compileAsync`の完了後に公開programのlink・shader compile状態を認可する。反射targetでmain・reflection両cameraの初回使用と近景・遠景水面のuploadを確認し、可視default framebufferへの準備描画を省く。shader失敗はpass・状態・context喪失・原logを共有ownerへ通知し、default用programの実初回使用と後発XR variantは通常描画時にも確認する。
 - 背景内部program・shadow pass・後着decalのuploadは準備時の初回使用と後続描画のCPU/GPU観測へ含める。shadow描画量はscissorによる画素書込み抑制と区別する。
 
 - WebのCSS寸法は保持し、元のDPRと選択倍率の積をThree.jsの公開`setPixelRatio`へ渡す。

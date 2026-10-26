@@ -190,6 +190,28 @@ export class ThreeApplicationRenderer {
     if (failures.length > 0) throw new AggregateError(failures, "GPU compilation failed");
     if (this.gpu_failure !== null) throw this.gpu_failure.cause;
     if (preparation.cancelled) return;
+    const gl = this.renderer.getContext();
+    const programs = this.renderer.info.programs;
+    if (gl.isContextLost() || programs === null || programs.length === 0) {
+      const cause = new Error(`GPU preparation programs are unavailable: contextLost=${String(gl.isContextLost())}; count=${String(programs?.length ?? null)}`);
+      this.gpu_failure ??= { cause, reported: false };
+      throw cause;
+    }
+    for (const compiled of programs) {
+      const program = compiled.program;
+      if (!(program instanceof WebGLProgram) || !gl.isProgram(program)
+        || !gl.isShader(compiled.vertexShader) || !gl.isShader(compiled.fragmentShader)) {
+        const cause = new Error(`GPU preparation program is unavailable: name=${compiled.name}; contextLost=${String(gl.isContextLost())}`);
+        this.gpu_failure ??= { cause, reported: false };
+        throw cause;
+      }
+      if (gl.getProgramParameter(program, gl.LINK_STATUS) !== true
+        || gl.getShaderParameter(compiled.vertexShader, gl.COMPILE_STATUS) !== true
+        || gl.getShaderParameter(compiled.fragmentShader, gl.COMPILE_STATUS) !== true) {
+        const cause = this.shaderFailure(gl, program, compiled.vertexShader, compiled.fragmentShader, `prepare-program:${compiled.name}`);
+        throw cause;
+      }
+    }
     const savedTarget = this.renderer.getRenderTarget();
     const savedViewport = this.renderer.getViewport(new Vector4());
     const savedScissor = this.renderer.getScissor(new Vector4());
@@ -200,35 +222,38 @@ export class ThreeApplicationRenderer {
     const savedShadowNeedsUpdate = this.renderer.shadowMap.needsUpdate;
     const uncullable: Object3D[] = [];
     const used = new Set<Material>();
-    const materialCallbacks = candidate.water_materials.map(material => ({ material,
-      callback: material.onBeforeRender.bind(material), descriptor: Object.getOwnPropertyDescriptor(material, "onBeforeRender") }));
+    const materialCallbacks = candidate.water_materials.map(material => {
+      const reflectionTexture: unknown = material.uniforms["uReflectionTexture"]?.value;
+      return { material, callback: material.onBeforeRender.bind(material),
+        descriptor: Object.getOwnPropertyDescriptor(material, "onBeforeRender"), reflectionTexture };
+    });
     try {
       candidate.scene.traverse(object => {
         if (object.frustumCulled) { uncullable.push(object); object.frustumCulled = false; }
       });
       for (const { material, callback } of materialCallbacks) {
+        uniform(material, "uReflectionTexture", null);
         material.onBeforeRender = (...args) => {
           used.add(material);
           callback.apply(material, args);
         };
       }
       this.renderer.xr.enabled = false;
-      this.renderer.setRenderTarget(null);
+      this.renderer.setRenderTarget(candidate.reflection);
       this.renderer.setViewport(0, 0, 1, 1);
       this.renderer.setScissor(0, 0, 0, 0);
       this.renderer.setScissorTest(true);
       this.renderer.shadowMap.autoUpdate = false;
       this.renderer.shadowMap.needsUpdate = true;
-      this.render(candidate.scene, this.camera);
+      this.render(candidate.scene, this.camera, "prepare-main-offscreen");
       candidate.scene.background = null;
       this.renderer.shadowMap.needsUpdate = false;
       this.renderer.setRenderTarget(candidate.reflection);
       this.renderer.setViewport(0, 0, 1, 1);
       this.renderer.setScissor(0, 0, 0, 0);
       this.renderer.setScissorTest(true);
-      this.render(candidate.scene, this.reflection_camera);
+      this.render(candidate.scene, this.reflection_camera, "prepare-reflection");
       if (candidate.water_materials.some(material => !used.has(material))) failures.push(new Error("Prepared water material did not reach its first drawing use"));
-      const gl = this.renderer.getContext();
       const error = gl.getError();
       if (error !== gl.NO_ERROR) {
         const cause = new Error(`GPU context reported WebGL error at preparation: ${String(error)}`);
@@ -243,7 +268,8 @@ export class ThreeApplicationRenderer {
         () => { this.renderer.setRenderTarget(savedTarget); }, () => { this.renderer.setViewport(savedViewport); },
         () => { this.renderer.setScissor(savedScissor); }, () => { this.renderer.setScissorTest(savedScissorTest); },
         () => {
-          for (const { material, descriptor } of materialCallbacks) {
+          for (const { material, descriptor, reflectionTexture } of materialCallbacks) {
+            uniform(material, "uReflectionTexture", reflectionTexture);
             if (descriptor !== undefined) Object.defineProperty(material, "onBeforeRender", descriptor);
             else if (!Reflect.deleteProperty(material, "onBeforeRender")) throw new Error("Water drawing callback restoration failed");
           }
@@ -256,7 +282,23 @@ export class ThreeApplicationRenderer {
     if (failures.length > 0) throw new AggregateError(failures, "GPU first-use preparation failed");
   }
 
-  private render(scene: Scene, camera: PerspectiveCamera): void {
+  private shaderFailure(gl: WebGLRenderingContext | WebGL2RenderingContext, program: WebGLProgram,
+    vertex: WebGLShader, fragment: WebGLShader, pass: string): Error {
+    const vertexSource = gl.getShaderSource(vertex);
+    const fragmentSource = gl.getShaderSource(fragment);
+    const linkStatus: unknown = gl.getProgramParameter(program, gl.LINK_STATUS);
+    const vertexCompileStatus: unknown = gl.getShaderParameter(vertex, gl.COMPILE_STATUS);
+    const fragmentCompileStatus: unknown = gl.getShaderParameter(fragment, gl.COMPILE_STATUS);
+    const cause = new Error(`GPU shader link failed: ${JSON.stringify({ pass,
+      contextLost: gl.isContextLost(), glError: gl.getError(), linkStatus, vertexCompileStatus, fragmentCompileStatus,
+      vertexDefines: vertexSource?.match(/^#define (?:SHADER_NAME|SHADER_TYPE|LAKE_WAVE_COUNT).*$/gm) ?? null,
+      fragmentDefines: fragmentSource?.match(/^#define (?:SHADER_NAME|SHADER_TYPE|LAKE_WAVE_COUNT).*$/gm) ?? null,
+      program: gl.getProgramInfoLog(program), vertex: gl.getShaderInfoLog(vertex), fragment: gl.getShaderInfoLog(fragment) })}`);
+    this.gpu_failure ??= { cause, reported: false };
+    return cause;
+  }
+
+  private render(scene: Scene, camera: PerspectiveCamera, pass = "main"): void {
     if (this.gpu_failure !== null) throw this.gpu_failure.cause;
     const check = this.renderer.debug.checkShaderErrors;
     const previous = this.renderer.debug.onShaderError;
@@ -264,8 +306,7 @@ export class ThreeApplicationRenderer {
     try {
       this.renderer.debug.checkShaderErrors = true;
       this.renderer.debug.onShaderError = (gl, program, vertex, fragment) => {
-        const cause = new Error(`GPU shader link failed: program=${gl.getProgramInfoLog(program) ?? ""}; vertex=${gl.getShaderInfoLog(vertex) ?? ""}; fragment=${gl.getShaderInfoLog(fragment) ?? ""}`);
-        this.gpu_failure ??= { cause, reported: false };
+        const cause = this.shaderFailure(gl, program, vertex, fragment, pass);
         failures.push(cause);
         try { previous?.(gl, program, vertex, fragment); } catch (cause) { failures.push(cause); }
       };
@@ -850,7 +891,7 @@ export class ThreeApplicationRenderer {
       this.renderer.setScissorTest(false);
       this.renderer.setClearColor(0x000000, 0);
       this.renderer.clear();
-      this.render(active.scene, this.reflection_camera);
+      this.render(active.scene, this.reflection_camera, "reflection");
     } catch (cause) { failures.push(cause); }
     finally {
       for (const restore of [() => { active.scene.background = background; }, () => { this.renderer.xr.enabled = xr; },

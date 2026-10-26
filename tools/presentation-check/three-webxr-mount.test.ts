@@ -10,6 +10,7 @@ import { applicationPlatformFixture } from "../game-check/application-fixture.js
 import { gpuTimerFixture } from "./gpu-timer-fixture.js";
 
 interface Draw {
+  readonly defaultFramebuffer: boolean;
   readonly eyes: Matrix4[];
   readonly projections: Matrix4[];
   readonly panel: Matrix4 | null;
@@ -50,6 +51,7 @@ vi.mock("three", async importOriginal => {
     reflectionFault = false;
     shaderFault = false;
     readonly debug: WebGLRenderer["debug"] = { checkShaderErrors: true, diagnostics: { keywords: true }, onShaderError: null };
+    readonly info = { programs: [] as { name: string; program: unknown; vertexShader: WebGLShader; fragmentShader: WebGLShader }[] };
     private readonly size = new actual.Vector2(1280, 720);
     private readonly viewport = new actual.Vector4(0, 0, 1280, 720);
     private readonly scissor = this.viewport.clone();
@@ -59,6 +61,15 @@ vi.mock("three", async importOriginal => {
     private scissorTest = false;
     private target: WebGLRenderTarget | null = null;
     private readonly gl = { ...this.timer.gl, NO_ERROR: 0, getError: () => 0,
+      LINK_STATUS: 35714, COMPILE_STATUS: 35713,
+      isProgram: (program: unknown) => program instanceof WebGLProgram,
+      isShader: (shader: unknown) => shader !== null && typeof shader === "object",
+      isContextLost: () => false,
+      getProgramParameter: () => !this.shaderFault,
+      getShaderParameter: () => true,
+      getProgramInfoLog: () => this.shaderFault ? "mobile program link rejected" : "",
+      getShaderInfoLog: (shader: WebGLShader) => this.shaderFault && shader === this.info.programs[0]?.fragmentShader ? "mobile shader compiler cause" : null,
+      getShaderSource: () => "#define SHADER_NAME LakeWater\n#define LAKE_WAVE_COUNT 8",
       getContextAttributes: () => ({ xrCompatible: true, antialias: false, depth: false, stencil: false }),
       getExtension: (name: string) => capture.timing && name === "EXT_disjoint_timer_query_webgl2" ? this.timer.gl.getExtension() : null };
     constructor() {
@@ -97,7 +108,11 @@ vi.mock("three", async importOriginal => {
     initTexture(): void {}
     initRenderTarget(): void {}
     clear(): void {}
-    compileAsync(scene: Scene): Promise<void> { this.scene = scene; return this.compile; }
+    compileAsync(scene: Scene): Promise<void> {
+      this.scene = scene;
+      this.info.programs.push({ name: "LakeWater", program: new WebGLProgram(), vertexShader: {}, fragmentShader: {} });
+      return this.compile;
+    }
     dispose(): void { this.disposed(); }
     render(scene: Scene, camera: Camera): void {
       const reflected = !this.xr.enabled && this.target !== null && !("isXRRenderTarget" in this.target && this.target.isXRRenderTarget);
@@ -112,20 +127,22 @@ vi.mock("three", async importOriginal => {
         if (!(object.geometry instanceof actual.BufferGeometry)) throw new Error("Mesh geometry is unavailable");
         for (const material of Array.isArray(object.material) ? object.material : [object.material]) {
           if (!(material instanceof actual.Material)) throw new Error("Mesh material is unavailable");
+          if (this.target !== null && material instanceof actual.ShaderMaterial
+            && material.uniforms["uReflectionTexture"]?.value === this.target.texture) throw new Error("Framebuffer texture feedback loop");
           material.onBeforeRender(this as unknown as WebGLRenderer, scene, camera,
             object.geometry as Parameters<Material["onBeforeRender"]>[3], object, new actual.Group());
           if (this.shaderFault && material instanceof actual.ShaderMaterial) {
+            const compiled = this.info.programs[0];
+            this.debug.onShaderError?.(this.gl as unknown as WebGLRenderingContext,
+              compiled?.program as Parameters<NonNullable<WebGLRenderer["debug"]["onShaderError"]>>[1], compiled?.vertexShader ?? {}, compiled?.fragmentShader ?? {});
             this.shaderFault = false;
-            const gl = { getProgramInfoLog: () => "mobile program link rejected", getShaderInfoLog: () => "mobile shader compiler cause" };
-            this.debug.onShaderError?.(gl as unknown as WebGLRenderingContext,
-              {} as Parameters<NonNullable<WebGLRenderer["debug"]["onShaderError"]>>[1], {}, {});
           }
         }
         if (object.geometry instanceof actual.CircleGeometry) cursors.push(object.matrixWorld.clone());
         if (object.material instanceof actual.MeshBasicMaterial && object.material.map instanceof actual.CanvasTexture && object.renderOrder === 2000) panel = object.matrixWorld.clone();
       });
       const eyes = "cameras" in current ? (current as ArrayCamera).cameras : [];
-      this.draws.push({ reflected, panel, cursors, eyes: eyes.map(eye => eye.matrixWorld.clone()), projections: eyes.map(eye => eye.projectionMatrix.clone()) });
+      this.draws.push({ defaultFramebuffer: this.target === null, reflected, panel, cursors, eyes: eyes.map(eye => eye.matrixWorld.clone()), projections: eyes.map(eye => eye.projectionMatrix.clone()) });
     }
   } };
 });
@@ -203,7 +220,8 @@ async function fixture() {
   Object.defineProperty(browser.navigator, "xr", { value: { requestSession: () => Promise.resolve(session) } });
   for (const [key, value] of Object.entries({ window: browser, document: browser.document, navigator: browser.navigator,
     HTMLElement: browser.HTMLElement, HTMLInputElement: browser.HTMLInputElement, HTMLSelectElement: browser.HTMLSelectElement,
-    MutationObserver: browser.MutationObserver, getComputedStyle: browser.getComputedStyle.bind(browser), XRWebGLLayer: XrLayer })) vi.stubGlobal(key, value);
+    MutationObserver: browser.MutationObserver, getComputedStyle: browser.getComputedStyle.bind(browser), XRWebGLLayer: XrLayer,
+    WebGLProgram: class { readonly [Symbol.toStringTag] = "WebGLProgram"; } })) vi.stubGlobal(key, value);
   vi.spyOn(browser.HTMLCanvasElement.prototype, "getContext").mockImplementation(function (this: HTMLCanvasElement) {
     const context = { canvas: this, font: "16px Arial", measureText(value: string) {
       const size = Number.parseFloat(context.font.match(/([\d.]+)px/)?.[1] ?? "16");
@@ -298,7 +316,12 @@ describe("Aggregate runtime through the real Three WebXRManager", () => {
       for (const material of water) {
         expect(material.defines["LAKE_WAVE_COUNT"]).toBe(waveCount);
         expect(material.uniforms["uWaveCount"]).toBeUndefined();
+        expect(material.uniforms["uReflectionTexture"]?.value).toHaveProperty("isTexture", true);
       }
+      expect(state.driver.draws.length).toBeGreaterThan(0);
+      expect(state.driver.draws.some(draw => draw.defaultFramebuffer)).toBe(false);
+      expect(state.driver.getRenderTarget()).toBeNull();
+      expect(state.driver.getScissorTest()).toBe(false);
       if (state.driver.frame === null) throw new Error("Screen animation was not started");
       state.driver.frame(1);
       const query = state.drawing().graphics.query;
@@ -446,9 +469,13 @@ describe("Aggregate runtime through the real Three WebXRManager", () => {
           const details = state.browser.document.querySelector("#game-boot-diagnostic");
           expect(details?.textContent).toContain("mobile program link rejected");
           expect(details?.textContent).toContain("mobile shader compiler cause");
+          expect(details?.textContent).toContain('"linkStatus":false');
+          expect(details?.textContent).toContain('"vertexCompileStatus":true');
+          expect(details?.textContent).toContain('"vertex":null');
+          expect(details?.textContent).toContain('"contextLost":false');
           expect(state.updates.mock.calls.some(([json]) => json.includes('"committed"'))).toBe(false);
           expect(state.updates.mock.calls.filter(([json]) => json.includes('"kind":"renderer_failed"'))).toHaveLength(1);
-          expect(shaderError).toHaveBeenCalledOnce();
+          expect(shaderError).not.toHaveBeenCalled();
           expect(state.driver.debug.onShaderError).toBe(shaderError);
           expect(state.driver.getRenderTarget()).toBeNull();
           expect(state.driver.getScissorTest()).toBe(false);
