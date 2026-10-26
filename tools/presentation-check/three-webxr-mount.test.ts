@@ -1,7 +1,7 @@
 import { IDBFactory } from "fake-indexeddb";
 import { Window } from "happy-dom";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { Camera, Color, Material, Matrix4, Mesh, PerspectiveCamera, Quaternion, Vector2, Vector3, Vector4, WebGLRenderTarget } from "three";
+import { Camera, Color, DirectionalLight, Material, Matrix4, Mesh, PerspectiveCamera, Quaternion, ShaderMaterial, Vector2, Vector3, Vector4, WebGLRenderTarget } from "three";
 import type { ArrayCamera, Scene, WebGLRenderer } from "three";
 import { WebXRManager } from "three/src/renderers/webxr/WebXRManager.js";
 import { ApplicationRuntimeBridge } from "../../web/pkg/birdman_game_wasm.js";
@@ -26,6 +26,8 @@ interface Driver {
   scene: Scene | null;
   sizeFaults: number;
   reflectionFault: boolean;
+  shaderFault: boolean;
+  readonly debug: WebGLRenderer["debug"];
   getRenderTarget(): WebGLRenderTarget | null;
   getClearAlpha(): number;
   getScissorTest(): boolean;
@@ -46,6 +48,8 @@ vi.mock("three", async importOriginal => {
     scene: Scene | null = null;
     sizeFaults = 0;
     reflectionFault = false;
+    shaderFault = false;
+    readonly debug: WebGLRenderer["debug"] = { checkShaderErrors: true, diagnostics: { keywords: true }, onShaderError: null };
     private readonly size = new actual.Vector2(1280, 720);
     private readonly viewport = new actual.Vector4(0, 0, 1280, 720);
     private readonly scissor = this.viewport.clone();
@@ -54,7 +58,7 @@ vi.mock("three", async importOriginal => {
     private pixelRatio = 1;
     private scissorTest = false;
     private target: WebGLRenderTarget | null = null;
-    private readonly gl = { ...this.timer.gl,
+    private readonly gl = { ...this.timer.gl, NO_ERROR: 0, getError: () => 0,
       getContextAttributes: () => ({ xrCompatible: true, antialias: false, depth: false, stencil: false }),
       getExtension: (name: string) => capture.timing && name === "EXT_disjoint_timer_query_webgl2" ? this.timer.gl.getExtension() : null };
     constructor() {
@@ -105,6 +109,18 @@ vi.mock("three", async importOriginal => {
       const cursors: Matrix4[] = [];
       scene.traverseVisible(object => {
         if (!(object instanceof actual.Mesh) || !current.layers.test(object.layers)) return;
+        if (!(object.geometry instanceof actual.BufferGeometry)) throw new Error("Mesh geometry is unavailable");
+        for (const material of Array.isArray(object.material) ? object.material : [object.material]) {
+          if (!(material instanceof actual.Material)) throw new Error("Mesh material is unavailable");
+          material.onBeforeRender(this as unknown as WebGLRenderer, scene, camera,
+            object.geometry as Parameters<Material["onBeforeRender"]>[3], object, new actual.Group());
+          if (this.shaderFault && material instanceof actual.ShaderMaterial) {
+            this.shaderFault = false;
+            const gl = { getProgramInfoLog: () => "mobile program link rejected", getShaderInfoLog: () => "mobile shader compiler cause" };
+            this.debug.onShaderError?.(gl as unknown as WebGLRenderingContext,
+              {} as Parameters<NonNullable<WebGLRenderer["debug"]["onShaderError"]>>[1], {}, {});
+          }
+        }
         if (object.geometry instanceof actual.CircleGeometry) cursors.push(object.matrixWorld.clone());
         if (object.material instanceof actual.MeshBasicMaterial && object.material.map instanceof actual.CanvasTexture && object.renderOrder === 2000) panel = object.matrixWorld.clone();
       });
@@ -249,10 +265,12 @@ describe("Aggregate runtime through the real Three WebXRManager", () => {
   describe("tracked presentation", () => {
   let prepared: Awaited<ReturnType<typeof fixture>> | null = null;
   let materialProbe: { name: string; transparent: boolean; depthWrite: boolean } | undefined;
+  let waveCount: number | undefined;
   beforeAll(async () => {
     const { ThreeApplicationRenderer } = await import("../../web/src/render/engines/three/application-renderer.js");
     const prepare = Object.getOwnPropertyDescriptor(ThreeApplicationRenderer.prototype, "prepare")?.value as InstanceType<typeof ThreeApplicationRenderer>["prepare"];
     vi.spyOn(ThreeApplicationRenderer.prototype, "prepare").mockImplementation(function (this: InstanceType<typeof ThreeApplicationRenderer>, request) {
+      waveCount = request.assets.water.projection.waveCount;
       const asset = request.assets.scene?.meshes[0];
       const source = asset?.materials[0];
       if (materialProbe === undefined && asset !== undefined && source !== undefined) {
@@ -272,6 +290,15 @@ describe("Aggregate runtime through the real Three WebXRManager", () => {
       if (!(mesh instanceof Mesh) || !(mesh.material instanceof Material)) throw new Error("Prepared material is unavailable");
       expect(mesh.material.transparent).toBe(materialProbe.transparent);
       expect(mesh.material.depthWrite).toBe(materialProbe.depthWrite);
+      const water: ShaderMaterial[] = [];
+      state.driver.scene?.traverse(object => {
+        if (object instanceof Mesh && object.material instanceof ShaderMaterial) water.push(object.material);
+      });
+      expect(new Set(water).size).toBe(2);
+      for (const material of water) {
+        expect(material.defines["LAKE_WAVE_COUNT"]).toBe(waveCount);
+        expect(material.uniforms["uWaveCount"]).toBeUndefined();
+      }
       if (state.driver.frame === null) throw new Error("Screen animation was not started");
       state.driver.frame(1);
       const query = state.drawing().graphics.query;
@@ -393,29 +420,44 @@ describe("Aggregate runtime through the real Three WebXRManager", () => {
   });
   });
 
-  it.each(["cancelled cleanup", "commit rollback"])("keeps shutdown alive until the actual %s terminal", async fault => {
+  it.each(["cancelled cleanup", "commit rollback", "shader link"])("keeps shutdown alive until the actual %s terminal", async fault => {
     let complete: (() => void) | undefined;
     capture.compilation = new Promise(resolve => { complete = resolve; });
     const state = await fixture();
     const diagnostic = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const sun = state.driver.scene?.children.find(object => object instanceof DirectionalLight);
+    if (!(sun instanceof DirectionalLight)) throw new Error("Prepared directional light is unavailable");
+    const shadowRelease = vi.spyOn(sun.shadow, "dispose");
+    const shaderError = vi.fn();
     try {
       if (fault === "cancelled cleanup") {
         vi.spyOn(WebGLRenderTarget.prototype, "dispose").mockImplementationOnce(() => { throw new Error("physical target release failed"); });
         state.dispose();
-      } else state.driver.sizeFaults = 2;
+      } else if (fault === "commit rollback") state.driver.sizeFaults = 2;
+      else { state.driver.shaderFault = true; state.driver.debug.onShaderError = shaderError; }
       expect(state.free).not.toHaveBeenCalled();
       if (complete === undefined) throw new Error("Deferred shader I/O was not created");
       complete();
-      if (fault === "commit rollback") {
+      if (fault !== "cancelled cleanup") {
         await flush();
-        expect(state.updates.mock.calls.some(([json]) => json.includes('"binding_lost"'))).toBe(true);
+        if (fault === "commit rollback") expect(state.updates.mock.calls.some(([json]) => json.includes('"binding_lost"'))).toBe(true);
+        else {
+          expect(state.updates.mock.calls.some(([json]) => json.includes("mobile program link rejected") && json.includes("mobile shader compiler cause"))).toBe(true);
+          expect(state.updates.mock.calls.some(([json]) => json.includes('"committed"'))).toBe(false);
+          expect(state.updates.mock.calls.filter(([json]) => json.includes('"kind":"renderer_failed"'))).toHaveLength(1);
+          expect(shaderError).toHaveBeenCalledOnce();
+          expect(state.driver.debug.onShaderError).toBe(shaderError);
+          expect(state.driver.getRenderTarget()).toBeNull();
+          expect(state.driver.getScissorTest()).toBe(false);
+        }
         state.dispose();
       }
       await flush();
       expect(state.free).toHaveBeenCalledOnce();
       expect(state.driver.disposed).toHaveBeenCalledOnce();
+      expect(shadowRelease).toHaveBeenCalled();
       if (fault === "commit rollback") expect(diagnostic).toHaveBeenCalled();
-      else expect(state.updates.mock.calls.some(([json]) => json.includes("physical target release failed"))).toBe(true);
+      else if (fault === "cancelled cleanup") expect(state.updates.mock.calls.some(([json]) => json.includes("physical target release failed"))).toBe(true);
     } finally { state.dispose(); await flush(); await state.browser.happyDOM.abort(); }
   });
 });

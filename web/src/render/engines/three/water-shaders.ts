@@ -40,9 +40,10 @@ mat3 lakeWaveModulation(vec2 point, vec2 direction, float waveNumber, float seed
 `;
 
 export const LAKE_WAVE_PROJECTION_GLSL = /* glsl */ `
-uniform vec4 uWaveKAmplitude[24];
-uniform vec4 uWaveOmegaPhase[24];
-uniform int uWaveCount;
+#if LAKE_WAVE_COUNT > 0
+uniform vec4 uWaveKAmplitude[LAKE_WAVE_COUNT];
+uniform vec4 uWaveOmegaPhase[LAKE_WAVE_COUNT];
+#endif
 ${LAKE_WAVE_PACKET_GLSL}
 
 struct LakeWaveProjection {
@@ -69,8 +70,8 @@ LakeWaveProjection projectLakeWaves(vec3 localPosition, vec2 worldXZ, float grid
   result.crest = 0.0;
   result.slopeEnergy = 0.0;
   vec2 spacingGradient = lakeGridSpacingGradient(localPosition.xz, spacingGradientMagnitude);
-  for (int index = 0; index < 24; index++) {
-    if (index < uWaveCount) {
+  #if LAKE_WAVE_COUNT > 0
+  for (int index = 0; index < LAKE_WAVE_COUNT; index++) {
       vec4 wave = uWaveKAmplitude[index];
       vec4 timing = uWaveOmegaPhase[index];
       vec2 direction = wave.xy;
@@ -97,8 +98,8 @@ LakeWaveProjection projectLakeWaves(vec3 localPosition, vec2 worldXZ, float grid
       result.heightGradient += amplitude * 3.0 * crestBasis * crestBasis * phaseCosine * phaseGradient
         + (2.0 * crestBasis * crestBasis * crestBasis - 0.625) * amplitudeGradient;
       result.crest += phaseSine * waveNumber * amplitude;
-    }
   }
+  #endif
   return result;
 }
 `;
@@ -194,9 +195,10 @@ uniform vec4 uWindVelocity;
 uniform float uDetailScale;
 uniform float uVisualWaveHeight;
 uniform float uTimeSeconds;
-uniform vec4 uWaveKAmplitude[24];
-uniform vec4 uWaveOmegaPhase[24];
-uniform int uWaveCount;
+#if LAKE_WAVE_COUNT > 0
+uniform vec4 uWaveKAmplitude[LAKE_WAVE_COUNT];
+uniform vec4 uWaveOmegaPhase[LAKE_WAVE_COUNT];
+#endif
 uniform vec3 uWaterDark;
 uniform vec3 uWaterMid;
 uniform vec3 uWaterLight;
@@ -245,8 +247,8 @@ vec2 lakeWaveSlope(vec2 worldXZ) {
   // filtering fades subpixel wavelengths smoothly as they recede from the eye.
   float waveSlopeX = 0.0;
   float waveSlopeZ = 0.0;
-  int componentCount = min(uWaveCount, 24);
-  for (int i = 0; i < componentCount; i++) {
+  #if LAKE_WAVE_COUNT > 0
+  for (int i = 0; i < LAKE_WAVE_COUNT; i++) {
     vec4 ka = uWaveKAmplitude[i];
     vec4 op = uWaveOmegaPhase[i];
     float k = ka.z;
@@ -267,6 +269,7 @@ vec2 lakeWaveSlope(vec2 worldXZ) {
       waveSlopeZ += gradient.y;
     }
   }
+  #endif
   return vec2(waveSlopeX, waveSlopeZ);
 }
 

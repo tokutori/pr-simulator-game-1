@@ -69,8 +69,8 @@
 - GPU upload、screenshot/readback、present待機、CPU全体の時間と区別する。
 - 使用するpipelineの準備が完了したframeを有効sampleとする。Auto用queryはAuto選択中に発行する。
 - Webは最初の描画前にGPU計測能力を確認する。GPU計測非対応のAutoは解像度50%・shadow 512・水面Lowの軽量固定profileを要求し、交換ACK後に原因付きで表示する。Manualへ戻すと保持した三値を復元する。
-- Webの初期化は実環境・viewport・Auto資源を適用し、現在のtextureと反射targetを初期化してから主描画・反射のmaterialを順に`compileAsync`で準備する。完了後にframe loopを開始する。
-- 背景内部program・shadow pass・後着decalのuploadは初回描画のCPU/GPU観測へ含める。
+- Webの資源準備はtextureと反射targetを初期化し、`compileAsync`の完了後にdefault framebufferと反射targetで初回使用を確認する。ゼロ面積scissorで画素書込みを抑え、近景・遠景水面の使用とshader原原因を確認してから準備完了を返す。後発のXRなどのprogram失敗も実描画時に共有ownerへ通知する。
+- 背景内部program・shadow pass・後着decalのuploadは準備時の初回使用と後続描画のCPU/GPU観測へ含める。shadow描画量はscissorによる画素書込み抑制と区別する。
 
 - WebのCSS寸法は保持し、元のDPRと選択倍率の積をThree.jsの公開`setPixelRatio`へ渡す。
 - Nativeは整数物理寸法へ共有`physical_size`を適用する。
@@ -120,6 +120,7 @@
 - choppinessは$q=\min(4.5,0.56/\sum_i B_i)$にFloat32用の余裕を加える。
 - 実数解析では水平変位のLipschitz上界を1未満へ抑える。
 - GPUでの数値・描画結果は[検証](verification.md)の本番shader試験で確認する。
+- Web水面は共有Rustの確定波成分数をcompile定数へ転写し、近景・遠景の配列とloopを実成分数へ特殊化する。波式・画素微分・detailの平均と分散は同じ投影を使用する。
 
 visibilityと実空間勾配の両channelがすべて厳密0の成分は、packet・位相・三角関数の評価を省略できる。非減衰のslope energyは元の成分順ですべて加算し、crestの正規化を保持する。
 

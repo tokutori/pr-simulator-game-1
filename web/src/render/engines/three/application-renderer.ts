@@ -75,6 +75,7 @@ export class ThreeApplicationRenderer {
   private presented_id: number | null = null;
   private next_source = 0;
   private disposed = false;
+  private gpu_failure: { cause: Error; reported: boolean } | null = null;
   private quality: ApplicationGraphicsTarget["quality"] = { scale: "100", shadow: "full", water_quality: "high" };
 
   constructor(private readonly canvas: HTMLCanvasElement, private readonly id: number,
@@ -120,6 +121,10 @@ export class ThreeApplicationRenderer {
   }
 
   prepare(request: PrepareRequest): void {
+    if (this.gpu_failure !== null) {
+      this.notify({ kind: "resources", request_id: request.request_id, observation: { kind: "failed", cause: errorMessage(this.gpu_failure.cause) } });
+      return;
+    }
     const preparation = { cancelled: false };
     this.preparations.set(request.request_id, preparation);
     let candidate: PreparedResources;
@@ -129,7 +134,18 @@ export class ThreeApplicationRenderer {
       this.notify({ kind: "resources", request_id: request.request_id, observation: { kind: "failed", cause: errorMessage(cause) } });
       return;
     }
-    void this.compile(candidate).then(() => {
+    const failed = (cause: unknown): void => {
+      this.preparations.delete(request.request_id);
+      let failure = cause;
+      try { this.releaseCandidate(candidate); } catch (cleanup) { failure = new AggregateError([cause, cleanup], "GPU preparation cleanup failed"); }
+      this.notify({ kind: "resources", request_id: request.request_id, observation: { kind: "failed", cause: errorMessage(failure) } });
+      if (this.gpu_failure !== null && !this.gpu_failure.reported) {
+        this.gpu_failure.reported = true;
+        this.notify({ kind: "renderer_failed", renderer_resource_id: this.id, cause: errorMessage(this.gpu_failure.cause) });
+      }
+    };
+    void this.compile(candidate, preparation).then(() => {
+      if (this.gpu_failure !== null) { failed(this.gpu_failure.cause); return; }
       this.preparations.delete(request.request_id);
       if (preparation.cancelled) {
         let failure: string | null = null;
@@ -140,15 +156,10 @@ export class ThreeApplicationRenderer {
         this.resources.set(request.request_id, candidate);
         this.notify({ kind: "resources", request_id: request.request_id, observation: { kind: "prepared", resource_id: request.request_id } });
       }
-    }, (cause: unknown) => {
-      this.preparations.delete(request.request_id);
-      let failure = cause;
-      try { this.releaseCandidate(candidate); } catch (cleanup) { failure = new AggregateError([cause, cleanup], "GPU preparation cleanup failed"); }
-      this.notify({ kind: "resources", request_id: request.request_id, observation: { kind: "failed", cause: errorMessage(failure) } });
-    });
+    }, failed);
   }
 
-  private async compile(candidate: PreparedResources): Promise<void> {
+  private async compile(candidate: PreparedResources, preparation: { cancelled: boolean }): Promise<void> {
     const surfaces = [this.menu_mesh, this.head_mesh, this.cursor_meshes[0]].flatMap(mesh => {
       if (mesh == null) return [];
       const surface = mesh.clone();
@@ -177,6 +188,94 @@ export class ThreeApplicationRenderer {
     }
     for (const result of await Promise.allSettled(pending)) if (result.status === "rejected") failures.push(result.reason);
     if (failures.length > 0) throw new AggregateError(failures, "GPU compilation failed");
+    if (this.gpu_failure !== null) throw this.gpu_failure.cause;
+    if (preparation.cancelled) return;
+    const savedTarget = this.renderer.getRenderTarget();
+    const savedViewport = this.renderer.getViewport(new Vector4());
+    const savedScissor = this.renderer.getScissor(new Vector4());
+    const savedScissorTest = this.renderer.getScissorTest();
+    const savedXr = this.renderer.xr.enabled;
+    const savedBackground = candidate.scene.background;
+    const savedShadowAutoUpdate = this.renderer.shadowMap.autoUpdate;
+    const savedShadowNeedsUpdate = this.renderer.shadowMap.needsUpdate;
+    const uncullable: Object3D[] = [];
+    const used = new Set<Material>();
+    const materialCallbacks = candidate.water_materials.map(material => ({ material,
+      callback: material.onBeforeRender.bind(material), descriptor: Object.getOwnPropertyDescriptor(material, "onBeforeRender") }));
+    try {
+      candidate.scene.traverse(object => {
+        if (object.frustumCulled) { uncullable.push(object); object.frustumCulled = false; }
+      });
+      for (const { material, callback } of materialCallbacks) {
+        material.onBeforeRender = (...args) => {
+          used.add(material);
+          callback.apply(material, args);
+        };
+      }
+      this.renderer.xr.enabled = false;
+      this.renderer.setRenderTarget(null);
+      this.renderer.setViewport(0, 0, 1, 1);
+      this.renderer.setScissor(0, 0, 0, 0);
+      this.renderer.setScissorTest(true);
+      this.renderer.shadowMap.autoUpdate = false;
+      this.renderer.shadowMap.needsUpdate = true;
+      this.render(candidate.scene, this.camera);
+      candidate.scene.background = null;
+      this.renderer.shadowMap.needsUpdate = false;
+      this.renderer.setRenderTarget(candidate.reflection);
+      this.renderer.setViewport(0, 0, 1, 1);
+      this.renderer.setScissor(0, 0, 0, 0);
+      this.renderer.setScissorTest(true);
+      this.render(candidate.scene, this.reflection_camera);
+      if (candidate.water_materials.some(material => !used.has(material))) failures.push(new Error("Prepared water material did not reach its first drawing use"));
+      const gl = this.renderer.getContext();
+      const error = gl.getError();
+      if (error !== gl.NO_ERROR) {
+        const cause = new Error(`GPU context reported WebGL error at preparation: ${String(error)}`);
+        this.gpu_failure ??= { cause, reported: false };
+        failures.push(cause);
+      }
+    } catch (cause) { failures.push(cause); }
+    finally {
+      for (const restore of [
+        () => { candidate.scene.background = savedBackground; this.renderer.xr.enabled = savedXr; },
+        () => { this.renderer.shadowMap.autoUpdate = savedShadowAutoUpdate; this.renderer.shadowMap.needsUpdate = savedShadowNeedsUpdate; },
+        () => { this.renderer.setRenderTarget(savedTarget); }, () => { this.renderer.setViewport(savedViewport); },
+        () => { this.renderer.setScissor(savedScissor); }, () => { this.renderer.setScissorTest(savedScissorTest); },
+        () => {
+          for (const { material, descriptor } of materialCallbacks) {
+            if (descriptor !== undefined) Object.defineProperty(material, "onBeforeRender", descriptor);
+            else if (!Reflect.deleteProperty(material, "onBeforeRender")) throw new Error("Water drawing callback restoration failed");
+          }
+        },
+        () => { for (const object of uncullable) object.frustumCulled = true; },
+      ]) {
+        try { restore(); } catch (cause) { failures.push(cause); }
+      }
+    }
+    if (failures.length > 0) throw new AggregateError(failures, "GPU first-use preparation failed");
+  }
+
+  private render(scene: Scene, camera: PerspectiveCamera): void {
+    if (this.gpu_failure !== null) throw this.gpu_failure.cause;
+    const check = this.renderer.debug.checkShaderErrors;
+    const previous = this.renderer.debug.onShaderError;
+    const failures: unknown[] = [];
+    try {
+      this.renderer.debug.checkShaderErrors = true;
+      this.renderer.debug.onShaderError = (gl, program, vertex, fragment) => {
+        const cause = new Error(`GPU shader link failed: program=${gl.getProgramInfoLog(program) ?? ""}; vertex=${gl.getShaderInfoLog(vertex) ?? ""}; fragment=${gl.getShaderInfoLog(fragment) ?? ""}`);
+        this.gpu_failure ??= { cause, reported: false };
+        failures.push(cause);
+        try { previous?.(gl, program, vertex, fragment); } catch (cause) { failures.push(cause); }
+      };
+      this.renderer.render(scene, camera);
+    } catch (cause) { failures.push(cause); }
+    finally {
+      this.renderer.debug.checkShaderErrors = check;
+      this.renderer.debug.onShaderError = previous;
+    }
+    if (failures.length > 0) throw new AggregateError(failures, "GPU drawing failed");
   }
 
   execute(request: ResourceRequest): void {
@@ -303,7 +402,7 @@ export class ThreeApplicationRenderer {
       uSkyTexture: { value: scene.background },
       uWaveKAmplitude: { value: projection.waveKAmplitude.map(wave => new Vector4(...wave)) },
       uWaveOmegaPhase: { value: projection.waveOmegaPhase.map(wave => new Vector4(...wave)) },
-      uWaveCount: { value: projection.waveCount }, uChoppiness: { value: projection.choppiness },
+      uChoppiness: { value: projection.choppiness },
       uGridSpacingGradient: { value: projection.spacing.gradientMagnitude }, uVisualWaveHeight: { value: projection.visualWaveHeight },
       uWaterDark: { value: new Color(assets.water.palette_srgb[0]) }, uWaterMid: { value: new Color(assets.water.palette_srgb[1]) }, uWaterLight: { value: new Color(assets.water.palette_srgb[2]) },
       uHazeColor: { value: new Color(lighting.haze_color_srgb) }, uHazeRange: { value: new Vector4(...lighting.haze_range_meters, 0, 0) },
@@ -311,9 +410,10 @@ export class ThreeApplicationRenderer {
       uReflectionMatrix: { value: new Matrix4() }, uReflectionEnabled: { value: 0 }, uWaterBackingClip: { value: 0 },
       uWaterBackingCenter: { value: new Vector4() }, uWaterBackingInnerExtent: { value: assets.water.geometry.backing_inner_extent_meters }
     };
-    const material = new ShaderMaterial({ lights: true, uniforms, vertexShader: lakeWaterVertexShader, fragmentShader: lakeWaterFragmentShader });
+    const defines = { LAKE_WAVE_COUNT: projection.waveCount };
+    const material = new ShaderMaterial({ lights: true, defines, uniforms, vertexShader: lakeWaterVertexShader, fragmentShader: lakeWaterFragmentShader });
     cleanup.push(() => { material.dispose(); });
-    const backing = new ShaderMaterial({ lights: true, uniforms: { ...uniforms, uWaterBackingClip: { value: 1 },
+    const backing = new ShaderMaterial({ lights: true, defines, uniforms: { ...uniforms, uWaterBackingClip: { value: 1 },
       uReflectionEnabled: { value: 0 } }, vertexShader: lakeFilteredWaterVertexShader, fragmentShader: lakeWaterFragmentShader,
       side: DoubleSide, depthWrite: false });
     cleanup.push(() => { backing.dispose(); });
@@ -358,7 +458,7 @@ export class ThreeApplicationRenderer {
   }
 
   private releaseCandidate(candidate: PreparedResources): void {
-    const resources = [...candidate.water_geometries, ...candidate.water_materials, candidate.reflection];
+    const resources = [candidate.sun.shadow, ...candidate.water_geometries, ...candidate.water_materials, candidate.reflection];
     const failures: unknown[] = [];
     for (const resource of resources) {
       try { resource.dispose(); } catch (cause) { failures.push(cause); }
@@ -567,7 +667,13 @@ export class ThreeApplicationRenderer {
   private readonly frame = (now: number, frame?: XRFrame): void => {
     if (this.disposed) return;
     try { this.observeFrame(now, frame); }
-    catch (cause) { this.notify({ kind: "renderer_failed", renderer_resource_id: this.id, cause: errorMessage(cause) }); }
+    catch (cause) {
+      if (this.gpu_failure !== null) {
+        if (this.gpu_failure.reported) return;
+        this.gpu_failure.reported = true;
+      }
+      this.notify({ kind: "renderer_failed", renderer_resource_id: this.id, cause: errorMessage(cause) });
+    }
   };
 
   private observeFrame(now: number, frame: XRFrame | undefined): void {
@@ -684,7 +790,7 @@ export class ThreeApplicationRenderer {
         } else active.scene.traverse(object => {
           if (object.frustumCulled) { uncullable.push(object); object.frustumCulled = false; }
         });
-        this.renderer.render(active.scene, this.camera);
+        this.render(active.scene, this.camera);
       } else if (eyes.length > 0) {
         this.renderer.setScissorTest(true);
         eyes.forEach(eye => {
@@ -695,9 +801,9 @@ export class ThreeApplicationRenderer {
           this.camera.projectionMatrixInverse.copy(this.camera.projectionMatrix).invert();
           this.renderer.setViewport(...viewport);
           this.renderer.setScissor(...viewport);
-          this.renderer.render(active.scene, this.camera);
+          this.render(active.scene, this.camera);
         });
-      } else this.renderer.render(active.scene, this.camera);
+      } else this.render(active.scene, this.camera);
       complete = true;
     } catch (cause) { failures.push(cause); }
     finally {
@@ -744,7 +850,7 @@ export class ThreeApplicationRenderer {
       this.renderer.setScissorTest(false);
       this.renderer.setClearColor(0x000000, 0);
       this.renderer.clear();
-      this.renderer.render(active.scene, this.reflection_camera);
+      this.render(active.scene, this.reflection_camera);
     } catch (cause) { failures.push(cause); }
     finally {
       for (const restore of [() => { active.scene.background = background; }, () => { this.renderer.xr.enabled = xr; },
