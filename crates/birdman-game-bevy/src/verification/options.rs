@@ -295,6 +295,8 @@ mod tests {
 
     #[test]
     fn water_auto_is_explicit_and_requires_a_water_case() {
+        use super::super::{Check, MotionEndpoint};
+        use bevy::camera::RenderTarget;
         let case = WaterVerificationCase::parse("typical-high").unwrap();
         assert_eq!(verification_water_auto(None, false), Ok(None));
         assert!(verification_water_auto(None, true).is_err());
@@ -304,6 +306,36 @@ mod tests {
             Ok(Some(case.with_auto()))
         );
         assert_ne!(case, case.with_auto());
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+            .init_asset::<Shader>();
+        for case in [case, case.with_auto()] {
+            let (verification, _) = Verification::try_new(
+                std::env::temp_dir(),
+                app.world().resource::<AssetServer>(),
+                Some(case),
+                RenderTarget::default(),
+                false,
+            )
+            .unwrap();
+            let starts = verification
+                .checks
+                .windows(3)
+                .filter(|steps| matches!(steps[0], Check::Motion(_, MotionEndpoint::Start)))
+                .collect::<Vec<_>>();
+            assert_eq!(starts.len(), 5);
+            for steps in starts {
+                if case.auto {
+                    assert!(
+                        matches!(steps[1], Check::Delay(duration) if duration == std::time::Duration::from_secs(5))
+                    );
+                    assert!(matches!(steps[2], Check::Capture(_)));
+                } else {
+                    assert!(matches!(steps[1], Check::Capture(_)));
+                    assert!(matches!(steps[2], Check::Motion(_, MotionEndpoint::End)));
+                }
+            }
+        }
     }
 
     #[test]

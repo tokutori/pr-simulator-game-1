@@ -322,8 +322,11 @@ impl Verification {
         if water_case.is_some() {
             let mut motion = WaterMotion::Static;
             loop {
+                checks.push(Check::Motion(motion, MotionEndpoint::Start));
+                if water_case.is_some_and(|case| case.auto) {
+                    checks.push(Check::Delay(Duration::from_secs(5)));
+                }
                 checks.extend([
-                    Check::Motion(motion, MotionEndpoint::Start),
                     Check::Capture(format!("motion-{}-start.png", motion.label())),
                     Check::Motion(motion, MotionEndpoint::End),
                     Check::Delay(MOTION_DURATION),

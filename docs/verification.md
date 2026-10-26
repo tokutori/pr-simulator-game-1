@@ -514,6 +514,7 @@ CASEは `calm-low` / `calm-medium` / `calm-high` / `typical-low` / `typical-medi
   Pause/Result/Retryはobserverを無効化し、指定画質への復元とResume後の進行を確認する。
 
 - Auto観測は公開Setup操作から最大10秒待ち、成熟窓・受領率90%以上・資源ACK・pipeline Ready・ 500 ms以内のGPU sourceを確認する。
+- Autoの各motionはStart姿勢で5秒間待機してからStart画像を保存し、従来の2秒観測を開始する。固定warm-up中もAutoの資源交換と再探索を継続し、実ACK・query source時刻からcooldown・成熟窓との対応を確認する。観測中の品質交換は混在・部分窓として区分する。
 - 外部context失効・適用失敗で完了事実を破棄する。
 - Measuringへの戻りと初期完了を区別し、倍率低下だけを成熟窓の根拠にしない。
 - 5 motion後はAuto解除で手動scale/shadow/水面の3値へ戻す。
