@@ -8,7 +8,7 @@ import { ThreeApplicationBuffers } from "./application-buffers.js";
 import { GpuWorkTimer } from "./gpu-work-timer.js";
 import { browserSurfaceContext } from "../../../presentation/browser-canvas.js";
 import { paintSurface } from "../../../presentation/surface-canvas.js";
-import { lakeFilteredWaterVertexShader, lakeWaterFragmentShader, lakeWaterVertexShader } from "./water-shaders.js";
+import { lakeWaterShaders } from "./water-shaders.js";
 
 type PrepareRequest = Extract<ApplicationRequest, { kind: "prepare_resources" }>;
 type ResourceRequest = Extract<ApplicationRequest, { kind: "commit_resources" | "cancel_resources" | "release_resources" }>;
@@ -470,11 +470,12 @@ export class ThreeApplicationRenderer {
       uReflectionMatrix: { value: new Matrix4() }, uReflectionEnabled: { value: 0 }
     };
     const defines = { LAKE_WAVE_COUNT: projection.waveCount };
-    const material = new ShaderMaterial({ lights: true, defines, uniforms, vertexShader: lakeWaterVertexShader, fragmentShader: lakeWaterFragmentShader });
+    const { vertexShader, filteredVertexShader, fragmentShader } = lakeWaterShaders(projection.waveCount);
+    const material = new ShaderMaterial({ lights: true, defines, uniforms, vertexShader, fragmentShader });
     material.name = "LakeWaterNear";
     cleanup.push(() => { material.dispose(); });
     const backing = new ShaderMaterial({ lights: true, defines, uniforms: { ...uniforms,
-      uReflectionEnabled: { value: 0 } }, vertexShader: lakeFilteredWaterVertexShader, fragmentShader: lakeWaterFragmentShader,
+      uReflectionEnabled: { value: 0 } }, vertexShader: filteredVertexShader, fragmentShader,
       side: DoubleSide, depthWrite: false });
     backing.name = "LakeWaterFar";
     cleanup.push(() => { backing.dispose(); });

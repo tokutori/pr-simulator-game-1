@@ -71,40 +71,45 @@ LakeWaveProjection projectLakeWaves(vec3 localPosition, vec2 worldXZ, float grid
   result.slopeEnergy = 0.0;
   vec2 spacingGradient = lakeGridSpacingGradient(localPosition.xz, spacingGradientMagnitude);
   #if LAKE_WAVE_COUNT > 0
-  for (int index = 0; index < LAKE_WAVE_COUNT; index++) {
-      vec4 wave = uWaveKAmplitude[index];
-      vec4 timing = uWaveOmegaPhase[index];
+  #pragma unroll_loop_start
+  for (int i = 0; i < LAKE_WAVE_LOOP_COUNT; i++) {
+    {
+      vec4 wave = uWaveKAmplitude[i];
+      vec4 timing = uWaveOmegaPhase[i];
       vec2 direction = wave.xy;
       float waveNumber = wave.z;
       float visibility = 1.0 - smoothstep(1.3, 2.5, waveNumber * gridSpacing);
       float transition = clamp((waveNumber * gridSpacing - 1.3) / 1.2, 0.0, 1.0);
       vec2 visibilityGradient = (-6.0 * waveNumber / 1.2 * transition * (1.0 - transition)) * spacingGradient;
       result.slopeEnergy += waveNumber * wave.w;
-      if (visibility == 0.0 && all(equal(visibilityGradient, vec2(0.0)))) continue;
-      mat3 modulation = lakeWaveModulation(worldXZ, direction, waveNumber, timing.y);
-      vec3 packet = modulation[0];
-      vec3 warp = modulation[1];
-      float amplitude = wave.w * visibility * packet.x;
-      vec2 amplitudeGradient = wave.w * (visibility * packet.yz + packet.x * visibilityGradient);
-      float phase = waveNumber * dot(direction, worldXZ) + warp.x - timing.x * timeSeconds + timing.y;
-      vec2 phaseGradient = waveNumber * direction + warp.yz;
-      float phaseSine = sin(phase);
-      float phaseCosine = cos(phase);
-      float crestBasis = 0.5 + 0.5 * phaseSine;
-      result.position.xz += choppiness * amplitude * direction * phaseCosine;
-      result.position.y += amplitude * (2.0 * crestBasis * crestBasis * crestBasis - 0.625);
-      vec2 horizontalGradient = choppiness * (phaseCosine * amplitudeGradient - amplitude * phaseSine * phaseGradient);
-      result.horizontalJacobian += vec4(direction.x * horizontalGradient, direction.y * horizontalGradient);
-      result.heightGradient += amplitude * 3.0 * crestBasis * crestBasis * phaseCosine * phaseGradient
-        + (2.0 * crestBasis * crestBasis * crestBasis - 0.625) * amplitudeGradient;
-      result.crest += phaseSine * waveNumber * amplitude;
+      if (!(visibility == 0.0 && all(equal(visibilityGradient, vec2(0.0))))) {
+        mat3 modulation = lakeWaveModulation(worldXZ, direction, waveNumber, timing.y);
+        vec3 packet = modulation[0];
+        vec3 warp = modulation[1];
+        float amplitude = wave.w * visibility * packet.x;
+        vec2 amplitudeGradient = wave.w * (visibility * packet.yz + packet.x * visibilityGradient);
+        float phase = waveNumber * dot(direction, worldXZ) + warp.x - timing.x * timeSeconds + timing.y;
+        vec2 phaseGradient = waveNumber * direction + warp.yz;
+        float phaseSine = sin(phase);
+        float phaseCosine = cos(phase);
+        float crestBasis = 0.5 + 0.5 * phaseSine;
+        result.position.xz += choppiness * amplitude * direction * phaseCosine;
+        result.position.y += amplitude * (2.0 * crestBasis * crestBasis * crestBasis - 0.625);
+        vec2 horizontalGradient = choppiness * (phaseCosine * amplitudeGradient - amplitude * phaseSine * phaseGradient);
+        result.horizontalJacobian += vec4(direction.x * horizontalGradient, direction.y * horizontalGradient);
+        result.heightGradient += amplitude * 3.0 * crestBasis * crestBasis * phaseCosine * phaseGradient
+          + (2.0 * crestBasis * crestBasis * crestBasis - 0.625) * amplitudeGradient;
+        result.crest += phaseSine * waveNumber * amplitude;
+      }
+    }
   }
+  #pragma unroll_loop_end
   #endif
   return result;
 }
 `;
 
-export const lakeWaterVertexShader = /* glsl */ `
+const lakeWaterVertexShader = /* glsl */ `
 uniform float uTimeSeconds;
 uniform vec4 uWindVelocity;
 uniform float uDetailScale;
@@ -168,7 +173,7 @@ void main() {
 }
 `;
 
-export const lakeFilteredWaterVertexShader = /* glsl */ `
+const lakeFilteredWaterVertexShader = /* glsl */ `
 attribute float aGridSpacing;
 varying vec3 vWorldPosition;
 varying vec3 vWorldNormal;
@@ -189,7 +194,7 @@ void main() {
 }
 `;
 
-export const lakeWaterFragmentShader = /* glsl */ `
+const lakeWaterFragmentShader = /* glsl */ `
 uniform float uWindSpeed;
 uniform vec4 uWindVelocity;
 uniform float uDetailScale;
@@ -245,27 +250,31 @@ vec2 lakeWaveSlope(vec2 worldXZ) {
   float waveSlopeX = 0.0;
   float waveSlopeZ = 0.0;
   #if LAKE_WAVE_COUNT > 0
-  for (int i = 0; i < LAKE_WAVE_COUNT; i++) {
-    vec4 ka = uWaveKAmplitude[i];
-    vec4 op = uWaveOmegaPhase[i];
-    float k = ka.z;
-    vec2 direction = ka.xy;
-    mat3 modulation = lakeWaveModulation(worldXZ, direction, k, op.y);
-    vec3 warp = modulation[1];
-    float phase = k * dot(direction, worldXZ) + warp.x - op.x * uTimeSeconds + op.y;
-    float geometricVisibility = 1.0 - smoothstep(1.3, 2.5, k * vSurfaceState.z);
-    float pixelVisibility = 1.0 - smoothstep(2.0, 5.0, fwidth(phase));
-    float normalWeight = (1.0 - geometricVisibility) * pixelVisibility * 0.65;
-    if (normalWeight != 0.0) {
-      vec2 phaseGradient = k * direction + warp.yz;
-      float crestBasis = 0.5 + 0.5 * sin(phase);
-      vec3 packet = modulation[0];
-      vec2 gradient = ka.w * (packet.x * 3.0 * crestBasis * crestBasis * cos(phase) * phaseGradient
-        + (2.0 * crestBasis * crestBasis * crestBasis - 0.625) * packet.yz) * normalWeight;
-      waveSlopeX += gradient.x;
-      waveSlopeZ += gradient.y;
+  #pragma unroll_loop_start
+  for (int i = 0; i < LAKE_WAVE_LOOP_COUNT; i++) {
+    {
+      vec4 ka = uWaveKAmplitude[i];
+      vec4 op = uWaveOmegaPhase[i];
+      float k = ka.z;
+      vec2 direction = ka.xy;
+      mat3 modulation = lakeWaveModulation(worldXZ, direction, k, op.y);
+      vec3 warp = modulation[1];
+      float phase = k * dot(direction, worldXZ) + warp.x - op.x * uTimeSeconds + op.y;
+      float geometricVisibility = 1.0 - smoothstep(1.3, 2.5, k * vSurfaceState.z);
+      float pixelVisibility = 1.0 - smoothstep(2.0, 5.0, fwidth(phase));
+      float normalWeight = (1.0 - geometricVisibility) * pixelVisibility * 0.65;
+      if (normalWeight != 0.0) {
+        vec2 phaseGradient = k * direction + warp.yz;
+        float crestBasis = 0.5 + 0.5 * sin(phase);
+        vec3 packet = modulation[0];
+        vec2 gradient = ka.w * (packet.x * 3.0 * crestBasis * crestBasis * cos(phase) * phaseGradient
+          + (2.0 * crestBasis * crestBasis * crestBasis - 0.625) * packet.yz) * normalWeight;
+        waveSlopeX += gradient.x;
+        waveSlopeZ += gradient.y;
+      }
     }
   }
+  #pragma unroll_loop_end
   #endif
   return vec2(waveSlopeX, waveSlopeZ);
 }
@@ -465,4 +474,13 @@ void main() {
   #include <colorspace_fragment>
 }
 `;
+
+export function lakeWaterShaders(waveCount: number) {
+  const count = String(waveCount);
+  return {
+    vertexShader: lakeWaterVertexShader.replaceAll("LAKE_WAVE_LOOP_COUNT", count),
+    filteredVertexShader: lakeFilteredWaterVertexShader,
+    fragmentShader: lakeWaterFragmentShader.replaceAll("LAKE_WAVE_LOOP_COUNT", count)
+  };
+}
 

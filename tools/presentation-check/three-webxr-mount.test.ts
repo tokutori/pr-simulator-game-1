@@ -1,9 +1,11 @@
 import { IDBFactory } from "fake-indexeddb";
 import { Window } from "happy-dom";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { Camera, Color, DirectionalLight, Material, Matrix4, Mesh, PerspectiveCamera, Quaternion, ShaderMaterial, Vector2, Vector3, Vector4, WebGLRenderTarget } from "three";
+import { Camera, Color, DirectionalLight, Material, Matrix4, Mesh, PerspectiveCamera, Quaternion, ShaderMaterial, SRGBColorSpace, Vector2, Vector3, Vector4, WebGLRenderTarget } from "three";
 import type { ArrayCamera, Scene, WebGLRenderer } from "three";
 import { WebXRManager } from "three/src/renderers/webxr/WebXRManager.js";
+import { WebGLProgram as ShaderProgram } from "three/src/renderers/webgl/WebGLProgram.js";
+import { lakeWaterShaders } from "../../web/src/render/engines/three/water-shaders.js";
 import { ApplicationRuntimeBridge } from "../../web/pkg/birdman_game_wasm.js";
 import type { ApplicationDrawingOutput, ApplicationObservation, ApplicationOutput, Pose, SurfacePaintItem } from "../../web/src/generated/application-contracts.js";
 import { applicationPlatformFixture } from "../game-check/application-fixture.js";
@@ -32,6 +34,7 @@ interface Driver {
   setSize(width: number, height: number): void;
   setPixelRatio(ratio: number): void;
   getPixelRatio(): number;
+  getContext(): unknown;
   getSize(target: Vector2): Vector2;
   getDrawingBufferSize(target: Vector2): Vector2;
   getRenderTarget(): WebGLRenderTarget | null;
@@ -348,10 +351,43 @@ describe("Aggregate runtime through the real Three WebXRManager", () => {
       });
       expect(new Set(water).size).toBe(2);
       expect(new Set(water.map(material => material.name))).toEqual(new Set(["LakeWaterNear", "LakeWaterFar"]));
+      if (waveCount === undefined) throw new Error("Shared wave count was not prepared");
+      const submittedShaders = lakeWaterShaders(waveCount);
       for (const material of water) {
         expect(material.defines["LAKE_WAVE_COUNT"]).toBe(waveCount);
+        expect(material.vertexShader).toBe(material.name === "LakeWaterFar" ? submittedShaders.filteredVertexShader : submittedShaders.vertexShader);
+        expect(material.fragmentShader).toBe(submittedShaders.fragmentShader);
         expect(material.uniforms["uWaveCount"]).toBeUndefined();
         expect(material.uniforms["uReflectionTexture"]?.value).toHaveProperty("isTexture", true);
+      }
+      const compiled: string[] = [];
+      const gl = state.driver.getContext();
+      if (typeof gl !== "object" || gl === null) throw new Error("Prepared GL context is unavailable");
+      Object.assign(gl, { VERTEX_SHADER: 35633, FRAGMENT_SHADER: 35632,
+        createProgram: () => new WebGLProgram(), createShader: () => ({}),
+        shaderSource: (_shader: WebGLShader, source: string) => { compiled.push(source); },
+        compileShader: () => undefined, attachShader: () => undefined,
+        linkProgram: () => undefined, deleteShader: () => undefined });
+      for (const count of [0, 6, 24]) {
+        const shaders = lakeWaterShaders(count);
+        for (const material of new Set(water)) {
+          const far = material.name === "LakeWaterFar";
+          new ShaderProgram(state.driver as unknown as WebGLRenderer, `${material.name}-${String(count)}`, {
+            defines: { LAKE_WAVE_COUNT: count }, precision: "highp", shaderType: "ShaderMaterial", shaderName: material.name,
+            vertexShader: far ? shaders.filteredVertexShader : shaders.vertexShader, fragmentShader: shaders.fragmentShader,
+            envMapCubeUVHeight: null, outputColorSpace: SRGBColorSpace, toneMapping: 0,
+            numDirLights: 1, numDirLightShadows: 1, numPointLights: 0, numPointLightShadows: 0,
+            numSpotLights: 0, numSpotLightShadows: 0, numSpotLightMaps: 0, numSpotLightShadowsWithMaps: 0,
+            numHemiLights: 0, numRectAreaLights: 0, numClippingPlanes: 0, numClipIntersection: 0
+          });
+          const stages = compiled.splice(0);
+          expect(stages).toHaveLength(2);
+          stages.forEach((source, stage) => {
+            expect(source).not.toMatch(/unroll_loop|LAKE_WAVE_LOOP_COUNT|continue;|uWave(?:KAmplitude|OmegaPhase)\[\s*(?:i|index)\s*\]/u);
+            const indices = [...source.matchAll(/uWaveKAmplitude\[\s*(\d+)\s*\]/gu)].map(match => Number(match[1]));
+            expect(indices).toEqual(stage === 0 && far ? [] : Array.from({ length: count }, (_, index) => index));
+          });
+        }
       }
       expect(state.driver.draws.length).toBeGreaterThan(0);
       expect(state.driver.draws.some(draw => draw.defaultFramebuffer)).toBe(true);
