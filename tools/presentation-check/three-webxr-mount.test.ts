@@ -29,6 +29,11 @@ interface Driver {
   reflectionFault: boolean;
   shaderFault: boolean;
   readonly debug: WebGLRenderer["debug"];
+  setSize(width: number, height: number): void;
+  setPixelRatio(ratio: number): void;
+  getPixelRatio(): number;
+  getSize(target: Vector2): Vector2;
+  getDrawingBufferSize(target: Vector2): Vector2;
   getRenderTarget(): WebGLRenderTarget | null;
   getClearAlpha(): number;
   getScissorTest(): boolean;
@@ -212,6 +217,7 @@ afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); capture.driver = 
 
 async function fixture() {
   const browser = new Window({ url: "http://localhost/" });
+  Object.defineProperty(browser, "devicePixelRatio", { value: 2 });
   browser.document.documentElement.style.font = "400 16px Arial";
   browser.document.documentElement.lang = "ja";
   Object.defineProperty(browser.document, "fonts", { value: Object.assign(new browser.EventTarget(), { ready: Promise.resolve() }) });
@@ -260,6 +266,10 @@ async function fixture() {
     select(at: number) { session.select(at); },
     async ready() {
       await flush();
+      expect(updates.mock.calls.some(([json]) => json.includes('"committed"'))).toBe(false);
+      expect(driver.draws.some(draw => draw.defaultFramebuffer)).toBe(false);
+      driver.frame?.(0);
+      await flush();
       expect(mount.querySelector('[data-control-id="game-title-start"]')).not.toBeNull();
     }
   };
@@ -297,6 +307,20 @@ describe("Aggregate runtime through the real Three WebXRManager", () => {
       }
       prepare.call(this, request);
     });
+    const execute = Object.getOwnPropertyDescriptor(ThreeApplicationRenderer.prototype, "execute")?.value as InstanceType<typeof ThreeApplicationRenderer>["execute"];
+    vi.spyOn(ThreeApplicationRenderer.prototype, "execute").mockImplementation(function (this: InstanceType<typeof ThreeApplicationRenderer>, request) {
+      const driver = capture.driver;
+      if (driver === null) throw new Error("Renderer is unavailable");
+      const before = driver.getDrawingBufferSize(new Vector2());
+      const ratio = driver.getPixelRatio();
+      const resize = vi.spyOn(driver, "setSize");
+      try {
+        execute.call(this, request);
+        if (request.kind === "commit_resources" && ratio === 1 && before.equals(driver.getDrawingBufferSize(new Vector2()))) {
+          expect(resize).not.toHaveBeenCalled();
+        }
+      } finally { resize.mockRestore(); }
+    });
     capture.timing = true; prepared = await fixture(); await prepared.ready();
   });
   it("submits asymmetric eyes, stable reset placement, painted cursors and a real trigger action", async () => {
@@ -319,7 +343,8 @@ describe("Aggregate runtime through the real Three WebXRManager", () => {
         expect(material.uniforms["uReflectionTexture"]?.value).toHaveProperty("isTexture", true);
       }
       expect(state.driver.draws.length).toBeGreaterThan(0);
-      expect(state.driver.draws.some(draw => draw.defaultFramebuffer)).toBe(false);
+      expect(state.driver.draws.some(draw => draw.defaultFramebuffer)).toBe(true);
+      expect(state.driver.getPixelRatio()).toBe(1);
       expect(state.driver.getRenderTarget()).toBeNull();
       expect(state.driver.getScissorTest()).toBe(false);
       if (state.driver.frame === null) throw new Error("Screen animation was not started");
@@ -453,16 +478,32 @@ describe("Aggregate runtime through the real Three WebXRManager", () => {
     const shadowRelease = vi.spyOn(sun.shadow, "dispose");
     const shaderError = vi.fn();
     try {
-      if (fault === "cancelled cleanup") {
-        vi.spyOn(WebGLRenderTarget.prototype, "dispose").mockImplementationOnce(() => { throw new Error("physical target release failed"); });
-        state.dispose();
-      } else if (fault === "commit rollback") state.driver.sizeFaults = 2;
-      else { state.driver.shaderFault = true; state.driver.debug.onShaderError = shaderError; }
-      expect(state.free).not.toHaveBeenCalled();
       if (complete === undefined) throw new Error("Deferred shader I/O was not created");
-      complete();
+      if (fault === "cancelled cleanup") {
+        complete();
+        await flush();
+        expect(state.updates.mock.calls.some(([json]) => json.includes('"prepared"'))).toBe(false);
+        vi.spyOn(WebGLRenderTarget.prototype, "dispose").mockImplementationOnce(() => { throw new Error("physical target release failed"); });
+        const canvas = state.browser.document.querySelector(".presentation-canvas");
+        if (canvas === null) throw new Error("Renderer canvas is unavailable");
+        canvas.dispatchEvent(new state.browser.Event("webglcontextlost"));
+        expect(state.driver.frame).toBeNull();
+        expect(shadowRelease).toHaveBeenCalledOnce();
+        expect(state.updates.mock.calls.filter(([json]) => json.includes('"kind":"resources"') && json.includes('"kind":"failed"'))).toHaveLength(1);
+        expect(state.updates.mock.calls.some(([json]) => json.includes('"prepared"'))).toBe(false);
+        state.dispose();
+      } else if (fault === "commit rollback") {
+        state.driver.setSize(1, 1);
+        state.driver.sizeFaults = 2;
+      }
+      else { state.driver.shaderFault = true; state.driver.debug.onShaderError = shaderError; }
+      if (fault !== "cancelled cleanup") {
+        expect(state.free).not.toHaveBeenCalled();
+        complete();
+      }
       if (fault !== "cancelled cleanup") {
         await flush();
+        if (fault === "commit rollback") state.driver.frame?.(0);
         if (fault === "commit rollback") expect(state.updates.mock.calls.some(([json]) => json.includes('"binding_lost"'))).toBe(true);
         else {
           expect(state.updates.mock.calls.some(([json]) => json.includes("mobile program link rejected") && json.includes("mobile shader compiler cause"))).toBe(true);

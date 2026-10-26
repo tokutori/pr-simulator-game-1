@@ -52,7 +52,7 @@ export class ThreeApplicationRenderer {
   private readonly buffers: ThreeApplicationBuffers;
   private readonly timer: GpuWorkTimer;
   private readonly resources = new Map<number, PreparedResources>();
-  private readonly preparations = new Map<number, { cancelled: boolean }>();
+  private readonly preparations = new Map<number, { cancelled: boolean; complete: (() => void) | null }>();
   private readonly base_geometry = new Map<number, BufferGeometry>();
   private readonly range_geometry = new Map<number, readonly BufferGeometry[]>();
   private readonly materials = new Map<string, Material>();
@@ -125,7 +125,7 @@ export class ThreeApplicationRenderer {
       this.notify({ kind: "resources", request_id: request.request_id, observation: { kind: "failed", cause: errorMessage(this.gpu_failure.cause) } });
       return;
     }
-    const preparation = { cancelled: false };
+    const preparation: { cancelled: boolean; complete: (() => void) | null } = { cancelled: false, complete: null };
     this.preparations.set(request.request_id, preparation);
     let candidate: PreparedResources;
     try { candidate = this.createResources(request); }
@@ -145,17 +145,21 @@ export class ThreeApplicationRenderer {
       }
     };
     void this.compile(candidate, preparation).then(() => {
-      if (this.gpu_failure !== null) { failed(this.gpu_failure.cause); return; }
-      this.preparations.delete(request.request_id);
-      if (preparation.cancelled) {
-        let failure: string | null = null;
-        try { this.releaseCandidate(candidate); } catch (cause) { failure = errorMessage(cause); }
-        this.notify({ kind: "resources", request_id: request.request_id, observation: failure === null
-          ? { kind: "cancelled" } : { kind: "failed", cause: failure } });
-      } else {
-        this.resources.set(request.request_id, candidate);
-        this.notify({ kind: "resources", request_id: request.request_id, observation: { kind: "prepared", resource_id: request.request_id } });
-      }
+      preparation.complete = () => {
+        preparation.complete = null;
+        if (this.gpu_failure !== null) { failed(this.gpu_failure.cause); return; }
+        this.preparations.delete(request.request_id);
+        if (preparation.cancelled) {
+          let failure: string | null = null;
+          try { this.releaseCandidate(candidate); } catch (cause) { failure = errorMessage(cause); }
+          this.notify({ kind: "resources", request_id: request.request_id, observation: failure === null
+            ? { kind: "cancelled" } : { kind: "failed", cause: failure } });
+        } else {
+          this.resources.set(request.request_id, candidate);
+          this.notify({ kind: "resources", request_id: request.request_id, observation: { kind: "prepared", resource_id: request.request_id } });
+        }
+      };
+      if (preparation.cancelled || this.disposed || this.gpu_failure !== null) preparation.complete();
     }, failed);
   }
 
@@ -322,7 +326,10 @@ export class ThreeApplicationRenderer {
   execute(request: ResourceRequest): void {
     if (request.kind === "cancel_resources") {
       const preparation = this.preparations.get(request.request_id);
-      if (preparation !== undefined) preparation.cancelled = true;
+      if (preparation !== undefined) {
+        preparation.cancelled = true;
+        preparation.complete?.();
+      }
       return;
     }
     const candidate = this.resources.get(request.resource_id);
@@ -340,8 +347,12 @@ export class ThreeApplicationRenderer {
     const previousSize = this.renderer.getSize(new Vector2());
     let extent: [number, number];
     try {
-      this.renderer.setPixelRatio(1);
-      this.renderer.setSize(target.extent_px[0], target.extent_px[1], false);
+      if (previousRatio !== 1) this.renderer.setPixelRatio(1);
+      const physical = this.renderer.getDrawingBufferSize(new Vector2());
+      if (previousSize.x !== target.extent_px[0] || previousSize.y !== target.extent_px[1]
+          || physical.x !== target.extent_px[0] || physical.y !== target.extent_px[1]) {
+        this.renderer.setSize(target.extent_px[0], target.extent_px[1], false);
+      }
       candidate.sun.shadow.mapSize.fromArray(target.shadow_extent_px);
       const size = this.renderer.getDrawingBufferSize(new Vector2());
       extent = [size.x, size.y];
@@ -670,7 +681,6 @@ export class ThreeApplicationRenderer {
     const failures: unknown[] = [];
     if (id === null || this.display_id === id) {
       this.display_id = null;
-      try { this.renderer.setAnimationLoop(null); } catch (cause) { failures.push(cause); }
     }
     const handle = id === null ? undefined : this.sessions.get(id);
     if (handle !== undefined) {
@@ -716,6 +726,8 @@ export class ThreeApplicationRenderer {
   };
 
   private observeFrame(now: number, frame: XRFrame | undefined): void {
+    for (const preparation of this.preparations.values()) preparation.complete?.();
+    if (this.disposed) return;
     for (const observation of this.timer.poll()) {
       this.notify({ kind: "graphics", renderer_resource_id: this.id, observation: observation.kind === "sample"
         ? { kind: "gpu_completed", query: observation.source, gpu_work_ms: observation.milliseconds }
@@ -976,6 +988,10 @@ export class ThreeApplicationRenderer {
     this.disposed = true;
     const failures: unknown[] = [];
     const release = (operation: () => void): void => { try { operation(); } catch (cause) { failures.push(cause); } };
+    for (const preparation of this.preparations.values()) {
+      preparation.cancelled = true;
+      release(() => { preparation.complete?.(); });
+    }
     release(() => { this.renderer.setAnimationLoop(null); });
     release(() => { this.canvas.removeEventListener("webglcontextlost", this.contextLost); });
     release(() => { this.canvas.removeEventListener("pointermove", this.pointerMove); });
