@@ -1756,6 +1756,56 @@ fn analysis_cursor_is_observational_and_rejects_nonfinite_or_out_of_record_times
             Err(GameUiError::InvalidTime)
         );
     }
+    let original = session.playback_record().unwrap();
+    let mut samples = original.samples()[..2].to_vec();
+    samples[1].tick_index = 0;
+    samples[1].fraction = 0.5;
+    let short = birdman_game_core::FlightRecord::try_from_finalized_samples(
+        original.header(),
+        samples,
+        birdman_game_core::FlightRecordFinalization {
+            terminal_tick: 0,
+            terminal_fraction: 0.5,
+            ..original.finalization().unwrap()
+        },
+    )
+    .unwrap();
+    let mut short_context = context(&session, difficulty(), &platform);
+    short_context.record = Some(&short);
+    for analysis_chart in [GameUiAnalysisChart::Altitude, GameUiAnalysisChart::Speed] {
+        let state = GameUiState {
+            analysis_chart,
+            ..state.clone()
+        };
+        let view = game_ui_view(&state, &short_context).unwrap();
+        let GameUiControlContent::Chart { plot, .. } =
+            &control(&view, "game-analysis-plot").content
+        else {
+            panic!("chart missing")
+        };
+        let [_, top, right, bottom] = plot.presentation.plot;
+        let time = plot
+            .pointer_time(
+                [right, (top + bottom) / 2.0],
+                [
+                    0.0,
+                    0.0,
+                    plot.presentation.viewport.width,
+                    plot.presentation.viewport.height,
+                ],
+                true,
+            )
+            .unwrap();
+        assert_eq!(time, short.duration_seconds().unwrap());
+        let action = view
+            .control_input_action(&GameUiControlInput::SetRange {
+                control_id: "game-analysis-cursor".into(),
+                value: time,
+            })
+            .unwrap()
+            .unwrap();
+        update_game_ui(&state, action, &short_context).unwrap();
+    }
     let duration = session
         .playback_record()
         .unwrap()
@@ -1806,6 +1856,7 @@ fn analysis_cursor_is_observational_and_rejects_nonfinite_or_out_of_record_times
         }
         let state = GameUiState {
             replay_view: GameUiReplayView::Analysis,
+            analysis_chart: GameUiAnalysisChart::Altitude,
             ..state.clone()
         };
         let view = game_ui_view(&state, &context(&zero, difficulty(), &platform)).unwrap();
@@ -1818,6 +1869,16 @@ fn analysis_cursor_is_observational_and_rejects_nonfinite_or_out_of_record_times
             },
         );
         assert!(!cursor.enabled);
+        let GameUiControlContent::Chart { plot, .. } =
+            &control(&view, "game-analysis-plot").content
+        else {
+            panic!("chart missing")
+        };
+        assert!(plot.x_maximum > plot.x_minimum);
+        assert_eq!(
+            plot.pointer_time([0.0, 0.0], [0.0, 0.0, 100.0, 100.0], false),
+            None
+        );
         assert!(matches!(
             cursor.content,
             GameUiControlContent::Range { maximum: 0.0, .. }
