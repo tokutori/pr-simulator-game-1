@@ -15,6 +15,8 @@ its unsafe boundary are unchanged.
 The used primary frame wait/begin/end, acquire/release and exit-request calls also
 return their original success statuses. The consumer distinguishes session loss
 from normal completion while draining outstanding frames and GPU submissions.
+Action synchronization also returns its original status so an unfocused or
+loss-pending result reaches the current frame's input observation.
 
 The timeout is an OpenXR wait parameter, not a hard wall-clock deadline. The
 application retains I/O custody when an operation has not reached its terminal

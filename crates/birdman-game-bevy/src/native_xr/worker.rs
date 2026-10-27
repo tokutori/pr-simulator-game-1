@@ -175,9 +175,16 @@ impl Actions {
         session: &OxrSession,
         base: &openxr::Space,
         time: openxr::Time,
-    ) -> openxr::Result<Vec<XrInputSourceObservation>> {
-        session.sync_actions(&[openxr::ActiveActionSet::new(&self.set)])?;
-        self.hands
+    ) -> openxr::Result<(Vec<XrInputSourceObservation>, openxr::sys::Result)> {
+        let status = session.sync_actions(&[openxr::ActiveActionSet::new(&self.set)])?;
+        if matches!(
+            status,
+            openxr::sys::Result::SESSION_NOT_FOCUSED | openxr::sys::Result::SESSION_LOSS_PENDING
+        ) {
+            return Ok((Vec::new(), status));
+        }
+        let sources = self
+            .hands
             .iter()
             .enumerate()
             .map(|(index, &hand)| {
@@ -224,7 +231,8 @@ impl Actions {
                     }),
                 })
             })
-            .collect()
+            .collect::<openxr::Result<_>>()?;
+        Ok((sources, status))
     }
 }
 
@@ -274,9 +282,15 @@ fn valid_space(flags: openxr::SpaceLocationFlags) -> bool {
     )
 }
 
-fn visibility(state: openxr::SessionState) -> (XrVisibility, bool) {
+fn visibility(
+    state: openxr::SessionState,
+    input_status: openxr::sys::Result,
+) -> (XrVisibility, bool) {
     match state {
-        openxr::SessionState::FOCUSED => (XrVisibility::Visible, true),
+        openxr::SessionState::FOCUSED => (
+            XrVisibility::Visible,
+            input_status == openxr::sys::Result::SUCCESS,
+        ),
         openxr::SessionState::VISIBLE => (XrVisibility::Visible, false),
         _ => (XrVisibility::Hidden, false),
     }
@@ -385,7 +399,8 @@ fn run_session(
                     if lost.is_some() {
                         events.send(Event::LossPending).map_err(error)?;
                     }
-                    let (visibility, input_focused) = visibility(state);
+                    let (visibility, input_focused) =
+                        visibility(state, openxr::sys::Result::SUCCESS);
                     events
                         .send(Event::Input(ApplicationInput::XrSessionState {
                             resource_id: id,
@@ -610,7 +625,6 @@ fn run_session(
                 }))
                 .map_err(error)?;
         }
-        let (visibility, input_focused) = visibility(state);
         let observation = (|| {
             let (flags, views) = raw.locate_views(
                 openxr::ViewConfigurationType::PRIMARY_STEREO,
@@ -618,10 +632,11 @@ fn run_session(
                 &base,
             )?;
             let head_location = head.locate(&base, frame.predicted_display_time)?;
-            let sources = actions.observe(session, &base, frame.predicted_display_time)?;
-            Ok::<_, openxr::sys::Result>((flags, views, head_location, sources))
+            let (sources, input_status) =
+                actions.observe(session, &base, frame.predicted_display_time)?;
+            Ok::<_, openxr::sys::Result>((flags, views, head_location, sources, input_status))
         })();
-        let (flags, views, head_location, sources) = match observation {
+        let (flags, views, head_location, sources, input_status) = match observation {
             Ok(observation) => observation,
             Err(openxr::sys::Result::ERROR_SESSION_LOST) => {
                 lost.get_or_insert_with(|| error(openxr::sys::Result::ERROR_SESSION_LOST));
@@ -638,6 +653,11 @@ fn run_session(
             }
             Err(cause) => return Err(error(cause)),
         };
+        if input_status == openxr::sys::Result::SESSION_LOSS_PENDING {
+            lost.get_or_insert_with(|| error(input_status));
+        }
+        report_status(events, id, input_status)?;
+        let (visibility, input_focused) = visibility(state, input_status);
         let valid = flags.contains(
             openxr::ViewStateFlags::ORIENTATION_VALID | openxr::ViewStateFlags::POSITION_VALID,
         );
@@ -685,7 +705,8 @@ fn run_session(
                 should_render: frame.should_render
                     && valid
                     && valid_space(head_location.location_flags)
-                    && status != openxr::sys::Result::SESSION_LOSS_PENDING,
+                    && status != openxr::sys::Result::SESSION_LOSS_PENDING
+                    && input_status != openxr::sys::Result::SESSION_LOSS_PENDING,
                 xr: ApplicationXrFrameObservation {
                     observation: viewer,
                     visibility,
@@ -712,6 +733,26 @@ fn run_session(
                 }
                 _ => return Err("OpenXR frame completion did not match the waited frame".into()),
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn action_sync_overrides_cached_input_focus() {
+        let state = openxr::SessionState::FOCUSED;
+        assert_eq!(
+            visibility(state, openxr::sys::Result::SUCCESS),
+            (XrVisibility::Visible, true)
+        );
+        for status in [
+            openxr::sys::Result::SESSION_NOT_FOCUSED,
+            openxr::sys::Result::SESSION_LOSS_PENDING,
+        ] {
+            assert_eq!(visibility(state, status), (XrVisibility::Visible, false));
         }
     }
 }

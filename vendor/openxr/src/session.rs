@@ -208,17 +208,14 @@ impl<G> Session<G> {
 
     /// Designate active input actions and update their states
     #[inline]
-    pub fn sync_actions(&self, action_sets: &[ActiveActionSet<'_>]) -> Result<()> {
+    pub fn sync_actions(&self, action_sets: &[ActiveActionSet<'_>]) -> Result<sys::Result> {
         let info = sys::ActionsSyncInfo {
             ty: sys::ActionsSyncInfo::TYPE,
             next: ptr::null(),
             count_active_action_sets: action_sets.len() as u32,
             active_action_sets: action_sets.as_ptr() as _,
         };
-        unsafe {
-            cvt((self.fp().sync_actions)(self.as_raw(), &info))?;
-        }
-        Ok(())
+        unsafe { cvt((self.fp().sync_actions)(self.as_raw(), &info)) }
     }
 
     /// Get a name for the input source in the current system locale

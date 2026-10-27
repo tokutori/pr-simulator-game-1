@@ -454,7 +454,7 @@ M C' H'=M C S S^{-1}H=M C H
 ### Native OpenXR
 
 - Windows/LinuxのVulkan adapterは、`cargo run -p birdman-game-bevy --features openxr -- --openxr`でOpenXR runtimeを初期化する。共有設定のHMD操作からsessionを開始し、全Scene・Menu・Head HUDを同じ共有Rustの完成cameraとSurfacePaintから描画する。
-- runtimeのLOCAL空間・予測表示時刻のhead/眼/controller観測を共有ownerへ渡す。受信時刻はNativeの単調時計へ揃え、controllerのprimary actionは有効な押下から解放までを共有ownerが認可する。
+- runtimeのLOCAL空間・予測表示時刻のhead/眼/controller観測を共有ownerへ渡す。入力同期時のfocus喪失とsession lossは同じframeへ反映し、inactiveな入力源を退役する。受信時刻はNativeの単調時計へ揃え、controllerのprimary actionは有効な押下から解放までを共有ownerが認可する。
 - fontは読み込み済みNative fontをBevyの同じshape/raster経路で測定・描画し、localeは実際の既定値`und`として通知する。
 - frame待機と生入力はI/O worker、queueへ触れるbegin/acquire/release/endと描画提出はRender scheduleが担当する。描画資源の準備中は層を提出せずframeを終了し、次frameの観測へ進む。画像waitは1回50 msを要求し、timeout後は同じ画像を再waitする。これはhard deadlineではない。
 - 通常停止は最終GPU完了とframe終了、両worldの参照退役、session/画像の所有解放、worker終了の順でACKする。session lossは原causeを通知して参照を退役し、未知の未終端I/Oは所有を保持して5秒の終了予算超過をerrorとして返す。
