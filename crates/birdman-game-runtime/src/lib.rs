@@ -391,9 +391,11 @@ impl ApplicationRuntime {
                     self.diagnostic = Some(cause);
                     if self.boot.active() {
                         self.boot.fail(self.diagnostic.as_deref());
+                    } else {
+                        self.platform.flight_controller_failure = Some(
+                            "描画を続けられない。ページを再読み込みして再試行する。".to_owned(),
+                        );
                     }
-                    self.platform.flight_controller_failure =
-                        Some("描画を続けられない。ページを再読み込みして再試行する。".to_owned());
                 }
             }
             ApplicationInput::DocumentFocus { focused } => {

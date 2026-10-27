@@ -598,6 +598,18 @@ fn boot_retries_renderer_creation_releases_late_resources_and_enters_title_after
             && matches!(&control.content, GameUiControlContent::Status { value, .. } if value == "initial pipeline creation failed")
     }));
     assert_eq!(runtime.platform.notification, stored_notification);
+    runtime
+        .observe_test(ApplicationInput::RendererFailed {
+            renderer_resource_id: 101,
+            cause: "initial GPU drawing failed".into(),
+        })
+        .unwrap();
+    let failed = runtime.retained.as_ref().unwrap().clone();
+    assert!(runtime.platform.flight_controller_failure.is_none());
+    assert!(failed.panels.iter().flat_map(|panel| &panel.controls).any(|control| {
+        control.id == "game-boot-diagnostic"
+            && matches!(&control.content, GameUiControlContent::Status { value, .. } if value == "initial pipeline creation failed")
+    }));
     let retried = runtime
         .observe_test(ApplicationInput::Control {
             view_revision: failed.view_revision,
@@ -606,7 +618,23 @@ fn boot_retries_renderer_creation_releases_late_resources_and_enters_title_after
             },
         })
         .unwrap();
-    let replacement = retried
+    let creation = retried
+        .requests
+        .iter()
+        .find_map(|request| match request {
+            ApplicationRequest::CreateRenderer { request_id } => Some(*request_id),
+            _ => None,
+        })
+        .unwrap();
+    let mut renderer = renderer_observation();
+    renderer.resource_id = 102;
+    let preparing = runtime
+        .observe_test(ApplicationInput::RendererCreated {
+            request_id: creation,
+            result: ApplicationRendererCreation::Ready { renderer },
+        })
+        .unwrap();
+    let replacement = preparing
         .requests
         .iter()
         .find_map(|request| match request {
@@ -631,10 +659,22 @@ fn boot_retries_renderer_creation_releases_late_resources_and_enters_title_after
             })
     );
     assert_eq!(runtime.platform.notification, stored_notification);
+    assert!(runtime.platform.flight_controller_failure.is_none());
     assert_eq!(
         runtime.application().core_session().snapshot().phase(),
         SessionPhase::Title
     );
+    let later_failure = runtime
+        .observe_test(ApplicationInput::RendererFailed {
+            renderer_resource_id: 102,
+            cause: "later GPU drawing failed".into(),
+        })
+        .unwrap();
+    assert_eq!(
+        later_failure.diagnostic.as_deref(),
+        Some("later GPU drawing failed")
+    );
+    assert!(runtime.platform.flight_controller_failure.is_some());
     let mut reload =
         ApplicationRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
     let initial = reload
