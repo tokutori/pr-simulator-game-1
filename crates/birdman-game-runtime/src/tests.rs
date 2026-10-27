@@ -2159,6 +2159,95 @@ fn display_completion_retains_owned_resources_and_reports_no_active_mode_after_s
         ]
     ));
     assert_eq!(display.state().active_mode(), None);
+
+    let platform = ApplicationPlatformObservation {
+        gpu_timing_requested: false,
+        renderer: Some(renderer_observation()),
+        surface: None,
+        viewport: GameUiViewport {
+            width: 1280.0,
+            height: 720.0,
+            root_font_size: 16.0,
+        },
+        capabilities: ApplicationCapabilities {
+            hmd_available: true,
+            ..Default::default()
+        },
+    };
+    let mut runtime =
+        ApplicationRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
+    let initial = runtime
+        .observe_test(ApplicationInput::Platform {
+            observation: platform,
+        })
+        .unwrap();
+    let title = structure(finish_boot(&mut runtime, initial));
+    let action = GameUiAction::Platform {
+        command: GameUiPlatformCommand::SetPresentation { mode: Hmd },
+    };
+    let pending = activate_action(&mut runtime, &title, action.clone());
+    let request_id = pending
+        .requests
+        .iter()
+        .find_map(|request| match request {
+            ApplicationRequest::Display {
+                request: DisplayRequest::Permission { request_id, .. },
+            } => Some(*request_id),
+            _ => None,
+        })
+        .unwrap();
+    let cause = "NotSupportedError: WebXR session could not be created\noriginal detail";
+    let failed = runtime
+        .observe_test(ApplicationInput::DisplayCompleted {
+            request_id,
+            completion: DisplayCompletion::Failed {
+                cause: cause.to_owned(),
+            },
+        })
+        .unwrap();
+    assert_eq!(failed.diagnostic.as_deref(), Some(cause));
+    let failed = structure(failed);
+    let message = failed
+        .panels
+        .iter()
+        .flat_map(|panel| &panel.controls)
+        .find_map(|control| match &control.content {
+            GameUiControlContent::Status { value, .. } if value.contains(cause) => {
+                Some(value.clone())
+            }
+            _ => None,
+        })
+        .expect("Expected the admitted display failure in the shared UI");
+    let held = runtime
+        .observe_test(ApplicationInput::Frame {
+            display_resource_id: None,
+            timestamp_ms: 10.0,
+            gamepads: Vec::new(),
+            xr: None,
+            spatial: Default::default(),
+        })
+        .unwrap();
+    assert!(held.diagnostic.is_none());
+    assert!(matches!(
+        held.drawing.unwrap().ui,
+        ApplicationUiProjection::Frame { .. }
+    ));
+    assert_eq!(runtime.platform.notification, message);
+    let retried = activate_action(&mut runtime, &failed, action);
+    assert!(retried.requests.iter().any(|request| matches!(request,
+        ApplicationRequest::Display { request: DisplayRequest::Permission { request_id: next, .. } } if *next != request_id
+    )));
+    let stale = runtime
+        .observe_test(ApplicationInput::DisplayCompleted {
+            request_id,
+            completion: DisplayCompletion::Failed {
+                cause: "stale display failure".to_owned(),
+            },
+        })
+        .unwrap();
+    assert!(stale.diagnostic.is_none());
+    assert!(runtime.display.state().pending());
+    assert_eq!(runtime.platform.notification, message);
 }
 
 #[test]

@@ -105,10 +105,11 @@ export class ThreeApplicationRenderer {
   observation(): ApplicationRendererObservation {
     const size = this.renderer.getDrawingBufferSize(new Vector2());
     const unsupported = this.timer.availability();
-    const layer = this.renderer.xr.getSession()?.renderState.baseLayer;
+    const layer = this.renderer.xr.isPresenting ? this.renderer.xr.getBaseLayer() : null;
     return { resource_id: this.id, initial_quality: this.quality,
       extent_px: [size.x, size.y], screen_extent_px: [Math.round(window.innerWidth * window.devicePixelRatio), Math.round(window.innerHeight * window.devicePixelRatio)],
-      xr_extent_px: layer == null ? null : [layer.framebufferWidth, layer.framebufferHeight],
+      xr_extent_px: layer == null ? null : "framebufferWidth" in layer
+        ? [layer.framebufferWidth, layer.framebufferHeight] : [layer.textureWidth, layer.textureHeight],
       gpu_timing: unsupported === null ? { kind: "available" } : { kind: "unsupported", cause: unsupported.cause } };
   }
 
@@ -355,19 +356,23 @@ export class ThreeApplicationRenderer {
     const previousSize = this.renderer.getSize(new Vector2());
     let extent: [number, number];
     try {
-      if (previousRatio !== 1) this.renderer.setPixelRatio(1);
-      const physical = this.renderer.getDrawingBufferSize(new Vector2());
-      if (previousSize.x !== target.extent_px[0] || previousSize.y !== target.extent_px[1]
-          || physical.x !== target.extent_px[0] || physical.y !== target.extent_px[1]) {
-        this.renderer.setSize(target.extent_px[0], target.extent_px[1], false);
+      if (!this.renderer.xr.isPresenting) {
+        if (previousRatio !== 1) this.renderer.setPixelRatio(1);
+        const physical = this.renderer.getDrawingBufferSize(new Vector2());
+        if (previousSize.x !== target.extent_px[0] || previousSize.y !== target.extent_px[1]
+            || physical.x !== target.extent_px[0] || physical.y !== target.extent_px[1]) {
+          this.renderer.setSize(target.extent_px[0], target.extent_px[1], false);
+        }
       }
       candidate.sun.shadow.mapSize.fromArray(target.shadow_extent_px);
       const size = this.renderer.getDrawingBufferSize(new Vector2());
       extent = [size.x, size.y];
     } catch (cause) {
       try {
-        this.renderer.setPixelRatio(previousRatio);
-        this.renderer.setSize(previousSize.x, previousSize.y, false);
+        if (!this.renderer.xr.isPresenting) {
+          this.renderer.setPixelRatio(previousRatio);
+          this.renderer.setSize(previousSize.x, previousSize.y, false);
+        }
       } catch (rollback) {
         this.notify({ kind: "resources", request_id: request.request_id, observation: { kind: "binding_lost", resource_id: request.resource_id,
           cause: errorMessage(new AggregateError([cause, rollback], "GPU commit rollback failed")) } });

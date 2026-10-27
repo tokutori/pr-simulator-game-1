@@ -1,7 +1,7 @@
 import { IDBFactory } from "fake-indexeddb";
 import { Window } from "happy-dom";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { Camera, Color, DirectionalLight, Material, Matrix4, Mesh, PerspectiveCamera, Quaternion, ShaderMaterial, SRGBColorSpace, Vector2, Vector3, Vector4, WebGLRenderTarget } from "three";
+import { Camera, Color, DirectionalLight, Material, Matrix4, Mesh, PCFShadowMap, PerspectiveCamera, Quaternion, ShaderMaterial, SRGBColorSpace, Vector2, Vector3, Vector4, WebGLRenderTarget } from "three";
 import type { ArrayCamera, Scene, WebGLRenderer } from "three";
 import { WebXRManager } from "three/src/renderers/webxr/WebXRManager.js";
 import { WebGLProgram as ShaderProgram } from "three/src/renderers/webgl/WebGLProgram.js";
@@ -98,6 +98,7 @@ vi.mock("three", async importOriginal => {
     setPixelRatio(ratio: number): void { this.pixelRatio = ratio; this.setSize(this.size.x, this.size.y); }
     getPixelRatio(): number { return this.pixelRatio; }
     setSize(width: number, height: number): void {
+      if (this.xr.isPresenting) throw new Error("Cannot resize while XR is presenting");
       if (this.sizeFaults > 0) { this.sizeFaults--; throw new Error("physical framebuffer resize failed"); }
       this.size.set(width, height);
       this.viewport.set(0, 0, width * this.pixelRatio, height * this.pixelRatio);
@@ -190,6 +191,7 @@ class XrSession extends EventTarget {
   readonly reference = new EventTarget();
   readonly inputSources: XRInputSource[] = [];
   readonly renderState: XRRenderStateInit = {};
+  private pendingRenderState: XRRenderStateInit | null = null;
   readonly enabledFeatures: readonly string[] = [];
   readonly environmentBlendMode = "opaque";
   visibilityState: XRVisibilityState = "visible";
@@ -201,7 +203,7 @@ class XrSession extends EventTarget {
   requestAnimationFrame(callback: XRFrameRequestCallback): number { this.callback = callback; return 1; }
   cancelAnimationFrame(): void { this.callback = null; }
   requestReferenceSpace(): Promise<XRReferenceSpace> { return Promise.resolve(this.reference as XRReferenceSpace); }
-  updateRenderState(state: XRRenderStateInit): void { Object.assign(this.renderState, state); }
+  updateRenderState(state: XRRenderStateInit): void { this.pendingRenderState = { ...this.pendingRenderState, ...state }; }
   end(): Promise<void> {
     if (++this.endCalls !== 1) return Promise.reject(new Error("XR session ended twice"));
     this.dispatchEvent(new Event("end"));
@@ -217,6 +219,8 @@ class XrSession extends EventTarget {
   }
   run(now: number): void {
     if (this.callback === null) throw new Error("XR animation was not started");
+    Object.assign(this.renderState, this.pendingRenderState);
+    this.pendingRenderState = null;
     this.callback(now + 50, this.frame(now));
   }
   select(now: number): void {
@@ -327,12 +331,20 @@ describe("Aggregate runtime through the real Three WebXRManager", () => {
       const before = driver.getDrawingBufferSize(new Vector2());
       const ratio = driver.getPixelRatio();
       const resize = vi.spyOn(driver, "setSize");
+      const pixelRatio = vi.spyOn(driver, "setPixelRatio");
+      const presenting = driver.xr.isPresenting;
+      const enabled = driver.xr.enabled;
       try {
         execute.call(this, request);
+        if (request.kind === "commit_resources" && presenting) {
+          expect(resize).not.toHaveBeenCalled();
+          expect(pixelRatio).not.toHaveBeenCalled();
+          expect(driver.xr.enabled).toBe(enabled);
+        }
         if (request.kind === "commit_resources" && ratio === 1 && before.equals(driver.getDrawingBufferSize(new Vector2()))) {
           expect(resize).not.toHaveBeenCalled();
         }
-      } finally { resize.mockRestore(); }
+      } finally { resize.mockRestore(); pixelRatio.mockRestore(); }
     });
     capture.timing = true; prepared = await fixture(); await prepared.ready();
   });
@@ -376,6 +388,7 @@ describe("Aggregate runtime through the real Three WebXRManager", () => {
             defines: { LAKE_WAVE_COUNT: count }, precision: "highp", shaderType: "ShaderMaterial", shaderName: material.name,
             vertexShader: far ? shaders.filteredVertexShader : shaders.vertexShader, fragmentShader: shaders.fragmentShader,
             envMapCubeUVHeight: null, outputColorSpace: SRGBColorSpace, toneMapping: 0,
+            shadowMapEnabled: true, shadowMapType: PCFShadowMap, numSunLights: 0, numSunLightShadows: 0,
             numDirLights: 1, numDirLightShadows: 1, numPointLights: 0, numPointLightShadows: 0,
             numSpotLights: 0, numSpotLightShadows: 0, numSpotLightMaps: 0, numSpotLightShadowsWithMaps: 0,
             numHemiLights: 0, numRectAreaLights: 0, numClippingPlanes: 0, numClipIntersection: 0
@@ -383,6 +396,9 @@ describe("Aggregate runtime through the real Three WebXRManager", () => {
           const stages = compiled.splice(0);
           expect(stages).toHaveLength(2);
           stages.forEach((source, stage) => {
+            expect(source).not.toMatch(/undefined|NaN/u);
+            expect(source).toContain("#define USE_SHADOWMAP");
+            expect(source).toContain("#define SHADOWMAP_TYPE_PCF");
             expect(source).not.toMatch(/unroll_loop|LAKE_WAVE_LOOP_COUNT|continue;|uWave(?:KAmplitude|OmegaPhase)\[\s*(?:i|index)\s*\]/u);
             const indices = [...source.matchAll(/uWaveKAmplitude\[\s*(\d+)\s*\]/gu)].map(match => Number(match[1]));
             expect(indices).toEqual(stage === 0 && far ? [] : Array.from({ length: count }, (_, index) => index));
@@ -421,13 +437,23 @@ describe("Aggregate runtime through the real Three WebXRManager", () => {
         const output = state.updates.mock.results.at(-1);
         expect(output?.type === "return" ? (JSON.parse(output.value) as ApplicationOutput).drawing : undefined).toBeNull();
       }
+      const hmdStart = state.updates.mock.calls.length;
       state.click("boot-enter-hmd");
       await flush();
       expect(state.driver.xr.isPresenting).toBe(true);
+      expect(state.session.renderState.baseLayer).toBeUndefined();
+      const xrPlatform = state.updates.mock.calls.map(([json]) => (JSON.parse(json) as ApplicationObservation).input)
+        .findLast(input => input.kind === "platform" && input.observation.renderer?.xr_extent_px != null);
+      expect(xrPlatform?.kind === "platform" ? xrPlatform.observation.renderer?.xr_extent_px : null).toEqual([1280, 720]);
       state.frame(10);
       await flush();
       state.frame(11);
       const opening = state.drawing();
+      expect(opening.graphics.resource?.extent_px).toEqual([1280, 720]);
+      expect(state.driver.xr.enabled).toBe(true);
+      expect(state.updates.mock.calls.slice(hmdStart).map(([json]) => (JSON.parse(json) as ApplicationObservation).input)
+        .some(input => input.kind === "resources" && input.observation.kind === "committed"
+          && input.observation.actual.extent_px[0] === 1280 && input.observation.actual.extent_px[1] === 720)).toBe(true);
       const menu = opening.spatial?.menu;
       if (menu?.kind !== "ready" || opening.scene.camera == null) throw new Error("Current tracked Menu is unavailable");
       const before = poseMatrix(menu.world_from_panel);

@@ -973,6 +973,7 @@ impl ApplicationRuntime {
                 request_id,
                 completion,
             } => {
+                let was_pending = self.display.state().pending();
                 let next_id = if self.display.completion_advances(request_id, &completion) {
                     self.allocate_request()?
                 } else {
@@ -984,6 +985,10 @@ impl ApplicationRuntime {
                         .into_iter()
                         .map(|request| ApplicationRequest::Display { request }),
                 );
+                if was_pending && let DisplayState::Failed { cause, .. } = self.display.state() {
+                    self.diagnostic = Some(cause.clone());
+                    self.platform.notification = format!("表示を切り替えられない。原因: {cause}");
+                }
             }
         }
         if io_continuation {
