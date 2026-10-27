@@ -208,12 +208,7 @@ impl Actions {
                     select_pressed: select.is_active.then_some(select.current_state),
                     gamepad: Some(XrInputGamepadObservation {
                         mapping: "xr-standard".into(),
-                        axes: vec![
-                            pad.is_active.then_some(f64::from(pad.current_state.x)),
-                            pad.is_active.then_some(f64::from(pad.current_state.y)),
-                            stick.is_active.then_some(f64::from(stick.current_state.x)),
-                            stick.is_active.then_some(f64::from(stick.current_state.y)),
-                        ],
+                        axes: gamepad_axes(pad, stick),
                         buttons: vec![
                             XrInputButtonObservation {
                                 pressed: select.is_active && select.current_state,
@@ -234,6 +229,18 @@ impl Actions {
             .collect::<openxr::Result<_>>()?;
         Ok((sources, status))
     }
+}
+
+fn gamepad_axes(
+    pad: openxr::ActionState<openxr::Vector2f>,
+    stick: openxr::ActionState<openxr::Vector2f>,
+) -> Vec<Option<f64>> {
+    vec![
+        pad.is_active.then_some(f64::from(pad.current_state.x)),
+        pad.is_active.then_some(-f64::from(pad.current_state.y)),
+        stick.is_active.then_some(f64::from(stick.current_state.x)),
+        stick.is_active.then_some(-f64::from(stick.current_state.y)),
+    ]
 }
 
 fn error(cause: impl std::fmt::Display) -> String {
@@ -751,6 +758,38 @@ mod tests {
 
     #[test]
     fn frame_input_preserves_focus_and_reference_change_observations() {
+        let pad = openxr::ActionState {
+            current_state: openxr::Vector2f { x: 0.25, y: 1.0 },
+            changed_since_last_sync: false,
+            last_change_time: openxr::Time::from_nanos(0),
+            is_active: true,
+        };
+        let stick = openxr::ActionState {
+            current_state: openxr::Vector2f { x: -0.5, y: -1.0 },
+            ..pad
+        };
+        assert_eq!(
+            gamepad_axes(pad, stick),
+            [Some(0.25), Some(-1.0), Some(-0.5), Some(1.0)]
+        );
+        assert_eq!(
+            gamepad_axes(stick, pad),
+            [Some(-0.5), Some(1.0), Some(0.25), Some(-1.0)]
+        );
+        assert_eq!(
+            gamepad_axes(
+                openxr::ActionState {
+                    is_active: false,
+                    ..pad
+                },
+                openxr::ActionState {
+                    is_active: false,
+                    ..stick
+                },
+            ),
+            [None; 4]
+        );
+
         let state = openxr::SessionState::FOCUSED;
         assert_eq!(
             visibility(state, openxr::sys::Result::SUCCESS),
