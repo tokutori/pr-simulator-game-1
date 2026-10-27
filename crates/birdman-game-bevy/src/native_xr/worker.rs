@@ -260,6 +260,25 @@ fn report_status(
     Ok(())
 }
 
+fn send_reference_changes(
+    pending: &mut Vec<(openxr::Time, Option<camera::Pose>)>,
+    frame_time: openxr::Time,
+    resource_id: u32,
+    events: &mpsc::SyncSender<Event>,
+) -> Result<(), String> {
+    pending.sort_by_key(|(at, _)| at.as_nanos());
+    let due = pending.partition_point(|(at, _)| at.as_nanos() <= frame_time.as_nanos());
+    for (_, previous_from_new) in pending.drain(..due) {
+        events
+            .send(Event::Input(ApplicationInput::XrReferenceReset {
+                resource_id,
+                previous_from_new,
+            }))
+            .map_err(error)?;
+    }
+    Ok(())
+}
+
 pub(super) fn pose(value: openxr::Posef) -> camera::Pose {
     camera::Pose {
         position: camera::Vector3 {
@@ -384,7 +403,7 @@ fn run_session(
     let mut lost: Option<String> = None;
     let mut release = false;
     let mut sequence = 0u64;
-    let mut reset = None;
+    let mut resets = Vec::new();
     loop {
         let mut buffer = openxr::EventDataBuffer::default();
         while let Some(event) = session.instance().poll_event(&mut buffer).map_err(error)? {
@@ -424,7 +443,7 @@ fn run_session(
                     if value.session() == session.as_raw()
                         && value.reference_space_type() == openxr::ReferenceSpaceType::LOCAL =>
                 {
-                    reset = Some((
+                    resets.push((
                         value.change_time(),
                         value
                             .pose_valid()
@@ -613,18 +632,7 @@ fn run_session(
             lost.get_or_insert_with(|| error(status));
         }
         report_status(events, id, status)?;
-        if reset
-            .as_ref()
-            .is_some_and(|(at, _)| frame.predicted_display_time.as_nanos() >= at.as_nanos())
-        {
-            let (_, previous_from_new) = reset.take().unwrap();
-            events
-                .send(Event::Input(ApplicationInput::XrReferenceReset {
-                    resource_id: id,
-                    previous_from_new,
-                }))
-                .map_err(error)?;
-        }
+        send_reference_changes(&mut resets, frame.predicted_display_time, id, events)?;
         let observation = (|| {
             let (flags, views) = raw.locate_views(
                 openxr::ViewConfigurationType::PRIMARY_STEREO,
@@ -742,7 +750,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn action_sync_overrides_cached_input_focus() {
+    fn frame_input_preserves_focus_and_reference_change_observations() {
         let state = openxr::SessionState::FOCUSED;
         assert_eq!(
             visibility(state, openxr::sys::Result::SUCCESS),
@@ -754,5 +762,57 @@ mod tests {
         ] {
             assert_eq!(visibility(state, status), (XrVisibility::Visible, false));
         }
+
+        let first = camera::Pose {
+            position: camera::Vector3 {
+                x: 1.0,
+                y: 0.0,
+                z: 0.0,
+            },
+            ..camera::Pose::IDENTITY
+        };
+        let second = camera::Pose {
+            position: camera::Vector3 {
+                x: 0.0,
+                y: 2.0,
+                z: 0.0,
+            },
+            ..camera::Pose::IDENTITY
+        };
+        let mut pending = vec![
+            (openxr::Time::from_nanos(20), Some(second)),
+            (openxr::Time::from_nanos(10), Some(first)),
+            (openxr::Time::from_nanos(20), None),
+        ];
+        let (events, received) = mpsc::sync_channel(3);
+        send_reference_changes(&mut pending, openxr::Time::from_nanos(9), 7, &events).unwrap();
+        assert_eq!(pending.len(), 3);
+        assert!(received.try_recv().is_err());
+        send_reference_changes(&mut pending, openxr::Time::from_nanos(10), 7, &events).unwrap();
+        let Event::Input(ApplicationInput::XrReferenceReset {
+            resource_id,
+            previous_from_new,
+        }) = received.try_recv().unwrap()
+        else {
+            panic!("expected raw reference change");
+        };
+        assert_eq!((resource_id, previous_from_new), (7, Some(first)));
+        assert_eq!(pending.len(), 2);
+        send_reference_changes(&mut pending, openxr::Time::from_nanos(20), 7, &events).unwrap();
+        let remaining: Vec<_> = received
+            .try_iter()
+            .map(|event| {
+                let Event::Input(ApplicationInput::XrReferenceReset {
+                    resource_id,
+                    previous_from_new,
+                }) = event
+                else {
+                    panic!("expected raw reference change");
+                };
+                (resource_id, previous_from_new)
+            })
+            .collect();
+        assert_eq!(remaining, [(7, Some(second)), (7, None)]);
+        assert!(pending.is_empty());
     }
 }
