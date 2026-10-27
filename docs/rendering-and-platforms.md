@@ -252,7 +252,7 @@ Nativeは既存DirectionalLightの2048 texel・30〜600 mの3段cascadeから、
 - live・prepared・Result・Replayは共有poseの採用済み曲げ係数を主翼へ渡す。係数が変化した場合だけ、同じspanの頂点列でたわみ評価を共有して保持position bufferを更新し、topologyを保持する。
 - 描画補間では身体位置・姿勢を補間し、尾翼角と曲げ係数は記録queryと同じ区間保持を用いる。
 - 未記録係数は主翼の表示、未登録形状はcockpitと桁を含む機体全体の表示を利用不可にする。表現範囲を超える変形は失敗として通知し、次の有効な採用係数で表示を復元する。
-- 全構造材は共通のf64頂点からFloat32へ投影し、尾翼batchは物理pivotを原点とするlocal座標を保持する。
+- 全構造材は共通のf64頂点からFloat32へ投影し、GPU転写用の尾翼bufferは機体座標で保持する。
 - 法線は完全な半翼topologyにarea-weighted計算を適用し、材質分割後も共有する。
 - 表示たわみの定数と実機諸元の区分はデータ文書へ集約する。
 
@@ -262,7 +262,7 @@ Nativeは既存DirectionalLightの2048 texel・30〜600 mの3段cascadeから、
 - linear-light mipを生成してsRGB textureへ格納する。
 - PBR/Lambertの明度差や縮小時の細部は実描画で評価する。
 
-- 尾翼は登録physical geometryのquarter-chordと全surfaceを共有し、水平・垂直それぞれ独立した親でphysical incidenceに従う。表示の親poseは水平・垂直とも登録pivotから後方へ1 m移し、外皮・内部部材・回転中心をまとめて配置する。空力と接触は登録位置を使うため、表示とは1 m異なる。
+- 尾翼は登録physical geometryのquarter-chordと全surfaceを共有する。水平・垂直の外皮・内部部材は、登録pivotから後方1 mの表示pivotを用いて共有Rustが完成meshへ配置し、同pivot周りのphysical incidenceを完成poseとして出力する。空力と接触は登録位置を使うため、表示とは1 m異なる。
 - FRD変換後は水平+X、垂直−Yの回転を用いる。
 - geometryは登録されたmodel identityから解決し、未知のidentityは明示的な未対応として扱う。
 - 被覆・材質は描画モデル、部材寸法・配置・変形則はcontent、採用曲げ係数・空力・慣性・操縦応答は飛行モデルが所有する。

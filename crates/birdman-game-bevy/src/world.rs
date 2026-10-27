@@ -54,8 +54,6 @@ pub(crate) fn color_srgb(color: u32) -> Color {
 #[derive(Component, PartialEq, Eq)]
 pub(crate) enum WorldProjection {
     Aircraft,
-    HorizontalTail,
-    VerticalTail,
     FlightCamera,
     SkyDome,
     LakeSurface,
@@ -578,12 +576,6 @@ impl NativeGpu {
         world
             .entity_mut(attachments[1])
             .insert(WorldProjection::Aircraft);
-        world
-            .entity_mut(attachments[2])
-            .insert(WorldProjection::HorizontalTail);
-        world
-            .entity_mut(attachments[3])
-            .insert(WorldProjection::VerticalTail);
         let output = world.resource_mut::<Assets<Image>>().add(output_image);
         let reflection = world.resource_mut::<Assets<Image>>().add(reflection_image);
         let mut acquired = Vec::new();
