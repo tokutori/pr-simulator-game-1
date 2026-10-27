@@ -818,7 +818,7 @@ impl GeometryOwner {
             ApplicationMeshPose {
                 attachment: tail_attachment(index),
                 pose: Pose {
-                    position: Vector3 { x, y, z },
+                    position: Vector3 { x, y, z: z + 1.0 },
                     orientation: Quaternion {
                         w: angle.cos(),
                         x: if index == 0 { angle.sin() } else { 0.0 },

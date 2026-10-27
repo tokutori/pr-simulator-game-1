@@ -262,7 +262,7 @@ Nativeは既存DirectionalLightの2048 texel・30〜600 mの3段cascadeから、
 - linear-light mipを生成してsRGB textureへ格納する。
 - PBR/Lambertの明度差や縮小時の細部は実描画で評価する。
 
-- 尾翼は登録physical geometryのquarter-chordと全surfaceを共有し、水平・垂直それぞれ独立した親でphysical incidenceに従う。
+- 尾翼は登録physical geometryのquarter-chordと全surfaceを共有し、水平・垂直それぞれ独立した親でphysical incidenceに従う。表示の親poseは水平・垂直とも登録pivotから後方へ1 m移し、外皮・内部部材・回転中心をまとめて配置する。空力と接触は登録位置を使うため、表示とは1 m異なる。
 - FRD変換後は水平+X、垂直−Yの回転を用いる。
 - geometryは登録されたmodel identityから解決し、未知のidentityは明示的な未対応として扱う。
 - 被覆・材質は描画モデル、部材寸法・配置・変形則はcontent、採用曲げ係数・空力・慣性・操縦応答は飛行モデルが所有する。

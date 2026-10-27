@@ -1510,7 +1510,30 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
         stale,
         Err(ApplicationRuntimeError::Ui(GameUiError::StaleView))
     ));
-    let _countdown = activate(&mut runtime, &briefing, SessionCommand::StartCountdown {});
+    let countdown = activate(&mut runtime, &briefing, SessionCommand::StartCountdown {});
+    let geometry = countdown
+        .drawing
+        .as_ref()
+        .unwrap()
+        .scene
+        .geometry
+        .as_ref()
+        .unwrap();
+    let definition = birdman_game_app::registered_aircraft().unwrap();
+    for (part, role) in geometry.part_poses.iter().zip([
+        birdman_game_core::HybridSurfaceRole::HorizontalTail,
+        birdman_game_core::HybridSurfaceRole::VerticalTail,
+    ]) {
+        let [forward, right, down] = definition
+            .shape()
+            .surface(role)
+            .incidence_pivot()
+            .unwrap()
+            .components();
+        assert_eq!(part.pose.position.x, right);
+        assert_eq!(part.pose.position.y, -down);
+        assert_eq!(part.pose.position.z, -forward + 1.0);
+    }
     assert_eq!(
         birdman_game_presentation::render_pose::prepared_render_pose(runtime.application())
             .unwrap()
