@@ -1624,29 +1624,30 @@ fn analysis_sections_preserve_order_and_typed_values_across_targets() {
                         },
                         locale: "ja".into(),
                     };
+                    let measure = |request: &MenuTextRequest, _: MenuSize, value: &str| {
+                        let width = value.chars().count() as f64 * request.font_meters * 0.6;
+                        Ok(MenuGlyphMetrics {
+                            advance: width,
+                            left: 0.0,
+                            right: width,
+                            ascent: if value.is_empty() {
+                                0.0
+                            } else {
+                                request.font_meters * 0.8
+                            },
+                            descent: if value.is_empty() {
+                                0.0
+                            } else {
+                                request.font_meters * 0.2
+                            },
+                        })
+                    };
                     let result = prepare_game_ui_menu(
                         &numeric,
                         &frame,
-                        input,
+                        input.clone(),
                         &mut SurfaceFontCache::default(),
-                        |request, _, value| {
-                            let width = value.chars().count() as f64 * request.font_meters * 0.6;
-                            Ok(MenuGlyphMetrics {
-                                advance: width,
-                                left: 0.0,
-                                right: width,
-                                ascent: if value.is_empty() {
-                                    0.0
-                                } else {
-                                    request.font_meters * 0.8
-                                },
-                                descent: if value.is_empty() {
-                                    0.0
-                                } else {
-                                    request.font_meters * 0.2
-                                },
-                            })
-                        },
+                        measure,
                     );
                     let MenuLayoutReply::Ready { projection } = result else {
                         panic!("numeric cards failed: {result:?}")
@@ -1668,6 +1669,59 @@ fn analysis_sections_preserve_order_and_typed_values_across_targets() {
                         assert!(projection.content.items.iter().any(|item| matches!(item, SurfacePaintItem::Text { value, font, .. } if value == &field.value && font.family == "monospace")));
                         assert!(projection.content.items.iter().any(|item| matches!(item, SurfacePaintItem::Text { value, .. } if value == &field.label)));
                     }
+                    let mut chart_view = spatial.clone();
+                    chart_view.panels[0].controls.retain(|control| {
+                        matches!(control.content, GameUiControlContent::Chart { .. })
+                    });
+                    let mut cursor_frame = game_ui_frame(
+                        &GameUiState {
+                            analysis_time_seconds: 0.015,
+                            ..state.clone()
+                        },
+                        &context(&session, difficulty(), &platform),
+                        &chart_view,
+                        chart_view.view_revision,
+                    )
+                    .unwrap();
+                    let mut expected_view = chart_view.clone();
+                    let cursor = cursor_frame.chart_cursor.as_ref().unwrap();
+                    let GameUiControlContent::Chart { plot, .. } =
+                        &mut expected_view.panels[0].controls[0].content
+                    else {
+                        panic!("chart missing")
+                    };
+                    plot.cursor_x = cursor.cursor_x;
+                    plot.cursor_points = cursor.cursor_points.clone();
+                    if let Some(vector) = &cursor.selected_wind_vector
+                        && let Some(first) = plot.vectors.first_mut()
+                    {
+                        *first = vector.clone();
+                    }
+                    let actual = prepare_game_ui_menu(
+                        &chart_view,
+                        &cursor_frame,
+                        input.clone(),
+                        &mut SurfaceFontCache::default(),
+                        measure,
+                    );
+                    cursor_frame.chart_cursor = None;
+                    let expected = prepare_game_ui_menu(
+                        &expected_view,
+                        &cursor_frame,
+                        input,
+                        &mut SurfaceFontCache::default(),
+                        measure,
+                    );
+                    let (
+                        MenuLayoutReply::Ready { projection: actual },
+                        MenuLayoutReply::Ready {
+                            projection: expected,
+                        },
+                    ) = (actual, expected)
+                    else {
+                        panic!("chart paint failed")
+                    };
+                    assert_eq!(actual, expected);
                 }
             }
             assert_eq!(session.snapshot(), snapshot);
