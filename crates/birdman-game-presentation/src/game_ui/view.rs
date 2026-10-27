@@ -1262,8 +1262,8 @@ fn analysis(
         let sample = record
             .sample_at_seconds(time)
             .map_err(GameUiError::Record)?;
-        plot.seek_target =
-            (state.analysis_chart != GameUiAnalysisChart::Map).then_some(if replay {
+        plot.seek_target = (duration > 0.0 && state.analysis_chart != GameUiAnalysisChart::Map)
+            .then_some(if replay {
                 GameUiRangeTarget::Replay
             } else {
                 GameUiRangeTarget::Analysis

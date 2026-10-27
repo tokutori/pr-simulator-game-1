@@ -63,16 +63,13 @@ pub(super) fn record_chart(
     let cursor = record
         .sample_at_seconds(time)
         .map_err(GameUiError::Record)?;
-    let duration = record
-        .duration_seconds()
-        .map_err(GameUiError::Record)?
-        .max(0.01);
+    let duration = record.duration_seconds().map_err(GameUiError::Record)?;
     let mut chart = ChartData {
         presentation: initial_presentation(extent, root_font_size)?,
         x_axis_label: "飛行時間 (s)".to_owned(),
         y_axis_label: String::new(),
         x_minimum: 0.0,
-        x_maximum: duration,
+        x_maximum: if duration > 0.0 { duration } else { 0.01 },
         y_minimum: 0.0,
         y_maximum: 1.0,
         equal_axis_scale: false,
