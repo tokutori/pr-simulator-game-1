@@ -459,7 +459,7 @@ M C' H'=M C S S^{-1}H=M C H
 - OpenXRのtouchpad・thumbstick軸は`xr-standard`の右・下を正とする向きへ転写し、inactiveな軸は未観測値として渡す。
 - fontは読み込み済みNative fontをBevyの同じshape/raster経路で測定・描画し、localeは実際の既定値`und`として通知する。
 - frame待機と生入力はI/O worker、queueへ触れるbegin/acquire/release/endと描画提出はRender scheduleが担当する。描画資源の準備中は層を提出せずframeを終了し、次frameの観測へ進む。画像waitは1回50 msを要求し、timeout後は同じ画像を再waitする。これはhard deadlineではない。
-- 通常停止は最終GPU完了とframe終了、両worldの参照退役、session/画像の所有解放、worker終了の順でACKする。session lossは原causeを通知して参照を退役し、未知の未終端I/Oは所有を保持して5秒の終了予算超過をerrorとして返す。
+- 通常停止は最終GPU完了とframe終了、両worldの参照退役、session/画像の所有解放、workerのjoin後にStoppedを返し、次回のHMD開始に備える。明示的な資源解放要求は同じ退役経路でDisplayReleasedを返す。session lossは原causeを通知して参照を退役し、未知の未終端I/Oは所有を保持して5秒の終了予算超過をerrorとして返す。
 
 ### VR入力と安全
 

@@ -80,7 +80,7 @@ fn extract(mut main: ResMut<MainWorld>, mut packet: ResMut<Packet>) {
     packet.drop_resources = io
         .session
         .as_ref()
-        .is_some_and(|session| session.stopped && session.release_requested);
+        .is_some_and(|session| session.stopped && session.retiring());
     packet.revision = io.revision;
     if packet.pending.is_none()
         && let Some(frame) = &io.frame

@@ -39,11 +39,16 @@ struct Session {
     extent: UVec2,
     release_sent: bool,
     release_requested: bool,
+    stop: Option<(u32, Option<DisplayCompletion>)>,
     stopped: bool,
     permission_granted: bool,
 }
 
 impl Session {
+    fn retiring(&self) -> bool {
+        self.release_requested || self.stop.is_some()
+    }
+
     fn request_exit(&self, completion: &Arc<Mutex<render::Completion>>) -> Result<(), String> {
         if completion.lock().unwrap().lost {
             return Ok(());
@@ -176,25 +181,24 @@ pub(crate) fn execute(
                     .commands
                     .send(worker::Command::Stop(request_id))
                     .map_err(|cause| cause.to_string())?;
-                io.closing.get_or_insert_with(Instant::now);
-                io.revision += 1;
-                io.blit = None;
-                session.request_exit(&io.completion)?;
+                session.stop = Some((request_id, None));
             }
             DisplayRequest::Release { resource_id } if resource_id == session.id => {
                 session.release_requested = true;
-                io.closing.get_or_insert_with(Instant::now);
-                io.revision += 1;
-                io.blit = None;
-                if !session.stopped {
-                    session.request_exit(&io.completion)?;
-                }
-                super::ui::xr_surface::release(world);
-                if let Some(right) = io.right.take() {
-                    world.despawn(right);
-                }
             }
             _ => return Ok(None),
+        }
+        if session.retiring() {
+            io.closing.get_or_insert_with(Instant::now);
+            io.revision += 1;
+            io.blit = None;
+            if !session.stopped {
+                session.request_exit(&io.completion)?;
+            }
+            super::ui::xr_surface::release(world);
+            if let Some(right) = io.right.take() {
+                world.despawn(right);
+            }
         }
         Ok(Some(Vec::new()))
     })();
@@ -254,6 +258,7 @@ fn create(world: &mut World, id: u32) -> Result<(), String> {
         .map_err(|cause| cause.to_string())?;
     let mut io = world.resource_mut::<XrIo>();
     io.completion = Arc::new(Mutex::new(render::Completion::default()));
+    io.presented = None;
     io.render = Some(owned);
     io.session = Some(Session {
         id,
@@ -264,6 +269,7 @@ fn create(world: &mut World, id: u32) -> Result<(), String> {
         extent,
         release_sent: false,
         release_requested: false,
+        stop: None,
         stopped: true,
         permission_granted: false,
     });
@@ -288,6 +294,11 @@ pub(crate) fn poll(world: &mut World, now: f64) -> Vec<ApplicationInput> {
         return Vec::new();
     };
     let mut inputs = Vec::new();
+    // A finished worker has already sent all terminal events; drain those before joining.
+    let worker_finished = io
+        .session
+        .as_ref()
+        .is_some_and(|session| session.join.as_ref().is_some_and(|join| join.is_finished()));
     let ended = io.completion.lock().unwrap().ended.take();
     if let Some(cause) = ended
         && let Some(session) = &io.session
@@ -326,6 +337,23 @@ pub(crate) fn poll(world: &mut World, now: f64) -> Vec<ApplicationInput> {
                     completion,
                 } = &input
                 {
+                    if let Some(session) = &mut io.session
+                        && let Some((stop_id, result)) = &mut session.stop
+                        && *stop_id == *request_id
+                        && matches!(
+                            completion,
+                            DisplayCompletion::Stopped | DisplayCompletion::Failed { .. }
+                        )
+                    {
+                        result.get_or_insert_with(|| completion.clone());
+                        if matches!(completion, DisplayCompletion::Stopped) {
+                            world
+                                .resource_mut::<super::native_runtime::NativeIo>()
+                                .display_resource_id = None;
+                            session.stopped = true;
+                        }
+                        continue;
+                    }
                     match completion {
                         DisplayCompletion::PermissionGranted { .. } => {
                             if let Some(session) = &mut io.session {
@@ -354,13 +382,6 @@ pub(crate) fn poll(world: &mut World, now: f64) -> Vec<ApplicationInput> {
                                 .display_resource_id = None;
                             if let Some(session) = &mut io.session {
                                 session.stopped = true;
-                            }
-                            if !io
-                                .session
-                                .as_ref()
-                                .is_some_and(|session| session.release_requested)
-                            {
-                                io.closing = None;
                             }
                         }
                         _ => {}
@@ -409,7 +430,7 @@ pub(crate) fn poll(world: &mut World, now: f64) -> Vec<ApplicationInput> {
     if io.closing.is_some() && retired {
         io.blit = None;
         if let Some(session) = &mut io.session
-            && session.release_requested
+            && session.retiring()
             && !session.release_sent
             && session.stopped
         {
@@ -418,23 +439,30 @@ pub(crate) fn poll(world: &mut World, now: f64) -> Vec<ApplicationInput> {
             session.release_sent = true;
         }
     }
-    if io
-        .session
-        .as_ref()
-        .is_some_and(|session| session.join.as_ref().is_some_and(|join| join.is_finished()))
-    {
+    if worker_finished {
         let mut session = io.session.take().unwrap();
         let joined = session.join.take().unwrap().join();
         session.handle.take();
         if joined.is_err() {
             io.failure = Some("OpenXR I/O thread panicked".into());
             io.closing.get_or_insert_with(Instant::now);
-        } else if session.release_requested {
+        } else {
             io.closing = None;
-            inputs.push(ApplicationInput::DisplayReleased {
-                resource_id: session.id,
-                failure: None,
-            });
+            io.presented = None;
+            if let Some((request_id, result)) = session.stop {
+                inputs.push(completion(
+                    request_id,
+                    result.unwrap_or_else(|| DisplayCompletion::Failed {
+                        cause: "OpenXR I/O stopped without a display completion".into(),
+                    }),
+                ));
+            }
+            if session.release_requested {
+                inputs.push(ApplicationInput::DisplayReleased {
+                    resource_id: session.id,
+                    failure: None,
+                });
+            }
         }
     }
     world.insert_resource(io);
@@ -536,7 +564,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn disconnected_display_requests_enter_custody_shutdown() {
+    fn display_requests_retire_ownership_before_completion_or_retain_failure() {
         for request in [
             DisplayRequest::Start {
                 request_id: 2,
@@ -563,6 +591,7 @@ mod tests {
                     extent: UVec2::ONE,
                     release_sent: false,
                     release_requested: false,
+                    stop: None,
                     stopped: false,
                     permission_granted: true,
                 }),
@@ -575,6 +604,129 @@ mod tests {
             assert!(!io.session.as_ref().unwrap().release_sent);
             world.resource_mut::<XrIo>().closing = Some(Instant::now() - RELEASE_BUDGET);
             assert!(failure(&world).unwrap().contains(&cause));
+        }
+
+        for result in [
+            Some(DisplayCompletion::Stopped),
+            Some(DisplayCompletion::Failed {
+                cause: "OpenXR original session loss".into(),
+            }),
+            None,
+        ] {
+            let (commands, receiver) = mpsc::channel();
+            let (events, receive) = mpsc::sync_channel(8);
+            let owned = Arc::new(());
+            let ownership = Arc::downgrade(&owned);
+            let expected = result.clone();
+            let join = thread::spawn(move || {
+                if let Some(result) = result {
+                    assert!(matches!(
+                        receiver.recv_timeout(RELEASE_BUDGET).unwrap(),
+                        worker::Command::Stop(3)
+                    ));
+                    events.send(worker::Event::Stopped).unwrap();
+                    events
+                        .send(worker::Event::Input(completion(3, result)))
+                        .unwrap();
+                }
+                assert!(matches!(
+                    receiver.recv_timeout(RELEASE_BUDGET).unwrap(),
+                    worker::Command::Release
+                ));
+                drop(owned);
+                events.send(worker::Event::Released).unwrap();
+            });
+            let mut world = World::new();
+            world.insert_resource(super::super::native_runtime::NativeIo::default());
+            world.insert_resource(XrIo {
+                session: Some(Session {
+                    id: 1,
+                    commands,
+                    events: Mutex::new(receive),
+                    join: Some(join),
+                    handle: None,
+                    extent: UVec2::ONE,
+                    release_sent: false,
+                    release_requested: false,
+                    stop: None,
+                    stopped: expected.is_none(),
+                    permission_granted: true,
+                }),
+                ..default()
+            });
+            let request = if expected.is_some() {
+                DisplayRequest::Stop {
+                    request_id: 3,
+                    mode: GameUiPresentationMode::Hmd,
+                    resource_id: Some(1),
+                }
+            } else {
+                DisplayRequest::Release { resource_id: 1 }
+            };
+            assert!(execute(&mut world, &request).unwrap().unwrap().is_empty());
+            let deadline = Instant::now() + RELEASE_BUDGET;
+            loop {
+                assert!(poll(&mut world, 0.0).is_empty());
+                let io = world.resource::<XrIo>();
+                assert!(ownership.upgrade().is_some());
+                assert!(io.closing.is_some());
+                assert!(!io.session.as_ref().unwrap().release_sent);
+                if expected.is_none()
+                    || io
+                        .session
+                        .as_ref()
+                        .unwrap()
+                        .stop
+                        .as_ref()
+                        .unwrap()
+                        .1
+                        .is_some()
+                {
+                    break;
+                }
+                assert!(Instant::now() < deadline);
+                thread::yield_now();
+            }
+            {
+                let io = world.resource::<XrIo>();
+                io.completion.lock().unwrap().retired = io.revision;
+            }
+            let mut inputs = Vec::new();
+            while world.resource::<XrIo>().session.is_some() {
+                inputs.extend(poll(&mut world, 1.0));
+                assert!(Instant::now() < deadline);
+                thread::yield_now();
+            }
+            assert!(ownership.upgrade().is_none());
+            assert!(world.resource::<XrIo>().closing.is_none());
+            match (expected, inputs.as_slice()) {
+                (
+                    Some(expected),
+                    [
+                        ApplicationInput::DisplayCompleted {
+                            request_id: 3,
+                            completion,
+                        },
+                    ],
+                ) => match (expected, completion) {
+                    (DisplayCompletion::Stopped, DisplayCompletion::Stopped) => {}
+                    (
+                        DisplayCompletion::Failed { cause: expected },
+                        DisplayCompletion::Failed { cause },
+                    ) => assert_eq!(*cause, expected),
+                    _ => panic!("display completion changed during retirement"),
+                },
+                (
+                    None,
+                    [
+                        ApplicationInput::DisplayReleased {
+                            resource_id: 1,
+                            failure: None,
+                        },
+                    ],
+                ) => {}
+                _ => panic!("unexpected display terminal"),
+            }
         }
     }
 }
