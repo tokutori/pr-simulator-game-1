@@ -55,6 +55,19 @@ pub fn game_ui_view(
             );
             if context.platform.stored_records_available {
                 menu.section("stored-records", "保存記録", GameUiSectionLayout::Column);
+                if context.platform.stored_records_retry_available {
+                    menu.status(
+                        "game-title-records-failed",
+                        "",
+                        "保存記録の一覧を読み込めない。",
+                    );
+                    menu.platform(
+                        "game-title-retry-records",
+                        "保存記録の一覧を再試行",
+                        GameUiPlatformCommand::RetryStoredRecords {},
+                        true,
+                    );
+                }
                 for record in context.platform.stored_records.iter() {
                     menu.platform(
                         &format!("game-title-open-record-{}", record.id),

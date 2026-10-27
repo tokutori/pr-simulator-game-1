@@ -20,9 +20,17 @@ pub(super) struct StorageOwner {
     downloads: BTreeSet<u32>,
     diagnostic: Option<String>,
     preview: Option<(u32, RecordPreviewTransaction)>,
-    previewed: bool,
+    preview_state: PreviewState,
     preview_stale: bool,
     title: bool,
+}
+
+#[derive(Default)]
+enum PreviewState {
+    #[default]
+    Unrequested,
+    Ready,
+    Failed,
 }
 
 struct LoadJob {
@@ -67,13 +75,26 @@ impl StorageOwner {
     pub(super) fn needs_preview(&self, application: &ApplicationSession) -> bool {
         application.core_session().snapshot().phase() == SessionPhase::Title
             && self.preview.is_none()
-            && (!self.previewed || self.preview_stale)
+            && (matches!(self.preview_state, PreviewState::Unrequested) || self.preview_stale)
+    }
+
+    pub(super) fn can_retry_preview(&self, application: &ApplicationSession) -> bool {
+        application.core_session().snapshot().phase() == SessionPhase::Title
+            && matches!(self.preview_state, PreviewState::Failed)
+            && self.preview.is_none()
+            && !self.load_pending()
+    }
+
+    pub(super) fn retry_preview(&mut self, application: &ApplicationSession) {
+        if self.can_retry_preview(application) {
+            self.preview_state = PreviewState::Unrequested;
+        }
     }
 
     pub(super) fn begin_preview(&mut self, request_id: u32) -> ApplicationRequest {
         let limit = birdman_game_presentation::game_ui::GAME_UI_STORED_RECORD_LIMIT;
         self.preview = Some((request_id, RecordPreviewTransaction::new(limit)));
-        self.previewed = true;
+        self.preview_state = PreviewState::Ready;
         self.preview_stale = false;
         ApplicationRequest::BeginRecordPreview { request_id, limit }
     }
@@ -83,7 +104,7 @@ impl StorageOwner {
         request_id: u32,
         observation: RecordPreviewObservation,
         requests: &mut Vec<ApplicationRequest>,
-    ) -> Option<Result<Vec<RecordPreviewItem>, ()>> {
+    ) -> Option<Vec<RecordPreviewItem>> {
         let (expected, transaction) = self.preview.as_mut()?;
         if *expected != request_id {
             return None;
@@ -96,14 +117,16 @@ impl StorageOwner {
             });
         }
         let result = if let Some(items) = transaction.items() {
-            Ok(items.to_vec())
+            self.preview_state = PreviewState::Ready;
+            Some(items.to_vec())
         } else {
             let cause = transaction.failure()?;
+            self.preview_state = PreviewState::Failed;
             self.diagnostic = Some(cause.to_owned());
-            Err(())
+            None
         };
         self.preview = None;
-        Some(result)
+        result
     }
 
     pub(super) fn take_diagnostic(&mut self) -> Option<String> {

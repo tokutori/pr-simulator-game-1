@@ -1178,6 +1178,8 @@ export type GameUiPlatformCommand = {
     readonly id: number;
     readonly kind: "open_stored_record";
 } | {
+    readonly kind: "retry_stored_records";
+} | {
     /**
      * Shared UI selection to apply.
      */

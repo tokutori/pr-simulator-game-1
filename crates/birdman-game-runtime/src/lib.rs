@@ -200,6 +200,7 @@ impl ApplicationRuntime {
             analysis_available: capabilities.analysis_available,
             replay_available: capabilities.replay_available,
             stored_records_available: capabilities.stored_records_available,
+            stored_records_retry_available: false,
             flight_log_available: capabilities.flight_log_available,
             water_quality: WaterQuality::High,
             water_quality_operation: GameUiWaterQualityOperation::Idle {},
@@ -462,28 +463,21 @@ impl ApplicationRuntime {
                 request_id,
                 observation,
             } => {
-                if let Some(result) =
+                if let Some(items) =
                     self.storage
                         .preview_observed(request_id, observation, &mut requests)
                 {
-                    match result {
-                        Ok(items) => {
-                            self.platform.stored_records = items
-                                .into_iter()
-                                .map(|item| {
-                                    birdman_game_presentation::game_ui::GameUiStoredRecord {
-                                        id: item.id,
-                                        saved_at: item.saved_at,
-                                        personal_best: item.personal_best,
-                                    }
-                                })
-                                .collect::<Vec<_>>()
-                                .into()
-                        }
-                        Err(()) => {
-                            self.platform.notification = "保存記録の一覧を読み込めない。".to_owned()
-                        }
-                    }
+                    self.platform.stored_records = items
+                        .into_iter()
+                        .map(
+                            |item| birdman_game_presentation::game_ui::GameUiStoredRecord {
+                                id: item.id,
+                                saved_at: item.saved_at,
+                                personal_best: item.personal_best,
+                            },
+                        )
+                        .collect::<Vec<_>>()
+                        .into();
                 }
             }
             ApplicationInput::DownloadCompleted {
@@ -1066,6 +1060,8 @@ impl ApplicationRuntime {
             .unwrap_or(GameUiPresentationMode::Screen);
         self.platform.operation_pending =
             self.display.state().pending() || self.storage.load_pending();
+        self.platform.stored_records_retry_available = self.platform.stored_records_available
+            && self.storage.can_retry_preview(&self.application);
         self.platform.screen_render_scale = self.graphics.snapshot();
         self.platform.water_quality = self.platform.screen_render_scale.water_quality;
         self.platform.water_quality_operation = self.graphics.water_operation();
@@ -1466,6 +1462,9 @@ impl ApplicationRuntime {
                     let request_id = self.allocate_request()?;
                     requests.push(self.storage.read(request_id, id, &self.application));
                 }
+                GameUiEffect::Platform {
+                    command: GameUiPlatformCommand::RetryStoredRecords {},
+                } => self.storage.retry_preview(&self.application),
                 GameUiEffect::Platform {
                     command: GameUiPlatformCommand::DownloadRecordJson {},
                 } => {

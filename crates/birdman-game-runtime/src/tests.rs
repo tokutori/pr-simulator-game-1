@@ -569,6 +569,7 @@ fn boot_retries_renderer_creation_releases_late_resources_and_enters_title_after
         structure(preparing).scene,
         birdman_game_presentation::game_ui::GameUiScene::Boot
     );
+    runtime.platform.notification = "別の操作の通知".into();
     runtime
         .observe_test(ApplicationInput::RecordPreviewObserved {
             request_id: preview,
@@ -579,6 +580,7 @@ fn boot_retries_renderer_creation_releases_late_resources_and_enters_title_after
         .unwrap();
     let stored_notification = runtime.platform.notification.clone();
     assert!(!stored_notification.is_empty());
+    assert!(runtime.platform.stored_records_retry_available);
     let failed = runtime
         .observe_test(ApplicationInput::Resources {
             request_id: preparation,
@@ -1127,6 +1129,69 @@ fn stored_record_preview_load_retry_and_original_download_share_owner() {
         })
         .unwrap();
     finish_boot(&mut runtime, initial);
+    let failed = runtime
+        .observe_test(ApplicationInput::RecordPreviewObserved {
+            request_id: preview_id,
+            observation: Seen::Failed {
+                cause: "list I/O failure".into(),
+            },
+        })
+        .unwrap();
+    assert_eq!(failed.diagnostic.as_deref(), Some("list I/O failure"));
+    assert!(runtime.platform.stored_records_retry_available);
+    let failed = structure(failed);
+    assert!(
+        failed
+            .panels
+            .iter()
+            .flat_map(|panel| &panel.controls)
+            .any(|control| control.id == "game-title-records-failed")
+    );
+    let idle = runtime
+        .observe_test(ApplicationInput::DocumentFocus { focused: true })
+        .unwrap();
+    assert!(
+        !idle
+            .requests
+            .iter()
+            .any(|request| matches!(request, ApplicationRequest::BeginRecordPreview { .. }))
+    );
+    let retry = activate_action(
+        &mut runtime,
+        &failed,
+        GameUiAction::Platform {
+            command: GameUiPlatformCommand::RetryStoredRecords {},
+        },
+    );
+    let previous_preview = preview_id;
+    let preview_id = match retry.requests.as_slice() {
+        [ApplicationRequest::BeginRecordPreview { request_id, .. }] => *request_id,
+        other => panic!("Expected a list retry: {other:?}"),
+    };
+    assert_ne!(preview_id, previous_preview);
+    assert!(!runtime.platform.stored_records_retry_available);
+    let next_request = runtime.next_request_id;
+    assert!(
+        runtime
+            .observe_test(ApplicationInput::Control {
+                view_revision: failed.view_revision,
+                input: GameUiControlInput::Activate {
+                    control_id: "game-title-retry-records".into()
+                },
+            })
+            .is_err()
+    );
+    assert_eq!(runtime.next_request_id, next_request);
+    let stale = runtime
+        .observe_test(ApplicationInput::RecordPreviewObserved {
+            request_id: previous_preview,
+            observation: Seen::Failed {
+                cause: "late list failure".into(),
+            },
+        })
+        .unwrap();
+    assert!(stale.diagnostic.is_none());
+    assert!(!runtime.platform.stored_records_retry_available);
     runtime
         .observe_test(ApplicationInput::RecordPreviewObserved {
             request_id: preview_id,
@@ -1269,6 +1334,42 @@ fn stored_record_preview_load_retry_and_original_download_share_owner() {
         })
         .unwrap();
     assert!(duplicate.diagnostic.is_none());
+    let replay = runtime.retained.as_ref().unwrap().clone();
+    let returned = activate(&mut runtime, &replay, SessionCommand::LeaveReplay {});
+    let empty_id = returned
+        .requests
+        .iter()
+        .find_map(|request| match request {
+            ApplicationRequest::BeginRecordPreview { request_id, .. } => Some(*request_id),
+            _ => None,
+        })
+        .unwrap();
+    runtime
+        .observe_test(ApplicationInput::RecordPreviewObserved {
+            request_id: empty_id,
+            observation: Seen::Rows { rows: Vec::new() },
+        })
+        .unwrap();
+    let empty = structure(
+        runtime
+            .observe_test(ApplicationInput::RecordPreviewObserved {
+                request_id: empty_id,
+                observation: Seen::Committed,
+            })
+            .unwrap(),
+    );
+    assert!(runtime.platform.stored_records.iter().next().is_none());
+    assert!(!runtime.platform.stored_records_retry_available);
+    assert!(
+        !empty
+            .panels
+            .iter()
+            .flat_map(|panel| &panel.controls)
+            .any(|control| matches!(
+                control.id.as_str(),
+                "game-title-records-failed" | "game-title-retry-records"
+            ))
+    );
 }
 
 trait ObservedInput {

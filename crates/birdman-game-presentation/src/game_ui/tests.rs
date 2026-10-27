@@ -30,6 +30,7 @@ pub(super) fn platform() -> GameUiPlatformInput {
         analysis_available: true,
         replay_available: true,
         stored_records_available: false,
+        stored_records_retry_available: false,
         flight_log_available: true,
         water_quality: WaterQuality::High,
         water_quality_operation: GameUiWaterQualityOperation::Idle {},

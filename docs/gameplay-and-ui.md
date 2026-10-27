@@ -249,7 +249,7 @@ Retryはsealed configuration、初期状態、scenario seed、波の位相基準
 - menu内の画面外の操作はscrollとkeyboard focusで到達可能にする。HUDはスクロールを使用しない。
 - Screenの最低対応解像度はUI倍率適用後の1280×720、推奨は1920×1080以上とする。
 
-VRを含むanchor、両眼への収まり、透明度、前方clear regionは[描画とplatform](rendering-and-platforms.md)に従う。保存全件の索引とTitle最大3枠の表示queryは分離し、毎frameの共通UI入力を有界に保つ。
+VRを含むanchor、両眼への収まり、透明度、前方clear regionは[描画とplatform](rendering-and-platforms.md)に従う。保存全件の索引とTitle最大3枠の表示queryは分離し、毎frameの共通UI入力を有界に保つ。保存一覧の取得に失敗した場合は、Titleの「保存記録の一覧を再試行」から取得し直す。取得中の重複操作と古い取得結果を拒否し、正常な空一覧と失敗を区別する。
 
 ## Camera
 

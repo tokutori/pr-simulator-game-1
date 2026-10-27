@@ -228,6 +228,8 @@ pub enum GameUiPlatformCommand {
         /// Platform persistence key.
         id: u32,
     },
+    /// Retries a failed Title record-list lookup.
+    RetryStoredRecords {},
     /// Advances the replay camera selection.
     SetReplayCamera {
         /// Shared UI selection to apply.
@@ -407,6 +409,8 @@ pub struct GameUiPlatformInput {
     pub replay_available: bool,
     /// Platform supports persisted record lookup.
     pub stored_records_available: bool,
+    /// The shared record owner admits an explicit retry of the failed Title list.
+    pub stored_records_retry_available: bool,
     /// Platform supports record downloads.
     pub flight_log_available: bool,
     /// Confirmed current render quality.
