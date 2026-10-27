@@ -457,7 +457,13 @@ fn run_session(
                     events
                         .send(Event::Input(ApplicationInput::DisplayCompleted {
                             request_id,
-                            completion: DisplayCompletion::Started { resource_id: id },
+                            completion: if let Some(cause) = &lost {
+                                DisplayCompletion::Failed {
+                                    cause: cause.clone(),
+                                }
+                            } else {
+                                DisplayCompletion::Started { resource_id: id }
+                            },
                         }))
                         .map_err(error)?;
                 }
