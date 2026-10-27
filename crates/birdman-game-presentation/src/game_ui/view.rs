@@ -1299,7 +1299,7 @@ fn analysis(
             } else {
                 "飛行時間 (s)"
             },
-            context.platform.analysis_available,
+            context.platform.analysis_available && duration > 0.0,
             "analysis",
             GameUiControlContent::Range {
                 target: if replay {
@@ -1310,7 +1310,7 @@ fn analysis(
                 value: time,
                 display_value: super::frame::range_display_value(time),
                 minimum: 0.0,
-                maximum: duration.max(0.01),
+                maximum: duration,
                 step: 0.01,
             },
         );
@@ -1329,6 +1329,22 @@ fn analysis(
                 "game-analysis-wind-availability",
                 "",
                 "周辺の風場データを取得できない",
+            );
+        }
+        menu.section("analysis-time-navigation", "", GameUiSectionLayout::Row);
+        for (id, label, time_seconds) in [
+            ("game-analysis-first", "先頭へ", 0.0),
+            ("game-analysis-last", "末尾へ", duration),
+        ] {
+            menu.action(
+                id,
+                label,
+                if replay {
+                    GameUiAction::SeekReplay { time_seconds }
+                } else {
+                    GameUiAction::SeekAnalysis { time_seconds }
+                },
+                context.platform.analysis_available && duration > 0.0,
             );
         }
     } else {
@@ -1386,17 +1402,29 @@ fn replay(
                 menu.push(
                     "game-replay-cursor",
                     "再生時刻 (s)",
-                    context.platform.replay_available,
+                    context.platform.replay_available && duration > 0.0,
                     "replay",
                     GameUiControlContent::Range {
                         target: GameUiRangeTarget::Replay,
                         value: clock.time_seconds(),
                         display_value: super::frame::range_display_value(clock.time_seconds()),
                         minimum: 0.0,
-                        maximum: duration.max(0.01),
+                        maximum: duration,
                         step: 0.01,
                     },
                 );
+                menu.section("replay-time-navigation", "", GameUiSectionLayout::Row);
+                for (id, label, time_seconds) in [
+                    ("game-replay-first", "先頭へ", 0.0),
+                    ("game-replay-last", "末尾へ", duration),
+                ] {
+                    menu.action(
+                        id,
+                        label,
+                        GameUiAction::SeekReplay { time_seconds },
+                        context.platform.replay_available && duration > 0.0,
+                    );
+                }
             }
         }
         menu.section("replay-actions", "", GameUiSectionLayout::Row);
