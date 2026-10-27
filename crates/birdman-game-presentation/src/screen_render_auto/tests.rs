@@ -788,6 +788,26 @@ fn unsupported_auto_applies_the_lightweight_profile_and_restores_manual_resource
     assert_eq!(manual.water_quality, WaterQuality::High);
     controller.applied(manual, 4.0, None).unwrap();
     assert_eq!(controller.snapshot().status, ScreenRenderAutoStatus::Manual);
+    assert!(!controller.measurement_requested(true));
+    let automatic = controller.select_auto(true, 5.0).unwrap().unwrap();
+    assert_eq!(automatic.scale, request.scale);
+    assert_eq!(automatic.shadow, request.shadow);
+    assert_eq!(automatic.water_quality, request.water_quality);
+    controller.applied(automatic, 6.0, None).unwrap();
+    assert_eq!(controller.snapshot(), snapshot);
+    assert_eq!(
+        controller
+            .select_water_quality(WaterQuality::Medium, 7.0)
+            .unwrap(),
+        None
+    );
+    assert_eq!(controller.snapshot().water_quality, WaterQuality::Low);
+    assert_eq!(controller.snapshot().status, snapshot.status);
+    assert!(!controller.measurement_requested(true));
+    let manual = controller.select_auto(false, 8.0).unwrap().unwrap();
+    assert_eq!(manual.scale, ScreenRenderScale::Full);
+    assert_eq!(manual.shadow, ScreenShadowMap::Full);
+    assert_eq!(manual.water_quality, WaterQuality::Medium);
 }
 
 #[test]

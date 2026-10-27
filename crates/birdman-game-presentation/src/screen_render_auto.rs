@@ -610,7 +610,13 @@ impl ScreenRenderAutoController {
         self.selection = selection;
         self.recovery = None;
         self.resource = ResourceState::Ready;
-        self.measurement = MeasurementState::Measuring;
+        if matches!(self.measurement, MeasurementState::Unsupported(_)) {
+            if self.automatic() {
+                return self.request_unsupported_quality();
+            }
+        } else {
+            self.measurement = MeasurementState::Measuring;
+        }
         if self.scope != ScreenRenderScope::Background {
             self.request(self.desired_quality())
         } else {
@@ -634,8 +640,12 @@ impl ScreenRenderAutoController {
                 if matches!(self.resource, ResourceState::Failed(_)) {
                     self.resource = ResourceState::Ready;
                 }
-                self.measurement = MeasurementState::Measuring;
-                Ok(None)
+                if matches!(self.measurement, MeasurementState::Unsupported(_)) {
+                    self.request_unsupported_quality()
+                } else {
+                    self.measurement = MeasurementState::Measuring;
+                    Ok(None)
+                }
             }
             (false, true) => self.select_manual(self.selection.manual.scale, now_ms),
             _ => Ok(self.requested()),
