@@ -214,6 +214,12 @@ impl<'a> CompositionLayerProjection<'a> {
         self.inner.space = value.as_raw_openxr_space();
         self
     }
+    /// Borrow an owned OpenXR reference space for this submission.
+    #[inline]
+    pub fn reference_space(mut self, value: &'a openxr::Space) -> Self {
+        self.inner.space = value.as_raw();
+        self
+    }
     #[inline]
     pub fn views(mut self, value: &[CompositionLayerProjectionView<'a>]) -> Self {
         self.views = value.iter().map(|view| view.inner).collect();

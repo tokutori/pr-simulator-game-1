@@ -15,7 +15,7 @@ use bevy::{
     prelude::*,
     render::render_resource::{AsBindGroup, encase},
     shader::ShaderRef,
-    text::{ComputedTextBlock, FontFeatureTag, FontFeatures, TextLayoutInfo},
+    text::{ComputedTextBlock, FontFeatureTag, FontFeatures},
     ui::ColorStop,
     ui::RelativeCursorPosition,
 };
@@ -37,6 +37,10 @@ mod chart;
 mod hud;
 #[path = "ui/projection.rs"]
 mod projection;
+#[cfg(all(feature = "openxr", any(target_os = "windows", target_os = "linux")))]
+#[path = "ui/xr_surface.rs"]
+pub(crate) mod xr_surface;
+pub(crate) use chart::align_chart_text_baselines;
 use chart::*;
 use hud::{RetainedHud, project_hud, setup_hud};
 use projection::*;
@@ -530,7 +534,6 @@ pub(crate) fn submit(world: &mut World, drawing: &ApplicationDrawingOutput) -> R
     if let Some(theme) = theme {
         project_focus(world, &theme);
     }
-    align_chart_text_baselines(world);
     for (role, text) in world.query::<(&UiText, &mut Text)>().iter_mut(world) {
         if matches!(role, UiText::FrameRate) {
             text.map_unchanged(|text| &mut text.0)

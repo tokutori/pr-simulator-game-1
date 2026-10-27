@@ -490,8 +490,8 @@ fn phone_viewer(
     {
         return Err(CameraError::InvalidDistance);
     }
-    let near = 0.05;
-    let far = 100_000.0;
+    let near = birdman_game_presentation::xr::VIEW_NEAR_METERS;
+    let far = birdman_game_presentation::xr::VIEW_FAR_METERS;
     let top = near * (vertical_fov_degrees.to_radians() / 2.0).tan();
     let [width, height] = extent.map_or([viewport.width, viewport.height], |extent| {
         extent.map(f64::from)
@@ -559,8 +559,8 @@ fn screen_projection(
         ));
     }
     let focal = 1.0 / (vertical_fov_degrees.to_radians() / 2.0).tan();
-    let near = 0.05;
-    let far = 100_000.0;
+    let near = birdman_game_presentation::xr::VIEW_NEAR_METERS;
+    let far = birdman_game_presentation::xr::VIEW_FAR_METERS;
     Ok([
         focal * viewport.height / viewport.width,
         0.0,

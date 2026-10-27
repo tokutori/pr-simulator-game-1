@@ -189,6 +189,9 @@ pub enum ApplicationInput {
     DisplayEnded {
         #[doc = "Ended session or sensor subscription identity."]
         resource_id: u32,
+        #[doc = "Original runtime reason for an unsolicited end, when supplied."]
+        #[serde(default)]
+        cause: Option<String>,
     },
     /// Stops new application work and drains already issued I/O.
     Dispose,

@@ -250,6 +250,9 @@ pub struct XrInputSourceObservation {
     pub tracking_from_ray: Option<Pose>,
     /// Actual gamepad, absent when the source has no gamepad API.
     pub gamepad: Option<XrInputGamepadObservation>,
+    /// Raw primary-action state when the API exposes a Boolean action instead of a completed select event.
+    #[serde(default)]
+    pub select_pressed: Option<bool>,
 }
 
 impl XrInputSourceObservation {
@@ -371,6 +374,8 @@ struct GamepadInput {
 struct ControllerInput {
     source_id: u32,
     squeeze: Option<bool>,
+    select_pressed: Option<bool>,
+    primary_started: bool,
 }
 
 /// Owns source handover, one-second dwell and duplicate activation admission.
@@ -391,6 +396,9 @@ impl XrPointerSession {
         self.focus = None;
         self.previous_activation = None;
         self.observation = None;
+        for controller in &mut self.controllers {
+            controller.primary_started = false;
+        }
     }
 
     /// Replaces measured geometry atomically and resets input on scope/layout changes.
@@ -463,7 +471,7 @@ impl XrPointerSession {
         }
         let mut result = XrPointerProjection::default();
         let gamepad = self.observe_gamepad(&observation);
-        let navigation = self.observe_controllers(&observation);
+        let (navigation, completed) = self.observe_controllers(&observation);
         if observation.focused
             && let Some(surface) = &self.surface
         {
@@ -554,6 +562,26 @@ impl XrPointerSession {
                 }
             }
         }
+        if !result.back {
+            let selected = completed.iter().find_map(|id| {
+                result
+                    .primary
+                    .iter()
+                    .chain(&result.secondary)
+                    .find(|hit| hit.source == XrPointerSource::Controller { id: *id })
+                    .cloned()
+            });
+            if let Some(hit) = selected
+                && self.admit(&hit, timestamp)
+            {
+                self.focus = Some(Focus {
+                    hit: hit.clone(),
+                    started_ms: timestamp,
+                    activated: true,
+                });
+                result.activation = Some(hit);
+            }
+        }
         if result.back {
             result.activation = None;
             result.scroll_pages = 0.0;
@@ -563,19 +591,24 @@ impl XrPointerSession {
         Ok(result)
     }
 
-    fn observe_controllers(&mut self, observation: &XrPointerObservation) -> Option<(bool, f64)> {
+    fn observe_controllers(
+        &mut self,
+        observation: &XrPointerObservation,
+    ) -> (Option<(bool, f64)>, Vec<u32>) {
         if !observation.focused {
             self.controllers.clear();
-            return None;
+            return (None, Vec::new());
         }
+        let mut completed = Vec::new();
         self.controllers.retain(|previous| {
             observation.sources.iter().any(|source| {
                 source.source_id == previous.source_id
                     && source.target_ray_mode == "tracked-pointer"
-                    && source
-                        .gamepad
-                        .as_ref()
-                        .is_some_and(|pad| pad.mapping == "xr-standard")
+                    && (source.select_pressed.is_some()
+                        || source
+                            .gamepad
+                            .as_ref()
+                            .is_some_and(|pad| pad.mapping == "xr-standard"))
             })
         });
         let elapsed = self.last_timestamp_ms.map_or(0.0, |previous| {
@@ -583,12 +616,17 @@ impl XrPointerSession {
         });
         let mut selected: Option<(bool, u32, bool, f64)> = None;
         for source in &observation.sources {
-            let Some(pad) = source.gamepad.as_ref().filter(|pad| {
+            let pad = source.gamepad.as_ref().filter(|pad| {
                 source.target_ray_mode == "tracked-pointer" && pad.mapping == "xr-standard"
-            }) else {
+            });
+            if source.target_ray_mode != "tracked-pointer"
+                || (pad.is_none() && source.select_pressed.is_none())
+            {
                 continue;
-            };
-            let squeeze = pad.buttons.get(1).map(|button| button.pressed);
+            }
+            let squeeze = pad
+                .and_then(|pad| pad.buttons.get(1))
+                .map(|button| button.pressed);
             let previous = self
                 .controllers
                 .iter_mut()
@@ -596,17 +634,48 @@ impl XrPointerSession {
             let back = if let Some(previous) = previous {
                 let back = squeeze == Some(true) && previous.squeeze == Some(false);
                 previous.squeeze = squeeze;
+                if source.select_pressed.is_none() || source.ray().is_none() {
+                    previous.primary_started = false;
+                }
+                if source.ray().is_some()
+                    && source.select_pressed == Some(true)
+                    && previous.select_pressed == Some(false)
+                {
+                    previous.primary_started = true;
+                }
+                if source.select_pressed == Some(false) && previous.select_pressed == Some(true) {
+                    if previous.primary_started {
+                        completed.push(source.source_id);
+                    }
+                    previous.primary_started = false;
+                }
+                previous.select_pressed = source.select_pressed;
                 back
             } else {
                 self.controllers.push(ControllerInput {
                     source_id: source.source_id,
                     squeeze,
+                    select_pressed: source.select_pressed,
+                    primary_started: false,
                 });
                 false
             };
-            let thumbstick = gamepad_axis(pad.axes.get(3).copied().flatten().unwrap_or(0.0));
-            let touchpad = if pad.buttons.get(2).is_some_and(|button| button.touched) {
-                gamepad_axis(pad.axes.get(1).copied().flatten().unwrap_or(0.0))
+            let thumbstick = gamepad_axis(
+                pad.and_then(|pad| pad.axes.get(3))
+                    .copied()
+                    .flatten()
+                    .unwrap_or(0.0),
+            );
+            let touchpad = if pad
+                .and_then(|pad| pad.buttons.get(2))
+                .is_some_and(|button| button.touched)
+            {
+                gamepad_axis(
+                    pad.and_then(|pad| pad.axes.get(1))
+                        .copied()
+                        .flatten()
+                        .unwrap_or(0.0),
+                )
             } else {
                 0.0
             };
@@ -627,7 +696,17 @@ impl XrPointerSession {
                 selected = Some(candidate);
             }
         }
-        selected.map(|(_, _, back, scroll)| (back, scroll))
+        completed.sort_by_key(|id| {
+            let right = observation
+                .sources
+                .iter()
+                .any(|source| source.source_id == *id && source.handedness == "right");
+            (!right, *id)
+        });
+        (
+            selected.map(|(_, _, back, scroll)| (back, scroll)),
+            completed,
+        )
     }
 
     fn observe_gamepad(

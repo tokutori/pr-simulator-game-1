@@ -169,7 +169,7 @@ impl OxrFrameStream {
     /// Indicate that graphics device work is beginning.
     ///
     /// Calls [`begin`](openxr::FrameStream::begin) internally.
-    pub fn begin(&mut self) -> openxr::Result<()> {
+    pub fn begin(&mut self) -> openxr::Result<openxr::sys::Result> {
         graphics_match!(
             &mut self.0;
             stream => stream.begin()
@@ -185,7 +185,7 @@ impl OxrFrameStream {
         display_time: openxr::Time,
         environment_blend_mode: openxr::EnvironmentBlendMode,
         layers: &[&dyn CompositionLayer],
-    ) -> OxrResult<()> {
+    ) -> OxrResult<openxr::sys::Result> {
         graphics_match!(
             &mut self.0;
             stream => {
@@ -237,7 +237,7 @@ impl OxrSwapchain {
     /// Determine the index of the next image to render to in the swapchain image array.
     ///
     /// Calls [`acquire_image`](openxr::Swapchain::acquire_image) internally.
-    pub fn acquire_image(&mut self) -> OxrResult<u32> {
+    pub fn acquire_image(&mut self) -> OxrResult<(u32, openxr::sys::Result)> {
         graphics_match!(
             &mut self.0;
             swap => Ok(swap.acquire_image()?)
@@ -247,7 +247,7 @@ impl OxrSwapchain {
     /// Wait for the compositor to finish reading from the oldest unwaited acquired image.
     ///
     /// Calls [`wait_image`](openxr::Swapchain::wait_image) internally.
-    pub fn wait_image(&mut self, timeout: openxr::Duration) -> OxrResult<()> {
+    pub fn wait_image(&mut self, timeout: openxr::Duration) -> OxrResult<openxr::sys::Result> {
         graphics_match!(
             &mut self.0;
             swap => Ok(swap.wait_image(timeout)?)
@@ -257,7 +257,7 @@ impl OxrSwapchain {
     /// Release the oldest acquired image.
     ///
     /// Calls [`release_image`](openxr::Swapchain::release_image) internally.
-    pub fn release_image(&mut self) -> OxrResult<()> {
+    pub fn release_image(&mut self) -> OxrResult<openxr::sys::Result> {
         graphics_match!(
             &mut self.0;
             swap => Ok(swap.release_image()?)

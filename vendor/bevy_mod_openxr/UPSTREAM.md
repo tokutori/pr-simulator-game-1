@@ -20,6 +20,9 @@ Local changes:
   the acquired frame stream, swapchain and image ownership into its own I/O
   thread instead of registering the default rendering systems.
 - Normal wgpu and XR utility dependencies disable their default features.
+- The used frame, image and exit APIs preserve the status from the patched binding.
+- Projection layers borrow an owned OpenXR reference space directly, bypassing
+  the optional space-patching plugin. Stereo targets allow transfer destinations.
 
 Birdman supplies the camera, frame, input and release integration. The upstream
 automatic camera and rendering plugins are not registered by that integration.

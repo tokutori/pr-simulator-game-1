@@ -405,8 +405,11 @@ impl ApplicationRuntime {
                     }
                 }
             }
-            ApplicationInput::DisplayEnded { resource_id } => {
+            ApplicationInput::DisplayEnded { resource_id, cause } => {
                 if self.display.active_resource() == Some(resource_id) {
+                    if let Some(cause) = cause {
+                        self.diagnostic = Some(cause);
+                    }
                     let next_id = self.allocate_request()?;
                     requests.extend(
                         self.display

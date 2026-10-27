@@ -62,6 +62,29 @@ fn plane(distance: f64) -> Pose {
 
 #[test]
 fn projection_preserves_runtime_matrix_and_respects_both_depth_conventions() {
+    let angles = [-0.7_f64, 0.9, -0.8, 0.6];
+    let projection = xr_projection_from_fov(angles).unwrap();
+    let eye = XrEyeGeometry {
+        eye: XrEye::Left,
+        projection,
+        depth_range: XrDepthRange::NegativeOneToOne,
+        head_from_eye: Pose::IDENTITY,
+    };
+    let prepared = geometry::PreparedEye::new(&eye).unwrap();
+    for (horizontal, x) in [(angles[0], -1.0), (angles[1], 1.0)] {
+        for (vertical, y) in [(angles[2], -1.0), (angles[3], 1.0)] {
+            let projected = prepared
+                .project(Vector3 {
+                    x: horizontal.tan() * 2.0,
+                    y: vertical.tan() * 2.0,
+                    z: -2.0,
+                })
+                .unwrap();
+            assert!((projected.x - x).abs() < 1e-12 && (projected.y - y).abs() < 1e-12);
+        }
+    }
+    assert!(xr_projection_from_fov([0.1, 0.1, -0.2, 0.2]).is_none());
+    assert!(xr_projection_from_fov([f64::NAN, 0.1, -0.2, 0.2]).is_none());
     for depth in [XrDepthRange::NegativeOneToOne, XrDepthRange::ZeroToOne] {
         let frame = viewer(depth);
         let XrViewerFrame::Configured { eyes, .. } = &frame else {

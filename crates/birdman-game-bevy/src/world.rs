@@ -236,9 +236,31 @@ pub(crate) fn platform(world: &mut World) -> ApplicationRendererObservation {
         initial_quality: world.resource::<NativeGpu>().quality,
         extent_px: extent,
         screen_extent_px: screen_extent,
-        xr_extent_px: None,
+        xr_extent_px: {
+            #[cfg(all(feature = "openxr", any(target_os = "windows", target_os = "linux")))]
+            {
+                super::native_xr::extent(world)
+            }
+            #[cfg(not(all(feature = "openxr", any(target_os = "windows", target_os = "linux"))))]
+            {
+                None
+            }
+        },
         gpu_timing,
     }
+}
+
+#[cfg(all(feature = "openxr", any(target_os = "windows", target_os = "linux")))]
+pub(crate) fn xr_output(world: &World) -> Option<(Entity, Handle<Image>, RenderLayers, bool)> {
+    let gpu = world.get_resource::<NativeGpu>()?;
+    let camera = gpu.main_camera?;
+    let candidate = gpu.candidates.get(&gpu.active?)?;
+    Some((
+        camera,
+        candidate.output.clone(),
+        world.get::<RenderLayers>(camera)?.clone(),
+        matches!(candidate.stage, ResourceStage::Bound),
+    ))
 }
 
 pub(crate) fn execute(

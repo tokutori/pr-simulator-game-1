@@ -461,7 +461,7 @@ fn init_xr_session(
 
     let swapchain = session.create_swapchain(SwapchainCreateInfo {
         create_flags: SwapchainCreateFlags::EMPTY,
-        usage_flags: SwapchainUsageFlags::COLOR_ATTACHMENT | SwapchainUsageFlags::SAMPLED,
+        usage_flags: SwapchainUsageFlags::COLOR_ATTACHMENT | SwapchainUsageFlags::SAMPLED | SwapchainUsageFlags::TRANSFER_DST,
         format,
         // TODO() add support for multisampling
         sample_count: 1,
@@ -587,10 +587,10 @@ pub fn request_exit_xr_session(session: Res<OxrSession>) {
 /// This is used solely to transport resources from the main world to the render world.
 #[derive(Resource)]
 pub struct OxrRenderResources {
-    pub session: OxrSession,
-    pub frame_stream: OxrFrameStream,
-    pub swapchain: OxrSwapchain,
     pub images: OxrSwapchainImages,
+    pub swapchain: OxrSwapchain,
+    pub frame_stream: OxrFrameStream,
+    pub session: OxrSession,
     pub graphics_info: OxrCurrentSessionConfig,
     pub session_destroy_flag: XrDestroySessionRender,
 }

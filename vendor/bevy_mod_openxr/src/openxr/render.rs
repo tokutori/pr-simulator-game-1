@@ -168,7 +168,7 @@ pub fn init_views<const SPAWN_CAMERAS: bool>(
 }
 
 pub fn wait_frame(mut frame_waiter: ResMut<OxrFrameWaiter>, mut commands: Commands) {
-    let state = frame_waiter.wait().expect("Failed to wait frame");
+    let (state, _) = frame_waiter.wait().expect("Failed to wait frame");
     commands.insert_resource(OxrFrameState(state));
 }
 
@@ -291,7 +291,7 @@ pub fn insert_texture_views(
     if !frame_state.should_render {
         return;
     }
-    let index = swapchain.acquire_image().expect("Failed to acquire image");
+    let (index, _) = swapchain.acquire_image().expect("Failed to acquire image");
     let image = &swapchain_images[index as usize];
 
     for i in 0..2 {

@@ -123,6 +123,7 @@ fn source(pointer: XrPointerRay) -> XrInputSourceObservation {
             orientation: pointer.reference_from_space.orientation,
         }),
         gamepad: None,
+        select_pressed: None,
     }
 }
 
@@ -498,6 +499,43 @@ fn gamepad_connection_cursor_edges_scroll_and_focus_share_one_owner() {
     assert_eq!(scrolling.primary.unwrap().source, XrPointerSource::Gaze);
     assert!(scrolling.scroll_pages > 0.0 && scrolling.activation.is_none());
     assert_eq!(scrolling.progress, 0.0);
+
+    // Native reports raw button states; activation admits a complete tracked press/release.
+    let mut native = source(pointer(XrPointerSource::Controller { id: 7 }, -0.25));
+    for (offset, pressed, focused, tracked, activated) in [
+        (0.0, Some(true), true, true, false),
+        (1.0, Some(false), true, true, false),
+        (2.0, Some(true), true, true, false),
+        (3.0, Some(false), true, true, true),
+        (4.0, Some(false), true, true, false),
+        (5.0, Some(true), true, true, false),
+        (6.0, None, true, true, false),
+        (7.0, Some(true), true, true, false),
+        (8.0, Some(false), true, true, false),
+        (9.0, Some(true), false, true, false),
+        (10.0, Some(false), true, true, false),
+        (11.0, Some(true), true, false, false),
+        (12.0, Some(false), true, true, false),
+        (13.0, Some(true), true, true, false),
+        (14.0, Some(false), true, true, true),
+    ] {
+        native.select_pressed = pressed;
+        let mut observation = native.clone();
+        if !tracked {
+            observation.tracking_from_ray = None;
+        }
+        assert_eq!(
+            frame(
+                &mut owner,
+                8000.0 + offset * 50.0,
+                vec![observation],
+                focused
+            )
+            .activation
+            .is_some(),
+            activated
+        );
+    }
 }
 
 #[test]

@@ -451,6 +451,14 @@ M C' H'=M C S S^{-1}H=M C H
 - reset直後は次の描画が完了するまでselectを停止する。Phone VRの明示tracking recenterは視線のyawを更新し、保持Menuを専用操作で輸送する。Menuの正面再配置と受動resetは別操作である。
 - 床高・IPD・projectionはXR runtimeの出力を使用する。
 
+### Native OpenXR
+
+- Windows/LinuxのVulkan adapterは、`cargo run -p birdman-game-bevy --features openxr -- --openxr`でOpenXR runtimeを初期化する。共有設定のHMD操作からsessionを開始し、全Scene・Menu・Head HUDを同じ共有Rustの完成cameraとSurfacePaintから描画する。
+- runtimeのLOCAL空間・予測表示時刻のhead/眼/controller観測を共有ownerへ渡す。受信時刻はNativeの単調時計へ揃え、controllerのprimary actionは有効な押下から解放までを共有ownerが認可する。
+- fontは読み込み済みNative fontをBevyの同じshape/raster経路で測定・描画し、localeは実際の既定値`und`として通知する。
+- frame待機と生入力はI/O worker、queueへ触れるbegin/acquire/release/endと描画提出はRender scheduleが担当する。描画資源の準備中は層を提出せずframeを終了し、次frameの観測へ進む。画像waitは1回50 msを要求し、timeout後は同じ画像を再waitする。これはhard deadlineではない。
+- 通常停止は最終GPU完了とframe終了、両worldの参照退役、session/画像の所有解放、worker終了の順でACKする。session lossは原causeを通知して参照を退役し、未知の未終端I/Oは所有を保持して5秒の終了予算超過をerrorとして返す。
+
 ### VR入力と安全
 
 - Screenはkeyboard/pointer/touch、VRはhead-gaze dwellまたは標準mappingのgamepadを用いる。
@@ -459,7 +467,7 @@ M C' H'=M C S S^{-1}H=M C H
 - `visibilitychange`・blur・reference reset・recenterは入力を失効させる。Scene/overlay/layout交換はfocusとdwellを更新し、同じmenuのscrollによる矩形変更ではgamepadのカーソル積分と押下履歴を保持する。入力源の喪失後は新たなgaze dwellを開始する。
 - dwellとtriggerの時刻は同じ単調な受信時計へ揃える。XR rAFの現在時刻とselect配送時の`performance.now()`を使用し、予測表示時刻はpose観測に限定する。照準はpanelの非等方scaleを相殺して実寸座標へ配置する。
 - gamepadの左stickはpanel cursor、button0は選択、button1は共有UIのBack、右stickはviewport単位のscrollへ接続する。同時押下ではBackを優先する。
-- `xr-standard` controllerはグリップの新規押下を「戻る」へ割り当て、thumbstick Yでscrollする。deadzone内ではtouch中のtouchpad Yを使用する。照準中もnavigationを受理し、全入力源の新規Backをscrollより優先、同種操作の競合は右手を優先する。trigger選択はselectイベントだけから受理し、Frameとの実到着順で処理する。
+- `xr-standard` controllerはグリップの新規押下を「戻る」へ割り当て、thumbstick Yでscrollする。deadzone内ではtouch中のtouchpad Yを使用する。照準中もnavigationを受理し、全入力源の新規Backをscrollより優先、同種操作の競合は右手を優先する。trigger選択はWebXRのselectイベントまたはNativeの有効な押下から解放までを受理し、Frameとの実到着順で処理する。不明・追跡喪失・focus喪失は進行中の押下を取り消す。
 
 - dwellの進行と取消を示し、視線を外して確定を中止できる。
 - Scene切替後の操作には、新しい入力開始を必要とする。
