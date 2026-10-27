@@ -177,6 +177,12 @@ pub(crate) fn range_value(minimum: f64, maximum: f64, step: f64, ratio: f64) -> 
     {
         return None;
     }
+    if ratio <= 0.0 {
+        return Some(minimum);
+    }
+    if ratio >= 1.0 {
+        return Some(maximum);
+    }
     let raw = minimum + ratio.clamp(0.0, 1.0) * (maximum - minimum);
     let value = minimum + ((raw - minimum) / step).round() * step;
     value.is_finite().then(|| value.clamp(minimum, maximum))

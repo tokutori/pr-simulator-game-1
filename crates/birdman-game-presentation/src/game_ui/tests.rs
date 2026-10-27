@@ -1731,7 +1731,7 @@ fn analysis_sections_preserve_order_and_typed_values_across_targets() {
 
 #[test]
 fn analysis_cursor_is_observational_and_rejects_nonfinite_or_out_of_record_times() {
-    let session = finalized();
+    let mut session = finalized();
     let platform = platform();
     let state = GameUiState {
         result_tab: GameUiResultTab::Analysis,
@@ -1754,6 +1754,80 @@ fn analysis_cursor_is_observational_and_rejects_nonfinite_or_out_of_record_times
                 &context(&session, difficulty(), &platform)
             ),
             Err(GameUiError::InvalidTime)
+        );
+    }
+    let duration = session
+        .playback_record()
+        .unwrap()
+        .duration_seconds()
+        .unwrap();
+    for replay_view in [
+        None,
+        Some(GameUiReplayView::Analysis),
+        Some(GameUiReplayView::Telemetry),
+    ] {
+        if replay_view.is_some() && session.playback_clock().is_none() {
+            session.enter_replay().unwrap();
+        }
+        let state = GameUiState {
+            replay_view: replay_view.unwrap_or(GameUiReplayView::Cinematic),
+            ..state.clone()
+        };
+        let context = context(&session, difficulty(), &platform);
+        let view = game_ui_view(&state, &context).unwrap();
+        let prefix = if replay_view == Some(GameUiReplayView::Telemetry) {
+            "game-replay"
+        } else {
+            "game-analysis"
+        };
+        for (suffix, time_seconds) in [("first", 0.0), ("last", duration)] {
+            let action = view
+                .control_input_action(&GameUiControlInput::Activate {
+                    control_id: format!("{prefix}-{suffix}"),
+                })
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                action,
+                if replay_view.is_some() {
+                    GameUiAction::SeekReplay { time_seconds }
+                } else {
+                    GameUiAction::SeekAnalysis { time_seconds }
+                }
+            );
+            update_game_ui(&state, action, &context).unwrap();
+        }
+    }
+    let mut zero = launched();
+    zero.abort_flight().unwrap();
+    for replay in [false, true] {
+        if replay {
+            zero.enter_replay().unwrap();
+        }
+        let state = GameUiState {
+            replay_view: GameUiReplayView::Analysis,
+            ..state.clone()
+        };
+        let view = game_ui_view(&state, &context(&zero, difficulty(), &platform)).unwrap();
+        let cursor = control(
+            &view,
+            if replay {
+                "game-replay-cursor"
+            } else {
+                "game-analysis-cursor"
+            },
+        );
+        assert!(!cursor.enabled);
+        assert!(matches!(
+            cursor.content,
+            GameUiControlContent::Range { maximum: 0.0, .. }
+        ));
+        for id in ["game-analysis-first", "game-analysis-last"] {
+            assert!(!control(&view, id).enabled);
+        }
+        assert!(
+            matches!(&control(&view, "game-analysis-cursor-values").content,
+            GameUiControlContent::Fields { fields, .. } if fields.len() == 9)
         );
     }
 }
@@ -2146,6 +2220,8 @@ fn range_display_text_matches_initial_and_retained_views_at_rounding_boundaries(
         assert_eq!(range_value(0.0, 1.0, 0.25, ratio), Some(time_seconds));
     }
     assert_eq!(range_value(0.0, 1.0, 0.25, f64::NAN), None);
+    assert_eq!(range_value(0.0, 0.0125, 0.01, 1.0), Some(0.0125));
+    assert_eq!(range_value(0.0, 0.0125, 0.01, 0.5), Some(0.01));
     assert_eq!(range.activation_action(), None);
     for (value, expected) in [
         (0.0, "0.0"),

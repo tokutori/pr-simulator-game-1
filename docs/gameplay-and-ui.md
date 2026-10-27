@@ -215,6 +215,7 @@ Retryはsealed configuration、初期状態、scenario seed、波の位相基準
 
 - ResultとReplayは秒単位の単一record-time cursorを使用する。
 - 時刻スライダーに加え、高度・速度チャートのプロット内から主ボタンでドラッグして時刻を選択できる。捕捉中は左右の範囲外を先頭・末尾へ丸め、ボタン解放・取消・捕捉喪失・画面切替で操作を終える。
+- 分析・再生の時間軸は記録の実際の終了時刻までとし、「先頭へ」「末尾へ」で正確な端点を選択する。0秒の記録は選択地点の値を表示し、時刻変更の操作を無効にする。
 - seek範囲、補間sample、再生速度・状態はcore queryを正本とし、adapterは時計の起床と入力だけを担当する。
 - Resultの時刻照会はReplay遷移を必要とせず、phase、score、record、physics、再生clockを変更しない。
 - clock操作はReplay/Attractへ限定する。
