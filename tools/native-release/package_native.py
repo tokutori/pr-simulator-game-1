@@ -34,6 +34,12 @@ DOCUMENTATION_FILES = (
     "docs/formal-verification.md",
 )
 
+OPENXR_NOTICES = tuple(
+    f"vendor/{crate}/{name}"
+    for crate in ("bevy_mod_openxr", "openxr")
+    for name in ("LICENSE-MIT", "LICENSE-APACHE", "UPSTREAM.md")
+)
+
 
 def digest(path: Path) -> str:
     with path.open("rb") as stream:
@@ -54,6 +60,10 @@ def require_source(root: Path, source_sha: str) -> None:
 
 def binary_name(target: str) -> str:
     return "birdman-game-bevy" + (".exe" if TARGETS[target][1] == "windows" else "")
+
+
+def native_features(target: str) -> list[str]:
+    return ["openxr"] if TARGETS[target][1] in ("windows", "linux") else []
 
 
 def validate_header(binary: Path, target: str) -> None:
@@ -95,11 +105,14 @@ def stage_binary(root: Path, binary: Path, target: str, source_sha: str, output:
             raise ValueError(f"unexpected native version: {results['--version']!r}")
         if "birdman-game-bevy" not in results["--help"] or "--help" not in results["--help"]:
             raise ValueError("native --help did not describe the application")
+        if ("--openxr" in results["--help"]) != ("openxr" in native_features(target)):
+            raise ValueError(f"native --help does not match the release features for {target}")
         if sorted(path.name for path in staging.iterdir()) != [executable.name]:
             raise ValueError("CPU-only CLI unexpectedly created files")
         metadata = {
             "source_sha": source_sha,
             "target": target,
+            "features": native_features(target),
             "binary_sha256": digest(executable),
             "cargo_lock_sha256": digest(root / "Cargo.lock"),
             "rustc": subprocess.check_output(["rustc", "-vV"], text=True).strip(),
@@ -118,10 +131,13 @@ def generate_licenses(root: Path, cargo_about: Path, source_sha: str, output: Pa
     if version != "cargo-about 0.9.2":
         raise ValueError(f"unexpected license tool: {version}")
     output.mkdir(parents=True, exist_ok=True)
+    features = sorted({feature for target in TARGETS for feature in native_features(target)})
     command = [str(cargo_about), "generate", "--locked", "--fail", "--manifest-path",
                str(root / "crates/birdman-game-bevy/Cargo.toml"), "--config",
                str(root / "tools/native-release/about.toml"), "--output-file",
                str(output / "THIRD-PARTY-LICENSES.html")]
+    for feature in features:
+        command.extend(["--features", feature])
     for target in TARGETS:
         command.extend(["--target", target])
     command.append(str(root / "tools/native-release/about.hbs"))
@@ -131,23 +147,26 @@ def generate_licenses(root: Path, cargo_about: Path, source_sha: str, output: Pa
         "cargo_lock_sha256": digest(root / "Cargo.lock"),
         "tool": version,
         "targets": list(TARGETS),
+        "features": features,
         "licenses_sha256": digest(output / "THIRD-PARTY-LICENSES.html"),
     })
 
 
 def copy_notices(root: Path, licenses: Path, staging: Path) -> None:
-    for relative in ("LICENSE", "THIRD_PARTY_DATA.md", *DOCUMENTATION_FILES):
+    for relative in ("LICENSE", "THIRD_PARTY_DATA.md", *DOCUMENTATION_FILES, *OPENXR_NOTICES):
         source = root / relative
         destination = staging / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, destination)
     (staging / "README.md").write_text(
-        "# Native Screen 試用版\n\n"
+        "# Native 試用版\n\n"
         "起動方法・動作環境・操作キー・保存先は "
         "[Nativeガイド](docs/native-guide.md) を参照する。\n\n"
         "- [ソースコードのライセンス](LICENSE)\n"
         "- [データ・フォントの利用条件](THIRD_PARTY_DATA.md)\n"
         "- [同梱ライブラリの利用条件](THIRD-PARTY-LICENSES.html)\n\n"
+        "Windows/Linux版は `--openxr` でruntimeを初期化し、タイトル画面からHMD表示を選ぶ。"
+        "前提runtimeと実機での確認範囲はNativeガイドを参照する。\n\n"
         "ビルド来歴は `BUILD-INFO.json` に記録している。"
         "配布ファイルの照合には、配布ページの `SHA256SUMS` を使用する。\n",
         encoding="utf-8", newline="\n")
@@ -177,6 +196,7 @@ def assemble(root: Path, binaries: Path, licenses: Path, source_sha: str, output
     lock_hash = digest(root / "Cargo.lock")
     if (license_info["source_sha"] != source_sha or license_info["cargo_lock_sha256"] != lock_hash
             or license_info["targets"] != list(TARGETS)
+            or license_info["features"] != sorted({feature for target in TARGETS for feature in native_features(target)})
             or license_info["licenses_sha256"] != digest(licenses / "THIRD-PARTY-LICENSES.html")):
         raise ValueError("license artifact provenance does not match the source")
     output.mkdir(parents=True, exist_ok=True)
@@ -198,6 +218,7 @@ def assemble(root: Path, binaries: Path, licenses: Path, source_sha: str, output
             executable.chmod(0o755)
             info = json.loads((staging / "BUILD-INFO.json").read_text(encoding="utf-8"))
             if (info["source_sha"] != source_sha or info["target"] != target
+                    or info["features"] != native_features(target)
                     or info["cargo_lock_sha256"] != lock_hash
                     or info["binary_sha256"] != digest(executable)):
                 raise ValueError(f"binary artifact provenance differs for {target}")
@@ -219,7 +240,8 @@ def assemble(root: Path, binaries: Path, licenses: Path, source_sha: str, output
 
                 with tarfile.open(package, "w:gz") as archive:
                     archive.add(staging, arcname=name, filter=permissions)
-            packages.append({"target": target, "file": package.name, "sha256": digest(package)})
+            packages.append({"target": target, "features": native_features(target),
+                             "file": package.name, "sha256": digest(package)})
     write_json(output / "SOURCE.json", {
         "source_sha": source_sha,
         "cargo_lock_sha256": lock_hash,
@@ -251,7 +273,9 @@ def main() -> None:
             subparser.add_argument("--licenses", type=Path, required=True)
     arguments = parser.parse_args()
     if arguments.command == "matrix":
-        print(json.dumps({"include": [{"target": target, "runner": spec[0]} for target, spec in TARGETS.items()]}))
+        print(json.dumps({"include": [{"target": target, "runner": spec[0],
+                                       "features": ",".join(native_features(target))}
+                                      for target, spec in TARGETS.items()]}))
     elif arguments.command == "stage":
         stage_binary(arguments.root, arguments.binary.resolve(), arguments.target, arguments.source_sha, arguments.output)
     elif arguments.command == "licenses":

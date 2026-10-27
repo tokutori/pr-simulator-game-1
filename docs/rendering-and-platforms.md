@@ -275,8 +275,9 @@ Nativeは既存DirectionalLightの2048 texel・30〜600 mの3段cascadeから、
 | WebXR | immersive-vr。runtimeの眼別pose/projectionを使用する |
 | Phone VR | 左右分割、Device Orientationによる3DoF。位置追跡・reprojection・XR compositorを提供しない |
 | Native Screen | Bevyのデスクトップ描画 |
+| Native OpenXR | Windows/LinuxのVulkan描画。共有Rustの完成cameraと空間UIを両眼へ提出する |
 
-- Native OpenXRは未接続であり、runtime・frame提出・swapchain、pose/FOVと入力の観測、共有描画の提出を接続対象とする。
+- Native OpenXRの起動環境と配布版の操作は[Nativeガイド](native-guide.md#hmd表示windowslinux)、実HMDでの残る受入条件は[検証](verification.md)に定める。
 - Webでは全8 SceneとSettings・Pause・Help・Credits・HUDを同じ共通UIから表示する。
 - XR sessionはScene間で共有する。
 - DOM Overlayは任意機能であり、非対応機種でも装着中の主要操作をpanelで完結できるようにする。
@@ -453,7 +454,7 @@ M C' H'=M C S S^{-1}H=M C H
 
 ### Native OpenXR
 
-- Windows/LinuxのVulkan adapterは、`cargo run -p birdman-game-bevy --features openxr -- --openxr`でOpenXR runtimeを初期化する。共有設定のHMD操作からsessionを開始し、全Scene・Menu・Head HUDを同じ共有Rustの完成cameraとSurfacePaintから描画する。
+- Windows/Linuxの配布版は`openxr` featureを含み、`--openxr`でOpenXR runtimeを初期化する。ソースからの起動も含む利用方法は[Nativeガイド](native-guide.md#hmd表示windowslinux)に定める。タイトル画面のHMD表示操作からsessionを開始し、全Scene・Menu・Head HUDを同じ共有Rustの完成cameraとSurfacePaintから描画する。
 - runtimeのLOCAL空間・予測表示時刻のhead/眼/controller観測を共有ownerへ渡す。入力同期時のfocus喪失とsession lossは同じframeへ反映し、inactiveな入力源を退役する。受信時刻はNativeの単調時計へ揃え、controllerのprimary actionは有効な押下から解放までを共有ownerが認可する。
 - LOCAL参照空間の変更はchangeTime順（同時刻は受信順）に該当frameのpose観測より先に配送し、相対poseの累積と不明時の通常画面復帰は共有ownerが扱う。
 - OpenXRのtouchpad・thumbstick軸は`xr-standard`の右・下を正とする向きへ転写し、inactiveな軸は未観測値として渡す。
