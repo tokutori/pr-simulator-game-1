@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use birdman_game_core::WingBendingFactor;
 use birdman_game_format::WaterQuality;
-use birdman_game_presentation::camera::{Pose, Quaternion, Vector3};
+use birdman_game_presentation::camera::{Pose, Quaternion, Vector3, compose_pose};
 use birdman_game_presentation::render_pose::{
     FlightRenderPose, RenderTailGeometry, RenderWingDeformation,
 };
@@ -10,7 +10,7 @@ use birdman_game_scene::airframe_structure::StructuralAttachment;
 use birdman_game_scene::lake_water::{LakeWaveProjection, water_quality_profile};
 use birdman_game_scene::lake_water_mesh::{PreparedWaterChunk, PreparedWaterGeometry};
 use birdman_game_scene::mesh::{area_weighted_normals, write_area_weighted_normals};
-use birdman_game_scene::prepared_scene::{PreparedAirframeFrame, PreparedScene, registered_scene};
+use birdman_game_scene::prepared_scene::{PreparedAirframeFrame, registered_scene};
 use birdman_game_scene::tail_geometry::TailMaterial;
 use birdman_game_scene::wing_geometry::WingMaterial;
 use serde::Serialize;
@@ -80,9 +80,9 @@ pub enum ApplicationMeshAttachment {
     World,
     /// Aircraft datum frame.
     Aircraft,
-    /// Physical horizontal-tail pivot.
+    /// Horizontal-tail mesh in the aircraft frame.
     HorizontalTail,
-    /// Physical vertical-tail pivot.
+    /// Vertical-tail mesh in the aircraft frame.
     VerticalTail,
 }
 
@@ -272,7 +272,7 @@ struct DynamicMesh {
 }
 
 pub(super) struct GeometryOwner {
-    source: &'static PreparedScene,
+    tail_pivots: [Vector3; 2],
     assets: ApplicationGeometryAssets,
     buffers: BTreeMap<u32, Buffer>,
     frame: PreparedAirframeFrame<'static>,
@@ -291,7 +291,10 @@ impl GeometryOwner {
             .frame(WingBendingFactor::try_new(0.0).map_err(|error| format!("{error:?}"))?)
             .map_err(|error| format!("{error:?}"))?;
         let mut owner = Self {
-            source,
+            tail_pivots: std::array::from_fn(|index| {
+                let [x, y, z] = source.tails()[index].origin;
+                Vector3 { x, y, z: z + 1.0 }
+            }),
             assets: ApplicationGeometryAssets {
                 meshes: Vec::new(),
                 wing_textures: std::array::from_fn(|_| ApplicationGeometryTexture {
@@ -349,7 +352,6 @@ impl GeometryOwner {
                 format!("wing-{index}"),
                 ApplicationMeshAttachment::Aircraft,
                 Buffer::BorrowedF32(surface.positions().as_flattened()),
-                surface.positions(),
                 Buffer::BorrowedU32(surface.indices()),
                 surface.indices(),
                 materials,
@@ -370,7 +372,6 @@ impl GeometryOwner {
                 format!("cockpit-{index}"),
                 ApplicationMeshAttachment::Aircraft,
                 Buffer::BorrowedF32(surface.positions.as_flattened()),
-                &surface.positions,
                 Buffer::BorrowedU32(&surface.indices),
                 &surface.indices,
                 vec![material(
@@ -389,20 +390,23 @@ impl GeometryOwner {
                 let mut indices = Vec::new();
                 for patch in tail.patches.iter().filter(|patch| patch.material == kind) {
                     let base = positions.len() as u32;
-                    positions.extend(patch.vertices);
+                    positions.extend(
+                        patch
+                            .vertices
+                            .map(|point| tail_vertex(point, owner.tail_pivots[index])),
+                    );
                     indices.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
                 }
                 if positions.is_empty() {
                     continue;
                 }
-                let position_buffer = Buffer::F32(positions.as_flattened().to_vec());
+                let position_buffer = Buffer::F32(positions.into_flattened());
                 let index_buffer = Buffer::U32(indices.clone());
                 owner.mesh(
                     next_id,
                     format!("tail-{index}-{kind:?}"),
                     tail_attachment(index),
                     position_buffer,
-                    &positions,
                     index_buffer,
                     &indices,
                     vec![material(
@@ -417,17 +421,35 @@ impl GeometryOwner {
             }
         }
         for (index, mesh) in source.structure().meshes().iter().enumerate() {
-            let attachment = match mesh.attachment() {
-                StructuralAttachment::HorizontalTail => ApplicationMeshAttachment::HorizontalTail,
-                StructuralAttachment::VerticalTail => ApplicationMeshAttachment::VerticalTail,
-                _ => ApplicationMeshAttachment::Aircraft,
+            let (attachment, position_buffer) = match mesh.attachment() {
+                StructuralAttachment::HorizontalTail => (
+                    ApplicationMeshAttachment::HorizontalTail,
+                    Buffer::F32(
+                        mesh.positions()
+                            .iter()
+                            .flat_map(|point| tail_vertex(*point, owner.tail_pivots[0]))
+                            .collect::<Vec<_>>(),
+                    ),
+                ),
+                StructuralAttachment::VerticalTail => (
+                    ApplicationMeshAttachment::VerticalTail,
+                    Buffer::F32(
+                        mesh.positions()
+                            .iter()
+                            .flat_map(|point| tail_vertex(*point, owner.tail_pivots[1]))
+                            .collect::<Vec<_>>(),
+                    ),
+                ),
+                _ => (
+                    ApplicationMeshAttachment::Aircraft,
+                    Buffer::BorrowedF32(mesh.positions().as_flattened()),
+                ),
             };
             let mesh_index = owner.mesh(
                 next_id,
                 format!("structure-{index}"),
                 attachment,
-                Buffer::BorrowedF32(mesh.positions().as_flattened()),
-                mesh.positions(),
+                position_buffer,
                 Buffer::BorrowedU32(mesh.indices()),
                 mesh.indices(),
                 vec![material(
@@ -483,8 +505,7 @@ impl GeometryOwner {
                 next_id,
                 mesh.kind.name().to_owned(),
                 ApplicationMeshAttachment::World,
-                Buffer::F32(positions.as_flattened().to_vec()),
-                &positions,
+                Buffer::F32(positions.into_flattened()),
                 Buffer::BorrowedU32(&mesh.indices),
                 &mesh.indices,
                 vec![material(
@@ -506,8 +527,7 @@ impl GeometryOwner {
                 next_id,
                 name.to_owned(),
                 ApplicationMeshAttachment::World,
-                Buffer::F32(positions.as_flattened().to_vec()),
-                &positions,
+                Buffer::F32(positions.into_flattened()),
                 Buffer::BorrowedU32(&mesh.indices),
                 &mesh.indices,
                 vec![material(
@@ -559,11 +579,20 @@ impl GeometryOwner {
         name: String,
         attachment: ApplicationMeshAttachment,
         position_buffer: Buffer,
-        positions: &[[f32; 3]],
         index_buffer: Buffer,
         indices: &[u32],
         materials: Vec<ApplicationMeshMaterial>,
     ) -> GeometryResult<usize> {
+        let values: &[f32] = match &position_buffer {
+            Buffer::BorrowedF32(values) => values,
+            Buffer::F32(values) => values,
+            _ => return Err(format!("{name}: Float32 positions required")),
+        };
+        let (positions, remainder) = values.as_chunks::<3>();
+        if !remainder.is_empty() {
+            return Err(format!("{name}: incomplete position"));
+        }
+        let count = positions.len();
         let normals = area_weighted_normals(positions, indices)
             .map_err(|error| format!("{name}: {error:?}"))?;
         self.mesh_ready(
@@ -571,7 +600,7 @@ impl GeometryOwner {
             name,
             attachment,
             position_buffer,
-            positions.len(),
+            count,
             index_buffer,
             indices.len(),
             materials,
@@ -806,7 +835,7 @@ impl GeometryOwner {
             }
         }
         let incidence = pose.map(|pose| pose.controls.physical_incidence);
-        let part_poses = std::array::from_fn(|index| {
+        let part_pose = |index: usize| -> GeometryResult<ApplicationMeshPose> {
             let angle = incidence.map_or(0.0, |angles| {
                 if index == 0 {
                     angles.horizontal_tail_radians
@@ -814,11 +843,10 @@ impl GeometryOwner {
                     -angles.vertical_tail_radians
                 }
             }) / 2.0;
-            let [x, y, z] = self.source.tails()[index].origin;
-            ApplicationMeshPose {
-                attachment: tail_attachment(index),
-                pose: Pose {
-                    position: Vector3 { x, y, z: z + 1.0 },
+            let pivot = self.tail_pivots[index];
+            let pose = compose_pose(
+                Pose {
+                    position: pivot,
                     orientation: Quaternion {
                         w: angle.cos(),
                         x: if index == 0 { angle.sin() } else { 0.0 },
@@ -826,8 +854,22 @@ impl GeometryOwner {
                         z: 0.0,
                     },
                 },
-            }
-        });
+                Pose {
+                    position: Vector3 {
+                        x: -pivot.x,
+                        y: -pivot.y,
+                        z: -pivot.z,
+                    },
+                    ..Pose::IDENTITY
+                },
+            )
+            .map_err(|error| format!("Tail articulation: {error:?}"))?;
+            Ok(ApplicationMeshPose {
+                attachment: tail_attachment(index),
+                pose,
+            })
+        };
+        let part_poses = [part_pose(0)?, part_pose(1)?];
         Ok(ApplicationGeometryFrame {
             aircraft_visible: available,
             revision: self.revision,
@@ -885,6 +927,14 @@ fn tail_attachment(index: usize) -> ApplicationMeshAttachment {
     } else {
         ApplicationMeshAttachment::VerticalTail
     }
+}
+
+fn tail_vertex(point: [f32; 3], pivot: Vector3) -> [f32; 3] {
+    [
+        (f64::from(point[0]) + pivot.x) as f32,
+        (f64::from(point[1]) + pivot.y) as f32,
+        (f64::from(point[2]) + pivot.z) as f32,
+    ]
 }
 
 fn ned([north, east, down]: [f32; 3]) -> [f32; 3] {
