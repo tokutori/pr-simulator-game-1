@@ -1,7 +1,7 @@
 use super::*;
 use crate::game_ui::{
-    GameUiChart, GameUiControlContent, GameUiEmphasis, GameUiFrame, GameUiPanel, GameUiTheme,
-    GameUiView,
+    GameUiChart, GameUiChartCursor, GameUiControlContent, GameUiEmphasis, GameUiFrame, GameUiPanel,
+    GameUiTheme, GameUiView,
 };
 use crate::xr::{
     XrPointerControl, XrPointerRect, XrPointerRegion, XrPointerSurface, XrPointerTarget,
@@ -250,20 +250,10 @@ pub(super) fn project(
             if let (GameUiControlContent::Chart { plot, .. }, Some(bounds)) =
                 (&control.content, placement.plot)
             {
-                let mut chart = (**plot).clone();
-                if let Some(cursor) = frame
+                let cursor = frame
                     .chart_cursor
                     .as_ref()
-                    .filter(|cursor| cursor.id == control.id)
-                {
-                    chart.cursor_x = cursor.cursor_x;
-                    chart.cursor_points = cursor.cursor_points.clone();
-                    if let Some(vector) = &cursor.selected_wind_vector
-                        && let Some(first) = chart.vectors.first_mut()
-                    {
-                        *first = vector.clone();
-                    }
-                }
+                    .filter(|cursor| cursor.id == control.id);
                 let mut clip = bounds;
                 let origin = translate(MenuPoint {
                     x: clip.x,
@@ -273,7 +263,7 @@ pub(super) fn project(
                 clip.y = origin.y;
                 content.push(SurfacePaintItem::Plot {
                     clip,
-                    items: paint_chart(&chart, bounds, &translate),
+                    items: paint_chart(plot, cursor, bounds, &translate),
                 });
             }
             for text in &placement.texts {
@@ -532,6 +522,7 @@ fn paint_text(
 
 fn paint_chart(
     chart: &GameUiChart,
+    cursor: Option<&GameUiChartCursor>,
     plot: MenuRect,
     translate: &impl Fn(MenuPoint) -> MenuPoint,
 ) -> Vec<SurfacePaintItem> {
@@ -610,7 +601,14 @@ fn paint_chart(
             );
         }
     }
-    for vector in &chart.vectors {
+    for (index, vector) in chart.vectors.iter().enumerate() {
+        let vector = if index == 0 {
+            cursor
+                .and_then(|cursor| cursor.selected_wind_vector.as_ref())
+                .unwrap_or(vector)
+        } else {
+            vector
+        };
         for [start, end] in &vector.segments {
             segment(*start, *end, &vector.color, 2.0, 1.0);
         }
@@ -622,7 +620,7 @@ fn paint_chart(
             color: marker.color.clone(),
         });
     }
-    if let Some(cursor) = chart.cursor_x {
+    if let Some(cursor) = cursor.map_or(chart.cursor_x, |cursor| cursor.cursor_x) {
         items.push(SurfacePaintItem::Line {
             start: project(Point {
                 x: cursor,
@@ -634,7 +632,9 @@ fn paint_chart(
             opacity: 1.0,
         });
     }
-    for cursor in &chart.cursor_points {
+    for cursor in cursor.map_or(chart.cursor_points.as_slice(), |cursor| {
+        &cursor.cursor_points
+    }) {
         items.push(SurfacePaintItem::Marker {
             point: project(cursor.point),
             size_px: 8.0,
