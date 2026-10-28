@@ -30,6 +30,7 @@ use birdman_game_runtime::{
     ApplicationUiProjection,
 };
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 #[path = "ui/chart.rs"]
 mod chart;
@@ -97,7 +98,7 @@ struct RetainedUi {
     heading: Entity,
     description: Entity,
     content: Entity,
-    view: Option<GameUiView>,
+    view: Option<Arc<GameUiView>>,
     sections: BTreeMap<String, Entity>,
     widgets: BTreeMap<String, Widget>,
     hud: RetainedHud,
