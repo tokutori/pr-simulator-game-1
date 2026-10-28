@@ -3266,11 +3266,16 @@ fn replay_hud_uses_the_recorded_pilot_target_for_the_displayed_interval() {
     };
     let platform = platform();
     let view = game_ui_view(&state, &context(&session, difficulty(), &platform)).unwrap();
+    let hud = view.hud.unwrap();
     assert!(
-        hud_node(&view.hud.unwrap(), "hud-pilot-position")
+        hud_node(&hud, "hud-pilot-position")
             .content
             .value()
             .contains("(+0.20)")
+    );
+    assert_eq!(
+        hud_node(&hud, "hud-tail-incidence-rate").content.value(),
+        "— rad/s"
     );
 }
 
@@ -3285,6 +3290,10 @@ fn hud_uses_the_authoritative_telemetry_and_existing_information_cue_policy() {
     .unwrap();
     let telemetry = session.telemetry().unwrap().unwrap();
     let hud = full.hud.unwrap();
+    assert_eq!(
+        hud_node(&hud, "hud-tail-incidence-rate").content.value(),
+        "— rad/s"
+    );
     let GameUiHudNodeContent::Attitude { geometry, value } =
         &hud_node(&hud, "hud-attitude").content
     else {
@@ -3440,6 +3449,53 @@ fn hud_uses_the_authoritative_telemetry_and_existing_information_cue_policy() {
     let primary = hud_node(&realistic, "hud-primary-readouts").content.value();
     assert!(primary.contains(&airspeed));
     assert!(!primary.contains("実機構成"));
+
+    let mut moving = launched();
+    let retained = game_ui_view(
+        &GameUiState::default(),
+        &context(&moving, difficulty(), &platform),
+    )
+    .unwrap();
+    moving
+        .advance_tail_flight_tick(TailFlightTickInput::new(
+            TailPilotIntent::try_new(0.5, -0.25).unwrap(),
+            TailRateTarget::try_new(0.0, 0.0).unwrap(),
+            TailPilotPositionCommand::Set(
+                birdman_game_core::TailPilotPositionIntent::try_new(0.5).unwrap(),
+            ),
+        ))
+        .unwrap();
+    let physical = moving.snapshot().tail_flight_state().unwrap();
+    assert!(physical.flight_state().pilot_velocity_mps() > 0.0);
+    let observed = game_ui_frame(
+        &GameUiState::default(),
+        &context(&moving, difficulty(), &platform),
+        &retained,
+        retained.view_revision,
+    )
+    .unwrap()
+    .hud
+    .unwrap();
+    let rates = hud_node(&observed, "hud-tail-incidence-rate")
+        .content
+        .value();
+    assert_eq!(rates, "-1.00/+1.00 rad/s");
+    assert_eq!(
+        hud_node(&observed, "hud-pilot-velocity").content.value(),
+        format!("{:+.2} m/s", physical.flight_state().pilot_velocity_mps())
+    );
+    moving.pause(PauseReason::Manual).unwrap();
+    let paused = game_ui_view(
+        &GameUiState::default(),
+        &context(&moving, difficulty(), &platform),
+    )
+    .unwrap()
+    .hud
+    .unwrap();
+    assert_eq!(
+        hud_node(&paused, "hud-tail-incidence-rate").content.value(),
+        rates
+    );
 }
 
 #[test]
