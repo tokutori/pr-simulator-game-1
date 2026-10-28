@@ -9,9 +9,7 @@ use crate::xr::{
 use serde::{Deserialize, Serialize};
 
 /// Prepared painting and input geometry from one published UI and font observation.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct MenuProjection {
     /// Fitted surface dimensions in metres.
     pub size: MenuSize,
@@ -38,9 +36,7 @@ pub struct MenuProjection {
 }
 
 /// Unscrolled input geometry used to invalidate a changed menu layout.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct MenuGeometryIdentity {
     /// Fitted surface size.
     pub size: MenuSize,
@@ -55,9 +51,7 @@ pub struct MenuGeometryIdentity {
 }
 
 /// Geometry and scale of one published control.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct MenuControlGeometry {
     /// Published control identity and widget kind.
     pub identity: [String; 2],
