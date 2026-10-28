@@ -8,8 +8,6 @@ use serde::{Deserialize, Serialize};
 /// Current shared UI boundary version.
 pub const GAME_UI_SCHEMA_VERSION: u32 = 1;
 
-/// Maximum UTF-8 JSON input size for the shared UI boundary.
-pub const GAME_UI_MAX_INPUT_BYTES: usize = 131_072;
 /// Number of newest saved records requested by the Title preview.
 pub const GAME_UI_STORED_RECORD_LIMIT: usize = 3;
 /// Maximum Unicode scalar count of a displayed platform diagnostic.
@@ -18,9 +16,7 @@ pub const GAME_UI_NOTICE_CHARACTERS: usize = 2048;
 pub const GAME_UI_SAVED_AT_CHARACTERS: usize = 256;
 
 /// UI-only selections; physical state and domain phase remain in GameSession.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct GameUiState {
     /// Shared credits shown without changing the domain phase.
     pub credits_open: bool,
@@ -351,9 +347,7 @@ pub enum GameUiControlInput {
 }
 
 /// Side-effect request produced after pure action admission.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum GameUiEffect {
     /// Existing session command.
     Session {
@@ -373,9 +367,7 @@ pub enum GameUiEffect {
 }
 
 /// Pure update output.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct GameUiUpdate {
     /// Next UI-only selections.
     pub state: GameUiState,
@@ -384,10 +376,7 @@ pub struct GameUiUpdate {
 }
 
 /// Browser or OS observations that never own game physics or phase.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(deny_unknown_fields)]
-#[cfg_attr(feature = "schema", schemars(extend("x-boundary-bytes" = GAME_UI_MAX_INPUT_BYTES)))]
+#[derive(Clone, Debug, PartialEq)]
 pub struct GameUiPlatformInput {
     /// Current physical display viewport.
     pub viewport: GameUiViewport,
@@ -420,7 +409,6 @@ pub struct GameUiPlatformInput {
     /// Confirmed Screen selection, applied resources, and stable measurement state.
     pub screen_render_scale: crate::screen_render_auto::ScreenRenderAutoSnapshot,
     /// Platform operation feedback.
-    #[cfg_attr(feature = "schema", schemars(length(max = GAME_UI_NOTICE_CHARACTERS)))]
     pub notification: String,
     /// Captured flight-controller resource failure; the session retains its last valid state.
     pub flight_controller_failure: Option<String>,
@@ -431,13 +419,8 @@ pub struct GameUiPlatformInput {
 }
 
 /// Title's bounded metadata query result, independent of all-record PB selection.
-#[derive(Clone, Debug, Default, PartialEq, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(transparent)]
-pub struct GameUiStoredRecordPreview(
-    #[cfg_attr(feature = "schema", schemars(length(max = GAME_UI_STORED_RECORD_LIMIT)))]
-    Vec<GameUiStoredRecord>,
-);
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct GameUiStoredRecordPreview(Vec<GameUiStoredRecord>);
 
 impl GameUiStoredRecordPreview {
     /// Returns the ordered rows without transferring record ownership.
@@ -465,33 +448,12 @@ impl From<Vec<GameUiStoredRecord>> for GameUiStoredRecordPreview {
     }
 }
 
-impl<'de> Deserialize<'de> for GameUiStoredRecordPreview {
-    fn deserialize<Deserializer: serde::Deserializer<'de>>(
-        deserializer: Deserializer,
-    ) -> Result<Self, Deserializer::Error> {
-        let records = Vec::<GameUiStoredRecord>::deserialize(deserializer)?;
-        if records.len() > GAME_UI_STORED_RECORD_LIMIT
-            || records
-                .iter()
-                .any(|record| record.saved_at.chars().count() > GAME_UI_SAVED_AT_CHARACTERS)
-        {
-            return Err(serde::de::Error::custom(
-                "stored-record preview exceeds its shared query bounds",
-            ));
-        }
-        Ok(Self(records))
-    }
-}
-
 /// Persistence metadata, not an independent flight record.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct GameUiStoredRecord {
     /// Platform key.
     pub id: u32,
     /// Original RFC 3339 save timestamp; the shared view formats it in UTC.
-    #[cfg_attr(feature = "schema", schemars(length(max = GAME_UI_SAVED_AT_CHARACTERS)))]
     pub saved_at: String,
     /// Existing Rust-derived Personal Best membership.
     pub personal_best: bool,
