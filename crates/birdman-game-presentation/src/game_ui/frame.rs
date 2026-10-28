@@ -150,7 +150,7 @@ fn readout(id: &str, value: String) -> GameUiReadoutValue {
 }
 
 pub(super) fn range_display_value(value: f64) -> String {
-    ryu_js::Buffer::new().format_to_fixed(value, 1).to_owned()
+    ryu_js::Buffer::new().format_to_fixed(value, 2).to_owned()
 }
 
 pub(super) fn analysis_cursor_fields(
