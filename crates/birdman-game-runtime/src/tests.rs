@@ -620,7 +620,7 @@ fn boot_retries_renderer_creation_releases_late_resources_and_enters_title_after
         })
         .unwrap();
     let failed = runtime.retained.as_ref().unwrap().clone();
-    assert!(runtime.platform.flight_controller_failure.is_none());
+    assert!(runtime.platform.renderer_failure.is_none());
     assert!(failed.panels.iter().flat_map(|panel| &panel.controls).any(|control| {
         control.id == "game-boot-diagnostic"
             && matches!(&control.content, GameUiControlContent::Status { value, .. } if value == "initial pipeline creation failed")
@@ -674,11 +674,18 @@ fn boot_retries_renderer_creation_releases_late_resources_and_enters_title_after
             })
     );
     assert_eq!(runtime.platform.notification, stored_notification);
-    assert!(runtime.platform.flight_controller_failure.is_none());
+    assert!(runtime.platform.renderer_failure.is_none());
     assert_eq!(
         runtime.application().core_session().snapshot().phase(),
         SessionPhase::Title
     );
+    runtime
+        .observe_test(ApplicationInput::RendererFailed {
+            renderer_resource_id: 101,
+            cause: "retired renderer failure".into(),
+        })
+        .unwrap();
+    assert!(runtime.platform.renderer_failure.is_none());
     let later_failure = runtime
         .observe_test(ApplicationInput::RendererFailed {
             renderer_resource_id: 102,
@@ -689,7 +696,56 @@ fn boot_retries_renderer_creation_releases_late_resources_and_enters_title_after
         later_failure.diagnostic.as_deref(),
         Some("later GPU drawing failed")
     );
-    assert!(runtime.platform.flight_controller_failure.is_some());
+    assert!(runtime.platform.renderer_failure.is_some());
+    let failed = structure(later_failure);
+    assert_eq!(
+        failed.scene,
+        birdman_game_presentation::game_ui::GameUiScene::Title
+    );
+    assert!(
+        failed
+            .panels
+            .iter()
+            .flat_map(|panel| &panel.controls)
+            .any(|control| {
+                control.id == "game-renderer-stopped"
+                    && matches!(&control.content, GameUiControlContent::Status { value, .. }
+                if Some(value) == runtime.platform.renderer_failure.as_ref())
+            })
+    );
+    assert!(matches!(
+        runtime.observe_test(ApplicationInput::Control {
+            view_revision: ready.view_revision,
+            input: GameUiControlInput::Activate {
+                control_id: "game-renderer-reload".into()
+            },
+        }),
+        Err(ApplicationRuntimeError::Ui(GameUiError::StaleView))
+    ));
+    let closing = runtime
+        .observe_test(ApplicationInput::Control {
+            view_revision: failed.view_revision,
+            input: GameUiControlInput::Activate {
+                control_id: "game-renderer-reload".into(),
+            },
+        })
+        .unwrap();
+    assert_eq!(closing.lifecycle, ApplicationLifecycle::Closing);
+    assert!(
+        !closing
+            .requests
+            .iter()
+            .any(|request| matches!(request, ApplicationRequest::ReloadApplication))
+    );
+    let duplicate = runtime
+        .observe_test(ApplicationInput::Control {
+            view_revision: failed.view_revision,
+            input: GameUiControlInput::Activate {
+                control_id: "game-renderer-reload".into(),
+            },
+        })
+        .unwrap();
+    assert!(duplicate.requests.is_empty());
     let mut reload =
         ApplicationRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
     let initial = reload

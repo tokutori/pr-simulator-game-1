@@ -127,12 +127,12 @@ pub(super) fn game_ui_hud(
         phase,
         SessionPhase::FlightRunning | SessionPhase::FlightPaused { .. }
     )
-    .then_some(context.platform.flight_controller_failure.as_deref())
+    .then_some(context.platform.renderer_failure.as_deref())
     .flatten();
     let mut primary = Vec::new();
     if let Some(cause) = failure {
         primary.push(hud_node(
-            "hud-controller-failure",
+            "hud-renderer-failure",
             "",
             GameUiHudNodeContent::Text {
                 value: format!("停止理由: {cause}"),

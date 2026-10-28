@@ -36,7 +36,7 @@ pub(super) fn platform() -> GameUiPlatformInput {
         water_quality_operation: GameUiWaterQualityOperation::Idle {},
         screen_render_scale: crate::screen_render_auto::ScreenRenderAutoSnapshot::default(),
         notification: String::new(),
-        flight_controller_failure: None,
+        renderer_failure: None,
         head_hud_failure: None,
         stored_records: Default::default(),
     }
@@ -2679,7 +2679,7 @@ fn leaving_replay_retains_the_authoritative_clock_as_the_analysis_cursor() {
 }
 
 #[test]
-fn controller_resource_failure_preserves_last_valid_hud_and_exit_in_both_modes() {
+fn renderer_failure_preserves_last_valid_hud_and_exposes_reload_across_scenes() {
     for mode in [
         GameUiPresentationMode::Screen,
         GameUiPresentationMode::PhoneVr,
@@ -2689,17 +2689,59 @@ fn controller_resource_failure_preserves_last_valid_hud_and_exit_in_both_modes()
         let before = session.snapshot();
         let mut platform = platform();
         platform.presentation_mode = mode;
-        platform.flight_controller_failure = Some("input disposal failed".to_owned());
+        platform.renderer_failure = Some("renderer submission failed".to_owned());
         let state = GameUiState::default();
         let settings = difficulty().with_information(InformationLevel::Minimal);
+        let assert_recovery = |session: &GameSession<'static>, state: &GameUiState| {
+            let context = context(session, settings, &platform);
+            let before = session.snapshot();
+            let view = game_ui_view(state, &context).unwrap();
+            assert!(matches!(&control(&view, "game-renderer-stopped").content,
+                GameUiControlContent::Status { value, .. } if value == "renderer submission failed"));
+            assert!(control(&view, "game-renderer-reload").enabled);
+            let update = update_game_ui(
+                state,
+                GameUiAction::ControlInput {
+                    input: GameUiControlInput::Activate {
+                        control_id: "game-renderer-reload".into(),
+                    },
+                },
+                &context,
+            )
+            .unwrap();
+            assert_eq!(
+                update.effects,
+                vec![GameUiEffect::Platform {
+                    command: GameUiPlatformCommand::ReloadApplication {},
+                }]
+            );
+            assert_eq!(session.snapshot(), before);
+        };
+        let mut setup = GameSession::new();
+        assert_recovery(&setup, &state);
+        assert_recovery(
+            &setup,
+            &GameUiState {
+                credits_open: true,
+                ..state.clone()
+            },
+        );
+        setup.open_setup().unwrap();
+        assert_recovery(&setup, &state);
+        prepare_manual_flight(&mut setup, settings.weather(), 100, 42).unwrap();
+        assert_recovery(&setup, &state);
+        setup.mark_briefing_ready().unwrap();
+        setup.start_countdown(1).unwrap();
+        assert_recovery(&setup, &state);
+        assert_recovery(&session, &state);
         let view = game_ui_view(&state, &context(&session, settings, &platform)).unwrap();
         assert!(control(&view, "game-flight-abort").enabled);
         let GameUiControlContent::Status { value, .. } =
-            &control(&view, "game-controller-stopped").content
+            &control(&view, "game-renderer-stopped").content
         else {
-            panic!("missing controller failure")
+            panic!("missing renderer failure")
         };
-        assert!(value.contains("最後の有効状態") && value.contains("input disposal failed"));
+        assert_eq!(value, "renderer submission failed");
         let hud = view.hud.unwrap();
         let primary = hud_node(&hud, "hud-primary-readouts");
         assert_eq!(
@@ -2709,14 +2751,34 @@ fn controller_resource_failure_preserves_last_valid_hud_and_exit_in_both_modes()
                 session.telemetry().unwrap().unwrap().airspeed_mps
             )
         );
-        assert!(matches!(&hud_node(&hud, "hud-controller-failure").content,
-            GameUiHudNodeContent::Text { value, tone: GameUiHudTone::Warning } if value == "停止理由: input disposal failed"));
+        assert!(matches!(&hud_node(&hud, "hud-renderer-failure").content,
+            GameUiHudNodeContent::Text { value, tone: GameUiHudTone::Warning } if value == "停止理由: renderer submission failed"));
         assert!(
             hud_node(&hud, "hud-last-valid-state").label == "最後の有効状態"
                 && hud_node(&hud, "hud-last-valid-state").content.value() == "0.00 s"
         );
         assert_eq!(session.snapshot(), before);
         session.pause(PauseReason::Manual).unwrap();
+        for pause_overlay in [
+            GameUiPauseOverlay::Menu,
+            GameUiPauseOverlay::Settings,
+            GameUiPauseOverlay::Help,
+        ] {
+            assert_recovery(
+                &session,
+                &GameUiState {
+                    pause_overlay,
+                    ..state.clone()
+                },
+            );
+        }
+        assert_recovery(
+            &session,
+            &GameUiState {
+                credits_open: true,
+                ..state.clone()
+            },
+        );
         let view = game_ui_view(&state, &context(&session, settings, &platform)).unwrap();
         assert_eq!(view.hud.is_some(), mode == GameUiPresentationMode::Screen);
         assert!(!control(&view, "game-flight-resume").enabled);
@@ -2731,7 +2793,34 @@ fn controller_resource_failure_preserves_last_valid_hud_and_exit_in_both_modes()
             ),
             Err(GameUiError::ActionUnavailable)
         );
-        platform.flight_controller_failure = None;
+        let mut result = finalized();
+        assert_recovery(&result, &state);
+        result.enter_replay().unwrap();
+        assert_recovery(&result, &state);
+        result.leave_replay().unwrap();
+        let record = result.take_finalized_result_record().unwrap();
+        let mut attract = GameSession::new();
+        attract.install_attract_record(record).unwrap();
+        attract.enter_attract().unwrap();
+        assert_recovery(&attract, &state);
+        platform.operation_pending = true;
+        let title = GameSession::new();
+        let pending = context(&title, settings, &platform);
+        let view = game_ui_view(&state, &pending).unwrap();
+        assert!(control(&view, "game-renderer-reload").enabled);
+        assert!(!control(&view, "game-title-start").enabled);
+        update_game_ui(
+            &state,
+            GameUiAction::ControlInput {
+                input: GameUiControlInput::Activate {
+                    control_id: "game-renderer-reload".into(),
+                },
+            },
+            &pending,
+        )
+        .unwrap();
+        platform.operation_pending = false;
+        platform.renderer_failure = None;
         assert!(
             control(
                 &game_ui_view(&state, &context(&session, settings, &platform)).unwrap(),
@@ -2810,7 +2899,7 @@ fn vr_resource_failure_panels_preserve_all_controls_without_overlap() {
                     Some("情報板の文字を読み取れる大きさで配置できない。".to_owned());
             }
             if controller_failed {
-                platform.flight_controller_failure = Some("input disposal failed".to_owned());
+                platform.renderer_failure = Some("input disposal failed".to_owned());
             }
             let view = game_ui_view(&state, &context(&session, difficulty(), &platform)).unwrap();
             assert_eq!(normal.panels[0].size, [0.62, 0.25]);
@@ -2843,7 +2932,7 @@ fn vr_resource_failure_panels_preserve_all_controls_without_overlap() {
                 ids.push("game-head-hud-unavailable");
             }
             if controller_failed {
-                ids.extend(["game-controller-stopped", "game-flight-abort"]);
+                ids.extend(["game-renderer-stopped", "game-flight-abort"]);
             }
             for id in ids {
                 let control = control(&view, id);
@@ -2857,8 +2946,8 @@ fn vr_resource_failure_panels_preserve_all_controls_without_overlap() {
                     platform.head_hud_failure.as_deref(),
                 ),
                 (
-                    "game-controller-stopped",
-                    platform.flight_controller_failure.as_deref(),
+                    "game-renderer-stopped",
+                    platform.renderer_failure.as_deref(),
                 ),
             ] {
                 if let Some(cause) = cause {
