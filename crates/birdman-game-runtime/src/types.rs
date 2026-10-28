@@ -14,6 +14,7 @@ use birdman_game_presentation::game_ui::{
 };
 use birdman_game_presentation::xr::XrViewerObservation;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 /// Capabilities implemented by the platform's I/O and drawing adapters.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -562,7 +563,7 @@ pub enum ApplicationUiProjection {
     /// Complete replacement for the retained visible structure.
     View {
         #[doc = "New structure carrying its shared revision."]
-        view: Box<GameUiView>,
+        view: Arc<GameUiView>,
     },
     /// Lightweight values for the retained structure.
     Frame {

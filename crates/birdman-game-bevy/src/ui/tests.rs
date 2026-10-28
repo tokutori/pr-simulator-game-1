@@ -93,6 +93,10 @@ fn shared_widgets_retain_values_and_forward_controls_and_chart_io_with_their_sou
         drawing.presentation.frame_rate_label
     );
     let retained = app.world().resource::<RetainedUi>();
+    let ApplicationUiProjection::View { view } = &drawing.ui else {
+        panic!("Expected structural drawing");
+    };
+    assert!(Arc::ptr_eq(retained.view.as_ref().unwrap(), view));
     let revision = retained.view.as_ref().unwrap().view_revision;
     let node = retained.widgets["game-boot-retry"].node;
     assert_eq!(
@@ -179,7 +183,7 @@ fn shared_widgets_retain_values_and_forward_controls_and_chart_io_with_their_sou
         .resource_mut::<ButtonInput<KeyCode>>()
         .clear();
     let mut retained = app.world_mut().remove_resource::<RetainedUi>().unwrap();
-    let mut view = retained.view.clone().unwrap();
+    let mut view = retained.view.as_deref().unwrap().clone();
     let numeric = birdman_game_presentation::game_ui::GameUiNumericField {
         id: "speed".into(),
         label: "対気速度".into(),
@@ -197,7 +201,13 @@ fn shared_widgets_retain_values_and_forward_controls_and_chart_io_with_their_sou
             fields: vec![numeric.clone()],
         },
     });
-    project_view(app.world_mut(), &mut retained, &view, &Handle::default()).unwrap();
+    project_view(
+        app.world_mut(),
+        &mut retained,
+        &Arc::new(view),
+        &Handle::default(),
+    )
+    .unwrap();
     let texts = retained.widgets["fields"].field_text["speed"];
     assert_eq!(app.world().get::<Text>(texts[1]).unwrap().0, "12.34");
     assert_eq!(app.world().get::<Text>(texts[2]).unwrap().0, "m/s");

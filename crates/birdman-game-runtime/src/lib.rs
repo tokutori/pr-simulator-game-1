@@ -105,6 +105,8 @@ use birdman_game_presentation::game_ui::{
 use birdman_game_presentation::xr::{
     MenuLayoutFailure, XrViewerFrame, XrViewerUnavailableReason, capture_xr_viewer,
 };
+#[cfg(not(verus_only))]
+use std::sync::Arc;
 
 #[cfg(test)]
 #[cfg(not(verus_only))]
@@ -117,7 +119,7 @@ pub struct ApplicationRuntime {
     ui: GameUiState,
     platform: GameUiPlatformInput,
     structure: GameUiStructureCache,
-    retained: Option<GameUiView>,
+    retained: Option<Arc<GameUiView>>,
     chart_pointer: Option<(u32, String, i32)>,
     display: display::DisplayWorkflow,
     previous_frame_ms: Option<f64>,
@@ -1110,10 +1112,9 @@ impl ApplicationRuntime {
                 view = self.boot.view(view);
             }
             view.view_revision = revision;
-            self.retained = Some(view.clone());
-            ApplicationUiProjection::View {
-                view: Box::new(view),
-            }
+            let view = Arc::new(view);
+            self.retained = Some(Arc::clone(&view));
+            ApplicationUiProjection::View { view }
         } else {
             let frame = game_ui_frame(
                 &self.ui,

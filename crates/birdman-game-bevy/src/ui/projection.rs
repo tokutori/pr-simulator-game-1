@@ -102,7 +102,7 @@ pub(super) fn retained_ui_transform(world: &mut World, entity: Entity) -> Mut<'_
 pub(super) fn project_view(
     world: &mut World,
     retained: &mut RetainedUi,
-    view: &GameUiView,
+    view: &Arc<GameUiView>,
     font: &Handle<Font>,
 ) -> Result<(), String> {
     if retained.view.as_ref() == Some(view) {
@@ -308,7 +308,7 @@ pub(super) fn project_view(
             }
         }
     }
-    retained.view = Some(view.clone());
+    retained.view = Some(Arc::clone(view));
     Ok(())
 }
 

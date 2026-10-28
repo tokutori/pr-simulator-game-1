@@ -30,6 +30,7 @@ use birdman_game_runtime::{
     ApplicationUiProjection,
 };
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 #[path = "ui/chart.rs"]
 mod chart;
@@ -97,7 +98,7 @@ struct RetainedUi {
     heading: Entity,
     description: Entity,
     content: Entity,
-    view: Option<GameUiView>,
+    view: Option<Arc<GameUiView>>,
     sections: BTreeMap<String, Entity>,
     widgets: BTreeMap<String, Widget>,
     hud: RetainedHud,
@@ -105,7 +106,7 @@ struct RetainedUi {
 
 #[cfg(feature = "verify-harness")]
 pub(crate) fn submitted_view(world: &World) -> Option<&GameUiView> {
-    world.get_resource::<RetainedUi>()?.view.as_ref()
+    world.get_resource::<RetainedUi>()?.view.as_deref()
 }
 
 #[derive(Component, Clone)]
