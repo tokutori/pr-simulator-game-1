@@ -48,13 +48,9 @@ impl SurfaceFontCache {
 pub fn prepare_game_ui_menu(
     view: &GameUiView,
     frame: &GameUiFrame,
-    input: MenuPreparationInput,
+    input: MenuPreparationInput<'_>,
     cache: &mut SurfaceFontCache,
-    mut measure: impl FnMut(
-        &MenuTextRequest,
-        MenuSize,
-        &str,
-    ) -> Result<MenuGlyphMetrics, MenuLayoutFailure>,
+    measure: impl FnMut(&MenuTextRequest, MenuSize, &str) -> Result<MenuGlyphMetrics, MenuLayoutFailure>,
 ) -> MenuLayoutReply {
     let result = (|| {
         if input.view_revision != view.view_revision || frame.view_revision != view.view_revision {
@@ -74,44 +70,19 @@ pub fn prepare_game_ui_menu(
             },
             ..Pose::IDENTITY
         };
-        let mut observation = None;
-        let mut requested = None;
-        for _ in 0..13 {
-            match select(
-                &mut source.clone(),
-                &input.viewer,
-                menu_from_panel,
-                observation.as_ref(),
-            )? {
-                PreparationStep::Measure { plan, attempt } => {
-                    let measurements =
-                        cache.measure(&plan.texts, plan.source.surface_size, &mut measure)?;
-                    requested = Some(plan);
-                    observation = Some(MenuPreparationObservation {
-                        attempt,
-                        measurements,
-                    });
-                }
-                PreparationStep::Ready { geometry } => {
-                    let plan = requested.ok_or(MenuLayoutFailure::MissingTextMetrics)?;
-                    let measurements = observation
-                        .ok_or(MenuLayoutFailure::MissingTextMetrics)?
-                        .measurements;
-                    return Ok(MenuLayoutReply::Ready {
-                        projection: Box::new(super::projection::project(
-                            view,
-                            frame,
-                            panel,
-                            &input,
-                            &plan,
-                            &measurements,
-                            &geometry,
-                        )?),
-                    });
-                }
-            }
-        }
-        Err(MenuLayoutFailure::InsufficientInkAngle)
+        let (plan, measurements, geometry) =
+            select(source, input.viewer, menu_from_panel, cache, measure)?;
+        Ok(MenuLayoutReply::Ready {
+            projection: Box::new(super::projection::project(
+                view,
+                frame,
+                panel,
+                &input,
+                &plan,
+                &measurements,
+                &geometry,
+            )?),
+        })
     })();
     result.unwrap_or_else(|reason| MenuLayoutReply::Unavailable { reason })
 }
@@ -120,7 +91,7 @@ fn source_from_view(
     panel: &GameUiPanel,
     caption: &str,
     frame: &GameUiFrame,
-    input: &MenuPreparationInput,
+    input: &MenuPreparationInput<'_>,
 ) -> MenuLayoutSource {
     let controls = panel
         .controls
@@ -258,34 +229,31 @@ fn source_from_view(
         },
         font_meters: 0.035,
         font: input.font.clone(),
-        locale: input.locale.clone(),
+        locale: input.locale.to_owned(),
         caption: caption.into(),
         previous_label: "前頁".into(),
         next_label: "次頁".into(),
     }
 }
 
-#[derive(Debug, PartialEq)]
-pub(super) enum PreparationStep {
-    Measure {
-        plan: MenuLayoutPlan,
-        attempt: usize,
-    },
-    Ready {
-        geometry: MenuDocumentGeometry,
-    },
-}
-
 pub(super) fn select(
-    source: &mut MenuLayoutSource,
+    mut source: MenuLayoutSource,
     viewer: &XrViewerFrame,
     menu_from_panel: Pose,
-    observation: Option<&MenuPreparationObservation>,
-) -> Result<PreparationStep, MenuLayoutFailure> {
-    let attempt = observation.map_or(0, |observed| observed.attempt);
-    if attempt >= 12 {
-        return Err(MenuLayoutFailure::StaleTextMetrics);
-    }
+    cache: &mut SurfaceFontCache,
+    mut measure: impl FnMut(
+        &MenuTextRequest,
+        MenuSize,
+        &str,
+    ) -> Result<MenuGlyphMetrics, MenuLayoutFailure>,
+) -> Result<
+    (
+        MenuLayoutPlan,
+        Vec<MenuTextMeasurement>,
+        MenuDocumentGeometry,
+    ),
+    MenuLayoutFailure,
+> {
     let fit = |size: MenuSize| {
         fit_xr_menu_view(
             viewer,
@@ -319,34 +287,27 @@ pub(super) fn select(
         source.title.clear();
         source.caption.clear();
     }
-    for _ in 0..attempt {
-        source.font_meters *= 1.15;
-    }
-    let planned = plan(source.clone())?;
-    let Some(observed) = observation else {
-        return Ok(PreparationStep::Measure {
-            plan: planned,
-            attempt,
-        });
-    };
-    let geometry = arrange(&planned, &observed.measurements)?;
-    match readability(
-        viewer,
-        planned.source.surface_size,
-        &observed.measurements,
-        head_from_surface,
-    ) {
-        XrInkFit::Ready { .. } => Ok(PreparationStep::Ready { geometry }),
-        XrInkFit::Unavailable { reason } => Err(fit_reason(reason)),
-        XrInkFit::Empty | XrInkFit::TooSmall if attempt + 1 < 12 => {
-            source.font_meters *= 1.15;
-            Ok(PreparationStep::Measure {
-                plan: plan(source.clone())?,
-                attempt: attempt + 1,
-            })
+    for attempt in 0..12 {
+        let planned = plan(source)?;
+        let measurements =
+            cache.measure(&planned.texts, planned.source.surface_size, &mut measure)?;
+        let geometry = arrange(&planned, &measurements)?;
+        match readability(
+            viewer,
+            planned.source.surface_size,
+            &measurements,
+            head_from_surface,
+        ) {
+            XrInkFit::Ready { .. } => return Ok((planned, measurements, geometry)),
+            XrInkFit::Unavailable { reason } => return Err(fit_reason(reason)),
+            XrInkFit::Empty | XrInkFit::TooSmall if attempt + 1 < 12 => {
+                source = planned.source;
+                source.font_meters *= 1.15;
+            }
+            _ => return Err(MenuLayoutFailure::InsufficientInkAngle),
         }
-        _ => Err(MenuLayoutFailure::InsufficientInkAngle),
     }
+    Err(MenuLayoutFailure::InsufficientInkAngle)
 }
 
 fn readability(

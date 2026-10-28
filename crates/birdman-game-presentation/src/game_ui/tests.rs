@@ -329,15 +329,15 @@ fn head_hud_fits_complete_shared_rows_in_lower_band_before_using_upper_space() {
         &frame,
         HeadHudPreparationInput {
             view_revision: view.view_revision,
-            viewer: Box::new(crate::xr::tests::viewer(XrDepthRange::NegativeOneToOne)),
+            viewer: &crate::xr::tests::viewer(XrDepthRange::NegativeOneToOne),
             profile: XrHeadHudProfile::default(),
-            font: MenuFont {
+            font: &MenuFont {
                 family: "sans-serif".into(),
                 weight: 400,
                 style: MenuFontStyle::Normal,
                 generation: 0,
             },
-            locale: "ja".into(),
+            locale: "ja",
             frame_rate_label: None,
         },
         &mut SurfaceFontCache::default(),
@@ -1730,15 +1730,15 @@ fn analysis_sections_preserve_order_and_typed_values_across_targets() {
                         progress: 0.0,
                         generation: 0,
                         view_revision: numeric.view_revision,
-                        panel_id: numeric.panels[0].id.clone(),
-                        viewer: Box::new(crate::xr::tests::viewer(XrDepthRange::NegativeOneToOne)),
-                        font: MenuFont {
+                        panel_id: &numeric.panels[0].id,
+                        viewer: &crate::xr::tests::viewer(XrDepthRange::NegativeOneToOne),
+                        font: &MenuFont {
                             family: "sans-serif".into(),
                             weight: 400,
                             style: MenuFontStyle::Normal,
                             generation: 0,
                         },
-                        locale: "ja".into(),
+                        locale: "ja",
                     };
                     let measure = |request: &MenuTextRequest, _: MenuSize, value: &str| {
                         let width = value.chars().count() as f64 * request.font_meters * 0.6;
@@ -1761,7 +1761,7 @@ fn analysis_sections_preserve_order_and_typed_values_across_targets() {
                     let result = prepare_game_ui_menu(
                         &numeric,
                         &frame,
-                        input.clone(),
+                        input,
                         &mut SurfaceFontCache::default(),
                         measure,
                     );
@@ -1816,7 +1816,7 @@ fn analysis_sections_preserve_order_and_typed_values_across_targets() {
                     let actual = prepare_game_ui_menu(
                         &chart_view,
                         &cursor_frame,
-                        input.clone(),
+                        input,
                         &mut SurfaceFontCache::default(),
                         measure,
                     );

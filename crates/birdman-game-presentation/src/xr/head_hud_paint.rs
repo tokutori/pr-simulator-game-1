@@ -12,22 +12,20 @@ use crate::game_ui::{
 use serde::{Deserialize, Serialize};
 
 /// Same-frame observations for the retained head-fixed UI.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct HeadHudPreparationInput {
+#[derive(Debug)]
+pub struct HeadHudPreparationInput<'a> {
     /// Structural UI revision supplied by the owner.
     pub view_revision: u32,
     /// Current stereo observation.
-    pub viewer: Box<XrViewerFrame>,
+    pub viewer: &'a XrViewerFrame,
     /// Optical HUD limits.
     pub profile: XrHeadHudProfile,
     /// Platform font resource.
-    pub font: MenuFont,
+    pub font: &'a MenuFont,
     /// Text-shaping locale.
-    pub locale: String,
+    pub locale: &'a str,
     /// Optional observed frame-rate label.
-    pub frame_rate_label: Option<String>,
+    pub frame_rate_label: Option<&'a str>,
 }
 
 /// Complete head-fixed painting or its rejection.
@@ -70,7 +68,7 @@ pub struct HeadHudPaintProjection {
 pub fn prepare_game_ui_head_hud(
     view: &GameUiView,
     frame: &GameUiFrame,
-    input: HeadHudPreparationInput,
+    input: HeadHudPreparationInput<'_>,
     cache: &mut SurfaceFontCache,
     mut measure: impl FnMut(
         &MenuTextRequest,
@@ -99,13 +97,9 @@ pub fn prepare_game_ui_head_hud(
         {
             return Ok(HeadHudPaintReply::Absent);
         }
-        let projection = project_xr_head_hud(
-            hud,
-            &input.viewer,
-            input.profile,
-            input.frame_rate_label.as_deref(),
-        )
-        .map_err(|_| MenuLayoutFailure::InvalidLayout)?;
+        let projection =
+            project_xr_head_hud(hud, input.viewer, input.profile, input.frame_rate_label)
+                .map_err(|_| MenuLayoutFailure::InvalidLayout)?;
         let XrHeadHudProjection::Visible {
             local_pose,
             size_m,
@@ -142,14 +136,14 @@ pub fn prepare_game_ui_head_hud(
             ink: Vec::new(),
         };
         let mut items = Vec::new();
-        if let (Some(value), Some(bounds)) = (&input.frame_rate_label, frame_rate_bounds) {
+        if let (Some(value), Some(bounds)) = (input.frame_rate_label, frame_rate_bounds) {
             let node = GameUiHudNode {
                 id: "head-frame-rate".into(),
                 label: String::new(),
                 bounds,
                 instrument_height_em: 0.0,
                 content: GameUiHudNodeContent::Text {
-                    value: value.clone(),
+                    value: value.to_owned(),
                     tone: GameUiHudTone::Normal,
                 },
             };
@@ -176,7 +170,7 @@ pub fn prepare_game_ui_head_hud(
                 hud.map_or(view.theme.hud_opacity, |hud| hud.layout.opacity),
             )?);
         }
-        match fit_xr_text_ink(&input.viewer, &painter.ink, local_pose, 0.35) {
+        match fit_xr_text_ink(input.viewer, &painter.ink, local_pose, 0.35) {
             XrInkFit::Ready { .. } | XrInkFit::Empty => {}
             XrInkFit::TooSmall => return Err(MenuLayoutFailure::InsufficientInkAngle),
             XrInkFit::Unavailable { reason } => return Err(optical_failure(reason)),
@@ -195,7 +189,7 @@ pub fn prepare_game_ui_head_hud(
 }
 
 struct HudPainter<'a, Measure> {
-    input: &'a HeadHudPreparationInput,
+    input: &'a HeadHudPreparationInput<'a>,
     size: MenuSize,
     font: f64,
     stroke_pixels: f64,
@@ -235,7 +229,7 @@ where
                 index: 0,
             },
             value,
-            locale: self.input.locale.clone(),
+            locale: self.input.locale.to_owned(),
             font_meters: self.font,
             font: self.input.font.clone(),
             width_meters: width,
@@ -291,7 +285,7 @@ where
             value: line.value.clone(),
             font: self.input.font.clone(),
             font_meters: self.font,
-            locale: self.input.locale.clone(),
+            locale: self.input.locale.to_owned(),
             anchor: MenuPoint {
                 x: anchor_x,
                 y: baseline,

@@ -177,7 +177,7 @@ pub(super) fn project(
     view: &GameUiView,
     frame: &GameUiFrame,
     panel: &GameUiPanel,
-    input: &MenuPreparationInput,
+    input: &MenuPreparationInput<'_>,
     plan: &MenuLayoutPlan,
     measurements: &[MenuTextMeasurement],
     geometry: &MenuDocumentGeometry,
