@@ -485,9 +485,7 @@ pub struct MenuPreparationInput<'a> {
 }
 
 /// Layout result or a precise measurement failure.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum MenuLayoutReply {
     /// Complete resolved document geometry.
     Ready {
