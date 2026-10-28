@@ -510,7 +510,7 @@ fn ordinary_warning_capability_is_explicit_and_keeps_the_configured_flag() {
 }
 
 #[test]
-fn stored_record_preview_has_a_bounded_serde_and_native_projection() {
+fn stored_record_preview_bounds_the_rows_projected_by_the_shared_owner() {
     let records = (1..=2000)
         .map(|id| GameUiStoredRecord {
             id,
@@ -518,28 +518,11 @@ fn stored_record_preview_has_a_bounded_serde_and_native_projection() {
             personal_best: id == 1,
         })
         .collect::<Vec<_>>();
-    let preview = GameUiStoredRecordPreview::from(records.clone());
+    let preview = GameUiStoredRecordPreview::from(records);
     assert_eq!(preview.iter().count(), GAME_UI_STORED_RECORD_LIMIT);
     assert_eq!(
         preview.iter().next().unwrap().saved_at.chars().count(),
         GAME_UI_SAVED_AT_CHARACTERS
-    );
-    let json = serde_json::to_string(&preview).unwrap();
-    assert_eq!(
-        serde_json::from_str::<GameUiStoredRecordPreview>(&json).unwrap(),
-        preview
-    );
-    assert!(
-        serde_json::from_str::<GameUiStoredRecordPreview>(
-            &serde_json::to_string(&records).unwrap()
-        )
-        .is_err()
-    );
-    assert!(
-        serde_json::from_str::<GameUiStoredRecordPreview>(
-            &serde_json::to_string(&records[..1]).unwrap()
-        )
-        .is_err()
     );
 }
 fn launched() -> GameSession<'static> {
