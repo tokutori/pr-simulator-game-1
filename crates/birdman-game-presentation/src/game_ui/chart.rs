@@ -275,7 +275,10 @@ fn complete_presentation(chart: &mut ChartData) {
                 value,
                 ratio,
                 text: chart_text(
-                    format_chart_tick(value),
+                    format_chart_tick(
+                        value,
+                        (chart.x_maximum - chart.x_minimum) / f64::from(tick_count_x),
+                    ),
                     point(left + ratio * width, bottom + 20.0 * scale),
                     presentation.tick_font_size,
                     400,
@@ -293,7 +296,10 @@ fn complete_presentation(chart: &mut ChartData) {
                 value,
                 ratio,
                 text: chart_text(
-                    format_chart_tick(value),
+                    format_chart_tick(
+                        value,
+                        (chart.y_maximum - chart.y_minimum) / f64::from(tick_count_y),
+                    ),
                     point(left - 10.0 * scale, bottom - ratio * height + 5.0 * scale),
                     presentation.tick_font_size,
                     400,
@@ -459,7 +465,7 @@ fn complete_presentation(chart: &mut ChartData) {
                 ],
             ],
             scale_label: chart_text(
-                format!("{} m", format_chart_tick(distance)),
+                format!("{} m", format_chart_tick(distance, f64::INFINITY)),
                 point(scale_x + scale_width / 2.0, scale_y - 8.0 * scale),
                 presentation.tick_font_size,
                 600,
@@ -511,12 +517,12 @@ fn chart_text(
     }
 }
 
-fn format_chart_tick(value: f64) -> String {
+fn format_chart_tick(value: f64, interval: f64) -> String {
     if !value.is_finite() {
         return String::new();
     }
     let magnitude = value.abs();
-    let digits = if magnitude >= 100.0 {
+    let mut digits = if magnitude >= 100.0 {
         0
     } else if magnitude >= 10.0 {
         1
@@ -524,7 +530,16 @@ fn format_chart_tick(value: f64) -> String {
         2
     };
     let mut buffer = ryu_js::Buffer::new();
-    let raw = buffer.format_to_fixed(value, digits);
+    let mut resolution = 10.0_f64.powi(-i32::from(digits));
+    while interval > 0.0 && digits < 100 && resolution > interval {
+        digits += 1;
+        resolution /= 10.0;
+    }
+    let raw = if interval <= 0.0 || interval.is_nan() || resolution > interval {
+        buffer.format_finite(value)
+    } else {
+        buffer.format_to_fixed(value, digits)
+    };
     let trimmed = if raw.contains('.') && !raw.contains('e') {
         raw.trim_end_matches('0').trim_end_matches('.')
     } else {
@@ -1055,7 +1070,12 @@ mod presentation_tests {
             (1.0e21, "1e+21"),
             (1.2e30, "1.2e+30"),
         ] {
-            assert_eq!(format_chart_tick(value), expected);
+            assert_eq!(format_chart_tick(value, f64::INFINITY), expected);
+        }
+        assert_eq!(format_chart_tick(0.125, 0.0), "0.125");
+        assert_eq!(format_chart_tick(1.25e-110, 1.0e-111), "1.25e-110");
+        for value in [-100.125, -0.125, 0.0, 0.125, 100.125] {
+            assert_eq!(format_chart_tick(value, 0.001), value.to_string());
         }
     }
 
