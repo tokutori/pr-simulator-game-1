@@ -1822,6 +1822,7 @@ impl ApplicationRuntime {
             record_notification: self.storage.save_notification(&self.application),
             session: self.application.core_session(),
             resume_available: self.application.can_resume(),
+            flight_failure: self.application.flight_failure(),
             presentation_available: self.application.presentation_available(),
             difficulty: self.application.display_difficulty(),
             keyboard_controls: self.application.keyboard_controls(),

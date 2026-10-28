@@ -9,6 +9,7 @@ use birdman_game_app::application::RecordSourceId;
 pub struct GameUiStructureKey {
     phase: SessionPhase,
     resume_available: bool,
+    flight_failure: Option<birdman_game_app::application::FlightFrameError>,
     presentation_available: bool,
     replay_source: Option<SessionReplaySource>,
     selections: GameUiState,
@@ -41,6 +42,7 @@ impl GameUiStructureKey {
         Self {
             phase,
             resume_available: context.resume_available,
+            flight_failure: context.flight_failure,
             presentation_available: context.presentation_available,
             replay_source,
             selections,

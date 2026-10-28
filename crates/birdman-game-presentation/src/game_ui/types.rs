@@ -518,6 +518,8 @@ pub struct GameUiContext<'view, 'session> {
     pub session: &'view GameSession<'session>,
     /// Resume admission from the application-owned live driver and domain session.
     pub resume_available: bool,
+    /// Original live-driver failure retained until the flight is replaced.
+    pub flight_failure: Option<birdman_game_app::application::FlightFrameError>,
     /// Admission from retained backend, focus and tracking observations.
     pub presentation_available: bool,
     /// Existing selected or saved settings.

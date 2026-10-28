@@ -54,6 +54,7 @@ pub(super) fn context<'view>(
         archived_identity: None,
         session,
         resume_available: session.can_resume(),
+        flight_failure: None,
         presentation_available: true,
         difficulty,
         keyboard_controls: birdman_game_app::flight_input::KeyboardControlSettings::default(),
@@ -1297,6 +1298,89 @@ fn pause_conditions_and_overlay_states_share_admission_without_resuming_physics(
         session.snapshot().phase(),
         SessionPhase::FlightPaused { .. }
     ));
+
+    let mut application =
+        birdman_game_app::application::ApplicationSession::new(ControlMode::Manual, 100, 42);
+    for command in [
+        SessionCommand::OpenSetup {},
+        SessionCommand::SelectWeather {
+            weather: WeatherClass::Calm,
+        },
+        SessionCommand::Prepare {},
+        SessionCommand::StartCountdown {},
+    ] {
+        application
+            .execute(command, BackendReadiness::Ready)
+            .unwrap();
+    }
+    let token = application.core_session().countdown_token().unwrap();
+    application.observe_countdown(token, 3.0, true).unwrap();
+    application.advance_flight_frame(1000.0, &[], true).unwrap();
+    let failure = application
+        .advance_flight_frame(999.0, &[], true)
+        .unwrap_err();
+    assert_eq!(application.flight_failure(), Some(failure));
+    let mut platform = platform.clone();
+    platform.notification = "保存処理の案内".to_owned();
+    for mode in [
+        GameUiPresentationMode::Screen,
+        GameUiPresentationMode::PhoneVr,
+        GameUiPresentationMode::Hmd,
+    ] {
+        platform.presentation_mode = mode;
+        let mut observed = context(
+            application.core_session(),
+            application.difficulty(),
+            &platform,
+        );
+        observed.resume_available = application.can_resume();
+        let before = GameUiStructureKey::new(&state, &observed);
+        observed.flight_failure = application.flight_failure();
+        assert_ne!(GameUiStructureKey::new(&state, &observed), before);
+        let view = game_ui_view(&state, &observed).unwrap();
+        assert!(!control(&view, "game-flight-resume").enabled);
+        assert!(
+            view.description
+                .contains(&control(&view, "game-paused-abort").label)
+        );
+        assert!(matches!(&control(&view, "game-flight-recovery").content,
+            GameUiControlContent::Status { value, .. } if value == &view.description));
+        assert!(
+            matches!(&control(&view, "game-flight-failure-cause").content,
+            GameUiControlContent::Status { value, .. } if !value.is_empty())
+        );
+        assert!(matches!(&control(&view, "game-state").content,
+            GameUiControlContent::Status { value, .. } if value == &platform.notification));
+    }
+    assert!(matches!(
+        application.execute(SessionCommand::Resume {}, BackendReadiness::Ready),
+        Err(ApplicationError::Flight(error)) if error == failure
+    ));
+    for id in ["game-paused-abort", "game-result-retry"] {
+        let mut observed = context(
+            application.core_session(),
+            application.difficulty(),
+            &platform,
+        );
+        observed.resume_available = application.can_resume();
+        observed.flight_failure = application.flight_failure();
+        let view = game_ui_view(&state, &observed).unwrap();
+        if id == "game-result-retry" {
+            assert!(control(&view, "game-result-setup").enabled);
+        }
+        let Some(GameUiAction::Session { command }) = view
+            .control_input_action(&GameUiControlInput::Activate {
+                control_id: id.to_owned(),
+            })
+            .unwrap()
+        else {
+            panic!("missing published recovery action")
+        };
+        application
+            .execute(command, BackendReadiness::Ready)
+            .unwrap();
+    }
+    assert_eq!(application.flight_failure(), None);
 }
 
 #[test]

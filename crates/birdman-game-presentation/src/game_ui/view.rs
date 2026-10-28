@@ -1,6 +1,6 @@
 use super::timestamps::saved_at_label;
 use super::{catalog, types::*};
-use birdman_game_app::application::SessionCommand;
+use birdman_game_app::application::{FlightFrameError, SessionCommand};
 use birdman_game_core::{SessionPhase, SessionReplaySource, SessionSnapshot};
 use birdman_game_format::WaterQuality;
 use birdman_game_format::{
@@ -19,8 +19,9 @@ pub fn game_ui_view(
 ) -> Result<GameUiView, GameUiError> {
     let phase = context.session.snapshot().phase();
     let scene = scene(phase);
-    let can_resume =
-        context.resume_available && context.platform.flight_controller_failure.is_none();
+    let can_resume = context.resume_available
+        && context.flight_failure.is_none()
+        && context.platform.flight_controller_failure.is_none();
     let mut menu = Menu::default();
     let credits_open = state.credits_open
         && matches!(
@@ -30,7 +31,7 @@ pub fn game_ui_view(
     let mut description = if credits_open {
         "使用しているデータとソフトウェアの出典・利用条件。".to_owned()
     } else {
-        description(phase, can_resume)
+        description(phase, can_resume, context.flight_failure)
     };
     match phase {
         SessionPhase::Title | SessionPhase::FlightPaused { .. } if credits_open => {
@@ -254,14 +255,22 @@ pub fn game_ui_view(
             GameUiPauseOverlay::Menu => {
                 menu.section("flight-status", "", GameUiSectionLayout::Column);
                 menu.status(
-                    "game-state",
+                    if context.flight_failure.is_some() {
+                        "game-flight-recovery"
+                    } else {
+                        "game-state"
+                    },
                     "",
-                    if context.platform.notification.is_empty() {
+                    if context.flight_failure.is_some() || context.platform.notification.is_empty()
+                    {
                         &description
                     } else {
                         &context.platform.notification
                     },
                 );
+                if context.flight_failure.is_some() && !context.platform.notification.is_empty() {
+                    menu.status("game-state", "", &context.platform.notification);
+                }
                 menu.section("flight-actions", "", GameUiSectionLayout::Row);
                 menu.session(
                     "game-flight-resume",
@@ -389,9 +398,19 @@ pub fn game_ui_view(
         SessionPhase::FlightRunning | SessionPhase::FlightPaused { .. }
     ) {
         menu.section("flight-diagnostics", "", GameUiSectionLayout::Column);
+        if let Some(failure) = context.flight_failure {
+            menu.status(
+                "game-flight-failure-cause",
+                "停止理由",
+                driver_failure_reason(failure),
+            );
+        }
         if let Some(cause) = &context.platform.flight_controller_failure {
-            description = format!("飛行処理停止。最後の有効状態を表示する。停止理由: {cause}");
-            menu.status("game-controller-stopped", "飛行処理停止", &description);
+            let message = format!("飛行処理停止。最後の有効状態を表示する。停止理由: {cause}");
+            if context.flight_failure.is_none() {
+                description.clone_from(&message);
+            }
+            menu.status("game-controller-stopped", "飛行処理停止", &message);
         }
         if context.platform.presentation_mode != GameUiPresentationMode::Screen
             && let Some(cause) = &context.platform.head_hud_failure
@@ -1619,7 +1638,25 @@ fn title(scene: GameUiScene) -> &'static str {
     }
 }
 
-fn description(phase: SessionPhase, can_resume: bool) -> String {
+fn driver_failure_reason(failure: FlightFrameError) -> &'static str {
+    match failure {
+        FlightFrameError::Clock(
+            birdman_game_app::flight_clock::FlightClockError::InvalidTimestamp,
+        ) => "描画時刻に有効な数値を取得できなかった。",
+        FlightFrameError::Clock(
+            birdman_game_app::flight_clock::FlightClockError::NonMonotonicTimestamp,
+        ) => "描画時刻が前回の観測より前になった。",
+        FlightFrameError::Input(_) => "操縦入力の処理に失敗した。",
+        FlightFrameError::PilotPosition(_) => "パイロット位置の変換に失敗した。",
+        FlightFrameError::Session(_) => "飛行状態の更新に失敗した。",
+    }
+}
+
+fn description(
+    phase: SessionPhase,
+    can_resume: bool,
+    flight_failure: Option<FlightFrameError>,
+) -> String {
     match phase {
         SessionPhase::Title => "琵琶湖を舞台に、人力飛行機で滑空する。".to_owned(),
         SessionPhase::FlightSetup => "飛行条件と描画品質を選択する。".to_owned(),
@@ -1632,6 +1669,9 @@ fn description(phase: SessionPhase, can_resume: bool) -> String {
         }
         SessionPhase::Countdown { .. } => "発進までお待ちください。".to_owned(),
         SessionPhase::FlightRunning => "キーボードまたはゲームパッドで操縦する。".to_owned(),
+        SessionPhase::FlightPaused { .. } if flight_failure.is_some() => {
+            "飛行処理の障害により一時停止した。この飛行は再開できない。「飛行を終了」で結果へ進み、「同じ条件で再試行」または「設定を変更」を選択する。".to_owned()
+        }
         SessionPhase::FlightPaused { reasons }
             if reasons.contains(birdman_game_core::PauseReason::ProcessingDelay) =>
         {
