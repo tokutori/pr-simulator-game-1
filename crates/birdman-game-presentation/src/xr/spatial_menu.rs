@@ -4,7 +4,7 @@ use super::{
     XrReferenceFrame, XrViewerFrame, compose_pose, fit_xr_menu_view,
 };
 use crate::game_ui::GameUiAnchor;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 const EYE_POSITION_TOLERANCE_M: f64 = 1.0e-4;
 const EYE_ANGLE_TOLERANCE_RAD: f64 = 1.0e-4;
@@ -97,9 +97,7 @@ impl XrCursorProjection {
 }
 
 /// Named reference frames used by physical and overlay UI anchors.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct XrAnchorFrames {
     /// Fixed world anchor in the active presentation reference.
     pub world: Pose,
@@ -127,9 +125,7 @@ pub fn resolve_xr_anchor(
 }
 
 /// Identity of one menu opening; all strings are opaque identity components.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct XrMenuScope {
     /// Scene identity from the shared view projection.
     pub scene: String,
@@ -140,9 +136,7 @@ pub struct XrMenuScope {
 }
 
 /// Measured panel geometry in metres, independent of its drawing backend.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct XrPanelGeometry {
     /// Placement/selection identity.
     pub scope: XrMenuScope,
@@ -155,9 +149,7 @@ pub struct XrPanelGeometry {
 }
 
 /// Availability of the current panel's measured geometry.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum XrPanelObservation {
     /// The view has no active panel.
     Absent,
@@ -175,15 +167,8 @@ pub enum XrPanelObservation {
     },
 }
 
-/// Spatial placement consumed by a platform renderer.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(
-    tag = "kind",
-    rename_all = "snake_case",
-    rename_all_fields = "camelCase",
-    deny_unknown_fields
-)]
+/// Placement result used by the shared surface projection.
+#[derive(Clone, Debug, PartialEq)]
 pub enum XrPanelPlacement {
     /// Current view supplies no drawable panel.
     Absent,
