@@ -33,6 +33,16 @@ fn chart_measurement_converges_and_raw_pointer_scrubs_only_its_admitted_range() 
         .unwrap();
     let ready = finish_boot(&mut runtime, initial);
     let result = structure(ready);
+    assert!(Arc::ptr_eq(runtime.retained.as_ref().unwrap(), &result));
+    let original = serde_json::to_value(result.as_ref()).unwrap();
+    let wire = serde_json::to_value(ApplicationUiProjection::View {
+        view: Arc::clone(&result),
+    })
+    .unwrap();
+    assert_eq!(
+        wire,
+        serde_json::json!({ "kind": "view", "view": original })
+    );
     let analysis = structure(activate_action(
         &mut runtime,
         &result,
@@ -47,6 +57,9 @@ fn chart_measurement_converges_and_raw_pointer_scrubs_only_its_admitted_range() 
             chart: GameUiAnalysisChart::Altitude,
         },
     ));
+    assert!(Arc::ptr_eq(runtime.retained.as_ref().unwrap(), &altitude));
+    assert!(!Arc::ptr_eq(&result, &altitude));
+    assert_eq!(serde_json::to_value(result.as_ref()).unwrap(), original);
     let extent = GameUiChartExtent {
         width: 900.0,
         height: 400.0,
@@ -1428,7 +1441,7 @@ fn activate_action(
         .unwrap()
 }
 
-fn structure(output: ApplicationOutput) -> Box<GameUiView> {
+fn structure(output: ApplicationOutput) -> Arc<GameUiView> {
     match output.drawing.unwrap().ui {
         ApplicationUiProjection::View { view } => view,
         ApplicationUiProjection::Frame { .. } => panic!("Expected a structural transition"),
