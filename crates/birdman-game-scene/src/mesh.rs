@@ -35,6 +35,13 @@ pub fn area_weighted_normals(
 }
 
 /// Reuses caller-owned buffers; publish the normals only after the complete update succeeds.
+///
+/// Finite `f32` vertices bound edges below 2^129 and cross components below 2^260.
+/// On supported 32/64-bit targets, an index slice has fewer than 2^61 entries.
+/// A rounded addition increases a sum's magnitude by at most twice the term's
+/// magnitude (smaller terms are absorbed), so accumulated components stay below 2^324.
+/// Nonzero components remain multiples of 2^-298; their squared length therefore
+/// lies between 2^-596 and 2^650, within the normal `f64` range.
 pub fn write_area_weighted_normals(
     positions: &[[f32; 3]],
     indices: &[u32],
@@ -75,7 +82,7 @@ pub fn write_area_weighted_normals(
         }
     }
     for (sum, normal) in sums.iter().zip(normals) {
-        let length = sum[0].hypot(sum[1]).hypot(sum[2]);
+        let length = (sum[0] * sum[0] + sum[1] * sum[1] + sum[2] * sum[2]).sqrt();
         if !length.is_finite() {
             return Err(MeshProjectionError::NonFinite);
         }

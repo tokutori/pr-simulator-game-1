@@ -437,6 +437,42 @@ mod tests {
         let mut normals = [[0.0; 3]; 3];
         write_area_weighted_normals(&positions, &[0, 1, 2], &mut sums, &mut normals).unwrap();
         assert_eq!(normals, [[0.0, 0.0, 1.0]; 3]);
+        let tiny = f32::from_bits(1);
+        for positions in [
+            [[0.0; 3], [tiny, tiny, 0.0], [-tiny, tiny, tiny]],
+            [
+                [0.0; 3],
+                [f32::MAX, f32::MAX, 0.0],
+                [-f32::MAX, f32::MAX, f32::MAX],
+            ],
+            [[f32::MAX, 0.0, 0.0], [0.0, tiny, 0.0], [0.0, 0.0, tiny]],
+        ] {
+            write_area_weighted_normals(&positions, &[0, 1, 2], &mut sums, &mut normals).unwrap();
+            for (sum, normal) in sums.iter().zip(normals) {
+                let reference_length = sum[0].hypot(sum[1]).hypot(sum[2]);
+                for (component, reference) in normal.iter().zip(sum) {
+                    assert!(component.is_finite());
+                    assert!(
+                        (f64::from(*component) - reference / reference_length).abs()
+                            <= f64::from(f32::EPSILON)
+                    );
+                }
+                assert!(
+                    (f64::from(normal[0])
+                        .hypot(f64::from(normal[1]))
+                        .hypot(f64::from(normal[2]))
+                        - 1.0)
+                        .abs()
+                        <= f64::from(f32::EPSILON)
+                );
+            }
+        }
+        for value in [f32::NAN, f32::INFINITY] {
+            assert_eq!(
+                area_weighted_normals(&[[value, 0.0, 0.0]; 3], &[0, 1, 2]),
+                Err(MeshProjectionError::NonFinite)
+            );
+        }
         assert_eq!(
             write_area_weighted_normals(&positions, &[0, 1, 3], &mut sums, &mut normals),
             Err(MeshProjectionError::InvalidTopology)
