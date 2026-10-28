@@ -1,4 +1,6 @@
-use birdman_game_core::{FlightRecordPlaybackSample, SessionPhase, SessionSnapshot};
+use birdman_game_core::{
+    FlightRecordPlaybackSample, GameSession, SessionPhase, SessionSnapshot, TailFlightTickState,
+};
 use birdman_game_format::InformationLevel;
 use unicode_width::UnicodeWidthStr;
 
@@ -25,7 +27,7 @@ pub(super) fn game_ui_hud(
     if state.credits_open && matches!(phase, SessionPhase::FlightPaused { .. }) {
         return Ok(None);
     }
-    let (sample, distance, target) = match snapshot {
+    let (sample, distance, target, incidence_rates) = match snapshot {
         SessionSnapshot::TailFlightRunning { state, .. }
         | SessionSnapshot::TailFlightPaused { state, .. }
             if context.platform.presentation_mode == GameUiPresentationMode::Screen
@@ -60,6 +62,7 @@ pub(super) fn game_ui_hud(
                 },
                 distance,
                 Some(state.pilot_position_target().position_m()),
+                tail_incidence_rates(context.session, state),
             )
         }
         SessionSnapshot::Replay { .. }
@@ -77,7 +80,7 @@ pub(super) fn game_ui_hud(
             let target = sample
                 .input
                 .map(|input| input.resolved_pilot_position_target_m());
-            (sample, "—".to_owned(), target)
+            (sample, "—".to_owned(), target, None)
         }
         _ => return Ok(None),
     };
@@ -197,6 +200,14 @@ pub(super) fn game_ui_hud(
                 ),
             ));
             primary.push(text_node(
+                "hud-tail-incidence-rate",
+                "水平/垂直尾翼角速度",
+                incidence_rates.map_or_else(
+                    || "— rad/s".to_owned(),
+                    |[elevator, rudder]| format!("{elevator:+.2}/{rudder:+.2} rad/s"),
+                ),
+            ));
+            primary.push(text_node(
                 "hud-pilot-position",
                 "パイロット位置（目標）",
                 format!(
@@ -204,6 +215,11 @@ pub(super) fn game_ui_hud(
                     sample.flight_state.pilot_position_m(),
                     target.map_or_else(|| "—".to_owned(), |target| format!("{target:+.2}")),
                 ),
+            ));
+            primary.push(text_node(
+                "hud-pilot-velocity",
+                "パイロット移動速度",
+                format!("{:+.2} m/s", sample.flight_state.pilot_velocity_mps()),
             ));
         }
     }
@@ -315,6 +331,32 @@ pub(super) fn game_ui_hud(
     }
     let groups = position_hud(&mut layout, primary, instruments, true, 0.55);
     Ok(Some(GameUiHud { layout, groups }))
+}
+
+fn tail_incidence_rates(session: &GameSession<'_>, state: TailFlightTickState) -> Option<[f64; 2]> {
+    let [previous, current] = session.flight_record()?.samples().last_chunk::<2>()?;
+    if current.tick_index != state.tick_index()
+        || current.fraction != 0.0
+        || current.flight_state != state.flight_state()
+        || current.controls.incidence != state.incidence()
+        || !previous.fraction.is_finite()
+        || !current.fraction.is_finite()
+    {
+        return None;
+    }
+    let elapsed_ticks = current.tick_index.checked_sub(previous.tick_index)? as f64
+        + (current.fraction - previous.fraction);
+    let seconds = elapsed_ticks / f64::from(birdman_game_core::PHYSICS_HZ);
+    if !seconds.is_finite() || seconds <= 0.0 {
+        return None;
+    }
+    let rates = [
+        (current.controls.incidence.elevator_rad() - previous.controls.incidence.elevator_rad())
+            / seconds,
+        (current.controls.incidence.rudder_rad() - previous.controls.incidence.rudder_rad())
+            / seconds,
+    ];
+    rates.iter().all(|rate| rate.is_finite()).then_some(rates)
 }
 
 fn hud_node(id: &str, label: &str, content: GameUiHudNodeContent) -> GameUiHudNode {

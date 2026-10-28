@@ -303,6 +303,7 @@ Nativeは既存DirectionalLightの2048 texel・30〜600 mの3段cascadeから、
 - focusは接続中・有効で、別要素への明示移動がない場合に`preventScroll`付きで復元する。
 
 - Screen HUDはFlight/PauseとReplay Telemetry、VR Head HUDはactive Flightに表示する。
+- 補助数値は水平・垂直尾翼の角度と直近の物理区間の平均角速度（rad/s）、パイロットの位置・目標と移動速度（m/s）を表示する。角速度は各tickで採用した舵角の差分を実時刻差で割った更新速度であり、発進直後とReplayでは「—」、一時停止では最後の物理区間の値を示す。
 - Result、Replay Cinematic/Analysis、Attractは共有HUD観測に従って非表示とする。
 - FPSはHUD観測の有無から独立する。
 - Screen HUDは下端の透明な領域へ配置し、主要数値、計器、右下の操作を分離する。各cardは共有boundsへ投影し、全体背景とスクロールを使用しない。姿勢計は透明な線画と共有ピッチ目盛を描く。
