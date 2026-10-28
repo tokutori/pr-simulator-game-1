@@ -2051,6 +2051,7 @@ fn replay_camera_order_and_clock_effects_are_shared_ui_state_only() {
         )
         .unwrap();
         assert_eq!(update.state.replay_camera, expected);
+        assert!(update.effects.is_empty());
         assert_eq!(
             game_ui_view(&update.state, &context(&session, difficulty(), &platform))
                 .unwrap()
@@ -2596,7 +2597,7 @@ fn range_display_text_matches_initial_and_retained_views_at_rounding_boundaries(
 }
 
 #[test]
-fn entering_replay_resets_its_view_and_disclosure_while_retaining_camera_and_cursor() {
+fn replay_request_preserves_view_state_until_session_admission() {
     let session = finalized();
     let platform = platform();
     let state = GameUiState {
@@ -2614,29 +2615,16 @@ fn entering_replay_resets_its_view_and_disclosure_while_retaining_camera_and_cur
         &context(&session, difficulty(), &platform),
     )
     .unwrap();
-    assert_eq!(update.state.replay_view, GameUiReplayView::Cinematic);
-    assert!(!update.state.technical_open);
-    assert_eq!(update.state.replay_camera, state.replay_camera);
-    assert_eq!(
-        update.state.analysis_time_seconds,
-        state.analysis_time_seconds
-    );
+    assert_eq!(update.state, state);
     assert_eq!(
         session.snapshot().phase(),
         birdman_game_core::SessionPhase::Result
     );
     assert_eq!(
         update.effects,
-        vec![
-            GameUiEffect::Session {
-                command: SessionCommand::EnterReplay {}
-            },
-            GameUiEffect::Platform {
-                command: GameUiPlatformCommand::SetReplayCamera {
-                    camera: GameUiReplayCamera::Chase
-                }
-            },
-        ]
+        vec![GameUiEffect::Session {
+            command: SessionCommand::EnterReplay {}
+        }]
     );
 }
 

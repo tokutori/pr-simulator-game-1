@@ -226,11 +226,6 @@ pub enum GameUiPlatformCommand {
     },
     /// Retries a failed Title record-list lookup.
     RetryStoredRecords {},
-    /// Advances the replay camera selection.
-    SetReplayCamera {
-        /// Shared UI selection to apply.
-        camera: GameUiReplayCamera,
-    },
 }
 
 /// UI message whose handling is shared by native and browser adapters.

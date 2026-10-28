@@ -494,12 +494,14 @@ impl ApplicationRuntime {
                 request_id,
                 completion,
             } => {
+                let previous_phase = self.application.core_session().snapshot().phase();
                 if let Some(notification) =
                     self.storage
                         .loaded(request_id, completion, &mut self.application)
                 {
                     self.platform.notification = notification;
                 }
+                self.observe_replay_entry(previous_phase);
             }
             ApplicationInput::RecordSaveOpened {
                 request_id,
@@ -1397,9 +1399,11 @@ impl ApplicationRuntime {
                         self.resources = None;
                         self.resource_readiness = BackendReadiness::Preparing;
                     }
+                    let previous_phase = self.application.core_session().snapshot().phase();
                     self.application
                         .execute(command, self.resource_readiness)
                         .map_err(ApplicationRuntimeError::Application)?;
+                    self.observe_replay_entry(previous_phase);
                     self.previous_frame_ms = None;
                 }
                 GameUiEffect::Record { action } => {
@@ -1453,11 +1457,6 @@ impl ApplicationRuntime {
                         .map_err(ApplicationRuntimeError::Camera)?;
                 }
                 GameUiEffect::Platform {
-                    command: GameUiPlatformCommand::SetReplayCamera { camera },
-                } => {
-                    self.ui.replay_camera = camera;
-                }
-                GameUiEffect::Platform {
                     command: GameUiPlatformCommand::OpenStoredRecord { id },
                 } => {
                     let request_id = self.allocate_request()?;
@@ -1484,6 +1483,15 @@ impl ApplicationRuntime {
             }
         }
         Ok(())
+    }
+
+    fn observe_replay_entry(&mut self, previous_phase: SessionPhase) {
+        if previous_phase != SessionPhase::Replay
+            && self.application.core_session().snapshot().phase() == SessionPhase::Replay
+        {
+            self.ui.replay_view = birdman_game_presentation::game_ui::GameUiReplayView::Cinematic;
+            self.ui.technical_open = false;
+        }
     }
 
     fn reset_xr_reference(

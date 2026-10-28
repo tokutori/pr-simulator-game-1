@@ -2,7 +2,7 @@ use super::*;
 use birdman_game_app::application::SessionCommand;
 use birdman_game_presentation::game_ui::{
     GameUiAnalysisChart, GameUiChartExtent, GameUiControlContent, GameUiControlInput,
-    GameUiResultTab, GameUiViewport,
+    GameUiReplayCamera, GameUiReplayView, GameUiResultTab, GameUiViewport,
 };
 
 fn no_text_metrics(_: &ApplicationTextProbe) -> Result<ApplicationGlyphMetrics, MenuLayoutFailure> {
@@ -930,6 +930,10 @@ fn saved_result_owns_transaction_and_scopes_notifications_to_its_record() {
             },
         };
         let mut runtime = ApplicationRuntime::new(application, platform.clone()).unwrap();
+        runtime.ui.replay_view = GameUiReplayView::Analysis;
+        runtime.ui.technical_open = true;
+        runtime.ui.replay_camera = GameUiReplayCamera::Chase;
+        runtime.ui.analysis_time_seconds = 0.015;
         let initial = runtime
             .observe_test(ApplicationInput::Platform {
                 observation: platform,
@@ -967,6 +971,20 @@ fn saved_result_owns_transaction_and_scopes_notifications_to_its_record() {
             &result,
             SessionCommand::EnterReplay {},
         ));
+        assert_eq!(
+            (
+                runtime.ui.replay_view,
+                runtime.ui.technical_open,
+                runtime.ui.replay_camera,
+                runtime.ui.analysis_time_seconds
+            ),
+            (
+                GameUiReplayView::Cinematic,
+                false,
+                GameUiReplayCamera::Chase,
+                0.015
+            ),
+        );
         let observations = if let Some(cause) = failure {
             vec![Seen::Failed {
                 cause: cause.to_owned(),
@@ -1125,9 +1143,14 @@ fn stored_record_preview_load_retry_and_original_download_share_owner() {
     };
     let mut runtime =
         ApplicationRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
+    runtime.ui.replay_view = GameUiReplayView::Analysis;
+    runtime.ui.technical_open = true;
+    runtime.ui.replay_camera = GameUiReplayCamera::Chase;
+    runtime.ui.analysis_time_seconds = 0.015;
+    let previous_ui = runtime.ui.clone();
     let initial = runtime
         .observe_test(ApplicationInput::Platform {
-            observation: platform,
+            observation: platform.clone(),
         })
         .unwrap();
     let preview_id = initial
@@ -1254,6 +1277,7 @@ fn stored_record_preview_load_retry_and_original_download_share_owner() {
         })
         .unwrap();
     assert_eq!(failed.diagnostic.as_deref(), Some("raw I/O failure"));
+    assert_eq!(runtime.ui, previous_ui);
     assert!(!runtime.platform.notification.contains("raw I/O failure"));
     assert!(!runtime.platform.operation_pending);
     let title = structure(failed);
@@ -1308,6 +1332,7 @@ fn stored_record_preview_load_retry_and_original_download_share_owner() {
     assert!(late.diagnostic.is_none());
     assert!(runtime.storage.load_pending());
     assert!(runtime.application().archive().is_none());
+    assert_eq!(runtime.ui, previous_ui);
     assert_eq!(
         runtime.application().core_session().snapshot().phase(),
         SessionPhase::Title
@@ -1324,6 +1349,36 @@ fn stored_record_preview_load_retry_and_original_download_share_owner() {
         runtime.application().archive().unwrap().original_json(),
         replacement_original
     );
+    assert_eq!(
+        (
+            runtime.ui.replay_view,
+            runtime.ui.technical_open,
+            runtime.ui.replay_camera,
+            runtime.ui.analysis_time_seconds
+        ),
+        (
+            GameUiReplayView::Cinematic,
+            false,
+            GameUiReplayCamera::Chase,
+            0.015
+        ),
+    );
+    let replay = runtime.retained.as_ref().unwrap().clone();
+    let selected = structure(activate_action(
+        &mut runtime,
+        &replay,
+        GameUiAction::SetReplayView {
+            view: GameUiReplayView::Telemetry,
+        },
+    ));
+    activate_action(&mut runtime, &selected, GameUiAction::ToggleTechnical {});
+    let selected_ui = runtime.ui.clone();
+    runtime
+        .observe_test(ApplicationInput::Platform {
+            observation: platform,
+        })
+        .unwrap();
+    assert_eq!(runtime.ui, selected_ui);
     let file_id = runtime.allocate_request().unwrap();
     let download = runtime
         .storage
