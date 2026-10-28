@@ -2385,11 +2385,13 @@ fn range_display_text_matches_initial_and_retained_views_at_rounding_boundaries(
     assert_eq!(range_value(0.0, 0.0125, 0.01, 0.5), Some(0.01));
     assert_eq!(range.activation_action(), None);
     for (value, expected) in [
-        (0.0, "0.0"),
-        (0.24999999999999997, "0.2"),
-        (0.25, "0.3"),
-        (0.25000000000000006, "0.3"),
-        (2.55, "2.5"),
+        (0.0, "0.00"),
+        (0.01, "0.01"),
+        (0.02, "0.02"),
+        (0.12499999999999999, "0.12"),
+        (0.125, "0.13"),
+        (0.12500000000000003, "0.13"),
+        (2.55, "2.55"),
     ] {
         assert_eq!(super::frame::range_display_value(value), expected);
     }
@@ -2560,10 +2562,12 @@ fn range_display_text_matches_initial_and_retained_views_at_rounding_boundaries(
             let retained =
                 game_ui_view(&state, &context(&session, difficulty(), &platform)).unwrap();
             for (time, expected) in [
-                (0.0, "0.0"),
-                (0.24999999999999997, "0.2"),
-                (0.25, "0.3"),
-                (0.25000000000000006, "0.3"),
+                (0.0, "0.00"),
+                (0.01, "0.01"),
+                (0.02, "0.02"),
+                (0.24999999999999997, "0.25"),
+                (0.25, "0.25"),
+                (0.25000000000000006, "0.25"),
             ] {
                 if replay_view.is_some() {
                     session.seek_playback(time).unwrap();
@@ -2590,6 +2594,37 @@ fn range_display_text_matches_initial_and_retained_views_at_rounding_boundaries(
                 assert_eq!(display_value, expected);
                 assert_eq!(range.value, *value);
                 assert_eq!(range.display_value, *display_value);
+                if time == 0.01 {
+                    let action = full
+                        .control_input_action(&GameUiControlInput::ControlKeys {
+                            control_id: id.into(),
+                            codes: vec!["ArrowRight".into()],
+                        })
+                        .unwrap()
+                        .unwrap();
+                    let expected_action = if replay_view.is_some() {
+                        GameUiAction::SeekReplay { time_seconds: 0.02 }
+                    } else {
+                        GameUiAction::SeekAnalysis { time_seconds: 0.02 }
+                    };
+                    assert_eq!(action, expected_action);
+                    let update = update_game_ui(&state, action, &context).unwrap();
+                    let [GameUiEffect::Record { action }] = update.effects.as_slice() else {
+                        panic!("missing seek effect");
+                    };
+                    match action {
+                        birdman_game_app::application::RecordCommand::SeekReplay {
+                            time_seconds,
+                        }
+                        | birdman_game_app::application::RecordCommand::SeekAnalysis {
+                            time_seconds,
+                        } => assert_eq!(*time_seconds, 0.02),
+                        _ => panic!("unexpected record effect"),
+                    }
+                    if replay_view.is_none() {
+                        assert_eq!(update.state.analysis_time_seconds, 0.02);
+                    }
+                }
                 assert_eq!(session.snapshot(), before);
             }
         }
