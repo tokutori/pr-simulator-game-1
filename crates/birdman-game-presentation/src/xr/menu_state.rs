@@ -1,11 +1,7 @@
-use serde::{Deserialize, Serialize};
-
 const MAX_GENERATION: u64 = 9_007_199_254_740_991;
 
 /// Semantic identity of one spatial menu opening.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MenuScope {
     /// Published panel identifier.
     pub panel_id: String,
@@ -24,9 +20,7 @@ fn valid_id(value: &str) -> bool {
 }
 
 /// Revision of the menu targeted by an input observation.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MenuContext {
     /// Semantic opening identity.
     pub scope: MenuScope,
@@ -35,14 +29,7 @@ pub struct MenuContext {
 }
 
 /// Focus within the current menu revision.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(
-    tag = "kind",
-    rename_all = "lowercase",
-    rename_all_fields = "camelCase",
-    deny_unknown_fields
-)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MenuFocus {
     /// No control has focus.
     None,
@@ -54,9 +41,7 @@ pub enum MenuFocus {
 }
 
 /// Observation of menu opening or closure.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MenuTarget {
     /// No spatial menu is presented.
     Closed,
@@ -68,9 +53,7 @@ pub enum MenuTarget {
 }
 
 /// Relative direction of a page action.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(rename_all = "lowercase")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MenuPageDirection {
     /// Move toward the beginning.
     Previous,
@@ -79,14 +62,7 @@ pub enum MenuPageDirection {
 }
 
 /// Scroll observation expressed in viewport units or normalized progress.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(
-    tag = "kind",
-    rename_all = "kebab-case",
-    rename_all_fields = "camelCase",
-    deny_unknown_fields
-)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum MenuScrollIntent {
     /// Page button action.
     Page {
@@ -110,14 +86,7 @@ pub enum MenuScrollIntent {
 }
 
 /// Input protocol of the engine-independent menu owner.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(
-    tag = "type",
-    rename_all = "kebab-case",
-    rename_all_fields = "camelCase",
-    deny_unknown_fields
-)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum MenuSessionInput {
     /// Synchronizes the presented opening against the observed revision.
     MenuScrollSynchronized {
@@ -148,9 +117,7 @@ pub enum MenuSessionInput {
 }
 
 /// Read-only projection of the menu owner's current state.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum MenuSessionState {
     /// Closed menu retaining its lifetime revision.
     Closed {
