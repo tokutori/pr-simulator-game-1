@@ -109,7 +109,10 @@ jobs:
       - name: Measure native hybrid hot-path allocations
         run: python tools/allocation-check/main.py
       - name: Verify offline environment source extraction
-        run: python -m unittest discover -s tools/environment-build -v
+        shell: bash
+        run: |
+          python -m unittest discover -s tools/environment-build -v
+          python -m unittest discover -s tools/world-build -v
       - name: Test native artifact packaging
         run: python -m unittest discover -s tools/native-release -v
       - run: cargo doc --workspace --no-deps --locked

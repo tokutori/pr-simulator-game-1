@@ -142,7 +142,7 @@ processing = "Generated orthographic indigo fabric and hand-painted Tokushima Un
 
 [[assets]]
 path = "assets/biwa-shoreline.json"
-sha256 = "e1f0894b0edaf1d986c0de1f70fcabba0c5aa83d05c7772674d9fd7e384a1eb7"
+sha256 = "909afbf8d70c609bf4a507005b56d9ac13329624ccf06a6ba9f79763c318375d"
 source = "OpenStreetMap Lake Biwa relation 63499, clipped outer shoreline ways and inner island rings"
 source_version = "relation version 111, 2025-08-14T09:30:32Z; source snapshot SHA-256 recorded in asset"
 license = "ODbL-1.0"
@@ -152,7 +152,7 @@ processing = "tools/world-build/build_biwa_world.py; origin WGS84 35.294075,136.
 
 [[assets]]
 path = "assets/biwa-analysis-map.json"
-sha256 = "e1ccf3a65fcdb9869cd34996d20cb81a216e9fbe7534999b1b0488e489c0646e"
+sha256 = "5252cc543e24ebb8b57b6585505fdaadf2f474ca3a5f7b54a554c1fe15b50b92"
 source = "OpenStreetMap Lake Biwa relation 63499, local shoreline crop around the Hikone launch point"
 source_version = "relation version 111, 2025-08-14T09:30:32Z; source snapshot SHA-256 recorded in asset"
 license = "ODbL-1.0"
@@ -162,7 +162,7 @@ processing = "tools/world-build/build_biwa_world.py; 3 km × 3 km shoreline crop
 
 [[assets]]
 path = "assets/biwa-terrain.json"
-sha256 = "3dc41ea7060ecbf4c7755800aed48af13fdef3dfb61dbd4bd3167fa0a07ffa81"
+sha256 = "ed9c3fc91974a1a248e3e92b4b73d61d1775d909b2c8da1fda3240e0e7cf446b"
 source = "JAXA Earth API AW3D30 COG and mask tiles E135-N35/E136-N35; Copernicus DEM GLO-30 Public COG tiles N35-E135/N35-E136"
 source_version = "AW3D30 v3.2 2021-02 collection; Copernicus DEM GLO-30 Public 2021 release; Copernicus tile SHA-256 values are recorded in the asset"
 license = "JAXA Research Data Terms of Use; Copernicus WorldDEM-30 free and open license"
@@ -172,7 +172,7 @@ processing = "tools/world-build/build_biwa_world.py; AW3D30 mask classes 0 and 1
 
 [[assets]]
 path = "assets/biwa-land-mask.json"
-sha256 = "b079091933d005429762805c534de83609f43a07b5a35069a22260c12bc0af00"
+sha256 = "be6bb9c142fabe0ba2994a9054997a3355e013339a20b833cce59f1747e6de83"
 source = "OpenStreetMap Lake Biwa relation 63499 outer water ring and inner island rings"
 source_version = "relation version 111, 2025-08-14T09:30:32Z; source snapshot SHA-256 recorded in asset"
 license = "ODbL-1.0"

@@ -19,6 +19,8 @@ python -m pip install -r tools/world-build/requirements.txt
 
 入力スナップショットを指定して生成する。
 
+陸水マスクは始点の重複有無にかかわらず各リングの最終点から始点への辺を含める。`--osm-only` は湖岸線・Analysis map・陸水マスクを生成する。マスクを変更した場合は、同じ標高入力から地形も再生成し、`assets/manifest.toml` の対応するSHA-256を更新する。
+
 ```powershell
 python tools/world-build/build_biwa_world.py .tmp/lake-biwas-relation.osm `
   --dsm-e135-n35 .tmp/E135-N35-DSM.tiff --mask-e135-n35 .tmp/E135-N35-MSK.tiff `

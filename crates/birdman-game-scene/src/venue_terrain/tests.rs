@@ -116,6 +116,26 @@ fn fallback_fills_only_mapped_land_and_uses_the_rendered_two_triangles() {
     assert_eq!(filtered.elevation_meters_above_water[0], None);
     assert_eq!(raw_reference.elevation_meters_above_water[0], Some(10.0));
     assert_eq!(raw_reference.height_at(7.5, 2.5), Some(17.5));
+
+    let (terrain, shore) = registered_inputs().unwrap();
+    let island = shore
+        .islands
+        .iter()
+        .find(|island| island.name.as_deref() == Some("沖島"))
+        .unwrap();
+    let patch = &terrain
+        .fine_patches
+        .iter()
+        .find(|patch| patch.id == "terrain-patch-okishima")
+        .unwrap()
+        .grid;
+    let filled = with_fallback(patch, &[terrain.grid.clone(), patch.clone()]);
+    for (index, height) in filled.elevation_meters_above_water.iter().enumerate() {
+        let [north, east] = filled.point(index / filled.columns, index % filled.columns);
+        let land = point_in_ring(north, east, contour(&island.ring_north_east_meters));
+        assert_eq!(patch.land_mask[index], land);
+        assert_eq!(height.is_some(), land);
+    }
 }
 
 #[test]
