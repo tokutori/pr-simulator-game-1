@@ -106,7 +106,7 @@ struct RetainedUi {
 
 #[cfg(feature = "verify-harness")]
 pub(crate) fn submitted_view(world: &World) -> Option<&GameUiView> {
-    world.get_resource::<RetainedUi>()?.view.as_ref()
+    world.get_resource::<RetainedUi>()?.view.as_deref()
 }
 
 #[derive(Component, Clone)]
