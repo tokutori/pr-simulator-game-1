@@ -141,6 +141,7 @@ u_{surface}=(1-a)u_{pilot,surface}+a u_{FBW,surface},\qquad 0\le a\le1
 - Sceneとoverlayの有効な組合せを型で表す。
 - Settingsを閉じるとPauseへ戻る。
 - Manual・非表示・処理遅延・XR中断等の停止理由を保持し、条件解消と「飛行を再開」の両方を必要とする。
+- 飛行ドライバの障害で停止した場合は、その飛行の再開ができないことと原因を表示する。「飛行を終了」で結果へ進み、「同じ条件で再試行」または「設定を変更」から次の飛行を準備する。
 - Pause中はtick、controller、actuator、sample数、水面simulation時刻を保持する。
 - 描画・UI・head trackingは継続できる。
 
