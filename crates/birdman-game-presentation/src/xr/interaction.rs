@@ -3,9 +3,7 @@ use crate::game_ui::{GameUiControlInput, range_value};
 use serde::{Deserialize, Serialize};
 
 /// Runtime input identity, stable for one presentation session.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum XrPointerSource {
     /// Head-directed dwell input.
     Gaze,
@@ -24,9 +22,7 @@ pub enum XrPointerSource {
 }
 
 /// Semantic target of a measured interactive rectangle.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum XrPointerTarget {
     /// Shared UI control identifier.
     Control {
@@ -41,9 +37,7 @@ pub enum XrPointerTarget {
 }
 
 /// Rectangle in surface coordinates: left, top, width and height, in metres.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(transparent)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct XrPointerRect(pub [f64; 4]);
 
 impl XrPointerRect {
@@ -60,28 +54,18 @@ impl XrPointerRect {
 }
 
 /// One enabled control or page rectangle after measurement and clipping.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct XrPointerRegion {
     /// Typed control or page target.
     pub target: XrPointerTarget,
     /// Visible hit rectangle in surface coordinates.
     pub bounds: XrPointerRect,
     /// Interactive widget data; an omitted descriptor represents a button.
-    #[serde(default)]
     pub control: Option<XrPointerControl>,
 }
 
 /// Widget value and uncut track required for shared activation resolution.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(
-    tag = "kind",
-    rename_all = "snake_case",
-    rename_all_fields = "camelCase",
-    deny_unknown_fields
-)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum XrPointerControl {
     /// Toggle's observed value.
     Toggle {
@@ -144,14 +128,11 @@ impl XrPointerRegion {
 }
 
 /// Measured surface geometry owned until its scope or layout changes.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct XrPointerSurface {
     /// Adapter's exact scene, overlay, panel and scroll context identity.
     pub scope: String,
     /// Layout/input revision within the same semantic menu.
-    #[serde(default)]
     pub revision: u64,
     /// Surface width and height in metres.
     pub size_m: [f64; 2],
@@ -195,9 +176,7 @@ impl XrPointerSurface {
 }
 
 /// Pointing ray with its observed space-to-panel-reference transform.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct XrPointerRay {
     /// Stable input source.
     pub source: XrPointerSource,
@@ -276,9 +255,7 @@ impl XrInputSourceObservation {
 }
 
 /// One same-frame input observation.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[derive(Clone, Debug)]
 pub struct XrPointerObservation {
     /// Monotonic presentation timestamp in milliseconds.
     pub timestamp_ms: f64,
@@ -291,14 +268,11 @@ pub struct XrPointerObservation {
     /// Raw connected XR sources, including sources without current tracking.
     pub sources: Vec<XrInputSourceObservation>,
     /// Connected standard gamepad observed with the rays.
-    #[serde(default)]
     pub gamepad: Option<XrGamepadObservation>,
 }
 
 /// Raw standard gamepad values used by spatial UI.
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[derive(Clone, Copy, Debug)]
 pub struct XrGamepadObservation {
     /// Adapter's device slot.
     pub index: u32,
@@ -320,9 +294,7 @@ impl XrGamepadObservation {
 }
 
 /// Visible metric cursor and its typed target.
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, PartialEq)]
 pub struct XrPointerHit {
     /// Input source producing this cursor.
     pub source: XrPointerSource,
@@ -335,9 +307,7 @@ pub struct XrPointerHit {
 }
 
 /// Cursor, focus and activation projected by the shared owner.
-#[derive(Clone, Debug, Default, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, Default)]
 pub struct XrPointerProjection {
     /// Primary focus owner, preferring a controller aimed at the panel.
     pub primary: Option<XrPointerHit>,
