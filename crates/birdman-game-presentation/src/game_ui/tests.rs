@@ -56,6 +56,7 @@ pub(super) fn context<'view>(
         resume_available: session.can_resume(),
         presentation_available: true,
         difficulty,
+        keyboard_controls: birdman_game_app::flight_input::KeyboardControlSettings::default(),
         preset: difficulty.preset_label(),
         identity: session.configuration_identity(),
         record: session.playback_record(),
@@ -841,7 +842,16 @@ fn web_setup_candidates_groups_order_and_primary_action_are_shared() {
             ..
         }
     ));
-    for group in ["preset", "information", "assistance", "weather"] {
+    for group in [
+        "preset",
+        "information",
+        "assistance",
+        "weather",
+        "keyboard-ramp",
+        "keyboard-curve",
+        "keyboard-sensitivity",
+        "keyboard-pilot-rate",
+    ] {
         for choice in controls.iter().filter(|control| control.section == group) {
             let GameUiControlContent::Button {
                 action,

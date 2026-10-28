@@ -1824,6 +1824,7 @@ impl ApplicationRuntime {
             resume_available: self.application.can_resume(),
             presentation_available: self.application.presentation_available(),
             difficulty: self.application.display_difficulty(),
+            keyboard_controls: self.application.keyboard_controls(),
             preset: self.application.display_preset(),
             identity: self.identity()?,
             record: self.application.core_session().playback_record(),

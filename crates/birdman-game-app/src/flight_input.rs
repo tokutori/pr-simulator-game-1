@@ -6,6 +6,9 @@ use birdman_game_core::{
 };
 use serde::{Deserialize, Serialize};
 
+mod settings;
+pub use settings::{KeyboardControlSettings, KeyboardResponseCurve};
+
 /// Inclusive neutral band for the shared standard-gamepad axes.
 pub const GAMEPAD_DEAD_ZONE: f64 = 0.08;
 
@@ -124,6 +127,7 @@ pub struct FlightInputState {
     active: bool,
     held_keys: u8,
     accepted_keys: u8,
+    keyboard_ramp: [f64; 2],
     gamepad: FlightGamepadAcquisition,
 }
 
@@ -135,6 +139,7 @@ impl FlightInputState {
         }
         self.active = active;
         self.accepted_keys = 0;
+        self.keyboard_ramp = [0.0; 2];
         if !active {
             self.held_keys = 0;
         }
@@ -160,6 +165,7 @@ impl FlightInputState {
     pub fn invalidate(&mut self) {
         self.held_keys = 0;
         self.accepted_keys = 0;
+        self.keyboard_ramp = [0.0; 2];
         self.rearm_gamepad();
     }
 
@@ -173,24 +179,36 @@ impl FlightInputState {
         &mut self,
         gamepads: &[FlightGamepadObservation],
         held_target_normalized: f64,
+        settings: KeyboardControlSettings,
+        pilot_target: impl FnOnce(f64) -> Result<TailPilotPositionIntent, TailControlError>,
     ) -> Result<TailFlightTickInput, TailControlError> {
+        if !settings.is_valid() {
+            return Err(TailControlError::InvalidPilotIntent);
+        }
         let held = TailPilotPositionIntent::try_new(held_target_normalized)?.value();
         let mut nose_up = 0.0;
         let mut turn_right = 0.0;
         let mut pilot_position = TailPilotPositionCommand::Hold;
         if self.active {
             let selected = self.select_gamepad(gamepads);
-            if self.accepted_keys != 0 {
+            let targets = [
+                self.keyboard_axis(FlightControl::NoseUp, FlightControl::NoseDown),
+                self.keyboard_axis(FlightControl::TurnRight, FlightControl::TurnLeft),
+            ];
+            let step = 1.0 / (settings.ramp_seconds * f64::from(PHYSICS_HZ));
+            for (ramp, target) in self.keyboard_ramp.iter_mut().zip(targets) {
+                *ramp += (target - *ramp).clamp(-step, step);
+            }
+            if self.accepted_keys != 0 || self.keyboard_ramp != [0.0; 2] {
                 self.rearm_gamepad();
-                nose_up = self.keyboard_axis(FlightControl::NoseUp, FlightControl::NoseDown);
-                turn_right = self.keyboard_axis(FlightControl::TurnRight, FlightControl::TurnLeft);
+                nose_up = settings.demand(self.keyboard_ramp[0]);
+                turn_right = settings.demand(self.keyboard_ramp[1]);
                 let movement =
                     self.keyboard_axis(FlightControl::PilotIncrease, FlightControl::PilotDecrease);
                 if movement != 0.0 {
-                    pilot_position =
-                        TailPilotPositionCommand::Set(TailPilotPositionIntent::try_new(
-                            (held + movement / f64::from(PHYSICS_HZ)).clamp(-1.0, 1.0),
-                        )?);
+                    pilot_position = TailPilotPositionCommand::Set(pilot_target(
+                        movement * settings.pilot_target_rate_mps / f64::from(PHYSICS_HZ),
+                    )?);
                 }
             } else if let Some(sample) = selected
                 && let Some(demand) = self.gamepad_demand(sample, held)

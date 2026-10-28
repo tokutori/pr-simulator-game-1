@@ -770,6 +770,83 @@ fn setup(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
         context.environment_readout,
     );
     menu.section(
+        "keyboard-settings",
+        "キーボード操縦",
+        GameUiSectionLayout::Column,
+    );
+    let keyboard = context.keyboard_controls;
+    for (code, seconds) in [(0, 0.1), (1, 0.25), (2, 0.5), (3, 1.0), (4, 2.0)] {
+        menu.choice(
+            "keyboard-ramp",
+            "中立から最大までの時間",
+            (&format!("{seconds} 秒"), code, ""),
+            SessionCommand::SetKeyboardControls {
+                settings: birdman_game_app::flight_input::KeyboardControlSettings {
+                    ramp_seconds: seconds,
+                    ..keyboard
+                },
+            },
+            keyboard.ramp_seconds == seconds,
+        );
+    }
+    for (curve, label) in [
+        (
+            birdman_game_app::flight_input::KeyboardResponseCurve::Linear,
+            "線形",
+        ),
+        (
+            birdman_game_app::flight_input::KeyboardResponseCurve::Smoothstep,
+            "滑らか",
+        ),
+    ] {
+        menu.choice(
+            "keyboard-curve",
+            "応答曲線",
+            (
+                label,
+                u32::from(
+                    curve == birdman_game_app::flight_input::KeyboardResponseCurve::Smoothstep,
+                ),
+                "",
+            ),
+            SessionCommand::SetKeyboardControls {
+                settings: birdman_game_app::flight_input::KeyboardControlSettings {
+                    curve,
+                    ..keyboard
+                },
+            },
+            keyboard.curve == curve,
+        );
+    }
+    for (code, sensitivity) in [(0, 0.25), (1, 0.5), (2, 0.75), (3, 1.0)] {
+        menu.choice(
+            "keyboard-sensitivity",
+            "舵要求の上限",
+            (&format!("{:.0}%", sensitivity * 100.0), code, ""),
+            SessionCommand::SetKeyboardControls {
+                settings: birdman_game_app::flight_input::KeyboardControlSettings {
+                    sensitivity,
+                    ..keyboard
+                },
+            },
+            keyboard.sensitivity == sensitivity,
+        );
+    }
+    for (code, rate) in [(0, 0.1), (1, 0.2), (2, 0.4), (3, 0.8)] {
+        menu.choice(
+            "keyboard-pilot-rate",
+            "パイロット目標位置の移動速度",
+            (&format!("{rate} m/s"), code, ""),
+            SessionCommand::SetKeyboardControls {
+                settings: birdman_game_app::flight_input::KeyboardControlSettings {
+                    pilot_target_rate_mps: rate,
+                    ..keyboard
+                },
+            },
+            keyboard.pilot_target_rate_mps == rate,
+        );
+    }
+    menu.section(
         "graphics-settings",
         "グラフィックス",
         GameUiSectionLayout::Column,

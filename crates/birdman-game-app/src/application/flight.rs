@@ -104,42 +104,51 @@ impl ApplicationSession {
         let input = &mut self.flight_input;
         let mut failure = None;
         let mut previous_tick = None;
-        let advance =
-            self.flight_clock.advance_frame(timestamp_ms, || {
-                let tick = session.snapshot().tail_flight_state();
-                let result =
-                    (|| {
-                        let previous = tick.ok_or(FlightFrameError::Session(
+        let advance = self.flight_clock.advance_frame(timestamp_ms, || {
+            let tick = session.snapshot().tail_flight_state();
+            let result = (|| {
+                let previous = tick.ok_or(FlightFrameError::Session(
+                    GameSessionError::InvalidTransition,
+                ))?;
+                let mapping =
+                    session
+                        .tail_pilot_position_mapping()
+                        .ok_or(FlightFrameError::Session(
                             GameSessionError::InvalidTransition,
                         ))?;
-                        let mapping = session.tail_pilot_position_mapping().ok_or(
-                            FlightFrameError::Session(GameSessionError::InvalidTransition),
-                        )?;
-                        let held = mapping
-                            .normalized_target(previous.pilot_position_target())
-                            .map_err(FlightFrameError::PilotPosition)?;
-                        let demand = input
-                            .tick_input(gamepads, held.value())
-                            .map_err(FlightFrameError::Input)?;
-                        prepared
-                            .as_mut()
-                            .ok_or(FlightFrameError::Session(
-                                GameSessionError::InvalidTransition,
-                            ))?
-                            .advance(session, demand)
-                            .map_err(FlightFrameError::Session)
-                    })();
-                previous_tick = tick;
-                match result {
-                    Ok(_) => session.snapshot().phase() == SessionPhase::FlightRunning,
-                    Err(error) => {
-                        if session.snapshot().phase() != SessionPhase::Result {
-                            failure = Some(error);
-                        }
-                        false
+                let held = mapping
+                    .normalized_target(previous.pilot_position_target())
+                    .map_err(FlightFrameError::PilotPosition)?;
+                let prepared = prepared.as_mut().ok_or(FlightFrameError::Session(
+                    GameSessionError::InvalidTransition,
+                ))?;
+                let demand = input
+                    .tick_input(gamepads, held.value(), prepared.keyboard_controls, |step| {
+                        let position = birdman_game_core::PilotPositionTarget::try_new(
+                            &prepared.aircraft,
+                            (previous.pilot_position_target().position_m() + step).clamp(-0.4, 0.4),
+                        )
+                        .map_err(|_| TailControlError::InvalidPilotIntent)?;
+                        mapping
+                            .normalized_target(position)
+                            .map_err(|_| TailControlError::InvalidPilotIntent)
+                    })
+                    .map_err(FlightFrameError::Input)?;
+                prepared
+                    .advance(session, demand)
+                    .map_err(FlightFrameError::Session)
+            })();
+            previous_tick = tick;
+            match result {
+                Ok(_) => session.snapshot().phase() == SessionPhase::FlightRunning,
+                Err(error) => {
+                    if session.snapshot().phase() != SessionPhase::Result {
+                        failure = Some(error);
                     }
+                    false
                 }
-            });
+            }
+        });
         let advance = match advance {
             Ok(advance) => advance,
             Err(error) => {

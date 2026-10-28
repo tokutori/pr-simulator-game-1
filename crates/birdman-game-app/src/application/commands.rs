@@ -17,6 +17,11 @@ use serde::{Deserialize, Serialize};
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SessionCommand {
+    /// Selects keyboard response before the flight configuration is sealed.
+    SetKeyboardControls {
+        /// Complete device response selection.
+        settings: crate::flight_input::KeyboardControlSettings,
+    },
     /// Opens flight settings.
     OpenSetup {},
     /// Returns to Title.
@@ -123,6 +128,8 @@ pub enum ApplicationError {
 
 /// Exact metadata returned after the existing configuration is sealed.
 pub struct PreparedFlight {
+    pub(super) keyboard_controls: crate::flight_input::KeyboardControlSettings,
+    pub(super) aircraft: birdman_game_core::AircraftModel,
     /// Archive definition identity.
     pub record_identity: FlightRecordTailIdentityDocument,
     /// Sealed software controller.
@@ -231,10 +238,13 @@ pub(crate) fn prepare_flight(
         .with_contact_shape(&mut contact_shape)
         .map_err(HybridSessionPreparationError::Scenario)
         .map_err(ApplicationError::Preparation)?;
+    let aircraft = configuration.aircraft();
     session
         .prepare_flight(configuration)
         .map_err(ApplicationError::Session)?;
     Ok(PreparedFlight {
+        keyboard_controls: crate::flight_input::KeyboardControlSettings::default(),
+        aircraft,
         record_identity,
         controller_profile,
         course_axis,

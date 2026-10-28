@@ -49,6 +49,43 @@ fn tick_count(report: FlightFrameReport) -> u32 {
 
 #[test]
 fn frame_ticks_integrate_against_each_confirmed_target_and_keep_the_last_render_interval() {
+    let mut configured = ApplicationSession::default();
+    execute(&mut configured, SessionCommand::OpenSetup {});
+    let settings = crate::flight_input::KeyboardControlSettings {
+        ramp_seconds: 1.0,
+        sensitivity: 0.5,
+        pilot_target_rate_mps: 0.2,
+        ..crate::flight_input::KeyboardControlSettings::default()
+    };
+    execute(
+        &mut configured,
+        SessionCommand::SetKeyboardControls { settings },
+    );
+    execute(&mut configured, SessionCommand::Prepare {});
+    assert_eq!(
+        configured.prepared.as_ref().unwrap().keyboard_controls,
+        settings
+    );
+    assert!(
+        configured
+            .execute(
+                SessionCommand::SetKeyboardControls {
+                    settings: crate::flight_input::KeyboardControlSettings::default(),
+                },
+                BackendReadiness::Ready
+            )
+            .is_err()
+    );
+    execute(&mut configured, SessionCommand::StartCountdown {});
+    let token = configured.core_session().countdown_token().unwrap();
+    configured.observe_countdown(token, 3.0, true).unwrap();
+    execute(&mut configured, SessionCommand::Abort {});
+    execute(&mut configured, SessionCommand::Retry {});
+    assert_eq!(
+        configured.prepared.as_ref().unwrap().keyboard_controls,
+        settings
+    );
+
     let mut framed = launch(100);
     let mut direct = launch(100);
     key(&mut framed, FlightControl::PilotIncrease, true, false);
@@ -66,20 +103,23 @@ fn frame_ticks_integrate_against_each_confirmed_target_and_keep_the_last_render_
             .snapshot()
             .tail_flight_state()
             .unwrap();
+        let target = birdman_game_core::PilotPositionTarget::try_new(
+            &direct.prepared.as_ref().unwrap().aircraft,
+            before.pilot_position_target().position_m() + 0.004,
+        )
+        .unwrap();
         let held = direct
             .core_session()
             .tail_pilot_position_mapping()
             .unwrap()
-            .normalized_target(before.pilot_position_target())
+            .normalized_target(target)
             .unwrap()
             .value();
         direct
             .advance_tail_flight_tick(TailFlightTickInput::new(
                 TailPilotIntent::try_new(0.0, 0.0).unwrap(),
                 TailRateTarget::try_new(0.0, 0.0).unwrap(),
-                TailPilotPositionCommand::Set(
-                    TailPilotPositionIntent::try_new(held + 0.01).unwrap(),
-                ),
+                TailPilotPositionCommand::Set(TailPilotPositionIntent::try_new(held).unwrap()),
             ))
             .unwrap();
     }

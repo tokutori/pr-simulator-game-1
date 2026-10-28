@@ -522,6 +522,8 @@ pub struct GameUiContext<'view, 'session> {
     pub presentation_available: bool,
     /// Existing selected or saved settings.
     pub difficulty: DifficultySettings,
+    /// Selected keyboard response, editable before flight preparation.
+    pub keyboard_controls: birdman_game_app::flight_input::KeyboardControlSettings,
     /// Exact displayed preset retained for archived selections.
     pub preset: DifficultyPreset,
     /// Optional selected identity before preparation or sealed identity thereafter.
