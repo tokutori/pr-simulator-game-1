@@ -160,13 +160,13 @@ fn gamepad_waits_for_neutral_and_crosses_the_confirmed_pilot_target_before_takeo
         0.0
     );
     assert!(matches!(
-        input.gamepad_acquisition(),
+        input.gamepad,
         FlightGamepadAcquisition::WaitingNeutral { .. }
     ));
     sample.axes = [Some(0.0); 3];
     tick(&mut input, &[sample], 0.4).unwrap();
     assert!(matches!(
-        input.gamepad_acquisition(),
+        input.gamepad,
         FlightGamepadAcquisition::WaitingPilot { .. }
     ));
     sample.axes = [Some(0.54), Some(-0.54), Some(1.2)];
@@ -176,7 +176,7 @@ fn gamepad_waits_for_neutral_and_crosses_the_confirmed_pilot_target_before_takeo
         TailPilotPositionCommand::Hold
     );
     assert!(matches!(
-        input.gamepad_acquisition(),
+        input.gamepad,
         FlightGamepadAcquisition::Active { .. }
     ));
     let acquired = tick(&mut input, &[sample], 0.4).unwrap();
@@ -214,7 +214,7 @@ fn keyboard_priority_rearms_gamepad_even_when_opposite_keys_cancel() {
         0.0
     );
     assert!(matches!(
-        input.gamepad_acquisition(),
+        input.gamepad,
         FlightGamepadAcquisition::WaitingNeutral { .. }
     ));
 }
@@ -228,7 +228,7 @@ fn device_order_is_retained_but_reconnection_and_replacement_restart_acquisition
     tick(&mut input, &[first, other], 0.0).unwrap();
     tick(&mut input, &[other, first], 0.0).unwrap();
     assert_eq!(
-        input.gamepad_acquisition(),
+        input.gamepad,
         FlightGamepadAcquisition::Active {
             identity: first.identity
         }
@@ -236,23 +236,20 @@ fn device_order_is_retained_but_reconnection_and_replacement_restart_acquisition
     let reconnected = gamepad(0, 2, [1.0; 3]);
     tick(&mut input, &[reconnected, other], 0.0).unwrap();
     assert_eq!(
-        input.gamepad_acquisition(),
+        input.gamepad,
         FlightGamepadAcquisition::WaitingNeutral {
             identity: reconnected.identity
         }
     );
     tick(&mut input, &[other], 0.0).unwrap();
     assert_eq!(
-        input.gamepad_acquisition(),
+        input.gamepad,
         FlightGamepadAcquisition::WaitingNeutral {
             identity: other.identity
         }
     );
     tick(&mut input, &[], 0.0).unwrap();
-    assert_eq!(
-        input.gamepad_acquisition(),
-        FlightGamepadAcquisition::Unselected
-    );
+    assert_eq!(input.gamepad, FlightGamepadAcquisition::Unselected);
 }
 
 #[test]
@@ -263,15 +260,15 @@ fn invalid_axes_delay_acquisition_and_invalid_targets_preserve_admission() {
     sample.axes[0] = None;
     tick(&mut input, &[sample], 0.0).unwrap();
     assert!(matches!(
-        input.gamepad_acquisition(),
+        input.gamepad,
         FlightGamepadAcquisition::WaitingNeutral { .. }
     ));
-    let previous = input.gamepad_acquisition();
+    let previous = input.gamepad;
     assert_eq!(
         tick(&mut input, &[], f64::NAN),
         Err(TailControlError::NonFinite)
     );
-    assert_eq!(input.gamepad_acquisition(), previous);
+    assert_eq!(input.gamepad, previous);
     sample.axes[0] = Some(f64::NAN);
     assert_eq!(
         tick(&mut input, &[sample], 0.0)
@@ -283,12 +280,12 @@ fn invalid_axes_delay_acquisition_and_invalid_targets_preserve_admission() {
     sample.axes[0] = Some(0.0);
     tick(&mut input, &[sample], 0.0).unwrap();
     assert!(matches!(
-        input.gamepad_acquisition(),
+        input.gamepad,
         FlightGamepadAcquisition::Active { .. }
     ));
     input.invalidate();
     assert!(matches!(
-        input.gamepad_acquisition(),
+        input.gamepad,
         FlightGamepadAcquisition::WaitingNeutral { .. }
     ));
 }
@@ -305,10 +302,7 @@ fn missing_pilot_samples_hold_the_target_and_require_neutral_and_pickup_again() 
             sample.axes[2] = Some(if acquired { 1.0 } else { 0.54 });
             tick(&mut input, &[sample], initial_target).unwrap();
             assert_eq!(
-                matches!(
-                    input.gamepad_acquisition(),
-                    FlightGamepadAcquisition::Active { .. }
-                ),
+                matches!(input.gamepad, FlightGamepadAcquisition::Active { .. }),
                 acquired
             );
             sample.axes[2] = missing;
@@ -318,7 +312,7 @@ fn missing_pilot_samples_hold_the_target_and_require_neutral_and_pickup_again() 
                 TailPilotPositionCommand::Hold
             );
             assert!(matches!(
-                input.gamepad_acquisition(),
+                input.gamepad,
                 FlightGamepadAcquisition::WaitingNeutral { .. }
             ));
             sample.axes[2] = Some(1.0);
@@ -329,13 +323,13 @@ fn missing_pilot_samples_hold_the_target_and_require_neutral_and_pickup_again() 
                 TailPilotPositionCommand::Hold
             );
             assert!(matches!(
-                input.gamepad_acquisition(),
+                input.gamepad,
                 FlightGamepadAcquisition::WaitingNeutral { .. }
             ));
             sample.axes[2] = Some(0.0);
             tick(&mut input, &[sample], 0.4).unwrap();
             assert!(matches!(
-                input.gamepad_acquisition(),
+                input.gamepad,
                 FlightGamepadAcquisition::WaitingPilot { .. }
             ));
         }

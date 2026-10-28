@@ -5,9 +5,7 @@ use birdman_game_core::{
 
 use super::{ApplicationSession, ExternalPauseReason};
 use crate::flight_clock::{FlightClockError, FlightFrameAdvance};
-use crate::flight_input::{
-    FlightGamepadAcquisition, FlightGamepadObservation, FlightKeyObservation,
-};
+use crate::flight_input::{FlightGamepadObservation, FlightKeyObservation};
 
 /// Original cause that stops live frame admission until the flight is replaced.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -44,11 +42,6 @@ impl ApplicationSession {
     /// Retires held controls and rearms gamepad takeover after an input-owner reset.
     pub fn invalidate_flight_input(&mut self) {
         self.flight_input.invalidate();
-    }
-
-    /// Reports the selected connection's neutral and pilot-target takeover state.
-    pub fn flight_gamepad_acquisition(&self) -> FlightGamepadAcquisition {
-        self.flight_input.gamepad_acquisition()
     }
 
     /// Returns the shared physical-time remainder for render interpolation.

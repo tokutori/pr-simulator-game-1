@@ -10,7 +10,7 @@ mod settings;
 pub use settings::{KeyboardControlSettings, KeyboardResponseCurve};
 
 /// Inclusive neutral band for the shared standard-gamepad axes.
-pub const GAMEPAD_DEAD_ZONE: f64 = 0.08;
+const GAMEPAD_DEAD_ZONE: f64 = 0.08;
 
 /// A control binding observed by a platform keyboard adapter.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
@@ -84,10 +84,8 @@ pub struct FlightGamepadObservation {
 }
 
 /// Shared takeover state for the selected gamepad connection.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum FlightGamepadAcquisition {
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+enum FlightGamepadAcquisition {
     /// No connected gamepad is selected.
     #[default]
     Unselected,
@@ -123,7 +121,7 @@ impl FlightGamepadAcquisition {
 
 /// Owns fresh-key admission and gamepad takeover independently of platform APIs.
 #[derive(Debug, Default)]
-pub struct FlightInputState {
+pub(crate) struct FlightInputState {
     active: bool,
     held_keys: u8,
     accepted_keys: u8,
@@ -133,7 +131,7 @@ pub struct FlightInputState {
 
 impl FlightInputState {
     /// Admits a running interval or retires controls when its availability changes.
-    pub fn set_active(&mut self, active: bool) {
+    pub(crate) fn set_active(&mut self, active: bool) {
         if self.active == active {
             return;
         }
@@ -147,7 +145,7 @@ impl FlightInputState {
     }
 
     /// Records one ordered keyboard observation, accepting fresh presses while active.
-    pub fn observe_key(&mut self, observation: FlightKeyObservation) {
+    pub(crate) fn observe_key(&mut self, observation: FlightKeyObservation) {
         let bit = observation.control.bit();
         if observation.pressed {
             if self.active && !observation.repeat && self.held_keys & bit == 0 {
@@ -162,20 +160,15 @@ impl FlightInputState {
     }
 
     /// Retires observations after focus loss, reset or a changed input owner.
-    pub fn invalidate(&mut self) {
+    pub(crate) fn invalidate(&mut self) {
         self.held_keys = 0;
         self.accepted_keys = 0;
         self.keyboard_ramp = [0.0; 2];
         self.rearm_gamepad();
     }
 
-    /// Returns the current takeover state for diagnostics and boundary verification.
-    pub fn gamepad_acquisition(&self) -> FlightGamepadAcquisition {
-        self.gamepad
-    }
-
     /// Resolves one physical tick against the target confirmed immediately before it.
-    pub fn tick_input(
+    pub(crate) fn tick_input(
         &mut self,
         gamepads: &[FlightGamepadObservation],
         held_target_normalized: f64,

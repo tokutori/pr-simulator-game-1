@@ -39,7 +39,7 @@ impl Default for KeyboardControlSettings {
 
 impl KeyboardControlSettings {
     /// Validates the complete selection before it can replace the retained settings.
-    pub fn is_valid(self) -> bool {
+    pub(crate) fn is_valid(self) -> bool {
         self.ramp_seconds.is_finite()
             && (0.1..=2.0).contains(&self.ramp_seconds)
             && self.sensitivity.is_finite()
