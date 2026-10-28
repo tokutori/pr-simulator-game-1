@@ -1882,6 +1882,19 @@ fn analysis_cursor_is_observational_and_rejects_nonfinite_or_out_of_record_times
         else {
             panic!("chart missing")
         };
+        let ticks = &plot.presentation.x_ticks;
+        assert_eq!(ticks.first().unwrap().value, 0.0);
+        assert_eq!(ticks.first().unwrap().text.label, "0");
+        assert_eq!(
+            ticks.last().unwrap().value,
+            short.duration_seconds().unwrap()
+        );
+        assert_eq!(ticks.last().unwrap().text.label, "0.005");
+        assert!(
+            ticks
+                .windows(2)
+                .all(|pair| pair[0].text.label != pair[1].text.label)
+        );
         let [_, top, right, bottom] = plot.presentation.plot;
         let time = plot
             .pointer_time(
