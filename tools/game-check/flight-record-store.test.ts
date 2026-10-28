@@ -1,4 +1,4 @@
-import { IDBFactory, IDBObjectStore } from "fake-indexeddb";
+import { forceCloseDatabase, IDBFactory, IDBObjectStore, IDBVersionChangeEvent } from "fake-indexeddb";
 import { describe, expect, it, vi } from "vitest";
 import { BrowserFlightRecordStore } from "../../web/src/game/flight-record-store.js";
 import type { ApplicationInput, ApplicationRequest } from "../../web/src/generated/application-contracts.js";
@@ -148,22 +148,28 @@ describe("Browser record primitive I/O", () => {
   });
 
   it.each(["complete", "cancel", "abort"] as const)("notifies a single read only after transaction termination, %s", async outcome => {
+    const factory = new IDBFactory();
+    const open = vi.spyOn(factory, "open");
     const inputs: ApplicationInput[] = [];
     let finish: (() => void) | undefined;
     const done = new Promise<void>(resolve => { finish = resolve; });
     let enqueue: (() => unknown) | undefined;
-    const store = new BrowserFlightRecordStore(new IDBFactory(), input => {
+    const store = new BrowserFlightRecordStore(factory, input => {
       inputs.push(input);
       expect(enqueue).toBeDefined();
       expect(() => { enqueue?.(); }).toThrow();
       finish?.();
     });
     const original = Reflect.get(IDBObjectStore.prototype, "get");
+    let connection: IDBDatabase | undefined;
+    let firstRead = true;
     const read = vi.spyOn(IDBObjectStore.prototype, "get").mockImplementation(function (this: IDBObjectStore, query) {
+      connection = this.transaction.db;
       enqueue = () => original.call(this, query);
       const request = original.call(this, query);
-      if (outcome === "cancel") request.addEventListener("success", () => { store.cancel(18); });
-      if (outcome === "abort") request.addEventListener("success", () => { this.transaction.abort(); });
+      if (firstRead && outcome === "cancel") request.addEventListener("success", () => { store.cancel(18); });
+      if (firstRead && outcome === "abort") request.addEventListener("success", () => { this.transaction.abort(); });
+      firstRead = false;
       return request;
     });
     try {
@@ -173,6 +179,28 @@ describe("Browser record primitive I/O", () => {
         ? [{ kind: "record_io_cancelled", request_id: 18, failure: null }]
         : [{ kind: "record_loaded", request_id: 18, completion: outcome === "abort"
           ? { kind: "failed", cause: "Error: IndexedDB transaction aborted" } : { kind: "missing" } }]);
-    } finally { read.mockRestore(); store.dispose(); }
+      if (outcome === "abort") {
+        if (connection === undefined) throw new Error("Missing database connection");
+        const retired = connection;
+        const close = retired.onclose;
+        const versionChange = retired.onversionchange;
+        // fake-indexeddb 6.2.5 declares a constructor parameter; its implementation takes an instance.
+        Reflect.apply(forceCloseDatabase, undefined, [retired]);
+        const retried = new Promise<void>(resolve => { finish = resolve; });
+        store.execute({ kind: "read_record", request_id: 19, record_id: 1 });
+        await retried;
+        expect(inputs.at(-1)).toEqual({ kind: "record_loaded", request_id: 19, completion: { kind: "missing" } });
+        expect(open).toHaveBeenCalledTimes(2);
+        expect(connection).not.toBe(retired);
+        close?.call(retired, new Event("close"));
+        versionChange?.call(retired, new IDBVersionChangeEvent("versionchange", { oldVersion: 4, newVersion: 5 }));
+        const afterStaleClose = new Promise<void>(resolve => { finish = resolve; });
+        store.execute({ kind: "read_record", request_id: 20, record_id: 1 });
+        await afterStaleClose;
+        expect(inputs.at(-1)).toEqual({ kind: "record_loaded", request_id: 20, completion: { kind: "missing" } });
+        expect(open).toHaveBeenCalledTimes(2);
+        expect(inputs).toHaveLength(3);
+      }
+    } finally { read.mockRestore(); open.mockRestore(); store.dispose(); }
   });
 });
