@@ -466,10 +466,8 @@ pub struct MenuDocumentGeometry {
 }
 
 /// Platform observations for preparing the current published menu.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct MenuPreparationInput {
+#[derive(Clone, Copy, Debug)]
+pub struct MenuPreparationInput<'a> {
     /// Normalized document scroll observation.
     pub progress: f64,
     /// Active menu input generation.
@@ -477,13 +475,13 @@ pub struct MenuPreparationInput {
     /// Published view whose controls are displayed by the adapter.
     pub view_revision: u32,
     /// Current visible menu panel.
-    pub panel_id: String,
+    pub panel_id: &'a str,
     /// Same-frame stereo optics.
-    pub viewer: Box<crate::xr::XrViewerFrame>,
+    pub viewer: &'a crate::xr::XrViewerFrame,
     /// Current platform font resource.
-    pub font: MenuFont,
+    pub font: &'a MenuFont,
     /// Platform text shaping locale.
-    pub locale: String,
+    pub locale: &'a str,
 }
 
 /// Layout result or a precise measurement failure.
@@ -501,15 +499,6 @@ pub enum MenuLayoutReply {
         /// Reason for rejecting the layout.
         reason: MenuLayoutFailure,
     },
-}
-
-/// Internal continuation for one fitted font candidate.
-#[derive(Clone, Debug)]
-pub(super) struct MenuPreparationObservation {
-    /// Candidate index supplied by the shared preparation result.
-    pub attempt: usize,
-    /// Actual text metrics for that candidate's exact measurement identities.
-    pub measurements: Vec<MenuTextMeasurement>,
 }
 
 /// Metric observations required to place a scrollable document on its surface.

@@ -315,105 +315,91 @@ fn viewport_projects_unclipped_tracks_and_clipped_ink() {
 
 #[test]
 fn preparation_owns_surface_fit_and_measured_font_selection() {
-    use preparation::{PreparationStep, select};
+    use preparation::select;
     let viewer = crate::xr::tests::viewer(crate::xr::XrDepthRange::NegativeOneToOne);
+    let measure = |request: &MenuTextRequest, _: MenuSize, value: &str| {
+        let advance = value.chars().count() as f64 * request.font_meters * 0.2;
+        Ok(MenuGlyphMetrics {
+            advance,
+            left: 0.0,
+            right: advance,
+            ascent: if value.is_empty() {
+                0.0
+            } else {
+                request.font_meters * 0.8
+            },
+            descent: 0.0,
+        })
+    };
     let mut edge_source = source();
     edge_source.font_meters = 0.02;
-    let edge_plan = plan(edge_source.clone()).unwrap();
-    let mut edge_metrics = measurements(&edge_plan);
-    for line in edge_metrics.iter_mut().flat_map(|text| &mut text.lines) {
-        if !line.value.is_empty() {
-            line.ascent_meters = 0.016;
-        }
-    }
     let central_angle = (2.0 * (0.016 / (2.0 * 2.4_f64.hypot(0.032))).atan()).to_degrees();
     assert!(central_angle > 0.35);
-    assert!(matches!(
-        select(
-            &mut edge_source,
-            &viewer,
-            crate::camera::Pose::IDENTITY,
-            Some(&MenuPreparationObservation {
-                attempt: 0,
-                measurements: edge_metrics
-            })
-        ),
-        Ok(PreparationStep::Measure { attempt: 1, .. })
-    ));
+    let (edge, _, _) = select(
+        edge_source,
+        &viewer,
+        crate::camera::Pose::IDENTITY,
+        &mut SurfaceFontCache::default(),
+        measure,
+    )
+    .unwrap();
+    assert!(edge.source.font_meters > 0.02);
     let mut requested = source();
     requested.surface_size.width = 8.0;
     requested.font_meters = 0.012;
-    let mut observation = None;
-    let mut measured_count = 0;
-    let mut selected = None;
-    let mut ready = false;
-    for _ in 0..13 {
-        match select(
-            &mut requested.clone(),
-            &viewer,
-            crate::camera::Pose::IDENTITY,
-            observation.as_ref(),
-        )
-        .unwrap()
-        {
-            PreparationStep::Measure { plan, attempt } => {
-                assert!(plan.source.surface_size.width < requested.surface_size.width);
-                assert!(plan.source.font_meters >= requested.font_meters);
-                let measured = plan
-                    .texts
-                    .iter()
-                    .map(|text| MenuTextMeasurement {
-                        identity: text.identity.clone(),
-                        lines: vec![MenuMeasuredLine {
-                            paragraph_index: 0,
-                            value: text.value.clone(),
-                            advance_meters: text.value.len() as f64 * text.font_meters * 0.2,
-                            left_meters: 0.0,
-                            right_meters: text.value.len() as f64 * text.font_meters * 0.2,
-                            ascent_meters: if text.value.is_empty() {
-                                0.0
-                            } else {
-                                text.font_meters * 0.8
-                            },
-                            descent_meters: 0.0,
-                        }],
-                    })
-                    .collect();
-                selected = Some(plan.source.font_meters);
-                observation = Some(MenuPreparationObservation {
-                    attempt,
-                    measurements: measured,
-                });
-                measured_count += 1;
-            }
-            PreparationStep::Ready { .. } => {
-                ready = true;
-                break;
-            }
-        }
+    let mut final_font = requested.font_meters;
+    for _ in 0..11 {
+        final_font *= 1.15;
     }
-    assert!(ready && measured_count > 1 && measured_count <= 12);
-    assert!(selected.unwrap() > requested.font_meters);
-    let mut mismatched = observation.clone().unwrap();
-    mismatched.attempt = if mismatched.attempt == 0 { 1 } else { 0 };
-    assert_eq!(
+    let mut candidates = Vec::new();
+    let (selected, _, _) = select(
+        requested.clone(),
+        &viewer,
+        crate::camera::Pose::IDENTITY,
+        &mut SurfaceFontCache::default(),
+        |request, size, value| {
+            if candidates.last() != Some(&request.font_meters) {
+                candidates.push(request.font_meters);
+            }
+            let mut metrics = measure(request, size, value)?;
+            if request.font_meters < final_font {
+                metrics.ascent *= 1e-6;
+            }
+            Ok(metrics)
+        },
+    )
+    .unwrap();
+    assert_eq!(candidates.len(), 12);
+    assert_eq!(selected.source.font_meters, final_font);
+    assert!(selected.source.surface_size.width < requested.surface_size.width);
+    candidates.clear();
+    let unavailable = select(
+        requested.clone(),
+        &viewer,
+        crate::camera::Pose::IDENTITY,
+        &mut SurfaceFontCache::default(),
+        |request, size, value| {
+            if candidates.last() != Some(&request.font_meters) {
+                candidates.push(request.font_meters);
+            }
+            let mut metrics = measure(request, size, value)?;
+            metrics.ascent *= 1e-6;
+            Ok(metrics)
+        },
+    );
+    assert_eq!(candidates.len(), 12);
+    assert!(matches!(
+        unavailable,
+        Err(MenuLayoutFailure::InsufficientInkAngle)
+    ));
+    assert!(matches!(
         select(
-            &mut requested.clone(),
+            requested,
             &viewer,
             crate::camera::Pose::IDENTITY,
-            Some(&mismatched)
+            &mut SurfaceFontCache::default(),
+            |_, _, _| Err(MenuLayoutFailure::MeasurementUnavailable)
         ),
-        Err(MenuLayoutFailure::StaleTextMetrics)
-    );
-    let mut stale = observation.unwrap();
-    stale.attempt = 12;
-    assert_eq!(
-        select(
-            &mut requested,
-            &viewer,
-            crate::camera::Pose::IDENTITY,
-            Some(&stale)
-        ),
-        Err(MenuLayoutFailure::StaleTextMetrics)
-    );
+        Err(MenuLayoutFailure::MeasurementUnavailable)
+    ));
 }
