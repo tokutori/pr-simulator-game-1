@@ -788,16 +788,11 @@ fn setup(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
         "気象",
         context.environment_readout,
     );
-    menu.section(
-        "keyboard-settings",
-        "キーボード操縦",
-        GameUiSectionLayout::Column,
-    );
     let keyboard = context.keyboard_controls;
     for (code, seconds) in [(0, 0.1), (1, 0.25), (2, 0.5), (3, 1.0), (4, 2.0)] {
         menu.choice(
             "keyboard-ramp",
-            "中立から最大までの時間",
+            "キーボード操縦の応答時間",
             (&format!("{seconds} 秒"), code, ""),
             SessionCommand::SetKeyboardControls {
                 settings: birdman_game_app::flight_input::KeyboardControlSettings {

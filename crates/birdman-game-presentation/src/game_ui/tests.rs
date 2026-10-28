@@ -853,13 +853,26 @@ fn web_setup_candidates_groups_order_and_primary_action_are_shared() {
         "keyboard-sensitivity",
         "keyboard-pilot-rate",
     ] {
-        for choice in controls.iter().filter(|control| control.section == group) {
+        let section = view.panels[0]
+            .sections
+            .iter()
+            .find(|section| section.id == group)
+            .unwrap();
+        assert!(!section.label.is_empty());
+        assert_eq!(section.layout, GameUiSectionLayout::ChoiceGrid);
+        let mut choices = controls
+            .iter()
+            .filter(|control| control.section == group)
+            .peekable();
+        assert!(choices.peek().is_some());
+        for choice in choices {
             let GameUiControlContent::Button {
                 action,
                 presentation:
                     GameUiButtonPresentation::Choice {
                         selected,
                         description,
+                        group_label,
                         ..
                     },
             } = &choice.content
@@ -867,6 +880,14 @@ fn web_setup_candidates_groups_order_and_primary_action_are_shared() {
                 panic!("missing direct choice");
             };
             assert!(choice.enabled);
+            assert_eq!(&section.label, group_label);
+            assert_eq!(
+                view.control_input_action(&GameUiControlInput::Activate {
+                    control_id: choice.id.clone()
+                })
+                .unwrap(),
+                Some(action.clone()),
+            );
             assert!(
                 update_game_ui(
                     &GameUiState::default(),
