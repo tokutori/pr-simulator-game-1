@@ -40,7 +40,7 @@ fn edges(ring: &[[f64; 2]]) -> impl Iterator<Item = ([f64; 2], [f64; 2])> + '_ {
         .take(ring.len())
 }
 
-fn contains(ring: &[[f64; 2]], p: [f64; 2]) -> bool {
+pub(super) fn contains(ring: &[[f64; 2]], p: [f64; 2]) -> bool {
     point_in_ring(p[0], p[1], ring) || edges(ring).any(|(a, b)| on_segment(p, a, b))
 }
 
@@ -250,6 +250,38 @@ fn insert_boundary_samples(mesh: &mut Builder, samples: usize) -> Result<(), Str
     Ok(())
 }
 
+/// Classification uses recorded samples, before interpolation or neighbouring-grid fallback.
+pub(super) fn has_samples(island: &Island, grid: &Grid) -> bool {
+    let ring = contour(&island.ring_north_east_meters);
+    grid.elevation_meters_above_water
+        .iter()
+        .enumerate()
+        .any(|(i, h)| {
+            h.is_some()
+                && grid.land_mask[i]
+                && contains(ring, grid.point(i / grid.columns, i % grid.columns))
+        })
+}
+
+/// An unmeasured land footprint has display thickness, rather than inferred terrain relief.
+pub(super) fn footprint_proxy(island: &Island) -> Result<VenueTerrainMesh, String> {
+    let mut mesh = Builder::new();
+    let outer: Vec<_> = contour(&island.ring_north_east_meters)
+        .iter()
+        .map(|&[north, east]| {
+            mesh.append(
+                [east, MINIMUM_VISIBLE_LAND_HEIGHT_M, -north],
+                terrain_color(MINIMUM_VISIBLE_LAND_HEIGHT_M, north, east),
+            )
+        })
+        .collect();
+    triangulate(&mut mesh, &outer, &[], &[]);
+    mesh.finish(
+        format!("lake-biwa-island-{}-footprint-proxy", island.way_ids[0]),
+        VenueTerrainMaterial::Terrain,
+    )
+}
+
 pub(super) fn generate(island: &Island, grid: &Grid) -> Result<Option<VenueTerrainMesh>, String> {
     let ring = contour(&island.ring_north_east_meters);
     let bounds = Bounds {
@@ -267,7 +299,7 @@ pub(super) fn generate(island: &Island, grid: &Grid) -> Result<Option<VenueTerra
             && contains(ring, p)
             && let Some(height) = height
         {
-            let height = height.max(0.35);
+            let height = height.max(MINIMUM_VISIBLE_LAND_HEIGHT_M);
             vertices[index] =
                 Some(mesh.append([p[1], height, -p[0]], terrain_color(height, p[0], p[1])));
         }

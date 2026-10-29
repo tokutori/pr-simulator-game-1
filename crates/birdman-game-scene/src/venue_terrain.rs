@@ -11,6 +11,9 @@ mod shoreline;
 #[path = "venue_terrain/tests.rs"]
 mod tests;
 
+// Minimum display thickness for land whose recorded surface meets the water datum.
+const MINIMUM_VISIBLE_LAND_HEIGHT_M: f64 = 0.35;
+
 static TERRAIN: OnceLock<Result<Vec<VenueTerrainMesh>, String>> = OnceLock::new();
 
 #[doc = "Existing Web vertex-coloured Lambert material groups, without a renderer-specific type."]
@@ -105,9 +108,9 @@ impl Grid {
                 (northwest, southwest, northeast)
         {
             return Some(
-                northwest.max(0.35) * (1.0 - along_east - along_south)
-                    + southwest.max(0.35) * along_south
-                    + northeast.max(0.35) * along_east,
+                northwest.max(MINIMUM_VISIBLE_LAND_HEIGHT_M) * (1.0 - along_east - along_south)
+                    + southwest.max(MINIMUM_VISIBLE_LAND_HEIGHT_M) * along_south
+                    + northeast.max(MINIMUM_VISIBLE_LAND_HEIGHT_M) * along_east,
             );
         }
         if along_east + along_south >= 1.0
@@ -115,9 +118,10 @@ impl Grid {
                 (northeast, southwest, southeast)
         {
             return Some(
-                northeast.max(0.35) * (1.0 - along_south)
-                    + southwest.max(0.35) * (1.0 - along_east)
-                    + southeast.max(0.35) * (along_east + along_south - 1.0),
+                northeast.max(MINIMUM_VISIBLE_LAND_HEIGHT_M) * (1.0 - along_south)
+                    + southwest.max(MINIMUM_VISIBLE_LAND_HEIGHT_M) * (1.0 - along_east)
+                    + southeast.max(MINIMUM_VISIBLE_LAND_HEIGHT_M)
+                        * (along_east + along_south - 1.0),
             );
         }
         None
@@ -588,7 +592,11 @@ fn terrain_mesh(
     for (index, height) in elevations.iter().enumerate() {
         let [north, east] = asset.point(index / asset.columns, index % asset.columns);
         mesh.append(
-            [east, height.map_or(0.0, |height| height.max(0.35)), -north],
+            [
+                east,
+                height.map_or(0.0, |height| height.max(MINIMUM_VISIBLE_LAND_HEIGHT_M)),
+                -north,
+            ],
             terrain_color(height.unwrap_or(0.0), north, east),
         );
     }
@@ -704,12 +712,17 @@ fn canopy(island: &Island, grid: &Grid) -> Result<VenueTerrainMesh, String> {
         .iter()
         .enumerate()
         .filter_map(|(index, height)| {
-            height.filter(|_| grid.land_mask[index]).map(|height| {
-                (
-                    grid.point(index / grid.columns, index % grid.columns),
-                    height,
-                )
-            })
+            height
+                .filter(|_| {
+                    let p = grid.point(index / grid.columns, index % grid.columns);
+                    grid.land_mask[index] && island::contains(contour, p)
+                })
+                .map(|height| {
+                    (
+                        grid.point(index / grid.columns, index % grid.columns),
+                        height,
+                    )
+                })
         })
         .collect();
     if samples.is_empty() {
@@ -1000,7 +1013,7 @@ pub fn registered_terrain() -> Result<&'static [VenueTerrainMesh], String> {
             }
             let mut sources: Vec<_> = grids
                 .iter()
-                .map(|grid| with_fallback(grid, &grids))
+                .chain(terrain.fine_patches.iter().map(|patch| &patch.grid))
                 .collect();
             sources.sort_by(|a, b| a.terrain_step_meters.total_cmp(&b.terrain_step_meters));
             let mut domains = Vec::new();
@@ -1013,6 +1026,15 @@ pub fn registered_terrain() -> Result<&'static [VenueTerrainMesh], String> {
                 {
                     continue;
                 }
+                let has_dem = std::iter::once(&terrain.grid)
+                    .chain(terrain.fine_patches.iter().map(|patch| &patch.grid))
+                    .any(|grid| island::has_samples(island, grid));
+                if !has_dem {
+                    domains.push(island.ring_north_east_meters.as_slice());
+                    island_meshes.push(island::footprint_proxy(island)?);
+                    continue;
+                }
+                let mut generated = false;
                 for grid in &sources {
                     if !island
                         .ring_north_east_meters
@@ -1024,8 +1046,15 @@ pub fn registered_terrain() -> Result<&'static [VenueTerrainMesh], String> {
                     if let Some(mesh) = island::generate(island, grid)? {
                         domains.push(island.ring_north_east_meters.as_slice());
                         island_meshes.push(mesh);
+                        generated = true;
                         break;
                     }
+                }
+                if !generated {
+                    return Err(format!(
+                        "Recorded island {} DEM has no containing terrain grid",
+                        island.way_ids[0]
+                    ));
                 }
             }
             for mesh in &mut meshes {

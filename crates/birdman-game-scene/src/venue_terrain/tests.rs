@@ -36,6 +36,21 @@ fn registered_collection_keeps_every_surface_finite_and_upward() {
     assert_eq!(meshes[1].name, "lake-biwa-distant-terrain");
     assert_eq!(meshes[2].material, VenueTerrainMaterial::Canopy);
     assert_eq!(meshes.last().unwrap().material, VenueTerrainMaterial::Rocks);
+    assert_eq!(
+        meshes
+            .iter()
+            .filter(|mesh| mesh.name.ends_with("-footprint-proxy"))
+            .count(),
+        6
+    );
+    assert_eq!(
+        meshes
+            .iter()
+            .filter(|mesh| mesh.name.starts_with("lake-biwa-island-")
+                && mesh.name.ends_with("-terrain"))
+            .count(),
+        7
+    );
     for mesh in meshes {
         assert!(!mesh.indices.is_empty(), "{}", mesh.name);
         assert_eq!(mesh.positions_ned.len(), mesh.normals_ned.len());
@@ -56,11 +71,17 @@ fn registered_collection_keeps_every_surface_finite_and_upward() {
         if mesh.material == VenueTerrainMaterial::Terrain {
             upward(mesh);
         }
-        if let Some(island) = shore
-            .islands
-            .iter()
-            .find(|island| mesh.name == format!("lake-biwa-island-{}-terrain", island.way_ids[0]))
-        {
+        if let Some(island) = shore.islands.iter().find(|island| {
+            mesh.name == format!("lake-biwa-island-{}-terrain", island.way_ids[0])
+                || mesh.name == format!("lake-biwa-island-{}-footprint-proxy", island.way_ids[0])
+        }) {
+            if mesh.name.ends_with("-footprint-proxy") {
+                assert!(
+                    mesh.positions_ned
+                        .iter()
+                        .all(|p| (f64::from(p[2]) + MINIMUM_VISIBLE_LAND_HEIGHT_M).abs() < 1e-7)
+                );
+            }
             let ring: Vec<_> = contour(&island.ring_north_east_meters)
                 .iter()
                 .map(|p| p.map(|v| f64::from(v as f32)))
