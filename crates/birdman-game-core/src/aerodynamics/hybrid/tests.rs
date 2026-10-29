@@ -547,8 +547,7 @@ fn tail_drag_survives_opposite_lift_and_uniform_strip_splitting() {
             alpha,
             1.2,
             slope,
-            coefficients,
-            geometry.aspect_ratio(),
+            (coefficients, geometry.aspect_ratio()),
         )
         .unwrap()
     };

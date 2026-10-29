@@ -523,7 +523,7 @@ fn proxy_increment(
             HybridLimit::ControlledAlphaDifference,
         ));
     }
-    if let Some((coefficients, aspect_ratio)) = tail {
+    if let Some(tail_parameters) = tail {
         let actual_wrench = tail_proxy_wrench(
             proxy,
             actual,
@@ -531,8 +531,7 @@ fn proxy_increment(
             actual_alpha + delta,
             density,
             slope,
-            coefficients,
-            aspect_ratio,
+            tail_parameters,
         )?;
         let reference_wrench = tail_proxy_wrench(
             proxy,
@@ -541,8 +540,7 @@ fn proxy_increment(
             reference_alpha,
             density,
             slope,
-            coefficients,
-            aspect_ratio,
+            tail_parameters,
         )?;
         let force = actual_wrench
             .force_body_newtons()
@@ -588,8 +586,7 @@ fn tail_proxy_wrench(
     alpha: f64,
     density: f64,
     slope: f64,
-    coefficients: TailAerodynamics,
-    aspect_ratio: f64,
+    (coefficients, aspect_ratio): (TailAerodynamics, f64),
 ) -> Result<Wrench, HybridError> {
     let site = HybridSite::Surface(proxy.role());
     let evaluate = || {
