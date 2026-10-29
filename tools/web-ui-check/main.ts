@@ -7,6 +7,7 @@ import { chromium } from "playwright-core";
 import type { Browser, Page } from "playwright-core";
 import type { ApplicationRuntimeBridge } from "../../web/pkg/birdman_game_wasm.js";
 import type { ApplicationInput, ApplicationObservation, ApplicationOutput, ApplicationRequest } from "../../web/src/generated/application-contracts.js";
+import { record } from "../shared/validation.js";
 
 declare global {
   interface Window {
@@ -26,7 +27,9 @@ declare global {
 
 const [address, destination, ...options] = process.argv.slice(2);
 assert.ok(address !== undefined && destination !== undefined, "Usage: npm run test:web-ui -- VITE_URL OUTPUT_DIRECTORY [--allow-dirty] [--without-gpu-timer] [--recovery]");
-assert.ok(options.every(option => ["--allow-dirty", "--without-gpu-timer", "--recovery", "--adapter-observe"].includes(option)), "Unknown Web UI check option");
+assert.ok(options.every(option => ["--allow-dirty", "--without-gpu-timer", "--recovery", "--adapter-observe"].includes(option) || option.startsWith("--native-evidence=")), "Unknown Web UI check option");
+const nativeEvidence = options.find(option => option.startsWith("--native-evidence="))?.slice("--native-evidence=".length);
+if (options.includes("--adapter-observe")) assert.ok(nativeEvidence, "--adapter-observe requires --native-evidence=DIR");
 const url = new URL(address);
 assert.ok(["127.0.0.1", "localhost", "[::1]"].includes(url.hostname), "Use the local Vite development server");
 const root = resolve(import.meta.dirname, "../..");
@@ -431,7 +434,8 @@ async function verify(activeBrowser: Browser): Promise<void> {
             const output = JSON.parse(result);
             const ui = output.drawing?.ui;
             if (output.drawing != null) probe.latest = { camera: output.drawing.scene.camera,
-              world_from_aircraft: output.drawing.scene.world_from_aircraft, water_time_seconds: output.drawing.scene.water_time_seconds };
+              world_from_aircraft: output.drawing.scene.world_from_aircraft, water_time_seconds: output.drawing.scene.water_time_seconds,
+              resource: output.drawing.graphics.resource };
             probe.rows.push({ observed_ms: data.observed_ms, input: data.input, consumed: output.keyboard_consumed,
               water_time: output.drawing?.scene.water_time_seconds ?? null,
               scene: ui?.kind === "view" ? ui.view.scene : null,
@@ -521,9 +525,52 @@ async function verify(activeBrowser: Browser): Promise<void> {
       await scene("Result");
       await click("game-result-technical");
       const [flightRecord] = await Promise.all([page.waitForEvent("download"), click("game-flight-log-json")]);
-      await flightRecord.saveAs(resolve(output, "adapter-record.json"));
+      const webRecordPath = resolve(output, "adapter-record.json");
+      await flightRecord.saveAs(webRecordPath);
+      assert.ok(nativeEvidence !== undefined);
+      const nativeSource = record(JSON.parse(await readFile(resolve(nativeEvidence, "source-evidence.json"), "utf8")) as unknown);
+      assert.equal(nativeSource["sourceHead"], sourceHead, "Native source HEAD");
+      assert.equal(nativeSource["rustDiffSha256"], hash(git(["diff", "--binary", "HEAD", "--", "crates"])), "Native Rust source diff");
+      assert.equal(nativeSource["nativeExit"], 0, "Native verification exit");
+      const nativeRecord = record(JSON.parse(await readFile(resolve(nativeEvidence, "records/flight-record.json"), "utf8")) as unknown);
+      const webRecord = record(JSON.parse(await readFile(webRecordPath, "utf8")) as unknown);
+      assert.deepEqual(webRecord["header"], nativeRecord["header"], "Flight conditions");
+      const nativeSamples = nativeRecord["samples"], webSamples = webRecord["samples"];
+      assert.ok(Array.isArray(nativeSamples) && Array.isArray(webSamples));
+      const common = Math.min(nativeSamples.length, webSamples.length);
+      assert.ok(common > 48, "Pause tick must be included in the shared interval");
+      assert.deepEqual(webSamples.slice(0, common), nativeSamples.slice(0, common), "Confirmed flight samples");
+      const nativeTrace = (await readFile(resolve(nativeEvidence, "application-trace.jsonl"), "utf8")).trim().split("\n").map(line => record(JSON.parse(line) as unknown));
+      assert.ok(nativeTrace.some(row => row["synthetic_clock"] === true), "Native evidence must use the synthetic comparison clock");
+      const capture = nativeTrace.find(row => row["file"] === "04-adapter-paused.png" && row["capture"] !== undefined);
+      assert.ok(capture !== undefined, "Native Pause capture is required");
+      const nativeDrawing = record(capture["capture"]), nativeScene = record(nativeDrawing["scene"]), nativeResource = record(record(nativeDrawing["graphics"])["resource"]);
+      const webDrawing = record(pausedDrawing), webResource = record(webDrawing["resource"]);
+      const rounded = (value: unknown) => JSON.parse(JSON.stringify(value, (_key, item: unknown) => typeof item === "number" ? Math.round(item * 1e9) / 1e9 : item)) as unknown;
+      assert.deepEqual(rounded({ camera: webDrawing["camera"], world_from_aircraft: webDrawing["world_from_aircraft"], water_time_seconds: webDrawing["water_time_seconds"] }),
+        rounded({ camera: nativeScene["camera"], world_from_aircraft: nativeScene["world_from_aircraft"], water_time_seconds: nativeScene["water_time_seconds"] }), "Pause camera and aircraft pose");
+      assert.deepEqual(webResource["extent_px"], nativeResource["extent_px"], "Pause drawable extent");
+      assert.deepEqual(webResource["quality"], nativeResource["quality"], "Pause rendering quality");
+      assert.equal(webDrawing["water_time_seconds"], 0.48, "Pause tick 48");
+      const keyP = observations.filter(row => row.input.kind === "keyboard" && row.input.code === "KeyP" && row.input.pressed);
+      assert.equal(keyP.length, 2, "Pause and Resume presses");
+      assert.ok(keyP.every(row => row.consumed), "Pause and Resume accepted");
+      assert.equal(keyP[0]?.overlay, "Pause");
+      assert.equal(keyP[1]?.overlay, null);
+      const resumed = observations.indexOf(keyP[1]!);
+      const firstFrame = observations.slice(resumed + 1).find(row => row.input.kind === "frame");
+      assert.equal(firstFrame?.water_time, 0.48, "Resume first frame keeps the confirmed time");
+      const nativeP = nativeTrace.filter(row => {
+        const input = record(record(row["observation"] ?? {})["input"] ?? {});
+        return input["kind"] === "keyboard" && input["code"] === "KeyP" && input["pressed"] === true;
+      });
+      assert.equal(nativeP.length, 2, "Native Pause and Resume presses");
+      assert.ok(nativeP.every(row => row["keyboard_consumed"] === true && record(row["flight"])["tick"] === 48));
+      report.adapterComparison = { commonSamples: common, nativeSamples: nativeSamples.length, webSamples: webSamples.length,
+        nativeEvidence: resolve(nativeEvidence), clock: "synthetic 16 ms frames", comparison: "confirmed samples and Pause pose; record endpoints differ" };
       report.execution = "Production Web input adapters with synthetic gamepad and Playwright Clock";
       checks.push("Keyboard and gamepad observations through the production browser adapters");
+      checks.push("Native/Web common confirmed ticks and Pause camera/pose");
       return;
     }
     await page.waitForTimeout(400);
