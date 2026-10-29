@@ -1301,7 +1301,9 @@ fn stored_record_preview_load_retry_and_original_download_share_owner() {
         .unwrap()
     );
     let record = json!({ "id": 7, "savedAt": "2026-10-23T00:00:00Z", "json": original });
-    let replacement_original = format!("{original}\n");
+    let mut replacement_document: serde_json::Value = serde_json::from_str(&original).unwrap();
+    replacement_document["header"]["aircraft_model_version"] = json!(999);
+    let replacement_original = serde_json::to_string(&replacement_document).unwrap();
     let replacement_record =
         json!({ "id": 8, "savedAt": "2026-10-23T00:00:01Z", "json": replacement_original });
     let platform = ApplicationPlatformObservation {
@@ -1541,6 +1543,28 @@ fn stored_record_preview_load_retry_and_original_download_share_owner() {
             0.015
         ),
     );
+    let ready = runtime.last_ready_resources.unwrap();
+    assert!(matches!(
+        EnvironmentSelection::for_session(&runtime.application)
+            .unwrap()
+            .resolve()
+            .unwrap(),
+        EnvironmentProjection::Unavailable { .. }
+    ));
+    let next_request = runtime.next_request_id;
+    let frame = runtime
+        .observe_test(ApplicationInput::Frame {
+            timestamp_ms: 16.0,
+            gamepads: Vec::new(),
+            display_resource_id: None,
+            xr: None,
+            spatial: Default::default(),
+        })
+        .unwrap();
+    assert!(frame.drawing.is_some());
+    assert!(frame.requests.is_empty());
+    assert_eq!(runtime.next_request_id, next_request);
+    assert!(runtime.resources.as_ref().unwrap().key == ready);
     let replay = runtime.retained.as_ref().unwrap().clone();
     let selected = structure(activate_action(
         &mut runtime,

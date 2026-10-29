@@ -82,7 +82,9 @@ use birdman_game_app::application::{
     PresentationObservation, XrAvailability, XrVisibility,
 };
 #[cfg(not(verus_only))]
-use birdman_game_app::environment_snapshot::{EnvironmentIdentity, EnvironmentSelection};
+use birdman_game_app::environment_snapshot::{
+    EnvironmentIdentity, EnvironmentProjection, EnvironmentSelection,
+};
 #[cfg(not(verus_only))]
 use birdman_game_app::flight_input::{
     FlightActionKey, FlightControl, FlightGamepadObservation, FlightKeyObservation,
@@ -1748,11 +1750,39 @@ impl ApplicationRuntime {
         };
         let environment = EnvironmentSelection::for_session(&self.application)
             .map_err(ApplicationRuntimeError::Environment)?;
-        let key = ResourceKey {
+        let desired_key = ResourceKey {
             graphics,
             environment: environment.identity,
             mode,
             display_resource_id: self.display.active_resource(),
+        };
+        // Archive metadata stays unavailable; only the already displayed background is reused.
+        let environment = if self
+            .resources
+            .as_ref()
+            .is_some_and(|resources| resources.key == desired_key)
+        {
+            environment
+        } else {
+            match environment
+                .resolve()
+                .map_err(ApplicationRuntimeError::Environment)?
+            {
+                EnvironmentProjection::Available { .. } => environment,
+                EnvironmentProjection::Unavailable { .. } => {
+                    let Some(previous) = self.last_ready_resources else {
+                        return Ok(());
+                    };
+                    EnvironmentSelection {
+                        identity: previous.environment,
+                        ..environment
+                    }
+                }
+            }
+        };
+        let key = ResourceKey {
+            environment: environment.identity,
+            ..desired_key
         };
         if self
             .resources
