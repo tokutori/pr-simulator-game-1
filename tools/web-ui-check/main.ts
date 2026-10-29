@@ -7,10 +7,12 @@ import { chromium } from "playwright-core";
 import type { Browser, Page } from "playwright-core";
 import type { ApplicationRuntimeBridge } from "../../web/pkg/birdman_game_wasm.js";
 import type { ApplicationInput, ApplicationObservation, ApplicationOutput, ApplicationRequest } from "../../web/src/generated/application-contracts.js";
+import { record } from "../shared/validation.js";
 
 declare global {
   interface Window {
     __graphicsLosses: number;
+    __adapterProbe: { active: boolean; axes: number[]; latest: unknown; rows: { observed_ms: number; input: ApplicationInput; consumed: boolean; water_time: number | null; scene: string | null; overlay: string | null }[] };
     __recoveryRead: { requestSucceeded: boolean; aborts: number; error: string | null };
     __recoveryGpu: { framebufferFailures: number; partialTextureCreated: boolean; partialTextureDeletes: number; partialFramebufferCreated: boolean; partialFramebufferDeletes: number; canvas: HTMLCanvasElement | OffscreenCanvas | null };
     __recoveryCompile: {
@@ -25,7 +27,9 @@ declare global {
 
 const [address, destination, ...options] = process.argv.slice(2);
 assert.ok(address !== undefined && destination !== undefined, "Usage: npm run test:web-ui -- VITE_URL OUTPUT_DIRECTORY [--allow-dirty] [--without-gpu-timer] [--recovery]");
-assert.ok(options.every(option => ["--allow-dirty", "--without-gpu-timer", "--recovery"].includes(option)), "Unknown Web UI check option");
+assert.ok(options.every(option => ["--allow-dirty", "--without-gpu-timer", "--recovery", "--adapter-observe"].includes(option) || option.startsWith("--native-evidence=")), "Unknown Web UI check option");
+const nativeEvidence = options.find(option => option.startsWith("--native-evidence="))?.slice("--native-evidence=".length);
+if (options.includes("--adapter-observe")) assert.ok(nativeEvidence, "--adapter-observe requires --native-evidence=DIR");
 const url = new URL(address);
 assert.ok(["127.0.0.1", "localhost", "[::1]"].includes(url.hostname), "Use the local Vite development server");
 const root = resolve(import.meta.dirname, "../..");
@@ -163,6 +167,7 @@ async function verify(activeBrowser: Browser): Promise<void> {
       }
     }, { withoutTimer: options.includes("--without-gpu-timer"), recovery });
     const page = await context.newPage();
+    if (options.includes("--adapter-observe")) await page.clock.install();
     page.setDefaultTimeout(30_000);
     page.on("pageerror", cause => { diagnostics.push({ phase, source: "page", url: page.url(), text: cause.message }); });
     page.on("console", message => {
@@ -416,23 +421,158 @@ async function verify(activeBrowser: Browser): Promise<void> {
       const debug = gl.getExtension("WEBGL_debug_renderer_info");
       return { renderer: String(gl.getParameter(debug?.UNMASKED_RENDERER_WEBGL ?? gl.RENDERER)), version: String(gl.getParameter(gl.VERSION)), userAgent: navigator.userAgent };
     });
-    await pair("title");
+    if (options.includes("--adapter-observe")) {
+      await page.evaluate(`(async () => {
+        const runtime = await import(new URL("pkg/birdman_game_wasm.js", location.href).href);
+        const update = runtime.ApplicationRuntimeBridge.prototype.update;
+        const probe = { active: false, axes: [0, 0, 0, 0], latest: null, rows: [] };
+        window.__adapterProbe = probe;
+        runtime.ApplicationRuntimeBridge.prototype.update = new Proxy(update, { apply: (target, receiver, args) => {
+          const result = Reflect.apply(target, receiver, args);
+          const data = JSON.parse(args[0]);
+          if (probe.active && (data.input.kind === "keyboard" || data.input.kind === "frame")) {
+            const output = JSON.parse(result);
+            const ui = output.drawing?.ui;
+            if (output.drawing != null) probe.latest = { camera: output.drawing.scene.camera,
+              world_from_aircraft: output.drawing.scene.world_from_aircraft, water_time_seconds: output.drawing.scene.water_time_seconds,
+              resource: output.drawing.graphics.resource };
+            probe.rows.push({ observed_ms: data.observed_ms, input: data.input, consumed: output.keyboard_consumed,
+              water_time: output.drawing?.scene.water_time_seconds ?? null,
+              scene: ui?.kind === "view" ? ui.view.scene : null,
+              overlay: ui?.kind === "view" ? ui.view.active_overlay ?? null : null });
+          }
+          return result;
+        } });
+        const pad = { index: 0, connected: true, mapping: "standard", axes: probe.axes,
+          buttons: [{ pressed: false }, { pressed: false }] };
+        Object.defineProperty(navigator, "getGamepads", { configurable: true, value: () => [pad] });
+        const event = new Event("gamepadconnected");
+        Object.defineProperty(event, "gamepad", { value: pad });
+        window.dispatchEvent(event);
+      })()`);
+    }
+    if (!options.includes("--adapter-observe")) await pair("title");
     const phoneVr = { disabled: await control("boot-enter-phone-vr").isDisabled(), label: await control("boot-enter-phone-vr").innerText() };
     report.phoneVr = phoneVr;
     assert.equal(phoneVr.disabled, true, "Desktop without orientation samples must keep Phone VR unavailable");
     checks.push("Title: production scene pixels and controls at HD/FHD");
     await click("game-title-start");
     await scene("FlightSetup");
-    await click("game-setup-select-weather-0");
-    await click("game-setup-select-assistance-3");
-    await pair("setup-calm");
+    if (options.includes("--adapter-observe")) {
+      if (await control("presentation-render-scale-auto").getAttribute("aria-pressed") === "true") await click("presentation-render-scale-auto");
+      await click("presentation-water-quality-low");
+      await click("presentation-render-scale-50");
+    } else {
+      await click("game-setup-select-weather-0");
+      await click("game-setup-select-assistance-3");
+      await pair("setup-calm");
+    }
     await click("game-setup-start");
     await scene("Briefing");
     await control("game-briefing-start").waitFor({ state: "visible" });
-    await pair("briefing");
+    if (!options.includes("--adapter-observe")) await pair("briefing");
+    if (options.includes("--adapter-observe")) {
+      await page.clock.pauseAt(await page.evaluate(() => Date.now() + 100));
+      await page.evaluate(() => { window.__adapterProbe.active = true; });
+    }
     await click("game-briefing-start");
-    await scene("Flight");
-    await control("game-flight-pause").waitFor({ state: "visible" });
+    if (options.includes("--adapter-observe")) {
+      for (let frame = 0; frame < 300 && !await control("game-flight-pause").isVisible(); frame++) await page.clock.runFor(16);
+    } else {
+      await scene("Flight");
+    }
+    if (options.includes("--adapter-observe") && await control("game-flight-resume").isVisible()) {
+      await control("game-flight-resume").waitFor({ state: "visible" });
+      await click("game-flight-resume");
+    }
+    try {
+      await control("game-flight-pause").waitFor({ state: "visible" });
+    } catch (cause) {
+      if (options.includes("--adapter-observe")) {
+        const state = await page.evaluate(() => ({ text: document.body.innerText, rows: window.__adapterProbe.rows.slice(-40) }));
+        await writeFile(resolve(output, "adapter-failure.json"), JSON.stringify(state, null, 2) + "\n", "utf8");
+      }
+      throw cause;
+    }
+    if (options.includes("--adapter-observe")) {
+      await page.clock.runFor(48);
+      await page.evaluate(() => { window.__adapterProbe.axes[0] = 0.25; window.__adapterProbe.axes[1] = -0.25; });
+      await page.clock.runFor(112);
+      await page.evaluate(() => { window.__adapterProbe.axes[0] = 0; window.__adapterProbe.axes[1] = 0; });
+      await page.clock.runFor(111);
+      await page.keyboard.down("ArrowUp");
+      await page.clock.runFor(112);
+      await page.keyboard.up("ArrowUp");
+      await page.clock.runFor(112);
+      await page.keyboard.down("KeyP");
+      await page.clock.runFor(16);
+      await page.keyboard.up("KeyP");
+      await page.clock.runFor(32);
+      await page.screenshot({ path: resolve(output, "adapter-pause-hd.png") });
+      const pausedDrawing = await page.evaluate(() => window.__adapterProbe.latest);
+      await writeFile(resolve(output, "adapter-pause-drawing.json"), JSON.stringify(pausedDrawing, null, 2) + "\n", "utf8");
+      await page.keyboard.down("KeyP");
+      await page.clock.runFor(16);
+      await page.keyboard.up("KeyP");
+      await page.clock.runFor(32);
+      await page.evaluate(() => { window.__adapterProbe.active = false; });
+      const observations = await page.evaluate(() => window.__adapterProbe.rows);
+      await writeFile(resolve(output, "adapter-observations.json"), JSON.stringify(observations, null, 2) + "\n", "utf8");
+      assert.ok(observations.some(row => row.input.kind === "keyboard" && row.input.code === "ArrowUp" && row.input.pressed && row.consumed));
+      assert.ok(observations.some(row => row.input.kind === "frame" && row.input.gamepads.some(pad => pad.axes[0] === 0.25 && pad.axes[1] === -0.25)));
+      await page.clock.resume();
+      await click("game-flight-abort");
+      await scene("Result");
+      await click("game-result-technical");
+      const [flightRecord] = await Promise.all([page.waitForEvent("download"), click("game-flight-log-json")]);
+      const webRecordPath = resolve(output, "adapter-record.json");
+      await flightRecord.saveAs(webRecordPath);
+      assert.ok(nativeEvidence !== undefined);
+      const nativeSource = record(JSON.parse(await readFile(resolve(nativeEvidence, "source-evidence.json"), "utf8")) as unknown);
+      assert.equal(nativeSource["sourceHead"], sourceHead, "Native source HEAD");
+      assert.equal(nativeSource["rustDiffSha256"], hash(git(["diff", "--binary", "HEAD", "--", "crates"])), "Native Rust source diff");
+      assert.equal(nativeSource["nativeExit"], 0, "Native verification exit");
+      const nativeRecord = record(JSON.parse(await readFile(resolve(nativeEvidence, "records/flight-record.json"), "utf8")) as unknown);
+      const webRecord = record(JSON.parse(await readFile(webRecordPath, "utf8")) as unknown);
+      assert.deepEqual(webRecord["header"], nativeRecord["header"], "Flight conditions");
+      const nativeSamples = nativeRecord["samples"], webSamples = webRecord["samples"];
+      assert.ok(Array.isArray(nativeSamples) && Array.isArray(webSamples));
+      const common = Math.min(nativeSamples.length, webSamples.length);
+      assert.ok(common > 48, "Pause tick must be included in the shared interval");
+      assert.deepEqual(webSamples.slice(0, common), nativeSamples.slice(0, common), "Confirmed flight samples");
+      const nativeTrace = (await readFile(resolve(nativeEvidence, "application-trace.jsonl"), "utf8")).trim().split("\n").map(line => record(JSON.parse(line) as unknown));
+      assert.ok(nativeTrace.some(row => row["synthetic_clock"] === true), "Native evidence must use the synthetic comparison clock");
+      const capture = nativeTrace.find(row => row["file"] === "04-adapter-paused.png" && row["capture"] !== undefined);
+      assert.ok(capture !== undefined, "Native Pause capture is required");
+      const nativeDrawing = record(capture["capture"]), nativeScene = record(nativeDrawing["scene"]), nativeResource = record(record(nativeDrawing["graphics"])["resource"]);
+      const webDrawing = record(pausedDrawing), webResource = record(webDrawing["resource"]);
+      const rounded = (value: unknown) => JSON.parse(JSON.stringify(value, (_key, item: unknown) => typeof item === "number" ? Math.round(item * 1e9) / 1e9 : item)) as unknown;
+      assert.deepEqual(rounded({ camera: webDrawing["camera"], world_from_aircraft: webDrawing["world_from_aircraft"], water_time_seconds: webDrawing["water_time_seconds"] }),
+        rounded({ camera: nativeScene["camera"], world_from_aircraft: nativeScene["world_from_aircraft"], water_time_seconds: nativeScene["water_time_seconds"] }), "Pause camera and aircraft pose");
+      assert.deepEqual(webResource["extent_px"], nativeResource["extent_px"], "Pause drawable extent");
+      assert.deepEqual(webResource["quality"], nativeResource["quality"], "Pause rendering quality");
+      assert.equal(webDrawing["water_time_seconds"], 0.48, "Pause tick 48");
+      const keyP = observations.filter(row => row.input.kind === "keyboard" && row.input.code === "KeyP" && row.input.pressed);
+      assert.equal(keyP.length, 2, "Pause and Resume presses");
+      assert.ok(keyP.every(row => row.consumed), "Pause and Resume accepted");
+      assert.equal(keyP[0]?.overlay, "Pause");
+      assert.equal(keyP[1]?.overlay, null);
+      const resumed = observations.indexOf(keyP[1]);
+      const firstFrame = observations.slice(resumed + 1).find(row => row.input.kind === "frame");
+      assert.equal(firstFrame?.water_time, 0.48, "Resume first frame keeps the confirmed time");
+      const nativeP = nativeTrace.filter(row => {
+        const input = record(record(row["observation"] ?? {})["input"] ?? {});
+        return input["kind"] === "keyboard" && input["code"] === "KeyP" && input["pressed"] === true;
+      });
+      assert.equal(nativeP.length, 2, "Native Pause and Resume presses");
+      assert.ok(nativeP.every(row => row["keyboard_consumed"] === true && record(row["flight"])["tick"] === 48));
+      report.adapterComparison = { commonSamples: common, nativeSamples: nativeSamples.length, webSamples: webSamples.length,
+        nativeEvidence: resolve(nativeEvidence), clock: "synthetic 16 ms frames", comparison: "confirmed samples and Pause pose; record endpoints differ" };
+      report.execution = "Production Web input adapters with synthetic gamepad and Playwright Clock";
+      checks.push("Keyboard and gamepad observations through the production browser adapters");
+      checks.push("Native/Web common confirmed ticks and Pause camera/pose");
+      return;
+    }
     await page.waitForTimeout(400);
     assert.equal(await control("game-flight-resume").isVisible(), false, "Flight unexpectedly paused");
     await click("game-flight-pause");

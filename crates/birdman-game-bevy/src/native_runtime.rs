@@ -83,6 +83,17 @@ pub(crate) fn update(world: &mut World) {
     let Some(mut runtime) = world.remove_resource::<NativeRuntime>() else {
         return;
     };
+    #[cfg(feature = "verify-harness")]
+    let now = if let Some(mut clock) =
+        world.get_resource_mut::<super::verification::VerificationClock>()
+    {
+        let now = clock.0;
+        clock.0 += 16.0;
+        now
+    } else {
+        world.resource::<NativeIo>().origin.elapsed().as_secs_f64() * 1000.0
+    };
+    #[cfg(not(feature = "verify-harness"))]
     let now = world.resource::<NativeIo>().origin.elapsed().as_secs_f64() * 1000.0;
     let due: Vec<_> = world
         .resource::<NativeIo>()
@@ -157,7 +168,14 @@ pub(crate) fn update(world: &mut World) {
             }
         };
         #[cfg(feature = "verify-harness")]
-        super::verification::trace::output(world, trace_input, trace_fonts, &output);
+        {
+            let snapshot = runtime.0.application().core_session().snapshot();
+            let flight = serde_json::json!({
+                "phase": format!("{:?}", snapshot.phase()),
+                "tick": snapshot.tail_flight_state().map(|state| state.tick_index()),
+            });
+            super::verification::trace::output(world, trace_input, trace_fonts, &output, flight);
+        }
         if let Some(cause) = output.diagnostic {
             warn!("Native application: {cause}");
         }
