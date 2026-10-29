@@ -3512,10 +3512,13 @@ fn hud_scene_policy_is_shared_by_full_and_frame_projection_in_screen_and_vr() {
 }
 
 #[test]
-fn replay_hud_uses_the_recorded_pilot_target_for_the_displayed_interval() {
+fn legacy_replay_hud_uses_the_recorded_pilot_target_and_marks_unrecorded_loads() {
     let source = finalized();
     let record = source.flight_record().unwrap();
     let mut samples = record.samples().to_vec();
+    for sample in &mut samples {
+        sample.tail_wrenches = None;
+    }
     let last = samples.last_mut().unwrap();
     last.controls.input_from_previous = Some(
         birdman_game_core::FlightRecordTailInput::try_from_recorded(
