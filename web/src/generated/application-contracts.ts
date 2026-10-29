@@ -1150,6 +1150,8 @@ export type HudCue = "telemetry" | "attitude" | "wind" | "flight_path" | "angle_
  * Platform-owned operation requested by common UI.
  */
 export type GameUiPlatformCommand = {
+    readonly kind: "reload_application";
+} | {
     readonly kind: "set_screen_render_scale";
     /**
      * Requested fraction of each physical rendering dimension.

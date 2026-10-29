@@ -191,6 +191,8 @@ pub enum GameUiWaterQualityOperation {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum GameUiPlatformCommand {
+    /// Reloads the application after its current resources have been released.
+    ReloadApplication {},
     /// Changes only the Screen 3D drawing resolution.
     SetScreenRenderScale {
         /// Requested fraction of each physical rendering dimension.
@@ -405,8 +407,8 @@ pub struct GameUiPlatformInput {
     pub screen_render_scale: crate::screen_render_auto::ScreenRenderAutoSnapshot,
     /// Platform operation feedback.
     pub notification: String,
-    /// Captured flight-controller resource failure; the session retains its last valid state.
-    pub flight_controller_failure: Option<String>,
+    /// Captured renderer failure; the session retains its last valid state.
+    pub renderer_failure: Option<String>,
     /// Captured head-HUD resource failure, separate from the domain and physical state.
     pub head_hud_failure: Option<String>,
     /// Bounded newest-record preview; the persistence index and PB search remain separate.

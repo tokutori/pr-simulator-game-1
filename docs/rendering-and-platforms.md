@@ -289,6 +289,7 @@ Nativeは既存DirectionalLightの2048 texel・30〜600 mの3段cascadeから、
 - XR/sensor権限は明示した利用者操作の同期区間で要求する。
 - capability調査を事前に済ませ、利用者操作の同期区間で権限を要求する。
 - Bootの最小権限UIはScreenに置き、rendererが利用できる場合は読込み中やResultだけを理由にScreenへ戻さない。
+- rendererの故障案内と「ゲームを再読み込み」を全Scene・overlayへ配置し、Bootと同じ共有commandから、未完了I/Oの取消と資源解放が完了したDrained後にWebの再読み込みまたはNativeの再起動を要求する。GPU故障後のNative・VRの視認と実操作は実機で受け入れる。
 - tracking喪失や退出時はSceneを保持し、Countdown取消・Flight停止・Replay/Attract clock停止を共通sessionへ送る。
 
 ### Screen DOMの保持
