@@ -258,12 +258,13 @@ Analysis用の発進台・湖岸・望遠camera点はOSMとAW3D30に基づく試
 - JSON exportは解決済み条件と来歴を含む完全な記録である。
 - 保存されていない情報を現行buildから補完しない。
 
-### CSV version 3/4
+### CSV version 3/4/5
 
 - CSVは初期・全成功tick・fractional terminalを省略せず、位置、速度、姿勢、角速度、pilot状態、入力、actuator、風、telemetry、終了情報等を出力する。
 - 列名に単位を明示し、f64のround-trip表現を使う。
 - 未提供値は空欄とし、ID・構造化診断は`_json`列へ格納する。
 - version 4は`row_kind`と`wing_bending_factor`を加える。通常sample列の後に同時刻の採用eventを`boundary_event`行として出力し、version 3は従来の列構成を保持する。
+- version 5は水平・垂直尾翼それぞれの機体FRD力3成分（N）とdatumまわりのモーメント3成分（N·m）を追加する。各列は記録した同時刻の荷重を出力する。
 
 - 加速度は保存済みNED速度、FRD角速度、pilot相対速度の有限差分による派生値である。
 - 内点は不等間隔3点、端点は2点の割線を用い、methodとstencil時刻を出力する。
