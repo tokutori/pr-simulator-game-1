@@ -230,7 +230,7 @@ Analysis用の発進台・湖岸・望遠camera点はOSMとAW3D30に基づく試
 - 位置・速度・角速度・pilot状態と最短経路quaternion補間を同じ瞬間へ揃え、record、Result、score、表示へ同じ終端sampleを渡す。
 - 正のfractionでは区間中に保持した尾翼角・曲げ係数・入力を使う。
 - 整数時刻では、既存形状による接触と新しい変形・尾翼角の採用直後の接触を区別する。前者は既存の値を保持し、後者は新しい値をfinalizationの`boundary_event`へ保存する。
-- 同時刻eventは既存sample列を保持し、終端queryで採用済みの尾翼角・入力・曲げ係数だけを投影する。時刻・body状態・telemetryは末尾sampleを正本とする。
+- 同時刻eventは既存sample列を保持し、終端queryで採用済みの尾翼角・入力・曲げ係数・尾翼荷重を投影する。時刻・body状態・telemetryは末尾sampleを正本とする。
 - 境界eventの採用時刻は最大tick未満の整数時刻とする。
 - 失敗tickの未来状態を露出しない。
 
@@ -359,6 +359,7 @@ keyは次の条件をSHA-256へ入力する。
 - Resultへ戻る際は元の確定状態を表示し、cursor状態へ置換しない。
 
 - 厳密な保存時刻はそのsample、区間内部は終点sampleが持つ尾翼角・入力・曲げ係数を用いる。確定終端時刻ではcanonicalなevent投影を使う。
+- 尾翼荷重は厳密な保存時刻の値を使い、区間内部では直前の受理sampleの値を保持する。HUDはその記録値の合力norm（N）を表示し、FRD力とdatumまわりのモーメントはJSON/CSVへ出力する。
 - 共有UIの分析cursorとReplay操作は、ownerが保有するrecordの有効な時刻範囲へ認可する。
 - 結果・分析・再生poseは同じrecordを参照し、元のfinalization・terminal stamp・確定scoreと、cursor時刻の表示投影を区別する。
 
