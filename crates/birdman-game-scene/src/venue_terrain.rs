@@ -3,6 +3,8 @@
 use serde::Deserialize;
 use std::sync::OnceLock;
 
+#[path = "venue_terrain/island.rs"]
+mod island;
 #[path = "venue_terrain/shoreline.rs"]
 mod shoreline;
 #[cfg(test)]
@@ -996,6 +998,45 @@ pub fn registered_terrain() -> Result<&'static [VenueTerrainMesh], String> {
                     &grids,
                 )?);
             }
+            let mut sources: Vec<_> = grids
+                .iter()
+                .map(|grid| with_fallback(grid, &grids))
+                .collect();
+            sources.sort_by(|a, b| a.terrain_step_meters.total_cmp(&b.terrain_step_meters));
+            let mut domains = Vec::new();
+            let mut island_meshes = Vec::new();
+            for island in &shore.islands {
+                if island
+                    .way_ids
+                    .iter()
+                    .any(|id| [41039534, 41039535, 41039553, 41039509].contains(id))
+                {
+                    continue;
+                }
+                for grid in &sources {
+                    if !island
+                        .ring_north_east_meters
+                        .iter()
+                        .all(|p| grid.bounds().contains(p[0], p[1]))
+                    {
+                        continue;
+                    }
+                    if let Some(mesh) = island::generate(island, grid)? {
+                        domains.push(island.ring_north_east_meters.as_slice());
+                        island_meshes.push(mesh);
+                        break;
+                    }
+                }
+            }
+            for mesh in &mut meshes {
+                if mesh.material == VenueTerrainMaterial::Terrain
+                    && mesh.name != "lake-biwa-shoreline-terrain-transition"
+                {
+                    island::remove_raster(mesh, &domains);
+                }
+            }
+            meshes.retain(|mesh| !mesh.indices.is_empty());
+            meshes.extend(island_meshes);
             meshes.push(rocks(&shore.islands)?);
             Ok(meshes)
         })
