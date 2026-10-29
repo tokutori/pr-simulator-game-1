@@ -557,7 +557,7 @@ async function verify(activeBrowser: Browser): Promise<void> {
       assert.ok(keyP.every(row => row.consumed), "Pause and Resume accepted");
       assert.equal(keyP[0]?.overlay, "Pause");
       assert.equal(keyP[1]?.overlay, null);
-      const resumed = observations.indexOf(keyP[1]!);
+      const resumed = observations.indexOf(keyP[1]);
       const firstFrame = observations.slice(resumed + 1).find(row => row.input.kind === "frame");
       assert.equal(firstFrame?.water_time, 0.48, "Resume first frame keeps the confirmed time");
       const nativeP = nativeTrace.filter(row => {
