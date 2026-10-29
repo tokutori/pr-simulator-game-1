@@ -235,7 +235,7 @@ fn patch_clipping_preserves_elevation_area_and_upward_faces() {
 
     let mut coarse =
         terrain_mesh("coarse".into(), &source, &[], std::slice::from_ref(&source)).unwrap();
-    let enclosed = [[1.0, 1.0], [1.0, 2.0], [2.0, 1.0]];
+    let enclosed = [[1.0, 3.0], [1.0, 4.0], [2.0, 3.0]];
     island::remove_raster(&mut coarse, &[&enclosed]);
     assert_eq!(coarse.indices.len(), 3);
 }
