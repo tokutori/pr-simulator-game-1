@@ -15,8 +15,8 @@
 | --- | --- |
 | 機体JSON | `AircraftDocument`、schema 3、最大256 KiB |
 | 環境JSON | `EnvironmentDocument`、schema 1、最大8 MiB |
-| 飛行記録JSON | `TailFlightRecordDocument`、schema 6/7、最大16 MiB |
-| 飛行ログCSV | schema 6はexport version 3、schema 7はversion 4 |
+| 飛行記録JSON | `TailFlightRecordDocument`、schema 6/7/8、最大16 MiB |
+| 飛行ログCSV | schema 6はexport version 3、schema 7はversion 4、schema 8はversion 5 |
 | Personal Best | 比較方式v3、Rustによるkey再生成・選定 |
 | 物理・積分・接触 | physics model 6 |
 | 既定機体・scenario | aircraft model 6、catalog 8、scenario 9、controller profile 3 |
@@ -244,10 +244,11 @@ Analysis用の発進台・湖岸・望遠camera点はOSMとAW3D30に基づく試
 
 ### codecとJSON
 
-- 現行codecはschema 6と7を受理する。
+- 現行codecはschema 6・7・8を受理する。
 - schema 7は全sampleの有限な`wing_bending_factor`を要求し、同時刻の採用値は任意の終端`boundary_event`に保持する。
-- schema 6は曲げ係数の未記録状態を保持する。共有producerは全係数を持つrecordをschema 7、全係数が未記録のrecordをschema 6として出力する。
-- 現行の登録機体による通常飛行とAttractはschema 7を生成する。schema 6・physics model 3/4およびschema 7・physics model 4の記録は既存keyと原文を検証・保持して閲覧し、PB順位の対象は現行physics modelとする。
+- schema 6は曲げ係数の未記録状態を保持する。旧schema 6・7は尾翼荷重を未収録として読み込み、保存原文を保持する。
+- schema 8は各sampleの水平・垂直尾翼の荷重を保持する。各面の値は機体FRD軸の力とdatumまわりのモーメントであり、面が存在しない場合はnullとする。同時刻の採用値は終端`boundary_event`に保持する。
+- 現行の通常飛行とAttractはschema 8を生成する。旧記録は既存keyと原文を検証・保持して閲覧し、PB順位の対象は現行physics modelとする。
 - 未対応データを通知して元の保存内容を保持する。
 - 破損、未知field、非有限値、非単位quaternion、時刻・header不整合と、schemaに対応しない係数・eventの組合せを拒否する。
 - 任意のidentity metadataには後述の未知raw保持規則を適用する。
@@ -300,7 +301,7 @@ keyは次の条件をSHA-256へ入力する。
 - 明示identity、catalog・aircraft・controller・scenario・environment・physics・scoreのversion。
 - seed、tick上限、Hz、有効なHUD表示条件、Assistance、Weather。
 - 実ControlModeとShared authority、二軸gain、slew、optional alpha guard、course。
-- 初期datum位置・速度、quaternion、角速度、wind、尾翼取付角、pilot位置・速度、およびschema 7の初期曲げ係数。
+- 初期datum位置・速度、quaternion、角速度、wind、尾翼取付角、pilot位置・速度、および記録された初期曲げ係数。
 
 - finite f64は負zeroをpositive zeroへ正規化してbig-endian IEEE-754で符号化する。
 - 画質、presentation、build来歴は比較条件と独立して保持する。
