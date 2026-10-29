@@ -50,6 +50,11 @@ fn inside_triangle(triangle: [[f64; 2]; 3], ring: &[[f64; 2]]) -> bool {
             .all(|i| !edges(ring).any(|(a, b)| touches(triangle[i], triangle[(i + 1) % 3], a, b)))
 }
 
+fn triangle_contains(triangle: [[f64; 2]; 3], p: [f64; 2]) -> bool {
+    let signs = [0, 1, 2].map(|i| cross(triangle[i], triangle[(i + 1) % 3], p));
+    signs.iter().all(|&s| s >= -EPSILON) || signs.iter().all(|&s| s <= EPSILON)
+}
+
 /// Removes the island-owned raster triangles before its one continuous surface is submitted.
 pub(super) fn remove_raster(mesh: &mut VenueTerrainMesh, rings: &[&[[f64; 2]]]) {
     let bounded: Vec<_> = rings
@@ -83,6 +88,7 @@ pub(super) fn remove_raster(mesh: &mut VenueTerrainMesh, rings: &[&[[f64; 2]]]) 
                     return false;
                 }
                 points.iter().any(|&p| contains(ring, p))
+                    || triangle_contains(points, ring[0])
                     || (0..3).any(|i| {
                         edges(ring).any(|(a, b)| touches(points[i], points[(i + 1) % 3], a, b))
                     })
@@ -221,16 +227,10 @@ fn insert_boundary_samples(mesh: &mut Builder, samples: usize) -> Result<(), Str
         let mut incident = Vec::new();
         let mut retained = Vec::new();
         for triangle in mesh.indices.chunks_exact(3) {
-            let signs = (0..3)
-                .map(|i| {
-                    cross(
-                        point(mesh.positions[triangle[i] as usize]),
-                        point(mesh.positions[triangle[(i + 1) % 3] as usize]),
-                        p,
-                    )
-                })
-                .collect::<Vec<_>>();
-            if signs.iter().all(|&s| s >= -EPSILON) || signs.iter().all(|&s| s <= EPSILON) {
+            if triangle_contains(
+                [triangle[0], triangle[1], triangle[2]].map(|i| point(mesh.positions[i as usize])),
+                p,
+            ) {
                 incident.push([triangle[0], triangle[1], triangle[2]]);
             } else {
                 retained.extend_from_slice(triangle);
