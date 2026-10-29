@@ -577,6 +577,38 @@ fn tail_drag_survives_opposite_lift_and_uniform_strip_splitting() {
             1.0e-12,
         );
     }
+    // Roll gives the two strips opposite local angles while their mean CL is zero.
+    let anchor = HybridAnchor::try_new(0.0, 0.0).unwrap();
+    let opposed = [[-1.0, 0.0], [0.0, 1.0]].map(|interval| {
+        HybridProxy::try_new(geometry, interval, ElementOrientation::IDENTITY, anchor).unwrap()
+    });
+    let surfaces = [HybridSurface::try_new(geometry, &opposed, Some(coefficients)).unwrap()];
+    let load = HybridAerodynamicLoad::try_new(
+        HybridModel::try_new(fixture.polar(), &surfaces).unwrap(),
+        1.2,
+        WindField::uniform(NedVector::zero()),
+    )
+    .unwrap();
+    let actual = load
+        .evaluate_hybrid(
+            &state([10.0, 0.0, 0.0], [1.0, 0.0, 0.0]),
+            TailIncidence::neutral(),
+        )
+        .unwrap()
+        .tail_wrenches()[0]
+        .unwrap()
+        .force_body_newtons()
+        .components();
+    let speed = libm::sqrt(100.25);
+    let angle = libm::atan2(0.5, 10.0);
+    let cl = slope * angle;
+    let induced = cl * cl / (core::f64::consts::PI * geometry.aspect_ratio() * 0.7);
+    let pressure_area = 0.5 * 1.2 * speed * speed * geometry.projected_area_m2();
+    let without_induced = pressure_area * (cl * libm::sin(angle) - 0.00385 * libm::cos(angle));
+    let expected = without_induced - pressure_area * induced * libm::cos(angle);
+    near(actual[0], expected, 1.0e-12);
+    near(actual[2], 0.0, 1.0e-12);
+    assert!(actual[0] < without_induced);
 }
 
 #[test]
