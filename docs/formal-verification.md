@@ -125,6 +125,10 @@
 
 ### Running tickと終端化
 
+- 公開`abort_flight`が使用する本番`abort_flight_with_score`は、Running/Pausedの認可、現在のstateとconfigurationからの採点呼出し、既存recordの確定を一つの更新bodyで検証する。
+- 成功時はManualAbortと同じscore・state・scenarioをResultと記録へ転送する。採点失敗時はFatal Resultを確定し、元のscoreエラーを呼出し元へ返す。sample列全体、尾翼荷重、headerと予約上限を保持し、認可・記録拒否時はowner全体を保持する。
+- 採点callbackへ渡す引数と返却値の転送は本番bodyの保証であり、公開wrapper内の`course_distance_score`による浮動小数点演算は通常数値試験で確認する。
+
 - 実ConfiguredPhaseのRunning認可だけが飛行stateを返す。
 - 認可拒否では数値callbackを呼ばず、ownerを保持する。
 - 評価・telemetry・scoreのFnOnceはconfigurationとCopy値を受け取り、record・phaseへの可変参照を持たない。

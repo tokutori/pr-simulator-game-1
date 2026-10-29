@@ -1540,12 +1540,16 @@ impl<'a> GameSession<'a> {
 
     /// Aborts at the current input boundary and retains the last valid tick.
     pub fn abort_flight(&mut self) -> Result<SessionSnapshot, GameSessionError> {
-        let state = match self.configured_mut()?.phase {
-            ConfiguredPhase::Flight(ActiveFlight { state, .. }) => state,
-            _ => return Err(GameSessionError::InvalidTransition),
-        };
-        self.finalize_tick(SessionEndReason::ManualAbort, state)?;
-        Ok(self.snapshot())
+        self.abort_flight_with_score(|configuration, terminal| {
+            course_distance_score(
+                configuration
+                    .initial_state()
+                    .flight_state()
+                    .datum_position_ned(),
+                terminal.flight_state().datum_position_ned(),
+                configuration.course_axis(),
+            )
+        })
     }
 
     /// Retries with the identical sealed scenario, seed, initial state, and tick limit.
@@ -1567,33 +1571,6 @@ impl<'a> GameSession<'a> {
             }
         }
         self.retry_with_record_factory(FlightRecord::try_new)
-    }
-
-    fn finalize_tick(
-        &mut self,
-        reason: SessionEndReason,
-        state: TailFlightTickState,
-    ) -> Result<(), GameSessionError> {
-        let terminal = SessionTerminalState::TailTick(state);
-        self.finalize_terminal(reason, terminal, None)
-    }
-
-    fn finalize_terminal(
-        &mut self,
-        reason: SessionEndReason,
-        state: SessionTerminalState,
-        failure: Option<TailFlightTickError>,
-    ) -> Result<(), GameSessionError> {
-        let configured = self.configured_mut()?;
-        let configuration = &configured.configuration;
-        let start = configuration
-            .initial_state()
-            .flight_state()
-            .datum_position_ned();
-        let terminal = state.flight_state().datum_position_ned();
-        let score_result = course_distance_score(start, terminal, configuration.course_axis());
-        let identity = configuration.identity;
-        configured.finalize_terminal(reason, state, identity, failure, None, score_result)
     }
 }
 
