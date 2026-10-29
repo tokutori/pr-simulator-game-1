@@ -738,13 +738,13 @@ fn registered_flight_finishes_at_the_airframe_and_keeps_record_score_and_revisio
     );
     let difficulty = application.difficulty();
     let document = application.flight_record_document().unwrap();
-    assert_eq!(document.schema_version, 7);
+    assert_eq!(document.schema_version, 8);
     assert_eq!(
         (
             document.header.catalog_version,
             document.header.scenario_version
         ),
-        (8, 8)
+        (8, 9)
     );
     assert_eq!(
         document.header.aircraft_model_version,
