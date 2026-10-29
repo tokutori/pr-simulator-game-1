@@ -58,6 +58,14 @@ pub(super) fn game_ui_hud(
                     actuators: state.incidence(),
                     input: None,
                     wing_bending_factor: state.wing_bending_factor(),
+                    tail_wrenches: context
+                        .session
+                        .flight_record()
+                        .and_then(|record| record.samples().last())
+                        .filter(|sample| {
+                            sample.tick_index == state.tick_index() && sample.fraction == 0.0
+                        })
+                        .and_then(|sample| sample.tail_wrenches),
                     telemetry,
                 },
                 distance,
@@ -211,6 +219,16 @@ pub(super) fn game_ui_hud(
                     sample.actuators.elevator_rad().to_degrees(),
                     sample.actuators.rudder_rad().to_degrees()
                 ),
+            ));
+            let loads = sample.tail_wrenches.unwrap_or([None; 2]).map(|wrench| {
+                wrench
+                    .and_then(|wrench| wrench.force_body_newtons().norm().ok())
+                    .map_or_else(|| "—".to_owned(), |magnitude| format!("{magnitude:.1}"))
+            });
+            primary.push(text_node(
+                "hud-tail-force",
+                "水平/垂直尾翼合力",
+                format!("{} / {} N", loads[0], loads[1]),
             ));
             primary.push(text_node(
                 "hud-tail-incidence-rate",

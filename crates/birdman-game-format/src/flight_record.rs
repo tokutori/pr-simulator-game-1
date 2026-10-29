@@ -16,7 +16,8 @@ pub use tail::{
     TailFlightRecordControlsDocument, TailFlightRecordDocument,
     TailFlightRecordFinalizationDocument, TailFlightRecordInputDocument,
     TailFlightRecordSampleDocument, TailIncidenceDocument, TailPilotPositionCommandDocument,
-    TailTickFailureDocument, WindFailureDocument, compare_tail_personal_best_records,
+    TailTickFailureDocument, TailWrenchDocument, WindFailureDocument,
+    compare_tail_personal_best_records,
 };
 
 /// Maximum encoded JSON size accepted by the decoder.

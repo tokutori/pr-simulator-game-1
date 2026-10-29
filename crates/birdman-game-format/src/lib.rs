@@ -38,7 +38,8 @@ pub use flight_record::{
     TailFlightRecordBoundaryEventDocument, TailFlightRecordControlsDocument,
     TailFlightRecordDocument, TailFlightRecordFinalizationDocument, TailFlightRecordInputDocument,
     TailFlightRecordSampleDocument, TailIncidenceDocument, TailPilotPositionCommandDocument,
-    TailTickFailureDocument, WindFailureDocument, compare_tail_personal_best_records,
+    TailTickFailureDocument, TailWrenchDocument, WindFailureDocument,
+    compare_tail_personal_best_records,
 };
 pub use personal_best::{
     TailPersonalBestConfiguration, TailPersonalBestSelection, canonical_tail_personal_best_key,

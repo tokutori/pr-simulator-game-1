@@ -48,7 +48,7 @@ fn cached_hybrid_owners_survive_preparation_moves_and_share_environment_telemetr
     );
     let identity = configuration.identity();
     assert_eq!(identity.catalog_version, CATALOG_VERSION);
-    assert_eq!(identity.scenario_version, 8);
+    assert_eq!(identity.scenario_version, 9);
     assert_eq!(identity.environment_version, 6);
     assert_eq!(
         identity.aircraft_model_version,
@@ -82,6 +82,11 @@ fn cached_hybrid_owners_survive_preparation_moves_and_share_environment_telemetr
     session.advance_tail_flight_tick(neutral_input()).unwrap();
     assert_eq!(session.snapshot().phase(), SessionPhase::Result);
     let record = session.flight_record().unwrap();
+    assert!(record.samples().iter().all(|sample| {
+        sample
+            .tail_wrenches
+            .is_some_and(|loads| loads.iter().all(Option::is_some))
+    }));
     assert!(
         record
             .sample(0)
@@ -100,6 +105,11 @@ fn cached_hybrid_owners_survive_preparation_moves_and_share_environment_telemetr
         control_identity,
     )
     .unwrap();
+    assert_eq!(document.schema_version, 8);
+    assert_eq!(
+        TailFlightRecordDocument::decode_json(&document.encode_json().unwrap()).unwrap(),
+        document
+    );
     assert_eq!(document.header.environment_version, 6);
     assert_eq!(document.header.seed, 42);
     assert_eq!(
@@ -275,7 +285,7 @@ fn every_hybrid_selection_launches_and_scores_along_the_shared_northwest_bearing
             assert!((score.net_horizontal_m() - 100.0).abs() < 1.0e-12);
             assert_eq!(
                 session.configuration_identity().unwrap().scenario_version,
-                8
+                9
             );
         }
     }

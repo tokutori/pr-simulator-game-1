@@ -476,7 +476,7 @@ mod tests {
                 .unwrap()
             };
             record
-                .begin_tail(previous, telemetry(previous.flight_state()))
+                .begin_tail(previous, telemetry(previous.flight_state()), None)
                 .unwrap();
             record
                 .append_tail_report(report, telemetry(contact.flight_state()))

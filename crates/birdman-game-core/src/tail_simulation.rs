@@ -986,7 +986,7 @@ verus! {
             Err(_) => true,
         },
     {
-        record.begin_tail(previous, telemetry)?;
+        record.begin_tail(previous, telemetry, None)?;
         let report = contact_at_start_report(previous, fraction, contact_point_index);
         record.append_tail_report(report, telemetry)?;
         let TailFlightTickOutcome::WaterContact(sample) = report.outcome() else {

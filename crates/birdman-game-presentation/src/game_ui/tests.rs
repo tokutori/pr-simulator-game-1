@@ -3559,6 +3559,7 @@ fn replay_hud_uses_the_recorded_pilot_target_for_the_displayed_interval() {
         hud_node(&hud, "hud-tail-incidence-rate").content.value(),
         "— rad/s"
     );
+    assert_eq!(hud_node(&hud, "hud-tail-force").content.value(), "— / — N");
 }
 
 #[test]
@@ -3575,6 +3576,22 @@ fn hud_uses_the_authoritative_telemetry_and_existing_information_cue_policy() {
     assert_eq!(
         hud_node(&hud, "hud-tail-incidence-rate").content.value(),
         "— rad/s"
+    );
+    let expected = session
+        .flight_record()
+        .unwrap()
+        .samples()
+        .last()
+        .unwrap()
+        .tail_wrenches
+        .unwrap();
+    let magnitudes = expected.map(|load| {
+        load.and_then(|load| load.force_body_newtons().norm().ok())
+            .map_or_else(|| "—".to_owned(), |value| format!("{value:.1}"))
+    });
+    assert_eq!(
+        hud_node(&hud, "hud-tail-force").content.value(),
+        format!("{} / {} N", magnitudes[0], magnitudes[1])
     );
     let GameUiHudNodeContent::Attitude { geometry, value } =
         &hud_node(&hud, "hud-attitude").content

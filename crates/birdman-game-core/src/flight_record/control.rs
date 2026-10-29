@@ -199,6 +199,8 @@ pub struct FlightRecordBoundaryEvent {
     pub input: FlightRecordTailInput,
     /// Accepted structural coefficient at the same boundary.
     pub wing_bending_factor: WingBendingFactor,
+    /// Accepted horizontal and vertical tail wrenches at this boundary.
+    pub tail_wrenches: Option<[Option<crate::Wrench>; 2]>,
 }
 
 impl FlightRecordBoundaryEvent {
@@ -216,6 +218,7 @@ impl FlightRecordBoundaryEvent {
                             incidence: controls.incidence,
                             input,
                             wing_bending_factor,
+                            tail_wrenches: Some(report.tail_wrenches()),
                         })),
                         _ => Err(super::FlightRecordError::FinalizationMismatch),
                     }
