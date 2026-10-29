@@ -525,6 +525,61 @@ fn tail_actual_loads_at_uniform_reference_are_distinct_from_zero_increment() {
 }
 
 #[test]
+fn tail_drag_survives_opposite_lift_and_uniform_strip_splitting() {
+    let fixture = Fixture::new(4);
+    let geometry = fixture.geometry(1);
+    let coefficients = test_tail(geometry).unwrap();
+    let two = &fixture.proxies[1];
+    let one = HybridProxy::try_new(
+        geometry,
+        [-1.0, 1.0],
+        ElementOrientation::IDENTITY,
+        two[0].anchor(),
+    )
+    .unwrap();
+    let slope = geometry.lift_slope_per_rad();
+    let zero_lift = one.anchor().geometric_alpha_rad() - one.anchor().lift_coefficient() / slope;
+    let evaluate = |proxy, alpha| {
+        tail_proxy_wrench(
+            proxy,
+            vector([10.0, 0.0, 0.0]),
+            10.0,
+            alpha,
+            1.2,
+            slope,
+            coefficients,
+            geometry.aspect_ratio(),
+        )
+        .unwrap()
+    };
+    let positive = evaluate(one, zero_lift + 0.03);
+    let negative = evaluate(one, zero_lift - 0.03);
+    let plus = positive.force_body_newtons().components();
+    let minus = negative.force_body_newtons().components();
+    near(plus[2], -minus[2], 1.0e-12);
+    near(plus[0], minus[0], 1.0e-12);
+    assert!(plus[0] < 0.0);
+    let parts = [
+        evaluate(two[0], zero_lift + 0.03),
+        evaluate(two[1], zero_lift + 0.03),
+    ];
+    for axis in 0..3 {
+        near(
+            positive.force_body_newtons().components()[axis],
+            parts[0].force_body_newtons().components()[axis]
+                + parts[1].force_body_newtons().components()[axis],
+            1.0e-12,
+        );
+        near(
+            positive.moment_about_datum_newton_meters().components()[axis],
+            parts[0].moment_about_datum_newton_meters().components()[axis]
+                + parts[1].moment_about_datum_newton_meters().components()[axis],
+            1.0e-12,
+        );
+    }
+}
+
+#[test]
 fn slope_has_explicit_analytic_values_and_asymptotic_limits() {
     for (span, chord, expected) in [
         (2.0, 1.0, core::f64::consts::PI),
