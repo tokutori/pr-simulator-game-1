@@ -58,6 +58,7 @@ pub(super) fn context<'view>(
         presentation_available: true,
         difficulty,
         keyboard_controls: birdman_game_app::flight_input::KeyboardControlSettings::default(),
+        accepted_flight_keys: [false; 9],
         preset: difficulty.preset_label(),
         identity: session.configuration_identity(),
         record: session.playback_record(),
@@ -2724,6 +2725,64 @@ fn leaving_replay_retains_the_authoritative_clock_as_the_analysis_cursor() {
         panic!("missing analysis cursor")
     };
     assert_eq!(*value, 0.015);
+}
+
+#[test]
+fn admitted_keyboard_state_is_visible_in_live_hud_across_information_and_modes() {
+    let session = launched();
+    let state = GameUiState::default();
+    for mode in [
+        GameUiPresentationMode::Screen,
+        GameUiPresentationMode::PhoneVr,
+        GameUiPresentationMode::Hmd,
+    ] {
+        let mut platform = platform();
+        platform.presentation_mode = mode;
+        for information in [
+            InformationLevel::Full,
+            InformationLevel::Minimal,
+            InformationLevel::Custom,
+        ] {
+            let mut context = context(
+                &session,
+                difficulty().with_information(information),
+                &platform,
+            );
+            context.accepted_flight_keys =
+                [true, false, false, true, true, false, true, false, true];
+            let view = game_ui_view(&state, &context).unwrap();
+            let hud = view.hud.as_ref().unwrap();
+            assert_eq!(
+                hud_node(hud, "hud-accepted-keys").content.value(),
+                "↑● ↓○ ←○ →● J● L○ C● P○ Esc●"
+            );
+            let frame = game_ui_frame(&state, &context, &view, view.view_revision).unwrap();
+            assert_eq!(
+                hud_node(frame.hud.as_ref().unwrap(), "hud-accepted-keys")
+                    .content
+                    .value(),
+                "↑● ↓○ ←○ →● J● L○ C● P○ Esc●"
+            );
+        }
+    }
+    let mut replay = finalized();
+    replay.enter_replay().unwrap();
+    let platform = platform();
+    let state = GameUiState {
+        replay_view: GameUiReplayView::Telemetry,
+        ..GameUiState::default()
+    };
+    let mut context = context(&replay, difficulty(), &platform);
+    context.accepted_flight_keys = [true; 9];
+    let view = game_ui_view(&state, &context).unwrap();
+    assert!(
+        view.hud
+            .unwrap()
+            .groups
+            .into_iter()
+            .flat_map(|group| group.nodes)
+            .all(|node| node.id != "hud-accepted-keys")
+    );
 }
 
 #[test]

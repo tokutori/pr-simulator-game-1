@@ -85,7 +85,7 @@ use birdman_game_app::application::{
 use birdman_game_app::environment_snapshot::{EnvironmentIdentity, EnvironmentSelection};
 #[cfg(not(verus_only))]
 use birdman_game_app::flight_input::{
-    FlightControl, FlightGamepadObservation, FlightKeyObservation,
+    FlightActionKey, FlightControl, FlightGamepadObservation, FlightKeyObservation,
 };
 #[cfg(not(verus_only))]
 use birdman_game_app::{HybridSessionPreparation, identity_for_selection};
@@ -803,6 +803,15 @@ impl ApplicationRuntime {
                 pressed,
                 repeat,
             } => {
+                let action_key = match code.as_str() {
+                    "KeyC" => Some(FlightActionKey::Camera),
+                    "KeyP" => Some(FlightActionKey::Pause),
+                    "Escape" => Some(FlightActionKey::Escape),
+                    _ => None,
+                };
+                if !pressed && let Some(key) = action_key {
+                    self.application.observe_flight_action_key(key, false);
+                }
                 let control = match code.as_str() {
                     "ArrowUp" => Some(FlightControl::NoseUp),
                     "ArrowDown" => Some(FlightControl::NoseDown),
@@ -829,6 +838,8 @@ impl ApplicationRuntime {
                         )
                     {
                         self.scene.toggle_camera();
+                        self.application
+                            .observe_flight_action_key(FlightActionKey::Camera, true);
                         keyboard_consumed = true;
                     } else if matches!(code.as_str(), "KeyP" | "Escape")
                         && pressed
@@ -852,6 +863,8 @@ impl ApplicationRuntime {
                                 GameUiAction::Session { command },
                                 &mut requests,
                             )?;
+                            self.application
+                                .observe_flight_action_key(action_key.unwrap(), true);
                             keyboard_consumed = true;
                         }
                     }
@@ -1827,6 +1840,7 @@ impl ApplicationRuntime {
             presentation_available: self.application.presentation_available(),
             difficulty: self.application.display_difficulty(),
             keyboard_controls: self.application.keyboard_controls(),
+            accepted_flight_keys: self.application.accepted_flight_keys(),
             preset: self.application.display_preset(),
             identity: self.identity()?,
             record: self.application.core_session().playback_record(),
