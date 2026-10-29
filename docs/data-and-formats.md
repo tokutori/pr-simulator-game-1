@@ -13,13 +13,13 @@
 
 | 対象 | 現行契約 |
 | --- | --- |
-| 機体JSON | `AircraftDocument`、schema 2、最大256 KiB |
+| 機体JSON | `AircraftDocument`、schema 3、最大256 KiB |
 | 環境JSON | `EnvironmentDocument`、schema 1、最大8 MiB |
 | 飛行記録JSON | `TailFlightRecordDocument`、schema 6/7、最大16 MiB |
 | 飛行ログCSV | schema 6はexport version 3、schema 7はversion 4 |
 | Personal Best | 比較方式v3、Rustによるkey再生成・選定 |
-| 物理・積分・接触 | physics model 5 |
-| 既定機体・scenario | aircraft model 5、catalog 8、scenario 8、controller profile 3 |
+| 物理・積分・接触 | physics model 6 |
+| 既定機体・scenario | aircraft model 6、catalog 8、scenario 9、controller profile 3 |
 
 - 版の正本は実装の公開定義・登録catalogとする。
 - JSON schema、物理model、機体、controller、環境、score、比較方式、build来歴は異なる概念であり、独立して保持する。
