@@ -1191,17 +1191,7 @@ export type GameUiPlatformCommand = {
     readonly kind: "open_stored_record";
 } | {
     readonly kind: "retry_stored_records";
-} | {
-    /**
-     * Shared UI selection to apply.
-     */
-    readonly camera: GameUiReplayCamera;
-    readonly kind: "set_replay_camera";
 };
-/**
- * Replay camera candidates in their shared selection order.
- */
-export type GameUiReplayCamera = "auto" | "pilot" | "chase" | "orbit" | "platform" | "shore" | "overhead" | "side" | "front" | "telephoto";
 /**
  * Result presentation mode.
  */
