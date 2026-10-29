@@ -12,16 +12,10 @@ pub(crate) struct FlightDevices {
     connections: BTreeMap<u64, ApplicationGamepadObservation>,
     generation: u32,
     observations: Vec<ApplicationGamepadObservation>,
-    #[cfg(feature = "verify-harness")]
-    verification: Option<[ApplicationGamepadObservation; 1]>,
 }
 
 impl FlightDevices {
     pub(crate) fn observations(&self) -> &[ApplicationGamepadObservation] {
-        #[cfg(feature = "verify-harness")]
-        if let Some(observations) = &self.verification {
-            return observations;
-        }
         &self.observations
     }
 
@@ -73,21 +67,6 @@ impl FlightDevices {
             RawGamepadEvent::Button(_) => {}
         }
         Ok(())
-    }
-
-    #[cfg(feature = "verify-harness")]
-    pub(crate) fn verification_axes(&mut self, axes: [f64; 3]) {
-        self.verification = Some([ApplicationGamepadObservation {
-            identity: FlightDeviceIdentity {
-                slot_low: 0,
-                slot_high: 0,
-                generation: 1,
-            },
-            connected: true,
-            mapping: "standard-y-up".into(),
-            axes: vec![Some(axes[1]), Some(axes[0]), Some(0.0), Some(axes[2])],
-            buttons: vec![false; 2],
-        }]);
     }
 }
 

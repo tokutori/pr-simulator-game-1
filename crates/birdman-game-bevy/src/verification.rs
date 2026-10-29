@@ -23,6 +23,11 @@ use super::{
     projection::VerificationObserver,
     screen_render::timing::TimingMode,
 };
+use bevy::input::{
+    ButtonState,
+    gamepad::{GamepadAxis, RawGamepadAxisChangedEvent, RawGamepadEvent},
+    keyboard::{Key, KeyboardInput, NativeKey},
+};
 use bevy::{
     camera::RenderTarget, diagnostic::DiagnosticsStore, ecs as bevy_ecs, prelude::*, shader::Shader,
 };
@@ -208,7 +213,14 @@ enum Check {
     Camera(GameUiReplayCamera),
     RetainRecord,
     OpenStoredRecord,
+    Keyboard(KeyCode, ButtonState),
+    GamepadAxis(GamepadAxis, f32),
+    Paused,
+    Running,
 }
+
+#[derive(Component)]
+struct VerificationGamepad;
 
 #[derive(Resource)]
 pub(crate) struct Verification {
@@ -250,6 +262,7 @@ impl Verification {
         water_case: Option<WaterVerificationCase>,
         capture_target: RenderTarget,
         replay_cameras: bool,
+        adapter_input: bool,
     ) -> Result<(Self, VerificationCompletion), std::io::Error> {
         std::fs::create_dir_all(&directory)?;
         let mut checks = vec![
@@ -269,6 +282,40 @@ impl Verification {
             Check::Capture("03-countdown.png".into()),
             Check::Flight,
             Check::FlightCapture("04-pilot.png".into()),
+        ]);
+        if adapter_input {
+            checks.extend([
+                session(SessionCommand::Pause {}),
+                overlay(GameUiPauseOverlay::Settings),
+                platform(GameUiPlatformCommand::SetScreenRenderAuto { enabled: false }),
+                platform(GameUiPlatformCommand::SetWaterQuality {
+                    quality: WaterQuality::Low,
+                }),
+                platform(GameUiPlatformCommand::SetScreenRenderScale {
+                    scale: ScreenRenderScale::Half,
+                }),
+                overlay(GameUiPauseOverlay::Menu),
+                session(SessionCommand::Resume {}),
+                Check::Flight,
+                Check::Keyboard(KeyCode::ArrowUp, ButtonState::Pressed),
+                Check::Delay(Duration::from_millis(100)),
+                Check::Keyboard(KeyCode::ArrowUp, ButtonState::Released),
+                Check::Delay(Duration::from_millis(100)),
+                Check::Flight,
+                Check::GamepadAxis(GamepadAxis::LeftStickY, 0.25),
+                Check::GamepadAxis(GamepadAxis::LeftStickX, 0.25),
+                Check::Delay(Duration::from_millis(100)),
+                Check::GamepadAxis(GamepadAxis::LeftStickY, 0.0),
+                Check::GamepadAxis(GamepadAxis::LeftStickX, 0.0),
+                Check::Keyboard(KeyCode::KeyP, ButtonState::Pressed),
+                Check::Keyboard(KeyCode::KeyP, ButtonState::Released),
+                Check::Paused,
+                Check::Keyboard(KeyCode::KeyP, ButtonState::Pressed),
+                Check::Keyboard(KeyCode::KeyP, ButtonState::Released),
+                Check::Running,
+            ]);
+        }
+        checks.extend([
             session(SessionCommand::Pause {}),
             overlay(GameUiPauseOverlay::Settings),
         ]);
@@ -474,10 +521,23 @@ impl Verification {
 
 pub(crate) fn supply_input(
     verification: Res<Verification>,
-    mut devices: ResMut<super::flight_devices::FlightDevices>,
+    mut initialized: Local<bool>,
+    mut commands: Commands,
+    mut events: MessageWriter<bevy::input::gamepad::RawGamepadEvent>,
 ) {
-    if verification.completion.is_some() {
-        devices.verification_axes([0.0; 3]);
+    if verification.completion.is_some() && !*initialized {
+        let gamepad = commands.spawn(VerificationGamepad).id();
+        events.write(bevy::input::gamepad::RawGamepadEvent::Connection(
+            bevy::input::gamepad::GamepadConnectionEvent::new(
+                gamepad,
+                bevy::input::gamepad::GamepadConnection::Connected {
+                    name: "Verification gamepad".into(),
+                    vendor_id: None,
+                    product_id: None,
+                },
+            ),
+        ));
+        *initialized = true;
     }
 }
 
@@ -649,6 +709,31 @@ fn advance_step(world: &mut World, verification: &mut Verification) -> Result<()
         return Ok(());
     };
     match check {
+        Check::Keyboard(key_code, state) => {
+            let window = world.query_filtered::<Entity, With<bevy::window::PrimaryWindow>>().single(world)
+                .map_err(|_| "Verification window is unavailable")?;
+            world.write_message(KeyboardInput {
+                key_code,
+                logical_key: Key::Unidentified(NativeKey::Unidentified),
+                state,
+                text: None,
+                repeat: false,
+                window,
+            });
+            verification.next();
+        }
+        Check::GamepadAxis(axis, value) => {
+            let gamepad = world.query_filtered::<Entity, With<VerificationGamepad>>().single(world)
+                .map_err(|_| "Verification gamepad is unavailable")?;
+            world.write_message(RawGamepadEvent::Axis(RawGamepadAxisChangedEvent::new(gamepad, axis, value)));
+            verification.next();
+        }
+        Check::Paused => {
+            if matches!(phase, SessionPhase::FlightPaused { .. }) { verification.next(); }
+        }
+        Check::Running => {
+            if phase == SessionPhase::FlightRunning { verification.next(); }
+        }
         Check::Action(action) => {
             let selected_auto = if let GameUiAction::Platform { command: GameUiPlatformCommand::SetScreenRenderAuto { enabled } } = &action {
                 super::ui::submitted_view(world).is_some_and(|view| view.panels.iter().flat_map(|panel| &panel.controls).any(|control| control.enabled && matches!(&control.content, GameUiControlContent::Button { action: GameUiAction::Platform { command: GameUiPlatformCommand::SetScreenRenderAuto { .. } }, presentation: GameUiButtonPresentation::Choice { selected, .. } } if selected == enabled)))

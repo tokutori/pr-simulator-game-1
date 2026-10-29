@@ -75,11 +75,12 @@ pub(crate) fn output(
     observation: Option<Value>,
     fonts: Vec<Value>,
     output: &ApplicationOutput,
+    flight: Value,
 ) {
     if let Some(observation) = observation {
         let result = wire_value(&output.requests).and_then(|requests| write(
             world,
-            json!({ "observation": observation, "fonts": fonts, "requests": requests, "lifecycle": output.lifecycle }),
+            json!({ "observation": observation, "fonts": fonts, "requests": requests, "lifecycle": output.lifecycle, "keyboard_consumed": output.keyboard_consumed, "flight": flight }),
             output.lifecycle == birdman_game_runtime::ApplicationLifecycle::Drained,
         ));
         report(world, result);
@@ -158,6 +159,7 @@ mod tests {
                 requests: Vec::new(),
                 keyboard_consumed: false,
             },
+            Value::Null,
         );
         failed(
             &mut world,

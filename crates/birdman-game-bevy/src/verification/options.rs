@@ -1,5 +1,5 @@
 use super::{Verification, VerificationCompletion, WaterVerificationCase};
-use crate::app::{native_runtime, offscreen, read_input, screen_render::timing::TimingMode};
+use crate::app::{native_runtime, offscreen, screen_render::timing::TimingMode};
 use bevy::{app::ScheduleRunnerPlugin, prelude::*, window::ExitCondition};
 use std::{error::Error, path::PathBuf};
 
@@ -11,6 +11,7 @@ pub(crate) struct Options {
     water_auto: bool,
     timing: Option<String>,
     replay_cameras: bool,
+    adapter_input: bool,
     offscreen: bool,
 }
 
@@ -24,6 +25,7 @@ impl Options {
             "--offscreen" => self.offscreen = true,
             "--verify-water-auto" => self.water_auto = true,
             "--verify-replay-cameras" => self.replay_cameras = true,
+            "--verify-adapter-input" => self.adapter_input = true,
             "--verify" => {
                 self.directory = Some(PathBuf::from(
                     arguments
@@ -149,11 +151,15 @@ impl Options {
             water,
             offscreen::output_target(app.world()),
             self.replay_cameras,
+            self.adapter_input,
         )?;
         app.insert_resource(super::trace::ApplicationTrace::create(&trace_directory)?)
             .insert_resource(verification)
             .add_plugins(super::render_readiness::VerificationRenderPlugin)
-            .add_systems(PreUpdate, super::supply_input.after(read_input))
+            .add_systems(
+                PreUpdate,
+                super::supply_input.before(bevy::input::InputSystems),
+            )
             .add_systems(
                 Update,
                 super::project_observer.before(native_runtime::update),
@@ -315,6 +321,7 @@ mod tests {
                 app.world().resource::<AssetServer>(),
                 Some(case),
                 RenderTarget::default(),
+                false,
                 false,
             )
             .unwrap();

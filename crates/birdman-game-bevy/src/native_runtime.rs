@@ -157,7 +157,14 @@ pub(crate) fn update(world: &mut World) {
             }
         };
         #[cfg(feature = "verify-harness")]
-        super::verification::trace::output(world, trace_input, trace_fonts, &output);
+        {
+            let snapshot = runtime.0.application().core_session().snapshot();
+            let flight = serde_json::json!({
+                "phase": format!("{:?}", snapshot.phase()),
+                "tick": snapshot.tail_flight_state().map(|state| state.tick_index()),
+            });
+            super::verification::trace::output(world, trace_input, trace_fonts, &output, flight);
+        }
         if let Some(cause) = output.diagnostic {
             warn!("Native application: {cause}");
         }
