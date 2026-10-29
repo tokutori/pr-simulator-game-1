@@ -21,14 +21,14 @@ pub fn game_ui_view(
     let scene = scene(phase);
     let can_resume = context.resume_available
         && context.flight_failure.is_none()
-        && context.platform.flight_controller_failure.is_none();
+        && context.platform.renderer_failure.is_none();
     let mut menu = Menu::default();
     let credits_open = state.credits_open
         && matches!(
             phase,
             SessionPhase::Title | SessionPhase::FlightPaused { .. }
         );
-    let mut description = if credits_open {
+    let description = if credits_open {
         "使用しているデータとソフトウェアの出典・利用条件。".to_owned()
     } else {
         description(phase, can_resume, context.flight_failure)
@@ -230,7 +230,7 @@ pub fn game_ui_view(
         }
         SessionPhase::FlightRunning => {
             menu.section("flight-actions", "", GameUiSectionLayout::Row);
-            if context.platform.flight_controller_failure.is_none() {
+            if context.platform.renderer_failure.is_none() {
                 menu.session(
                     "game-flight-pause",
                     "一時停止",
@@ -240,7 +240,7 @@ pub fn game_ui_view(
                 );
             }
             if context.platform.presentation_mode == GameUiPresentationMode::Screen
-                || context.platform.flight_controller_failure.is_some()
+                || context.platform.renderer_failure.is_some()
             {
                 menu.session(
                     "game-flight-abort",
@@ -405,13 +405,6 @@ pub fn game_ui_view(
                 driver_failure_reason(failure),
             );
         }
-        if let Some(cause) = &context.platform.flight_controller_failure {
-            let message = format!("飛行処理停止。最後の有効状態を表示する。停止理由: {cause}");
-            if context.flight_failure.is_none() {
-                description.clone_from(&message);
-            }
-            menu.status("game-controller-stopped", "飛行処理停止", &message);
-        }
         if context.platform.presentation_mode != GameUiPresentationMode::Screen
             && let Some(cause) = &context.platform.head_hud_failure
         {
@@ -422,6 +415,20 @@ pub fn game_ui_view(
             );
         }
     }
+    if let Some(cause) = &context.platform.renderer_failure {
+        menu.section(
+            "renderer-recovery",
+            "描画の回復",
+            GameUiSectionLayout::Column,
+        );
+        menu.status("game-renderer-stopped", "描画停止", cause);
+        menu.platform(
+            "game-renderer-reload",
+            "ゲームを再読み込み",
+            GameUiPlatformCommand::ReloadApplication {},
+            true,
+        );
+    }
     menu.sections.retain(|section| {
         menu.controls
             .iter()
@@ -431,7 +438,14 @@ pub fn game_ui_view(
         for control in &mut menu.controls {
             if !matches!(
                 control.content,
-                GameUiControlContent::Status { .. } | GameUiControlContent::Chart { .. }
+                GameUiControlContent::Status { .. }
+                    | GameUiControlContent::Chart { .. }
+                    | GameUiControlContent::Button {
+                        action: GameUiAction::Platform {
+                            command: GameUiPlatformCommand::ReloadApplication {},
+                        },
+                        ..
+                    }
             ) {
                 control.enabled = false;
             }
@@ -440,9 +454,8 @@ pub fn game_ui_view(
     let spatial_flight = phase == SessionPhase::FlightRunning
         && context.platform.presentation_mode != GameUiPresentationMode::Screen;
     let expanded_head_failure = spatial_flight && context.platform.head_hud_failure.is_some();
-    let expanded_controller_failure =
-        spatial_flight && context.platform.flight_controller_failure.is_some();
-    let spatial_height = match (expanded_head_failure, expanded_controller_failure) {
+    let expanded_renderer_failure = spatial_flight && context.platform.renderer_failure.is_some();
+    let spatial_height = match (expanded_head_failure, expanded_renderer_failure) {
         (true, true) => 0.80,
         (false, true) => 0.65,
         (true, false) => 0.50,
@@ -1065,7 +1078,7 @@ fn water_quality(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
             !matches!(
                 context.platform.water_quality_operation,
                 GameUiWaterQualityOperation::Applying { .. }
-            ) && context.platform.flight_controller_failure.is_none(),
+            ) && context.platform.renderer_failure.is_none(),
             "water-quality",
             GameUiControlContent::Button {
                 action: GameUiAction::Platform {
@@ -1095,7 +1108,7 @@ fn screen_render_scale(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
     }
     let render = &context.platform.screen_render_scale;
     let automatic = matches!(render.selection, ScreenRenderSelection::Auto { .. });
-    let enabled = context.platform.flight_controller_failure.is_none()
+    let enabled = context.platform.renderer_failure.is_none()
         && !matches!(render.status, ScreenRenderAutoStatus::Applying { .. });
     let status = match &render.status {
         ScreenRenderAutoStatus::Manual => "手動設定".to_owned(),
