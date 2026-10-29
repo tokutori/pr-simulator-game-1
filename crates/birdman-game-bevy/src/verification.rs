@@ -270,6 +270,17 @@ impl Verification {
             session(SessionCommand::OpenSetup {}),
             Check::Capture("01-setup.png".into()),
         ];
+        if adapter_input {
+            checks.extend([
+                platform(GameUiPlatformCommand::SetScreenRenderAuto { enabled: false }),
+                platform(GameUiPlatformCommand::SetWaterQuality {
+                    quality: WaterQuality::Low,
+                }),
+                platform(GameUiPlatformCommand::SetScreenRenderScale {
+                    scale: ScreenRenderScale::Half,
+                }),
+            ]);
+        }
         if let Some(case) = water_case {
             checks.push(session(SessionCommand::SelectWeather {
                 weather: case.weather,
@@ -281,22 +292,9 @@ impl Verification {
             session(SessionCommand::StartCountdown {}),
             Check::Capture("03-countdown.png".into()),
             Check::Flight,
-            Check::FlightCapture("04-pilot.png".into()),
         ]);
         if adapter_input {
             checks.extend([
-                session(SessionCommand::Pause {}),
-                overlay(GameUiPauseOverlay::Settings),
-                platform(GameUiPlatformCommand::SetScreenRenderAuto { enabled: false }),
-                platform(GameUiPlatformCommand::SetWaterQuality {
-                    quality: WaterQuality::Low,
-                }),
-                platform(GameUiPlatformCommand::SetScreenRenderScale {
-                    scale: ScreenRenderScale::Half,
-                }),
-                overlay(GameUiPauseOverlay::Menu),
-                session(SessionCommand::Resume {}),
-                Check::Flight,
                 Check::Keyboard(KeyCode::ArrowUp, ButtonState::Pressed),
                 Check::Delay(Duration::from_millis(100)),
                 Check::Keyboard(KeyCode::ArrowUp, ButtonState::Released),
@@ -307,6 +305,7 @@ impl Verification {
                 Check::Delay(Duration::from_millis(100)),
                 Check::GamepadAxis(GamepadAxis::LeftStickY, 0.0),
                 Check::GamepadAxis(GamepadAxis::LeftStickX, 0.0),
+                Check::Flight,
                 Check::Keyboard(KeyCode::KeyP, ButtonState::Pressed),
                 Check::Keyboard(KeyCode::KeyP, ButtonState::Released),
                 Check::Paused,
@@ -315,6 +314,7 @@ impl Verification {
                 Check::Running,
             ]);
         }
+        checks.push(Check::FlightCapture("04-pilot.png".into()));
         checks.extend([
             session(SessionCommand::Pause {}),
             overlay(GameUiPauseOverlay::Settings),
