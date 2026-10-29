@@ -1,13 +1,104 @@
 #[cfg(verus_only)]
 use vstd::prelude::*;
 
-use super::{GameSessionError, SessionResult, SessionTerminalState};
+#[cfg(verus_only)]
+use super::SessionLifecycle;
+use super::{
+    GameSession, GameSessionConfiguration, GameSessionError, SessionResult, SessionSnapshot,
+    SessionTerminalState,
+};
 use crate::configured_phase::ConfiguredPhase;
 use crate::configured_session::ConfiguredSession;
+use crate::flight_execution::ActiveFlight;
 use crate::flight_record::{FlightRecord, FlightRecordBoundaryEvent};
 use crate::scoring::{DistanceScore, DistanceScoreError};
 use crate::session_contract::{SessionEndReason, SessionScenarioIdentity};
 use crate::tail_simulation::{TailFlightTickError, TailFlightTickState};
+
+impl<'a> GameSession<'a> {
+    #[cfg_attr(verus_only, vstd::prelude::verus_verify)]
+    #[cfg_attr(verus_only, verus_spec(outcome =>
+        requires
+            old(self).projection_valid(),
+            match old(self).lifecycle {
+                SessionLifecycle::Configured(before) => match before.phase {
+                    ConfiguredPhase::Flight(flight) => score.requires((
+                        &before.configuration, SessionTerminalState::TailTick(flight.state))),
+                    _ => true,
+                },
+                _ => true,
+            },
+        ensures
+            final(self).projection_valid(),
+            final(self).attract_record == old(self).attract_record,
+            final(self).countdown_token == old(self).countdown_token,
+            match old(self).lifecycle {
+                SessionLifecycle::Configured(before) => match before.phase {
+                    ConfiguredPhase::Flight(flight) => match outcome {
+                        Err(GameSessionError::Record(_)) => *final(self) == *old(self),
+                        _ => match final(self).lifecycle {
+                            SessionLifecycle::Configured(after) => after.configuration == before.configuration
+                                && after.record.recorded_samples() == before.record.recorded_samples()
+                                && after.record.header() == before.record.header()
+                                && after.record.sample_limit() == before.record.sample_limit()
+                                && match after.phase {
+                                    ConfiguredPhase::Result { result } => result.state == SessionTerminalState::TailTick(flight.state)
+                                        && result.scenario == before.configuration.identity && result.failure.is_none()
+                                        && (exists|returned: Result<DistanceScore, DistanceScoreError>|
+                                            #[trigger] score.ensures((&before.configuration, result.state), returned)
+                                            && result.score == match returned { Ok(value) => Some(value), Err(_) => None }
+                                            && result.reason == match returned {
+                                                Ok(_) => SessionEndReason::ManualAbort,
+                                                Err(_) => SessionEndReason::FatalSimulationError,
+                                            }
+                                            && outcome == match returned {
+                                                Ok(_) => Ok(final(self).snapshot()),
+                                                Err(error) => Err(GameSessionError::Score(error)),
+                                            })
+                                        && match after.record.finalization() {
+                                            Some(metadata) => metadata.reason == result.reason
+                                                && metadata.score == result.score && metadata.failure.is_none()
+                                                && metadata.boundary_event.is_none()
+                                                && metadata.terminal_tick == flight.state.tick_index()
+                                                && metadata.terminal_fraction == SessionTerminalState::TailTick(flight.state).record_time().1,
+                                            None => false,
+                                        },
+                                    _ => false,
+                                },
+                            _ => false,
+                        },
+                    },
+                    _ => outcome == Err(GameSessionError::InvalidTransition) && *final(self) == *old(self),
+                },
+                _ => outcome == Err(GameSessionError::InvalidTransition) && *final(self) == *old(self),
+            },
+    ))]
+    pub(super) fn abort_flight_with_score(
+        &mut self,
+        score: impl FnOnce(
+            &GameSessionConfiguration<'a>,
+            SessionTerminalState,
+        ) -> Result<DistanceScore, DistanceScoreError>,
+    ) -> Result<SessionSnapshot, GameSessionError> {
+        let configured = self.configured_mut()?;
+        let state = match configured.phase {
+            ConfiguredPhase::Flight(ActiveFlight { state, .. }) => state,
+            _ => return Err(GameSessionError::InvalidTransition),
+        };
+        let terminal = SessionTerminalState::TailTick(state);
+        let score_result = score(&configured.configuration, terminal);
+        let identity = configured.configuration.identity;
+        configured.finalize_terminal(
+            SessionEndReason::ManualAbort,
+            terminal,
+            identity,
+            None,
+            None,
+            score_result,
+        )?;
+        Ok(self.snapshot())
+    }
+}
 
 impl<Configuration, Clock>
     ConfiguredSession<Configuration, FlightRecord, TailFlightTickState, SessionResult, Clock>
