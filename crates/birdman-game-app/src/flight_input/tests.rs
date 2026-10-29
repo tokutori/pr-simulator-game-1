@@ -109,6 +109,7 @@ fn activation_and_resume_accept_release_then_fresh_press_instead_of_held_repeats
     key(&mut input, FlightControl::NoseUp, true, false);
     input.set_active(true);
     key(&mut input, FlightControl::NoseUp, true, true);
+    assert_eq!(input.accepted_keys(), [false; 9]);
     assert_eq!(
         tick(&mut input, &[], 0.0)
             .unwrap()
@@ -118,6 +119,11 @@ fn activation_and_resume_accept_release_then_fresh_press_instead_of_held_repeats
     );
     key(&mut input, FlightControl::NoseUp, false, false);
     key(&mut input, FlightControl::NoseUp, true, false);
+    assert!(input.accepted_keys()[0]);
+    input.observe_action_key(FlightActionKey::Camera, true);
+    assert!(input.accepted_keys()[6]);
+    input.observe_action_key(FlightActionKey::Camera, false);
+    assert!(!input.accepted_keys()[6]);
     assert_eq!(
         tick(&mut input, &[], 0.0)
             .unwrap()
@@ -126,6 +132,7 @@ fn activation_and_resume_accept_release_then_fresh_press_instead_of_held_repeats
         0.02
     );
     input.set_active(false);
+    assert!(!input.accepted_keys()[0]);
     key(&mut input, FlightControl::NoseUp, true, true);
     input.set_active(true);
     key(&mut input, FlightControl::NoseUp, true, true);
@@ -138,6 +145,7 @@ fn activation_and_resume_accept_release_then_fresh_press_instead_of_held_repeats
     );
     key(&mut input, FlightControl::NoseUp, false, false);
     key(&mut input, FlightControl::NoseUp, true, false);
+    assert!(input.accepted_keys()[0]);
     assert_eq!(
         tick(&mut input, &[], 0.0)
             .unwrap()
@@ -145,6 +153,8 @@ fn activation_and_resume_accept_release_then_fresh_press_instead_of_held_repeats
             .nose_up(),
         0.02
     );
+    input.invalidate();
+    assert_eq!(input.accepted_keys(), [false; 9]);
 }
 
 #[test]

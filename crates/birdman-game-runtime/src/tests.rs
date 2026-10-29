@@ -2,7 +2,7 @@ use super::*;
 use birdman_game_app::application::SessionCommand;
 use birdman_game_presentation::game_ui::{
     GameUiAnalysisChart, GameUiChartExtent, GameUiControlContent, GameUiControlInput,
-    GameUiResultTab, GameUiViewport,
+    GameUiReplayCamera, GameUiReplayView, GameUiResultTab, GameUiViewport,
 };
 
 fn no_text_metrics(_: &ApplicationTextProbe) -> Result<ApplicationGlyphMetrics, MenuLayoutFailure> {
@@ -959,6 +959,128 @@ fn finalized_application() -> ApplicationSession {
 }
 
 #[test]
+fn admitted_flight_keys_reach_hud_and_clear_on_focus_loss() {
+    use birdman_game_core::ControlMode;
+    let mut application = ApplicationSession::new(ControlMode::Manual, 1, 42);
+    for command in [
+        SessionCommand::OpenSetup {},
+        SessionCommand::Prepare {},
+        SessionCommand::StartCountdown {},
+    ] {
+        application
+            .execute(command, BackendReadiness::Ready)
+            .unwrap();
+    }
+    application
+        .observe_countdown(
+            application.core_session().countdown_token().unwrap(),
+            3.0,
+            true,
+        )
+        .unwrap();
+    let platform = ApplicationPlatformObservation {
+        gpu_timing_requested: false,
+        renderer: Some(renderer_observation()),
+        surface: None,
+        viewport: GameUiViewport {
+            width: 1280.0,
+            height: 720.0,
+            root_font_size: 16.0,
+        },
+        capabilities: ApplicationCapabilities::default(),
+    };
+    let mut runtime = ApplicationRuntime::new(application, platform.clone()).unwrap();
+    let initial = runtime
+        .observe_test(ApplicationInput::Platform {
+            observation: platform,
+        })
+        .unwrap();
+    let ready = finish_boot(&mut runtime, initial);
+    if matches!(
+        runtime.application().core_session().snapshot().phase(),
+        SessionPhase::FlightPaused { .. }
+    ) {
+        activate(&mut runtime, &structure(ready), SessionCommand::Resume {});
+    }
+    assert_eq!(
+        runtime.application().core_session().snapshot().phase(),
+        SessionPhase::FlightRunning
+    );
+    let key = |code: &str, pressed, repeat| ApplicationInput::Keyboard {
+        code: code.to_owned(),
+        pressed,
+        repeat,
+    };
+    let hud_value = |output: ApplicationOutput| {
+        let drawing = output.drawing.expect("key transition must update the HUD");
+        let hud = match drawing.ui {
+            ApplicationUiProjection::Frame { frame } => frame.hud,
+            ApplicationUiProjection::View { view } => view.hud.clone(),
+        }
+        .unwrap();
+        hud.groups
+            .into_iter()
+            .flat_map(|group| group.nodes)
+            .find(|node| node.id == "hud-accepted-keys")
+            .unwrap()
+            .content
+            .value()
+            .to_owned()
+    };
+    let pressed = runtime.observe_test(key("ArrowUp", true, false)).unwrap();
+    assert!(hud_value(pressed).contains("↑●"));
+    let camera = runtime.observe_test(key("KeyC", true, false)).unwrap();
+    assert!(hud_value(camera).contains("C●"));
+    let released = runtime.observe_test(key("KeyC", false, false)).unwrap();
+    assert!(hud_value(released).contains("C○"));
+    let paused = runtime.observe_test(key("KeyP", true, false)).unwrap();
+    let value = hud_value(paused);
+    assert!(value.contains("P●") && value.contains("↑○"));
+    assert!(hud_value(runtime.observe_test(key("KeyP", false, false)).unwrap()).contains("P○"));
+    let resumed = runtime.observe_test(key("Escape", true, false)).unwrap();
+    assert!(hud_value(resumed).contains("Esc●"));
+    assert!(hud_value(runtime.observe_test(key("Escape", false, false)).unwrap()).contains("Esc○"));
+    runtime.observe_test(key("ArrowUp", false, false)).unwrap();
+    assert!(hud_value(runtime.observe_test(key("ArrowUp", true, false)).unwrap()).contains("↑●"));
+    let lost = runtime
+        .observe_test(ApplicationInput::DocumentFocus { focused: false })
+        .unwrap();
+    let value = hud_value(lost);
+    assert!(value.contains("↑○") && value.contains("C○"));
+    let _ = runtime.observe_test(key("KeyP", true, false));
+    assert!(!runtime.application.accepted_flight_keys()[7]);
+    runtime.observe_test(key("KeyP", false, false)).unwrap();
+    runtime
+        .observe_test(ApplicationInput::DocumentFocus { focused: true })
+        .unwrap();
+    let repeat = runtime.observe_test(key("ArrowUp", true, true)).unwrap();
+    assert!(hud_value(repeat).contains("↑○"));
+    runtime.observe_test(key("KeyP", true, false)).unwrap();
+    runtime.observe_test(key("KeyP", false, false)).unwrap();
+    runtime.observe_test(key("ArrowUp", false, false)).unwrap();
+    assert!(hud_value(runtime.observe_test(key("ArrowUp", true, false)).unwrap()).contains("↑●"));
+    runtime.observe_test(key("KeyC", true, false)).unwrap();
+    assert!(runtime.application.accepted_flight_keys()[6]);
+    runtime
+        .display
+        .request(GameUiPresentationMode::PhoneVr, 99_999);
+    runtime.observe_test(key("KeyC", false, false)).unwrap();
+    assert!(!runtime.application.accepted_flight_keys()[6]);
+    runtime
+        .observe_test(ApplicationInput::PageHide { persisted: true })
+        .unwrap();
+    assert_eq!(runtime.application.accepted_flight_keys(), [false; 9]);
+    runtime
+        .application
+        .observe_flight_action_key(FlightActionKey::Camera, true);
+    runtime
+        .application
+        .execute(SessionCommand::Abort {}, BackendReadiness::Ready)
+        .unwrap();
+    assert_eq!(runtime.application.accepted_flight_keys(), [false; 9]);
+}
+
+#[test]
 fn saved_result_owns_transaction_and_scopes_notifications_to_its_record() {
     use birdman_game_app::record_persistence::{
         RecordWriteObservation as Seen, RecordWriteRequest as Io,
@@ -986,6 +1108,10 @@ fn saved_result_owns_transaction_and_scopes_notifications_to_its_record() {
             },
         };
         let mut runtime = ApplicationRuntime::new(application, platform.clone()).unwrap();
+        runtime.ui.replay_view = GameUiReplayView::Analysis;
+        runtime.ui.technical_open = true;
+        runtime.ui.replay_camera = GameUiReplayCamera::Chase;
+        runtime.ui.analysis_time_seconds = 0.015;
         let initial = runtime
             .observe_test(ApplicationInput::Platform {
                 observation: platform,
@@ -1023,6 +1149,20 @@ fn saved_result_owns_transaction_and_scopes_notifications_to_its_record() {
             &result,
             SessionCommand::EnterReplay {},
         ));
+        assert_eq!(
+            (
+                runtime.ui.replay_view,
+                runtime.ui.technical_open,
+                runtime.ui.replay_camera,
+                runtime.ui.analysis_time_seconds
+            ),
+            (
+                GameUiReplayView::Cinematic,
+                false,
+                GameUiReplayCamera::Chase,
+                0.015
+            ),
+        );
         let observations = if let Some(cause) = failure {
             vec![Seen::Failed {
                 cause: cause.to_owned(),
@@ -1181,9 +1321,14 @@ fn stored_record_preview_load_retry_and_original_download_share_owner() {
     };
     let mut runtime =
         ApplicationRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
+    runtime.ui.replay_view = GameUiReplayView::Analysis;
+    runtime.ui.technical_open = true;
+    runtime.ui.replay_camera = GameUiReplayCamera::Chase;
+    runtime.ui.analysis_time_seconds = 0.015;
+    let previous_ui = runtime.ui.clone();
     let initial = runtime
         .observe_test(ApplicationInput::Platform {
-            observation: platform,
+            observation: platform.clone(),
         })
         .unwrap();
     let preview_id = initial
@@ -1310,6 +1455,7 @@ fn stored_record_preview_load_retry_and_original_download_share_owner() {
         })
         .unwrap();
     assert_eq!(failed.diagnostic.as_deref(), Some("raw I/O failure"));
+    assert_eq!(runtime.ui, previous_ui);
     assert!(!runtime.platform.notification.contains("raw I/O failure"));
     assert!(!runtime.platform.operation_pending);
     let title = structure(failed);
@@ -1364,6 +1510,7 @@ fn stored_record_preview_load_retry_and_original_download_share_owner() {
     assert!(late.diagnostic.is_none());
     assert!(runtime.storage.load_pending());
     assert!(runtime.application().archive().is_none());
+    assert_eq!(runtime.ui, previous_ui);
     assert_eq!(
         runtime.application().core_session().snapshot().phase(),
         SessionPhase::Title
@@ -1380,6 +1527,36 @@ fn stored_record_preview_load_retry_and_original_download_share_owner() {
         runtime.application().archive().unwrap().original_json(),
         replacement_original
     );
+    assert_eq!(
+        (
+            runtime.ui.replay_view,
+            runtime.ui.technical_open,
+            runtime.ui.replay_camera,
+            runtime.ui.analysis_time_seconds
+        ),
+        (
+            GameUiReplayView::Cinematic,
+            false,
+            GameUiReplayCamera::Chase,
+            0.015
+        ),
+    );
+    let replay = runtime.retained.as_ref().unwrap().clone();
+    let selected = structure(activate_action(
+        &mut runtime,
+        &replay,
+        GameUiAction::SetReplayView {
+            view: GameUiReplayView::Telemetry,
+        },
+    ));
+    activate_action(&mut runtime, &selected, GameUiAction::ToggleTechnical {});
+    let selected_ui = runtime.ui.clone();
+    runtime
+        .observe_test(ApplicationInput::Platform {
+            observation: platform,
+        })
+        .unwrap();
+    assert_eq!(runtime.ui, selected_ui);
     let file_id = runtime.allocate_request().unwrap();
     let download = runtime
         .storage

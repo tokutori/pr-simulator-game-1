@@ -301,7 +301,7 @@ T_{world,view}=T_{world,aircraft}T_{aircraft,pilot}T_{pilot,head}T_{head,eye}
 
 - Directorはlaunch、距離、高度、終端event、record時刻からshotを選び、優先順位、最短継続時間、再発火条件を持つ。
 - 乱数を使用する場合はseedとversionを明示する。
-- Cinematic・Telemetry・Analysisの表示modeを持つ。再生開始時はCinematicを選択し、技術情報を閉じる。camera選択と分析cursorを保持する。
+- Cinematic・Telemetry・Analysisの表示modeを持つ。結果画面と保存記録の両入口で、再生開始が認可された時点でCinematicを選択し、技術情報を閉じる。camera選択と分析cursorを保持する。
 
 ## Attract・Credits
 

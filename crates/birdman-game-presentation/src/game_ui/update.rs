@@ -253,17 +253,12 @@ pub fn update_game_ui(
         GameUiAction::ControlInput { .. } => return Err(GameUiError::ActionUnavailable),
         GameUiAction::SetCredits { open } => next.credits_open = open,
         GameUiAction::Session { command } => {
-            let entering_replay = command == (SessionCommand::EnterReplay {});
             if command == (SessionCommand::LeaveReplay {}) {
                 next.analysis_time_seconds = context
                     .session
                     .playback_clock()
                     .ok_or(GameUiError::ActionUnavailable)?
                     .time_seconds();
-            }
-            if entering_replay {
-                next.replay_view = GameUiReplayView::Cinematic;
-                next.technical_open = false;
             }
             if matches!(
                 command,
@@ -279,13 +274,6 @@ pub fn update_game_ui(
                 next.pause_overlay = GameUiPauseOverlay::Menu;
             }
             effects.push(GameUiEffect::Session { command });
-            if entering_replay {
-                effects.push(GameUiEffect::Platform {
-                    command: GameUiPlatformCommand::SetReplayCamera {
-                        camera: next.replay_camera,
-                    },
-                });
-            }
         }
         GameUiAction::Platform { command } => effects.push(GameUiEffect::Platform { command }),
         GameUiAction::ToggleTechnical {} => next.technical_open = !state.technical_open,
@@ -300,11 +288,6 @@ pub fn update_game_ui(
                 .ok_or(GameUiError::ActionUnavailable)?;
             next.replay_camera =
                 GameUiReplayCamera::ALL[(current + 1) % GameUiReplayCamera::ALL.len()];
-            effects.push(GameUiEffect::Platform {
-                command: GameUiPlatformCommand::SetReplayCamera {
-                    camera: next.replay_camera,
-                },
-            });
         }
         GameUiAction::SeekAnalysis { time_seconds } | GameUiAction::SeekReplay { time_seconds } => {
             validate_record_time(

@@ -130,6 +130,19 @@ pub(super) fn game_ui_hud(
     .then_some(context.platform.renderer_failure.as_deref())
     .flatten();
     let mut primary = Vec::new();
+    if matches!(
+        phase,
+        SessionPhase::FlightRunning | SessionPhase::FlightPaused { .. }
+    ) {
+        let labels = ["↑", "↓", "←", "→", "J", "L", "C", "P", "Esc"];
+        let value = labels
+            .into_iter()
+            .zip(context.accepted_flight_keys)
+            .map(|(label, pressed)| format!("{label}{}", if pressed { "●" } else { "○" }))
+            .collect::<Vec<_>>()
+            .join(" ");
+        primary.push(text_node("hud-accepted-keys", "キー", value));
+    }
     if let Some(cause) = failure {
         primary.push(hud_node(
             "hud-renderer-failure",

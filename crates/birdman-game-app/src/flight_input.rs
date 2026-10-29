@@ -44,6 +44,27 @@ impl FlightControl {
     }
 }
 
+/// Keyboard actions admitted by the shared runtime during flight.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FlightActionKey {
+    /// Switch the camera.
+    Camera,
+    /// Pause or resume with P.
+    Pause,
+    /// Pause or resume with Escape.
+    Escape,
+}
+
+impl FlightActionKey {
+    const fn bit(self) -> u8 {
+        match self {
+            Self::Camera => 1,
+            Self::Pause => 2,
+            Self::Escape => 4,
+        }
+    }
+}
+
 /// One keyboard transition in platform event order.
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -125,6 +146,7 @@ pub(crate) struct FlightInputState {
     active: bool,
     held_keys: u8,
     accepted_keys: u8,
+    accepted_action_keys: u8,
     keyboard_ramp: [f64; 2],
     gamepad: FlightGamepadAcquisition,
 }
@@ -163,8 +185,44 @@ impl FlightInputState {
     pub(crate) fn invalidate(&mut self) {
         self.held_keys = 0;
         self.accepted_keys = 0;
+        self.accepted_action_keys = 0;
         self.keyboard_ramp = [0.0; 2];
         self.rearm_gamepad();
+    }
+
+    pub(crate) fn observe_action_key(&mut self, key: FlightActionKey, pressed: bool) {
+        if pressed {
+            self.accepted_action_keys |= key.bit();
+        } else {
+            self.accepted_action_keys &= !key.bit();
+        }
+    }
+
+    pub(crate) fn clear_action_keys(&mut self) {
+        self.accepted_action_keys = 0;
+    }
+
+    pub(crate) fn accepted_keys(&self) -> [bool; 9] {
+        let controls = [
+            FlightControl::NoseUp,
+            FlightControl::NoseDown,
+            FlightControl::TurnLeft,
+            FlightControl::TurnRight,
+            FlightControl::PilotDecrease,
+            FlightControl::PilotIncrease,
+        ];
+        let actions = [
+            FlightActionKey::Camera,
+            FlightActionKey::Pause,
+            FlightActionKey::Escape,
+        ];
+        core::array::from_fn(|index| {
+            if index < controls.len() {
+                self.accepted_keys & controls[index].bit() != 0
+            } else {
+                self.accepted_action_keys & actions[index - controls.len()].bit() != 0
+            }
+        })
     }
 
     /// Resolves one physical tick against the target confirmed immediately before it.

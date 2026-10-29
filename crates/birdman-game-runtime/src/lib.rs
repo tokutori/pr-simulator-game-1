@@ -85,7 +85,7 @@ use birdman_game_app::application::{
 use birdman_game_app::environment_snapshot::{EnvironmentIdentity, EnvironmentSelection};
 #[cfg(not(verus_only))]
 use birdman_game_app::flight_input::{
-    FlightControl, FlightGamepadObservation, FlightKeyObservation,
+    FlightActionKey, FlightControl, FlightGamepadObservation, FlightKeyObservation,
 };
 #[cfg(not(verus_only))]
 use birdman_game_app::{HybridSessionPreparation, identity_for_selection};
@@ -494,12 +494,14 @@ impl ApplicationRuntime {
                 request_id,
                 completion,
             } => {
+                let previous_phase = self.application.core_session().snapshot().phase();
                 if let Some(notification) =
                     self.storage
                         .loaded(request_id, completion, &mut self.application)
                 {
                     self.platform.notification = notification;
                 }
+                self.observe_replay_entry(previous_phase);
             }
             ApplicationInput::RecordSaveOpened {
                 request_id,
@@ -803,6 +805,15 @@ impl ApplicationRuntime {
                 pressed,
                 repeat,
             } => {
+                let action_key = match code.as_str() {
+                    "KeyC" => Some(FlightActionKey::Camera),
+                    "KeyP" => Some(FlightActionKey::Pause),
+                    "Escape" => Some(FlightActionKey::Escape),
+                    _ => None,
+                };
+                if !pressed && let Some(key) = action_key {
+                    self.application.observe_flight_action_key(key, false);
+                }
                 let control = match code.as_str() {
                     "ArrowUp" => Some(FlightControl::NoseUp),
                     "ArrowDown" => Some(FlightControl::NoseDown),
@@ -829,6 +840,8 @@ impl ApplicationRuntime {
                         )
                     {
                         self.scene.toggle_camera();
+                        self.application
+                            .observe_flight_action_key(FlightActionKey::Camera, true);
                         keyboard_consumed = true;
                     } else if matches!(code.as_str(), "KeyP" | "Escape")
                         && pressed
@@ -852,6 +865,8 @@ impl ApplicationRuntime {
                                 GameUiAction::Session { command },
                                 &mut requests,
                             )?;
+                            self.application
+                                .observe_flight_action_key(action_key.unwrap(), true);
                             keyboard_consumed = true;
                         }
                     }
@@ -1424,9 +1439,11 @@ impl ApplicationRuntime {
                         self.resources = None;
                         self.resource_readiness = BackendReadiness::Preparing;
                     }
+                    let previous_phase = self.application.core_session().snapshot().phase();
                     self.application
                         .execute(command, self.resource_readiness)
                         .map_err(ApplicationRuntimeError::Application)?;
+                    self.observe_replay_entry(previous_phase);
                     self.previous_frame_ms = None;
                 }
                 GameUiEffect::Record { action } => {
@@ -1480,11 +1497,6 @@ impl ApplicationRuntime {
                         .map_err(ApplicationRuntimeError::Camera)?;
                 }
                 GameUiEffect::Platform {
-                    command: GameUiPlatformCommand::SetReplayCamera { camera },
-                } => {
-                    self.ui.replay_camera = camera;
-                }
-                GameUiEffect::Platform {
                     command: GameUiPlatformCommand::OpenStoredRecord { id },
                 } => {
                     let request_id = self.allocate_request()?;
@@ -1511,6 +1523,15 @@ impl ApplicationRuntime {
             }
         }
         Ok(())
+    }
+
+    fn observe_replay_entry(&mut self, previous_phase: SessionPhase) {
+        if previous_phase != SessionPhase::Replay
+            && self.application.core_session().snapshot().phase() == SessionPhase::Replay
+        {
+            self.ui.replay_view = birdman_game_presentation::game_ui::GameUiReplayView::Cinematic;
+            self.ui.technical_open = false;
+        }
     }
 
     fn reset_xr_reference(
@@ -1854,6 +1875,7 @@ impl ApplicationRuntime {
             presentation_available: self.application.presentation_available(),
             difficulty: self.application.display_difficulty(),
             keyboard_controls: self.application.keyboard_controls(),
+            accepted_flight_keys: self.application.accepted_flight_keys(),
             preset: self.application.display_preset(),
             identity: self.identity()?,
             record: self.application.core_session().playback_record(),
