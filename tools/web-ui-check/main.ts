@@ -11,6 +11,7 @@ import type { ApplicationInput, ApplicationObservation, ApplicationOutput, Appli
 declare global {
   interface Window {
     __graphicsLosses: number;
+    __adapterProbe: { active: boolean; axes: number[]; rows: { observed_ms: number; input: ApplicationInput; consumed: boolean }[] };
     __recoveryRead: { requestSucceeded: boolean; aborts: number; error: string | null };
     __recoveryGpu: { framebufferFailures: number; partialTextureCreated: boolean; partialTextureDeletes: number; partialFramebufferCreated: boolean; partialFramebufferDeletes: number; canvas: HTMLCanvasElement | OffscreenCanvas | null };
     __recoveryCompile: {
@@ -25,7 +26,7 @@ declare global {
 
 const [address, destination, ...options] = process.argv.slice(2);
 assert.ok(address !== undefined && destination !== undefined, "Usage: npm run test:web-ui -- VITE_URL OUTPUT_DIRECTORY [--allow-dirty] [--without-gpu-timer] [--recovery]");
-assert.ok(options.every(option => ["--allow-dirty", "--without-gpu-timer", "--recovery"].includes(option)), "Unknown Web UI check option");
+assert.ok(options.every(option => ["--allow-dirty", "--without-gpu-timer", "--recovery", "--adapter-observe"].includes(option)), "Unknown Web UI check option");
 const url = new URL(address);
 assert.ok(["127.0.0.1", "localhost", "[::1]"].includes(url.hostname), "Use the local Vite development server");
 const root = resolve(import.meta.dirname, "../..");
@@ -163,6 +164,7 @@ async function verify(activeBrowser: Browser): Promise<void> {
       }
     }, { withoutTimer: options.includes("--without-gpu-timer"), recovery });
     const page = await context.newPage();
+    if (options.includes("--adapter-observe")) await page.clock.install();
     page.setDefaultTimeout(30_000);
     page.on("pageerror", cause => { diagnostics.push({ phase, source: "page", url: page.url(), text: cause.message }); });
     page.on("console", message => {
@@ -416,6 +418,29 @@ async function verify(activeBrowser: Browser): Promise<void> {
       const debug = gl.getExtension("WEBGL_debug_renderer_info");
       return { renderer: String(gl.getParameter(debug?.UNMASKED_RENDERER_WEBGL ?? gl.RENDERER)), version: String(gl.getParameter(gl.VERSION)), userAgent: navigator.userAgent };
     });
+    if (options.includes("--adapter-observe")) {
+      await page.evaluate(`(async () => {
+        const runtime = await import(new URL("pkg/birdman_game_wasm.js", location.href).href);
+        const update = runtime.ApplicationRuntimeBridge.prototype.update;
+        const probe = { active: false, axes: [0, 0, 0, 0], rows: [] };
+        window.__adapterProbe = probe;
+        runtime.ApplicationRuntimeBridge.prototype.update = new Proxy(update, { apply: (target, receiver, args) => {
+          const result = Reflect.apply(target, receiver, args);
+          const data = JSON.parse(args[0]);
+          if (probe.active && (data.input.kind === "keyboard" || data.input.kind === "frame")) {
+            const output = JSON.parse(result);
+            probe.rows.push({ observed_ms: data.observed_ms, input: data.input, consumed: output.keyboard_consumed });
+          }
+          return result;
+        } });
+        const pad = { index: 0, connected: true, mapping: "standard", axes: probe.axes,
+          buttons: [{ pressed: false }, { pressed: false }] };
+        Object.defineProperty(navigator, "getGamepads", { configurable: true, value: () => [pad] });
+        const event = new Event("gamepadconnected");
+        Object.defineProperty(event, "gamepad", { value: pad });
+        window.dispatchEvent(event);
+      })()`);
+    }
     await pair("title");
     const phoneVr = { disabled: await control("boot-enter-phone-vr").isDisabled(), label: await control("boot-enter-phone-vr").innerText() };
     report.phoneVr = phoneVr;
@@ -423,16 +448,61 @@ async function verify(activeBrowser: Browser): Promise<void> {
     checks.push("Title: production scene pixels and controls at HD/FHD");
     await click("game-title-start");
     await scene("FlightSetup");
-    await click("game-setup-select-weather-0");
-    await click("game-setup-select-assistance-3");
-    await pair("setup-calm");
+    if (options.includes("--adapter-observe")) {
+      if (await control("presentation-render-scale-auto").getAttribute("aria-pressed") === "true") await click("presentation-render-scale-auto");
+      await click("presentation-water-quality-low");
+      await click("presentation-render-scale-50");
+    } else {
+      await click("game-setup-select-weather-0");
+      await click("game-setup-select-assistance-3");
+      await pair("setup-calm");
+    }
     await click("game-setup-start");
     await scene("Briefing");
     await control("game-briefing-start").waitFor({ state: "visible" });
     await pair("briefing");
+    if (options.includes("--adapter-observe")) await page.evaluate(() => { window.__adapterProbe.active = true; });
     await click("game-briefing-start");
     await scene("Flight");
-    await control("game-flight-pause").waitFor({ state: "visible" });
+    if (options.includes("--adapter-observe") && await control("game-flight-resume").isVisible()) {
+      await control("game-flight-resume").waitFor({ state: "visible" });
+      await click("game-flight-resume");
+    }
+    try {
+      await control("game-flight-pause").waitFor({ state: "visible" });
+    } catch (cause) {
+      if (options.includes("--adapter-observe")) {
+        const state = await page.evaluate(() => ({ text: document.body.innerText, rows: window.__adapterProbe.rows.slice(-40) }));
+        await writeFile(resolve(output, "adapter-failure.json"), JSON.stringify(state, null, 2) + "\n", "utf8");
+      }
+      throw cause;
+    }
+    if (options.includes("--adapter-observe")) {
+      await page.clock.pauseAt(await page.evaluate(() => Date.now() + 100));
+      await page.evaluate(() => { window.__adapterProbe.active = true; });
+      await page.keyboard.down("ArrowUp");
+      await page.clock.runFor(100);
+      await page.keyboard.up("ArrowUp");
+      await page.clock.runFor(100);
+      await page.evaluate(() => { window.__adapterProbe.axes[0] = 0.25; window.__adapterProbe.axes[1] = -0.25; });
+      await page.clock.runFor(100);
+      await page.evaluate(() => { window.__adapterProbe.axes[0] = 0; window.__adapterProbe.axes[1] = 0; });
+      await page.clock.runFor(50);
+      await page.evaluate(() => { window.__adapterProbe.active = false; });
+      const observations = await page.evaluate(() => window.__adapterProbe.rows);
+      await writeFile(resolve(output, "adapter-observations.json"), JSON.stringify(observations, null, 2) + "\n", "utf8");
+      assert.ok(observations.some(row => row.input.kind === "keyboard" && row.input.code === "ArrowUp" && row.input.pressed && row.consumed));
+      assert.ok(observations.some(row => row.input.kind === "frame" && row.input.gamepads.some(pad => pad.axes[0] === 0.25 && pad.axes[1] === -0.25)));
+      await page.clock.resume();
+      await click("game-flight-abort");
+      await scene("Result");
+      await click("game-result-technical");
+      const [flightRecord] = await Promise.all([page.waitForEvent("download"), click("game-flight-log-json")]);
+      await flightRecord.saveAs(resolve(output, "adapter-record.json"));
+      report.execution = "Production Web input adapters with synthetic gamepad and Playwright Clock";
+      checks.push("Keyboard and gamepad observations through the production browser adapters");
+      return;
+    }
     await page.waitForTimeout(400);
     assert.equal(await control("game-flight-resume").isVisible(), false, "Flight unexpectedly paused");
     await click("game-flight-pause");
