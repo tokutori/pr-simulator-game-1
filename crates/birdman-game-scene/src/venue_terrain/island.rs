@@ -217,27 +217,30 @@ fn triangulate(mesh: &mut Builder, outer: &[u32], holes: &[Vec<u32>], steiner: &
     }
 }
 
-fn insert_boundary_samples(mesh: &mut Builder, samples: usize) -> Result<(), String> {
+fn insert_boundary_samples(mesh: &mut Builder, samples: &BTreeSet<u32>) -> Result<(), String> {
     let mut represented: BTreeSet<_> = mesh.indices.iter().copied().collect();
-    for index in 0..samples as u32 {
-        if represented.contains(&index) {
-            continue;
-        }
+    for &index in samples {
         let p = point(mesh.positions[index as usize]);
         let mut incident = Vec::new();
         let mut retained = Vec::new();
         for triangle in mesh.indices.chunks_exact(3) {
-            if triangle_contains(
-                [triangle[0], triangle[1], triangle[2]].map(|i| point(mesh.positions[i as usize])),
-                p,
-            ) {
+            if !triangle.contains(&index)
+                && triangle_contains(
+                    [triangle[0], triangle[1], triangle[2]]
+                        .map(|i| point(mesh.positions[i as usize])),
+                    p,
+                )
+            {
                 incident.push([triangle[0], triangle[1], triangle[2]]);
             } else {
                 retained.extend_from_slice(triangle);
             }
         }
         if incident.is_empty() {
-            return Err("Island triangulation omitted a registered DEM vertex".into());
+            if !represented.contains(&index) {
+                return Err("Island triangulation omitted a registered DEM vertex".into());
+            }
+            continue;
         }
         mesh.indices = retained;
         for triangle in incident {
@@ -328,6 +331,13 @@ pub(super) fn generate(island: &Island, grid: &Grid) -> Result<Option<VenueTerra
         boundaries.into_iter().partition(|r| area(&mesh, r) < 0.0);
     let used: BTreeSet<_> = mesh.indices.iter().copied().collect();
     let mut orphan: BTreeSet<_> = (0..samples as u32).filter(|i| !used.contains(i)).collect();
+    let constraints = inner
+        .iter()
+        .chain(&cavities)
+        .flatten()
+        .copied()
+        .chain(orphan.iter().copied())
+        .collect();
     for cavity in &cavities {
         let outline: Vec<_> = cavity
             .iter()
@@ -377,7 +387,7 @@ pub(super) fn generate(island: &Island, grid: &Grid) -> Result<Option<VenueTerra
         &orphan.into_iter().collect::<Vec<_>>(),
     );
     // Earcut may simplify collinear coast vertices; split their incident faces to retain DEM height constraints.
-    insert_boundary_samples(&mut mesh, samples)?;
+    insert_boundary_samples(&mut mesh, &constraints)?;
     mesh.finish(
         format!("lake-biwa-island-{}-terrain", island.way_ids[0]),
         VenueTerrainMaterial::Terrain,

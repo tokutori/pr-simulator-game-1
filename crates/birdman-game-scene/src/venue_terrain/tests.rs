@@ -412,6 +412,7 @@ fn closed_island_surface_retains_dem_constraints_in_both_windings_and_open_shore
         pinched.land_mask[i] = true;
     }
     let mut cavity = grid(7, 7, 10.0, vec![Some(20.0); 49], vec![true; 49]);
+    cavity.elevation_meters_above_water[22] = Some(50.0);
     cavity.elevation_meters_above_water[24] = None;
     cavity.land_mask[24] = false;
     for source in [pinched, cavity] {
@@ -422,6 +423,19 @@ fn closed_island_surface_retains_dem_constraints_in_both_windings_and_open_shore
             ring_north_east_meters: vec![[0.0, 0.0], [side, 0.0], [side, side], [0.0, side]],
         };
         let mesh = island::generate(&island, &source).unwrap().unwrap();
+        for triangle in mesh.indices.chunks_exact(3) {
+            for edge in 0..3 {
+                let [a, b] = [triangle[edge], triangle[(edge + 1) % 3]]
+                    .map(|i| mesh.positions_ned[i as usize]);
+                for &index in &mesh.indices {
+                    let p = mesh.positions_ned[index as usize];
+                    let cross = (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0]);
+                    let interior =
+                        (p[0] - a[0]) * (p[0] - b[0]) + (p[1] - a[1]) * (p[1] - b[1]) < 0.0;
+                    assert!(cross.abs() > 1e-5 || !interior, "Unsplit shared DEM edge");
+                }
+            }
+        }
         let area: f64 = mesh
             .indices
             .chunks_exact(3)
