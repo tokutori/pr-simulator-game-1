@@ -295,11 +295,13 @@ float lakeDetailSpread(sampler2D image, vec2 gradientX, vec2 gradientY) {
 
 vec4 lakeDetailSample(sampler2D image, vec2 uv, vec2 gradientX, vec2 gradientY,
     vec4 offsets, bool centered, int corner) {
-  if (centered) return textureGrad(image, uv, gradientX, gradientY);
-  vec2 point = uv - offsets.xy - offsets.zw;
-  if (corner == 1) point = uv + offsets.xy - offsets.zw;
-  if (corner == 2) point = uv - offsets.xy + offsets.zw;
-  if (corner == 3) point = uv + offsets.xy + offsets.zw;
+  vec2 point = uv;
+  if (!centered) {
+    point = uv - offsets.xy - offsets.zw;
+    if (corner == 1) point = uv + offsets.xy - offsets.zw;
+    if (corner == 2) point = uv - offsets.xy + offsets.zw;
+    if (corner == 3) point = uv + offsets.xy + offsets.zw;
+  }
   return textureGrad(image, point, gradientX, gradientY);
 }
 
