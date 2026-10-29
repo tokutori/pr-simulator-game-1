@@ -11,7 +11,7 @@ import type { ApplicationInput, ApplicationObservation, ApplicationOutput, Appli
 declare global {
   interface Window {
     __graphicsLosses: number;
-    __adapterProbe: { active: boolean; axes: number[]; rows: { observed_ms: number; input: ApplicationInput; consumed: boolean }[] };
+    __adapterProbe: { active: boolean; axes: number[]; rows: { observed_ms: number; input: ApplicationInput; consumed: boolean; water_time: number | null; scene: string | null; overlay: string | null }[] };
     __recoveryRead: { requestSucceeded: boolean; aborts: number; error: string | null };
     __recoveryGpu: { framebufferFailures: number; partialTextureCreated: boolean; partialTextureDeletes: number; partialFramebufferCreated: boolean; partialFramebufferDeletes: number; canvas: HTMLCanvasElement | OffscreenCanvas | null };
     __recoveryCompile: {
@@ -429,7 +429,11 @@ async function verify(activeBrowser: Browser): Promise<void> {
           const data = JSON.parse(args[0]);
           if (probe.active && (data.input.kind === "keyboard" || data.input.kind === "frame")) {
             const output = JSON.parse(result);
-            probe.rows.push({ observed_ms: data.observed_ms, input: data.input, consumed: output.keyboard_consumed });
+            const ui = output.drawing?.ui;
+            probe.rows.push({ observed_ms: data.observed_ms, input: data.input, consumed: output.keyboard_consumed,
+              water_time: output.drawing?.scene.water_time_seconds ?? null,
+              scene: ui?.kind === "view" ? ui.view.scene : null,
+              overlay: ui?.kind === "view" ? ui.view.active_overlay ?? null : null });
           }
           return result;
         } });
@@ -460,10 +464,17 @@ async function verify(activeBrowser: Browser): Promise<void> {
     await click("game-setup-start");
     await scene("Briefing");
     await control("game-briefing-start").waitFor({ state: "visible" });
-    await pair("briefing");
-    if (options.includes("--adapter-observe")) await page.evaluate(() => { window.__adapterProbe.active = true; });
+    if (!options.includes("--adapter-observe")) await pair("briefing");
+    if (options.includes("--adapter-observe")) {
+      await page.clock.pauseAt(await page.evaluate(() => Date.now() + 100));
+      await page.evaluate(() => { window.__adapterProbe.active = true; });
+    }
     await click("game-briefing-start");
-    await scene("Flight");
+    if (options.includes("--adapter-observe")) {
+      for (let frame = 0; frame < 300 && !await control("game-flight-pause").isVisible(); frame++) await page.clock.runFor(16);
+    } else {
+      await scene("Flight");
+    }
     if (options.includes("--adapter-observe") && await control("game-flight-resume").isVisible()) {
       await control("game-flight-resume").waitFor({ state: "visible" });
       await click("game-flight-resume");
@@ -478,16 +489,23 @@ async function verify(activeBrowser: Browser): Promise<void> {
       throw cause;
     }
     if (options.includes("--adapter-observe")) {
-      await page.clock.pauseAt(await page.evaluate(() => Date.now() + 100));
-      await page.evaluate(() => { window.__adapterProbe.active = true; });
-      await page.keyboard.down("ArrowUp");
-      await page.clock.runFor(100);
-      await page.keyboard.up("ArrowUp");
-      await page.clock.runFor(100);
+      await page.clock.runFor(48);
       await page.evaluate(() => { window.__adapterProbe.axes[0] = 0.25; window.__adapterProbe.axes[1] = -0.25; });
-      await page.clock.runFor(100);
+      await page.clock.runFor(112);
       await page.evaluate(() => { window.__adapterProbe.axes[0] = 0; window.__adapterProbe.axes[1] = 0; });
-      await page.clock.runFor(50);
+      await page.clock.runFor(111);
+      await page.keyboard.down("ArrowUp");
+      await page.clock.runFor(112);
+      await page.keyboard.up("ArrowUp");
+      await page.clock.runFor(112);
+      await page.keyboard.down("KeyP");
+      await page.clock.runFor(16);
+      await page.keyboard.up("KeyP");
+      await page.clock.runFor(32);
+      await page.keyboard.down("KeyP");
+      await page.clock.runFor(16);
+      await page.keyboard.up("KeyP");
+      await page.clock.runFor(32);
       await page.evaluate(() => { window.__adapterProbe.active = false; });
       const observations = await page.evaluate(() => window.__adapterProbe.rows);
       await writeFile(resolve(output, "adapter-observations.json"), JSON.stringify(observations, null, 2) + "\n", "utf8");
