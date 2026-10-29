@@ -11,7 +11,7 @@ import type { ApplicationInput, ApplicationObservation, ApplicationOutput, Appli
 declare global {
   interface Window {
     __graphicsLosses: number;
-    __adapterProbe: { active: boolean; axes: number[]; rows: { observed_ms: number; input: ApplicationInput; consumed: boolean; water_time: number | null; scene: string | null; overlay: string | null }[] };
+    __adapterProbe: { active: boolean; axes: number[]; latest: unknown; rows: { observed_ms: number; input: ApplicationInput; consumed: boolean; water_time: number | null; scene: string | null; overlay: string | null }[] };
     __recoveryRead: { requestSucceeded: boolean; aborts: number; error: string | null };
     __recoveryGpu: { framebufferFailures: number; partialTextureCreated: boolean; partialTextureDeletes: number; partialFramebufferCreated: boolean; partialFramebufferDeletes: number; canvas: HTMLCanvasElement | OffscreenCanvas | null };
     __recoveryCompile: {
@@ -422,7 +422,7 @@ async function verify(activeBrowser: Browser): Promise<void> {
       await page.evaluate(`(async () => {
         const runtime = await import(new URL("pkg/birdman_game_wasm.js", location.href).href);
         const update = runtime.ApplicationRuntimeBridge.prototype.update;
-        const probe = { active: false, axes: [0, 0, 0, 0], rows: [] };
+        const probe = { active: false, axes: [0, 0, 0, 0], latest: null, rows: [] };
         window.__adapterProbe = probe;
         runtime.ApplicationRuntimeBridge.prototype.update = new Proxy(update, { apply: (target, receiver, args) => {
           const result = Reflect.apply(target, receiver, args);
@@ -430,6 +430,8 @@ async function verify(activeBrowser: Browser): Promise<void> {
           if (probe.active && (data.input.kind === "keyboard" || data.input.kind === "frame")) {
             const output = JSON.parse(result);
             const ui = output.drawing?.ui;
+            if (output.drawing != null) probe.latest = { camera: output.drawing.scene.camera,
+              world_from_aircraft: output.drawing.scene.world_from_aircraft, water_time_seconds: output.drawing.scene.water_time_seconds };
             probe.rows.push({ observed_ms: data.observed_ms, input: data.input, consumed: output.keyboard_consumed,
               water_time: output.drawing?.scene.water_time_seconds ?? null,
               scene: ui?.kind === "view" ? ui.view.scene : null,
@@ -445,7 +447,7 @@ async function verify(activeBrowser: Browser): Promise<void> {
         window.dispatchEvent(event);
       })()`);
     }
-    await pair("title");
+    if (!options.includes("--adapter-observe")) await pair("title");
     const phoneVr = { disabled: await control("boot-enter-phone-vr").isDisabled(), label: await control("boot-enter-phone-vr").innerText() };
     report.phoneVr = phoneVr;
     assert.equal(phoneVr.disabled, true, "Desktop without orientation samples must keep Phone VR unavailable");
@@ -502,6 +504,9 @@ async function verify(activeBrowser: Browser): Promise<void> {
       await page.clock.runFor(16);
       await page.keyboard.up("KeyP");
       await page.clock.runFor(32);
+      await page.screenshot({ path: resolve(output, "adapter-pause-hd.png") });
+      const pausedDrawing = await page.evaluate(() => window.__adapterProbe.latest);
+      await writeFile(resolve(output, "adapter-pause-drawing.json"), JSON.stringify(pausedDrawing, null, 2) + "\n", "utf8");
       await page.keyboard.down("KeyP");
       await page.clock.runFor(16);
       await page.keyboard.up("KeyP");

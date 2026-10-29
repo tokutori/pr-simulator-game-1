@@ -311,6 +311,7 @@ impl Verification {
                 Check::Keyboard(KeyCode::KeyP, ButtonState::Pressed),
                 Check::Keyboard(KeyCode::KeyP, ButtonState::Released),
                 Check::Paused,
+                Check::Capture("04-adapter-paused.png".into()),
                 Check::Keyboard(KeyCode::KeyP, ButtonState::Pressed),
                 Check::Keyboard(KeyCode::KeyP, ButtonState::Released),
                 Check::Running,
