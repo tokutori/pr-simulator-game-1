@@ -208,7 +208,7 @@ impl ApplicationRuntime {
             water_quality_operation: GameUiWaterQualityOperation::Idle {},
             screen_render_scale: Default::default(),
             notification: String::new(),
-            flight_controller_failure: None,
+            renderer_failure: None,
             head_hud_failure: None,
             stored_records: Default::default(),
         };
@@ -395,8 +395,8 @@ impl ApplicationRuntime {
                     if self.boot.active() {
                         self.boot.fail(self.diagnostic.as_deref());
                     } else {
-                        self.platform.flight_controller_failure = Some(
-                            "描画を続けられない。ページを再読み込みして再試行する。".to_owned(),
+                        self.platform.renderer_failure = Some(
+                            "描画を続けられない。ゲームを再読み込みして再試行する。".to_owned(),
                         );
                     }
                 }
@@ -1354,54 +1354,81 @@ impl ApplicationRuntime {
         action: GameUiAction,
         requests: &mut Vec<ApplicationRequest>,
     ) -> Result<(), ApplicationRuntimeError> {
-        if self.boot.active() {
+        let update = if self.boot.active() {
+            let view = self
+                .retained
+                .as_ref()
+                .filter(|view| view.view_revision == view_revision)
+                .ok_or(ApplicationRuntimeError::Ui(GameUiError::StaleView))?;
+            if !matches!(self.boot, boot::BootOwner::Failed(_)) {
+                return Ok(());
+            }
+            let action = match action {
+                GameUiAction::ControlInput { input } => view
+                    .control_input_action(&input)
+                    .map_err(ApplicationRuntimeError::Ui)?,
+                action => Some(action),
+            };
+            let Some(action) = action else {
+                return Ok(());
+            };
+            if !view
+                .panels
+                .iter()
+                .flat_map(|panel| &panel.controls)
+                .any(|control| {
+                    control.enabled && control.content.activation_action().as_ref() == Some(&action)
+                })
+            {
+                return Err(ApplicationRuntimeError::Ui(GameUiError::ActionUnavailable));
+            }
+            match action {
+                GameUiAction::Platform {
+                    command: GameUiPlatformCommand::ReloadApplication {},
+                } => birdman_game_presentation::game_ui::GameUiUpdate {
+                    state: self.ui.clone(),
+                    effects: vec![GameUiEffect::Platform {
+                        command: GameUiPlatformCommand::ReloadApplication {},
+                    }],
+                },
+                GameUiAction::ControlInput {
+                    input:
+                        birdman_game_presentation::game_ui::GameUiControlInput::Activate { control_id },
+                } if control_id == "game-boot-retry" => {
+                    self.resources = None;
+                    self.resource_readiness = BackendReadiness::Preparing;
+                    self.boot = if self.graphics.resource().is_some() {
+                        boot::BootOwner::Preparing
+                    } else {
+                        boot::BootOwner::Initial
+                    };
+                    return Ok(());
+                }
+                _ => return Err(ApplicationRuntimeError::Ui(GameUiError::ActionUnavailable)),
+            }
+        } else {
+            let environment = self.environment()?;
+            let revision = self.structure_revision(&environment)?;
             if self
                 .retained
                 .as_ref()
                 .is_none_or(|view| view.view_revision != view_revision)
+                || revision != view_revision
             {
                 return Err(ApplicationRuntimeError::Ui(GameUiError::StaleView));
             }
-            if let GameUiAction::ControlInput {
-                input:
-                    birdman_game_presentation::game_ui::GameUiControlInput::Activate { control_id },
-            } = action
-                && matches!(self.boot, boot::BootOwner::Failed(_))
-            {
-                match control_id.as_str() {
-                    "game-boot-reload" => {
-                        self.shutdown.request_reload();
-                        self.close(requests);
-                    }
-                    "game-boot-retry" => {
-                        self.resources = None;
-                        self.resource_readiness = BackendReadiness::Preparing;
-                        self.boot = if self.graphics.resource().is_some() {
-                            boot::BootOwner::Preparing
-                        } else {
-                            boot::BootOwner::Initial
-                        };
-                    }
-                    _ => {}
-                }
-            }
-            return Ok(());
-        }
-        let environment = self.environment()?;
-        let revision = self.structure_revision(&environment)?;
-        if self
-            .retained
-            .as_ref()
-            .is_none_or(|view| view.view_revision != view_revision)
-            || revision != view_revision
-        {
-            return Err(ApplicationRuntimeError::Ui(GameUiError::StaleView));
-        }
-        let update = update_game_ui(&self.ui, action, &self.context(&environment)?)
-            .map_err(ApplicationRuntimeError::Ui)?;
+            update_game_ui(&self.ui, action, &self.context(&environment)?)
+                .map_err(ApplicationRuntimeError::Ui)?
+        };
         self.ui = update.state;
         for effect in update.effects {
             match effect {
+                GameUiEffect::Platform {
+                    command: GameUiPlatformCommand::ReloadApplication {},
+                } => {
+                    self.shutdown.request_reload();
+                    self.close(requests);
+                }
                 GameUiEffect::Session { command } => {
                     if matches!(
                         &command,

@@ -60,7 +60,7 @@ impl BootOwner {
 
     pub(super) fn description(&self) -> &'static str {
         match self {
-            Self::Failed(_) => "表示を準備できない。再試行するか、ページを再読み込みする。",
+            Self::Failed(_) => "表示を準備できない。再試行するか、ゲームを再読み込みする。",
             Self::Closed => "ゲームを終了した。",
             Self::Preparing => "空と会場を準備している。",
             _ => "ゲームの表示を準備している。",
@@ -98,7 +98,7 @@ impl BootOwner {
             controls: if matches!(self, Self::Failed(_)) {
                 [
                     ("game-boot-retry", "再試行"),
-                    ("game-boot-reload", "ページを再読み込み"),
+                    ("game-boot-reload", "ゲームを再読み込み"),
                 ]
                 .into_iter()
                 .map(|(id, label)| GameUiControl {
@@ -107,10 +107,16 @@ impl BootOwner {
                     enabled: true,
                     section: "boot-actions".to_owned(),
                     content: GameUiControlContent::Button {
-                        action: GameUiAction::ControlInput {
-                            input: GameUiControlInput::Activate {
-                                control_id: id.to_owned(),
-                            },
+                        action: if id == "game-boot-reload" {
+                            GameUiAction::Platform {
+                                command: GameUiPlatformCommand::ReloadApplication {},
+                            }
+                        } else {
+                            GameUiAction::ControlInput {
+                                input: GameUiControlInput::Activate {
+                                    control_id: id.to_owned(),
+                                },
+                            }
                         },
                         presentation: GameUiButtonPresentation::Action {
                             emphasis: GameUiEmphasis::Normal,
