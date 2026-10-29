@@ -407,7 +407,7 @@ fn adopted_shape_contact_matches_independent_rotated_support_and_record_query() 
         };
         let mut record = FlightRecord::try_new(header).unwrap();
         record
-            .begin_tail(previous, telemetry(previous.flight_state()))
+            .begin_tail(previous, telemetry(previous.flight_state()), None)
             .unwrap();
         record
             .append_tail_report(report, telemetry(contact.flight_state()))

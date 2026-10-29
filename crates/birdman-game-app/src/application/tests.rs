@@ -85,13 +85,14 @@ fn registered_live_records_interval_initial_coefficients_and_restores_them_on_re
             application.prepared().unwrap().record_identity.clone(),
         )
         .unwrap();
-        assert_eq!(document.schema_version, 7);
+        assert_eq!(document.schema_version, 8);
         let restored = TailFlightRecordDocument::decode_json(&document.encode_json().unwrap())
             .unwrap()
             .to_finalized_core_record()
             .unwrap();
         for (saved, original) in restored.samples().iter().zip(record.samples()) {
             assert_eq!(saved.wing_bending_factor, original.wing_bending_factor);
+            assert_eq!(saved.tail_wrenches, original.tail_wrenches);
             assert_eq!(saved.controls, original.controls);
             assert_eq!(
                 saved.flight_state.datum_position_ned(),

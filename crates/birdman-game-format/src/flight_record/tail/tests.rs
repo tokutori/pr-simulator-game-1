@@ -408,6 +408,7 @@ fn document() -> TailFlightRecordDocument {
     };
     let initial = TailFlightRecordSampleDocument {
         tick_index: 0,
+        tail_wrenches: None,
         wing_bending_factor: None,
         fraction: 0.0,
         state: FlightRecordStateDocument {
@@ -790,6 +791,138 @@ fn schema_seven_retains_held_coefficients_and_preserves_unrecorded_schema_six() 
 }
 
 #[test]
+fn schema_eight_tail_wrenches_roundtrip_and_keep_recorded_times() {
+    let mut archive = document();
+    archive.schema_version = 8;
+    let initial = TailWrenchDocument {
+        force_frd_n: [1.0, -2.0, 3.0],
+        moment_about_datum_frd_nm: [4.0, 5.0, 6.0],
+    };
+    let terminal = TailWrenchDocument {
+        force_frd_n: [7.0, 8.0, 9.0],
+        moment_about_datum_frd_nm: [-1.0, -2.0, -3.0],
+    };
+    for sample in &mut archive.samples {
+        sample.wing_bending_factor = Some(1.0);
+    }
+    archive.samples[0].tail_wrenches = Some([Some(initial), None]);
+    archive.samples[1].tail_wrenches = Some([Some(terminal), None]);
+    let bytes = archive.encode_json().unwrap();
+    let decoded = TailFlightRecordDocument::decode_json(&bytes).unwrap();
+    assert_eq!(decoded, archive);
+    let record = decoded.to_finalized_core_record().unwrap();
+    let force = |sample: birdman_game_core::FlightRecordPlaybackSample| {
+        sample.tail_wrenches.unwrap()[0]
+            .unwrap()
+            .force_body_newtons()
+            .components()
+    };
+    assert_eq!(
+        force(record.sample_at_time(0, 0.25).unwrap()),
+        initial.force_frd_n
+    );
+    assert_eq!(
+        force(record.sample_at_time(0, 0.5).unwrap()),
+        terminal.force_frd_n
+    );
+    let csv = tail_csv_rows(&decoded);
+    assert_eq!(csv_value(&csv, 1, "log_export_version"), "5");
+    assert_eq!(csv_value(&csv, 2, "horizontal_tail_force_frd_x_n"), "7");
+    assert_eq!(csv_value(&csv, 2, "vertical_tail_force_frd_x_n"), "");
+    let mut downgraded = archive.clone();
+    downgraded.schema_version = 7;
+    assert_eq!(
+        downgraded.validate(),
+        Err(FlightRecordFormatError::InvalidRecord)
+    );
+    let mut incomplete = archive.clone();
+    incomplete.samples[1].tail_wrenches = None;
+    assert_eq!(
+        incomplete.validate(),
+        Err(FlightRecordFormatError::InvalidRecord)
+    );
+    let mut invalid = archive.clone();
+    invalid.samples[0].tail_wrenches.as_mut().unwrap()[0]
+        .as_mut()
+        .unwrap()
+        .force_frd_n[0] = f64::NAN;
+    assert_eq!(
+        invalid.validate(),
+        Err(FlightRecordFormatError::InvalidRecord)
+    );
+    let mut legacy = document();
+    legacy.schema_version = 7;
+    legacy.header.physics_model_version = 5;
+    for sample in &mut legacy.samples {
+        sample.wing_bending_factor = Some(1.0);
+    }
+    let restored = TailFlightRecordDocument::decode_json(&legacy.encode_json().unwrap()).unwrap();
+    assert!(
+        restored
+            .to_finalized_core_record()
+            .unwrap()
+            .samples()
+            .iter()
+            .all(|sample| sample.tail_wrenches.is_none())
+    );
+    assert!(restored.personal_best_candidate_score().unwrap().is_none());
+    assert_eq!(
+        csv_value(&tail_csv_rows(&restored), 1, "log_export_version"),
+        "4"
+    );
+}
+
+#[test]
+fn schema_eight_boundary_retains_the_right_side_tail_wrench() {
+    let mut archive = document();
+    let TailFlightRecordControlsDocument::TailIncidence {
+        physical_incidence,
+        input_from_previous: Some(input),
+    } = archive.samples[1].controls.clone()
+    else {
+        panic!("expected input");
+    };
+    let before = TailWrenchDocument {
+        force_frd_n: [1.0, 0.0, 0.0],
+        moment_about_datum_frd_nm: [0.0; 3],
+    };
+    let after = TailWrenchDocument {
+        force_frd_n: [2.0, 0.0, 0.0],
+        moment_about_datum_frd_nm: [0.0; 3],
+    };
+    archive.schema_version = 8;
+    archive.samples.truncate(1);
+    archive.samples[0].wing_bending_factor = Some(1.0);
+    archive.samples[0].tail_wrenches = Some([Some(before), None]);
+    archive.finalization.terminal_fraction = 0.0;
+    archive.finalization.boundary_event = Some(TailFlightRecordBoundaryEventDocument {
+        physical_incidence,
+        input,
+        wing_bending_factor: 1.0,
+        tail_wrenches: Some([Some(after), None]),
+    });
+    let decoded = TailFlightRecordDocument::decode_json(&archive.encode_json().unwrap()).unwrap();
+    let record = decoded.to_finalized_core_record().unwrap();
+    assert_eq!(
+        record.samples()[0].tail_wrenches.unwrap()[0]
+            .unwrap()
+            .force_body_newtons()
+            .components(),
+        before.force_frd_n
+    );
+    assert_eq!(
+        record.terminal_sample().unwrap().tail_wrenches.unwrap()[0]
+            .unwrap()
+            .force_body_newtons()
+            .components(),
+        after.force_frd_n
+    );
+    let csv = tail_csv_rows(&decoded);
+    assert_eq!(csv_value(&csv, 2, "row_kind"), "boundary_event");
+    assert_eq!(csv_value(&csv, 2, "horizontal_tail_force_frd_x_n"), "2");
+}
+
+#[test]
 fn schema_seven_boundary_event_roundtrips_and_exports_a_distinct_same_time_csv_row() {
     let mut document = document();
     let TailFlightRecordControlsDocument::TailIncidence {
@@ -807,6 +940,7 @@ fn schema_seven_boundary_event_roundtrips_and_exports_a_distinct_same_time_csv_r
         physical_incidence,
         input,
         wing_bending_factor: 2.0,
+        tail_wrenches: None,
     });
     let json = document.encode_json().unwrap();
     let decoded = TailFlightRecordDocument::decode_json(&json).unwrap();
@@ -856,7 +990,7 @@ fn schema_seven_boundary_event_roundtrips_and_exports_a_distinct_same_time_csv_r
 
 #[test]
 fn unknown_corrupt_or_surplus_control_schemas_are_rejected() {
-    for version in [0, 8, u32::MAX] {
+    for version in [0, 9, u32::MAX] {
         let mut value = serde_json::to_value(document()).unwrap();
         value["schema_version"] = version.into();
         assert_eq!(
@@ -982,7 +1116,7 @@ fn personal_best_does_not_mix_distinct_model_controller_identity() {
 #[test]
 fn previous_physics_four_archive_retains_its_key_and_original_json() {
     let mut previous = document();
-    previous.schema_version = TAIL_FLIGHT_RECORD_SCHEMA_VERSION;
+    previous.schema_version = 7;
     previous.header.physics_model_version = 4;
     for sample in &mut previous.samples {
         sample.wing_bending_factor = Some(1.0);
@@ -1045,7 +1179,7 @@ fn personal_best_initial_shape_separates_schema_seven_and_preserves_schema_six_k
         100, 244, 101, 87, 227, 166, 248, 160, 89, 62, 108, 0, 0,
     ]);
     let mut current = document();
-    current.schema_version = TAIL_FLIGHT_RECORD_SCHEMA_VERSION;
+    current.schema_version = 7;
     for sample in &mut current.samples {
         sample.wing_bending_factor = Some(1.0);
     }
