@@ -60,7 +60,12 @@ pub(crate) fn report(world: &mut World, result: Result<(), String>) {
 }
 
 pub(crate) fn initialize(world: &mut World, platform: &ApplicationPlatformObservation) {
-    let result = write(world, json!({ "platform": platform }), false);
+    let synthetic_clock = world.contains_resource::<super::VerificationClock>();
+    let result = write(
+        world,
+        json!({ "platform": platform, "synthetic_clock": synthetic_clock }),
+        false,
+    );
     report(world, result);
 }
 

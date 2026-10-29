@@ -144,6 +144,9 @@ impl Options {
                         .before(super::project_observer),
                 );
         }
+        if self.adapter_input {
+            app.insert_resource(super::VerificationClock::default());
+        }
         let trace_directory = directory.clone();
         let (verification, completion) = Verification::try_new(
             directory,

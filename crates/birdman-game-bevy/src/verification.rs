@@ -214,13 +214,17 @@ enum Check {
     RetainRecord,
     OpenStoredRecord,
     Keyboard(KeyCode, ButtonState),
-    GamepadAxis(GamepadAxis, f32),
+    GamepadAxes(f32),
+    Frames(u32),
     Paused,
     Running,
 }
 
 #[derive(Component)]
 struct VerificationGamepad;
+
+#[derive(Resource, Default)]
+pub(crate) struct VerificationClock(pub(crate) f64);
 
 #[derive(Resource)]
 pub(crate) struct Verification {
@@ -286,26 +290,24 @@ impl Verification {
                 weather: case.weather,
             }));
         }
-        checks.extend([
-            session(SessionCommand::Prepare {}),
-            Check::Capture("02-briefing.png".into()),
-            session(SessionCommand::StartCountdown {}),
-            Check::Capture("03-countdown.png".into()),
-            Check::Flight,
-        ]);
+        checks.push(session(SessionCommand::Prepare {}));
+        checks.push(Check::Capture("02-briefing.png".into()));
+        checks.push(session(SessionCommand::StartCountdown {}));
+        if !adapter_input {
+            checks.push(Check::Capture("03-countdown.png".into()));
+        }
+        checks.push(Check::Flight);
         if adapter_input {
             checks.extend([
+                Check::Frames(2),
+                Check::GamepadAxes(0.25),
+                Check::Frames(6),
+                Check::GamepadAxes(0.0),
+                Check::Frames(6),
                 Check::Keyboard(KeyCode::ArrowUp, ButtonState::Pressed),
-                Check::Delay(Duration::from_millis(100)),
+                Check::Frames(6),
                 Check::Keyboard(KeyCode::ArrowUp, ButtonState::Released),
-                Check::Delay(Duration::from_millis(100)),
-                Check::Flight,
-                Check::GamepadAxis(GamepadAxis::LeftStickY, 0.25),
-                Check::GamepadAxis(GamepadAxis::LeftStickX, 0.25),
-                Check::Delay(Duration::from_millis(100)),
-                Check::GamepadAxis(GamepadAxis::LeftStickY, 0.0),
-                Check::GamepadAxis(GamepadAxis::LeftStickX, 0.0),
-                Check::Flight,
+                Check::Frames(6),
                 Check::Keyboard(KeyCode::KeyP, ButtonState::Pressed),
                 Check::Keyboard(KeyCode::KeyP, ButtonState::Released),
                 Check::Paused,
@@ -709,6 +711,18 @@ fn advance_step(world: &mut World, verification: &mut Verification) -> Result<()
         return Ok(());
     };
     match check {
+        Check::GamepadAxes(value) => {
+            let gamepad = world.query_filtered::<Entity, With<VerificationGamepad>>().single(world)
+                .map_err(|_| "Verification gamepad is unavailable")?;
+            for axis in [GamepadAxis::LeftStickX, GamepadAxis::LeftStickY] {
+                world.write_message(RawGamepadEvent::Axis(RawGamepadAxisChangedEvent::new(gamepad, axis, value)));
+            }
+            verification.next();
+        }
+        Check::Frames(remaining) => {
+            if remaining <= 1 { verification.next(); }
+            else { verification.checks[verification.index] = Check::Frames(remaining - 1); }
+        }
         Check::Keyboard(key_code, state) => {
             let window = world.query_filtered::<Entity, With<bevy::window::PrimaryWindow>>().single(world)
                 .map_err(|_| "Verification window is unavailable")?;
@@ -720,12 +734,6 @@ fn advance_step(world: &mut World, verification: &mut Verification) -> Result<()
                 repeat: false,
                 window,
             });
-            verification.next();
-        }
-        Check::GamepadAxis(axis, value) => {
-            let gamepad = world.query_filtered::<Entity, With<VerificationGamepad>>().single(world)
-                .map_err(|_| "Verification gamepad is unavailable")?;
-            world.write_message(RawGamepadEvent::Axis(RawGamepadAxisChangedEvent::new(gamepad, axis, value)));
             verification.next();
         }
         Check::Paused => {
