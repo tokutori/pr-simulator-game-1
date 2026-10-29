@@ -134,7 +134,7 @@ Analysis用の発進台・湖岸・望遠camera点はOSMとAW3D30に基づく試
 - 構造定義は主桁の端点・半径・曲げ剛性、コックピット断面、パイロット視点と、`members`の主翼・尾翼rib/foam・stringer・cockpit frame・rimの寸法と配置を保持する。
 - `format::AircraftDocument`は文書の構造・有限値・物理値域を検証する。`content::AircraftDefinition`は空力stripの対称性・構造支持点の生成・主翼たわみの定義域・トリム解の成立まで検証し、準備済みstorageを公開する。
 - `content::AircraftDefinition`は文書と変換済みの質量・section・strip・静特性・中立構造支持点を所有する。借用した荷重モデルと構造形状の寿命はこのstorageと結び付く。
-- `content::playable_aircraft()`は`assets/aircraft/playable-glider-v5.json`を読み込む。主翼の69断面は20.863 mのスパン、テーパー、二つの上反角変化点を持ち、同じ区分線型形状から参照寸法を求める。
+- `content::playable_aircraft()`は`assets/aircraft/playable-glider-v6.json`を読み込む。主翼の69断面は20.863 mのスパン、テーパー、二つの上反角変化点を持ち、同じ区分線型形状から参照寸法を求める。
 - stripの指定境界とsection境界の和集合で荷重評価点を生成する。各点の面積・作用位置・局所フレームは、その区間の幾何から導出する。
 - `AircraftShape`は同じsectionの四分の一翼弦点と翼弦長を区分線型補間する。翼・水平尾翼の翼型はbody XZ、垂直尾翼はbody XYで閉じた前縁・後縁を持つ。コックピットは断面間の区分線型補間と指定指数の超楕円、主桁は指定端点・半径を使う。
 - 中立支持点は全section knotの翼型、全コックピット断面、全構造材の共有頂点から導出する。既定は翼弦方向32分割・管周方向24分割で、材料の被覆率と空力stripの分割から独立する。sceneは同じ管の周方向位相と三角形を描画する。

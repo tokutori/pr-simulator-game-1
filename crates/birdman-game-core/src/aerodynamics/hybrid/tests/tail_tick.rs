@@ -400,6 +400,16 @@ fn tail_tick_contact_interpolates_body_and_pilot_at_one_time_with_interval_input
         assert_eq!(contact.contact_point_index(), 0);
         let fraction = contact.fraction();
         let sampled = contact.flight_state();
+        if down == 0.0 {
+            assert_eq!(report.tail_wrenches(), [None; 2]);
+        } else {
+            assert_eq!(
+                report.tail_wrenches(),
+                load.evaluate_hybrid(&sampled, contact.incidence())
+                    .unwrap()
+                    .tail_wrenches()
+            );
+        }
         let initial = previous.flight_state();
         let final_state = next.flight_state();
         near(sampled.datum_position_ned().components()[2], 0.0, 1.0e-14);

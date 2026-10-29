@@ -4,7 +4,7 @@ use birdman_game_core::{
     HybridAnchor, HybridError, HybridModel, HybridProxy, HybridSection, HybridSurface,
     HybridSurfaceGeometry, HybridSurfaceRole, MathError, PlanformSymmetry, PolarAnalysisMethod,
     PolarMomentAxes, StaticPolar, StaticPolarMetadata, StaticPolarRow, SteadyGlideError,
-    SteadyGlideTrim, TailIncidence, WingBendingFactor,
+    SteadyGlideTrim, TailAerodynamics, TailIncidence, WingBendingFactor,
 };
 use birdman_game_format::aircraft::{
     AircraftDocument, AircraftFormatError, AircraftPolarAxes, AircraftPolarMethod,
@@ -13,7 +13,7 @@ use birdman_game_format::aircraft::{
 
 /// Complete source of the registered fictional glider, in body FRD coordinates and SI units.
 pub const PLAYABLE_AIRCRAFT_JSON: &[u8] =
-    include_bytes!("../../../assets/aircraft/playable-glider-v5.json");
+    include_bytes!("../../../assets/aircraft/playable-glider-v6.json");
 
 /// Decodes and prepares the bundled aircraft into owned immutable storage.
 pub fn playable_aircraft() -> Result<AircraftDefinition, AircraftDefinitionError> {
@@ -53,6 +53,7 @@ struct SurfaceStorage {
     symmetry: PlanformSymmetry,
     sections: Vec<HybridSection>,
     proxies: Vec<HybridProxy>,
+    tail_aerodynamics: Option<TailAerodynamics>,
 }
 
 impl AircraftDefinition {
@@ -229,8 +230,12 @@ impl AircraftDefinition {
                 .iter()
                 .find(|surface| surface.role == role)
                 .expect("document validation requires every unique surface role");
-            HybridSurface::try_new(storage.geometry()?, &storage.proxies)
-                .map_err(AircraftDefinitionError::Hybrid)
+            HybridSurface::try_new(
+                storage.geometry()?,
+                &storage.proxies,
+                storage.tail_aerodynamics,
+            )
+            .map_err(AircraftDefinitionError::Hybrid)
         };
         Ok([
             surface(HybridSurfaceRole::MainWing)?,
@@ -381,6 +386,17 @@ fn prepare_surface(
             .core_sections()
             .map_err(AircraftDefinitionError::Format)?,
         proxies: Vec::new(),
+        tail_aerodynamics: source
+            .tail_aerodynamics
+            .map(|tail| {
+                TailAerodynamics::try_new(
+                    tail.zero_lift_drag_coefficient,
+                    tail.span_efficiency,
+                    tail.pitching_moment_coefficient,
+                )
+                .map_err(AircraftDefinitionError::Aerodynamics)
+            })
+            .transpose()?,
     };
     let geometry = storage.geometry()?;
     let axis = if storage.role == HybridSurfaceRole::VerticalTail {

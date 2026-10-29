@@ -81,6 +81,13 @@ impl<'a> GameSessionConfiguration<'a> {
         self.scenario.initial_state()
     }
 
+    /// Returns the tail loads validated for the sealed launch state.
+    #[cfg_attr(verus_only, vstd::prelude::verus_verify(dual_spec))]
+    #[cfg_attr(verus_only, verus_spec(returns self.initial_tail_wrenches()))]
+    pub const fn initial_tail_wrenches(&self) -> [Option<crate::Wrench>; 2] {
+        self.scenario.initial_tail_wrenches()
+    }
+
     fn telemetry(&self, state: FlightState) -> Result<FlightTelemetry, FlightTelemetryError> {
         self.scenario.telemetry(state)
     }

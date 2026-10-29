@@ -30,6 +30,15 @@ fn valid_document() -> AircraftDocument {
             .to_vec(),
         strip_fractions: vec![0.0, 0.5, 1.0],
         lift_anchor: [0.0, 0.0],
+        tail_aerodynamics: (role != AircraftSurfaceRole::MainWing).then_some(
+            TailAerodynamicsDocument {
+                zero_lift_drag_coefficient: 0.00385,
+                span_efficiency: 0.7,
+                pitching_moment_coefficient: 0.0,
+                reference_airspeed_mps: 9.7,
+                reference_kinematic_viscosity_m2ps: 0.000015,
+            },
+        ),
         airfoil: AircraftAirfoilDocument {
             camber_ratio: 0.04,
             camber_position_ratio: 0.4,
@@ -259,6 +268,30 @@ fn invalid_surface_identity_order_partition_and_counts_are_rejected() {
     document.surfaces[0].sections =
         vec![document.surfaces[0].sections[0]; MAX_AIRCRAFT_STATIONS + 1];
     assert_eq!(document.validate(), Err(AircraftFormatError::InvalidCount));
+    document = valid_document();
+    document.surfaces[1]
+        .tail_aerodynamics
+        .as_mut()
+        .unwrap()
+        .reference_airspeed_mps = 0.0;
+    assert_eq!(
+        document.validate(),
+        Err(AircraftFormatError::InvalidSurface(
+            AircraftSurfaceRole::HorizontalTail
+        ))
+    );
+    document = valid_document();
+    document.surfaces[2]
+        .tail_aerodynamics
+        .as_mut()
+        .unwrap()
+        .reference_kinematic_viscosity_m2ps = f64::NAN;
+    assert_eq!(
+        document.validate(),
+        Err(AircraftFormatError::InvalidSurface(
+            AircraftSurfaceRole::VerticalTail
+        ))
+    );
 }
 
 #[test]

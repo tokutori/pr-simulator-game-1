@@ -184,16 +184,19 @@ impl TestAircraft {
             HybridSurface::try_new(
                 geometry(HybridSurfaceRole::MainWing, &self.wing_sections)?,
                 &self.wing_proxies,
+                None,
             )
             .map_err(TestAircraftError::Hybrid)?,
             HybridSurface::try_new(
                 geometry(HybridSurfaceRole::HorizontalTail, &self.tail_sections)?,
                 &self.tail_proxies,
+                Some(crate::TailAerodynamics::try_new(0.0038517428696657075, 0.7, 0.0).unwrap()),
             )
             .map_err(TestAircraftError::Hybrid)?,
             HybridSurface::try_new(
                 geometry(HybridSurfaceRole::VerticalTail, &self.fin_sections)?,
                 &self.fin_proxies,
+                Some(crate::TailAerodynamics::try_new(0.003907975667072787, 0.7, 0.0).unwrap()),
             )
             .map_err(TestAircraftError::Hybrid)?,
         ])

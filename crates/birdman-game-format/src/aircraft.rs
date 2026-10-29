@@ -10,7 +10,7 @@ use birdman_game_core::{
 use serde::{Deserialize, Serialize};
 
 /// External document version, separate from the physical model version.
-pub const AIRCRAFT_SCHEMA_VERSION: u32 = 2;
+pub const AIRCRAFT_SCHEMA_VERSION: u32 = 3;
 /// Maximum source JSON size accepted before deserialization.
 pub const MAX_AIRCRAFT_JSON_BYTES: usize = 256 * 1024;
 /// Maximum section or strip-edge count in each lifting surface.
@@ -136,8 +136,27 @@ pub struct AircraftSurfaceDocument {
     pub strip_fractions: Vec<f64>,
     /// Reference normal-force coefficient and corresponding incidence in radians.
     pub lift_anchor: [f64; 2],
+    /// Synthetic tail coefficients; the main wing uses the full-aircraft polar.
+    pub tail_aerodynamics: Option<TailAerodynamicsDocument>,
     /// Normalized cross-section used by the physical outer surface.
     pub airfoil: AircraftAirfoilDocument,
+}
+
+/// Coefficients for the synthetic tail strip model.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct TailAerodynamicsDocument {
+    /// Zero-lift drag coefficient at the stated reference Reynolds number.
+    pub zero_lift_drag_coefficient: f64,
+    /// Span efficiency of the complete tail.
+    pub span_efficiency: f64,
+    /// Pitching moment coefficient about the local quarter chord.
+    pub pitching_moment_coefficient: f64,
+    /// Reference airspeed used to derive the synthetic profile drag in m/s.
+    pub reference_airspeed_mps: f64,
+    /// Reference kinematic viscosity in square metres per second.
+    pub reference_kinematic_viscosity_m2ps: f64,
 }
 
 /// Static table source classification supported by the physical core.
@@ -523,7 +542,24 @@ impl AircraftSurfaceDocument {
             return Err(AircraftFormatError::InvalidCount);
         }
         let airfoil = self.airfoil;
+        let tail_valid = match self.tail_aerodynamics {
+            None => self.role == AircraftSurfaceRole::MainWing,
+            Some(tail) => {
+                self.role != AircraftSurfaceRole::MainWing
+                    && tail.reference_airspeed_mps.is_finite()
+                    && tail.reference_airspeed_mps > 0.0
+                    && tail.reference_kinematic_viscosity_m2ps.is_finite()
+                    && tail.reference_kinematic_viscosity_m2ps > 0.0
+                    && birdman_game_core::TailAerodynamics::try_new(
+                        tail.zero_lift_drag_coefficient,
+                        tail.span_efficiency,
+                        tail.pitching_moment_coefficient,
+                    )
+                    .is_ok()
+            }
+        };
         if self.strip_fractions.first() != Some(&0.0)
+            || !tail_valid
             || self.strip_fractions.last() != Some(&1.0)
             || self
                 .strip_fractions

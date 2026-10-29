@@ -4,7 +4,7 @@ use crate::{PLAYABLE_AIRCRAFT_JSON, playable_aircraft};
 #[test]
 fn bundled_aircraft_prepares_its_nonrectangular_broken_dihedral_surfaces() {
     let definition = playable_aircraft().unwrap();
-    assert_eq!(definition.document().model_version, 5);
+    assert_eq!(definition.document().model_version, 6);
     let surfaces = definition.surfaces().unwrap();
     let wing = surfaces[0].geometry();
     assert_eq!(wing.sections().len(), 69);

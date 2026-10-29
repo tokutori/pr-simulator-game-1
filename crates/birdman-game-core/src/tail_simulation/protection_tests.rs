@@ -349,7 +349,7 @@ fn shortened_contact_search_retains_contact_errors_and_elapsed_time() {
         Err(original)
     );
     let calls = Cell::new(0);
-    let (_, contact) = contact_before_wind_exit(
+    let (_, contact, _) = contact_before_wind_exit(
         |fraction| {
             calls.set(calls.get() + 1);
             if fraction > 0.1 {
@@ -363,6 +363,7 @@ fn shortened_contact_search_retains_contact_errors_and_elapsed_time() {
                     contact_point_index: 0,
                     flight_state: state,
                 }),
+                [None; 2],
             ))
         },
         original,
@@ -383,7 +384,7 @@ fn shortened_contact_search_retains_contact_errors_and_elapsed_time() {
                     if calls.get() > 1 {
                         return Err(failure);
                     }
-                    Ok((state, Some(contact)))
+                    Ok((state, Some(contact), [None; 2]))
                 },
                 original,
             ),
@@ -402,6 +403,7 @@ fn shortened_contact_search_retains_contact_errors_and_elapsed_time() {
                         contact_point_index: 0,
                         flight_state: state,
                     }),
+                    [None; 2],
                 ))
             },
             original,

@@ -691,6 +691,7 @@ fn acceleration_toward_velocity(
 
 /// Non-gravitational external force and moment about datum O.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub struct Wrench {
     force_body_newtons: BodyVector,
     moment_about_datum_newton_meters: BodyVector,

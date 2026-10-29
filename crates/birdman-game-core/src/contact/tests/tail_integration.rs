@@ -40,7 +40,12 @@ fn off_grid_tail_contact_seals_record_and_score_at_the_first_fractional_time() {
         HybridAnchor::try_new(0.0, 0.0).unwrap(),
     )
     .unwrap()];
-    let surfaces = [HybridSurface::try_new(geometry, &proxies).unwrap()];
+    let surfaces = [HybridSurface::try_new(
+        geometry,
+        &proxies,
+        Some(TailAerodynamics::try_new(0.00385, 0.7, 0.0).unwrap()),
+    )
+    .unwrap()];
     let loads = HybridAerodynamicLoad::try_new(
         HybridModel::try_new(polar, &surfaces).unwrap(),
         1.225,

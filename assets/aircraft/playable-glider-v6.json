@@ -1,7 +1,7 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "configuration_id": "bpg041-playable-hybrid-mock",
-  "model_version": 5,
+  "model_version": 6,
   "mass": {
     "airframe_kg": 40,
     "inertia_about_datum_kg_m2": [
@@ -621,6 +621,7 @@
     },
     {
       "role": "horizontal_tail",
+      "tail_aerodynamics": {"zero_lift_drag_coefficient": 0.0038517428696657075, "span_efficiency": 0.7, "pitching_moment_coefficient": 0.0, "reference_airspeed_mps": 9.7, "reference_kinematic_viscosity_m2ps": 0.000015},
       "mirror_span": true,
       "sections": [
         {
@@ -663,6 +664,7 @@
     },
     {
       "role": "vertical_tail",
+      "tail_aerodynamics": {"zero_lift_drag_coefficient": 0.003907975667072787, "span_efficiency": 0.7, "pitching_moment_coefficient": 0.0, "reference_airspeed_mps": 9.7, "reference_kinematic_viscosity_m2ps": 0.000015},
       "mirror_span": false,
       "sections": [
         {

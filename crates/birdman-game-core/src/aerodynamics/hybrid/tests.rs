@@ -165,7 +165,12 @@ impl Fixture {
 
     fn surfaces(&self) -> [HybridSurface<'_>; 3] {
         core::array::from_fn(|index| {
-            HybridSurface::try_new(self.geometry(index), &self.proxies[index]).unwrap()
+            HybridSurface::try_new(
+                self.geometry(index),
+                &self.proxies[index],
+                test_tail(self.geometry(index)),
+            )
+            .unwrap()
         })
     }
 
@@ -211,7 +216,7 @@ fn linear_chord_squared_integral_and_area_centroid_are_exact() {
     .unwrap();
     near(proxy.point().components()[1], 7.0 / 6.0, 1.0e-14);
     near(proxy.point().components()[0], -19.0 / 6.0, 1.0e-14);
-    assert!(HybridSurface::try_new(geometry, &[proxy]).is_ok());
+    assert!(HybridSurface::try_new(geometry, &[proxy], test_tail(geometry)).is_ok());
 }
 
 #[test]
@@ -237,7 +242,7 @@ fn dihedral_uses_surface_weights_and_projected_whole_surface_ar_once() {
         HybridProxy::try_new(geometry, [-2.0, 0.0], frame_x(dihedral), anchor).unwrap(),
         HybridProxy::try_new(geometry, [0.0, 2.0], frame_x(-dihedral), anchor).unwrap(),
     ];
-    assert!(HybridSurface::try_new(geometry, &proxies).is_ok());
+    assert!(HybridSurface::try_new(geometry, &proxies, test_tail(geometry)).is_ok());
     assert_eq!(
         HybridProxy::try_new(geometry, [-2.0, 0.0], ElementOrientation::IDENTITY, anchor)
             .unwrap_err()
@@ -314,7 +319,7 @@ fn proxy_coverage_symmetry_and_cross_geometry_identity_are_validated() {
     let geometry = fixture.geometry(0);
     for invalid in [&fixture.proxies[0][1..], &fixture.proxies[0][..3]] {
         assert_eq!(
-            HybridSurface::try_new(geometry, invalid)
+            HybridSurface::try_new(geometry, invalid, test_tail(geometry))
                 .unwrap_err()
                 .cause(),
             AeroError::InvalidHybridProxySet
@@ -322,7 +327,7 @@ fn proxy_coverage_symmetry_and_cross_geometry_identity_are_validated() {
     }
     let mut duplicated = fixture.proxies[0].clone();
     duplicated[1] = duplicated[0];
-    let error = HybridSurface::try_new(geometry, &duplicated).unwrap_err();
+    let error = HybridSurface::try_new(geometry, &duplicated, test_tail(geometry)).unwrap_err();
     assert_eq!(
         error.site(),
         HybridSite::Proxy {
@@ -339,13 +344,13 @@ fn proxy_coverage_symmetry_and_cross_geometry_identity_are_validated() {
     )
     .unwrap();
     assert_eq!(
-        HybridSurface::try_new(geometry, &asymmetric)
+        HybridSurface::try_new(geometry, &asymmetric, test_tail(geometry))
             .unwrap_err()
             .cause(),
         AeroError::InvalidHybridProxySet
     );
     assert_eq!(
-        HybridSurface::try_new(geometry, &fixture.proxies[1])
+        HybridSurface::try_new(geometry, &fixture.proxies[1], test_tail(geometry))
             .unwrap_err()
             .cause(),
         AeroError::InvalidHybridProxySet
@@ -465,6 +470,58 @@ fn isolated_increment(
         .evaluate_hybrid(&state(velocity, rate), incidence)
         .unwrap()
         .increment()
+}
+
+#[test]
+fn tail_actual_loads_at_uniform_reference_are_distinct_from_zero_increment() {
+    let fixture = Fixture::new(4);
+    let surfaces = fixture.surfaces();
+    let loads = HybridAerodynamicLoad::try_new(
+        HybridModel::try_new(fixture.polar(), &surfaces).unwrap(),
+        1.2,
+        WindField::uniform(NedVector::zero()),
+    )
+    .unwrap();
+    let evaluation = loads
+        .evaluate_hybrid(&state([10.0, 0.0, 0.0], [0.0; 3]), TailIncidence::neutral())
+        .unwrap();
+    assert_eq!(evaluation.increment(), Wrench::zero());
+    let [horizontal, vertical] = evaluation.tail_wrenches().map(Option::unwrap);
+    let horizontal_cl = 0.4 - (4.0 * core::f64::consts::PI / 3.0) * 0.02;
+    let horizontal_cd =
+        0.00385 + horizontal_cl * horizontal_cl / (core::f64::consts::PI * 4.0 * 0.7);
+    let vertical_cl = 0.4 - core::f64::consts::PI * 0.02;
+    let vertical_cd = 0.00385 + vertical_cl * vertical_cl / (core::f64::consts::PI * 2.0 * 0.7);
+    near(
+        horizontal.force_body_newtons().components()[0],
+        -60.0 * horizontal_cd,
+        1.0e-12,
+    );
+    near(
+        horizontal.force_body_newtons().components()[2],
+        -60.0 * horizontal_cl,
+        1.0e-12,
+    );
+    near(
+        horizontal.moment_about_datum_newton_meters().components()[1],
+        -180.0 * horizontal_cl,
+        1.0e-12,
+    );
+    near(
+        vertical.force_body_newtons().components()[0],
+        -30.0 * vertical_cd,
+        1.0e-12,
+    );
+    near(
+        vertical.force_body_newtons().components()[1],
+        30.0 * vertical_cl,
+        1.0e-12,
+    );
+    near(
+        vertical.moment_about_datum_newton_meters().components()[2],
+        -75.0 * vertical_cl,
+        1.0e-12,
+    );
 }
 
 #[test]
@@ -607,23 +664,10 @@ fn tail_pitch_and_fin_yaw_damping_converge_to_independent_small_disturbance_orac
     let fixture = Fixture::new(4);
     let tail_slope = 4.0 * core::f64::consts::PI / 3.0;
     let fin_slope = core::f64::consts::PI;
-    for (surface, component, expected, rate_scale, normalization) in [
-        (
-            1,
-            1,
-            -2.0 * tail_slope * (1.0 / 4.0) * 9.0,
-            20.0,
-            60.0 * 4.0,
-        ),
-        (
-            2,
-            2,
-            -2.0 * fin_slope * (0.5 / 4.0) * (2.5 / 4.0) * (2.5 / 4.0),
-            5.0,
-            60.0 * 4.0 * 4.0,
-        ),
+    for (surface, component, slope, aspect_ratio, lever, area, rate_scale, normalization) in [
+        (1, 1, tail_slope, 4.0, 3.0, 1.0, 20.0, 60.0 * 4.0),
+        (2, 2, fin_slope, 2.0, 2.5, 0.5, 5.0, 60.0 * 4.0 * 4.0),
     ] {
-        let mut previous_error = f64::INFINITY;
         for width in [0.002, 0.001, 0.0005] {
             let mut positive_rate = [0.0; 3];
             positive_rate[component] = width * rate_scale;
@@ -649,12 +693,16 @@ fn tail_pitch_and_fin_yaw_damping_converge_to_independent_small_disturbance_orac
             .components()[component];
             assert!(positive < 0.0 && negative > 0.0);
             let observed = (positive - negative) / (2.0 * width * normalization);
-            let error = (observed - expected).abs();
-            assert!(error < previous_error);
-            previous_error = error;
-            if width == 0.0005 {
-                near(observed, expected, 2.0e-4);
-            }
+            let ratio = lever * rate_scale * width / 10.0;
+            let angle = libm::atan(ratio);
+            let cl0 = 0.4 - slope * 0.02;
+            let induced = 1.0 / (core::f64::consts::PI * aspect_ratio * 0.7);
+            let cd0 = 0.00385 + induced * cl0 * cl0;
+            let force_term = slope * angle * libm::cos(angle)
+                + (cd0 + induced * slope * slope * angle * angle) * libm::sin(angle);
+            let expected =
+                -lever * 60.0 * area * (1.0 + ratio * ratio) * force_term / (width * normalization);
+            near(observed, expected, 1.0e-10);
         }
     }
 }
@@ -680,15 +728,21 @@ fn fin_beta_restoration_and_physical_tail_incidence_have_independent_signs() {
         let side = positive.force_body_newtons().components()[1];
         let yaw = positive.moment_about_datum_newton_meters().components()[2];
         assert!(side < 0.0 && yaw > 0.0);
+        let slope = core::f64::consts::PI;
+        let induced = 1.0 / (core::f64::consts::PI * 2.0 * 0.7);
+        let cl0 = 0.4 - slope * 0.02;
+        let mean_drag = 0.00385 + induced * (cl0 * cl0 + slope * slope * width * width);
+        let expected_side =
+            -(slope * libm::cos(width) + mean_drag * libm::sin(width) / width) / 8.0;
         near(
             (side - negative.force_body_newtons().components()[1]) / (2.0 * width * 60.0 * 4.0),
-            -core::f64::consts::PI / 8.0,
+            expected_side,
             2.0e-12,
         );
         near(
             (yaw - negative.moment_about_datum_newton_meters().components()[2])
                 / (2.0 * width * 60.0 * 4.0 * 4.0),
-            core::f64::consts::PI * (0.5 / 4.0) * (2.5 / 4.0),
+            -expected_side * 2.5 / 4.0,
             2.0e-12,
         );
     }
@@ -791,7 +845,7 @@ fn tip_up_dihedral_restores_beta_and_symmetric_upflow_cancels_roll() {
         HybridProxy::try_new(geometry, [-2.0, 0.0], frame_x(angle), anchor).unwrap(),
         HybridProxy::try_new(geometry, [0.0, 2.0], frame_x(-angle), anchor).unwrap(),
     ];
-    let surfaces = [HybridSurface::try_new(geometry, &proxies).unwrap()];
+    let surfaces = [HybridSurface::try_new(geometry, &proxies, test_tail(geometry)).unwrap()];
     let model = HybridModel::try_new(fixture.polar(), &surfaces).unwrap();
     let load =
         HybridAerodynamicLoad::try_new(model, 1.2, WindField::uniform(NedVector::zero())).unwrap();
@@ -957,4 +1011,9 @@ fn zero_datum_requires_all_actual_proxy_velocities_and_wind_samples_to_succeed()
             index: 0
         }
     );
+}
+
+fn test_tail(geometry: HybridSurfaceGeometry<'_>) -> Option<TailAerodynamics> {
+    (geometry.role() != HybridSurfaceRole::MainWing)
+        .then(|| TailAerodynamics::try_new(0.00385, 0.7, 0.0).unwrap())
 }

@@ -318,9 +318,17 @@ enum TailReportedOutcome {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TailFlightTickReport {
     result: TailReportedOutcome,
+    tail_wrenches: [Option<Wrench>; 2],
 }
 
 impl TailFlightTickReport {
+    /// Returns actual horizontal and vertical tail loads at the published state.
+    /// An unelapsed contact retains the preceding record instead.
+    #[cfg_attr(verus_only, verus_verify(dual_spec))]
+    #[cfg_attr(verus_only, verus_spec(returns self.tail_wrenches()))]
+    pub const fn tail_wrenches(self) -> [Option<Wrench>; 2] {
+        self.tail_wrenches
+    }
     #[cfg(verus_only)]
     verus! {
         /// Boundary reports retain preceding motion and preserve controls on the left side.
@@ -398,12 +406,14 @@ impl ExternalLoadProvider for HeldTailLoad<'_, '_> {
 struct TailTrialOutcome {
     flight_state: FlightState,
     contact: Option<TailWaterContactSample>,
+    tail_wrenches: [Option<Wrench>; 2],
 }
 
 struct TailEvaluatedTick {
     next: TailFlightTickState,
     controls: TailAppliedControls,
     contact: Option<TailWaterContactSample>,
+    tail_wrenches: [Option<Wrench>; 2],
 }
 
 struct TailTickTrial<'provider, 'environment, 'geometry> {
@@ -438,9 +448,11 @@ impl TailTickTrial<'_, '_, '_> {
                 .initial_contact_point(self.previous.flight_state)
                 .map_err(TailFlightTickError::Contact)?
         {
-            validate_published_load(self.loads, self.previous.flight_state, incidence)?;
+            let tail_wrenches =
+                validate_published_load(self.loads, self.previous.flight_state, incidence)?;
             return Ok(TailTrialOutcome {
                 flight_state: self.previous.flight_state,
+                tail_wrenches,
                 contact: Some(TailWaterContactSample {
                     interval_start_tick: self.previous.tick_index,
                     fraction: 0.0,
@@ -484,14 +496,16 @@ impl TailTickTrial<'_, '_, '_> {
                 } else {
                     incidence
                 };
-            validate_published_load(self.loads, published_state, published_incidence)?;
-            Ok((state, contact))
+            let tail_wrenches =
+                validate_published_load(self.loads, published_state, published_incidence)?;
+            Ok((state, contact, tail_wrenches))
         };
-        let (state, contact) = match evaluate_interval(1.0) {
+        let (state, contact, tail_wrenches) = match evaluate_interval(1.0) {
             Ok(outcome) => outcome,
             Err(error) if geometry.is_some() && future_wind_domain_failure(error) => {
-                let (state, contact) = contact_before_wind_exit(evaluate_interval, error)?;
-                (state, Some(contact))
+                let (state, contact, tail_wrenches) =
+                    contact_before_wind_exit(evaluate_interval, error)?;
+                (state, Some(contact), tail_wrenches)
             }
             Err(error) => return Err(error),
         };
@@ -526,6 +540,7 @@ impl TailTickTrial<'_, '_, '_> {
         Ok(TailTrialOutcome {
             flight_state: state,
             contact,
+            tail_wrenches,
         })
     }
 
@@ -600,11 +615,15 @@ fn contact_before_wind_exit(
     evaluate_interval: impl Fn(
         f64,
     ) -> Result<
-        (FlightState, Option<FlightStateContactSample>),
+        (
+            FlightState,
+            Option<FlightStateContactSample>,
+            [Option<Wrench>; 2],
+        ),
         TailFlightTickError,
     >,
     original_error: TailFlightTickError,
-) -> Result<(FlightState, FlightStateContactSample), TailFlightTickError> {
+) -> Result<(FlightState, FlightStateContactSample, [Option<Wrench>; 2]), TailFlightTickError> {
     let mut lower = 0.0;
     let mut upper = 1.0;
     let mut earliest = None;
@@ -614,16 +633,16 @@ fn contact_before_wind_exit(
             break;
         }
         match evaluate_interval(fraction) {
-            Ok((state, Some(mut contact))) => {
+            Ok((state, Some(mut contact), tail_wrenches)) => {
                 let local_fraction = contact.fraction;
                 contact.fraction *= fraction;
                 if local_fraction > 0.0 && contact.fraction == 0.0 {
                     return Err(TailFlightTickError::Contact(ContactError::UnresolvedMotion));
                 }
-                earliest = Some((state, contact));
+                earliest = Some((state, contact, tail_wrenches));
                 upper = fraction;
             }
-            Ok((_, None)) => lower = fraction,
+            Ok((_, None, _)) => lower = fraction,
             Err(error) if future_wind_domain_failure(error) => {
                 upper = fraction;
                 earliest = None;
@@ -639,13 +658,13 @@ fn validate_published_load(
     loads: &HybridAerodynamicLoad<'_>,
     state: FlightState,
     incidence: TailIncidence,
-) -> Result<(), TailFlightTickError> {
-    loads.evaluate_hybrid(&state, incidence).map_err(|error| {
+) -> Result<[Option<Wrench>; 2], TailFlightTickError> {
+    let evaluation = loads.evaluate_hybrid(&state, incidence).map_err(|error| {
         TailFlightTickError::Dynamics(DynamicsError::Load(LoadError::Aerodynamic(
             AerodynamicEvaluationError::Hybrid(error),
         )))
     })?;
-    Ok(())
+    Ok(evaluation.tail_wrenches())
 }
 
 fn controlled_tail_failure(error: TailFlightTickError) -> bool {
@@ -769,6 +788,7 @@ fn evaluate_tail_flight_tick(
             commands: control.commands(),
         },
         contact: outcome.contact,
+        tail_wrenches: outcome.tail_wrenches,
     })
 }
 
@@ -828,12 +848,14 @@ pub fn advance_tail_flight_tick_with_contact_report(
         loads,
         TailTrialGeometry::Fixed(geometry),
     )?;
-    Ok(evaluated_tick_report(
+    let mut report = evaluated_tick_report(
         previous,
         evaluation.next,
         evaluation.controls,
         evaluation.contact,
-    ))
+    );
+    report.tail_wrenches = evaluation.tail_wrenches;
+    Ok(report)
 }
 
 #[cfg_attr(verus_only, verus_spec(report =>
@@ -896,7 +918,10 @@ pub(crate) fn evaluated_tick_report(
             }
         },
     };
-    TailFlightTickReport { result }
+    TailFlightTickReport {
+        result,
+        tail_wrenches: [None; 2],
+    }
 }
 
 #[cfg_attr(verus_only, verus_spec(report =>
@@ -920,6 +945,7 @@ fn contact_at_start_report(
     contact_point_index: usize,
 ) -> TailFlightTickReport {
     TailFlightTickReport {
+        tail_wrenches: [None; 2],
         result: TailReportedOutcome::ContactAtStart(TailWaterContactSample {
             interval_start_tick: previous.tick_index,
             fraction,
