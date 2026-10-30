@@ -198,7 +198,7 @@ fn setup(
             projection.visual_wave_height() as f32,
             projection.spacing().gradient_magnitude() as f32,
         );
-        base.project_camera(camera.translation, 7.0);
+        base.camera_time = camera.translation.extend(7.0);
         if far {
             base.geometry_patch = Vec4::ZERO;
         }
