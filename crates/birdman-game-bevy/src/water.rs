@@ -3,7 +3,10 @@ use bevy::{
     render as bevy_render,
 };
 use bevy::{
-    prelude::*, reflect::TypePath, render::render_resource::AsBindGroup, shader::ShaderRef,
+    prelude::*,
+    reflect::TypePath,
+    render::render_resource::{AsBindGroup, encase},
+    shader::ShaderRef,
 };
 use birdman_game_runtime::{ApplicationLightingAssets, ApplicationWaterAssets};
 use birdman_game_scene::lake_water::MAX_LAKE_WAVE_COMPONENTS;
@@ -22,17 +25,17 @@ pub(crate) struct NearWaterSurface;
 pub(crate) struct WaterMaterial {
     #[uniform(0)]
     pub(crate) camera_time: Vec4,
-    #[uniform(1)]
+    #[uniform(0)]
     pub(crate) sun_cloud: Vec4,
-    #[uniform(2)]
+    #[uniform(0)]
     pub(crate) waves_sky: Vec4,
-    #[uniform(3)]
+    #[uniform(0)]
     pub(crate) geometry_patch: Vec4,
-    #[uniform(4)]
+    #[uniform(0)]
     geometry_waves: [Vec4; MAX_LAKE_WAVE_COMPONENTS],
-    #[uniform(5)]
+    #[uniform(0)]
     geometry_motion: [Vec4; MAX_LAKE_WAVE_COMPONENTS],
-    #[uniform(6)]
+    #[uniform(0)]
     geometry_parameters: Vec4,
     #[texture(7)]
     #[sampler(8)]
@@ -40,9 +43,9 @@ pub(crate) struct WaterMaterial {
     #[texture(9)]
     #[sampler(10)]
     detail_far: Option<Handle<Image>>,
-    #[uniform(11)]
+    #[uniform(0)]
     water_palette: [Vec4; 4],
-    #[uniform(12)]
+    #[uniform(0)]
     haze_parameters: Vec4,
     #[texture(13)]
     #[sampler(14)]
@@ -50,11 +53,11 @@ pub(crate) struct WaterMaterial {
     #[texture(15)]
     #[sampler(16)]
     pub(crate) reflection_texture: Option<Handle<Image>>,
-    #[uniform(17)]
+    #[uniform(0)]
     pub(crate) reflection_clip_from_world: Mat4,
-    #[uniform(18)]
+    #[uniform(0)]
     pub(crate) reflection_enabled: f32,
-    #[uniform(19)]
+    #[uniform(0)]
     detail_filter_minification: Vec2,
 }
 
