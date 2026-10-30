@@ -2,18 +2,18 @@ use super::{NativeGpu, ResourceStage};
 use bevy::ecs as bevy_ecs;
 use bevy::{
     asset::{AssetId, RenderAssetUsages, UntypedAssetId},
-    camera::NormalizedRenderTarget,
+    camera::{NormalizedRenderTarget, primitives::MeshAabb},
     mesh::Indices,
     pbr::{PreparedMaterial, ViewShadowBindings},
     prelude::*,
     render::{
-        Extract, ExtractSchedule, MainWorld, RenderApp,
+        ExtractSchedule, MainWorld, Render, RenderApp, RenderSystems,
         camera::ExtractedCamera,
         erased_render_asset::ErasedRenderAssets,
-        mesh::RenderMesh,
+        mesh::{RenderMesh, allocator::MeshAllocator},
         render_asset::RenderAssets,
-        render_resource::PrimitiveTopology,
-        renderer::{RenderGraph, RenderGraphSystems},
+        render_resource::{BufferUsages, PrimitiveTopology},
+        renderer::{RenderGraph, RenderGraphSystems, RenderQueue},
         sync_world::MainEntity,
         texture::GpuImage,
     },
@@ -51,12 +51,23 @@ struct Upload {
     images: Vec<AssetId<Image>>,
     mip_images: Vec<AssetId<Image>>,
     materials: Vec<UntypedAssetId>,
+    bound: bool,
+    failure: Option<String>,
+}
+
+struct MeshTransfer {
+    id: AssetId<Mesh>,
+    vertices: Vec<u8>,
+    count: u32,
+    stride: u64,
+    center: Vec3,
 }
 
 #[derive(Resource, Default)]
 struct Uploads {
     revision: u64,
     jobs: Vec<Upload>,
+    pending_meshes: Vec<MeshTransfer>,
 }
 
 pub(crate) fn install(app: &mut App) {
@@ -66,6 +77,12 @@ pub(crate) fn install(app: &mut App) {
             .init_resource::<GpuReadback>()
             .init_resource::<Uploads>()
             .add_systems(ExtractSchedule, (report, extract).chain())
+            .add_systems(
+                Render,
+                transfer_meshes
+                    .after(bevy::render::render_asset::prepare_assets::<RenderMesh>)
+                    .before(RenderSystems::Queue),
+            )
             .add_systems(RenderGraph, observe.after(RenderGraphSystems::Submit));
     }
 }
@@ -77,76 +94,164 @@ fn report(render: Res<GpuReadback>, mut main: ResMut<MainWorld>) {
     }
 }
 
-fn extract(
-    gpu: Extract<Res<NativeGpu>>,
-    cameras: Extract<Query<&Camera>>,
-    lights: Extract<Query<&DirectionalLight>>,
-    mut commands: Commands,
-) {
-    commands.insert_resource(Uploads {
-        revision: gpu.revision,
-        jobs: gpu
-            .candidates
-            .iter()
-            .filter_map(|(&id, candidate)| {
-                if matches!(candidate.stage, ResourceStage::Cancelling { .. }) {
-                    return None;
-                }
-                let camera = if matches!(
+fn extract(mut main: ResMut<MainWorld>, mut uploads: ResMut<Uploads>) {
+    let Some(mut gpu) = main.remove_resource::<NativeGpu>() else {
+        return;
+    };
+    let meshes = main.resource::<Assets<Mesh>>();
+    uploads.pending_meshes.retain(|pending| {
+        gpu.meshes
+            .values()
+            .flatten()
+            .any(|handle| handle.id() == pending.id)
+    });
+    for id in std::mem::take(&mut gpu.dirty_meshes) {
+        if let Some(mesh) = meshes.get(id) {
+            let pending = MeshTransfer {
+                id,
+                vertices: mesh.create_packed_vertex_buffer_data(),
+                count: mesh.count_vertices() as u32,
+                stride: mesh.get_vertex_size(),
+                center: mesh
+                    .compute_aabb()
+                    .map_or(Vec3::ZERO, |bounds| bounds.center.into()),
+            };
+            if let Some(previous) = uploads
+                .pending_meshes
+                .iter_mut()
+                .find(|previous| previous.id == id)
+            {
+                *previous = pending;
+            } else {
+                uploads.pending_meshes.push(pending);
+            }
+        }
+    }
+    uploads.revision = gpu.revision;
+    uploads.jobs = gpu
+        .candidates
+        .iter()
+        .filter_map(|(&id, candidate)| {
+            if matches!(candidate.stage, ResourceStage::Cancelling { .. }) {
+                return None;
+            }
+            let camera = if matches!(
+                candidate.stage,
+                ResourceStage::Committing { .. } | ResourceStage::Bound
+            ) {
+                gpu.main_camera?
+            } else {
+                candidate.preview
+            };
+            let commit_request = match candidate.stage {
+                ResourceStage::Committing { request_id, .. } => Some(request_id),
+                _ => None,
+            };
+            let mip_images: Vec<_> = candidate
+                .images
+                .iter()
+                .filter_map(|id| gpu.images.get(id).map(|(image, _)| image.id()))
+                .collect();
+            let mut images = mip_images.clone();
+            images.extend([candidate.output.id(), candidate.reflection.id()]);
+            images.extend(gpu.textures.values().map(Handle::id));
+            let cameras = [camera, candidate.reflection_camera]
+                .into_iter()
+                .filter(|camera| {
+                    main.get::<Camera>(*camera)
+                        .is_some_and(|camera| camera.is_active)
+                })
+                .collect();
+            let shadow_extent = (commit_request.is_some()
+                && main
+                    .get::<DirectionalLight>(candidate.sun)
+                    .is_some_and(|light| light.shadow_maps_enabled))
+            .then_some(candidate.target.shadow_extent_px);
+            Some(Upload {
+                id,
+                bound: matches!(
                     candidate.stage,
                     ResourceStage::Committing { .. } | ResourceStage::Bound
-                ) {
-                    gpu.main_camera?
-                } else {
-                    candidate.preview
-                };
-                let commit_request = match candidate.stage {
-                    ResourceStage::Committing { request_id, .. } => Some(request_id),
-                    _ => None,
-                };
-                let mip_images: Vec<_> = candidate
-                    .images
+                ),
+                failure: None,
+                commit_request,
+                camera,
+                output: candidate.output.id(),
+                extent: candidate.target.extent_px,
+                shadow_extent,
+                cameras,
+                meshes: candidate.meshes.iter().map(Handle::id).collect(),
+                images,
+                mip_images,
+                materials: candidate
+                    .materials
                     .iter()
-                    .filter_map(|id| gpu.images.get(id).map(|(image, _)| image.id()))
-                    .collect();
-                let mut images = mip_images.clone();
-                images.extend([candidate.output.id(), candidate.reflection.id()]);
-                images.extend(gpu.textures.values().map(Handle::id));
-                let cameras = [camera, candidate.reflection_camera]
-                    .into_iter()
-                    .filter(|camera| cameras.get(*camera).is_ok_and(|camera| camera.is_active))
-                    .collect();
-                let shadow_extent = (commit_request.is_some()
-                    && lights
-                        .get(candidate.sun)
-                        .is_ok_and(|light| light.shadow_maps_enabled))
-                .then_some(candidate.target.shadow_extent_px);
-                Some(Upload {
-                    id,
-                    commit_request,
-                    camera,
-                    output: candidate.output.id(),
-                    extent: candidate.target.extent_px,
-                    shadow_extent,
-                    cameras,
-                    meshes: candidate.meshes.iter().map(Handle::id).collect(),
-                    images,
-                    mip_images,
-                    materials: candidate
-                        .materials
-                        .iter()
-                        .map(|material| material.id().untyped())
-                        .chain(
-                            candidate
-                                .water
-                                .iter()
-                                .map(|material| material.id().untyped()),
-                        )
-                        .collect(),
-                })
+                    .map(|material| material.id().untyped())
+                    .chain(
+                        candidate
+                            .water
+                            .iter()
+                            .map(|material| material.id().untyped()),
+                    )
+                    .collect(),
             })
-            .collect(),
+        })
+        .collect();
+    main.insert_resource(gpu);
+}
+
+fn transfer_meshes(
+    mut uploads: ResMut<Uploads>,
+    mut meshes: ResMut<RenderAssets<RenderMesh>>,
+    allocator: Res<MeshAllocator>,
+    queue: Res<RenderQueue>,
+) {
+    let mut pending = std::mem::take(&mut uploads.pending_meshes);
+    pending.retain(|transfer| {
+        let missing = || {
+            uploads
+                .jobs
+                .iter()
+                .any(|job| job.bound && job.meshes.contains(&transfer.id))
+        };
+        let failure = match (
+            meshes.get_mut(transfer.id),
+            allocator.mesh_vertex_slice(&transfer.id),
+        ) {
+            (Some(mesh), Some(slice)) => {
+                let stride = mesh.layout.0.layout().array_stride;
+                let bytes = u64::from(transfer.count) * stride;
+                let offset = u64::from(slice.range.start) * stride;
+                if mesh.vertex_count != transfer.count
+                    || stride != transfer.stride
+                    || bytes != transfer.vertices.len() as u64
+                    || slice.range.end - slice.range.start != transfer.count
+                    || offset
+                        .checked_add(bytes)
+                        .is_none_or(|end| end > slice.buffer.size())
+                    || !slice.buffer.usage().contains(BufferUsages::COPY_DST)
+                {
+                    Some("Dynamic GPU vertex layout differs from its prepared topology")
+                } else {
+                    // Slab ranges are in vertices, and may move when other assets are prepared.
+                    queue.write_buffer(slice.buffer, offset, &transfer.vertices);
+                    mesh.aabb_center = transfer.center;
+                    None
+                }
+            }
+            _ if !missing() => return true,
+            _ => Some("Bound dynamic GPU mesh allocation is unavailable"),
+        };
+        if let Some(cause) = failure {
+            for job in &mut uploads.jobs {
+                if job.meshes.contains(&transfer.id) {
+                    job.failure = Some(cause.into());
+                }
+            }
+        }
+        false
     });
+    uploads.pending_meshes = pending;
 }
 
 fn observe(world: &mut World) {
@@ -161,6 +266,18 @@ fn observe(world: &mut World) {
             output: upload.output,
             result,
         };
+        if let Some(cause) = &upload.failure {
+            results.insert(upload.id, result(Err(cause.clone())));
+            continue;
+        }
+        if world
+            .resource::<Uploads>()
+            .pending_meshes
+            .iter()
+            .any(|pending| upload.meshes.contains(&pending.id))
+        {
+            continue;
+        }
         if !upload
             .meshes
             .iter()

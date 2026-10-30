@@ -103,6 +103,7 @@ struct Candidate {
 pub(crate) struct NativeGpu {
     manifest: Option<ApplicationGeometryAssets>,
     meshes: BTreeMap<u32, Vec<Handle<Mesh>>>,
+    dirty_meshes: Vec<bevy::asset::AssetId<Mesh>>,
     water_meshes: BTreeMap<u32, Handle<Mesh>>,
     textures: BTreeMap<u32, Handle<Image>>,
     images: BTreeMap<u32, (Handle<Image>, usize)>,
@@ -121,6 +122,7 @@ impl Default for NativeGpu {
         Self {
             manifest: None,
             meshes: BTreeMap::new(),
+            dirty_meshes: Vec::new(),
             water_meshes: BTreeMap::new(),
             textures: BTreeMap::new(),
             images: BTreeMap::new(),
@@ -451,6 +453,7 @@ impl NativeGpu {
                 failures.push(cause);
             }
         }
+        self.dirty_meshes.clear();
         for handles in std::mem::take(&mut self.meshes).into_values() {
             for handle in handles {
                 world.resource_mut::<Assets<Mesh>>().remove(handle.id());
@@ -900,10 +903,22 @@ pub(crate) fn submit(
     runtime: &ApplicationRuntime,
     drawing: &ApplicationDrawingOutput,
 ) -> Result<(), String> {
-    let gpu = world
+    let mut gpu = world
         .remove_resource::<NativeGpu>()
         .ok_or("Native GPU handles are unavailable")?;
     let result = (|| {
+        let readback = world.resource::<readiness::GpuReadback>();
+        for (&id, candidate) in &gpu.candidates {
+            if gpu.active == Some(id)
+                && matches!(candidate.stage, ResourceStage::Bound)
+                && let Some(observation) = readback.results.get(&id)
+                && Some(observation.camera) == gpu.main_camera
+                && observation.output == candidate.output.id()
+                && let Err(cause) = &observation.result
+            {
+                return Err(cause.clone());
+            }
+        }
         if let Some(geometry) = &drawing.scene.geometry {
             for update in &geometry.updates {
                 let Some(handles) = gpu.meshes.get(&update.mesh_id) else {
@@ -914,10 +929,13 @@ pub(crate) fn submit(
                 };
                 for handle in handles {
                     let mut meshes = world.resource_mut::<Assets<Mesh>>();
-                    let mut mesh = meshes
-                        .get_mut(handle.id())
+                    let mesh = meshes
+                        .get_mut_untracked(handle.id())
                         .ok_or("Dynamic GPU mesh is unavailable")?;
-                    environment::update_mesh(runtime, &mut mesh, update.position, update.normal)?;
+                    environment::update_mesh(runtime, mesh, update.position, update.normal)?;
+                    if !gpu.dirty_meshes.contains(&handle.id()) {
+                        gpu.dirty_meshes.push(handle.id());
+                    }
                 }
             }
         }
@@ -1083,7 +1101,6 @@ pub(crate) fn submit(
         );
         Ok(())
     })();
-    let mut gpu = gpu;
     gpu.query = drawing.graphics.query;
     if let Some(resource) = drawing.graphics.resource {
         gpu.quality = resource.quality;
@@ -1390,7 +1407,7 @@ mod tests {
             },
         )
         .unwrap();
-        let initial = runtime
+        let mut initial = runtime
             .update(
                 birdman_game_runtime::ApplicationObservation {
                     observed_ms: 0.0,
@@ -1413,6 +1430,24 @@ mod tests {
                 },
             )
             .unwrap();
+        let mut drawing = initial.drawing.take().expect("Initial drawing");
+        drawing.scene.geometry = None;
+        drawing.scene.camera = None;
+        let camera_active = world.get::<Camera>(main).unwrap().is_active;
+        world
+            .resource_mut::<readiness::GpuReadback>()
+            .results
+            .get_mut(&3)
+            .unwrap()
+            .result = Err("Lost active vertex allocation".into());
+        world.resource_mut::<NativeGpu>().active = Some(4);
+        assert!(submit(&mut world, &runtime, &drawing).is_ok());
+        world.resource_mut::<NativeGpu>().active = Some(3);
+        assert_eq!(
+            submit(&mut world, &runtime, &drawing).unwrap_err(),
+            "Lost active vertex allocation"
+        );
+        world.get_mut::<Camera>(main).unwrap().is_active = camera_active;
         let scene = initial
             .requests
             .iter()
@@ -1421,6 +1456,22 @@ mod tests {
                 _ => None,
             })
             .expect("Prepared scene upload");
+        let wing = &scene.meshes[0];
+        let range = &wing.materials[0];
+        let mut mesh = environment::mesh(&runtime, wing, range.start, range.count).unwrap();
+        let indices = mesh.get_index_buffer_bytes().unwrap().to_vec();
+        let packed = mesh.create_packed_vertex_buffer_data();
+        for attribute in [Mesh::ATTRIBUTE_POSITION, Mesh::ATTRIBUTE_NORMAL] {
+            let Some(bevy::mesh::VertexAttributeValues::Float32x3(values)) =
+                mesh.attribute_mut(attribute)
+            else {
+                panic!("Dynamic vertex layout")
+            };
+            values.fill([f32::NAN; 3]);
+        }
+        environment::update_mesh(&runtime, &mut mesh, wing.position, wing.normal).unwrap();
+        assert_eq!(mesh.create_packed_vertex_buffer_data(), packed);
+        assert_eq!(mesh.get_index_buffer_bytes().unwrap(), indices);
         for texture in &scene.wing_textures {
             let image = environment::wing_image(&runtime, texture).unwrap();
             assert_eq!(
