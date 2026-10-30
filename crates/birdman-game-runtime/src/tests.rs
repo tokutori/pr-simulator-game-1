@@ -1561,7 +1561,36 @@ fn stored_record_preview_load_retry_and_original_download_share_owner() {
             spatial: Default::default(),
         })
         .unwrap();
-    assert!(frame.drawing.is_some());
+    let scene = &frame.drawing.as_ref().unwrap().scene;
+    let camera = scene
+        .camera
+        .as_ref()
+        .unwrap()
+        .world_from_head
+        .unwrap()
+        .position;
+    assert_eq!(
+        scene.water_world_from_surface,
+        birdman_game_presentation::camera::Pose {
+            position: birdman_game_presentation::camera::Vector3 {
+                x: camera.x.round(),
+                y: 0.0,
+                z: camera.z.round()
+            },
+            ..birdman_game_presentation::camera::Pose::IDENTITY
+        }
+    );
+    assert_ne!(
+        [
+            scene.water_world_from_surface.position.x,
+            scene.water_world_from_surface.position.z
+        ],
+        [
+            scene.world_from_aircraft.position.x,
+            scene.world_from_aircraft.position.z
+        ]
+    );
+
     assert!(frame.requests.is_empty());
     assert_eq!(runtime.next_request_id, next_request);
     assert!(runtime.resources.as_ref().unwrap().key == ready);
@@ -2384,17 +2413,25 @@ fn hmd_frame_and_focus_use_the_confirmed_display_resource_and_shared_viewer_capt
             _ => None,
         })
         .unwrap();
-    resources_ready(&mut runtime, resource_request).unwrap();
+    let initial = resources_ready(&mut runtime, resource_request).unwrap();
+    assert_eq!(
+        initial.drawing.unwrap().scene.water_world_from_surface,
+        Pose::IDENTITY
+    );
     assert!(!runtime.application().presentation_available());
     let head = Pose {
         position: Vector3 {
-            x: 1.0,
+            x: 1.499,
             y: 2.0,
             z: 3.0,
         },
         ..Pose::IDENTITY
     };
-    let observation = hmd_observation(head);
+    let mut observation = hmd_observation(head);
+    observation.observation.views[1]
+        .tracking_from_eye
+        .position
+        .x += 0.004;
     runtime
         .observe_test(ApplicationInput::Frame {
             display_resource_id: None,
@@ -2420,10 +2457,49 @@ fn hmd_frame_and_focus_use_the_confirmed_display_resource_and_shared_viewer_capt
             &mut no_text_metrics,
         )
         .unwrap();
-    let camera = current.drawing.unwrap().scene.camera.unwrap();
+    let scene = current.drawing.unwrap().scene;
+    let water = scene.water_world_from_surface;
+    assert_eq!(
+        water,
+        Pose {
+            position: Vector3 {
+                x: 2.0,
+                y: 0.0,
+                z: 3.0
+            },
+            ..Pose::IDENTITY
+        }
+    );
+    assert_eq!(scene.water_time_seconds, 0.0);
+    let camera = scene.camera.unwrap();
     assert_eq!(camera.world_from_head, Some(head));
     assert_eq!(camera.eyes.len(), 2);
     assert!(runtime.application().presentation_available());
+    observation.observation.views.swap(0, 1);
+    for xr in [None, Some(observation.clone())] {
+        let tracking_available = xr.is_some();
+        let output = runtime
+            .update(
+                ApplicationObservation {
+                    observed_ms: 10_020.0,
+                    input: ApplicationInput::Frame {
+                        display_resource_id: Some(50),
+                        timestamp_ms: 10_070.0,
+                        gamepads: Vec::new(),
+                        xr,
+                        spatial: Default::default(),
+                    },
+                },
+                &mut no_text_metrics,
+            )
+            .unwrap();
+        let scene = output.drawing.unwrap().scene;
+        assert_eq!(
+            scene.camera.unwrap().world_from_head.is_some(),
+            tracking_available
+        );
+        assert_eq!(scene.water_world_from_surface, water);
+    }
     runtime
         .observe_test(ApplicationInput::DocumentFocus { focused: false })
         .unwrap();
@@ -2540,6 +2616,15 @@ fn hmd_frame_and_focus_use_the_confirmed_display_resource_and_shared_viewer_capt
             .world_from_head,
         Some(head)
     );
+    assert_eq!(
+        reset_event
+            .drawing
+            .as_ref()
+            .unwrap()
+            .scene
+            .water_world_from_surface,
+        water
+    );
     assert!(reset_event.drawing.unwrap().spatial.is_none());
     let mut shifted = observation.clone();
     let new_from_previous =
@@ -2579,6 +2664,15 @@ fn hmd_frame_and_focus_use_the_confirmed_display_resource_and_shared_viewer_capt
             .unwrap()
             .world_from_head,
         Some(head)
+    );
+    assert_eq!(
+        reset
+            .drawing
+            .as_ref()
+            .unwrap()
+            .scene
+            .water_world_from_surface,
+        water
     );
     match reset.drawing.unwrap().spatial.unwrap().menu {
         ApplicationMenuProjection::Ready {
