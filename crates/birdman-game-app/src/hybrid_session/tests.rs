@@ -285,7 +285,7 @@ fn every_hybrid_selection_launches_and_scores_along_the_shared_northwest_bearing
             assert!((score.net_horizontal_m() - 100.0).abs() < 1.0e-12);
             assert_eq!(
                 session.configuration_identity().unwrap().scenario_version,
-                9
+                10
             );
         }
     }
