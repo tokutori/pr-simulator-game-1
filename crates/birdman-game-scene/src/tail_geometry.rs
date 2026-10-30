@@ -162,7 +162,7 @@ mod tests {
         let [horizontal, vertical] = TailGeometry::registered().unwrap();
         for (tail, origin, span_axis, span, chord) in [
             (horizontal, [0.0, -0.1, 3.6], 0, 3.4, 2.5 / 3.4),
-            (vertical, [0.0, 0.1, 1.8], 1, 0.7, 0.5 / 0.7),
+            (vertical, [0.0, 0.1, 3.6], 1, 0.7, 0.5 / 0.7),
         ] {
             for (actual, expected) in tail.origin.into_iter().zip(origin) {
                 assert!((actual - expected).abs() < 1.0e-12);

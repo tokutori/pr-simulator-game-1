@@ -372,7 +372,7 @@ mod tests {
             );
             assert_eq!(surface.positions().len(), surface.uvs().len());
         }
-        assert_eq!(scene.structure().meshes().len(), 11);
+        assert_eq!(scene.structure().meshes().len(), 12);
         assert!(!scene.cockpit().surfaces[0].indices.is_empty());
         assert!(scene.tails().iter().all(|tail| !tail.patches.is_empty()));
         let platform = birdman_game_app::launch_venue().unwrap().platform;
