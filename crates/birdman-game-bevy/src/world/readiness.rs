@@ -7,7 +7,7 @@ use bevy::{
     pbr::{PreparedMaterial, ViewShadowBindings},
     prelude::*,
     render::{
-        ExtractSchedule, MainWorld, Render, RenderApp, RenderSystems,
+        Extract, ExtractSchedule, MainWorld, Render, RenderApp, RenderSystems,
         camera::ExtractedCamera,
         erased_render_asset::ErasedRenderAssets,
         mesh::{RenderMesh, allocator::MeshAllocator},
@@ -68,6 +68,7 @@ struct Uploads {
     revision: u64,
     jobs: Vec<Upload>,
     pending_meshes: Vec<MeshTransfer>,
+    dirty_meshes: Vec<AssetId<Mesh>>,
 }
 
 pub(crate) fn install(app: &mut App) {
@@ -87,25 +88,30 @@ pub(crate) fn install(app: &mut App) {
     }
 }
 
-fn report(render: Res<GpuReadback>, mut main: ResMut<MainWorld>) {
+fn report(render: Res<GpuReadback>, mut main: ResMut<MainWorld>, mut uploads: ResMut<Uploads>) {
     if let Some(mut readback) = main.get_resource_mut::<GpuReadback>() {
         readback.revision = render.revision;
         readback.results.clone_from(&render.results);
     }
+    uploads.dirty_meshes = main
+        .get_resource_mut::<NativeGpu>()
+        .map_or_else(Vec::new, |mut gpu| std::mem::take(&mut gpu.dirty_meshes));
 }
 
-fn extract(mut main: ResMut<MainWorld>, mut uploads: ResMut<Uploads>) {
-    let Some(mut gpu) = main.remove_resource::<NativeGpu>() else {
-        return;
-    };
-    let meshes = main.resource::<Assets<Mesh>>();
+fn extract(
+    gpu: Extract<Res<NativeGpu>>,
+    meshes: Extract<Res<Assets<Mesh>>>,
+    cameras: Extract<Query<&Camera>>,
+    lights: Extract<Query<&DirectionalLight>>,
+    mut uploads: ResMut<Uploads>,
+) {
     uploads.pending_meshes.retain(|pending| {
         gpu.meshes
             .values()
             .flatten()
             .any(|handle| handle.id() == pending.id)
     });
-    for id in std::mem::take(&mut gpu.dirty_meshes) {
+    for id in std::mem::take(&mut uploads.dirty_meshes) {
         if let Some(mesh) = meshes.get(id) {
             let pending = MeshTransfer {
                 id,
@@ -157,15 +163,12 @@ fn extract(mut main: ResMut<MainWorld>, mut uploads: ResMut<Uploads>) {
             images.extend(gpu.textures.values().map(Handle::id));
             let cameras = [camera, candidate.reflection_camera]
                 .into_iter()
-                .filter(|camera| {
-                    main.get::<Camera>(*camera)
-                        .is_some_and(|camera| camera.is_active)
-                })
+                .filter(|camera| cameras.get(*camera).is_ok_and(|camera| camera.is_active))
                 .collect();
             let shadow_extent = (commit_request.is_some()
-                && main
-                    .get::<DirectionalLight>(candidate.sun)
-                    .is_some_and(|light| light.shadow_maps_enabled))
+                && lights
+                    .get(candidate.sun)
+                    .is_ok_and(|light| light.shadow_maps_enabled))
             .then_some(candidate.target.shadow_extent_px);
             Some(Upload {
                 id,
@@ -197,7 +200,6 @@ fn extract(mut main: ResMut<MainWorld>, mut uploads: ResMut<Uploads>) {
             })
         })
         .collect();
-    main.insert_resource(gpu);
 }
 
 fn transfer_meshes(
