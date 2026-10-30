@@ -92,7 +92,7 @@
 - Web移植基準の式と成分順を使用し、`lake_sky`の全天画像も共用する。
 - 波は描画モデルであり、位相の進行には共有セッションのsimulation timeを使用する。
 
-- 品質選択はformatのWaterQualityを共用し、lake_waterのprofileが波数・mesh予算を定める。基準spectrumは18成分で、Low・Medium・Highは6・10・18成分を使用する。
+- 品質選択はformatのWaterQualityを共用し、lake_waterのprofileが波数・mesh・detail積分の予算を定める。基準spectrumは18成分で、Low・Medium・Highは6・10・18成分を使用する。
 - fetch、JONSWAP重み、方向分散、正規化、steepness上限0.52を保持する。
 - quality投影はFloat32 upload、帯域energy補償、実mesh spacing、解析的微分上界、choppiness reserveを使用する。
 - geometryの位相と方向jitterは固定hash、`patternSeed`はdetail画像だけへ作用する。
@@ -137,7 +137,8 @@ visibilityと実空間勾配の両channelがすべて厳密0の成分は、packe
 - 64 mと288 mの周期反復は残る。
 - 帯域別の移流は深水重力波の$c\propto\sqrt{\lambda}$に近づけた視覚近似であり、帯域内の分散・水深変化を表さない。
 
-- near/farと回転・縮尺を変えたfine/rippleの4層micro-normalは、解像する帯域を4点で積分する。texel footprintの短軸を保守的に評価し、2〜4texelの区間で採取位置を中心へ連続的に縮め、十分に縮小された帯域はmipの平均傾斜と二次momentを1回採取して共用する。UV・勾配・採取幅を先に固定し、各cornerの4帯域を順に合成してから二次momentを積算する。
+- near/farと回転・縮尺を変えたfine/rippleの4層micro-normalは、Lowで各帯域の中心1点、Medium・Highで2×2の4点を評価する。全品質で画素全体のUV勾配とmipの平均傾斜・二次moment、anisotropyを使用する。Lowの採取は最大16回から4回へ減り、角点間の合成傾斜の変動と帯域間共分散を中心評価で近似する。
+- Medium・Highはtexel footprintの短軸を保守的に評価し、2〜4texelの区間で採取位置を中心へ連続的に縮める。十分に縮小された帯域はmip値を1回採取して共用する。UV・勾配・採取幅を先に固定し、各cornerの4帯域を順に合成してから二次momentを積算する。
 - Fragmentの波loopは実成分数を上限とし、各成分の画素微分を全laneで評価する。法線寄与が0の画素では、その後のcrestとgradientの演算を省略する。
 - 回転は移動方向、texture勾配、法線勾配へ一貫して適用する。
 - mipmapに平均勾配と二次モーメントを保持し、頂点法線が表現した勾配を差し引いて二重計上を避ける。

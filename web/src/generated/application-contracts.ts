@@ -4773,6 +4773,7 @@ export interface LakeWaveProjection {
         number,
         number
     ];
+    readonly detailQuadratureSamples: number;
     readonly horizontalDerivativeBound: number;
     readonly spacing: LakeMeshSpacingDomain;
     readonly visualWaveHeight: number;

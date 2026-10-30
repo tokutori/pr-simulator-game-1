@@ -1519,6 +1519,10 @@ mod tests {
         assert_ne!(water_surfaces[1].buffer.id(), water_surfaces[2].buffer.id());
         assert_ne!(water_surfaces[0].buffer.id(), water_surfaces[2].buffer.id());
         for surface in &water_surfaces {
+            assert_eq!(
+                bevy::render::render_resource::AsBindGroup::bind_group_data(surface),
+                water.projection.detail_quadrature_samples()
+            );
             let buffer = parameter_buffers.remove(surface.buffer.id()).unwrap();
             assert_eq!(buffer.data.unwrap(), surface.parameters.encode());
             assert_eq!(

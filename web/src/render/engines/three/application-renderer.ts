@@ -474,7 +474,10 @@ export class ThreeApplicationRenderer {
       uSunDirection: { value: new Vector4(...lighting.sunlight_direction) }, uReflectionTexture: { value: reflection.texture },
       uReflectionMatrix: { value: new Matrix4() }, uReflectionEnabled: { value: 0 }
     };
-    const defines = { LAKE_WAVE_COUNT: projection.waveCount };
+    const defines = {
+      LAKE_WAVE_COUNT: projection.waveCount,
+      LAKE_DETAIL_SAMPLES: projection.detailQuadratureSamples,
+    };
     const { vertexShader, filteredVertexShader, fragmentShader } = lakeWaterShaders(projection.waveCount);
     const material = new ShaderMaterial({ lights: true, defines, uniforms, vertexShader, fragmentShader });
     material.name = "LakeWaterNear";

@@ -283,11 +283,11 @@ fn lake_micro_detail(position: vec2<f32>, footprint_x: vec2<f32>, footprint_y: v
     var fine_sample = vec4<f32>(0.0);
     var ripple_sample = vec4<f32>(0.0);
     var filtered = vec3<f32>(0.0);
-    for (var corner = 0u; corner < 4u; corner += 1u) {
-      if corner == 0u || near_spread != 0.0 { near_sample = lake_detail_sample(detail_near, detail_near_sampler, near_uv, near_x, near_y, near_offsets, near_spread == 0.0, corner); }
-      if corner == 0u || far_spread != 0.0 { far_sample = lake_detail_sample(detail_far, detail_far_sampler, far_uv, far_x, far_y, far_offsets, far_spread == 0.0, corner); }
-      if corner == 0u || fine_spread != 0.0 { fine_sample = lake_detail_sample(detail_near, detail_near_sampler, fine_uv, fine_x, fine_y, fine_offsets, fine_spread == 0.0, corner); }
-      if corner == 0u || ripple_spread != 0.0 { ripple_sample = lake_detail_sample(detail_near, detail_near_sampler, ripple_uv, ripple_x, ripple_y, ripple_offsets, ripple_spread == 0.0, corner); }
+    for (var corner = 0u; corner < #{LAKE_DETAIL_SAMPLES}u; corner += 1u) {
+      if corner == 0u || near_spread != 0.0 { near_sample = lake_detail_sample(detail_near, detail_near_sampler, near_uv, near_x, near_y, near_offsets, #{LAKE_DETAIL_SAMPLES}u == 1u || near_spread == 0.0, corner); }
+      if corner == 0u || far_spread != 0.0 { far_sample = lake_detail_sample(detail_far, detail_far_sampler, far_uv, far_x, far_y, far_offsets, #{LAKE_DETAIL_SAMPLES}u == 1u || far_spread == 0.0, corner); }
+      if corner == 0u || fine_spread != 0.0 { fine_sample = lake_detail_sample(detail_near, detail_near_sampler, fine_uv, fine_x, fine_y, fine_offsets, #{LAKE_DETAIL_SAMPLES}u == 1u || fine_spread == 0.0, corner); }
+      if corner == 0u || ripple_spread != 0.0 { ripple_sample = lake_detail_sample(detail_near, detail_near_sampler, ripple_uv, ripple_x, ripple_y, ripple_offsets, #{LAKE_DETAIL_SAMPLES}u == 1u || ripple_spread == 0.0, corner); }
       let near_slope = (near_sample.xy * 255.0 - 128.0) / 127.0;
       let far_slope = (far_sample.xy * 255.0 - 128.0) / 127.0;
       let fine_raw_slope = (fine_sample.xy * 255.0 - 128.0) / 127.0;
@@ -303,7 +303,7 @@ fn lake_micro_detail(position: vec2<f32>, footprint_x: vec2<f32>, footprint_y: v
           + 0.6 * 0.6 * near_variance + 0.55 * 0.55 * far_variance
           + 2.6 * 2.6 * fine_amplitude * fine_amplitude * fine_variance
           + 5.2 * 5.2 * ripple_amplitude * ripple_amplitude * ripple_variance;
-      filtered += vec3<f32>(micro_slope, slope_moment) * 0.25;
+      filtered += vec3<f32>(micro_slope, slope_moment) * (1.0 / f32(#{LAKE_DETAIL_SAMPLES}u));
     }
     let strength = smoothstep(0.05, 0.6, water.wind_speed);
     let scaled_strength = strength * water.waves_sky.z;

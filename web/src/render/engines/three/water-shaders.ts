@@ -362,11 +362,11 @@ vec3 lakeMicroDetail(vec2 worldXZ, vec2 footprintX, vec2 footprintY) {
   vec4 fineSample = vec4(0.0);
   vec4 rippleSample = vec4(0.0);
   vec3 filtered = vec3(0.0);
-  for (int corner = 0; corner < 4; corner++) {
-    if (corner == 0 || nearSpread != 0.0) nearSample = lakeDetailSample(uDetailNear, nearUv, nearX, nearY, nearOffsets, nearSpread == 0.0, corner);
-    if (corner == 0 || farSpread != 0.0) farSample = lakeDetailSample(uDetailFar, farUv, farX, farY, farOffsets, farSpread == 0.0, corner);
-    if (corner == 0 || fineSpread != 0.0) fineSample = lakeDetailSample(uDetailNear, fineUv, fineX, fineY, fineOffsets, fineSpread == 0.0, corner);
-    if (corner == 0 || rippleSpread != 0.0) rippleSample = lakeDetailSample(uDetailNear, rippleUv, rippleX, rippleY, rippleOffsets, rippleSpread == 0.0, corner);
+  for (int corner = 0; corner < LAKE_DETAIL_SAMPLES; corner++) {
+    if (corner == 0 || nearSpread != 0.0) nearSample = lakeDetailSample(uDetailNear, nearUv, nearX, nearY, nearOffsets, LAKE_DETAIL_SAMPLES == 1 || nearSpread == 0.0, corner);
+    if (corner == 0 || farSpread != 0.0) farSample = lakeDetailSample(uDetailFar, farUv, farX, farY, farOffsets, LAKE_DETAIL_SAMPLES == 1 || farSpread == 0.0, corner);
+    if (corner == 0 || fineSpread != 0.0) fineSample = lakeDetailSample(uDetailNear, fineUv, fineX, fineY, fineOffsets, LAKE_DETAIL_SAMPLES == 1 || fineSpread == 0.0, corner);
+    if (corner == 0 || rippleSpread != 0.0) rippleSample = lakeDetailSample(uDetailNear, rippleUv, rippleX, rippleY, rippleOffsets, LAKE_DETAIL_SAMPLES == 1 || rippleSpread == 0.0, corner);
     vec2 nearSlope = (nearSample.rg * 255.0 - 128.0) / 127.0;
     vec2 farSlope = (farSample.rg * 255.0 - 128.0) / 127.0;
     vec2 fineRawSlope = (fineSample.rg * 255.0 - 128.0) / 127.0;
@@ -390,7 +390,7 @@ vec3 lakeMicroDetail(vec2 worldXZ, vec2 footprintX, vec2 footprintY) {
       + 0.6 * 0.6 * nearVariance + 0.55 * 0.55 * farVariance
       + 2.6 * 2.6 * fineAmplitude * fineAmplitude * fineVariance
       + 5.2 * 5.2 * rippleAmplitude * rippleAmplitude * rippleVariance;
-    filtered += vec3(microSlope, slopeMoment) * 0.25;
+    filtered += vec3(microSlope, slopeMoment) * (1.0 / float(LAKE_DETAIL_SAMPLES));
   }
   float strength = smoothstep(0.05, 0.6, uWindSpeed);
   float scaledStrength = strength * uDetailScale;

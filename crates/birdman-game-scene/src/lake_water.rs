@@ -150,6 +150,7 @@ impl LakeVisualCondition {
 pub struct WaterQualityProfile {
     component_indices: &'static [usize],
     mesh_segments: u32,
+    detail_quadrature_samples: u32,
 }
 
 impl WaterQualityProfile {
@@ -161,6 +162,11 @@ impl WaterQualityProfile {
     /// Grid segment budget used to bound displacement derivatives.
     pub const fn mesh_segments(self) -> u32 {
         self.mesh_segments
+    }
+
+    /// Number of full-footprint detail evaluations per spectral band.
+    pub const fn detail_quadrature_samples(self) -> u32 {
+        self.detail_quadrature_samples
     }
 }
 
@@ -177,6 +183,10 @@ pub const fn water_quality_profile(quality: WaterQuality) -> WaterQualityProfile
     WaterQualityProfile {
         component_indices,
         mesh_segments,
+        detail_quadrature_samples: match quality {
+            WaterQuality::Low => 1,
+            WaterQuality::Medium | WaterQuality::High => 4,
+        },
     }
 }
 

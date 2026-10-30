@@ -159,6 +159,7 @@ pub struct LakeWaveProjection {
     horizontal_derivative_bound: f64,
     choppiness: f32,
     detail_filter_minification: [f32; 2],
+    detail_quadrature_samples: u32,
 }
 
 impl LakeWaveProjection {
@@ -215,6 +216,7 @@ impl LakeWaveProjection {
             horizontal_derivative_bound,
             choppiness,
             detail_filter_minification: [2.0, 4.0],
+            detail_quadrature_samples: water_quality_profile(quality).detail_quadrature_samples(),
         })
     }
 
@@ -250,6 +252,11 @@ impl LakeWaveProjection {
     /// Returns the conservative minor-footprint interval for detail-filter contraction in texels.
     pub const fn detail_filter_minification(&self) -> [f32; 2] {
         self.detail_filter_minification
+    }
+
+    /// Returns the static per-band detail quadrature budget.
+    pub const fn detail_quadrature_samples(&self) -> u32 {
+        self.detail_quadrature_samples
     }
 }
 

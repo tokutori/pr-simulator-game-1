@@ -4,19 +4,21 @@ use bevy::{
 };
 use bevy::{
     ecs::system::{SystemParamItem, lifetimeless::SRes},
+    mesh::MeshVertexBufferLayoutRef,
+    pbr::{MaterialPipeline, MaterialPipelineKey},
     prelude::*,
     reflect::TypePath,
     render::{
         render_asset::RenderAssets,
         render_resource::{
             AsBindGroup, AsBindGroupError, BindGroupLayout, BindGroupLayoutEntry, BindingType,
-            BufferBindingType, BufferUsages, OwnedBindingResource, ShaderStages, ShaderType,
-            UnpreparedBindGroup, encase,
+            BufferBindingType, BufferUsages, OwnedBindingResource, RenderPipelineDescriptor,
+            ShaderStages, ShaderType, SpecializedMeshPipelineError, UnpreparedBindGroup, encase,
         },
         renderer::RenderDevice,
         storage::{GpuShaderBuffer, ShaderBuffer},
     },
-    shader::ShaderRef,
+    shader::{ShaderDefVal, ShaderRef},
 };
 use birdman_game_runtime::{ApplicationLightingAssets, ApplicationWaterAssets};
 use birdman_game_scene::lake_water::MAX_LAKE_WAVE_COMPONENTS;
@@ -36,6 +38,7 @@ pub(crate) struct WaterMaterial {
     pub(crate) parameters: WaterParameters,
     textures: WaterTextures,
     pub(crate) buffer: Handle<ShaderBuffer>,
+    detail_quadrature_samples: u32,
 }
 
 #[derive(ShaderType, Debug, Clone)]
@@ -83,7 +86,7 @@ pub(crate) struct WaterTextures {
 }
 
 impl AsBindGroup for WaterMaterial {
-    type Data = ();
+    type Data = u32;
     type Param = (
         <WaterTextures as AsBindGroup>::Param,
         SRes<RenderAssets<GpuShaderBuffer>>,
@@ -92,7 +95,9 @@ impl AsBindGroup for WaterMaterial {
     fn label() -> &'static str {
         "WaterMaterial"
     }
-    fn bind_group_data(&self) -> Self::Data {}
+    fn bind_group_data(&self) -> Self::Data {
+        self.detail_quadrature_samples
+    }
 
     fn unprepared_bind_group(
         &self,
@@ -138,6 +143,20 @@ impl AsBindGroup for WaterMaterial {
 }
 
 impl Material for WaterMaterial {
+    fn specialize(
+        _pipeline: &MaterialPipeline,
+        descriptor: &mut RenderPipelineDescriptor,
+        _layout: &MeshVertexBufferLayoutRef,
+        key: MaterialPipelineKey<Self>,
+    ) -> Result<(), SpecializedMeshPipelineError> {
+        let definition = ShaderDefVal::UInt("LAKE_DETAIL_SAMPLES".into(), key.bind_group_data);
+        descriptor.vertex.shader_defs.push(definition.clone());
+        if let Some(fragment) = &mut descriptor.fragment {
+            fragment.shader_defs.push(definition);
+        }
+        Ok(())
+    }
+
     fn vertex_shader() -> ShaderRef {
         super::native_assets::water_shader_path().into()
     }
@@ -213,6 +232,7 @@ impl WaterMaterial {
                 reflection_texture: Some(reflection),
             },
             buffer: Handle::default(),
+            detail_quadrature_samples: projection.detail_quadrature_samples(),
         }
     }
 
