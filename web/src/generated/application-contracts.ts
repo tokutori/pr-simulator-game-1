@@ -2647,7 +2647,7 @@ export interface ApplicationSceneProjection {
      */
     readonly water_time_seconds: number;
     /**
-     * Final render-world water translation, independent of aircraft rotation and altitude.
+     * Final camera-centred water translation, snapped to the one-metre world XZ lattice.
      */
     readonly water_world_from_surface: Pose;
     /**
