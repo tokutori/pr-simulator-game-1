@@ -1001,23 +1001,40 @@ pub(crate) fn submit(
                     }
                 }
                 let center = drawing.scene.water_world_from_surface.position;
+                let camera_time = transform
+                    .translation
+                    .extend(drawing.scene.water_time_seconds as f32);
+                let reflection_matrix = drawing.scene.reflection.as_ref().map(|reflection| {
+                    Mat4::from_cols_array(
+                        &reflection.projection_from_world.map(|value| value as f32),
+                    )
+                });
                 for (index, handle) in candidate.water.iter().enumerate() {
                     if let Some(mut material) = world
                         .resource_mut::<Assets<WaterMaterial>>()
                         .get_mut(handle.id())
                     {
-                        material.project_camera(
-                            transform.translation,
-                            drawing.scene.water_time_seconds,
+                        if material.camera_time != camera_time {
+                            material.camera_time = camera_time;
+                        }
+                        let geometry_patch = Vec4::new(
+                            center.x as f32,
+                            center.z as f32,
+                            material.geometry_patch.z,
+                            material.geometry_patch.w,
                         );
-                        material.geometry_patch.x = center.x as f32;
-                        material.geometry_patch.y = center.z as f32;
-                        material.reflection_enabled =
-                            f32::from(index == 0 && drawing.scene.reflection.is_some());
-                        if let Some(reflection) = &drawing.scene.reflection {
-                            material.reflection_clip_from_world = Mat4::from_cols_array(
-                                &reflection.projection_from_world.map(|value| value as f32),
-                            );
+                        if material.geometry_patch != geometry_patch {
+                            material.geometry_patch = geometry_patch;
+                        }
+                        let reflection_enabled =
+                            f32::from(index == 0 && reflection_matrix.is_some());
+                        if material.reflection_enabled != reflection_enabled {
+                            material.reflection_enabled = reflection_enabled;
+                        }
+                        if let Some(matrix) = reflection_matrix
+                            && material.reflection_clip_from_world != matrix
+                        {
+                            material.reflection_clip_from_world = matrix;
                         }
                     }
                 }
