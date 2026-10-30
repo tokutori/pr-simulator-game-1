@@ -141,8 +141,4 @@ impl WaterMaterial {
         material.reflection_enabled = 0.0;
         material
     }
-
-    pub(crate) fn project_camera(&mut self, position: Vec3, time: f64) {
-        self.camera_time = position.extend(time as f32);
-    }
 }
