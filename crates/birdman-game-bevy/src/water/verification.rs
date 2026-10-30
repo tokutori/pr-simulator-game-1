@@ -191,6 +191,7 @@ fn setup(
                 return;
             }
         };
+        base.detail_quadrature_samples = projection.detail_quadrature_samples();
         base.parameters.geometry_waves = projection.wave_k_amplitude().map(Vec4::from_array);
         base.parameters.geometry_motion = projection.wave_omega_phase().map(Vec4::from_array);
         base.parameters.geometry_parameters = Vec4::new(

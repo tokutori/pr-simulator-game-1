@@ -311,11 +311,13 @@ describe("Aggregate runtime through the real Three WebXRManager", () => {
   let prepared: Awaited<ReturnType<typeof fixture>> | null = null;
   let materialProbe: { name: string; transparent: boolean; depthWrite: boolean } | undefined;
   let waveCount: number | undefined;
+  let detailSamples: number | undefined;
   beforeAll(async () => {
     const { ThreeApplicationRenderer } = await import("../../web/src/render/engines/three/application-renderer.js");
     const prepare = Object.getOwnPropertyDescriptor(ThreeApplicationRenderer.prototype, "prepare")?.value as InstanceType<typeof ThreeApplicationRenderer>["prepare"];
     vi.spyOn(ThreeApplicationRenderer.prototype, "prepare").mockImplementation(function (this: InstanceType<typeof ThreeApplicationRenderer>, request) {
       waveCount = request.assets.water.projection.waveCount;
+      detailSamples = request.assets.water.projection.detailQuadratureSamples;
       const asset = request.assets.scene?.meshes[0];
       const source = asset?.materials[0];
       if (materialProbe === undefined && asset !== undefined && source !== undefined) {
@@ -367,6 +369,7 @@ describe("Aggregate runtime through the real Three WebXRManager", () => {
       const submittedShaders = lakeWaterShaders(waveCount);
       for (const material of water) {
         expect(material.defines["LAKE_WAVE_COUNT"]).toBe(waveCount);
+        expect(material.defines["LAKE_DETAIL_SAMPLES"]).toBe(detailSamples);
         expect(material.vertexShader).toBe(material.name === "LakeWaterFar" ? submittedShaders.filteredVertexShader : submittedShaders.vertexShader);
         expect(material.fragmentShader).toBe(submittedShaders.fragmentShader);
         expect(material.uniforms["uWaveCount"]).toBeUndefined();
@@ -385,7 +388,7 @@ describe("Aggregate runtime through the real Three WebXRManager", () => {
         for (const material of new Set(water)) {
           const far = material.name === "LakeWaterFar";
           new ShaderProgram(state.driver as unknown as WebGLRenderer, `${material.name}-${String(count)}`, {
-            defines: { LAKE_WAVE_COUNT: count }, precision: "highp", shaderType: "ShaderMaterial", shaderName: material.name,
+            defines: { ...material.defines, LAKE_WAVE_COUNT: count }, precision: "highp", shaderType: "ShaderMaterial", shaderName: material.name,
             vertexShader: far ? shaders.filteredVertexShader : shaders.vertexShader, fragmentShader: shaders.fragmentShader,
             envMapCubeUVHeight: null, outputColorSpace: SRGBColorSpace, toneMapping: 0,
             shadowMapEnabled: true, shadowMapType: PCFShadowMap, numSunLights: 0, numSunLightShadows: 0,
