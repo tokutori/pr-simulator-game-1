@@ -526,7 +526,10 @@ pub(super) fn generate(
             let index = (0..samples as u32)
                 .find(|&i| point(mesh.positions[i as usize]) == p)
                 .unwrap_or_else(|| {
-                    let height = height_at(p).unwrap_or(-8.0);
+                    // The OSM waterline is a land boundary at the water datum, not the submerged shore skirt.
+                    let height = height_at(p)
+                        .or_else(|| grid.height_at(p[0], p[1]))
+                        .unwrap_or(MINIMUM_VISIBLE_LAND_HEIGHT_M);
                     mesh.append([p[1], height, -p[0]], terrain_color(height, p[0], p[1]))
                 });
             coast.push(index);

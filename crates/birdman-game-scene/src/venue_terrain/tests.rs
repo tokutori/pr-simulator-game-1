@@ -75,6 +75,14 @@ fn registered_collection_keeps_every_surface_finite_and_upward() {
             mesh.name == format!("lake-biwa-island-{}-terrain", island.way_ids[0])
                 || mesh.name == format!("lake-biwa-island-{}-footprint-proxy", island.way_ids[0])
         }) {
+            assert!(
+                mesh.indices.iter().all(|&i| {
+                    -f64::from(mesh.positions_ned[i as usize][2])
+                        >= f64::from(MINIMUM_VISIBLE_LAND_HEIGHT_M as f32)
+                }),
+                "{} submerged land coast",
+                mesh.name
+            );
             if mesh.name.ends_with("-footprint-proxy") {
                 assert!(
                     mesh.positions_ned
@@ -237,7 +245,7 @@ fn fallback_fills_only_mapped_land_and_uses_the_rendered_two_triangles() {
     let filtered = with_fallback(&raw_reference, std::slice::from_ref(&raw_reference));
     assert_eq!(filtered.elevation_meters_above_water[0], None);
     assert_eq!(raw_reference.elevation_meters_above_water[0], Some(10.0));
-    assert_eq!(raw_reference.height_at(7.5, 2.5), Some(17.5));
+    assert_eq!(raw_reference.height_at(7.5, 2.5), None);
 
     let (terrain, shore) = registered_inputs().unwrap();
     let island = shore
@@ -448,7 +456,12 @@ fn closed_island_surface_retains_dem_constraints_in_both_windings_and_open_shore
  {
     let mut source = grid(7, 7, 10.0, vec![Some(20.0); 49], vec![true; 49]);
     let origin = birdman_game_app::launch_venue().unwrap().origin_wgs84;
-    let ring = vec![[20.0, 20.0], [40.0, 20.0], [40.0, 40.0], [20.0, 40.0]];
+    let ring = vec![
+        [20.25, 20.25],
+        [40.25, 20.25],
+        [40.25, 40.25],
+        [20.25, 40.25],
+    ];
     for ring in [ring.clone(), ring.iter().rev().copied().collect()] {
         let island = Island {
             name: None,
@@ -467,6 +480,8 @@ fn closed_island_surface_retains_dem_constraints_in_both_windings_and_open_shore
             .unwrap()
             .unwrap();
         assert!(mesh.positions_ned.iter().all(|p| p[2] == -20.0));
+        let interpolated = island::generate(&island, &source, &[]).unwrap().unwrap();
+        assert!(interpolated.positions_ned.iter().all(|p| p[2] == -20.0));
         assert!(!mesh.indices.is_empty());
         let total_area: f64 = mesh
             .indices
@@ -477,8 +492,8 @@ fn closed_island_surface_retains_dem_constraints_in_both_windings_and_open_shore
             })
             .sum();
         assert!((total_area - 400.0).abs() < 1e-6);
-        for north in [20.0, 30.0, 40.0] {
-            for east in [20.0, 30.0, 40.0] {
+        for north in [30.0, 40.0] {
+            for east in [30.0, 40.0] {
                 assert!(
                     mesh.indices
                         .iter()
@@ -505,6 +520,10 @@ fn closed_island_surface_retains_dem_constraints_in_both_windings_and_open_shore
             ring_north_east_meters: vec![[0.0, 0.0], [side, 0.0], [side, side], [0.0, side]],
         };
         let mesh = island::generate(&island, &source, &[]).unwrap().unwrap();
+        assert!(mesh.indices.iter().all(|&i| {
+            -f64::from(mesh.positions_ned[i as usize][2])
+                >= f64::from(MINIMUM_VISIBLE_LAND_HEIGHT_M as f32)
+        }));
         for triangle in mesh.indices.chunks_exact(3) {
             for edge in 0..3 {
                 let [a, b] = [triangle[edge], triangle[(edge + 1) % 3]]

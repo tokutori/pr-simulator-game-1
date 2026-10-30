@@ -104,6 +104,13 @@ impl Grid {
         let southwest = self.elevation_meters_above_water[(row + 1) * self.columns + column];
         let southeast = self.elevation_meters_above_water[(row + 1) * self.columns + column + 1];
         if along_east + along_south <= 1.0
+            && [
+                row * self.columns + column,
+                (row + 1) * self.columns + column,
+                row * self.columns + column + 1,
+            ]
+            .into_iter()
+            .all(|i| self.land_mask[i])
             && let (Some(northwest), Some(southwest), Some(northeast)) =
                 (northwest, southwest, northeast)
         {
@@ -114,6 +121,13 @@ impl Grid {
             );
         }
         if along_east + along_south >= 1.0
+            && [
+                row * self.columns + column + 1,
+                (row + 1) * self.columns + column,
+                (row + 1) * self.columns + column + 1,
+            ]
+            .into_iter()
+            .all(|i| self.land_mask[i])
             && let (Some(northeast), Some(southwest), Some(southeast)) =
                 (northeast, southwest, southeast)
         {
