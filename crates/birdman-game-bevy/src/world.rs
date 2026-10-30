@@ -590,8 +590,13 @@ impl NativeGpu {
         });
         let water =
             WaterMaterial::prepared(&assets.water, assets.lighting, &images, reflection.clone());
-        let water = [water.clone(), water.far_surface(), water.sky_surface()]
-            .map(|material| world.resource_mut::<Assets<WaterMaterial>>().add(material));
+        let water =
+            [water.clone(), water.far_surface(), water.sky_surface()].map(|mut material| {
+                material.allocate_buffer(
+                    &mut world.resource_mut::<Assets<bevy::render::storage::ShaderBuffer>>(),
+                );
+                world.resource_mut::<Assets<WaterMaterial>>().add(material)
+            });
         let mut materials = Vec::new();
         let mut meshes = Vec::new();
         for asset in &manifest.meshes {
@@ -869,9 +874,14 @@ impl NativeGpu {
                 .remove(material.id());
         }
         for material in &candidate.water {
-            world
+            if let Some(material) = world
                 .resource_mut::<Assets<WaterMaterial>>()
-                .remove(material.id());
+                .remove(material.id())
+            {
+                world
+                    .resource_mut::<Assets<bevy::render::storage::ShaderBuffer>>()
+                    .remove(material.buffer.id());
+            }
         }
         world
             .resource_mut::<Assets<Mesh>>()
@@ -1032,32 +1042,46 @@ pub(crate) fn submit(
                     )
                 });
                 for (index, handle) in candidate.water.iter().enumerate() {
-                    if let Some(mut material) = world
-                        .resource_mut::<Assets<WaterMaterial>>()
-                        .get_mut(handle.id())
-                    {
-                        if material.camera_time != camera_time {
-                            material.camera_time = camera_time;
+                    let upload = {
+                        let mut materials = world.resource_mut::<Assets<WaterMaterial>>();
+                        let material = materials
+                            .get_mut_untracked(handle.id())
+                            .ok_or("Water material is unavailable")?;
+                        let mut changed = false;
+                        if material.parameters.camera_time != camera_time {
+                            material.parameters.camera_time = camera_time;
+                            changed = true;
                         }
                         let geometry_patch = Vec4::new(
                             center.x as f32,
                             center.z as f32,
-                            material.geometry_patch.z,
-                            material.geometry_patch.w,
+                            material.parameters.geometry_patch.z,
+                            material.parameters.geometry_patch.w,
                         );
-                        if material.geometry_patch != geometry_patch {
-                            material.geometry_patch = geometry_patch;
+                        if material.parameters.geometry_patch != geometry_patch {
+                            material.parameters.geometry_patch = geometry_patch;
+                            changed = true;
                         }
                         let reflection_enabled =
                             f32::from(index == 0 && reflection_matrix.is_some());
-                        if material.reflection_enabled != reflection_enabled {
-                            material.reflection_enabled = reflection_enabled;
+                        if material.parameters.reflection_enabled != reflection_enabled {
+                            material.parameters.reflection_enabled = reflection_enabled;
+                            changed = true;
                         }
                         if let Some(matrix) = reflection_matrix
-                            && material.reflection_clip_from_world != matrix
+                            && material.parameters.reflection_clip_from_world != matrix
                         {
-                            material.reflection_clip_from_world = matrix;
+                            material.parameters.reflection_clip_from_world = matrix;
+                            changed = true;
                         }
+                        changed.then(|| (material.buffer.id(), material.parameters.encode()))
+                    };
+                    if let Some((buffer, bytes)) = upload {
+                        world
+                            .resource_mut::<Assets<bevy::render::storage::ShaderBuffer>>()
+                            .get_mut(buffer)
+                            .ok_or("Water parameter buffer is unavailable")?
+                            .data = Some(bytes);
                     }
                 }
             }
@@ -1260,6 +1284,7 @@ mod tests {
         world.init_resource::<Assets<Image>>();
         world.init_resource::<Assets<Mesh>>();
         world.init_resource::<Assets<WaterMaterial>>();
+        world.init_resource::<Assets<bevy::render::storage::ShaderBuffer>>();
         world.init_resource::<Assets<TerrainMaterial>>();
         world.init_resource::<readiness::GpuReadback>();
         world.init_resource::<DirectionalLightShadowMap>();

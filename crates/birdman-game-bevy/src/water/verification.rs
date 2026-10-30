@@ -94,6 +94,7 @@ type ProbeAssets<'world> = (
     ResMut<'world, Assets<ProbeMaterial>>,
     ResMut<'world, Assets<Mesh>>,
     ResMut<'world, Assets<Image>>,
+    ResMut<'world, Assets<bevy::render::storage::ShaderBuffer>>,
 );
 
 #[derive(Default)]
@@ -138,7 +139,7 @@ fn setup(
     runtime: Option<Res<super::super::native_runtime::NativeRuntime>>,
     mut configured: Local<bool>,
 ) {
-    let (source_materials, mut materials, mut meshes, mut images) = assets;
+    let (source_materials, mut materials, mut meshes, mut images, mut buffers) = assets;
     if *configured {
         return;
     }
@@ -190,24 +191,25 @@ fn setup(
                 return;
             }
         };
-        base.geometry_waves = projection.wave_k_amplitude().map(Vec4::from_array);
-        base.geometry_motion = projection.wave_omega_phase().map(Vec4::from_array);
-        base.geometry_parameters = Vec4::new(
+        base.parameters.geometry_waves = projection.wave_k_amplitude().map(Vec4::from_array);
+        base.parameters.geometry_motion = projection.wave_omega_phase().map(Vec4::from_array);
+        base.parameters.geometry_parameters = Vec4::new(
             projection.wave_count() as f32,
             projection.choppiness(),
             projection.visual_wave_height() as f32,
             projection.spacing().gradient_magnitude() as f32,
         );
-        base.camera_time = camera.translation.extend(7.0);
+        base.parameters.camera_time = camera.translation.extend(7.0);
         if far {
-            base.geometry_patch = Vec4::ZERO;
+            base.parameters.geometry_patch = Vec4::ZERO;
         }
         if flat {
-            base.geometry_parameters.x = 0.0;
-            base.waves_sky = Vec4::ZERO;
+            base.parameters.geometry_parameters.x = 0.0;
+            base.parameters.waves_sky = Vec4::ZERO;
+            base.parameters.wind_speed = 0.0;
         }
         if detail_cutoff {
-            base.geometry_parameters.x = 0.0;
+            base.parameters.geometry_parameters.x = 0.0;
         }
         let geometry = match birdman_game_scene::lake_water_mesh::PreparedWaterGeometry::try_new(
             quality,
@@ -219,6 +221,7 @@ fn setup(
                 return;
             }
         };
+        base.allocate_buffer(&mut buffers);
         let bounds = Vec2::from_array(geometry.displacement_meters.map(|value| value as f32));
         for (output_index, output) in ProbeOutput::ALL.into_iter().enumerate() {
             let layers = probe_layers(case_index * ProbeOutput::ALL.len() + output_index);

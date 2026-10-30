@@ -20,6 +20,8 @@ struct LakeWaterUniforms {
     reflection_clip_from_world: mat4x4<f32>,
     reflection_enabled: f32,
     detail_filter_minification: vec2<f32>,
+    detail_extents: vec2<f32>,
+    wind_speed: f32,
 }
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> water: LakeWaterUniforms;
@@ -90,8 +92,8 @@ fn grid_spacing_gradient(local: vec2<f32>) -> vec2<f32> {
 
 fn detail_samples(position: vec2<f32>) -> mat2x4<f32> {
     let drift = water.waves_sky.xy * water.camera_time.w;
-    let near_sample = textureSampleLevel(detail_near, detail_near_sampler, (position - drift * 0.42) / 64.0, 0.0);
-    let far_sample = textureSampleLevel(detail_far, detail_far_sampler, (position - drift * 0.89) / 288.0, 0.0);
+    let near_sample = textureSampleLevel(detail_near, detail_near_sampler, (position - drift * 0.42) / water.detail_extents.x, 0.0);
+    let far_sample = textureSampleLevel(detail_far, detail_far_sampler, (position - drift * 0.89) / water.detail_extents.y, 0.0);
     return mat2x4<f32>(near_sample, far_sample);
 }
 
@@ -250,24 +252,24 @@ fn lake_micro_detail(position: vec2<f32>, footprint_x: vec2<f32>, footprint_y: v
     let fine_amplitude = 0.4;
     let ripple_amplitude = 0.1;
     let drift = water.waves_sky.xy * water.camera_time.w;
-    let near_uv = (position - drift * 0.42) / 64.0;
-    let near_x = footprint_x / 64.0;
-    let near_y = footprint_y / 64.0;
-    let far_uv = (position - drift * 0.89) / 288.0;
-    let far_x = footprint_x / 288.0;
-    let far_y = footprint_y / 288.0;
+    let near_uv = (position - drift * 0.42) / water.detail_extents.x;
+    let near_x = footprint_x / water.detail_extents.x;
+    let near_y = footprint_y / water.detail_extents.x;
+    let far_uv = (position - drift * 0.89) / water.detail_extents.y;
+    let far_x = footprint_x / water.detail_extents.y;
+    let far_y = footprint_y / water.detail_extents.y;
     let fine_rotation = mat2x2<f32>(vec2<f32>(0.6, 0.8), vec2<f32>(-0.8, 0.6));
     let ripple_rotation = mat2x2<f32>(vec2<f32>(0.8, 0.6), vec2<f32>(-0.6, 0.8));
     let fine_drift = transpose(fine_rotation) * drift * 0.26;
     let ripple_drift = transpose(ripple_rotation) * drift * 0.18;
     let fine_point = fine_rotation * ((position - fine_drift) * 2.6);
     let ripple_point = ripple_rotation * ((position - ripple_drift) * 5.2);
-    let fine_uv = fine_point / 64.0 + vec2<f32>(0.217, 0.631);
-    let fine_x = fine_rotation * footprint_x * (2.6 / 64.0);
-    let fine_y = fine_rotation * footprint_y * (2.6 / 64.0);
-    let ripple_uv = ripple_point / 64.0 + vec2<f32>(0.683, 0.173);
-    let ripple_x = ripple_rotation * footprint_x * (5.2 / 64.0);
-    let ripple_y = ripple_rotation * footprint_y * (5.2 / 64.0);
+    let fine_uv = fine_point / water.detail_extents.x + vec2<f32>(0.217, 0.631);
+    let fine_x = fine_rotation * footprint_x * (2.6 / water.detail_extents.x);
+    let fine_y = fine_rotation * footprint_y * (2.6 / water.detail_extents.x);
+    let ripple_uv = ripple_point / water.detail_extents.x + vec2<f32>(0.683, 0.173);
+    let ripple_x = ripple_rotation * footprint_x * (5.2 / water.detail_extents.x);
+    let ripple_y = ripple_rotation * footprint_y * (5.2 / water.detail_extents.x);
     let near_spread = lake_detail_spread(detail_near, near_x, near_y);
     let far_spread = lake_detail_spread(detail_far, far_x, far_y);
     let fine_spread = lake_detail_spread(detail_near, fine_x, fine_y);
@@ -303,7 +305,7 @@ fn lake_micro_detail(position: vec2<f32>, footprint_x: vec2<f32>, footprint_y: v
           + 5.2 * 5.2 * ripple_amplitude * ripple_amplitude * ripple_variance;
       filtered += vec3<f32>(micro_slope, slope_moment) * 0.25;
     }
-    let strength = smoothstep(0.05, 0.6, length(water.waves_sky.xy));
+    let strength = smoothstep(0.05, 0.6, water.wind_speed);
     let scaled_strength = strength * water.waves_sky.z;
     return vec3<f32>(filtered.xy * scaled_strength, filtered.z * scaled_strength * scaled_strength);
 }
@@ -381,7 +383,7 @@ fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
     let geometric_fresnel = 0.02 + 0.98 * pow(1.0 - geometric_ndv, 5.0);
     let facet_fresnel = 0.02 + 0.98 * pow(1.0 - max(facet_ndv, 0.0), 5.0);
     let fresnel = mix(geometric_fresnel, facet_fresnel, 0.4 * facet_visibility * smoothstep(0.03, 0.22, geometric_ndv));
-    let roughness = clamp(0.23 + length(water.waves_sky.xy) * 0.018 + sqrt(detail.z) * 0.6, 0.23, 0.62);
+    let roughness = clamp(0.23 + water.wind_speed * 0.018 + sqrt(detail.z) * 0.6, 0.23, 0.62);
     let sun_direction = select(vec3<f32>(0.0, 1.0, 0.0), water.sun_cloud.xyz, dot(water.sun_cloud.xyz, water.sun_cloud.xyz) > 0.5);
     var sun_visibility = 1.0;
     if water.haze_parameters.z > 0.5 && view_bindings::lights.n_directional_lights > 0u {
@@ -395,7 +397,7 @@ fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
     let sun_alignment = max(dot(reflected_direction, sun_direction), 0.0);
     let glitter_lobe = pow(sun_alignment, mix(220.0, 45.0, roughness));
     let glitter_noise = 0.35 + 0.65 * clamp(sqrt(micro_detail.z) * 3.0, 0.0, 1.0);
-    let glitter = glitter_lobe * glitter_noise * smoothstep(0.35, 2.0, length(water.waves_sky.xy)) * sun_visibility * water.haze_parameters.z;
+    let glitter = glitter_lobe * glitter_noise * smoothstep(0.35, 2.0, water.wind_speed) * sun_visibility * water.haze_parameters.z;
     let diffuse = 0.58 + 0.42 * sun_visibility * max(dot(normal, sun_direction), 0.0) * water.haze_parameters.z;
     var base = mix(water.water_palette[0].xyz, water.water_palette[1].xyz, diffuse * 0.72);
     base = mix(base, water.water_palette[2].xyz, crest_light * 0.16 + patches * 0.07);
