@@ -105,8 +105,9 @@
 
 - 近景meshは6 km四方の非一様gridで、Low・Medium・Highを96・144・224分割とする。Webは元の頂点属性と三角形を保った4×4のchunkに分け、視錐台カリングを適用する。
 - chunkの境界球はshaderのXZ座標に合わせ、全波成分・detail画像による水平/鉛直変位とFloat32丸めの余裕を含める。Highの各chunkは最大3,249頂点で、境界共有により全chunkの頂点総数は51,984となる。
-- camera水平位置を1 m格子へsnapして追従し、波はworld-spaceで評価する。
-- 遠景ringは18万m四方を覆い、近景領域を除外する。
+- Screenの最終camera、stereoの左右眼の中点の水平位置を1 m格子へsnapして追従する。片眼・両眼の観測が揃わない場合は有効なhead位置を使い、head欠測中は直前の確定位置を保持する。
+- 波とdetailの位相はworld-spaceと記録時刻で評価する。機体と影の配置は機体datumを基準とし、機体反射のcameraは最終viewerを水面で鏡映した姿勢を使う。
+- 遠景ringは16万m四方（各軸±80,000 m）を覆い、近景領域を除外する。
 - meshの範囲と波浪生成のfetchを区別する。
 
 - 有限wave packet、二段noiseのphase/振幅変調、Gerstner水平変位、平均高さ0の非正弦波形を使用する。
