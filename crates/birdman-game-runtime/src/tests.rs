@@ -1029,6 +1029,16 @@ fn admitted_flight_keys_reach_hud_and_clear_on_focus_loss() {
     };
     let pressed = runtime.observe_test(key("ArrowUp", true, false)).unwrap();
     assert!(hud_value(pressed).contains("↑●"));
+    for (code, label) in [("KeyW", "W"), ("KeyS", "S"), ("KeyA", "A"), ("KeyD", "D")] {
+        assert!(
+            hud_value(runtime.observe_test(key(code, true, false)).unwrap())
+                .contains(&format!("{label}●"))
+        );
+        assert!(
+            hud_value(runtime.observe_test(key(code, false, false)).unwrap())
+                .contains(&format!("{label}○"))
+        );
+    }
     let camera = runtime.observe_test(key("KeyC", true, false)).unwrap();
     assert!(hud_value(camera).contains("C●"));
     let released = runtime.observe_test(key("KeyC", false, false)).unwrap();
@@ -1069,7 +1079,7 @@ fn admitted_flight_keys_reach_hud_and_clear_on_focus_loss() {
     runtime
         .observe_test(ApplicationInput::PageHide { persisted: true })
         .unwrap();
-    assert_eq!(runtime.application.accepted_flight_keys(), [false; 9]);
+    assert_eq!(runtime.application.accepted_flight_keys(), [false; 13]);
     runtime
         .application
         .observe_flight_action_key(FlightActionKey::Camera, true);
@@ -1077,7 +1087,7 @@ fn admitted_flight_keys_reach_hud_and_clear_on_focus_loss() {
         .application
         .execute(SessionCommand::Abort {}, BackendReadiness::Ready)
         .unwrap();
-    assert_eq!(runtime.application.accepted_flight_keys(), [false; 9]);
+    assert_eq!(runtime.application.accepted_flight_keys(), [false; 13]);
 }
 
 #[test]

@@ -87,7 +87,7 @@ use birdman_game_app::environment_snapshot::{
 };
 #[cfg(not(verus_only))]
 use birdman_game_app::flight_input::{
-    FlightActionKey, FlightControl, FlightGamepadObservation, FlightKeyObservation,
+    FlightActionKey, FlightControlKey, FlightGamepadObservation, FlightKeyObservation,
 };
 #[cfg(not(verus_only))]
 use birdman_game_app::{HybridSessionPreparation, identity_for_selection};
@@ -816,20 +816,24 @@ impl ApplicationRuntime {
                 if !pressed && let Some(key) = action_key {
                     self.application.observe_flight_action_key(key, false);
                 }
-                let control = match code.as_str() {
-                    "ArrowUp" => Some(FlightControl::NoseUp),
-                    "ArrowDown" => Some(FlightControl::NoseDown),
-                    "ArrowLeft" => Some(FlightControl::TurnLeft),
-                    "ArrowRight" => Some(FlightControl::TurnRight),
-                    "KeyJ" => Some(FlightControl::PilotDecrease),
-                    "KeyL" => Some(FlightControl::PilotIncrease),
+                let key = match code.as_str() {
+                    "ArrowUp" => Some(FlightControlKey::ArrowUp),
+                    "ArrowDown" => Some(FlightControlKey::ArrowDown),
+                    "ArrowLeft" => Some(FlightControlKey::ArrowLeft),
+                    "ArrowRight" => Some(FlightControlKey::ArrowRight),
+                    "KeyW" => Some(FlightControlKey::KeyW),
+                    "KeyS" => Some(FlightControlKey::KeyS),
+                    "KeyA" => Some(FlightControlKey::KeyA),
+                    "KeyD" => Some(FlightControlKey::KeyD),
+                    "KeyJ" => Some(FlightControlKey::KeyJ),
+                    "KeyL" => Some(FlightControlKey::KeyL),
                     _ => None,
                 };
                 if self.page_visible && self.document_focused && !self.display.state().pending() {
-                    if let Some(control) = control {
+                    if let Some(key) = key {
                         keyboard_consumed =
                             self.application.observe_flight_key(FlightKeyObservation {
-                                control,
+                                key,
                                 pressed,
                                 repeat,
                             });

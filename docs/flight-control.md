@@ -295,7 +295,7 @@ S_h(v)=\frac{v^2}{2A}+\frac{r(Ah-r)}{2A}
 
 - キーボードの応答設定と、標準ゲームパッドの固定binding・軸方向・dead zoneを区別する。個別binding・校正の変更操作は提供しない。
 - 論理舵指令と身体目標は別fieldへ保持し、舵角・姿勢目標・角速度目標を曖昧なpitch値へ混在させない。
-- Webの標準二系統入力はArrowUp/Downがnose-up/down、ArrowRight/Leftがright/left turn、J/Lが身体位置である。
+- Web・Nativeの標準入力はArrowUp / Wが機首上げ、ArrowDown / Sが機首下げ、ArrowLeft / Aが左旋回、ArrowRight / Dが右旋回、J / Lがパイロットの前後移動である。物理キーごとに押下・受理を保持し、同じ方向のキーは一つでも受理中なら要求を維持する。相反する方向の同時保持は中立要求とする。
 - ゲームパッドは割り当てたnose-up・right-turn・身体軸だけを読む。
 - キー解放は`Hold`、取得済みゲームパッドの身体軸は`Set`とする。
 

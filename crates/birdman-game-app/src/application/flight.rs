@@ -49,8 +49,8 @@ impl ApplicationSession {
         self.flight_input.observe_action_key(key, pressed);
     }
 
-    /// Returns admitted Up, Down, Left, Right, J, L, C, P and Escape states.
-    pub fn accepted_flight_keys(&self) -> [bool; 9] {
+    /// Returns admitted Up, Down, Left, Right, J, L, C, P, Escape, W, S, A and D states.
+    pub fn accepted_flight_keys(&self) -> [bool; 13] {
         self.flight_input.accepted_keys()
     }
 

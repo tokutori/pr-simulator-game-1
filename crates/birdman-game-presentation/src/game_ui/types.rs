@@ -490,8 +490,8 @@ pub struct GameUiContext<'view, 'session> {
     pub difficulty: DifficultySettings,
     /// Selected keyboard response, editable before flight preparation.
     pub keyboard_controls: birdman_game_app::flight_input::KeyboardControlSettings,
-    /// Admitted Up, Down, Left, Right, J, L, C, P and Escape keys.
-    pub accepted_flight_keys: [bool; 9],
+    /// Admitted Up, Down, Left, Right, J, L, C, P, Escape, W, S, A and D keys.
+    pub accepted_flight_keys: [bool; 13],
     /// Exact displayed preset retained for archived selections.
     pub preset: DifficultyPreset,
     /// Optional selected identity before preparation or sealed identity thereafter.

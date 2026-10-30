@@ -39,4 +39,4 @@ pub(super) fn weather(weather: WeatherClass) -> (&'static str, u32, &'static str
     }
 }
 
-pub(super) const FLIGHT_CONTROL_INSTRUCTIONS: &str = "機首を上げる / 下げる ↑ / ↓\n左 / 右へ旋回 ← / →\nパイロットを前へ L / 後へ J（離すと位置を保持）\nゲームパッド: スティックで操縦・パイロット移動\nVRコントローラー: トリガーで選択・グリップで戻る・スティック上下でスクロール";
+pub(super) const FLIGHT_CONTROL_INSTRUCTIONS: &str = "機首を上げる ↑ / W、下げる ↓ / S\n左へ旋回 ← / A、右へ旋回 → / D\nパイロットを前へ L / 後へ J（離すと位置を保持）\nゲームパッド: スティックで操縦・パイロット移動\nVRコントローラー: トリガーで選択・グリップで戻る・スティック上下でスクロール";

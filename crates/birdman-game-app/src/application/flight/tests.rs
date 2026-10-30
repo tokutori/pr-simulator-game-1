@@ -1,6 +1,6 @@
 use super::*;
 use crate::application::{ApplicationError, BackendReadiness, SessionCommand};
-use crate::flight_input::FlightControl;
+use crate::flight_input::FlightControlKey;
 use birdman_game_core::{
     ControlMode, CountdownProgress, TailFlightTickInput, TailPilotIntent, TailPilotPositionCommand,
     TailPilotPositionIntent, TailRateTarget,
@@ -32,9 +32,9 @@ fn launch(maximum_ticks: u64) -> ApplicationSession {
     application
 }
 
-fn key(application: &mut ApplicationSession, control: FlightControl, pressed: bool, repeat: bool) {
+fn key(application: &mut ApplicationSession, key: FlightControlKey, pressed: bool, repeat: bool) {
     application.observe_flight_key(FlightKeyObservation {
-        control,
+        key,
         pressed,
         repeat,
     });
@@ -88,7 +88,7 @@ fn frame_ticks_integrate_against_each_confirmed_target_and_keep_the_last_render_
 
     let mut framed = launch(100);
     let mut direct = launch(100);
-    key(&mut framed, FlightControl::PilotIncrease, true, false);
+    key(&mut framed, FlightControlKey::KeyL, true, false);
     assert_eq!(
         tick_count(framed.advance_flight_frame(1000.0, &[], true).unwrap()),
         0
@@ -136,7 +136,7 @@ fn frame_ticks_integrate_against_each_confirmed_target_and_keep_the_last_render_
 #[test]
 fn pause_resume_between_frames_retires_time_and_requires_a_fresh_key_press() {
     let mut application = launch(100);
-    key(&mut application, FlightControl::PilotIncrease, true, false);
+    key(&mut application, FlightControlKey::KeyL, true, false);
     application.advance_flight_frame(1000.0, &[], true).unwrap();
     application.advance_flight_frame(1015.0, &[], true).unwrap();
     let held = application
@@ -146,9 +146,9 @@ fn pause_resume_between_frames_retires_time_and_requires_a_fresh_key_press() {
         .unwrap()
         .pilot_position_target();
     execute(&mut application, SessionCommand::Pause {});
-    key(&mut application, FlightControl::PilotIncrease, true, true);
+    key(&mut application, FlightControlKey::KeyL, true, true);
     execute(&mut application, SessionCommand::Resume {});
-    key(&mut application, FlightControl::PilotIncrease, true, true);
+    key(&mut application, FlightControlKey::KeyL, true, true);
     assert_eq!(
         tick_count(application.advance_flight_frame(6000.0, &[], true).unwrap()),
         0
@@ -166,8 +166,8 @@ fn pause_resume_between_frames_retires_time_and_requires_a_fresh_key_press() {
             .pilot_position_target(),
         held
     );
-    key(&mut application, FlightControl::PilotIncrease, false, false);
-    key(&mut application, FlightControl::PilotIncrease, true, false);
+    key(&mut application, FlightControlKey::KeyL, false, false);
+    key(&mut application, FlightControlKey::KeyL, true, false);
     application.advance_flight_frame(6020.0, &[], true).unwrap();
     assert!(
         application
@@ -368,7 +368,7 @@ fn menus_observe_frames_without_consuming_live_flight_ticks() {
 #[test]
 fn unavailable_frames_cancel_countdown_and_pause_live_flight_until_explicit_resume() {
     let mut application = launch(100);
-    key(&mut application, FlightControl::NoseUp, true, false);
+    key(&mut application, FlightControlKey::ArrowUp, true, false);
     application.advance_flight_frame(1000.0, &[], true).unwrap();
     let retained = application
         .core_session()

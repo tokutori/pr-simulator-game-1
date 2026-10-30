@@ -10,9 +10,9 @@ fn tick(
     })
 }
 
-fn key(input: &mut FlightInputState, control: FlightControl, pressed: bool, repeat: bool) {
+fn key(input: &mut FlightInputState, key: FlightControlKey, pressed: bool, repeat: bool) {
     input.observe_key(FlightKeyObservation {
-        control,
+        key,
         pressed,
         repeat,
     });
@@ -41,20 +41,20 @@ fn set_value(input: TailFlightTickInput) -> f64 {
 fn keyboard_integrates_the_confirmed_target_per_tick_and_clamps_at_its_limit() {
     let mut input = FlightInputState::default();
     input.set_active(true);
-    key(&mut input, FlightControl::PilotIncrease, true, false);
+    key(&mut input, FlightControlKey::KeyL, true, false);
     let first = tick(&mut input, &[], 0.4).unwrap();
     assert!((set_value(first) - 0.41).abs() < 1e-12);
     let second = tick(&mut input, &[], set_value(first)).unwrap();
     assert!((set_value(second) - 0.42).abs() < 1e-12);
     assert_eq!(set_value(tick(&mut input, &[], 0.999).unwrap()), 1.0);
-    key(&mut input, FlightControl::PilotIncrease, false, false);
+    key(&mut input, FlightControlKey::KeyL, false, false);
     assert_eq!(
         tick(&mut input, &[], 0.9).unwrap().pilot_position_command(),
         TailPilotPositionCommand::Hold
     );
-    key(&mut input, FlightControl::PilotDecrease, true, false);
+    key(&mut input, FlightControlKey::KeyJ, true, false);
     assert_eq!(set_value(tick(&mut input, &[], -0.999).unwrap()), -1.0);
-    key(&mut input, FlightControl::PilotDecrease, false, false);
+    key(&mut input, FlightControlKey::KeyJ, false, false);
     for curve in [
         KeyboardResponseCurve::Linear,
         KeyboardResponseCurve::Smoothstep,
@@ -65,7 +65,7 @@ fn keyboard_integrates_the_confirmed_target_per_tick_and_clamps_at_its_limit() {
             sensitivity: 0.5,
             ..KeyboardControlSettings::default()
         };
-        key(&mut input, FlightControl::NoseUp, true, false);
+        key(&mut input, FlightControlKey::ArrowUp, true, false);
         let mut demand = 0.0;
         for _ in 0..50 {
             demand = input
@@ -75,14 +75,14 @@ fn keyboard_integrates_the_confirmed_target_per_tick_and_clamps_at_its_limit() {
                 .nose_up();
         }
         assert_eq!(demand, 0.5);
-        key(&mut input, FlightControl::NoseUp, false, false);
+        key(&mut input, FlightControlKey::ArrowUp, false, false);
         let release = input
             .tick_input(&[], 0.0, settings, |_| unreachable!())
             .unwrap()
             .manual_intent()
             .nose_up();
         assert!(release > 0.0 && release < demand);
-        key(&mut input, FlightControl::NoseDown, true, false);
+        key(&mut input, FlightControlKey::ArrowDown, true, false);
         for _ in 0..100 {
             demand = input
                 .tick_input(&[], 0.0, settings, |_| unreachable!())
@@ -91,7 +91,7 @@ fn keyboard_integrates_the_confirmed_target_per_tick_and_clamps_at_its_limit() {
                 .nose_up();
         }
         assert_eq!(demand, -0.5);
-        key(&mut input, FlightControl::NoseUp, true, false);
+        key(&mut input, FlightControlKey::ArrowUp, true, false);
         for _ in 0..50 {
             demand = input
                 .tick_input(&[], 0.0, settings, |_| unreachable!())
@@ -101,15 +101,43 @@ fn keyboard_integrates_the_confirmed_target_per_tick_and_clamps_at_its_limit() {
         }
         assert_eq!(demand, 0.0);
     }
+    use FlightControlKey::{ArrowDown, ArrowLeft, ArrowRight, ArrowUp, KeyA, KeyD, KeyS, KeyW};
+    for (arrow, alias, opposite, axis, sign) in [
+        (ArrowUp, KeyW, KeyS, 0, 1.0),
+        (ArrowDown, KeyS, KeyW, 0, -1.0),
+        (ArrowLeft, KeyA, KeyD, 1, -1.0),
+        (ArrowRight, KeyD, KeyA, 1, 1.0),
+    ] {
+        for release_order in [[arrow, alias], [alias, arrow]] {
+            input.invalidate();
+            key(&mut input, arrow, true, false);
+            key(&mut input, alias, true, false);
+            for _ in 0..50 {
+                tick(&mut input, &[], 0.0).unwrap();
+            }
+            key(&mut input, release_order[0], false, false);
+            let demand = tick(&mut input, &[], 0.0).unwrap().manual_intent();
+            assert_eq!([demand.nose_up(), demand.turn_right()][axis], sign);
+            key(&mut input, opposite, true, false);
+            for _ in 0..50 {
+                tick(&mut input, &[], 0.0).unwrap();
+            }
+            let demand = tick(&mut input, &[], 0.0).unwrap().manual_intent();
+            assert_eq!([demand.nose_up(), demand.turn_right()][axis], 0.0);
+            key(&mut input, opposite, false, false);
+            key(&mut input, release_order[1], false, false);
+            assert_eq!(input.accepted_keys(), [false; 13]);
+        }
+    }
 }
 
 #[test]
 fn activation_and_resume_accept_release_then_fresh_press_instead_of_held_repeats() {
     let mut input = FlightInputState::default();
-    key(&mut input, FlightControl::NoseUp, true, false);
+    key(&mut input, FlightControlKey::ArrowUp, true, false);
     input.set_active(true);
-    key(&mut input, FlightControl::NoseUp, true, true);
-    assert_eq!(input.accepted_keys(), [false; 9]);
+    key(&mut input, FlightControlKey::ArrowUp, true, true);
+    assert_eq!(input.accepted_keys(), [false; 13]);
     assert_eq!(
         tick(&mut input, &[], 0.0)
             .unwrap()
@@ -117,8 +145,26 @@ fn activation_and_resume_accept_release_then_fresh_press_instead_of_held_repeats
             .nose_up(),
         0.0
     );
-    key(&mut input, FlightControl::NoseUp, false, false);
-    key(&mut input, FlightControl::NoseUp, true, false);
+    key(&mut input, FlightControlKey::KeyW, true, false);
+    assert!(input.accepted_keys()[9] && !input.accepted_keys()[0]);
+    assert_eq!(
+        tick(&mut input, &[], 0.0)
+            .unwrap()
+            .manual_intent()
+            .nose_up(),
+        0.02
+    );
+    key(&mut input, FlightControlKey::KeyW, false, false);
+    assert_eq!(
+        tick(&mut input, &[], 0.0)
+            .unwrap()
+            .manual_intent()
+            .nose_up(),
+        0.0
+    );
+    assert_eq!(input.accepted_keys(), [false; 13]);
+    key(&mut input, FlightControlKey::ArrowUp, false, false);
+    key(&mut input, FlightControlKey::ArrowUp, true, false);
     assert!(input.accepted_keys()[0]);
     input.observe_action_key(FlightActionKey::Camera, true);
     assert!(input.accepted_keys()[6]);
@@ -133,9 +179,9 @@ fn activation_and_resume_accept_release_then_fresh_press_instead_of_held_repeats
     );
     input.set_active(false);
     assert!(!input.accepted_keys()[0]);
-    key(&mut input, FlightControl::NoseUp, true, true);
+    key(&mut input, FlightControlKey::ArrowUp, true, true);
     input.set_active(true);
-    key(&mut input, FlightControl::NoseUp, true, true);
+    key(&mut input, FlightControlKey::ArrowUp, true, true);
     assert_eq!(
         tick(&mut input, &[], 0.0)
             .unwrap()
@@ -143,8 +189,8 @@ fn activation_and_resume_accept_release_then_fresh_press_instead_of_held_repeats
             .nose_up(),
         0.0
     );
-    key(&mut input, FlightControl::NoseUp, false, false);
-    key(&mut input, FlightControl::NoseUp, true, false);
+    key(&mut input, FlightControlKey::ArrowUp, false, false);
+    key(&mut input, FlightControlKey::ArrowUp, true, false);
     assert!(input.accepted_keys()[0]);
     assert_eq!(
         tick(&mut input, &[], 0.0)
@@ -154,7 +200,24 @@ fn activation_and_resume_accept_release_then_fresh_press_instead_of_held_repeats
         0.02
     );
     input.invalidate();
-    assert_eq!(input.accepted_keys(), [false; 9]);
+    assert_eq!(input.accepted_keys(), [false; 13]);
+    for alias in [
+        FlightControlKey::KeyW,
+        FlightControlKey::KeyS,
+        FlightControlKey::KeyA,
+        FlightControlKey::KeyD,
+    ] {
+        input.set_active(false);
+        key(&mut input, alias, true, false);
+        input.set_active(true);
+        key(&mut input, alias, true, true);
+        assert_eq!(input.accepted_keys(), [false; 13]);
+        key(&mut input, alias, false, false);
+        key(&mut input, alias, true, false);
+        assert_ne!(input.accepted_keys, 0);
+        input.invalidate();
+        assert_eq!(input.accepted_keys(), [false; 13]);
+    }
 }
 
 #[test]
@@ -206,16 +269,16 @@ fn keyboard_priority_rearms_gamepad_even_when_opposite_keys_cancel() {
     tick(&mut input, &[sample], 0.0).unwrap();
     sample.axes = [Some(1.0); 3];
     assert_eq!(set_value(tick(&mut input, &[sample], 0.0).unwrap()), 1.0);
-    key(&mut input, FlightControl::NoseUp, true, false);
-    key(&mut input, FlightControl::NoseDown, true, false);
+    key(&mut input, FlightControlKey::ArrowUp, true, false);
+    key(&mut input, FlightControlKey::ArrowDown, true, false);
     let keyboard = tick(&mut input, &[sample], 0.0).unwrap();
     assert_eq!(keyboard.manual_intent().nose_up(), 0.0);
     assert_eq!(
         keyboard.pilot_position_command(),
         TailPilotPositionCommand::Hold
     );
-    key(&mut input, FlightControl::NoseUp, false, false);
-    key(&mut input, FlightControl::NoseDown, false, false);
+    key(&mut input, FlightControlKey::ArrowUp, false, false);
+    key(&mut input, FlightControlKey::ArrowDown, false, false);
     assert_eq!(
         tick(&mut input, &[sample], 0.0)
             .unwrap()

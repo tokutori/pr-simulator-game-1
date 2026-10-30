@@ -88,7 +88,7 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
             }
             "--help" => {
                 println!(
-                    "birdman-game-bevy [--help] [--version] [--font PATH] [--no-vsync] [--export-dir DIR]\n矢印: pitch/yaw、J/L: pilot target、P: Pause/Resume、C: Pilot/Chase、右drag: 視点、F12: Screenshot\n--no-vsync: WindowはAutoNoVsyncを要求する。既定はFifo。非対応環境ではfallbackする。"
+                    "birdman-game-bevy [--help] [--version] [--font PATH] [--no-vsync] [--export-dir DIR]\n↑/W: 機首上げ、↓/S: 機首下げ、←/A: 左旋回、→/D: 右旋回、J/L: pilot target、P: Pause/Resume、C: Pilot/Chase、右drag: 視点、F12: Screenshot\n--no-vsync: WindowはAutoNoVsyncを要求する。既定はFifo。非対応環境ではfallbackする。"
                 );
                 println!(
                     "--export-dir DIR: 飛行ログJSON/CSVの保存先。既定は起動時の作業directory/flight-logs。既存fileは上書きしない。"

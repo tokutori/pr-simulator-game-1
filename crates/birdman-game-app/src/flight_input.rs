@@ -12,35 +12,61 @@ pub use settings::{KeyboardControlSettings, KeyboardResponseCurve};
 /// Inclusive neutral band for the shared standard-gamepad axes.
 const GAMEPAD_DEAD_ZONE: f64 = 0.08;
 
-/// A control binding observed by a platform keyboard adapter.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(rename_all = "snake_case")]
-pub enum FlightControl {
-    /// Positive nose-up demand.
+/// Logical flight demand resolved from the admitted physical keys.
+#[derive(Clone, Copy)]
+enum FlightControl {
     NoseUp,
-    /// Negative nose-up demand.
     NoseDown,
-    /// Positive right-turn demand.
     TurnRight,
-    /// Negative right-turn demand.
     TurnLeft,
-    /// Increase the normalized pilot-position target.
     PilotIncrease,
-    /// Decrease the normalized pilot-position target.
     PilotDecrease,
 }
 
 impl FlightControl {
-    const fn bit(self) -> u8 {
+    const fn mask(self) -> u16 {
         match self {
-            Self::NoseUp => 0b00_0001,
-            Self::NoseDown => 0b00_0010,
-            Self::TurnRight => 0b00_0100,
-            Self::TurnLeft => 0b00_1000,
-            Self::PilotIncrease => 0b01_0000,
-            Self::PilotDecrease => 0b10_0000,
+            Self::NoseUp => FlightControlKey::ArrowUp.bit() | FlightControlKey::KeyW.bit(),
+            Self::NoseDown => FlightControlKey::ArrowDown.bit() | FlightControlKey::KeyS.bit(),
+            Self::TurnRight => FlightControlKey::ArrowRight.bit() | FlightControlKey::KeyD.bit(),
+            Self::TurnLeft => FlightControlKey::ArrowLeft.bit() | FlightControlKey::KeyA.bit(),
+            Self::PilotIncrease => FlightControlKey::KeyL.bit(),
+            Self::PilotDecrease => FlightControlKey::KeyJ.bit(),
         }
+    }
+}
+
+/// Physical control key, retained independently from every alias of its demand.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+#[repr(u8)]
+pub enum FlightControlKey {
+    /// Up arrow.
+    ArrowUp,
+    /// Down arrow.
+    ArrowDown,
+    /// Left arrow.
+    ArrowLeft,
+    /// Right arrow.
+    ArrowRight,
+    /// Move the pilot target backward.
+    KeyJ,
+    /// Move the pilot target forward.
+    KeyL,
+    /// W key.
+    KeyW,
+    /// S key.
+    KeyS,
+    /// A key.
+    KeyA,
+    /// D key.
+    KeyD,
+}
+
+impl FlightControlKey {
+    const fn bit(self) -> u16 {
+        1 << self as u8
     }
 }
 
@@ -70,8 +96,8 @@ impl FlightActionKey {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct FlightKeyObservation {
-    /// The bound control represented by the key.
-    pub control: FlightControl,
+    /// The physical key observed by the platform.
+    pub key: FlightControlKey,
     /// Whether the key is being pressed or released.
     pub pressed: bool,
     /// Whether a pressed event repeats an existing physical hold.
@@ -144,8 +170,8 @@ impl FlightGamepadAcquisition {
 #[derive(Debug, Default)]
 pub(crate) struct FlightInputState {
     active: bool,
-    held_keys: u8,
-    accepted_keys: u8,
+    held_keys: u16,
+    accepted_keys: u16,
     accepted_action_keys: u8,
     keyboard_ramp: [f64; 2],
     gamepad: FlightGamepadAcquisition,
@@ -168,7 +194,7 @@ impl FlightInputState {
 
     /// Records one ordered keyboard observation, accepting fresh presses while active.
     pub(crate) fn observe_key(&mut self, observation: FlightKeyObservation) {
-        let bit = observation.control.bit();
+        let bit = observation.key.bit();
         if observation.pressed {
             if self.active && !observation.repeat && self.held_keys & bit == 0 {
                 self.accepted_keys |= bit;
@@ -202,14 +228,18 @@ impl FlightInputState {
         self.accepted_action_keys = 0;
     }
 
-    pub(crate) fn accepted_keys(&self) -> [bool; 9] {
+    pub(crate) fn accepted_keys(&self) -> [bool; 13] {
         let controls = [
-            FlightControl::NoseUp,
-            FlightControl::NoseDown,
-            FlightControl::TurnLeft,
-            FlightControl::TurnRight,
-            FlightControl::PilotDecrease,
-            FlightControl::PilotIncrease,
+            FlightControlKey::ArrowUp,
+            FlightControlKey::ArrowDown,
+            FlightControlKey::ArrowLeft,
+            FlightControlKey::ArrowRight,
+            FlightControlKey::KeyJ,
+            FlightControlKey::KeyL,
+            FlightControlKey::KeyW,
+            FlightControlKey::KeyS,
+            FlightControlKey::KeyA,
+            FlightControlKey::KeyD,
         ];
         let actions = [
             FlightActionKey::Camera,
@@ -217,10 +247,11 @@ impl FlightInputState {
             FlightActionKey::Escape,
         ];
         core::array::from_fn(|index| {
-            if index < controls.len() {
-                self.accepted_keys & controls[index].bit() != 0
+            if (6..9).contains(&index) {
+                self.accepted_action_keys & actions[index - 6].bit() != 0
             } else {
-                self.accepted_action_keys & actions[index - controls.len()].bit() != 0
+                let control = controls[if index < 6 { index } else { index - 3 }];
+                self.accepted_keys & control.bit() != 0
             }
         })
     }
@@ -276,8 +307,8 @@ impl FlightInputState {
     }
 
     fn keyboard_axis(&self, positive: FlightControl, negative: FlightControl) -> f64 {
-        f64::from(self.accepted_keys & positive.bit() != 0)
-            - f64::from(self.accepted_keys & negative.bit() != 0)
+        f64::from(self.accepted_keys & positive.mask() != 0)
+            - f64::from(self.accepted_keys & negative.mask() != 0)
     }
 
     fn rearm_gamepad(&mut self) {

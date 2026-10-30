@@ -58,7 +58,7 @@ pub(super) fn context<'view>(
         presentation_available: true,
         difficulty,
         keyboard_controls: birdman_game_app::flight_input::KeyboardControlSettings::default(),
-        accepted_flight_keys: [false; 9],
+        accepted_flight_keys: [false; 13],
         preset: difficulty.preset_label(),
         identity: session.configuration_identity(),
         record: session.playback_record(),
@@ -2736,20 +2736,21 @@ fn admitted_keyboard_state_is_visible_in_live_hud_across_information_and_modes()
                 difficulty().with_information(information),
                 &platform,
             );
-            context.accepted_flight_keys =
-                [true, false, false, true, true, false, true, false, true];
+            context.accepted_flight_keys = [
+                true, false, false, true, true, false, true, false, true, true, false, true, false,
+            ];
             let view = game_ui_view(&state, &context).unwrap();
             let hud = view.hud.as_ref().unwrap();
             assert_eq!(
                 hud_node(hud, "hud-accepted-keys").content.value(),
-                "↑● ↓○ ←○ →● J● L○ C● P○ Esc●"
+                "↑● ↓○ ←○ →● J● L○ C● P○ Esc● W● S○ A● D○"
             );
             let frame = game_ui_frame(&state, &context, &view, view.view_revision).unwrap();
             assert_eq!(
                 hud_node(frame.hud.as_ref().unwrap(), "hud-accepted-keys")
                     .content
                     .value(),
-                "↑● ↓○ ←○ →● J● L○ C● P○ Esc●"
+                "↑● ↓○ ←○ →● J● L○ C● P○ Esc● W● S○ A● D○"
             );
         }
     }
@@ -2761,7 +2762,7 @@ fn admitted_keyboard_state_is_visible_in_live_hud_across_information_and_modes()
         ..GameUiState::default()
     };
     let mut context = context(&replay, difficulty(), &platform);
-    context.accepted_flight_keys = [true; 9];
+    context.accepted_flight_keys = [true; 13];
     let view = game_ui_view(&state, &context).unwrap();
     assert!(
         view.hud

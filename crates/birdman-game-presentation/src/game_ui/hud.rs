@@ -142,7 +142,9 @@ pub(super) fn game_ui_hud(
         phase,
         SessionPhase::FlightRunning | SessionPhase::FlightPaused { .. }
     ) {
-        let labels = ["↑", "↓", "←", "→", "J", "L", "C", "P", "Esc"];
+        let labels = [
+            "↑", "↓", "←", "→", "J", "L", "C", "P", "Esc", "W", "S", "A", "D",
+        ];
         let value = labels
             .into_iter()
             .zip(context.accepted_flight_keys)
