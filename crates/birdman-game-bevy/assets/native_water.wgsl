@@ -7,26 +7,31 @@
     shadows::fetch_directional_shadow,
 }
 
-@group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> camera_time: vec4<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(1) var<uniform> sun_cloud: vec4<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(2) var<uniform> waves_sky: vec4<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(3) var<uniform> geometry_patch: vec4<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(4) var<uniform> geometry_waves: array<vec4<f32>, 24>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(5) var<uniform> geometry_motion: array<vec4<f32>, 24>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(6) var<uniform> geometry_parameters: vec4<f32>;
+struct LakeWaterUniforms {
+    camera_time: vec4<f32>,
+    sun_cloud: vec4<f32>,
+    waves_sky: vec4<f32>,
+    geometry_patch: vec4<f32>,
+    geometry_waves: array<vec4<f32>, 24>,
+    geometry_motion: array<vec4<f32>, 24>,
+    geometry_parameters: vec4<f32>,
+    water_palette: array<vec4<f32>, 4>,
+    haze_parameters: vec4<f32>,
+    reflection_clip_from_world: mat4x4<f32>,
+    reflection_enabled: f32,
+    detail_filter_minification: vec2<f32>,
+}
+
+@group(#{MATERIAL_BIND_GROUP}) @binding(0) var<uniform> water: LakeWaterUniforms;
+
 @group(#{MATERIAL_BIND_GROUP}) @binding(7) var detail_near: texture_2d<f32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(8) var detail_near_sampler: sampler;
 @group(#{MATERIAL_BIND_GROUP}) @binding(9) var detail_far: texture_2d<f32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(10) var detail_far_sampler: sampler;
-@group(#{MATERIAL_BIND_GROUP}) @binding(11) var<uniform> water_palette: array<vec4<f32>, 4>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(12) var<uniform> haze_parameters: vec4<f32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(13) var sky_texture: texture_2d<f32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(14) var sky_sampler: sampler;
 @group(#{MATERIAL_BIND_GROUP}) @binding(15) var reflection_texture: texture_2d<f32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(16) var reflection_sampler: sampler;
-@group(#{MATERIAL_BIND_GROUP}) @binding(17) var<uniform> reflection_clip_from_world: mat4x4<f32>;
-@group(#{MATERIAL_BIND_GROUP}) @binding(18) var<uniform> reflection_enabled: f32;
-@group(#{MATERIAL_BIND_GROUP}) @binding(19) var<uniform> detail_filter_minification: vec2<f32>;
 
 struct SurfaceProjection {
     offset: vec3<f32>,
@@ -77,14 +82,14 @@ fn lake_wave_modulation(point: vec2<f32>, direction: vec2<f32>, wave_number: f32
 }
 
 fn grid_spacing_gradient(local: vec2<f32>) -> vec2<f32> {
-    let magnitude = geometry_parameters.w;
+    let magnitude = water.geometry_parameters.w;
     if abs(local.x) > abs(local.y) { return vec2<f32>(sign(local.x) * magnitude, 0.0); }
     if abs(local.y) > abs(local.x) { return vec2<f32>(0.0, sign(local.y) * magnitude); }
     return sign(local) * (0.5 * magnitude);
 }
 
 fn detail_samples(position: vec2<f32>) -> mat2x4<f32> {
-    let drift = waves_sky.xy * camera_time.w;
+    let drift = water.waves_sky.xy * water.camera_time.w;
     let near_sample = textureSampleLevel(detail_near, detail_near_sampler, (position - drift * 0.42) / 64.0, 0.0);
     let far_sample = textureSampleLevel(detail_far, detail_far_sampler, (position - drift * 0.89) / 288.0, 0.0);
     return mat2x4<f32>(near_sample, far_sample);
@@ -98,8 +103,8 @@ fn lake_geometry(position: vec2<f32>, spacing: f32) -> SurfaceProjection {
     surface.represented_slope = vec2<f32>(0.0);
     surface.crest = 0.0;
     surface.compression = 0.0;
-    if geometry_patch.w <= 0.0 { return surface; }
-    let local = position - geometry_patch.xy;
+    if water.geometry_patch.w <= 0.0 { return surface; }
+    let local = position - water.geometry_patch.xy;
     let spacing_gradient = grid_spacing_gradient(local);
     var resolved_detail_slope = vec2<f32>(0.0);
     if spacing < 2.8 {
@@ -109,18 +114,18 @@ fn lake_geometry(position: vec2<f32>, spacing: f32) -> SurfaceProjection {
         let near_slope = (details[0].xy * 255.0 - 128.0) / 127.0;
         let far_slope = (details[1].xy * 255.0 - 128.0) / 127.0;
         resolved_detail_slope = (near_slope * (0.6 * near_visibility)
-            + far_slope * (0.55 * far_visibility)) * waves_sky.z;
+            + far_slope * (0.55 * far_visibility)) * water.waves_sky.z;
         surface.offset.y = ((details[0].w - 128.0 / 255.0) * 0.6 * near_visibility
-            + (details[1].w - 128.0 / 255.0) * 0.55 * far_visibility) * waves_sky.z;
+            + (details[1].w - 128.0 / 255.0) * 0.55 * far_visibility) * water.waves_sky.z;
     }
     var horizontal_jacobian = vec4<f32>(1.0, 0.0, 0.0, 1.0);
     var height_gradient = resolved_detail_slope;
     var crest = 0.0;
     var slope_energy = 0.0;
     for (var component: u32 = 0u; component < 24u; component += 1u) {
-        if component < u32(geometry_parameters.x) {
-            let wave = geometry_waves[component];
-            let timing = geometry_motion[component];
+        if component < u32(water.geometry_parameters.x) {
+            let wave = water.geometry_waves[component];
+            let timing = water.geometry_motion[component];
             let visibility = 1.0 - smoothstep(1.3, 2.5, wave.z * spacing);
             let transition = clamp((wave.z * spacing - 1.3) / 1.2, 0.0, 1.0);
             let visibility_gradient = (-6.0 * wave.z / 1.2 * transition * (1.0 - transition)) * spacing_gradient;
@@ -131,15 +136,15 @@ fn lake_geometry(position: vec2<f32>, spacing: f32) -> SurfaceProjection {
             let warp = modulation[1];
             let amplitude = wave.w * visibility * packet.x;
             let amplitude_gradient = wave.w * (visibility * packet.yz + packet.x * visibility_gradient);
-            let phase = wave.z * dot(wave.xy, position) + warp.x - timing.x * camera_time.w + timing.y;
+            let phase = wave.z * dot(wave.xy, position) + warp.x - timing.x * water.camera_time.w + timing.y;
             let phase_gradient = wave.z * wave.xy + warp.yz;
             let phase_sine = sin(phase);
             let phase_cosine = cos(phase);
             let crest_basis = 0.5 + 0.5 * phase_sine;
-            surface.offset.x += geometry_parameters.y * amplitude * wave.x * phase_cosine;
-            surface.offset.z += geometry_parameters.y * amplitude * wave.y * phase_cosine;
+            surface.offset.x += water.geometry_parameters.y * amplitude * wave.x * phase_cosine;
+            surface.offset.z += water.geometry_parameters.y * amplitude * wave.y * phase_cosine;
             surface.offset.y += amplitude * (2.0 * crest_basis * crest_basis * crest_basis - 0.625);
-            let horizontal_gradient = geometry_parameters.y * (phase_cosine * amplitude_gradient - amplitude * phase_sine * phase_gradient);
+            let horizontal_gradient = water.geometry_parameters.y * (phase_cosine * amplitude_gradient - amplitude * phase_sine * phase_gradient);
             horizontal_jacobian += vec4<f32>(wave.x * horizontal_gradient, wave.y * horizontal_gradient);
             height_gradient += amplitude * 3.0 * crest_basis * crest_basis * phase_cosine * phase_gradient
                 + (2.0 * crest_basis * crest_basis * crest_basis - 0.625) * amplitude_gradient;
@@ -171,7 +176,7 @@ fn vertex(vertex: Vertex) -> VertexOutput {
 #ifdef VERTEX_UVS_B
     spacing = vertex.uv_b.x;
 #endif
-    if waves_sky.w < 0.5 {
+    if water.waves_sky.w < 0.5 {
         let surface = lake_geometry(base_position.xz, spacing);
         output.world_position = vec4<f32>(base_position.xyz + surface.offset, 1.0);
         output.world_normal = normalize(cross(surface.tangent_z, surface.tangent_x));
@@ -180,7 +185,7 @@ fn vertex(vertex: Vertex) -> VertexOutput {
 #endif
     }
     output.position = position_world_to_clip(output.world_position.xyz);
-    if waves_sky.w > 0.5 {
+    if water.waves_sky.w > 0.5 {
         output.position = vec4<f32>(vertex.position.xy, 0.0, 1.0);
         let direction = view_bindings::view.world_from_clip * vec4<f32>(vertex.position.xy, 0.5, 1.0);
         output.world_position = vec4<f32>(direction.xyz / direction.w, 1.0);
@@ -229,7 +234,7 @@ fn lake_detail_spread(image: texture_2d<f32>, gradient_x: vec2<f32>, gradient_y:
     if denominator > 0.0 {
         minor_bound = abs(texel_x.x * texel_y.y - texel_x.y * texel_y.x) / denominator;
     }
-    return 1.0 - smoothstep(detail_filter_minification.x, detail_filter_minification.y, minor_bound);
+    return 1.0 - smoothstep(water.detail_filter_minification.x, water.detail_filter_minification.y, minor_bound);
 }
 
 fn lake_detail_sample(image: texture_2d<f32>, image_sampler: sampler, uv: vec2<f32>, gradient_x: vec2<f32>, gradient_y: vec2<f32>, offsets: vec4<f32>, centered: bool, corner: u32) -> vec4<f32> {
@@ -244,7 +249,7 @@ fn lake_detail_sample(image: texture_2d<f32>, image_sampler: sampler, uv: vec2<f
 fn lake_micro_detail(position: vec2<f32>, footprint_x: vec2<f32>, footprint_y: vec2<f32>) -> vec3<f32> {
     let fine_amplitude = 0.4;
     let ripple_amplitude = 0.1;
-    let drift = waves_sky.xy * camera_time.w;
+    let drift = water.waves_sky.xy * water.camera_time.w;
     let near_uv = (position - drift * 0.42) / 64.0;
     let near_x = footprint_x / 64.0;
     let near_y = footprint_y / 64.0;
@@ -298,20 +303,20 @@ fn lake_micro_detail(position: vec2<f32>, footprint_x: vec2<f32>, footprint_y: v
           + 5.2 * 5.2 * ripple_amplitude * ripple_amplitude * ripple_variance;
       filtered += vec3<f32>(micro_slope, slope_moment) * 0.25;
     }
-    let strength = smoothstep(0.05, 0.6, length(waves_sky.xy));
-    let scaled_strength = strength * waves_sky.z;
+    let strength = smoothstep(0.05, 0.6, length(water.waves_sky.xy));
+    let scaled_strength = strength * water.waves_sky.z;
     return vec3<f32>(filtered.xy * scaled_strength, filtered.z * scaled_strength * scaled_strength);
 }
 
 fn lake_wave_slope(position: vec2<f32>, spacing: f32) -> vec2<f32> {
     var slope = vec2<f32>(0.0);
-    let component_count = min(u32(geometry_parameters.x), 24u);
+    let component_count = min(u32(water.geometry_parameters.x), 24u);
     for (var component: u32 = 0u; component < component_count; component += 1u) {
-        let wave = geometry_waves[component];
-        let timing = geometry_motion[component];
+        let wave = water.geometry_waves[component];
+        let timing = water.geometry_motion[component];
         let modulation = lake_wave_modulation(position, wave.xy, wave.z, timing.y);
         let warp = modulation[1];
-        let phase = wave.z * dot(wave.xy, position) + warp.x - timing.x * camera_time.w + timing.y;
+        let phase = wave.z * dot(wave.xy, position) + warp.x - timing.x * water.camera_time.w + timing.y;
         let geometric_visibility = 1.0 - smoothstep(1.3, 2.5, wave.z * spacing);
         let pixel_visibility = 1.0 - smoothstep(2.0, 5.0, fwidth(phase));
         let normal_weight = (1.0 - geometric_visibility) * pixel_visibility * 0.65;
@@ -328,7 +333,7 @@ fn lake_wave_slope(position: vec2<f32>, spacing: f32) -> vec2<f32> {
 
 @fragment
 fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
-    let view = normalize(camera_time.xyz - mesh.world_position.xyz);
+    let view = normalize(water.camera_time.xyz - mesh.world_position.xyz);
 #ifdef VERTEX_UVS_A
     let position = mesh.uv;
 #else
@@ -336,7 +341,7 @@ fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
 #endif
     let footprint_x = dpdx(position);
     let footprint_y = dpdy(position);
-    if waves_sky.w > 0.5 { return vec4<f32>(lake_sky_radiance(-view), 1.0); }
+    if water.waves_sky.w > 0.5 { return vec4<f32>(lake_sky_radiance(-view), 1.0); }
     var spacing = 1200.0;
 #ifdef VERTEX_UVS_B
     spacing = mesh.uv_b.x;
@@ -376,10 +381,10 @@ fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
     let geometric_fresnel = 0.02 + 0.98 * pow(1.0 - geometric_ndv, 5.0);
     let facet_fresnel = 0.02 + 0.98 * pow(1.0 - max(facet_ndv, 0.0), 5.0);
     let fresnel = mix(geometric_fresnel, facet_fresnel, 0.4 * facet_visibility * smoothstep(0.03, 0.22, geometric_ndv));
-    let roughness = clamp(0.23 + length(waves_sky.xy) * 0.018 + sqrt(detail.z) * 0.6, 0.23, 0.62);
-    let sun_direction = select(vec3<f32>(0.0, 1.0, 0.0), sun_cloud.xyz, dot(sun_cloud.xyz, sun_cloud.xyz) > 0.5);
+    let roughness = clamp(0.23 + length(water.waves_sky.xy) * 0.018 + sqrt(detail.z) * 0.6, 0.23, 0.62);
+    let sun_direction = select(vec3<f32>(0.0, 1.0, 0.0), water.sun_cloud.xyz, dot(water.sun_cloud.xyz, water.sun_cloud.xyz) > 0.5);
     var sun_visibility = 1.0;
-    if haze_parameters.z > 0.5 && view_bindings::lights.n_directional_lights > 0u {
+    if water.haze_parameters.z > 0.5 && view_bindings::lights.n_directional_lights > 0u {
         let sun = view_bindings::lights.directional_lights[0];
         if (sun.flags & DIRECTIONAL_LIGHT_FLAGS_SHADOWS_ENABLED_BIT) != 0u {
             let view_depth = (view_bindings::view.view_from_world * mesh.world_position).z;
@@ -390,15 +395,15 @@ fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
     let sun_alignment = max(dot(reflected_direction, sun_direction), 0.0);
     let glitter_lobe = pow(sun_alignment, mix(220.0, 45.0, roughness));
     let glitter_noise = 0.35 + 0.65 * clamp(sqrt(micro_detail.z) * 3.0, 0.0, 1.0);
-    let glitter = glitter_lobe * glitter_noise * smoothstep(0.35, 2.0, length(waves_sky.xy)) * sun_visibility * haze_parameters.z;
-    let diffuse = 0.58 + 0.42 * sun_visibility * max(dot(normal, sun_direction), 0.0) * haze_parameters.z;
-    var base = mix(water_palette[0].xyz, water_palette[1].xyz, diffuse * 0.72);
-    base = mix(base, water_palette[2].xyz, crest_light * 0.16 + patches * 0.07);
+    let glitter = glitter_lobe * glitter_noise * smoothstep(0.35, 2.0, length(water.waves_sky.xy)) * sun_visibility * water.haze_parameters.z;
+    let diffuse = 0.58 + 0.42 * sun_visibility * max(dot(normal, sun_direction), 0.0) * water.haze_parameters.z;
+    var base = mix(water.water_palette[0].xyz, water.water_palette[1].xyz, diffuse * 0.72);
+    base = mix(base, water.water_palette[2].xyz, crest_light * 0.16 + patches * 0.07);
     base *= mix(0.82, 1.0, sun_visibility);
     base *= vec3<f32>(0.29, 0.34, 0.37);
     var color = mix(base, reflection, fresnel * 0.45);
-    let reflected_clip = reflection_clip_from_world * mesh.world_position;
-    if reflection_enabled > 0.5 && reflected_clip.w > 0.0 {
+    let reflected_clip = water.reflection_clip_from_world * mesh.world_position;
+    if water.reflection_enabled > 0.5 && reflected_clip.w > 0.0 {
         let reflected_uv = reflected_clip.xy / reflected_clip.w * vec2<f32>(0.5, -0.5)
             + vec2<f32>(0.5) + total_slope * vec2<f32>(0.006, -0.006);
         if all(reflected_uv >= vec2<f32>(0.0)) && all(reflected_uv <= vec2<f32>(1.0)) {
@@ -407,13 +412,13 @@ fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
                 aircraft_reflection.a * clamp(0.16 + fresnel * 0.7, 0.0, 0.72));
         }
     }
-    let depth_tint = clamp(geometry_parameters.z / 0.35, 0.0, 1.0);
+    let depth_tint = clamp(water.geometry_parameters.z / 0.35, 0.0, 1.0);
     color = mix(color, color * vec3<f32>(0.92, 0.97, 1.04), depth_tint * 0.12);
     color += vec3<f32>(1.0, 0.78, 0.52) * glitter * 0.15;
     color = mix(color, vec3<f32>(0.38, 0.43, 0.43), detail.w * 0.28);
-    let distance_to_eye = length(camera_time.xyz - mesh.world_position.xyz);
-    let atmospheric_fade = smoothstep(haze_parameters.x, haze_parameters.y, distance_to_eye);
-    color = mix(color, water_palette[3].xyz, atmospheric_fade);
+    let distance_to_eye = length(water.camera_time.xyz - mesh.world_position.xyz);
+    let atmospheric_fade = smoothstep(water.haze_parameters.x, water.haze_parameters.y, distance_to_eye);
+    color = mix(color, water.water_palette[3].xyz, atmospheric_fade);
     return vec4<f32>(color, 1.0);
 #endif
 #endif
