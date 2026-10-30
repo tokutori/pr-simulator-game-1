@@ -3972,7 +3972,7 @@ fn screen_render_auto_projects_selection_applied_status_and_admission() {
             manual_water_quality: WaterQuality::High,
         },
         applied: ScreenRenderScale::ThreeQuarters,
-        shadow: ScreenShadowMap::Full,
+        shadow: ScreenShadowMap::Off,
         water_quality: WaterQuality::Low,
         status: ScreenRenderAutoStatus::Unsupported {
             cause: "missing GPU timer".to_owned(),
@@ -4001,7 +4001,7 @@ fn screen_render_auto_projects_selection_applied_status_and_admission() {
         );
         let status = control(&view, "presentation-render-scale-status");
         assert!(
-            matches!(&status.content, GameUiControlContent::Status { value, .. } if value.contains("Auto") && value.contains("75%") && value.contains("missing GPU timer"))
+            matches!(&status.content, GameUiControlContent::Status { value, .. } if value.contains("Auto") && value.contains("75%") && value.contains("影 なし") && value.contains("missing GPU timer"))
         );
         let water = control(&view, "presentation-water-quality-status");
         assert!(

@@ -1137,13 +1137,14 @@ fn screen_render_scale(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
         "presentation-render-scale-status",
         "3D描画品質",
         &format!(
-            "{} · 使用中 {} · {status}",
+            "{} · 使用中 {} · 影 {} · {status}",
             if automatic {
                 "自動（Auto）"
             } else {
                 "手動"
             },
             render.applied.label(),
+            render.shadow.label(),
         ),
     );
     menu.push(
