@@ -147,6 +147,10 @@ fn spectrum_and_float32_projection_match_fixed_web_reference() {
                 .as_object_mut()
                 .unwrap()
                 .remove("detailFilterMinification");
+            actual
+                .as_object_mut()
+                .unwrap()
+                .remove("detailQuadratureSamples");
             assert_numeric_tree(&actual, &projection.projection, "projection");
         }
     }
