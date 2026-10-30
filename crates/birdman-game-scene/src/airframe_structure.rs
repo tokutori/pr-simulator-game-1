@@ -269,7 +269,7 @@ mod tests {
             .iter()
             .map(|mesh| mesh.positions().as_ptr())
             .collect();
-        assert_eq!(geometry.meshes().len(), 11);
+        assert_eq!(geometry.meshes().len(), 12);
         let vertex_count: usize = geometry
             .meshes()
             .iter()
