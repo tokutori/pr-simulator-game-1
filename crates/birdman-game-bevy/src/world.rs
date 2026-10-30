@@ -1473,6 +1473,61 @@ mod tests {
             "Lost active vertex allocation"
         );
         world.get_mut::<Camera>(main).unwrap().is_active = camera_active;
+        let assets = initial
+            .requests
+            .iter()
+            .find_map(|request| match request {
+                ApplicationRequest::PrepareResources { assets, .. } => Some(assets.as_ref()),
+                _ => None,
+            })
+            .expect("Prepared environment upload");
+        let mut water = assets.water.clone();
+        water.detail[0].extent_meters = 32.0;
+        water.detail[1].extent_meters = 144.0;
+        water.wind_speed_meters_per_second = 3.25;
+        let near = WaterMaterial::prepared(
+            &water,
+            assets.lighting,
+            &std::array::from_fn(|_| Handle::default()),
+            Handle::default(),
+        );
+        let bytes = near.parameters.encode();
+        assert_eq!(bytes.len(), 1024);
+        for (offset, value) in [
+            (0, 0.0_f32),
+            (48, 0.0),
+            (60, 1.0),
+            (928, 1.0),
+            (992, 0.0),
+            (1008, 32.0),
+            (1012, 144.0),
+            (1016, 3.25),
+        ] {
+            assert_eq!(
+                &bytes[offset..offset + 4],
+                &value.to_le_bytes(),
+                "Water uniform offset {offset}"
+            );
+        }
+        let mut water_surfaces = [near.clone(), near.far_surface(), near.sky_surface()];
+        let mut parameter_buffers =
+            world.resource_mut::<Assets<bevy::render::storage::ShaderBuffer>>();
+        for surface in &mut water_surfaces {
+            surface.allocate_buffer(&mut parameter_buffers);
+        }
+        assert_ne!(water_surfaces[0].buffer.id(), water_surfaces[1].buffer.id());
+        assert_ne!(water_surfaces[1].buffer.id(), water_surfaces[2].buffer.id());
+        assert_ne!(water_surfaces[0].buffer.id(), water_surfaces[2].buffer.id());
+        for surface in &water_surfaces {
+            let buffer = parameter_buffers.remove(surface.buffer.id()).unwrap();
+            assert_eq!(buffer.data.unwrap(), surface.parameters.encode());
+            assert_eq!(
+                buffer.buffer_description.usage,
+                bevy::render::render_resource::BufferUsages::UNIFORM
+                    | bevy::render::render_resource::BufferUsages::COPY_DST
+            );
+        }
+        assert!(parameter_buffers.is_empty());
         let scene = initial
             .requests
             .iter()

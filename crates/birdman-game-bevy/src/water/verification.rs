@@ -221,7 +221,6 @@ fn setup(
                 return;
             }
         };
-        base.allocate_buffer(&mut buffers);
         let bounds = Vec2::from_array(geometry.displacement_meters.map(|value| value as f32));
         for (output_index, output) in ProbeOutput::ALL.into_iter().enumerate() {
             let layers = probe_layers(case_index * ProbeOutput::ALL.len() + output_index);
@@ -275,8 +274,10 @@ fn setup(
             );
             mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, vec![[0.0; 4]; mesh.count_vertices()]);
             let mesh = meshes.add(mesh);
+            let mut material_base = base.clone();
+            material_base.allocate_buffer(&mut buffers);
             let material = materials.add(ExtendedMaterial {
-                base: base.clone(),
+                base: material_base,
                 extension: ProbeExtension { output },
             });
             let surface_entity = commands
@@ -287,7 +288,7 @@ fn setup(
                     layers,
                 ))
                 .id();
-            commands.spawn(Readback::texture(image.clone())).observe(move |event: On<ReadbackComplete>, mut commands: Commands, mut verification: ResMut<WaterShaderVerification>, mut images: ResMut<Assets<Image>>, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<ProbeMaterial>>, mut accepted: Local<bool>| {
+            commands.spawn(Readback::texture(image.clone())).observe(move |event: On<ReadbackComplete>, mut commands: Commands, mut verification: ResMut<WaterShaderVerification>, mut images: ResMut<Assets<Image>>, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<ProbeMaterial>>, mut buffers: ResMut<Assets<bevy::render::storage::ShaderBuffer>>, mut accepted: Local<bool>| {
                 if *accepted || !matches!(verification.state, ProbeState::Reading(_)) { return; }
                 let result = inspect_pixels(&event.data, output, flat, !far && !detail_cutoff, bounds);
                 let Some(result) = result else { return; };
@@ -307,7 +308,7 @@ fn setup(
                 commands.entity(surface_entity).despawn();
                 images.remove(image.id());
                 meshes.remove(mesh.id());
-                materials.remove(material.id());
+                if let Some(material) = materials.remove(material.id()) { buffers.remove(material.base.buffer.id()); }
             });
         }
     }
