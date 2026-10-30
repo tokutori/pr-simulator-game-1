@@ -362,7 +362,12 @@ vec3 lakeMicroDetail(vec2 worldXZ, vec2 footprintX, vec2 footprintY) {
   vec4 fineSample = vec4(0.0);
   vec4 rippleSample = vec4(0.0);
   vec3 filtered = vec3(0.0);
+#if LAKE_DETAIL_SAMPLES == 1
+  {
+    const int corner = 0;
+#else
   for (int corner = 0; corner < LAKE_DETAIL_SAMPLES; corner++) {
+#endif
     if (corner == 0 || nearSpread != 0.0) nearSample = lakeDetailSample(uDetailNear, nearUv, nearX, nearY, nearOffsets, LAKE_DETAIL_SAMPLES == 1 || nearSpread == 0.0, corner);
     if (corner == 0 || farSpread != 0.0) farSample = lakeDetailSample(uDetailFar, farUv, farX, farY, farOffsets, LAKE_DETAIL_SAMPLES == 1 || farSpread == 0.0, corner);
     if (corner == 0 || fineSpread != 0.0) fineSample = lakeDetailSample(uDetailNear, fineUv, fineX, fineY, fineOffsets, LAKE_DETAIL_SAMPLES == 1 || fineSpread == 0.0, corner);
