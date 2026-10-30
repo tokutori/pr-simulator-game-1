@@ -1170,6 +1170,12 @@ impl ApplicationRuntime {
                 sunlight,
             )
         });
+        if let Some(lighting) = &mut scene_frame.projection.lighting {
+            lighting.shadow_enabled &= self
+                .graphics
+                .resource()
+                .is_some_and(|resource| resource.quality.shadow.enabled());
+        }
         if self.drawable_resources_available()
             && self.presentation_visible()
             && let Some(camera) = &scene_frame.projection.camera
@@ -1456,6 +1462,7 @@ impl ApplicationRuntime {
                 GameUiEffect::Platform {
                     command:
                         command @ (GameUiPlatformCommand::SetScreenRenderScale { .. }
+                        | GameUiPlatformCommand::SetShadowMap { .. }
                         | GameUiPlatformCommand::SetScreenRenderAuto { .. }
                         | GameUiPlatformCommand::SetWaterQuality { .. }),
                 } => {

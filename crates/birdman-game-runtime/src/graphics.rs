@@ -338,6 +338,9 @@ impl GraphicsOwner {
             GameUiPlatformCommand::SetScreenRenderScale { scale } => {
                 policy.select_manual(scale, now)?;
             }
+            GameUiPlatformCommand::SetShadowMap { shadow } => {
+                policy.select_shadow(shadow, now)?;
+            }
             GameUiPlatformCommand::SetScreenRenderAuto { enabled } => {
                 policy.select_auto(enabled, now)?;
             }

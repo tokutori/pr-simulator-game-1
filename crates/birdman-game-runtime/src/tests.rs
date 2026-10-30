@@ -3152,6 +3152,86 @@ fn spatial_trigger_uses_submitted_painting_and_the_canonical_ui_action_owner() {
 }
 
 #[test]
+fn shadow_off_preparation_keeps_live_shadows_until_the_complete_resource_ack() {
+    use birdman_game_presentation::screen_render_auto::ScreenShadowMap;
+    let platform = ApplicationPlatformObservation {
+        gpu_timing_requested: false,
+        renderer: Some(renderer_observation()),
+        surface: None,
+        viewport: GameUiViewport {
+            width: 1280.0,
+            height: 720.0,
+            root_font_size: 16.0,
+        },
+        capabilities: ApplicationCapabilities::default(),
+    };
+    let mut runtime =
+        ApplicationRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
+    let initial = runtime
+        .observe_test(ApplicationInput::Platform {
+            observation: platform,
+        })
+        .unwrap();
+    let title = structure(finish_boot(&mut runtime, initial));
+    let mut view = structure(activate(&mut runtime, &title, SessionCommand::OpenSetup {}));
+    for (shadow, expected_live) in [(ScreenShadowMap::Off, true), (ScreenShadowMap::Full, false)] {
+        let output = activate_action(
+            &mut runtime,
+            &view,
+            GameUiAction::Platform {
+                command: GameUiPlatformCommand::SetShadowMap { shadow },
+            },
+        );
+        let (request_id, target) = output
+            .requests
+            .iter()
+            .find_map(|request| match request {
+                ApplicationRequest::PrepareResources {
+                    request_id,
+                    graphics,
+                    assets,
+                    ..
+                } => {
+                    assert_eq!(
+                        assets
+                            .lighting
+                            .initial_shadow
+                            .as_ref()
+                            .unwrap()
+                            .shadow_enabled,
+                        shadow.enabled()
+                    );
+                    assert!(assets.lighting.sunlight_irradiance > 0.0);
+                    Some((*request_id, *graphics))
+                }
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(target.shadow_extent_px, [shadow.size(); 2]);
+        assert!(
+            target
+                .shadow_extent_px
+                .into_iter()
+                .all(|dimension| dimension > 0)
+        );
+        let live = output.drawing.as_ref().unwrap();
+        assert_eq!(
+            live.scene.lighting.as_ref().unwrap().shadow_enabled,
+            expected_live
+        );
+        assert_ne!(live.graphics.resource.unwrap().quality.shadow, shadow);
+        let ready = resources_ready(&mut runtime, request_id).unwrap();
+        let live = ready.drawing.as_ref().unwrap();
+        assert_eq!(live.graphics.resource.unwrap().quality.shadow, shadow);
+        assert_eq!(
+            live.scene.lighting.as_ref().unwrap().shadow_enabled,
+            shadow.enabled()
+        );
+        view = structure(ready);
+    }
+}
+
+#[test]
 fn graphics_commit_tracks_actual_resources_cleanup_and_renderer_lifetimes() {
     let platform = ApplicationPlatformObservation {
         gpu_timing_requested: false,

@@ -717,7 +717,11 @@ impl NativeGpu {
                 DirectionalLight {
                     color: color_srgb(assets.lighting.sunlight_color_srgb),
                     illuminance,
-                    shadow_maps_enabled: assets.lighting.sunlight_direction[3] > 0.0,
+                    shadow_maps_enabled: assets
+                        .lighting
+                        .initial_shadow
+                        .as_ref()
+                        .is_some_and(|light| light.shadow_enabled),
                     ..default()
                 },
                 CascadeShadowConfig {

@@ -989,7 +989,7 @@ fn threshold_boundaries_hold_and_cooldown_limits_each_step_and_bounds() {
         vec![
             ScreenRenderScale::ThreeQuarters,
             ScreenRenderScale::Half,
-            ScreenRenderScale::Half,
+            ScreenRenderScale::Quarter,
             ScreenRenderScale::Half,
             ScreenRenderScale::ThreeQuarters,
             ScreenRenderScale::Full
@@ -1122,38 +1122,58 @@ fn water_reduction_follows_resolution_and_shadow_and_recovers_in_reverse_order()
                 WaterQuality::High
             ),
             (
-                ScreenRenderScale::Half,
+                ScreenRenderScale::Quarter,
+                ScreenShadowMap::Full,
+                WaterQuality::High
+            ),
+            (
+                ScreenRenderScale::Quarter,
                 ScreenShadowMap::Half,
                 WaterQuality::High
             ),
             (
-                ScreenRenderScale::Half,
+                ScreenRenderScale::Quarter,
                 ScreenShadowMap::Quarter,
                 WaterQuality::High
             ),
             (
-                ScreenRenderScale::Half,
-                ScreenShadowMap::Quarter,
+                ScreenRenderScale::Quarter,
+                ScreenShadowMap::Off,
+                WaterQuality::High
+            ),
+            (
+                ScreenRenderScale::Quarter,
+                ScreenShadowMap::Off,
                 WaterQuality::Medium
             ),
             (
-                ScreenRenderScale::Half,
-                ScreenShadowMap::Quarter,
+                ScreenRenderScale::Quarter,
+                ScreenShadowMap::Off,
                 WaterQuality::Low
             ),
             (
-                ScreenRenderScale::Half,
-                ScreenShadowMap::Quarter,
+                ScreenRenderScale::Quarter,
+                ScreenShadowMap::Off,
                 WaterQuality::Medium
             ),
             (
-                ScreenRenderScale::Half,
+                ScreenRenderScale::Quarter,
+                ScreenShadowMap::Off,
+                WaterQuality::High
+            ),
+            (
+                ScreenRenderScale::Quarter,
                 ScreenShadowMap::Quarter,
                 WaterQuality::High
             ),
             (
-                ScreenRenderScale::Half,
+                ScreenRenderScale::Quarter,
                 ScreenShadowMap::Half,
+                WaterQuality::High
+            ),
+            (
+                ScreenRenderScale::Quarter,
+                ScreenShadowMap::Full,
                 WaterQuality::High
             ),
             (
@@ -1188,7 +1208,7 @@ fn manual_shadow_is_retained_and_partial_ack_cannot_commit_a_resource_pair() {
         WaterQuality::High,
     );
     controller.select_auto(true, 0.0).unwrap();
-    for frame in 0..=120 {
+    for frame in 0..=180 {
         let now = f64::from(frame) * 50.0;
         if let Some(request) = controller
             .observe(sample(&controller, frame, now, 20.0), now, false)
@@ -1197,9 +1217,9 @@ fn manual_shadow_is_retained_and_partial_ack_cannot_commit_a_resource_pair() {
             controller.applied(request, now, None).unwrap();
         }
     }
-    assert_eq!(controller.snapshot().applied, ScreenRenderScale::Half);
+    assert_eq!(controller.snapshot().applied, ScreenRenderScale::Quarter);
     assert_eq!(controller.snapshot().shadow, ScreenShadowMap::Quarter);
-    let request = controller.select_auto(false, 6_001.0).unwrap().unwrap();
+    let request = controller.select_auto(false, 9_001.0).unwrap().unwrap();
     assert_eq!(request.scale, ScreenRenderScale::ThreeQuarters);
     assert_eq!(request.shadow, ScreenShadowMap::Half);
     assert_eq!(
@@ -1208,16 +1228,16 @@ fn manual_shadow_is_retained_and_partial_ack_cannot_commit_a_resource_pair() {
                 shadow: ScreenShadowMap::Full,
                 ..request
             },
-            6_002.0,
+            9_002.0,
             None,
         ),
         Err(ScreenRenderAutoError::StaleRequest)
     );
     assert_eq!(controller.snapshot().shadow, ScreenShadowMap::Quarter);
     controller
-        .failed(request, "shadow allocation failed".to_owned(), 6_003.0)
+        .failed(request, "shadow allocation failed".to_owned(), 9_003.0)
         .unwrap();
-    assert_eq!(controller.snapshot().applied, ScreenRenderScale::Half);
+    assert_eq!(controller.snapshot().applied, ScreenRenderScale::Quarter);
     assert_eq!(controller.snapshot().shadow, ScreenShadowMap::Quarter);
     assert_eq!(
         controller.snapshot().status,
@@ -1226,10 +1246,10 @@ fn manual_shadow_is_retained_and_partial_ack_cannot_commit_a_resource_pair() {
         }
     );
     let retry = controller
-        .select_manual(ScreenRenderScale::ThreeQuarters, 6_004.0)
+        .select_manual(ScreenRenderScale::ThreeQuarters, 9_004.0)
         .unwrap()
         .unwrap();
-    controller.applied(retry, 6_005.0, None).unwrap();
+    controller.applied(retry, 9_005.0, None).unwrap();
     assert_eq!(
         controller.snapshot().selection,
         ScreenRenderSelection::Manual {
@@ -1239,6 +1259,22 @@ fn manual_shadow_is_retained_and_partial_ack_cannot_commit_a_resource_pair() {
         }
     );
     assert_eq!(controller.snapshot().shadow, ScreenShadowMap::Half);
+    let off = controller
+        .select_shadow(ScreenShadowMap::Off, 9_006.0)
+        .unwrap()
+        .unwrap();
+    assert_eq!(off.shadow.size(), 1);
+    assert!(!off.shadow.enabled());
+    // The live resource remains unchanged until the complete Off ACK is accepted.
+    assert_eq!(controller.snapshot().shadow, ScreenShadowMap::Half);
+    controller.applied(off, 9_007.0, None).unwrap();
+    assert_eq!(controller.snapshot().shadow, ScreenShadowMap::Off);
+    let full = controller
+        .select_shadow(ScreenShadowMap::Full, 9_008.0)
+        .unwrap()
+        .unwrap();
+    controller.applied(full, 9_009.0, None).unwrap();
+    assert!(controller.snapshot().shadow.enabled());
 }
 
 #[test]
@@ -1273,8 +1309,8 @@ fn cleanup_failure_keeps_the_new_resources_and_the_original_cause() {
 #[test]
 fn water_cap_changes_preserve_lower_auto_quality_and_restore_the_manual_triple() {
     let mut controller = ScreenRenderAutoController::new(
-        ScreenRenderScale::Half,
-        ScreenShadowMap::Quarter,
+        ScreenRenderScale::Quarter,
+        ScreenShadowMap::Off,
         WaterQuality::Medium,
     );
     controller.select_auto(true, 0.0).unwrap();
@@ -1308,8 +1344,8 @@ fn water_cap_changes_preserve_lower_auto_quality_and_restore_the_manual_triple()
     assert_eq!(
         (recovered.scale, recovered.shadow, recovered.water_quality),
         (
-            ScreenRenderScale::Half,
-            ScreenShadowMap::Quarter,
+            ScreenRenderScale::Quarter,
+            ScreenShadowMap::Off,
             WaterQuality::Medium
         )
     );
@@ -1365,8 +1401,8 @@ fn water_cap_changes_preserve_lower_auto_quality_and_restore_the_manual_triple()
     assert_eq!(
         (restore.scale, restore.shadow, restore.water_quality),
         (
-            ScreenRenderScale::Half,
-            ScreenShadowMap::Quarter,
+            ScreenRenderScale::Quarter,
+            ScreenShadowMap::Off,
             WaterQuality::Medium
         )
     );
@@ -1376,8 +1412,8 @@ fn water_cap_changes_preserve_lower_auto_quality_and_restore_the_manual_triple()
     assert_eq!(
         controller.snapshot().selection,
         ScreenRenderSelection::Manual {
-            scale: ScreenRenderScale::Half,
-            shadow: ScreenShadowMap::Quarter,
+            scale: ScreenRenderScale::Quarter,
+            shadow: ScreenShadowMap::Off,
             water_quality: WaterQuality::Medium
         }
     );
