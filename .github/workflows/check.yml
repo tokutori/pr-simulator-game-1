@@ -124,7 +124,8 @@ jobs:
         run: cargo build -p birdman-game-cli --target wasm32-wasip2 --locked
       - name: Install matching wasm-bindgen CLI
         run: cargo install wasm-bindgen-cli --locked --version 0.2.129
-      - run: cargo run -p birdman-game-cli --locked
+      - name: Verify hybrid flight modes
+        run: cargo run -p birdman-game-cli --locked -- verify-hybrid-flight all
       - run: npm ci
       - run: npm run verify
       - name: Configure GitHub Pages
