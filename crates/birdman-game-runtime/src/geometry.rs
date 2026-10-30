@@ -293,7 +293,7 @@ impl GeometryOwner {
         let mut owner = Self {
             tail_pivots: std::array::from_fn(|index| {
                 let [x, y, z] = source.tails()[index].origin;
-                Vector3 { x, y, z: z + 1.0 }
+                Vector3 { x, y, z }
             }),
             assets: ApplicationGeometryAssets {
                 meshes: Vec::new(),

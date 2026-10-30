@@ -354,7 +354,7 @@ L(t)-z(t)=\frac{g(t-a)(b-t)}2\le\frac{g\,dt^2}8,
 
 - Web入力: 生成DTOのJSON送信とRustでの受理を接続する。不正なActionの拒否、循環参照の送信エラー、シリアライズ中に破棄されたownerへの呼出し抑止を既存試験で確認する。
 - 内部出力: 所有WASM instanceの出力とfacadeが返す生成DTOの一致を確認する。Analysis列のmetadata非重複と、live/prepared/Replayに接続する共有描画poseも検査する。
-- 構造変形: 保存時刻・区間内部・同時刻終端で採用曲げ係数と尾翼角を照合する。全259部材の共有頂点・三角形・管周方向位相を接触点へ照合し、Web/Nativeの11 batchが同じ頂点と物理pivotを消費することを検査する。Replayのパイロット目標位置は同じcanonical queryへ照合する。
+- 構造変形: 保存時刻・区間内部・同時刻終端で採用曲げ係数と尾翼角を照合する。全260部材の共有頂点・三角形・管周方向位相を接触点へ照合し、Web/Nativeの12 batchが同じ頂点と物理pivotを消費することを検査する。Replayのパイロット目標位置は同じcanonical queryへ照合する。
 - 描画可用性: 未記録係数と未知機体を区別し、対応する主翼・尾翼の非表示を検査する。極端な有限係数はGPU公開前に座標・Transform・法線を検査し、有効係数への復帰で表示と保持bufferの更新を確認する。
 - 数値・保存契約: 時刻、stamp、quaternion、終端、score、request echoの整合はRustのproducer/core/formatで検査し、Webはその出力を転送する。
 - 資源寿命: 実非同期のquery・record-source・Countdown世代とcleanupを検査し、表示DTOの静的readonly制約と分ける。

@@ -1993,6 +1993,34 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
         assert_eq!(part.pose, Pose::IDENTITY);
     }
     let source = birdman_game_scene::prepared_scene::registered_scene().unwrap();
+    let ApplicationRequest::PrepareResources { assets, .. } = &initial.requests[0] else {
+        unreachable!()
+    };
+    for (index, physical) in source
+        .structure()
+        .meshes()
+        .iter()
+        .enumerate()
+        .filter(|(_, mesh)| {
+            mesh.attachment() == birdman_game_scene::airframe_structure::StructuralAttachment::Rigid
+        })
+    {
+        let mesh = assets
+            .scene
+            .as_ref()
+            .unwrap()
+            .meshes
+            .iter()
+            .find(|mesh| mesh.name == format!("structure-{index}"))
+            .unwrap();
+        assert_eq!(mesh.attachment, ApplicationMeshAttachment::Aircraft);
+        let ApplicationBufferSlice::F32(positions) =
+            runtime.asset_buffer(mesh.position.buffer_id).unwrap()
+        else {
+            unreachable!()
+        };
+        assert_eq!(positions, physical.positions().as_flattened());
+    }
     let mut baselines = Vec::new();
     for mesh in tail_meshes {
         let (index, role) = match mesh.attachment {
@@ -2013,7 +2041,7 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
         let pivot = Vector3 {
             x: right,
             y: -down,
-            z: -forward + 1.0,
+            z: -forward,
         };
         let local: Vec<_> =
             if let Some(material) = mesh.name.strip_prefix(&format!("tail-{index}-")) {
@@ -2037,7 +2065,7 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
                 .positions()
                 .to_vec()
             };
-        baselines.push((mesh, pivot, local));
+        baselines.push((mesh, pivot, local, role));
     }
     for attachment in [
         ApplicationMeshAttachment::HorizontalTail,
@@ -2046,7 +2074,7 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
         assert!(
             baselines
                 .iter()
-                .any(|(mesh, _, _)| mesh.attachment == attachment)
+                .any(|(mesh, _, _, _)| mesh.attachment == attachment)
         );
     }
     let mut pose =
@@ -2060,8 +2088,17 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
         .project_geometry(Some(pose))
         .unwrap()
         .unwrap();
-    for frame in [geometry.clone(), articulated] {
-        for (mesh, pivot, local) in &baselines {
+    for (frame, incidence) in [
+        (
+            geometry.clone(),
+            birdman_game_core::TailIncidence::neutral(),
+        ),
+        (
+            articulated,
+            birdman_game_core::TailIncidence::try_new(0.2, 0.15).unwrap(),
+        ),
+    ] {
+        for (mesh, pivot, local, role) in &baselines {
             let part = frame
                 .part_poses
                 .iter()
@@ -2081,10 +2118,6 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
                     && (fixed.y - pivot.y).abs() < 1.0e-12
                     && (fixed.z - pivot.z).abs() < 1.0e-12
             );
-            let expected = Pose {
-                position: *pivot,
-                orientation: part.pose.orientation,
-            };
             let ApplicationBufferSlice::F32(positions) =
                 runtime.asset_buffer(mesh.position.buffer_id).unwrap()
             else {
@@ -2105,19 +2138,23 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
                 )
                 .unwrap()
                 .position;
-                let expected = compose_pose(
-                    expected,
-                    Pose {
-                        position: Vector3 {
-                            x: f64::from(local[0]),
-                            y: f64::from(local[1]),
-                            z: f64::from(local[2]),
-                        },
-                        ..Pose::IDENTITY
-                    },
+                let physical = birdman_game_core::BodyPoint::try_new(
+                    -(f64::from(local[2]) + pivot.z),
+                    f64::from(local[0]) + pivot.x,
+                    -(f64::from(local[1]) + pivot.y),
                 )
-                .unwrap()
-                .position;
+                .unwrap();
+                let [forward, right, down] = definition
+                    .shape()
+                    .surface(*role)
+                    .actuated_point(physical, incidence)
+                    .unwrap()
+                    .components();
+                let expected = Vector3 {
+                    x: right,
+                    y: -down,
+                    z: -forward,
+                };
                 assert!(
                     (actual.x - expected.x).abs() < 1.0e-6
                         && (actual.y - expected.y).abs() < 1.0e-6
