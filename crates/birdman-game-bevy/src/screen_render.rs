@@ -70,6 +70,10 @@ pub(crate) fn image(extent: [u32; 2]) -> Result<Image, String> {
     }
     let mut image =
         Image::new_target_texture(extent[0], extent[1], TextureFormat::Rgba8UnormSrgb, None);
+    #[cfg(all(feature = "openxr", any(target_os = "windows", target_os = "linux")))]
+    {
+        image.texture_descriptor.usage |= bevy::render::render_resource::TextureUsages::COPY_SRC;
+    }
     image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor::linear());
     Ok(image)
 }

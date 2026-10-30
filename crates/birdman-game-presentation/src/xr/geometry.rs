@@ -94,6 +94,47 @@ pub enum XrDepthRange {
     ZeroToOne,
 }
 
+/// Near clipping distance used by the shared scene cameras, in metres.
+pub const VIEW_NEAR_METERS: f64 = 0.05;
+/// Far clipping distance used by the shared scene cameras, in metres.
+pub const VIEW_FAR_METERS: f64 = 100_000.0;
+
+/// Converts OpenXR left/right/down/up view angles to the shared OpenGL-depth projection.
+pub fn xr_projection_from_fov(angles: [f64; 4]) -> Option<[f64; 16]> {
+    if angles
+        .iter()
+        .any(|value| !value.is_finite() || value.abs() >= std::f64::consts::FRAC_PI_2)
+    {
+        return None;
+    }
+    let [left, right, down, up] = angles.map(f64::tan);
+    let width = right - left;
+    let height = up - down;
+    if width <= 0.0 || height <= 0.0 {
+        return None;
+    }
+    let near = VIEW_NEAR_METERS;
+    let far = VIEW_FAR_METERS;
+    Some([
+        2.0 / width,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        2.0 / height,
+        0.0,
+        0.0,
+        (right + left) / width,
+        (up + down) / height,
+        -(far + near) / (far - near),
+        -1.0,
+        0.0,
+        0.0,
+        -2.0 * far * near / (far - near),
+        0.0,
+    ])
+}
+
 /// One same-frame eye pose and the runtime's column-major projection matrix.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]

@@ -10,6 +10,9 @@ mod native_assets;
 mod native_runtime;
 #[path = "native_storage.rs"]
 mod native_storage;
+#[cfg(all(feature = "openxr", any(target_os = "windows", target_os = "linux")))]
+#[path = "native_xr.rs"]
+mod native_xr;
 #[cfg(feature = "verify-harness")]
 #[path = "offscreen.rs"]
 mod offscreen;
@@ -58,10 +61,14 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
     #[cfg(feature = "verify-harness")]
     let mut verification = verification::Options::default();
     let mut no_vsync = false;
+    #[cfg(all(feature = "openxr", any(target_os = "windows", target_os = "linux")))]
+    let mut openxr = false;
     let mut export_directory = None;
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
             "--no-vsync" => no_vsync = true,
+            #[cfg(all(feature = "openxr", any(target_os = "windows", target_os = "linux")))]
+            "--openxr" => openxr = true,
             "--font" => {
                 font_path = Some(PathBuf::from(
                     arguments
@@ -92,6 +99,10 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
                 );
                 println!(
                     "--export-dir DIR: 飛行ログJSON/CSVの保存先。既定は起動時の作業directory/flight-logs。既存fileは上書きしない。"
+                );
+                #[cfg(all(feature = "openxr", any(target_os = "windows", target_os = "linux")))]
+                println!(
+                    "--openxr: OpenXR runtimeとVulkanを初期化し、共有設定のHMD表示を利用する。"
                 );
                 println!(
                     "日本語fontは組込M PLUS 1p Regular（OFL-1.1）を使用する。--font PATHでローカルfontへ変更できる。--versionはbuild sourceとOS/architectureを表示する。"
@@ -139,6 +150,17 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
     #[cfg(feature = "verify-harness")]
     let window_plugin = verification.window_plugin(window_plugin);
     let plugins = DefaultPlugins.set(window_plugin);
+    #[cfg(all(feature = "openxr", any(target_os = "windows", target_os = "linux")))]
+    let plugins = if openxr {
+        plugins
+            .add_before::<bevy::render::RenderPlugin>(bevy_mod_xr::session::XrSessionPlugin {
+                auto_handle: false,
+            })
+            .add_before::<bevy::render::RenderPlugin>(native_xr::init_plugin())
+            .disable::<bevy::render::RenderPlugin>()
+    } else {
+        plugins
+    };
     #[cfg(feature = "verify-harness")]
     let plugins = if verification.offscreen() {
         plugins.disable::<WinitPlugin>()
@@ -157,6 +179,10 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
     #[cfg(feature = "verify-harness")]
     app.insert_resource(verification.timing_mode()?);
     world::install(&mut app);
+    #[cfg(all(feature = "openxr", any(target_os = "windows", target_os = "linux")))]
+    ui::xr_surface::install(&mut app);
+    #[cfg(all(feature = "openxr", any(target_os = "windows", target_os = "linux")))]
+    native_xr::install(&mut app);
     let font = app
         .world_mut()
         .resource_mut::<Assets<Font>>()
@@ -168,6 +194,12 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
     app.add_systems(
         PostUpdate,
         ui::scroll_focused_control.after(bevy::ui::UiSystems::PostLayout),
+    );
+    app.add_systems(
+        PostUpdate,
+        ui::align_chart_text_baselines
+            .after(bevy::ui::UiSystems::Content)
+            .before(bevy::ui::UiSystems::Layout),
     );
     #[cfg(feature = "verify-harness")]
     let verification_completion = verification.install(&mut app)?;

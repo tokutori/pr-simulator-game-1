@@ -19,6 +19,18 @@ OSとCPUに一致する配布アーカイブを展開し、実行ファイルを
 - ビルド来歴: 配布物の `SOURCE.json` とアーカイブ内の `BUILD-INFO.json` に記録する。
 - 画面の最低対応解像度: UI倍率を適用した後の表示領域で1280×720。推奨は1920×1080以上である。
 
+## HMD表示（Windows・Linux）
+
+Windows/Linuxの配布版はOpenXRを同梱機能として有効にしている。HMDに対応するOpenXR runtimeをインストールし、そのruntimeの案内に従って有効なruntimeとして選択する。対応するVulkan GPUドライバーを用意し、次の引数で起動してタイトル画面のVR欄から「VRヘッドセットで表示」を選ぶ。
+
+- Windows: `.\birdman-game-bevy.exe --openxr`
+- Linux: `./birdman-game-bevy --openxr`。OpenXR loaderの`libopenxr_loader.so`が動的ライブラリの探索先に必要である。
+- macOS版: 通常画面を提供する。Native OpenXRの対象はWindows/Linuxである。
+- 操作: controllerのtrigger完了または視線のdwellで選択し、squeezeで戻る。thumbstick上下、未操作時は触れているtouchpad上下でscrollする。
+- 確認範囲: CPUの契約試験と、共有paint・materialの非表示GPU描画を確認した。実runtime・HMDでの両眼表示・操作・終了は未受入である。
+
+引数なしでは通常画面を起動する。ビルド時の機能は`BUILD-INFO.json`の`features`と`--help`で確認できる。runtimeの選択とloaderの役割は[Khronos公式資料](https://registry.khronos.org/OpenXR/specs/1.1/loader.html#runtime-discovery)を参照する。
+
 ## 最初のフライト
 
 1. タイトルの「飛行を設定」から「飛行設定」を開く。
@@ -78,6 +90,7 @@ cargo run -p birdman-game-bevy --release --locked
 | `--no-vsync` | 垂直同期の解除を要求。GPU・OSにより選択される同期方式が異なり、画面のちらつきや消費電力が増える場合がある |
 | `--export-dir DIR` | 飛行記録の保存先を変更 |
 | `--font PATH` | 組込みのM PLUS 1p Regularを指定フォントへ変更 |
+| `--openxr` | Windows/LinuxでOpenXR runtimeとVulkanを初期化し、共有設定のHMD表示を利用する |
 
 ソースから起動する場合は `--` の後ろへオプションを付ける。
 
@@ -85,9 +98,15 @@ cargo run -p birdman-game-bevy --release --locked
 cargo run -p birdman-game-bevy --release --locked -- --export-dir ./my-flight-logs
 ```
 
+Windows/LinuxでソースからHMD表示を利用する場合は`openxr` featureを指定する。WindowsではOpenXR loaderのビルドにCMakeも使用する。
+
+```sh
+cargo run -p birdman-game-bevy --release --locked --features openxr -- --openxr
+```
+
 ## 利用条件と詳細
 
-- データ出典: [THIRD_PARTY_DATA.md](../THIRD_PARTY_DATA.md)。同梱ライブラリの利用条件は `THIRD-PARTY-LICENSES.html`、フォントの利用条件は `assets/fonts/MPLUS1p-OFL.txt` を参照する。
+- データ出典: [THIRD_PARTY_DATA.md](../THIRD_PARTY_DATA.md)。同梱ライブラリの利用条件は `THIRD-PARTY-LICENSES.html`、フォントの利用条件は `assets/fonts/MPLUS1p-OFL.txt` を参照する。OpenXR依存の原ライセンスとlocal修正内容は同梱`vendor/bevy_mod_openxr`・`vendor/openxr`に記録する。
 - 記録形式: [データ形式](data-and-formats.md)。
 - ゲーム進行・計器・視点: [ゲームとUI](gameplay-and-ui.md)。
 - 開発者向けの描画・VR仕様: [描画とプラットフォーム](rendering-and-platforms.md)。

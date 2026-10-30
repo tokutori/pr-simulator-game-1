@@ -52,9 +52,31 @@ pub(crate) fn platform(world: &mut World) -> ApplicationPlatformObservation {
             .get_resource::<super::screen_render::timing::TimingMode>()
             .is_some_and(|mode| mode.diagnostic_requested()),
         renderer: Some(super::world::platform(world)),
-        surface: None,
+        surface: {
+            #[cfg(all(feature = "openxr", any(target_os = "windows", target_os = "linux")))]
+            {
+                super::ui::xr_surface::surface(world)
+            }
+            #[cfg(not(all(feature = "openxr", any(target_os = "windows", target_os = "linux"))))]
+            {
+                None
+            }
+        },
         viewport,
         capabilities: ApplicationCapabilities {
+            hmd_available: {
+                #[cfg(all(feature = "openxr", any(target_os = "windows", target_os = "linux")))]
+                {
+                    super::native_xr::available(world)
+                }
+                #[cfg(not(all(
+                    feature = "openxr",
+                    any(target_os = "windows", target_os = "linux")
+                )))]
+                {
+                    false
+                }
+            },
             analysis_available: true,
             replay_available: true,
             stored_records_available: true,
@@ -107,6 +129,16 @@ pub(crate) fn update(world: &mut World) {
         queue.push_back(ApplicationInput::Wake { request_id });
     }
     queue.extend(super::world::poll(world));
+    #[cfg(all(feature = "openxr", any(target_os = "windows", target_os = "linux")))]
+    {
+        queue.extend(super::native_xr::poll(world, now));
+        if let Some(cause) = super::native_xr::failure(world) {
+            error!("{cause}");
+            world.insert_resource(runtime);
+            world.write_message(AppExit::error());
+            return;
+        }
+    }
     if let Some(cause) = super::screen_render::timing::shutdown_failure(world) {
         error!("{cause}");
         world.insert_resource(runtime);
@@ -116,16 +148,28 @@ pub(crate) fn update(world: &mut World) {
     queue.push_back(ApplicationInput::Platform {
         observation: platform(world),
     });
-    queue.push_back(ApplicationInput::Frame {
-        display_resource_id: world.resource::<NativeIo>().display_resource_id,
-        timestamp_ms: now,
-        gamepads: world
-            .resource::<super::flight_devices::FlightDevices>()
-            .observations()
-            .to_vec(),
-        xr: None,
-        spatial: Default::default(),
-    });
+    let screen_frame = {
+        #[cfg(all(feature = "openxr", any(target_os = "windows", target_os = "linux")))]
+        {
+            !super::native_xr::active(world)
+        }
+        #[cfg(not(all(feature = "openxr", any(target_os = "windows", target_os = "linux"))))]
+        {
+            true
+        }
+    };
+    if screen_frame {
+        queue.push_back(ApplicationInput::Frame {
+            display_resource_id: world.resource::<NativeIo>().display_resource_id,
+            timestamp_ms: now,
+            gamepads: world
+                .resource::<super::flight_devices::FlightDevices>()
+                .observations()
+                .to_vec(),
+            xr: None,
+            spatial: Default::default(),
+        });
+    }
     while let Some(input) = queue.pop_front() {
         let observation = ApplicationObservation {
             observed_ms: now,
@@ -135,24 +179,42 @@ pub(crate) fn update(world: &mut World) {
         let trace_input = super::verification::trace::observation(world, &observation);
         #[cfg(feature = "verify-harness")]
         let mut trace_fonts = Vec::new();
-        let output = runtime.0.update(observation, &mut |probe| {
-            let result: Result<birdman_game_runtime::ApplicationGlyphMetrics, _> =
-                Err(birdman_game_presentation::xr::MenuLayoutFailure::MeasurementUnavailable);
-            #[cfg(feature = "verify-harness")]
-            if trace_input.is_some() {
-                let font = super::verification::trace::wire_value(&probe).and_then(|probe| {
-                    super::verification::trace::wire_value(&result)
-                        .map(|result| serde_json::json!({ "probe": probe, "result": result }))
-                });
-                match font {
-                    Ok(font) => trace_fonts.push(font),
-                    Err(cause) => super::verification::trace::report(world, Err(cause)),
+        #[cfg(feature = "verify-harness")]
+        let mut font_failures = Vec::new();
+        let update = |measure: &mut dyn FnMut(
+            &birdman_game_runtime::ApplicationTextProbe,
+        ) -> Result<
+            birdman_game_runtime::ApplicationGlyphMetrics,
+            birdman_game_presentation::xr::MenuLayoutFailure,
+        >| {
+            runtime.0.update(observation, &mut |probe| {
+                let result = measure(probe);
+                #[cfg(feature = "verify-harness")]
+                if trace_input.is_some() {
+                    let font = super::verification::trace::wire_value(&probe).and_then(|probe| {
+                        super::verification::trace::wire_value(&result)
+                            .map(|result| serde_json::json!({ "probe": probe, "result": result }))
+                    });
+                    match font {
+                        Ok(font) => trace_fonts.push(font),
+                        Err(cause) => font_failures.push(cause),
+                    }
                 }
-            }
-            #[cfg(not(feature = "verify-harness"))]
-            let _ = probe;
-            result
+                #[cfg(not(feature = "verify-harness"))]
+                let _ = probe;
+                result
+            })
+        };
+        #[cfg(all(feature = "openxr", any(target_os = "windows", target_os = "linux")))]
+        let output = super::ui::xr_surface::with_metrics(world, update);
+        #[cfg(not(all(feature = "openxr", any(target_os = "windows", target_os = "linux"))))]
+        let output = update(&mut |_| {
+            Err(birdman_game_presentation::xr::MenuLayoutFailure::MeasurementUnavailable)
         });
+        #[cfg(feature = "verify-harness")]
+        for cause in font_failures {
+            super::verification::trace::report(world, Err(cause));
+        }
         let output = match output {
             Ok(output) => output,
             Err(cause) => {
@@ -181,6 +243,20 @@ pub(crate) fn update(world: &mut World) {
         }
         let mut restart_failed = false;
         for request in output.requests {
+            #[cfg(all(feature = "openxr", any(target_os = "windows", target_os = "linux")))]
+            if let ApplicationRequest::Display { request: display } = &request {
+                match super::native_xr::execute(world, display) {
+                    Ok(Some(inputs)) => {
+                        queue.extend(inputs);
+                        continue;
+                    }
+                    Ok(None) => {}
+                    Err(cause) => {
+                        error!("Native OpenXR: {cause}");
+                        continue;
+                    }
+                }
+            }
             if let Some(inputs) = world
                 .resource_mut::<super::native_storage::NativeStorage>()
                 .execute(&request)
@@ -267,9 +343,11 @@ pub(crate) fn update(world: &mut World) {
             }
         }
         if let Some(drawing) = output.drawing {
-            if let Err(cause) = super::ui::submit(world, &drawing)
-                .and_then(|()| super::world::submit(world, &runtime.0, &drawing))
-            {
+            let submitted = super::ui::submit(world, &drawing)
+                .and_then(|()| super::world::submit(world, &runtime.0, &drawing));
+            #[cfg(all(feature = "openxr", any(target_os = "windows", target_os = "linux")))]
+            let submitted = submitted.and_then(|()| super::native_xr::submit(world, &drawing));
+            if let Err(cause) = submitted {
                 queue.push_back(ApplicationInput::RendererFailed {
                     renderer_resource_id: drawing.graphics.resource.map_or_else(
                         || super::world::platform(world).resource_id,

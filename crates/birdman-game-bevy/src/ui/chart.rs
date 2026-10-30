@@ -316,21 +316,20 @@ fn project_chart_text(
     Ok(entity)
 }
 
-pub(super) fn align_chart_text_baselines(world: &mut World) {
-    for (block, layout, mut node, mut visibility) in world
+pub(crate) fn align_chart_text_baselines(world: &mut World) {
+    for (block, mut node, mut visibility) in world
         .query_filtered::<(
             &ComputedTextBlock,
-            &TextLayoutInfo,
             &mut Node,
             &mut Visibility,
         ), With<ChartTextBaseline>>()
         .iter_mut(world)
     {
         if let Some(line) = block.buffer().lines().next()
-            && layout.scale_factor.is_finite()
-            && layout.scale_factor > 0.0
+            && block.buffer().scale().is_finite()
+            && block.buffer().scale() > 0.0
         {
-            let top = px(-line.metrics().baseline / layout.scale_factor);
+            let top = px(-line.metrics().baseline / block.buffer().scale());
             if node.top != top {
                 node.top = top;
             }

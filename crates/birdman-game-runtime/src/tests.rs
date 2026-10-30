@@ -2973,6 +2973,7 @@ fn spatial_trigger_uses_submitted_painting_and_the_canonical_ui_action_owner() {
                     spatial: ApplicationSpatialObservation {
                         presented_id: Some(opening.presentation_id),
                         sources: vec![birdman_game_presentation::xr::XrInputSourceObservation {
+                            select_pressed: None,
                             source_id: pointer.source_id,
                             target_ray_mode: "tracked-pointer".into(),
                             handedness: "right".into(),
@@ -3066,6 +3067,7 @@ fn spatial_trigger_uses_submitted_painting_and_the_canonical_ui_action_owner() {
         XrInputButtonObservation, XrInputGamepadObservation, XrInputSourceObservation,
     };
     let mut controller = XrInputSourceObservation {
+        select_pressed: None,
         source_id: pointer.source_id,
         target_ray_mode: "tracked-pointer".into(),
         handedness: "right".into(),

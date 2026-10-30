@@ -3,6 +3,7 @@ import { record, nonEmpty } from "../shared/validation.js";
 export const HOST_NUMERICAL_TEST_TARGET = 'cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))';
 export const NATIVE_SCREEN_TARGET = 'cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))';
 export const NATIVE_LINUX_WINDOW_TARGET = 'cfg(target_os = "linux")';
+export const NATIVE_OPENXR_TARGET = 'cfg(any(target_os = "windows", target_os = "linux"))';
 
 const allowed = new Map<string, readonly string[]>([
   ["birdman-game-core", ["libm"]],
@@ -88,6 +89,19 @@ function isNativeTextDependency(crate: string, dependency: Record<string, unknow
     && dependency.features.length === 2
     && dependency.features.includes("std")
     && dependency.features.includes("complex-scripts");
+}
+
+function isNativeXrDependency(crate: string, dependency: Record<string, unknown>): boolean {
+  const features = dependency.features;
+  return crate === "birdman-game-bevy" && dependency.target === NATIVE_OPENXR_TARGET
+    && dependency.kind === null && dependency.optional === true
+    && dependency.uses_default_features === false && dependency.path === undefined
+    && dependency.rename === null && isDefaultRegistrySource(dependency)
+    && Array.isArray(features)
+    && (dependency.name === "bevy_mod_openxr" && dependency.req === "=0.6.0"
+      && features.length === 2 && features.includes("vulkan") && features.includes("window_support")
+      || dependency.name === "bevy_mod_xr" && dependency.req === "=0.6.0" && features.length === 0
+      || dependency.name === "openxr" && dependency.req === "=0.21.1" && features.length === 0);
 }
 
 function isSharedJsonNumberDependency(crate: string, dependency: Record<string, unknown>): boolean {
@@ -285,6 +299,7 @@ export function assertDependencyBoundary(packages: readonly unknown[]): void {
       if (!permitted.includes(dependencyName)
         && !isNativeGpuIoDependency(name, dependency)
         && !isNativeTextDependency(name, dependency)
+        && !isNativeXrDependency(name, dependency)
         && !isSharedJsonNumberDependency(name, dependency)
         && !isSharedImageOperationsDependency(name, dependency)
         && !isPresentationSceneTestDependency(name, dependency)

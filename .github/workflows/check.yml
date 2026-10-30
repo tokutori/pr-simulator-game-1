@@ -77,19 +77,19 @@ jobs:
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
         env:
           RUSTC_WRAPPER: ''
-      - name: Lint native verification feature
-        run: cargo clippy -p birdman-game-bevy --all-targets --features verify-harness --locked -- -D warnings
+      - name: Lint native verification and OpenXR features
+        run: cargo clippy -p birdman-game-bevy --all-targets --features verify-harness,openxr --locked -- -D warnings
         env:
           RUSTC_WRAPPER: ''
       - name: Test workspace packages (Linux)
         if: runner.os == 'Linux'
-        run: cargo test --workspace --features birdman-game-bevy/verify-harness --locked
+        run: cargo test --workspace --features birdman-game-bevy/verify-harness,birdman-game-bevy/openxr --locked
       - name: Test shared and Web packages (Windows)
         if: runner.os == 'Windows'
         run: cargo test --workspace --exclude birdman-game-bevy --locked
       - name: Test Bevy native Screen (Windows)
         if: runner.os == 'Windows'
-        run: cargo test -p birdman-game-bevy --features verify-harness --locked
+        run: cargo test -p birdman-game-bevy --features verify-harness,openxr --locked
       - name: Build Bevy native Screen executable (Windows)
         if: runner.os == 'Windows'
         run: cargo build -p birdman-game-bevy --locked

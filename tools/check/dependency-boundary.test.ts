@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assertDependencyBoundary, assertNativeTextPatch, HOST_NUMERICAL_TEST_TARGET, NATIVE_LINUX_WINDOW_TARGET, NATIVE_SCREEN_TARGET } from "./dependency-boundary.js";
+import { assertDependencyBoundary, assertNativeTextPatch, HOST_NUMERICAL_TEST_TARGET, NATIVE_LINUX_WINDOW_TARGET, NATIVE_OPENXR_TARGET, NATIVE_SCREEN_TARGET } from "./dependency-boundary.js";
 
 const numericalDependency = {
   name: "nalgebra", kind: "dev", target: HOST_NUMERICAL_TEST_TARGET, req: "=0.35.0",
@@ -368,6 +368,18 @@ describe("Cargo dependency boundary", () => {
   );
 
   it("keeps native engine and shared session dependencies outside core and format", () => {
+    for (const [name, req, features] of [
+      ["bevy_mod_openxr", "=0.6.0", ["vulkan", "window_support"]],
+      ["bevy_mod_xr", "=0.6.0", []],
+      ["openxr", "=0.21.1", []]
+    ] as const) {
+      const dependency = { ...nativeTextDependency, name, req, features, target: NATIVE_OPENXR_TARGET, optional: true };
+      expect(() => { assertDependencyBoundary([{ name: "birdman-game-bevy", dependencies: [dependency] }]); }).not.toThrow();
+      for (const difference of [{ target: NATIVE_SCREEN_TARGET }, { optional: false }, { uses_default_features: true }, { req: "^0.6.0" }]) {
+        expect(() => { assertDependencyBoundary([{ name: "birdman-game-bevy", dependencies: [{ ...dependency, ...difference }] }]); }).toThrow();
+      }
+      expect(() => { assertDependencyBoundary([{ name: "birdman-game-runtime", dependencies: [dependency] }]); }).toThrow();
+    }
     expect(() => { assertDependencyBoundary([
       { name: "birdman-game-presentation", dependencies: [{ name: "birdman-game-core" }, { name: "birdman-game-format" }] },
       { name: "birdman-game-wasm", dependencies: [{ name: "birdman-game-presentation" }] },

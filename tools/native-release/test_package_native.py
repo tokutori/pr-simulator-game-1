@@ -34,10 +34,11 @@ def header(target: str) -> bytes:
 
 
 def raw_artifact(directory: Path, root: Path, target: str, binary: bytes,
-                 source_sha: str = SOURCE_SHA, additional: str = "") -> None:
+                 source_sha: str = SOURCE_SHA, additional: str = "", features: list[str] | None = None) -> None:
     info = {
         "source_sha": source_sha,
         "target": target,
+        "features": packaging.native_features(target) if features is None else features,
         "cargo_lock_sha256": packaging.digest(root / "Cargo.lock"),
         "binary_sha256": hashlib.sha256(binary).hexdigest(),
     }
@@ -59,6 +60,8 @@ class NativePackagingTests(unittest.TestCase):
             self.assertEqual(len({spec[0] for spec in packaging.TARGETS.values()}), 6)
             for target in packaging.TARGETS:
                 with self.subTest(target=target):
+                    self.assertEqual(packaging.native_features(target),
+                                     [] if "apple-darwin" in target else ["openxr"])
                     binary.write_bytes(header(target))
                     packaging.validate_header(binary, target)
                     other = next(candidate for candidate in packaging.TARGETS if candidate != target)
@@ -87,6 +90,7 @@ class NativePackagingTests(unittest.TestCase):
             binary.write_bytes(header(target))
             output = root / "output"
             calls = []
+            advertise_openxr = True
 
             def run(command, **options):
                 executable = Path(command[0])
@@ -94,7 +98,7 @@ class NativePackagingTests(unittest.TestCase):
                 self.assertNotEqual(executable, binary)
                 self.assertNotEqual(options["cwd"], root)
                 self.assertEqual(executable.read_bytes(), binary.read_bytes())
-                text = ("birdman-game-bevy --help" if command[1] == "--help" else
+                text = ("birdman-game-bevy --help" + (" --openxr" if advertise_openxr else "") if command[1] == "--help" else
                         f"birdman-game-bevy 0.1.0 source {SOURCE_SHA} windows x86_64")
                 return subprocess.CompletedProcess(command, 0, text, "")
 
@@ -105,8 +109,13 @@ class NativePackagingTests(unittest.TestCase):
             with tarfile.open(output / f"{target}.tar.gz") as archive:
                 info = json.load(archive.extractfile("BUILD-INFO.json"))
                 self.assertEqual(info["source_sha"], SOURCE_SHA)
+                self.assertEqual(info["features"], ["openxr"])
                 self.assertEqual(info["binary_sha256"], packaging.digest(binary))
                 self.assertEqual(sorted(archive.getnames()), ["BUILD-INFO.json", "birdman-game-bevy.exe"])
+            advertise_openxr = False
+            with patch("package_native.require_source"), patch("package_native.subprocess.run", side_effect=run), \
+                    self.assertRaisesRegex(ValueError, "release features"):
+                packaging.stage_binary(root, binary, target, SOURCE_SHA, output)
 
     def fixture(self, directory: str):
         root = Path(directory) / "source"
@@ -121,6 +130,7 @@ class NativePackagingTests(unittest.TestCase):
             "source_sha": SOURCE_SHA,
             "cargo_lock_sha256": packaging.digest(root / "Cargo.lock"),
             "targets": list(packaging.TARGETS),
+            "features": ["openxr"],
             "licenses_sha256": packaging.digest(notice),
         })
         for target in packaging.TARGETS:
@@ -140,6 +150,7 @@ class NativePackagingTests(unittest.TestCase):
             self.assertEqual(len(source["packages"]), 6)
             self.assertEqual(source["source_sha"], SOURCE_SHA)
             for package in source["packages"]:
+                self.assertEqual(package["features"], packaging.native_features(package["target"]))
                 path = output / package["file"]
                 self.assertEqual(package["sha256"], packaging.digest(path))
                 if path.suffix == ".zip":
@@ -155,7 +166,7 @@ class NativePackagingTests(unittest.TestCase):
                 self.assertEqual(checksum, packaging.digest(output / name))
 
     def test_rejects_mixed_source_architecture_and_unexpected_archive_paths(self) -> None:
-        for mutation in ("source", "architecture", "path", "hash", "missing"):
+        for mutation in ("source", "architecture", "path", "hash", "missing", "features", "license-features"):
             with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as directory:
                 root, binaries, licenses, output = self.fixture(directory)
                 target = next(iter(packaging.TARGETS))
@@ -167,6 +178,12 @@ class NativePackagingTests(unittest.TestCase):
                     raw_artifact(binaries, root, target, header(target), additional="../outside")
                 elif mutation == "hash":
                     (licenses / "THIRD-PARTY-LICENSES.html").write_text("modified", encoding="utf-8")
+                elif mutation == "features":
+                    raw_artifact(binaries, root, target, header(target), features=[])
+                elif mutation == "license-features":
+                    info = json.loads((licenses / "LICENSE-INFO.json").read_text(encoding="utf-8"))
+                    info["features"] = []
+                    packaging.write_json(licenses / "LICENSE-INFO.json", info)
                 else:
                     (binaries / f"{target}.tar.gz").unlink()
                 with patch("package_native.require_source"), patch("package_native.copy_notices"), \
@@ -190,12 +207,15 @@ class NativePackagingTests(unittest.TestCase):
             self.assertNotIn("--workspace", command)
             self.assertEqual(command.count("--target"), 6)
             self.assertTrue(set(packaging.TARGETS).issubset(command))
+            self.assertEqual(command[command.index("--features") + 1], "openxr")
+            self.assertEqual(json.loads((licenses / "LICENSE-INFO.json").read_text(encoding="utf-8"))["features"],
+                             ["openxr"])
 
     def test_registered_assets_font_and_full_notices_are_copied_and_verified(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root, _, licenses, output = self.fixture(directory)
             output.mkdir()
-            for entry in ("LICENSE", "THIRD_PARTY_DATA.md", *packaging.DOCUMENTATION_FILES,
+            for entry in ("LICENSE", "THIRD_PARTY_DATA.md", *packaging.DOCUMENTATION_FILES, *packaging.OPENXR_NOTICES,
                           "assets/fonts/MPLUS1p-Regular.ttf", "assets/fonts/MPLUS1p-OFL.txt"):
                 path = root / entry
                 path.parent.mkdir(parents=True, exist_ok=True)
@@ -206,7 +226,8 @@ class NativePackagingTests(unittest.TestCase):
             tracked = ("\0".join(assets + ["assets/manifest.toml", "assets/test-fonts/not-for-distribution.ttf"]) + "\0").encode()
             with patch("package_native.subprocess.check_output", return_value=tracked):
                 packaging.copy_notices(root, licenses, output)
-                for entry in assets + ["LICENSE", "THIRD_PARTY_DATA.md", *packaging.DOCUMENTATION_FILES]:
+                for entry in assets + ["LICENSE", "THIRD_PARTY_DATA.md", *packaging.DOCUMENTATION_FILES,
+                                       *packaging.OPENXR_NOTICES]:
                     self.assertEqual((output / entry).read_bytes(), (root / entry).read_bytes())
                 self.assertEqual((output / "THIRD-PARTY-LICENSES.html").read_bytes(),
                                  (licenses / "THIRD-PARTY-LICENSES.html").read_bytes())

@@ -42,7 +42,7 @@ cargo run -p birdman-game-bevy --release --locked
 ```
 
 Windows・macOS・Linuxのx86_64 / ARM64向け配布ファイル、OS別の前提環境、
-操作キー、保存先は[Nativeガイド](docs/native-guide.md)を参照する。
+操作キー、保存先、Windows/LinuxのOpenXR起動は[Nativeガイド](docs/native-guide.md)を参照する。
 
 ## 開発・検査
 

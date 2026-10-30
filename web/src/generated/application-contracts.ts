@@ -43,6 +43,10 @@ export type ApplicationInput = {
     readonly focused: boolean;
     readonly kind: "document_focus";
 } | {
+    /**
+     * Original runtime reason for an unsolicited end, when supplied.
+     */
+    readonly cause?: string | null;
     readonly kind: "display_ended";
     /**
      * Ended session or sensor subscription identity.
@@ -2271,6 +2275,10 @@ export interface XrInputSourceObservation {
      * Raw handedness, independent of the source handle.
      */
     readonly handedness: string;
+    /**
+     * Raw primary-action state when the API exposes a Boolean action instead of a completed select event.
+     */
+    readonly select_pressed?: boolean | null;
     /**
      * Platform handle for this source's connection lifetime.
      */

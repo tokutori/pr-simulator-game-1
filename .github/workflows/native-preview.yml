@@ -94,7 +94,10 @@ jobs:
           actual_host=$(rustc -vV | sed -n 's/^host: //p' | tr -d '\r')
           test "$actual_host" = '${{ matrix.target }}'
       - name: Build the real native application
-        run: cargo build -p birdman-game-bevy --release --locked --target '${{ matrix.target }}'
+        run: |
+          features=()
+          if [ -n '${{ matrix.features }}' ]; then features=(--features '${{ matrix.features }}'); fi
+          cargo build -p birdman-game-bevy --release --locked --target '${{ matrix.target }}' "${features[@]}"
       - name: Validate architecture and CPU-only startup outside the source tree
         run: |
           binary='target/${{ matrix.target }}/release/birdman-game-bevy'

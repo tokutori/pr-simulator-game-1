@@ -1,10 +1,12 @@
 [workspace]
 members = ["crates/*"]
-exclude = ["vendor/parley"]
+exclude = ["vendor/parley", "vendor/bevy_mod_openxr", "vendor/openxr"]
 resolver = "3"
 
 [patch.crates-io]
 parley = { path = "vendor/parley" }
+bevy_mod_openxr = { path = "vendor/bevy_mod_openxr" }
+openxr = { path = "vendor/openxr" }
 
 [workspace.package]
 version = "0.1.0"

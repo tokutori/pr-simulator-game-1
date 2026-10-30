@@ -10,6 +10,7 @@ description = "Native Screen adapter for the existing Birdman hybrid game sessio
 [features]
 default = []
 verify-harness = []
+openxr = ["dep:bevy_mod_openxr", "dep:bevy_mod_xr", "dep:openxr"]
 
 [dependencies]
 birdman-game-app.workspace = true
@@ -33,6 +34,11 @@ bevy = { version = "=0.19.1", default-features = false, features = [
 
 [target.'cfg(target_os = "linux")'.dependencies]
 bevy = { version = "=0.19.1", default-features = false, features = ["x11", "wayland"] }
+
+[target.'cfg(any(target_os = "windows", target_os = "linux"))'.dependencies]
+bevy_mod_openxr = { version = "=0.6.0", default-features = false, features = ["vulkan", "window_support"], optional = true }
+bevy_mod_xr = { version = "=0.6.0", default-features = false, optional = true }
+openxr = { version = "=0.21.1", default-features = false, optional = true }
 
 [lints]
 workspace = true
