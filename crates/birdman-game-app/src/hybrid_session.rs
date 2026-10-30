@@ -22,8 +22,8 @@ use crate::{
 
 const CONTROLLER_PROFILE_ID: &str = "bpg040-tail-rate-feedback";
 const CONTROLLER_PROFILE_VERSION: u32 = 3;
-const CATALOG_VERSION: u32 = 8;
-const SCENARIO_VERSION: u32 = 9;
+const CATALOG_VERSION: u32 = 9;
+const SCENARIO_VERSION: u32 = 10;
 const SCENARIOS: [(u32, WeatherClass); 5] = [
     (1, WeatherClass::Calm),
     (2, WeatherClass::Mild),

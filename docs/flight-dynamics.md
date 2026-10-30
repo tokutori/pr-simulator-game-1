@@ -353,8 +353,8 @@ D_i=q_i S_{projected,i}\left(C_{D0}+\frac{C_{L,i}^2}{\pi AR_s e}\right)
 
 ## 公開Playableモデル
 
-- 公開既定は`bpg041-playable-hybrid-mock`のmodel 6、catalog 8 / scenario 9、`bpg040-tail-rate-feedback`のcontroller 3である。
-- `assets/aircraft/playable-glider-v6.json`が質量・慣性・section・strip・anchor・全機polar・構造材寸法・視点mountを定義する。contentの`AircraftDefinition`が検証済みdocumentと借用viewのstorageを所有する。
+- 公開既定は`bpg041-playable-hybrid-mock`のmodel 7、catalog 9 / scenario 10、`bpg040-tail-rate-feedback`のcontroller 3である。
+- `assets/aircraft/playable-glider-v7.json`が質量・慣性・section・strip・anchor・全機polar・構造材寸法・視点mountを定義する。contentの`AircraftDefinition`が検証済みdocumentと借用viewのstorageを所有する。
 - 定常滑空は汎用の`SteadyGlideTrim`が、質量モデル・全機polar・`SteadyGlideConditions`から求める。指定した迎角区間で力の釣合を解き、合成重心まわりのモーメントを満たすパイロット位置を求める。
 - 現行catalog・scenario・controllerの組合せを登録する。保存snapshotは記録時のデータから閲覧する。
 
@@ -362,7 +362,7 @@ D_i=q_i S_{projected,i}\left(C_{D0}+\frac{C_{L,i}^2}{\pi AR_s e}\right)
 |---|---|---|---|
 | 主翼 | 約17.5551 / 20.863 / 0.90170 | 全sectionとstrip境界で分割 | 69断面のテーパー翼・二段折れ上反角 |
 | 水平尾翼 | 2.5 / 3.4 / 2.5/3.4 | 8 | $(-3.6,y,0.1)$、body frame |
-| 垂直尾翼 | 0.5 / 0.7 / 0.5/0.7 | 4 | $(-1.8,0,z)$、$z\in[-0.45,0.25]$、$R_x(\pi/2)$ |
+| 垂直尾翼 | 0.5 / 0.7 / 0.5/0.7 | 4 | $(-3.6,0,z)$、$z\in[-0.45,0.25]$、$R_x(\pi/2)$ |
 
 - 作用点は各区間の面積重心とし、線型に変化する翼弦・sweep・上反角から求める。
 - 投影面積、実面積、MAC、局所frameを同じsectionから導出する。

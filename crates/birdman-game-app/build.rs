@@ -21,7 +21,7 @@ fn main() {
     let shared_venue_source = workspace_dir.join("crates/birdman-game-app/src/venue.rs");
     let shared_venue_asset = workspace_dir.join("assets/biwa-launch-venue.json");
     let content_source = workspace_dir.join("crates/birdman-game-content/src");
-    let aircraft_asset = workspace_dir.join("assets/aircraft/playable-glider-v6.json");
+    let aircraft_asset = workspace_dir.join("assets/aircraft/playable-glider-v7.json");
     let hybrid_trim_source = core_source.join("steady_glide.rs");
     let dynamics_source = core_source.join("dynamics.rs");
     let aerodynamics_source = core_source.join("aerodynamics.rs");

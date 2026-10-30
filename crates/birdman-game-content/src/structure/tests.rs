@@ -40,6 +40,7 @@ fn all_structural_parts_share_contact_vertices_and_complete_local_topology() {
         (StructuralPartKind::Stringer, 48),
         (StructuralPartKind::Foam, 54),
         (StructuralPartKind::MainBeam, 1),
+        (StructuralPartKind::TailSupport, 1),
         (StructuralPartKind::CockpitFrame, 18),
         (StructuralPartKind::CanopyRim, 16),
     ] {
@@ -52,6 +53,36 @@ fn all_structural_parts_share_contact_vertices_and_complete_local_topology() {
             count
         );
     }
+    let support = structure
+        .parts()
+        .iter()
+        .find(|part| part.kind() == StructuralPartKind::TailSupport)
+        .unwrap();
+    assert_eq!(support.attachment(), StructuralAttachment::Rigid);
+    let MemberForm::Tube {
+        endpoints,
+        radius_m,
+        ..
+    } = support.form
+    else {
+        panic!("tail support must be a tube")
+    };
+    assert_eq!(endpoints[0], [-3.6, 0.0, 0.25]);
+    let [first, last] = definition.document().structure.main_beam_endpoints_frd_m;
+    let direction = subtract(last, first);
+    let t =
+        (dot(subtract(endpoints[0], first), direction) / dot(direction, direction)).clamp(0.0, 1.0);
+    for (axis, value) in endpoints[1].into_iter().enumerate() {
+        assert_eq!(value, first[axis] + t * (last[axis] - first[axis]));
+    }
+    assert_eq!(
+        radius_m,
+        definition
+            .document()
+            .structure
+            .members
+            .tail_support_radius_m
+    );
     let mut end = 0;
     for part in structure.parts() {
         let range = part.vertex_range();
@@ -66,6 +97,16 @@ fn all_structural_parts_share_contact_vertices_and_complete_local_topology() {
         end = range.end;
     }
     assert_eq!(end, structure.neutral_vertices().len());
+    let mut connected_document = definition.document().clone();
+    connected_document.structure.main_beam_endpoints_frd_m[0] = endpoints[0];
+    let connected = crate::AircraftDefinition::from_document(connected_document).unwrap();
+    assert!(
+        connected
+            .structural_geometry()
+            .parts()
+            .iter()
+            .all(|part| part.kind() != StructuralPartKind::TailSupport)
+    );
 }
 
 #[test]
@@ -256,9 +297,60 @@ fn source_radii_foam_width_and_tail_offset_change_the_shared_outer_vertices() {
         .horizontal_tail
         .foam_normal_offset_m *= 2.0;
     document.structure.main_beam_radius_m *= 1.5;
+    document.structure.members.tail_support_radius_m *= 2.0;
+    let fin = document
+        .surfaces
+        .iter_mut()
+        .find(|surface| surface.role.core_role() == HybridSurfaceRole::VerticalTail)
+        .unwrap();
+    fin.sections[0].quarter_chord_frd_m[0] += 0.2;
+    fin.sections[0].quarter_chord_frd_m[1] += 0.1;
     let changed = crate::AircraftDefinition::from_document(document).unwrap();
     let original_geometry = original.structural_geometry();
     let changed_geometry = changed.structural_geometry();
+    let supports: Vec<_> = changed_geometry
+        .parts()
+        .iter()
+        .filter(|part| part.kind() == StructuralPartKind::TailSupport)
+        .collect();
+    assert_eq!(supports.len(), 2);
+    let mut vertices = changed_geometry.neutral_vertices().to_vec();
+    for rudder in [-0.2, 0.2] {
+        let incidence = TailIncidence::try_new(0.0, rudder).unwrap();
+        changed
+            .write_structural_vertices(
+                WingBendingFactor::try_new(1.0).unwrap(),
+                incidence,
+                &mut vertices,
+            )
+            .unwrap();
+        let centers: Vec<_> = supports
+            .iter()
+            .map(|part| {
+                let range = part.vertex_range();
+                let ring = range.len() / 2;
+                core::array::from_fn::<_, 2, _>(|end| {
+                    core::array::from_fn::<_, 3, _>(|axis| {
+                        vertices[range.start + end * ring..range.start + (end + 1) * ring]
+                            .iter()
+                            .map(|point| point.components()[axis])
+                            .sum::<f64>()
+                            / ring as f64
+                    })
+                })
+            })
+            .collect();
+        for (fixed, moving) in centers[0][0].into_iter().zip(centers[1][0]) {
+            assert!((fixed - moving).abs() < 1.0e-14);
+        }
+        let fin = changed.shape().surface(HybridSurfaceRole::VerticalTail);
+        let root = body_point(mean_point(fin, fin.span_bounds_m()[1], 0.25).unwrap()).unwrap();
+        let root = fin.actuated_point(root, incidence).unwrap().components();
+        for axis in 0..3 {
+            assert!((centers[1][1][axis] - root[axis]).abs() < 1.0e-14);
+        }
+    }
+
     for (kind, attachment) in [
         (StructuralPartKind::Rib, StructuralAttachment::MainWing),
         (StructuralPartKind::Foam, StructuralAttachment::MainWing),
@@ -267,6 +359,7 @@ fn source_radii_foam_width_and_tail_offset_change_the_shared_outer_vertices() {
             StructuralAttachment::HorizontalTail,
         ),
         (StructuralPartKind::MainBeam, StructuralAttachment::Rigid),
+        (StructuralPartKind::TailSupport, StructuralAttachment::Rigid),
     ] {
         let index = original_geometry
             .parts()

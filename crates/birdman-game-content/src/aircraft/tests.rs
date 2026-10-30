@@ -4,7 +4,7 @@ use crate::{PLAYABLE_AIRCRAFT_JSON, playable_aircraft};
 #[test]
 fn bundled_aircraft_prepares_its_nonrectangular_broken_dihedral_surfaces() {
     let definition = playable_aircraft().unwrap();
-    assert_eq!(definition.document().model_version, 6);
+    assert_eq!(definition.document().model_version, 7);
     let surfaces = definition.surfaces().unwrap();
     let wing = surfaces[0].geometry();
     assert_eq!(wing.sections().len(), 69);
@@ -35,6 +35,94 @@ fn bundled_aircraft_prepares_its_nonrectangular_broken_dihedral_surfaces() {
                 proxy.interval_m()[0] >= pair[0].quarter_chord().components()[axis]
                     && proxy.interval_m()[1] <= pair[1].quarter_chord().components()[axis]
             }));
+        }
+    }
+    let fin = surfaces[2].geometry();
+    assert_eq!(
+        fin.sections()[0].quarter_chord().components(),
+        [-3.6, 0.0, -0.45]
+    );
+    assert_eq!(
+        fin.sections()[1].quarter_chord().components(),
+        [-3.6, 0.0, 0.25]
+    );
+    assert!(
+        fin.sections()
+            .iter()
+            .all(|section| section.chord_m() == 0.7142857142857143)
+    );
+    // The previous arm is reconstructed from the same coefficients and sections;
+    // uniform translation changes r x F without changing a stationary strip's force.
+    let mut previous_document = definition.document().clone();
+    for section in &mut previous_document
+        .surfaces
+        .iter_mut()
+        .find(|surface| surface.role.core_role() == HybridSurfaceRole::VerticalTail)
+        .unwrap()
+        .sections
+    {
+        section.quarter_chord_frd_m[0] += 1.8;
+    }
+    let previous = AircraftDefinition::from_document(previous_document).unwrap();
+    let previous_surfaces = previous.surfaces().unwrap();
+    let make_load = |surfaces| {
+        birdman_game_core::HybridAerodynamicLoad::try_new(
+            HybridModel::try_new(definition.polar().unwrap(), surfaces).unwrap(),
+            definition.document().trim.air_density_kg_m3,
+            birdman_game_core::WindField::uniform(birdman_game_core::NedVector::zero()),
+        )
+        .unwrap()
+    };
+    let current_load = make_load(&surfaces);
+    let previous_load = make_load(&previous_surfaces);
+    for sign in [-1.0, 1.0] {
+        for (beta, rudder) in [(sign * 0.02, 0.0), (0.0, sign * 0.02)] {
+            let speed = definition.document().trim.airspeed_mps;
+            let state = birdman_game_core::FlightState::try_new(
+                birdman_game_core::NedPoint::origin(),
+                birdman_game_core::NedVector::try_new(
+                    speed * libm::cos(beta),
+                    speed * libm::sin(beta),
+                    0.0,
+                )
+                .unwrap(),
+                birdman_game_core::UnitQuaternion::IDENTITY,
+                birdman_game_core::BodyVector::zero(),
+                0.0,
+                0.0,
+            )
+            .unwrap();
+            let incidence = birdman_game_core::TailIncidence::try_new(0.0, rudder).unwrap();
+            let current = current_load
+                .evaluate_hybrid(&state, incidence)
+                .unwrap()
+                .tail_wrenches()[1]
+                .unwrap();
+            let old = previous_load
+                .evaluate_hybrid(&state, incidence)
+                .unwrap()
+                .tail_wrenches()[1]
+                .unwrap();
+            let force = current.force_body_newtons().components();
+            for (actual, expected) in force.into_iter().zip(old.force_body_newtons().components()) {
+                assert!((actual - expected).abs() < 1.0e-12);
+            }
+            let moment = current.moment_about_datum_newton_meters().components();
+            let old_moment = old.moment_about_datum_newton_meters().components();
+            for (actual, expected) in (0..3).map(|axis| {
+                (
+                    moment[axis] - old_moment[axis],
+                    [0.0, 1.8 * force[2], -1.8 * force[1]][axis],
+                )
+            }) {
+                assert!((actual - expected).abs() < 1.0e-12);
+            }
+            assert!(moment[2].abs() > old_moment[2].abs());
+            assert!(if beta != 0.0 {
+                sign * moment[2] > 0.0
+            } else {
+                sign * moment[2] < 0.0
+            });
         }
     }
     let trim = definition.trim().unwrap();

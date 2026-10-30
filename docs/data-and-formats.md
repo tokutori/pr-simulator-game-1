@@ -13,13 +13,13 @@
 
 | 対象 | 現行契約 |
 | --- | --- |
-| 機体JSON | `AircraftDocument`、schema 3、最大256 KiB |
+| 機体JSON | `AircraftDocument`、schema 4、最大256 KiB |
 | 環境JSON | `EnvironmentDocument`、schema 1、最大8 MiB |
 | 飛行記録JSON | `TailFlightRecordDocument`、schema 6/7/8、最大16 MiB |
 | 飛行ログCSV | schema 6はexport version 3、schema 7はversion 4、schema 8はversion 5 |
 | Personal Best | 比較方式v3、Rustによるkey再生成・選定 |
 | 物理・積分・接触 | physics model 6 |
-| 既定機体・scenario | aircraft model 6、catalog 8、scenario 9、controller profile 3 |
+| 既定機体・scenario | aircraft model 7、catalog 9、scenario 10、controller profile 3 |
 
 - 版の正本は実装の公開定義・登録catalogとする。
 - JSON schema、物理model、機体、controller、環境、score、比較方式、build来歴は異なる概念であり、独立して保持する。
@@ -124,6 +124,7 @@ Analysis用の発進台・湖岸・望遠camera点はOSMとAW3D30に基づく試
 - 主翼span 20.863 mは提供図面の値である。root chord 1.13 m、tip chord 0.38 mや輪郭の一部は図面比率からの推定である。
 - 構造形状は機体JSONのFRD座標・SI単位を正本とし、共有f64形状から表示meshと物理polytopeを導出する。材質と描画用samplingは表示側で扱う。
 - 物理接触は採用した曲げ係数・尾翼角によるpolytopeの全頂点から静水面に対する支持量を求める。連続翼型・細径材の形状近似と、可動尾翼・曲げ変形の時間離散化は別の評価対象である。
+- 垂直尾翼のquarter-chordはFRD x = −3.6 mとする。下端から回転軸への可動支持材と、回転軸から主ブーム有限線分の最近接点への固定支持材を共有生成し、表示と接触へ同じ形状を渡す。支持材の半径は機体JSONの`tail_support_radius_m`に明示した0.012 mの合成寸法であり、強度の実証値ではない。
 - 主翼たわみは機体JSONの全質量・重力・曲げ剛性・基準対気速度を用いる重量支持の片持ち梁モデルである。区間開始時の対気速度から0.3〜1.6の係数を採用し、接触・表示・記録へ同じ値を渡す。
 - 空力・質量・慣性・制御の実行規則は[飛行力学](flight-dynamics.md)と[飛行制御](flight-control.md)に定める。
 
@@ -134,7 +135,7 @@ Analysis用の発進台・湖岸・望遠camera点はOSMとAW3D30に基づく試
 - 構造定義は主桁の端点・半径・曲げ剛性、コックピット断面、パイロット視点と、`members`の主翼・尾翼rib/foam・stringer・cockpit frame・rimの寸法と配置を保持する。
 - `format::AircraftDocument`は文書の構造・有限値・物理値域を検証する。`content::AircraftDefinition`は空力stripの対称性・構造支持点の生成・主翼たわみの定義域・トリム解の成立まで検証し、準備済みstorageを公開する。
 - `content::AircraftDefinition`は文書と変換済みの質量・section・strip・静特性・中立構造支持点を所有する。借用した荷重モデルと構造形状の寿命はこのstorageと結び付く。
-- `content::playable_aircraft()`は`assets/aircraft/playable-glider-v6.json`を読み込む。主翼の69断面は20.863 mのスパン、テーパー、二つの上反角変化点を持ち、同じ区分線型形状から参照寸法を求める。
+- `content::playable_aircraft()`は`assets/aircraft/playable-glider-v7.json`を読み込む。主翼の69断面は20.863 mのスパン、テーパー、二つの上反角変化点を持ち、同じ区分線型形状から参照寸法を求める。
 - stripの指定境界とsection境界の和集合で荷重評価点を生成する。各点の面積・作用位置・局所フレームは、その区間の幾何から導出する。
 - `AircraftShape`は同じsectionの四分の一翼弦点と翼弦長を区分線型補間する。翼・水平尾翼の翼型はbody XZ、垂直尾翼はbody XYで閉じた前縁・後縁を持つ。コックピットは断面間の区分線型補間と指定指数の超楕円、主桁は指定端点・半径を使う。
 - 中立支持点は全section knotの翼型、全コックピット断面、全構造材の共有頂点から導出する。既定は翼弦方向32分割・管周方向24分割で、材料の被覆率と空力stripの分割から独立する。sceneは同じ管の周方向位相と三角形を描画する。

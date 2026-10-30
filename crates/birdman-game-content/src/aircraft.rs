@@ -13,7 +13,7 @@ use birdman_game_format::aircraft::{
 
 /// Complete source of the registered fictional glider, in body FRD coordinates and SI units.
 pub const PLAYABLE_AIRCRAFT_JSON: &[u8] =
-    include_bytes!("../../../assets/aircraft/playable-glider-v6.json");
+    include_bytes!("../../../assets/aircraft/playable-glider-v7.json");
 
 /// Decodes and prepares the bundled aircraft into owned immutable storage.
 pub fn playable_aircraft() -> Result<AircraftDefinition, AircraftDefinitionError> {

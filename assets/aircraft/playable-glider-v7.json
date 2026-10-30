@@ -1,7 +1,7 @@
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "configuration_id": "bpg041-playable-hybrid-mock",
-  "model_version": 6,
+  "model_version": 7,
   "mass": {
     "airframe_kg": 40,
     "inertia_about_datum_kg_m2": [
@@ -669,7 +669,7 @@
       "sections": [
         {
           "quarter_chord_frd_m": [
-            -1.8,
+            -3.6,
             0,
             -0.45
           ],
@@ -677,7 +677,7 @@
         },
         {
           "quarter_chord_frd_m": [
-            -1.8,
+            -3.6,
             0,
             0.25
           ],
@@ -915,6 +915,7 @@
         "foam_half_width_m": 0.012,
         "foam_normal_offset_m": 0.003
       },
+      "tail_support_radius_m": 0.012,
       "cockpit": {
         "nose_station": 1,
         "upper_station_fractions": [0.15, 0.75],

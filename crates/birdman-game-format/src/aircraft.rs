@@ -10,7 +10,7 @@ use birdman_game_core::{
 use serde::{Deserialize, Serialize};
 
 /// External document version, separate from the physical model version.
-pub const AIRCRAFT_SCHEMA_VERSION: u32 = 3;
+pub const AIRCRAFT_SCHEMA_VERSION: u32 = 4;
 /// Maximum source JSON size accepted before deserialization.
 pub const MAX_AIRCRAFT_JSON_BYTES: usize = 256 * 1024;
 /// Maximum section or strip-edge count in each lifting surface.
@@ -272,6 +272,8 @@ pub struct AircraftMembersDocument {
     pub horizontal_tail: AircraftTailMembersDocument,
     /// Vertical-tail ribs and foam patches.
     pub vertical_tail: AircraftTailMembersDocument,
+    /// Radius of the fixed vertical-tail support tube.
+    pub tail_support_radius_m: f64,
     /// Frame, beam attachments and canopy-opening rim.
     pub cockpit: AircraftCockpitMembersDocument,
 }
@@ -681,6 +683,7 @@ impl AircraftMembersDocument {
             || !chords(&wing.foam_chord_fractions, 2)
             || !valid_tail(&self.horizontal_tail)
             || !valid_tail(&self.vertical_tail)
+            || !positive(self.tail_support_radius_m)
             || cockpit.nose_station as usize >= cockpit_stations
             || cockpit.rim_station as usize >= cockpit_stations
             || !(4..=MAX_AIRCRAFT_STATIONS as u32).contains(&cockpit.rim_segments)
@@ -705,7 +708,10 @@ impl AircraftMembersDocument {
             * (self.horizontal_tail.rib_intervals as usize
                 + self.vertical_tail.rib_intervals as usize
                 - 2);
-        if wing_parts + tail_parts + 19 + cockpit.rim_segments as usize > MAX_AIRCRAFT_MEMBERS {
+        let tail_support_parts = 2;
+        if wing_parts + tail_parts + tail_support_parts + 19 + cockpit.rim_segments as usize
+            > MAX_AIRCRAFT_MEMBERS
+        {
             return Err(AircraftFormatError::InvalidCount);
         }
         Ok(())

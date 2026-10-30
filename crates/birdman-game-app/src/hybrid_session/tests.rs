@@ -48,7 +48,7 @@ fn cached_hybrid_owners_survive_preparation_moves_and_share_environment_telemetr
     );
     let identity = configuration.identity();
     assert_eq!(identity.catalog_version, CATALOG_VERSION);
-    assert_eq!(identity.scenario_version, 9);
+    assert_eq!(identity.scenario_version, 10);
     assert_eq!(identity.environment_version, 6);
     assert_eq!(
         identity.aircraft_model_version,

@@ -107,6 +107,7 @@ fn valid_document() -> AircraftDocument {
                 },
                 horizontal_tail: tail_members(),
                 vertical_tail: tail_members(),
+                tail_support_radius_m: 0.012,
                 cockpit: AircraftCockpitMembersDocument {
                     nose_station: 0,
                     upper_station_fractions: [0.15, 0.75],
@@ -358,6 +359,7 @@ fn structural_member_dimensions_partitions_and_derived_budget_are_bounded() {
             |members, value| members.wing.stringer_radius_m = value,
             |members, value| members.wing.foam_half_width_m = value,
             |members, value| members.horizontal_tail.rib_radius_m = value,
+            |members, value| members.tail_support_radius_m = value,
             |members, value| members.vertical_tail.foam_half_width_m = value,
             |members, value| members.cockpit.cross_radius_m = value,
             |members, value| members.cockpit.diagonal_radius_m = value,
@@ -398,7 +400,7 @@ fn structural_member_dimensions_partitions_and_derived_budget_are_bounded() {
     members.wing.rib_chord_knots = vec![0.5, 1.0];
     members.horizontal_tail.rib_intervals = 8;
     members.vertical_tail.rib_intervals = 4;
-    members.cockpit.rim_segments = 71;
+    members.cockpit.rim_segments = 69;
     assert_eq!(document.validate(), Ok(()));
     document.structure.members.cockpit.rim_segments += 1;
     assert_eq!(document.validate(), Err(AircraftFormatError::InvalidCount));
