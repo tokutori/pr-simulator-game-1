@@ -55,11 +55,63 @@ fn triangle_contains(triangle: [[f64; 2]; 3], p: [f64; 2]) -> bool {
     signs.iter().all(|&s| s >= -EPSILON) || signs.iter().all(|&s| s <= EPSILON)
 }
 
-/// Removes the island-owned raster triangles before its one continuous surface is submitted.
-pub(super) fn remove_raster(mesh: &mut VenueTerrainMesh, rings: &[&[[f64; 2]]]) {
+fn clip_edge(polygon: &[[f64; 2]], a: [f64; 2], b: [f64; 2], sign: f64) -> Vec<[f64; 2]> {
+    let Some(&last) = polygon.last() else {
+        return Vec::new();
+    };
+    let mut previous = last;
+    let mut previous_distance = cross(a, b, previous) * sign;
+    let mut result = Vec::new();
+    for &current in polygon {
+        let distance = cross(a, b, current) * sign;
+        if (distance >= 0.0) != (previous_distance >= 0.0) {
+            let t = previous_distance / (previous_distance - distance);
+            result.push(std::array::from_fn(|k| {
+                previous[k] + t * (current[k] - previous[k])
+            }));
+        }
+        if distance >= 0.0 {
+            result.push(current);
+        }
+        previous = current;
+        previous_distance = distance;
+    }
+    result
+}
+
+fn subtract(polygon: &[[f64; 2]], triangle: [[f64; 2]; 3]) -> Vec<Vec<[f64; 2]>> {
+    let sign = cross(triangle[0], triangle[1], triangle[2]).signum();
+    let mut candidate = polygon.to_vec();
+    let mut outside = Vec::new();
+    for i in 0..3 {
+        let [a, b] = [triangle[i], triangle[(i + 1) % 3]];
+        let piece = clip_edge(&candidate, a, b, -sign);
+        if piece.len() >= 3 {
+            outside.push(piece);
+        }
+        candidate = clip_edge(&candidate, a, b, sign);
+        if candidate.len() < 3 {
+            break;
+        }
+    }
+    outside
+}
+
+/// Retires only island-owned area; crossing faces retain their original outside height and colour plane.
+pub(super) fn remove_raster(
+    mesh: &mut VenueTerrainMesh,
+    rings: &[&[[f64; 2]]],
+) -> Vec<Vec<[[f64; 3]; 2]>> {
+    let mut contacts = vec![Vec::new(); rings.len()];
     let bounded: Vec<_> = rings
         .iter()
         .map(|ring| {
+            let mut indices = Vec::<u32>::new();
+            earcut::Earcut::<f64>::new().earcut(ring.iter().copied(), &[], &mut indices);
+            let triangles: Vec<_> = indices
+                .chunks_exact(3)
+                .map(|t| [t[0], t[1], t[2]].map(|i| ring[i as usize]))
+                .collect();
             (
                 *ring,
                 Bounds {
@@ -68,35 +120,116 @@ pub(super) fn remove_raster(mesh: &mut VenueTerrainMesh, rings: &[&[[f64; 2]]]) 
                     min_east: ring.iter().map(|p| p[1]).fold(f64::INFINITY, f64::min),
                     max_east: ring.iter().map(|p| p[1]).fold(f64::NEG_INFINITY, f64::max),
                 },
+                triangles,
             )
         })
         .collect();
-    mesh.indices = mesh
-        .indices
-        .chunks_exact(3)
-        .filter(|triangle| {
-            let points = [triangle[0], triangle[1], triangle[2]].map(|i| {
-                let p = mesh.positions_ned[i as usize];
-                [f64::from(p[0]), f64::from(p[1])]
-            });
-            !bounded.iter().any(|(ring, bounds)| {
-                if points.iter().all(|p| p[0] < bounds.min_north)
-                    || points.iter().all(|p| p[0] > bounds.max_north)
-                    || points.iter().all(|p| p[1] < bounds.min_east)
-                    || points.iter().all(|p| p[1] > bounds.max_east)
-                {
-                    return false;
-                }
-                points.iter().any(|&p| contains(ring, p))
+    for triangle in std::mem::take(&mut mesh.indices).chunks_exact(3) {
+        let source = [triangle[0], triangle[1], triangle[2]]
+            .map(|i| mesh.positions_ned[i as usize].map(f64::from));
+        let points = source.map(|p| [p[0], p[1]]);
+        let intersects = |ring: &[[f64; 2]], bounds: &Bounds| {
+            !(points.iter().all(|p| p[0] < bounds.min_north)
+                || points.iter().all(|p| p[0] > bounds.max_north)
+                || points.iter().all(|p| p[1] < bounds.min_east)
+                || points.iter().all(|p| p[1] > bounds.max_east))
+                && (points.iter().any(|&p| contains(ring, p))
                     || triangle_contains(points, ring[0])
                     || (0..3).any(|i| {
                         edges(ring).any(|(a, b)| touches(points[i], points[(i + 1) % 3], a, b))
-                    })
-            })
-        })
-        .flatten()
-        .copied()
-        .collect();
+                    }))
+        };
+        if !bounded
+            .iter()
+            .any(|(ring, bounds, _)| intersects(ring, bounds))
+        {
+            mesh.indices.extend_from_slice(triangle);
+            continue;
+        }
+        if bounded
+            .iter()
+            .any(|(ring, bounds, _)| intersects(ring, bounds) && inside_triangle(points, ring))
+        {
+            continue;
+        }
+        let mut pieces = vec![points.to_vec()];
+        for (_, _, cutters) in bounded
+            .iter()
+            .filter(|(ring, bounds, _)| intersects(ring, bounds))
+        {
+            for &cutter in cutters {
+                pieces = pieces
+                    .iter()
+                    .flat_map(|piece| subtract(piece, cutter))
+                    .collect();
+            }
+        }
+        for piece in pieces {
+            let indices: Vec<_> = piece
+                .iter()
+                .map(|&p| {
+                    if let Some(i) = points.iter().position(|&original| original == p) {
+                        return triangle[i];
+                    }
+                    let denominator = cross(points[0], points[1], points[2]);
+                    let weights = [
+                        cross(points[1], points[2], p) / denominator,
+                        cross(points[2], points[0], p) / denominator,
+                        cross(points[0], points[1], p) / denominator,
+                    ];
+                    let index = mesh.positions_ned.len() as u32;
+                    mesh.positions_ned.push([
+                        p[0] as f32,
+                        p[1] as f32,
+                        (0..3).map(|i| source[i][2] * weights[i]).sum::<f64>() as f32,
+                    ]);
+                    let normal: [f64; 3] = std::array::from_fn(|axis| {
+                        (0..3)
+                            .map(|i| {
+                                f64::from(mesh.normals_ned[triangle[i] as usize][axis]) * weights[i]
+                            })
+                            .sum::<f64>()
+                    });
+                    let length = normal.iter().map(|v| v * v).sum::<f64>().sqrt();
+                    mesh.normals_ned.push(normal.map(|v| (v / length) as f32));
+                    mesh.colors_linear.push(std::array::from_fn(|axis| {
+                        (0..3)
+                            .map(|i| {
+                                f64::from(mesh.colors_linear[triangle[i] as usize][axis])
+                                    * weights[i]
+                            })
+                            .sum::<f64>() as f32
+                    }));
+                    index
+                })
+                .collect();
+            for (a, b) in (0..piece.len()).map(|i| (i, (i + 1) % piece.len())) {
+                if piece[a] == piece[b] {
+                    continue;
+                }
+                for (ring_index, ring) in rings.iter().enumerate() {
+                    if edges(ring)
+                        .any(|(c, d)| on_segment(piece[a], c, d) && on_segment(piece[b], c, d))
+                    {
+                        contacts[ring_index].push([a, b].map(|i| {
+                            [
+                                piece[i][0],
+                                piece[i][1],
+                                -f64::from(mesh.positions_ned[indices[i] as usize][2]),
+                            ]
+                        }));
+                    }
+                }
+            }
+            for i in 1..indices.len().saturating_sub(1) {
+                if cross(piece[0], piece[i], piece[i + 1]).abs() > EPSILON {
+                    mesh.indices
+                        .extend([indices[0], indices[i], indices[i + 1]]);
+                }
+            }
+        }
+    }
+    contacts
 }
 
 fn boundary(indices: &[u32]) -> Result<BTreeSet<(u32, u32)>, String> {
@@ -285,7 +418,11 @@ pub(super) fn footprint_proxy(island: &Island) -> Result<VenueTerrainMesh, Strin
     )
 }
 
-pub(super) fn generate(island: &Island, grid: &Grid) -> Result<Option<VenueTerrainMesh>, String> {
+pub(super) fn generate(
+    island: &Island,
+    grid: &Grid,
+    contacts: &[[[f64; 3]; 2]],
+) -> Result<Option<VenueTerrainMesh>, String> {
     let ring = contour(&island.ring_north_east_meters);
     let bounds = Bounds {
         min_north: ring.iter().map(|p| p[0]).fold(f64::INFINITY, f64::min),
@@ -331,7 +468,7 @@ pub(super) fn generate(island: &Island, grid: &Grid) -> Result<Option<VenueTerra
         boundaries.into_iter().partition(|r| area(&mesh, r) < 0.0);
     let used: BTreeSet<_> = mesh.indices.iter().copied().collect();
     let mut orphan: BTreeSet<_> = (0..samples as u32).filter(|i| !used.contains(i)).collect();
-    let constraints = inner
+    let mut constraints: BTreeSet<u32> = inner
         .iter()
         .chain(&cavities)
         .flatten()
@@ -353,29 +490,48 @@ pub(super) fn generate(island: &Island, grid: &Grid) -> Result<Option<VenueTerra
         }
         triangulate(&mut mesh, cavity, &[], &points);
     }
+    let height_at = |p: [f64; 2]| {
+        contacts.iter().find_map(|segment| {
+            let [a, b] = segment.map(|v| [v[0], v[1]]);
+            if !on_segment(p, a, b) {
+                return None;
+            }
+            let axis = usize::from((b[1] - a[1]).abs() > (b[0] - a[0]).abs());
+            let t = (p[axis] - a[axis]) / (b[axis] - a[axis]);
+            Some(segment[0][2] + t * (segment[1][2] - segment[0][2]))
+        })
+    };
     let mut coast = Vec::new();
     for (a, b) in edges(ring) {
-        let coincident = (0..samples as u32).find(|&i| point(mesh.positions[i as usize]) == a);
-        coast.push(
-            coincident.unwrap_or_else(|| {
-                mesh.append([a[1], -8.0, -a[0]], terrain_color(-8.0, a[0], a[1]))
-            }),
+        let mut along = vec![a];
+        along.extend(
+            orphan
+                .iter()
+                .map(|&i| point(mesh.positions[i as usize]))
+                .filter(|&p| p != a && p != b && on_segment(p, a, b)),
         );
-        let mut along: Vec<_> = orphan
-            .iter()
-            .copied()
-            .filter(|&i| {
-                let p = point(mesh.positions[i as usize]);
-                p != a && p != b && on_segment(p, a, b)
-            })
-            .collect();
-        along.sort_by(|&i, &j| {
-            let pi = point(mesh.positions[i as usize]);
-            let pj = point(mesh.positions[j as usize]);
-            ((pi[0] - a[0]).powi(2) + (pi[1] - a[1]).powi(2))
-                .total_cmp(&((pj[0] - a[0]).powi(2) + (pj[1] - a[1]).powi(2)))
+        along.extend(
+            contacts
+                .iter()
+                .flatten()
+                .map(|p| [p[0], p[1]])
+                .filter(|&p| p != a && p != b && on_segment(p, a, b)),
+        );
+        along.sort_by(|p, q| {
+            ((p[0] - a[0]).powi(2) + (p[1] - a[1]).powi(2))
+                .total_cmp(&((q[0] - a[0]).powi(2) + (q[1] - a[1]).powi(2)))
         });
-        coast.extend(along);
+        along.dedup_by(|p, q| (p[0] - q[0]).abs() <= EPSILON && (p[1] - q[1]).abs() <= EPSILON);
+        for p in along {
+            let index = (0..samples as u32)
+                .find(|&i| point(mesh.positions[i as usize]) == p)
+                .unwrap_or_else(|| {
+                    let height = height_at(p).unwrap_or(-8.0);
+                    mesh.append([p[1], height, -p[0]], terrain_color(height, p[0], p[1]))
+                });
+            coast.push(index);
+            constraints.insert(index);
+        }
     }
     for i in &coast {
         orphan.remove(i);

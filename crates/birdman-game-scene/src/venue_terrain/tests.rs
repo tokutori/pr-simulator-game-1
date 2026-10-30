@@ -116,9 +116,65 @@ fn registered_collection_keeps_every_surface_finite_and_upward() {
                     mesh.name
                 );
             }
+            let perimeter: f64 = ring
+                .iter()
+                .zip(ring.iter().cycle().skip(1))
+                .take(ring.len())
+                .map(|(a, b)| ((b[0] - a[0]).powi(2) + (b[1] - a[1]).powi(2)).sqrt())
+                .sum();
+            let mut half_edges = std::collections::BTreeSet::new();
+            for t in mesh.indices.chunks_exact(3) {
+                for i in 0..3 {
+                    assert!(half_edges.insert((t[i], t[(i + 1) % 3])));
+                }
+            }
+            let boundary: Vec<_> = half_edges
+                .iter()
+                .copied()
+                .filter(|&(a, b)| !half_edges.contains(&(b, a)))
+                .collect();
+            let final_area = boundary
+                .iter()
+                .map(|&(a, b)| {
+                    let [a, b] = [a, b].map(|i| mesh.positions_ned[i as usize].map(f64::from));
+                    (a[0] - origin[0]) * (b[1] - origin[1])
+                        - (b[0] - origin[0]) * (a[1] - origin[1])
+                })
+                .sum::<f64>()
+                .abs()
+                * 0.5;
             assert!(
-                (actual - expected).abs() < 1e-5,
-                "{} coverage mismatch: {actual} vs {expected}",
+                (actual - final_area).abs() < 1e-5,
+                "{} triangle coverage differs from final boundary",
+                mesh.name
+            );
+            let displacement = boundary
+                .iter()
+                .map(|&(a, _)| {
+                    let p = mesh.positions_ned[a as usize].map(f64::from);
+                    ring.iter()
+                        .zip(ring.iter().cycle().skip(1))
+                        .take(ring.len())
+                        .map(|(a, b)| {
+                            let length = (b[0] - a[0]).powi(2) + (b[1] - a[1]).powi(2);
+                            let t = (((p[0] - a[0]) * (b[0] - a[0])
+                                + (p[1] - a[1]) * (b[1] - a[1]))
+                                / length)
+                                .clamp(0.0, 1.0);
+                            ((p[0] - a[0] - t * (b[0] - a[0])).powi(2)
+                                + (p[1] - a[1] - t * (b[1] - a[1])).powi(2))
+                            .sqrt()
+                        })
+                        .fold(f64::INFINITY, f64::min)
+                })
+                .fold(0.0, f64::max);
+            let coordinate_scale = ring.iter().flatten().map(|v| v.abs()).fold(1.0, f64::max);
+            assert!(displacement <= coordinate_scale * f64::from(f32::EPSILON) * 2.0_f64.sqrt());
+            let quantization_bound =
+                perimeter * displacement + boundary.len() as f64 * displacement.powi(2);
+            assert!(
+                (final_area - expected).abs() <= quantization_bound + 1e-5,
+                "{} boundary quantization exceeds its measured displacement",
                 mesh.name
             );
         }
@@ -233,11 +289,26 @@ fn patch_clipping_preserves_elevation_area_and_upward_faces() {
     assert!(mesh.positions_ned.iter().all(|point| point[2] == -10.0));
     upward(&mesh);
 
+    let mut sloped = source.clone();
+    sloped.elevation_meters_above_water = [10.0, 20.0, 30.0, 40.0].map(Some).to_vec();
     let mut coarse =
-        terrain_mesh("coarse".into(), &source, &[], std::slice::from_ref(&source)).unwrap();
+        terrain_mesh("coarse".into(), &sloped, &[], std::slice::from_ref(&sloped)).unwrap();
     let enclosed = [[1.0, 3.0], [1.0, 4.0], [2.0, 3.0]];
-    island::remove_raster(&mut coarse, &[&enclosed]);
-    assert_eq!(coarse.indices.len(), 3);
+    let contacts = island::remove_raster(&mut coarse, &[&enclosed]);
+    assert!(!contacts[0].is_empty());
+    let retained_area: f64 = coarse
+        .indices
+        .chunks_exact(3)
+        .map(|t| {
+            let [a, b, c] = [t[0], t[1], t[2]].map(|i| coarse.positions_ned[i as usize]);
+            f64::from(((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])).abs()) * 0.5
+        })
+        .sum();
+    assert!((retained_area - 99.5).abs() < 1e-5);
+    assert!((0..4).all(|i| coarse.indices.contains(&i)));
+    for p in &coarse.positions_ned {
+        assert!((p[2] + 30.0 - 2.0 * p[0] + p[1]).abs() < 1e-5);
+    }
 }
 
 #[test]
@@ -384,7 +455,18 @@ fn closed_island_surface_retains_dem_constraints_in_both_windings_and_open_shore
             way_ids: vec![1],
             ring_north_east_meters: ring.clone(),
         };
-        let mesh = island::generate(&island, &source).unwrap().unwrap();
+        let mut adjacent = terrain_mesh(
+            "adjacent".into(),
+            &source,
+            &[],
+            std::slice::from_ref(&source),
+        )
+        .unwrap();
+        let contacts = island::remove_raster(&mut adjacent, &[&ring]);
+        let mesh = island::generate(&island, &source, &contacts[0])
+            .unwrap()
+            .unwrap();
+        assert!(mesh.positions_ned.iter().all(|p| p[2] == -20.0));
         assert!(!mesh.indices.is_empty());
         let total_area: f64 = mesh
             .indices
@@ -422,7 +504,7 @@ fn closed_island_surface_retains_dem_constraints_in_both_windings_and_open_shore
             way_ids: vec![1],
             ring_north_east_meters: vec![[0.0, 0.0], [side, 0.0], [side, side], [0.0, side]],
         };
-        let mesh = island::generate(&island, &source).unwrap().unwrap();
+        let mesh = island::generate(&island, &source, &[]).unwrap().unwrap();
         for triangle in mesh.indices.chunks_exact(3) {
             for edge in 0..3 {
                 let [a, b] = [triangle[edge], triangle[(edge + 1) % 3]]

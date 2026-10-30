@@ -1016,8 +1016,7 @@ pub fn registered_terrain() -> Result<&'static [VenueTerrainMesh], String> {
                 .chain(terrain.fine_patches.iter().map(|patch| &patch.grid))
                 .collect();
             sources.sort_by(|a, b| a.terrain_step_meters.total_cmp(&b.terrain_step_meters));
-            let mut domains = Vec::new();
-            let mut island_meshes = Vec::new();
+            let mut selected = Vec::new();
             for island in &shore.islands {
                 if island
                     .way_ids
@@ -1027,45 +1026,51 @@ pub fn registered_terrain() -> Result<&'static [VenueTerrainMesh], String> {
                     continue;
                 }
                 let has_dem = std::iter::once(&terrain.grid)
-                    .chain(terrain.fine_patches.iter().map(|patch| &patch.grid))
+                    .chain(terrain.fine_patches.iter().map(|p| &p.grid))
                     .any(|grid| island::has_samples(island, grid));
-                if !has_dem {
-                    domains.push(island.ring_north_east_meters.as_slice());
-                    island_meshes.push(island::footprint_proxy(island)?);
-                    continue;
-                }
-                let mut generated = false;
-                for grid in &sources {
-                    if !island
-                        .ring_north_east_meters
-                        .iter()
-                        .all(|p| grid.bounds().contains(p[0], p[1]))
-                    {
-                        continue;
-                    }
-                    if let Some(mesh) = island::generate(island, grid)? {
-                        domains.push(island.ring_north_east_meters.as_slice());
-                        island_meshes.push(mesh);
-                        generated = true;
-                        break;
-                    }
-                }
-                if !generated {
-                    return Err(format!(
-                        "Recorded island {} DEM has no containing terrain grid",
-                        island.way_ids[0]
-                    ));
-                }
+                let grid = if has_dem {
+                    Some(
+                        *sources
+                            .iter()
+                            .find(|grid| {
+                                island
+                                    .ring_north_east_meters
+                                    .iter()
+                                    .all(|p| grid.bounds().contains(p[0], p[1]))
+                                    && island::has_samples(island, grid)
+                            })
+                            .ok_or("Recorded island DEM has no containing terrain grid")?,
+                    )
+                } else {
+                    None
+                };
+                selected.push((island, grid));
             }
+            let domains: Vec<_> = selected
+                .iter()
+                .map(|(island, _)| island.ring_north_east_meters.as_slice())
+                .collect();
+            let mut contacts = vec![Vec::new(); domains.len()];
             for mesh in &mut meshes {
                 if mesh.material == VenueTerrainMaterial::Terrain
                     && mesh.name != "lake-biwa-shoreline-terrain-transition"
                 {
-                    island::remove_raster(mesh, &domains);
+                    for (target, source) in contacts
+                        .iter_mut()
+                        .zip(island::remove_raster(mesh, &domains))
+                    {
+                        target.extend(source);
+                    }
                 }
             }
             meshes.retain(|mesh| !mesh.indices.is_empty());
-            meshes.extend(island_meshes);
+            for ((island, grid), contacts) in selected.into_iter().zip(contacts) {
+                meshes.push(match grid {
+                    Some(grid) => island::generate(island, grid, &contacts)?
+                        .ok_or("Recorded island DEM has no surface")?,
+                    None => island::footprint_proxy(island)?,
+                });
+            }
             meshes.push(rocks(&shore.islands)?);
             Ok(meshes)
         })
