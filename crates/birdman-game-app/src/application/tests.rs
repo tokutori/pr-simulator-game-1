@@ -652,6 +652,27 @@ fn unavailable_presentation_stops_replay_until_explicit_playback() {
     execute(&mut application, SessionCommand::Abort {});
     execute(&mut application, SessionCommand::EnterReplay {});
     application.set_playback_playing(true).unwrap();
+    let delayed = 1000.0 + f64::from(crate::MAXIMUM_FLIGHT_FRAME_GAP_MILLISECONDS) + 0.001;
+    application.advance_flight_frame(1000.0, &[], true).unwrap();
+    application
+        .advance_flight_frame(delayed, &[], true)
+        .unwrap();
+    assert!(
+        application
+            .core_session()
+            .playback_clock()
+            .unwrap()
+            .is_playing()
+    );
+    application.advance_playback(0.005).unwrap();
+    assert_eq!(
+        application
+            .core_session()
+            .playback_clock()
+            .unwrap()
+            .time_seconds(),
+        0.005
+    );
     let time = application
         .core_session()
         .playback_clock()
@@ -674,6 +695,17 @@ fn unavailable_presentation_stops_replay_until_explicit_playback() {
             .unwrap()
             .is_playing()
     );
+    execute(&mut application, SessionCommand::LeaveReplay {});
+    execute(&mut application, SessionCommand::ReturnToTitle {});
+    execute(&mut application, SessionCommand::OpenSetup {});
+    execute(&mut application, SessionCommand::Prepare {});
+    execute(&mut application, SessionCommand::StartCountdown {});
+    let token = application.core_session().countdown_token().unwrap();
+    application
+        .advance_flight_frame(delayed + 10.0, &[], true)
+        .unwrap();
+    application.observe_countdown(token, 0.01, true).unwrap();
+    assert_eq!(application.core_session().countdown_token(), Some(token));
 }
 
 #[test]

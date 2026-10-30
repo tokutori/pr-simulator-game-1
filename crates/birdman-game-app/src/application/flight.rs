@@ -161,7 +161,14 @@ impl ApplicationSession {
         if let Some(error) = failure {
             return Err(self.retain_flight_failure(error));
         }
-        if let FlightFrameAdvance::ProcessingDelay { blocked } = advance {
+        if let FlightFrameAdvance::ProcessingDelay { blocked } = advance
+            && matches!(
+                self.session.snapshot().phase(),
+                SessionPhase::Countdown { .. }
+                    | SessionPhase::FlightRunning
+                    | SessionPhase::FlightPaused { .. }
+            )
+        {
             self.observe_external_pause(ExternalPauseReason::ProcessingDelay, !blocked)
                 .map_err(FlightFrameError::Session)?;
         }
