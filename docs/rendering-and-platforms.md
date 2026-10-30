@@ -263,13 +263,13 @@ NativeはDirectionalLightの選択した解像度・30〜600 mの3段cascadeか�
 - 法線は完全な半翼topologyにarea-weighted計算を適用し、材質分割後も共有する。
 - 表示たわみの定数と実機諸元の区分はデータ文書へ集約する。
 
-- 259部材をattachmentとmaterialの11 batchへまとめ、Web/Nativeは同じ管周方向24分割・輪郭・三角形を描画する。構造材の接触点と表示頂点は同じproducerから得る。
+- 260部材をattachmentとmaterialの12 batchへまとめ、Web/Nativeは同じ管周方向24分割・輪郭・三角形を描画する。構造材の接触点と表示頂点は同じproducerから得る。
 - 管の変形は中立frameからの最小回転で周方向位相を保ち、foamは中央stationの曲げ変位を共有する。
 - 主翼被覆は非光沢Lambertを基準とし、Nativeのreflectanceを0として不適切なspecularの持上げを抑える。
 - linear-light mipを生成してsRGB textureへ格納する。
 - PBR/Lambertの明度差や縮小時の細部は実描画で評価する。
 
-- 尾翼は登録physical geometryのquarter-chordと全surfaceを共有する。水平・垂直の外皮・内部部材は、登録pivotから後方1 mの表示pivotを用いて共有Rustが完成meshへ配置し、同pivot周りのphysical incidenceを完成poseとして出力する。空力と接触は登録位置を使うため、表示とは1 m異なる。
+- 尾翼は登録physical geometryのquarter-chordと全surfaceを共有する。水平・垂直の外皮・内部部材は、空力・接触と同じ登録pivotを用いて共有Rustが完成meshへ配置し、同pivot周りのphysical incidenceを完成poseとして出力する。
 - FRD変換後は水平+X、垂直−Yの回転を用いる。
 - geometryは登録されたmodel identityから解決し、未知のidentityは明示的な未対応として扱う。
 - 被覆・材質は描画モデル、部材寸法・配置・変形則はcontent、採用曲げ係数・空力・慣性・操縦応答は飛行モデルが所有する。
