@@ -230,7 +230,11 @@ vec3 lakeSkyRadiance(vec3 ray) {
   skyRay = dot(skyRay, skyRay) < 1e-8 ? vec3(1.0, 0.0, 0.0) : normalize(skyRay);
   vec2 skyUv = vec2(atan(skyRay.z, skyRay.x) / 6.2831853 + 0.5,
     asin(skyRay.y) / 3.1415927 + 0.5);
-  return texture2D(uSkyTexture, skyUv).rgb;
+  vec2 gradientX = dFdx(skyUv);
+  vec2 gradientY = dFdy(skyUv);
+  gradientX.x -= round(gradientX.x);
+  gradientY.x -= round(gradientY.x);
+  return textureGrad(uSkyTexture, skyUv, gradientX, gradientY).rgb;
 }
 
 float lakeNoise(vec2 point) {

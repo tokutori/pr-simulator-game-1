@@ -400,7 +400,7 @@ fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
     let reflected_clip = reflection_clip_from_world * mesh.world_position;
     if reflection_enabled > 0.5 && reflected_clip.w > 0.0 {
         let reflected_uv = reflected_clip.xy / reflected_clip.w * vec2<f32>(0.5, -0.5)
-            + vec2<f32>(0.5) + total_slope * vec2<f32>(-0.006, -0.006);
+            + vec2<f32>(0.5) + total_slope * vec2<f32>(0.006, -0.006);
         if all(reflected_uv >= vec2<f32>(0.0)) && all(reflected_uv <= vec2<f32>(1.0)) {
             let aircraft_reflection = textureSampleLevel(reflection_texture, reflection_sampler, reflected_uv, 0.0);
             color = mix(color, aircraft_reflection.rgb,
