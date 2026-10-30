@@ -16,11 +16,14 @@ pub enum ScreenRenderScale {
     /// Half of each physical rendering dimension.
     #[serde(rename = "50")]
     Half,
+    /// One quarter of each physical rendering dimension.
+    #[serde(rename = "25")]
+    Quarter,
 }
 
 impl ScreenRenderScale {
     /// Shared choice order used by every Screen frontend.
-    pub const ALL: [Self; 3] = [Self::Full, Self::ThreeQuarters, Self::Half];
+    pub const ALL: [Self; 4] = [Self::Full, Self::ThreeQuarters, Self::Half, Self::Quarter];
 
     /// Percentage of each original physical dimension.
     pub const fn percent(self) -> u32 {
@@ -28,6 +31,7 @@ impl ScreenRenderScale {
             Self::Full => 100,
             Self::ThreeQuarters => 75,
             Self::Half => 50,
+            Self::Quarter => 25,
         }
     }
 
@@ -42,6 +46,7 @@ impl ScreenRenderScale {
             Self::Full => "100%",
             Self::ThreeQuarters => "75%",
             Self::Half => "50%",
+            Self::Quarter => "25%",
         }
     }
 
@@ -70,6 +75,7 @@ mod tests {
             (ScreenRenderScale::Full, "\"100\"", 100, 1.0, "100%"),
             (ScreenRenderScale::ThreeQuarters, "\"75\"", 75, 0.75, "75%"),
             (ScreenRenderScale::Half, "\"50\"", 50, 0.5, "50%"),
+            (ScreenRenderScale::Quarter, "\"25\"", 25, 0.25, "25%"),
         ] {
             assert!(ScreenRenderScale::ALL.contains(&scale));
             assert_eq!(serde_json::to_string(&scale).unwrap(), json);
@@ -81,7 +87,7 @@ mod tests {
             assert_eq!(scale.factor(), factor);
             assert_eq!(scale.label(), label);
         }
-        for invalid in ["75", "\"0\"", "\"25\"", "\"74\"", "\"101\"", "null"] {
+        for invalid in ["75", "\"0\"", "\"74\"", "\"101\"", "null"] {
             assert!(serde_json::from_str::<ScreenRenderScale>(invalid).is_err());
         }
     }
@@ -101,6 +107,12 @@ mod tests {
                 [640, 360],
                 [959, 539],
                 2_147_483_647,
+            ),
+            (
+                ScreenRenderScale::Quarter,
+                [320, 180],
+                [479, 269],
+                1_073_741_823,
             ),
         ] {
             assert_eq!(scale.physical_size(1280, 720), ordinary);

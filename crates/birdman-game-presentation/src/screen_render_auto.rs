@@ -30,20 +30,37 @@ pub enum ScreenShadowMap {
     Full,
     /// Half the manual map dimensions.
     Half,
-    /// Minimum retained shadow-map dimensions.
+    /// One quarter of the full shadow-map dimensions.
     Quarter,
+    /// Disables directional shadow rendering.
+    Off,
 }
 
 impl ScreenShadowMap {
     /// Ordered resolutions from highest to lowest quality.
-    pub const ALL: [Self; 3] = [Self::Full, Self::Half, Self::Quarter];
+    pub const ALL: [Self; 4] = [Self::Full, Self::Half, Self::Quarter, Self::Off];
 
-    /// Width and height of each directional shadow map or cascade.
+    /// Valid allocation extent; disabled shadows retain a one-pixel placeholder.
     pub const fn size(self) -> u32 {
         match self {
             Self::Full => 2_048,
             Self::Half => 1_024,
             Self::Quarter => 512,
+            Self::Off => 1,
+        }
+    }
+    /// Whether directional shadow passes are enabled.
+    pub const fn enabled(self) -> bool {
+        !matches!(self, Self::Off)
+    }
+
+    /// Shared user-facing label.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Full => "2048",
+            Self::Half => "1024",
+            Self::Quarter => "512",
+            Self::Off => "なし",
         }
     }
 }
@@ -571,6 +588,25 @@ impl ScreenRenderAutoController {
                 automatic: false,
                 manual: RenderQuality {
                     scale,
+                    ..self.selection.manual
+                },
+            },
+            now_ms,
+        )
+    }
+
+    /// Chooses manual shadow quality and stops automatic changes.
+    pub fn select_shadow(
+        &mut self,
+        shadow: ScreenShadowMap,
+        now_ms: f64,
+    ) -> Result<Option<ScreenRenderResourceRequest>, ScreenRenderAutoError> {
+        self.check_time(now_ms)?;
+        self.replace_selection(
+            QualitySelection {
+                automatic: false,
+                manual: RenderQuality {
+                    shadow,
                     ..self.selection.manual
                 },
             },

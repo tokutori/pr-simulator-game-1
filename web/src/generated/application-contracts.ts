@@ -440,11 +440,11 @@ export type ApplicationGpuTimingCapability = {
 /**
  * Supported manual Screen rendering scales, with full resolution as the default.
  */
-export type ScreenRenderScale = "100" | "75" | "50";
+export type ScreenRenderScale = "100" | "75" | "50" | "25";
 /**
  * Directional shadow-map resolutions supported by both Screen adapters.
  */
-export type ScreenShadowMap = "full" | "half" | "quarter";
+export type ScreenShadowMap = "full" | "half" | "quarter" | "off";
 /**
  * Shared non-physical water-detail selection.
  */
@@ -1157,6 +1157,12 @@ export type GameUiPlatformCommand = {
      * Requested fraction of each physical rendering dimension.
      */
     readonly scale: ScreenRenderScale;
+} | {
+    readonly kind: "set_shadow_map";
+    /**
+     * Requested shadow quality.
+     */
+    readonly shadow: ScreenShadowMap;
 } | {
     /**
      * Whether GPU-work-based adjustment is selected.

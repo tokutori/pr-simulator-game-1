@@ -1101,7 +1101,9 @@ fn water_quality(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
 
 fn screen_render_scale(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
     menu.automatic_sections();
-    use crate::screen_render_auto::{ScreenRenderAutoStatus, ScreenRenderSelection};
+    use crate::screen_render_auto::{
+        ScreenRenderAutoStatus, ScreenRenderSelection, ScreenShadowMap,
+    };
     use crate::screen_render_scale::ScreenRenderScale;
     if context.platform.presentation_mode != GameUiPresentationMode::Screen {
         return;
@@ -1125,7 +1127,7 @@ fn screen_render_scale(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
             format!(
                 "{}・影 {}・水面{}へ変更中",
                 requested.label(),
-                shadow.size(),
+                shadow.label(),
                 water_quality.label()
             )
         }
@@ -1135,13 +1137,14 @@ fn screen_render_scale(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
         "presentation-render-scale-status",
         "3D描画品質",
         &format!(
-            "{} · 使用中 {} · {status}",
+            "{} · 使用中 {} · 影 {} · {status}",
             if automatic {
                 "自動（Auto）"
             } else {
                 "手動"
             },
             render.applied.label(),
+            render.shadow.label(),
         ),
     );
     menu.push(
@@ -1181,6 +1184,36 @@ fn screen_render_scale(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
                     group: "render-scale".to_owned(),
                     group_label: "3D描画品質".to_owned(),
                     selected: matches!(render.selection, ScreenRenderSelection::Manual { scale: selected, .. } if selected == scale),
+                    description: String::new(),
+                },
+            },
+        );
+    }
+    let retained_shadow = match render.selection {
+        ScreenRenderSelection::Manual { shadow, .. } => shadow,
+        ScreenRenderSelection::Auto { manual_shadow, .. } => manual_shadow,
+    };
+    for shadow in ScreenShadowMap::ALL {
+        menu.push(
+            &format!(
+                "presentation-shadow-map-{}",
+                if shadow.enabled() {
+                    shadow.size().to_string()
+                } else {
+                    "off".to_owned()
+                }
+            ),
+            shadow.label(),
+            enabled,
+            "shadow-map",
+            GameUiControlContent::Button {
+                action: GameUiAction::Platform {
+                    command: GameUiPlatformCommand::SetShadowMap { shadow },
+                },
+                presentation: GameUiButtonPresentation::Choice {
+                    group: "shadow-map".to_owned(),
+                    group_label: "影".to_owned(),
+                    selected: !automatic && retained_shadow == shadow,
                     description: String::new(),
                 },
             },

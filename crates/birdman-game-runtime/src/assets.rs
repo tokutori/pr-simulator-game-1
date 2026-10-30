@@ -357,7 +357,12 @@ impl AssetsOwner {
                     sunlight.direction[2],
                     if sunlight.daylight { 1.0 } else { 0.0 },
                 ],
-                initial_shadow: LakeSceneShadow::for_aircraft([0.0; 3], sunlight),
+                initial_shadow: LakeSceneShadow::for_aircraft([0.0; 3], sunlight).map(
+                    |mut light| {
+                        light.shadow_enabled &= target.quality.shadow.enabled();
+                        light
+                    },
+                ),
                 haze_color_srgb: haze.color_srgb,
                 haze_range_meters: [haze.near_m, haze.far_m],
             },

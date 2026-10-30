@@ -198,6 +198,11 @@ pub enum GameUiPlatformCommand {
         /// Requested fraction of each physical rendering dimension.
         scale: crate::screen_render_scale::ScreenRenderScale,
     },
+    /// Changes directional shadow quality in the shared rendering owner.
+    SetShadowMap {
+        /// Requested shadow quality.
+        shadow: crate::screen_render_auto::ScreenShadowMap,
+    },
     /// Enables Auto or restores its retained manual Screen resolution.
     SetScreenRenderAuto {
         /// Whether GPU-work-based adjustment is selected.
