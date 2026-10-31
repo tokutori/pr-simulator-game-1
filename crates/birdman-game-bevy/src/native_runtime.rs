@@ -55,6 +55,9 @@ pub(crate) fn platform(world: &mut World) -> ApplicationPlatformObservation {
         surface: None,
         viewport,
         capabilities: ApplicationCapabilities {
+            touch_available: world
+                .resource::<super::flight_devices::FlightDevices>()
+                .touch_available(),
             analysis_available: true,
             replay_available: true,
             stored_records_available: true,

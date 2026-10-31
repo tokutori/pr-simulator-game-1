@@ -26,8 +26,7 @@ use birdman_game_presentation::game_ui::{
     GameUiSectionLayout, GameUiShell, GameUiTheme, GameUiView, GameUiViewport,
 };
 use birdman_game_runtime::{
-    ApplicationChartPointerPhase, ApplicationDrawingOutput, ApplicationInput,
-    ApplicationUiProjection,
+    ApplicationDrawingOutput, ApplicationInput, ApplicationPointerPhase, ApplicationUiProjection,
 };
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -38,6 +37,8 @@ mod chart;
 mod hud;
 #[path = "ui/projection.rs"]
 mod projection;
+#[path = "ui/touch.rs"]
+mod touch;
 use chart::*;
 use hud::{RetainedHud, project_hud, setup_hud};
 use projection::*;
@@ -98,6 +99,7 @@ struct RetainedUi {
     heading: Entity,
     description: Entity,
     content: Entity,
+    touch_root: Entity,
     view: Option<Arc<GameUiView>>,
     sections: BTreeMap<String, Entity>,
     widgets: BTreeMap<String, Widget>,
@@ -121,23 +123,26 @@ struct RetainedChart {
 }
 
 #[derive(Component)]
-struct ChartViewport {
+struct ControlPointerRegion {
     canvas: Entity,
     control_id: String,
     view_revision: u32,
     measured: Option<GameUiChartExtent>,
+    chart: bool,
 }
 
 #[derive(Resource, Default)]
-struct ChartPointerIo {
+struct ControlPointerIo {
     cursor: bevy::ecs::message::MessageCursor<PointerInput>,
     buttons: u16,
-    capture: Option<ChartCapture>,
+    touch_primary: Option<u64>,
+    touch_active: std::collections::BTreeSet<u64>,
+    captures: std::collections::HashMap<PointerId, ControlCapture>,
 }
 
-struct ChartCapture {
-    viewport: Entity,
-    canvas: Entity,
+struct ControlCapture {
+    region: Option<(Entity, Entity)>,
+    scope: String,
     last: ApplicationInput,
 }
 
@@ -146,7 +151,7 @@ struct ChartTextBaseline;
 
 pub(crate) fn setup_ui(mut commands: Commands, font: Res<NativeFont>) {
     commands.init_resource::<InputFocus>();
-    commands.init_resource::<ChartPointerIo>();
+    commands.init_resource::<ControlPointerIo>();
     commands.spawn((
         UiText::FrameRate,
         Text::new("FPS —"),
@@ -185,12 +190,24 @@ pub(crate) fn setup_ui(mut commands: Commands, font: Res<NativeFont>) {
     let content = commands
         .spawn((ChildOf(shell), UiPanel::Navigation, Node::default()))
         .id();
+    let touch_root = commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                width: percent(100),
+                height: percent(100),
+                ..default()
+            },
+            Pickable::IGNORE,
+        ))
+        .id();
     let hud = setup_hud(&mut commands);
     commands.insert_resource(RetainedUi {
         shell,
         heading,
         description,
         content,
+        touch_root,
         view: None,
         sections: BTreeMap::new(),
         widgets: BTreeMap::new(),
@@ -233,7 +250,7 @@ pub(crate) fn viewport(world: &mut World) -> GameUiViewport {
 }
 
 pub(crate) fn button_actions(world: &mut World) {
-    chart_inputs(world);
+    control_pointer_inputs(world);
     let revision = world
         .resource::<RetainedUi>()
         .view
@@ -316,25 +333,36 @@ pub(crate) fn button_actions(world: &mut World) {
     }
 }
 
-fn chart_inputs(world: &mut World) {
+fn control_pointer_inputs(world: &mut World) {
     let Some(retained) = world.get_resource::<RetainedUi>() else {
         return;
     };
     let visible = world
         .get::<Visibility>(retained.shell)
-        .is_none_or(|visibility| *visibility != Visibility::Hidden);
+        .is_none_or(|value| *value != Visibility::Hidden);
     let revision = retained.view.as_ref().map(|view| view.view_revision);
+    let scope = retained
+        .view
+        .as_ref()
+        .map(|view| view.interaction_scope.clone())
+        .unwrap_or_default();
     let scale = world.get_resource::<UiScale>().map_or(1.0, |scale| scale.0);
+    let viewport = viewport(world);
+    let focused = world
+        .query::<&Window>()
+        .iter(world)
+        .next()
+        .is_none_or(|window| window.focused);
     let mut inputs = Vec::new();
-    for (node, mut viewport, visibility) in world
+    for (node, mut region, visibility) in world
         .query::<(
             &ComputedNode,
-            &mut ChartViewport,
+            &mut ControlPointerRegion,
             Option<&InheritedVisibility>,
         )>()
         .iter_mut(world)
     {
-        if !visible || visibility.is_some_and(|visibility| !visibility.get()) {
+        if !region.chart || !visible || visibility.is_some_and(|value| !value.get()) {
             continue;
         }
         let size = node.size() * node.inverse_scale_factor;
@@ -342,25 +370,46 @@ fn chart_inputs(world: &mut World) {
             width: f64::from(size.x),
             height: f64::from(size.y),
         };
-        if viewport.measured != Some(extent) {
-            viewport.measured = Some(extent);
+        if region.measured != Some(extent) {
+            region.measured = Some(extent);
             inputs.push(ApplicationInput::ChartMeasured {
-                view_revision: viewport.view_revision,
-                control_id: viewport.control_id.clone(),
+                view_revision: region.view_revision,
+                control_id: region.control_id.clone(),
                 extent,
             });
         }
     }
-    let Some(mut io) = world.remove_resource::<ChartPointerIo>() else {
+    let Some(mut io) = world.remove_resource::<ControlPointerIo>() else {
         return;
     };
-    if io.capture.as_ref().is_some_and(|capture| {
-        !visible || world.get::<ChartViewport>(capture.viewport).is_none_or(|viewport| {
-            Some(viewport.view_revision) != revision || viewport.canvas != capture.canvas
-        }) || !matches!(&capture.last, ApplicationInput::ChartPointer { view_revision, .. } if Some(*view_revision) == revision)
-    }) && let Some(mut capture) = io.capture.take() {
-        if let ApplicationInput::ChartPointer { phase, .. } = &mut capture.last {
-            *phase = ApplicationChartPointerPhase::LostCapture;
+    if !focused {
+        io.touch_primary = None;
+        io.touch_active.clear();
+    }
+    let stale =
+        io.captures
+            .iter()
+            .filter_map(|(id, capture)| {
+                let invalid = !visible
+                    || !focused
+                    || capture.scope != scope
+                    || match capture.region {
+                        Some((entity, canvas)) => world
+                            .get::<ControlPointerRegion>(entity)
+                            .is_none_or(|region| {
+                                region.canvas != canvas
+                                    || (*id == PointerId::Mouse
+                                        && Some(region.view_revision) != revision)
+                            }),
+                        None => false,
+                    };
+                invalid.then_some(*id)
+            })
+            .collect::<Vec<_>>();
+    for id in stale {
+        let mut capture = io.captures.remove(&id).unwrap();
+        if let ApplicationInput::ControlPointer { phase, .. } = &mut capture.last {
+            *phase = ApplicationPointerPhase::LostCapture;
         }
         inputs.push(capture.last);
     }
@@ -369,139 +418,187 @@ fn chart_inputs(world: &mut World) {
         .map(|messages| io.cursor.read(messages).cloned().collect::<Vec<_>>())
         .unwrap_or_default();
     for event in events {
-        if event.pointer_id != PointerId::Mouse {
-            continue;
-        }
+        let (pointer_id, pointer_kind) = match event.pointer_id {
+            PointerId::Mouse => (
+                birdman_game_runtime::ApplicationPointerId::from_bits(0),
+                birdman_game_runtime::ApplicationPointerKind::Mouse,
+            ),
+            PointerId::Touch(id) => (
+                birdman_game_runtime::ApplicationPointerId::from_bits(id),
+                birdman_game_runtime::ApplicationPointerKind::Touch,
+            ),
+            PointerId::Custom(_) => continue,
+        };
+        let touch = event.pointer_id.is_touch();
         let button_value = |button| match button {
             PointerButton::Primary => (0, 1),
             PointerButton::Secondary => (2, 2),
             PointerButton::Middle => (1, 4),
         };
-        let (phase, button) = match event.action {
-            PointerAction::Press(button) => {
-                let (button, bit) = button_value(button);
-                let first = io.buttons == 0;
-                io.buttons |= bit;
-                (
-                    if first {
-                        ApplicationChartPointerPhase::Down
-                    } else {
-                        ApplicationChartPointerPhase::Move
-                    },
-                    button,
-                )
+        let (phase, button, buttons) = if touch {
+            match event.action {
+                PointerAction::Press(_) => (ApplicationPointerPhase::Down, 0, 1),
+                PointerAction::Release(_) => (ApplicationPointerPhase::Up, 0, 0),
+                PointerAction::Move { .. } => (ApplicationPointerPhase::Move, -1, 1),
+                PointerAction::Cancel => (ApplicationPointerPhase::Cancel, -1, 0),
+                PointerAction::Scroll { .. } => continue,
             }
-            PointerAction::Release(button) => {
-                let (button, bit) = button_value(button);
-                io.buttons &= !bit;
-                (
-                    if io.buttons == 0 {
-                        ApplicationChartPointerPhase::Up
-                    } else {
-                        ApplicationChartPointerPhase::Move
-                    },
-                    button,
-                )
-            }
-            PointerAction::Move { .. } => (ApplicationChartPointerPhase::Move, -1),
-            PointerAction::Cancel => {
-                io.buttons = 0;
-                (ApplicationChartPointerPhase::Cancel, -1)
-            }
-            PointerAction::Scroll { .. } => continue,
+        } else {
+            let (phase, button) = match event.action {
+                PointerAction::Press(button) => {
+                    let (button, bit) = button_value(button);
+                    let first = io.buttons == 0;
+                    io.buttons |= bit;
+                    (
+                        if first {
+                            ApplicationPointerPhase::Down
+                        } else {
+                            ApplicationPointerPhase::Move
+                        },
+                        button,
+                    )
+                }
+                PointerAction::Release(button) => {
+                    let (button, bit) = button_value(button);
+                    io.buttons &= !bit;
+                    (
+                        if io.buttons == 0 {
+                            ApplicationPointerPhase::Up
+                        } else {
+                            ApplicationPointerPhase::Move
+                        },
+                        button,
+                    )
+                }
+                PointerAction::Move { .. } => (ApplicationPointerPhase::Move, -1),
+                PointerAction::Cancel => {
+                    io.buttons = 0;
+                    (ApplicationPointerPhase::Cancel, -1)
+                }
+                PointerAction::Scroll { .. } => continue,
+            };
+            (phase, button, io.buttons)
         };
-        if !visible {
+        let is_primary = if let PointerId::Touch(id) = event.pointer_id {
+            if phase == ApplicationPointerPhase::Down {
+                if io.touch_active.is_empty() {
+                    io.touch_primary = Some(id);
+                }
+                io.touch_active.insert(id);
+            }
+            let primary = io.touch_primary == Some(id);
+            if matches!(
+                phase,
+                ApplicationPointerPhase::Up | ApplicationPointerPhase::Cancel
+            ) {
+                io.touch_active.remove(&id);
+                if io.touch_active.is_empty() {
+                    io.touch_primary = None;
+                }
+            }
+            primary
+        } else {
+            true
+        };
+        if !visible || !focused {
             continue;
         }
-        if phase == ApplicationChartPointerPhase::Down {
-            let charts = world
-                .query::<(Entity, &ChartViewport)>()
-                .iter(world)
-                .map(|(entity, viewport)| {
-                    (
-                        entity,
-                        viewport.canvas,
-                        viewport.control_id.clone(),
-                        viewport.view_revision,
-                    )
-                })
-                .collect::<Vec<_>>();
-            let hit = charts.into_iter().find(|(entity, ..)| {
-                world
-                    .get_resource::<HoverMap>()
-                    .and_then(|hover| hover.0.get(&event.pointer_id))
-                    .is_some_and(|hovered| {
-                        hovered.keys().any(|hit| {
-                            let mut hit = *hit;
-                            loop {
-                                if hit == *entity {
-                                    return true;
-                                }
-                                let Some(parent) = world.get::<ChildOf>(hit) else {
-                                    return false;
-                                };
-                                hit = parent.parent();
-                            }
-                        })
-                    })
+        if phase == ApplicationPointerPhase::Down {
+            let hovered = world
+                .get_resource::<HoverMap>()
+                .and_then(|hover| hover.0.get(&event.pointer_id))
+                .map(|items| items.keys().copied().collect::<Vec<_>>())
+                .unwrap_or_default();
+            let region = hovered.iter().find_map(|hit| {
+                let mut entity = *hit;
+                loop {
+                    if let Some(region) = world.get::<ControlPointerRegion>(entity) {
+                        return Some((
+                            entity,
+                            region.canvas,
+                            region.control_id.clone(),
+                            region.view_revision,
+                        ));
+                    }
+                    let parent = world.get::<ChildOf>(entity)?;
+                    entity = parent.parent();
+                }
             });
-            let Some((viewport, canvas, control_id, view_revision)) = hit else {
+            let any_ui = hovered.iter().any(|hit| world.get::<Node>(*hit).is_some());
+            let (region, control_id, view_revision) =
+                if let Some((entity, canvas, control_id, revision)) = region {
+                    (Some((entity, canvas)), Some(control_id), revision)
+                } else if touch
+                    && !any_ui
+                    && let Some(revision) = revision
+                {
+                    (None, None, revision)
+                } else {
+                    continue;
+                };
+            io.captures.insert(
+                event.pointer_id,
+                ControlCapture {
+                    region,
+                    scope: scope.clone(),
+                    last: ApplicationInput::ControlPointer {
+                        view_revision,
+                        control_id,
+                        pointer_id,
+                        pointer_kind,
+                        phase,
+                        button,
+                        buttons,
+                        is_primary,
+                        position: [0.0; 2],
+                        rect: [0.0; 4],
+                    },
+                },
+            );
+        }
+        let Some(capture) = io.captures.get_mut(&event.pointer_id) else {
+            continue;
+        };
+        let rect = if let Some((_, canvas)) = capture.region {
+            let (Some(node), Some(transform)) = (
+                world.get::<ComputedNode>(canvas),
+                world.get::<UiGlobalTransform>(canvas),
+            ) else {
                 continue;
             };
-            io.capture = Some(ChartCapture {
-                viewport,
-                canvas,
-                last: ApplicationInput::ChartPointer {
-                    view_revision,
-                    control_id,
-                    pointer_id: 0,
-                    phase,
-                    button,
-                    buttons: io.buttons,
-                    is_primary: true,
-                    position: [0.0; 2],
-                    rect: [0.0; 4],
-                },
-            });
-        }
-        let Some(capture) = io.capture.as_mut() else {
-            continue;
+            let size = node.size() * node.inverse_scale_factor;
+            let corner = (transform.translation - node.size() * 0.5) * node.inverse_scale_factor;
+            [
+                f64::from(corner.x),
+                f64::from(corner.y),
+                f64::from(size.x),
+                f64::from(size.y),
+            ]
+        } else {
+            [0.0, 0.0, viewport.width, viewport.height]
         };
-        let (Some(node), Some(transform)) = (
-            world.get::<ComputedNode>(capture.canvas),
-            world.get::<UiGlobalTransform>(capture.canvas),
-        ) else {
-            continue;
-        };
-        let size = node.size() * node.inverse_scale_factor;
-        let corner = (transform.translation - node.size() * 0.5) * node.inverse_scale_factor;
         let position = event.location.position / scale;
-        if let ApplicationInput::ChartPointer {
+        if let ApplicationInput::ControlPointer {
             phase: input_phase,
             button: input_button,
-            buttons,
+            buttons: input_buttons,
             position: input_position,
-            rect,
+            rect: input_rect,
             ..
         } = &mut capture.last
         {
             *input_phase = phase;
             *input_button = button;
-            *buttons = io.buttons;
+            *input_buttons = buttons;
             *input_position = [f64::from(position.x), f64::from(position.y)];
-            *rect = [
-                f64::from(corner.x),
-                f64::from(corner.y),
-                f64::from(size.x),
-                f64::from(size.y),
-            ];
+            *input_rect = rect;
         }
         inputs.push(capture.last.clone());
         if matches!(
             phase,
-            ApplicationChartPointerPhase::Up | ApplicationChartPointerPhase::Cancel
+            ApplicationPointerPhase::Up | ApplicationPointerPhase::Cancel
         ) {
-            io.capture = None;
+            io.captures.remove(&event.pointer_id);
         }
     }
     world.insert_resource(io);
@@ -525,6 +622,13 @@ pub(crate) fn submit(world: &mut World, drawing: &ApplicationDrawingOutput) -> R
             Visibility::Hidden
         };
     }
+    world
+        .entity_mut(retained.touch_root)
+        .insert(if drawing.presentation.screen_ui_visible {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        });
     let theme = retained.view.as_ref().map(|view| view.theme.clone());
     world.insert_resource(retained);
     result?;

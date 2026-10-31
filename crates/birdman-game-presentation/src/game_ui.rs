@@ -19,6 +19,8 @@ mod structure;
 #[cfg(not(verus_only))]
 mod timestamps;
 #[cfg(not(verus_only))]
+mod touch;
+#[cfg(not(verus_only))]
 mod types;
 #[cfg(not(verus_only))]
 mod update;
@@ -37,6 +39,8 @@ pub use head_fit::{GameUiHeadHudFit, GameUiHeadHudNode, GameUiHeadHudSpace, fit_
 pub use structure::{GameUiStructureCache, GameUiStructureKey};
 #[cfg(not(verus_only))]
 pub use timestamps::game_ui_saved_record_timestamp;
+#[cfg(not(verus_only))]
+pub use touch::{flight_touch_axes, flight_touch_indicator_position};
 #[cfg(not(verus_only))]
 pub use types::*;
 #[cfg(not(verus_only))]

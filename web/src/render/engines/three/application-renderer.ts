@@ -58,6 +58,7 @@ export class ThreeApplicationRenderer {
   private readonly materials = new Map<string, Material>();
   private readonly sources = new WeakMap<XRInputSource, number>();
   private readonly gamepad_generations = new Map<number, number>();
+  private readonly canvasPointers = new Map<number, Extract<ApplicationInput, { kind: "control_pointer" }>>();
   private readonly sessions = new Map<number, XrHandle>();
   private readonly display_handles = new Set<number>();
   private readonly camera = new PerspectiveCamera();
@@ -94,6 +95,10 @@ export class ThreeApplicationRenderer {
     this.head_canvas = canvas.ownerDocument.createElement("canvas");
     canvas.addEventListener("webglcontextlost", this.contextLost);
     canvas.addEventListener("pointermove", this.pointerMove);
+    canvas.addEventListener("pointerdown", this.pointerDown);
+    canvas.addEventListener("pointerup", this.pointerUp);
+    canvas.addEventListener("pointercancel", this.pointerCancel);
+    canvas.addEventListener("lostpointercapture", this.pointerLost);
     canvas.addEventListener("contextmenu", this.contextMenu);
     window.addEventListener("gamepadconnected", this.gamepadConnection);
     window.addEventListener("gamepaddisconnected", this.gamepadConnection);
@@ -992,8 +997,44 @@ export class ThreeApplicationRenderer {
     this.renderer.setAnimationLoop(null);
     this.notify({ kind: "graphics", renderer_resource_id: this.id, observation: { kind: "context_lost" } });
   };
+  private canvasPointer(event: PointerEvent, phase: Extract<ApplicationInput, { kind: "control_pointer" }>["phase"]): void {
+    if (event.pointerType !== "touch") return;
+    const previous = this.canvasPointers.get(event.pointerId);
+    const ui = this.drawing?.ui;
+    if (phase === "down" ? ui === undefined : previous === undefined) return;
+    const revision = previous?.view_revision ?? (ui?.kind === "view" ? ui.view.view_revision : ui?.frame.view_revision);
+    if (revision === undefined) return;
+    const rect = this.canvas.getBoundingClientRect();
+    const input: Extract<ApplicationInput, { kind: "control_pointer" }> = {
+      kind: "control_pointer", control_id: null, view_revision: revision,
+      pointer_id: { low: event.pointerId >>> 0, high: 0 }, pointer_kind: "touch", phase,
+      button: event.button, buttons: event.buttons, is_primary: event.isPrimary,
+      position: [event.clientX, event.clientY], rect: [rect.left, rect.top, rect.width, rect.height]
+    };
+    if (phase === "down") {
+      this.canvasPointers.set(event.pointerId, input);
+      let captured = true;
+      try { this.canvas.setPointerCapture(event.pointerId); } catch { captured = false; }
+      this.notify(input);
+      if (!captured && this.canvasPointers.delete(event.pointerId)) this.notify({ ...input, phase: "lost_capture" });
+    } else {
+      if (phase === "move") this.canvasPointers.set(event.pointerId, input);
+      else {
+        this.canvasPointers.delete(event.pointerId);
+        if (phase !== "lost_capture") {
+          try { this.canvas.releasePointerCapture(event.pointerId); } catch { /* Runtime consumes the terminal observation below. */ }
+        }
+      }
+      this.notify(input);
+    }
+  }
+  private readonly pointerDown = (event: PointerEvent): void => { this.canvasPointer(event, "down"); };
+  private readonly pointerUp = (event: PointerEvent): void => { this.canvasPointer(event, "up"); };
+  private readonly pointerCancel = (event: PointerEvent): void => { this.canvasPointer(event, "cancel"); };
+  private readonly pointerLost = (event: PointerEvent): void => { this.canvasPointer(event, "lost_capture"); };
   private readonly pointerMove = (event: PointerEvent): void => {
-    this.notify({ kind: "pointer_motion", display_resource_id: this.display_id, delta_px: [event.movementX, event.movementY], buttons: event.buttons });
+    if (event.pointerType === "touch") this.canvasPointer(event, "move");
+    else this.notify({ kind: "pointer_motion", display_resource_id: this.display_id, delta_px: [event.movementX, event.movementY], buttons: event.buttons });
   };
   private readonly contextMenu = (event: Event): void => { event.preventDefault(); };
   private readonly gamepadConnection = (event: GamepadEvent): void => {
@@ -1013,7 +1054,16 @@ export class ThreeApplicationRenderer {
     }
     release(() => { this.renderer.setAnimationLoop(null); });
     release(() => { this.canvas.removeEventListener("webglcontextlost", this.contextLost); });
+    for (const [id, input] of this.canvasPointers) {
+      release(() => { this.canvas.releasePointerCapture(id); });
+      this.notify({ ...input, phase: "lost_capture" });
+    }
+    this.canvasPointers.clear();
     release(() => { this.canvas.removeEventListener("pointermove", this.pointerMove); });
+    release(() => { this.canvas.removeEventListener("pointerdown", this.pointerDown); });
+    release(() => { this.canvas.removeEventListener("pointerup", this.pointerUp); });
+    release(() => { this.canvas.removeEventListener("pointercancel", this.pointerCancel); });
+    release(() => { this.canvas.removeEventListener("lostpointercapture", this.pointerLost); });
     release(() => { this.canvas.removeEventListener("contextmenu", this.contextMenu); });
     release(() => { window.removeEventListener("gamepadconnected", this.gamepadConnection); });
     release(() => { window.removeEventListener("gamepaddisconnected", this.gamepadConnection); });

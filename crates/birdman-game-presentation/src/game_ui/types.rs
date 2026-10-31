@@ -428,6 +428,8 @@ pub struct GameUiPlatformInput {
     pub hmd_available: bool,
     /// Phone sensor headset support.
     pub phone_vr_available: bool,
+    /// Platform has observed touch input support.
+    pub touch_available: bool,
     /// Active spatial backend can reposition the menu in front of the viewer.
     pub menu_recenter_available: bool,
     /// Platform supports full record plots.
@@ -655,6 +657,21 @@ pub struct GameUiFrame {
     pub button_labels: Vec<GameUiButtonLabel>,
     /// Cursor-only chart observation; plotted series and bounds remain in the view.
     pub chart_cursor: Option<GameUiChartCursor>,
+    /// Pointer-control indicators associated with the retained flight controls.
+    pub flight_touch: Vec<GameUiFlightTouchValue>,
+}
+
+/// Completed local indicator geometry for a retained flight pointer control.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct GameUiFlightTouchValue {
+    /// Existing published control identity.
+    pub id: String,
+    /// Complete local-pixel knob centre.
+    pub position: [f64; 2],
+    /// Complete local-pixel relative-drag origin, absent for an absolute slider.
+    pub origin: Option<[f64; 2]>,
 }
 
 /// Value of a retained typed range control.
@@ -992,6 +1009,8 @@ pub struct GameUiPanel {
     pub controls: Vec<GameUiControl>,
 }
 
+pub use birdman_game_app::flight_input::FlightTouchControl;
+
 /// Engine-independent anchor.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -1097,6 +1116,19 @@ pub enum GameUiControlContent {
         source: GameUiReadoutSource,
         /// Ordered values and units.
         fields: Vec<GameUiNumericField>,
+    },
+    /// Screen flight pointer region placed in viewport logical pixels.
+    FlightTouch {
+        /// Stick or absolute pilot-position interaction.
+        control: FlightTouchControl,
+        /// Completed viewport placement.
+        bounds: GameUiRect,
+        /// Completed local indicator centre in logical pixels.
+        position: [f64; 2],
+        /// Acquired local stick origin, absent before touch acquisition.
+        origin: Option<[f64; 2]>,
+        /// Shared indicator radius in logical pixels.
+        radius: f64,
     },
     /// Record-derived chart data, not a separately simulated trajectory.
     Chart {

@@ -95,7 +95,7 @@ describe("Screen DOM adapter", () => {
       adapter.render(view);
       const button = required(root, "button");
       const numericValue = required(root, "#fields .screen-ui-field-value");
-      const frame: GameUiFrame = { view_revision: view.view_revision, hud: null, chart_cursor: null,
+      const frame: GameUiFrame = { view_revision: view.view_revision, hud: null, chart_cursor: null, flight_touch: [],
         ranges: [{ id: "range", value: 2.5, display_value: "2.5" }], button_labels: [{ id: "button", label: "一時停止" }], readouts: [{ id: "notice", value: "更新済み" }],
         fields: [{ id: "fields", fields: [{ id: "speed", label: "対気速度", value: "9.87", unit: "m/s" }] }] };
       adapter.renderFrame(frame);
@@ -165,15 +165,15 @@ describe("Screen DOM adapter", () => {
       pointer("pointerdown", 73, 1);
       pointer("pointermove", 940, 1);
       pointer("pointerup", 940, 0);
-      expect(actions.map(input => input.kind === "chart_pointer" ? [input.phase, input.position[0], input.buttons] : input.kind))
+      expect(actions.map(input => input.kind === "control_pointer" ? [input.phase, input.position[0], input.buttons] : input.kind))
         .toEqual([["down", 73, 1], ["move", 940, 1], ["up", 940, 0]]);
-      expect(actions[0]).toMatchObject({ kind: "chart_pointer", view_revision: view.view_revision, control_id: control.id,
-        pointer_id: 7, is_primary: true, rect: [17, 29, 813, 417] });
+      expect(actions[0]).toMatchObject({ kind: "control_pointer", view_revision: view.view_revision, control_id: control.id,
+        pointer_id: { low: 7, high: 0 }, is_primary: true, rect: [17, 29, 813, 417] });
       expect(release).toHaveBeenCalledWith(7);
       actions.length = 0;
       pointer("pointerdown", 73, 1);
       adapter.render(view, false);
-      expect(actions.at(-1)).toMatchObject({ kind: "chart_pointer", phase: "lost_capture", view_revision: view.view_revision });
+      expect(actions.at(-1)).toMatchObject({ kind: "control_pointer", phase: "lost_capture", view_revision: view.view_revision });
       const count = actions.length;
       pointer("pointermove", 940, 1);
       expect(actions).toHaveLength(count);
@@ -181,7 +181,7 @@ describe("Screen DOM adapter", () => {
       Object.assign(viewport, { setPointerCapture: () => { throw new Error("capture unavailable"); } });
       actions.length = 0;
       pointer("pointerdown", 73, 1);
-      expect(actions.map(input => input.kind === "chart_pointer" ? input.phase : input.kind)).toEqual(["down", "lost_capture"]);
+      expect(actions.map(input => input.kind === "control_pointer" ? input.phase : input.kind)).toEqual(["down", "lost_capture"]);
       actions.length = 0;
       measure(viewport, 900, 450);
       adapter.render(view, false);

@@ -221,6 +221,7 @@ fn shared_widgets_retain_values_and_forward_controls_and_chart_io_with_their_sou
             readouts: vec![],
             button_labels: vec![],
             chart_cursor: None,
+            flight_touch: vec![],
             fields: vec![birdman_game_presentation::game_ui::GameUiFieldsValue {
                 id: "fields".into(),
                 fields: vec![birdman_game_presentation::game_ui::GameUiNumericField {
@@ -256,11 +257,12 @@ fn shared_widgets_retain_values_and_forward_controls_and_chart_io_with_their_sou
                 inverse_scale_factor: 0.5,
                 ..default()
             },
-            ChartViewport {
+            ControlPointerRegion {
                 canvas,
                 control_id: "chart".into(),
                 view_revision: revision,
                 measured: None,
+                chart: true,
             },
         ))
         .id();
@@ -275,13 +277,13 @@ fn shared_widgets_retain_values_and_forward_controls_and_chart_io_with_their_sou
             bevy::picking::backend::HitData::new(window, 0.0, None, None),
         );
     app.world_mut().resource_mut::<NativeInputs>().0.clear();
-    chart_inputs(app.world_mut());
+    control_pointer_inputs(app.world_mut());
     assert!(
         matches!(&app.world().resource::<NativeInputs>().0[..], [ApplicationInput::ChartMeasured { view_revision, control_id, extent }]
         if *view_revision == revision && control_id == "chart" && *extent == GameUiChartExtent { width: 813.0, height: 417.0 })
     );
     app.world_mut().resource_mut::<NativeInputs>().0.clear();
-    chart_inputs(app.world_mut());
+    control_pointer_inputs(app.world_mut());
     assert!(app.world().resource::<NativeInputs>().0.is_empty());
     let target = bevy::camera::RenderTarget::Window(bevy::window::WindowRef::Entity(window))
         .normalize(Some(window))
@@ -319,17 +321,17 @@ fn shared_widgets_retain_values_and_forward_controls_and_chart_io_with_their_sou
             action,
         ));
     }
-    chart_inputs(app.world_mut());
+    control_pointer_inputs(app.world_mut());
     let inputs = &app.world().resource::<NativeInputs>().0;
     assert_eq!(inputs.len(), 5);
     assert!(
-        matches!(&inputs[0], ApplicationInput::ChartPointer { view_revision, control_id, phase: ApplicationChartPointerPhase::Down, position: [73.0, 51.0], rect: [17.0, 29.0, 813.0, 417.0], buttons: 1, .. }
-        if *view_revision == revision && control_id == "chart")
+        matches!(&inputs[0], ApplicationInput::ControlPointer { view_revision, control_id, phase: ApplicationPointerPhase::Down, position: [73.0, 51.0], rect: [17.0, 29.0, 813.0, 417.0], buttons: 1, .. }
+        if *view_revision == revision && control_id.as_deref() == Some("chart"))
     );
     assert!(matches!(
         &inputs[3],
-        ApplicationInput::ChartPointer {
-            phase: ApplicationChartPointerPhase::Move,
+        ApplicationInput::ControlPointer {
+            phase: ApplicationPointerPhase::Move,
             position: [940.0, 51.0],
             buttons: 1,
             ..
@@ -337,8 +339,8 @@ fn shared_widgets_retain_values_and_forward_controls_and_chart_io_with_their_sou
     ));
     assert!(matches!(
         &inputs[4],
-        ApplicationInput::ChartPointer {
-            phase: ApplicationChartPointerPhase::Up,
+        ApplicationInput::ControlPointer {
+            phase: ApplicationPointerPhase::Up,
             position: [940.0, 51.0],
             buttons: 0,
             ..
@@ -346,8 +348,8 @@ fn shared_widgets_retain_values_and_forward_controls_and_chart_io_with_their_sou
     ));
     assert!(matches!(
         &inputs[1],
-        ApplicationInput::ChartPointer {
-            phase: ApplicationChartPointerPhase::Move,
+        ApplicationInput::ControlPointer {
+            phase: ApplicationPointerPhase::Move,
             button: 2,
             buttons: 3,
             ..
@@ -355,8 +357,8 @@ fn shared_widgets_retain_values_and_forward_controls_and_chart_io_with_their_sou
     ));
     assert!(matches!(
         &inputs[2],
-        ApplicationInput::ChartPointer {
-            phase: ApplicationChartPointerPhase::Move,
+        ApplicationInput::ControlPointer {
+            phase: ApplicationPointerPhase::Move,
             button: 2,
             buttons: 1,
             ..
@@ -371,10 +373,10 @@ fn shared_widgets_retain_values_and_forward_controls_and_chart_io_with_their_sou
         },
         PointerAction::Press(PointerButton::Primary),
     ));
-    chart_inputs(app.world_mut());
+    control_pointer_inputs(app.world_mut());
     app.world_mut().despawn(host);
-    chart_inputs(app.world_mut());
+    control_pointer_inputs(app.world_mut());
     assert!(
-        matches!(app.world().resource::<NativeInputs>().0.last(), Some(ApplicationInput::ChartPointer { view_revision, phase: ApplicationChartPointerPhase::LostCapture, .. }) if *view_revision == revision)
+        matches!(app.world().resource::<NativeInputs>().0.last(), Some(ApplicationInput::ControlPointer { view_revision, phase: ApplicationPointerPhase::LostCapture, .. }) if *view_revision == revision)
     );
 }

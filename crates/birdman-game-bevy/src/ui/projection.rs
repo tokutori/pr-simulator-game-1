@@ -70,6 +70,13 @@ pub(super) fn project_frame(
             set_text(world, entities[2], field.unit.clone());
         }
     }
+    for value in &frame.flight_touch {
+        let widget = retained
+            .widgets
+            .get(&value.id)
+            .ok_or_else(|| format!("Missing retained touch control: {}", value.id))?;
+        touch::project_frame(world, widget.node, value);
+    }
     if let Some(cursor) = &frame.chart_cursor {
         let widget = retained
             .widgets
@@ -197,11 +204,16 @@ pub(super) fn project_view(
         scroll.y = 0.0;
     }
     if rebuild {
-        let children = world
-            .entity(retained.content)
-            .get::<Children>()
-            .map(|children| children.iter().collect::<Vec<_>>())
-            .unwrap_or_default();
+        let children = [retained.content, retained.touch_root]
+            .into_iter()
+            .flat_map(|entity| {
+                world
+                    .entity(entity)
+                    .get::<Children>()
+                    .map(|children| children.iter().collect::<Vec<_>>())
+                    .unwrap_or_default()
+            })
+            .collect::<Vec<_>>();
         for child in children {
             world.despawn(child);
         }
@@ -209,6 +221,12 @@ pub(super) fn project_view(
         retained.widgets.clear();
         for panel in &view.panels {
             for section in &panel.sections {
+                if !panel.controls.iter().any(|control| {
+                    control.section == section.id
+                        && !matches!(control.content, GameUiControlContent::FlightTouch { .. })
+                }) {
+                    continue;
+                }
                 let group = world
                     .spawn((
                         ChildOf(retained.content),
@@ -230,10 +248,15 @@ pub(super) fn project_view(
                 retained.sections.insert(section.id.clone(), columns);
             }
             for control in &panel.controls {
-                let parent = *retained
-                    .sections
-                    .get(&control.section)
-                    .ok_or_else(|| format!("UI sectionが存在しない: {}", control.section))?;
+                let parent = if matches!(control.content, GameUiControlContent::FlightTouch { .. })
+                {
+                    retained.touch_root
+                } else {
+                    *retained
+                        .sections
+                        .get(&control.section)
+                        .ok_or_else(|| format!("UI sectionが存在しない: {}", control.section))?
+                };
                 let node = world
                     .spawn((
                         ChildOf(parent),
@@ -300,7 +323,12 @@ pub(super) fn project_view(
             if let Some(surface) = world
                 .get::<RetainedChart>(widget.node)
                 .map(|chart| chart.viewport)
-                && let Some(mut viewport) = world.get_mut::<ChartViewport>(surface)
+                .or_else(|| {
+                    world
+                        .get::<ControlPointerRegion>(widget.node)
+                        .map(|_| widget.node)
+                })
+                && let Some(mut viewport) = world.get_mut::<ControlPointerRegion>(surface)
                 && viewport.view_revision != view.view_revision
             {
                 viewport.view_revision = view.view_revision;
@@ -329,6 +357,7 @@ fn structure(view: &GameUiView) -> Vec<String> {
                 GameUiControlContent::Status { .. } => "status",
                 GameUiControlContent::Fields { .. } => "fields",
                 GameUiControlContent::Chart { .. } => "chart",
+                GameUiControlContent::FlightTouch { .. } => "flight_touch",
             };
             result.push(format!("{}/{}/{kind}", control.id, control.section));
             if let GameUiControlContent::Fields { fields, .. } = &control.content {
@@ -625,6 +654,46 @@ fn project_control(
                 }
             }
         }
+        GameUiControlContent::FlightTouch {
+            bounds,
+            position,
+            origin,
+            radius,
+            ..
+        } => {
+            node = Node {
+                position_type: PositionType::Absolute,
+                left: px(bounds.x),
+                top: px(bounds.y),
+                width: px(bounds.width),
+                height: px(bounds.height),
+                border: UiRect::all(px(1)),
+                border_radius: BorderRadius::all(px(*radius)),
+                ..default()
+            };
+            background = color(&theme.panel_background, theme.panel_opacity)?;
+            world.entity_mut(widget.node).insert((
+                Pickable::default(),
+                BorderColor::all(color(&theme.text, 1.0)?),
+            ));
+            touch::project(
+                world,
+                widget.node,
+                *position,
+                *origin,
+                *radius,
+                color(&theme.text, 1.0)?,
+            );
+            if world.get::<ControlPointerRegion>(widget.node).is_none() {
+                world.entity_mut(widget.node).insert(ControlPointerRegion {
+                    canvas: widget.node,
+                    control_id: control.id.clone(),
+                    view_revision: 0,
+                    measured: None,
+                    chart: false,
+                });
+            }
+        }
         GameUiControlContent::Chart { plot, .. } => {
             label = control.label.clone();
             background = color(&theme.panel_background, theme.panel_opacity)?;
@@ -653,12 +722,13 @@ fn project_control(
                 .get::<RetainedChart>(widget.node)
                 .expect("projected chart exists");
             let (viewport, canvas) = (chart.viewport, chart.surface);
-            if world.get::<ChartViewport>(viewport).is_none() {
-                world.entity_mut(viewport).insert(ChartViewport {
+            if world.get::<ControlPointerRegion>(viewport).is_none() {
+                world.entity_mut(viewport).insert(ControlPointerRegion {
                     canvas,
                     control_id: control.id.clone(),
                     view_revision: 0,
                     measured: None,
+                    chart: true,
                 });
             }
         }
@@ -672,6 +742,7 @@ fn project_control(
             GameUiControlContent::Status { .. }
                 | GameUiControlContent::Fields { .. }
                 | GameUiControlContent::Chart { .. }
+                | GameUiControlContent::FlightTouch { .. }
         )
     {
         world.entity_mut(widget.node).insert(TabIndex(0));

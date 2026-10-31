@@ -664,7 +664,14 @@ fn hud_layout(
         phase,
         SessionPhase::FlightPaused { .. } | SessionPhase::Replay
     );
-    let (left, bottom, width) = if in_menu && menu.shell == GameUiShell::FlightBar {
+    let (left, bottom, width) = if super::touch::available(platform, phase) {
+        let [(stick, _), (slider, _)] = super::touch::regions(platform, menu);
+        (
+            0.75 * font,
+            viewport.height - stick.y + 0.75 * font,
+            (slider.x - 1.5 * font).max(1.0).min(54.0 * font),
+        )
+    } else if in_menu && menu.shell == GameUiShell::FlightBar {
         (
             if compact { 0.6 } else { 0.75 } * font,
             menu.maximum_height_px + 0.75 * font,

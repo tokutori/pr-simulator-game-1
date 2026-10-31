@@ -234,6 +234,13 @@ pub fn game_ui_view(
             feedback(&mut menu, context);
         }
         SessionPhase::FlightRunning => {
+            if super::touch::available(context.platform, phase) {
+                menu.section("flight-touch", "", GameUiSectionLayout::Column);
+                menu.controls.extend(super::touch::controls(
+                    context,
+                    &layout(state, context, phase)?,
+                )?);
+            }
             menu.section("flight-actions", "", GameUiSectionLayout::Row);
             if context.platform.presentation_mode == GameUiPresentationMode::Screen {
                 menu.action(

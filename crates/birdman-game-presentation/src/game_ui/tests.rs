@@ -26,6 +26,7 @@ pub(super) fn platform() -> GameUiPlatformInput {
         operation_pending: false,
         hmd_available: false,
         phone_vr_available: false,
+        touch_available: false,
         menu_recenter_available: false,
         analysis_available: true,
         replay_available: true,

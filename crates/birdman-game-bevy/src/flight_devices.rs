@@ -11,10 +11,15 @@ use std::collections::BTreeMap;
 pub(crate) struct FlightDevices {
     connections: BTreeMap<u64, ApplicationGamepadObservation>,
     generation: u32,
+    touch_observed: bool,
     observations: Vec<ApplicationGamepadObservation>,
 }
 
 impl FlightDevices {
+    pub(crate) fn touch_available(&self) -> bool {
+        self.touch_observed
+    }
+
     pub(crate) fn observations(&self) -> &[ApplicationGamepadObservation] {
         &self.observations
     }
@@ -73,9 +78,11 @@ impl FlightDevices {
 pub(crate) fn observe_devices(
     mut devices: ResMut<FlightDevices>,
     mut raw: MessageReader<RawGamepadEvent>,
+    mut touch: MessageReader<bevy::input::touch::TouchInput>,
     mut connections: MessageReader<GamepadConnectionEvent>,
     gamepads: Query<&Gamepad>,
 ) {
+    devices.touch_observed |= touch.read().count() != 0;
     let changed = !raw.is_empty() || !connections.is_empty();
     let raw = raw.read().collect::<Vec<_>>();
     let result = (|| {

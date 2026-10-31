@@ -17,7 +17,7 @@ const APP_BUILD_LABEL = typeof __APP_BUILD_LABEL__ === "string"
   : "v0.1.0 · test";
 
 const patch = init([attributesModule, classModule, datasetModule, propsModule, styleModule]);
-type ChartPointer = Extract<ApplicationInput, { kind: "chart_pointer" }>;
+type ControlPointer = Extract<ApplicationInput, { kind: "control_pointer" }>;
 type ChartMeasurement = Extract<ApplicationInput, { kind: "chart_measured" }>;
 
 interface RetainedScreenDom {
@@ -40,7 +40,7 @@ export class ScreenUiAdapter {
   private readonly observedCharts = new Map<Element, number>();
   private readonly chartMeasurements = new Map<Element, ChartMeasurement>();
   private chartFrame: number | null = null;
-  private readonly capturedPointers = new Map<number, { element: Element; last: ChartPointer }>();
+  private readonly capturedPointers = new Map<number, { element: Element; last: ControlPointer }>();
   private readonly chartObserver: ResizeObserver | null;
 
   constructor(private readonly root: HTMLElement, private readonly dispatch: (input: ApplicationInput) => void) {
@@ -96,7 +96,15 @@ export class ScreenUiAdapter {
 
   private renderDom(viewModel: GameUiView, visible: boolean): void {
     const scopeChanged = this.currentViewModel !== null && (this.currentViewModel.interaction_scope !== viewModel.interaction_scope);
-    const released = !visible || scopeChanged || this.currentViewModel?.view_revision !== viewModel.view_revision ? this.releasePointers() : [];
+    const nextControls = new Map(viewModel.panels.flatMap(panel => panel.controls.map(control => [control.id, control] as const)));
+    const released = !visible || scopeChanged ? this.releasePointers() : this.currentViewModel?.view_revision !== viewModel.view_revision
+      ? this.releasePointers(last => {
+        if (last.control_id == null) return false;
+        const before = this.controls.get(last.control_id)?.content;
+        const after = nextControls.get(last.control_id);
+        return last.pointer_kind === "touch" && before?.kind === "flight_touch" && after?.enabled === true
+          && after.content.kind === "flight_touch" && JSON.stringify(before.bounds) === JSON.stringify(after.content.bounds);
+      }) : [];
     this.currentViewModel = viewModel;
     const wasVisible = this.visible;
     if (wasVisible && !visible) {
@@ -123,7 +131,7 @@ export class ScreenUiAdapter {
     ]);
     const nextVNode = h("div.screen-ui-mount", {
       attrs: { hidden: !visible, inert: !visible, "aria-hidden": String(!visible) }
-    }, [shell]);
+    }, [shell, ...viewModel.panels.flatMap(panel => panel.controls.filter(control => control.content.kind === "flight_touch").map(control => this.createControl(control)))]);
     this.currentVNode = patch(this.currentVNode, nextVNode);
     if (scopeChanged) {
       const element = this.mount.querySelector<HTMLElement>(".screen-ui-shell");
@@ -191,19 +199,19 @@ export class ScreenUiAdapter {
     if (this.currentViewModel !== null) this.dispatch({ kind: "control", view_revision: this.currentViewModel.view_revision, input });
   }
 
-  private chartPointer(event: PointerEvent, phase: ChartPointer["phase"], element: Element, controlId: string, revision: number): ChartPointer {
+  private controlPointer(event: PointerEvent, phase: ControlPointer["phase"], element: Element, controlId: string | null, revision: number): ControlPointer {
     const rect = element.getBoundingClientRect();
-    return { kind: "chart_pointer", view_revision: revision, control_id: controlId, pointer_id: event.pointerId, phase,
+    return { kind: "control_pointer", view_revision: revision, control_id: controlId, pointer_id: { low: event.pointerId >>> 0, high: 0 }, pointer_kind: ["mouse", "touch", "pen"].includes(event.pointerType) ? event.pointerType as "mouse" | "touch" | "pen" : "unknown", phase,
       button: event.button, buttons: event.buttons, is_primary: event.isPrimary, position: [event.clientX, event.clientY],
       rect: [rect.left, rect.top, rect.width, rect.height] };
   }
 
   private readonly onPointerDown = (event: PointerEvent): void => {
     if (!this.visible || this.currentViewModel === null) return;
-    const element = eventElement(event, this.root)?.closest(".screen-ui-chart-viewport");
-    const controlId = element?.getAttribute("data-chart-control-id");
+    const element = eventElement(event, this.root)?.closest("[data-pointer-control-id], .screen-ui-chart-viewport");
+    const controlId = element?.getAttribute("data-pointer-control-id") ?? element?.getAttribute("data-chart-control-id");
     if (element == null || controlId == null) return;
-    const handle = { element, last: this.chartPointer(event, "down", element, controlId, this.currentViewModel.view_revision) };
+    const handle = { element, last: this.controlPointer(event, "down", element, controlId, this.currentViewModel.view_revision) };
     this.capturedPointers.set(event.pointerId, handle);
     let failure = false;
     try { element.setPointerCapture(event.pointerId); } catch { failure = true; }
@@ -214,10 +222,10 @@ export class ScreenUiAdapter {
     }
   };
 
-  private pointerEvent(event: PointerEvent, phase: ChartPointer["phase"], release: boolean): void {
+  private pointerEvent(event: PointerEvent, phase: ControlPointer["phase"], release: boolean): void {
     const handle = this.capturedPointers.get(event.pointerId);
     if (handle === undefined) return;
-    handle.last = this.chartPointer(event, phase, handle.element, handle.last.control_id, handle.last.view_revision);
+    handle.last = this.controlPointer(event, phase, handle.element, handle.last.control_id ?? null, handle.last.view_revision);
     if (release) {
       this.capturedPointers.delete(event.pointerId);
       if (phase !== "lost_capture") {
@@ -236,12 +244,12 @@ export class ScreenUiAdapter {
   private readonly onPointerCancel = (event: PointerEvent): void => { this.pointerEvent(event, "cancel", true); };
   private readonly onPointerLost = (event: PointerEvent): void => { this.pointerEvent(event, "lost_capture", true); };
 
-  private releasePointers(): ChartPointer[] {
-    const released = [...this.capturedPointers.values()];
-    this.capturedPointers.clear();
-    return released.map(handle => {
-      const input: ChartPointer = { ...handle.last, phase: "lost_capture" };
-      try { handle.element.releasePointerCapture(handle.last.pointer_id); } catch { return input; }
+  private releasePointers(keep: (input: ControlPointer) => boolean = () => false): ControlPointer[] {
+    const released = [...this.capturedPointers.entries()].filter(([, handle]) => !keep(handle.last));
+    for (const [pointerId] of released) this.capturedPointers.delete(pointerId);
+    return released.map(([pointerId, handle]) => {
+      const input: ControlPointer = { ...handle.last, phase: "lost_capture" };
+      try { handle.element.releasePointerCapture(pointerId); } catch { return input; }
       return input;
     });
   }
@@ -340,7 +348,9 @@ export class ScreenUiAdapter {
     const data: VNodeData = { key: panel.id, dataset: { anchor: panel.anchor }, attrs: { "aria-label": panel.title } };
     const children: VNode[] = [];
     for (const section of panel.sections) {
-      const content = h("div.screen-ui-section-controls", panel.controls.filter((control) => control.section === section.id).map((control) => this.createControl(control)));
+      const controls = panel.controls.filter(control => control.section === section.id && control.content.kind !== "flight_touch");
+      if (controls.length === 0) continue;
+      const content = h("div.screen-ui-section-controls", controls.map(control => this.createControl(control)));
       children.push(h(section.label.length > 0 ? "fieldset.screen-ui-section" : "div.screen-ui-section", {
         key: `${panel.id}-section-${section.id}`, dataset: { sectionId: section.id, layout: section.layout }
       }, section.label.length > 0 ? [h("legend", section.label), content] : [content]));
@@ -351,6 +361,22 @@ export class ScreenUiAdapter {
   private createControl(control: GameUiControl): VNode {
     const content = control.content;
     const label = this.frame?.button_labels.find(button => button.id === control.id)?.label ?? control.label;
+    if (content.kind === "flight_touch") {
+      const theme = this.currentViewModel?.theme;
+      if (theme === undefined) throw new Error("Touch control has no retained UI view");
+      const value = this.frame?.flight_touch.find(value => value.id === control.id) ?? content;
+      const point = value.position;
+      const origin = value.origin;
+      return h("div.screen-ui-flight-touch", {
+        key: control.id, dataset: { pointerControlId: control.id },
+        attrs: { "aria-label": control.label },
+        style: { position: "fixed", left: `${String(content.bounds.x)}px`, top: `${String(content.bounds.y)}px`, width: `${String(content.bounds.width)}px`, height: `${String(content.bounds.height)}px`, pointerEvents: "auto", touchAction: "none", userSelect: "none" }
+      }, [h("svg", { attrs: { width: "100%", height: "100%", "aria-hidden": "true" }, style: { overflow: "visible", pointerEvents: "none" } }, [
+        h("rect", { attrs: { x: 0, y: 0, width: "100%", height: "100%", rx: String(content.radius), fill: theme.panel_background, "fill-opacity": String(theme.panel_opacity), stroke: theme.text } }),
+        ...(origin == null ? [] : [h("circle", { attrs: { cx: String(origin[0]), cy: String(origin[1]), r: String(content.radius), fill: "none", stroke: theme.text } })]),
+        h("circle", { attrs: { cx: String(point[0]), cy: String(point[1]), r: String(content.radius), fill: theme.text, stroke: theme.panel_background } })
+      ]), h("span", { style: { position: "absolute", top: "0", left: "0", color: theme.text, pointerEvents: "none" } }, control.label)]);
+    }
     if (content.kind === "button") {
       const data: VNodeData = { key: control.id, attrs: { type: "button" }, dataset: { controlId: control.id }, props: { disabled: !control.enabled } };
       const presentation = content.presentation;

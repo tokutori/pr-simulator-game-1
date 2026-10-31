@@ -61,7 +61,7 @@ pub fn prepare_game_ui_menu(
             .iter()
             .find(|panel| panel.id == input.panel_id && panel.anchor == GameUiAnchor::Menu)
             .ok_or(MenuLayoutFailure::StaleView)?;
-        let source = source_from_view(panel, &view.description, frame, &input);
+        let source = source_from_view(panel, &view.description, frame, &input)?;
         let menu_from_panel = Pose {
             position: Vector3 {
                 x: panel.local_position[0],
@@ -92,12 +92,15 @@ fn source_from_view(
     caption: &str,
     frame: &GameUiFrame,
     input: &MenuPreparationInput<'_>,
-) -> MenuLayoutSource {
+) -> Result<MenuLayoutSource, MenuLayoutFailure> {
     let controls = panel
         .controls
         .iter()
         .map(|control| {
             let widget = match &control.content {
+                GameUiControlContent::FlightTouch { .. } => {
+                    return Err(MenuLayoutFailure::InvalidLayout);
+                }
                 GameUiControlContent::Button { presentation, .. } => MenuWidget::Button {
                     presentation: presentation.clone(),
                 },
@@ -205,7 +208,7 @@ fn source_from_view(
                     }
                 }
             };
-            MenuLayoutControl {
+            Ok(MenuLayoutControl {
                 id: control.id.clone(),
                 section: Some(control.section.clone()),
                 label: frame
@@ -215,10 +218,10 @@ fn source_from_view(
                     .map_or(&control.label, |button| &button.label)
                     .clone(),
                 widget,
-            }
+            })
         })
-        .collect();
-    MenuLayoutSource {
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(MenuLayoutSource {
         panel_id: panel.id.clone(),
         title: panel.title.clone(),
         sections: Some(panel.sections.clone()),
@@ -233,7 +236,7 @@ fn source_from_view(
         caption: caption.into(),
         previous_label: "前頁".into(),
         next_label: "次頁".into(),
-    }
+    })
 }
 
 pub(super) fn select(
