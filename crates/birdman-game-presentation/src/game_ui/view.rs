@@ -1804,7 +1804,8 @@ pub(super) fn layout(
         }
         SessionPhase::FlightRunning => GameUiShell::FlightBar,
         SessionPhase::FlightPaused { .. }
-            if state.pause_overlay == GameUiPauseOverlay::Settings
+            if (state.pause_overlay == GameUiPauseOverlay::Settings
+                || context.platform.renderer_failure.is_some())
                 && (context.platform.presentation_mode != GameUiPresentationMode::Screen
                     || viewport.width
                         >= super::hud::minimum_hud_width(font)

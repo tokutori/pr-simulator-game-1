@@ -2989,13 +2989,38 @@ fn renderer_failure_preserves_last_valid_hud_and_exposes_reload_across_scenes() 
             GameUiPauseOverlay::Settings,
             GameUiPauseOverlay::Help,
         ] {
-            assert_recovery(
-                &session,
-                &GameUiState {
-                    pause_overlay,
-                    ..state.clone()
-                },
-            );
+            let paused_state = GameUiState {
+                pause_overlay,
+                ..state.clone()
+            };
+            assert_recovery(&session, &paused_state);
+            for (width, height, font) in [
+                (1280.0, 720.0, 16.0),
+                (1920.0, 1080.0, 16.0),
+                (1920.0, 1080.0, 24.0),
+            ] {
+                let mut recovery_platform = platform.clone();
+                recovery_platform.viewport = GameUiViewport {
+                    width,
+                    height,
+                    root_font_size: font,
+                };
+                let recovery = game_ui_view(
+                    &paused_state,
+                    &context(&session, difficulty(), &recovery_platform),
+                )
+                .unwrap();
+                assert_eq!(recovery.layout.shell, GameUiShell::PauseSettings);
+                if let Some(hud) = recovery.hud {
+                    let layout = hud.layout;
+                    assert!(layout.offset_px[0] >= 0.0 && layout.offset_px[1] >= 0.0);
+                    assert!(layout.offset_px[1] + layout.height_px <= height);
+                    assert!(
+                        layout.offset_px[0] + layout.width_px
+                            <= width - recovery.layout.width_px - 0.75 * font
+                    );
+                }
+            }
         }
         assert_recovery(
             &session,
