@@ -3570,6 +3570,10 @@ fn legacy_replay_hud_uses_the_recorded_pilot_target_and_marks_unrecorded_loads()
         "— rad/s"
     );
     assert_eq!(hud_node(&hud, "hud-tail-force").content.value(), "— / — N");
+    assert_eq!(
+        hud_node(&hud, "hud-pilot-position").label,
+        "パイロット位置（適用目標）"
+    );
 }
 
 #[test]
@@ -3804,6 +3808,44 @@ fn hud_uses_the_authoritative_telemetry_and_existing_information_cue_policy() {
     assert_eq!(
         hud_node(&paused, "hud-tail-incidence-rate").content.value(),
         rates
+    );
+    let mut stopped = GameSession::new();
+    stopped.open_setup().unwrap();
+    prepare_manual_flight(&mut stopped, WeatherClass::Typical, 300, 42).unwrap();
+    stopped.mark_briefing_ready().unwrap();
+    stopped.start_countdown(1).unwrap();
+    stopped
+        .observe_countdown(stopped.countdown_token().unwrap(), 1.0, true)
+        .unwrap();
+    let command = TailFlightTickInput::new(
+        TailPilotIntent::try_new(0.0, 0.0).unwrap(),
+        TailRateTarget::try_new(0.0, 0.0).unwrap(),
+        TailPilotPositionCommand::Set(
+            birdman_game_core::TailPilotPositionIntent::try_new(-1.0).unwrap(),
+        ),
+    );
+    for _ in 0..250 {
+        stopped.advance_tail_flight_tick(command).unwrap();
+        let body = stopped.snapshot().tail_flight_state().unwrap();
+        if body.pilot_motion_limited() && body.flight_state().pilot_velocity_mps() == 0.0 {
+            break;
+        }
+    }
+    let body = stopped.snapshot().tail_flight_state().unwrap();
+    assert!(body.pilot_motion_limited());
+    assert_eq!(body.flight_state().pilot_velocity_mps(), 0.0);
+    let protected = game_ui_view(
+        &GameUiState::default(),
+        &context(&stopped, difficulty(), &platform),
+    )
+    .unwrap()
+    .hud
+    .unwrap();
+    assert!(
+        hud_node(&protected, "hud-pilot-position")
+            .content
+            .value()
+            .contains("保護停止")
     );
 }
 

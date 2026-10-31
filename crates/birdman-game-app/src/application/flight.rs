@@ -119,7 +119,9 @@ impl ApplicationSession {
                         .ok_or(FlightFrameError::Session(
                             GameSessionError::InvalidTransition,
                         ))?;
-                let stop_target = previous.pilot_stopping_target();
+                let stop_target = previous
+                    .pilot_stopping_target()
+                    .filter(|_| previous.pilot_motion_limited());
                 input.observe_pilot_stop(stop_target.is_some());
                 let held = mapping
                     .normalized_target(stop_target.unwrap_or(previous.pilot_position_demand()))
@@ -161,7 +163,7 @@ impl ApplicationSession {
                         .as_ref()
                         .ok()
                         .and_then(|snapshot| snapshot.tail_flight_state())
-                        .is_some_and(|state| state.pilot_stopping_target().is_some());
+                        .is_some_and(|state| state.pilot_motion_limited());
                     input.confirm_tick(demand, stopped);
                 }
                 result

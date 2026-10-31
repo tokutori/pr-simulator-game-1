@@ -115,6 +115,17 @@ impl TailFlightTickState {
         }
     }
 
+    /// Reports protection that holds an unfulfilled demand at a certified stop.
+    pub const fn pilot_motion_limited(self) -> bool {
+        match self.pilot_stop {
+            Some(stop) => {
+                !stop.resume_after_stop
+                    && stop.target.position_m() != self.pilot_position_demand.position_m()
+            }
+            None => false,
+        }
+    }
+
     /// Attaches the explicitly accepted structural coefficient at this boundary.
     pub const fn with_wing_bending_factor(mut self, factor: WingBendingFactor) -> Self {
         self.wing_bending_factor = Some(factor);
