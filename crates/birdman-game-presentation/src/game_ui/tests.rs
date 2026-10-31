@@ -1334,9 +1334,24 @@ fn processing_delay_description_and_resume_follow_the_authoritative_reason() {
     let platform = platform();
     let state = GameUiState::default();
     let blocked = game_ui_view(&state, &context(&session, difficulty(), &platform)).unwrap();
-    assert!(blocked.description.contains("処理に時間がかかった"));
-    assert!(!blocked.description.contains("ProcessingDelay"));
-    assert!(!blocked.description.contains("Resume"));
+    let GameUiControlContent::Status {
+        value: pause_description,
+        ..
+    } = &control(&blocked, "game-state").content
+    else {
+        panic!("missing pause description")
+    };
+    assert!(blocked.description.is_empty());
+    assert!(pause_description.contains("処理に時間がかかった"));
+    assert!(!pause_description.contains("ProcessingDelay"));
+    assert!(!pause_description.contains("Resume"));
+    let mut notified_platform = platform.clone();
+    notified_platform.notification = "保存処理の案内".to_owned();
+    let notified =
+        game_ui_view(&state, &context(&session, difficulty(), &notified_platform)).unwrap();
+    assert_eq!(&notified.description, pause_description);
+    assert!(matches!(&control(&notified, "game-state").content,
+        GameUiControlContent::Status { value, .. } if value == &notified_platform.notification));
     assert!(control(&blocked, "game-state").label.is_empty());
     assert!(!control(&blocked, "game-flight-resume").enabled);
     session
@@ -1432,12 +1447,9 @@ fn pause_conditions_and_overlay_states_share_admission_without_resuming_physics(
         assert_ne!(GameUiStructureKey::new(&state, &observed), before);
         let view = game_ui_view(&state, &observed).unwrap();
         assert!(!control(&view, "game-flight-resume").enabled);
-        assert!(
-            view.description
-                .contains(&control(&view, "game-paused-abort").label)
-        );
+        assert!(view.description.is_empty());
         assert!(matches!(&control(&view, "game-flight-recovery").content,
-            GameUiControlContent::Status { value, .. } if value == &view.description));
+            GameUiControlContent::Status { value, .. } if value.contains(&control(&view, "game-paused-abort").label)));
         assert!(
             matches!(&control(&view, "game-flight-failure-cause").content,
             GameUiControlContent::Status { value, .. } if !value.is_empty())

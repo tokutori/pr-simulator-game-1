@@ -33,6 +33,10 @@ pub fn game_ui_view(
     } else {
         description(phase, can_resume, context.flight_failure)
     };
+    let pause_description_in_body = matches!(phase, SessionPhase::FlightPaused { .. })
+        && !credits_open
+        && state.pause_overlay == GameUiPauseOverlay::Menu
+        && (context.flight_failure.is_some() || context.platform.notification.is_empty());
     if matches!(phase, SessionPhase::FlightPaused { .. }) && !credits_open {
         flight_camera_choices(&mut menu, state, context);
     }
@@ -283,8 +287,7 @@ pub fn game_ui_view(
                         "game-state"
                     },
                     "",
-                    if context.flight_failure.is_some() || context.platform.notification.is_empty()
-                    {
+                    if pause_description_in_body {
                         &description
                     } else {
                         &context.platform.notification
@@ -375,7 +378,7 @@ pub fn game_ui_view(
         SessionPhase::Attract => {
             menu.status(
                 "game-attract-status",
-                "Demo",
+                "再生状態",
                 if context.platform.notification.is_empty() {
                     "自動再生中"
                 } else {
@@ -492,11 +495,17 @@ pub fn game_ui_view(
         scene,
         title: if credits_open {
             "クレジット・利用条件"
+        } else if phase == SessionPhase::Attract {
+            "デモ飛行"
         } else {
             title(scene)
         }
         .to_owned(),
-        description,
+        description: if pause_description_in_body {
+            String::new()
+        } else {
+            description
+        },
         active_overlay: if credits_open {
             Some(GameUiOverlay::Credits)
         } else if matches!(phase, SessionPhase::FlightPaused { .. }) {
@@ -1726,7 +1735,7 @@ fn title(scene: GameUiScene) -> &'static str {
         GameUiScene::FlightSetup => "飛行設定",
         GameUiScene::Briefing => "発進前の確認",
         GameUiScene::Countdown => "発進準備",
-        GameUiScene::Flight => "Flight",
+        GameUiScene::Flight => "飛行",
         GameUiScene::Result => "飛行結果",
         GameUiScene::Replay => "飛行リプレイ",
     }
@@ -1754,12 +1763,8 @@ fn description(
     match phase {
         SessionPhase::Title => "琵琶湖を舞台に、人力飛行機で滑空する。".to_owned(),
         SessionPhase::FlightSetup => "飛行条件と描画品質を選択する。".to_owned(),
-        SessionPhase::BriefingPreparing => "飛行に必要なデータを準備している。".to_owned(),
-        SessionPhase::BriefingReady => {
-            "飛行条件と操縦方法を確認し、発進カウントダウンを開始する。".to_owned()
-        }
-        SessionPhase::BriefingFailed { .. } => {
-            "飛行準備に失敗した。再試行または設定変更を選択する。".to_owned()
+        SessionPhase::BriefingPreparing | SessionPhase::BriefingReady | SessionPhase::BriefingFailed { .. } => {
+            "飛行条件と操縦方法を確認する。".to_owned()
         }
         SessionPhase::Countdown { .. } => "発進までお待ちください。".to_owned(),
         SessionPhase::FlightRunning => "機体を操縦して、できるだけ遠くまで滑空する。".to_owned(),
@@ -1779,7 +1784,7 @@ fn description(
         }
         SessionPhase::Result => "飛行結果を確認し、再試行や記録再生を選択する。".to_owned(),
         SessionPhase::Replay => "保存した飛行を再生している。".to_owned(),
-        SessionPhase::Attract => "デモ飛行を再生している。".to_owned(),
+        SessionPhase::Attract => String::new(),
     }
 }
 
