@@ -1856,12 +1856,18 @@ pub(super) fn layout(
         GameUiShell::Center => (viewport.width * 0.04).clamp(1.25 * font, 2.5 * font),
     };
     let content = (width - 2.0 * padding - 1.5 * font).max(1.0);
-    let running_renderer_recovery =
-        phase == SessionPhase::FlightRunning && context.platform.renderer_failure.is_some();
+    let flight_bar_renderer_recovery = shell == GameUiShell::FlightBar
+        && matches!(
+            phase,
+            SessionPhase::FlightRunning | SessionPhase::FlightPaused { .. }
+        )
+        && context.platform.renderer_failure.is_some();
     Ok(GameUiLayout {
         shell,
         width_px: width,
-        maximum_height_px: if phase == SessionPhase::FlightRunning && !running_renderer_recovery {
+        maximum_height_px: if flight_bar_renderer_recovery {
+            (viewport.height - 2.0 * font).max(1.0)
+        } else if phase == SessionPhase::FlightRunning {
             (viewport.height - 2.0 * font).max(1.0).min(8.0 * font)
         } else if shell == GameUiShell::Analysis {
             (viewport.height - 2.0 * font).max(1.0)
@@ -1890,7 +1896,7 @@ pub(super) fn layout(
             || context.platform.presentation_mode == GameUiPresentationMode::Screen)
             && !(shell == GameUiShell::FlightBar
                 && phase == SessionPhase::FlightRunning
-                && !running_renderer_recovery),
+                && !flight_bar_renderer_recovery),
         clip_x: true,
         passthrough: shell == GameUiShell::FlightBar && phase == SessionPhase::FlightRunning
             || (shell == GameUiShell::Analysis
