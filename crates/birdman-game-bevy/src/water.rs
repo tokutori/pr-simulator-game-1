@@ -39,13 +39,21 @@ pub(crate) struct WaterMaterial {
     textures: WaterTextures,
     pub(crate) buffer: Handle<ShaderBuffer>,
     detail_quadrature_samples: u32,
+    sky: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct WaterPipelineKey {
+    pub(crate) detail_quadrature_samples: u32,
+    pub(crate) sky: bool,
 }
 
 #[derive(ShaderType, Debug, Clone)]
 pub(crate) struct WaterParameters {
     pub(crate) camera_time: Vec4,
     pub(crate) sun_cloud: Vec4,
-    pub(crate) waves_sky: Vec4,
+    // Wind velocity, detail amplitude and reserved zero padding.
+    pub(crate) wind_detail: Vec4,
     pub(crate) geometry_patch: Vec4,
     geometry_waves: [Vec4; MAX_LAKE_WAVE_COMPONENTS],
     geometry_motion: [Vec4; MAX_LAKE_WAVE_COMPONENTS],
@@ -86,7 +94,7 @@ pub(crate) struct WaterTextures {
 }
 
 impl AsBindGroup for WaterMaterial {
-    type Data = u32;
+    type Data = WaterPipelineKey;
     type Param = (
         <WaterTextures as AsBindGroup>::Param,
         SRes<RenderAssets<GpuShaderBuffer>>,
@@ -96,7 +104,10 @@ impl AsBindGroup for WaterMaterial {
         "WaterMaterial"
     }
     fn bind_group_data(&self) -> Self::Data {
-        self.detail_quadrature_samples
+        WaterPipelineKey {
+            detail_quadrature_samples: self.detail_quadrature_samples,
+            sky: self.sky,
+        }
     }
 
     fn unprepared_bind_group(
@@ -149,10 +160,16 @@ impl Material for WaterMaterial {
         _layout: &MeshVertexBufferLayoutRef,
         key: MaterialPipelineKey<Self>,
     ) -> Result<(), SpecializedMeshPipelineError> {
-        let definition = ShaderDefVal::UInt("LAKE_DETAIL_SAMPLES".into(), key.bind_group_data);
-        descriptor.vertex.shader_defs.push(definition.clone());
+        let mut definitions = vec![ShaderDefVal::UInt(
+            "LAKE_DETAIL_SAMPLES".into(),
+            key.bind_group_data.detail_quadrature_samples,
+        )];
+        if key.bind_group_data.sky {
+            definitions.push(ShaderDefVal::Bool("LAKE_SKY".into(), true));
+        }
+        descriptor.vertex.shader_defs.extend(definitions.clone());
         if let Some(fragment) = &mut descriptor.fragment {
-            fragment.shader_defs.push(definition);
+            fragment.shader_defs.extend(definitions);
         }
         Ok(())
     }
@@ -186,7 +203,7 @@ impl WaterMaterial {
             parameters: WaterParameters {
                 camera_time: Vec4::ZERO,
                 sun_cloud: Vec4::from_array(lighting.sunlight_direction.map(|value| value as f32)),
-                waves_sky: Vec4::new(
+                wind_detail: Vec4::new(
                     water.wind_velocity_render[0] as f32,
                     water.wind_velocity_render[1] as f32,
                     water.detail_amplitude_scale as f32,
@@ -233,6 +250,7 @@ impl WaterMaterial {
             },
             buffer: Handle::default(),
             detail_quadrature_samples: projection.detail_quadrature_samples(),
+            sky: false,
         }
     }
 
@@ -251,7 +269,7 @@ impl WaterMaterial {
 
     pub(crate) fn sky_surface(&self) -> Self {
         let mut material = self.clone();
-        material.parameters.waves_sky.w = 1.0;
+        material.sky = true;
         material.parameters.geometry_patch = Vec4::ZERO;
         material.parameters.reflection_enabled = 0.0;
         material
