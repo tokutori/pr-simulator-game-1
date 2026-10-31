@@ -34,6 +34,7 @@ pub struct TailFlightTickState {
     flight_state: FlightState,
     incidence: TailIncidence,
     pilot_position_target: PilotPositionTarget,
+    pilot_position_demand: PilotPositionTarget,
     wing_bending_factor: Option<WingBendingFactor>,
 }
 
@@ -55,6 +56,7 @@ impl TailFlightTickState {
             flight_state,
             incidence,
             pilot_position_target,
+            pilot_position_demand: pilot_position_target,
             wing_bending_factor: None,
         })
     }
@@ -85,6 +87,15 @@ impl TailFlightTickState {
     #[cfg_attr(verus_only, verus_spec(returns self.pilot_position_target()))]
     pub const fn pilot_position_target(self) -> PilotPositionTarget {
         self.pilot_position_target
+    }
+
+    /// Returns the retained pilot demand before the angle-of-attack guard projection.
+    /// The guard rewrites only the applied target, so the next tick resolves its
+    /// input from this demand and a held demand is never erased by protection.
+    #[cfg_attr(verus_only, verus_verify(dual_spec))]
+    #[cfg_attr(verus_only, verus_spec(returns self.pilot_position_demand()))]
+    pub const fn pilot_position_demand(self) -> PilotPositionTarget {
+        self.pilot_position_demand
     }
 
     /// Attaches the explicitly accepted structural coefficient at this boundary.
@@ -734,7 +745,7 @@ fn evaluate_tail_flight_tick(
         .pilot_mapping
         .resolve(
             aircraft,
-            previous.pilot_position_target,
+            previous.pilot_position_demand,
             input.pilot_position,
         )
         .map_err(TailFlightTickError::Dynamics)?;
@@ -781,6 +792,7 @@ fn evaluate_tail_flight_tick(
             flight_state: outcome.flight_state,
             incidence,
             pilot_position_target,
+            pilot_position_demand: requested_pilot_position_target,
             wing_bending_factor,
         },
         controls: TailAppliedControls {
