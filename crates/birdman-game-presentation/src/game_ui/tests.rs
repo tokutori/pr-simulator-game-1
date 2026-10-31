@@ -572,9 +572,17 @@ fn head_hud_fits_complete_shared_rows_in_lower_band_before_using_upper_space() {
             GameUiHudTone::Normal => unreachable!(),
         };
         assert!(
-            projection.items.iter().any(
-                |item| matches!(item, SurfacePaintItem::Text { color, .. } if color == expected)
-            )
+            projection
+                .items
+                .iter()
+                .filter_map(|item| match item {
+                    SurfacePaintItem::Plot { items, .. } => Some(items),
+                    _ => None,
+                })
+                .flatten()
+                .any(
+                    |item| matches!(item, SurfacePaintItem::Text { color, .. } if color == expected)
+                )
         );
         assert!(projection.items.iter().filter_map(|item| match item {
             SurfacePaintItem::Plot { items, .. } => Some(items),
