@@ -525,7 +525,9 @@ fn adi_line(
     ink: Color,
 ) {
     let Some([start, end]) = segment else {
-        retained_node(world, entity).display = Display::None;
+        retained_node(world, entity)
+            .map_unchanged(|node| &mut node.display)
+            .set_if_neq(Display::None);
         return;
     };
     let start = Vec2::new(start.x as f32, start.y as f32);
@@ -590,7 +592,9 @@ fn project_instrument_label(
     });
     retained_ui_transform(world, anchor)
         .set_if_neq(UiTransform::from_rotation(Rot2::degrees(rotation)));
-    retained_node(world, label).position_type = PositionType::Absolute;
+    retained_node(world, label)
+        .map_unchanged(|node| &mut node.position_type)
+        .set_if_neq(PositionType::Absolute);
     retained_ui_transform(world, label)
         .set_if_neq(UiTransform::from_translation(Val2::percent(align, 0)));
     set_text(world, label, value.to_owned());
@@ -612,7 +616,9 @@ fn project_triangle(
     ink: Color,
 ) {
     let Some([tip, left, right]) = points else {
-        retained_node(world, entity).display = Display::None;
+        retained_node(world, entity)
+            .map_unchanged(|node| &mut node.display)
+            .set_if_neq(Display::None);
         return;
     };
     let height = (tip.y - left.y).abs();
@@ -684,10 +690,6 @@ fn project_widget(
             for (entity, segment) in aircraft.into_iter().zip(geometry.aircraft_segments) {
                 adi_line(world, entity, Some(segment), 5.0, focus);
             }
-            for (line, anchor, _) in ticks {
-                retained_node(world, line).display = Display::None;
-                retained_node(world, anchor).display = Display::None;
-            }
             if let Some(layer) = layer {
                 for ((line, anchor, label), tick) in ticks.into_iter().zip(layer.pitch_ticks) {
                     adi_line(world, line, tick.segment, 2.0, ink);
@@ -705,6 +707,15 @@ fn project_widget(
                             ink,
                         ),
                     );
+                }
+            } else {
+                for (line, anchor, _) in ticks {
+                    retained_node(world, line)
+                        .map_unchanged(|node| &mut node.display)
+                        .set_if_neq(Display::None);
+                    retained_node(world, anchor)
+                        .map_unchanged(|node| &mut node.display)
+                        .set_if_neq(Display::None);
                 }
             }
             retained_node(world, marker)
@@ -1016,15 +1027,86 @@ mod tests {
             [Color::WHITE; 3],
         )
         .unwrap();
-        let HudWidget::Attitude { ticks, .. } = widget.widget else {
+        let HudWidget::Attitude { ref ticks, .. } = widget.widget else {
             unreachable!()
         };
+        let ticks = **ticks;
         assert_eq!(world.get::<Node>(ticks[3].0).unwrap().width, px(188));
         assert_eq!(world.get::<Node>(ticks[3].0).unwrap().top, px(111));
         assert_eq!(world.get::<Node>(ticks[3].1).unwrap().top, px(116));
         assert_eq!(
             world.get::<TextLayout>(ticks[3].2).unwrap().linebreak,
             bevy::text::LineBreak::NoWrap
+        );
+        world.clear_trackers();
+        project_widget(
+            &mut world,
+            &mut widget,
+            &source,
+            &hud,
+            &font,
+            [Color::WHITE; 3],
+        )
+        .unwrap();
+        for (line, anchor, label) in ticks.iter().copied() {
+            for entity in [line, anchor, label] {
+                assert!(!world.entity(entity).get_ref::<Node>().unwrap().is_changed());
+            }
+        }
+        let GameUiHudNodeContent::Attitude { geometry, .. } = &mut source.content else {
+            unreachable!()
+        };
+        let saved_layer = geometry.horizon.take().unwrap();
+        project_widget(
+            &mut world,
+            &mut widget,
+            &source,
+            &hud,
+            &font,
+            [Color::WHITE; 3],
+        )
+        .unwrap();
+        for (line, anchor, _) in ticks.iter().copied() {
+            for entity in [line, anchor] {
+                assert_eq!(world.get::<Node>(entity).unwrap().display, Display::None);
+                assert!(world.entity(entity).get_ref::<Node>().unwrap().is_changed());
+            }
+        }
+        world.clear_trackers();
+        project_widget(
+            &mut world,
+            &mut widget,
+            &source,
+            &hud,
+            &font,
+            [Color::WHITE; 3],
+        )
+        .unwrap();
+        for (line, anchor, _) in ticks.iter().copied() {
+            for entity in [line, anchor] {
+                assert!(!world.entity(entity).get_ref::<Node>().unwrap().is_changed());
+            }
+        }
+        let GameUiHudNodeContent::Attitude { geometry, .. } = &mut source.content else {
+            unreachable!()
+        };
+        geometry.horizon = Some(saved_layer);
+        project_widget(
+            &mut world,
+            &mut widget,
+            &source,
+            &hud,
+            &font,
+            [Color::WHITE; 3],
+        )
+        .unwrap();
+        assert_eq!(
+            world.get::<Node>(ticks[3].0).unwrap().display,
+            Display::Flex
+        );
+        assert_eq!(
+            world.get::<Node>(ticks[3].1).unwrap().display,
+            Display::Flex
         );
         assert!(world.get_entity(surface).is_ok());
         let pointer = shape(&mut world, parent, Node::default(), Color::NONE);
@@ -1063,6 +1145,15 @@ mod tests {
         assert_eq!(world.get::<BorderColor>(pointer).unwrap().top, Color::WHITE);
         project_triangle(&mut world, pointer, None, Color::WHITE);
         assert_eq!(world.get::<Node>(pointer).unwrap().display, Display::None);
+        world.clear_trackers();
+        project_triangle(&mut world, pointer, None, Color::WHITE);
+        assert!(
+            !world
+                .entity(pointer)
+                .get_ref::<Node>()
+                .unwrap()
+                .is_changed()
+        );
         source.content = GameUiHudNodeContent::Direction {
             value: String::new(),
             canvas_size: [72.0, 72.0],
