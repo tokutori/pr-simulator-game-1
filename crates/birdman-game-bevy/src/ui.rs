@@ -513,6 +513,10 @@ fn control_pointer_inputs(world: &mut World) {
                 let mut entity = *hit;
                 loop {
                     if let Some(region) = world.get::<ControlPointerRegion>(entity) {
+                        // Native mouse motion already reaches the aggregate through PointerMotion.
+                        if event.pointer_id == PointerId::Mouse && !region.chart {
+                            return None;
+                        }
                         return Some((
                             entity,
                             region.canvas,

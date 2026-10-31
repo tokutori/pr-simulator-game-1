@@ -432,6 +432,38 @@ fn shared_widgets_retain_values_and_forward_controls_and_chart_io_with_their_sou
             ..
         }
     ));
+    // Touch-only regions leave native mouse motion to the existing global observation.
+    app.world_mut()
+        .get_mut::<ControlPointerRegion>(host)
+        .unwrap()
+        .chart = false;
+    app.world_mut().resource_mut::<NativeInputs>().0.clear();
+    for action in [
+        PointerAction::Press(PointerButton::Secondary),
+        PointerAction::Move { delta: Vec2::X },
+        PointerAction::Release(PointerButton::Secondary),
+    ] {
+        app.world_mut().write_message(PointerInput::new(
+            PointerId::Mouse,
+            bevy::picking::pointer::Location {
+                target: target.clone(),
+                position: Vec2::new(73.0, 51.0),
+            },
+            action,
+        ));
+    }
+    control_pointer_inputs(app.world_mut());
+    assert!(app.world().resource::<NativeInputs>().0.is_empty());
+    assert!(
+        !app.world()
+            .resource::<ControlPointerIo>()
+            .captures
+            .contains_key(&PointerId::Mouse)
+    );
+    app.world_mut()
+        .get_mut::<ControlPointerRegion>(host)
+        .unwrap()
+        .chart = true;
     app.world_mut().resource_mut::<NativeInputs>().0.clear();
     app.world_mut().write_message(PointerInput::new(
         PointerId::Mouse,
@@ -442,6 +474,10 @@ fn shared_widgets_retain_values_and_forward_controls_and_chart_io_with_their_sou
         PointerAction::Press(PointerButton::Primary),
     ));
     control_pointer_inputs(app.world_mut());
+    app.world_mut()
+        .get_mut::<ControlPointerRegion>(host)
+        .unwrap()
+        .chart = false;
     // Raw touch lifetimes include contacts outside controls; a surviving secondary never
     // becomes primary when the first contact ends. The full u64 identities remain distinct.
     let first_touch = 0x1_0000_0005;
