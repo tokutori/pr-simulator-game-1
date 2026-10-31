@@ -13,6 +13,73 @@ fn shared_widgets_retain_values_and_forward_controls_and_chart_io_with_their_sou
         .init_resource::<ButtonInput<KeyCode>>()
         .add_systems(Startup, setup_ui);
     app.update();
+    let touch_node = app.world_mut().spawn_empty().id();
+    touch::project(
+        app.world_mut(),
+        touch_node,
+        [20.0, 30.0],
+        Some([10.0, 15.0]),
+        4.0,
+        Color::WHITE,
+    );
+    let children = app.world().get::<Children>(touch_node).unwrap();
+    let (indicator, origin) = (children[0], children[1]);
+    let mut touch_value = birdman_game_presentation::game_ui::GameUiFlightTouchValue {
+        id: "retained-touch".into(),
+        position: [20.0, 30.0],
+        origin: Some([10.0, 15.0]),
+    };
+    app.world_mut().clear_trackers();
+    touch::project_frame(app.world_mut(), touch_node, &touch_value);
+    for entity in [indicator, origin] {
+        assert!(
+            !app.world()
+                .entity(entity)
+                .get_ref::<Node>()
+                .unwrap()
+                .is_changed()
+        );
+    }
+    touch_value.position = [25.0, 35.0];
+    touch_value.origin = None;
+    touch::project_frame(app.world_mut(), touch_node, &touch_value);
+    assert_eq!(app.world().get::<Node>(indicator).unwrap().left, px(25));
+    assert_eq!(app.world().get::<Node>(indicator).unwrap().top, px(35));
+    assert_eq!(
+        app.world().get::<Node>(origin).unwrap().display,
+        Display::None
+    );
+    for entity in [indicator, origin] {
+        assert!(
+            app.world()
+                .entity(entity)
+                .get_ref::<Node>()
+                .unwrap()
+                .is_changed()
+        );
+    }
+    app.world_mut().clear_trackers();
+    touch::project_frame(app.world_mut(), touch_node, &touch_value);
+    for entity in [indicator, origin] {
+        assert!(
+            !app.world()
+                .entity(entity)
+                .get_ref::<Node>()
+                .unwrap()
+                .is_changed()
+        );
+    }
+    touch_value.origin = Some([12.0, 17.0]);
+    touch::project_frame(app.world_mut(), touch_node, &touch_value);
+    let restored_origin = app.world().get::<Node>(origin).unwrap();
+    assert_eq!(
+        (
+            restored_origin.display,
+            restored_origin.left,
+            restored_origin.top
+        ),
+        (Display::Flex, px(12), px(17))
+    );
     let mut runtime = ApplicationRuntime::new(
         birdman_game_app::application::ApplicationSession::default(),
         ApplicationPlatformObservation {

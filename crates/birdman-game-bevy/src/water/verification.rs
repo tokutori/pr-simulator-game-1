@@ -206,7 +206,7 @@ fn setup(
         }
         if flat {
             base.parameters.geometry_parameters.x = 0.0;
-            base.parameters.waves_sky = Vec4::ZERO;
+            base.parameters.wind_detail = Vec4::ZERO;
             base.parameters.wind_speed = 0.0;
         }
         if detail_cutoff {

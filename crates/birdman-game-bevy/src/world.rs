@@ -1610,11 +1610,14 @@ mod tests {
         assert_ne!(water_surfaces[0].buffer.id(), water_surfaces[1].buffer.id());
         assert_ne!(water_surfaces[1].buffer.id(), water_surfaces[2].buffer.id());
         assert_ne!(water_surfaces[0].buffer.id(), water_surfaces[2].buffer.id());
-        for surface in &water_surfaces {
+        for (index, surface) in water_surfaces.iter().enumerate() {
+            let key = bevy::render::render_resource::AsBindGroup::bind_group_data(surface);
             assert_eq!(
-                bevy::render::render_resource::AsBindGroup::bind_group_data(surface),
+                key.detail_quadrature_samples,
                 water.projection.detail_quadrature_samples()
             );
+            assert_eq!(key.sky, index == 2);
+            assert_eq!(&surface.parameters.encode()[44..48], &0.0_f32.to_le_bytes());
             let buffer = parameter_buffers.remove(surface.buffer.id()).unwrap();
             assert_eq!(buffer.data.unwrap(), surface.parameters.encode());
             assert_eq!(

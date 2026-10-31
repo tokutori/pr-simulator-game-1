@@ -10,7 +10,7 @@
 struct LakeWaterUniforms {
     camera_time: vec4<f32>,
     sun_cloud: vec4<f32>,
-    waves_sky: vec4<f32>,
+    wind_detail: vec4<f32>,
     geometry_patch: vec4<f32>,
     geometry_waves: array<vec4<f32>, 24>,
     geometry_motion: array<vec4<f32>, 24>,
@@ -91,7 +91,7 @@ fn grid_spacing_gradient(local: vec2<f32>) -> vec2<f32> {
 }
 
 fn detail_samples(position: vec2<f32>) -> mat2x4<f32> {
-    let drift = water.waves_sky.xy * water.camera_time.w;
+    let drift = water.wind_detail.xy * water.camera_time.w;
     let near_sample = textureSampleLevel(detail_near, detail_near_sampler, (position - drift * 0.42) / water.detail_extents.x, 0.0);
     let far_sample = textureSampleLevel(detail_far, detail_far_sampler, (position - drift * 0.89) / water.detail_extents.y, 0.0);
     return mat2x4<f32>(near_sample, far_sample);
@@ -116,9 +116,9 @@ fn lake_geometry(position: vec2<f32>, spacing: f32) -> SurfaceProjection {
         let near_slope = (details[0].xy * 255.0 - 128.0) / 127.0;
         let far_slope = (details[1].xy * 255.0 - 128.0) / 127.0;
         resolved_detail_slope = (near_slope * (0.6 * near_visibility)
-            + far_slope * (0.55 * far_visibility)) * water.waves_sky.z;
+            + far_slope * (0.55 * far_visibility)) * water.wind_detail.z;
         surface.offset.y = ((details[0].w - 128.0 / 255.0) * 0.6 * near_visibility
-            + (details[1].w - 128.0 / 255.0) * 0.55 * far_visibility) * water.waves_sky.z;
+            + (details[1].w - 128.0 / 255.0) * 0.55 * far_visibility) * water.wind_detail.z;
     }
     var horizontal_jacobian = vec4<f32>(1.0, 0.0, 0.0, 1.0);
     var height_gradient = resolved_detail_slope;
@@ -178,7 +178,8 @@ fn vertex(vertex: Vertex) -> VertexOutput {
 #ifdef VERTEX_UVS_B
     spacing = vertex.uv_b.x;
 #endif
-    if water.waves_sky.w < 0.5 {
+#ifndef LAKE_SKY
+    {
         let surface = lake_geometry(base_position.xz, spacing);
         output.world_position = vec4<f32>(base_position.xyz + surface.offset, 1.0);
         output.world_normal = normalize(cross(surface.tangent_z, surface.tangent_x));
@@ -186,12 +187,15 @@ fn vertex(vertex: Vertex) -> VertexOutput {
         output.color = vec4<f32>(surface.represented_slope, surface.crest, surface.compression);
 #endif
     }
+#endif
     output.position = position_world_to_clip(output.world_position.xyz);
-    if water.waves_sky.w > 0.5 {
+#ifdef LAKE_SKY
+    {
         output.position = vec4<f32>(vertex.position.xy, 0.0, 1.0);
         let direction = view_bindings::view.world_from_clip * vec4<f32>(vertex.position.xy, 0.5, 1.0);
         output.world_position = vec4<f32>(direction.xyz / direction.w, 1.0);
     }
+#endif
 #ifdef VERTEX_UVS_A
     output.uv = base_position.xz;
 #endif
@@ -251,7 +255,7 @@ fn lake_detail_sample(image: texture_2d<f32>, image_sampler: sampler, uv: vec2<f
 fn lake_micro_detail(position: vec2<f32>, footprint_x: vec2<f32>, footprint_y: vec2<f32>) -> vec3<f32> {
     let fine_amplitude = 0.4;
     let ripple_amplitude = 0.1;
-    let drift = water.waves_sky.xy * water.camera_time.w;
+    let drift = water.wind_detail.xy * water.camera_time.w;
     let near_uv = (position - drift * 0.42) / water.detail_extents.x;
     let near_x = footprint_x / water.detail_extents.x;
     let near_y = footprint_y / water.detail_extents.x;
@@ -306,7 +310,7 @@ fn lake_micro_detail(position: vec2<f32>, footprint_x: vec2<f32>, footprint_y: v
       filtered += vec3<f32>(micro_slope, slope_moment) * (1.0 / f32(#{LAKE_DETAIL_SAMPLES}u));
     }
     let strength = smoothstep(0.05, 0.6, water.wind_speed);
-    let scaled_strength = strength * water.waves_sky.z;
+    let scaled_strength = strength * water.wind_detail.z;
     return vec3<f32>(filtered.xy * scaled_strength, filtered.z * scaled_strength * scaled_strength);
 }
 
@@ -343,7 +347,9 @@ fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
 #endif
     let footprint_x = dpdx(position);
     let footprint_y = dpdy(position);
-    if water.waves_sky.w > 0.5 { return vec4<f32>(lake_sky_radiance(-view), 1.0); }
+#ifdef LAKE_SKY
+    return vec4<f32>(lake_sky_radiance(-view), 1.0);
+#else
     var spacing = 1200.0;
 #ifdef VERTEX_UVS_B
     spacing = mesh.uv_b.x;
@@ -422,6 +428,7 @@ fn fragment(mesh: VertexOutput) -> @location(0) vec4<f32> {
     let atmospheric_fade = smoothstep(water.haze_parameters.x, water.haze_parameters.y, distance_to_eye);
     color = mix(color, water.water_palette[3].xyz, atmospheric_fade);
     return vec4<f32>(color, 1.0);
+#endif
 #endif
 #endif
 }

@@ -2884,6 +2884,18 @@ fn renderer_failure_preserves_last_valid_hud_and_exposes_reload_across_scenes() 
             assert!(matches!(&control(&view, "game-renderer-stopped").content,
                 GameUiControlContent::Status { value, .. } if value == "renderer submission failed"));
             assert!(control(&view, "game-renderer-reload").enabled);
+            if view.layout.shell == GameUiShell::FlightBar
+                && matches!(
+                    before.phase(),
+                    SessionPhase::FlightRunning | SessionPhase::FlightPaused { .. }
+                )
+            {
+                assert_eq!(
+                    view.layout.maximum_height_px,
+                    platform.viewport.height - 2.0 * platform.viewport.root_font_size
+                );
+                assert!(view.layout.scroll_y);
+            }
             let update = update_game_ui(
                 state,
                 GameUiAction::ControlInput {
@@ -2919,6 +2931,34 @@ fn renderer_failure_preserves_last_valid_hud_and_exposes_reload_across_scenes() 
         setup.start_countdown(1).unwrap();
         assert_recovery(&setup, &state);
         assert_recovery(&session, &state);
+        for (width, height, font) in [
+            (1280.0, 720.0, 16.0),
+            (1920.0, 1080.0, 16.0),
+            (1280.0, 720.0, 24.0),
+        ] {
+            let mut recovery_platform = platform.clone();
+            recovery_platform.viewport = GameUiViewport {
+                width,
+                height,
+                root_font_size: font,
+            };
+            let recovery =
+                game_ui_view(&state, &context(&session, settings, &recovery_platform)).unwrap();
+            recovery_platform.renderer_failure = None;
+            let normal =
+                game_ui_view(&state, &context(&session, settings, &recovery_platform)).unwrap();
+            assert_eq!(normal.layout.maximum_height_px, 8.0 * font);
+            assert!(!normal.layout.scroll_y);
+            assert_eq!(recovery.layout.maximum_height_px, height - 2.0 * font);
+            // Padding, action row, section gaps and reload alone require 8.5 font units.
+            assert!(recovery.layout.maximum_height_px > 8.5 * font);
+            assert!(recovery.layout.scroll_y);
+            assert_eq!(recovery.layout.shell, normal.layout.shell);
+            assert_eq!(recovery.layout.width_px, normal.layout.width_px);
+            assert_eq!(recovery.layout.padding_px, normal.layout.padding_px);
+            assert_eq!(recovery.layout.passthrough, normal.layout.passthrough);
+            assert!(control(&recovery, "game-renderer-reload").enabled);
+        }
         let view = game_ui_view(&state, &context(&session, settings, &platform)).unwrap();
         assert!(control(&view, "game-flight-abort").enabled);
         let GameUiControlContent::Status { value, .. } =
@@ -2949,13 +2989,38 @@ fn renderer_failure_preserves_last_valid_hud_and_exposes_reload_across_scenes() 
             GameUiPauseOverlay::Settings,
             GameUiPauseOverlay::Help,
         ] {
-            assert_recovery(
-                &session,
-                &GameUiState {
-                    pause_overlay,
-                    ..state.clone()
-                },
-            );
+            let paused_state = GameUiState {
+                pause_overlay,
+                ..state.clone()
+            };
+            assert_recovery(&session, &paused_state);
+            for (width, height, font) in [
+                (1280.0, 720.0, 16.0),
+                (1920.0, 1080.0, 16.0),
+                (1920.0, 1080.0, 24.0),
+            ] {
+                let mut recovery_platform = platform.clone();
+                recovery_platform.viewport = GameUiViewport {
+                    width,
+                    height,
+                    root_font_size: font,
+                };
+                let recovery = game_ui_view(
+                    &paused_state,
+                    &context(&session, difficulty(), &recovery_platform),
+                )
+                .unwrap();
+                assert_eq!(recovery.layout.shell, GameUiShell::PauseSettings);
+                if let Some(hud) = recovery.hud {
+                    let layout = hud.layout;
+                    assert!(layout.offset_px[0] >= 0.0 && layout.offset_px[1] >= 0.0);
+                    assert!(layout.offset_px[1] + layout.height_px <= height);
+                    assert!(
+                        layout.offset_px[0] + layout.width_px
+                            <= width - recovery.layout.width_px - 0.75 * font
+                    );
+                }
+            }
         }
         assert_recovery(
             &session,

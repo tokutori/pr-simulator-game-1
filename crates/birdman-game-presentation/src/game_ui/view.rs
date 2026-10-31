@@ -1804,7 +1804,8 @@ pub(super) fn layout(
         }
         SessionPhase::FlightRunning => GameUiShell::FlightBar,
         SessionPhase::FlightPaused { .. }
-            if state.pause_overlay == GameUiPauseOverlay::Settings
+            if (state.pause_overlay == GameUiPauseOverlay::Settings
+                || context.platform.renderer_failure.is_some())
                 && (context.platform.presentation_mode != GameUiPresentationMode::Screen
                     || viewport.width
                         >= super::hud::minimum_hud_width(font)
@@ -1856,10 +1857,18 @@ pub(super) fn layout(
         GameUiShell::Center => (viewport.width * 0.04).clamp(1.25 * font, 2.5 * font),
     };
     let content = (width - 2.0 * padding - 1.5 * font).max(1.0);
+    let flight_bar_renderer_recovery = shell == GameUiShell::FlightBar
+        && matches!(
+            phase,
+            SessionPhase::FlightRunning | SessionPhase::FlightPaused { .. }
+        )
+        && context.platform.renderer_failure.is_some();
     Ok(GameUiLayout {
         shell,
         width_px: width,
-        maximum_height_px: if phase == SessionPhase::FlightRunning {
+        maximum_height_px: if flight_bar_renderer_recovery {
+            (viewport.height - 2.0 * font).max(1.0)
+        } else if phase == SessionPhase::FlightRunning {
             (viewport.height - 2.0 * font).max(1.0).min(8.0 * font)
         } else if shell == GameUiShell::Analysis {
             (viewport.height - 2.0 * font).max(1.0)
@@ -1886,7 +1895,9 @@ pub(super) fn layout(
         compact,
         scroll_y: (shell != GameUiShell::Analysis
             || context.platform.presentation_mode == GameUiPresentationMode::Screen)
-            && !(shell == GameUiShell::FlightBar && phase == SessionPhase::FlightRunning),
+            && !(shell == GameUiShell::FlightBar
+                && phase == SessionPhase::FlightRunning
+                && !flight_bar_renderer_recovery),
         clip_x: true,
         passthrough: shell == GameUiShell::FlightBar && phase == SessionPhase::FlightRunning
             || (shell == GameUiShell::Analysis
