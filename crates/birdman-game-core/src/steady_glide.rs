@@ -30,6 +30,38 @@ pub enum SteadyGlideError {
     Aerodynamics(AeroError),
 }
 
+#[cfg(not(verus_only))]
+impl core::fmt::Display for SteadyGlideError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::InvalidConditions => f.write_str(
+                "steady-glide conditions are non-finite or outside the upright search domain",
+            ),
+            Self::NotBracketed => {
+                f.write_str("requested weight is not bracketed by the polar endpoints")
+            }
+            Self::UnbalancedWrench => f.write_str(
+                "polar cannot balance forces and moments in an upright wings-level glide",
+            ),
+            Self::Math(_) => f.write_str("steady-glide math"),
+            Self::Dynamics(_) => f.write_str("steady-glide dynamics"),
+            Self::Aerodynamics(_) => f.write_str("steady-glide aerodynamics"),
+        }
+    }
+}
+
+#[cfg(not(verus_only))]
+impl core::error::Error for SteadyGlideError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        match self {
+            Self::Math(cause) => Some(cause),
+            Self::Dynamics(cause) => Some(cause),
+            Self::Aerodynamics(cause) => Some(cause),
+            Self::InvalidConditions | Self::NotBracketed | Self::UnbalancedWrench => None,
+        }
+    }
+}
+
 impl SteadyGlideConditions {
     /// Validates positive speed, density and gravity and an increasing upright alpha interval.
     pub fn try_new(

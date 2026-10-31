@@ -146,6 +146,26 @@ pub enum FlightTelemetryError {
     Wind(crate::wind_field::WindError),
 }
 
+#[cfg(not(verus_only))]
+impl core::fmt::Display for FlightTelemetryError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Dynamics(_) => f.write_str("composite-center kinematics"),
+            Self::Wind(_) => f.write_str("composite-center wind"),
+        }
+    }
+}
+
+#[cfg(not(verus_only))]
+impl core::error::Error for FlightTelemetryError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        match self {
+            Self::Dynamics(cause) => Some(cause),
+            Self::Wind(cause) => Some(cause),
+        }
+    }
+}
+
 /// Errors while validating scenario-wide model and initial-state boundaries.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FlightScenarioError {
@@ -153,6 +173,26 @@ pub enum FlightScenarioError {
     Launch(DynamicsError),
     /// Contact geometry is invalid.
     Contact(ContactError),
+}
+
+#[cfg(not(verus_only))]
+impl core::fmt::Display for FlightScenarioError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Launch(_) => f.write_str("launch state"),
+            Self::Contact(_) => f.write_str("launch contact geometry"),
+        }
+    }
+}
+
+#[cfg(not(verus_only))]
+impl core::error::Error for FlightScenarioError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        match self {
+            Self::Launch(cause) => Some(cause),
+            Self::Contact(cause) => Some(cause),
+        }
+    }
 }
 
 pub(crate) fn derive_flight_telemetry(

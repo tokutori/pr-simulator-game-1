@@ -462,5 +462,31 @@ pub enum TailControlError {
     Incidence(HybridError),
 }
 
+#[cfg(not(verus_only))]
+impl core::fmt::Display for TailControlError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::NonFinite => f.write_str("tail-control intent or desired rate is non-finite"),
+            Self::InvalidPilotIntent => {
+                f.write_str("manual surface or pilot-position intent lies outside [-1, 1]")
+            }
+            Self::InvalidRateTarget => f.write_str("pitch or yaw target exceeds 0.2 rad/s"),
+            Self::Actuator(_) => f.write_str("tail actuator"),
+            Self::Incidence(_) => f.write_str("physical tail incidence"),
+        }
+    }
+}
+
+#[cfg(not(verus_only))]
+impl core::error::Error for TailControlError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        match self {
+            Self::Actuator(cause) => Some(cause),
+            Self::Incidence(cause) => Some(cause),
+            Self::NonFinite | Self::InvalidPilotIntent | Self::InvalidRateTarget => None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests;

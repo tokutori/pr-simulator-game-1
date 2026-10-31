@@ -75,6 +75,29 @@ pub enum MathError {
     NonPhysicalInertiaTensor,
 }
 
+#[cfg(not(verus_only))]
+impl core::fmt::Display for MathError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::NonFinite => f.write_str("math value is non-finite"),
+            Self::InvalidQuaternion => {
+                f.write_str("quaternion is zero or exceeds the unit-length tolerance")
+            }
+            Self::InvalidInterpolationFraction => {
+                f.write_str("interpolation fraction lies outside [0, 1]")
+            }
+            Self::AsymmetricTensor => f.write_str("tensor is not symmetric"),
+            Self::NonPositiveDefiniteTensor => f.write_str("tensor is not positive definite"),
+            Self::NonPhysicalInertiaTensor => {
+                f.write_str("inertia tensor cannot represent a nonnegative mass distribution")
+            }
+        }
+    }
+}
+
+#[cfg(not(verus_only))]
+impl core::error::Error for MathError {}
+
 impl<F: Frame> Vector3<F> {
     /// Creates a vector from finite components.
     pub fn try_new(
