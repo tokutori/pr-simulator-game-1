@@ -579,9 +579,9 @@ impl core::fmt::Display for GameUiError {
                 f.write_str("UI action is not available in the current view")
             }
             Self::InvalidTime => f.write_str("UI time is nonfinite or outside the retained record"),
-            Self::Record(cause) => write!(f, "UI record query failed: {cause}"),
-            Self::Session(cause) => write!(f, "UI session projection failed: {cause}"),
-            Self::Environment(cause) => write!(f, "UI environment projection failed: {cause}"),
+            Self::Record(_) => f.write_str("UI record query failed"),
+            Self::Session(_) => f.write_str("UI session projection failed"),
+            Self::Environment(_) => f.write_str("UI environment projection failed"),
             Self::InvalidVenueMap => f.write_str("Venue map asset is invalid"),
         }
     }

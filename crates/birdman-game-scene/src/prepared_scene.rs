@@ -45,15 +45,15 @@ pub enum ScenePreparationError {
 impl core::fmt::Display for ScenePreparationError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::Aircraft(cause) => write!(f, "Registered aircraft validation failed: {cause}"),
-            Self::Structure(cause) => write!(f, "Structural geometry projection failed: {cause}"),
+            Self::Aircraft(_) => f.write_str("Registered aircraft validation failed"),
+            Self::Structure(_) => f.write_str("Structural geometry projection failed"),
             Self::Tail(cause) => write!(f, "Tail skin generation failed: {cause}"),
             Self::Terrain(cause) => write!(f, "Terrain generation failed: {cause}"),
-            Self::VenueStructures(cause) => write!(f, "Venue structure generation failed: {cause}"),
-            Self::LaunchPlatform(cause) => write!(f, "Launch platform generation failed: {cause}"),
-            Self::Mesh(cause) => write!(f, "Scene mesh projection failed: {cause}"),
+            Self::VenueStructures(_) => f.write_str("Venue structure generation failed"),
+            Self::LaunchPlatform(_) => f.write_str("Launch platform generation failed"),
+            Self::Mesh(_) => f.write_str("Scene mesh projection failed"),
             Self::Decal(cause) => write!(f, "Wing decal decoding failed: {cause}"),
-            Self::WingTexture(cause) => write!(f, "Wing texture generation failed: {cause}"),
+            Self::WingTexture(_) => f.write_str("Wing texture generation failed"),
         }
     }
 }

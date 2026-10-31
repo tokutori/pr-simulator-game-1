@@ -421,16 +421,10 @@ impl core::fmt::Display for AircraftFormatError {
                 f.write_str("Aircraft surface roles are missing or duplicated")
             }
             Self::InvalidSurface(surface) => write!(f, "Aircraft {surface} surface is invalid"),
-            Self::Geometry(cause) => {
-                write!(f, "Aircraft surface geometry validation failed: {cause}")
-            }
-            Self::Dynamics(cause) => {
-                write!(f, "Aircraft physical model validation failed: {cause}")
-            }
-            Self::Math(cause) => write!(f, "Aircraft coordinate validation failed: {cause}"),
-            Self::Aerodynamics(cause) => {
-                write!(f, "Aircraft aerodynamic configuration failed: {cause}")
-            }
+            Self::Geometry(_) => f.write_str("Aircraft surface geometry validation failed"),
+            Self::Dynamics(_) => f.write_str("Aircraft physical model validation failed"),
+            Self::Math(_) => f.write_str("Aircraft coordinate validation failed"),
+            Self::Aerodynamics(_) => f.write_str("Aircraft aerodynamic configuration failed"),
             Self::InvalidStructure => f.write_str("Aircraft structure configuration is invalid"),
             Self::InvalidTrim => f.write_str("Aircraft trim configuration is invalid"),
         }

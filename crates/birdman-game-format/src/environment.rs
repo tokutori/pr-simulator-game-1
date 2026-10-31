@@ -276,7 +276,7 @@ impl core::fmt::Display for EnvironmentFormatError {
                 f.write_str("Environment local frame or water datum is invalid")
             }
             Self::GridTooLarge => f.write_str("Environment wind grid exceeds its sample capacity"),
-            Self::Wind(cause) => write!(f, "Environment wind grid validation failed: {cause}"),
+            Self::Wind(_) => f.write_str("Environment wind grid validation failed"),
             Self::InvalidWindSample(index) => write!(
                 f,
                 "Environment wind sample {index} is not a finite NED vector"

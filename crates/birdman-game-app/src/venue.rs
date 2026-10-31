@@ -132,13 +132,9 @@ pub enum VenueCatalogError {
 impl core::fmt::Display for VenueCatalogError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::Document(cause) => {
-                write!(f, "Registered venue document validation failed: {cause}")
-            }
-            Self::Launch(cause) => write!(f, "Registered launch venue validation failed: {cause}"),
-            Self::Environment(cause) => {
-                write!(f, "Registered venue environment validation failed: {cause}")
-            }
+            Self::Document(_) => f.write_str("Registered venue document validation failed"),
+            Self::Launch(_) => f.write_str("Registered launch venue validation failed"),
+            Self::Environment(_) => f.write_str("Registered venue environment validation failed"),
             Self::UnregisteredOrigin => {
                 f.write_str("Venue source origin differs from its registered frame")
             }

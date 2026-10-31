@@ -81,7 +81,7 @@ pub enum VenueStructureError {
 impl core::fmt::Display for VenueStructureError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::Source(cause) => write!(f, "Venue structure source validation failed: {cause}"),
+            Self::Source(_) => f.write_str("Venue structure source validation failed"),
             Self::InvalidGeometry(cause) => {
                 write!(f, "Venue structure geometry is invalid: {cause}")
             }

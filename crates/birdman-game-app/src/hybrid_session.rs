@@ -74,25 +74,18 @@ pub enum HybridSessionPreparationError {
 impl core::fmt::Display for HybridSessionPreparationError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::Trim(cause) => write!(
-                f,
-                "Launch trim could not be converted to an initial state: {cause}"
-            ),
-            Self::Venue(cause) => write!(f, "Launch venue preparation failed: {cause}"),
-            Self::Configuration(cause) => {
-                write!(f, "Registered scenario selection failed: {cause}")
-            }
-            Self::Aircraft(cause) => write!(f, "Registered aircraft preparation failed: {cause}"),
-            Self::Environment(cause) => {
-                write!(f, "Offline environment preparation failed: {cause}")
-            }
-            Self::Math(cause) => write!(f, "Launch coordinate validation failed: {cause}"),
-            Self::Dynamics(cause) => write!(f, "Initial physical state validation failed: {cause}"),
-            Self::Course(cause) => write!(f, "Scoring course validation failed: {cause}"),
-            Self::Hybrid(cause) => write!(f, "Hybrid load model preparation failed: {cause}"),
-            Self::Control(cause) => write!(f, "Software controller preparation failed: {cause}"),
-            Self::Scenario(cause) => write!(f, "Sealed flight scenario validation failed: {cause}"),
-            Self::Session(cause) => write!(f, "Versioned session configuration failed: {cause}"),
+            Self::Trim(_) => f.write_str("Launch trim could not be converted to an initial state"),
+            Self::Venue(_) => f.write_str("Launch venue preparation failed"),
+            Self::Configuration(_) => f.write_str("Registered scenario selection failed"),
+            Self::Aircraft(_) => f.write_str("Registered aircraft preparation failed"),
+            Self::Environment(_) => f.write_str("Offline environment preparation failed"),
+            Self::Math(_) => f.write_str("Launch coordinate validation failed"),
+            Self::Dynamics(_) => f.write_str("Initial physical state validation failed"),
+            Self::Course(_) => f.write_str("Scoring course validation failed"),
+            Self::Hybrid(_) => f.write_str("Hybrid load model preparation failed"),
+            Self::Control(_) => f.write_str("Software controller preparation failed"),
+            Self::Scenario(_) => f.write_str("Sealed flight scenario validation failed"),
+            Self::Session(_) => f.write_str("Versioned session configuration failed"),
             Self::AllocationFailed => f.write_str("Flight structural storage allocation failed"),
         }
     }

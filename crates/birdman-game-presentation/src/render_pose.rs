@@ -36,9 +36,9 @@ impl core::fmt::Display for RenderPoseProjectionError {
             Self::UnsupportedPhase => {
                 f.write_str("Session phase does not provide a live render pose")
             }
-            Self::Session(cause) => write!(f, "Render pose session state is invalid: {cause}"),
+            Self::Session(_) => f.write_str("Render pose session state is invalid"),
             Self::Geometry(cause) => write!(f, "Render pose geometry is invalid: {cause}"),
-            Self::Interpolation(cause) => write!(f, "Render pose interpolation failed: {cause}"),
+            Self::Interpolation(_) => f.write_str("Render pose interpolation failed"),
         }
     }
 }

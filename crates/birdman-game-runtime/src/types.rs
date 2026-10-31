@@ -702,26 +702,26 @@ pub enum ApplicationRuntimeError {
 impl core::fmt::Display for ApplicationRuntimeError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::Assets(cause) => write!(f, "Drawing asset preparation failed: {cause}"),
-            Self::RecordExport(cause) => write!(f, "Record export failed: {cause}"),
-            Self::RecordFormat(cause) => write!(f, "Record document validation failed: {cause}"),
-            Self::Graphics(cause) => write!(f, "Graphics observation was rejected: {cause}"),
+            Self::Assets(_) => f.write_str("Drawing asset preparation failed"),
+            Self::RecordExport(_) => f.write_str("Record export failed"),
+            Self::RecordFormat(_) => f.write_str("Record document validation failed"),
+            Self::Graphics(_) => f.write_str("Graphics observation was rejected"),
             Self::SpatialInput(cause) => write!(f, "Spatial input was rejected: {cause}"),
             Self::PresentationExhausted => {
                 f.write_str("Spatial presentation identities are exhausted")
             }
-            Self::RenderPose(cause) => write!(f, "Live render pose projection failed: {cause}"),
-            Self::ReplayCamera(cause) => write!(f, "Replay camera projection failed: {cause}"),
-            Self::Venue(cause) => write!(f, "Launch venue validation failed: {cause}"),
-            Self::Camera(cause) => write!(f, "Camera projection failed: {cause}"),
-            Self::Environment(cause) => write!(f, "Environment resolution failed: {cause}"),
+            Self::RenderPose(_) => f.write_str("Live render pose projection failed"),
+            Self::ReplayCamera(_) => f.write_str("Replay camera projection failed"),
+            Self::Venue(_) => f.write_str("Launch venue validation failed"),
+            Self::Camera(_) => f.write_str("Camera projection failed"),
+            Self::Environment(_) => f.write_str("Environment resolution failed"),
             Self::InvalidTimestamp => {
                 f.write_str("Observation timestamp must be finite, nonnegative and monotonic")
             }
-            Self::Application(cause) => write!(f, "Application operation failed: {cause}"),
-            Self::Session(cause) => write!(f, "Session operation failed: {cause}"),
-            Self::Flight(cause) => write!(f, "Flight frame failed: {cause}"),
-            Self::Ui(cause) => write!(f, "UI observation failed: {cause}"),
+            Self::Application(_) => f.write_str("Application operation failed"),
+            Self::Session(_) => f.write_str("Session operation failed"),
+            Self::Flight(_) => f.write_str("Flight frame failed"),
+            Self::Ui(_) => f.write_str("UI observation failed"),
             Self::RequestExhausted => f.write_str("Application request identities are exhausted"),
         }
     }

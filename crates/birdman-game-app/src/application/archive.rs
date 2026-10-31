@@ -17,10 +17,8 @@ pub enum ArchiveError {
 impl core::fmt::Display for ArchiveError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::Format(cause) => write!(f, "Archived record validation failed: {cause}"),
-            Self::Session(cause) => {
-                write!(f, "Session does not admit opening this archive: {cause}")
-            }
+            Self::Format(_) => f.write_str("Archived record validation failed"),
+            Self::Session(_) => f.write_str("Session does not admit opening this archive"),
         }
     }
 }

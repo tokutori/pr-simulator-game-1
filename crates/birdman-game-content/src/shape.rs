@@ -50,7 +50,7 @@ impl core::fmt::Display for ShapeError {
                 f.write_str("Vertex count does not match the prepared aircraft shape")
             }
             Self::DegenerateMember => f.write_str("Structural member is degenerate"),
-            Self::Math(cause) => write!(f, "Aircraft shape coordinate calculation failed: {cause}"),
+            Self::Math(_) => f.write_str("Aircraft shape coordinate calculation failed"),
         }
     }
 }

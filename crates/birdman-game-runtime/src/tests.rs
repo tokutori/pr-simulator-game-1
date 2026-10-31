@@ -32,7 +32,16 @@ fn technical_errors_preserve_typed_sources_and_opaque_leaf_context() {
         .unwrap();
     assert_eq!(*leaf, query);
     assert!(leaf.source().is_none());
-    assert_eq!(error.to_string().matches(&query.to_string()).count(), 1);
+    let text = birdman_game_app::technical_error_text(&error);
+    for context in [
+        &error as &dyn Error,
+        ui as &dyn Error,
+        session as &dyn Error,
+        leaf as &dyn Error,
+    ] {
+        assert_eq!(text.matches(&context.to_string()).count(), 1);
+    }
+    assert!(!error.to_string().contains(&query.to_string()));
 
     let projection = MeshProjectionError::InvalidTopology;
     let error = ApplicationRuntimeError::Assets(ApplicationAssetError::ScenePreparation(
@@ -69,8 +78,7 @@ fn technical_errors_preserve_typed_sources_and_opaque_leaf_context() {
     );
     assert!(mesh_error.to_string().contains("main-wing"));
     assert_eq!(
-        mesh_error
-            .to_string()
+        birdman_game_app::technical_error_text(&mesh_error)
             .matches(&projection.to_string())
             .count(),
         1

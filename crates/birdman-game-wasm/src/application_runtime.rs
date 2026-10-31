@@ -40,7 +40,7 @@ impl ApplicationRuntimeBridge {
         let platform: ApplicationPlatformObservation =
             serde_json::from_str(platform_json).map_err(crate::error)?;
         let runtime = ApplicationRuntime::new(ApplicationSession::default(), platform)
-            .map_err(crate::error)?;
+            .map_err(|cause| crate::error(birdman_game_app::technical_error_text(&cause)))?;
         Ok(Self { runtime })
     }
 
@@ -71,7 +71,7 @@ impl ApplicationRuntimeBridge {
                     descent_px: *descent_px,
                 })
             })
-            .map_err(crate::error)?;
+            .map_err(|cause| crate::error(birdman_game_app::technical_error_text(&cause)))?;
         serde_json::to_string(&output).map_err(crate::error)
     }
 }

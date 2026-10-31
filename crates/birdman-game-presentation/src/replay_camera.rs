@@ -81,10 +81,8 @@ impl core::fmt::Display for ReplayCameraError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::InvalidTime => f.write_str("Replay camera time must be finite and nonnegative"),
-            Self::Record(cause) => write!(f, "Replay camera record query failed: {cause}"),
-            Self::Math(cause) => {
-                write!(f, "Replay camera orientation construction failed: {cause}")
-            }
+            Self::Record(_) => f.write_str("Replay camera record query failed"),
+            Self::Math(_) => f.write_str("Replay camera orientation construction failed"),
             Self::InvalidVenue => f.write_str("Registered replay camera metadata is invalid"),
             Self::Geometry(cause) => write!(f, "Replay camera geometry is invalid: {cause}"),
         }

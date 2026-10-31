@@ -156,9 +156,19 @@ fn setup(
     let condition = (|| {
         let EnvironmentProjection::Available { metadata, .. } =
             EnvironmentSelection::for_session(runtime.0.application())
-                .map_err(|cause| format!("Shader probe environment: {cause}"))?
+                .map_err(|cause| {
+                    format!(
+                        "Shader probe environment: {}",
+                        birdman_game_app::technical_error_text(&cause)
+                    )
+                })?
                 .resolve()
-                .map_err(|cause| format!("Shader probe environment: {cause}"))?
+                .map_err(|cause| {
+                    format!(
+                        "Shader probe environment: {}",
+                        birdman_game_app::technical_error_text(&cause)
+                    )
+                })?
         else {
             return Err("Shader probe environment is unavailable".to_string());
         };
@@ -170,7 +180,12 @@ fn setup(
             waves.detail_amplitude_scale,
             u64::from(waves.pattern_seed),
         )
-        .map_err(|cause| format!("Shader probe waves: {cause}"))
+        .map_err(|cause| {
+            format!(
+                "Shader probe waves: {}",
+                birdman_game_app::technical_error_text(&cause)
+            )
+        })
     })();
     let condition = match condition {
         Ok(condition) => condition,
@@ -186,8 +201,10 @@ fn setup(
         let projection = match LakeWaveProjection::try_new(condition, quality) {
             Ok(projection) => projection,
             Err(cause) => {
-                verification.state =
-                    ProbeState::Failed(format!("Shader probe projection: {cause}"));
+                verification.state = ProbeState::Failed(format!(
+                    "Shader probe projection: {}",
+                    birdman_game_app::technical_error_text(&cause)
+                ));
                 return;
             }
         };
@@ -218,7 +235,10 @@ fn setup(
         ) {
             Ok(geometry) => geometry,
             Err(cause) => {
-                verification.state = ProbeState::Failed(format!("Shader probe bounds: {cause}"));
+                verification.state = ProbeState::Failed(format!(
+                    "Shader probe bounds: {}",
+                    birdman_game_app::technical_error_text(&cause)
+                ));
                 return;
             }
         };
@@ -302,7 +322,7 @@ fn setup(
                             if *remaining == 0 { verification.state = ProbeState::Complete; }
                         }
                     }
-                    Err(cause) => verification.state = ProbeState::Failed(format!("Production water shader probe {label}/{output:?}: {cause}")),
+                    Err(cause) => verification.state = ProbeState::Failed(format!("Production water shader probe {label}/{output:?}: {}", birdman_game_app::technical_error_text(&cause))),
                 }
                 commands.entity(event.entity).despawn();
                 commands.entity(camera_entity).despawn();

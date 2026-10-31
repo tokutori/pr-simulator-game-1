@@ -956,7 +956,10 @@ impl ApplicationRuntime {
                         observed_ms,
                     )
                 {
-                    self.diagnostic = Some(format!("描画資源の確定値を受理できない: {error}"));
+                    self.diagnostic = Some(format!(
+                        "描画資源の確定値を受理できない: {}",
+                        birdman_game_app::technical_error_text(&error)
+                    ));
                     commit_failed = true;
                 }
                 if let Some(failed) = &completion.failed
@@ -1050,7 +1053,7 @@ impl ApplicationRuntime {
         self.synchronize_graphics()?;
         if let Err(error) = self.synchronize_resources(&mut requests) {
             if self.boot.active() {
-                self.diagnostic = Some(format!("{error}"));
+                self.diagnostic = Some(birdman_game_app::technical_error_text(&error));
                 self.boot.fail(self.diagnostic.as_deref());
             } else {
                 return Err(error);

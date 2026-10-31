@@ -62,9 +62,7 @@ impl core::fmt::Display for RecordExportError {
         match self {
             Self::RecordUnavailable => f.write_str("No finalized record is available for export"),
             Self::MetadataMismatch => f.write_str("Export metadata belongs to a different record"),
-            Self::Format(cause) => {
-                write!(f, "Export record validation or encoding failed: {cause}")
-            }
+            Self::Format(_) => f.write_str("Export record validation or encoding failed"),
         }
     }
 }

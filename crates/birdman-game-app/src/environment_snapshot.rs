@@ -34,12 +34,8 @@ impl core::fmt::Display for EnvironmentSnapshotError {
             Self::MissingSessionIdentity => {
                 f.write_str("Session phase has no retained environment identity")
             }
-            Self::Preparation(cause) => {
-                write!(f, "Environment scenario preparation failed: {cause}")
-            }
-            Self::Environment(cause) => {
-                write!(f, "Registered environment projection failed: {cause}")
-            }
+            Self::Preparation(_) => f.write_str("Environment scenario preparation failed"),
+            Self::Environment(_) => f.write_str("Registered environment projection failed"),
         }
     }
 }

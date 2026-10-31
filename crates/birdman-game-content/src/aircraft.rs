@@ -40,14 +40,12 @@ pub enum AircraftDefinitionError {
 impl core::fmt::Display for AircraftDefinitionError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::Format(cause) => write!(f, "Aircraft document validation failed: {cause}"),
-            Self::Math(cause) => write!(f, "Aircraft coordinate validation failed: {cause}"),
-            Self::Aerodynamics(cause) => {
-                write!(f, "Aircraft aerodynamic validation failed: {cause}")
-            }
-            Self::Hybrid(cause) => write!(f, "Aircraft hybrid model validation failed: {cause}"),
-            Self::Shape(cause) => write!(f, "Aircraft shape validation failed: {cause}"),
-            Self::Trim(cause) => write!(f, "Aircraft trim validation failed: {cause}"),
+            Self::Format(_) => f.write_str("Aircraft document validation failed"),
+            Self::Math(_) => f.write_str("Aircraft coordinate validation failed"),
+            Self::Aerodynamics(_) => f.write_str("Aircraft aerodynamic validation failed"),
+            Self::Hybrid(_) => f.write_str("Aircraft hybrid model validation failed"),
+            Self::Shape(_) => f.write_str("Aircraft shape validation failed"),
+            Self::Trim(_) => f.write_str("Aircraft trim validation failed"),
         }
     }
 }

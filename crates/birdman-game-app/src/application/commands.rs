@@ -129,16 +129,14 @@ pub enum ApplicationError {
 impl core::fmt::Display for ApplicationError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::Flight(cause) => write!(f, "Application flight frame failed: {cause}"),
-            Self::Session(cause) => write!(f, "Application session operation failed: {cause}"),
-            Self::Configuration(cause) => {
-                write!(f, "Application configuration was rejected: {cause}")
-            }
-            Self::Control(cause) => write!(f, "Software control authority was rejected: {cause}"),
-            Self::Preparation(cause) => write!(f, "Flight preparation failed: {cause}"),
+            Self::Flight(_) => f.write_str("Application flight frame failed"),
+            Self::Session(_) => f.write_str("Application session operation failed"),
+            Self::Configuration(_) => f.write_str("Application configuration was rejected"),
+            Self::Control(_) => f.write_str("Software control authority was rejected"),
+            Self::Preparation(_) => f.write_str("Flight preparation failed"),
             Self::NotSelection => f.write_str("Command is not a difficulty selection"),
-            Self::Input(cause) => write!(f, "Pilot intent was rejected: {cause}"),
-            Self::Record(cause) => write!(f, "Application record query failed: {cause}"),
+            Self::Input(_) => f.write_str("Pilot intent was rejected"),
+            Self::Record(_) => f.write_str("Application record query failed"),
         }
     }
 }

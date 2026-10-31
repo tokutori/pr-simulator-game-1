@@ -23,10 +23,10 @@ pub enum FlightFrameError {
 impl core::fmt::Display for FlightFrameError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::Clock(cause) => write!(f, "Flight clock observation failed: {cause}"),
-            Self::Input(cause) => write!(f, "Flight input was rejected: {cause}"),
-            Self::PilotPosition(cause) => write!(f, "Pilot position conversion failed: {cause}"),
-            Self::Session(cause) => write!(f, "Flight state update failed: {cause}"),
+            Self::Clock(_) => f.write_str("Flight clock observation failed"),
+            Self::Input(_) => f.write_str("Flight input was rejected"),
+            Self::PilotPosition(_) => f.write_str("Pilot position conversion failed"),
+            Self::Session(_) => f.write_str("Flight state update failed"),
         }
     }
 }

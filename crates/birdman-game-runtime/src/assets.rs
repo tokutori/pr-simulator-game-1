@@ -148,24 +148,22 @@ impl core::fmt::Display for ApplicationAssetError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::Geometry(cause) => write!(f, "Drawing geometry is invalid: {cause}"),
-            Self::ScenePreparation(cause) => {
-                write!(f, "Registered scene preparation failed: {cause}")
-            }
-            Self::FrameDeformation(cause) => write!(f, "Wing deformation was rejected: {cause}"),
-            Self::MeshProjection { mesh, cause } => {
+            Self::ScenePreparation(_) => f.write_str("Registered scene preparation failed"),
+            Self::FrameDeformation(_) => f.write_str("Wing deformation was rejected"),
+            Self::MeshProjection { mesh, .. } => {
                 if let Some(mesh) = mesh {
-                    write!(f, "Mesh {mesh} projection failed: {cause}")
+                    write!(f, "Mesh {mesh} projection failed")
                 } else {
-                    write!(f, "Mesh projection failed: {cause}")
+                    f.write_str("Mesh projection failed")
                 }
             }
-            Self::TailArticulation(cause) => write!(f, "Tail articulation failed: {cause}"),
-            Self::Environment(cause) => write!(f, "Asset environment resolution failed: {cause}"),
+            Self::TailArticulation(_) => f.write_str("Tail articulation failed"),
+            Self::Environment(_) => f.write_str("Asset environment resolution failed"),
             Self::UnavailableEnvironment => {
                 f.write_str("No display environment is registered for the selected identity")
             }
-            Self::Sky(cause) => write!(f, "Sky metadata validation failed: {cause}"),
-            Self::Water(cause) => write!(f, "Water resource generation failed: {cause}"),
+            Self::Sky(_) => f.write_str("Sky metadata validation failed"),
+            Self::Water(_) => f.write_str("Water resource generation failed"),
             Self::IdentifiersExhausted => {
                 f.write_str("Drawing asset buffer identities are exhausted")
             }
