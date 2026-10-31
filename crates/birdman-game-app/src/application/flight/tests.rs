@@ -105,7 +105,7 @@ fn frame_ticks_integrate_against_each_confirmed_target_and_keep_the_last_render_
             .unwrap();
         let target = birdman_game_core::PilotPositionTarget::try_new(
             &direct.prepared.as_ref().unwrap().aircraft,
-            before.pilot_position_target().position_m() + 0.004,
+            before.pilot_position_demand().position_m() + 0.004,
         )
         .unwrap();
         let held = direct

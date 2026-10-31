@@ -120,7 +120,7 @@ impl ApplicationSession {
                             GameSessionError::InvalidTransition,
                         ))?;
                 let held = mapping
-                    .normalized_target(previous.pilot_position_target())
+                    .normalized_target(previous.pilot_position_demand())
                     .map_err(FlightFrameError::PilotPosition)?;
                 let prepared = prepared.as_mut().ok_or(FlightFrameError::Session(
                     GameSessionError::InvalidTransition,
@@ -129,7 +129,7 @@ impl ApplicationSession {
                     .tick_input(gamepads, held.value(), prepared.keyboard_controls, |step| {
                         let position = birdman_game_core::PilotPositionTarget::try_new(
                             &prepared.aircraft,
-                            (previous.pilot_position_target().position_m() + step).clamp(-0.4, 0.4),
+                            (previous.pilot_position_demand().position_m() + step).clamp(-0.4, 0.4),
                         )
                         .map_err(|_| TailControlError::InvalidPilotIntent)?;
                         mapping
