@@ -268,7 +268,37 @@ fn tail_tick_pilot_set_hold_and_trim_are_independent_of_surface_authority() {
                 &load,
             )
             .unwrap();
-            assert_eq!(trim.pilot_position_target().position_m(), 0.12);
+            assert_eq!(trim.pilot_position_demand().position_m(), 0.12);
+            let stop = crate::dynamics::pilot_braking_plan(
+                &aircraft(),
+                held.flight_state().pilot_position_m(),
+                held.flight_state().pilot_velocity_mps(),
+                PHYSICS_DT_SECONDS,
+            )
+            .unwrap();
+            assert_eq!(trim.pilot_position_target(), stop.stop_target);
+            assert!(!trim.pilot_motion_limited());
+            let mut returning = trim;
+            let mut stopped_before_reverse = returning.flight_state().pilot_velocity_mps() == 0.0;
+            for _ in 0..20 {
+                returning = advance_tail_flight_tick(
+                    &aircraft(),
+                    returning,
+                    config(mode),
+                    input([0.0; 2], TailPilotPositionCommand::Hold),
+                    &load,
+                )
+                .unwrap();
+                let velocity = returning.flight_state().pilot_velocity_mps();
+                if !stopped_before_reverse {
+                    assert!(normalized * velocity >= 0.0);
+                    stopped_before_reverse = velocity == 0.0;
+                }
+            }
+            assert!(stopped_before_reverse);
+            assert_eq!(returning.pilot_position_demand().position_m(), 0.12);
+            assert_eq!(returning.pilot_position_target().position_m(), 0.12);
+            assert_eq!(returning.flight_state().pilot_position_m(), 0.12);
         }
     }
 }

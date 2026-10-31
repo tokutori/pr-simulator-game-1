@@ -102,11 +102,14 @@ rudder要求はこのalpha policyで変更しない。
 
 - effective targetへの移動は身体の加速度policyとRK4で行い、身体stateを直接変更しない。
 - tick stateはguard投影前の要求位置と、投影後のeffective targetを別々に保持する。
-- 次tickの解決は保持した要求位置を基準とし、guardはeffective targetだけを書き換える。
+- 次tickの解決は保持した要求位置を基準とし、guard候補の射影値を新しい進行量の上限として使う。
 - `Set`の元normalized要求、`Hold`、manual intent、desired rate、manual/FBW/mixed要求をrecordに保存する。
 - 実stateと`resolved_pilot_position_target_m`は採用したeffective targetを保持する。
-- `Hold`は保持した要求位置を名目要求とし、作動中の保護は毎tickその要求をtrim側へ投影する。
-- guardが緩むと、保持した要求位置へeffective targetが戻る。
+- `Hold`は保持した要求位置と、認可済みの保護停止を継続する。
+- 保護による進行上限が実速度の停止可能位置より手前になる場合は、有限停止certificateが返す停止位置まで制動して保持する。
+- 停止保持は同じ長押しのSetやHoldで継続し、入力ownerが認可した新しい操作で再評価する。J/Lはfresh press、gamepadは既neutral・pickupで取得した操作を認可する。保護停止後のgamepadは停止位置のpickupを経て再取得する。
+- 逆入力は現在の制動を完了してから新しい方向へ進む。位置・速度は保持加速度の運動で更新する。
+- 飛行中の目標表示は保持需要とし、保護中は「保護制動」「保護停止」を示す。Replayは記録された適用目標を表示する。
 
 - previewはalpha変化をqから近似する。
 - 空間風・flight-pathの連成、独立したyaw域、任意の将来入力に対する安全は保証しない。

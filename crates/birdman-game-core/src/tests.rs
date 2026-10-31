@@ -164,10 +164,14 @@ fn pilot_position_target_acceleration_respects_stopping_distance() {
                 0.01,
             )
             .unwrap();
+            let command =
+                pilot_target_acceleration(&model, &current, certificate.stop_target, 0.01).unwrap();
+            assert_eq!(command.meters_per_second_squared(), plan.first_acceleration);
+            assert_eq!(plan.stop_target, certificate.stop_target);
             current = step(
                 &model,
                 &current,
-                plan.first_acceleration,
+                command.meters_per_second_squared(),
                 0.0,
                 Wrench::zero(),
                 0.01,
