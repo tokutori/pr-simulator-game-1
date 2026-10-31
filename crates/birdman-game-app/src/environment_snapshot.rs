@@ -359,7 +359,9 @@ fn preset_metadata(
     let velocity = NedVector::try_new(north, east, down).map_err(|_| {
         EnvironmentSnapshotError::Environment(EnvironmentFormatError::InvalidWindSample(0))
     })?;
-    let representative = [0.0, 0.0, -10.5];
+    let representative = crate::hybrid_session::registered_launch_cg_position()
+        .map_err(EnvironmentSnapshotError::Preparation)?
+        .components();
     Ok(EnvironmentMetadata {
         name: environment.name.to_owned(),
         content_hash: ContentHash::SourceFingerprint {
@@ -371,7 +373,7 @@ fn preset_metadata(
         local_frame: document.local_frame.clone(),
         wind_domain: WindDomain::Uniform,
         representative_position_ned_m: representative,
-        representative_altitude_m: 10.5,
+        representative_altitude_m: -representative[2],
         representative_velocity_ned_mps: sample(WindField::uniform(velocity), representative)?,
         waves: environment.waves,
         sky: document.sky,
@@ -429,7 +431,21 @@ mod tests {
     fn only_current_model_and_controller_identities_resolve_registered_metadata() {
         for version in [1, 2, 4, 5, 6] {
             let current = identity(version);
-            assert_eq!(query(current)["kind"], "available");
+            let projection = query(current);
+            assert_eq!(projection["kind"], "available");
+            if version != 6 {
+                let launch = crate::hybrid_session::registered_launch_cg_position()
+                    .unwrap()
+                    .components();
+                assert_eq!(
+                    projection["metadata"]["representative_position_ned_m"],
+                    json!(launch)
+                );
+                assert_eq!(
+                    projection["metadata"]["representative_altitude_m"],
+                    -launch[2]
+                );
+            }
             for component in 0..4 {
                 let mut retired = current;
                 match component {

@@ -19,7 +19,7 @@
 | 飛行ログCSV | schema 6はexport version 3、schema 7はversion 4、schema 8はversion 5 |
 | Personal Best | 比較方式v3、Rustによるkey再生成・選定 |
 | 物理・積分・接触 | physics model 6 |
-| 既定機体・scenario | aircraft model 7、catalog 9、scenario 10、controller profile 4 |
+| 既定機体・scenario | aircraft model 7、catalog 10、scenario 11、controller profile 4 |
 
 - 版の正本は実装の公開定義・登録catalogとする。
 - JSON schema、物理model、機体、controller、環境、score、比較方式、build来歴は異なる概念であり、独立して保持する。
