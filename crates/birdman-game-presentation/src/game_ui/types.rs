@@ -339,6 +339,49 @@ pub enum GameUiAction {
     },
 }
 
+/// Platform-neutral physical keys observed by shared input and widget contracts.
+///
+/// This vocabulary describes physical keys, not flight bindings or held-key ownership.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum KeyboardKey {
+    /// Enter key.
+    Enter,
+    /// Space bar.
+    Space,
+    /// Home key.
+    Home,
+    /// End key.
+    End,
+    /// Left arrow.
+    Left,
+    /// Right arrow.
+    Right,
+    /// Up arrow.
+    Up,
+    /// Down arrow.
+    Down,
+    /// Physical A key.
+    A,
+    /// Physical C key.
+    C,
+    /// Physical D key.
+    D,
+    /// Physical J key.
+    J,
+    /// Physical L key.
+    L,
+    /// Physical P key.
+    P,
+    /// Physical S key.
+    S,
+    /// Physical W key.
+    W,
+    /// Escape key.
+    Escape,
+}
+
 /// Engine-independent widget observation, resolved by the shared UI owner.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -379,8 +422,8 @@ pub enum GameUiControlInput {
     ControlKeys {
         /// Published control identifier.
         control_id: String,
-        /// Platform key codes observed in the same input frame.
-        codes: Vec<String>,
+        /// Platform-neutral physical keys observed in the same input frame.
+        keys: Vec<KeyboardKey>,
     },
 }
 

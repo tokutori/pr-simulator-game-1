@@ -102,8 +102,8 @@ use birdman_game_format::WaterQuality;
 use birdman_game_presentation::game_ui::{
     GameUiAction, GameUiContext, GameUiEffect, GameUiError, GameUiPlatformCommand,
     GameUiPlatformInput, GameUiPresentationMode, GameUiState, GameUiStructureCache,
-    GameUiStructureKey, GameUiView, GameUiWaterQualityOperation, game_ui_environment_readout,
-    game_ui_frame, game_ui_view, update_game_ui,
+    GameUiStructureKey, GameUiView, GameUiWaterQualityOperation, KeyboardKey,
+    game_ui_environment_readout, game_ui_frame, game_ui_view, update_game_ui,
 };
 #[cfg(not(verus_only))]
 use birdman_game_presentation::xr::{
@@ -828,86 +828,17 @@ impl ApplicationRuntime {
                 pressed,
                 repeat,
             } => {
-                let action_key = match code.as_str() {
-                    "KeyC" => Some(FlightActionKey::Camera),
-                    "KeyP" => Some(FlightActionKey::Pause),
-                    "Escape" => Some(FlightActionKey::Escape),
-                    _ => None,
-                };
-                if !pressed && let Some(key) = action_key {
-                    self.application.observe_flight_action_key(key, false);
+                if let Some(key) = browser_keyboard_key(&code) {
+                    keyboard_consumed =
+                        self.observe_keyboard(key, pressed, repeat, &mut requests)?;
                 }
-                let key = match code.as_str() {
-                    "ArrowUp" => Some(FlightControlKey::ArrowUp),
-                    "ArrowDown" => Some(FlightControlKey::ArrowDown),
-                    "ArrowLeft" => Some(FlightControlKey::ArrowLeft),
-                    "ArrowRight" => Some(FlightControlKey::ArrowRight),
-                    "KeyW" => Some(FlightControlKey::KeyW),
-                    "KeyS" => Some(FlightControlKey::KeyS),
-                    "KeyA" => Some(FlightControlKey::KeyA),
-                    "KeyD" => Some(FlightControlKey::KeyD),
-                    "KeyJ" => Some(FlightControlKey::KeyJ),
-                    "KeyL" => Some(FlightControlKey::KeyL),
-                    _ => None,
-                };
-                if self.page_visible && self.document_focused && !self.display.state().pending() {
-                    if let Some(key) = key {
-                        keyboard_consumed =
-                            self.application.observe_flight_key(FlightKeyObservation {
-                                key,
-                                pressed,
-                                repeat,
-                            });
-                    } else if code == "KeyC"
-                        && self.platform.presentation_mode == GameUiPresentationMode::Screen
-                        && !self.ui.credits_open
-                        && pressed
-                        && !repeat
-                        && matches!(
-                            self.application.core_session().snapshot().phase(),
-                            SessionPhase::FlightRunning | SessionPhase::FlightPaused { .. }
-                        )
-                    {
-                        let environment = self.environment()?;
-                        let revision = self.structure_revision(&environment)?;
-                        self.apply_action(
-                            revision,
-                            GameUiAction::SetFlightCamera {
-                                camera: self.ui.flight_camera.toggled(),
-                            },
-                            &mut requests,
-                        )?;
-                        self.application
-                            .observe_flight_action_key(FlightActionKey::Camera, true);
-                        keyboard_consumed = true;
-                    } else if matches!(code.as_str(), "KeyP" | "Escape")
-                        && pressed
-                        && !repeat
-                        && !self.boot.active()
-                    {
-                        let command = match self.application.core_session().snapshot().phase() {
-                            SessionPhase::FlightRunning => {
-                                Some(birdman_game_app::application::SessionCommand::Pause {})
-                            }
-                            SessionPhase::FlightPaused { .. } => {
-                                Some(birdman_game_app::application::SessionCommand::Resume {})
-                            }
-                            _ => None,
-                        };
-                        if let Some(command) = command {
-                            let environment = self.environment()?;
-                            let revision = self.structure_revision(&environment)?;
-                            self.apply_action(
-                                revision,
-                                GameUiAction::Session { command },
-                                &mut requests,
-                            )?;
-                            self.application
-                                .observe_flight_action_key(action_key.unwrap(), true);
-                            keyboard_consumed = true;
-                        }
-                    }
-                }
+            }
+            ApplicationInput::PhysicalKey {
+                key,
+                pressed,
+                repeat,
+            } => {
+                keyboard_consumed = self.observe_keyboard(key, pressed, repeat, &mut requests)?;
             }
             ApplicationInput::Platform { observation } => {
                 self.graphics
@@ -1298,6 +1229,92 @@ impl ApplicationRuntime {
             ui: projection,
         };
         Ok(self.output(Some(drawing), requests, keyboard_consumed))
+    }
+
+    fn observe_keyboard(
+        &mut self,
+        key: KeyboardKey,
+        pressed: bool,
+        repeat: bool,
+        requests: &mut Vec<ApplicationRequest>,
+    ) -> Result<bool, ApplicationRuntimeError> {
+        let mut keyboard_consumed = false;
+        let action_key = match key {
+            KeyboardKey::C => Some(FlightActionKey::Camera),
+            KeyboardKey::P => Some(FlightActionKey::Pause),
+            KeyboardKey::Escape => Some(FlightActionKey::Escape),
+            _ => None,
+        };
+        if !pressed && let Some(key) = action_key {
+            self.application.observe_flight_action_key(key, false);
+        }
+        let control_key = match key {
+            KeyboardKey::Up => Some(FlightControlKey::ArrowUp),
+            KeyboardKey::Down => Some(FlightControlKey::ArrowDown),
+            KeyboardKey::Left => Some(FlightControlKey::ArrowLeft),
+            KeyboardKey::Right => Some(FlightControlKey::ArrowRight),
+            KeyboardKey::W => Some(FlightControlKey::KeyW),
+            KeyboardKey::S => Some(FlightControlKey::KeyS),
+            KeyboardKey::A => Some(FlightControlKey::KeyA),
+            KeyboardKey::D => Some(FlightControlKey::KeyD),
+            KeyboardKey::J => Some(FlightControlKey::KeyJ),
+            KeyboardKey::L => Some(FlightControlKey::KeyL),
+            _ => None,
+        };
+        if self.page_visible && self.document_focused && !self.display.state().pending() {
+            if let Some(key) = control_key {
+                keyboard_consumed = self.application.observe_flight_key(FlightKeyObservation {
+                    key,
+                    pressed,
+                    repeat,
+                });
+            } else if key == KeyboardKey::C
+                && self.platform.presentation_mode == GameUiPresentationMode::Screen
+                && !self.ui.credits_open
+                && pressed
+                && !repeat
+                && matches!(
+                    self.application.core_session().snapshot().phase(),
+                    SessionPhase::FlightRunning | SessionPhase::FlightPaused { .. }
+                )
+            {
+                let environment = self.environment()?;
+                let revision = self.structure_revision(&environment)?;
+                self.apply_action(
+                    revision,
+                    GameUiAction::SetFlightCamera {
+                        camera: self.ui.flight_camera.toggled(),
+                    },
+                    requests,
+                )?;
+                self.application
+                    .observe_flight_action_key(FlightActionKey::Camera, true);
+                keyboard_consumed = true;
+            } else if matches!(key, KeyboardKey::P | KeyboardKey::Escape)
+                && pressed
+                && !repeat
+                && !self.boot.active()
+            {
+                let command = match self.application.core_session().snapshot().phase() {
+                    SessionPhase::FlightRunning => {
+                        Some(birdman_game_app::application::SessionCommand::Pause {})
+                    }
+                    SessionPhase::FlightPaused { .. } => {
+                        Some(birdman_game_app::application::SessionCommand::Resume {})
+                    }
+                    _ => None,
+                };
+                if let Some(command) = command {
+                    let environment = self.environment()?;
+                    let revision = self.structure_revision(&environment)?;
+                    self.apply_action(revision, GameUiAction::Session { command }, requests)?;
+                    self.application
+                        .observe_flight_action_key(action_key.unwrap(), true);
+                    keyboard_consumed = true;
+                }
+            }
+        }
+        Ok(keyboard_consumed)
     }
 
     fn close(&mut self, requests: &mut Vec<ApplicationRequest>) {
@@ -1995,4 +2012,28 @@ impl ApplicationRuntime {
             .observe(key, self.application.record_source_id())
             .map_err(ApplicationRuntimeError::Ui)
     }
+}
+
+#[cfg(not(verus_only))]
+fn browser_keyboard_key(code: &str) -> Option<KeyboardKey> {
+    Some(match code {
+        "Enter" => KeyboardKey::Enter,
+        "Space" => KeyboardKey::Space,
+        "Home" => KeyboardKey::Home,
+        "End" => KeyboardKey::End,
+        "ArrowLeft" => KeyboardKey::Left,
+        "ArrowRight" => KeyboardKey::Right,
+        "ArrowUp" => KeyboardKey::Up,
+        "ArrowDown" => KeyboardKey::Down,
+        "KeyA" => KeyboardKey::A,
+        "KeyC" => KeyboardKey::C,
+        "KeyD" => KeyboardKey::D,
+        "KeyJ" => KeyboardKey::J,
+        "KeyL" => KeyboardKey::L,
+        "KeyP" => KeyboardKey::P,
+        "KeyS" => KeyboardKey::S,
+        "KeyW" => KeyboardKey::W,
+        "Escape" => KeyboardKey::Escape,
+        _ => return None,
+    })
 }

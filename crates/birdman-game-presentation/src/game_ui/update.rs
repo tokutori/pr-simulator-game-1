@@ -33,9 +33,12 @@ impl GameUiView {
             (
                 content @ (GameUiControlContent::Button { .. }
                 | GameUiControlContent::Toggle { .. }),
-                GameUiControlInput::ControlKeys { codes, .. },
+                GameUiControlInput::ControlKeys { keys, .. },
             ) => {
-                if !codes.iter().any(|code| code == "Enter" || code == "Space") {
+                if !keys
+                    .iter()
+                    .any(|key| matches!(key, KeyboardKey::Enter | KeyboardKey::Space))
+                {
                     return Ok(None);
                 }
                 content
@@ -68,15 +71,15 @@ impl GameUiView {
                         range_value(*minimum, *maximum, *step, *ratio)
                             .ok_or(GameUiError::ActionUnavailable)?
                     }
-                    GameUiControlInput::ControlKeys { codes, .. } => {
-                        let pressed = |code| codes.iter().any(|actual| actual == code);
-                        let desired = if pressed("Home") {
+                    GameUiControlInput::ControlKeys { keys, .. } => {
+                        let pressed = |key| keys.contains(&key);
+                        let desired = if pressed(KeyboardKey::Home) {
                             *minimum
-                        } else if pressed("End") {
+                        } else if pressed(KeyboardKey::End) {
                             *maximum
-                        } else if pressed("ArrowLeft") || pressed("ArrowDown") {
+                        } else if pressed(KeyboardKey::Left) || pressed(KeyboardKey::Down) {
                             current - step
-                        } else if pressed("ArrowRight") || pressed("ArrowUp") {
+                        } else if pressed(KeyboardKey::Right) || pressed(KeyboardKey::Up) {
                             current + step
                         } else {
                             return Ok(None);

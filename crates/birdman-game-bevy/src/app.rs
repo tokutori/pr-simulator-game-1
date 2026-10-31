@@ -235,11 +235,13 @@ fn read_input(
         inputs.0.push(ApplicationInput::Dispose);
     }
     for event in ports.keyboard.read() {
-        inputs.0.push(ApplicationInput::Keyboard {
-            code: format!("{:?}", event.key_code),
-            pressed: event.state == ButtonState::Pressed,
-            repeat: event.repeat,
-        });
+        if let Some(key) = keyboard_key(&event.key_code) {
+            inputs.0.push(ApplicationInput::PhysicalKey {
+                key,
+                pressed: event.state == ButtonState::Pressed,
+                repeat: event.repeat,
+            });
+        }
     }
     if ports.motion.delta != Vec2::ZERO {
         inputs.0.push(ApplicationInput::PointerMotion {
@@ -276,4 +278,28 @@ fn read_input(
             .spawn(Screenshot::primary_window())
             .observe(save_to_disk(filename));
     }
+}
+
+fn keyboard_key(code: &KeyCode) -> Option<birdman_game_presentation::game_ui::KeyboardKey> {
+    use birdman_game_presentation::game_ui::KeyboardKey;
+    Some(match code {
+        KeyCode::Enter => KeyboardKey::Enter,
+        KeyCode::Space => KeyboardKey::Space,
+        KeyCode::Home => KeyboardKey::Home,
+        KeyCode::End => KeyboardKey::End,
+        KeyCode::ArrowLeft => KeyboardKey::Left,
+        KeyCode::ArrowRight => KeyboardKey::Right,
+        KeyCode::ArrowUp => KeyboardKey::Up,
+        KeyCode::ArrowDown => KeyboardKey::Down,
+        KeyCode::KeyA => KeyboardKey::A,
+        KeyCode::KeyC => KeyboardKey::C,
+        KeyCode::KeyD => KeyboardKey::D,
+        KeyCode::KeyJ => KeyboardKey::J,
+        KeyCode::KeyL => KeyboardKey::L,
+        KeyCode::KeyP => KeyboardKey::P,
+        KeyCode::KeyS => KeyboardKey::S,
+        KeyCode::KeyW => KeyboardKey::W,
+        KeyCode::Escape => KeyboardKey::Escape,
+        _ => return None,
+    })
 }

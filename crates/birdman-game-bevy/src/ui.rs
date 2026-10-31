@@ -304,16 +304,16 @@ pub(crate) fn button_actions(world: &mut World) {
                     .map(|range| &range.control_id)
             });
         if let Some(control_id) = control_id {
-            let codes = keys
+            let observed_keys = keys
                 .get_just_pressed()
-                .map(|code| format!("{code:?}"))
+                .filter_map(super::keyboard_key)
                 .collect::<Vec<_>>();
-            if !codes.is_empty() {
+            if !observed_keys.is_empty() {
                 inputs.push((
                     focused,
                     GameUiControlInput::ControlKeys {
                         control_id: control_id.clone(),
-                        codes,
+                        keys: observed_keys,
                     },
                 ));
             }
