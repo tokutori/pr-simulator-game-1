@@ -12,8 +12,8 @@ use crate::contact::{
 };
 use crate::dynamics::{
     AircraftModel, DynamicsError, ExternalLoadProvider, FlightState, Gravity, LoadError,
-    PilotAcceleration, PilotPositionTarget, Wrench, advance, pilot_target_acceleration,
-    total_momentum,
+    PilotAcceleration, PilotPositionTarget, Wrench, advance, pilot_braking_plan,
+    pilot_target_acceleration, total_momentum,
 };
 use crate::flight_control::ControlMode;
 use crate::tail_control::{
@@ -35,7 +35,15 @@ pub struct TailFlightTickState {
     incidence: TailIncidence,
     pilot_position_target: PilotPositionTarget,
     pilot_position_demand: PilotPositionTarget,
+    pilot_stop: Option<PilotStop>,
     wing_bending_factor: Option<WingBendingFactor>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
+struct PilotStop {
+    target: PilotPositionTarget,
+    resume_after_stop: bool,
 }
 
 impl TailFlightTickState {
@@ -57,6 +65,7 @@ impl TailFlightTickState {
             incidence,
             pilot_position_target,
             pilot_position_demand: pilot_position_target,
+            pilot_stop: None,
             wing_bending_factor: None,
         })
     }
@@ -96,6 +105,14 @@ impl TailFlightTickState {
     #[cfg_attr(verus_only, verus_spec(returns self.pilot_position_demand()))]
     pub const fn pilot_position_demand(self) -> PilotPositionTarget {
         self.pilot_position_demand
+    }
+
+    /// Returns a certified pilot stop held until an explicit new motion admission.
+    pub const fn pilot_stopping_target(self) -> Option<PilotPositionTarget> {
+        match self.pilot_stop {
+            Some(stop) => Some(stop.target),
+            None => None,
+        }
     }
 
     /// Attaches the explicitly accepted structural coefficient at this boundary.
@@ -138,6 +155,17 @@ impl TailFlightTickConfig {
     }
 }
 
+/// An input-owner observation authorizing a new pilot-motion attempt.
+/// Continuous Set/Hold commands alone do not grant this permission.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
+pub enum TailPilotMotionAdmission {
+    /// The current physical input episode continues.
+    Continued,
+    /// A fresh admitted press or neutral-to-deflection transition was observed.
+    Rearmed,
+}
+
 /// Device-independent tail intent, desired q/r and independent pilot-position command.
 #[cfg_attr(verus_only, verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -145,6 +173,7 @@ pub struct TailFlightTickInput {
     pilot: TailPilotIntent,
     desired_rate: TailRateTarget,
     pilot_position: TailPilotPositionCommand,
+    pilot_motion_admission: TailPilotMotionAdmission,
 }
 
 impl TailFlightTickInput {
@@ -158,7 +187,22 @@ impl TailFlightTickInput {
             pilot,
             desired_rate,
             pilot_position,
+            pilot_motion_admission: TailPilotMotionAdmission::Continued,
         }
+    }
+
+    /// Attaches an explicit admission from the shared raw-input owner.
+    pub const fn with_pilot_motion_admission(
+        mut self,
+        admission: TailPilotMotionAdmission,
+    ) -> Self {
+        self.pilot_motion_admission = admission;
+        self
+    }
+
+    /// Returns the one-tick pilot-motion admission, separate from recorded commands.
+    pub const fn pilot_motion_admission(self) -> TailPilotMotionAdmission {
+        self.pilot_motion_admission
     }
 
     /// Returns normalized nose-up/right-turn manual intent, distinct from physical incidence.
@@ -749,7 +793,7 @@ fn evaluate_tail_flight_tick(
             input.pilot_position,
         )
         .map_err(TailFlightTickError::Dynamics)?;
-    let pilot_position_target =
+    let guarded_target =
         if let Some((guard, alpha)) = config.profile.angle_of_attack_guard().zip(datum_alpha_rad) {
             PilotPositionTarget::try_new(
                 aircraft,
@@ -764,6 +808,13 @@ fn evaluate_tail_flight_tick(
         } else {
             requested_pilot_position_target
         };
+    let (pilot_position_target, pilot_stop) = admit_pilot_target(
+        aircraft,
+        previous,
+        input,
+        requested_pilot_position_target,
+        guarded_target,
+    )?;
     let pilot_acceleration = pilot_target_acceleration(
         aircraft,
         &previous.flight_state,
@@ -793,6 +844,7 @@ fn evaluate_tail_flight_tick(
             incidence,
             pilot_position_target,
             pilot_position_demand: requested_pilot_position_target,
+            pilot_stop,
             wing_bending_factor,
         },
         controls: TailAppliedControls {
@@ -802,6 +854,48 @@ fn evaluate_tail_flight_tick(
         contact: outcome.contact,
         tail_wrenches: outcome.tail_wrenches,
     })
+}
+
+fn admit_pilot_target(
+    aircraft: &AircraftModel,
+    previous: TailFlightTickState,
+    input: TailFlightTickInput,
+    demand: PilotPositionTarget,
+    guarded: PilotPositionTarget,
+) -> Result<(PilotPositionTarget, Option<PilotStop>), TailFlightTickError> {
+    let state = previous.flight_state;
+    if let Some(mut stop) = previous.pilot_stop {
+        stop.resume_after_stop |= input.pilot_motion_admission == TailPilotMotionAdmission::Rearmed;
+        if state.pilot_velocity_mps() != 0.0 || !stop.resume_after_stop {
+            return Ok((stop.target, Some(stop)));
+        }
+    }
+    let position = state.pilot_position_m();
+    let velocity = state.pilot_velocity_mps();
+    let direction = (demand.position_m() - position).signum();
+    let plan = pilot_braking_plan(aircraft, position, velocity, PHYSICS_DT_SECONDS)
+        .map_err(TailFlightTickError::Dynamics)?;
+    // A new request on the other side first completes the current certified stop.
+    if velocity * direction < 0.0 {
+        let stop = PilotStop {
+            target: plan.stop_target,
+            resume_after_stop: true,
+        };
+        return Ok((stop.target, Some(stop)));
+    }
+    if guarded != demand {
+        // Protection grants forward progress only; it never commands a return to trim.
+        if direction == 0.0
+            || direction * (guarded.position_m() - plan.stop_target.position_m()) < 0.0
+        {
+            let stop = PilotStop {
+                target: plan.stop_target,
+                resume_after_stop: false,
+            };
+            return Ok((stop.target, Some(stop)));
+        }
+    }
+    Ok((guarded, None))
 }
 
 fn datum_alpha_for_guard(state: FlightState, loads: &HybridAerodynamicLoad<'_>) -> Option<f64> {

@@ -1,8 +1,8 @@
 //! Shared keyboard admission, gamepad acquisition and per-tick pilot demand.
 
 use birdman_game_core::{
-    PHYSICS_HZ, TailControlError, TailFlightTickInput, TailPilotIntent, TailPilotPositionCommand,
-    TailPilotPositionIntent, TailRateTarget,
+    PHYSICS_HZ, TailControlError, TailFlightTickInput, TailPilotIntent, TailPilotMotionAdmission,
+    TailPilotPositionCommand, TailPilotPositionIntent, TailRateTarget,
 };
 use serde::{Deserialize, Serialize};
 
@@ -166,6 +166,12 @@ impl FlightGamepadAcquisition {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PilotRearmSource {
+    Keyboard,
+    Gamepad,
+}
+
 /// Owns fresh-key admission and gamepad takeover independently of platform APIs.
 #[derive(Debug, Default)]
 pub(crate) struct FlightInputState {
@@ -175,6 +181,9 @@ pub(crate) struct FlightInputState {
     accepted_action_keys: u8,
     keyboard_ramp: [f64; 2],
     gamepad: FlightGamepadAcquisition,
+    pilot_rearm_pending: Option<PilotRearmSource>,
+    gamepad_pilot_direction: i8,
+    pilot_stop_observed: bool,
 }
 
 impl FlightInputState {
@@ -184,6 +193,8 @@ impl FlightInputState {
             return;
         }
         self.active = active;
+        self.pilot_stop_observed = false;
+        self.pilot_rearm_pending = None;
         self.accepted_keys = 0;
         self.keyboard_ramp = [0.0; 2];
         if !active {
@@ -199,16 +210,31 @@ impl FlightInputState {
             if self.active && !observation.repeat && self.held_keys & bit == 0 {
                 self.accepted_keys |= bit;
                 self.rearm_gamepad();
+                if matches!(
+                    observation.key,
+                    FlightControlKey::KeyJ | FlightControlKey::KeyL
+                ) {
+                    self.pilot_rearm_pending = Some(PilotRearmSource::Keyboard);
+                }
             }
             self.held_keys |= bit;
         } else {
             self.held_keys &= !bit;
             self.accepted_keys &= !bit;
+            if self.pilot_rearm_pending == Some(PilotRearmSource::Keyboard)
+                && self.accepted_keys
+                    & (FlightControlKey::KeyJ.bit() | FlightControlKey::KeyL.bit())
+                    == 0
+            {
+                self.pilot_rearm_pending = None;
+            }
         }
     }
 
     /// Retires observations after focus loss, reset or a changed input owner.
     pub(crate) fn invalidate(&mut self) {
+        self.pilot_stop_observed = false;
+        self.pilot_rearm_pending = None;
         self.held_keys = 0;
         self.accepted_keys = 0;
         self.accepted_action_keys = 0;
@@ -303,7 +329,35 @@ impl FlightInputState {
             TailPilotIntent::try_new(nose_up, turn_right)?,
             TailRateTarget::try_new(nose_up * limits[0], turn_right * limits[1])?,
             pilot_position,
+        )
+        .with_pilot_motion_admission(
+            if self.pilot_rearm_pending.is_some()
+                && matches!(pilot_position, TailPilotPositionCommand::Set(_))
+            {
+                TailPilotMotionAdmission::Rearmed
+            } else {
+                TailPilotMotionAdmission::Continued
+            },
         ))
+    }
+
+    /// A protective stop retires gamepad pickup until the existing neutral/crossing admission.
+    pub(crate) fn observe_pilot_stop(&mut self, stopped: bool) {
+        if stopped && !self.pilot_stop_observed {
+            self.rearm_gamepad();
+        }
+        self.pilot_stop_observed = stopped;
+    }
+
+    /// Consumes a one-shot observation only after an elapsed physics interval commits.
+    pub(crate) fn confirm_tick(&mut self, input: TailFlightTickInput, stopped: bool) {
+        if input.pilot_motion_admission() == TailPilotMotionAdmission::Rearmed {
+            if stopped && self.pilot_rearm_pending == Some(PilotRearmSource::Gamepad) {
+                self.rearm_gamepad();
+                self.pilot_stop_observed = true;
+            }
+            self.pilot_rearm_pending = None;
+        }
     }
 
     fn keyboard_axis(&self, positive: FlightControl, negative: FlightControl) -> f64 {
@@ -312,6 +366,10 @@ impl FlightInputState {
     }
 
     fn rearm_gamepad(&mut self) {
+        self.gamepad_pilot_direction = 0;
+        if self.pilot_rearm_pending == Some(PilotRearmSource::Gamepad) {
+            self.pilot_rearm_pending = None;
+        }
         if let Some(identity) = self.gamepad.identity() {
             self.gamepad = FlightGamepadAcquisition::WaitingNeutral { identity };
         }
@@ -327,6 +385,10 @@ impl FlightInputState {
                 .find(|sample| sample.connected && sample.identity == identity)
         {
             return Some(current);
+        }
+        self.gamepad_pilot_direction = 0;
+        if self.pilot_rearm_pending == Some(PilotRearmSource::Gamepad) {
+            self.pilot_rearm_pending = None;
         }
         let selected = gamepads.iter().find(|sample| sample.connected);
         self.gamepad = selected.map_or(FlightGamepadAcquisition::Unselected, |sample| {
@@ -360,6 +422,17 @@ impl FlightInputState {
         }
         let [nose_up, turn_right, position] = axes.map(normalized_axis);
         if matches!(self.gamepad, FlightGamepadAcquisition::Active { .. }) {
+            let direction = if position > 0.0 {
+                1
+            } else if position < 0.0 {
+                -1
+            } else {
+                0
+            };
+            if direction != 0 && direction != self.gamepad_pilot_direction {
+                self.pilot_rearm_pending = Some(PilotRearmSource::Gamepad);
+            }
+            self.gamepad_pilot_direction = direction;
             return Some((
                 nose_up,
                 turn_right,

@@ -330,13 +330,16 @@ pub fn pilot_target_acceleration(
     let position = state.pilot_position_m;
     let velocity = state.pilot_velocity_mps;
     let maximum_acceleration = model.pilot_maximum_acceleration_mps2;
-    let braking_acceleration =
-        pilot_braking_plan(model, position, velocity, timestep_seconds)?.first_acceleration;
+    let braking_plan = pilot_braking_plan(model, position, velocity, timestep_seconds)?;
+    let braking_acceleration = braking_plan.first_acceleration;
     let stopping_distance = continuous_stopping_distance(velocity.abs(), maximum_acceleration);
     let position_error = target.position_m - position;
     let one_tick_stopping_distance =
         0.5 * maximum_acceleration * timestep_seconds * timestep_seconds;
-    let requested_acceleration = if position_error.abs() <= one_tick_stopping_distance
+    let requested_acceleration = if target == braking_plan.stop_target {
+        // Execute the accepted finite certificate exactly when its endpoint is requested.
+        braking_acceleration
+    } else if position_error.abs() <= one_tick_stopping_distance
         && stopping_distance <= one_tick_stopping_distance
     {
         // A held step followed by a step ending at rest reaches the target when

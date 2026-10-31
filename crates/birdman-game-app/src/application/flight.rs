@@ -119,8 +119,10 @@ impl ApplicationSession {
                         .ok_or(FlightFrameError::Session(
                             GameSessionError::InvalidTransition,
                         ))?;
+                let stop_target = previous.pilot_stopping_target();
+                input.observe_pilot_stop(stop_target.is_some());
                 let held = mapping
-                    .normalized_target(previous.pilot_position_demand())
+                    .normalized_target(stop_target.unwrap_or(previous.pilot_position_demand()))
                     .map_err(FlightFrameError::PilotPosition)?;
                 let prepared = prepared.as_mut().ok_or(FlightFrameError::Session(
                     GameSessionError::InvalidTransition,
@@ -137,9 +139,32 @@ impl ApplicationSession {
                             .map_err(|_| TailControlError::InvalidPilotIntent)
                     })
                     .map_err(FlightFrameError::Input)?;
-                prepared
+                let result = prepared
                     .advance(session, demand)
-                    .map_err(FlightFrameError::Session)
+                    .map_err(FlightFrameError::Session);
+                let elapsed = result.as_ref().is_ok_and(|snapshot| {
+                    snapshot
+                        .tail_flight_state()
+                        .is_some_and(|state| state.tick_index() > previous.tick_index())
+                        || snapshot.result().is_some_and(|result| match result.state {
+                            birdman_game_core::SessionTerminalState::TailTick(state) => {
+                                state.tick_index() > previous.tick_index()
+                            }
+                            birdman_game_core::SessionTerminalState::TailWaterContact(contact) => {
+                                contact.interval_start_tick() > previous.tick_index()
+                                    || contact.fraction() > 0.0
+                            }
+                        })
+                });
+                if elapsed {
+                    let stopped = result
+                        .as_ref()
+                        .ok()
+                        .and_then(|snapshot| snapshot.tail_flight_state())
+                        .is_some_and(|state| state.pilot_stopping_target().is_some());
+                    input.confirm_tick(demand, stopped);
+                }
+                result
             })();
             previous_tick = tick;
             match result {
