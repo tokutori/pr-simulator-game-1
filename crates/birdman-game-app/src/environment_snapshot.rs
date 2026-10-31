@@ -26,6 +26,34 @@ pub enum EnvironmentSnapshotError {
     /// The shared environment provider failed with its original cause.
     Environment(EnvironmentFormatError),
 }
+#[cfg(not(verus_only))]
+impl core::fmt::Display for EnvironmentSnapshotError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::InvalidIdentity => f.write_str("Environment identity is invalid"),
+            Self::MissingSessionIdentity => {
+                f.write_str("Session phase has no retained environment identity")
+            }
+            Self::Preparation(cause) => {
+                write!(f, "Environment scenario preparation failed: {cause}")
+            }
+            Self::Environment(cause) => {
+                write!(f, "Registered environment projection failed: {cause}")
+            }
+        }
+    }
+}
+
+#[cfg(not(verus_only))]
+impl core::error::Error for EnvironmentSnapshotError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        match self {
+            Self::Preparation(cause) => Some(cause),
+            Self::Environment(cause) => Some(cause),
+            _ => None,
+        }
+    }
+}
 
 /// Exact split-seed scenario identity used by aggregate resource preparation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

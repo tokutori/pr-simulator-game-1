@@ -208,6 +208,17 @@ pub enum EnvironmentComponent {
     /// Sky state.
     Sky,
 }
+#[cfg(not(verus_only))]
+impl core::fmt::Display for EnvironmentComponent {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::LocalFrame => f.write_str("local frame"),
+            Self::WindGrid => f.write_str("wind grid"),
+            Self::Waves => f.write_str("waves"),
+            Self::Sky => f.write_str("sky"),
+        }
+    }
+}
 
 /// Classified failures from the bounded external environment boundary.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -246,6 +257,68 @@ pub enum EnvironmentFormatError {
     EnvironmentVersionMismatch,
     /// Validated content could not be serialized.
     EncodingFailed,
+}
+#[cfg(not(verus_only))]
+impl core::fmt::Display for EnvironmentFormatError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::InputTooLarge => f.write_str("Environment document exceeds its byte budget"),
+            Self::InvalidJson => {
+                f.write_str("Environment JSON has invalid syntax, fields or field types")
+            }
+            Self::UnsupportedSchemaVersion => {
+                f.write_str("Environment schema version is unsupported")
+            }
+            Self::InvalidIdentity => {
+                f.write_str("Environment version and name must identify a valid environment")
+            }
+            Self::InvalidLocalFrame => {
+                f.write_str("Environment local frame or water datum is invalid")
+            }
+            Self::GridTooLarge => f.write_str("Environment wind grid exceeds its sample capacity"),
+            Self::Wind(cause) => write!(f, "Environment wind grid validation failed: {cause}"),
+            Self::InvalidWindSample(index) => write!(
+                f,
+                "Environment wind sample {index} is not a finite NED vector"
+            ),
+            Self::InvalidWindPosition => {
+                f.write_str("Environment wind origin and representative position must be finite")
+            }
+            Self::InvalidWaves => {
+                f.write_str("Environment wave inputs are outside their valid domain")
+            }
+            Self::InvalidSky => {
+                f.write_str("Environment sky inputs are outside their valid domain")
+            }
+            Self::InvalidSource(index) => write!(
+                f,
+                "Environment source {index} is missing identity, hash or attribution"
+            ),
+            Self::MetadataTooLarge => {
+                f.write_str("Environment metadata exceeds its collection budget")
+            }
+            Self::InvalidGroundWindNormal(index) => {
+                write!(f, "Ground wind normal {index} is invalid")
+            }
+            Self::InvalidProvenance(component) => {
+                write!(f, "Environment provenance for {component} is invalid")
+            }
+            Self::EnvironmentVersionMismatch => {
+                f.write_str("Environment content version does not match its catalog entry")
+            }
+            Self::EncodingFailed => f.write_str("Environment document encoding failed"),
+        }
+    }
+}
+
+#[cfg(not(verus_only))]
+impl core::error::Error for EnvironmentFormatError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        match self {
+            Self::Wind(cause) => Some(cause),
+            _ => None,
+        }
+    }
 }
 
 /// Owned, validated velocity storage, allocated only while constructing a scenario.

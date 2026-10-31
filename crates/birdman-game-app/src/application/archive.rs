@@ -13,6 +13,27 @@ pub enum ArchiveError {
     /// The current session does not admit opening an archive.
     Session(GameSessionError),
 }
+#[cfg(not(verus_only))]
+impl core::fmt::Display for ArchiveError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Format(cause) => write!(f, "Archived record validation failed: {cause}"),
+            Self::Session(cause) => {
+                write!(f, "Session does not admit opening this archive: {cause}")
+            }
+        }
+    }
+}
+
+#[cfg(not(verus_only))]
+impl core::error::Error for ArchiveError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        match self {
+            Self::Format(cause) => Some(cause),
+            Self::Session(cause) => Some(cause),
+        }
+    }
+}
 
 /// Metadata retained with the exact external record owned by the application.
 pub struct ArchiveMetadata {

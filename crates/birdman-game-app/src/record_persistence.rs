@@ -240,13 +240,13 @@ impl RecordSaveTransaction {
         let document = match TailFlightRecordDocument::decode_json(json.as_bytes()) {
             Ok(document) => document,
             Err(FlightRecordFormatError::UnsupportedSchemaVersion) => return Ok(false),
-            Err(error) => return Err(format!("保存記録を検証できない: {error:?}")),
+            Err(error) => return Err(format!("保存記録を検証できない: {error}")),
         };
         self.selection
             .as_mut()
             .unwrap()
             .consider_existing(u64::from(id), &document)
-            .map_err(|error| format!("自己ベストを比較できない: {error:?}"))
+            .map_err(|error| format!("自己ベストを比較できない: {error}"))
     }
 
     fn advance(
@@ -544,7 +544,7 @@ impl RecordPreviewTransaction {
                     }
                     let key = match TailFlightRecordDocument::decode_json(record.json.as_bytes()) {
                         Ok(document) => TailPersonalBestSelection::try_new(&document)
-                            .map_err(|error| format!("{error:?}"))?
+                            .map_err(|error| format!("{error}"))?
                             .map(|selection| {
                                 selection
                                     .key()
@@ -554,7 +554,7 @@ impl RecordPreviewTransaction {
                                     .collect::<String>()
                             }),
                         Err(FlightRecordFormatError::UnsupportedSchemaVersion) => None,
-                        Err(error) => return Err(format!("{error:?}")),
+                        Err(error) => return Err(format!("{error}")),
                     };
                     if let Some(key) = &key
                         && !keys.contains(key)

@@ -507,6 +507,26 @@ pub enum ConfigurationError {
     /// Custom settings require all three explicit axis values.
     CustomRequiresExplicitAxes,
 }
+#[cfg(not(verus_only))]
+impl core::fmt::Display for ConfigurationError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::InvalidVersion => {
+                f.write_str("Catalog and registered identity versions must be positive")
+            }
+            Self::UnorderedScenarioCatalog => {
+                f.write_str("Scenario catalog is not strictly ordered")
+            }
+            Self::ScenarioUnavailable => f.write_str("Requested scenario is not registered"),
+            Self::CustomRequiresExplicitAxes => {
+                f.write_str("Custom difficulty requires explicit cue axes")
+            }
+        }
+    }
+}
+
+#[cfg(not(verus_only))]
+impl core::error::Error for ConfigurationError {}
 
 #[cfg(test)]
 mod tests {

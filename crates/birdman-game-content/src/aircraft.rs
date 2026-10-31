@@ -36,6 +36,35 @@ pub enum AircraftDefinitionError {
     /// The requested operating point could not form a steady-glide equilibrium.
     Trim(SteadyGlideError),
 }
+#[cfg(not(verus_only))]
+impl core::fmt::Display for AircraftDefinitionError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Format(cause) => write!(f, "Aircraft document validation failed: {cause}"),
+            Self::Math(cause) => write!(f, "Aircraft coordinate validation failed: {cause}"),
+            Self::Aerodynamics(cause) => {
+                write!(f, "Aircraft aerodynamic validation failed: {cause}")
+            }
+            Self::Hybrid(cause) => write!(f, "Aircraft hybrid model validation failed: {cause}"),
+            Self::Shape(cause) => write!(f, "Aircraft shape validation failed: {cause}"),
+            Self::Trim(cause) => write!(f, "Aircraft trim validation failed: {cause}"),
+        }
+    }
+}
+
+#[cfg(not(verus_only))]
+impl core::error::Error for AircraftDefinitionError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        match self {
+            Self::Format(cause) => Some(cause),
+            Self::Math(cause) => Some(cause),
+            Self::Aerodynamics(cause) => Some(cause),
+            Self::Hybrid(cause) => Some(cause),
+            Self::Shape(cause) => Some(cause),
+            Self::Trim(cause) => Some(cause),
+        }
+    }
+}
 
 /// Owned physical parameters and aerodynamic storage derived from one validated document.
 pub struct AircraftDefinition {

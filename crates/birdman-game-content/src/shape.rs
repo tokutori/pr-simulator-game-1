@@ -31,6 +31,39 @@ pub enum ShapeError {
     /// A derived point or frame cannot be represented by finite coordinates.
     Math(MathError),
 }
+#[cfg(not(verus_only))]
+impl core::fmt::Display for ShapeError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::NonFinite => f.write_str("Aircraft shape input must be finite"),
+            Self::InvalidAirspeed => f.write_str("Aircraft shape airspeed is invalid"),
+            Self::InvalidChordFraction => {
+                f.write_str("Aircraft shape chord fraction is outside its domain")
+            }
+            Self::OutsideSurface(surface) => write!(f, "Point is outside the {surface} surface"),
+            Self::OutsideCockpit => f.write_str("Point is outside the cockpit shape"),
+            Self::InvalidSampling => f.write_str("Aircraft shape sampling is invalid"),
+            Self::MismatchedContactPointCount => {
+                f.write_str("Contact point count does not match the prepared aircraft shape")
+            }
+            Self::MismatchedVertexCount => {
+                f.write_str("Vertex count does not match the prepared aircraft shape")
+            }
+            Self::DegenerateMember => f.write_str("Structural member is degenerate"),
+            Self::Math(cause) => write!(f, "Aircraft shape coordinate calculation failed: {cause}"),
+        }
+    }
+}
+
+#[cfg(not(verus_only))]
+impl core::error::Error for ShapeError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        match self {
+            Self::Math(cause) => Some(cause),
+            _ => None,
+        }
+    }
+}
 
 /// Side of the normalized mean-line and thickness profile.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

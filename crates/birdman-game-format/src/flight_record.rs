@@ -229,6 +229,31 @@ pub enum FlightRecordFormatError {
     /// Saved snapshots belong to a model/controller/control layout incompatible with reintegration.
     IncompatibleReintegration,
 }
+#[cfg(not(verus_only))]
+impl core::fmt::Display for FlightRecordFormatError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::InputTooLarge => f.write_str("Flight record document exceeds its byte budget"),
+            Self::InvalidJson => {
+                f.write_str("Flight record JSON has invalid syntax, fields or field types")
+            }
+            Self::UnsupportedSchemaVersion => {
+                f.write_str("Flight record schema version is unsupported")
+            }
+            Self::InvalidRecord => {
+                f.write_str("Flight record violates its validated data contract")
+            }
+            Self::RecordUnavailable => f.write_str("No complete flight record is available"),
+            Self::EncodingFailed => f.write_str("Flight record document encoding failed"),
+            Self::IncompatibleReintegration => {
+                f.write_str("Flight record identity does not permit reintegration")
+            }
+        }
+    }
+}
+
+#[cfg(not(verus_only))]
+impl core::error::Error for FlightRecordFormatError {}
 
 impl From<DifficultySettings> for FlightRecordDifficultyDocument {
     fn from(settings: DifficultySettings) -> Self {

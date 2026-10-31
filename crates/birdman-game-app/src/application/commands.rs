@@ -125,6 +125,39 @@ pub enum ApplicationError {
     /// A demonstration record query rejected invalid or empty finalized data.
     Record(birdman_game_core::FlightRecordQueryError),
 }
+#[cfg(not(verus_only))]
+impl core::fmt::Display for ApplicationError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Flight(cause) => write!(f, "Application flight frame failed: {cause}"),
+            Self::Session(cause) => write!(f, "Application session operation failed: {cause}"),
+            Self::Configuration(cause) => {
+                write!(f, "Application configuration was rejected: {cause}")
+            }
+            Self::Control(cause) => write!(f, "Software control authority was rejected: {cause}"),
+            Self::Preparation(cause) => write!(f, "Flight preparation failed: {cause}"),
+            Self::NotSelection => f.write_str("Command is not a difficulty selection"),
+            Self::Input(cause) => write!(f, "Pilot intent was rejected: {cause}"),
+            Self::Record(cause) => write!(f, "Application record query failed: {cause}"),
+        }
+    }
+}
+
+#[cfg(not(verus_only))]
+impl core::error::Error for ApplicationError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        match self {
+            Self::Flight(cause) => Some(cause),
+            Self::Session(cause) => Some(cause),
+            Self::Configuration(cause) => Some(cause),
+            Self::Control(cause) => Some(cause),
+            Self::Preparation(cause) => Some(cause),
+            Self::Input(cause) => Some(cause),
+            Self::Record(cause) => Some(cause),
+            _ => None,
+        }
+    }
+}
 
 /// Exact metadata returned after the existing configuration is sealed.
 pub struct PreparedFlight {

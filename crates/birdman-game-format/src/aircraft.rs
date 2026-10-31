@@ -85,6 +85,16 @@ pub enum AircraftSurfaceRole {
     /// Yaw-control surface spanning the body down axis.
     VerticalTail,
 }
+#[cfg(not(verus_only))]
+impl core::fmt::Display for AircraftSurfaceRole {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::MainWing => f.write_str("main wing"),
+            Self::HorizontalTail => f.write_str("horizontal tail"),
+            Self::VerticalTail => f.write_str("vertical tail"),
+        }
+    }
+}
 
 impl AircraftSurfaceRole {
     /// Returns the corresponding validated aerodynamic surface role.
@@ -393,6 +403,51 @@ pub enum AircraftFormatError {
     InvalidStructure,
     /// Trim conditions or their polar coverage are invalid.
     InvalidTrim,
+}
+#[cfg(not(verus_only))]
+impl core::fmt::Display for AircraftFormatError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::InputTooLarge => f.write_str("Aircraft document exceeds its byte budget"),
+            Self::InvalidJson => {
+                f.write_str("Aircraft JSON has invalid syntax, fields or field types")
+            }
+            Self::UnsupportedSchemaVersion => f.write_str("Aircraft schema version is unsupported"),
+            Self::InvalidIdentity => f.write_str("Aircraft identity is invalid"),
+            Self::InvalidCount => {
+                f.write_str("Aircraft collection count is outside its allowed budget")
+            }
+            Self::InvalidSurfaceRoles => {
+                f.write_str("Aircraft surface roles are missing or duplicated")
+            }
+            Self::InvalidSurface(surface) => write!(f, "Aircraft {surface} surface is invalid"),
+            Self::Geometry(cause) => {
+                write!(f, "Aircraft surface geometry validation failed: {cause}")
+            }
+            Self::Dynamics(cause) => {
+                write!(f, "Aircraft physical model validation failed: {cause}")
+            }
+            Self::Math(cause) => write!(f, "Aircraft coordinate validation failed: {cause}"),
+            Self::Aerodynamics(cause) => {
+                write!(f, "Aircraft aerodynamic configuration failed: {cause}")
+            }
+            Self::InvalidStructure => f.write_str("Aircraft structure configuration is invalid"),
+            Self::InvalidTrim => f.write_str("Aircraft trim configuration is invalid"),
+        }
+    }
+}
+
+#[cfg(not(verus_only))]
+impl core::error::Error for AircraftFormatError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        match self {
+            Self::Geometry(cause) => Some(cause),
+            Self::Dynamics(cause) => Some(cause),
+            Self::Math(cause) => Some(cause),
+            Self::Aerodynamics(cause) => Some(cause),
+            _ => None,
+        }
+    }
 }
 
 impl AircraftDocument {

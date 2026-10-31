@@ -70,6 +70,54 @@ pub enum HybridSessionPreparationError {
     /// Structural storage could not be reserved before preparing flight.
     AllocationFailed,
 }
+#[cfg(not(verus_only))]
+impl core::fmt::Display for HybridSessionPreparationError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Trim(cause) => write!(
+                f,
+                "Launch trim could not be converted to an initial state: {cause}"
+            ),
+            Self::Venue(cause) => write!(f, "Launch venue preparation failed: {cause}"),
+            Self::Configuration(cause) => {
+                write!(f, "Registered scenario selection failed: {cause}")
+            }
+            Self::Aircraft(cause) => write!(f, "Registered aircraft preparation failed: {cause}"),
+            Self::Environment(cause) => {
+                write!(f, "Offline environment preparation failed: {cause}")
+            }
+            Self::Math(cause) => write!(f, "Launch coordinate validation failed: {cause}"),
+            Self::Dynamics(cause) => write!(f, "Initial physical state validation failed: {cause}"),
+            Self::Course(cause) => write!(f, "Scoring course validation failed: {cause}"),
+            Self::Hybrid(cause) => write!(f, "Hybrid load model preparation failed: {cause}"),
+            Self::Control(cause) => write!(f, "Software controller preparation failed: {cause}"),
+            Self::Scenario(cause) => write!(f, "Sealed flight scenario validation failed: {cause}"),
+            Self::Session(cause) => write!(f, "Versioned session configuration failed: {cause}"),
+            Self::AllocationFailed => f.write_str("Flight structural storage allocation failed"),
+        }
+    }
+}
+
+#[cfg(not(verus_only))]
+impl core::error::Error for HybridSessionPreparationError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        match self {
+            Self::Trim(cause) => Some(cause),
+            Self::Venue(cause) => Some(cause),
+            Self::Configuration(cause) => Some(cause),
+            Self::Aircraft(cause) => Some(cause),
+            Self::Environment(cause) => Some(cause),
+            Self::Math(cause) => Some(cause),
+            Self::Dynamics(cause) => Some(cause),
+            Self::Course(cause) => Some(cause),
+            Self::Hybrid(cause) => Some(cause),
+            Self::Control(cause) => Some(cause),
+            Self::Scenario(cause) => Some(cause),
+            Self::Session(cause) => Some(cause),
+            _ => None,
+        }
+    }
+}
 
 /// Platform-independent preparation with stable owned model and environment resources.
 ///

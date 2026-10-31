@@ -116,13 +116,30 @@ pub enum VenueFormatError {
     /// Camera-point content differs from its declared digest.
     CameraPointsHashMismatch,
 }
-
+#[cfg(not(verus_only))]
 impl core::fmt::Display for VenueFormatError {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(formatter, "venue source: {self:?}")
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::InputTooLarge => f.write_str("Venue document exceeds its byte budget"),
+            Self::InvalidJson(cause) => write!(f, "Venue JSON decoding failed: {cause}"),
+            Self::UnsupportedSchema(version) => {
+                write!(f, "Venue schema version {version} is unsupported")
+            }
+            Self::InvalidOrigin => {
+                f.write_str("Venue geographic origin is outside the finite WGS84 domain")
+            }
+            Self::NonFiniteCoordinate => f.write_str("Venue path contains a nonfinite coordinate"),
+            Self::InvalidCameraPoints => {
+                f.write_str("Venue fixed camera identities are duplicated or incomplete")
+            }
+            Self::CameraPointsHashMismatch => {
+                f.write_str("Venue camera-point content differs from its declared digest")
+            }
+        }
     }
 }
 
+#[cfg(not(verus_only))]
 impl core::error::Error for VenueFormatError {}
 
 impl Wgs84Origin {

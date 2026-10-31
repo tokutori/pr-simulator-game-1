@@ -11,6 +11,22 @@ pub enum FlightClockError {
     /// The timestamp precedes the previous accepted observation.
     NonMonotonicTimestamp,
 }
+#[cfg(not(verus_only))]
+impl core::fmt::Display for FlightClockError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::InvalidTimestamp => {
+                f.write_str("Flight frame timestamp must be finite and nonnegative")
+            }
+            Self::NonMonotonicTimestamp => {
+                f.write_str("Flight frame timestamp precedes the previous observation")
+            }
+        }
+    }
+}
+
+#[cfg(not(verus_only))]
+impl core::error::Error for FlightClockError {}
 
 /// Work performed for one accepted presentation observation.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]

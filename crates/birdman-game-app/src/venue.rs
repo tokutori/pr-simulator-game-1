@@ -56,6 +56,22 @@ pub enum LaunchVenueError {
     /// Coordinates, dimensions, slope or bearing are outside their valid ranges.
     InvalidGeometry,
 }
+#[cfg(not(verus_only))]
+impl core::fmt::Display for LaunchVenueError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::InvalidDocument => {
+                f.write_str("Launch venue document does not match its required shape")
+            }
+            Self::InvalidGeometry => {
+                f.write_str("Launch venue coordinates, dimensions, slope or bearing are invalid")
+            }
+        }
+    }
+}
+
+#[cfg(not(verus_only))]
+impl core::error::Error for LaunchVenueError {}
 
 /// Returns the validated immutable venue shared by native preparation and Web rendering.
 pub fn launch_venue() -> Result<&'static LaunchVenue, LaunchVenueError> {
@@ -112,14 +128,35 @@ pub enum VenueCatalogError {
     /// Source origin differs from the launch or environment frame.
     UnregisteredOrigin,
 }
-
+#[cfg(not(verus_only))]
 impl core::fmt::Display for VenueCatalogError {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(formatter, "registered venue: {self:?}")
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Document(cause) => {
+                write!(f, "Registered venue document validation failed: {cause}")
+            }
+            Self::Launch(cause) => write!(f, "Registered launch venue validation failed: {cause}"),
+            Self::Environment(cause) => {
+                write!(f, "Registered venue environment validation failed: {cause}")
+            }
+            Self::UnregisteredOrigin => {
+                f.write_str("Venue source origin differs from its registered frame")
+            }
+        }
     }
 }
 
-impl std::error::Error for VenueCatalogError {}
+#[cfg(not(verus_only))]
+impl core::error::Error for VenueCatalogError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        match self {
+            Self::Document(cause) => Some(cause),
+            Self::Launch(cause) => Some(cause),
+            Self::Environment(cause) => Some(cause),
+            _ => None,
+        }
+    }
+}
 
 /// Borrows the catalog decoded and registered once for map, scene and camera consumers.
 pub fn registered_venue() -> Result<&'static VenueCatalog, VenueCatalogError> {

@@ -56,6 +56,28 @@ pub enum RecordExportError {
     /// Existing format validation or encoding failed.
     Format(FlightRecordFormatError),
 }
+#[cfg(not(verus_only))]
+impl core::fmt::Display for RecordExportError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::RecordUnavailable => f.write_str("No finalized record is available for export"),
+            Self::MetadataMismatch => f.write_str("Export metadata belongs to a different record"),
+            Self::Format(cause) => {
+                write!(f, "Export record validation or encoding failed: {cause}")
+            }
+        }
+    }
+}
+
+#[cfg(not(verus_only))]
+impl core::error::Error for RecordExportError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        match self {
+            Self::Format(cause) => Some(cause),
+            _ => None,
+        }
+    }
+}
 
 /// Produces the current two-tail document and key from the retained physical outputs.
 pub fn export_record_document(

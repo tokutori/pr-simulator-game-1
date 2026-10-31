@@ -19,6 +19,29 @@ pub enum FlightFrameError {
     /// The prepared session rejected an attempted physical tick.
     Session(GameSessionError),
 }
+#[cfg(not(verus_only))]
+impl core::fmt::Display for FlightFrameError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Clock(cause) => write!(f, "Flight clock observation failed: {cause}"),
+            Self::Input(cause) => write!(f, "Flight input was rejected: {cause}"),
+            Self::PilotPosition(cause) => write!(f, "Pilot position conversion failed: {cause}"),
+            Self::Session(cause) => write!(f, "Flight state update failed: {cause}"),
+        }
+    }
+}
+
+#[cfg(not(verus_only))]
+impl core::error::Error for FlightFrameError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        match self {
+            Self::Clock(cause) => Some(cause),
+            Self::Input(cause) => Some(cause),
+            Self::PilotPosition(cause) => Some(cause),
+            Self::Session(cause) => Some(cause),
+        }
+    }
+}
 
 /// Admitted work and the last physical interval's start for render interpolation.
 #[derive(Clone, Copy, Debug, PartialEq)]
