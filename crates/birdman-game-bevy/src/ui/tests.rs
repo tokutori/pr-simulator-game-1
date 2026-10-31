@@ -1,4 +1,5 @@
 use super::*;
+use birdman_game_presentation::game_ui::KeyboardKey;
 use birdman_game_runtime::{
     ApplicationCapabilities, ApplicationObservation, ApplicationPlatformObservation,
     ApplicationRendererCreation, ApplicationRequest, ApplicationRuntime,
@@ -181,7 +182,7 @@ fn shared_widgets_retain_values_and_forward_controls_and_chart_io_with_their_sou
         .press(KeyCode::Space);
     button_actions(app.world_mut());
     assert!(
-        matches!(app.world_mut().resource_mut::<NativeInputs>().0.pop(), Some(ApplicationInput::Control { input: GameUiControlInput::ControlKeys { codes, .. }, .. }) if codes == ["Space"])
+        matches!(app.world_mut().resource_mut::<NativeInputs>().0.pop(), Some(ApplicationInput::Control { input: GameUiControlInput::ControlKeys { keys, .. }, .. }) if keys == [KeyboardKey::Space])
     );
     app.world_mut()
         .entity_mut(node)
@@ -237,14 +238,14 @@ fn shared_widgets_retain_values_and_forward_controls_and_chart_io_with_their_sou
         matches!(app.world_mut().resource_mut::<NativeInputs>().0.pop(), Some(ApplicationInput::Control { view_revision, input: GameUiControlInput::SetRangeRatio { ratio: 0.75, .. } }) if view_revision == revision)
     );
     app.world_mut().entity_mut(range).insert(Interaction::None);
-    for code in [KeyCode::Home, KeyCode::End, KeyCode::KeyA] {
+    for code in [KeyCode::Home, KeyCode::End, KeyCode::KeyA, KeyCode::F12] {
         app.world_mut()
             .resource_mut::<ButtonInput<KeyCode>>()
             .press(code);
     }
     button_actions(app.world_mut());
     assert!(
-        matches!(app.world_mut().resource_mut::<NativeInputs>().0.pop(), Some(ApplicationInput::Control { view_revision, input: GameUiControlInput::ControlKeys { codes, .. } }) if view_revision == revision && codes.len() == 3 && ["Home", "End", "KeyA"].iter().all(|code| codes.iter().any(|actual| actual == code)))
+        matches!(app.world_mut().resource_mut::<NativeInputs>().0.pop(), Some(ApplicationInput::Control { view_revision, input: GameUiControlInput::ControlKeys { keys, .. } }) if view_revision == revision && keys.len() == 3 && [KeyboardKey::Home, KeyboardKey::End, KeyboardKey::A].iter().all(|key| keys.contains(key)))
     );
     app.world_mut()
         .resource_mut::<ButtonInput<KeyCode>>()

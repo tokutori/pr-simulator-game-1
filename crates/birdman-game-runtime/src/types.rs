@@ -449,6 +449,15 @@ pub enum ApplicationInput {
         /// Whether this press repeats an existing hold.
         repeat: bool,
     },
+    /// A platform-neutral physical key transition from a typed platform adapter.
+    PhysicalKey {
+        /// Physical key, without application action or flight binding selection.
+        key: birdman_game_presentation::game_ui::KeyboardKey,
+        /// Whether the key is pressed.
+        pressed: bool,
+        /// Whether this press repeats an existing hold.
+        repeat: bool,
+    },
     /// Confirmed viewport, capabilities and renderer resource observations.
     Platform {
         #[doc = "Viewport and API capabilities."]

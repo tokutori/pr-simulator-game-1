@@ -387,6 +387,20 @@ export type ApplicationInput = {
      */
     readonly repeat: boolean;
 } | {
+    /**
+     * Physical key, without application action or flight binding selection.
+     */
+    readonly key: KeyboardKey;
+    readonly kind: "physical_key";
+    /**
+     * Whether the key is pressed.
+     */
+    readonly pressed: boolean;
+    /**
+     * Whether this press repeats an existing hold.
+     */
+    readonly repeat: boolean;
+} | {
     readonly kind: "platform";
     /**
      * Viewport and API capabilities.
@@ -634,15 +648,21 @@ export type GameUiControlInput = {
     readonly type: "set-range-ratio";
 } | {
     /**
-     * Platform key codes observed in the same input frame.
-     */
-    readonly codes: readonly string[];
-    /**
      * Published control identifier.
      */
     readonly controlId: string;
+    /**
+     * Platform-neutral physical keys observed in the same input frame.
+     */
+    readonly keys: readonly KeyboardKey[];
     readonly type: "control-keys";
 };
+/**
+ * Platform-neutral physical keys observed by shared input and widget contracts.
+ *
+ * This vocabulary describes physical keys, not flight bindings or held-key ownership.
+ */
+export type KeyboardKey = "enter" | "space" | "home" | "end" | "left" | "right" | "up" | "down" | "a" | "c" | "d" | "j" | "l" | "p" | "s" | "w" | "escape";
 /**
  * Raw stage of a platform pointer event on an admitted control.
  */

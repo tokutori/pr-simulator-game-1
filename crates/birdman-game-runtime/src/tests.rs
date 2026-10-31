@@ -1087,6 +1087,11 @@ fn admitted_flight_keys_reach_hud_and_clear_on_focus_loss() {
         pressed,
         repeat,
     };
+    let physical_key = |key, pressed, repeat| ApplicationInput::PhysicalKey {
+        key,
+        pressed,
+        repeat,
+    };
     use birdman_game_presentation::game_ui::GameUiControlContent;
     let bounds = |runtime: &ApplicationRuntime, id: &str| {
         runtime
@@ -1318,19 +1323,35 @@ fn admitted_flight_keys_reach_hud_and_clear_on_focus_loss() {
             .value()
             .to_owned()
     };
+    assert!(
+        !runtime
+            .observe_test(key("F12", true, false))
+            .unwrap()
+            .keyboard_consumed
+    );
     let pressed = runtime.observe_test(key("ArrowUp", true, false)).unwrap();
     assert!(hud_value(pressed).contains("↑●"));
-    for (code, label) in [("KeyW", "W"), ("KeyS", "S"), ("KeyA", "A"), ("KeyD", "D")] {
-        assert!(
-            hud_value(runtime.observe_test(key(code, true, false)).unwrap())
-                .contains(&format!("{label}●"))
-        );
-        assert!(
-            hud_value(runtime.observe_test(key(code, false, false)).unwrap())
-                .contains(&format!("{label}○"))
-        );
+    for (physical, code, label) in [
+        (KeyboardKey::W, "KeyW", "W"),
+        (KeyboardKey::S, "KeyS", "S"),
+        (KeyboardKey::A, "KeyA", "A"),
+        (KeyboardKey::D, "KeyD", "D"),
+    ] {
+        for (pressed, released) in [
+            (physical_key(physical, true, false), key(code, false, false)),
+            (key(code, true, false), physical_key(physical, false, false)),
+        ] {
+            assert!(
+                hud_value(runtime.observe_test(pressed).unwrap()).contains(&format!("{label}●"))
+            );
+            assert!(
+                hud_value(runtime.observe_test(released).unwrap()).contains(&format!("{label}○"))
+            );
+        }
     }
-    let camera = runtime.observe_test(key("KeyC", true, false)).unwrap();
+    let camera = runtime
+        .observe_test(physical_key(KeyboardKey::C, true, false))
+        .unwrap();
     assert_eq!(
         runtime.ui.flight_camera,
         birdman_game_presentation::game_ui::GameUiFlightCamera::Chase
@@ -1411,7 +1432,9 @@ fn admitted_flight_keys_reach_hud_and_clear_on_focus_loss() {
     runtime
         .observe_test(ApplicationInput::DocumentFocus { focused: true })
         .unwrap();
-    let repeat = runtime.observe_test(key("ArrowUp", true, true)).unwrap();
+    let repeat = runtime
+        .observe_test(physical_key(KeyboardKey::Up, true, true))
+        .unwrap();
     assert!(hud_value(repeat).contains("↑○"));
     runtime.observe_test(key("KeyP", true, false)).unwrap();
     runtime.observe_test(key("KeyP", false, false)).unwrap();

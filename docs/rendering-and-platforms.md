@@ -299,6 +299,12 @@ NativeはDirectionalLightの選択した解像度・30〜600 mの3段cascadeか�
 - rendererの故障案内と「ゲームを再読み込み」を全Scene・overlayへ配置し、Bootと同じ共有commandから、未完了I/Oの取消と資源解放が完了したDrained後にWebの再読み込みまたはNativeの再起動を要求する。GPU故障後のNative・VRの視認と実操作は実機で受け入れる。
 - tracking喪失や退出時はSceneを保持し、Countdown取消・Flight停止・Replay/Attract clock停止を共通sessionへ送る。
 
+### 物理キーの通知とUI解決
+
+- `KeyboardKey`は、共有widgetと入力通知が使う17種の中立な物理キー語彙を定義する。両者の公開入力契約が参照するためpresentationに配置し、操縦割当・aliasの論理和・保持・fresh認可は既appの入力ownerが管理する。
+- Browserは生の`KeyboardEvent.code`・押下・repeatを既Runtime通知で渡し、Runtimeが`KeyboardKey`へ正規化する。Nativeは`KeyCode`から同じ型への単一変換をwidget通知と全体通知で再用し、両媒体は同じRustの入力処理へ合流する。
+- widgetは型付き`ControlKeys.keys`で決定する。Webのbutton・checkbox・rangeはDOM標準のclick・change・input観測を転写し、TSへキーマップを持たせない。未対応キーは操作を生成しない。
+
 ### Screen DOMの保持
 
 - Screen・初期化中・失敗・Screenからの権限要求中はScreen DOMを維持する。

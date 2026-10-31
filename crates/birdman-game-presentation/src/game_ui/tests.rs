@@ -1263,7 +1263,7 @@ fn custom_cues_and_native_selection_use_the_same_existing_settings_resolver() {
         },
         GameUiControlInput::ControlKeys {
             control_id: toggle.id.clone(),
-            codes: vec!["Enter".into(), "Space".into()],
+            keys: vec![KeyboardKey::Enter, KeyboardKey::Space],
         },
     ] {
         assert_eq!(
@@ -2553,15 +2553,18 @@ fn range_display_text_matches_initial_and_retained_views_at_rounding_boundaries(
             }),
             Ok(Some(GameUiAction::SeekReplay { time_seconds: 0.25 }))
         );
-        for (codes, expected) in [
-            (vec!["ArrowRight", "End", "Home"], Some(0.0)),
-            (vec!["End"], Some(1.12)),
-            (vec!["ArrowRight"], Some(0.38)),
-            (vec!["KeyA"], None),
+        for (keys, expected) in [
+            (
+                vec![KeyboardKey::Right, KeyboardKey::End, KeyboardKey::Home],
+                Some(0.0),
+            ),
+            (vec![KeyboardKey::End], Some(1.12)),
+            (vec![KeyboardKey::Right], Some(0.38)),
+            (vec![KeyboardKey::A], None),
         ] {
             let input = GameUiControlInput::ControlKeys {
                 control_id: id.clone(),
-                codes: codes.into_iter().map(str::to_owned).collect(),
+                keys,
             };
             assert_eq!(
                 view.control_input_action(&input),
@@ -2570,7 +2573,7 @@ fn range_display_text_matches_initial_and_retained_views_at_rounding_boundaries(
         }
         let unknown = GameUiControlInput::ControlKeys {
             control_id: "game-analysis-cursor".into(),
-            codes: vec!["KeyA".into()],
+            keys: vec![KeyboardKey::A],
         };
         let unchanged = update_game_ui(
             &state,
@@ -2596,7 +2599,7 @@ fn range_display_text_matches_initial_and_retained_views_at_rounding_boundaries(
         assert_eq!(
             view.control_input_action(&GameUiControlInput::ControlKeys {
                 control_id: "missing".into(),
-                codes: vec!["KeyA".into()]
+                keys: vec![KeyboardKey::A]
             }),
             Err(GameUiError::ActionUnavailable)
         );
@@ -2609,11 +2612,11 @@ fn range_display_text_matches_initial_and_retained_views_at_rounding_boundaries(
             })
             .unwrap();
         let button_id = button.id.clone();
-        for code in ["Enter", "Space"] {
+        for code in [KeyboardKey::Enter, KeyboardKey::Space] {
             assert_eq!(
                 view.control_input_action(&GameUiControlInput::ControlKeys {
                     control_id: button_id.clone(),
-                    codes: vec![code.into()],
+                    keys: vec![code],
                 }),
                 Ok(button.content.activation_action())
             );
@@ -2621,7 +2624,7 @@ fn range_display_text_matches_initial_and_retained_views_at_rounding_boundaries(
         assert_eq!(
             view.control_input_action(&GameUiControlInput::ControlKeys {
                 control_id: button_id,
-                codes: vec!["KeyA".into()]
+                keys: vec![KeyboardKey::A]
             }),
             Ok(None)
         );
@@ -2643,7 +2646,7 @@ fn range_display_text_matches_initial_and_retained_views_at_rounding_boundaries(
         assert_eq!(
             view.control_input_action(&GameUiControlInput::ControlKeys {
                 control_id: noninteractive_id,
-                codes: vec!["Enter".into()]
+                keys: vec![KeyboardKey::Enter]
             }),
             Err(GameUiError::ActionUnavailable)
         );
@@ -2712,7 +2715,7 @@ fn range_display_text_matches_initial_and_retained_views_at_rounding_boundaries(
                     let action = full
                         .control_input_action(&GameUiControlInput::ControlKeys {
                             control_id: id.into(),
-                            codes: vec!["ArrowRight".into()],
+                            keys: vec![KeyboardKey::Right],
                         })
                         .unwrap()
                         .unwrap();
