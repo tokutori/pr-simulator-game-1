@@ -31,6 +31,36 @@ pub enum FlightRecordError {
     IncompatibleFailure,
 }
 
+#[cfg(not(verus_only))]
+impl core::fmt::Display for FlightRecordError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::InvalidHeader => {
+                f.write_str("flight record header exceeds the sample capacity or physics contract")
+            }
+            Self::AlreadyStarted => f.write_str("flight record has already started"),
+            Self::NotStarted => f.write_str("flight record has not started"),
+            Self::AlreadyFinalized => f.write_str("flight record has already been finalized"),
+            Self::CapacityExceeded => f.write_str("flight record sample capacity is exhausted"),
+            Self::AllocationFailed => f.write_str("flight record buffer reservation failed"),
+            Self::InvalidTime => f.write_str("flight record time is invalid or non-monotonic"),
+            Self::InvalidTelemetry => {
+                f.write_str("flight telemetry is non-finite or has negative speed")
+            }
+            Self::FinalizationMismatch => {
+                f.write_str("flight record terminal time differs from its latest sample")
+            }
+            Self::InvalidArchive => f.write_str("flight record archive violates sample invariants"),
+            Self::IncompatibleFailure => {
+                f.write_str("flight record failure differs from its terminal reason")
+            }
+        }
+    }
+}
+
+#[cfg(not(verus_only))]
+impl core::error::Error for FlightRecordError {}
+
 #[cfg_attr(verus_only, verus_verify)]
 pub struct FlightRecordStorage<Header, Sample, Finalization> {
     pub(super) header: Header,

@@ -350,6 +350,56 @@ pub enum GameSessionError {
     Telemetry(FlightTelemetryError),
 }
 
+#[cfg(not(verus_only))]
+impl core::fmt::Display for GameSessionError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::InvalidTransition => {
+                f.write_str("action is unavailable in the current session phase")
+            }
+            Self::InvalidCountdown => {
+                f.write_str("countdown must contain at least one whole second")
+            }
+            Self::InvalidCountdownElapsed => {
+                f.write_str("countdown elapsed time must be finite and nonnegative")
+            }
+            Self::CountdownTokenExhausted => f.write_str("countdown attempt tokens are exhausted"),
+            Self::InvalidFlightTickLimit => f.write_str("flight tick limit must be positive"),
+            Self::InvalidModelVersion => f.write_str("session model versions must be positive"),
+            Self::NotPaused => f.write_str("flight is not paused"),
+            Self::PauseConditionsRemain => f.write_str("external pause conditions remain active"),
+            Self::TailTick(_) => f.write_str("flight tick"),
+            Self::Score(_) => f.write_str("terminal distance score"),
+            Self::Record(_) => f.write_str("flight record"),
+            Self::PlaybackClock(_) => f.write_str("replay clock"),
+            Self::PlaybackQuery(_) => f.write_str("replay record query"),
+            Self::Telemetry(_) => f.write_str("flight telemetry"),
+        }
+    }
+}
+
+#[cfg(not(verus_only))]
+impl core::error::Error for GameSessionError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        match self {
+            Self::TailTick(cause) => Some(cause),
+            Self::Score(cause) => Some(cause),
+            Self::Record(cause) => Some(cause),
+            Self::PlaybackClock(cause) => Some(cause),
+            Self::PlaybackQuery(cause) => Some(cause),
+            Self::Telemetry(cause) => Some(cause),
+            Self::InvalidTransition
+            | Self::InvalidCountdown
+            | Self::InvalidCountdownElapsed
+            | Self::CountdownTokenExhausted
+            | Self::InvalidFlightTickLimit
+            | Self::InvalidModelVersion
+            | Self::NotPaused
+            | Self::PauseConditionsRemain => None,
+        }
+    }
+}
+
 impl GameSessionError {
     #[cfg_attr(verus_only, vstd::prelude::verus_verify(dual_spec))]
     #[cfg_attr(verus_only, verus_spec(returns Self::from_flight_execution(error)))]

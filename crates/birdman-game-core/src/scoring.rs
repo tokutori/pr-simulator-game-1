@@ -104,6 +104,22 @@ pub enum DistanceScoreError {
     InvalidRecordedMetrics,
 }
 
+#[cfg(not(verus_only))]
+impl core::fmt::Display for DistanceScoreError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::NonFinite => f.write_str("distance score input or result is non-finite"),
+            Self::InvalidCourseAxis => f.write_str("horizontal course axis has zero length"),
+            Self::InvalidRecordedMetrics => {
+                f.write_str("recorded endpoint metrics violate their geometric invariant")
+            }
+        }
+    }
+}
+
+#[cfg(not(verus_only))]
+impl core::error::Error for DistanceScoreError {}
+
 /// Measures endpoint displacement from the start datum to a terminal datum.
 ///
 /// The score in version 1 is signed displacement parallel to `course_axis`.

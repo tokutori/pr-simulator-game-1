@@ -18,6 +18,31 @@ pub enum WindError {
     OutsideGrid,
 }
 
+#[cfg(not(verus_only))]
+impl core::fmt::Display for WindError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::NonFinite => f.write_str("wind input or result is non-finite"),
+            Self::InvalidGridDimensions => f.write_str(
+                "wind grid dimensions must contain at least two samples per axis without overflow",
+            ),
+            Self::InvalidGridSpacing => {
+                f.write_str("wind grid spacing must be finite and positive")
+            }
+            Self::InvalidGridDomain => {
+                f.write_str("wind grid upper bounds must be finite and exceed their origins")
+            }
+            Self::GridLengthMismatch => {
+                f.write_str("wind velocity count differs from grid dimensions")
+            }
+            Self::OutsideGrid => f.write_str("wind query lies outside the grid domain"),
+        }
+    }
+}
+
+#[cfg(not(verus_only))]
+impl core::error::Error for WindError {}
+
 /// An immutable, time-independent wind velocity field in NED coordinates.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(verus_only, vstd::prelude::verus_verify)]

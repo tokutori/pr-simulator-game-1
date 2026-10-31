@@ -192,6 +192,25 @@ pub enum FlightRecordQueryError {
     NonFiniteInterpolation,
 }
 
+#[cfg(not(verus_only))]
+impl core::fmt::Display for FlightRecordQueryError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::EmptyRecord => f.write_str("flight record has no initial sample"),
+            Self::InvalidTime => f.write_str("invalid flight record query time"),
+            Self::OutsideRecordedRange => {
+                f.write_str("query is outside the recorded time interval")
+            }
+            Self::NonFiniteInterpolation => {
+                f.write_str("flight record interpolation produced a non-finite value")
+            }
+        }
+    }
+}
+
+#[cfg(not(verus_only))]
+impl core::error::Error for FlightRecordQueryError {}
+
 /// Bounded flight samples with capacity reserved before simulation begins.
 ///
 /// Storage updates require the public domain validation methods.

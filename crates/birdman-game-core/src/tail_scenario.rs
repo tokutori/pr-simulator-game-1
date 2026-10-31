@@ -34,6 +34,32 @@ pub enum TailFlightScenarioError {
     Contact(ContactError),
 }
 
+#[cfg(not(verus_only))]
+impl core::fmt::Display for TailFlightScenarioError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::PhysicalParameters(_) => f.write_str("flight physical parameters"),
+            Self::InitialState(_) => f.write_str("initial tail flight state"),
+            Self::Aerodynamics(_) => f.write_str("initial aerodynamic envelope"),
+            Self::Telemetry(_) => f.write_str("initial flight telemetry"),
+            Self::Contact(_) => f.write_str("initial contact geometry"),
+        }
+    }
+}
+
+#[cfg(not(verus_only))]
+impl core::error::Error for TailFlightScenarioError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        match self {
+            Self::PhysicalParameters(cause) => Some(cause),
+            Self::InitialState(cause) => Some(cause),
+            Self::Aerodynamics(cause) => Some(cause),
+            Self::Telemetry(cause) => Some(cause),
+            Self::Contact(cause) => Some(cause),
+        }
+    }
+}
+
 /// Sealed physical launch, initial tail incidence, trim mapping and contact conditions.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(verus_only, vstd::prelude::verus_verify)]

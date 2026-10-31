@@ -46,6 +46,25 @@ pub enum ReplayClockError {
     UnsupportedRate,
 }
 
+#[cfg(not(verus_only))]
+impl core::fmt::Display for ReplayClockError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::InvalidDuration => f.write_str("replay duration must be finite and nonnegative"),
+            Self::InvalidElapsedTime => {
+                f.write_str("replay elapsed time must be finite and nonnegative")
+            }
+            Self::InvalidSeekTime => {
+                f.write_str("replay seek time lies outside the finite record interval")
+            }
+            Self::UnsupportedRate => f.write_str("unsupported replay rate"),
+        }
+    }
+}
+
+#[cfg(not(verus_only))]
+impl core::error::Error for ReplayClockError {}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 /// Playback cursor and rate for a finalized flight record.
 #[cfg_attr(verus_only, vstd::prelude::verus_verify)]

@@ -252,6 +252,30 @@ pub enum TailFlightTickError {
     Contact(ContactError),
 }
 
+#[cfg(not(verus_only))]
+impl core::fmt::Display for TailFlightTickError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::TickOverflow => f.write_str("flight tick counter overflow"),
+            Self::Control(_) => f.write_str("tail control"),
+            Self::Dynamics(_) => f.write_str("flight dynamics"),
+            Self::Contact(_) => f.write_str("water contact"),
+        }
+    }
+}
+
+#[cfg(not(verus_only))]
+impl core::error::Error for TailFlightTickError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        match self {
+            Self::Control(cause) => Some(cause),
+            Self::Dynamics(cause) => Some(cause),
+            Self::Contact(cause) => Some(cause),
+            Self::TickOverflow => None,
+        }
+    }
+}
+
 /// Ordering of water contact relative to an interval's shape and control update.
 #[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

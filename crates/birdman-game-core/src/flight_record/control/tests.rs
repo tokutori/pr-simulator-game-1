@@ -595,6 +595,58 @@ fn failure_finalization_preserves_original_stage_site_and_last_valid_sample() {
     assert!(record.personal_best_candidate_score().is_none());
     let restored = FlightRecord::try_from_finalized_samples(header(), previous, finalized).unwrap();
     assert_eq!(restored.finalization(), Some(finalized));
+    use core::error::Error;
+    let session =
+        crate::GameSessionError::TailTick(restored.finalization().unwrap().failure.unwrap());
+    let tick = session
+        .source()
+        .unwrap()
+        .downcast_ref::<TailFlightTickError>()
+        .unwrap();
+    assert_eq!(*tick, failure);
+    let dynamics = tick
+        .source()
+        .unwrap()
+        .downcast_ref::<DynamicsError>()
+        .unwrap();
+    let load = dynamics
+        .source()
+        .unwrap()
+        .downcast_ref::<LoadError>()
+        .unwrap();
+    let evaluation = load
+        .source()
+        .unwrap()
+        .downcast_ref::<AerodynamicEvaluationError>()
+        .unwrap();
+    let hybrid = evaluation
+        .source()
+        .unwrap()
+        .downcast_ref::<HybridError>()
+        .unwrap();
+    assert_eq!(*hybrid, cause);
+    let text = alloc::format!("{hybrid}");
+    for context in ["main wing", "proxy 3", "RK4 stage 2", "local speed"] {
+        assert!(text.contains(context));
+    }
+    let leaf = hybrid
+        .source()
+        .unwrap()
+        .downcast_ref::<crate::AeroError>()
+        .unwrap();
+    assert_eq!(*leaf, crate::AeroError::OutsideEnvelope);
+    assert!(leaf.source().is_none());
+    let leaf_text = alloc::format!("{leaf}");
+    for context in [
+        &session as &dyn Error,
+        tick,
+        dynamics,
+        load,
+        evaluation,
+        hybrid,
+    ] {
+        assert!(!alloc::format!("{context}").contains(&leaf_text));
+    }
 }
 
 #[test]

@@ -29,6 +29,48 @@ pub enum ContactError {
     Wind(crate::WindError),
 }
 
+#[cfg(not(verus_only))]
+impl core::fmt::Display for ContactError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::EmptyGeometry => f.write_str("contact geometry has no structural point"),
+            Self::MismatchedGeometry => {
+                f.write_str("contact interval endpoints have different point counts")
+            }
+            Self::NonAdjacentTicks => {
+                f.write_str("contact states do not form one adjacent tick interval")
+            }
+            Self::UnresolvedMotion => {
+                f.write_str("continuous contact motion could not be resolved at bounded precision")
+            }
+            Self::MissingWingBendingFactor => {
+                f.write_str("deforming contact geometry has no accepted wing-bending coefficient")
+            }
+            Self::ShapeProjection => f.write_str("structural contact shape projection failed"),
+            Self::Math(_) => f.write_str("contact math"),
+            Self::Dynamics(_) => f.write_str("contact flight state"),
+            Self::Wind(_) => f.write_str("initial composite-center wind"),
+        }
+    }
+}
+
+#[cfg(not(verus_only))]
+impl core::error::Error for ContactError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        match self {
+            Self::Math(cause) => Some(cause),
+            Self::Dynamics(cause) => Some(cause),
+            Self::Wind(cause) => Some(cause),
+            Self::EmptyGeometry
+            | Self::MismatchedGeometry
+            | Self::NonAdjacentTicks
+            | Self::UnresolvedMotion
+            | Self::MissingWingBendingFactor
+            | Self::ShapeProjection => None,
+        }
+    }
+}
+
 /// Borrowed structural projection with storage prepared before flight.
 pub trait TailContactShapeProvider {
     /// Evaluates the structural load law at the interval's initial composite-CG airspeed.

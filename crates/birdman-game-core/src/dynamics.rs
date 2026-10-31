@@ -838,6 +838,29 @@ pub enum LoadError {
     Aerodynamic(AerodynamicEvaluationError),
 }
 
+#[cfg(not(verus_only))]
+impl core::fmt::Display for LoadError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::OutsideDomain => {
+                f.write_str("flight state lies outside the validated load domain")
+            }
+            Self::Unavailable => f.write_str("load model cannot evaluate this flight state"),
+            Self::Aerodynamic(_) => f.write_str("aerodynamic load"),
+        }
+    }
+}
+
+#[cfg(not(verus_only))]
+impl core::error::Error for LoadError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        match self {
+            Self::Aerodynamic(cause) => Some(cause),
+            Self::OutsideDomain | Self::Unavailable => None,
+        }
+    }
+}
+
 /// Provides external non-gravitational loads at each integration stage.
 pub trait ExternalLoadProvider {
     /// Evaluates the non-gravitational wrench at the supplied stage state.
@@ -891,6 +914,58 @@ pub enum DynamicsError {
     Load(LoadError),
     /// A validated math constructor rejected its value.
     InvalidMathValue(MathError),
+}
+
+#[cfg(not(verus_only))]
+impl core::fmt::Display for DynamicsError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::NonFinite => f.write_str("flight dynamics input or result is non-finite"),
+            Self::InvalidMass => {
+                f.write_str("airframe or pilot mass is outside its physical domain")
+            }
+            Self::InvalidGravity => f.write_str("gravity is negative"),
+            Self::InvalidPilotLimits => {
+                f.write_str("pilot movement limits are inconsistent or nonpositive")
+            }
+            Self::PilotOutOfRange => {
+                f.write_str("pilot position, velocity or acceleration exceeds model limits")
+            }
+            Self::PilotMotionUnrecoverable => {
+                f.write_str("pilot motion cannot stop before its movement boundary")
+            }
+            Self::PilotMotionOutsidePolicyDomain => {
+                f.write_str("held-acceleration policy cannot certify a finite stopping sequence")
+            }
+            Self::InvalidTimeStep => {
+                f.write_str("flight dynamics timestep must be finite and positive")
+            }
+            Self::SingularMassMatrix => {
+                f.write_str("coupled mass matrix is singular or numerically non-invertible")
+            }
+            Self::Load(_) => f.write_str("external load"),
+            Self::InvalidMathValue(_) => f.write_str("flight dynamics math"),
+        }
+    }
+}
+
+#[cfg(not(verus_only))]
+impl core::error::Error for DynamicsError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        match self {
+            Self::Load(cause) => Some(cause),
+            Self::InvalidMathValue(cause) => Some(cause),
+            Self::NonFinite
+            | Self::InvalidMass
+            | Self::InvalidGravity
+            | Self::InvalidPilotLimits
+            | Self::PilotOutOfRange
+            | Self::PilotMotionUnrecoverable
+            | Self::PilotMotionOutsidePolicyDomain
+            | Self::InvalidTimeStep
+            | Self::SingularMassMatrix => None,
+        }
+    }
 }
 
 /// Linear momentum in NED and angular momentum about inertial origin in NED.

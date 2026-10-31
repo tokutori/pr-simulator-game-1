@@ -125,3 +125,19 @@ pub enum ActuatorError {
     /// A timestep is not finite and positive.
     InvalidTimeStep,
 }
+
+#[cfg(not(verus_only))]
+impl core::fmt::Display for ActuatorError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::NonFinite => f.write_str("actuator input or result is non-finite"),
+            Self::InvalidAuthority => f.write_str("flight-control authority lies outside [0, 1]"),
+            Self::InvalidFeedbackGain => f.write_str("body-rate feedback gain is negative"),
+            Self::InvalidLimit => f.write_str("actuator travel or rate limit is invalid"),
+            Self::InvalidTimeStep => f.write_str("actuator timestep must be finite and positive"),
+        }
+    }
+}
+
+#[cfg(not(verus_only))]
+impl core::error::Error for ActuatorError {}
