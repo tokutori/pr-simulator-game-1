@@ -353,7 +353,7 @@ D_i=q_i S_{projected,i}\left(C_{D0}+\frac{C_{L,i}^2}{\pi AR_s e}\right)
 
 ## 公開Playableモデル
 
-- 公開既定は`bpg041-playable-hybrid-mock`のmodel 7、catalog 10 / scenario 11、`bpg040-tail-rate-feedback`のcontroller 3である。
+- 公開既定は`bpg041-playable-hybrid-mock`のmodel 7、catalog 10 / scenario 11、`bpg040-tail-rate-feedback`のcontroller 4である。
 - `assets/aircraft/playable-glider-v7.json`が質量・慣性・section・strip・anchor・全機polar・構造材寸法・視点mountを定義する。contentの`AircraftDefinition`が検証済みdocumentと借用viewのstorageを所有する。
 - 定常滑空は汎用の`SteadyGlideTrim`が、質量モデル・全機polar・`SteadyGlideConditions`から求める。指定した迎角区間で力の釣合を解き、合成重心まわりのモーメントを満たすパイロット位置を求める。
 - 発進CGの水平投影は台前縁中央とし、既trim姿勢・実対気速度の曲げ・中立舵角による全接触外形を台の支持平面より上へ置く高さを共有appで導出する。登録形状では有限台に対する保守的な高さの余裕は4.406 mm以下。初速は確定位置の風をtrim対気速度へ一度加算する。

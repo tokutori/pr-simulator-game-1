@@ -27,7 +27,7 @@ pub(super) fn game_ui_hud(
     if state.credits_open && matches!(phase, SessionPhase::FlightPaused { .. }) {
         return Ok(None);
     }
-    let (sample, distance, target, incidence_rates) = match snapshot {
+    let (sample, distance, target, incidence_rates, pilot_protection) = match snapshot {
         SessionSnapshot::TailFlightRunning { state, .. }
         | SessionSnapshot::TailFlightPaused { state, .. }
             if context.platform.presentation_mode == GameUiPresentationMode::Screen
@@ -69,8 +69,15 @@ pub(super) fn game_ui_hud(
                     telemetry,
                 },
                 distance,
-                Some(state.pilot_position_target().position_m()),
+                Some(state.pilot_position_demand().position_m()),
                 tail_incidence_rates(context.session, state),
+                state.pilot_motion_limited().then_some(
+                    if state.flight_state().pilot_velocity_mps() == 0.0 {
+                        "保護停止"
+                    } else {
+                        "保護制動"
+                    },
+                ),
             )
         }
         SessionSnapshot::Replay { .. }
@@ -88,7 +95,7 @@ pub(super) fn game_ui_hud(
             let target = sample
                 .input
                 .map(|input| input.resolved_pilot_position_target_m());
-            (sample, "—".to_owned(), target, None)
+            (sample, "—".to_owned(), target, None, None)
         }
         _ => return Ok(None),
     };
@@ -242,11 +249,16 @@ pub(super) fn game_ui_hud(
             ));
             primary.push(text_node(
                 "hud-pilot-position",
-                "パイロット位置（目標）",
+                if phase == SessionPhase::Replay {
+                    "パイロット位置（適用目標）"
+                } else {
+                    "パイロット位置（目標）"
+                },
                 format!(
-                    "{:+.2} ({}) m",
+                    "{:+.2} ({}) m{}",
                     sample.flight_state.pilot_position_m(),
                     target.map_or_else(|| "—".to_owned(), |target| format!("{target:+.2}")),
+                    pilot_protection.map_or_else(String::new, |status| format!(" · {status}")),
                 ),
             ));
             primary.push(text_node(
@@ -640,7 +652,14 @@ fn hud_layout(
 ) -> GameUiHudLayout {
     let font = platform.viewport.root_font_size;
     let viewport = platform.viewport;
-    let compact = viewport.width <= 600.0 || viewport.width < minimum_hud_width(font) + 17.5 * font;
+    let flight_bar = phase == SessionPhase::FlightRunning;
+    let reserved_width = if flight_bar {
+        menu.width_px + 2.0 * font
+    } else {
+        17.5 * font
+    };
+    let compact =
+        viewport.width <= 600.0 || viewport.width < minimum_hud_width(font) + reserved_width;
     let in_menu = matches!(
         phase,
         SessionPhase::FlightPaused { .. } | SessionPhase::Replay
@@ -669,14 +688,18 @@ fn hud_layout(
     } else if compact {
         (
             0.6 * font,
-            4.25 * font,
+            if flight_bar {
+                menu.maximum_height_px + 0.75 * font
+            } else {
+                4.25 * font
+            },
             (viewport.width - 1.2 * font).max(1.0),
         )
     } else {
         (
             0.75 * font,
             0.75 * font,
-            (viewport.width - 17.5 * font).max(1.0).min(54.0 * font),
+            (viewport.width - reserved_width).max(1.0).min(54.0 * font),
         )
     };
     GameUiHudLayout {

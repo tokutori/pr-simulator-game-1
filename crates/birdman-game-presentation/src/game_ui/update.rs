@@ -281,6 +281,7 @@ pub fn update_game_ui(
         GameUiAction::SetAnalysisChart { chart } => next.analysis_chart = chart,
         GameUiAction::SetPauseOverlay { overlay } => next.pause_overlay = overlay,
         GameUiAction::SetReplayView { view } => next.replay_view = view,
+        GameUiAction::SetFlightCamera { camera } => next.flight_camera = camera,
         GameUiAction::CycleReplayCamera {} => {
             let current = GameUiReplayCamera::ALL
                 .iter()

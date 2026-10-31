@@ -81,9 +81,10 @@ pub use tail_scenario::{
 };
 pub use tail_simulation::{
     TailAppliedControls, TailFlightTickConfig, TailFlightTickError, TailFlightTickInput,
-    TailFlightTickOutcome, TailFlightTickReport, TailFlightTickState, TailWaterContactMoment,
-    TailWaterContactSample, advance_tail_flight_tick, advance_tail_flight_tick_with_contact,
-    advance_tail_flight_tick_with_contact_report, advance_tail_flight_tick_with_shape_provider,
+    TailFlightTickOutcome, TailFlightTickReport, TailFlightTickState, TailPilotMotionAdmission,
+    TailWaterContactMoment, TailWaterContactSample, advance_tail_flight_tick,
+    advance_tail_flight_tick_with_contact, advance_tail_flight_tick_with_contact_report,
+    advance_tail_flight_tick_with_shape_provider,
 };
 pub use wind_field::{WindError, WindField};
 

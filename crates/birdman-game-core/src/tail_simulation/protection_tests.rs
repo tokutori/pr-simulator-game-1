@@ -219,8 +219,13 @@ fn alpha_guard_applies_effective_pilot_targets_without_clamping_state_or_losing_
                 .pilot_position_command(),
             TailPilotPositionCommand::Hold
         );
+        // Hold retains the demand resolved by Set, and the guard projects
+        // that demand again; the previous applied target is not re-projected.
+        assert_eq!(held.pilot_position_demand(), next.pilot_position_demand());
         assert!(
-            held.pilot_position_target().position_m() >= next.pilot_position_target().position_m()
+            held.pilot_position_target().position_m() <= 0.0
+                && held.pilot_position_target().position_m()
+                    >= next.pilot_position_demand().position_m()
         );
         let safe = TailFlightTickInput::new(
             set.manual_intent(),
@@ -1003,4 +1008,120 @@ fn weighted_endpoint_failure_is_not_fourth_stage_or_a_post_contact_rejection() {
     );
     assert_eq!(report.applied_controls(), None);
     assert_eq!(previous, before);
+}
+
+#[test]
+fn held_pilot_demand_is_monotonic_and_survives_guard_projection() {
+    let definition = TestAircraft::try_new().unwrap();
+    let surfaces = definition.surfaces().unwrap();
+    let loads = HybridAerodynamicLoad::try_new(
+        HybridModel::try_new(definition.polar().unwrap(), &surfaces).unwrap(),
+        1.225,
+        WindField::uniform(NedVector::zero()),
+    )
+    .unwrap();
+    let aircraft = definition.aircraft();
+    let alpha: f64 = 0.08;
+    let mut current = state(
+        &aircraft,
+        [10.0 * libm::cos(alpha), 0.0, 10.0 * libm::sin(alpha)],
+        [0.0; 3],
+        TailIncidence::neutral(),
+        -50.0,
+    );
+    let profile = TailControlProfile::try_new(0.2, 0.2, 1.0)
+        .unwrap()
+        .with_angle_of_attack_guard(
+            TailAngleOfAttackGuard::try_new([-0.09, 0.09], 0.04, 1.0, 1.6).unwrap(),
+        );
+    let mapping = TailPilotPositionMapping::try_new(&aircraft, 0.0).unwrap();
+    let config = TailFlightTickConfig::new(
+        ControlMode::Manual,
+        profile,
+        mapping,
+        Gravity::try_new(0.0).unwrap(),
+    );
+    // Hold the decrease direction for 150 ticks, integrating the requested
+    // position from the retained demand exactly as the application does.
+    let mut requested = current.pilot_position_demand().position_m();
+    let mut velocity_sign_changes = 0_usize;
+    let mut previous_velocity_sign = 0_i32;
+    let mut guard_projected = false;
+    for _ in 0..150 {
+        requested = (requested - 0.004).clamp(-0.4, 0.4);
+        let intent = mapping
+            .normalized_target(PilotPositionTarget::try_new(&aircraft, requested).unwrap())
+            .unwrap();
+        let input = TailFlightTickInput::new(
+            TailPilotIntent::try_new(0.0, 0.0).unwrap(),
+            TailRateTarget::try_new(0.0, 0.0).unwrap(),
+            TailPilotPositionCommand::Set(intent),
+        );
+        current = advance_tail_flight_tick(&aircraft, current, config, input, &loads).unwrap();
+        let demand = current.pilot_position_demand().position_m();
+        assert!(
+            (demand - requested).abs() < 1.0e-12,
+            "demand {demand} must store the resolved request {requested}"
+        );
+        let applied = current.pilot_position_target().position_m();
+        assert!(
+            demand <= applied && applied <= 0.0,
+            "applied {applied} must be the guard projection of demand {demand} toward trim"
+        );
+        guard_projected |= applied - demand > 0.01;
+        let velocity = current.flight_state().pilot_velocity_mps();
+        let sign = if velocity > 1.0e-9 {
+            1
+        } else if velocity < -1.0e-9 {
+            -1
+        } else {
+            0
+        };
+        if sign != 0 && previous_velocity_sign != 0 && sign != previous_velocity_sign {
+            velocity_sign_changes += 1;
+        }
+        if sign != 0 {
+            previous_velocity_sign = sign;
+        }
+    }
+    assert!(
+        guard_projected,
+        "the guard must project the demand in this fixture"
+    );
+    assert!((current.pilot_position_demand().position_m() + 0.4).abs() < 1.0e-12);
+    // Hold retains the demand verbatim while the guard keeps projecting it,
+    // and the pilot settles on the applied target without hunting.
+    let held_demand = current.pilot_position_demand();
+    for _ in 0..50 {
+        let input = TailFlightTickInput::new(
+            TailPilotIntent::try_new(0.0, 0.0).unwrap(),
+            TailRateTarget::try_new(0.0, 0.0).unwrap(),
+            TailPilotPositionCommand::Hold,
+        );
+        current = advance_tail_flight_tick(&aircraft, current, config, input, &loads).unwrap();
+        assert_eq!(current.pilot_position_demand(), held_demand);
+        let velocity = current.flight_state().pilot_velocity_mps();
+        let sign = if velocity > 1.0e-9 {
+            1
+        } else if velocity < -1.0e-9 {
+            -1
+        } else {
+            0
+        };
+        if sign != 0 && previous_velocity_sign != 0 && sign != previous_velocity_sign {
+            velocity_sign_changes += 1;
+        }
+        if sign != 0 {
+            previous_velocity_sign = sign;
+        }
+    }
+    assert!(
+        velocity_sign_changes <= 1,
+        "pilot velocity reversed {velocity_sign_changes} times during a single hold"
+    );
+    assert!(
+        (current.flight_state().pilot_position_m() - current.pilot_position_target().position_m())
+            .abs()
+            < 0.01
+    );
 }

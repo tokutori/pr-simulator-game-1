@@ -287,6 +287,11 @@ fn screen_hud_information_profiles_fit_hd_with_overlays_and_enlarged_text() {
                     assert!(
                         height - hud.layout.offset_px[1] - hud.layout.height_px >= height * 0.5
                     );
+                    let menu_left = width - view.layout.width_px - 0.75 * font;
+                    assert!(
+                        hud.layout.offset_px[0] + hud.layout.width_px <= menu_left
+                            || hud.layout.offset_px[1] > view.layout.maximum_height_px
+                    );
                 }
                 let nodes = hud
                     .groups
@@ -2652,6 +2657,7 @@ fn replay_request_preserves_view_state_until_session_admission() {
     let state = GameUiState {
         replay_view: GameUiReplayView::Analysis,
         replay_camera: GameUiReplayCamera::Chase,
+        flight_camera: GameUiFlightCamera::Chase,
         analysis_time_seconds: 0.015,
         technical_open: true,
         ..GameUiState::default()
@@ -3564,6 +3570,10 @@ fn legacy_replay_hud_uses_the_recorded_pilot_target_and_marks_unrecorded_loads()
         "— rad/s"
     );
     assert_eq!(hud_node(&hud, "hud-tail-force").content.value(), "— / — N");
+    assert_eq!(
+        hud_node(&hud, "hud-pilot-position").label,
+        "パイロット位置（適用目標）"
+    );
 }
 
 #[test]
@@ -3798,6 +3808,44 @@ fn hud_uses_the_authoritative_telemetry_and_existing_information_cue_policy() {
     assert_eq!(
         hud_node(&paused, "hud-tail-incidence-rate").content.value(),
         rates
+    );
+    let mut stopped = GameSession::new();
+    stopped.open_setup().unwrap();
+    prepare_manual_flight(&mut stopped, WeatherClass::Typical, 300, 42).unwrap();
+    stopped.mark_briefing_ready().unwrap();
+    stopped.start_countdown(1).unwrap();
+    stopped
+        .observe_countdown(stopped.countdown_token().unwrap(), 1.0, true)
+        .unwrap();
+    let command = TailFlightTickInput::new(
+        TailPilotIntent::try_new(0.0, 0.0).unwrap(),
+        TailRateTarget::try_new(0.0, 0.0).unwrap(),
+        TailPilotPositionCommand::Set(
+            birdman_game_core::TailPilotPositionIntent::try_new(-1.0).unwrap(),
+        ),
+    );
+    for _ in 0..250 {
+        stopped.advance_tail_flight_tick(command).unwrap();
+        let body = stopped.snapshot().tail_flight_state().unwrap();
+        if body.pilot_motion_limited() && body.flight_state().pilot_velocity_mps() == 0.0 {
+            break;
+        }
+    }
+    let body = stopped.snapshot().tail_flight_state().unwrap();
+    assert!(body.pilot_motion_limited());
+    assert_eq!(body.flight_state().pilot_velocity_mps(), 0.0);
+    let protected = game_ui_view(
+        &GameUiState::default(),
+        &context(&stopped, difficulty(), &platform),
+    )
+    .unwrap()
+    .hud
+    .unwrap();
+    assert!(
+        hud_node(&protected, "hud-pilot-position")
+            .content
+            .value()
+            .contains("保護停止")
     );
 }
 
@@ -4350,5 +4398,72 @@ fn title_preserves_platform_fault_notification_after_screen_recovery() {
         );
         assert!(!view.description.contains(&platform.notification));
         assert_eq!(session.snapshot(), before);
+    }
+}
+
+#[test]
+fn flight_camera_choices_share_selection_and_spatial_modes_keep_pilot() {
+    let mut session = GameSession::new();
+    session.open_setup().unwrap();
+    let mut platform = platform();
+    let state = GameUiState::default();
+    let update = update_game_ui(
+        &state,
+        GameUiAction::SetFlightCamera {
+            camera: GameUiFlightCamera::Chase,
+        },
+        &context(&session, difficulty(), &platform),
+    )
+    .unwrap();
+    assert_eq!(update.state.flight_camera, GameUiFlightCamera::Chase);
+    assert!(update.effects.is_empty());
+    let retained = update_game_ui(
+        &update.state,
+        GameUiAction::Session {
+            command: SessionCommand::Prepare {},
+        },
+        &context(&session, difficulty(), &platform),
+    )
+    .unwrap();
+    assert_eq!(retained.state.flight_camera, GameUiFlightCamera::Chase);
+    let finished = finalized();
+    let retry = update_game_ui(
+        &retained.state,
+        GameUiAction::Session {
+            command: SessionCommand::Retry {},
+        },
+        &context(&finished, difficulty(), &platform),
+    )
+    .unwrap();
+    assert_eq!(retry.state.flight_camera, GameUiFlightCamera::Chase);
+    let view = game_ui_view(&retained.state, &context(&session, difficulty(), &platform)).unwrap();
+    assert!(matches!(
+        &control(&view, "game-flight-camera-chase").content,
+        GameUiControlContent::Button {
+            presentation: GameUiButtonPresentation::Choice { selected: true, .. },
+            ..
+        }
+    ));
+    for mode in [GameUiPresentationMode::Hmd, GameUiPresentationMode::PhoneVr] {
+        platform.presentation_mode = mode;
+        let view =
+            game_ui_view(&retained.state, &context(&session, difficulty(), &platform)).unwrap();
+        assert!(
+            !view
+                .panels
+                .iter()
+                .flat_map(|panel| &panel.controls)
+                .any(|control| control.id.starts_with("game-flight-camera-"))
+        );
+        assert_eq!(
+            update_game_ui(
+                &retained.state,
+                GameUiAction::SetFlightCamera {
+                    camera: GameUiFlightCamera::Pilot
+                },
+                &context(&session, difficulty(), &platform)
+            ),
+            Err(GameUiError::ActionUnavailable)
+        );
     }
 }

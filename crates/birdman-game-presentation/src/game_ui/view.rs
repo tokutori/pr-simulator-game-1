@@ -33,6 +33,9 @@ pub fn game_ui_view(
     } else {
         description(phase, can_resume, context.flight_failure)
     };
+    if matches!(phase, SessionPhase::FlightPaused { .. }) && !credits_open {
+        flight_camera_choices(&mut menu, state, context);
+    }
     match phase {
         SessionPhase::Title | SessionPhase::FlightPaused { .. } if credits_open => {
             credits(&mut menu)
@@ -147,6 +150,8 @@ pub fn game_ui_view(
         }
         SessionPhase::FlightSetup => {
             setup(&mut menu, context);
+            flight_camera_choices(&mut menu, state, context);
+            menu.section("flight-actions", "", GameUiSectionLayout::Row);
             menu.session(
                 "game-setup-start",
                 "飛行準備へ進む",
@@ -230,6 +235,16 @@ pub fn game_ui_view(
         }
         SessionPhase::FlightRunning => {
             menu.section("flight-actions", "", GameUiSectionLayout::Row);
+            if context.platform.presentation_mode == GameUiPresentationMode::Screen {
+                menu.action(
+                    "game-flight-camera-toggle",
+                    &format!("視点: {}", state.flight_camera.label()),
+                    GameUiAction::SetFlightCamera {
+                        camera: state.flight_camera.toggled(),
+                    },
+                    true,
+                );
+            }
             if context.platform.renderer_failure.is_none() {
                 menu.session(
                     "game-flight-pause",
@@ -674,6 +689,34 @@ impl Menu {
             },
         );
     }
+}
+
+fn flight_camera_choices(menu: &mut Menu, state: &GameUiState, context: &GameUiContext<'_, '_>) {
+    if context.platform.presentation_mode != GameUiPresentationMode::Screen {
+        return;
+    }
+    menu.section("flight-camera", "視点", GameUiSectionLayout::ChoiceGrid);
+    for (id, camera) in [
+        ("pilot", GameUiFlightCamera::Pilot),
+        ("chase", GameUiFlightCamera::Chase),
+    ] {
+        menu.push(
+            &format!("game-flight-camera-{id}"),
+            camera.label(),
+            true,
+            "flight-camera",
+            GameUiControlContent::Button {
+                action: GameUiAction::SetFlightCamera { camera },
+                presentation: GameUiButtonPresentation::Choice {
+                    group: "flight-camera".to_owned(),
+                    group_label: "視点".to_owned(),
+                    selected: state.flight_camera == camera,
+                    description: String::new(),
+                },
+            },
+        );
+    }
+    menu.automatic_sections();
 }
 
 fn setup(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
@@ -1786,9 +1829,13 @@ pub(super) fn layout(
     let width = match shell {
         GameUiShell::Center => available_width.min(42.0 * font),
         GameUiShell::Analysis => available_width.min(72.0 * font),
-        GameUiShell::FlightBar if phase == SessionPhase::FlightRunning => {
-            available_width.min(15.5 * font)
-        }
+        GameUiShell::FlightBar if phase == SessionPhase::FlightRunning => available_width.min(
+            if context.platform.presentation_mode == GameUiPresentationMode::Screen {
+                26.0
+            } else {
+                15.5
+            } * font,
+        ),
         GameUiShell::FlightBar => viewport.width,
         GameUiShell::PauseSettings => pause_settings_width,
         GameUiShell::Cinematic => cinematic_width,
@@ -1805,7 +1852,9 @@ pub(super) fn layout(
     Ok(GameUiLayout {
         shell,
         width_px: width,
-        maximum_height_px: if shell == GameUiShell::Analysis {
+        maximum_height_px: if phase == SessionPhase::FlightRunning {
+            (viewport.height - 2.0 * font).max(1.0).min(8.0 * font)
+        } else if shell == GameUiShell::Analysis {
             (viewport.height - 2.0 * font).max(1.0)
         } else if context.platform.presentation_mode == GameUiPresentationMode::Screen
             && shell == GameUiShell::FlightBar

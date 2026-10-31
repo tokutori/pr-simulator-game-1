@@ -254,8 +254,8 @@ VRを含むanchor、両眼への収まり、透明度、前方clear regionは[�
 
 ## Camera
 
-- Webの通常FlightはPilotを使用し、Information・Assistance・presentation種別から独立する。
-- Nativeはpresentation操作としてPilot/Chase切替を提供する。
+- Screenの飛行視点はWeb・Native共通で操縦席（Pilot）と追従（Chase）を選択する。既定は操縦席で、飛行設定・一時停止の選択、飛行中の「視点」ボタン、Cキーが同じ選択へ反映される。選択は再試行時も保持する。
+- HMD・Phone VRの飛行視点はPilotを使用し、記録再生は独立した視点選択を使用する。
 - いずれもcamera操作からphysicsやrecordを変更しない。
 
 PilotEyePointは機体構造datumからの基準位置・取付姿勢を持つmetadataであり、左右眼の中点を表す。実身体移動$x_p$に対し、基準位置から前後方向の眼移動を導出する。

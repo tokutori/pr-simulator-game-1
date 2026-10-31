@@ -330,13 +330,16 @@ pub fn pilot_target_acceleration(
     let position = state.pilot_position_m;
     let velocity = state.pilot_velocity_mps;
     let maximum_acceleration = model.pilot_maximum_acceleration_mps2;
-    let braking_acceleration =
-        pilot_braking_acceleration(model, position, velocity, timestep_seconds)?;
+    let braking_plan = pilot_braking_plan(model, position, velocity, timestep_seconds)?;
+    let braking_acceleration = braking_plan.first_acceleration;
     let stopping_distance = continuous_stopping_distance(velocity.abs(), maximum_acceleration);
     let position_error = target.position_m - position;
     let one_tick_stopping_distance =
         0.5 * maximum_acceleration * timestep_seconds * timestep_seconds;
-    let requested_acceleration = if position_error.abs() <= one_tick_stopping_distance
+    let requested_acceleration = if target == braking_plan.stop_target {
+        // Execute the accepted finite certificate exactly when its endpoint is requested.
+        braking_acceleration
+    } else if position_error.abs() <= one_tick_stopping_distance
         && stopping_distance <= one_tick_stopping_distance
     {
         // A held step followed by a step ending at rest reaches the target when
@@ -357,7 +360,19 @@ pub fn pilot_target_acceleration(
         } else {
             model.pilot_maximum_speed_mps
         };
-        if velocity * direction > 0.0
+        let manifold_acceleration = if velocity * direction > 0.0 {
+            pilot_stopping_manifold_acceleration(
+                velocity * direction,
+                position_error.abs(),
+                timestep_seconds,
+                maximum_acceleration,
+            )
+        } else {
+            None
+        };
+        if let Some(acceleration) = manifold_acceleration {
+            direction * acceleration
+        } else if velocity * direction > 0.0
             && direction * (position + direction * stopping_distance)
                 >= direction * target.position_m
         {
@@ -412,6 +427,69 @@ fn continuous_stopping_distance(speed: f64, maximum_acceleration: f64) -> f64 {
     0.5 * speed * (speed / maximum_acceleration)
 }
 
+// Distance covered while braking at the maximum acceleration with one held
+// command per tick: maximal braking steps plus a final step that ends at
+// rest. This is the stopping distance the braking certificate actually
+// travels; it exceeds the continuous distance by a tick-quantization term
+// of at most one eighth of a one-tick stopping distance.
+fn pilot_sampled_stopping_distance(speed: f64, timestep: f64, maximum_acceleration: f64) -> f64 {
+    let speed_change = maximum_acceleration * timestep;
+    let remainder = libm::fmod(speed, speed_change);
+    continuous_stopping_distance(speed, maximum_acceleration)
+        + 0.5 * remainder * ((speed_change - remainder) / maximum_acceleration)
+}
+
+// Returns the acceleration, measured toward the target, that places the
+// pilot exactly on the sampled stopping manifold after one tick: the
+// distance travelled during the tick plus the sampled stopping distance
+// from the resulting speed equals the remaining error. The braking
+// certificate followed from a state on the manifold stops exactly at the
+// target, so arrivals on this command neither overshoot nor hunt. Returns
+// the maximum braking command when even that command lands beyond the
+// manifold, and None when even maximum acceleration cannot reach the
+// manifold within this tick.
+fn pilot_stopping_manifold_acceleration(
+    directed_velocity: f64,
+    error_magnitude: f64,
+    timestep: f64,
+    maximum_acceleration: f64,
+) -> Option<f64> {
+    let speed_change = maximum_acceleration * timestep;
+    if directed_velocity <= speed_change {
+        return None;
+    }
+    let manifold_gap = |acceleration: f64| {
+        let end_speed = directed_velocity + acceleration * timestep;
+        directed_velocity * timestep
+            + 0.5 * acceleration * timestep * timestep
+            + pilot_sampled_stopping_distance(end_speed, timestep, maximum_acceleration)
+            - error_magnitude
+    };
+    if manifold_gap(-maximum_acceleration) > 0.0 {
+        return Some(-maximum_acceleration);
+    }
+    if manifold_gap(maximum_acceleration) < 0.0 {
+        return None;
+    }
+    // The gap increases with the acceleration, so bisection keeps the lower
+    // endpoint on or inside the manifold until the finite f64 endpoints
+    // coalesce.
+    let mut lower = -maximum_acceleration;
+    let mut upper = maximum_acceleration;
+    for _ in 0..200 {
+        let midpoint = lower + (upper - lower) * 0.5;
+        if midpoint == lower || midpoint == upper {
+            break;
+        }
+        if manifold_gap(midpoint) > 0.0 {
+            upper = midpoint;
+        } else {
+            lower = midpoint;
+        }
+    }
+    Some(lower)
+}
+
 // Returns the first command of a finite stopping certificate. The first option
 // brakes by A until the last tick, whose acceleration is chosen to end at rest.
 // If that distance is unavailable, maximal braking is followed by one reversing
@@ -423,18 +501,28 @@ fn continuous_stopping_distance(speed: f64, maximum_acceleration: f64) -> f64 {
 // treating unsupported numerical states as physically unrecoverable.
 const MAX_PILOT_STOPPING_STEPS: usize = 4096;
 
-fn pilot_braking_acceleration(
+/// First command and endpoint of the same bounded, held-acceleration stopping certificate.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PilotBrakingPlan {
+    pub(crate) first_acceleration: f64,
+    pub(crate) stop_target: PilotPositionTarget,
+}
+
+pub(crate) fn pilot_braking_plan(
     model: &AircraftModel,
     position: f64,
     velocity: f64,
     timestep: f64,
-) -> Result<f64, DynamicsError> {
+) -> Result<PilotBrakingPlan, DynamicsError> {
     let mut current_position = position;
     let mut current_velocity = velocity;
     let mut first_acceleration = 0.0;
     for step in 0..MAX_PILOT_STOPPING_STEPS {
         if current_velocity == 0.0 {
-            return Ok(first_acceleration);
+            return Ok(PilotBrakingPlan {
+                first_acceleration,
+                stop_target: PilotPositionTarget::try_new(model, current_position)?,
+            });
         }
         let acceleration = pilot_braking_step(model, current_position, current_velocity, timestep)
             .map_err(|error| {
@@ -460,7 +548,10 @@ fn pilot_braking_acceleration(
             pilot_motion_at(current_position, current_velocity, acceleration, timestep);
     }
     if current_velocity == 0.0 {
-        Ok(first_acceleration)
+        Ok(PilotBrakingPlan {
+            first_acceleration,
+            stop_target: PilotPositionTarget::try_new(model, current_position)?,
+        })
     } else {
         Err(DynamicsError::PilotMotionOutsidePolicyDomain)
     }
@@ -490,8 +581,7 @@ fn pilot_braking_step(
         return Err(DynamicsError::PilotMotionOutsidePolicyDomain);
     }
     let remainder = libm::fmod(speed, speed_change);
-    let sampled_distance =
-        continuous_distance + 0.5 * remainder * ((speed_change - remainder) / maximum_acceleration);
+    let sampled_distance = pilot_sampled_stopping_distance(speed, timestep, maximum_acceleration);
     if pilot_position_is_in_range(model, position + direction * sampled_distance) {
         return Ok(-direction * maximum_acceleration.min(speed / timestep));
     }
@@ -642,7 +732,7 @@ fn pilot_acceleration_is_safe(
     }
     let (next_position, next_velocity) =
         pilot_motion_at(position, velocity, acceleration, timestep);
-    pilot_braking_acceleration(model, next_position, next_velocity, timestep).is_ok()
+    pilot_braking_plan(model, next_position, next_velocity, timestep).is_ok()
 }
 
 fn pilot_held_motion_is_in_range(

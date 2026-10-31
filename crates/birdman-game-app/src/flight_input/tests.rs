@@ -5,9 +5,11 @@ fn tick(
     gamepads: &[FlightGamepadObservation],
     held: f64,
 ) -> Result<TailFlightTickInput, TailControlError> {
-    input.tick_input(gamepads, held, KeyboardControlSettings::default(), |step| {
+    let result = input.tick_input(gamepads, held, KeyboardControlSettings::default(), |step| {
         TailPilotPositionIntent::try_new((held + step / 0.4).clamp(-1.0, 1.0))
-    })
+    })?;
+    input.confirm_tick(result, false);
+    Ok(result)
 }
 
 fn key(input: &mut FlightInputState, key: FlightControlKey, pressed: bool, repeat: bool) {
@@ -43,6 +45,16 @@ fn keyboard_integrates_the_confirmed_target_per_tick_and_clamps_at_its_limit() {
     input.set_active(true);
     key(&mut input, FlightControlKey::KeyL, true, false);
     let first = tick(&mut input, &[], 0.4).unwrap();
+    assert_eq!(
+        first.pilot_motion_admission(),
+        TailPilotMotionAdmission::Rearmed
+    );
+    assert_eq!(
+        tick(&mut input, &[], 0.41)
+            .unwrap()
+            .pilot_motion_admission(),
+        TailPilotMotionAdmission::Continued
+    );
     assert!((set_value(first) - 0.41).abs() < 1e-12);
     let second = tick(&mut input, &[], set_value(first)).unwrap();
     assert!((set_value(second) - 0.42).abs() < 1e-12);
@@ -218,6 +230,49 @@ fn activation_and_resume_accept_release_then_fresh_press_instead_of_held_repeats
         input.invalidate();
         assert_eq!(input.accepted_keys(), [false; 13]);
     }
+    input.set_active(true);
+    key(&mut input, FlightControlKey::KeyL, true, false);
+    let settings = KeyboardControlSettings::default();
+    assert_eq!(
+        input.tick_input(&[], 0.0, settings, |_| Err(
+            TailControlError::InvalidPilotIntent
+        )),
+        Err(TailControlError::InvalidPilotIntent)
+    );
+    let uncommitted = input
+        .tick_input(&[], 0.0, settings, |_| {
+            TailPilotPositionIntent::try_new(0.1)
+        })
+        .unwrap();
+    assert_eq!(
+        uncommitted.pilot_motion_admission(),
+        TailPilotMotionAdmission::Rearmed
+    );
+    // NoElapsed and a failed tick do not call confirm_tick, so the same observation remains.
+    assert_eq!(
+        input
+            .tick_input(&[], 0.0, settings, |_| TailPilotPositionIntent::try_new(
+                0.1
+            ))
+            .unwrap()
+            .pilot_motion_admission(),
+        TailPilotMotionAdmission::Rearmed
+    );
+    input.confirm_tick(uncommitted, false);
+    assert_eq!(
+        tick(&mut input, &[], 0.1).unwrap().pilot_motion_admission(),
+        TailPilotMotionAdmission::Continued
+    );
+    key(&mut input, FlightControlKey::KeyL, false, false);
+    assert_eq!(
+        tick(&mut input, &[], 0.1).unwrap().pilot_motion_admission(),
+        TailPilotMotionAdmission::Continued
+    );
+    key(&mut input, FlightControlKey::KeyL, true, false);
+    assert_eq!(
+        tick(&mut input, &[], 0.1).unwrap().pilot_motion_admission(),
+        TailPilotMotionAdmission::Rearmed
+    );
 }
 
 #[test]
@@ -259,6 +314,61 @@ fn gamepad_waits_for_neutral_and_crosses_the_confirmed_pilot_target_before_takeo
     assert!((acquired.desired_body_rate().pitch_rad_per_second() - limits[0] * 0.5).abs() < 1e-12);
     assert!((acquired.desired_body_rate().yaw_rad_per_second() + limits[1] * 0.5).abs() < 1e-12);
     assert_eq!(set_value(acquired), 1.0);
+    assert_eq!(
+        acquired.pilot_motion_admission(),
+        TailPilotMotionAdmission::Rearmed
+    );
+    assert_eq!(
+        tick(&mut input, &[sample], 0.4)
+            .unwrap()
+            .pilot_motion_admission(),
+        TailPilotMotionAdmission::Continued
+    );
+    input.observe_pilot_stop(true);
+    assert_eq!(
+        tick(&mut input, &[sample], 0.4)
+            .unwrap()
+            .pilot_motion_admission(),
+        TailPilotMotionAdmission::Continued
+    );
+    sample.axes = [Some(0.0); 3];
+    tick(&mut input, &[sample], 0.4).unwrap();
+    for value in [0.0799, 0.0801, 0.0799, 0.0801] {
+        sample.axes[2] = Some(value);
+        let waiting = tick(&mut input, &[sample], 0.4).unwrap();
+        assert_eq!(
+            waiting.pilot_position_command(),
+            TailPilotPositionCommand::Hold
+        );
+        assert_eq!(
+            waiting.pilot_motion_admission(),
+            TailPilotMotionAdmission::Continued
+        );
+    }
+    sample.axes[2] = Some(0.54);
+    tick(&mut input, &[sample], 0.4).unwrap();
+    let pending = input
+        .tick_input(&[sample], 0.4, KeyboardControlSettings::default(), |_| {
+            TailPilotPositionIntent::try_new(0.4)
+        })
+        .unwrap();
+    assert_eq!(
+        pending.pilot_motion_admission(),
+        TailPilotMotionAdmission::Rearmed
+    );
+    key(&mut input, FlightControlKey::ArrowUp, false, false);
+    assert_eq!(input.pilot_rearm_pending, Some(PilotRearmSource::Gamepad));
+    input.confirm_tick(pending, true);
+    assert!(matches!(
+        input.gamepad,
+        FlightGamepadAcquisition::WaitingNeutral { .. }
+    ));
+    assert_eq!(
+        tick(&mut input, &[sample], 0.4)
+            .unwrap()
+            .pilot_motion_admission(),
+        TailPilotMotionAdmission::Continued
+    );
 }
 
 #[test]

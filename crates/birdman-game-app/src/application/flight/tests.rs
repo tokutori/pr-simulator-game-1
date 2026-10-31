@@ -105,7 +105,7 @@ fn frame_ticks_integrate_against_each_confirmed_target_and_keep_the_last_render_
             .unwrap();
         let target = birdman_game_core::PilotPositionTarget::try_new(
             &direct.prepared.as_ref().unwrap().aircraft,
-            before.pilot_position_target().position_m() + 0.004,
+            before.pilot_position_demand().position_m() + 0.004,
         )
         .unwrap();
         let held = direct
@@ -131,6 +131,60 @@ fn frame_ticks_integrate_against_each_confirmed_target_and_keep_the_last_render_
         framed.core_session().flight_record().unwrap().samples(),
         direct.core_session().flight_record().unwrap().samples()
     );
+    for (control, direction) in [
+        (FlightControlKey::KeyJ, -1.0),
+        (FlightControlKey::KeyL, 1.0),
+    ] {
+        let mut application = launch(500);
+        key(&mut application, control, true, false);
+        application.advance_flight_frame(1000.0, &[], true).unwrap();
+        let mut position = application
+            .core_session()
+            .snapshot()
+            .tail_flight_state()
+            .unwrap()
+            .flight_state()
+            .pilot_position_m();
+        let mut protected = false;
+        let mut stopped = false;
+        for tick in 1..=300 {
+            application
+                .advance_flight_frame(1000.0 + f64::from(tick) * 10.0, &[], true)
+                .unwrap();
+            let body = application
+                .core_session()
+                .snapshot()
+                .tail_flight_state()
+                .unwrap();
+            let next = body.flight_state().pilot_position_m();
+            assert!(direction * (next - position) >= -1.0e-12);
+            if body.pilot_motion_limited() {
+                protected = true;
+                if body.flight_state().pilot_velocity_mps() == 0.0 {
+                    stopped = true;
+                    assert_eq!(next, body.pilot_stopping_target().unwrap().position_m());
+                }
+            }
+            position = next;
+        }
+        assert!(protected && stopped);
+        let demand = application
+            .core_session()
+            .snapshot()
+            .tail_flight_state()
+            .unwrap()
+            .pilot_position_demand();
+        key(&mut application, control, false, false);
+        application.advance_flight_frame(4010.0, &[], true).unwrap();
+        let held = application
+            .core_session()
+            .snapshot()
+            .tail_flight_state()
+            .unwrap();
+        assert_eq!(held.pilot_position_demand(), demand);
+        assert_eq!(held.flight_state().pilot_position_m(), position);
+        assert_eq!(held.flight_state().pilot_velocity_mps(), 0.0);
+    }
 }
 
 #[test]
