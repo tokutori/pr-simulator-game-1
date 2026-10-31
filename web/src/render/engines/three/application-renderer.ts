@@ -2,7 +2,7 @@ import { AmbientLight, BufferGeometry, CanvasTexture, CircleGeometry, Color, Dir
   Group, LinearFilter, Matrix4, Mesh, MeshBasicMaterial, MeshLambertMaterial, PerspectiveCamera, PlaneGeometry,
   Scene, ShaderMaterial, SRGBColorSpace, UniformsLib, UniformsUtils, Vector2, Vector4, WebGLRenderer, WebGLRenderTarget } from "three";
 import type { Material, Object3D } from "three";
-import type { ApplicationDrawingOutput, ApplicationGraphicsTarget, ApplicationInput, ApplicationMeshAsset,
+import type { ApplicationDrawingOutput, ApplicationInput, ApplicationMeshAsset,
   ApplicationMeshAttachment, ApplicationRequest, ApplicationRendererObservation, DisplayRequest, Pose, XrSurfaceStyle } from "../../../generated/application-contracts.js";
 import { ThreeApplicationBuffers } from "./application-buffers.js";
 import { GpuWorkTimer } from "./gpu-work-timer.js";
