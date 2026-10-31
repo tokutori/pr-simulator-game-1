@@ -158,7 +158,7 @@ pub(super) fn project_hud(
             let tone_color = match tone {
                 GameUiHudTone::Normal => ink,
                 GameUiHudTone::Muted => muted,
-                GameUiHudTone::Warning => Color::srgb(1.0, 0.6, 0.4),
+                GameUiHudTone::Warning => color(&theme.warning_text, 1.0)?,
             };
             world
                 .get_mut::<TextColor>(retained.value)
@@ -170,7 +170,12 @@ pub(super) fn project_hud(
                 node,
                 hud,
                 &font,
-                [ink, color(&theme.focus_outline, 1.0)?, muted],
+                [
+                    ink,
+                    color(&theme.focus_outline, 1.0)?,
+                    muted,
+                    color(&theme.flight_path_marker, 1.0)?,
+                ],
             )?;
         }
     }
@@ -414,7 +419,7 @@ fn spawn_node(
             );
             world.entity_mut(marker).insert((
                 UiTransform::from_translation(Val2::percent(-50, -50)),
-                BorderColor::all(Color::srgb(0.490, 0.957, 0.773)),
+                BorderColor::all(Color::NONE),
             ));
             HudWidget::Attitude {
                 surface,
@@ -652,7 +657,7 @@ fn project_widget(
     source: &GameUiHudNode,
     hud: &GameUiHud,
     font: &Handle<Font>,
-    [ink, focus, muted]: [Color; 3],
+    [ink, focus, muted, flight_path]: [Color; 4],
 ) -> Result<(), String> {
     match &source.content {
         GameUiHudNodeContent::Text { .. } => {}
@@ -670,6 +675,10 @@ fn project_widget(
             };
             let (surface, horizon, outline, aircraft, marker, ticks) =
                 (*surface, *horizon, *outline, *aircraft, *marker, **ticks);
+            world
+                .get_mut::<BorderColor>(marker)
+                .expect("Flight-path marker color exists")
+                .set_if_neq(BorderColor::all(flight_path));
             let layer = geometry.horizon;
             let scale = fit_instrument(world, horizon, source, hud, geometry.canvas_size);
             world
@@ -968,7 +977,7 @@ mod tests {
             &source,
             &hud,
             &font,
-            [Color::WHITE; 3],
+            [Color::WHITE; 4],
         )
         .unwrap();
         let HudWidget::Attitude {
@@ -986,6 +995,36 @@ mod tests {
         );
         assert_eq!(world.get::<Node>(horizon).unwrap().width, px(240));
         assert_eq!(world.get::<Node>(marker).unwrap().top, px(45));
+        for marker_color in [Color::srgb(0.1, 0.2, 0.3), Color::srgb(0.4, 0.5, 0.6)] {
+            project_widget(
+                &mut world,
+                &mut widget,
+                &source,
+                &hud,
+                &font,
+                [Color::WHITE, Color::WHITE, Color::WHITE, marker_color],
+            )
+            .unwrap();
+            assert_eq!(world.get::<BorderColor>(marker).unwrap().top, marker_color);
+            world.clear_trackers();
+            project_widget(
+                &mut world,
+                &mut widget,
+                &source,
+                &hud,
+                &font,
+                [Color::WHITE, Color::WHITE, Color::WHITE, marker_color],
+            )
+            .unwrap();
+            assert!(
+                !world
+                    .entity(marker)
+                    .get_ref::<BorderColor>()
+                    .unwrap()
+                    .is_changed()
+            );
+        }
+
         let GameUiHudNodeContent::Attitude { geometry, .. } = &mut source.content else {
             unreachable!()
         };
@@ -996,7 +1035,7 @@ mod tests {
             &source,
             &hud,
             &font,
-            [Color::WHITE; 3],
+            [Color::WHITE; 4],
         )
         .unwrap();
         assert_eq!(world.get::<Node>(marker).unwrap().top, px(135));
@@ -1024,7 +1063,7 @@ mod tests {
             &source,
             &hud,
             &font,
-            [Color::WHITE; 3],
+            [Color::WHITE; 4],
         )
         .unwrap();
         let HudWidget::Attitude { ref ticks, .. } = widget.widget else {
@@ -1045,7 +1084,7 @@ mod tests {
             &source,
             &hud,
             &font,
-            [Color::WHITE; 3],
+            [Color::WHITE; 4],
         )
         .unwrap();
         for (line, anchor, label) in ticks.iter().copied() {
@@ -1063,7 +1102,7 @@ mod tests {
             &source,
             &hud,
             &font,
-            [Color::WHITE; 3],
+            [Color::WHITE; 4],
         )
         .unwrap();
         for (line, anchor, _) in ticks.iter().copied() {
@@ -1079,7 +1118,7 @@ mod tests {
             &source,
             &hud,
             &font,
-            [Color::WHITE; 3],
+            [Color::WHITE; 4],
         )
         .unwrap();
         for (line, anchor, _) in ticks.iter().copied() {
@@ -1097,7 +1136,7 @@ mod tests {
             &source,
             &hud,
             &font,
-            [Color::WHITE; 3],
+            [Color::WHITE; 4],
         )
         .unwrap();
         assert_eq!(
@@ -1178,7 +1217,7 @@ mod tests {
             &source,
             &hud,
             &font,
-            [Color::WHITE; 3],
+            [Color::WHITE; 4],
         )
         .unwrap();
         let HudWidget::Direction {
@@ -1229,7 +1268,7 @@ mod tests {
                 &source,
                 &hud,
                 &font,
-                [Color::WHITE; 3],
+                [Color::WHITE; 4],
             )
             .unwrap();
             assert_eq!(
@@ -1271,7 +1310,7 @@ mod tests {
             &source,
             &hud,
             &font,
-            [Color::WHITE; 3],
+            [Color::WHITE; 4],
         )
         .unwrap();
         assert_eq!(world.get::<Node>(arrow).unwrap().display, Display::None);

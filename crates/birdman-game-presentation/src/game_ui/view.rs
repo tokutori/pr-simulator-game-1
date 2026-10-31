@@ -1949,6 +1949,8 @@ fn theme(font: f64) -> GameUiTheme {
     GameUiTheme {
         text: "#f3f4e8".to_owned(),
         muted_text: "#c7d7d1".to_owned(),
+        warning_text: "#ff9b73".to_owned(),
+        flight_path_marker: "#7df4c5".to_owned(),
         panel_background: "#10242b".to_owned(),
         panel_opacity: 0.92,
         hud_opacity: 0.28,
