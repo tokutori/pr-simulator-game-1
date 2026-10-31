@@ -2919,6 +2919,34 @@ fn renderer_failure_preserves_last_valid_hud_and_exposes_reload_across_scenes() 
         setup.start_countdown(1).unwrap();
         assert_recovery(&setup, &state);
         assert_recovery(&session, &state);
+        for (width, height, font) in [
+            (1280.0, 720.0, 16.0),
+            (1920.0, 1080.0, 16.0),
+            (1280.0, 720.0, 24.0),
+        ] {
+            let mut recovery_platform = platform.clone();
+            recovery_platform.viewport = GameUiViewport {
+                width,
+                height,
+                root_font_size: font,
+            };
+            let recovery =
+                game_ui_view(&state, &context(&session, settings, &recovery_platform)).unwrap();
+            recovery_platform.renderer_failure = None;
+            let normal =
+                game_ui_view(&state, &context(&session, settings, &recovery_platform)).unwrap();
+            assert_eq!(normal.layout.maximum_height_px, 8.0 * font);
+            assert!(!normal.layout.scroll_y);
+            assert_eq!(recovery.layout.maximum_height_px, height - 2.0 * font);
+            // Padding, action row, section gaps and reload alone require 8.5 font units.
+            assert!(recovery.layout.maximum_height_px > 8.5 * font);
+            assert!(recovery.layout.scroll_y);
+            assert_eq!(recovery.layout.shell, normal.layout.shell);
+            assert_eq!(recovery.layout.width_px, normal.layout.width_px);
+            assert_eq!(recovery.layout.padding_px, normal.layout.padding_px);
+            assert_eq!(recovery.layout.passthrough, normal.layout.passthrough);
+            assert!(control(&recovery, "game-renderer-reload").enabled);
+        }
         let view = game_ui_view(&state, &context(&session, settings, &platform)).unwrap();
         assert!(control(&view, "game-flight-abort").enabled);
         let GameUiControlContent::Status { value, .. } =
