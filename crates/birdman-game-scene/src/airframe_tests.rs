@@ -692,6 +692,45 @@ fn registered_flight_finishes_at_the_airframe_and_keeps_record_score_and_revisio
             true,
         )
         .unwrap();
+    let initial = application
+        .core_session()
+        .snapshot()
+        .tail_flight_state()
+        .unwrap()
+        .flight_state();
+    let definition = registered_aircraft().unwrap();
+    let platform = birdman_game_app::launch_venue().unwrap().platform;
+    let factor = definition
+        .shape()
+        .wing_bending_factor(definition.document().trim.airspeed_mps)
+        .unwrap();
+    let [north, east] = platform.horizontal_direction_ned();
+    let slope = platform.downward_slope_degrees.to_radians().tan();
+    for point in rendered_airframe_points(factor, TailIncidence::neutral()) {
+        let values = point.components();
+        let offset = initial
+            .attitude_body_to_ned()
+            .body_to_ned(BodyVector::try_new(values[0], values[1], values[2]).unwrap())
+            .unwrap();
+        let p = initial
+            .datum_position_ned()
+            .translated(offset)
+            .unwrap()
+            .components();
+        let clearance =
+            -platform.front_lip_above_water_meters + (p[0] * north + p[1] * east) * slope - p[2];
+        let quantization = f64::from(f32::EPSILON)
+            * values
+                .into_iter()
+                .map(|v| v.abs().max(1.0).powi(2))
+                .sum::<f64>()
+                .sqrt()
+            * (1.0 + slope * slope).sqrt();
+        assert!(
+            clearance >= -quantization,
+            "mesh penetrates deck beyond f32 projection: {p:?} {clearance}"
+        );
+    }
     while application.core_session().snapshot().phase() == SessionPhase::FlightRunning {
         application
             .advance_tail_flight_tick(neutral_input())
@@ -744,7 +783,7 @@ fn registered_flight_finishes_at_the_airframe_and_keeps_record_score_and_revisio
             document.header.catalog_version,
             document.header.scenario_version
         ),
-        (9, 10)
+        (10, 11)
     );
     assert_eq!(
         document.header.aircraft_model_version,

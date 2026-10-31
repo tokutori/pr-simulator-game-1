@@ -48,7 +48,7 @@ fn cached_hybrid_owners_survive_preparation_moves_and_share_environment_telemetr
     );
     let identity = configuration.identity();
     assert_eq!(identity.catalog_version, CATALOG_VERSION);
-    assert_eq!(identity.scenario_version, 10);
+    assert_eq!(identity.scenario_version, SCENARIO_VERSION);
     assert_eq!(identity.environment_version, 6);
     assert_eq!(
         identity.aircraft_model_version,
@@ -77,7 +77,69 @@ fn cached_hybrid_owners_survive_preparation_moves_and_share_environment_telemetr
             .unwrap()
     );
     assert!((telemetry.airspeed_mps - definition.document().trim.airspeed_mps).abs() < 1.0e-12);
-    assert!((telemetry.altitude_m - 10.5).abs() < 1.0e-12);
+    let cg = registered_launch_cg_position().unwrap();
+    assert_eq!(&cg.components()[..2], &[0.0, 0.0]);
+    assert!((telemetry.altitude_m + cg.components()[2]).abs() < 1.0e-12);
+    let platform = launch_venue().unwrap().platform;
+    let reference = definition
+        .trim()
+        .unwrap()
+        .initial_state_for_ground_launch(cg, platform.heading_rad())
+        .unwrap();
+    let state = initial.flight_state();
+    assert_eq!(state.datum_position_ned(), reference.datum_position_ned());
+    assert_eq!(
+        state.attitude_body_to_ned(),
+        reference.attitude_body_to_ned()
+    );
+    assert_eq!(
+        state.angular_velocity_body(),
+        reference.angular_velocity_body()
+    );
+    for (ground, (wind, air)) in state.datum_velocity_ned().components().into_iter().zip(
+        telemetry
+            .wind_velocity_ned_mps
+            .components()
+            .into_iter()
+            .zip(reference.datum_velocity_ned().components()),
+    ) {
+        assert!((ground - wind - air).abs() < 1.0e-12);
+    }
+    let mut points = definition.contact_points().to_vec();
+    definition
+        .write_deformed_contact_points(
+            telemetry.airspeed_mps,
+            TailIncidence::neutral(),
+            &mut points,
+        )
+        .unwrap();
+    let [north, east] = platform.horizontal_direction_ned();
+    let slope = platform.downward_slope_degrees.to_radians().tan();
+    let mut finite_minimum = f64::INFINITY;
+    for point in points {
+        let [x, y, z] = point.components();
+        let offset = state
+            .attitude_body_to_ned()
+            .body_to_ned(BodyVector::try_new(x, y, z).unwrap())
+            .unwrap();
+        let position = state
+            .datum_position_ned()
+            .translated(offset)
+            .unwrap()
+            .components();
+        let along = position[0] * north + position[1] * east;
+        let across = -position[0] * east + position[1] * north;
+        let clearance = -platform.front_lip_above_water_meters + along * slope - position[2];
+        assert!(clearance >= -32.0 * f64::EPSILON * position[2].abs().max(1.0));
+        if (-platform.length_meters..=0.0).contains(&along)
+            && across.abs() <= platform.width_meters / 2.0
+        {
+            finite_minimum = finite_minimum.min(clearance);
+        }
+    }
+    // A finite-deck vertex gives a lower bound on the necessary height, so this
+    // bounds the conservatism without assuming face intersections occur at vertices.
+    assert!(finite_minimum.is_finite() && (0.0..=0.004_406).contains(&finite_minimum));
     session.advance_tail_flight_tick(neutral_input()).unwrap();
     session.advance_tail_flight_tick(neutral_input()).unwrap();
     assert_eq!(session.snapshot().phase(), SessionPhase::Result);
@@ -285,7 +347,7 @@ fn every_hybrid_selection_launches_and_scores_along_the_shared_northwest_bearing
             assert!((score.net_horizontal_m() - 100.0).abs() < 1.0e-12);
             assert_eq!(
                 session.configuration_identity().unwrap().scenario_version,
-                10
+                SCENARIO_VERSION
             );
         }
     }
