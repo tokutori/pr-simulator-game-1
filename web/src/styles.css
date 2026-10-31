@@ -61,6 +61,7 @@ body {
 }
 
 .screen-ui-root {
+  pointer-events: none;
   display: grid;
   min-height: 100dvh;
   place-items: center;
@@ -218,6 +219,7 @@ body {
 }
 
 .screen-ui-shell {
+  pointer-events: auto;
   width: min(42rem, 100%);
   max-height: calc(100dvh - 2rem);
   overflow-x: hidden;
