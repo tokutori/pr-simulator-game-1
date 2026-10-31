@@ -4272,6 +4272,10 @@ export interface GameUiTheme {
      */
     readonly choice_background: string;
     /**
+     * Flight-path marker color.
+     */
+    readonly flight_path_marker: string;
+    /**
      * Keyboard focus outline.
      */
     readonly focus_outline: string;
@@ -4307,6 +4311,10 @@ export interface GameUiTheme {
      * Main text color.
      */
     readonly text: string;
+    /**
+     * Mandatory warning text color.
+     */
+    readonly warning_text: string;
 }
 /**
  * Lightweight per-frame UI observation associated with one published structural view.
