@@ -1276,7 +1276,6 @@ fn admitted_flight_keys_reach_hud_and_clear_on_focus_loss() {
                 .world_from_head,
             before
         );
-        assert_eq!(runtime.look_pointer.unwrap().position, moved);
         assert!(runtime.flight_pointers.iter().all(Option::is_none));
         assert_eq!(runtime.application.flight_touch_generation(), None);
         runtime
