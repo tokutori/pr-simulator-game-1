@@ -596,6 +596,8 @@ impl TailFlightRecordDocument {
     }
 
     /// Encodes the validated archive within the bounded JSON size.
+    /// See the [executed session and record example](../birdman_game_app/struct.HybridSessionPreparation.html#method.try_new)
+    /// for creating a finalized archive and restoring these bytes.
     pub fn encode_json(&self) -> Result<Vec<u8>, FlightRecordFormatError> {
         self.validate()?;
         let encoded =
@@ -614,6 +616,7 @@ impl TailFlightRecordDocument {
     }
 
     /// Rejects unsupported schemas before decoding the current document structure.
+    /// See the [executed session and record example](../birdman_game_app/struct.HybridSessionPreparation.html#method.try_new).
     pub fn decode_json(input: &[u8]) -> Result<Self, FlightRecordFormatError> {
         if input.len() > MAX_FLIGHT_RECORD_JSON_BYTES {
             return Err(FlightRecordFormatError::InputTooLarge);

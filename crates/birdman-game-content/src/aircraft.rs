@@ -16,6 +16,21 @@ pub const PLAYABLE_AIRCRAFT_JSON: &[u8] =
     include_bytes!("../../../assets/aircraft/playable-glider-v7.json");
 
 /// Decodes and prepares the bundled aircraft into owned immutable storage.
+///
+/// # Examples
+///
+/// Obtain the definition, then borrow its prepared surfaces and solved trim.
+/// Preparation failures are returned as [`AircraftDefinitionError`]; the bundled
+/// validated source is used here without reconstructing its physical parameters.
+///
+/// ```
+/// let definition = birdman_game_content::playable_aircraft().unwrap();
+/// assert!(definition.document().model_version > 0);
+/// let surfaces = definition.surfaces().unwrap();
+/// assert_eq!(surfaces.len(), 3);
+/// let trim = definition.trim().unwrap();
+/// assert!(trim.conditions().airspeed_mps() > 0.0);
+/// ```
 pub fn playable_aircraft() -> Result<AircraftDefinition, AircraftDefinitionError> {
     AircraftDefinition::decode_json(PLAYABLE_AIRCRAFT_JSON)
 }

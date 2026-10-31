@@ -511,6 +511,7 @@ impl EnvironmentDocument {
     }
 
     /// Decodes strict, bounded JSON and validates every component before returning it.
+    /// See the [executable decode and encode example](index.html#examples).
     pub fn decode_json(input: &[u8]) -> Result<Self, EnvironmentFormatError> {
         if input.len() > MAX_ENVIRONMENT_JSON_BYTES {
             return Err(EnvironmentFormatError::InputTooLarge);
@@ -522,6 +523,7 @@ impl EnvironmentDocument {
     }
 
     /// Encodes a validated document into bounded JSON without accessing a filesystem.
+    /// See the [executable round-trip example](index.html#examples).
     /// Grid and metadata limits bound serialization to less than 8 MiB even when
     /// every metadata byte needs a six-byte JSON escape and floats use 25 bytes.
     pub fn encode_json(&self) -> Result<Vec<u8>, EnvironmentFormatError> {

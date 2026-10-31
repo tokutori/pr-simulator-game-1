@@ -446,6 +446,7 @@ impl core::error::Error for AircraftFormatError {
 
 impl AircraftDocument {
     /// Decodes a bounded document and validates every physical and structural field.
+    /// See the [executable bundled-document example](../index.html#examples).
     pub fn decode_json(input: &[u8]) -> Result<Self, AircraftFormatError> {
         if input.len() > MAX_AIRCRAFT_JSON_BYTES {
             return Err(AircraftFormatError::InputTooLarge);

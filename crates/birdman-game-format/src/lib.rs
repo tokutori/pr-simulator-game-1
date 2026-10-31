@@ -1,5 +1,38 @@
 #![no_std]
 //! Validated, deterministic configuration shared by CLI and browser adapters.
+//!
+//! # Examples
+//!
+//! Decode the repository's bundled aircraft, environment, and geographic sources.
+//! These workspace examples include the existing assets relative to this crate's
+//! manifest, independently of the process working directory. Decoders return
+//! their document-specific errors for malformed, oversized, or invalid input.
+//! The environment example then encodes and restores the validated document.
+//!
+//! ```
+//! use birdman_game_format::aircraft::AircraftDocument;
+//! use birdman_game_format::{EnvironmentDocument, VenueAnalysisDocument, VenueFeaturesDocument};
+//!
+//! let aircraft = AircraftDocument::decode_json(include_bytes!(concat!(
+//!     env!("CARGO_MANIFEST_DIR"),
+//!     "/../../assets/aircraft/playable-glider-v7.json"
+//! ))).unwrap();
+//! assert!(aircraft.model_version > 0);
+//!
+//! let environment = EnvironmentDocument::decode_json(include_bytes!(concat!(
+//!     env!("CARGO_MANIFEST_DIR"),
+//!     "/../../assets/biwa-typical-july-environment-v6.json"
+//! ))).unwrap();
+//! let encoded = environment.encode_json().unwrap();
+//! assert_eq!(EnvironmentDocument::decode_json(&encoded).unwrap(), environment);
+//!
+//! VenueAnalysisDocument::decode_json(include_bytes!(concat!(
+//!     env!("CARGO_MANIFEST_DIR"), "/../../assets/biwa-analysis-map.json"
+//! ))).unwrap();
+//! VenueFeaturesDocument::decode_json(include_bytes!(concat!(
+//!     env!("CARGO_MANIFEST_DIR"), "/../../assets/biwa-venue-features.json"
+//! ))).unwrap();
+//! ```
 
 extern crate alloc;
 

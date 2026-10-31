@@ -1529,6 +1529,10 @@ impl<'a> GameSession<'a> {
     }
 
     /// Advances one hybrid interval and retains its once-evaluated controls atomically.
+    /// The [executed prepared-session example](../birdman_game_app/struct.HybridSessionPreparation.html#method.try_new)
+    /// shows the public preparation, countdown, tick, and finalized-record sequence.
+    /// With a longer tick limit, successful ticks normally remain in FlightRunning
+    /// until a terminal event; the example deliberately uses a two-tick time limit.
     pub fn advance_tail_flight_tick(
         &mut self,
         input: TailFlightTickInput,
