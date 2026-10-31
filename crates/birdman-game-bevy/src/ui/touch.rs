@@ -66,16 +66,31 @@ pub(super) fn project_frame(
     };
     let (indicator, origin) = (retained.indicator, retained.origin);
     let mut indicator_node = retained_node(world, indicator);
-    indicator_node.left = px(value.position[0]);
-    indicator_node.top = px(value.position[1]);
+    indicator_node
+        .reborrow()
+        .map_unchanged(|node| &mut node.left)
+        .set_if_neq(px(value.position[0]));
+    indicator_node
+        .reborrow()
+        .map_unchanged(|node| &mut node.top)
+        .set_if_neq(px(value.position[1]));
     let mut origin_node = retained_node(world, origin);
-    origin_node.display = if value.origin.is_some() {
-        Display::Flex
-    } else {
-        Display::None
-    };
+    origin_node
+        .reborrow()
+        .map_unchanged(|node| &mut node.display)
+        .set_if_neq(if value.origin.is_some() {
+            Display::Flex
+        } else {
+            Display::None
+        });
     if let Some(center) = value.origin {
-        origin_node.left = px(center[0]);
-        origin_node.top = px(center[1]);
+        origin_node
+            .reborrow()
+            .map_unchanged(|node| &mut node.left)
+            .set_if_neq(px(center[0]));
+        origin_node
+            .reborrow()
+            .map_unchanged(|node| &mut node.top)
+            .set_if_neq(px(center[1]));
     }
 }
