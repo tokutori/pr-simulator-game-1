@@ -136,6 +136,50 @@ fn pilot_position_target_acceleration_respects_stopping_distance() {
     );
     let braking = pilot_target_acceleration(&model, &braking_state, target, 0.01).unwrap();
     close(braking.meters_per_second_squared(), -2.0, 1.0e-14);
+    for (position, velocity) in [
+        (0.49, 0.2),
+        (-0.49, -0.2),
+        (0.0, 0.0),
+        (0.0, 0.031),
+        (0.0, -0.031),
+    ] {
+        let certificate =
+            crate::dynamics::pilot_braking_plan(&model, position, velocity, 0.01).unwrap();
+        let mut current = state(
+            [0.0; 3],
+            [0.0; 3],
+            UnitQuaternion::IDENTITY,
+            [0.0; 3],
+            position,
+            velocity,
+        );
+        for _ in 0..100 {
+            if current.pilot_velocity_mps() == 0.0 {
+                break;
+            }
+            let plan = crate::dynamics::pilot_braking_plan(
+                &model,
+                current.pilot_position_m(),
+                current.pilot_velocity_mps(),
+                0.01,
+            )
+            .unwrap();
+            current = step(
+                &model,
+                &current,
+                plan.first_acceleration,
+                0.0,
+                Wrench::zero(),
+                0.01,
+            )
+            .unwrap();
+        }
+        assert_eq!(current.pilot_velocity_mps(), 0.0);
+        assert_eq!(
+            current.pilot_position_m(),
+            certificate.stop_target.position_m()
+        );
+    }
 }
 
 #[test]

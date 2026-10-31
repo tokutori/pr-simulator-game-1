@@ -331,7 +331,7 @@ pub fn pilot_target_acceleration(
     let velocity = state.pilot_velocity_mps;
     let maximum_acceleration = model.pilot_maximum_acceleration_mps2;
     let braking_acceleration =
-        pilot_braking_acceleration(model, position, velocity, timestep_seconds)?;
+        pilot_braking_plan(model, position, velocity, timestep_seconds)?.first_acceleration;
     let stopping_distance = continuous_stopping_distance(velocity.abs(), maximum_acceleration);
     let position_error = target.position_m - position;
     let one_tick_stopping_distance =
@@ -498,18 +498,28 @@ fn pilot_stopping_manifold_acceleration(
 // treating unsupported numerical states as physically unrecoverable.
 const MAX_PILOT_STOPPING_STEPS: usize = 4096;
 
-fn pilot_braking_acceleration(
+/// First command and endpoint of the same bounded, held-acceleration stopping certificate.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PilotBrakingPlan {
+    pub(crate) first_acceleration: f64,
+    pub(crate) stop_target: PilotPositionTarget,
+}
+
+pub(crate) fn pilot_braking_plan(
     model: &AircraftModel,
     position: f64,
     velocity: f64,
     timestep: f64,
-) -> Result<f64, DynamicsError> {
+) -> Result<PilotBrakingPlan, DynamicsError> {
     let mut current_position = position;
     let mut current_velocity = velocity;
     let mut first_acceleration = 0.0;
     for step in 0..MAX_PILOT_STOPPING_STEPS {
         if current_velocity == 0.0 {
-            return Ok(first_acceleration);
+            return Ok(PilotBrakingPlan {
+                first_acceleration,
+                stop_target: PilotPositionTarget::try_new(model, current_position)?,
+            });
         }
         let acceleration = pilot_braking_step(model, current_position, current_velocity, timestep)
             .map_err(|error| {
@@ -535,7 +545,10 @@ fn pilot_braking_acceleration(
             pilot_motion_at(current_position, current_velocity, acceleration, timestep);
     }
     if current_velocity == 0.0 {
-        Ok(first_acceleration)
+        Ok(PilotBrakingPlan {
+            first_acceleration,
+            stop_target: PilotPositionTarget::try_new(model, current_position)?,
+        })
     } else {
         Err(DynamicsError::PilotMotionOutsidePolicyDomain)
     }
@@ -716,7 +729,7 @@ fn pilot_acceleration_is_safe(
     }
     let (next_position, next_velocity) =
         pilot_motion_at(position, velocity, acceleration, timestep);
-    pilot_braking_acceleration(model, next_position, next_velocity, timestep).is_ok()
+    pilot_braking_plan(model, next_position, next_velocity, timestep).is_ok()
 }
 
 fn pilot_held_motion_is_in_range(
