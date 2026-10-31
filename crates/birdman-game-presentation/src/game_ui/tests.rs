@@ -2943,6 +2943,7 @@ fn renderer_failure_preserves_last_valid_hud_and_exposes_reload_across_scenes() 
         let before = session.snapshot();
         let mut platform = platform();
         platform.presentation_mode = mode;
+        platform.touch_available = true;
         platform.renderer_failure = Some("renderer submission failed".to_owned());
         let state = GameUiState::default();
         let settings = difficulty().with_information(InformationLevel::Minimal);
@@ -2950,6 +2951,21 @@ fn renderer_failure_preserves_last_valid_hud_and_exposes_reload_across_scenes() 
             let context = context(session, settings, &platform);
             let before = session.snapshot();
             let view = game_ui_view(state, &context).unwrap();
+            assert!(
+                !view
+                    .panels
+                    .iter()
+                    .flat_map(|panel| &panel.controls)
+                    .any(|control| {
+                        matches!(control.content, GameUiControlContent::FlightTouch { .. })
+                    })
+            );
+            assert!(
+                game_ui_frame(state, &context, &view, view.view_revision)
+                    .unwrap()
+                    .flight_touch
+                    .is_empty()
+            );
             assert!(matches!(&control(&view, "game-renderer-stopped").content,
                 GameUiControlContent::Status { value, .. } if value == "renderer submission failed"));
             assert!(control(&view, "game-renderer-reload").enabled);
@@ -3027,6 +3043,34 @@ fn renderer_failure_preserves_last_valid_hud_and_exposes_reload_across_scenes() 
             assert_eq!(recovery.layout.padding_px, normal.layout.padding_px);
             assert_eq!(recovery.layout.passthrough, normal.layout.passthrough);
             assert!(control(&recovery, "game-renderer-reload").enabled);
+            assert_eq!(
+                normal
+                    .panels
+                    .iter()
+                    .flat_map(|panel| &panel.controls)
+                    .filter(|control| matches!(
+                        control.content,
+                        GameUiControlContent::FlightTouch { .. }
+                    ))
+                    .count(),
+                if mode == GameUiPresentationMode::Screen {
+                    2
+                } else {
+                    0
+                }
+            );
+            assert_eq!(
+                recovery
+                    .panels
+                    .iter()
+                    .flat_map(|panel| &panel.controls)
+                    .filter(|control| matches!(
+                        control.content,
+                        GameUiControlContent::FlightTouch { .. }
+                    ))
+                    .count(),
+                0
+            );
         }
         let view = game_ui_view(&state, &context(&session, settings, &platform)).unwrap();
         assert!(control(&view, "game-flight-abort").enabled);

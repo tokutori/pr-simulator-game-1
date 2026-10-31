@@ -77,6 +77,7 @@ pub fn flight_touch_indicator_position(
 /// One shared availability condition for flight controls and their HUD reservation.
 pub(super) fn available(platform: &GameUiPlatformInput, phase: SessionPhase) -> bool {
     platform.touch_available
+        && platform.renderer_failure.is_none()
         && platform.presentation_mode == GameUiPresentationMode::Screen
         && platform.viewport.width >= platform.viewport.height
         && phase == SessionPhase::FlightRunning
