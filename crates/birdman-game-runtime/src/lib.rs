@@ -838,6 +838,8 @@ impl ApplicationRuntime {
                                 repeat,
                             });
                     } else if code == "KeyC"
+                        && self.platform.presentation_mode == GameUiPresentationMode::Screen
+                        && !self.ui.credits_open
                         && pressed
                         && !repeat
                         && matches!(
@@ -845,7 +847,15 @@ impl ApplicationRuntime {
                             SessionPhase::FlightRunning | SessionPhase::FlightPaused { .. }
                         )
                     {
-                        self.scene.toggle_camera();
+                        let environment = self.environment()?;
+                        let revision = self.structure_revision(&environment)?;
+                        self.apply_action(
+                            revision,
+                            GameUiAction::SetFlightCamera {
+                                camera: self.ui.flight_camera.toggled(),
+                            },
+                            &mut requests,
+                        )?;
                         self.application
                             .observe_flight_action_key(FlightActionKey::Camera, true);
                         keyboard_consumed = true;
@@ -1434,6 +1444,9 @@ impl ApplicationRuntime {
             update_game_ui(&self.ui, action, &self.context(&environment)?)
                 .map_err(ApplicationRuntimeError::Ui)?
         };
+        if self.ui.flight_camera != update.state.flight_camera {
+            self.scene.reset_look();
+        }
         self.ui = update.state;
         for effect in update.effects {
             match effect {

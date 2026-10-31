@@ -652,7 +652,14 @@ fn hud_layout(
 ) -> GameUiHudLayout {
     let font = platform.viewport.root_font_size;
     let viewport = platform.viewport;
-    let compact = viewport.width <= 600.0 || viewport.width < minimum_hud_width(font) + 17.5 * font;
+    let flight_bar = phase == SessionPhase::FlightRunning;
+    let reserved_width = if flight_bar {
+        menu.width_px + 2.0 * font
+    } else {
+        17.5 * font
+    };
+    let compact =
+        viewport.width <= 600.0 || viewport.width < minimum_hud_width(font) + reserved_width;
     let in_menu = matches!(
         phase,
         SessionPhase::FlightPaused { .. } | SessionPhase::Replay
@@ -681,14 +688,18 @@ fn hud_layout(
     } else if compact {
         (
             0.6 * font,
-            4.25 * font,
+            if flight_bar {
+                menu.maximum_height_px + 0.75 * font
+            } else {
+                4.25 * font
+            },
             (viewport.width - 1.2 * font).max(1.0),
         )
     } else {
         (
             0.75 * font,
             0.75 * font,
-            (viewport.width - 17.5 * font).max(1.0).min(54.0 * font),
+            (viewport.width - reserved_width).max(1.0).min(54.0 * font),
         )
     };
     GameUiHudLayout {
