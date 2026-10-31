@@ -456,18 +456,6 @@ export type ApplicationGpuTimingCapability = {
     readonly kind: "unsupported";
 };
 /**
- * Supported manual Screen rendering scales, with full resolution as the default.
- */
-export type ScreenRenderScale = "100" | "75" | "50" | "25";
-/**
- * Directional shadow-map resolutions supported by both Screen adapters.
- */
-export type ScreenShadowMap = "full" | "half" | "quarter" | "off";
-/**
- * Shared non-physical water-detail selection.
- */
-export type WaterQuality = "low" | "medium" | "high";
-/**
  * Raw results from one bounded record preview transaction.
  */
 export type RecordPreviewObservation = {
@@ -709,6 +697,18 @@ export type ApplicationResourceObservation = {
     readonly cause: string;
     readonly kind: "failed";
 };
+/**
+ * Supported manual Screen rendering scales, with full resolution as the default.
+ */
+export type ScreenRenderScale = "100" | "75" | "50" | "25";
+/**
+ * Directional shadow-map resolutions supported by both Screen adapters.
+ */
+export type ScreenShadowMap = "full" | "half" | "quarter" | "off";
+/**
+ * Shared non-physical water-detail selection.
+ */
+export type WaterQuality = "low" | "medium" | "high";
 /**
  * Identity and outcome of an actual requested I/O operation.
  */
@@ -2096,10 +2096,6 @@ export interface ApplicationRendererObservation {
      */
     readonly gpu_timing: ApplicationGpuTimingCapability;
     /**
-     * Confirmed resources at this renderer's creation, before owner-issued changes.
-     */
-    readonly initial_quality: ApplicationRenderQuality;
-    /**
      * Creation/restoration identity, replaced after context loss or device replacement.
      */
     readonly resource_id: number;
@@ -2123,23 +2119,6 @@ export interface ApplicationRendererObservation {
         number,
         number
     ] | null;
-}
-/**
- * Renderer resource configuration; Screen scale is independent of runtime XR framebuffer size.
- */
-export interface ApplicationRenderQuality {
-    /**
-     * Retained Screen drawing resolution.
-     */
-    readonly scale: ScreenRenderScale;
-    /**
-     * Directional shadow-map resolution.
-     */
-    readonly shadow: ScreenShadowMap;
-    /**
-     * Water geometry and wave budget.
-     */
-    readonly water_quality: WaterQuality;
 }
 /**
  * Raw rows retrieved by a bounded descending metadata cursor in one read transaction.
@@ -2598,6 +2577,23 @@ export interface ApplicationResourceCommit {
     ];
 }
 /**
+ * Renderer resource configuration; Screen scale is independent of runtime XR framebuffer size.
+ */
+export interface ApplicationRenderQuality {
+    /**
+     * Retained Screen drawing resolution.
+     */
+    readonly scale: ScreenRenderScale;
+    /**
+     * Directional shadow-map resolution.
+     */
+    readonly shadow: ScreenShadowMap;
+    /**
+     * Water geometry and wave budget.
+     */
+    readonly water_quality: WaterQuality;
+}
+/**
  * One update's I/O work and optional drawing submission.
  */
 export interface ApplicationOutput {
@@ -2658,7 +2654,11 @@ export interface ApplicationGraphicsProjection {
      */
     readonly query?: ApplicationGpuQuery | null;
     /**
-     * Current drawable resources, absent while the renderer is unavailable.
+     * Live context identity, independent of whether its first binding has completed.
+     */
+    readonly renderer_resource_id?: number | null;
+    /**
+     * Last acknowledged drawable resources, absent until this context has a commit.
      */
     readonly resource?: ApplicationGraphicsResource | null;
     readonly [k: string]: unknown | undefined;
