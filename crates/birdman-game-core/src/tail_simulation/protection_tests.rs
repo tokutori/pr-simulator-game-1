@@ -1100,6 +1100,20 @@ fn held_pilot_demand_is_monotonic_and_survives_guard_projection() {
         );
         current = advance_tail_flight_tick(&aircraft, current, config, input, &loads).unwrap();
         assert_eq!(current.pilot_position_demand(), held_demand);
+        let velocity = current.flight_state().pilot_velocity_mps();
+        let sign = if velocity > 1.0e-9 {
+            1
+        } else if velocity < -1.0e-9 {
+            -1
+        } else {
+            0
+        };
+        if sign != 0 && previous_velocity_sign != 0 && sign != previous_velocity_sign {
+            velocity_sign_changes += 1;
+        }
+        if sign != 0 {
+            previous_velocity_sign = sign;
+        }
     }
     assert!(
         velocity_sign_changes <= 1,

@@ -390,23 +390,21 @@ fn pilot_target_tracking_follows_key_rate_ramps_without_overshoot_or_hunting() {
                 );
             } else {
                 overshoot = overshoot.max(direction * (position - stop));
-                if settle_tick.is_none() {
-                    let sign = if velocity > 1.0e-9 {
-                        1
-                    } else if velocity < -1.0e-9 {
-                        -1
-                    } else {
-                        0
-                    };
-                    if sign != 0 && previous_velocity_sign != 0 && sign != previous_velocity_sign {
-                        velocity_sign_changes_after_stop += 1;
-                    }
-                    if sign != 0 {
-                        previous_velocity_sign = sign;
-                    }
-                    if velocity.abs() < 1.0e-6 {
-                        settle_tick = Some(tick - ramp_ticks);
-                    }
+                let sign = if velocity > 1.0e-9 {
+                    1
+                } else if velocity < -1.0e-9 {
+                    -1
+                } else {
+                    0
+                };
+                if sign != 0 && previous_velocity_sign != 0 && sign != previous_velocity_sign {
+                    velocity_sign_changes_after_stop += 1;
+                }
+                if sign != 0 {
+                    previous_velocity_sign = sign;
+                }
+                if settle_tick.is_none() && velocity.abs() < 1.0e-6 {
+                    settle_tick = Some(tick - ramp_ticks);
                 }
             }
         }
