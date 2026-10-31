@@ -76,6 +76,31 @@ pub enum ReplayCameraError {
     /// The registered physical geometry could not supply presentation metadata.
     Geometry(&'static str),
 }
+#[cfg(not(verus_only))]
+impl core::fmt::Display for ReplayCameraError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::InvalidTime => f.write_str("Replay camera time must be finite and nonnegative"),
+            Self::Record(cause) => write!(f, "Replay camera record query failed: {cause}"),
+            Self::Math(cause) => {
+                write!(f, "Replay camera orientation construction failed: {cause}")
+            }
+            Self::InvalidVenue => f.write_str("Registered replay camera metadata is invalid"),
+            Self::Geometry(cause) => write!(f, "Replay camera geometry is invalid: {cause}"),
+        }
+    }
+}
+
+#[cfg(not(verus_only))]
+impl core::error::Error for ReplayCameraError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        match self {
+            Self::Record(cause) => Some(cause),
+            Self::Math(cause) => Some(cause),
+            _ => None,
+        }
+    }
+}
 
 /// Projects the Web-baseline camera from one immutable record and one requested time.
 ///

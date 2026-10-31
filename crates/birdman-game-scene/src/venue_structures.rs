@@ -1,6 +1,6 @@
 #![doc = "Registered OSM shoreline structure presentation, migrated from the Web reference. Coordinates are local NED metres and heights use the fixed gameplay water plane."]
 
-use std::{fmt, sync::OnceLock};
+use std::sync::OnceLock;
 
 use birdman_game_app::VenueCatalogError;
 use birdman_game_format::VenueFeatureDocument;
@@ -77,14 +77,27 @@ pub enum VenueStructureError {
     #[doc = "The named structure kind or footprint cannot form the existing raised presentation."]
     InvalidGeometry(String),
 }
-
-impl fmt::Display for VenueStructureError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "venue structure: {self:?}")
+#[cfg(not(verus_only))]
+impl core::fmt::Display for VenueStructureError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Source(cause) => write!(f, "Venue structure source validation failed: {cause}"),
+            Self::InvalidGeometry(cause) => {
+                write!(f, "Venue structure geometry is invalid: {cause}")
+            }
+        }
     }
 }
 
-impl std::error::Error for VenueStructureError {}
+#[cfg(not(verus_only))]
+impl core::error::Error for VenueStructureError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        match self {
+            Self::Source(cause) => Some(cause),
+            _ => None,
+        }
+    }
+}
 
 #[doc = "Returns the immutable three-kind presentation built once from the registered source."]
 pub fn registered_structures() -> Result<&'static [ShoreStructureMesh; 3], VenueStructureError> {

@@ -29,6 +29,30 @@ pub enum RenderPoseProjectionError {
     /// A retained physical interval could not provide a valid display sample.
     Interpolation(birdman_game_core::FlightRecordQueryError),
 }
+#[cfg(not(verus_only))]
+impl core::fmt::Display for RenderPoseProjectionError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::UnsupportedPhase => {
+                f.write_str("Session phase does not provide a live render pose")
+            }
+            Self::Session(cause) => write!(f, "Render pose session state is invalid: {cause}"),
+            Self::Geometry(cause) => write!(f, "Render pose geometry is invalid: {cause}"),
+            Self::Interpolation(cause) => write!(f, "Render pose interpolation failed: {cause}"),
+        }
+    }
+}
+
+#[cfg(not(verus_only))]
+impl core::error::Error for RenderPoseProjectionError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        match self {
+            Self::Session(cause) => Some(cause),
+            Self::Interpolation(cause) => Some(cause),
+            _ => None,
+        }
+    }
+}
 
 /// Projects the live or terminal pose using the application's physical-time remainder.
 pub fn live_render_pose(

@@ -889,7 +889,7 @@ fn registered_inputs() -> Result<(TerrainAsset, Shoreline), String> {
         || shore.schema_version != 3
         || shore.origin_wgs84
             != birdman_game_app::launch_venue()
-                .map_err(|cause| format!("{cause:?}"))?
+                .map_err(|cause| format!("{cause}"))?
                 .origin_wgs84
         || shore.shoreline_land_side_signs.len() != shore.shorelines_north_east_meters.len()
         || shore

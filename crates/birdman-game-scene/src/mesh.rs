@@ -1,7 +1,5 @@
 //! Shared finite, area-weighted vertex normals for prepared and retained meshes.
 
-use core::fmt;
-
 /// Rejected geometry or caller-owned mesh projection buffers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MeshProjectionError {
@@ -14,14 +12,26 @@ pub enum MeshProjectionError {
     /// A vertex has no finite nonzero accumulated surface normal.
     DegenerateNormal,
 }
-
-impl fmt::Display for MeshProjectionError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "mesh projection: {self:?}")
+#[cfg(not(verus_only))]
+impl core::fmt::Display for MeshProjectionError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::InvalidTopology => {
+                f.write_str("Mesh indices must form complete in-bounds triangles")
+            }
+            Self::InvalidBuffers => {
+                f.write_str("Mesh scratch and output lengths must match the position count")
+            }
+            Self::NonFinite => f.write_str("Mesh positions and accumulated normals must be finite"),
+            Self::DegenerateNormal => {
+                f.write_str("Mesh vertex has no nonzero finite accumulated normal")
+            }
+        }
     }
 }
 
-impl std::error::Error for MeshProjectionError {}
+#[cfg(not(verus_only))]
+impl core::error::Error for MeshProjectionError {}
 
 /// Prepares complete triangle-mesh normals once, using double-precision area accumulation.
 pub fn area_weighted_normals(

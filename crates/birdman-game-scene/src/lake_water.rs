@@ -60,14 +60,50 @@ pub enum LakeRenderModelError {
     /// A production detail direction is undefined below the Web's minimum wind speed.
     WindTooCalmForDetail,
 }
-
+#[cfg(not(verus_only))]
 impl core::fmt::Display for LakeRenderModelError {
-    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(formatter, "{self:?}")
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::NonFinite => {
+                f.write_str("Water render input or intermediate value must be finite")
+            }
+            Self::WindSpeedOutsideDomain => f.write_str("Water wind speed exceeds 60 m/s"),
+            Self::FetchOutsideDomain => {
+                f.write_str("Water fetch must be positive and at most 50 km")
+            }
+            Self::ComponentCountOutsideDomain => {
+                f.write_str("Water spectrum must contain 4 to 24 components")
+            }
+            Self::DetailAmplitudeOutsideDomain => {
+                f.write_str("Water detail amplitude scale must be positive and at most 3")
+            }
+            Self::PatternSeedOutsideDomain => {
+                f.write_str("Water pattern seed is outside the exact nonnegative integer domain")
+            }
+            Self::InvalidMeshSpacing => {
+                f.write_str("Water mesh spacing or gradient domain is invalid")
+            }
+            Self::InvalidWaveProjection => {
+                f.write_str("Water wave number or projected derivative is invalid")
+            }
+            Self::InvalidDetailExtent => {
+                f.write_str("Water detail extent or wavelet shape cannot be represented")
+            }
+            Self::InvalidDetailDirection => {
+                f.write_str("Water detail direction must be a finite unit direction")
+            }
+            Self::DetailWaveletCountOutsideDomain => {
+                f.write_str("Water detail wavelet count exceeds its allocation budget")
+            }
+            Self::WindTooCalmForDetail => {
+                f.write_str("Water detail direction is undefined at this wind speed")
+            }
+        }
     }
 }
 
-impl std::error::Error for LakeRenderModelError {}
+#[cfg(not(verus_only))]
+impl core::error::Error for LakeRenderModelError {}
 
 /// Stable visual weather; wind direction is NED and detail seed affects no geometry phase.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]

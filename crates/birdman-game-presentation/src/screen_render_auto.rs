@@ -231,6 +231,24 @@ pub enum ScreenRenderAutoError {
     /// Epochs cannot wrap and reuse a previous request identity.
     EpochExhausted,
 }
+#[cfg(not(verus_only))]
+impl core::fmt::Display for ScreenRenderAutoError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::InvalidTime => {
+                f.write_str("Graphics policy time must be finite, nonnegative and monotonic")
+            }
+            Self::InvalidSample => f.write_str("Graphics sample time or GPU work is invalid"),
+            Self::StaleRequest => {
+                f.write_str("Graphics acknowledgment targets an obsolete request")
+            }
+            Self::EpochExhausted => f.write_str("Graphics epochs are exhausted"),
+        }
+    }
+}
+
+#[cfg(not(verus_only))]
+impl core::error::Error for ScreenRenderAutoError {}
 
 /// Selects whether retained flight settings or background Auto controls rendering.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

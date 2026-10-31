@@ -1,6 +1,6 @@
 //! Immutable registered scene assets and caller-owned deformation buffers.
 
-use std::{fmt, sync::OnceLock};
+use std::sync::OnceLock;
 
 use birdman_game_app::LaunchVenueError;
 use birdman_game_content::{AircraftDefinitionError, ShapeError};
@@ -41,14 +41,37 @@ pub enum ScenePreparationError {
     /// Registered texture composition or linear-light mip generation failed.
     WingTexture(WingTextureError),
 }
-
-impl fmt::Display for ScenePreparationError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "scene preparation: {self:?}")
+#[cfg(not(verus_only))]
+impl core::fmt::Display for ScenePreparationError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Aircraft(cause) => write!(f, "Registered aircraft validation failed: {cause}"),
+            Self::Structure(cause) => write!(f, "Structural geometry projection failed: {cause}"),
+            Self::Tail(cause) => write!(f, "Tail skin generation failed: {cause}"),
+            Self::Terrain(cause) => write!(f, "Terrain generation failed: {cause}"),
+            Self::VenueStructures(cause) => write!(f, "Venue structure generation failed: {cause}"),
+            Self::LaunchPlatform(cause) => write!(f, "Launch platform generation failed: {cause}"),
+            Self::Mesh(cause) => write!(f, "Scene mesh projection failed: {cause}"),
+            Self::Decal(cause) => write!(f, "Wing decal decoding failed: {cause}"),
+            Self::WingTexture(cause) => write!(f, "Wing texture generation failed: {cause}"),
+        }
     }
 }
 
-impl std::error::Error for ScenePreparationError {}
+#[cfg(not(verus_only))]
+impl core::error::Error for ScenePreparationError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        match self {
+            Self::Aircraft(cause) => Some(cause),
+            Self::Structure(cause) => Some(cause),
+            Self::VenueStructures(cause) => Some(cause),
+            Self::LaunchPlatform(cause) => Some(cause),
+            Self::Mesh(cause) => Some(cause),
+            Self::WingTexture(cause) => Some(cause),
+            _ => None,
+        }
+    }
+}
 
 /// One static launch-platform mesh in world-fixed north/east/down metres.
 pub struct LaunchPlatformMesh {

@@ -1350,7 +1350,7 @@ fn technical_configuration(context: &GameUiContext<'_, '_>) -> String {
     }
     match super::environment::game_ui_environment_diagnostics(context.identity) {
         Ok(environment) => description.push_str(&format!("\n\n気象の詳細\n{environment}")),
-        Err(error) => description.push_str(&format!("\n気象の詳細を取得できない: {error:?}")),
+        Err(error) => description.push_str(&format!("\n気象の詳細を取得できない: {error}")),
     }
     description
 }

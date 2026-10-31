@@ -566,6 +566,38 @@ pub enum GameUiError {
     /// The bundled venue chart asset is malformed.
     InvalidVenueMap,
 }
+#[cfg(not(verus_only))]
+impl core::fmt::Display for GameUiError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::RevisionExhausted => f.write_str("UI view revision identities are exhausted"),
+            Self::StaleView => f.write_str("UI observation targets a superseded view"),
+            Self::InvalidViewport => {
+                f.write_str("UI viewport must contain positive finite dimensions")
+            }
+            Self::ActionUnavailable => {
+                f.write_str("UI action is not available in the current view")
+            }
+            Self::InvalidTime => f.write_str("UI time is nonfinite or outside the retained record"),
+            Self::Record(cause) => write!(f, "UI record query failed: {cause}"),
+            Self::Session(cause) => write!(f, "UI session projection failed: {cause}"),
+            Self::Environment(cause) => write!(f, "UI environment projection failed: {cause}"),
+            Self::InvalidVenueMap => f.write_str("Venue map asset is invalid"),
+        }
+    }
+}
+
+#[cfg(not(verus_only))]
+impl core::error::Error for GameUiError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        match self {
+            Self::Record(cause) => Some(cause),
+            Self::Session(cause) => Some(cause),
+            Self::Environment(cause) => Some(cause),
+            _ => None,
+        }
+    }
+}
 
 /// Shared scene name, preserving current Web spelling.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
