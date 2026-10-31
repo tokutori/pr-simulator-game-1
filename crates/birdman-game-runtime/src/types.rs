@@ -25,6 +25,8 @@ pub struct ApplicationCapabilities {
     pub hmd_available: bool,
     /// Raw orientation API and permission-method availability, absent without the required browser APIs.
     pub phone_sensors: Option<PhoneSensorApiObservation>,
+    /// Platform has observed touch input support.
+    pub touch_available: bool,
     /// Drawing adapter supports record plots.
     pub analysis_available: bool,
     /// Drawing adapter supports recorded playback.
@@ -52,11 +54,47 @@ pub struct ApplicationPlatformObservation {
     pub capabilities: ApplicationCapabilities,
 }
 
-/// Raw stage of a platform chart pointer event.
+/// Exact raw pointer identifier, preserving native 64-bit IDs at the JSON boundary.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct ApplicationPointerId {
+    /// Low word of the platform identifier.
+    pub low: u32,
+    /// High word of the platform identifier.
+    pub high: u32,
+}
+
+impl ApplicationPointerId {
+    /// Splits a native identifier without changing its bits.
+    pub const fn from_bits(value: u64) -> Self {
+        Self {
+            low: value as u32,
+            high: (value >> 32) as u32,
+        }
+    }
+}
+
+/// Raw platform pointer kind, without flight-input policy.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
-pub enum ApplicationChartPointerPhase {
+pub enum ApplicationPointerKind {
+    /// Physical mouse pointer.
+    Mouse,
+    /// Direct finger contact.
+    Touch,
+    /// Pen digitizer pointer.
+    Pen,
+    /// Unspecified platform pointer kind.
+    Unknown,
+}
+
+/// Raw stage of a platform pointer event on an admitted control.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum ApplicationPointerPhase {
     /// Pointer button pressed.
     Down,
     /// Pointer position changed.
@@ -379,16 +417,18 @@ pub enum ApplicationInput {
         /// Actual logical-pixel extent.
         extent: GameUiChartExtent,
     },
-    /// Raw pointer event and actual chart rectangle in the same coordinate system.
-    ChartPointer {
+    /// Raw pointer event and actual control rectangle in the same coordinate system.
+    ControlPointer {
         /// Revision displayed by the event target.
         view_revision: u32,
-        /// Chart element identity.
-        control_id: String,
+        /// Published pointer-control identity; absent for the scene canvas.
+        control_id: Option<String>,
         /// Platform pointer identity.
-        pointer_id: i32,
+        pointer_id: ApplicationPointerId,
+        /// Raw platform device kind.
+        pointer_kind: ApplicationPointerKind,
         /// Raw event stage.
-        phase: ApplicationChartPointerPhase,
+        phase: ApplicationPointerPhase,
         /// Changed button, using the platform pointer-event numbering.
         button: i16,
         /// Currently held button bitset.

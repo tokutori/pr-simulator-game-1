@@ -273,6 +273,150 @@ fn activation_and_resume_accept_release_then_fresh_press_instead_of_held_repeats
         tick(&mut input, &[], 0.1).unwrap().pilot_motion_admission(),
         TailPilotMotionAdmission::Rearmed
     );
+    // The touch source uses the same one-shot admission and elapsed-tick confirmation.
+    input.invalidate();
+    let touch = |phase, value| FlightTouchObservation {
+        generation: 1,
+        control: FlightTouchControl::PilotSlider,
+        phase,
+        axes: [value, 0.0],
+    };
+    assert!(input.observe_touch(touch(FlightTouchPhase::Acquire, 0.0)));
+    assert_eq!(
+        tick(&mut input, &[], 0.0).unwrap().pilot_position_command(),
+        TailPilotPositionCommand::Hold
+    );
+    let uncommitted_touch = |input: &mut FlightInputState| {
+        input
+            .tick_input(
+                &[],
+                0.0,
+                KeyboardControlSettings::default(),
+                |_| unreachable!(),
+            )
+            .unwrap()
+    };
+    let first = uncommitted_touch(&mut input);
+    assert_eq!(
+        first.pilot_motion_admission(),
+        TailPilotMotionAdmission::Rearmed
+    );
+    assert_eq!(
+        uncommitted_touch(&mut input).pilot_motion_admission(),
+        TailPilotMotionAdmission::Rearmed
+    );
+    input.confirm_tick(first, false);
+    assert_eq!(
+        tick(&mut input, &[], 0.0).unwrap().pilot_motion_admission(),
+        TailPilotMotionAdmission::Continued
+    );
+    input.observe_pilot_stop(true);
+    assert!(input.observe_touch(touch(FlightTouchPhase::Change, 0.6)));
+    tick(&mut input, &[], 0.0).unwrap(); // Existing target crossing reacquires the absolute axis.
+    let rearmed = uncommitted_touch(&mut input);
+    assert_eq!(
+        rearmed.pilot_motion_admission(),
+        TailPilotMotionAdmission::Rearmed
+    );
+    input.confirm_tick(rearmed, true);
+    assert!(input.observe_touch(touch(FlightTouchPhase::Change, 0.6)));
+    assert_eq!(
+        tick(&mut input, &[], 0.0).unwrap().pilot_position_command(),
+        TailPilotPositionCommand::Hold
+    );
+    assert!(input.observe_touch(touch(FlightTouchPhase::Release, 0.0)));
+    assert!(!input.observe_touch(touch(FlightTouchPhase::Change, 0.0)));
+    // Acquiring the displayed held demand admits even a small reverse movement.
+    let held = -0.5;
+    assert!(input.observe_touch(FlightTouchObservation {
+        generation: 2,
+        control: FlightTouchControl::PilotSlider,
+        phase: FlightTouchPhase::Acquire,
+        axes: [held, 0.0],
+    }));
+    assert_eq!(
+        tick(&mut input, &[], held)
+            .unwrap()
+            .pilot_position_command(),
+        TailPilotPositionCommand::Hold
+    );
+    assert!(input.observe_touch(FlightTouchObservation {
+        generation: 2,
+        control: FlightTouchControl::PilotSlider,
+        phase: FlightTouchPhase::Change,
+        axes: [held + 0.01, 0.0],
+    }));
+    assert_eq!(set_value(tick(&mut input, &[], held).unwrap()), held + 0.01);
+    let same_finger = |phase, value| FlightTouchObservation {
+        generation: 2,
+        control: FlightTouchControl::PilotSlider,
+        phase,
+        axes: [value, 0.0],
+    };
+    input.observe_pilot_stop(false);
+    input.observe_touch(same_finger(FlightTouchPhase::Change, 0.8));
+    assert_eq!(set_value(tick(&mut input, &[], held).unwrap()), 0.8);
+    input.observe_pilot_stop(true);
+    assert_eq!(
+        tick(&mut input, &[], 0.6).unwrap().pilot_position_command(),
+        TailPilotPositionCommand::Hold
+    );
+    input.observe_touch(same_finger(FlightTouchPhase::Change, 0.5));
+    assert_eq!(
+        tick(&mut input, &[], 0.6).unwrap().pilot_position_command(),
+        TailPilotPositionCommand::Hold
+    );
+    let crossing_tick = |input: &mut FlightInputState| {
+        input
+            .tick_input(
+                &[],
+                0.6,
+                KeyboardControlSettings::default(),
+                |_| unreachable!(),
+            )
+            .unwrap()
+    };
+    let rearmed = crossing_tick(&mut input);
+    assert_eq!(set_value(rearmed), 0.5);
+    assert_eq!(
+        rearmed.pilot_motion_admission(),
+        TailPilotMotionAdmission::Rearmed
+    );
+    assert_eq!(
+        crossing_tick(&mut input).pilot_motion_admission(),
+        TailPilotMotionAdmission::Rearmed
+    );
+    input.confirm_tick(rearmed, true);
+    input.observe_touch(same_finger(FlightTouchPhase::Change, 0.5));
+    let unchanged = tick(&mut input, &[], 0.6).unwrap();
+    assert_eq!(
+        unchanged.pilot_position_command(),
+        TailPilotPositionCommand::Hold
+    );
+    assert_eq!(
+        unchanged.pilot_motion_admission(),
+        TailPilotMotionAdmission::Continued
+    );
+    input.observe_pilot_stop(false);
+    input.observe_touch(same_finger(FlightTouchPhase::Change, 0.6));
+    tick(&mut input, &[], 0.6).unwrap();
+    tick(&mut input, &[], 0.6).unwrap();
+    input.observe_pilot_stop(true);
+    let stationary = tick(&mut input, &[], 0.6).unwrap();
+    assert_eq!(
+        stationary.pilot_position_command(),
+        TailPilotPositionCommand::Hold
+    );
+    assert_eq!(
+        stationary.pilot_motion_admission(),
+        TailPilotMotionAdmission::Continued
+    );
+    input.observe_touch(same_finger(FlightTouchPhase::Change, 0.5));
+    tick(&mut input, &[], 0.6).unwrap();
+    assert_eq!(
+        crossing_tick(&mut input).pilot_motion_admission(),
+        TailPilotMotionAdmission::Rearmed
+    );
 }
 
 #[test]
@@ -369,6 +513,37 @@ fn gamepad_waits_for_neutral_and_crosses_the_confirmed_pilot_target_before_takeo
             .pilot_motion_admission(),
         TailPilotMotionAdmission::Continued
     );
+    // A neutral standby pad must not pre-acquire the pilot axis while touch changes its target.
+    input.invalidate();
+    let touch = |phase, value| FlightTouchObservation {
+        generation: 1,
+        control: FlightTouchControl::PilotSlider,
+        phase,
+        axes: [value, 0.0],
+    };
+    assert!(input.observe_touch(touch(FlightTouchPhase::Acquire, 0.0)));
+    let mut standby = gamepad(0, 1, [0.0; 3]);
+    tick(&mut input, &[standby], 0.0).unwrap();
+    assert!(input.observe_touch(touch(FlightTouchPhase::Change, 0.6)));
+    let held = set_value(tick(&mut input, &[standby], 0.0).unwrap());
+    tick(&mut input, &[standby], held).unwrap();
+    standby.axes[0] = Some(0.54);
+    let handed_over = tick(&mut input, &[standby], held).unwrap();
+    assert!(handed_over.manual_intent().nose_up() > 0.0);
+    assert_eq!(
+        handed_over.pilot_position_command(),
+        TailPilotPositionCommand::Hold
+    );
+    assert_eq!(input.touch_generation(), None);
+    assert!(!input.observe_touch(touch(FlightTouchPhase::Change, 0.0)));
+    standby.axes[2] = Some(1.0);
+    assert_eq!(
+        tick(&mut input, &[standby], held)
+            .unwrap()
+            .pilot_position_command(),
+        TailPilotPositionCommand::Hold
+    );
+    assert_eq!(set_value(tick(&mut input, &[standby], held).unwrap()), 1.0);
 }
 
 #[test]

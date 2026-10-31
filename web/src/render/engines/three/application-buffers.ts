@@ -11,16 +11,26 @@ export class ThreeApplicationBuffers {
 
   constructor(private readonly bytes: (id: number) => Uint8Array) {}
 
-  private read(descriptor: ApplicationBufferDescriptor): Float32Array | Uint32Array | Uint8Array {
+  private checkedBytes(descriptor: ApplicationBufferDescriptor): Uint8Array {
     const bytes = this.bytes(descriptor.buffer_id);
     const count = descriptor.count * descriptor.components;
     const width = descriptor.data_type === "u8" ? 1 : 4;
     if (descriptor.stride_bytes !== descriptor.components * width || bytes.length !== count * width) throw new Error("Shared GPU buffer layout does not match its bytes");
+    return bytes;
+  }
+
+  private copyFloat32(view: DataView, values: Float32Array): void {
+    for (let index = 0; index < values.length; index++) values[index] = view.getFloat32(index * 4, true);
+  }
+
+  private read(descriptor: ApplicationBufferDescriptor): Float32Array | Uint32Array | Uint8Array {
+    const bytes = this.checkedBytes(descriptor);
+    const count = descriptor.count * descriptor.components;
     if (descriptor.data_type === "u8") return bytes;
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     if (descriptor.data_type === "f32") {
       const values = new Float32Array(count);
-      for (let index = 0; index < count; index++) values[index] = view.getFloat32(index * 4, true);
+      this.copyFloat32(view, values);
       return values;
     }
     const values = new Uint32Array(count);
@@ -66,20 +76,20 @@ export class ThreeApplicationBuffers {
   }
 
   update(geometry: BufferGeometry, update: ApplicationMeshUpdate): void {
-    const position = this.read(update.position);
-    const normal = this.read(update.normal);
-    for (const [name, descriptor, values] of [["position", update.position, position], ["normal", update.normal, normal]] as const) {
-      const attribute = this.attributes.get(descriptor.buffer_id);
-      if (attribute === undefined) {
-        const prepared = new BufferAttribute(values, descriptor.components);
-        this.attributes.set(descriptor.buffer_id, prepared);
-        geometry.setAttribute(name, prepared);
-      }
-      else {
-        attribute.array.set(values);
-        attribute.needsUpdate = true;
-        geometry.setAttribute(name, attribute);
-      }
+    const uploads = ([["position", update.position], ["normal", update.normal]] as const).map(([name, descriptor]) => {
+      if (descriptor.data_type !== "f32") throw new Error("Dynamic GPU attributes require Float32 uploads");
+      const bytes = this.checkedBytes(descriptor);
+      const retained = this.attributes.get(descriptor.buffer_id);
+      const attribute = retained ?? new BufferAttribute(new Float32Array(descriptor.count * descriptor.components), descriptor.components);
+      if (!(attribute.array instanceof Float32Array) || attribute.array.length !== descriptor.count * descriptor.components
+          || attribute.itemSize !== descriptor.components) throw new Error("Dynamic GPU attribute layout differs from its prepared topology");
+      return { name, descriptor, attribute, values: attribute.array, view: new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength), retained };
+    });
+    for (const { name, descriptor, attribute, values, view, retained } of uploads) {
+      this.copyFloat32(view, values);
+      if (retained === undefined) this.attributes.set(descriptor.buffer_id, attribute);
+      else attribute.needsUpdate = true;
+      geometry.setAttribute(name, attribute);
     }
   }
 

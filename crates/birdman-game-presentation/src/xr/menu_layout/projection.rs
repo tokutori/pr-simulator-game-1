@@ -404,6 +404,7 @@ pub(super) fn project(
                     GameUiControlContent::Status { .. } => ("status", None),
                     GameUiControlContent::Fields { .. } => ("fields", None),
                     GameUiControlContent::Chart { .. } => ("chart", None),
+                    GameUiControlContent::FlightTouch { .. } => ("flight_touch", None),
                 };
                 MenuControlGeometry {
                     identity: [control.id.clone(), kind.into()],

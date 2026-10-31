@@ -234,6 +234,13 @@ pub fn game_ui_view(
             feedback(&mut menu, context);
         }
         SessionPhase::FlightRunning => {
+            if super::touch::available(context.platform, phase) {
+                menu.section("flight-touch", "", GameUiSectionLayout::Column);
+                menu.controls.extend(super::touch::controls(
+                    context,
+                    &layout(state, context, phase)?,
+                )?);
+            }
             menu.section("flight-actions", "", GameUiSectionLayout::Row);
             if context.platform.presentation_mode == GameUiPresentationMode::Screen {
                 menu.action(
@@ -1755,7 +1762,7 @@ fn description(
             "飛行準備に失敗した。再試行または設定変更を選択する。".to_owned()
         }
         SessionPhase::Countdown { .. } => "発進までお待ちください。".to_owned(),
-        SessionPhase::FlightRunning => "キーボードまたはゲームパッドで操縦する。".to_owned(),
+        SessionPhase::FlightRunning => "機体を操縦して、できるだけ遠くまで滑空する。".to_owned(),
         SessionPhase::FlightPaused { .. } if flight_failure.is_some() => {
             "飛行処理の障害により一時停止した。この飛行は再開できない。「飛行を終了」で結果へ進み、「同じ条件で再試行」または「設定を変更」を選択する。".to_owned()
         }

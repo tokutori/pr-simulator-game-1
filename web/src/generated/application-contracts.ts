@@ -326,22 +326,26 @@ export type ApplicationInput = {
      */
     readonly buttons: number;
     /**
-     * Chart element identity.
+     * Published pointer-control identity; absent for the scene canvas.
      */
-    readonly control_id: string;
+    readonly control_id?: string | null;
     /**
      * Platform primary-pointer observation.
      */
     readonly is_primary: boolean;
-    readonly kind: "chart_pointer";
+    readonly kind: "control_pointer";
     /**
      * Raw event stage.
      */
-    readonly phase: ApplicationChartPointerPhase;
+    readonly phase: ApplicationPointerPhase;
     /**
      * Platform pointer identity.
      */
-    readonly pointer_id: number;
+    readonly pointer_id: ApplicationPointerId;
+    /**
+     * Raw platform device kind.
+     */
+    readonly pointer_kind: ApplicationPointerKind;
     /**
      * Pointer coordinates in logical pixels.
      *
@@ -640,9 +644,13 @@ export type GameUiControlInput = {
     readonly type: "control-keys";
 };
 /**
- * Raw stage of a platform chart pointer event.
+ * Raw stage of a platform pointer event on an admitted control.
  */
-export type ApplicationChartPointerPhase = "down" | "move" | "up" | "cancel" | "lost_capture";
+export type ApplicationPointerPhase = "down" | "move" | "up" | "cancel" | "lost_capture";
+/**
+ * Raw platform pointer kind, without flight-input policy.
+ */
+export type ApplicationPointerKind = "mouse" | "touch" | "pen" | "unknown";
 /**
  * Completion state of the display and scene resources needed for launch.
  */
@@ -1525,6 +1533,40 @@ export type GameUiControlContent = {
     readonly source: GameUiReadoutSource;
 } | {
     /**
+     * Completed viewport placement.
+     */
+    readonly bounds: GameUiRect;
+    /**
+     * Stick or absolute pilot-position interaction.
+     */
+    readonly control: FlightTouchControl;
+    readonly kind: "flight_touch";
+    /**
+     * Acquired local stick origin, absent before touch acquisition.
+     *
+     * @minItems 2
+     * @maxItems 2
+     */
+    readonly origin?: readonly [
+        number,
+        number
+    ] | null;
+    /**
+     * Completed local indicator centre in logical pixels.
+     *
+     * @minItems 2
+     * @maxItems 2
+     */
+    readonly position: readonly [
+        number,
+        number
+    ];
+    /**
+     * Shared indicator radius in logical pixels.
+     */
+    readonly radius: number;
+} | {
+    /**
      * Plot selection.
      */
     readonly chart: GameUiAnalysisChart;
@@ -1580,6 +1622,10 @@ export type GameUiRangeTarget = "analysis" | "replay";
  * Shared source for frame-varying readouts, independent of element identity.
  */
 export type GameUiReadoutSource = "static" | "countdown" | "playback_time" | "playback_summary" | "analysis_cursor";
+/**
+ * Independent channels belonging to one touch flight device.
+ */
+export type FlightTouchControl = "stick" | "pilot_slider";
 /**
  * Horizontal alignment relative to a chart label's baseline anchor.
  */
@@ -2399,6 +2445,19 @@ export interface GameUiChartExtent {
     readonly width: number;
 }
 /**
+ * Exact raw pointer identifier, preserving native 64-bit IDs at the JSON boundary.
+ */
+export interface ApplicationPointerId {
+    /**
+     * High word of the platform identifier.
+     */
+    readonly high: number;
+    /**
+     * Low word of the platform identifier.
+     */
+    readonly low: number;
+}
+/**
  * External metrics and API availability, without derived UI state.
  */
 export interface ApplicationPlatformObservation {
@@ -2451,6 +2510,10 @@ export interface ApplicationCapabilities {
      * Platform provides persistent record I/O.
      */
     readonly stored_records_available: boolean;
+    /**
+     * Platform has observed touch input support.
+     */
+    readonly touch_available: boolean;
 }
 /**
  * Browser orientation API observations before a sensor sample is available.
@@ -4242,6 +4305,10 @@ export interface GameUiFrame {
      */
     readonly fields: readonly GameUiFieldsValue[];
     /**
+     * Pointer-control indicators associated with the retained flight controls.
+     */
+    readonly flight_touch: readonly GameUiFlightTouchValue[];
+    /**
      * Shared HUD projection, never a second physical state.
      */
     readonly hud?: GameUiHud | null;
@@ -4304,6 +4371,35 @@ export interface GameUiFieldsValue {
      * Retained group identity.
      */
     readonly id: string;
+}
+/**
+ * Completed local indicator geometry for a retained flight pointer control.
+ */
+export interface GameUiFlightTouchValue {
+    /**
+     * Existing published control identity.
+     */
+    readonly id: string;
+    /**
+     * Complete local-pixel relative-drag origin, absent for an absolute slider.
+     *
+     * @minItems 2
+     * @maxItems 2
+     */
+    readonly origin?: readonly [
+        number,
+        number
+    ] | null;
+    /**
+     * Complete local-pixel knob centre.
+     *
+     * @minItems 2
+     * @maxItems 2
+     */
+    readonly position: readonly [
+        number,
+        number
+    ];
 }
 /**
  * Value of a retained typed range control.

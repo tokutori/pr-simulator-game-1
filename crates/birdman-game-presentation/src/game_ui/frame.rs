@@ -21,6 +21,7 @@ pub fn game_ui_frame(
         fields: Vec::new(),
         button_labels: Vec::new(),
         chart_cursor: None,
+        flight_touch: super::touch::frame_values(context, retained)?,
     };
     let controls: Vec<_> = retained
         .panels
@@ -136,7 +137,8 @@ pub fn game_ui_frame(
             GameUiControlContent::Fields { .. }
             | GameUiControlContent::Button { .. }
             | GameUiControlContent::Toggle { .. }
-            | GameUiControlContent::Chart { .. } => {}
+            | GameUiControlContent::Chart { .. }
+            | GameUiControlContent::FlightTouch { .. } => {}
         }
     }
     Ok(frame)

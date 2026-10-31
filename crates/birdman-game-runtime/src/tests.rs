@@ -98,10 +98,11 @@ fn chart_measurement_converges_and_raw_pointer_scrubs_only_its_admitted_range() 
         })
         .unwrap();
     let [left, top, right, bottom] = plot.presentation.plot;
-    let pointer = |revision, phase, position_x, buttons| ApplicationInput::ChartPointer {
+    let pointer = |revision, phase, position_x, buttons| ApplicationInput::ControlPointer {
         view_revision: revision,
-        control_id: "game-analysis-plot".to_owned(),
-        pointer_id: 9,
+        control_id: Some("game-analysis-plot".to_owned()),
+        pointer_id: ApplicationPointerId::from_bits(9),
+        pointer_kind: ApplicationPointerKind::Mouse,
         phase,
         button: 0,
         buttons,
@@ -113,27 +114,32 @@ fn chart_measurement_converges_and_raw_pointer_scrubs_only_its_admitted_range() 
     runtime
         .observe_test(pointer(
             altitude.view_revision,
-            ApplicationChartPointerPhase::Down,
+            ApplicationPointerPhase::Down,
             right,
             1,
         ))
         .unwrap();
     assert!(runtime.chart_pointer.is_none());
     runtime
-        .observe_test(pointer(
-            revision,
-            ApplicationChartPointerPhase::Down,
-            right,
-            1,
-        ))
+        .observe_test(pointer(revision, ApplicationPointerPhase::Down, right, 1))
         .unwrap();
     assert_eq!(runtime.ui.analysis_time_seconds, plot.x_maximum);
+    // Native pointer IDs are scoped by kind: another device cannot move or retire this lease.
+    for phase in [ApplicationPointerPhase::Move, ApplicationPointerPhase::Up] {
+        let mut other_kind = pointer(revision, phase, left, 1);
+        if let ApplicationInput::ControlPointer { pointer_kind, .. } = &mut other_kind {
+            *pointer_kind = ApplicationPointerKind::Touch;
+        }
+        runtime.observe_test(other_kind).unwrap();
+        assert_eq!(runtime.ui.analysis_time_seconds, plot.x_maximum);
+        assert!(runtime.chart_pointer.is_some());
+    }
     for (phase, buttons) in [
-        (ApplicationChartPointerPhase::Down, 3),
-        (ApplicationChartPointerPhase::Up, 1),
+        (ApplicationPointerPhase::Down, 3),
+        (ApplicationPointerPhase::Up, 1),
     ] {
         let mut chord = pointer(revision, phase, left, buttons);
-        if let ApplicationInput::ChartPointer { button, .. } = &mut chord {
+        if let ApplicationInput::ControlPointer { button, .. } = &mut chord {
             *button = 2;
         }
         runtime.observe_test(chord).unwrap();
@@ -143,55 +149,35 @@ fn chart_measurement_converges_and_raw_pointer_scrubs_only_its_admitted_range() 
     runtime
         .observe_test(pointer(
             revision,
-            ApplicationChartPointerPhase::Move,
+            ApplicationPointerPhase::Move,
             left - 100.0,
             1,
         ))
         .unwrap();
     assert_eq!(runtime.ui.analysis_time_seconds, 0.0);
     runtime
-        .observe_test(pointer(
-            revision,
-            ApplicationChartPointerPhase::Up,
-            right,
-            0,
-        ))
+        .observe_test(pointer(revision, ApplicationPointerPhase::Up, right, 0))
         .unwrap();
     assert!(runtime.chart_pointer.is_none());
     for ending in [
-        ApplicationChartPointerPhase::Cancel,
-        ApplicationChartPointerPhase::LostCapture,
-        ApplicationChartPointerPhase::Move,
+        ApplicationPointerPhase::Cancel,
+        ApplicationPointerPhase::LostCapture,
+        ApplicationPointerPhase::Move,
     ] {
         runtime
-            .observe_test(pointer(
-                revision,
-                ApplicationChartPointerPhase::Down,
-                left,
-                1,
-            ))
+            .observe_test(pointer(revision, ApplicationPointerPhase::Down, left, 1))
             .unwrap();
         runtime
             .observe_test(pointer(revision, ending, left, 0))
             .unwrap();
         runtime
-            .observe_test(pointer(
-                revision,
-                ApplicationChartPointerPhase::Move,
-                right,
-                1,
-            ))
+            .observe_test(pointer(revision, ApplicationPointerPhase::Move, right, 1))
             .unwrap();
         assert_eq!(runtime.ui.analysis_time_seconds, 0.0);
         assert!(runtime.chart_pointer.is_none());
     }
     runtime
-        .observe_test(pointer(
-            revision,
-            ApplicationChartPointerPhase::Down,
-            right,
-            1,
-        ))
+        .observe_test(pointer(revision, ApplicationPointerPhase::Down, right, 1))
         .unwrap();
     runtime
         .observe_test(ApplicationInput::PageVisibility { visible: false })
@@ -961,7 +947,7 @@ fn finalized_application() -> ApplicationSession {
 #[test]
 fn admitted_flight_keys_reach_hud_and_clear_on_focus_loss() {
     use birdman_game_core::ControlMode;
-    let mut application = ApplicationSession::new(ControlMode::Manual, 1, 42);
+    let mut application = ApplicationSession::new(ControlMode::Manual, 100, 42);
     for command in [
         SessionCommand::OpenSetup {},
         SessionCommand::Prepare {},
@@ -987,7 +973,10 @@ fn admitted_flight_keys_reach_hud_and_clear_on_focus_loss() {
             height: 720.0,
             root_font_size: 16.0,
         },
-        capabilities: ApplicationCapabilities::default(),
+        capabilities: ApplicationCapabilities {
+            touch_available: true,
+            ..Default::default()
+        },
     };
     let mut runtime = ApplicationRuntime::new(application, platform.clone()).unwrap();
     let initial = runtime
@@ -1011,6 +1000,221 @@ fn admitted_flight_keys_reach_hud_and_clear_on_focus_loss() {
         pressed,
         repeat,
     };
+    use birdman_game_presentation::game_ui::GameUiControlContent;
+    let bounds = |runtime: &ApplicationRuntime, id: &str| {
+        runtime
+            .retained
+            .as_ref()
+            .unwrap()
+            .panels
+            .iter()
+            .flat_map(|panel| &panel.controls)
+            .find_map(|control| {
+                if control.id == id
+                    && let GameUiControlContent::FlightTouch { bounds, .. } = control.content
+                {
+                    Some(bounds)
+                } else {
+                    None
+                }
+            })
+            .unwrap()
+    };
+    let stick = bounds(&runtime, "game-flight-stick");
+    let slider = bounds(&runtime, "game-flight-pilot-slider");
+    let touch = |revision,
+                 id: &str,
+                 pointer: u64,
+                 phase,
+                 point: [f64; 2],
+                 bounds: birdman_game_presentation::game_ui::GameUiRect| {
+        ApplicationInput::ControlPointer {
+            view_revision: revision,
+            control_id: Some(id.to_owned()),
+            pointer_id: ApplicationPointerId::from_bits(pointer),
+            pointer_kind: ApplicationPointerKind::Touch,
+            phase,
+            button: 0,
+            buttons: if matches!(
+                phase,
+                ApplicationPointerPhase::Up | ApplicationPointerPhase::Cancel
+            ) {
+                0
+            } else {
+                1
+            },
+            is_primary: pointer == 0x1_0000_0001,
+            position: point,
+            rect: [bounds.x, bounds.y, bounds.width, bounds.height],
+        }
+    };
+    let center = |bounds: birdman_game_presentation::game_ui::GameUiRect| {
+        [
+            bounds.x + bounds.width * 0.5,
+            bounds.y + bounds.height * 0.5,
+        ]
+    };
+    let revision = runtime.retained.as_ref().unwrap().view_revision;
+    // A menu pointer never becomes a flight channel.
+    runtime
+        .observe_test(touch(
+            revision,
+            "game-flight-pause",
+            17,
+            ApplicationPointerPhase::Down,
+            center(stick),
+            stick,
+        ))
+        .unwrap();
+    assert_eq!(runtime.application.flight_touch_generation(), None);
+    runtime
+        .observe_test(touch(
+            revision,
+            "game-flight-stick",
+            0x1_0000_0001,
+            ApplicationPointerPhase::Down,
+            center(stick),
+            stick,
+        ))
+        .unwrap();
+    runtime
+        .observe_test(touch(
+            revision,
+            "game-flight-pilot-slider",
+            0x2_0000_0001,
+            ApplicationPointerPhase::Down,
+            center(slider),
+            slider,
+        ))
+        .unwrap();
+    assert_eq!(runtime.flight_pointers.iter().flatten().count(), 2);
+    let generation = runtime.application.flight_touch_generation().unwrap();
+    let moved = [center(stick)[0], center(stick)[1] - stick.height * 0.2];
+    runtime
+        .observe_test(touch(
+            revision,
+            "game-flight-stick",
+            0x1_0000_0001,
+            ApplicationPointerPhase::Move,
+            moved,
+            stick,
+        ))
+        .unwrap();
+    runtime.observe_test(key("KeyC", true, false)).unwrap();
+    runtime.observe_test(key("KeyC", false, false)).unwrap();
+    assert_ne!(runtime.retained.as_ref().unwrap().view_revision, revision);
+    assert_eq!(runtime.flight_pointers.iter().flatten().count(), 2);
+    // An existing capture survives the same flight's camera revision.
+    runtime
+        .observe_test(touch(
+            revision,
+            "game-flight-stick",
+            0x1_0000_0001,
+            ApplicationPointerPhase::Move,
+            moved,
+            stick,
+        ))
+        .unwrap();
+    for timestamp_ms in [0.0, 10.0] {
+        runtime
+            .observe_test(ApplicationInput::Frame {
+                display_resource_id: runtime.display.active_resource(),
+                timestamp_ms,
+                gamepads: vec![],
+                xr: None,
+                spatial: Default::default(),
+            })
+            .unwrap();
+    }
+    assert!(
+        runtime
+            .application
+            .core_session()
+            .flight_record()
+            .unwrap()
+            .samples()
+            .last()
+            .unwrap()
+            .controls
+            .input_from_previous
+            .unwrap()
+            .manual_intent()
+            .nose_up()
+            > 0.0
+    );
+    runtime
+        .observe_test(touch(
+            revision,
+            "game-flight-stick",
+            0x1_0000_0001,
+            ApplicationPointerPhase::Up,
+            moved,
+            stick,
+        ))
+        .unwrap();
+    assert!(
+        runtime.flight_pointers[0].is_none() && runtime.flight_pointers[1].is_some(),
+        "phase={:?}, generation={:?}, resource={:?}, target={:?}",
+        runtime.application.core_session().snapshot().phase(),
+        runtime.application.flight_touch_generation(),
+        runtime.graphics.resource(),
+        runtime.graphics.target(GameUiPresentationMode::Screen)
+    );
+    assert_eq!(
+        runtime.application.flight_touch_generation(),
+        Some(generation)
+    );
+    runtime
+        .observe_test(touch(
+            revision,
+            "game-flight-pilot-slider",
+            0x2_0000_0001,
+            ApplicationPointerPhase::Cancel,
+            center(slider),
+            slider,
+        ))
+        .unwrap();
+    assert_eq!(runtime.application.flight_touch_generation(), None);
+    runtime
+        .observe_test(touch(
+            revision,
+            "game-flight-stick",
+            0x1_0000_0001,
+            ApplicationPointerPhase::Move,
+            moved,
+            stick,
+        ))
+        .unwrap();
+    assert_eq!(runtime.application.flight_touch_generation(), None);
+    let current = runtime.retained.as_ref().unwrap().view_revision;
+    runtime
+        .observe_test(touch(
+            current,
+            "game-flight-stick",
+            0x1_0000_0001,
+            ApplicationPointerPhase::Down,
+            center(stick),
+            stick,
+        ))
+        .unwrap();
+    assert!(runtime.application.flight_touch_generation().unwrap() > generation);
+    runtime.observe_test(key("KeyW", true, false)).unwrap();
+    assert!(runtime.flight_pointers.iter().all(Option::is_none));
+    runtime
+        .observe_test(touch(
+            current,
+            "game-flight-stick",
+            0x1_0000_0001,
+            ApplicationPointerPhase::Move,
+            moved,
+            stick,
+        ))
+        .unwrap();
+    assert_eq!(runtime.application.flight_touch_generation(), None);
+    runtime.observe_test(key("KeyW", false, false)).unwrap();
+    // Restore the same public camera setting for the existing keyboard journey.
+    runtime.observe_test(key("KeyC", true, false)).unwrap();
+    runtime.observe_test(key("KeyC", false, false)).unwrap();
     let hud_value = |output: ApplicationOutput| {
         let drawing = output.drawing.expect("key transition must update the HUD");
         let hud = match drawing.ui {
@@ -1096,9 +1300,22 @@ fn admitted_flight_keys_reach_hud_and_clear_on_focus_loss() {
     assert!(hud_value(runtime.observe_test(key("Escape", false, false)).unwrap()).contains("Esc○"));
     runtime.observe_test(key("ArrowUp", false, false)).unwrap();
     assert!(hud_value(runtime.observe_test(key("ArrowUp", true, false)).unwrap()).contains("↑●"));
+    let revision = runtime.retained.as_ref().unwrap().view_revision;
+    runtime
+        .observe_test(touch(
+            revision,
+            "game-flight-stick",
+            0x1_0000_0001,
+            ApplicationPointerPhase::Down,
+            center(stick),
+            stick,
+        ))
+        .unwrap();
     let lost = runtime
         .observe_test(ApplicationInput::DocumentFocus { focused: false })
         .unwrap();
+    assert!(runtime.flight_pointers.iter().all(Option::is_none));
+    assert_eq!(runtime.application.flight_touch_generation(), None);
     let value = hud_value(lost);
     assert!(value.contains("↑○") && value.contains("C○"));
     let _ = runtime.observe_test(key("KeyP", true, false));

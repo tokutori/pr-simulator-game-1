@@ -7,6 +7,8 @@ mod assets;
 mod boot;
 mod display;
 #[cfg(not(verus_only))]
+mod flight_pointer;
+#[cfg(not(verus_only))]
 mod frame_rate;
 #[cfg(not(verus_only))]
 mod gamepad;
@@ -122,7 +124,10 @@ pub struct ApplicationRuntime {
     platform: GameUiPlatformInput,
     structure: GameUiStructureCache,
     retained: Option<Arc<GameUiView>>,
-    chart_pointer: Option<(u32, String, i32)>,
+    chart_pointer: Option<(u32, String, ApplicationPointerId, ApplicationPointerKind)>,
+    flight_pointers: [Option<flight_pointer::FlightPointer>; 2],
+    look_pointer: Option<flight_pointer::LookPointer>,
+    next_touch_generation: u32,
     display: display::DisplayWorkflow,
     previous_frame_ms: Option<f64>,
     next_request_id: u32,
@@ -200,6 +205,7 @@ impl ApplicationRuntime {
             operation_pending: false,
             hmd_available: capabilities.hmd_available,
             phone_vr_available: phone.available(),
+            touch_available: capabilities.touch_available,
             menu_recenter_available: false,
             analysis_available: capabilities.analysis_available,
             replay_available: capabilities.replay_available,
@@ -221,6 +227,9 @@ impl ApplicationRuntime {
             structure: GameUiStructureCache::default(),
             retained: None,
             chart_pointer: None,
+            flight_pointers: [None, None],
+            look_pointer: None,
+            next_touch_generation: 0,
             display: display::DisplayWorkflow::new(GameUiPresentationMode::Screen),
             previous_frame_ms: None,
             next_request_id: 1,
@@ -721,10 +730,11 @@ impl ApplicationRuntime {
                     self.platform.chart_extent = Some(extent);
                 }
             }
-            ApplicationInput::ChartPointer {
+            ApplicationInput::ControlPointer {
                 view_revision,
                 control_id,
                 pointer_id,
+                pointer_kind,
                 phase,
                 button,
                 buttons,
@@ -732,34 +742,43 @@ impl ApplicationRuntime {
                 position,
                 rect,
             } => {
-                let identity = (view_revision, control_id.clone(), pointer_id);
-                if matches!(
+                if self.observe_flight_pointer(
+                    view_revision,
+                    control_id.as_deref(),
+                    pointer_id,
+                    pointer_kind,
                     phase,
-                    ApplicationChartPointerPhase::Cancel
-                        | ApplicationChartPointerPhase::LostCapture
-                ) || !is_primary
-                    || (phase == ApplicationChartPointerPhase::Move && buttons & 1 == 0)
-                {
-                    if self.chart_pointer.as_ref() == Some(&identity) {
-                        self.chart_pointer = None;
-                    }
-                } else if self.presentation_input_focused()
-                    && (phase != ApplicationChartPointerPhase::Down || button == 0)
-                    && (phase != ApplicationChartPointerPhase::Up
-                        || button == 0
-                        || buttons & 1 == 0)
-                {
-                    let chart = self
-                        .retained
-                        .as_ref()
-                        .filter(|view| view.view_revision == view_revision)
-                        .and_then(|view| {
-                            view.panels
-                                .iter()
-                                .flat_map(|panel| &panel.controls)
-                                .find(|control| control.id == control_id)
-                        })
-                        .and_then(|control| match &control.content {
+                    position,
+                    rect,
+                )? {
+                    // The same raw boundary serves controls and the scene canvas.
+                } else if let Some(control_id) = control_id {
+                    let identity = (view_revision, control_id.clone(), pointer_id, pointer_kind);
+                    if matches!(
+                        phase,
+                        ApplicationPointerPhase::Cancel | ApplicationPointerPhase::LostCapture
+                    ) || !is_primary
+                        || (phase == ApplicationPointerPhase::Move && buttons & 1 == 0)
+                    {
+                        if self.chart_pointer.as_ref() == Some(&identity) {
+                            self.chart_pointer = None;
+                        }
+                    } else if self.presentation_input_focused()
+                        && (phase != ApplicationPointerPhase::Down || button == 0)
+                        && (phase != ApplicationPointerPhase::Up || button == 0 || buttons & 1 == 0)
+                    {
+                        let chart = self
+                            .retained
+                            .as_ref()
+                            .filter(|view| view.view_revision == view_revision)
+                            .and_then(|view| {
+                                view.panels
+                                    .iter()
+                                    .flat_map(|panel| &panel.controls)
+                                    .find(|control| control.id == control_id)
+                            })
+                            .and_then(|control| {
+                                match &control.content {
                             birdman_game_presentation::game_ui::GameUiControlContent::Chart {
                                 plot,
                                 ..
@@ -768,36 +787,38 @@ impl ApplicationRuntime {
                                 plot.pointer_time(
                                     position,
                                     rect,
-                                    phase == ApplicationChartPointerPhase::Down,
+                                    phase == ApplicationPointerPhase::Down,
                                 )?,
                             )),
                             _ => None,
-                        });
-                    if let Some((target, value)) = chart {
-                        let range_id = self.retained.as_ref().unwrap().panels.iter().flat_map(|panel| &panel.controls).find_map(|control| match control.content { birdman_game_presentation::game_ui::GameUiControlContent::Range { target: candidate, .. } if candidate == target && control.enabled => Some(control.id.clone()), _ => None });
-                        if phase == ApplicationChartPointerPhase::Down
-                            && button == 0
-                            && buttons & 1 != 0
-                            && range_id.is_some()
-                        {
-                            self.chart_pointer = Some(identity.clone());
                         }
-                        if self.chart_pointer.as_ref() == Some(&identity)
-                            && matches!(
-                                phase,
-                                ApplicationChartPointerPhase::Down
-                                    | ApplicationChartPointerPhase::Move
-                                    | ApplicationChartPointerPhase::Up
-                            )
-                            && let Some(control_id) = range_id
-                        {
-                            self.apply_action(view_revision, GameUiAction::ControlInput { input: birdman_game_presentation::game_ui::GameUiControlInput::SetRange { control_id, value } }, &mut requests)?;
+                            });
+                        if let Some((target, value)) = chart {
+                            let range_id = self.retained.as_ref().unwrap().panels.iter().flat_map(|panel| &panel.controls).find_map(|control| match control.content { birdman_game_presentation::game_ui::GameUiControlContent::Range { target: candidate, .. } if candidate == target && control.enabled => Some(control.id.clone()), _ => None });
+                            if phase == ApplicationPointerPhase::Down
+                                && button == 0
+                                && buttons & 1 != 0
+                                && range_id.is_some()
+                            {
+                                self.chart_pointer = Some(identity.clone());
+                            }
+                            if self.chart_pointer.as_ref() == Some(&identity)
+                                && matches!(
+                                    phase,
+                                    ApplicationPointerPhase::Down
+                                        | ApplicationPointerPhase::Move
+                                        | ApplicationPointerPhase::Up
+                                )
+                                && let Some(control_id) = range_id
+                            {
+                                self.apply_action(view_revision, GameUiAction::ControlInput { input: birdman_game_presentation::game_ui::GameUiControlInput::SetRange { control_id, value } }, &mut requests)?;
+                            }
                         }
-                    }
-                    if phase == ApplicationChartPointerPhase::Up
-                        && self.chart_pointer.as_ref() == Some(&identity)
-                    {
-                        self.chart_pointer = None;
+                        if phase == ApplicationPointerPhase::Up
+                            && self.chart_pointer.as_ref() == Some(&identity)
+                        {
+                            self.chart_pointer = None;
+                        }
                     }
                 }
             }
@@ -903,6 +924,7 @@ impl ApplicationRuntime {
                 self.platform.viewport = observation.viewport;
                 let capabilities = observation.capabilities;
                 self.platform.hmd_available = capabilities.hmd_available;
+                self.platform.touch_available = capabilities.touch_available;
                 self.phone.configure(capabilities.phone_sensors);
                 self.platform.analysis_available = capabilities.analysis_available;
                 self.platform.replay_available = capabilities.replay_available;
@@ -1106,13 +1128,14 @@ impl ApplicationRuntime {
                     && (self.phone.resource().is_none() || self.phone.projection().available),
             })
             .map_err(ApplicationRuntimeError::Application)?;
+        self.retire_stale_flight_pointers();
         let environment = self.environment()?;
         let revision = self.structure_revision(&environment)?;
         if !self.presentation_input_focused()
             || self
                 .chart_pointer
                 .as_ref()
-                .is_some_and(|(retained, _, _)| *retained != revision)
+                .is_some_and(|(retained, ..)| *retained != revision)
         {
             self.chart_pointer = None;
         }
@@ -1143,17 +1166,19 @@ impl ApplicationRuntime {
                 view = self.boot.view(view);
             }
             view.view_revision = revision;
+            self.project_flight_pointer_view(&mut view);
             let view = Arc::new(view);
             self.retained = Some(Arc::clone(&view));
             ApplicationUiProjection::View { view }
         } else {
-            let frame = game_ui_frame(
+            let mut frame = game_ui_frame(
                 &self.ui,
                 &self.context(&environment)?,
                 self.retained.as_ref().unwrap(),
                 revision,
             )
             .map_err(ApplicationRuntimeError::Ui)?;
+            self.project_flight_pointers(&mut frame);
             ApplicationUiProjection::Frame {
                 frame: Box::new(frame),
             }
@@ -1207,10 +1232,13 @@ impl ApplicationRuntime {
         }
         let view = self.retained.as_ref().unwrap();
         let structural_frame = if matches!(projection, ApplicationUiProjection::View { .. }) {
-            Some(
-                game_ui_frame(&self.ui, &self.context(&environment)?, view, revision)
-                    .map_err(ApplicationRuntimeError::Ui)?,
-            )
+            Some({
+                let mut frame =
+                    game_ui_frame(&self.ui, &self.context(&environment)?, view, revision)
+                        .map_err(ApplicationRuntimeError::Ui)?;
+                self.project_flight_pointers(&mut frame);
+                frame
+            })
         } else {
             None
         };

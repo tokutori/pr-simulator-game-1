@@ -221,6 +221,7 @@ fn shared_widgets_retain_values_and_forward_controls_and_chart_io_with_their_sou
             readouts: vec![],
             button_labels: vec![],
             chart_cursor: None,
+            flight_touch: vec![],
             fields: vec![birdman_game_presentation::game_ui::GameUiFieldsValue {
                 id: "fields".into(),
                 fields: vec![birdman_game_presentation::game_ui::GameUiNumericField {
@@ -256,11 +257,12 @@ fn shared_widgets_retain_values_and_forward_controls_and_chart_io_with_their_sou
                 inverse_scale_factor: 0.5,
                 ..default()
             },
-            ChartViewport {
+            ControlPointerRegion {
                 canvas,
                 control_id: "chart".into(),
                 view_revision: revision,
                 measured: None,
+                chart: true,
             },
         ))
         .id();
@@ -275,13 +277,13 @@ fn shared_widgets_retain_values_and_forward_controls_and_chart_io_with_their_sou
             bevy::picking::backend::HitData::new(window, 0.0, None, None),
         );
     app.world_mut().resource_mut::<NativeInputs>().0.clear();
-    chart_inputs(app.world_mut());
+    control_pointer_inputs(app.world_mut());
     assert!(
         matches!(&app.world().resource::<NativeInputs>().0[..], [ApplicationInput::ChartMeasured { view_revision, control_id, extent }]
         if *view_revision == revision && control_id == "chart" && *extent == GameUiChartExtent { width: 813.0, height: 417.0 })
     );
     app.world_mut().resource_mut::<NativeInputs>().0.clear();
-    chart_inputs(app.world_mut());
+    control_pointer_inputs(app.world_mut());
     assert!(app.world().resource::<NativeInputs>().0.is_empty());
     let target = bevy::camera::RenderTarget::Window(bevy::window::WindowRef::Entity(window))
         .normalize(Some(window))
@@ -319,17 +321,17 @@ fn shared_widgets_retain_values_and_forward_controls_and_chart_io_with_their_sou
             action,
         ));
     }
-    chart_inputs(app.world_mut());
+    control_pointer_inputs(app.world_mut());
     let inputs = &app.world().resource::<NativeInputs>().0;
     assert_eq!(inputs.len(), 5);
     assert!(
-        matches!(&inputs[0], ApplicationInput::ChartPointer { view_revision, control_id, phase: ApplicationChartPointerPhase::Down, position: [73.0, 51.0], rect: [17.0, 29.0, 813.0, 417.0], buttons: 1, .. }
-        if *view_revision == revision && control_id == "chart")
+        matches!(&inputs[0], ApplicationInput::ControlPointer { view_revision, control_id, phase: ApplicationPointerPhase::Down, position: [73.0, 51.0], rect: [17.0, 29.0, 813.0, 417.0], buttons: 1, .. }
+        if *view_revision == revision && control_id.as_deref() == Some("chart"))
     );
     assert!(matches!(
         &inputs[3],
-        ApplicationInput::ChartPointer {
-            phase: ApplicationChartPointerPhase::Move,
+        ApplicationInput::ControlPointer {
+            phase: ApplicationPointerPhase::Move,
             position: [940.0, 51.0],
             buttons: 1,
             ..
@@ -337,8 +339,8 @@ fn shared_widgets_retain_values_and_forward_controls_and_chart_io_with_their_sou
     ));
     assert!(matches!(
         &inputs[4],
-        ApplicationInput::ChartPointer {
-            phase: ApplicationChartPointerPhase::Up,
+        ApplicationInput::ControlPointer {
+            phase: ApplicationPointerPhase::Up,
             position: [940.0, 51.0],
             buttons: 0,
             ..
@@ -346,8 +348,8 @@ fn shared_widgets_retain_values_and_forward_controls_and_chart_io_with_their_sou
     ));
     assert!(matches!(
         &inputs[1],
-        ApplicationInput::ChartPointer {
-            phase: ApplicationChartPointerPhase::Move,
+        ApplicationInput::ControlPointer {
+            phase: ApplicationPointerPhase::Move,
             button: 2,
             buttons: 3,
             ..
@@ -355,8 +357,8 @@ fn shared_widgets_retain_values_and_forward_controls_and_chart_io_with_their_sou
     ));
     assert!(matches!(
         &inputs[2],
-        ApplicationInput::ChartPointer {
-            phase: ApplicationChartPointerPhase::Move,
+        ApplicationInput::ControlPointer {
+            phase: ApplicationPointerPhase::Move,
             button: 2,
             buttons: 1,
             ..
@@ -366,15 +368,127 @@ fn shared_widgets_retain_values_and_forward_controls_and_chart_io_with_their_sou
     app.world_mut().write_message(PointerInput::new(
         PointerId::Mouse,
         bevy::picking::pointer::Location {
-            target,
+            target: target.clone(),
             position: Vec2::new(73.0, 51.0),
         },
         PointerAction::Press(PointerButton::Primary),
     ));
-    chart_inputs(app.world_mut());
-    app.world_mut().despawn(host);
-    chart_inputs(app.world_mut());
+    control_pointer_inputs(app.world_mut());
+    // Raw touch lifetimes include contacts outside controls; a surviving secondary never
+    // becomes primary when the first contact ends. The full u64 identities remain distinct.
+    let first_touch = 0x1_0000_0005;
+    let second_touch = 0x2_0000_0005;
+    app.world_mut()
+        .resource_mut::<HoverMap>()
+        .0
+        .entry(PointerId::Touch(second_touch))
+        .or_default()
+        .insert(
+            host,
+            bevy::picking::backend::HitData::new(window, 0.0, None, None),
+        );
+    for (id, action, primary, phase) in [
+        (
+            first_touch,
+            PointerAction::Press(PointerButton::Primary),
+            true,
+            ApplicationPointerPhase::Down,
+        ),
+        (
+            second_touch,
+            PointerAction::Press(PointerButton::Primary),
+            false,
+            ApplicationPointerPhase::Down,
+        ),
+        (
+            first_touch,
+            PointerAction::Release(PointerButton::Primary),
+            true,
+            ApplicationPointerPhase::Up,
+        ),
+        (
+            second_touch,
+            PointerAction::Move { delta: Vec2::X },
+            false,
+            ApplicationPointerPhase::Move,
+        ),
+        (
+            second_touch,
+            PointerAction::Cancel,
+            false,
+            ApplicationPointerPhase::Cancel,
+        ),
+        (
+            second_touch,
+            PointerAction::Press(PointerButton::Primary),
+            true,
+            ApplicationPointerPhase::Down,
+        ),
+        (
+            second_touch,
+            PointerAction::Cancel,
+            true,
+            ApplicationPointerPhase::Cancel,
+        ),
+    ] {
+        app.world_mut().resource_mut::<NativeInputs>().0.clear();
+        app.world_mut().write_message(PointerInput::new(
+            PointerId::Touch(id),
+            bevy::picking::pointer::Location {
+                target: target.clone(),
+                position: Vec2::new(73.0, 51.0),
+            },
+            action,
+        ));
+        control_pointer_inputs(app.world_mut());
+        let inputs = &app.world().resource::<NativeInputs>().0;
+        let [
+            ApplicationInput::ControlPointer {
+                pointer_id,
+                pointer_kind,
+                is_primary,
+                phase: actual_phase,
+                position,
+                rect,
+                control_id,
+                ..
+            },
+        ] = inputs.as_slice()
+        else {
+            panic!("one raw touch notification is required: {inputs:?}");
+        };
+        assert_eq!(
+            *pointer_id,
+            birdman_game_runtime::ApplicationPointerId::from_bits(id)
+        );
+        assert_eq!(
+            *pointer_kind,
+            birdman_game_runtime::ApplicationPointerKind::Touch
+        );
+        assert_eq!(
+            (*is_primary, *actual_phase, *position),
+            (primary, phase, [73.0, 51.0])
+        );
+        if id == second_touch {
+            assert_eq!(control_id.as_deref(), Some("chart"));
+            assert_eq!(*rect, [17.0, 29.0, 813.0, 417.0]);
+        } else {
+            assert_eq!(*control_id, None);
+        }
+    }
     assert!(
-        matches!(app.world().resource::<NativeInputs>().0.last(), Some(ApplicationInput::ChartPointer { view_revision, phase: ApplicationChartPointerPhase::LostCapture, .. }) if *view_revision == revision)
+        app.world()
+            .resource::<ControlPointerIo>()
+            .touch_active
+            .is_empty()
+    );
+    assert_eq!(
+        app.world().resource::<ControlPointerIo>().touch_primary,
+        None
+    );
+    app.world_mut().despawn(host);
+    control_pointer_inputs(app.world_mut());
+    assert!(
+        matches!(app.world().resource::<NativeInputs>().0.last(), Some(ApplicationInput::ControlPointer { view_revision, phase: ApplicationPointerPhase::LostCapture, .. }) if *view_revision == revision)
     );
 }
