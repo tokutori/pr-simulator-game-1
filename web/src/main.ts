@@ -24,7 +24,7 @@ try {
     analysis_available: true,
     flight_log_available: typeof URL.createObjectURL === "function",
     hmd_available: hmd,
-    touch_available: navigator.maxTouchPoints > 0,
+    touch_available: false,
     phone_sensors: window.isSecureContext && "DeviceOrientationEvent" in window && "orientation" in screen ? {
       permission_required: typeof (DeviceOrientationEvent as typeof DeviceOrientationEvent & { requestPermission?: unknown }).requestPermission === "function",
       screen_angle_degrees: screen.orientation.angle

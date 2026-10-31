@@ -113,17 +113,41 @@ describe("Screen DOM adapter", () => {
   it("allocates the shared chart height and transfers measured rectangles and captured pointer lifetimes", async () => {
     const fixture = readyApplicationFixture();
     let view: GameUiView;
+    let flightView: GameUiView;
     try {
       for (const command of [{ kind: "open_setup" }, { kind: "prepare" }, { kind: "start_countdown" }] as const) {
         fixture.activate({ kind: "session", command });
       }
       for (let now = 0; now <= 3050; now += 10) fixture.observe({ kind: "frame", timestamp_ms: now, gamepads: [],
         display_resource_id: null, spatial: { gamepads: [], sources: [], presented_id: null }, xr: null }, now);
+      fixture.observe({ kind: "platform", observation: { ...fixture.platform,
+        capabilities: { ...fixture.platform.capabilities, touch_available: true } } }, 3050);
+      flightView = fixture.view;
       fixture.activate({ kind: "session", command: { kind: "abort" } }, 3050);
       fixture.activate({ kind: "set_result_tab", tab: "analysis" }, 3050);
       fixture.activate({ kind: "set_analysis_chart", chart: "altitude" }, 3050);
       view = fixture.view;
     } finally { fixture.owner.free(); }
+    await withAdapter((root, adapter, actions, window) => {
+      adapter.render(flightView);
+      const region = required(root, "[data-pointer-control-id]");
+      Object.assign(region, { setPointerCapture: vi.fn(), releasePointerCapture: vi.fn() });
+      const pointer = (type: string, x: number, buttons: number) => region.dispatchEvent(new window.PointerEvent(type, {
+        bubbles: true, pointerType: "mouse", pointerId: 19, button: 2, buttons, isPrimary: true, clientX: x, clientY: 51
+      }) as unknown as PointerEvent);
+      pointer("pointerdown", 73, 2);
+      adapter.render({ ...flightView, view_revision: flightView.view_revision + 1 });
+      pointer("pointermove", 83, 2);
+      pointer("pointerup", 83, 0);
+      expect(actions.map(input => input.kind === "control_pointer" ? [input.phase, input.pointer_kind, input.position[0], input.buttons] : input.kind))
+        .toEqual([["down", "mouse", 73, 2], ["move", "mouse", 83, 2], ["up", "mouse", 83, 0]]);
+      const menu = new window.MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+      region.dispatchEvent(menu as unknown as MouseEvent);
+      expect(menu.defaultPrevented).toBe(true);
+      const normalMenu = new window.MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+      required(root, ".screen-ui-shell").dispatchEvent(normalMenu as unknown as MouseEvent);
+      expect(normalMenu.defaultPrevented).toBe(false);
+    });
     const control = view.panels.flatMap(panel => panel.controls).find(control => control.content.kind === "chart");
     if (control?.content.kind !== "chart") throw new Error("Missing shared Analysis chart");
     const targetHeight = control.content.plot.presentation.target_height_px;

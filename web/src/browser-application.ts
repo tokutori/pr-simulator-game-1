@@ -49,6 +49,7 @@ export class BrowserApplication {
     this.documentStyle.observe(documentRef.documentElement, { attributes: true, attributeFilter: ["style", "class", "lang"] });
     const platform = this.platform();
     this.owner = new ApplicationRuntimeBridge(JSON.stringify(platform));
+    this.mount.addEventListener("pointerdown", this.onPointerObserved, true);
     window.addEventListener("resize", this.onPlatform);
     window.addEventListener("keydown", this.onKeyDown);
     window.addEventListener("keyup", this.onKeyUp);
@@ -290,6 +291,14 @@ export class BrowserApplication {
     this.observe({ kind: "phone_sensors_started", resource_id: id, failure });
   }
 
+  private readonly onPointerObserved = (event: PointerEvent): void => {
+    if (event.pointerType === "touch") {
+      const observation = this.platform();
+      this.observe({ kind: "platform", observation: { ...observation,
+        capabilities: { ...observation.capabilities, touch_available: true } } });
+    }
+  };
+
   private readonly onPlatform = (): void => { this.observe({ kind: "platform", observation: this.platform() }); };
   private readonly onFontLoaded = (): void => {
     if (this.fontGeneration >= 0xffff_ffff) throw new Error("Font resource generation exhausted");
@@ -313,6 +322,7 @@ export class BrowserApplication {
   private free(): void {
     const owner = this.owner;
     this.owner = null;
+    this.mount.removeEventListener("pointerdown", this.onPointerObserved, true);
     window.removeEventListener("resize", this.onPlatform);
     window.removeEventListener("keydown", this.onKeyDown);
     window.removeEventListener("keyup", this.onKeyUp);

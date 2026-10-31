@@ -26,6 +26,7 @@ pub(super) struct FlightPointer {
 #[derive(Clone, Copy, Debug)]
 pub(super) struct LookPointer {
     id: ApplicationPointerId,
+    kind: ApplicationPointerKind,
     minimum_revision: u32,
     viewport: GameUiViewport,
     phase: SessionPhase,
@@ -104,7 +105,75 @@ impl ApplicationRuntime {
         }
     }
 
-    /// Returns true for the touch domain, leaving the existing chart interpretation intact.
+    #[allow(clippy::too_many_arguments)]
+    fn observe_look_pointer(
+        &mut self,
+        revision: u32,
+        id: ApplicationPointerId,
+        kind: ApplicationPointerKind,
+        phase: ApplicationPointerPhase,
+        button: i16,
+        buttons: u16,
+        position: [f64; 2],
+    ) -> Result<(), ApplicationRuntimeError> {
+        let current_revision = self.retained.as_ref().map(|view| view.view_revision);
+        if phase == ApplicationPointerPhase::Down
+            && (kind == ApplicationPointerKind::Touch || (button == 2 && buttons & 2 != 0))
+            && self.screen_pointer_available()
+            && current_revision == Some(revision)
+            && self.look_pointer.is_none()
+            && position.into_iter().all(f64::is_finite)
+            && matches!(
+                self.application.core_session().snapshot().phase(),
+                SessionPhase::FlightRunning
+                    | SessionPhase::FlightPaused { .. }
+                    | SessionPhase::Result
+                    | SessionPhase::Replay
+                    | SessionPhase::Attract
+            )
+            && !self
+                .flight_pointers
+                .iter()
+                .flatten()
+                .any(|pointer| pointer.id == id)
+        {
+            self.look_pointer = Some(LookPointer {
+                id,
+                kind,
+                minimum_revision: revision,
+                viewport: self.platform.viewport,
+                phase: self.application.core_session().snapshot().phase(),
+                position,
+            });
+        } else if let Some(pointer) = &mut self.look_pointer
+            && pointer.id == id
+            && pointer.kind == kind
+            && revision >= pointer.minimum_revision
+            && current_revision.is_some_and(|current| revision <= current)
+        {
+            if phase == ApplicationPointerPhase::Move
+                && (kind == ApplicationPointerKind::Touch || buttons & 2 != 0)
+                && position.into_iter().all(f64::is_finite)
+            {
+                self.scene
+                    .observe_look([
+                        position[0] - pointer.position[0],
+                        position[1] - pointer.position[1],
+                    ])
+                    .map_err(ApplicationRuntimeError::Camera)?;
+                pointer.position = position;
+            }
+            if ended(phase)
+                || (kind == ApplicationPointerKind::Mouse && buttons & 2 == 0)
+                || !position.into_iter().all(f64::is_finite)
+            {
+                self.look_pointer = None;
+            }
+        }
+        Ok(())
+    }
+
+    /// Interprets touch controls and camera drags, leaving chart pointers to their existing owner.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn observe_flight_pointer(
         &mut self,
@@ -113,61 +182,34 @@ impl ApplicationRuntime {
         id: ApplicationPointerId,
         kind: ApplicationPointerKind,
         phase: ApplicationPointerPhase,
+        button: i16,
+        buttons: u16,
         position: [f64; 2],
         rect: [f64; 4],
     ) -> Result<bool, ApplicationRuntimeError> {
-        if kind != ApplicationPointerKind::Touch {
+        let mouse_over_touch_control = kind == ApplicationPointerKind::Mouse
+            && control_id.is_some_and(|id| {
+                self.retained.as_ref().is_some_and(|view| {
+                    view.panels
+                        .iter()
+                        .flat_map(|panel| &panel.controls)
+                        .any(|control| {
+                            control.id == id
+                                && control.enabled
+                                && matches!(
+                                    control.content,
+                                    GameUiControlContent::FlightTouch { .. }
+                                )
+                        })
+                })
+            });
+        if kind != ApplicationPointerKind::Touch && !mouse_over_touch_control {
             return Ok(false);
         }
         self.retire_stale_flight_pointers();
         let current_revision = self.retained.as_ref().map(|view| view.view_revision);
-        if control_id.is_none() {
-            if phase == ApplicationPointerPhase::Down
-                && self.screen_pointer_available()
-                && current_revision == Some(revision)
-                && self.look_pointer.is_none()
-                && position.into_iter().all(f64::is_finite)
-                && matches!(
-                    self.application.core_session().snapshot().phase(),
-                    SessionPhase::FlightRunning
-                        | SessionPhase::FlightPaused { .. }
-                        | SessionPhase::Result
-                        | SessionPhase::Replay
-                        | SessionPhase::Attract
-                )
-                && !self
-                    .flight_pointers
-                    .iter()
-                    .flatten()
-                    .any(|pointer| pointer.id == id)
-            {
-                self.look_pointer = Some(LookPointer {
-                    id,
-                    minimum_revision: revision,
-                    viewport: self.platform.viewport,
-                    phase: self.application.core_session().snapshot().phase(),
-                    position,
-                });
-            } else if let Some(pointer) = &mut self.look_pointer
-                && pointer.id == id
-                && revision >= pointer.minimum_revision
-                && current_revision.is_some_and(|current| revision <= current)
-            {
-                if phase == ApplicationPointerPhase::Move
-                    && position.into_iter().all(f64::is_finite)
-                {
-                    self.scene
-                        .observe_look([
-                            position[0] - pointer.position[0],
-                            position[1] - pointer.position[1],
-                        ])
-                        .map_err(ApplicationRuntimeError::Camera)?;
-                    pointer.position = position;
-                }
-                if ended(phase) || !position.into_iter().all(f64::is_finite) {
-                    self.look_pointer = None;
-                }
-            }
+        if control_id.is_none() || mouse_over_touch_control {
+            self.observe_look_pointer(revision, id, kind, phase, button, buttons, position)?;
             return Ok(true);
         }
         let control_id = control_id.unwrap();

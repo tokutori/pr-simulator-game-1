@@ -52,6 +52,7 @@ export class ScreenUiAdapter {
     this.root.addEventListener("change", this.onChange);
     this.root.addEventListener("input", this.onInput);
     this.root.addEventListener("pointerdown", this.onPointerDown);
+    this.root.addEventListener("contextmenu", this.onContextMenu);
     this.root.addEventListener("pointermove", this.onPointerMove);
     this.root.addEventListener("pointerup", this.onPointerUp);
     this.root.addEventListener("pointercancel", this.onPointerCancel);
@@ -70,6 +71,7 @@ export class ScreenUiAdapter {
     this.root.removeEventListener("change", this.onChange);
     this.root.removeEventListener("input", this.onInput);
     this.root.removeEventListener("pointerdown", this.onPointerDown);
+    this.root.removeEventListener("contextmenu", this.onContextMenu);
     this.root.removeEventListener("pointermove", this.onPointerMove);
     this.root.removeEventListener("pointerup", this.onPointerUp);
     this.root.removeEventListener("pointercancel", this.onPointerCancel);
@@ -102,7 +104,7 @@ export class ScreenUiAdapter {
         if (last.control_id == null) return false;
         const before = this.controls.get(last.control_id)?.content;
         const after = nextControls.get(last.control_id);
-        return last.pointer_kind === "touch" && before?.kind === "flight_touch" && after?.enabled === true
+        return (last.pointer_kind === "touch" || last.pointer_kind === "mouse") && before?.kind === "flight_touch" && after?.enabled === true
           && after.content.kind === "flight_touch" && JSON.stringify(before.bounds) === JSON.stringify(after.content.bounds);
       }) : [];
     this.currentViewModel = viewModel;
@@ -205,6 +207,11 @@ export class ScreenUiAdapter {
       button: event.button, buttons: event.buttons, is_primary: event.isPrimary, position: [event.clientX, event.clientY],
       rect: [rect.left, rect.top, rect.width, rect.height] };
   }
+
+  private readonly onContextMenu = (event: MouseEvent): void => {
+    const id = eventElement(event, this.root)?.closest("[data-pointer-control-id]")?.getAttribute("data-pointer-control-id");
+    if (id != null && this.controls.get(id)?.content.kind === "flight_touch") event.preventDefault();
+  };
 
   private readonly onPointerDown = (event: PointerEvent): void => {
     if (!this.visible || this.currentViewModel === null) return;

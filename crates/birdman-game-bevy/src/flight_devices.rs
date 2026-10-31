@@ -82,7 +82,7 @@ pub(crate) fn observe_devices(
     mut connections: MessageReader<GamepadConnectionEvent>,
     gamepads: Query<&Gamepad>,
 ) {
-    devices.touch_observed |= touch.read().count() != 0;
+    devices.touch_observed = touch.read().count() != 0;
     let changed = !raw.is_empty() || !connections.is_empty();
     let raw = raw.read().collect::<Vec<_>>();
     let result = (|| {
@@ -209,5 +209,19 @@ mod tests {
             observed[0].axes,
             vec![Some(0.0), Some(0.75), Some(0.0), Some(0.0)]
         );
+        // The adapter reports only the current batch; the aggregate runtime retains availability.
+        assert!(!app.world().resource::<FlightDevices>().touch_available());
+        app.world_mut()
+            .write_message(bevy::input::touch::TouchInput {
+                phase: bevy::input::touch::TouchPhase::Started,
+                position: Vec2::ZERO,
+                window: gamepad,
+                force: None,
+                id: 1,
+            });
+        app.update();
+        assert!(app.world().resource::<FlightDevices>().touch_available());
+        app.update();
+        assert!(!app.world().resource::<FlightDevices>().touch_available());
     }
 }

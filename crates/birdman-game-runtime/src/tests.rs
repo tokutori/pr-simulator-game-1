@@ -1114,14 +1114,14 @@ fn admitted_flight_keys_reach_hud_and_clear_on_focus_loss() {
             root_font_size: 16.0,
         },
         capabilities: ApplicationCapabilities {
-            touch_available: true,
+            touch_available: false,
             ..Default::default()
         },
     };
     let mut runtime = ApplicationRuntime::new(application, platform.clone()).unwrap();
     let initial = runtime
         .observe_test(ApplicationInput::Platform {
-            observation: platform,
+            observation: platform.clone(),
         })
         .unwrap();
     let ready = finish_boot(&mut runtime, initial);
@@ -1135,6 +1135,33 @@ fn admitted_flight_keys_reach_hud_and_clear_on_focus_loss() {
         runtime.application().core_session().snapshot().phase(),
         SessionPhase::FlightRunning
     );
+    assert!(!runtime.platform.touch_available);
+    assert!(
+        !runtime
+            .retained
+            .as_ref()
+            .unwrap()
+            .panels
+            .iter()
+            .flat_map(|panel| &panel.controls)
+            .any(|control| matches!(
+                control.content,
+                birdman_game_presentation::game_ui::GameUiControlContent::FlightTouch { .. }
+            ))
+    );
+    let mut observed_touch = platform.clone();
+    observed_touch.capabilities.touch_available = true;
+    runtime
+        .observe_test(ApplicationInput::Platform {
+            observation: observed_touch,
+        })
+        .unwrap();
+    runtime
+        .observe_test(ApplicationInput::Platform {
+            observation: platform,
+        })
+        .unwrap();
+    assert!(runtime.platform.touch_available);
     let key = |code: &str, pressed, repeat| ApplicationInput::Keyboard {
         code: code.to_owned(),
         pressed,
@@ -1199,6 +1226,65 @@ fn admitted_flight_keys_reach_hud_and_clear_on_focus_loss() {
             bounds.y + bounds.height * 0.5,
         ]
     };
+    // A captured mouse over either touch region remains a right-button camera drag.
+    for region in [stick, slider] {
+        let current = runtime.retained.as_ref().unwrap().view_revision;
+        let pointer = |phase, point, buttons| ApplicationInput::ControlPointer {
+            view_revision: current,
+            control_id: Some(
+                if region == stick {
+                    "game-flight-stick"
+                } else {
+                    "game-flight-pilot-slider"
+                }
+                .to_owned(),
+            ),
+            pointer_id: ApplicationPointerId::from_bits(91),
+            pointer_kind: ApplicationPointerKind::Mouse,
+            phase,
+            button: if buttons == 2 { 2 } else { 0 },
+            buttons,
+            is_primary: true,
+            position: point,
+            rect: [region.x, region.y, region.width, region.height],
+        };
+        runtime
+            .observe_test(pointer(ApplicationPointerPhase::Down, center(region), 1))
+            .unwrap();
+        assert!(runtime.look_pointer.is_none());
+        let before = runtime
+            .observe_test(pointer(ApplicationPointerPhase::Down, center(region), 2))
+            .unwrap()
+            .drawing
+            .unwrap()
+            .scene
+            .camera
+            .unwrap()
+            .world_from_head;
+        assert!(runtime.look_pointer.is_some());
+        let moved = [center(region)[0] + 20.0, center(region)[1] - 10.0];
+        let output = runtime
+            .observe_test(pointer(ApplicationPointerPhase::Move, moved, 2))
+            .unwrap();
+        assert_ne!(
+            output
+                .drawing
+                .unwrap()
+                .scene
+                .camera
+                .unwrap()
+                .world_from_head,
+            before
+        );
+        assert_eq!(runtime.look_pointer.unwrap().position, moved);
+        assert!(runtime.flight_pointers.iter().all(Option::is_none));
+        assert_eq!(runtime.application.flight_touch_generation(), None);
+        runtime
+            .observe_test(pointer(ApplicationPointerPhase::Up, moved, 0))
+            .unwrap();
+        assert!(runtime.look_pointer.is_none());
+    }
+    runtime.scene.reset_look();
     let revision = runtime.retained.as_ref().unwrap().view_revision;
     // A menu pointer never becomes a flight channel.
     runtime

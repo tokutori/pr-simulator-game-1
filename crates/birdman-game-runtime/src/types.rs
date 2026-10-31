@@ -25,7 +25,7 @@ pub struct ApplicationCapabilities {
     pub hmd_available: bool,
     /// Raw orientation API and permission-method availability, absent without the required browser APIs.
     pub phone_sensors: Option<PhoneSensorApiObservation>,
-    /// Platform has observed touch input support.
+    /// Actual touch input occurred in this observation batch; the runtime retains this evidence.
     pub touch_available: bool,
     /// Drawing adapter supports record plots.
     pub analysis_available: bool,

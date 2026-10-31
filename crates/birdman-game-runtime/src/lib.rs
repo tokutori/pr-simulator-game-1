@@ -748,6 +748,8 @@ impl ApplicationRuntime {
                     pointer_id,
                     pointer_kind,
                     phase,
+                    button,
+                    buttons,
                     position,
                     rect,
                 )? {
@@ -855,7 +857,7 @@ impl ApplicationRuntime {
                 self.platform.viewport = observation.viewport;
                 let capabilities = observation.capabilities;
                 self.platform.hmd_available = capabilities.hmd_available;
-                self.platform.touch_available = capabilities.touch_available;
+                self.platform.touch_available |= capabilities.touch_available;
                 self.phone.configure(capabilities.phone_sensors);
                 self.platform.analysis_available = capabilities.analysis_available;
                 self.platform.replay_available = capabilities.replay_available;
