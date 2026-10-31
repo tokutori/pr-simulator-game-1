@@ -213,7 +213,7 @@ impl StorageOwner {
                         }
                         application
                             .open_archived_record_json(&record.json)
-                            .map_err(|error| format!("{error:?}"))
+                            .map_err(|error| format!("{error}"))
                     },
                 )
             }

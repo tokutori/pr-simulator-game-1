@@ -117,8 +117,21 @@ pub struct ApplicationEnvironmentAssets {
 /// Failures from registered environment resolution or immutable CPU resource generation.
 #[derive(Debug)]
 pub enum ApplicationAssetError {
-    /// Registered mesh preparation or accepted-frame projection failed.
+    /// An intrinsic drawing-buffer or accepted-frame invariant was violated.
     Geometry(String),
+    /// Original registered scene preparation failure.
+    ScenePreparation(birdman_game_scene::prepared_scene::ScenePreparationError),
+    /// Original rejection of the physical wing-deformation factor.
+    FrameDeformation(birdman_game_core::ContactError),
+    /// Original normal or attribute projection failure, with its mesh context when known.
+    MeshProjection {
+        /// Mesh name from the accepted descriptor, when available.
+        mesh: Option<String>,
+        /// Original shared projection failure.
+        cause: birdman_game_scene::mesh::MeshProjectionError,
+    },
+    /// Original tail-pivot transform failure.
+    TailArticulation(birdman_game_presentation::camera::CameraError),
     /// The registered environment could not be resolved.
     Environment(EnvironmentSnapshotError),
     /// The selected identity has no registered display environment.
@@ -129,6 +142,51 @@ pub enum ApplicationAssetError {
     Water(LakeRenderModelError),
     /// Buffer identities have been consumed.
     IdentifiersExhausted,
+}
+#[cfg(not(verus_only))]
+impl core::fmt::Display for ApplicationAssetError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Geometry(cause) => write!(f, "Drawing geometry is invalid: {cause}"),
+            Self::ScenePreparation(cause) => {
+                write!(f, "Registered scene preparation failed: {cause}")
+            }
+            Self::FrameDeformation(cause) => write!(f, "Wing deformation was rejected: {cause}"),
+            Self::MeshProjection { mesh, cause } => {
+                if let Some(mesh) = mesh {
+                    write!(f, "Mesh {mesh} projection failed: {cause}")
+                } else {
+                    write!(f, "Mesh projection failed: {cause}")
+                }
+            }
+            Self::TailArticulation(cause) => write!(f, "Tail articulation failed: {cause}"),
+            Self::Environment(cause) => write!(f, "Asset environment resolution failed: {cause}"),
+            Self::UnavailableEnvironment => {
+                f.write_str("No display environment is registered for the selected identity")
+            }
+            Self::Sky(cause) => write!(f, "Sky metadata validation failed: {cause}"),
+            Self::Water(cause) => write!(f, "Water resource generation failed: {cause}"),
+            Self::IdentifiersExhausted => {
+                f.write_str("Drawing asset buffer identities are exhausted")
+            }
+        }
+    }
+}
+
+#[cfg(not(verus_only))]
+impl core::error::Error for ApplicationAssetError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        match self {
+            Self::ScenePreparation(cause) => Some(cause),
+            Self::FrameDeformation(cause) => Some(cause),
+            Self::MeshProjection { cause, .. } => Some(cause),
+            Self::TailArticulation(cause) => Some(cause),
+            Self::Environment(cause) => Some(cause),
+            Self::Sky(cause) => Some(cause),
+            Self::Water(cause) => Some(cause),
+            _ => None,
+        }
+    }
 }
 
 struct ImageBuffer {
@@ -231,8 +289,7 @@ impl AssetsOwner {
         policy_request: Option<ScreenRenderResourceRequest>,
     ) -> Result<ApplicationEnvironmentAssets, ApplicationAssetError> {
         if self.geometry.is_none() {
-            let geometry = crate::geometry::GeometryOwner::prepare(&mut self.next_buffer_id)
-                .map_err(ApplicationAssetError::Geometry)?;
+            let geometry = crate::geometry::GeometryOwner::prepare(&mut self.next_buffer_id)?;
             self.geometry = Some(Box::new(geometry));
         }
         let scene = (self.geometry_renderer != Some(target.renderer_resource_id))
@@ -278,12 +335,11 @@ impl AssetsOwner {
         .map_err(ApplicationAssetError::Water)?;
         let projection = LakeWaveProjection::try_new(condition, quality)
             .map_err(ApplicationAssetError::Water)?;
-        let water_geometry = self
-            .geometry
-            .as_mut()
-            .unwrap()
-            .water(&mut self.next_buffer_id, quality, &projection)
-            .map_err(ApplicationAssetError::Geometry)?;
+        let water_geometry = self.geometry.as_mut().unwrap().water(
+            &mut self.next_buffer_id,
+            quality,
+            &projection,
+        )?;
         let wind_speed = wave.wind_velocity_ne_mps[0].hypot(wave.wind_velocity_ne_mps[1]);
         let detail = if wind_speed < 0.05 {
             None
@@ -587,11 +643,7 @@ impl AssetsOwner {
     ) -> Result<Option<crate::ApplicationGeometryFrame>, ApplicationAssetError> {
         self.geometry
             .as_mut()
-            .map(|geometry| {
-                geometry
-                    .project(pose)
-                    .map_err(ApplicationAssetError::Geometry)
-            })
+            .map(|geometry| geometry.project(pose))
             .transpose()
     }
 

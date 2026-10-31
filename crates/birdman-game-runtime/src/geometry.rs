@@ -1,3 +1,4 @@
+use crate::assets::ApplicationAssetError;
 use std::collections::BTreeMap;
 
 use birdman_game_core::WingBendingFactor;
@@ -282,14 +283,16 @@ pub(super) struct GeometryOwner {
     water: BTreeMap<u32, ApplicationWaterGeometry>,
 }
 
-type GeometryResult<Value> = Result<Value, String>;
+type GeometryResult<Value> = Result<Value, ApplicationAssetError>;
 
 impl GeometryOwner {
     pub(super) fn prepare(next_id: &mut u32) -> GeometryResult<Self> {
-        let source = registered_scene().map_err(|error| error.to_string())?;
+        let source = registered_scene().map_err(ApplicationAssetError::ScenePreparation)?;
         let frame = source
-            .frame(WingBendingFactor::try_new(0.0).map_err(|error| format!("{error:?}"))?)
-            .map_err(|error| format!("{error:?}"))?;
+            .frame(
+                WingBendingFactor::try_new(0.0).map_err(ApplicationAssetError::FrameDeformation)?,
+            )
+            .map_err(ApplicationAssetError::ScenePreparation)?;
         let mut owner = Self {
             tail_pivots: std::array::from_fn(|index| {
                 let [x, y, z] = source.tails()[index].origin;
@@ -552,11 +555,12 @@ impl GeometryOwner {
         components: u32,
         count: usize,
     ) -> GeometryResult<ApplicationBufferDescriptor> {
-        let count =
-            u32::try_from(count).map_err(|_| "Drawing buffer count exhausted".to_owned())?;
+        let count = u32::try_from(count).map_err(|_| {
+            ApplicationAssetError::Geometry("Drawing buffer count exhausted".to_owned())
+        })?;
         *next_id = next_id
             .checked_add(1)
-            .ok_or_else(|| "Drawing buffer identities exhausted".to_owned())?;
+            .ok_or(ApplicationAssetError::IdentifiersExhausted)?;
         self.buffers.insert(*next_id, buffer);
         Ok(ApplicationBufferDescriptor {
             buffer_id: *next_id,
@@ -586,15 +590,25 @@ impl GeometryOwner {
         let values: &[f32] = match &position_buffer {
             Buffer::BorrowedF32(values) => values,
             Buffer::F32(values) => values,
-            _ => return Err(format!("{name}: Float32 positions required")),
+            _ => {
+                return Err(ApplicationAssetError::Geometry(format!(
+                    "{name}: Float32 positions required"
+                )));
+            }
         };
         let (positions, remainder) = values.as_chunks::<3>();
         if !remainder.is_empty() {
-            return Err(format!("{name}: incomplete position"));
+            return Err(ApplicationAssetError::Geometry(format!(
+                "{name}: incomplete position"
+            )));
         }
         let count = positions.len();
-        let normals = area_weighted_normals(positions, indices)
-            .map_err(|error| format!("{name}: {error:?}"))?;
+        let normals = area_weighted_normals(positions, indices).map_err(|cause| {
+            ApplicationAssetError::MeshProjection {
+                mesh: Some(name.clone()),
+                cause,
+            }
+        })?;
         self.mesh_ready(
             next_id,
             name,
@@ -709,7 +723,7 @@ impl GeometryOwner {
         projection: &LakeWaveProjection,
     ) -> GeometryResult<ApplicationWaterGeometry> {
         let prepared = PreparedWaterGeometry::try_new(quality, projection)
-            .map_err(|error| format!("{error:?}"))?;
+            .map_err(ApplicationAssetError::Water)?;
         let key = water_quality_profile(quality).mesh_segments();
         if !self.water.contains_key(&key) {
             let near = prepared
@@ -802,8 +816,11 @@ impl GeometryOwner {
         {
             let changed = self
                 .frame
-                .update(WingBendingFactor::try_new(factor).map_err(|error| format!("{error:?}"))?)
-                .map_err(|error| format!("{error:?}"))?;
+                .update(
+                    WingBendingFactor::try_new(factor)
+                        .map_err(ApplicationAssetError::FrameDeformation)?,
+                )
+                .map_err(ApplicationAssetError::ScenePreparation)?;
             if changed || !self.published {
                 self.published = false;
                 for mesh in &mut self.dynamic {
@@ -811,12 +828,17 @@ impl GeometryOwner {
                         DynamicSource::Wing(index) => &self
                             .frame
                             .wing()
-                            .ok_or("Unaccepted wing frame")?
+                            .ok_or_else(|| {
+                                ApplicationAssetError::Geometry("Unaccepted wing frame".to_owned())
+                            })?
                             .surface_positions()[index],
-                        DynamicSource::Structure(index) => self
-                            .frame
-                            .structure_positions(index)
-                            .ok_or("Unaccepted structural frame")?,
+                        DynamicSource::Structure(index) => {
+                            self.frame.structure_positions(index).ok_or_else(|| {
+                                ApplicationAssetError::Geometry(
+                                    "Unaccepted structural frame".to_owned(),
+                                )
+                            })?
+                        }
                     };
                     write_area_weighted_normals(
                         positions,
@@ -824,13 +846,14 @@ impl GeometryOwner {
                         &mut mesh.sums,
                         &mut mesh.normals,
                     )
-                    .map_err(|error| format!("{error:?}"))?;
+                    .map_err(|cause| ApplicationAssetError::MeshProjection { mesh: None, cause })?;
                     updates.push(mesh.update.clone());
                 }
-                self.revision = self
-                    .revision
-                    .checked_add(1)
-                    .ok_or("Drawing frame generations exhausted")?;
+                self.revision = self.revision.checked_add(1).ok_or_else(|| {
+                    ApplicationAssetError::Geometry(
+                        "Drawing frame generations exhausted".to_owned(),
+                    )
+                })?;
                 self.published = true;
             }
         }
@@ -863,7 +886,7 @@ impl GeometryOwner {
                     ..Pose::IDENTITY
                 },
             )
-            .map_err(|error| format!("Tail articulation: {error:?}"))?;
+            .map_err(ApplicationAssetError::TailArticulation)?;
             Ok(ApplicationMeshPose {
                 attachment: tail_attachment(index),
                 pose,

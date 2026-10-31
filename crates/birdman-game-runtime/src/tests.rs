@@ -5,6 +5,85 @@ use birdman_game_presentation::game_ui::{
     GameUiReplayCamera, GameUiReplayView, GameUiResultTab, GameUiViewport,
 };
 
+#[test]
+fn technical_errors_preserve_typed_sources_and_opaque_leaf_context() {
+    use birdman_game_core::{FlightRecordQueryError, GameSessionError};
+    use birdman_game_presentation::game_ui::GameUiError;
+    use birdman_game_scene::{mesh::MeshProjectionError, prepared_scene::ScenePreparationError};
+    use core::error::Error;
+
+    let query = FlightRecordQueryError::OutsideRecordedRange;
+    let error =
+        ApplicationRuntimeError::Ui(GameUiError::Session(GameSessionError::PlaybackQuery(query)));
+    let ui = error
+        .source()
+        .unwrap()
+        .downcast_ref::<GameUiError>()
+        .unwrap();
+    let session = ui
+        .source()
+        .unwrap()
+        .downcast_ref::<GameSessionError>()
+        .unwrap();
+    let leaf = session
+        .source()
+        .unwrap()
+        .downcast_ref::<FlightRecordQueryError>()
+        .unwrap();
+    assert_eq!(*leaf, query);
+    assert!(leaf.source().is_none());
+    assert_eq!(error.to_string().matches(&query.to_string()).count(), 1);
+
+    let projection = MeshProjectionError::InvalidTopology;
+    let error = ApplicationRuntimeError::Assets(ApplicationAssetError::ScenePreparation(
+        ScenePreparationError::Mesh(projection),
+    ));
+    let asset = error
+        .source()
+        .unwrap()
+        .downcast_ref::<ApplicationAssetError>()
+        .unwrap();
+    let scene = asset
+        .source()
+        .unwrap()
+        .downcast_ref::<ScenePreparationError>()
+        .unwrap();
+    assert_eq!(
+        scene
+            .source()
+            .unwrap()
+            .downcast_ref::<MeshProjectionError>(),
+        Some(&projection)
+    );
+
+    let mesh_error = ApplicationAssetError::MeshProjection {
+        mesh: Some("main-wing".to_owned()),
+        cause: projection,
+    };
+    assert_eq!(
+        mesh_error
+            .source()
+            .unwrap()
+            .downcast_ref::<MeshProjectionError>(),
+        Some(&projection)
+    );
+    assert!(mesh_error.to_string().contains("main-wing"));
+    assert_eq!(
+        mesh_error
+            .to_string()
+            .matches(&projection.to_string())
+            .count(),
+        1
+    );
+
+    let intrinsic = ApplicationAssetError::Geometry("incomplete attribute buffer".to_owned());
+    let external = ScenePreparationError::Terrain("external terrain decoding failed".to_owned());
+    for error in [&intrinsic as &dyn Error, &external as &dyn Error] {
+        assert!(error.source().is_none());
+        assert!(!error.to_string().is_empty());
+    }
+}
+
 fn no_text_metrics(_: &ApplicationTextProbe) -> Result<ApplicationGlyphMetrics, MenuLayoutFailure> {
     Err(MenuLayoutFailure::MeasurementUnavailable)
 }

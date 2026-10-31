@@ -76,7 +76,7 @@ pub(crate) fn initialize(world: &mut World) {
             world.insert_resource(runtime);
         }
         Err(cause) => {
-            error!("Native application initialization: {cause:?}");
+            error!("Native application initialization: {cause}");
             world.write_message(AppExit::error());
         }
     }
@@ -164,9 +164,9 @@ pub(crate) fn update(world: &mut World) {
                     world,
                     trace_input,
                     trace_fonts,
-                    format!("{cause:?}"),
+                    format!("{cause}"),
                 );
-                error!("Native application observation: {cause:?}");
+                error!("Native application observation: {cause}");
                 continue;
             }
         };

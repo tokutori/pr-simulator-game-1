@@ -80,6 +80,6 @@ fn read_document(path: &str, maximum_bytes: usize) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
-fn display_error(error: impl std::fmt::Debug) -> String {
-    format!("{error:?}")
+fn display_error(error: impl std::fmt::Display) -> String {
+    error.to_string()
 }

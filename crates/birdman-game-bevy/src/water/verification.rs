@@ -156,9 +156,9 @@ fn setup(
     let condition = (|| {
         let EnvironmentProjection::Available { metadata, .. } =
             EnvironmentSelection::for_session(runtime.0.application())
-                .map_err(|cause| format!("Shader probe environment: {cause:?}"))?
+                .map_err(|cause| format!("Shader probe environment: {cause}"))?
                 .resolve()
-                .map_err(|cause| format!("Shader probe environment: {cause:?}"))?
+                .map_err(|cause| format!("Shader probe environment: {cause}"))?
         else {
             return Err("Shader probe environment is unavailable".to_string());
         };
@@ -170,7 +170,7 @@ fn setup(
             waves.detail_amplitude_scale,
             u64::from(waves.pattern_seed),
         )
-        .map_err(|cause| format!("Shader probe waves: {cause:?}"))
+        .map_err(|cause| format!("Shader probe waves: {cause}"))
     })();
     let condition = match condition {
         Ok(condition) => condition,
@@ -187,7 +187,7 @@ fn setup(
             Ok(projection) => projection,
             Err(cause) => {
                 verification.state =
-                    ProbeState::Failed(format!("Shader probe projection: {cause:?}"));
+                    ProbeState::Failed(format!("Shader probe projection: {cause}"));
                 return;
             }
         };
@@ -218,7 +218,7 @@ fn setup(
         ) {
             Ok(geometry) => geometry,
             Err(cause) => {
-                verification.state = ProbeState::Failed(format!("Shader probe bounds: {cause:?}"));
+                verification.state = ProbeState::Failed(format!("Shader probe bounds: {cause}"));
                 return;
             }
         };

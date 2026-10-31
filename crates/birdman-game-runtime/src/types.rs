@@ -698,3 +698,53 @@ pub enum ApplicationRuntimeError {
     /// The request identity space has been consumed.
     RequestExhausted,
 }
+#[cfg(not(verus_only))]
+impl core::fmt::Display for ApplicationRuntimeError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Assets(cause) => write!(f, "Drawing asset preparation failed: {cause}"),
+            Self::RecordExport(cause) => write!(f, "Record export failed: {cause}"),
+            Self::RecordFormat(cause) => write!(f, "Record document validation failed: {cause}"),
+            Self::Graphics(cause) => write!(f, "Graphics observation was rejected: {cause}"),
+            Self::SpatialInput(cause) => write!(f, "Spatial input was rejected: {cause}"),
+            Self::PresentationExhausted => {
+                f.write_str("Spatial presentation identities are exhausted")
+            }
+            Self::RenderPose(cause) => write!(f, "Live render pose projection failed: {cause}"),
+            Self::ReplayCamera(cause) => write!(f, "Replay camera projection failed: {cause}"),
+            Self::Venue(cause) => write!(f, "Launch venue validation failed: {cause}"),
+            Self::Camera(cause) => write!(f, "Camera projection failed: {cause}"),
+            Self::Environment(cause) => write!(f, "Environment resolution failed: {cause}"),
+            Self::InvalidTimestamp => {
+                f.write_str("Observation timestamp must be finite, nonnegative and monotonic")
+            }
+            Self::Application(cause) => write!(f, "Application operation failed: {cause}"),
+            Self::Session(cause) => write!(f, "Session operation failed: {cause}"),
+            Self::Flight(cause) => write!(f, "Flight frame failed: {cause}"),
+            Self::Ui(cause) => write!(f, "UI observation failed: {cause}"),
+            Self::RequestExhausted => f.write_str("Application request identities are exhausted"),
+        }
+    }
+}
+
+#[cfg(not(verus_only))]
+impl core::error::Error for ApplicationRuntimeError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        match self {
+            Self::Assets(cause) => Some(cause),
+            Self::RecordExport(cause) => Some(cause),
+            Self::RecordFormat(cause) => Some(cause),
+            Self::Graphics(cause) => Some(cause),
+            Self::RenderPose(cause) => Some(cause),
+            Self::ReplayCamera(cause) => Some(cause),
+            Self::Venue(cause) => Some(cause),
+            Self::Camera(cause) => Some(cause),
+            Self::Environment(cause) => Some(cause),
+            Self::Application(cause) => Some(cause),
+            Self::Session(cause) => Some(cause),
+            Self::Flight(cause) => Some(cause),
+            Self::Ui(cause) => Some(cause),
+            _ => None,
+        }
+    }
+}
