@@ -324,6 +324,110 @@ fn pilot_boundary_regressions_remain_safe_across_repeated_queries() {
 }
 
 #[test]
+fn pilot_target_tracking_follows_key_rate_ramps_without_overshoot_or_hunting() {
+    // Playable aircraft limits: travel +/-0.4 m, maximum pilot speed
+    // 0.3 m/s, maximum pilot acceleration 0.8 m/s^2. The target ramps at
+    // each selectable keyboard demand rate and then stops.
+    let aircraft = AircraftModel::try_new(
+        4.0,
+        diagonal_inertia(1.0, 1.0, 1.0),
+        0.0,
+        0.0,
+        -0.4,
+        0.4,
+        0.3,
+        0.8,
+    )
+    .expect("valid aircraft model");
+    let timestep = 1.0 / PHYSICS_HZ as f64;
+    for (rate, stop) in [
+        (0.1_f64, 0.2_f64),
+        (0.2, 0.2),
+        (0.4, 0.2),
+        (0.4, 0.4),
+        (0.8, 0.4),
+        (0.4, -0.4),
+    ] {
+        let direction = stop.signum();
+        let ramp_ticks = ((stop.abs() / rate) / timestep).round() as usize;
+        let mut current = state(
+            [0.0; 3],
+            [0.0; 3],
+            UnitQuaternion::IDENTITY,
+            [0.0; 3],
+            0.0,
+            0.0,
+        );
+        let mut overshoot = 0.0_f64;
+        let mut velocity_sign_changes_after_stop = 0_usize;
+        let mut previous_velocity_sign = 0_i32;
+        let mut settle_tick = None;
+        for tick in 0..3000 {
+            let target_position = if tick < ramp_ticks {
+                direction * (rate * (tick as f64 + 1.0) * timestep).min(stop.abs())
+            } else {
+                stop
+            };
+            let target = PilotPositionTarget::try_new(&aircraft, target_position).unwrap();
+            let acceleration = pilot_target_acceleration(&aircraft, &current, target, timestep)
+                .unwrap_or_else(|error| panic!("rate {rate}, stop {stop}, tick {tick}: {error:?}"));
+            let before = current.pilot_position_m();
+            current = step(
+                &aircraft,
+                &current,
+                acceleration.meters_per_second_squared(),
+                0.0,
+                Wrench::zero(),
+                timestep,
+            )
+            .unwrap();
+            let position = current.pilot_position_m();
+            let velocity = current.pilot_velocity_mps();
+            if tick < ramp_ticks {
+                assert!(
+                    direction * (position - before) >= -1.0e-12,
+                    "rate {rate}: pilot moved backward at tick {tick} while the target ramped"
+                );
+            } else {
+                overshoot = overshoot.max(direction * (position - stop));
+                if settle_tick.is_none() {
+                    let sign = if velocity > 1.0e-9 {
+                        1
+                    } else if velocity < -1.0e-9 {
+                        -1
+                    } else {
+                        0
+                    };
+                    if sign != 0 && previous_velocity_sign != 0 && sign != previous_velocity_sign {
+                        velocity_sign_changes_after_stop += 1;
+                    }
+                    if sign != 0 {
+                        previous_velocity_sign = sign;
+                    }
+                    if velocity.abs() < 1.0e-6 {
+                        settle_tick = Some(tick - ramp_ticks);
+                    }
+                }
+            }
+        }
+        assert!(
+            overshoot <= 1.0e-3,
+            "rate {rate}, stop {stop}: overshoot {overshoot} m"
+        );
+        assert_eq!(
+            velocity_sign_changes_after_stop, 0,
+            "rate {rate}, stop {stop}: pilot velocity reversed after the target stopped"
+        );
+        assert!(
+            settle_tick.is_some(),
+            "rate {rate}, stop {stop}: pilot never settled to rest"
+        );
+        close(current.pilot_position_m(), stop, 1.0e-9);
+        close(current.pilot_velocity_mps(), 0.0, 1.0e-6);
+    }
+}
+
+#[test]
 fn constant_pilot_acceleration_uses_analytic_positions_at_all_rk_stages() {
     struct StagePilotMotion {
         stage: core::cell::Cell<usize>,
