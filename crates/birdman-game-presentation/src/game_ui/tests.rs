@@ -414,34 +414,37 @@ fn head_hud_fits_complete_shared_rows_in_lower_band_before_using_upper_space() {
     let view = game_ui_view(&state, &context).unwrap();
     let hud = view.hud.as_ref().unwrap();
     let frame = game_ui_frame(&state, &context, &view, view.view_revision).unwrap();
-    let HeadHudPaintReply::Ready { projection } = prepare_game_ui_head_hud(
-        &view,
-        &frame,
-        HeadHudPreparationInput {
-            view_revision: view.view_revision,
-            viewer: &crate::xr::tests::viewer(XrDepthRange::NegativeOneToOne),
-            profile: XrHeadHudProfile::default(),
-            font: &MenuFont {
-                family: "sans-serif".into(),
-                weight: 400,
-                style: MenuFontStyle::Normal,
-                generation: 0,
+    let paint = |view: &GameUiView, frame: &GameUiFrame| {
+        prepare_game_ui_head_hud(
+            view,
+            frame,
+            HeadHudPreparationInput {
+                view_revision: view.view_revision,
+                viewer: &crate::xr::tests::viewer(XrDepthRange::NegativeOneToOne),
+                profile: XrHeadHudProfile::default(),
+                font: &MenuFont {
+                    family: "sans-serif".into(),
+                    weight: 400,
+                    style: MenuFontStyle::Normal,
+                    generation: 0,
+                },
+                locale: "ja",
+                frame_rate_label: None,
             },
-            locale: "ja",
-            frame_rate_label: None,
-        },
-        &mut SurfaceFontCache::default(),
-        |request, _, value| {
-            let advance = value.chars().count() as f64 * request.font_meters * 0.5;
-            Ok(MenuGlyphMetrics {
-                advance,
-                left: 0.0,
-                right: advance,
-                ascent: request.font_meters * 0.8,
-                descent: request.font_meters * 0.2,
-            })
-        },
-    ) else {
+            &mut SurfaceFontCache::default(),
+            |request, _, value| {
+                let advance = value.chars().count() as f64 * request.font_meters * 0.5;
+                Ok(MenuGlyphMetrics {
+                    advance,
+                    left: 0.0,
+                    right: advance,
+                    ascent: request.font_meters * 0.8,
+                    descent: request.font_meters * 0.2,
+                })
+            },
+        )
+    };
+    let HeadHudPaintReply::Ready { projection } = paint(&view, &frame) else {
         panic!("head HUD paint did not fit")
     };
     let (north_label, arrow) = hud
@@ -539,6 +542,56 @@ fn head_hud_fits_complete_shared_rows_in_lower_band_before_using_upper_space() {
                 }
             ),
             GameUiHeadHudFit::Unavailable
+        );
+    }
+    let mut themed_view = view.clone();
+    themed_view.theme.muted_text = "#123456".into();
+    themed_view.theme.warning_text = "#654321".into();
+    themed_view.theme.flight_path_marker = "#abcdef".into();
+    for tone in [GameUiHudTone::Muted, GameUiHudTone::Warning] {
+        let mut themed_frame = frame.clone();
+        let text = themed_frame
+            .hud
+            .as_mut()
+            .unwrap()
+            .groups
+            .iter_mut()
+            .flat_map(|group| &mut group.nodes)
+            .find_map(|node| match &mut node.content {
+                GameUiHudNodeContent::Text { tone, .. } => Some(tone),
+                _ => None,
+            })
+            .unwrap();
+        *text = tone;
+        let HeadHudPaintReply::Ready { projection } = paint(&themed_view, &themed_frame) else {
+            panic!("themed head HUD paint did not fit")
+        };
+        let expected = match tone {
+            GameUiHudTone::Muted => &themed_view.theme.muted_text,
+            GameUiHudTone::Warning => &themed_view.theme.warning_text,
+            GameUiHudTone::Normal => unreachable!(),
+        };
+        assert!(
+            projection
+                .items
+                .iter()
+                .filter_map(|item| match item {
+                    SurfacePaintItem::Plot { items, .. } => Some(items),
+                    _ => None,
+                })
+                .flatten()
+                .any(
+                    |item| matches!(item, SurfacePaintItem::Text { color, .. } if color == expected)
+                )
+        );
+        assert!(projection.items.iter().filter_map(|item| match item {
+            SurfacePaintItem::Plot { items, .. } => Some(items),
+            _ => None,
+        }).flatten().any(|item| matches!(item,
+            SurfacePaintItem::RoundedOutline { color, .. } if color == &themed_view.theme.flight_path_marker)));
+        assert_eq!(
+            paint(&themed_view, &themed_frame),
+            HeadHudPaintReply::Ready { projection }
         );
     }
 }

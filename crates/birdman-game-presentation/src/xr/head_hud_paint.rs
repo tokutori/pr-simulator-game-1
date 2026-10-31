@@ -341,7 +341,7 @@ where
             GameUiHudNodeContent::Text {
                 tone: GameUiHudTone::Warning,
                 ..
-            } => self.theme.focus_outline.clone(),
+            } => self.theme.warning_text.clone(),
             _ => self.theme.text.clone(),
         };
         for (index, line) in lines.iter().enumerate() {
@@ -589,7 +589,7 @@ where
                             height: radius * 2.0,
                         },
                         radius,
-                        color: "#7df4c5".into(),
+                        color: self.theme.flight_path_marker.clone(),
                         width_px: self.stroke_pixels,
                         opacity: self.input.profile.foreground_alpha,
                     });

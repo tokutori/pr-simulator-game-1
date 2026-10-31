@@ -1632,6 +1632,10 @@ pub struct GameUiTheme {
     pub text: String,
     /// Secondary text color.
     pub muted_text: String,
+    /// Mandatory warning text color.
+    pub warning_text: String,
+    /// Flight-path marker color.
+    pub flight_path_marker: String,
     /// Panel background color.
     pub panel_background: String,
     /// Centered menu opacity.
