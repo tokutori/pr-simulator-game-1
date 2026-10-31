@@ -18,7 +18,6 @@ pub enum WindError {
     OutsideGrid,
 }
 
-#[cfg(not(verus_only))]
 impl core::fmt::Display for WindError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
@@ -40,7 +39,6 @@ impl core::fmt::Display for WindError {
     }
 }
 
-#[cfg(not(verus_only))]
 impl core::error::Error for WindError {}
 
 /// An immutable, time-independent wind velocity field in NED coordinates.

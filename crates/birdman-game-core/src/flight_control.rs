@@ -126,7 +126,6 @@ pub enum ActuatorError {
     InvalidTimeStep,
 }
 
-#[cfg(not(verus_only))]
 impl core::fmt::Display for ActuatorError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
@@ -139,5 +138,4 @@ impl core::fmt::Display for ActuatorError {
     }
 }
 
-#[cfg(not(verus_only))]
 impl core::error::Error for ActuatorError {}

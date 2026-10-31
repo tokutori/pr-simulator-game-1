@@ -34,7 +34,6 @@ pub enum TailFlightScenarioError {
     Contact(ContactError),
 }
 
-#[cfg(not(verus_only))]
 impl core::fmt::Display for TailFlightScenarioError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
@@ -47,7 +46,6 @@ impl core::fmt::Display for TailFlightScenarioError {
     }
 }
 
-#[cfg(not(verus_only))]
 impl core::error::Error for TailFlightScenarioError {
     fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
         match self {

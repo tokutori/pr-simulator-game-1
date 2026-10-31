@@ -46,7 +46,6 @@ pub enum ReplayClockError {
     UnsupportedRate,
 }
 
-#[cfg(not(verus_only))]
 impl core::fmt::Display for ReplayClockError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
@@ -62,7 +61,6 @@ impl core::fmt::Display for ReplayClockError {
     }
 }
 
-#[cfg(not(verus_only))]
 impl core::error::Error for ReplayClockError {}
 
 #[derive(Clone, Copy, Debug, PartialEq)]

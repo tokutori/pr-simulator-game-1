@@ -30,7 +30,6 @@ pub enum SteadyGlideError {
     Aerodynamics(AeroError),
 }
 
-#[cfg(not(verus_only))]
 impl core::fmt::Display for SteadyGlideError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
@@ -50,7 +49,6 @@ impl core::fmt::Display for SteadyGlideError {
     }
 }
 
-#[cfg(not(verus_only))]
 impl core::error::Error for SteadyGlideError {
     fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
         match self {

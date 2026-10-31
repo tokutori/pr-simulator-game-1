@@ -350,7 +350,6 @@ pub enum GameSessionError {
     Telemetry(FlightTelemetryError),
 }
 
-#[cfg(not(verus_only))]
 impl core::fmt::Display for GameSessionError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
@@ -378,7 +377,6 @@ impl core::fmt::Display for GameSessionError {
     }
 }
 
-#[cfg(not(verus_only))]
 impl core::error::Error for GameSessionError {
     fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
         match self {

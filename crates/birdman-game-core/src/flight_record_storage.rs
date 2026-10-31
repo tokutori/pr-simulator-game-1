@@ -31,7 +31,6 @@ pub enum FlightRecordError {
     IncompatibleFailure,
 }
 
-#[cfg(not(verus_only))]
 impl core::fmt::Display for FlightRecordError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
@@ -58,7 +57,6 @@ impl core::fmt::Display for FlightRecordError {
     }
 }
 
-#[cfg(not(verus_only))]
 impl core::error::Error for FlightRecordError {}
 
 #[cfg_attr(verus_only, verus_verify)]

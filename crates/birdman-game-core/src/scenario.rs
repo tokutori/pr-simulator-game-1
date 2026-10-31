@@ -146,7 +146,6 @@ pub enum FlightTelemetryError {
     Wind(crate::wind_field::WindError),
 }
 
-#[cfg(not(verus_only))]
 impl core::fmt::Display for FlightTelemetryError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
@@ -156,7 +155,6 @@ impl core::fmt::Display for FlightTelemetryError {
     }
 }
 
-#[cfg(not(verus_only))]
 impl core::error::Error for FlightTelemetryError {
     fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
         match self {
@@ -175,7 +173,6 @@ pub enum FlightScenarioError {
     Contact(ContactError),
 }
 
-#[cfg(not(verus_only))]
 impl core::fmt::Display for FlightScenarioError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
@@ -185,7 +182,6 @@ impl core::fmt::Display for FlightScenarioError {
     }
 }
 
-#[cfg(not(verus_only))]
 impl core::error::Error for FlightScenarioError {
     fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
         match self {
