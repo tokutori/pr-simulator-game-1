@@ -170,7 +170,7 @@ pub struct ScreenRenderAutoSnapshot {
 }
 
 impl ScreenRenderAutoSnapshot {
-    /// Builds a confirmed manual observation for startup and adapter fixtures.
+    /// Builds a manual quality baseline; the graphics owner tracks resource confirmation.
     pub const fn manual(scale: ScreenRenderScale) -> Self {
         Self {
             selection: ScreenRenderSelection::Manual {
@@ -475,7 +475,9 @@ pub struct ScreenRenderAutoController {
 }
 
 impl ScreenRenderAutoController {
-    /// Starts with Auto and retains the backend's confirmed resources for manual restoration.
+    /// Starts Auto from the calling graphics owner's quality baseline for manual restoration.
+    ///
+    /// The caller owns resource binding and acknowledgment.
     pub fn new(
         applied: ScreenRenderScale,
         shadow: ScreenShadowMap,

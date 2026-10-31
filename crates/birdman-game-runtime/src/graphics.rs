@@ -57,8 +57,6 @@ pub struct ApplicationRendererObservation {
     pub screen_extent_px: [u32; 2],
     /// Actual HMD runtime framebuffer dimensions when available.
     pub xr_extent_px: Option<[u32; 2]>,
-    /// Confirmed resources at this renderer's creation, before owner-issued changes.
-    pub initial_quality: ApplicationRenderQuality,
 }
 
 /// Identity of the committed resources used for scene preparation.
@@ -153,7 +151,9 @@ pub struct ApplicationResourceCommit {
 #[derive(Clone, Debug, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ApplicationGraphicsProjection {
-    /// Current drawable resources, absent while the renderer is unavailable.
+    /// Live context identity, independent of whether its first binding has completed.
+    pub renderer_resource_id: Option<u32>,
+    /// Last acknowledged drawable resources, absent until this context has a commit.
     pub resource: Option<ApplicationGraphicsResource>,
     /// Query to begin around this frame's GPU work.
     pub query: Option<ApplicationGpuQuery>,
@@ -161,7 +161,8 @@ pub struct ApplicationGraphicsProjection {
 
 struct Context {
     id: u32,
-    extent: [u32; 2],
+    observed_extent: [u32; 2],
+    committed: Option<ApplicationResourceCommit>,
     screen_extent: [u32; 2],
     xr_extent: Option<[u32; 2]>,
     commit: u32,
@@ -241,7 +242,7 @@ impl GraphicsOwner {
         if let Some(context) = &mut self.context
             && context.id == observation.resource_id
         {
-            if context.extent != observation.extent_px
+            if context.observed_extent != observation.extent_px
                 || context.screen_extent != observation.screen_extent_px
                 || context.xr_extent != observation.xr_extent_px
             {
@@ -249,7 +250,7 @@ impl GraphicsOwner {
                     && context.screen_extent == observation.screen_extent_px
                     && context.xr_extent == observation.xr_extent_px
                     && expected_extent == Some(observation.extent_px);
-                context.extent = observation.extent_px;
+                context.observed_extent = observation.extent_px;
                 context.screen_extent = observation.screen_extent_px;
                 context.xr_extent = observation.xr_extent_px;
                 self.prepared = false;
@@ -262,10 +263,10 @@ impl GraphicsOwner {
             }
             return Ok(());
         }
-        let quality = observation.initial_quality;
+        let seed = ScreenRenderAutoSnapshot::default();
         let selection = self.snapshot().selection;
         let mut policy =
-            ScreenRenderAutoController::new(quality.scale, quality.shadow, quality.water_quality);
+            ScreenRenderAutoController::new(seed.applied, seed.shadow, seed.water_quality);
         policy.set_scope(scope, now)?;
         policy.restore_selection(selection, now)?;
         if let ApplicationGpuTimingCapability::Unsupported { cause } = &observation.gpu_timing {
@@ -274,7 +275,8 @@ impl GraphicsOwner {
         self.policy = Some(policy);
         self.context = Some(Context {
             id: observation.resource_id,
-            extent: observation.extent_px,
+            observed_extent: observation.extent_px,
+            committed: None,
             screen_extent: observation.screen_extent_px,
             xr_extent: observation.xr_extent_px,
             commit: 0,
@@ -287,20 +289,28 @@ impl GraphicsOwner {
         Ok(())
     }
 
+    pub(super) fn renderer_id(&self) -> Option<u32> {
+        self.context
+            .as_ref()
+            .filter(|context| context.available)
+            .map(|context| context.id)
+    }
+
     pub(super) fn resource(&self) -> Option<ApplicationGraphicsResource> {
         let context = self.context.as_ref().filter(|context| {
-            context.available && context.extent.into_iter().all(|dimension| dimension > 0)
+            context.available
+                && context
+                    .observed_extent
+                    .into_iter()
+                    .all(|dimension| dimension > 0)
+                && context.commit > 0
         })?;
-        let snapshot = self.policy.as_ref()?.snapshot();
+        let committed = context.committed?;
         Some(ApplicationGraphicsResource {
             renderer_resource_id: context.id,
             commit: context.commit,
-            quality: ApplicationRenderQuality {
-                scale: snapshot.applied,
-                shadow: snapshot.shadow,
-                water_quality: snapshot.water_quality,
-            },
-            extent_px: context.extent,
+            quality: committed.applied,
+            extent_px: committed.extent_px,
         })
     }
 
@@ -448,15 +458,26 @@ impl GraphicsOwner {
     }
 
     pub(super) fn target(&self, mode: GameUiPresentationMode) -> Option<ApplicationGraphicsTarget> {
-        let resource = self.resource()?;
-        let context = self.context.as_ref()?;
-        let quality =
-            self.requested()
-                .map_or(resource.quality, |request| ApplicationRenderQuality {
-                    scale: request.scale,
-                    shadow: request.shadow,
-                    water_quality: request.water_quality,
-                });
+        let context = self.context.as_ref().filter(|context| {
+            context.available
+                && context
+                    .observed_extent
+                    .into_iter()
+                    .all(|dimension| dimension > 0)
+        })?;
+        let baseline = self.policy.as_ref()?.snapshot();
+        let quality = self.requested().map_or(
+            ApplicationRenderQuality {
+                scale: baseline.applied,
+                shadow: baseline.shadow,
+                water_quality: baseline.water_quality,
+            },
+            |request| ApplicationRenderQuality {
+                scale: request.scale,
+                shadow: request.shadow,
+                water_quality: request.water_quality,
+            },
+        );
         let extent_px = match mode {
             GameUiPresentationMode::Screen => {
                 if context.screen_extent.into_iter().any(|value| value == 0) {
@@ -490,7 +511,13 @@ impl GraphicsOwner {
         eligible: bool,
         now: f64,
     ) -> Result<(), ScreenRenderAutoError> {
-        if self.resource().is_none() {
+        if self.context.as_ref().is_none_or(|context| {
+            !context.available
+                || context
+                    .observed_extent
+                    .into_iter()
+                    .any(|dimension| dimension == 0)
+        }) {
             return Ok(());
         }
         let policy = self.policy.as_mut().unwrap();
@@ -550,7 +577,8 @@ impl GraphicsOwner {
             }
         }
         context.commit = next_commit;
-        context.extent = actual.extent_px;
+        context.observed_extent = actual.extent_px;
+        context.committed = Some(actual);
         self.prepared = false;
         self.retained = policy.snapshot();
         Ok(())
@@ -652,7 +680,11 @@ impl GraphicsOwner {
         } else {
             None
         };
-        Ok(ApplicationGraphicsProjection { resource, query })
+        Ok(ApplicationGraphicsProjection {
+            renderer_resource_id: self.renderer_id(),
+            resource,
+            query,
+        })
     }
 }
 #[cfg(test)]
@@ -670,13 +702,25 @@ mod tests {
                     extent_px: [640, 360],
                     screen_extent_px: [1283, 723],
                     xr_extent_px: Some([1832, 1920]),
-                    initial_quality: ApplicationRenderQuality {
-                        scale: ScreenRenderScale::Half,
-                        shadow: ScreenShadowMap::Full,
-                        water_quality: WaterQuality::High,
-                    },
                 }),
                 ScreenRenderScope::FlightSettings,
+                0.0,
+            )
+            .unwrap();
+        assert_eq!(owner.renderer_id(), Some(1));
+        assert!(owner.resource().is_none());
+        assert!(owner.projection(true, 0.0).unwrap().query.is_none());
+        owner
+            .synchronize(ScreenRenderScope::FlightSettings, true, 0.0)
+            .unwrap();
+        assert!(owner.eligible);
+        owner.prepared(true, false, 0.0).unwrap();
+        assert!(!owner.prepared);
+        owner
+            .select(
+                &GameUiPlatformCommand::SetScreenRenderScale {
+                    scale: ScreenRenderScale::Half,
+                },
                 0.0,
             )
             .unwrap();
@@ -698,6 +742,19 @@ mod tests {
             owner.target(GameUiPresentationMode::Hmd).unwrap().extent_px,
             [1832, 1920]
         );
+        let initial_target = owner.target(GameUiPresentationMode::Screen).unwrap();
+        owner
+            .committed(
+                initial_target,
+                owner.requested(),
+                ApplicationResourceCommit {
+                    applied: initial_target.quality,
+                    extent_px: initial_target.extent_px,
+                },
+                0.0,
+            )
+            .unwrap();
+        assert_eq!(owner.resource().unwrap().extent_px, [641, 361]);
         owner
             .policy
             .as_mut()
@@ -936,14 +993,35 @@ mod tests {
             extent_px: [640, 360],
             screen_extent_px: [1280, 720],
             xr_extent_px: None,
-            initial_quality: ApplicationRenderQuality {
-                scale: ScreenRenderScale::Half,
-                shadow: ScreenShadowMap::Full,
-                water_quality: WaterQuality::High,
-            },
         };
         owner
             .adopt(Some(&renderer), ScreenRenderScope::FlightSettings, 3_000.0)
+            .unwrap();
+        owner
+            .select(
+                &GameUiPlatformCommand::SetScreenRenderScale {
+                    scale: ScreenRenderScale::Half,
+                },
+                3_000.0,
+            )
+            .unwrap();
+        let initial_target = owner.target(GameUiPresentationMode::Screen).unwrap();
+        owner
+            .committed(
+                initial_target,
+                owner.requested(),
+                ApplicationResourceCommit {
+                    applied: initial_target.quality,
+                    extent_px: initial_target.extent_px,
+                },
+                3_000.0,
+            )
+            .unwrap();
+        owner
+            .policy
+            .as_mut()
+            .unwrap()
+            .select_auto(true, 3_000.0)
             .unwrap();
         owner.request_gpu_timing(true, 3_000.0).unwrap();
         owner.prepared(true, false, 3_000.0).unwrap();
@@ -989,11 +1067,40 @@ mod tests {
             .unwrap();
         assert_eq!(owner.snapshot().applied, ScreenRenderScale::ThreeQuarters);
         let epoch = owner.policy.as_ref().unwrap().epoch();
+        let previous_commit = owner.resource().unwrap();
         renderer.screen_extent_px = [1920, 1080];
         renderer.extent_px = [1440, 810];
         owner
             .adopt(Some(&renderer), ScreenRenderScope::FlightSettings, 5_501.0)
             .unwrap();
         assert!(owner.policy.as_ref().unwrap().epoch() > epoch);
+        assert_eq!(owner.resource(), Some(previous_commit));
+        assert!(owner.projection(true, 5_501.0).unwrap().query.is_none());
+        let resized = owner.target(GameUiPresentationMode::Screen).unwrap();
+        assert_eq!(resized.extent_px, [1440, 810]);
+        owner
+            .committed(
+                resized,
+                owner.requested(),
+                ApplicationResourceCommit {
+                    applied: resized.quality,
+                    extent_px: resized.extent_px,
+                },
+                5_502.0,
+            )
+            .unwrap();
+        let resized_commit = owner.resource().unwrap();
+        assert_eq!(resized_commit.extent_px, [1440, 810]);
+        assert_eq!(resized_commit.quality, previous_commit.quality);
+        assert_eq!(resized_commit.commit, previous_commit.commit + 1);
+        renderer.resource_id = 3;
+        owner
+            .adopt(Some(&renderer), ScreenRenderScope::FlightSettings, 5_503.0)
+            .unwrap();
+        assert_eq!(owner.renderer_id(), Some(3));
+        assert!(owner.resource().is_none());
+        owner.invalidate_renderer(3, 5_504.0).unwrap();
+        assert_eq!(owner.renderer_id(), None);
+        assert!(owner.resource().is_none());
     }
 }

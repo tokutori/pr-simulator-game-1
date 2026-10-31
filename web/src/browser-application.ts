@@ -108,7 +108,7 @@ export class BrowserApplication {
             this.view = drawing.ui.view;
             this.screen.render(drawing.ui.view, drawing.presentation.screen_ui_visible);
           } else this.screen.renderFrame(drawing.ui.frame, drawing.presentation.screen_ui_visible);
-        } catch (cause) { failed(drawing.graphics.resource?.renderer_resource_id, cause); }
+        } catch (cause) { failed(drawing.graphics.renderer_resource_id, cause); }
         const hud = drawing.ui.kind === "view" ? drawing.ui.view.hud : drawing.ui.frame.hud;
         try {
           if (this.view !== null) this.hud.render(hud ?? null, this.view.theme);
@@ -117,7 +117,7 @@ export class BrowserApplication {
           if (this.frameRate.textContent !== drawing.presentation.frame_rate_label) {
             this.frameRate.textContent = drawing.presentation.frame_rate_label;
           }
-        } catch (cause) { failed(drawing.graphics.resource?.renderer_resource_id, cause); }
+        } catch (cause) { failed(drawing.graphics.renderer_resource_id, cause); }
       }
       if (output.diagnostic != null) console.error(output.diagnostic);
       const failures: unknown[] = [];

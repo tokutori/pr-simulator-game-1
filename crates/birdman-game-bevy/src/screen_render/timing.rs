@@ -229,11 +229,7 @@ impl TimingState {
     }
 }
 
-pub(crate) fn observe_query(
-    world: &mut World,
-    query: Option<ApplicationGpuQuery>,
-    quality: ApplicationRenderQuality,
-) {
+pub(crate) fn observe_query(world: &mut World, source: Option<TimingSource>) {
     let Some(readout) = world.get_resource::<TimingReadout>() else {
         return;
     };
@@ -245,7 +241,7 @@ pub(crate) fn observe_query(
         );
     }
     if state.release.is_none() {
-        state.pending = query.map(|query| TimingSource { query, quality });
+        state.pending = source;
     }
 }
 
@@ -347,7 +343,8 @@ fn extract_packet(
             TimingOutcome::NotSubmitted("render graph not submitted"),
         );
     }
-    if let Some(query) = rendering.query {
+    if let Some(source) = rendering.query {
+        let query = source.query;
         let stamp = (
             query.renderer_resource_id,
             query.epoch,
@@ -355,10 +352,7 @@ fn extract_packet(
             query.source_ms.to_bits(),
         );
         if packet.last_query != Some(stamp) {
-            packet.source = Some(TimingSource {
-                query,
-                quality: rendering.quality,
-            });
+            packet.source = Some(source);
             packet.last_query = Some(stamp);
         }
     }
@@ -830,10 +824,9 @@ pub(crate) mod tests {
         };
         {
             let mut gpu = world.resource_mut::<NativeGpu>();
-            gpu.query = Some(query);
-            gpu.quality = quality;
+            gpu.query = Some(TimingSource { query, quality });
         }
-        observe_query(&mut world, Some(query), quality);
+        observe_query(&mut world, Some(TimingSource { query, quality }));
         let readout = world.resource::<TimingReadout>().clone();
         let mut main = MainWorld::default();
         *main = world;
@@ -854,10 +847,18 @@ pub(crate) mod tests {
             let mut main = render.resource_mut::<MainWorld>();
             {
                 let mut gpu = main.resource_mut::<NativeGpu>();
-                gpu.query = Some(next_query);
-                gpu.quality = next_quality;
+                gpu.query = Some(TimingSource {
+                    query: next_query,
+                    quality: next_quality,
+                });
             }
-            observe_query(&mut main, Some(next_query), next_quality);
+            observe_query(
+                &mut main,
+                Some(TimingSource {
+                    query: next_query,
+                    quality: next_quality,
+                }),
+            );
         }
         let frozen = render.resource_mut::<TimingPacket>().source.take().unwrap();
         assert_eq!(frozen.query.frame, query.frame);
@@ -884,11 +885,13 @@ pub(crate) mod tests {
             let mut main = render.resource_mut::<MainWorld>();
             observe_query(
                 &mut main,
-                Some(ApplicationGpuQuery { frame: 23, ..query }),
-                next_quality,
+                Some(TimingSource {
+                    query: ApplicationGpuQuery { frame: 23, ..query },
+                    quality: next_quality,
+                }),
             );
             main.resource_mut::<NativeGpu>().query = None;
-            observe_query(&mut main, None, next_quality);
+            observe_query(&mut main, None);
         }
         {
             let state = readout.0.lock().unwrap();

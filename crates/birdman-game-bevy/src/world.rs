@@ -29,10 +29,9 @@ use bevy::{
 };
 use birdman_game_runtime::{
     ApplicationDrawingOutput, ApplicationEnvironmentAssets, ApplicationGeometryAssets,
-    ApplicationGpuQuery, ApplicationGpuTimingCapability, ApplicationGraphicsTarget,
-    ApplicationInput, ApplicationMeshAttachment, ApplicationRenderQuality,
-    ApplicationRendererObservation, ApplicationRequest, ApplicationResourceCommit,
-    ApplicationResourceObservation, ApplicationRuntime,
+    ApplicationGpuTimingCapability, ApplicationGraphicsTarget, ApplicationInput,
+    ApplicationMeshAttachment, ApplicationRendererObservation, ApplicationRequest,
+    ApplicationResourceCommit, ApplicationResourceObservation, ApplicationRuntime,
 };
 use std::collections::BTreeMap;
 
@@ -111,8 +110,7 @@ pub(crate) struct NativeGpu {
     candidates: BTreeMap<u32, Candidate>,
     active: Option<u32>,
     pub(crate) main_camera: Option<Entity>,
-    pub(crate) query: Option<ApplicationGpuQuery>,
-    pub(crate) quality: ApplicationRenderQuality,
+    pub(crate) query: Option<screen_render::timing::TimingSource>,
     initial_failure: Option<String>,
     pub(crate) renderer_id: u32,
     pub(crate) revision: u64,
@@ -131,11 +129,6 @@ impl Default for NativeGpu {
             active: None,
             main_camera: None,
             query: None,
-            quality: ApplicationRenderQuality {
-                scale: Default::default(),
-                shadow: Default::default(),
-                water_quality: Default::default(),
-            },
             initial_failure: None,
             renderer_id: 0,
             revision: 0,
@@ -255,7 +248,6 @@ pub(crate) fn platform(world: &mut World) -> ApplicationRendererObservation {
     };
     ApplicationRendererObservation {
         resource_id: world.resource::<NativeGpu>().renderer_id,
-        initial_quality: world.resource::<NativeGpu>().quality,
         extent_px: extent,
         screen_extent_px: screen_extent,
         xr_extent_px: None,
@@ -1163,11 +1155,15 @@ pub(crate) fn submit(
         );
         Ok(())
     })();
-    gpu.query = drawing.graphics.query;
-    if let Some(resource) = drawing.graphics.resource {
-        gpu.quality = resource.quality;
-    }
-    screen_render::timing::observe_query(world, gpu.query, gpu.quality);
+    gpu.query = drawing
+        .graphics
+        .query
+        .zip(drawing.graphics.resource)
+        .map(|(query, resource)| screen_render::timing::TimingSource {
+            query,
+            quality: resource.quality,
+        });
+    screen_render::timing::observe_query(world, gpu.query);
     world.insert_resource(gpu);
     result
 }
@@ -1436,8 +1432,11 @@ mod tests {
             renderer_id: 7,
             ..default()
         };
-        let mut quality = gpu.quality;
-        quality.scale = birdman_game_presentation::screen_render_scale::ScreenRenderScale::Half;
+        let quality = birdman_game_runtime::ApplicationRenderQuality {
+            scale: birdman_game_presentation::screen_render_scale::ScreenRenderScale::Half,
+            shadow: birdman_game_presentation::screen_render_auto::ScreenShadowMap::Full,
+            water_quality: birdman_game_format::WaterQuality::High,
+        };
         gpu.candidates.insert(
             3,
             Candidate {

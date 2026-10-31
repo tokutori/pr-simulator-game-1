@@ -1085,6 +1085,7 @@ fn credits(menu: &mut Menu) {
 fn water_quality(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
     menu.automatic_sections();
     use crate::screen_render_auto::{ScreenRenderAutoStatus, ScreenRenderSelection};
+    let confirmed = context.platform.render_quality_confirmed;
     let current = context.platform.water_quality;
     let retained = match context.platform.screen_render_scale.selection {
         ScreenRenderSelection::Manual { water_quality, .. } => water_quality,
@@ -1101,29 +1102,44 @@ fn water_quality(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
     menu.status(
         "presentation-water-quality-status",
         "水面画質",
-        &match &context.platform.water_quality_operation {
-            GameUiWaterQualityOperation::Idle {} => format!(
-                "{}{} · 使用中 {}",
-                retained.label(),
-                if automatic {
-                    "（自動調整の上限）"
-                } else {
-                    ""
-                },
-                current.label()
-            ),
-            GameUiWaterQualityOperation::Applying { requested } => {
-                format!("{} · {}を適用中", current.label(), requested.label())
+        &if confirmed {
+            match &context.platform.water_quality_operation {
+                GameUiWaterQualityOperation::Idle {} => format!(
+                    "{}{} · 使用中 {}",
+                    retained.label(),
+                    if automatic {
+                        "（自動調整の上限）"
+                    } else {
+                        ""
+                    },
+                    current.label()
+                ),
+                GameUiWaterQualityOperation::Applying { requested } => {
+                    format!("{} · {}を適用中", current.label(), requested.label())
+                }
+                GameUiWaterQualityOperation::Failed { requested, cause } => format!(
+                    "{}を保持する。{}の適用に失敗した: {cause}",
+                    current.label(),
+                    requested.label()
+                ),
+                GameUiWaterQualityOperation::CleanupFailed { cause } => format!(
+                    "{}を適用した。以前の描画資源の解放に失敗した: {cause}",
+                    current.label()
+                ),
             }
-            GameUiWaterQualityOperation::Failed { requested, cause } => format!(
-                "{}を保持する。{}の適用に失敗した: {cause}",
-                current.label(),
-                requested.label()
-            ),
-            GameUiWaterQualityOperation::CleanupFailed { cause } => format!(
-                "{}を適用した。旧geometryの解放に失敗した: {cause}",
-                current.label()
-            ),
+        } else {
+            match &context.platform.water_quality_operation {
+                GameUiWaterQualityOperation::Idle {} => format!("{}を準備中", retained.label()),
+                GameUiWaterQualityOperation::Applying { requested } => {
+                    format!("{}を適用中", requested.label())
+                }
+                GameUiWaterQualityOperation::Failed { requested, cause } => {
+                    format!("{}の適用に失敗した: {cause}", requested.label())
+                }
+                GameUiWaterQualityOperation::CleanupFailed { cause } => {
+                    format!("以前の描画資源の解放に失敗した: {cause}")
+                }
+            }
         },
     );
     for (quality, suffix, description) in [
@@ -1134,13 +1150,16 @@ fn water_quality(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
         menu.push(
             &format!("presentation-water-quality-{suffix}"),
             quality.label(),
-            !matches!(
-                context.platform.water_quality_operation,
-                GameUiWaterQualityOperation::Applying { .. }
-            ) && !matches!(
-                context.platform.screen_render_scale.status,
-                ScreenRenderAutoStatus::Applying { .. }
-            ) && context.platform.renderer_failure.is_none(),
+            confirmed
+                && !matches!(
+                    context.platform.water_quality_operation,
+                    GameUiWaterQualityOperation::Applying { .. }
+                )
+                && !matches!(
+                    context.platform.screen_render_scale.status,
+                    ScreenRenderAutoStatus::Applying { .. }
+                )
+                && context.platform.renderer_failure.is_none(),
             "water-quality",
             GameUiControlContent::Button {
                 action: GameUiAction::Platform {
@@ -1172,7 +1191,9 @@ fn screen_render_scale(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
     }
     let render = &context.platform.screen_render_scale;
     let automatic = matches!(render.selection, ScreenRenderSelection::Auto { .. });
-    let enabled = context.platform.renderer_failure.is_none()
+    let confirmed = context.platform.render_quality_confirmed;
+    let enabled = confirmed
+        && context.platform.renderer_failure.is_none()
         && !matches!(render.status, ScreenRenderAutoStatus::Applying { .. });
     let status = match &render.status {
         ScreenRenderAutoStatus::Manual => "手動設定".to_owned(),
@@ -1198,16 +1219,27 @@ fn screen_render_scale(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
     menu.status(
         "presentation-render-scale-status",
         "3D描画品質",
-        &format!(
-            "{} · 使用中 {} · 影 {} · {status}",
-            if automatic {
-                "自動（Auto）"
-            } else {
-                "手動"
-            },
-            render.applied.label(),
-            render.shadow.label(),
-        ),
+        &if confirmed {
+            format!(
+                "{} · 使用中 {} · 影 {} · {status}",
+                if automatic {
+                    "自動（Auto）"
+                } else {
+                    "手動"
+                },
+                render.applied.label(),
+                render.shadow.label()
+            )
+        } else {
+            format!(
+                "{} · 描画資源を準備中 · {status}",
+                if automatic {
+                    "自動（Auto）"
+                } else {
+                    "手動"
+                }
+            )
+        },
     );
     menu.push(
         "presentation-render-scale-auto",

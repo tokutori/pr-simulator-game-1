@@ -27,8 +27,7 @@ vi.mock("../../web/src/render/engines/three/application-renderer.js", () => ({
       private readonly notify: (input: ApplicationInput) => void) { capture.driver = this; }
     observation(): ApplicationRendererObservation {
       capture.observation();
-      return { resource_id: this.id, initial_quality: { scale: "100", shadow: "full", water_quality: "high" },
-        extent_px: [1280, 720], screen_extent_px: [window.innerWidth, window.innerHeight], xr_extent_px: null,
+      return { resource_id: this.id, extent_px: [1280, 720], screen_extent_px: [window.innerWidth, window.innerHeight], xr_extent_px: null,
         gpu_timing: { kind: "unsupported", cause: "physical timer is unavailable" } };
     }
     prepare(request: Prepare): void {

@@ -32,8 +32,7 @@ export function bootViewFixture(): GameUiView {
 
 export function readyApplicationFixture() {
   const platform: ApplicationPlatformObservation = { ...applicationPlatformFixture(), renderer: {
-    resource_id: 100, initial_quality: { scale: "100", shadow: "full", water_quality: "high" },
-    extent_px: [1280, 720], screen_extent_px: [1280, 720], xr_extent_px: null, gpu_timing: { kind: "available" }
+    resource_id: 100, extent_px: [1280, 720], screen_extent_px: [1280, 720], xr_extent_px: null, gpu_timing: { kind: "available" }
   } };
   const owner = new ApplicationRuntimeBridge(JSON.stringify(platform));
   const prepared = new Map<number, Extract<ApplicationRequest, { kind: "prepare_resources" }>>();

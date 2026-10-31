@@ -280,10 +280,10 @@ pub(crate) fn update(world: &mut World) {
                 .and_then(|()| super::world::submit(world, &runtime.0, &drawing))
             {
                 queue.push_back(ApplicationInput::RendererFailed {
-                    renderer_resource_id: drawing.graphics.resource.map_or_else(
-                        || super::world::platform(world).resource_id,
-                        |resource| resource.renderer_resource_id,
-                    ),
+                    renderer_resource_id: drawing
+                        .graphics
+                        .renderer_resource_id
+                        .unwrap_or_else(|| super::world::platform(world).resource_id),
                     cause,
                 });
             }

@@ -34,6 +34,7 @@ pub(super) fn platform() -> GameUiPlatformInput {
         stored_records_retry_available: false,
         flight_log_available: true,
         water_quality: WaterQuality::High,
+        render_quality_confirmed: true,
         water_quality_operation: GameUiWaterQualityOperation::Idle {},
         screen_render_scale: crate::screen_render_auto::ScreenRenderAutoSnapshot::default(),
         notification: String::new(),
@@ -4311,6 +4312,14 @@ fn screen_render_auto_projects_selection_applied_status_and_admission() {
             }]
         );
     }
+    platform.presentation_mode = GameUiPresentationMode::Screen;
+    platform.render_quality_confirmed = false;
+    let waiting = game_ui_view(&state, &context(&session, difficulty(), &platform)).unwrap();
+    assert!(!control(&waiting, "presentation-render-scale-auto").enabled);
+    assert!(
+        matches!(&control(&waiting, "presentation-render-scale-status").content,
+        GameUiControlContent::Status { value, .. } if !value.contains("使用中") && value.contains("missing GPU timer"))
+    );
 }
 
 #[test]
@@ -4346,8 +4355,8 @@ fn water_quality_operation_retains_applied_selection_and_original_failure() {
         ),
     ] {
         platform.water_quality_operation = operation;
-        let context = context(&session, difficulty(), &platform);
-        let view = game_ui_view(&state, &context).unwrap();
+        let inputs = context(&session, difficulty(), &platform);
+        let view = game_ui_view(&state, &inputs).unwrap();
         let GameUiControlContent::Status { value, .. } =
             &control(&view, "presentation-water-quality-status").content
         else {
@@ -4374,8 +4383,26 @@ fn water_quality_operation_retains_applied_selection_and_original_failure() {
                 quality: WaterQuality::Low,
             },
         };
-        assert_eq!(update_game_ui(&state, action, &context).is_ok(), enabled);
+        assert_eq!(update_game_ui(&state, action, &inputs).is_ok(), enabled);
         assert_eq!(session.snapshot(), before);
+        platform.render_quality_confirmed = false;
+        let waiting = game_ui_view(&state, &context(&session, difficulty(), &platform)).unwrap();
+        let GameUiControlContent::Status { value, .. } =
+            &control(&waiting, "presentation-water-quality-status").content
+        else {
+            unreachable!()
+        };
+        assert!(!value.contains("使用中"));
+        if let GameUiWaterQualityOperation::Failed { cause, .. }
+        | GameUiWaterQualityOperation::CleanupFailed { cause } =
+            &platform.water_quality_operation
+        {
+            assert!(value.contains(cause));
+        }
+        assert!(!control(&waiting, "presentation-water-quality-high").enabled);
+        assert!(!control(&waiting, "presentation-render-scale-auto").enabled);
+        assert!(waiting.back_action().is_some());
+        platform.render_quality_confirmed = true;
     }
     use crate::screen_render_auto::{ScreenRenderAutoStatus, ScreenShadowMap};
     use crate::screen_render_scale::ScreenRenderScale;
@@ -4397,8 +4424,8 @@ fn water_quality_operation_retains_applied_selection_and_original_failure() {
     ] {
         platform.water_quality_operation = GameUiWaterQualityOperation::Idle {};
         platform.screen_render_scale.status = status;
-        let context = context(&session, difficulty(), &platform);
-        let view = game_ui_view(&state, &context).unwrap();
+        let inputs = context(&session, difficulty(), &platform);
+        let view = game_ui_view(&state, &inputs).unwrap();
         let GameUiControlContent::Status { value: water, .. } =
             &control(&view, "presentation-water-quality-status").content
         else {

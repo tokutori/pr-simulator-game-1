@@ -212,9 +212,10 @@ impl ApplicationRuntime {
             stored_records_available: capabilities.stored_records_available,
             stored_records_retry_available: false,
             flight_log_available: capabilities.flight_log_available,
-            water_quality: WaterQuality::High,
+            water_quality: graphics.snapshot().water_quality,
+            render_quality_confirmed: graphics.resource().is_some(),
             water_quality_operation: GameUiWaterQualityOperation::Idle {},
-            screen_render_scale: Default::default(),
+            screen_render_scale: graphics.snapshot(),
             notification: String::new(),
             renderer_failure: None,
             head_hud_failure: None,
@@ -463,9 +464,10 @@ impl ApplicationRuntime {
                         }
                     }
                 } else if let ApplicationRendererCreation::Ready { renderer } = result
-                    && self.graphics.resource().is_none_or(|resource| {
-                        resource.renderer_resource_id != renderer.resource_id
-                    })
+                    && self
+                        .graphics
+                        .renderer_id()
+                        .is_none_or(|id| id != renderer.resource_id)
                 {
                     requests.push(ApplicationRequest::ReleaseRenderer {
                         renderer_resource_id: renderer.resource_id,
@@ -1051,6 +1053,7 @@ impl ApplicationRuntime {
             self.display.state().pending() || self.storage.load_pending();
         self.platform.stored_records_retry_available = self.platform.stored_records_available
             && self.storage.can_retry_preview(&self.application);
+        self.platform.render_quality_confirmed = self.graphics.resource().is_some();
         self.platform.screen_render_scale = self.graphics.snapshot();
         self.platform.water_quality = self.platform.screen_render_scale.water_quality;
         self.platform.water_quality_operation = self.graphics.water_operation();
@@ -1469,7 +1472,7 @@ impl ApplicationRuntime {
                 } if control_id == "game-boot-retry" => {
                     self.resources = None;
                     self.resource_readiness = BackendReadiness::Preparing;
-                    self.boot = if self.graphics.resource().is_some() {
+                    self.boot = if self.graphics.renderer_id().is_some() {
                         boot::BootOwner::Preparing
                     } else {
                         boot::BootOwner::Initial

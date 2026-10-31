@@ -639,9 +639,15 @@ fn boot_retries_renderer_creation_releases_late_resources_and_enters_title_after
     let preparing = runtime
         .observe_test(ApplicationInput::RendererCreated {
             request_id: second,
-            result: ApplicationRendererCreation::Ready { renderer },
+            result: ApplicationRendererCreation::Ready {
+                renderer: renderer.clone(),
+            },
         })
         .unwrap();
+    let drawing = preparing.drawing.as_ref().unwrap();
+    assert_eq!(drawing.graphics.renderer_resource_id, Some(101));
+    assert!(drawing.graphics.resource.is_none());
+    assert!(drawing.graphics.query.is_none());
     let preparation = preparing
         .requests
         .iter()
@@ -655,6 +661,18 @@ fn boot_retries_renderer_creation_releases_late_resources_and_enters_title_after
         structure(preparing).scene,
         birdman_game_presentation::game_ui::GameUiScene::Boot
     );
+    let stale_same_context = runtime
+        .observe_test(ApplicationInput::RendererCreated {
+            request_id: first,
+            result: ApplicationRendererCreation::Ready { renderer },
+        })
+        .unwrap();
+    assert!(!stale_same_context.requests.iter().any(|request| matches!(
+        request,
+        ApplicationRequest::ReleaseRenderer {
+            renderer_resource_id: 101
+        }
+    )));
     runtime.platform.notification = "別の操作の通知".into();
     runtime
         .observe_test(ApplicationInput::RecordPreviewObserved {
@@ -686,6 +704,40 @@ fn boot_retries_renderer_creation_releases_late_resources_and_enters_title_after
             && matches!(&control.content, GameUiControlContent::Status { value, .. } if value == "initial pipeline creation failed")
     }));
     assert_eq!(runtime.platform.notification, stored_notification);
+    let reused = runtime
+        .observe_test(ApplicationInput::Control {
+            view_revision: failed.view_revision,
+            input: GameUiControlInput::Activate {
+                control_id: "game-boot-retry".into(),
+            },
+        })
+        .unwrap();
+    assert!(
+        !reused
+            .requests
+            .iter()
+            .any(|request| matches!(request, ApplicationRequest::CreateRenderer { .. }))
+    );
+    let reused_request = reused
+        .requests
+        .iter()
+        .find_map(|request| match request {
+            ApplicationRequest::PrepareResources {
+                request_id,
+                graphics,
+                ..
+            } if graphics.renderer_resource_id == 101 => Some(*request_id),
+            _ => None,
+        })
+        .unwrap();
+    runtime
+        .observe_test(ApplicationInput::Resources {
+            request_id: reused_request,
+            observation: ApplicationResourceObservation::Failed {
+                cause: "initial pipeline creation failed".into(),
+            },
+        })
+        .unwrap();
     runtime
         .observe_test(ApplicationInput::RendererFailed {
             renderer_resource_id: 101,
@@ -4182,11 +4234,6 @@ fn renderer_observation() -> ApplicationRendererObservation {
         extent_px: [1280, 720],
         screen_extent_px: [1280, 720],
         xr_extent_px: Some([1280, 720]),
-        initial_quality: ApplicationRenderQuality {
-            scale: birdman_game_presentation::screen_render_scale::ScreenRenderScale::Full,
-            shadow: birdman_game_presentation::screen_render_auto::ScreenShadowMap::Full,
-            water_quality: WaterQuality::High,
-        },
     }
 }
 

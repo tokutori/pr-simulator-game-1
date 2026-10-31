@@ -77,7 +77,6 @@ export class ThreeApplicationRenderer {
   private next_source = 0;
   private disposed = false;
   private gpu_failure: { cause: Error; reported: boolean } | null = null;
-  private quality: ApplicationGraphicsTarget["quality"] = { scale: "100", shadow: "full", water_quality: "high" };
 
   constructor(private readonly canvas: HTMLCanvasElement, private readonly id: number,
     bytes: (id: number) => Uint8Array, private readonly notify: (input: ApplicationInput) => void,
@@ -111,7 +110,7 @@ export class ThreeApplicationRenderer {
     const size = this.renderer.getDrawingBufferSize(new Vector2());
     const unsupported = this.timer.availability();
     const layer = this.renderer.xr.isPresenting ? this.renderer.xr.getBaseLayer() : null;
-    return { resource_id: this.id, initial_quality: this.quality,
+    return { resource_id: this.id,
       extent_px: [size.x, size.y], screen_extent_px: [Math.round(window.innerWidth * window.devicePixelRatio), Math.round(window.innerHeight * window.devicePixelRatio)],
       xr_extent_px: layer == null ? null : "framebufferWidth" in layer
         ? [layer.framebufferWidth, layer.framebufferHeight] : [layer.textureWidth, layer.textureHeight],
@@ -386,10 +385,9 @@ export class ThreeApplicationRenderer {
       this.notify({ kind: "resources", request_id: request.request_id, observation: { kind: "failed", cause: errorMessage(cause) } });
       return;
     }
-    this.quality = target.quality;
     this.active = candidate;
     this.notify({ kind: "resources", request_id: request.request_id, observation: { kind: "committed", resource_id: request.resource_id,
-      actual: { applied: this.quality, extent_px: extent } } });
+      actual: { applied: target.quality, extent_px: extent } } });
   }
 
   private createResources(request: PrepareRequest): PreparedResources {

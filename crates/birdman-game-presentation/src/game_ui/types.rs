@@ -487,6 +487,8 @@ pub struct GameUiPlatformInput {
     pub flight_log_available: bool,
     /// Confirmed current render quality.
     pub water_quality: WaterQuality,
+    /// Acknowledged graphics quality is available for the current live renderer.
+    pub render_quality_confirmed: bool,
     /// Actual resource preparation, commitment and cleanup observation.
     pub water_quality_operation: GameUiWaterQualityOperation,
     /// Confirmed Screen selection, applied resources, and stable measurement state.
