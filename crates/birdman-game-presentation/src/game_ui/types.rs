@@ -32,6 +32,8 @@ pub struct GameUiState {
     pub pause_overlay: GameUiPauseOverlay,
     /// Replay presentation selection.
     pub replay_view: GameUiReplayView,
+    /// Shared live Screen camera selection; spatial displays keep the pilot mount.
+    pub flight_camera: GameUiFlightCamera,
     /// Shared replay camera selection; adapters only apply its geometry.
     pub replay_camera: GameUiReplayCamera,
 }
@@ -47,6 +49,7 @@ impl Default for GameUiState {
             pause_overlay: GameUiPauseOverlay::Menu,
             replay_view: GameUiReplayView::Cinematic,
             replay_camera: GameUiReplayCamera::Auto,
+            flight_camera: GameUiFlightCamera::Pilot,
         }
     }
 }
@@ -99,6 +102,34 @@ pub enum GameUiReplayView {
     Telemetry,
     /// Record plot and shared cursor.
     Analysis,
+}
+
+/// Screen flight camera selection retained with the shared UI settings.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum GameUiFlightCamera {
+    /// Pilot eye view.
+    Pilot,
+    /// External view following the aircraft.
+    Chase,
+}
+
+impl GameUiFlightCamera {
+    /// The other live Screen camera, used by both the button and C key.
+    pub const fn toggled(self) -> Self {
+        match self {
+            Self::Pilot => Self::Chase,
+            Self::Chase => Self::Pilot,
+        }
+    }
+    /// Shared menu label.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Pilot => "操縦席",
+            Self::Chase => "追従",
+        }
+    }
 }
 
 /// Replay camera candidates in their shared selection order.
@@ -281,6 +312,11 @@ pub enum GameUiAction {
     SetReplayView {
         /// Requested view.
         view: GameUiReplayView,
+    },
+    /// Selects the live Screen camera.
+    SetFlightCamera {
+        /// Requested live camera.
+        camera: GameUiFlightCamera,
     },
     /// Advances the common ordered camera selection.
     CycleReplayCamera {},

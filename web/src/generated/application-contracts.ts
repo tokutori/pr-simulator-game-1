@@ -1026,6 +1026,12 @@ export type GameUiAction = {
      */
     readonly view: GameUiReplayView;
 } | {
+    /**
+     * Requested live camera.
+     */
+    readonly camera: GameUiFlightCamera;
+    readonly kind: "set_flight_camera";
+} | {
     readonly kind: "cycle_replay_camera";
 } | {
     readonly kind: "seek_analysis";
@@ -1214,6 +1220,10 @@ export type GameUiPauseOverlay = "menu" | "settings" | "help";
  * Replay presentation selection.
  */
 export type GameUiReplayView = "cinematic" | "telemetry" | "analysis";
+/**
+ * Screen flight camera selection retained with the shared UI settings.
+ */
+export type GameUiFlightCamera = "pilot" | "chase";
 /**
  * Widget implementations must exhaustively handle each display primitive.
  */

@@ -8,7 +8,8 @@ use birdman_game_presentation::camera::{
     flight_relative_pose, registered_pilot_eye,
 };
 use birdman_game_presentation::game_ui::{
-    GameUiLayout, GameUiPresentationMode, GameUiReplayCamera, GameUiState, GameUiViewport,
+    GameUiFlightCamera, GameUiLayout, GameUiPresentationMode, GameUiReplayCamera, GameUiState,
+    GameUiViewport,
 };
 use birdman_game_presentation::render_pose::{
     FlightRenderPose, live_render_pose, prepared_render_pose,
@@ -98,13 +99,11 @@ pub(super) struct SceneOwner {
     rig: Option<XrCameraRig>,
     reference: Option<XrReferenceFrame>,
     look: [f64; 2],
-    chase: bool,
     water_world_from_surface: Option<Pose>,
 }
 
 impl SceneOwner {
-    pub(super) fn toggle_camera(&mut self) {
-        self.chase = !self.chase;
+    pub(super) fn reset_look(&mut self) {
         self.look = [0.0; 2];
     }
 
@@ -257,9 +256,11 @@ impl SceneOwner {
             self.resource = Some(display);
             self.origin = XrTrackingOrigin::default();
         }
-        let chase = replay.as_ref().map_or(self.chase, |view| {
-            view.camera() != GameUiReplayCamera::Pilot
-        });
+        let chase = replay.as_ref().map_or(
+            mode == GameUiPresentationMode::Screen
+                && context.ui.flight_camera == GameUiFlightCamera::Chase,
+            |view| view.camera() != GameUiReplayCamera::Pilot,
+        );
         let look = if mode == GameUiPresentationMode::Screen {
             self.look
         } else {

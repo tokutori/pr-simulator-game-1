@@ -1040,13 +1040,57 @@ fn admitted_flight_keys_reach_hud_and_clear_on_focus_loss() {
         );
     }
     let camera = runtime.observe_test(key("KeyC", true, false)).unwrap();
+    assert_eq!(
+        runtime.ui.flight_camera,
+        birdman_game_presentation::game_ui::GameUiFlightCamera::Chase
+    );
     assert!(hud_value(camera).contains("C●"));
     let released = runtime.observe_test(key("KeyC", false, false)).unwrap();
     assert!(hud_value(released).contains("C○"));
+    let view = runtime.retained.as_ref().unwrap().clone();
+    activate_action(
+        &mut runtime,
+        &view,
+        GameUiAction::SetFlightCamera {
+            camera: birdman_game_presentation::game_ui::GameUiFlightCamera::Pilot,
+        },
+    );
+    assert_eq!(
+        runtime.ui.flight_camera,
+        birdman_game_presentation::game_ui::GameUiFlightCamera::Pilot
+    );
     let paused = runtime.observe_test(key("KeyP", true, false)).unwrap();
     let value = hud_value(paused);
     assert!(value.contains("P●") && value.contains("↑○"));
     assert!(hud_value(runtime.observe_test(key("KeyP", false, false)).unwrap()).contains("P○"));
+    for overlay in [
+        birdman_game_presentation::game_ui::GameUiPauseOverlay::Menu,
+        birdman_game_presentation::game_ui::GameUiPauseOverlay::Settings,
+        birdman_game_presentation::game_ui::GameUiPauseOverlay::Help,
+    ] {
+        if overlay != birdman_game_presentation::game_ui::GameUiPauseOverlay::Menu {
+            let view = runtime.retained.as_ref().unwrap().clone();
+            activate_action(
+                &mut runtime,
+                &view,
+                GameUiAction::SetPauseOverlay { overlay },
+            );
+        }
+        let previous = runtime.ui.flight_camera;
+        runtime.observe_test(key("KeyC", true, false)).unwrap();
+        assert_eq!(runtime.ui.flight_camera, previous.toggled());
+        runtime.observe_test(key("KeyC", false, false)).unwrap();
+        if overlay != birdman_game_presentation::game_ui::GameUiPauseOverlay::Menu {
+            let view = runtime.retained.as_ref().unwrap().clone();
+            activate_action(
+                &mut runtime,
+                &view,
+                GameUiAction::SetPauseOverlay {
+                    overlay: birdman_game_presentation::game_ui::GameUiPauseOverlay::Menu,
+                },
+            );
+        }
+    }
     let resumed = runtime.observe_test(key("Escape", true, false)).unwrap();
     assert!(hud_value(resumed).contains("Esc●"));
     assert!(hud_value(runtime.observe_test(key("Escape", false, false)).unwrap()).contains("Esc○"));
