@@ -116,9 +116,91 @@ fn hud_node<'view>(hud: &'view GameUiHud, id: &str) -> &'view GameUiHudNode {
         .unwrap()
 }
 
+fn assert_touch_hud_lower_band(session: &GameSession<'static>, protected_cue: Option<&str>) {
+    let snapshot = session.snapshot();
+    for (width, height, font) in [
+        (1280.0, 720.0, 16.0),
+        (1920.0, 1080.0, 16.0),
+        (1920.0, 1080.0, 24.0),
+    ] {
+        let mut platform = platform();
+        platform.touch_available = true;
+        platform.viewport = GameUiViewport {
+            width,
+            height,
+            root_font_size: font,
+        };
+        let full = difficulty().with_information(InformationLevel::Full);
+        let state = GameUiState::default();
+        let view = game_ui_view(&state, &context(session, full, &platform)).unwrap();
+        let hud = view.hud.as_ref().unwrap();
+        let left = hud.layout.offset_px[0];
+        let bottom = hud.layout.offset_px[1];
+        let top = height - bottom - hud.layout.height_px;
+        let right = left + hud.layout.width_px;
+        assert!(
+            top >= height * 0.5,
+            "{width}x{height}@{font}: top={top}, height={}",
+            hud.layout.height_px
+        );
+        assert!(hud.layout.font_size_px >= 0.875 * font);
+        assert!(right <= width - view.layout.width_px);
+        let bounds = view
+            .panels
+            .iter()
+            .flat_map(|panel| &panel.controls)
+            .filter_map(|item| {
+                if let GameUiControlContent::FlightTouch { bounds, .. } = item.content {
+                    Some(bounds)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(bounds.len(), 2);
+        for region in bounds {
+            assert!(
+                right <= region.x
+                    || left >= region.x + region.width
+                    || height - bottom <= region.y
+                    || top >= region.y + region.height
+            );
+        }
+        if let Some(cue) = protected_cue {
+            assert!(
+                hud_node(hud, "hud-pilot-position")
+                    .content
+                    .value()
+                    .contains(cue)
+            );
+        }
+        platform.touch_available = false;
+        let baseline = game_ui_view(&state, &context(session, full, &platform))
+            .unwrap()
+            .hud
+            .unwrap();
+        let values = |hud: &GameUiHud| {
+            hud.groups
+                .iter()
+                .flat_map(|group| &group.nodes)
+                .map(|node| {
+                    (
+                        node.id.clone(),
+                        node.label.clone(),
+                        node.content.value().to_owned(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(values(hud), values(&baseline));
+    }
+    assert_eq!(session.snapshot(), snapshot);
+}
+
 #[test]
 fn bottom_hud_preserves_all_information_and_shared_nonoverlapping_rows() {
     let session = launched();
+    assert_touch_hud_lower_band(&session, None);
     let snapshot = session.snapshot();
     let mut expected_ids = None;
     for (width, height, font) in [
@@ -3825,9 +3907,17 @@ fn hud_uses_the_authoritative_telemetry_and_existing_information_cue_policy() {
             birdman_game_core::TailPilotPositionIntent::try_new(-1.0).unwrap(),
         ),
     );
+    let mut braking_layout_checked = false;
     for _ in 0..250 {
         stopped.advance_tail_flight_tick(command).unwrap();
         let body = stopped.snapshot().tail_flight_state().unwrap();
+        if !braking_layout_checked
+            && body.pilot_motion_limited()
+            && body.flight_state().pilot_velocity_mps() != 0.0
+        {
+            assert_touch_hud_lower_band(&stopped, Some("保護制動"));
+            braking_layout_checked = true;
+        }
         if body.pilot_motion_limited() && body.flight_state().pilot_velocity_mps() == 0.0 {
             break;
         }
@@ -3835,6 +3925,7 @@ fn hud_uses_the_authoritative_telemetry_and_existing_information_cue_policy() {
     let body = stopped.snapshot().tail_flight_state().unwrap();
     assert!(body.pilot_motion_limited());
     assert_eq!(body.flight_state().pilot_velocity_mps(), 0.0);
+    assert_touch_hud_lower_band(&stopped, Some("保護停止"));
     let protected = game_ui_view(
         &GameUiState::default(),
         &context(&stopped, difficulty(), &platform),

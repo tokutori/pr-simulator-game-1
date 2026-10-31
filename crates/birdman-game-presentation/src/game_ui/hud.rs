@@ -666,11 +666,10 @@ fn hud_layout(
     );
     let (left, bottom, width) = if super::touch::available(platform, phase) {
         let [(stick, _), (slider, _)] = super::touch::regions(platform, menu);
-        (
-            0.75 * font,
-            viewport.height - stick.y + 0.75 * font,
-            (slider.x - 1.5 * font).max(1.0).min(54.0 * font),
-        )
+        let gap = 0.75 * font;
+        let left = stick.x + stick.width + gap;
+        let right = (viewport.width - menu.width_px - gap).min(slider.x - gap);
+        (left, gap, (right - left).max(1.0).min(54.0 * font))
     } else if in_menu && menu.shell == GameUiShell::FlightBar {
         (
             if compact { 0.6 } else { 0.75 } * font,
