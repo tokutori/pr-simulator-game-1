@@ -104,7 +104,6 @@ pub enum DistanceScoreError {
     InvalidRecordedMetrics,
 }
 
-#[cfg(not(verus_only))]
 impl core::fmt::Display for DistanceScoreError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
@@ -117,7 +116,6 @@ impl core::fmt::Display for DistanceScoreError {
     }
 }
 
-#[cfg(not(verus_only))]
 impl core::error::Error for DistanceScoreError {}
 
 /// Measures endpoint displacement from the start datum to a terminal datum.

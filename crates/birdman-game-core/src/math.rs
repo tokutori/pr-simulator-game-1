@@ -75,7 +75,6 @@ pub enum MathError {
     NonPhysicalInertiaTensor,
 }
 
-#[cfg(not(verus_only))]
 impl core::fmt::Display for MathError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
@@ -95,7 +94,6 @@ impl core::fmt::Display for MathError {
     }
 }
 
-#[cfg(not(verus_only))]
 impl core::error::Error for MathError {}
 
 impl<F: Frame> Vector3<F> {

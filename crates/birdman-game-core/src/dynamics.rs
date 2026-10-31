@@ -838,7 +838,6 @@ pub enum LoadError {
     Aerodynamic(AerodynamicEvaluationError),
 }
 
-#[cfg(not(verus_only))]
 impl core::fmt::Display for LoadError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
@@ -851,7 +850,6 @@ impl core::fmt::Display for LoadError {
     }
 }
 
-#[cfg(not(verus_only))]
 impl core::error::Error for LoadError {
     fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
         match self {
@@ -916,7 +914,6 @@ pub enum DynamicsError {
     InvalidMathValue(MathError),
 }
 
-#[cfg(not(verus_only))]
 impl core::fmt::Display for DynamicsError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
@@ -949,7 +946,6 @@ impl core::fmt::Display for DynamicsError {
     }
 }
 
-#[cfg(not(verus_only))]
 impl core::error::Error for DynamicsError {
     fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
         match self {

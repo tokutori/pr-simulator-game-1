@@ -42,7 +42,6 @@ pub enum AeroError {
     Wind(WindError),
 }
 
-#[cfg(not(verus_only))]
 impl core::fmt::Display for AeroError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
@@ -86,7 +85,6 @@ impl core::fmt::Display for AeroError {
     }
 }
 
-#[cfg(not(verus_only))]
 impl core::error::Error for AeroError {
     fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
         match self {
@@ -123,7 +121,6 @@ pub enum AerodynamicEvaluationError {
     },
 }
 
-#[cfg(not(verus_only))]
 impl core::fmt::Display for AerodynamicEvaluationError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
@@ -133,7 +130,6 @@ impl core::fmt::Display for AerodynamicEvaluationError {
     }
 }
 
-#[cfg(not(verus_only))]
 impl core::error::Error for AerodynamicEvaluationError {
     fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
         match self {
@@ -167,7 +163,6 @@ pub enum HybridSurfaceRole {
     VerticalTail,
 }
 
-#[cfg(not(verus_only))]
 impl core::fmt::Display for HybridSurfaceRole {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
@@ -201,7 +196,6 @@ pub enum HybridSite {
     Aggregate,
 }
 
-#[cfg(not(verus_only))]
 impl core::fmt::Display for HybridSite {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
@@ -225,7 +219,6 @@ pub enum HybridFlowKind {
     Reference,
 }
 
-#[cfg(not(verus_only))]
 impl core::fmt::Display for HybridFlowKind {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
@@ -261,7 +254,6 @@ pub enum HybridLimit {
     LocalSpeed,
 }
 
-#[cfg(not(verus_only))]
 impl core::fmt::Display for HybridLimit {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
@@ -293,7 +285,6 @@ pub enum AerodynamicStage {
     Fourth,
 }
 
-#[cfg(not(verus_only))]
 impl core::fmt::Display for AerodynamicStage {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
@@ -315,7 +306,6 @@ pub struct HybridError {
     stage: Option<AerodynamicStage>,
 }
 
-#[cfg(not(verus_only))]
 impl core::fmt::Display for HybridError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "hybrid aerodynamic evaluation at {}", self.site)?;
@@ -329,7 +319,6 @@ impl core::fmt::Display for HybridError {
     }
 }
 
-#[cfg(not(verus_only))]
 impl core::error::Error for HybridError {
     fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
         Some(&self.cause)

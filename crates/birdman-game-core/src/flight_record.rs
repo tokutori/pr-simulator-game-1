@@ -192,7 +192,6 @@ pub enum FlightRecordQueryError {
     NonFiniteInterpolation,
 }
 
-#[cfg(not(verus_only))]
 impl core::fmt::Display for FlightRecordQueryError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
@@ -208,7 +207,6 @@ impl core::fmt::Display for FlightRecordQueryError {
     }
 }
 
-#[cfg(not(verus_only))]
 impl core::error::Error for FlightRecordQueryError {}
 
 /// Bounded flight samples with capacity reserved before simulation begins.

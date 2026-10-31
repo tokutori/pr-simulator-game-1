@@ -29,7 +29,6 @@ pub enum ContactError {
     Wind(crate::WindError),
 }
 
-#[cfg(not(verus_only))]
 impl core::fmt::Display for ContactError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
@@ -54,7 +53,6 @@ impl core::fmt::Display for ContactError {
     }
 }
 
-#[cfg(not(verus_only))]
 impl core::error::Error for ContactError {
     fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
         match self {
