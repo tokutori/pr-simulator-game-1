@@ -1025,7 +1025,7 @@ fn credits(menu: &mut Menu) {
 
 fn water_quality(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
     menu.automatic_sections();
-    use crate::screen_render_auto::ScreenRenderSelection;
+    use crate::screen_render_auto::{ScreenRenderAutoStatus, ScreenRenderSelection};
     let current = context.platform.water_quality;
     let retained = match context.platform.screen_render_scale.selection {
         ScreenRenderSelection::Manual { water_quality, .. } => water_quality,
@@ -1078,6 +1078,9 @@ fn water_quality(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
             !matches!(
                 context.platform.water_quality_operation,
                 GameUiWaterQualityOperation::Applying { .. }
+            ) && !matches!(
+                context.platform.screen_render_scale.status,
+                ScreenRenderAutoStatus::Applying { .. }
             ) && context.platform.renderer_failure.is_none(),
             "water-quality",
             GameUiControlContent::Button {

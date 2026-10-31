@@ -4089,6 +4089,63 @@ fn water_quality_operation_retains_applied_selection_and_original_failure() {
         assert_eq!(update_game_ui(&state, action, &context).is_ok(), enabled);
         assert_eq!(session.snapshot(), before);
     }
+    use crate::screen_render_auto::{ScreenRenderAutoStatus, ScreenShadowMap};
+    use crate::screen_render_scale::ScreenRenderScale;
+    for (status, busy) in [
+        (
+            ScreenRenderAutoStatus::Applying {
+                requested: ScreenRenderScale::Half,
+                shadow: ScreenShadowMap::Off,
+                water_quality: WaterQuality::High,
+            },
+            true,
+        ),
+        (
+            ScreenRenderAutoStatus::Failed {
+                cause: "shadow-prepare-cause".to_owned(),
+            },
+            false,
+        ),
+    ] {
+        platform.water_quality_operation = GameUiWaterQualityOperation::Idle {};
+        platform.screen_render_scale.status = status;
+        let context = context(&session, difficulty(), &platform);
+        let view = game_ui_view(&state, &context).unwrap();
+        let GameUiControlContent::Status { value: water, .. } =
+            &control(&view, "presentation-water-quality-status").content
+        else {
+            unreachable!()
+        };
+        assert!(!water.contains("失敗") && !water.contains("適用中"));
+        let GameUiControlContent::Status {
+            value: graphics, ..
+        } = &control(&view, "presentation-render-scale-status").content
+        else {
+            unreachable!()
+        };
+        if !busy {
+            assert!(graphics.contains("shadow-prepare-cause"));
+        }
+        for suffix in ["low", "medium", "high"] {
+            assert_eq!(
+                control(&view, &format!("presentation-water-quality-{suffix}")).enabled,
+                !busy
+            );
+        }
+        assert_eq!(
+            update_game_ui(
+                &state,
+                GameUiAction::Platform {
+                    command: GameUiPlatformCommand::SetWaterQuality {
+                        quality: WaterQuality::Low
+                    }
+                },
+                &context
+            )
+            .is_ok(),
+            !busy
+        );
+    }
     assert!(
         serde_json::from_str::<GameUiWaterQualityOperation>(r#"{"kind":"idle","requested":"low"}"#)
             .is_err()

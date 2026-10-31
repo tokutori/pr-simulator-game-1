@@ -312,15 +312,18 @@ impl GraphicsOwner {
     }
 
     pub(super) fn water_operation(&self) -> GameUiWaterQualityOperation {
-        self.policy
-            .as_ref()
-            .and_then(ScreenRenderAutoController::requested)
-            .map_or_else(
-                || self.water_operation.clone(),
-                |request| GameUiWaterQualityOperation::Applying {
+        let Some(policy) = &self.policy else {
+            return self.water_operation.clone();
+        };
+        match policy.requested() {
+            Some(request) if request.water_quality != policy.snapshot().water_quality => {
+                GameUiWaterQualityOperation::Applying {
                     requested: request.water_quality,
-                },
-            )
+                }
+            }
+            Some(_) => GameUiWaterQualityOperation::Idle {},
+            None => self.water_operation.clone(),
+        }
     }
 
     pub(super) fn select(
@@ -571,10 +574,15 @@ impl GraphicsOwner {
         {
             let cause = "描画資源を準備できない。".to_owned();
             let policy = self.policy.as_mut().unwrap();
+            let water_changed = request.water_quality != policy.snapshot().water_quality;
             policy.failed(request, cause.clone(), now)?;
-            self.water_operation = GameUiWaterQualityOperation::Failed {
-                requested: request.water_quality,
-                cause,
+            self.water_operation = if water_changed {
+                GameUiWaterQualityOperation::Failed {
+                    requested: request.water_quality,
+                    cause,
+                }
+            } else {
+                GameUiWaterQualityOperation::Idle {}
             };
             self.retained = policy.snapshot();
         }
@@ -831,6 +839,70 @@ mod tests {
             .observe(1, ApplicationGraphicsObservation::Disjoint, 2_000.0)
             .unwrap();
         assert!(owner.prepared);
+        for (index, (command, changes_water)) in [
+            (
+                GameUiPlatformCommand::SetScreenRenderScale {
+                    scale: ScreenRenderScale::Quarter,
+                },
+                false,
+            ),
+            (
+                GameUiPlatformCommand::SetShadowMap {
+                    shadow: ScreenShadowMap::Off,
+                },
+                false,
+            ),
+            (
+                GameUiPlatformCommand::SetWaterQuality {
+                    quality: WaterQuality::Medium,
+                },
+                true,
+            ),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let now = 2_000.0 + index as f64 / 10.0;
+            owner.select(&command, now).unwrap();
+            let request = owner.requested().unwrap();
+            assert_eq!(
+                request.water_quality != owner.snapshot().water_quality,
+                changes_water
+            );
+            assert_eq!(
+                matches!(
+                    owner.water_operation(),
+                    GameUiWaterQualityOperation::Applying { .. }
+                ),
+                changes_water
+            );
+            if !changes_water {
+                assert_eq!(
+                    owner.water_operation(),
+                    GameUiWaterQualityOperation::Idle {}
+                );
+            }
+            let target = owner.target(GameUiPresentationMode::Screen).unwrap();
+            owner.failed(target, Some(request), now).unwrap();
+            assert!(matches!(
+                owner.snapshot().status,
+                ScreenRenderAutoStatus::Failed { .. }
+            ));
+            assert_eq!(owner.snapshot().water_quality, WaterQuality::High);
+            assert_eq!(
+                matches!(
+                    owner.water_operation(),
+                    GameUiWaterQualityOperation::Failed { .. }
+                ),
+                changes_water
+            );
+            if !changes_water {
+                assert_eq!(
+                    owner.water_operation(),
+                    GameUiWaterQualityOperation::Idle {}
+                );
+            }
+        }
         owner
             .select(
                 &GameUiPlatformCommand::SetWaterQuality {
