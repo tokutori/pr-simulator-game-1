@@ -95,8 +95,6 @@ use birdman_game_app::flight_input::{
 use birdman_game_app::{HybridSessionPreparation, identity_for_selection};
 #[cfg(not(verus_only))]
 use birdman_game_core::{SessionPhase, SessionScenarioIdentity};
-#[cfg(not(verus_only))]
-use birdman_game_format::WaterQuality;
 
 #[cfg(not(verus_only))]
 use birdman_game_presentation::game_ui::{

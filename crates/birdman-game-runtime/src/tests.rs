@@ -1,5 +1,6 @@
 use super::*;
 use birdman_game_app::application::SessionCommand;
+use birdman_game_format::WaterQuality;
 use birdman_game_presentation::game_ui::{
     GameUiAnalysisChart, GameUiChartExtent, GameUiControlContent, GameUiControlInput,
     GameUiReplayCamera, GameUiReplayView, GameUiResultTab, GameUiViewport,

@@ -99,7 +99,7 @@ struct Candidate {
     sky_mesh: Handle<Mesh>,
 }
 
-#[derive(Resource)]
+#[derive(Resource, Default)]
 pub(crate) struct NativeGpu {
     manifest: Option<ApplicationGeometryAssets>,
     meshes: BTreeMap<u32, Vec<Handle<Mesh>>>,
@@ -114,26 +114,6 @@ pub(crate) struct NativeGpu {
     initial_failure: Option<String>,
     pub(crate) renderer_id: u32,
     pub(crate) revision: u64,
-}
-
-impl Default for NativeGpu {
-    fn default() -> Self {
-        Self {
-            manifest: None,
-            meshes: BTreeMap::new(),
-            dirty_meshes: Vec::new(),
-            water_meshes: BTreeMap::new(),
-            textures: BTreeMap::new(),
-            images: BTreeMap::new(),
-            candidates: BTreeMap::new(),
-            active: None,
-            main_camera: None,
-            query: None,
-            initial_failure: None,
-            renderer_id: 0,
-            revision: 0,
-        }
-    }
 }
 
 fn install_shadow_binding(app: &mut App) {

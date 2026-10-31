@@ -995,14 +995,14 @@ mod tests {
             xr_extent_px: None,
         };
         owner
-            .adopt(Some(&renderer), ScreenRenderScope::FlightSettings, 3_000.0)
+            .adopt(Some(&renderer), ScreenRenderScope::FlightSettings, 0.0)
             .unwrap();
         owner
             .select(
                 &GameUiPlatformCommand::SetScreenRenderScale {
                     scale: ScreenRenderScale::Half,
                 },
-                3_000.0,
+                0.0,
             )
             .unwrap();
         let initial_target = owner.target(GameUiPresentationMode::Screen).unwrap();
@@ -1014,14 +1014,14 @@ mod tests {
                     applied: initial_target.quality,
                     extent_px: initial_target.extent_px,
                 },
-                3_000.0,
+                0.0,
             )
             .unwrap();
         owner
             .policy
             .as_mut()
             .unwrap()
-            .select_auto(true, 3_000.0)
+            .select_auto(true, 0.0)
             .unwrap();
         owner.request_gpu_timing(true, 3_000.0).unwrap();
         owner.prepared(true, false, 3_000.0).unwrap();

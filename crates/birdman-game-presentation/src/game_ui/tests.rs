@@ -4455,7 +4455,7 @@ fn water_quality_operation_retains_applied_selection_and_original_failure() {
                         quality: WaterQuality::Low
                     }
                 },
-                &context
+                &inputs
             )
             .is_ok(),
             !busy
