@@ -195,7 +195,7 @@ export class BrowserApplication {
         const operation = request.request;
         const id = operation.kind === "release" || operation.kind === "stop" ? operation.resource_id
           : operation.kind === "start" ? operation.permission_resource_id : null;
-        const rendererId = drawing?.graphics.resource?.renderer_resource_id;
+        const rendererId = drawing?.graphics.renderer_resource_id;
         const renderer = id == null ? rendererId == null ? this.renderer : this.renderers.get(rendererId)
           : [...this.renderers.values()].find(candidate => candidate.ownsDisplay(id));
         if (renderer != null) renderer.display(operation);
