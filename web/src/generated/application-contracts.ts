@@ -2510,7 +2510,7 @@ export interface ApplicationCapabilities {
      */
     readonly stored_records_available: boolean;
     /**
-     * Platform has observed touch input support.
+     * Actual touch input occurred in this observation batch; the runtime retains this evidence.
      */
     readonly touch_available: boolean;
 }
