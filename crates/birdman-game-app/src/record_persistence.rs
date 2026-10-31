@@ -110,7 +110,7 @@ pub enum RecordWriteObservation {
     BestWritten,
     /// The platform's atomic transaction completed successfully.
     Committed,
-    /// The transaction aborted or an I/O operation failed.
+    /// The platform reported failure after the transaction ended or its cleanup completed.
     Failed {
         #[doc = "Original I/O failure."]
         cause: String,
@@ -186,14 +186,24 @@ impl RecordSaveTransaction {
         if matches!(self.state, State::Saved(_) | State::Failed(_)) {
             return Vec::new();
         }
+        if let RecordWriteObservation::Failed { cause } = observation {
+            self.state = State::Failed(cause);
+            return Vec::new();
+        }
         let result = self.advance(observation);
         match result {
             Ok(requests) => requests,
-            Err(cause) => {
-                self.state = State::Failed(cause);
-                vec![RecordWriteRequest::Abort]
-            }
+            Err(cause) => self.reject(cause),
         }
+    }
+
+    /// Rejects shared validation while the opened platform transaction still needs cleanup.
+    pub fn reject(&mut self, cause: String) -> Vec<RecordWriteRequest> {
+        if matches!(self.state, State::Saved(_) | State::Failed(_)) {
+            return Vec::new();
+        }
+        self.state = State::Failed(cause);
+        vec![RecordWriteRequest::Abort]
     }
 
     /// Returns a committed receipt, never an intermediate insertion result.
@@ -263,9 +273,6 @@ impl RecordSaveTransaction {
         &mut self,
         observation: RecordWriteObservation,
     ) -> Result<Vec<RecordWriteRequest>, String> {
-        if let RecordWriteObservation::Failed { cause } = observation {
-            return Err(cause);
-        }
         match (&mut self.state, observation) {
             (State::Index, RecordWriteObservation::Best { value }) => {
                 if value.is_null() {
@@ -446,7 +453,7 @@ pub enum RecordPreviewObservation {
     },
     /// The read transaction completed successfully.
     Committed,
-    /// The transaction or a request failed.
+    /// The platform reported failure after the read transaction ended or its cleanup completed.
     Failed {
         /// Original platform failure.
         cause: String,
@@ -496,6 +503,10 @@ impl RecordPreviewTransaction {
         if matches!(self.state, PreviewState::Ready | PreviewState::Failed(_)) {
             return Vec::new();
         }
+        if let RecordPreviewObservation::Failed { cause } = observation {
+            self.state = PreviewState::Failed(cause);
+            return Vec::new();
+        }
         match self.advance(observation) {
             Ok(requests) => requests,
             Err(cause) => {
@@ -522,9 +533,6 @@ impl RecordPreviewTransaction {
         &mut self,
         observation: RecordPreviewObservation,
     ) -> Result<Vec<RecordPreviewRequest>, String> {
-        if let RecordPreviewObservation::Failed { cause } = observation {
-            return Err(cause);
-        }
         match (&self.state, observation) {
             (PreviewState::Rows, RecordPreviewObservation::Rows { rows }) => {
                 if rows.len() > self.limit {

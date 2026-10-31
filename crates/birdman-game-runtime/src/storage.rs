@@ -326,9 +326,9 @@ impl StorageOwner {
                 .and_then(|date| date.format(&Rfc3339).ok());
         let requests = match timestamp {
             Some(timestamp) => job.transaction.start(timestamp),
-            None => job.transaction.observe(RecordWriteObservation::Failed {
-                cause: "保存日時を取得できない。".to_owned(),
-            }),
+            None => job
+                .transaction
+                .reject("保存日時を取得できない。".to_owned()),
         };
         vec![ApplicationRequest::RecordWrite {
             request_id,

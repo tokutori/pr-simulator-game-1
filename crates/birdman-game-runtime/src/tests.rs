@@ -1522,11 +1522,12 @@ fn saved_result_owns_transaction_and_scopes_notifications_to_its_record() {
     use birdman_game_app::record_persistence::{
         RecordWriteObservation as Seen, RecordWriteRequest as Io,
     };
-    for (failure, delayed) in [
-        (None, false),
-        (Some("record transaction aborted"), false),
-        (None, true),
-        (Some("record transaction aborted"), true),
+    for (failure, delayed, invalid_timestamp) in [
+        (None, false, false),
+        (Some("record transaction aborted"), false, false),
+        (None, true, false),
+        (Some("record transaction aborted"), true, false),
+        (None, false, true),
     ] {
         let application = finalized_application();
         let platform = ApplicationPlatformObservation {
@@ -1567,9 +1568,40 @@ fn saved_result_owns_transaction_and_scopes_notifications_to_its_record() {
         let opened = runtime
             .observe_test(ApplicationInput::RecordSaveOpened {
                 request_id,
-                unix_milliseconds: 0,
+                unix_milliseconds: if invalid_timestamp { i64::MAX } else { 0 },
             })
             .unwrap();
+        if invalid_timestamp {
+            assert!(
+                matches!(opened.requests.as_slice(), [ApplicationRequest::RecordWrite { requests, .. }] if matches!(requests.as_slice(), [Io::Abort]))
+            );
+            let terminal = runtime
+                .observe_test(ApplicationInput::RecordSaveObserved {
+                    request_id,
+                    observation: Seen::Failed {
+                        cause: "platform abort complete".into(),
+                    },
+                })
+                .unwrap();
+            assert!(terminal.requests.is_empty());
+            assert_eq!(
+                terminal.diagnostic.as_deref(),
+                Some("保存日時を取得できない。")
+            );
+            assert!(
+                runtime
+                    .observe_test(ApplicationInput::RecordSaveObserved {
+                        request_id,
+                        observation: Seen::Failed {
+                            cause: "duplicate terminal".into()
+                        }
+                    })
+                    .unwrap()
+                    .requests
+                    .is_empty()
+            );
+            continue;
+        }
         assert!(
             matches!(opened.requests.as_slice(), [ApplicationRequest::RecordWrite { requests, .. }] if matches!(requests.as_slice(), [Io::InsertRecord { saved_at, .. }] if saved_at == "1970-01-01T00:00:00Z"))
         );
@@ -1625,7 +1657,14 @@ fn saved_result_owns_transaction_and_scopes_notifications_to_its_record() {
                         .unwrap(),
                 );
             }
-            completed.unwrap()
+            let completed = completed.unwrap();
+            assert!(
+                !completed
+                    .requests
+                    .iter()
+                    .any(|request| matches!(request, ApplicationRequest::RecordWrite { .. }))
+            );
+            completed
         };
         let displayed = |view: &GameUiView, notice: &str| {
             view.panels.iter().flat_map(|panel| &panel.controls).any(|control| {
@@ -1790,6 +1829,7 @@ fn stored_record_preview_load_retry_and_original_download_share_owner() {
             },
         })
         .unwrap();
+    assert!(failed.requests.is_empty());
     assert_eq!(failed.diagnostic.as_deref(), Some("list I/O failure"));
     assert!(runtime.platform.stored_records_retry_available);
     let failed = structure(failed);

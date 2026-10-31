@@ -275,6 +275,14 @@ mod tests {
         assert_eq!(receipt.id, 5);
         assert!(!receipt.personal_best);
         assert!(save.observe(Seen::Committed).is_empty());
+        assert!(
+            save.observe(Seen::Failed {
+                cause: "late abort".into()
+            })
+            .is_empty()
+        );
+        assert_eq!(save.receipt(), Some(receipt));
+        assert!(save.failure().is_none());
     }
 
     #[test]
@@ -327,6 +335,54 @@ mod tests {
             Some(2)
         );
         viewer.seek_playback(0.0).unwrap();
+        assert!(
+            preview
+                .observe(Seen::Failed {
+                    cause: "late abort".into()
+                })
+                .is_empty()
+        );
+        assert_eq!(preview.items().unwrap().len(), 2);
+        assert!(preview.failure().is_none());
+        let mut preview = RecordPreviewTransaction::new(3);
+        assert!(
+            preview
+                .observe(Seen::Failed {
+                    cause: "read aborted".into()
+                })
+                .is_empty()
+        );
+        assert!(
+            preview
+                .observe(Seen::Failed {
+                    cause: "duplicate abort".into()
+                })
+                .is_empty()
+        );
+        assert_eq!(preview.failure(), Some("read aborted"));
+        assert!(preview.items().is_none());
+        let mut preview = RecordPreviewTransaction::new(0);
+        assert!(matches!(
+            preview
+                .observe(Seen::Rows {
+                    rows: vec![RecordPreviewRow {
+                        key: json!(1),
+                        metadata: json!(null),
+                        record: json!(null),
+                    }]
+                })
+                .as_slice(),
+            [Io::Abort]
+        ));
+        let cause = preview.failure().unwrap().to_owned();
+        assert!(
+            preview
+                .observe(Seen::Failed {
+                    cause: "cleanup aborted".into()
+                })
+                .is_empty()
+        );
+        assert_eq!(preview.failure(), Some(cause.as_str()));
     }
 
     #[test]
@@ -354,6 +410,14 @@ mod tests {
             [Io::Abort]
         ));
         assert!(save.failure().is_some());
+        let validation_cause = save.failure().unwrap().to_owned();
+        assert!(
+            save.observe(Seen::Failed {
+                cause: "cleanup aborted".into()
+            })
+            .is_empty()
+        );
+        assert_eq!(save.failure(), Some(validation_cause.as_str()));
         assert!(save.observe(Seen::Committed).is_empty());
         assert!(save.receipt().is_none());
         let mut save = RecordSaveTransaction::new(&document).unwrap();
@@ -365,13 +429,18 @@ mod tests {
         });
         save.observe(Seen::Inserted { key: json!(1) });
         save.observe(Seen::MetadataWritten);
-        assert!(matches!(
+        assert!(
             save.observe(Seen::Failed {
                 cause: "quota".to_owned()
             })
-            .as_slice(),
-            [Io::Abort]
-        ));
+            .is_empty()
+        );
+        assert!(
+            save.observe(Seen::Failed {
+                cause: "duplicate abort".into()
+            })
+            .is_empty()
+        );
         assert_eq!(save.failure(), Some("quota"));
         save.observe(Seen::Committed);
         assert!(save.receipt().is_none());
