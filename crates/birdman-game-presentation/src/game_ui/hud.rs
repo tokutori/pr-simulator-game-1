@@ -69,7 +69,7 @@ pub(super) fn game_ui_hud(
                     telemetry,
                 },
                 distance,
-                Some(state.pilot_position_target().position_m()),
+                Some(state.pilot_position_demand().position_m()),
                 tail_incidence_rates(context.session, state),
             )
         }
