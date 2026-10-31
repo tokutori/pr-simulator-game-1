@@ -393,10 +393,12 @@ impl FlightInputState {
                 position = TailPilotPositionCommand::Set(
                     TailPilotPositionIntent::try_new(value).expect("normalized finite touch axis"),
                 );
-            } else if (previous <= held_target && held_target <= value)
-                || (value <= held_target && held_target <= previous)
+            } else if ((previous <= held_target && held_target <= value)
+                || (value <= held_target && held_target <= previous))
+                && (previous != value || self.pilot_rearm_pending == Some(PilotRearmSource::Touch))
             {
                 touch.pilot_picked_up = true;
+                self.pilot_rearm_pending = Some(PilotRearmSource::Touch);
             }
             touch.previous_pilot = Some(value);
         }
@@ -574,6 +576,7 @@ impl FlightInputState {
             self.rearm_gamepad();
             if let Some(touch) = &mut self.touch {
                 touch.pilot_picked_up = false;
+                touch.previous_pilot = touch.pilot;
             }
         }
         self.pilot_stop_observed = stopped;
