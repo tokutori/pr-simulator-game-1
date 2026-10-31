@@ -101,10 +101,12 @@ rudder要求はこのalpha policyで変更しない。
 - 反対側の身体目標は変更せず、固定normalized capを追加しない。
 
 - effective targetへの移動は身体の加速度policyとRK4で行い、身体stateを直接変更しない。
+- tick stateはguard投影前の要求位置と、投影後のeffective targetを別々に保持する。
+- 次tickの解決は保持した要求位置を基準とし、guardはeffective targetだけを書き換える。
 - `Set`の元normalized要求、`Hold`、manual intent、desired rate、manual/FBW/mixed要求をrecordに保存する。
 - 実stateと`resolved_pilot_position_target_m`は採用したeffective targetを保持する。
-- `Hold`は前tickのeffective targetを名目要求とし、作動中の保護はさらにtrim側へ絞り得る。
-- 安全域へ戻っても、過去の未適用targetを自動再開する状態を追加しない。
+- `Hold`は保持した要求位置を名目要求とし、作動中の保護は毎tickその要求をtrim側へ投影する。
+- guardが緩むと、保持した要求位置へeffective targetが戻る。
 
 - previewはalpha変化をqから近似する。
 - 空間風・flight-pathの連成、独立したyaw域、任意の将来入力に対する安全は保証しない。
@@ -176,10 +178,10 @@ $m_p=0$、身体静止、無外力時の全運動量・角運動量、一般3次
 
 ## 身体の目標位置と停止policy
 
-- `TailPilotPositionCommand`は新しいnormalized inputの`Set`と、前tick targetを使う`Hold`を排他的に表す。
+- `TailPilotPositionCommand`は新しいnormalized inputの`Set`と、前tickの保持要求を使う`Hold`を排他的に表す。
 - `TailPilotPositionMapping`は[-1,0,1]を[-0.4,trim,0.4] mへ区分線型に写像し、出力を±0.4 mへ制限する。
 - 新しいflightの保持targetはtrim、中立inputもtrimとする。
-- 欠損・切断の`Hold`は保持中の目標を名目要求とする。
+- 欠損・切断の`Hold`は保持中の要求位置を名目要求とする。
 - 速度・加速度・移動範囲は身体policyが検証し、位置の瞬間的な変更を禁止する。
 - 公開モデルの最大速度0.3 m/s・最大加速度0.8 m/s²と機体値は[Playable仕様](flight-dynamics.md#公開playableモデル)に従う。
 
@@ -191,6 +193,9 @@ v_t=\operatorname{sgn}(x_t-x)\min\left(v_{max},\sqrt{2Ad}\right)
 
 - 要求加速度は $(v_t-\dot x)/h$ を $[-A,A]$ へ制限する。
 - 目標方向の停止位置が目標へ到達している場合は最大制動を要求する。
+- 目標方向へ運動中は、1 tick後の移動量と終端速度の標本化停止距離（次節の $S_h$）の和が残距離と一致する加速度を二分で求め、要求する。
+- 停止多様体へ乗った身体は制動証明の系列により目標で正確に静止し、到達時の超過と速度反転を生じない。
+- 最大制動でも多様体を超える状態では最大制動を要求し、最大加速でも多様体へ届かない状態では停止曲線速度へ追従する。
 - 目標誤差と現在の連続停止距離がともに $Ah^2/2$ 以下なら、近傍の要求終端速度を $w=(x_t-x)/h-\dot x/2$ とする。
 - 次tickに $-w/h$ を適用すれば目標で静止する2 tickの運動学から得られる。
 - この要求も速度・加速度上限と安全検査を通す。
