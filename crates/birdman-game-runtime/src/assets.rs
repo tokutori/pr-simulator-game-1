@@ -122,7 +122,7 @@ pub enum ApplicationAssetError {
     /// Original registered scene preparation failure.
     ScenePreparation(birdman_game_scene::prepared_scene::ScenePreparationError),
     /// Original rejection of the physical wing-deformation factor.
-    FrameDeformation(birdman_game_core::ContactError),
+    FrameDeformation(birdman_game_core::MathError),
     /// Original normal or attribute projection failure, with its mesh context when known.
     MeshProjection {
         /// Mesh name from the accepted descriptor, when available.

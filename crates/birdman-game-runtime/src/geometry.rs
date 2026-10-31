@@ -292,7 +292,11 @@ impl GeometryOwner {
             .frame(
                 WingBendingFactor::try_new(0.0).map_err(ApplicationAssetError::FrameDeformation)?,
             )
-            .map_err(ApplicationAssetError::ScenePreparation)?;
+            .map_err(|cause| {
+                ApplicationAssetError::ScenePreparation(
+                    birdman_game_scene::prepared_scene::ScenePreparationError::Structure(cause),
+                )
+            })?;
         let mut owner = Self {
             tail_pivots: std::array::from_fn(|index| {
                 let [x, y, z] = source.tails()[index].origin;
@@ -820,7 +824,11 @@ impl GeometryOwner {
                     WingBendingFactor::try_new(factor)
                         .map_err(ApplicationAssetError::FrameDeformation)?,
                 )
-                .map_err(ApplicationAssetError::ScenePreparation)?;
+                .map_err(|cause| {
+                    ApplicationAssetError::ScenePreparation(
+                        birdman_game_scene::prepared_scene::ScenePreparationError::Structure(cause),
+                    )
+                })?;
             if changed || !self.published {
                 self.published = false;
                 for mesh in &mut self.dynamic {

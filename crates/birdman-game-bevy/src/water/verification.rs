@@ -322,7 +322,7 @@ fn setup(
                             if *remaining == 0 { verification.state = ProbeState::Complete; }
                         }
                     }
-                    Err(cause) => verification.state = ProbeState::Failed(format!("Production water shader probe {label}/{output:?}: {}", birdman_game_app::technical_error_text(&cause))),
+                    Err(cause) => verification.state = ProbeState::Failed(format!("Production water shader probe {label}/{output:?}: {cause}")),
                 }
                 commands.entity(event.entity).despawn();
                 commands.entity(camera_entity).despawn();
