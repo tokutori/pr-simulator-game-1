@@ -1332,9 +1332,12 @@ fn admitted_flight_keys_reach_hud_and_clear_on_focus_loss() {
     assert!(hud_value(runtime.observe_test(key("ArrowUp", true, false)).unwrap()).contains("↑●"));
     runtime.observe_test(key("KeyC", true, false)).unwrap();
     assert!(runtime.application.accepted_flight_keys()[6]);
-    runtime
-        .display
-        .request(GameUiPresentationMode::PhoneVr, 99_999);
+    assert!(matches!(
+        runtime
+            .display
+            .request(GameUiPresentationMode::PhoneVr, 99_999),
+        display::DisplayRequestOutcome::Accepted(_)
+    ));
     runtime.observe_test(key("KeyC", false, false)).unwrap();
     assert!(!runtime.application.accepted_flight_keys()[6]);
     runtime
@@ -3053,14 +3056,28 @@ fn hmd_frame_and_focus_use_the_confirmed_display_resource_and_shared_viewer_capt
 #[test]
 fn display_completion_retains_owned_resources_and_reports_no_active_mode_after_stopping() {
     use GameUiPresentationMode::{Hmd, Screen};
+    use display::DisplayRequestOutcome;
     let mut display = display::DisplayWorkflow::new(Screen);
+    let ready = display.state().clone();
+    assert_eq!(
+        display.request(Screen, 0),
+        DisplayRequestOutcome::AlreadyActive
+    );
+    assert_eq!(display.state(), &ready);
+    assert_eq!(display.active_resource(), None);
     assert!(matches!(
-        display.request(Hmd, 1).as_slice(),
-        [DisplayRequest::Permission {
+        display.request(Hmd, 1),
+        DisplayRequestOutcome::Accepted(DisplayRequest::Permission {
             request_id: 1,
             mode: Hmd
-        }]
+        })
     ));
+    let pending = display.state().clone();
+    for target in [Screen, Hmd] {
+        assert_eq!(display.request(target, 99), DisplayRequestOutcome::Busy);
+        assert_eq!(display.state(), &pending);
+        assert_eq!(display.active_resource(), None);
+    }
     assert!(matches!(
         display
             .complete(
@@ -3084,6 +3101,10 @@ fn display_completion_retains_owned_resources_and_reports_no_active_mode_after_s
         }]
     ));
     assert_eq!(display.state().active_mode(), None);
+    let starting = display.state().clone();
+    assert_eq!(display.request(Screen, 99), DisplayRequestOutcome::Busy);
+    assert_eq!(display.state(), &starting);
+    assert_eq!(display.active_resource(), None);
     assert!(
         display
             .complete(3, DisplayCompletion::Started { resource_id: 10 }, 4)
@@ -3096,7 +3117,25 @@ fn display_completion_retains_owned_resources_and_reports_no_active_mode_after_s
             .complete(3, DisplayCompletion::Started { resource_id: 10 }, 5)
             .is_empty()
     );
-    let _stop = display.request(Screen, 6);
+    let ready = display.state().clone();
+    assert_eq!(
+        display.request(Hmd, 5),
+        DisplayRequestOutcome::AlreadyActive
+    );
+    assert_eq!(display.state(), &ready);
+    assert_eq!(display.active_resource(), Some(10));
+    assert!(matches!(
+        display.request(Screen, 6),
+        DisplayRequestOutcome::Accepted(DisplayRequest::Stop {
+            request_id: 6,
+            resource_id: Some(10),
+            ..
+        })
+    ));
+    let stopping = display.state().clone();
+    assert_eq!(display.request(Hmd, 99), DisplayRequestOutcome::Busy);
+    assert_eq!(display.state(), &stopping);
+    assert_eq!(display.active_resource(), Some(10));
     let _start = display.complete(6, DisplayCompletion::Stopped, 7);
     assert!(
         display
@@ -3116,7 +3155,10 @@ fn display_completion_retains_owned_resources_and_reports_no_active_mode_after_s
             .as_slice(),
         [DisplayRequest::Release { resource_id: 99 }]
     ));
-    display.request(Hmd, 10);
+    assert!(matches!(
+        display.request(Hmd, 10),
+        DisplayRequestOutcome::Accepted(_)
+    ));
     display.complete(
         10,
         DisplayCompletion::PermissionGranted {
@@ -3164,6 +3206,22 @@ fn display_completion_retains_owned_resources_and_reports_no_active_mode_after_s
         command: GameUiPlatformCommand::SetPresentation { mode: Hmd },
     };
     let pending = activate_action(&mut runtime, &title, action.clone());
+    let transition = runtime.display.state().clone();
+    let active_resource = runtime.display.active_resource();
+    let mut no_requests = Vec::new();
+    let pending_revision = runtime.retained.as_ref().unwrap().view_revision;
+    assert!(matches!(
+        runtime.apply_action(pending_revision, action.clone(), &mut no_requests),
+        Err(ApplicationRuntimeError::Ui(GameUiError::ActionUnavailable))
+    ));
+    let notification = runtime.platform.notification.clone();
+    runtime
+        .recover_screen("VRの表示を切り替えている。", &mut no_requests)
+        .unwrap();
+    assert!(no_requests.is_empty());
+    assert_eq!(runtime.display.state(), &transition);
+    assert_eq!(runtime.display.active_resource(), active_resource);
+    runtime.platform.notification = notification;
     let request_id = pending
         .requests
         .iter()

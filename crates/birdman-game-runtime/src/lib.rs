@@ -1519,12 +1519,17 @@ impl ApplicationRuntime {
                     command: GameUiPlatformCommand::SetPresentation { mode },
                 } => {
                     let request_id = self.allocate_request()?;
-                    requests.extend(
-                        self.display
-                            .request(mode, request_id)
-                            .into_iter()
-                            .map(|request| ApplicationRequest::Display { request }),
-                    );
+                    match self.display.request(mode, request_id) {
+                        display::DisplayRequestOutcome::Accepted(request) => {
+                            requests.push(ApplicationRequest::Display { request })
+                        }
+                        display::DisplayRequestOutcome::AlreadyActive => {}
+                        display::DisplayRequestOutcome::Busy => {
+                            return Err(ApplicationRuntimeError::Ui(
+                                GameUiError::ActionUnavailable,
+                            ));
+                        }
+                    }
                 }
                 GameUiEffect::Platform {
                     command: GameUiPlatformCommand::RecenterPhoneTracking {},
@@ -1621,12 +1626,18 @@ impl ApplicationRuntime {
         self.platform.notification = message.to_owned();
         if !self.display.state().pending() {
             let request_id = self.allocate_request()?;
-            requests.extend(
-                self.display
-                    .request(GameUiPresentationMode::Screen, request_id)
-                    .into_iter()
-                    .map(|request| ApplicationRequest::Display { request }),
-            );
+            match self
+                .display
+                .request(GameUiPresentationMode::Screen, request_id)
+            {
+                display::DisplayRequestOutcome::Accepted(request) => {
+                    requests.push(ApplicationRequest::Display { request })
+                }
+                display::DisplayRequestOutcome::AlreadyActive => {}
+                display::DisplayRequestOutcome::Busy => {
+                    return Err(ApplicationRuntimeError::Ui(GameUiError::ActionUnavailable));
+                }
+            }
         }
         Ok(())
     }
