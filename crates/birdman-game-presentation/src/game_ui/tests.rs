@@ -2884,6 +2884,18 @@ fn renderer_failure_preserves_last_valid_hud_and_exposes_reload_across_scenes() 
             assert!(matches!(&control(&view, "game-renderer-stopped").content,
                 GameUiControlContent::Status { value, .. } if value == "renderer submission failed"));
             assert!(control(&view, "game-renderer-reload").enabled);
+            if view.layout.shell == GameUiShell::FlightBar
+                && matches!(
+                    before.phase(),
+                    SessionPhase::FlightRunning | SessionPhase::FlightPaused { .. }
+                )
+            {
+                assert_eq!(
+                    view.layout.maximum_height_px,
+                    platform.viewport.height - 2.0 * platform.viewport.root_font_size
+                );
+                assert!(view.layout.scroll_y);
+            }
             let update = update_game_ui(
                 state,
                 GameUiAction::ControlInput {
