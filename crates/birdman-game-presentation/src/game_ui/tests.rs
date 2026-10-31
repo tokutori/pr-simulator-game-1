@@ -3892,6 +3892,69 @@ fn hud_uses_the_authoritative_telemetry_and_existing_information_cue_policy() {
         hud_node(&paused, "hud-tail-incidence-rate").content.value(),
         rates
     );
+    let assert_pickup_indicator = |session: &GameSession<'static>, expected| {
+        let mut touch_platform = platform.clone();
+        touch_platform.touch_available = true;
+        let context = context(session, difficulty(), &touch_platform);
+        let view = game_ui_view(&GameUiState::default(), &context).unwrap();
+        let GameUiControlContent::FlightTouch {
+            control: kind,
+            bounds,
+            position,
+            radius,
+            ..
+        } = control(&view, "game-flight-pilot-slider").content
+        else {
+            panic!("missing pilot slider")
+        };
+        let observed = super::touch::flight_touch_axes(
+            kind,
+            [bounds.x + position[0], bounds.y + position[1]],
+            [0.0; 2],
+            bounds,
+            radius,
+        )
+        .unwrap()[0];
+        let normalized = session
+            .tail_pilot_position_mapping()
+            .unwrap()
+            .normalized_target(expected)
+            .unwrap()
+            .value();
+        assert!((observed - normalized).abs() < 1e-12);
+        let frame =
+            game_ui_frame(&GameUiState::default(), &context, &view, view.view_revision).unwrap();
+        assert_eq!(
+            frame
+                .flight_touch
+                .iter()
+                .find(|item| item.id == "game-flight-pilot-slider")
+                .unwrap()
+                .position,
+            position
+        );
+    };
+    moving.resume().unwrap();
+    moving
+        .advance_tail_flight_tick(TailFlightTickInput::new(
+            TailPilotIntent::try_new(0.0, 0.0).unwrap(),
+            TailRateTarget::try_new(0.0, 0.0).unwrap(),
+            TailPilotPositionCommand::Set(
+                birdman_game_core::TailPilotPositionIntent::try_new(-0.5).unwrap(),
+            ),
+        ))
+        .unwrap();
+    let reversing = moving.snapshot().tail_flight_state().unwrap();
+    assert!(!reversing.pilot_motion_limited());
+    assert_ne!(
+        reversing.pilot_position_target(),
+        reversing.pilot_position_demand()
+    );
+    assert_eq!(
+        birdman_game_app::flight_input::pilot_position_pickup_target(reversing),
+        reversing.pilot_position_demand()
+    );
+    assert_pickup_indicator(&moving, reversing.pilot_position_demand());
     let mut stopped = GameSession::new();
     stopped.open_setup().unwrap();
     prepare_manual_flight(&mut stopped, WeatherClass::Typical, 300, 42).unwrap();
@@ -3926,6 +3989,11 @@ fn hud_uses_the_authoritative_telemetry_and_existing_information_cue_policy() {
     assert!(body.pilot_motion_limited());
     assert_eq!(body.flight_state().pilot_velocity_mps(), 0.0);
     assert_touch_hud_lower_band(&stopped, Some("保護停止"));
+    assert_eq!(
+        birdman_game_app::flight_input::pilot_position_pickup_target(body),
+        body.pilot_stopping_target().unwrap()
+    );
+    assert_pickup_indicator(&stopped, body.pilot_stopping_target().unwrap());
     let protected = game_ui_view(
         &GameUiState::default(),
         &context(&stopped, difficulty(), &platform),

@@ -326,6 +326,27 @@ fn activation_and_resume_accept_release_then_fresh_press_instead_of_held_repeats
     );
     assert!(input.observe_touch(touch(FlightTouchPhase::Release, 0.0)));
     assert!(!input.observe_touch(touch(FlightTouchPhase::Change, 0.0)));
+    // Acquiring the displayed held demand admits even a small reverse movement.
+    let held = -0.5;
+    assert!(input.observe_touch(FlightTouchObservation {
+        generation: 2,
+        control: FlightTouchControl::PilotSlider,
+        phase: FlightTouchPhase::Acquire,
+        axes: [held, 0.0],
+    }));
+    assert_eq!(
+        tick(&mut input, &[], held)
+            .unwrap()
+            .pilot_position_command(),
+        TailPilotPositionCommand::Hold
+    );
+    assert!(input.observe_touch(FlightTouchObservation {
+        generation: 2,
+        control: FlightTouchControl::PilotSlider,
+        phase: FlightTouchPhase::Change,
+        axes: [held + 0.01, 0.0],
+    }));
+    assert_eq!(set_value(tick(&mut input, &[], held).unwrap()), held + 0.01);
 }
 
 #[test]

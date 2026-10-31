@@ -137,7 +137,7 @@ impl ApplicationSession {
                     .filter(|_| previous.pilot_motion_limited());
                 input.observe_pilot_stop(stop_target.is_some());
                 let held = mapping
-                    .normalized_target(stop_target.unwrap_or(previous.pilot_position_demand()))
+                    .normalized_target(crate::flight_input::pilot_position_pickup_target(previous))
                     .map_err(FlightFrameError::PilotPosition)?;
                 let prepared = prepared.as_mut().ok_or(FlightFrameError::Session(
                     GameSessionError::InvalidTransition,

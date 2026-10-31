@@ -131,7 +131,7 @@ fn held_target(context: &GameUiContext<'_, '_>) -> Result<f64, GameUiError> {
         .tail_pilot_position_mapping()
         .ok_or_else(invalid)?;
     mapping
-        .normalized_target(state.pilot_position_target())
+        .normalized_target(birdman_game_app::flight_input::pilot_position_pickup_target(state))
         .map(|value| value.value())
         .map_err(|cause| {
             GameUiError::Session(GameSessionError::TailTick(TailFlightTickError::Dynamics(

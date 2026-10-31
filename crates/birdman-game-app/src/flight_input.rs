@@ -9,6 +9,17 @@ use serde::{Deserialize, Serialize};
 mod settings;
 pub use settings::{KeyboardControlSettings, KeyboardResponseCurve};
 
+/// Physical target used to acquire an absolute input device without changing held demand.
+/// A certified protection stop is the pickup point while protection remains latched.
+pub fn pilot_position_pickup_target(
+    state: birdman_game_core::TailFlightTickState,
+) -> birdman_game_core::PilotPositionTarget {
+    state
+        .pilot_stopping_target()
+        .filter(|_| state.pilot_motion_limited())
+        .unwrap_or(state.pilot_position_demand())
+}
+
 /// Inclusive neutral band for the shared standard-gamepad axes.
 const GAMEPAD_DEAD_ZONE: f64 = 0.08;
 
@@ -327,7 +338,7 @@ impl FlightInputState {
                 if touch.pilot.is_some() {
                     return false;
                 }
-                let value = normalized_axis(sample.axes[0]);
+                let value = sample.axes[0].clamp(-1.0, 1.0);
                 touch.pilot = Some(value);
                 touch.previous_pilot = Some(value);
                 touch.pilot_picked_up = false;
@@ -337,7 +348,7 @@ impl FlightInputState {
                 let Some(previous) = touch.pilot else {
                     return false;
                 };
-                let value = normalized_axis(sample.axes[0]);
+                let value = sample.axes[0].clamp(-1.0, 1.0);
                 if pilot_direction(value) != 0
                     && pilot_direction(value) != pilot_direction(previous)
                 {
