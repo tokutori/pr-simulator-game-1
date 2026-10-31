@@ -124,6 +124,16 @@ fn chart_measurement_converges_and_raw_pointer_scrubs_only_its_admitted_range() 
         .observe_test(pointer(revision, ApplicationPointerPhase::Down, right, 1))
         .unwrap();
     assert_eq!(runtime.ui.analysis_time_seconds, plot.x_maximum);
+    // Native pointer IDs are scoped by kind: another device cannot move or retire this lease.
+    for phase in [ApplicationPointerPhase::Move, ApplicationPointerPhase::Up] {
+        let mut other_kind = pointer(revision, phase, left, 1);
+        if let ApplicationInput::ControlPointer { pointer_kind, .. } = &mut other_kind {
+            *pointer_kind = ApplicationPointerKind::Touch;
+        }
+        runtime.observe_test(other_kind).unwrap();
+        assert_eq!(runtime.ui.analysis_time_seconds, plot.x_maximum);
+        assert!(runtime.chart_pointer.is_some());
+    }
     for (phase, buttons) in [
         (ApplicationPointerPhase::Down, 3),
         (ApplicationPointerPhase::Up, 1),

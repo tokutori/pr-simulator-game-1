@@ -124,7 +124,7 @@ pub struct ApplicationRuntime {
     platform: GameUiPlatformInput,
     structure: GameUiStructureCache,
     retained: Option<Arc<GameUiView>>,
-    chart_pointer: Option<(u32, String, ApplicationPointerId)>,
+    chart_pointer: Option<(u32, String, ApplicationPointerId, ApplicationPointerKind)>,
     flight_pointers: [Option<flight_pointer::FlightPointer>; 2],
     look_pointer: Option<flight_pointer::LookPointer>,
     next_touch_generation: u32,
@@ -753,7 +753,7 @@ impl ApplicationRuntime {
                 )? {
                     // The same raw boundary serves controls and the scene canvas.
                 } else if let Some(control_id) = control_id {
-                    let identity = (view_revision, control_id.clone(), pointer_id);
+                    let identity = (view_revision, control_id.clone(), pointer_id, pointer_kind);
                     if matches!(
                         phase,
                         ApplicationPointerPhase::Cancel | ApplicationPointerPhase::LostCapture
@@ -1135,7 +1135,7 @@ impl ApplicationRuntime {
             || self
                 .chart_pointer
                 .as_ref()
-                .is_some_and(|(retained, _, _)| *retained != revision)
+                .is_some_and(|(retained, ..)| *retained != revision)
         {
             self.chart_pointer = None;
         }

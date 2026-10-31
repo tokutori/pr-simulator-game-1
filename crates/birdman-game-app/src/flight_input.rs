@@ -161,7 +161,7 @@ pub struct FlightTouchObservation {
     pub control: FlightTouchControl,
     /// Explicit gesture lifetime transition.
     pub phase: FlightTouchPhase,
-    /// Unfiltered normalized stick [nose-up,right-turn] or slider [position,0].
+    /// Unfiltered normalized stick `[nose-up, right-turn]` or slider `[position, 0]`.
     pub axes: [f64; 2],
 }
 
