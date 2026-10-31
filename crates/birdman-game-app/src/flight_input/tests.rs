@@ -422,6 +422,37 @@ fn gamepad_waits_for_neutral_and_crosses_the_confirmed_pilot_target_before_takeo
             .pilot_motion_admission(),
         TailPilotMotionAdmission::Continued
     );
+    // A neutral standby pad must not pre-acquire the pilot axis while touch changes its target.
+    input.invalidate();
+    let touch = |phase, value| FlightTouchObservation {
+        generation: 1,
+        control: FlightTouchControl::PilotSlider,
+        phase,
+        axes: [value, 0.0],
+    };
+    assert!(input.observe_touch(touch(FlightTouchPhase::Acquire, 0.0)));
+    let mut standby = gamepad(0, 1, [0.0; 3]);
+    tick(&mut input, &[standby], 0.0).unwrap();
+    assert!(input.observe_touch(touch(FlightTouchPhase::Change, 0.6)));
+    let held = set_value(tick(&mut input, &[standby], 0.0).unwrap());
+    tick(&mut input, &[standby], held).unwrap();
+    standby.axes[0] = Some(0.54);
+    let handed_over = tick(&mut input, &[standby], held).unwrap();
+    assert!(handed_over.manual_intent().nose_up() > 0.0);
+    assert_eq!(
+        handed_over.pilot_position_command(),
+        TailPilotPositionCommand::Hold
+    );
+    assert_eq!(input.touch_generation(), None);
+    assert!(!input.observe_touch(touch(FlightTouchPhase::Change, 0.0)));
+    standby.axes[2] = Some(1.0);
+    assert_eq!(
+        tick(&mut input, &[standby], held)
+            .unwrap()
+            .pilot_position_command(),
+        TailPilotPositionCommand::Hold
+    );
+    assert_eq!(set_value(tick(&mut input, &[standby], held).unwrap()), 1.0);
 }
 
 #[test]

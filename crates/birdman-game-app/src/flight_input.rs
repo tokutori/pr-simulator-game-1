@@ -512,12 +512,21 @@ impl FlightInputState {
             } else if self.touch.is_some() {
                 let candidate = selected.and_then(|sample| {
                     let demand = self.gamepad_demand(sample, held)?;
-                    sample
+                    if sample
                         .axes
                         .into_iter()
                         .flatten()
                         .any(|axis| axis.abs() > GAMEPAD_DEAD_ZONE)
-                        .then_some(demand)
+                    {
+                        Some(demand)
+                    } else {
+                        // Neutral acknowledges the connection, not ownership of the changing touch target.
+                        self.gamepad = FlightGamepadAcquisition::WaitingPilot {
+                            identity: sample.identity,
+                            previous_target: normalized_axis(sample.axes[2]?),
+                        };
+                        None
+                    }
                 });
                 if let Some(demand) = candidate {
                     self.retire_touch();
