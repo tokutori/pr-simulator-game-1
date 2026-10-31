@@ -4126,7 +4126,10 @@ fn graphics_commit_tracks_actual_resources_cleanup_and_renderer_lifetimes() {
             observation: replacement,
         })
         .unwrap();
-    let new_resource = replaced.drawing.unwrap().graphics.resource.unwrap();
+    let unbound = replaced.drawing.unwrap().graphics;
+    assert_eq!(unbound.renderer_resource_id, Some(101));
+    assert!(unbound.resource.is_none());
+    assert!(unbound.query.is_none());
     runtime
         .observe_test(ApplicationInput::Resources {
             request_id: second_id,
@@ -4139,8 +4142,15 @@ fn graphics_commit_tracks_actual_resources_cleanup_and_renderer_lifetimes() {
             },
         })
         .unwrap();
-    assert_eq!(runtime.graphics.resource(), Some(new_resource));
+    let after_stale = runtime
+        .graphics
+        .projection(true, runtime.observed_ms)
+        .unwrap();
+    assert_eq!(after_stale.renderer_resource_id, Some(101));
+    assert!(after_stale.resource.is_none());
+    assert!(after_stale.query.is_none());
     let first = runtime.resources.as_ref().unwrap().request_id;
+    let first_target = runtime.resources.as_ref().unwrap().key.graphics;
     runtime
         .observe_test(ApplicationInput::Resources {
             request_id: first,
@@ -4178,7 +4188,7 @@ fn graphics_commit_tracks_actual_resources_cleanup_and_renderer_lifetimes() {
             observation: ApplicationResourceObservation::Committed {
                 resource_id: 800,
                 actual: ApplicationResourceCommit {
-                    applied: new_resource.quality,
+                    applied: first_target.quality,
                     extent_px: [0, 0],
                 },
             },
