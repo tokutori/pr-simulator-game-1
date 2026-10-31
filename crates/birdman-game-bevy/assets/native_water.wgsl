@@ -124,34 +124,32 @@ fn lake_geometry(position: vec2<f32>, spacing: f32) -> SurfaceProjection {
     var height_gradient = resolved_detail_slope;
     var crest = 0.0;
     var slope_energy = 0.0;
-    for (var component: u32 = 0u; component < 24u; component += 1u) {
-        if component < u32(water.geometry_parameters.x) {
-            let wave = water.geometry_waves[component];
-            let timing = water.geometry_motion[component];
-            let visibility = 1.0 - smoothstep(1.3, 2.5, wave.z * spacing);
-            let transition = clamp((wave.z * spacing - 1.3) / 1.2, 0.0, 1.0);
-            let visibility_gradient = (-6.0 * wave.z / 1.2 * transition * (1.0 - transition)) * spacing_gradient;
-            slope_energy += wave.z * wave.w;
-            if visibility == 0.0 && all(visibility_gradient == vec2<f32>(0.0)) { continue; }
-            let modulation = lake_wave_modulation(position, wave.xy, wave.z, timing.y);
-            let packet = modulation[0];
-            let warp = modulation[1];
-            let amplitude = wave.w * visibility * packet.x;
-            let amplitude_gradient = wave.w * (visibility * packet.yz + packet.x * visibility_gradient);
-            let phase = wave.z * dot(wave.xy, position) + warp.x - timing.x * water.camera_time.w + timing.y;
-            let phase_gradient = wave.z * wave.xy + warp.yz;
-            let phase_sine = sin(phase);
-            let phase_cosine = cos(phase);
-            let crest_basis = 0.5 + 0.5 * phase_sine;
-            surface.offset.x += water.geometry_parameters.y * amplitude * wave.x * phase_cosine;
-            surface.offset.z += water.geometry_parameters.y * amplitude * wave.y * phase_cosine;
-            surface.offset.y += amplitude * (2.0 * crest_basis * crest_basis * crest_basis - 0.625);
-            let horizontal_gradient = water.geometry_parameters.y * (phase_cosine * amplitude_gradient - amplitude * phase_sine * phase_gradient);
-            horizontal_jacobian += vec4<f32>(wave.x * horizontal_gradient, wave.y * horizontal_gradient);
-            height_gradient += amplitude * 3.0 * crest_basis * crest_basis * phase_cosine * phase_gradient
-                + (2.0 * crest_basis * crest_basis * crest_basis - 0.625) * amplitude_gradient;
-            crest += phase_sine * wave.z * amplitude;
-        }
+    for (var component: u32 = 0u; component < #{LAKE_WAVE_COUNT}u; component += 1u) {
+        let wave = water.geometry_waves[component];
+        let timing = water.geometry_motion[component];
+        let visibility = 1.0 - smoothstep(1.3, 2.5, wave.z * spacing);
+        let transition = clamp((wave.z * spacing - 1.3) / 1.2, 0.0, 1.0);
+        let visibility_gradient = (-6.0 * wave.z / 1.2 * transition * (1.0 - transition)) * spacing_gradient;
+        slope_energy += wave.z * wave.w;
+        if visibility == 0.0 && all(visibility_gradient == vec2<f32>(0.0)) { continue; }
+        let modulation = lake_wave_modulation(position, wave.xy, wave.z, timing.y);
+        let packet = modulation[0];
+        let warp = modulation[1];
+        let amplitude = wave.w * visibility * packet.x;
+        let amplitude_gradient = wave.w * (visibility * packet.yz + packet.x * visibility_gradient);
+        let phase = wave.z * dot(wave.xy, position) + warp.x - timing.x * water.camera_time.w + timing.y;
+        let phase_gradient = wave.z * wave.xy + warp.yz;
+        let phase_sine = sin(phase);
+        let phase_cosine = cos(phase);
+        let crest_basis = 0.5 + 0.5 * phase_sine;
+        surface.offset.x += water.geometry_parameters.y * amplitude * wave.x * phase_cosine;
+        surface.offset.z += water.geometry_parameters.y * amplitude * wave.y * phase_cosine;
+        surface.offset.y += amplitude * (2.0 * crest_basis * crest_basis * crest_basis - 0.625);
+        let horizontal_gradient = water.geometry_parameters.y * (phase_cosine * amplitude_gradient - amplitude * phase_sine * phase_gradient);
+        horizontal_jacobian += vec4<f32>(wave.x * horizontal_gradient, wave.y * horizontal_gradient);
+        height_gradient += amplitude * 3.0 * crest_basis * crest_basis * phase_cosine * phase_gradient
+            + (2.0 * crest_basis * crest_basis * crest_basis - 0.625) * amplitude_gradient;
+        crest += phase_sine * wave.z * amplitude;
     }
     let determinant = horizontal_jacobian.x * horizontal_jacobian.w - horizontal_jacobian.y * horizontal_jacobian.z;
     surface.represented_slope = vec2<f32>(
@@ -316,8 +314,7 @@ fn lake_micro_detail(position: vec2<f32>, footprint_x: vec2<f32>, footprint_y: v
 
 fn lake_wave_slope(position: vec2<f32>, spacing: f32) -> vec2<f32> {
     var slope = vec2<f32>(0.0);
-    let component_count = min(u32(water.geometry_parameters.x), 24u);
-    for (var component: u32 = 0u; component < component_count; component += 1u) {
+    for (var component: u32 = 0u; component < #{LAKE_WAVE_COUNT}u; component += 1u) {
         let wave = water.geometry_waves[component];
         let timing = water.geometry_motion[component];
         let modulation = lake_wave_modulation(position, wave.xy, wave.z, timing.y);

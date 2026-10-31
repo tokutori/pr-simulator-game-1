@@ -1649,6 +1649,7 @@ mod tests {
             (0, 0.0_f32),
             (48, 0.0),
             (60, 1.0),
+            (832, 0.0),
             (928, 1.0),
             (992, 0.0),
             (1008, 32.0),
@@ -1662,6 +1663,10 @@ mod tests {
             );
         }
         let mut water_surfaces = [near.clone(), near.far_surface(), near.sky_surface()];
+        assert_eq!(
+            bevy::render::render_resource::AsBindGroup::bind_group_data(&water_surfaces[0]),
+            bevy::render::render_resource::AsBindGroup::bind_group_data(&water_surfaces[1])
+        );
         let mut parameter_buffers =
             world.resource_mut::<Assets<bevy::render::storage::ShaderBuffer>>();
         for surface in &mut water_surfaces {
@@ -1672,6 +1677,14 @@ mod tests {
         assert_ne!(water_surfaces[0].buffer.id(), water_surfaces[2].buffer.id());
         for (index, surface) in water_surfaces.iter().enumerate() {
             let key = bevy::render::render_resource::AsBindGroup::bind_group_data(surface);
+            assert_eq!(
+                key.wave_count,
+                if index == 2 {
+                    0
+                } else {
+                    water.projection.wave_count() as u32
+                }
+            );
             assert_eq!(
                 key.detail_quadrature_samples,
                 water.projection.detail_quadrature_samples()

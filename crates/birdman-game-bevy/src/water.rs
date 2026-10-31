@@ -38,12 +38,14 @@ pub(crate) struct WaterMaterial {
     pub(crate) parameters: WaterParameters,
     textures: WaterTextures,
     pub(crate) buffer: Handle<ShaderBuffer>,
+    wave_count: u32,
     detail_quadrature_samples: u32,
     sky: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct WaterPipelineKey {
+    pub(crate) wave_count: u32,
     pub(crate) detail_quadrature_samples: u32,
     pub(crate) sky: bool,
 }
@@ -57,6 +59,7 @@ pub(crate) struct WaterParameters {
     pub(crate) geometry_patch: Vec4,
     geometry_waves: [Vec4; MAX_LAKE_WAVE_COMPONENTS],
     geometry_motion: [Vec4; MAX_LAKE_WAVE_COMPONENTS],
+    // Reserved zero, choppiness, visual height and spacing gradient.
     geometry_parameters: Vec4,
     water_palette: [Vec4; 4],
     haze_parameters: Vec4,
@@ -105,6 +108,7 @@ impl AsBindGroup for WaterMaterial {
     }
     fn bind_group_data(&self) -> Self::Data {
         WaterPipelineKey {
+            wave_count: self.wave_count,
             detail_quadrature_samples: self.detail_quadrature_samples,
             sky: self.sky,
         }
@@ -160,10 +164,13 @@ impl Material for WaterMaterial {
         _layout: &MeshVertexBufferLayoutRef,
         key: MaterialPipelineKey<Self>,
     ) -> Result<(), SpecializedMeshPipelineError> {
-        let mut definitions = vec![ShaderDefVal::UInt(
-            "LAKE_DETAIL_SAMPLES".into(),
-            key.bind_group_data.detail_quadrature_samples,
-        )];
+        let mut definitions = vec![
+            ShaderDefVal::UInt("LAKE_WAVE_COUNT".into(), key.bind_group_data.wave_count),
+            ShaderDefVal::UInt(
+                "LAKE_DETAIL_SAMPLES".into(),
+                key.bind_group_data.detail_quadrature_samples,
+            ),
+        ];
         if key.bind_group_data.sky {
             definitions.push(ShaderDefVal::Bool("LAKE_SKY".into(), true));
         }
@@ -213,7 +220,7 @@ impl WaterMaterial {
                 geometry_waves: projection.wave_k_amplitude().map(Vec4::from_array),
                 geometry_motion: projection.wave_omega_phase().map(Vec4::from_array),
                 geometry_parameters: Vec4::new(
-                    projection.wave_count() as f32,
+                    0.0,
                     projection.choppiness(),
                     projection.visual_wave_height() as f32,
                     projection.spacing().gradient_magnitude() as f32,
@@ -249,6 +256,7 @@ impl WaterMaterial {
                 reflection_texture: Some(reflection),
             },
             buffer: Handle::default(),
+            wave_count: projection.wave_count() as u32,
             detail_quadrature_samples: projection.detail_quadrature_samples(),
             sky: false,
         }
@@ -270,6 +278,8 @@ impl WaterMaterial {
     pub(crate) fn sky_surface(&self) -> Self {
         let mut material = self.clone();
         material.sky = true;
+        // Sky shaders exclude water evaluation and share its zero-wave variant.
+        material.wave_count = 0;
         material.parameters.geometry_patch = Vec4::ZERO;
         material.parameters.reflection_enabled = 0.0;
         material

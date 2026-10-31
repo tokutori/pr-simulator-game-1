@@ -209,10 +209,11 @@ fn setup(
             }
         };
         base.detail_quadrature_samples = projection.detail_quadrature_samples();
+        base.wave_count = projection.wave_count() as u32;
         base.parameters.geometry_waves = projection.wave_k_amplitude().map(Vec4::from_array);
         base.parameters.geometry_motion = projection.wave_omega_phase().map(Vec4::from_array);
         base.parameters.geometry_parameters = Vec4::new(
-            projection.wave_count() as f32,
+            0.0,
             projection.choppiness(),
             projection.visual_wave_height() as f32,
             projection.spacing().gradient_magnitude() as f32,
@@ -222,12 +223,12 @@ fn setup(
             base.parameters.geometry_patch = Vec4::ZERO;
         }
         if flat {
-            base.parameters.geometry_parameters.x = 0.0;
+            base.wave_count = 0;
             base.parameters.wind_detail = Vec4::ZERO;
             base.parameters.wind_speed = 0.0;
         }
         if detail_cutoff {
-            base.parameters.geometry_parameters.x = 0.0;
+            base.wave_count = 0;
         }
         let geometry = match birdman_game_scene::lake_water_mesh::PreparedWaterGeometry::try_new(
             quality,
