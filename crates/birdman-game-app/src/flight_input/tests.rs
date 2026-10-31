@@ -273,6 +273,59 @@ fn activation_and_resume_accept_release_then_fresh_press_instead_of_held_repeats
         tick(&mut input, &[], 0.1).unwrap().pilot_motion_admission(),
         TailPilotMotionAdmission::Rearmed
     );
+    // The touch source uses the same one-shot admission and elapsed-tick confirmation.
+    input.invalidate();
+    let touch = |phase, value| FlightTouchObservation {
+        generation: 1,
+        control: FlightTouchControl::PilotSlider,
+        phase,
+        axes: [value, 0.0],
+    };
+    assert!(input.observe_touch(touch(FlightTouchPhase::Acquire, 0.0)));
+    assert_eq!(
+        tick(&mut input, &[], 0.0).unwrap().pilot_position_command(),
+        TailPilotPositionCommand::Hold
+    );
+    let uncommitted_touch = |input: &mut FlightInputState| {
+        input
+            .tick_input(
+                &[],
+                0.0,
+                KeyboardControlSettings::default(),
+                |_| unreachable!(),
+            )
+            .unwrap()
+    };
+    let first = uncommitted_touch(&mut input);
+    assert_eq!(
+        first.pilot_motion_admission(),
+        TailPilotMotionAdmission::Rearmed
+    );
+    assert_eq!(
+        uncommitted_touch(&mut input).pilot_motion_admission(),
+        TailPilotMotionAdmission::Rearmed
+    );
+    input.confirm_tick(first, false);
+    assert_eq!(
+        tick(&mut input, &[], 0.0).unwrap().pilot_motion_admission(),
+        TailPilotMotionAdmission::Continued
+    );
+    input.observe_pilot_stop(true);
+    assert!(input.observe_touch(touch(FlightTouchPhase::Change, 0.6)));
+    tick(&mut input, &[], 0.0).unwrap(); // Existing target crossing reacquires the absolute axis.
+    let rearmed = uncommitted_touch(&mut input);
+    assert_eq!(
+        rearmed.pilot_motion_admission(),
+        TailPilotMotionAdmission::Rearmed
+    );
+    input.confirm_tick(rearmed, true);
+    assert!(input.observe_touch(touch(FlightTouchPhase::Change, 0.6)));
+    assert_eq!(
+        tick(&mut input, &[], 0.0).unwrap().pilot_position_command(),
+        TailPilotPositionCommand::Hold
+    );
+    assert!(input.observe_touch(touch(FlightTouchPhase::Release, 0.0)));
+    assert!(!input.observe_touch(touch(FlightTouchPhase::Change, 0.0)));
 }
 
 #[test]

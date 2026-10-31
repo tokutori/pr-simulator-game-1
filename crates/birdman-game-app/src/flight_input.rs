@@ -130,6 +130,50 @@ pub struct FlightGamepadObservation {
     pub axes: [Option<f64>; 3],
 }
 
+/// Independent channels belonging to one touch flight device.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum FlightTouchControl {
+    /// Relative nose-up/right-turn drag.
+    Stick,
+    /// Absolute normalized pilot-position slider.
+    PilotSlider,
+}
+
+/// A fresh gesture, an update, or retirement of one owned touch channel.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FlightTouchPhase {
+    /// Fresh pointer acquisition, never inferred from repeated values.
+    Acquire,
+    /// Movement within the same admitted pointer lease.
+    Change,
+    /// Up, cancellation, or lost capture.
+    Release,
+}
+
+/// Rust-normalized observation from a raw pointer lease, not a gamepad connection.
+#[derive(Clone, Copy, Debug)]
+pub struct FlightTouchObservation {
+    /// Monotonic gesture-device lifetime owned by the application runtime.
+    pub generation: u32,
+    /// Independent channel affected by this observation.
+    pub control: FlightTouchControl,
+    /// Explicit gesture lifetime transition.
+    pub phase: FlightTouchPhase,
+    /// Unfiltered normalized stick [nose-up,right-turn] or slider [position,0].
+    pub axes: [f64; 2],
+}
+
+#[derive(Clone, Copy, Debug)]
+struct FlightTouchDevice {
+    generation: u32,
+    stick: Option<[f64; 2]>,
+    pilot: Option<f64>,
+    previous_pilot: Option<f64>,
+    pilot_picked_up: bool,
+}
+
 /// Shared takeover state for the selected gamepad connection.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 enum FlightGamepadAcquisition {
@@ -170,6 +214,7 @@ impl FlightGamepadAcquisition {
 enum PilotRearmSource {
     Keyboard,
     Gamepad,
+    Touch,
 }
 
 /// Owns fresh-key admission and gamepad takeover independently of platform APIs.
@@ -184,6 +229,8 @@ pub(crate) struct FlightInputState {
     pilot_rearm_pending: Option<PilotRearmSource>,
     gamepad_pilot_direction: i8,
     pilot_stop_observed: bool,
+    touch: Option<FlightTouchDevice>,
+    touch_generation: u32,
 }
 
 impl FlightInputState {
@@ -195,6 +242,7 @@ impl FlightInputState {
         self.active = active;
         self.pilot_stop_observed = false;
         self.pilot_rearm_pending = None;
+        self.touch = None;
         self.accepted_keys = 0;
         self.keyboard_ramp = [0.0; 2];
         if !active {
@@ -203,11 +251,153 @@ impl FlightInputState {
         self.rearm_gamepad();
     }
 
+    /// Admits explicit pointer leases while retaining one active flight device.
+    pub(crate) fn observe_touch(&mut self, sample: FlightTouchObservation) -> bool {
+        if !self.active {
+            return false;
+        }
+        if sample.phase != FlightTouchPhase::Release && !sample.axes.into_iter().all(f64::is_finite)
+        {
+            if self
+                .touch
+                .is_some_and(|touch| touch.generation == sample.generation)
+            {
+                self.retire_touch();
+                self.rearm_gamepad();
+            }
+            return false;
+        }
+        if sample.phase == FlightTouchPhase::Acquire {
+            if sample.control == FlightTouchControl::Stick
+                && sample
+                    .axes
+                    .iter()
+                    .any(|value| value.abs() > GAMEPAD_DEAD_ZONE)
+            {
+                return false;
+            }
+            if sample.generation < self.touch_generation || sample.generation == 0 {
+                return false;
+            }
+            if self.touch.is_none() {
+                if sample.generation == self.touch_generation {
+                    return false;
+                }
+                self.touch_generation = sample.generation;
+                self.accepted_keys = 0;
+                self.keyboard_ramp = [0.0; 2];
+                self.pilot_rearm_pending = None;
+                self.rearm_gamepad();
+                self.touch = Some(FlightTouchDevice {
+                    generation: sample.generation,
+                    stick: None,
+                    pilot: None,
+                    previous_pilot: None,
+                    pilot_picked_up: false,
+                });
+            }
+        }
+        let Some(touch) = self
+            .touch
+            .as_mut()
+            .filter(|touch| touch.generation == sample.generation)
+        else {
+            return false;
+        };
+        match (sample.control, sample.phase) {
+            (FlightTouchControl::Stick, FlightTouchPhase::Acquire) => {
+                if touch.stick.is_some()
+                    || sample
+                        .axes
+                        .iter()
+                        .any(|value| value.abs() > GAMEPAD_DEAD_ZONE)
+                {
+                    return false;
+                }
+                touch.stick = Some([0.0; 2]);
+            }
+            (FlightTouchControl::Stick, FlightTouchPhase::Change) => {
+                if touch.stick.is_none() {
+                    return false;
+                }
+                touch.stick = Some(sample.axes.map(normalized_axis));
+            }
+            (FlightTouchControl::Stick, FlightTouchPhase::Release) => touch.stick = None,
+            (FlightTouchControl::PilotSlider, FlightTouchPhase::Acquire) => {
+                if touch.pilot.is_some() {
+                    return false;
+                }
+                let value = normalized_axis(sample.axes[0]);
+                touch.pilot = Some(value);
+                touch.previous_pilot = Some(value);
+                touch.pilot_picked_up = false;
+                self.pilot_rearm_pending = Some(PilotRearmSource::Touch);
+            }
+            (FlightTouchControl::PilotSlider, FlightTouchPhase::Change) => {
+                let Some(previous) = touch.pilot else {
+                    return false;
+                };
+                let value = normalized_axis(sample.axes[0]);
+                if pilot_direction(value) != 0
+                    && pilot_direction(value) != pilot_direction(previous)
+                {
+                    self.pilot_rearm_pending = Some(PilotRearmSource::Touch);
+                }
+                touch.pilot = Some(value);
+            }
+            (FlightTouchControl::PilotSlider, FlightTouchPhase::Release) => {
+                touch.pilot = None;
+                touch.previous_pilot = None;
+                touch.pilot_picked_up = false;
+                if self.pilot_rearm_pending == Some(PilotRearmSource::Touch) {
+                    self.pilot_rearm_pending = None;
+                }
+            }
+        }
+        if touch.stick.is_none() && touch.pilot.is_none() {
+            self.retire_touch();
+            self.rearm_gamepad();
+        }
+        true
+    }
+
+    pub(crate) fn touch_generation(&self) -> Option<u32> {
+        self.touch.map(|touch| touch.generation)
+    }
+
+    fn retire_touch(&mut self) {
+        self.touch = None;
+        if self.pilot_rearm_pending == Some(PilotRearmSource::Touch) {
+            self.pilot_rearm_pending = None;
+        }
+    }
+
+    fn touch_demand(&mut self, held_target: f64) -> Option<(f64, f64, TailPilotPositionCommand)> {
+        let touch = self.touch.as_mut()?;
+        let [nose_up, turn_right] = touch.stick.unwrap_or([0.0; 2]);
+        let mut position = TailPilotPositionCommand::Hold;
+        if let Some(value) = touch.pilot {
+            let previous = touch.previous_pilot.unwrap_or(value);
+            if touch.pilot_picked_up {
+                position = TailPilotPositionCommand::Set(
+                    TailPilotPositionIntent::try_new(value).expect("normalized finite touch axis"),
+                );
+            } else if (previous <= held_target && held_target <= value)
+                || (value <= held_target && held_target <= previous)
+            {
+                touch.pilot_picked_up = true;
+            }
+            touch.previous_pilot = Some(value);
+        }
+        Some((nose_up, turn_right, position))
+    }
+
     /// Records one ordered keyboard observation, accepting fresh presses while active.
     pub(crate) fn observe_key(&mut self, observation: FlightKeyObservation) {
         let bit = observation.key.bit();
         if observation.pressed {
             if self.active && !observation.repeat && self.held_keys & bit == 0 {
+                self.retire_touch();
                 self.accepted_keys |= bit;
                 self.rearm_gamepad();
                 if matches!(
@@ -235,6 +425,7 @@ impl FlightInputState {
     pub(crate) fn invalidate(&mut self) {
         self.pilot_stop_observed = false;
         self.pilot_rearm_pending = None;
+        self.touch = None;
         self.held_keys = 0;
         self.accepted_keys = 0;
         self.accepted_action_keys = 0;
@@ -318,6 +509,22 @@ impl FlightInputState {
                         movement * settings.pilot_target_rate_mps / f64::from(PHYSICS_HZ),
                     )?);
                 }
+            } else if self.touch.is_some() {
+                let candidate = selected.and_then(|sample| {
+                    let demand = self.gamepad_demand(sample, held)?;
+                    sample
+                        .axes
+                        .into_iter()
+                        .flatten()
+                        .any(|axis| axis.abs() > GAMEPAD_DEAD_ZONE)
+                        .then_some(demand)
+                });
+                if let Some(demand) = candidate {
+                    self.retire_touch();
+                    (nose_up, turn_right, pilot_position) = demand;
+                } else if let Some(demand) = self.touch_demand(held) {
+                    (nose_up, turn_right, pilot_position) = demand;
+                }
             } else if let Some(sample) = selected
                 && let Some(demand) = self.gamepad_demand(sample, held)
             {
@@ -345,6 +552,9 @@ impl FlightInputState {
     pub(crate) fn observe_pilot_stop(&mut self, stopped: bool) {
         if stopped && !self.pilot_stop_observed {
             self.rearm_gamepad();
+            if let Some(touch) = &mut self.touch {
+                touch.pilot_picked_up = false;
+            }
         }
         self.pilot_stop_observed = stopped;
     }
@@ -355,6 +565,12 @@ impl FlightInputState {
             if stopped && self.pilot_rearm_pending == Some(PilotRearmSource::Gamepad) {
                 self.rearm_gamepad();
                 self.pilot_stop_observed = true;
+            }
+            if stopped
+                && self.pilot_rearm_pending == Some(PilotRearmSource::Touch)
+                && let Some(touch) = &mut self.touch
+            {
+                touch.pilot_picked_up = false;
             }
             self.pilot_rearm_pending = None;
         }
@@ -422,13 +638,7 @@ impl FlightInputState {
         }
         let [nose_up, turn_right, position] = axes.map(normalized_axis);
         if matches!(self.gamepad, FlightGamepadAcquisition::Active { .. }) {
-            let direction = if position > 0.0 {
-                1
-            } else if position < 0.0 {
-                -1
-            } else {
-                0
-            };
+            let direction = pilot_direction(position);
             if direction != 0 && direction != self.gamepad_pilot_direction {
                 self.pilot_rearm_pending = Some(PilotRearmSource::Gamepad);
             }
@@ -460,6 +670,16 @@ impl FlightInputState {
             }
         };
         Some((nose_up, turn_right, TailPilotPositionCommand::Hold))
+    }
+}
+
+fn pilot_direction(value: f64) -> i8 {
+    if value > 0.0 {
+        1
+    } else if value < 0.0 {
+        -1
+    } else {
+        0
     }
 }
 

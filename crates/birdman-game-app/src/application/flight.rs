@@ -39,6 +39,19 @@ impl ApplicationSession {
             && self.flight_failure.is_none()
     }
 
+    /// Admits an internally normalized touch-channel lifetime without a platform-specific owner.
+    pub fn observe_flight_touch(
+        &mut self,
+        observation: crate::flight_input::FlightTouchObservation,
+    ) -> bool {
+        self.flight_input.observe_touch(observation)
+    }
+
+    /// Current touch-device lease, absent after takeover or retirement.
+    pub fn flight_touch_generation(&self) -> Option<u32> {
+        self.flight_input.touch_generation()
+    }
+
     /// Retires held controls and rearms gamepad takeover after an input-owner reset.
     pub fn invalidate_flight_input(&mut self) {
         self.flight_input.invalidate();
