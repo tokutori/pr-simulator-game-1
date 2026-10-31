@@ -12,14 +12,15 @@ use super::{
 use bevy::ecs as bevy_ecs;
 use bevy::{
     camera::{
-        Exposure, RenderTarget,
+        CameraUpdateSystems, Exposure, RenderTarget,
         primitives::Aabb,
         visibility::{NoFrustumCulling, RenderLayers},
     },
     core_pipeline::{mip_generation::MipGenerationPlugin, tonemapping::Tonemapping},
     light::{
         CascadeShadowConfig, Cascades, DirectionalLightShadowMap, NotShadowCaster,
-        SimulationLightSystems, cascade::Cascade,
+        SimulationLightSystems,
+        cascade::{Cascade, build_directional_light_cascades},
     },
     pbr::MaterialPlugin,
     prelude::*,
@@ -142,7 +143,34 @@ impl Default for NativeGpu {
     }
 }
 
+fn install_shadow_binding(app: &mut App) {
+    // DefaultPlugins has installed LightPlugin. All Native directional lights are
+    // created by prepare from shared lighting and receive SubmittedShadow in submit;
+    // future directional-light producers must participate in that same contract.
+    let removed = app
+        .remove_systems_in_set(
+            PostUpdate,
+            build_directional_light_cascades,
+            bevy::ecs::schedule::ScheduleCleanupPolicy::RemoveSystemsOnly,
+        )
+        .expect("LightPlugin cascade producer must be registered before shared shadow binding");
+    assert_eq!(removed, 1, "Expected exactly one standard cascade producer");
+    app.add_systems(
+        PostUpdate,
+        bind_shadow
+            .in_set(SimulationLightSystems::UpdateDirectionalLightCascades)
+            // Keep the removed function's type set: LightPlugin's size validator
+            // precedes it. Its per-function transform/camera/gizmo edges are explicit.
+            .after(build_directional_light_cascades)
+            .after(bevy::transform::TransformSystems::Propagate)
+            .after(CameraUpdateSystems)
+            .before(bevy::app::TransformGizmoRenderStep)
+            .before(SimulationLightSystems::UpdateLightFrusta),
+    );
+}
+
 pub(crate) fn install(app: &mut App) {
+    install_shadow_binding(app);
     let mode = app
         .world()
         .get_resource::<screen_render::timing::TimingMode>()
@@ -157,13 +185,7 @@ pub(crate) fn install(app: &mut App) {
             MaterialPlugin::<TerrainMaterial>::default(),
             screen_render::timing::ScreenTimingPlugin { mode },
         ))
-        .add_systems(PreStartup, setup_world)
-        .add_systems(
-            PostUpdate,
-            bind_shadow
-                .after(SimulationLightSystems::UpdateDirectionalLightCascades)
-                .before(SimulationLightSystems::UpdateLightFrusta),
-        );
+        .add_systems(PreStartup, setup_world);
     if let Some(render) = app.get_sub_app_mut(bevy::render::RenderApp) {
         render
             .init_resource::<super::water::detail_mips::LakeDetailMips>()
@@ -1292,6 +1314,65 @@ mod tests {
 
     #[test]
     fn actual_binding_rejects_preview_ack_and_waits_for_retirement_extract() {
+        use bevy::ecs::{
+            schedule::{IntoSystemSet, NodeId},
+            system::{IntoSystem, System},
+        };
+        let mut lighting_app = App::new();
+        lighting_app.add_plugins((
+            bevy::asset::AssetPlugin::default(),
+            bevy::transform::TransformPlugin,
+            bevy::light::LightPlugin,
+        ));
+        install_shadow_binding(&mut lighting_app);
+        lighting_app
+            .world_mut()
+            .schedule_scope(PostUpdate, |world, schedule| {
+                schedule.initialize(world).unwrap();
+                let old_type =
+                    IntoSystem::into_system(build_directional_light_cascades).system_type();
+                assert!(
+                    !schedule
+                        .systems()
+                        .unwrap()
+                        .any(|(_, system)| system.system_type() == old_type)
+                );
+                let bind_type = IntoSystem::into_system(bind_shadow).system_type();
+                let (key, _) = schedule
+                    .systems()
+                    .unwrap()
+                    .find(|(_, system)| system.system_type() == bind_type)
+                    .unwrap();
+                let graph = schedule.graph();
+                assert!(
+                    graph
+                        .systems_in_set(
+                            SimulationLightSystems::UpdateDirectionalLightCascades.intern()
+                        )
+                        .unwrap()
+                        .contains(&key)
+                );
+                let node = |set| NodeId::Set(graph.system_sets.get_key(set).unwrap());
+                let binding = NodeId::System(key);
+                for (before, after) in [
+                    (
+                        node(bevy::transform::TransformSystems::Propagate.intern()),
+                        binding,
+                    ),
+                    (node(CameraUpdateSystems.intern()), binding),
+                    (binding, node(bevy::app::TransformGizmoRenderStep.intern())),
+                    (
+                        node(build_directional_light_cascades.into_system_set().intern()),
+                        binding,
+                    ),
+                    (
+                        binding,
+                        node(SimulationLightSystems::UpdateLightFrusta.intern()),
+                    ),
+                ] {
+                    assert!(graph.dependency().graph().contains_edge(before, after));
+                }
+            });
         let mut world = World::new();
         world.init_resource::<Messages<bevy::window::WindowResized>>();
         world.init_resource::<Messages<bevy::window::WindowCreated>>();
