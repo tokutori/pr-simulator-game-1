@@ -1288,6 +1288,7 @@ pub(crate) fn poll(world: &mut World) -> Vec<ApplicationInput> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bevy::camera::primitives::MeshAabb;
 
     #[test]
     fn actual_binding_rejects_preview_ack_and_waits_for_retirement_extract() {
@@ -1650,6 +1651,98 @@ mod tests {
         environment::update_mesh(&runtime, &mut mesh, wing.position, wing.normal).unwrap();
         assert_eq!(mesh.create_packed_vertex_buffer_data(), packed);
         assert_eq!(mesh.get_index_buffer_bytes().unwrap(), indices);
+        let mut grouped_assets = Assets::<Mesh>::default();
+        let handles: Vec<_> = wing
+            .materials
+            .iter()
+            .map(|range| {
+                grouped_assets
+                    .add(environment::mesh(&runtime, wing, range.start, range.count).unwrap())
+            })
+            .collect();
+        assert!(handles.len() > 1);
+        assert_ne!(
+            grouped_assets
+                .get(&handles[0])
+                .unwrap()
+                .get_index_buffer_bytes(),
+            grouped_assets
+                .get(&handles[1])
+                .unwrap()
+                .get_index_buffer_bytes()
+        );
+        let mut grouped_gpu = NativeGpu::default();
+        grouped_gpu.meshes.insert(wing.mesh_id, handles.clone());
+        let mut pending = Vec::new();
+        readiness::extract_meshes(
+            &grouped_gpu,
+            &grouped_assets,
+            handles.iter().map(Handle::id).collect(),
+            &mut pending,
+        );
+        assert_eq!(pending.len(), handles.len());
+        for transfer in &pending {
+            assert_eq!(transfer.vertices.as_slice(), packed);
+            assert!(std::sync::Arc::ptr_eq(
+                &pending[0].vertices,
+                &transfer.vertices
+            ));
+        }
+        let old_payload = std::sync::Arc::downgrade(&pending[0].vertices);
+        for handle in &handles {
+            let mesh = grouped_assets.get_mut_untracked(handle.id()).unwrap();
+            let Some(bevy::mesh::VertexAttributeValues::Float32x3(positions)) =
+                mesh.attribute_mut(Mesh::ATTRIBUTE_POSITION)
+            else {
+                unreachable!()
+            };
+            positions[0][0] += 1.0;
+        }
+        let replacement = grouped_assets
+            .get(&handles[0])
+            .unwrap()
+            .create_packed_vertex_buffer_data();
+        assert_ne!(replacement, packed);
+        readiness::extract_meshes(
+            &grouped_gpu,
+            &grouped_assets,
+            handles.iter().map(Handle::id).collect(),
+            &mut pending,
+        );
+        assert!(old_payload.upgrade().is_none());
+        assert_eq!(pending.len(), handles.len());
+        for transfer in &pending {
+            let source = grouped_assets.get(transfer.id).unwrap();
+            assert_eq!(transfer.vertices.as_slice(), replacement);
+            assert!(std::sync::Arc::ptr_eq(
+                &pending[0].vertices,
+                &transfer.vertices
+            ));
+            assert_eq!(transfer.count, source.count_vertices() as u32);
+            assert_eq!(transfer.stride, source.get_vertex_size());
+            assert_eq!(
+                transfer.center,
+                Vec3::from(source.compute_aabb().unwrap().center)
+            );
+        }
+        let retained_payload = std::sync::Arc::clone(&pending[1].vertices);
+        readiness::extract_meshes(
+            &grouped_gpu,
+            &grouped_assets,
+            vec![handles[0].id()],
+            &mut pending,
+        );
+        assert!(!std::sync::Arc::ptr_eq(
+            &pending[0].vertices,
+            &retained_payload
+        ));
+        assert!(std::sync::Arc::ptr_eq(
+            &pending[1].vertices,
+            &retained_payload
+        ));
+        grouped_gpu.meshes.clear();
+        readiness::extract_meshes(&grouped_gpu, &grouped_assets, Vec::new(), &mut pending);
+        assert!(pending.is_empty());
         for texture in &scene.wing_textures {
             let image = environment::wing_image(&runtime, texture).unwrap();
             assert_eq!(

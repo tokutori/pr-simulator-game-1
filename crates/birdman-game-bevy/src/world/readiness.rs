@@ -18,7 +18,7 @@ use bevy::{
         texture::GpuImage,
     },
 };
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, sync::Arc};
 
 #[derive(Component)]
 pub(crate) struct CandidateLayer(pub(crate) usize);
@@ -55,12 +55,12 @@ struct Upload {
     failure: Option<String>,
 }
 
-struct MeshTransfer {
-    id: AssetId<Mesh>,
-    vertices: Vec<u8>,
-    count: u32,
-    stride: u64,
-    center: Vec3,
+pub(super) struct MeshTransfer {
+    pub(super) id: AssetId<Mesh>,
+    pub(super) vertices: Arc<Vec<u8>>,
+    pub(super) count: u32,
+    pub(super) stride: u64,
+    pub(super) center: Vec3,
 }
 
 #[derive(Resource, Default)]
@@ -98,6 +98,66 @@ fn report(render: Res<GpuReadback>, mut main: ResMut<MainWorld>, mut uploads: Re
         .map_or_else(Vec::new, |mut gpu| std::mem::take(&mut gpu.dirty_meshes));
 }
 
+pub(super) fn extract_meshes(
+    gpu: &NativeGpu,
+    meshes: &Assets<Mesh>,
+    dirty: Vec<AssetId<Mesh>>,
+    pending: &mut Vec<MeshTransfer>,
+) {
+    pending.retain(|pending| {
+        gpu.meshes
+            .values()
+            .flatten()
+            .any(|handle| handle.id() == pending.id)
+    });
+    for handles in gpu.meshes.values() {
+        let mut changed = handles
+            .iter()
+            .filter(|handle| dirty.contains(&handle.id()))
+            .filter_map(|handle| meshes.get(handle.id()).map(|mesh| (handle.id(), mesh)));
+        let Some((first_id, first)) = changed.next() else {
+            continue;
+        };
+        let vertices = Arc::new(first.create_packed_vertex_buffer_data());
+        let center = first
+            .compute_aabb()
+            .map_or(Vec3::ZERO, |bounds| bounds.center.into());
+        // prepare splits only index ranges; submit replaces position/normal in every
+        // member together. Other vertex attributes remain those of that shared asset.
+        // This ownership invariant, not layout equality alone, permits byte sharing.
+        for (id, mesh) in std::iter::once((first_id, first)).chain(changed) {
+            let same_layout = first.count_vertices() == mesh.count_vertices()
+                && first
+                    .attributes()
+                    .map(|(attribute, values)| (attribute.id, attribute.format, values.len()))
+                    .eq(mesh
+                        .attributes()
+                        .map(|(attribute, values)| (attribute.id, attribute.format, values.len())));
+            let transfer = MeshTransfer {
+                id,
+                vertices: if same_layout {
+                    Arc::clone(&vertices)
+                } else {
+                    Arc::new(mesh.create_packed_vertex_buffer_data())
+                },
+                count: mesh.count_vertices() as u32,
+                stride: mesh.get_vertex_size(),
+                center: if same_layout {
+                    center
+                } else {
+                    mesh.compute_aabb()
+                        .map_or(Vec3::ZERO, |bounds| bounds.center.into())
+                },
+            };
+            if let Some(previous) = pending.iter_mut().find(|previous| previous.id == id) {
+                *previous = transfer;
+            } else {
+                pending.push(transfer);
+            }
+        }
+    }
+}
+
 fn extract(
     gpu: Extract<Res<NativeGpu>>,
     meshes: Extract<Res<Assets<Mesh>>>,
@@ -105,34 +165,8 @@ fn extract(
     lights: Extract<Query<&DirectionalLight>>,
     mut uploads: ResMut<Uploads>,
 ) {
-    uploads.pending_meshes.retain(|pending| {
-        gpu.meshes
-            .values()
-            .flatten()
-            .any(|handle| handle.id() == pending.id)
-    });
-    for id in std::mem::take(&mut uploads.dirty_meshes) {
-        if let Some(mesh) = meshes.get(id) {
-            let pending = MeshTransfer {
-                id,
-                vertices: mesh.create_packed_vertex_buffer_data(),
-                count: mesh.count_vertices() as u32,
-                stride: mesh.get_vertex_size(),
-                center: mesh
-                    .compute_aabb()
-                    .map_or(Vec3::ZERO, |bounds| bounds.center.into()),
-            };
-            if let Some(previous) = uploads
-                .pending_meshes
-                .iter_mut()
-                .find(|previous| previous.id == id)
-            {
-                *previous = pending;
-            } else {
-                uploads.pending_meshes.push(pending);
-            }
-        }
-    }
+    let dirty = std::mem::take(&mut uploads.dirty_meshes);
+    extract_meshes(&gpu, &meshes, dirty, &mut uploads.pending_meshes);
     uploads.revision = gpu.revision;
     uploads.jobs = gpu
         .candidates
