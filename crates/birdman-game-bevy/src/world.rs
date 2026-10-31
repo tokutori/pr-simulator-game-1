@@ -908,6 +908,14 @@ impl NativeGpu {
     }
 }
 
+pub(crate) fn submit_transform(world: &mut World, entity: Entity, transform: Transform) {
+    if let Some(mut current) = world.get_mut::<Transform>(entity) {
+        current.set_if_neq(transform);
+    } else {
+        world.entity_mut(entity).insert(transform);
+    }
+}
+
 pub(crate) fn submit(
     world: &mut World,
     runtime: &ApplicationRuntime,
@@ -953,9 +961,11 @@ pub(crate) fn submit(
             if matches!(candidate.stage, ResourceStage::Cancelling { .. }) {
                 continue;
             }
-            world
-                .entity_mut(candidate.water_root)
-                .insert(pose_transform(drawing.scene.water_world_from_surface));
+            submit_transform(
+                world,
+                candidate.water_root,
+                pose_transform(drawing.scene.water_world_from_surface),
+            );
             world
                 .entity_mut(candidate.attachments[0])
                 .insert(if drawing.scene.venue_visible {
@@ -963,8 +973,12 @@ pub(crate) fn submit(
                 } else {
                     Visibility::Hidden
                 });
-            world.entity_mut(candidate.attachments[1]).insert((
+            submit_transform(
+                world,
+                candidate.attachments[1],
                 pose_transform(drawing.scene.world_from_aircraft),
+            );
+            world.entity_mut(candidate.attachments[1]).insert(
                 if drawing
                     .scene
                     .geometry
@@ -975,12 +989,14 @@ pub(crate) fn submit(
                 } else {
                     Visibility::Hidden
                 },
-            ));
+            );
             if let Some(geometry) = &drawing.scene.geometry {
                 for part in &geometry.part_poses {
-                    world
-                        .entity_mut(candidate.attachments[attachment_index(part.attachment)])
-                        .insert(pose_transform(part.pose));
+                    submit_transform(
+                        world,
+                        candidate.attachments[attachment_index(part.attachment)],
+                        pose_transform(part.pose),
+                    );
                 }
             }
             let light = if matches!(candidate.stage, ResourceStage::Bound) {
@@ -992,13 +1008,15 @@ pub(crate) fn submit(
                 let position = Vec3::from_array(light.sun_world_position.map(|value| value as f32));
                 let target =
                     Vec3::from_array(light.sun_target_world_position.map(|value| value as f32));
-                world.entity_mut(candidate.sun).insert((
+                submit_transform(
+                    world,
+                    candidate.sun,
                     Transform::from_translation(position).looking_at(target, Vec3::Y),
-                    SubmittedShadow {
-                        bounds: light.shadow_bounds,
-                        extent: candidate.target.shadow_extent_px[0],
-                    },
-                ));
+                );
+                world.entity_mut(candidate.sun).insert(SubmittedShadow {
+                    bounds: light.shadow_bounds,
+                    extent: candidate.target.shadow_extent_px[0],
+                });
                 if let Some(mut sun) = world.get_mut::<DirectionalLight>(candidate.sun) {
                     let texel = (light.shadow_bounds[1] - light.shadow_bounds[0])
                         .max(light.shadow_bounds[3] - light.shadow_bounds[2])
@@ -1027,7 +1045,7 @@ pub(crate) fn submit(
                     .into_iter()
                     .flatten()
                 {
-                    world.entity_mut(entity).insert(transform);
+                    submit_transform(world, entity, transform);
                     if let Some(matrix) = camera.screen_projection {
                         SubmittedProjection::submit(world, entity, matrix);
                     }
@@ -1092,9 +1110,7 @@ pub(crate) fn submit(
                 && let Some(pose) = camera.world_from_head
                 && let Some(matrix) = camera.screen_projection
             {
-                world
-                    .entity_mut(candidate.reflection_camera)
-                    .insert(pose_transform(pose));
+                submit_transform(world, candidate.reflection_camera, pose_transform(pose));
                 SubmittedProjection::submit(world, candidate.reflection_camera, matrix);
                 if let Some(mut camera) = world.get_mut::<Camera>(candidate.reflection_camera) {
                     camera.is_active = true;
@@ -1467,6 +1483,81 @@ mod tests {
             .result = Err("Lost active vertex allocation".into());
         world.resource_mut::<NativeGpu>().active = Some(4);
         assert!(submit(&mut world, &runtime, &drawing).is_ok());
+        assert!(world.get::<GlobalTransform>(root).is_some());
+        world.clear_trackers();
+        submit(&mut world, &runtime, &drawing).unwrap();
+        for entity in [root, attachments[1]] {
+            assert!(
+                !world
+                    .entity(entity)
+                    .get_ref::<Transform>()
+                    .unwrap()
+                    .is_changed()
+            );
+        }
+        let previous_anchor = drawing.scene.water_world_from_surface;
+        drawing.scene.water_world_from_surface.position.x += 1.0;
+        submit(&mut world, &runtime, &drawing).unwrap();
+        assert!(
+            world
+                .entity(root)
+                .get_ref::<Transform>()
+                .unwrap()
+                .is_changed()
+        );
+        assert_eq!(
+            world.get::<Transform>(root).unwrap().translation,
+            pose_transform(drawing.scene.water_world_from_surface).translation
+        );
+        drawing.scene.water_world_from_surface = previous_anchor;
+
+        bevy::tasks::ComputeTaskPool::get_or_init(bevy::tasks::TaskPool::default);
+        let mut propagation = App::new();
+        propagation.add_plugins(bevy::transform::TransformPlugin);
+        let parent = propagation.world_mut().spawn_empty().id();
+        let first_pose = Transform::from_xyz(1.0, 0.0, 0.0);
+        submit_transform(propagation.world_mut(), parent, first_pose);
+        let child = propagation
+            .world_mut()
+            .spawn((ChildOf(parent), Transform::from_xyz(0.0, 2.0, 0.0)))
+            .id();
+        propagation.update();
+        let previous_global = *propagation.world().get::<GlobalTransform>(child).unwrap();
+        let changed_at = propagation
+            .world()
+            .entity(child)
+            .get_ref::<GlobalTransform>()
+            .unwrap()
+            .last_changed();
+        submit_transform(propagation.world_mut(), parent, first_pose);
+        propagation.update();
+        assert_eq!(
+            *propagation.world().get::<GlobalTransform>(child).unwrap(),
+            previous_global
+        );
+        assert_eq!(
+            propagation
+                .world()
+                .entity(child)
+                .get_ref::<GlobalTransform>()
+                .unwrap()
+                .last_changed(),
+            changed_at
+        );
+        submit_transform(
+            propagation.world_mut(),
+            parent,
+            Transform::from_xyz(3.0, 0.0, 0.0),
+        );
+        propagation.update();
+        assert_eq!(
+            propagation
+                .world()
+                .get::<GlobalTransform>(child)
+                .unwrap()
+                .translation(),
+            Vec3::new(3.0, 2.0, 0.0)
+        );
         world.resource_mut::<NativeGpu>().active = Some(3);
         assert_eq!(
             submit(&mut world, &runtime, &drawing).unwrap_err(),
