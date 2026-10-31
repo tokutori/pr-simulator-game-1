@@ -1687,7 +1687,11 @@ mod tests {
             );
             assert_eq!(
                 key.detail_quadrature_samples,
-                water.projection.detail_quadrature_samples()
+                if index == 2 {
+                    1
+                } else {
+                    water.projection.detail_quadrature_samples()
+                }
             );
             assert_eq!(key.sky, index == 2);
             assert_eq!(&surface.parameters.encode()[44..48], &0.0_f32.to_le_bytes());

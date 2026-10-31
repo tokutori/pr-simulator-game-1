@@ -280,6 +280,7 @@ impl WaterMaterial {
         material.sky = true;
         // Sky shaders exclude water evaluation and share its zero-wave variant.
         material.wave_count = 0;
+        material.detail_quadrature_samples = 1;
         material.parameters.geometry_patch = Vec4::ZERO;
         material.parameters.reflection_enabled = 0.0;
         material
