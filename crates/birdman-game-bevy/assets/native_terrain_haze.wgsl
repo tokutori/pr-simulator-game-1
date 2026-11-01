@@ -23,6 +23,9 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     out.color = main_pass_post_lighting_processing(pbr_input, out.color);
     let depth = -position_world_to_view(in.world_position.xyz).z;
     let amount = smoothstep(haze_range.x, haze_range.y, depth);
+    if amount == 0.0 {
+        return out;
+    }
     let fogged = mix(linear_rgb_to_srgb(out.color.rgb), haze_color_srgb.rgb, amount);
     out.color = vec4<f32>(srgb_to_linear_rgb(fogged), out.color.a);
     return out;
