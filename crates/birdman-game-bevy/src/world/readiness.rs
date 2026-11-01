@@ -190,7 +190,7 @@ fn extract(
             let mip_images: Vec<_> = candidate
                 .images
                 .iter()
-                .filter_map(|id| gpu.images.get(id).map(|(image, _)| image.id()))
+                .filter_map(|key| gpu.images.get(key).map(|(image, _)| image.id()))
                 .collect();
             let mut images = mip_images.clone();
             images.extend([candidate.output.id(), candidate.reflection.id()]);

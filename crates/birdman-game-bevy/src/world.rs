@@ -94,7 +94,7 @@ struct Candidate {
     reflection: Handle<Image>,
     materials: Vec<Handle<TerrainMaterial>>,
     water: [Handle<WaterMaterial>; 3],
-    images: Vec<u32>,
+    images: Vec<(u32, u16)>,
     meshes: Vec<Handle<Mesh>>,
     sky_mesh: Handle<Mesh>,
 }
@@ -106,7 +106,7 @@ pub(crate) struct NativeGpu {
     dirty_meshes: Vec<bevy::asset::AssetId<Mesh>>,
     water_meshes: BTreeMap<u32, Handle<Mesh>>,
     textures: BTreeMap<u32, Handle<Image>>,
-    images: BTreeMap<u32, (Handle<Image>, usize)>,
+    images: BTreeMap<(u32, u16), (Handle<Image>, usize)>,
     candidates: BTreeMap<u32, Candidate>,
     active: Option<u32>,
     pub(crate) main_camera: Option<Entity>,
@@ -522,16 +522,24 @@ impl NativeGpu {
             })
             .collect::<Result<Vec<_>, _>>()?;
         let image_descriptors = [
-            assets.water.detail[0].image.clone(),
-            assets.water.detail[1].image.clone(),
-            assets.sky.clone(),
+            (
+                assets.water.detail[0].image.clone(),
+                assets.water.detail_anisotropy_clamp,
+            ),
+            (
+                assets.water.detail[1].image.clone(),
+                assets.water.detail_anisotropy_clamp,
+            ),
+            (assets.sky.clone(), 1),
         ];
         let mut new_images = BTreeMap::new();
-        for image in &image_descriptors {
-            if !self.images.contains_key(&image.buffer_id)
-                && !new_images.contains_key(&image.buffer_id)
-            {
-                new_images.insert(image.buffer_id, environment::image(runtime, image.clone())?);
+        for (image, anisotropy_clamp) in &image_descriptors {
+            let key = (image.buffer_id, *anisotropy_clamp);
+            if !self.images.contains_key(&key) && !new_images.contains_key(&key) {
+                new_images.insert(
+                    key,
+                    environment::image(runtime, image.clone(), *anisotropy_clamp)?,
+                );
             }
         }
         let output_image = screen_render::image(target.extent_px)?;
@@ -576,10 +584,11 @@ impl NativeGpu {
         let output = world.resource_mut::<Assets<Image>>().add(output_image);
         let reflection = world.resource_mut::<Assets<Image>>().add(reflection_image);
         let mut acquired = Vec::new();
-        let images: [Handle<Image>; 3] = image_descriptors.map(|image| {
-            let (handle, count) = self.images.get_mut(&image.buffer_id).unwrap();
+        let images: [Handle<Image>; 3] = image_descriptors.map(|(image, anisotropy_clamp)| {
+            let key = (image.buffer_id, anisotropy_clamp);
+            let (handle, count) = self.images.get_mut(&key).unwrap();
             *count += 1;
-            acquired.push(image.buffer_id);
+            acquired.push(key);
             handle.clone()
         });
         let water =
@@ -883,14 +892,14 @@ impl NativeGpu {
         for image in [&candidate.output, &candidate.reflection] {
             world.resource_mut::<Assets<Image>>().remove(image.id());
         }
-        for id in &candidate.images {
-            if let Some((_, count)) = self.images.get_mut(id) {
+        for key in &candidate.images {
+            if let Some((_, count)) = self.images.get_mut(key) {
                 *count -= 1;
                 if *count > 0 {
                     continue;
                 }
             }
-            if let Some((handle, _)) = self.images.remove(id) {
+            if let Some((handle, _)) = self.images.remove(key) {
                 world.resource_mut::<Assets<Image>>().remove(handle.id());
             }
         }
@@ -1633,6 +1642,50 @@ mod tests {
                 _ => None,
             })
             .expect("Prepared environment upload");
+        let mut sampler_gpu = NativeGpu::default();
+        let target = world.resource::<NativeGpu>().candidates[&3].target;
+        let mut sampler_assets = assets.clone();
+        sampler_assets.water.detail_anisotropy_clamp = 8;
+        let sampler_eight = sampler_gpu
+            .prepare(&mut world, &runtime, target, &sampler_assets)
+            .unwrap();
+        sampler_assets.water.detail_anisotropy_clamp = 4;
+        let sampler_four = sampler_gpu
+            .prepare(&mut world, &runtime, target, &sampler_assets)
+            .unwrap();
+        for detail in &assets.water.detail {
+            let eight = &sampler_gpu.images[&(detail.image.buffer_id, 8)].0;
+            let four = &sampler_gpu.images[&(detail.image.buffer_id, 4)].0;
+            assert_ne!(eight.id(), four.id());
+            let images = world.resource::<Assets<Image>>();
+            let eight = images.get(eight).unwrap();
+            let four = images.get(four).unwrap();
+            assert!(
+                matches!(&eight.sampler, bevy::image::ImageSampler::Descriptor(s) if s.anisotropy_clamp == 8)
+            );
+            assert!(
+                matches!(&four.sampler, bevy::image::ImageSampler::Descriptor(s) if s.anisotropy_clamp == 4)
+            );
+            assert_eq!(eight.data, four.data);
+            assert_eq!(
+                eight.texture_descriptor.mip_level_count,
+                four.texture_descriptor.mip_level_count
+            );
+        }
+        let sky_key = (assets.sky.buffer_id, 1);
+        assert_eq!(sampler_gpu.images[&sky_key].1, 2);
+        sampler_gpu.release(&mut world, &sampler_four).unwrap();
+        for detail in &assets.water.detail {
+            assert!(
+                !sampler_gpu
+                    .images
+                    .contains_key(&(detail.image.buffer_id, 4))
+            );
+            assert_eq!(sampler_gpu.images[&(detail.image.buffer_id, 8)].1, 1);
+        }
+        assert_eq!(sampler_gpu.images[&sky_key].1, 1);
+        sampler_gpu.release(&mut world, &sampler_eight).unwrap();
+        assert!(sampler_gpu.images.is_empty());
         let mut water = assets.water.clone();
         water.detail[0].extent_meters = 32.0;
         water.detail[1].extent_meters = 144.0;
@@ -1822,6 +1875,9 @@ mod tests {
         assert!(pending.is_empty());
         for texture in &scene.wing_textures {
             let image = environment::wing_image(&runtime, texture).unwrap();
+            assert!(
+                matches!(&image.sampler, bevy::image::ImageSampler::Descriptor(s) if s.anisotropy_clamp == 8)
+            );
             assert_eq!(
                 image.texture_descriptor.mip_level_count,
                 texture.mip_level_count
