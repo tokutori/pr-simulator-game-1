@@ -33,9 +33,12 @@ impl GameUiView {
             (
                 content @ (GameUiControlContent::Button { .. }
                 | GameUiControlContent::Toggle { .. }),
-                GameUiControlInput::ControlKeys { codes, .. },
+                GameUiControlInput::ControlKeys { keys, .. },
             ) => {
-                if !codes.iter().any(|code| code == "Enter" || code == "Space") {
+                if !keys
+                    .iter()
+                    .any(|key| matches!(key, KeyboardKey::Enter | KeyboardKey::Space))
+                {
                     return Ok(None);
                 }
                 content
@@ -68,15 +71,15 @@ impl GameUiView {
                         range_value(*minimum, *maximum, *step, *ratio)
                             .ok_or(GameUiError::ActionUnavailable)?
                     }
-                    GameUiControlInput::ControlKeys { codes, .. } => {
-                        let pressed = |code| codes.iter().any(|actual| actual == code);
-                        let desired = if pressed("Home") {
+                    GameUiControlInput::ControlKeys { keys, .. } => {
+                        let pressed = |key| keys.contains(&key);
+                        let desired = if pressed(KeyboardKey::Home) {
                             *minimum
-                        } else if pressed("End") {
+                        } else if pressed(KeyboardKey::End) {
                             *maximum
-                        } else if pressed("ArrowLeft") || pressed("ArrowDown") {
+                        } else if pressed(KeyboardKey::Left) || pressed(KeyboardKey::Down) {
                             current - step
-                        } else if pressed("ArrowRight") || pressed("ArrowUp") {
+                        } else if pressed(KeyboardKey::Right) || pressed(KeyboardKey::Up) {
                             current + step
                         } else {
                             return Ok(None);
@@ -177,6 +180,12 @@ pub(crate) fn range_value(minimum: f64, maximum: f64, step: f64, ratio: f64) -> 
     {
         return None;
     }
+    if ratio <= 0.0 {
+        return Some(minimum);
+    }
+    if ratio >= 1.0 {
+        return Some(maximum);
+    }
     let raw = minimum + ratio.clamp(0.0, 1.0) * (maximum - minimum);
     let value = minimum + ((raw - minimum) / step).round() * step;
     value.is_finite().then(|| value.clamp(minimum, maximum))
@@ -247,17 +256,12 @@ pub fn update_game_ui(
         GameUiAction::ControlInput { .. } => return Err(GameUiError::ActionUnavailable),
         GameUiAction::SetCredits { open } => next.credits_open = open,
         GameUiAction::Session { command } => {
-            let entering_replay = command == (SessionCommand::EnterReplay {});
             if command == (SessionCommand::LeaveReplay {}) {
                 next.analysis_time_seconds = context
                     .session
                     .playback_clock()
                     .ok_or(GameUiError::ActionUnavailable)?
                     .time_seconds();
-            }
-            if entering_replay {
-                next.replay_view = GameUiReplayView::Cinematic;
-                next.technical_open = false;
             }
             if matches!(
                 command,
@@ -273,13 +277,6 @@ pub fn update_game_ui(
                 next.pause_overlay = GameUiPauseOverlay::Menu;
             }
             effects.push(GameUiEffect::Session { command });
-            if entering_replay {
-                effects.push(GameUiEffect::Platform {
-                    command: GameUiPlatformCommand::SetReplayCamera {
-                        camera: next.replay_camera,
-                    },
-                });
-            }
         }
         GameUiAction::Platform { command } => effects.push(GameUiEffect::Platform { command }),
         GameUiAction::ToggleTechnical {} => next.technical_open = !state.technical_open,
@@ -287,6 +284,7 @@ pub fn update_game_ui(
         GameUiAction::SetAnalysisChart { chart } => next.analysis_chart = chart,
         GameUiAction::SetPauseOverlay { overlay } => next.pause_overlay = overlay,
         GameUiAction::SetReplayView { view } => next.replay_view = view,
+        GameUiAction::SetFlightCamera { camera } => next.flight_camera = camera,
         GameUiAction::CycleReplayCamera {} => {
             let current = GameUiReplayCamera::ALL
                 .iter()
@@ -294,11 +292,6 @@ pub fn update_game_ui(
                 .ok_or(GameUiError::ActionUnavailable)?;
             next.replay_camera =
                 GameUiReplayCamera::ALL[(current + 1) % GameUiReplayCamera::ALL.len()];
-            effects.push(GameUiEffect::Platform {
-                command: GameUiPlatformCommand::SetReplayCamera {
-                    camera: next.replay_camera,
-                },
-            });
         }
         GameUiAction::SeekAnalysis { time_seconds } | GameUiAction::SeekReplay { time_seconds } => {
             validate_record_time(

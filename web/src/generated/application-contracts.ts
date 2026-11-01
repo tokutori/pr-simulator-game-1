@@ -330,22 +330,26 @@ export type ApplicationInput = {
      */
     readonly buttons: number;
     /**
-     * Chart element identity.
+     * Published pointer-control identity; absent for the scene canvas.
      */
-    readonly control_id: string;
+    readonly control_id?: string | null;
     /**
      * Platform primary-pointer observation.
      */
     readonly is_primary: boolean;
-    readonly kind: "chart_pointer";
+    readonly kind: "control_pointer";
     /**
      * Raw event stage.
      */
-    readonly phase: ApplicationChartPointerPhase;
+    readonly phase: ApplicationPointerPhase;
     /**
      * Platform pointer identity.
      */
-    readonly pointer_id: number;
+    readonly pointer_id: ApplicationPointerId;
+    /**
+     * Raw platform device kind.
+     */
+    readonly pointer_kind: ApplicationPointerKind;
     /**
      * Pointer coordinates in logical pixels.
      *
@@ -378,6 +382,20 @@ export type ApplicationInput = {
      */
     readonly code: string;
     readonly kind: "keyboard";
+    /**
+     * Whether the key is pressed.
+     */
+    readonly pressed: boolean;
+    /**
+     * Whether this press repeats an existing hold.
+     */
+    readonly repeat: boolean;
+} | {
+    /**
+     * Physical key, without application action or flight binding selection.
+     */
+    readonly key: KeyboardKey;
+    readonly kind: "physical_key";
     /**
      * Whether the key is pressed.
      */
@@ -441,18 +459,6 @@ export type ApplicationGpuTimingCapability = {
     readonly cause: string;
     readonly kind: "unsupported";
 };
-/**
- * Supported manual Screen rendering scales, with full resolution as the default.
- */
-export type ScreenRenderScale = "100" | "75" | "50";
-/**
- * Directional shadow-map resolutions supported by both Screen adapters.
- */
-export type ScreenShadowMap = "full" | "half" | "quarter";
-/**
- * Shared non-physical water-detail selection.
- */
-export type WaterQuality = "low" | "medium" | "high";
 /**
  * Raw results from one bounded record preview transaction.
  */
@@ -634,19 +640,29 @@ export type GameUiControlInput = {
     readonly type: "set-range-ratio";
 } | {
     /**
-     * Platform key codes observed in the same input frame.
-     */
-    readonly codes: readonly string[];
-    /**
      * Published control identifier.
      */
     readonly controlId: string;
+    /**
+     * Platform-neutral physical keys observed in the same input frame.
+     */
+    readonly keys: readonly KeyboardKey[];
     readonly type: "control-keys";
 };
 /**
- * Raw stage of a platform chart pointer event.
+ * Platform-neutral physical keys observed by shared input and widget contracts.
+ *
+ * This vocabulary describes physical keys, not flight bindings or held-key ownership.
  */
-export type ApplicationChartPointerPhase = "down" | "move" | "up" | "cancel" | "lost_capture";
+export type KeyboardKey = "enter" | "space" | "home" | "end" | "left" | "right" | "up" | "down" | "a" | "c" | "d" | "j" | "l" | "p" | "s" | "w" | "escape";
+/**
+ * Raw stage of a platform pointer event on an admitted control.
+ */
+export type ApplicationPointerPhase = "down" | "move" | "up" | "cancel" | "lost_capture";
+/**
+ * Raw platform pointer kind, without flight-input policy.
+ */
+export type ApplicationPointerKind = "mouse" | "touch" | "pen" | "unknown";
 /**
  * Completion state of the display and scene resources needed for launch.
  */
@@ -685,6 +701,18 @@ export type ApplicationResourceObservation = {
     readonly cause: string;
     readonly kind: "failed";
 };
+/**
+ * Supported manual Screen rendering scales, with full resolution as the default.
+ */
+export type ScreenRenderScale = "100" | "75" | "50" | "25";
+/**
+ * Directional shadow-map resolutions supported by both Screen adapters.
+ */
+export type ScreenShadowMap = "full" | "half" | "quarter" | "off";
+/**
+ * Shared non-physical water-detail selection.
+ */
+export type WaterQuality = "low" | "medium" | "high";
 /**
  * Identity and outcome of an actual requested I/O operation.
  */
@@ -743,6 +771,10 @@ export type ApplicationHeadHudProjection = {
      * Head-relative surface and texture drawing commands.
      */
     readonly paint: HeadHudPaintProjection;
+    /**
+     * Last successful spatial projection that changed the complete raster data.
+     */
+    readonly paint_revision: number;
     /**
      * Final GPU depth, alpha and ordering settings.
      */
@@ -945,6 +977,10 @@ export type ApplicationMenuProjection = {
      */
     readonly paint: ApplicationMenuPaint;
     /**
+     * Last successful spatial projection that changed the complete raster data.
+     */
+    readonly paint_revision: number;
+    /**
      * Final GPU depth, alpha and ordering settings.
      */
     readonly surface_style: XrSurfaceStyle;
@@ -1030,6 +1066,12 @@ export type GameUiAction = {
      */
     readonly view: GameUiReplayView;
 } | {
+    /**
+     * Requested live camera.
+     */
+    readonly camera: GameUiFlightCamera;
+    readonly kind: "set_flight_camera";
+} | {
     readonly kind: "cycle_replay_camera";
 } | {
     readonly kind: "seek_analysis";
@@ -1056,6 +1098,12 @@ export type GameUiAction = {
  * Canonical application operations generated by every game UI.
  */
 export type SessionCommand = {
+    readonly kind: "set_keyboard_controls";
+    /**
+     * Complete device response selection.
+     */
+    readonly settings: KeyboardControlSettings;
+} | {
     readonly kind: "open_setup";
 } | {
     readonly kind: "return_to_title";
@@ -1121,6 +1169,10 @@ export type SessionCommand = {
     readonly visible: boolean;
 };
 /**
+ * Keyboard response curve applied to the fixed-tick ramp position.
+ */
+export type KeyboardResponseCurve = "linear" | "smoothstep";
+/**
  * Named preset whose axes are resolved independently.
  */
 export type DifficultyPreset = "beginner" | "standard" | "expert" | "realistic" | "custom";
@@ -1144,11 +1196,19 @@ export type HudCue = "telemetry" | "attitude" | "wind" | "flight_path" | "angle_
  * Platform-owned operation requested by common UI.
  */
 export type GameUiPlatformCommand = {
+    readonly kind: "reload_application";
+} | {
     readonly kind: "set_screen_render_scale";
     /**
      * Requested fraction of each physical rendering dimension.
      */
     readonly scale: ScreenRenderScale;
+} | {
+    readonly kind: "set_shadow_map";
+    /**
+     * Requested shadow quality.
+     */
+    readonly shadow: ScreenShadowMap;
 } | {
     /**
      * Whether GPU-work-based adjustment is selected.
@@ -1182,16 +1242,8 @@ export type GameUiPlatformCommand = {
     readonly id: number;
     readonly kind: "open_stored_record";
 } | {
-    /**
-     * Shared UI selection to apply.
-     */
-    readonly camera: GameUiReplayCamera;
-    readonly kind: "set_replay_camera";
+    readonly kind: "retry_stored_records";
 };
-/**
- * Replay camera candidates in their shared selection order.
- */
-export type GameUiReplayCamera = "auto" | "pilot" | "chase" | "orbit" | "platform" | "shore" | "overhead" | "side" | "front" | "telephoto";
 /**
  * Result presentation mode.
  */
@@ -1208,6 +1260,10 @@ export type GameUiPauseOverlay = "menu" | "settings" | "help";
  * Replay presentation selection.
  */
 export type GameUiReplayView = "cinematic" | "telemetry" | "analysis";
+/**
+ * Screen flight camera selection retained with the shared UI settings.
+ */
+export type GameUiFlightCamera = "pilot" | "chase";
 /**
  * Widget implementations must exhaustively handle each display primitive.
  */
@@ -1509,6 +1565,40 @@ export type GameUiControlContent = {
     readonly source: GameUiReadoutSource;
 } | {
     /**
+     * Completed viewport placement.
+     */
+    readonly bounds: GameUiRect;
+    /**
+     * Stick or absolute pilot-position interaction.
+     */
+    readonly control: FlightTouchControl;
+    readonly kind: "flight_touch";
+    /**
+     * Acquired local stick origin, absent before touch acquisition.
+     *
+     * @minItems 2
+     * @maxItems 2
+     */
+    readonly origin?: readonly [
+        number,
+        number
+    ] | null;
+    /**
+     * Completed local indicator centre in logical pixels.
+     *
+     * @minItems 2
+     * @maxItems 2
+     */
+    readonly position: readonly [
+        number,
+        number
+    ];
+    /**
+     * Shared indicator radius in logical pixels.
+     */
+    readonly radius: number;
+} | {
+    /**
      * Plot selection.
      */
     readonly chart: GameUiAnalysisChart;
@@ -1564,6 +1654,10 @@ export type GameUiRangeTarget = "analysis" | "replay";
  * Shared source for frame-varying readouts, independent of element identity.
  */
 export type GameUiReadoutSource = "static" | "countdown" | "playback_time" | "playback_summary" | "analysis_cursor";
+/**
+ * Independent channels belonging to one touch flight device.
+ */
+export type FlightTouchControl = "stick" | "pilot_slider";
 /**
  * Horizontal alignment relative to a chart label's baseline anchor.
  */
@@ -2014,10 +2108,6 @@ export interface ApplicationRendererObservation {
      */
     readonly gpu_timing: ApplicationGpuTimingCapability;
     /**
-     * Confirmed resources at this renderer's creation, before owner-issued changes.
-     */
-    readonly initial_quality: ApplicationRenderQuality;
-    /**
      * Creation/restoration identity, replaced after context loss or device replacement.
      */
     readonly resource_id: number;
@@ -2041,23 +2131,6 @@ export interface ApplicationRendererObservation {
         number,
         number
     ] | null;
-}
-/**
- * Renderer resource configuration; Screen scale is independent of runtime XR framebuffer size.
- */
-export interface ApplicationRenderQuality {
-    /**
-     * Retained Screen drawing resolution.
-     */
-    readonly scale: ScreenRenderScale;
-    /**
-     * Directional shadow-map resolution.
-     */
-    readonly shadow: ScreenShadowMap;
-    /**
-     * Water geometry and wave budget.
-     */
-    readonly water_quality: WaterQuality;
 }
 /**
  * Raw rows retrieved by a bounded descending metadata cursor in one read transaction.
@@ -2387,6 +2460,19 @@ export interface GameUiChartExtent {
     readonly width: number;
 }
 /**
+ * Exact raw pointer identifier, preserving native 64-bit IDs at the JSON boundary.
+ */
+export interface ApplicationPointerId {
+    /**
+     * High word of the platform identifier.
+     */
+    readonly high: number;
+    /**
+     * Low word of the platform identifier.
+     */
+    readonly low: number;
+}
+/**
  * External metrics and API availability, without derived UI state.
  */
 export interface ApplicationPlatformObservation {
@@ -2439,6 +2525,10 @@ export interface ApplicationCapabilities {
      * Platform provides persistent record I/O.
      */
     readonly stored_records_available: boolean;
+    /**
+     * Actual touch input occurred in this observation batch; the runtime retains this evidence.
+     */
+    readonly touch_available: boolean;
 }
 /**
  * Browser orientation API observations before a sensor sample is available.
@@ -2503,6 +2593,23 @@ export interface ApplicationResourceCommit {
     ];
 }
 /**
+ * Renderer resource configuration; Screen scale is independent of runtime XR framebuffer size.
+ */
+export interface ApplicationRenderQuality {
+    /**
+     * Retained Screen drawing resolution.
+     */
+    readonly scale: ScreenRenderScale;
+    /**
+     * Directional shadow-map resolution.
+     */
+    readonly shadow: ScreenShadowMap;
+    /**
+     * Water geometry and wave budget.
+     */
+    readonly water_quality: WaterQuality;
+}
+/**
  * One update's I/O work and optional drawing submission.
  */
 export interface ApplicationOutput {
@@ -2563,7 +2670,11 @@ export interface ApplicationGraphicsProjection {
      */
     readonly query?: ApplicationGpuQuery | null;
     /**
-     * Current drawable resources, absent while the renderer is unavailable.
+     * Live context identity, independent of whether its first binding has completed.
+     */
+    readonly renderer_resource_id?: number | null;
+    /**
+     * Last acknowledged drawable resources, absent until this context has a commit.
      */
     readonly resource?: ApplicationGraphicsResource | null;
     readonly [k: string]: unknown | undefined;
@@ -2651,7 +2762,7 @@ export interface ApplicationSceneProjection {
      */
     readonly water_time_seconds: number;
     /**
-     * Final render-world water translation, independent of aircraft rotation and altitude.
+     * Final camera-centred water translation, snapped to the one-metre world XZ lattice.
      */
     readonly water_world_from_surface: Pose;
     /**
@@ -3289,6 +3400,27 @@ export interface GameUiView {
      * Adapter query-cache revision; pure projections use zero until published.
      */
     readonly view_revision: number;
+}
+/**
+ * Device response selection sealed independently of the physical controller.
+ */
+export interface KeyboardControlSettings {
+    /**
+     * Curve of the normalized ramp position.
+     */
+    readonly curve: KeyboardResponseCurve;
+    /**
+     * Speed of the pilot's target position, in metres per second.
+     */
+    readonly pilot_target_rate_mps: number;
+    /**
+     * Seconds from neutral to full ramp position.
+     */
+    readonly ramp_seconds: number;
+    /**
+     * Maximum normalized nose-up and turn demand.
+     */
+    readonly sensitivity: number;
 }
 /**
  * Shared Web-baseline HUD model; no adapter rederives flight values or labels.
@@ -4156,6 +4288,10 @@ export interface GameUiTheme {
      */
     readonly choice_background: string;
     /**
+     * Flight-path marker color.
+     */
+    readonly flight_path_marker: string;
+    /**
      * Keyboard focus outline.
      */
     readonly focus_outline: string;
@@ -4191,6 +4327,10 @@ export interface GameUiTheme {
      * Main text color.
      */
     readonly text: string;
+    /**
+     * Mandatory warning text color.
+     */
+    readonly warning_text: string;
 }
 /**
  * Lightweight per-frame UI observation associated with one published structural view.
@@ -4208,6 +4348,10 @@ export interface GameUiFrame {
      * Numeric readouts that advance with the retained record cursor.
      */
     readonly fields: readonly GameUiFieldsValue[];
+    /**
+     * Pointer-control indicators associated with the retained flight controls.
+     */
+    readonly flight_touch: readonly GameUiFlightTouchValue[];
     /**
      * Shared HUD projection, never a second physical state.
      */
@@ -4271,6 +4415,35 @@ export interface GameUiFieldsValue {
      * Retained group identity.
      */
     readonly id: string;
+}
+/**
+ * Completed local indicator geometry for a retained flight pointer control.
+ */
+export interface GameUiFlightTouchValue {
+    /**
+     * Existing published control identity.
+     */
+    readonly id: string;
+    /**
+     * Complete local-pixel relative-drag origin, absent for an absolute slider.
+     *
+     * @minItems 2
+     * @maxItems 2
+     */
+    readonly origin?: readonly [
+        number,
+        number
+    ] | null;
+    /**
+     * Complete local-pixel knob centre.
+     *
+     * @minItems 2
+     * @maxItems 2
+     */
+    readonly position: readonly [
+        number,
+        number
+    ];
 }
 /**
  * Value of a retained typed range control.
@@ -4500,6 +4673,10 @@ export interface ApplicationMeshMaterial {
      */
     readonly lit: boolean;
     /**
+     * Final material identity, unique across this application's asset lifetimes.
+     */
+    readonly material_id: number;
+    /**
      * Material alpha.
      */
     readonly opacity: number;
@@ -4587,6 +4764,10 @@ export interface ApplicationWaterAssets {
      * Downstream detail multiplier; zero denotes the flat-water case.
      */
     readonly detail_amplitude_scale: number;
+    /**
+     * Maximum anisotropic filtering for both detail images, fixed for this prepared resource.
+     */
+    readonly detail_anisotropy_clamp: number;
     /**
      * Complete final-axis water meshes and conservative culling bounds.
      */
@@ -4750,6 +4931,7 @@ export interface LakeWaveProjection {
         number,
         number
     ];
+    readonly detailQuadratureSamples: number;
     readonly horizontalDerivativeBound: number;
     readonly spacing: LakeMeshSpacingDomain;
     readonly visualWaveHeight: number;

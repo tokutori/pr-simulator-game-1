@@ -69,7 +69,7 @@ impl Context {
         }
     }
 
-    fn nearby(&self, point: [f64; 2], ring: Option<&[[f64; 2]]>) -> Option<Transition> {
+    fn nearby(&self, point: [f64; 2]) -> Option<Transition> {
         let containing = self.ordered.iter().find(|(index, grid)| {
             grid.bounds().contains(point[0], point[1])
                 && !(*index == 0
@@ -109,7 +109,6 @@ impl Context {
                     if distance > 1e-6
                         && distance <= radius
                         && self.mapped(candidate[0], candidate[1])
-                        && ring.is_none_or(|ring| point_in_ring(candidate[0], candidate[1], ring))
                     {
                         candidates.push((candidate, distance));
                     }
@@ -130,27 +129,13 @@ impl Context {
         })
     }
 
-    fn append_path(&self, mesh: &mut Builder, points: &[[f64; 2]], closed: bool, open_side: f64) {
+    fn append_path(&self, mesh: &mut Builder, points: &[[f64; 2]], open_side: f64) {
         if points.len() < 2 {
             return;
         }
-        let area: f64 = points
-            .iter()
-            .zip(points.iter().cycle().skip(1))
-            .take(points.len())
-            .map(|(current, next)| current[1] * next[0] - next[1] * current[0])
-            .sum();
-        let side = if closed {
-            if area < 0.0 { -1.0 } else { 1.0 }
-        } else {
-            open_side
-        };
+        let side = open_side;
         let mut samples = Vec::new();
-        for segment in 0..if closed {
-            points.len()
-        } else {
-            points.len() - 1
-        } {
+        for segment in 0..points.len() - 1 {
             let start = points[segment];
             let end = points[(segment + 1) % points.len()];
             let length = (end[0] - start[0]).hypot(end[1] - start[1]);
@@ -163,25 +148,15 @@ impl Context {
                 ]);
             }
         }
-        if !closed {
-            samples.push(*points.last().unwrap());
-        }
+        samples.push(*points.last().unwrap());
         if samples.len() < 2 {
             return;
         }
         let mut normals = Vec::new();
         let mut transitions = Vec::new();
         for (index, &point) in samples.iter().enumerate() {
-            let before = samples[if index == 0 {
-                if closed { samples.len() - 1 } else { 0 }
-            } else {
-                index - 1
-            }];
-            let after = samples[if index == samples.len() - 1 {
-                if closed { 0 } else { index }
-            } else {
-                index + 1
-            }];
+            let before = samples[index.saturating_sub(1)];
+            let after = samples[(index + 1).min(samples.len() - 1)];
             let delta = [after[0] - before[0], after[1] - before[1]];
             let length = delta[0].hypot(delta[1]);
             let length = if length == 0.0 { 1.0 } else { length };
@@ -190,12 +165,12 @@ impl Context {
             let mut transition = self
                 .find_land(point, normal)
                 .or_else(|| self.find_land(point, normal.map(|value| -value)));
-            let refine = closed || (index >= 8 && index + 8 < samples.len());
+            let refine = index >= 8 && index + 8 < samples.len();
             if refine
                 && transition.is_some_and(|transition| {
                     transition.width > 120.0_f64.max(self.minimum_step * 4.0)
                 })
-                && let Some(nearby) = self.nearby(point, closed.then_some(points))
+                && let Some(nearby) = self.nearby(point)
                 && transition.is_none_or(|transition| nearby.width < transition.width)
             {
                 transition = Some(nearby);
@@ -207,15 +182,14 @@ impl Context {
                 continue;
             }
             let previous = (1..=9).find_map(|distance| {
-                if !closed && distance > index {
+                if distance > index {
                     None
                 } else {
-                    transitions[(index + samples.len() - distance % samples.len()) % samples.len()]
-                        .map(|value| (distance, value))
+                    transitions[index - distance].map(|value| (distance, value))
                 }
             });
             let next = (1..=9).find_map(|distance| {
-                if !closed && index + distance >= samples.len() {
+                if index + distance >= samples.len() {
                     None
                 } else {
                     transitions[(index + distance) % samples.len()].map(|value| (distance, value))
@@ -230,14 +204,10 @@ impl Context {
                 continue;
             }
             let fraction = previous_distance as f64 / (previous_distance + next_distance) as f64;
-            let direction = if closed {
-                normals[index]
-            } else {
-                std::array::from_fn(|axis| {
-                    previous.direction[axis]
-                        + (next.direction[axis] - previous.direction[axis]) * fraction
-                })
-            };
+            let direction = std::array::from_fn(|axis| {
+                previous.direction[axis]
+                    + (next.direction[axis] - previous.direction[axis]) * fraction
+            });
             let length = direction[0].hypot(direction[1]);
             if length < 0.5 {
                 continue;
@@ -248,66 +218,64 @@ impl Context {
                 height: previous.height + (next.height - previous.height) * fraction,
             });
         }
-        if !closed {
-            if let Some(first) = transitions
-                .iter()
-                .position(Option::is_some)
-                .filter(|&index| index <= 8)
-            {
-                let reference = transitions[first].unwrap();
-                for index in 0..first {
-                    transitions[index] = Some(Transition {
-                        direction: normals[index],
-                        ..reference
-                    });
-                }
-            }
-            if let Some(last) = transitions
-                .iter()
-                .rposition(Option::is_some)
-                .filter(|&index| transitions.len() - 1 - index <= 8)
-            {
-                let reference = transitions[last].unwrap();
-                for index in last + 1..transitions.len() {
-                    transitions[index] = Some(Transition {
-                        direction: normals[index],
-                        ..reference
-                    });
-                }
-            }
-            let supported = transitions.clone();
-            for index in 0..transitions.len() {
-                if transitions[index].is_some() {
-                    continue;
-                }
-                let nearest = (1..=8).find_map(|distance| {
-                    [
-                        index.checked_sub(distance),
-                        index
-                            .checked_add(distance)
-                            .filter(|&candidate| candidate < supported.len()),
-                    ]
-                    .into_iter()
-                    .flatten()
-                    .find_map(|candidate| supported[candidate])
+
+        if let Some(first) = transitions
+            .iter()
+            .position(Option::is_some)
+            .filter(|&index| index <= 8)
+        {
+            let reference = transitions[first].unwrap();
+            for index in 0..first {
+                transitions[index] = Some(Transition {
+                    direction: normals[index],
+                    ..reference
                 });
-                if let Some(nearest) = nearest {
-                    let normal = normals[index];
-                    let sign = if nearest.direction[0] * normal[0]
-                        + nearest.direction[1] * normal[1]
-                        < 0.0
-                    {
+            }
+        }
+        if let Some(last) = transitions
+            .iter()
+            .rposition(Option::is_some)
+            .filter(|&index| transitions.len() - 1 - index <= 8)
+        {
+            let reference = transitions[last].unwrap();
+            for index in last + 1..transitions.len() {
+                transitions[index] = Some(Transition {
+                    direction: normals[index],
+                    ..reference
+                });
+            }
+        }
+        let supported = transitions.clone();
+        for index in 0..transitions.len() {
+            if transitions[index].is_some() {
+                continue;
+            }
+            let nearest = (1..=8).find_map(|distance| {
+                [
+                    index.checked_sub(distance),
+                    index
+                        .checked_add(distance)
+                        .filter(|&candidate| candidate < supported.len()),
+                ]
+                .into_iter()
+                .flatten()
+                .find_map(|candidate| supported[candidate])
+            });
+            if let Some(nearest) = nearest {
+                let normal = normals[index];
+                let sign =
+                    if nearest.direction[0] * normal[0] + nearest.direction[1] * normal[1] < 0.0 {
                         -1.0
                     } else {
                         1.0
                     };
-                    transitions[index] = Some(Transition {
-                        direction: normal.map(|value| value * sign),
-                        ..nearest
-                    });
-                }
+                transitions[index] = Some(Transition {
+                    direction: normal.map(|value| value * sign),
+                    ..nearest
+                });
             }
         }
+
         for (index, transition) in transitions.iter_mut().enumerate() {
             let Some(current) = *transition else {
                 continue;
@@ -378,13 +346,6 @@ impl Context {
             }
             path.push((index, start));
         }
-        if closed
-            && path.len() > 2
-            && path.first().unwrap().0 == 0
-            && path.last().unwrap().0 == samples.len() - 1
-        {
-            connect(mesh, path.last().unwrap().1, path.first().unwrap().1);
-        }
     }
 }
 
@@ -428,10 +389,7 @@ pub(super) fn generate(shore: &Shoreline, grids: &[Grid]) -> Result<VenueTerrain
         .iter()
         .zip(&shore.shoreline_land_side_signs)
     {
-        context.append_path(&mut mesh, points, false, f64::from(side));
-    }
-    for island in &shore.islands {
-        context.append_path(&mut mesh, &island.ring_north_east_meters, true, 1.0);
+        context.append_path(&mut mesh, points, f64::from(side));
     }
     mesh.finish(
         "lake-biwa-shoreline-terrain-transition".into(),

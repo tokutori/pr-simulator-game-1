@@ -51,12 +51,15 @@ use material::*;
 
 #[derive(Default, Resource)]
 struct Surfaces {
+    resource: Option<(u32, u32)>,
     menu: Option<PaintTarget>,
     head: Option<PaintTarget>,
     cursors: Vec<Cursor>,
 }
 
 struct PaintTarget {
+    paint_revision: Option<u32>,
+    paint_pending: Option<u32>,
     camera: Entity,
     root: Entity,
     plane: Entity,
@@ -140,6 +143,8 @@ fn target(world: &mut World, order: isize) -> PaintTarget {
         ))
         .id();
     PaintTarget {
+        paint_revision: None,
+        paint_pending: None,
         camera,
         root,
         plane,
@@ -174,12 +179,14 @@ impl PaintTarget {
     fn begin(
         &mut self,
         world: &mut World,
-        size: MenuSize,
-        canvas: [u32; 2],
+        extent: (MenuSize, [u32; 2]),
         pose: Pose,
         style: XrSurfaceStyle,
         layers: &RenderLayers,
-    ) -> Result<(), String> {
+        raster: (u32, u32, Option<u32>),
+    ) -> Result<bool, String> {
+        let (size, canvas) = extent;
+        let (paint_revision, presentation_id, presented) = raster;
         if canvas.contains(&0)
             || !size.width.is_finite()
             || !size.height.is_finite()
@@ -195,6 +202,7 @@ impl PaintTarget {
                 .ok_or("XR surface image was released")?;
             if current.width() != canvas[0] || current.height() != canvas[1] {
                 *current = image(canvas);
+                self.paint_revision = None;
             }
         }
         *world
@@ -214,18 +222,34 @@ impl PaintTarget {
                 .entity_mut(self.plane)
                 .insert(SurfaceOrder(style.render_order));
         }
-        world.entity_mut(self.root).insert(Node {
-            width: px(canvas[0]),
-            height: px(canvas[1]),
-            ..default()
-        });
-        for entity in &self.nodes {
-            world
-                .entity_mut(*entity)
-                .remove::<(ChildOf, Baseline)>()
-                .insert(Visibility::Hidden);
+        let repaint = self.paint_revision != Some(paint_revision);
+        if self
+            .paint_pending
+            .is_some_and(|pending| presented.is_some_and(|done| done >= pending))
+        {
+            self.paint_pending = None;
         }
-        Ok(())
+        if repaint {
+            // A failed rebuild leaves the raster receipt invalid for the next submission.
+            self.paint_revision = None;
+            self.paint_pending = Some(presentation_id);
+            world.entity_mut(self.root).insert(Node {
+                width: px(canvas[0]),
+                height: px(canvas[1]),
+                ..default()
+            });
+            for entity in &self.nodes {
+                world
+                    .entity_mut(*entity)
+                    .remove::<(ChildOf, Baseline)>()
+                    .insert(Visibility::Hidden);
+            }
+        }
+        world
+            .get_mut::<Camera>(self.camera)
+            .ok_or("XR UI camera missing")?
+            .is_active = self.paint_pending.is_some();
+        Ok(repaint)
     }
 
     fn release(self, world: &mut World) {
@@ -261,12 +285,26 @@ pub(crate) fn submit(
     world: &mut World,
     projection: Option<&ApplicationSpatialProjection>,
     layers: RenderLayers,
+    resource: Option<(u32, u32)>,
+    presented: Option<u32>,
 ) -> Result<(), String> {
     let mut state = world
         .remove_resource::<Surfaces>()
         .ok_or("XR surfaces were not installed")?;
-    let result = submit_inner(world, &mut state, projection, &layers);
+    if state.resource != resource {
+        for target in [&mut state.menu, &mut state.head].into_iter().flatten() {
+            target.paint_revision = None;
+            target.paint_pending = None;
+        }
+        state.resource = resource;
+    }
+    let projection = projection.filter(|_| resource.is_some());
+    let result = submit_inner(world, &mut state, projection, &layers, presented);
     if result.is_err() {
+        for target in [&mut state.menu, &mut state.head].into_iter().flatten() {
+            target.paint_revision = None;
+            target.paint_pending = None;
+        }
         for target in [&state.menu, &state.head].into_iter().flatten() {
             world.entity_mut(target.plane).insert(Visibility::Hidden);
             if let Some(mut camera) = world.get_mut::<Camera>(target.camera) {
@@ -286,6 +324,7 @@ fn submit_inner(
     state: &mut Surfaces,
     projection: Option<&ApplicationSpatialProjection>,
     layers: &RenderLayers,
+    presented: Option<u32>,
 ) -> Result<(), String> {
     for target in [&state.menu, &state.head].into_iter().flatten() {
         world.entity_mut(target.plane).insert(Visibility::Hidden);
@@ -305,67 +344,66 @@ fn submit_inner(
         world_from_panel,
         surface_style,
         canvas_size,
+        paint_revision,
         paint,
         cursors,
     } = &projection.menu
     {
         let target = state.menu.get_or_insert_with(|| target(world, -8));
-        target.begin(
+        let repaint = target.begin(
             world,
-            paint.size,
-            *canvas_size,
+            (paint.size, *canvas_size),
             *world_from_panel,
             *surface_style,
             layers,
+            (*paint_revision, projection.presentation_id, presented),
         )?;
-        world
-            .entity_mut(target.camera)
-            .get_mut::<Camera>()
-            .ok_or("XR UI camera missing")?
-            .is_active = true;
-        let scale = Vec2::new(
-            canvas_size[0] as f32 / paint.size.width as f32,
-            canvas_size[1] as f32 / paint.size.height as f32,
-        );
-        let mut used = 0;
-        let background = target.node(
-            world,
-            &mut used,
-            target.root,
-            Node {
-                position_type: PositionType::Absolute,
-                width: px(canvas_size[0]),
-                height: px(canvas_size[1]),
-                ..default()
-            },
-        );
-        world
-            .entity_mut(background)
-            .insert(BackgroundColor(color(&paint.background, paint.opacity)?));
-        let clip = target.clip_node(
-            world,
-            paint.content.clip,
-            target.root,
-            Vec2::ZERO,
-            scale,
-            &mut used,
-        );
-        target.paint(
-            world,
-            &paint.content.items,
-            clip,
-            Vec2::new(paint.content.clip.x as f32, paint.content.clip.y as f32) * scale,
-            scale,
-            &mut used,
-        )?;
-        target.paint(
-            world,
-            &paint.footer,
-            target.root,
-            Vec2::ZERO,
-            scale,
-            &mut used,
-        )?;
+        if repaint {
+            let scale = Vec2::new(
+                canvas_size[0] as f32 / paint.size.width as f32,
+                canvas_size[1] as f32 / paint.size.height as f32,
+            );
+            let mut used = 0;
+            let background = target.node(
+                world,
+                &mut used,
+                target.root,
+                Node {
+                    position_type: PositionType::Absolute,
+                    width: px(canvas_size[0]),
+                    height: px(canvas_size[1]),
+                    ..default()
+                },
+            );
+            world
+                .entity_mut(background)
+                .insert(BackgroundColor(color(&paint.background, paint.opacity)?));
+            let clip = target.clip_node(
+                world,
+                paint.content.clip,
+                target.root,
+                Vec2::ZERO,
+                scale,
+                &mut used,
+            );
+            target.paint(
+                world,
+                &paint.content.items,
+                clip,
+                Vec2::new(paint.content.clip.x as f32, paint.content.clip.y as f32) * scale,
+                scale,
+                &mut used,
+            )?;
+            target.paint(
+                world,
+                &paint.footer,
+                target.root,
+                Vec2::ZERO,
+                scale,
+                &mut used,
+            )?;
+            target.paint_revision = Some(*paint_revision);
+        }
         for (index, cursor) in cursors.iter().enumerate() {
             while state.cursors.len() <= index {
                 let mesh = world.resource_mut::<Assets<Mesh>>().add(Circle::new(0.5));
@@ -425,28 +463,27 @@ fn submit_inner(
     if let ApplicationHeadHudProjection::Ready {
         world_from_surface,
         surface_style,
+        paint_revision,
         paint,
     } = &projection.head_hud
     {
         let target = state.head.get_or_insert_with(|| target(world, -7));
-        target.begin(
+        let repaint = target.begin(
             world,
-            paint.size,
-            paint.canvas_size,
+            (paint.size, paint.canvas_size),
             *world_from_surface,
             *surface_style,
             layers,
+            (*paint_revision, projection.presentation_id, presented),
         )?;
-        world
-            .entity_mut(target.camera)
-            .get_mut::<Camera>()
-            .ok_or("XR UI camera missing")?
-            .is_active = true;
-        let scale = Vec2::new(
-            paint.canvas_size[0] as f32 / paint.size.width as f32,
-            paint.canvas_size[1] as f32 / paint.size.height as f32,
-        );
-        target.paint(world, &paint.items, target.root, Vec2::ZERO, scale, &mut 0)?;
+        if repaint {
+            let scale = Vec2::new(
+                paint.canvas_size[0] as f32 / paint.size.width as f32,
+                paint.canvas_size[1] as f32 / paint.size.height as f32,
+            );
+            target.paint(world, &paint.items, target.root, Vec2::ZERO, scale, &mut 0)?;
+            target.paint_revision = Some(*paint_revision);
+        }
     }
     Ok(())
 }
@@ -630,5 +667,97 @@ mod tests {
                 .into_iter()
                 .all(|entity| world.get_entity(entity).is_err())
         );
+
+        world.init_resource::<Surfaces>();
+        let mut projection = ApplicationSpatialProjection {
+            presentation_id: 11,
+            menu: ApplicationMenuProjection::Ready {
+                world_from_panel: Pose::IDENTITY,
+                surface_style: XrSurfaceStyle {
+                    depth_test: false,
+                    depth_write: false,
+                    transparent: true,
+                    render_order: 1,
+                },
+                canvas_size: [200, 100],
+                paint_revision: 5,
+                paint: Box::new(birdman_game_runtime::ApplicationMenuPaint {
+                    size: MenuSize {
+                        width: 1.0,
+                        height: 0.5,
+                    },
+                    title: "raster receipt".into(),
+                    background: "#000000".into(),
+                    opacity: 0.5,
+                    content: birdman_game_presentation::xr::MenuPaintLayer {
+                        clip: MenuRect {
+                            x: 0.0,
+                            y: 0.0,
+                            width: 1.0,
+                            height: 0.5,
+                        },
+                        items: Vec::new(),
+                    },
+                    footer: Vec::new(),
+                }),
+                cursors: Vec::new(),
+            },
+            head_hud: ApplicationHeadHudProjection::Absent,
+        };
+        submit(
+            world,
+            Some(&projection),
+            RenderLayers::layer(0),
+            Some((7, 9)),
+            None,
+        )
+        .unwrap();
+        let menu = world.resource::<Surfaces>().menu.as_ref().unwrap();
+        let (camera, plane, image, nodes) =
+            (menu.camera, menu.plane, menu.image.id(), menu.nodes.clone());
+        assert!(world.get::<Camera>(camera).unwrap().is_active);
+        // Another CPU output before the render receipt must keep the raster queued.
+        submit(
+            world,
+            Some(&projection),
+            RenderLayers::layer(0),
+            Some((7, 9)),
+            None,
+        )
+        .unwrap();
+        assert!(world.get::<Camera>(camera).unwrap().is_active);
+        projection.presentation_id = 12;
+        if let ApplicationMenuProjection::Ready {
+            world_from_panel, ..
+        } = &mut projection.menu
+        {
+            world_from_panel.position.x = 1.0;
+        }
+        submit(
+            world,
+            Some(&projection),
+            RenderLayers::layer(0),
+            Some((7, 9)),
+            Some(11),
+        )
+        .unwrap();
+        assert!(!world.get::<Camera>(camera).unwrap().is_active);
+        assert_eq!(world.get::<Transform>(plane).unwrap().translation.x, 1.0);
+        assert_eq!(
+            world.resource::<Surfaces>().menu.as_ref().unwrap().nodes,
+            nodes
+        );
+        // A renderer replacement cannot acknowledge its new raster with the old receipt.
+        submit(
+            world,
+            Some(&projection),
+            RenderLayers::layer(0),
+            Some((8, 9)),
+            Some(11),
+        )
+        .unwrap();
+        assert!(world.get::<Camera>(camera).unwrap().is_active);
+        release(world);
+        assert!(world.resource::<Assets<Image>>().get(image).is_none());
     }
 }

@@ -97,11 +97,25 @@ fn extract(mut main: ResMut<MainWorld>, mut packet: ResMut<Packet>) {
         });
     }
     if let Some(pending) = &mut packet.pending {
-        pending.source = io
-            .blit
-            .as_ref()
-            .filter(|blit| blit.frame == pending.frame.id)
-            .cloned();
+        update_copy_source(
+            &mut pending.source,
+            pending.frame.id,
+            pending.submitted,
+            io.blit.as_ref(),
+        );
+    }
+}
+
+fn update_copy_source(
+    current: &mut Option<Blit>,
+    frame: u64,
+    submitted: bool,
+    incoming: Option<&Blit>,
+) {
+    // Once queued, GPU completion and end_frame must acknowledge that exact copy,
+    // even if another main-world output offers a newer painting in the meantime.
+    if !submitted {
+        *current = incoming.filter(|blit| blit.frame == frame).cloned();
     }
 }
 
@@ -343,6 +357,13 @@ fn copy(world: &mut World) {
         if source.texture_descriptor.format != wgpu::TextureFormat::Rgba8UnormSrgb {
             return Err("OpenXR source framebuffer format changed".into());
         }
+        if !source
+            .texture_descriptor
+            .usage
+            .contains(wgpu::TextureUsages::COPY_SRC)
+        {
+            return Err("OpenXR source framebuffer is not copyable".into());
+        }
         let index = pending
             .acquired
             .ok_or("OpenXR image has not been acquired")?;
@@ -412,4 +433,31 @@ fn copy(world: &mut World) {
         fault(&packet, cause);
     }
     world.insert_resource(packet);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn submitted_copy_retains_its_source_and_presentation_until_completion() {
+        let mut images = Assets::<Image>::default();
+        let a = Blit {
+            frame: 4,
+            source: images.add(Image::default()).id(),
+            presentation: Some(11),
+        };
+        let b = Blit {
+            frame: 4,
+            source: images.add(Image::default()).id(),
+            presentation: Some(12),
+        };
+        let mut source = None;
+        update_copy_source(&mut source, 4, false, Some(&a));
+        update_copy_source(&mut source, 4, true, Some(&b));
+        update_copy_source(&mut source, 4, true, None);
+        let completed = source.unwrap();
+        assert_eq!(completed.source, a.source);
+        assert_eq!(completed.presentation, a.presentation);
+    }
 }

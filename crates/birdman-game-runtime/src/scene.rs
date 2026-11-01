@@ -8,7 +8,8 @@ use birdman_game_presentation::camera::{
     flight_relative_pose, registered_pilot_eye,
 };
 use birdman_game_presentation::game_ui::{
-    GameUiLayout, GameUiPresentationMode, GameUiReplayCamera, GameUiState, GameUiViewport,
+    GameUiFlightCamera, GameUiLayout, GameUiPresentationMode, GameUiReplayCamera, GameUiState,
+    GameUiViewport,
 };
 use birdman_game_presentation::render_pose::{
     FlightRenderPose, live_render_pose, prepared_render_pose,
@@ -59,7 +60,7 @@ pub struct ApplicationSceneProjection {
     pub reflection: Option<birdman_game_presentation::camera::PlanarReflection>,
     /// Whether the registered world geometry belongs to this admitted environment.
     pub venue_visible: bool,
-    /// Final render-world water translation, independent of aircraft rotation and altitude.
+    /// Final camera-centred water translation, snapped to the one-metre world XZ lattice.
     pub water_world_from_surface: Pose,
     /// Complete accepted mutable attributes and final articulated part transforms.
     pub geometry: Option<crate::ApplicationGeometryFrame>,
@@ -98,12 +99,11 @@ pub(super) struct SceneOwner {
     rig: Option<XrCameraRig>,
     reference: Option<XrReferenceFrame>,
     look: [f64; 2],
-    chase: bool,
+    water_world_from_surface: Option<Pose>,
 }
 
 impl SceneOwner {
-    pub(super) fn toggle_camera(&mut self) {
-        self.chase = !self.chase;
+    pub(super) fn reset_look(&mut self) {
         self.look = [0.0; 2];
     }
 
@@ -239,14 +239,9 @@ impl SceneOwner {
                     lighting: None,
                     reflection: None,
                     venue_visible: context.venue_visible,
-                    water_world_from_surface: Pose {
-                        position: Vector3 {
-                            x: world_from_aircraft.position.x,
-                            y: 0.0,
-                            z: world_from_aircraft.position.z,
-                        },
-                        ..Pose::IDENTITY
-                    },
+                    water_world_from_surface: self
+                        .water_world_from_surface
+                        .unwrap_or(Pose::IDENTITY),
                     geometry: None,
                     water_time_seconds: aircraft.map_or(0.0, |pose| pose.simulation_time_seconds),
                     world_from_aircraft,
@@ -261,9 +256,11 @@ impl SceneOwner {
             self.resource = Some(display);
             self.origin = XrTrackingOrigin::default();
         }
-        let chase = replay.as_ref().map_or(self.chase, |view| {
-            view.camera() != GameUiReplayCamera::Pilot
-        });
+        let chase = replay.as_ref().map_or(
+            mode == GameUiPresentationMode::Screen
+                && context.ui.flight_camera == GameUiFlightCamera::Chase,
+            |view| view.camera() != GameUiReplayCamera::Pilot,
+        );
         let look = if mode == GameUiPresentationMode::Screen {
             self.look
         } else {
@@ -362,7 +359,7 @@ impl SceneOwner {
             .map(|head| xr_reference_frame(rig, head))
             .transpose()
             .map_err(ApplicationRuntimeError::Camera)?;
-        let eyes = match (&viewer, world_from_head) {
+        let eyes: Vec<ApplicationEyeProjection> = match (&viewer, world_from_head) {
             (
                 Some(
                     XrViewerFrame::Configured { eyes, .. }
@@ -394,6 +391,24 @@ impl SceneOwner {
                 .map_err(ApplicationRuntimeError::Camera)?,
             _ => Vec::new(),
         };
+        let water_center = match eyes.as_slice() {
+            [left, right] => Some(Vector3 {
+                x: left.world_from_eye.position.x * 0.5 + right.world_from_eye.position.x * 0.5,
+                y: 0.0,
+                z: left.world_from_eye.position.z * 0.5 + right.world_from_eye.position.z * 0.5,
+            }),
+            _ => world_from_head.map(|head| head.position),
+        };
+        if let Some(center) = water_center {
+            self.water_world_from_surface = Some(Pose {
+                position: Vector3 {
+                    x: center.x.round(),
+                    y: 0.0,
+                    z: center.z.round(),
+                },
+                ..Pose::IDENTITY
+            });
+        }
         self.rig = Some(rig);
         self.reference = reference;
         Ok(SceneFrame {
@@ -402,14 +417,7 @@ impl SceneOwner {
                 lighting: None,
                 reflection: None,
                 venue_visible: context.venue_visible,
-                water_world_from_surface: Pose {
-                    position: Vector3 {
-                        x: world_from_aircraft.position.x,
-                        y: 0.0,
-                        z: world_from_aircraft.position.z,
-                    },
-                    ..Pose::IDENTITY
-                },
+                water_world_from_surface: self.water_world_from_surface.unwrap_or(Pose::IDENTITY),
                 geometry: None,
                 water_time_seconds: aircraft.map_or(0.0, |pose| pose.simulation_time_seconds),
                 world_from_aircraft,

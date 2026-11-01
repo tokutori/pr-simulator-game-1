@@ -141,6 +141,7 @@ u_{surface}=(1-a)u_{pilot,surface}+a u_{FBW,surface},\qquad 0\le a\le1
 - Sceneとoverlayの有効な組合せを型で表す。
 - Settingsを閉じるとPauseへ戻る。
 - Manual・非表示・処理遅延・XR中断等の停止理由を保持し、条件解消と「飛行を再開」の両方を必要とする。
+- 飛行ドライバの障害で停止した場合は、その飛行の再開ができないことと原因を表示する。「飛行を終了」で結果へ進み、「同じ条件で再試行」または「設定を変更」から次の飛行を準備する。
 - Pause中はtick、controller、actuator、sample数、水面simulation時刻を保持する。
 - 描画・UI・head trackingは継続できる。
 
@@ -215,6 +216,7 @@ Retryはsealed configuration、初期状態、scenario seed、波の位相基準
 
 - ResultとReplayは秒単位の単一record-time cursorを使用する。
 - 時刻スライダーに加え、高度・速度チャートのプロット内から主ボタンでドラッグして時刻を選択できる。捕捉中は左右の範囲外を先頭・末尾へ丸め、ボタン解放・取消・捕捉喪失・画面切替で操作を終える。
+- 分析・再生の時間軸は記録の実際の終了時刻までとし、「先頭へ」「末尾へ」で正確な端点を選択する。0秒の記録は選択地点の値を表示し、時刻変更の操作を無効にする。
 - seek範囲、補間sample、再生速度・状態はcore queryを正本とし、adapterは時計の起床と入力だけを担当する。
 - Resultの時刻照会はReplay遷移を必要とせず、phase、score、record、physics、再生clockを変更しない。
 - clock操作はReplay/Attractへ限定する。
@@ -248,12 +250,12 @@ Retryはsealed configuration、初期状態、scenario seed、波の位相基準
 - menu内の画面外の操作はscrollとkeyboard focusで到達可能にする。HUDはスクロールを使用しない。
 - Screenの最低対応解像度はUI倍率適用後の1280×720、推奨は1920×1080以上とする。
 
-VRを含むanchor、両眼への収まり、透明度、前方clear regionは[描画とplatform](rendering-and-platforms.md)に従う。保存全件の索引とTitle最大3枠の表示queryは分離し、毎frameの共通UI入力を有界に保つ。
+VRを含むanchor、両眼への収まり、透明度、前方clear regionは[描画とplatform](rendering-and-platforms.md)に従う。保存全件の索引とTitle最大3枠の表示queryは分離し、毎frameの共通UI入力を有界に保つ。保存一覧の取得に失敗した場合は、Titleの「保存記録の一覧を再試行」から取得し直す。取得中の重複操作と古い取得結果を拒否し、正常な空一覧と失敗を区別する。
 
 ## Camera
 
-- Webの通常FlightはPilotを使用し、Information・Assistance・presentation種別から独立する。
-- Nativeはpresentation操作としてPilot/Chase切替を提供する。
+- Screenの飛行視点はWeb・Native共通で操縦席（Pilot）と追従（Chase）を選択する。既定は操縦席で、飛行設定・一時停止の選択、飛行中の「視点」ボタン、Cキーが同じ選択へ反映される。選択は再試行時も保持する。
+- HMD・Phone VRの飛行視点はPilotを使用し、記録再生は独立した視点選択を使用する。
 - いずれもcamera操作からphysicsやrecordを変更しない。
 
 PilotEyePointは機体構造datumからの基準位置・取付姿勢を持つmetadataであり、左右眼の中点を表す。実身体移動$x_p$に対し、基準位置から前後方向の眼移動を導出する。
@@ -299,7 +301,7 @@ T_{world,view}=T_{world,aircraft}T_{aircraft,pilot}T_{pilot,head}T_{head,eye}
 
 - Directorはlaunch、距離、高度、終端event、record時刻からshotを選び、優先順位、最短継続時間、再発火条件を持つ。
 - 乱数を使用する場合はseedとversionを明示する。
-- Cinematic・Telemetry・Analysisの表示modeを持つ。再生開始時はCinematicを選択し、技術情報を閉じる。camera選択と分析cursorを保持する。
+- Cinematic・Telemetry・Analysisの表示modeを持つ。結果画面と保存記録の両入口で、再生開始が認可された時点でCinematicを選択し、技術情報を閉じる。camera選択と分析cursorを保持する。
 
 ## Attract・Credits
 

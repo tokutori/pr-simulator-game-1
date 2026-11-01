@@ -12,6 +12,7 @@ export function applicationPlatformFixture(): ApplicationPlatformObservation {
     surface: { font: { family: "Arial", generation: 0, style: "normal", weight: 400 }, locale: "ja" },
     viewport: { width: 1280, height: 720, root_font_size: 16 },
     capabilities: {
+      touch_available: false,
       analysis_available: true, flight_log_available: true, hmd_available: true,
       phone_sensors: null, replay_available: true, stored_records_available: false
     }
@@ -31,8 +32,7 @@ export function bootViewFixture(): GameUiView {
 
 export function readyApplicationFixture() {
   const platform: ApplicationPlatformObservation = { ...applicationPlatformFixture(), renderer: {
-    resource_id: 100, initial_quality: { scale: "100", shadow: "full", water_quality: "high" },
-    extent_px: [1280, 720], screen_extent_px: [1280, 720], xr_extent_px: null, gpu_timing: { kind: "available" }
+    resource_id: 100, extent_px: [1280, 720], screen_extent_px: [1280, 720], xr_extent_px: null, gpu_timing: { kind: "available" }
   } };
   const owner = new ApplicationRuntimeBridge(JSON.stringify(platform));
   const prepared = new Map<number, Extract<ApplicationRequest, { kind: "prepare_resources" }>>();

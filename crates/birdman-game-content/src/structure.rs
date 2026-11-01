@@ -30,6 +30,8 @@ pub enum StructuralPartKind {
     Foam,
     /// Longitudinal carbon beam.
     MainBeam,
+    /// Support joining the vertical-tail root, pivot axis and main beam.
+    TailSupport,
     /// Cockpit frame, brace or beam attachment.
     CockpitFrame,
     /// Canopy-opening rim segment.
@@ -113,6 +115,33 @@ impl StructuralGeometry {
             structure.main_beam_endpoints_frd_m,
             structure.main_beam_radius_m,
         )?;
+        let fin = shape.surface(HybridSurfaceRole::VerticalTail);
+        let fin_root = mean_point(fin, fin.span_bounds_m()[1], 0.25)?;
+        let pivot = fin.incidence_pivot()?.components();
+        let axis_root = [pivot[0], pivot[1], fin_root[2]];
+        let [beam_start, beam_end] = structure.main_beam_endpoints_frd_m;
+        let beam_direction = subtract(beam_end, beam_start);
+        let fraction = (dot(subtract(axis_root, beam_start), beam_direction)
+            / dot(beam_direction, beam_direction))
+        .clamp(0.0, 1.0);
+        let beam_root =
+            core::array::from_fn(|axis| beam_start[axis] + fraction * beam_direction[axis]);
+        if axis_root != beam_root {
+            geometry.add_tube(
+                StructuralPartKind::TailSupport,
+                StructuralAttachment::Rigid,
+                [axis_root, beam_root],
+                structure.members.tail_support_radius_m,
+            )?;
+        }
+        if fin_root != axis_root {
+            geometry.add_tube(
+                StructuralPartKind::TailSupport,
+                StructuralAttachment::VerticalTail,
+                [axis_root, fin_root],
+                structure.members.tail_support_radius_m,
+            )?;
+        }
         geometry.add_cockpit(shape, sampling)?;
         Ok(geometry)
     }

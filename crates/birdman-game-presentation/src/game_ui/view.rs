@@ -1,6 +1,6 @@
 use super::timestamps::saved_at_label;
 use super::{catalog, types::*};
-use birdman_game_app::application::SessionCommand;
+use birdman_game_app::application::{FlightFrameError, SessionCommand};
 use birdman_game_core::{SessionPhase, SessionReplaySource, SessionSnapshot};
 use birdman_game_format::WaterQuality;
 use birdman_game_format::{
@@ -19,19 +19,27 @@ pub fn game_ui_view(
 ) -> Result<GameUiView, GameUiError> {
     let phase = context.session.snapshot().phase();
     let scene = scene(phase);
-    let can_resume =
-        context.resume_available && context.platform.flight_controller_failure.is_none();
+    let can_resume = context.resume_available
+        && context.flight_failure.is_none()
+        && context.platform.renderer_failure.is_none();
     let mut menu = Menu::default();
     let credits_open = state.credits_open
         && matches!(
             phase,
             SessionPhase::Title | SessionPhase::FlightPaused { .. }
         );
-    let mut description = if credits_open {
+    let description = if credits_open {
         "使用しているデータとソフトウェアの出典・利用条件。".to_owned()
     } else {
-        description(phase, can_resume)
+        description(phase, can_resume, context.flight_failure)
     };
+    let pause_description_in_body = matches!(phase, SessionPhase::FlightPaused { .. })
+        && !credits_open
+        && state.pause_overlay == GameUiPauseOverlay::Menu
+        && (context.flight_failure.is_some() || context.platform.notification.is_empty());
+    if matches!(phase, SessionPhase::FlightPaused { .. }) && !credits_open {
+        flight_camera_choices(&mut menu, state, context);
+    }
     match phase {
         SessionPhase::Title | SessionPhase::FlightPaused { .. } if credits_open => {
             credits(&mut menu)
@@ -55,6 +63,19 @@ pub fn game_ui_view(
             );
             if context.platform.stored_records_available {
                 menu.section("stored-records", "保存記録", GameUiSectionLayout::Column);
+                if context.platform.stored_records_retry_available {
+                    menu.status(
+                        "game-title-records-failed",
+                        "",
+                        "保存記録の一覧を読み込めない。",
+                    );
+                    menu.platform(
+                        "game-title-retry-records",
+                        "保存記録の一覧を再試行",
+                        GameUiPlatformCommand::RetryStoredRecords {},
+                        true,
+                    );
+                }
                 for record in context.platform.stored_records.iter() {
                     menu.platform(
                         &format!("game-title-open-record-{}", record.id),
@@ -133,6 +154,8 @@ pub fn game_ui_view(
         }
         SessionPhase::FlightSetup => {
             setup(&mut menu, context);
+            flight_camera_choices(&mut menu, state, context);
+            menu.section("flight-actions", "", GameUiSectionLayout::Row);
             menu.session(
                 "game-setup-start",
                 "飛行準備へ進む",
@@ -215,8 +238,25 @@ pub fn game_ui_view(
             feedback(&mut menu, context);
         }
         SessionPhase::FlightRunning => {
+            if super::touch::available(context.platform, phase) {
+                menu.section("flight-touch", "", GameUiSectionLayout::Column);
+                menu.controls.extend(super::touch::controls(
+                    context,
+                    &layout(state, context, phase)?,
+                )?);
+            }
             menu.section("flight-actions", "", GameUiSectionLayout::Row);
-            if context.platform.flight_controller_failure.is_none() {
+            if context.platform.presentation_mode == GameUiPresentationMode::Screen {
+                menu.action(
+                    "game-flight-camera-toggle",
+                    &format!("視点: {}", state.flight_camera.label()),
+                    GameUiAction::SetFlightCamera {
+                        camera: state.flight_camera.toggled(),
+                    },
+                    true,
+                );
+            }
+            if context.platform.renderer_failure.is_none() {
                 menu.session(
                     "game-flight-pause",
                     "一時停止",
@@ -226,7 +266,7 @@ pub fn game_ui_view(
                 );
             }
             if context.platform.presentation_mode == GameUiPresentationMode::Screen
-                || context.platform.flight_controller_failure.is_some()
+                || context.platform.renderer_failure.is_some()
             {
                 menu.session(
                     "game-flight-abort",
@@ -241,14 +281,21 @@ pub fn game_ui_view(
             GameUiPauseOverlay::Menu => {
                 menu.section("flight-status", "", GameUiSectionLayout::Column);
                 menu.status(
-                    "game-state",
+                    if context.flight_failure.is_some() {
+                        "game-flight-recovery"
+                    } else {
+                        "game-state"
+                    },
                     "",
-                    if context.platform.notification.is_empty() {
+                    if pause_description_in_body {
                         &description
                     } else {
                         &context.platform.notification
                     },
                 );
+                if context.flight_failure.is_some() && !context.platform.notification.is_empty() {
+                    menu.status("game-state", "", &context.platform.notification);
+                }
                 menu.section("flight-actions", "", GameUiSectionLayout::Row);
                 menu.session(
                     "game-flight-resume",
@@ -331,7 +378,7 @@ pub fn game_ui_view(
         SessionPhase::Attract => {
             menu.status(
                 "game-attract-status",
-                "Demo",
+                "再生状態",
                 if context.platform.notification.is_empty() {
                     "自動再生中"
                 } else {
@@ -376,9 +423,12 @@ pub fn game_ui_view(
         SessionPhase::FlightRunning | SessionPhase::FlightPaused { .. }
     ) {
         menu.section("flight-diagnostics", "", GameUiSectionLayout::Column);
-        if let Some(cause) = &context.platform.flight_controller_failure {
-            description = format!("飛行処理停止。最後の有効状態を表示する。停止理由: {cause}");
-            menu.status("game-controller-stopped", "飛行処理停止", &description);
+        if let Some(failure) = context.flight_failure {
+            menu.status(
+                "game-flight-failure-cause",
+                "停止理由",
+                driver_failure_reason(failure),
+            );
         }
         if context.platform.presentation_mode != GameUiPresentationMode::Screen
             && let Some(cause) = &context.platform.head_hud_failure
@@ -390,6 +440,20 @@ pub fn game_ui_view(
             );
         }
     }
+    if let Some(cause) = &context.platform.renderer_failure {
+        menu.section(
+            "renderer-recovery",
+            "描画の回復",
+            GameUiSectionLayout::Column,
+        );
+        menu.status("game-renderer-stopped", "描画停止", cause);
+        menu.platform(
+            "game-renderer-reload",
+            "ゲームを再読み込み",
+            GameUiPlatformCommand::ReloadApplication {},
+            true,
+        );
+    }
     menu.sections.retain(|section| {
         menu.controls
             .iter()
@@ -399,7 +463,14 @@ pub fn game_ui_view(
         for control in &mut menu.controls {
             if !matches!(
                 control.content,
-                GameUiControlContent::Status { .. } | GameUiControlContent::Chart { .. }
+                GameUiControlContent::Status { .. }
+                    | GameUiControlContent::Chart { .. }
+                    | GameUiControlContent::Button {
+                        action: GameUiAction::Platform {
+                            command: GameUiPlatformCommand::ReloadApplication {},
+                        },
+                        ..
+                    }
             ) {
                 control.enabled = false;
             }
@@ -408,9 +479,8 @@ pub fn game_ui_view(
     let spatial_flight = phase == SessionPhase::FlightRunning
         && context.platform.presentation_mode != GameUiPresentationMode::Screen;
     let expanded_head_failure = spatial_flight && context.platform.head_hud_failure.is_some();
-    let expanded_controller_failure =
-        spatial_flight && context.platform.flight_controller_failure.is_some();
-    let spatial_height = match (expanded_head_failure, expanded_controller_failure) {
+    let expanded_renderer_failure = spatial_flight && context.platform.renderer_failure.is_some();
+    let spatial_height = match (expanded_head_failure, expanded_renderer_failure) {
         (true, true) => 0.80,
         (false, true) => 0.65,
         (true, false) => 0.50,
@@ -425,11 +495,17 @@ pub fn game_ui_view(
         scene,
         title: if credits_open {
             "クレジット・利用条件"
+        } else if phase == SessionPhase::Attract {
+            "デモ飛行"
         } else {
             title(scene)
         }
         .to_owned(),
-        description,
+        description: if pause_description_in_body {
+            String::new()
+        } else {
+            description
+        },
         active_overlay: if credits_open {
             Some(GameUiOverlay::Credits)
         } else if matches!(phase, SessionPhase::FlightPaused { .. }) {
@@ -631,6 +707,34 @@ impl Menu {
     }
 }
 
+fn flight_camera_choices(menu: &mut Menu, state: &GameUiState, context: &GameUiContext<'_, '_>) {
+    if context.platform.presentation_mode != GameUiPresentationMode::Screen {
+        return;
+    }
+    menu.section("flight-camera", "視点", GameUiSectionLayout::ChoiceGrid);
+    for (id, camera) in [
+        ("pilot", GameUiFlightCamera::Pilot),
+        ("chase", GameUiFlightCamera::Chase),
+    ] {
+        menu.push(
+            &format!("game-flight-camera-{id}"),
+            camera.label(),
+            true,
+            "flight-camera",
+            GameUiControlContent::Button {
+                action: GameUiAction::SetFlightCamera { camera },
+                presentation: GameUiButtonPresentation::Choice {
+                    group: "flight-camera".to_owned(),
+                    group_label: "視点".to_owned(),
+                    selected: state.flight_camera == camera,
+                    description: String::new(),
+                },
+            },
+        );
+    }
+    menu.automatic_sections();
+}
+
 fn setup(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
     let difficulty = context.difficulty;
     progress(menu, SessionPhase::FlightSetup);
@@ -756,6 +860,78 @@ fn setup(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
         "気象",
         context.environment_readout,
     );
+    let keyboard = context.keyboard_controls;
+    for (code, seconds) in [(0, 0.1), (1, 0.25), (2, 0.5), (3, 1.0), (4, 2.0)] {
+        menu.choice(
+            "keyboard-ramp",
+            "キーボード操縦の応答時間",
+            (&format!("{seconds} 秒"), code, ""),
+            SessionCommand::SetKeyboardControls {
+                settings: birdman_game_app::flight_input::KeyboardControlSettings {
+                    ramp_seconds: seconds,
+                    ..keyboard
+                },
+            },
+            keyboard.ramp_seconds == seconds,
+        );
+    }
+    for (curve, label) in [
+        (
+            birdman_game_app::flight_input::KeyboardResponseCurve::Linear,
+            "線形",
+        ),
+        (
+            birdman_game_app::flight_input::KeyboardResponseCurve::Smoothstep,
+            "滑らか",
+        ),
+    ] {
+        menu.choice(
+            "keyboard-curve",
+            "応答曲線",
+            (
+                label,
+                u32::from(
+                    curve == birdman_game_app::flight_input::KeyboardResponseCurve::Smoothstep,
+                ),
+                "",
+            ),
+            SessionCommand::SetKeyboardControls {
+                settings: birdman_game_app::flight_input::KeyboardControlSettings {
+                    curve,
+                    ..keyboard
+                },
+            },
+            keyboard.curve == curve,
+        );
+    }
+    for (code, sensitivity) in [(0, 0.25), (1, 0.5), (2, 0.75), (3, 1.0)] {
+        menu.choice(
+            "keyboard-sensitivity",
+            "舵要求の上限",
+            (&format!("{:.0}%", sensitivity * 100.0), code, ""),
+            SessionCommand::SetKeyboardControls {
+                settings: birdman_game_app::flight_input::KeyboardControlSettings {
+                    sensitivity,
+                    ..keyboard
+                },
+            },
+            keyboard.sensitivity == sensitivity,
+        );
+    }
+    for (code, rate) in [(0, 0.1), (1, 0.2), (2, 0.4), (3, 0.8)] {
+        menu.choice(
+            "keyboard-pilot-rate",
+            "パイロット目標位置の移動速度",
+            (&format!("{rate} m/s"), code, ""),
+            SessionCommand::SetKeyboardControls {
+                settings: birdman_game_app::flight_input::KeyboardControlSettings {
+                    pilot_target_rate_mps: rate,
+                    ..keyboard
+                },
+            },
+            keyboard.pilot_target_rate_mps == rate,
+        );
+    }
     menu.section(
         "graphics-settings",
         "グラフィックス",
@@ -908,7 +1084,8 @@ fn credits(menu: &mut Menu) {
 
 fn water_quality(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
     menu.automatic_sections();
-    use crate::screen_render_auto::ScreenRenderSelection;
+    use crate::screen_render_auto::{ScreenRenderAutoStatus, ScreenRenderSelection};
+    let confirmed = context.platform.render_quality_confirmed;
     let current = context.platform.water_quality;
     let retained = match context.platform.screen_render_scale.selection {
         ScreenRenderSelection::Manual { water_quality, .. } => water_quality,
@@ -925,29 +1102,44 @@ fn water_quality(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
     menu.status(
         "presentation-water-quality-status",
         "水面画質",
-        &match &context.platform.water_quality_operation {
-            GameUiWaterQualityOperation::Idle {} => format!(
-                "{}{} · 使用中 {}",
-                retained.label(),
-                if automatic {
-                    "（自動調整の上限）"
-                } else {
-                    ""
-                },
-                current.label()
-            ),
-            GameUiWaterQualityOperation::Applying { requested } => {
-                format!("{} · {}を適用中", current.label(), requested.label())
+        &if confirmed {
+            match &context.platform.water_quality_operation {
+                GameUiWaterQualityOperation::Idle {} => format!(
+                    "{}{} · 使用中 {}",
+                    retained.label(),
+                    if automatic {
+                        "（自動調整の上限）"
+                    } else {
+                        ""
+                    },
+                    current.label()
+                ),
+                GameUiWaterQualityOperation::Applying { requested } => {
+                    format!("{} · {}を適用中", current.label(), requested.label())
+                }
+                GameUiWaterQualityOperation::Failed { requested, cause } => format!(
+                    "{}を保持する。{}の適用に失敗した: {cause}",
+                    current.label(),
+                    requested.label()
+                ),
+                GameUiWaterQualityOperation::CleanupFailed { cause } => format!(
+                    "{}を適用した。以前の描画資源の解放に失敗した: {cause}",
+                    current.label()
+                ),
             }
-            GameUiWaterQualityOperation::Failed { requested, cause } => format!(
-                "{}を保持する。{}の適用に失敗した: {cause}",
-                current.label(),
-                requested.label()
-            ),
-            GameUiWaterQualityOperation::CleanupFailed { cause } => format!(
-                "{}を適用した。旧geometryの解放に失敗した: {cause}",
-                current.label()
-            ),
+        } else {
+            match &context.platform.water_quality_operation {
+                GameUiWaterQualityOperation::Idle {} => format!("{}を準備中", retained.label()),
+                GameUiWaterQualityOperation::Applying { requested } => {
+                    format!("{}を適用中", requested.label())
+                }
+                GameUiWaterQualityOperation::Failed { requested, cause } => {
+                    format!("{}の適用に失敗した: {cause}", requested.label())
+                }
+                GameUiWaterQualityOperation::CleanupFailed { cause } => {
+                    format!("以前の描画資源の解放に失敗した: {cause}")
+                }
+            }
         },
     );
     for (quality, suffix, description) in [
@@ -958,10 +1150,16 @@ fn water_quality(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
         menu.push(
             &format!("presentation-water-quality-{suffix}"),
             quality.label(),
-            !matches!(
-                context.platform.water_quality_operation,
-                GameUiWaterQualityOperation::Applying { .. }
-            ) && context.platform.flight_controller_failure.is_none(),
+            confirmed
+                && !matches!(
+                    context.platform.water_quality_operation,
+                    GameUiWaterQualityOperation::Applying { .. }
+                )
+                && !matches!(
+                    context.platform.screen_render_scale.status,
+                    ScreenRenderAutoStatus::Applying { .. }
+                )
+                && context.platform.renderer_failure.is_none(),
             "water-quality",
             GameUiControlContent::Button {
                 action: GameUiAction::Platform {
@@ -984,14 +1182,18 @@ fn water_quality(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
 
 fn screen_render_scale(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
     menu.automatic_sections();
-    use crate::screen_render_auto::{ScreenRenderAutoStatus, ScreenRenderSelection};
+    use crate::screen_render_auto::{
+        ScreenRenderAutoStatus, ScreenRenderSelection, ScreenShadowMap,
+    };
     use crate::screen_render_scale::ScreenRenderScale;
     if context.platform.presentation_mode != GameUiPresentationMode::Screen {
         return;
     }
     let render = &context.platform.screen_render_scale;
     let automatic = matches!(render.selection, ScreenRenderSelection::Auto { .. });
-    let enabled = context.platform.flight_controller_failure.is_none()
+    let confirmed = context.platform.render_quality_confirmed;
+    let enabled = confirmed
+        && context.platform.renderer_failure.is_none()
         && !matches!(render.status, ScreenRenderAutoStatus::Applying { .. });
     let status = match &render.status {
         ScreenRenderAutoStatus::Manual => "手動設定".to_owned(),
@@ -1008,7 +1210,7 @@ fn screen_render_scale(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
             format!(
                 "{}・影 {}・水面{}へ変更中",
                 requested.label(),
-                shadow.size(),
+                shadow.label(),
                 water_quality.label()
             )
         }
@@ -1017,15 +1219,27 @@ fn screen_render_scale(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
     menu.status(
         "presentation-render-scale-status",
         "3D描画品質",
-        &format!(
-            "{} · 使用中 {} · {status}",
-            if automatic {
-                "自動（Auto）"
-            } else {
-                "手動"
-            },
-            render.applied.label(),
-        ),
+        &if confirmed {
+            format!(
+                "{} · 使用中 {} · 影 {} · {status}",
+                if automatic {
+                    "自動（Auto）"
+                } else {
+                    "手動"
+                },
+                render.applied.label(),
+                render.shadow.label()
+            )
+        } else {
+            format!(
+                "{} · 描画資源を準備中 · {status}",
+                if automatic {
+                    "自動（Auto）"
+                } else {
+                    "手動"
+                }
+            )
+        },
     );
     menu.push(
         "presentation-render-scale-auto",
@@ -1064,6 +1278,36 @@ fn screen_render_scale(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
                     group: "render-scale".to_owned(),
                     group_label: "3D描画品質".to_owned(),
                     selected: matches!(render.selection, ScreenRenderSelection::Manual { scale: selected, .. } if selected == scale),
+                    description: String::new(),
+                },
+            },
+        );
+    }
+    let retained_shadow = match render.selection {
+        ScreenRenderSelection::Manual { shadow, .. } => shadow,
+        ScreenRenderSelection::Auto { manual_shadow, .. } => manual_shadow,
+    };
+    for shadow in ScreenShadowMap::ALL {
+        menu.push(
+            &format!(
+                "presentation-shadow-map-{}",
+                if shadow.enabled() {
+                    shadow.size().to_string()
+                } else {
+                    "off".to_owned()
+                }
+            ),
+            shadow.label(),
+            enabled,
+            "shadow-map",
+            GameUiControlContent::Button {
+                action: GameUiAction::Platform {
+                    command: GameUiPlatformCommand::SetShadowMap { shadow },
+                },
+                presentation: GameUiButtonPresentation::Choice {
+                    group: "shadow-map".to_owned(),
+                    group_label: "影".to_owned(),
+                    selected: !automatic && retained_shadow == shadow,
                     description: String::new(),
                 },
             },
@@ -1138,7 +1382,10 @@ fn technical_configuration(context: &GameUiContext<'_, '_>) -> String {
     }
     match super::environment::game_ui_environment_diagnostics(context.identity) {
         Ok(environment) => description.push_str(&format!("\n\n気象の詳細\n{environment}")),
-        Err(error) => description.push_str(&format!("\n気象の詳細を取得できない: {error:?}")),
+        Err(error) => description.push_str(&format!(
+            "\n気象の詳細を取得できない: {}",
+            birdman_game_app::technical_error_text(&error)
+        )),
     }
     description
 }
@@ -1262,8 +1509,8 @@ fn analysis(
         let sample = record
             .sample_at_seconds(time)
             .map_err(GameUiError::Record)?;
-        plot.seek_target =
-            (state.analysis_chart != GameUiAnalysisChart::Map).then_some(if replay {
+        plot.seek_target = (duration > 0.0 && state.analysis_chart != GameUiAnalysisChart::Map)
+            .then_some(if replay {
                 GameUiRangeTarget::Replay
             } else {
                 GameUiRangeTarget::Analysis
@@ -1299,7 +1546,7 @@ fn analysis(
             } else {
                 "飛行時間 (s)"
             },
-            context.platform.analysis_available,
+            context.platform.analysis_available && duration > 0.0,
             "analysis",
             GameUiControlContent::Range {
                 target: if replay {
@@ -1310,7 +1557,7 @@ fn analysis(
                 value: time,
                 display_value: super::frame::range_display_value(time),
                 minimum: 0.0,
-                maximum: duration.max(0.01),
+                maximum: duration,
                 step: 0.01,
             },
         );
@@ -1329,6 +1576,22 @@ fn analysis(
                 "game-analysis-wind-availability",
                 "",
                 "周辺の風場データを取得できない",
+            );
+        }
+        menu.section("analysis-time-navigation", "", GameUiSectionLayout::Row);
+        for (id, label, time_seconds) in [
+            ("game-analysis-first", "先頭へ", 0.0),
+            ("game-analysis-last", "末尾へ", duration),
+        ] {
+            menu.action(
+                id,
+                label,
+                if replay {
+                    GameUiAction::SeekReplay { time_seconds }
+                } else {
+                    GameUiAction::SeekAnalysis { time_seconds }
+                },
+                context.platform.analysis_available && duration > 0.0,
             );
         }
     } else {
@@ -1386,17 +1649,29 @@ fn replay(
                 menu.push(
                     "game-replay-cursor",
                     "再生時刻 (s)",
-                    context.platform.replay_available,
+                    context.platform.replay_available && duration > 0.0,
                     "replay",
                     GameUiControlContent::Range {
                         target: GameUiRangeTarget::Replay,
                         value: clock.time_seconds(),
                         display_value: super::frame::range_display_value(clock.time_seconds()),
                         minimum: 0.0,
-                        maximum: duration.max(0.01),
+                        maximum: duration,
                         step: 0.01,
                     },
                 );
+                menu.section("replay-time-navigation", "", GameUiSectionLayout::Row);
+                for (id, label, time_seconds) in [
+                    ("game-replay-first", "先頭へ", 0.0),
+                    ("game-replay-last", "末尾へ", duration),
+                ] {
+                    menu.action(
+                        id,
+                        label,
+                        GameUiAction::SeekReplay { time_seconds },
+                        context.platform.replay_available && duration > 0.0,
+                    );
+                }
             }
         }
         menu.section("replay-actions", "", GameUiSectionLayout::Row);
@@ -1495,25 +1770,42 @@ fn title(scene: GameUiScene) -> &'static str {
         GameUiScene::FlightSetup => "飛行設定",
         GameUiScene::Briefing => "発進前の確認",
         GameUiScene::Countdown => "発進準備",
-        GameUiScene::Flight => "Flight",
+        GameUiScene::Flight => "飛行",
         GameUiScene::Result => "飛行結果",
         GameUiScene::Replay => "飛行リプレイ",
     }
 }
 
-fn description(phase: SessionPhase, can_resume: bool) -> String {
+fn driver_failure_reason(failure: FlightFrameError) -> &'static str {
+    match failure {
+        FlightFrameError::Clock(
+            birdman_game_app::flight_clock::FlightClockError::InvalidTimestamp,
+        ) => "描画時刻に有効な数値を取得できなかった。",
+        FlightFrameError::Clock(
+            birdman_game_app::flight_clock::FlightClockError::NonMonotonicTimestamp,
+        ) => "描画時刻が前回の観測より前になった。",
+        FlightFrameError::Input(_) => "操縦入力の処理に失敗した。",
+        FlightFrameError::PilotPosition(_) => "パイロット位置の変換に失敗した。",
+        FlightFrameError::Session(_) => "飛行状態の更新に失敗した。",
+    }
+}
+
+fn description(
+    phase: SessionPhase,
+    can_resume: bool,
+    flight_failure: Option<FlightFrameError>,
+) -> String {
     match phase {
         SessionPhase::Title => "琵琶湖を舞台に、人力飛行機で滑空する。".to_owned(),
         SessionPhase::FlightSetup => "飛行条件と描画品質を選択する。".to_owned(),
-        SessionPhase::BriefingPreparing => "飛行に必要なデータを準備している。".to_owned(),
-        SessionPhase::BriefingReady => {
-            "飛行条件と操縦方法を確認し、発進カウントダウンを開始する。".to_owned()
-        }
-        SessionPhase::BriefingFailed { .. } => {
-            "飛行準備に失敗した。再試行または設定変更を選択する。".to_owned()
+        SessionPhase::BriefingPreparing | SessionPhase::BriefingReady | SessionPhase::BriefingFailed { .. } => {
+            "飛行条件と操縦方法を確認する。".to_owned()
         }
         SessionPhase::Countdown { .. } => "発進までお待ちください。".to_owned(),
-        SessionPhase::FlightRunning => "キーボードまたはゲームパッドで操縦する。".to_owned(),
+        SessionPhase::FlightRunning => "機体を操縦して、できるだけ遠くまで滑空する。".to_owned(),
+        SessionPhase::FlightPaused { .. } if flight_failure.is_some() => {
+            "飛行処理の障害により一時停止した。この飛行は再開できない。「飛行を終了」で結果へ進み、「同じ条件で再試行」または「設定を変更」を選択する。".to_owned()
+        }
         SessionPhase::FlightPaused { reasons }
             if reasons.contains(birdman_game_core::PauseReason::ProcessingDelay) =>
         {
@@ -1527,7 +1819,7 @@ fn description(phase: SessionPhase, can_resume: bool) -> String {
         }
         SessionPhase::Result => "飛行結果を確認し、再試行や記録再生を選択する。".to_owned(),
         SessionPhase::Replay => "保存した飛行を再生している。".to_owned(),
-        SessionPhase::Attract => "デモ飛行を再生している。".to_owned(),
+        SessionPhase::Attract => String::new(),
     }
 }
 
@@ -1552,7 +1844,8 @@ pub(super) fn layout(
         }
         SessionPhase::FlightRunning => GameUiShell::FlightBar,
         SessionPhase::FlightPaused { .. }
-            if state.pause_overlay == GameUiPauseOverlay::Settings
+            if (state.pause_overlay == GameUiPauseOverlay::Settings
+                || context.platform.renderer_failure.is_some())
                 && (context.platform.presentation_mode != GameUiPresentationMode::Screen
                     || viewport.width
                         >= super::hud::minimum_hud_width(font)
@@ -1584,9 +1877,13 @@ pub(super) fn layout(
     let width = match shell {
         GameUiShell::Center => available_width.min(42.0 * font),
         GameUiShell::Analysis => available_width.min(72.0 * font),
-        GameUiShell::FlightBar if phase == SessionPhase::FlightRunning => {
-            available_width.min(15.5 * font)
-        }
+        GameUiShell::FlightBar if phase == SessionPhase::FlightRunning => available_width.min(
+            if context.platform.presentation_mode == GameUiPresentationMode::Screen {
+                26.0
+            } else {
+                15.5
+            } * font,
+        ),
         GameUiShell::FlightBar => viewport.width,
         GameUiShell::PauseSettings => pause_settings_width,
         GameUiShell::Cinematic => cinematic_width,
@@ -1600,10 +1897,20 @@ pub(super) fn layout(
         GameUiShell::Center => (viewport.width * 0.04).clamp(1.25 * font, 2.5 * font),
     };
     let content = (width - 2.0 * padding - 1.5 * font).max(1.0);
+    let flight_bar_renderer_recovery = shell == GameUiShell::FlightBar
+        && matches!(
+            phase,
+            SessionPhase::FlightRunning | SessionPhase::FlightPaused { .. }
+        )
+        && context.platform.renderer_failure.is_some();
     Ok(GameUiLayout {
         shell,
         width_px: width,
-        maximum_height_px: if shell == GameUiShell::Analysis {
+        maximum_height_px: if flight_bar_renderer_recovery {
+            (viewport.height - 2.0 * font).max(1.0)
+        } else if phase == SessionPhase::FlightRunning {
+            (viewport.height - 2.0 * font).max(1.0).min(8.0 * font)
+        } else if shell == GameUiShell::Analysis {
             (viewport.height - 2.0 * font).max(1.0)
         } else if context.platform.presentation_mode == GameUiPresentationMode::Screen
             && shell == GameUiShell::FlightBar
@@ -1628,7 +1935,9 @@ pub(super) fn layout(
         compact,
         scroll_y: (shell != GameUiShell::Analysis
             || context.platform.presentation_mode == GameUiPresentationMode::Screen)
-            && !(shell == GameUiShell::FlightBar && phase == SessionPhase::FlightRunning),
+            && !(shell == GameUiShell::FlightBar
+                && phase == SessionPhase::FlightRunning
+                && !flight_bar_renderer_recovery),
         clip_x: true,
         passthrough: shell == GameUiShell::FlightBar && phase == SessionPhase::FlightRunning
             || (shell == GameUiShell::Analysis
@@ -1640,6 +1949,8 @@ fn theme(font: f64) -> GameUiTheme {
     GameUiTheme {
         text: "#f3f4e8".to_owned(),
         muted_text: "#c7d7d1".to_owned(),
+        warning_text: "#ff9b73".to_owned(),
+        flight_path_marker: "#7df4c5".to_owned(),
         panel_background: "#10242b".to_owned(),
         panel_opacity: 0.92,
         hud_opacity: 0.28,

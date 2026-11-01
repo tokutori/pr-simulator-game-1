@@ -17,6 +17,11 @@ use serde::{Deserialize, Serialize};
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SessionCommand {
+    /// Selects keyboard response before the flight configuration is sealed.
+    SetKeyboardControls {
+        /// Complete device response selection.
+        settings: crate::flight_input::KeyboardControlSettings,
+    },
     /// Opens flight settings.
     OpenSetup {},
     /// Returns to Title.
@@ -120,9 +125,42 @@ pub enum ApplicationError {
     /// A demonstration record query rejected invalid or empty finalized data.
     Record(birdman_game_core::FlightRecordQueryError),
 }
+#[cfg(not(verus_only))]
+impl core::fmt::Display for ApplicationError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Flight(_) => f.write_str("Application flight frame failed"),
+            Self::Session(_) => f.write_str("Application session operation failed"),
+            Self::Configuration(_) => f.write_str("Application configuration was rejected"),
+            Self::Control(_) => f.write_str("Software control authority was rejected"),
+            Self::Preparation(_) => f.write_str("Flight preparation failed"),
+            Self::NotSelection => f.write_str("Command is not a difficulty selection"),
+            Self::Input(_) => f.write_str("Pilot intent was rejected"),
+            Self::Record(_) => f.write_str("Application record query failed"),
+        }
+    }
+}
+
+#[cfg(not(verus_only))]
+impl core::error::Error for ApplicationError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        match self {
+            Self::Flight(cause) => Some(cause),
+            Self::Session(cause) => Some(cause),
+            Self::Configuration(cause) => Some(cause),
+            Self::Control(cause) => Some(cause),
+            Self::Preparation(cause) => Some(cause),
+            Self::Input(cause) => Some(cause),
+            Self::Record(cause) => Some(cause),
+            _ => None,
+        }
+    }
+}
 
 /// Exact metadata returned after the existing configuration is sealed.
 pub struct PreparedFlight {
+    pub(super) keyboard_controls: crate::flight_input::KeyboardControlSettings,
+    pub(super) aircraft: birdman_game_core::AircraftModel,
     /// Archive definition identity.
     pub record_identity: FlightRecordTailIdentityDocument,
     /// Sealed software controller.
@@ -231,10 +269,13 @@ pub(crate) fn prepare_flight(
         .with_contact_shape(&mut contact_shape)
         .map_err(HybridSessionPreparationError::Scenario)
         .map_err(ApplicationError::Preparation)?;
+    let aircraft = configuration.aircraft();
     session
         .prepare_flight(configuration)
         .map_err(ApplicationError::Session)?;
     Ok(PreparedFlight {
+        keyboard_controls: crate::flight_input::KeyboardControlSettings::default(),
+        aircraft,
         record_identity,
         controller_profile,
         course_axis,

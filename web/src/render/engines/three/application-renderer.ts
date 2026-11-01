@@ -2,9 +2,9 @@ import { AmbientLight, BufferGeometry, CanvasTexture, CircleGeometry, Color, Dir
   Group, LinearFilter, Matrix4, Mesh, MeshBasicMaterial, MeshLambertMaterial, PerspectiveCamera, PlaneGeometry,
   Scene, ShaderMaterial, SRGBColorSpace, UniformsLib, UniformsUtils, Vector2, Vector4, WebGLRenderer, WebGLRenderTarget } from "three";
 import type { Material, Object3D } from "three";
-import type { ApplicationDrawingOutput, ApplicationGraphicsTarget, ApplicationInput, ApplicationMeshAsset,
+import type { ApplicationDrawingOutput, ApplicationInput, ApplicationMeshAsset,
   ApplicationMeshAttachment, ApplicationRequest, ApplicationRendererObservation, DisplayRequest, Pose, XrSurfaceStyle } from "../../../generated/application-contracts.js";
-import { ThreeApplicationBuffers } from "./application-buffers.js";
+import { ThreeApplicationBuffers, type ImageLease } from "./application-buffers.js";
 import { GpuWorkTimer } from "./gpu-work-timer.js";
 import { browserSurfaceContext } from "../../../presentation/browser-canvas.js";
 import { paintSurface } from "../../../presentation/surface-canvas.js";
@@ -37,7 +37,7 @@ interface PreparedResources {
   readonly water_geometries: readonly BufferGeometry[];
   readonly sun: DirectionalLight;
   readonly reflection: WebGLRenderTarget;
-  readonly image_leases: readonly number[];
+  readonly image_leases: readonly ImageLease[];
 }
 
 interface XrHandle {
@@ -55,9 +55,10 @@ export class ThreeApplicationRenderer {
   private readonly preparations = new Map<number, { cancelled: boolean; complete: (() => void) | null }>();
   private readonly base_geometry = new Map<number, BufferGeometry>();
   private readonly range_geometry = new Map<number, readonly BufferGeometry[]>();
-  private readonly materials = new Map<string, Material>();
+  private readonly materials = new Map<number, Material>();
   private readonly sources = new WeakMap<XRInputSource, number>();
   private readonly gamepad_generations = new Map<number, number>();
+  private readonly canvasPointers = new Map<number, Extract<ApplicationInput, { kind: "control_pointer" }>>();
   private readonly sessions = new Map<number, XrHandle>();
   private readonly display_handles = new Set<number>();
   private readonly camera = new PerspectiveCamera();
@@ -66,6 +67,8 @@ export class ThreeApplicationRenderer {
   private readonly head_canvas: HTMLCanvasElement;
   private menu_mesh: Mesh<PlaneGeometry, MeshBasicMaterial> | null = null;
   private head_mesh: Mesh<PlaneGeometry, MeshBasicMaterial> | null = null;
+  private menu_paint: { revision: number; texture: MeshBasicMaterial["map"] } | null = null;
+  private head_paint: { revision: number; texture: MeshBasicMaterial["map"] } | null = null;
   private cursor_geometry: CircleGeometry | null = null;
   private readonly cursor_meshes: Mesh<CircleGeometry, MeshBasicMaterial>[] = [];
   private manifest: PrepareRequest["assets"]["scene"] = null;
@@ -76,7 +79,6 @@ export class ThreeApplicationRenderer {
   private next_source = 0;
   private disposed = false;
   private gpu_failure: { cause: Error; reported: boolean } | null = null;
-  private quality: ApplicationGraphicsTarget["quality"] = { scale: "100", shadow: "full", water_quality: "high" };
 
   constructor(private readonly canvas: HTMLCanvasElement, private readonly id: number,
     bytes: (id: number) => Uint8Array, private readonly notify: (input: ApplicationInput) => void,
@@ -92,8 +94,15 @@ export class ThreeApplicationRenderer {
     this.timer = new GpuWorkTimer(this.renderer.getContext() as WebGL2RenderingContext);
     this.menu_canvas = canvas.ownerDocument.createElement("canvas");
     this.head_canvas = canvas.ownerDocument.createElement("canvas");
+    this.menu_canvas.addEventListener("contextrestored", this.invalidateSurfacePaint);
+    this.head_canvas.addEventListener("contextrestored", this.invalidateSurfacePaint);
     canvas.addEventListener("webglcontextlost", this.contextLost);
+    canvas.addEventListener("webglcontextrestored", this.invalidateSurfacePaint);
     canvas.addEventListener("pointermove", this.pointerMove);
+    canvas.addEventListener("pointerdown", this.pointerDown);
+    canvas.addEventListener("pointerup", this.pointerUp);
+    canvas.addEventListener("pointercancel", this.pointerCancel);
+    canvas.addEventListener("lostpointercapture", this.pointerLost);
     canvas.addEventListener("contextmenu", this.contextMenu);
     window.addEventListener("gamepadconnected", this.gamepadConnection);
     window.addEventListener("gamepaddisconnected", this.gamepadConnection);
@@ -106,7 +115,7 @@ export class ThreeApplicationRenderer {
     const size = this.renderer.getDrawingBufferSize(new Vector2());
     const unsupported = this.timer.availability();
     const layer = this.renderer.xr.isPresenting ? this.renderer.xr.getBaseLayer() : null;
-    return { resource_id: this.id, initial_quality: this.quality,
+    return { resource_id: this.id,
       extent_px: [size.x, size.y], screen_extent_px: [Math.round(window.innerWidth * window.devicePixelRatio), Math.round(window.innerHeight * window.devicePixelRatio)],
       xr_extent_px: layer == null ? null : "framebufferWidth" in layer
         ? [layer.framebufferWidth, layer.framebufferHeight] : [layer.textureWidth, layer.textureHeight],
@@ -381,10 +390,9 @@ export class ThreeApplicationRenderer {
       this.notify({ kind: "resources", request_id: request.request_id, observation: { kind: "failed", cause: errorMessage(cause) } });
       return;
     }
-    this.quality = target.quality;
     this.active = candidate;
     this.notify({ kind: "resources", request_id: request.request_id, observation: { kind: "committed", resource_id: request.resource_id,
-      actual: { applied: this.quality, extent_px: extent } } });
+      actual: { applied: target.quality, extent_px: extent } } });
   }
 
   private createResources(request: PrepareRequest): PreparedResources {
@@ -403,10 +411,10 @@ export class ThreeApplicationRenderer {
     try {
     const scene = new Scene();
     const lighting = assets.lighting;
-    scene.background = this.buffers.image(assets.sky, true);
-    cleanup.push(() => { this.buffers.releaseImages([assets.sky.buffer_id]); });
+    scene.background = this.buffers.image(assets.sky, true, 1);
+    cleanup.push(() => { this.buffers.releaseImages([[assets.sky.buffer_id, 1]]); });
     scene.fog = new Fog(lighting.haze_color_srgb, lighting.haze_range_meters[0], lighting.haze_range_meters[1]);
-    const images = [assets.sky.buffer_id];
+    const images: ImageLease[] = [[assets.sky.buffer_id, 1]];
     for (const texture of this.manifest.wing_textures) this.buffers.wingTexture(texture);
     const sun = new DirectionalLight(lighting.sunlight_color_srgb, lighting.sunlight_irradiance);
     submitSun(sun, lighting.initial_shadow, lighting.sunlight_irradiance);
@@ -447,12 +455,13 @@ export class ThreeApplicationRenderer {
       });
     }
     const [near, far] = assets.water.detail;
-    const nearTexture = this.buffers.image(near.image, false);
-    images.push(near.image.buffer_id);
-    cleanup.push(() => { this.buffers.releaseImages([near.image.buffer_id]); });
-    const farTexture = this.buffers.image(far.image, false);
-    images.push(far.image.buffer_id);
-    cleanup.push(() => { this.buffers.releaseImages([far.image.buffer_id]); });
+    const anisotropy = assets.water.detail_anisotropy_clamp;
+    const nearTexture = this.buffers.image(near.image, false, anisotropy);
+    images.push([near.image.buffer_id, anisotropy]);
+    cleanup.push(() => { this.buffers.releaseImages([[near.image.buffer_id, anisotropy]]); });
+    const farTexture = this.buffers.image(far.image, false, anisotropy);
+    images.push([far.image.buffer_id, anisotropy]);
+    cleanup.push(() => { this.buffers.releaseImages([[far.image.buffer_id, anisotropy]]); });
     const reflection = new WebGLRenderTarget(request.graphics.reflection_extent_px[0], request.graphics.reflection_extent_px[1], { minFilter: LinearFilter, magFilter: LinearFilter });
     cleanup.push(() => { reflection.dispose(); });
     reflection.texture.colorSpace = SRGBColorSpace;
@@ -474,7 +483,10 @@ export class ThreeApplicationRenderer {
       uSunDirection: { value: new Vector4(...lighting.sunlight_direction) }, uReflectionTexture: { value: reflection.texture },
       uReflectionMatrix: { value: new Matrix4() }, uReflectionEnabled: { value: 0 }
     };
-    const defines = { LAKE_WAVE_COUNT: projection.waveCount };
+    const defines = {
+      LAKE_WAVE_COUNT: projection.waveCount,
+      LAKE_DETAIL_SAMPLES: projection.detailQuadratureSamples,
+    };
     const { vertexShader, filteredVertexShader, fragmentShader } = lakeWaterShaders(projection.waveCount);
     const material = new ShaderMaterial({ lights: true, defines, uniforms, vertexShader, fragmentShader });
     material.name = "LakeWaterNear";
@@ -512,7 +524,7 @@ export class ThreeApplicationRenderer {
   private material(asset: ApplicationMeshAsset, index: number): Material {
     const source = asset.materials[index];
     if (source === undefined) throw new Error("Missing shared material range");
-    const key = JSON.stringify([source, asset.color != null]);
+    const key = source.material_id;
     let material = this.materials.get(key);
     if (material !== undefined) return material;
     const texture = this.manifest?.wing_textures.find(image => image.buffer.buffer_id === source.texture_buffer_id);
@@ -594,7 +606,7 @@ export class ThreeApplicationRenderer {
           } };
           const ended = (): void => {
             handle.ended = true;
-            queueMicrotask(() => { this.notify({ kind: "display_ended", resource_id: request.request_id }); });
+            queueMicrotask(() => { this.notify({ kind: "display_ended", resource_id: request.request_id, cause: null }); });
           };
           const visibility = (): void => { this.notify({ kind: "xr_session_state", resource_id: request.request_id,
             visibility: xrVisibility(session), input_focused: session.visibilityState === "visible" }); };
@@ -761,6 +773,7 @@ export class ThreeApplicationRenderer {
       const pose = frame.getPose(source.targetRaySpace, reference);
       return { source_id: this.sourceId(source), target_ray_mode: source.targetRayMode, handedness: source.handedness,
         tracking_from_ray: pose == null ? null : xrPose(pose.transform),
+        select_pressed: null,
         gamepad: source.gamepad == null ? null : { mapping: source.gamepad.mapping,
           axes: source.gamepad.axes.map(axis => Number.isFinite(axis) ? axis : null),
           buttons: source.gamepad.buttons.map(button => ({ pressed: button.pressed, touched: button.touched })) } };
@@ -834,7 +847,14 @@ export class ThreeApplicationRenderer {
     const scissorTest = this.renderer.getScissorTest();
     const uncullable: Object3D[] = [];
     const failures: unknown[] = [];
+    const shadowAutoUpdate = this.renderer.shadowMap.autoUpdate;
+    const shadowNeedsUpdate = this.renderer.shadowMap.needsUpdate;
     try {
+      if (drawing.scene.reflection !== null && active.sun.castShadow) {
+        this.drawCurrentShadows(active);
+        this.renderer.shadowMap.autoUpdate = false;
+        this.renderer.shadowMap.needsUpdate = false;
+      }
       this.drawReflection(active, drawing);
       const eyes = camera.eyes;
       if (frame !== undefined && this.renderer.xr.isPresenting) {
@@ -875,7 +895,8 @@ export class ThreeApplicationRenderer {
     } catch (cause) { failures.push(cause); }
     finally {
       for (const restore of [() => { this.renderer.setViewport(viewport); },
-        () => { this.renderer.setScissor(scissor); }, () => { this.renderer.setScissorTest(scissorTest); }]) {
+        () => { this.renderer.setScissor(scissor); }, () => { this.renderer.setScissorTest(scissorTest); },
+        () => { this.renderer.shadowMap.autoUpdate = shadowAutoUpdate; this.renderer.shadowMap.needsUpdate = shadowNeedsUpdate; }]) {
         try { restore(); } catch (cause) { failures.push(cause); }
       }
       for (const object of uncullable) object.frustumCulled = true;
@@ -883,6 +904,81 @@ export class ThreeApplicationRenderer {
     }
     if (failures.length > 0) throw new AggregateError(failures, "Frame drawing failed");
     if (spatial != null) this.presented_id = spatial.presentation_id;
+  }
+
+  private drawCurrentShadows(active: PreparedResources): void {
+    const target = this.renderer.getRenderTarget();
+    const face = this.renderer.getActiveCubeFace();
+    const mip = this.renderer.getActiveMipmapLevel();
+    const viewport = this.renderer.getViewport(new Vector4());
+    const scissor = this.renderer.getScissor(new Vector4());
+    const scissorTest = this.renderer.getScissorTest();
+    const xr = this.renderer.xr.enabled;
+    const autoClear = this.renderer.autoClear;
+    const background = active.scene.background;
+    const shadowAutoUpdate = this.renderer.shadowMap.autoUpdate;
+    const shadowNeedsUpdate = this.renderer.shadowMap.needsUpdate;
+    const hidden: Mesh[] = [];
+    const callbacks: { mesh: Mesh; descriptor: PropertyDescriptor | undefined }[] = [];
+    const ranges = new Map<BufferGeometry, { start: number; count: number }>();
+    const sides = new Map<Material, Material["side"]>();
+    const failures: unknown[] = [];
+    try {
+      // This adapter creates leaf Mesh renderables. Only casters enter this render;
+      // in particular water never samples the attached reflection texture.
+      active.scene.traverse(object => {
+        if (!(object instanceof Mesh)) return;
+        const mesh = object as Mesh;
+        if (!mesh.castShadow) {
+          if (mesh.visible) { hidden.push(mesh); mesh.visible = false; }
+          return;
+        }
+        const geometry = mesh.geometry;
+        if (!ranges.has(geometry)) ranges.set(geometry, { ...geometry.drawRange });
+        const callback = mesh.onBeforeRender.bind(mesh);
+        callbacks.push({ mesh, descriptor: Object.getOwnPropertyDescriptor(mesh, "onBeforeRender") });
+        mesh.onBeforeRender = (...args) => {
+          callback(...args);
+          // r186 finishes all shadow draws before Object3D.onBeforeRender.
+          // Preserve their original ranges; suppress only the following color draw.
+          geometry.setDrawRange(geometry.drawRange.start, 0);
+        };
+        for (const material of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
+          if (!sides.has(material)) sides.set(material, material.side);
+        }
+      });
+      active.scene.background = null;
+      this.renderer.autoClear = false;
+      this.renderer.xr.enabled = false;
+      this.renderer.shadowMap.autoUpdate = false;
+      this.renderer.shadowMap.needsUpdate = true;
+      // The existing single-sample, non-mipmapped target receives no color/depth
+      // fragments. Traversal, program setup and zero-count GL commands still cost CPU.
+      this.renderer.setRenderTarget(active.reflection);
+      this.renderer.setScissorTest(false);
+      this.render(active.scene, this.camera, "shadow");
+    } catch (cause) { failures.push(cause); }
+    finally {
+      for (const { mesh, descriptor } of callbacks) {
+        try {
+          if (descriptor !== undefined) Object.defineProperty(mesh, "onBeforeRender", descriptor);
+          else if (!Reflect.deleteProperty(mesh, "onBeforeRender")) failures.push(new Error("Shadow drawing callback restoration failed"));
+        } catch (cause) { failures.push(cause); }
+      }
+      for (const [geometry, range] of ranges) {
+        try { geometry.setDrawRange(range.start, range.count); } catch (cause) { failures.push(cause); }
+      }
+      for (const [material, side] of sides) material.side = side;
+      for (const mesh of hidden) mesh.visible = true;
+      for (const restore of [() => { active.scene.background = background; },
+        () => { this.renderer.autoClear = autoClear; this.renderer.xr.enabled = xr; },
+        () => { this.renderer.shadowMap.autoUpdate = shadowAutoUpdate; this.renderer.shadowMap.needsUpdate = shadowNeedsUpdate; },
+        () => { this.renderer.setRenderTarget(target, face, mip); }, () => { this.renderer.setViewport(viewport); },
+        () => { this.renderer.setScissor(scissor); }, () => { this.renderer.setScissorTest(scissorTest); }]) {
+        try { restore(); } catch (cause) { failures.push(cause); }
+      }
+    }
+    if (failures.length > 0) throw new AggregateError(failures, "Shadow drawing failed");
   }
 
   private drawReflection(active: PreparedResources, drawing: ApplicationDrawingOutput): void {
@@ -900,8 +996,6 @@ export class ThreeApplicationRenderer {
     const alpha = this.renderer.getClearAlpha();
     const color = this.renderer.getClearColor(new Color());
     const xr = this.renderer.xr.enabled;
-    const shadowAutoUpdate = this.renderer.shadowMap.autoUpdate;
-    const shadowNeedsUpdate = this.renderer.shadowMap.needsUpdate;
     const viewport = this.renderer.getViewport(new Vector4());
     const scissor = this.renderer.getScissor(new Vector4());
     const scissorTest = this.renderer.getScissorTest();
@@ -909,10 +1003,6 @@ export class ThreeApplicationRenderer {
     try {
       active.scene.background = null;
       this.renderer.xr.enabled = false;
-      if (active.sun.shadow.map !== null) {
-        this.renderer.shadowMap.autoUpdate = false;
-        this.renderer.shadowMap.needsUpdate = false;
-      }
       this.renderer.setRenderTarget(active.reflection);
       this.renderer.setScissorTest(false);
       this.renderer.setClearColor(0x000000, 0);
@@ -921,7 +1011,6 @@ export class ThreeApplicationRenderer {
     } catch (cause) { failures.push(cause); }
     finally {
       for (const restore of [() => { active.scene.background = background; }, () => { this.renderer.xr.enabled = xr; },
-        () => { this.renderer.shadowMap.autoUpdate = shadowAutoUpdate; this.renderer.shadowMap.needsUpdate = shadowNeedsUpdate; },
         () => { this.renderer.setRenderTarget(target); }, () => { this.renderer.setClearColor(color, alpha); },
         () => { this.renderer.setViewport(viewport); }, () => { this.renderer.setScissor(scissor); },
         () => { this.renderer.setScissorTest(scissorTest); }]) {
@@ -945,6 +1034,8 @@ export class ThreeApplicationRenderer {
 
   private paintMenu(menu: Extract<NonNullable<ApplicationDrawingOutput["spatial"]>["menu"], { kind: "ready" }>): void {
     if (this.menu_mesh === null) return;
+    if (this.menu_paint?.revision === menu.paint_revision && this.menu_paint.texture === this.menu_mesh.material.map
+      && this.menu_canvas.width === menu.canvas_size[0] && this.menu_canvas.height === menu.canvas_size[1]) return;
     const context = this.paintContext(this.menu_canvas, menu.canvas_size, this.menu_mesh);
     const paint = menu.paint;
     const scaleX = this.menu_canvas.width / paint.size.width;
@@ -961,17 +1052,21 @@ export class ThreeApplicationRenderer {
     } finally { context.restore(); }
     paintSurface(context, paint.footer, scaleX, scaleY);
     if (this.menu_mesh.material.map !== null) this.menu_mesh.material.map.needsUpdate = true;
+    this.menu_paint = { revision: menu.paint_revision, texture: this.menu_mesh.material.map };
   }
 
   private paintHead(head: Extract<NonNullable<ApplicationDrawingOutput["spatial"]>["head_hud"], { kind: "ready" }>): void {
     if (this.head_mesh === null) return;
+    if (this.head_paint?.revision === head.paint_revision && this.head_paint.texture === this.head_mesh.material.map
+      && this.head_canvas.width === head.paint.canvasSize[0] && this.head_canvas.height === head.paint.canvasSize[1]) return;
     const context = this.paintContext(this.head_canvas, head.paint.canvasSize, this.head_mesh);
     paintSurface(context, head.paint.items, this.head_canvas.width / head.paint.size.width, this.head_canvas.height / head.paint.size.height);
     if (this.head_mesh.material.map !== null) this.head_mesh.material.map.needsUpdate = true;
+    this.head_paint = { revision: head.paint_revision, texture: this.head_mesh.material.map };
   }
 
   private paintContext(canvas: HTMLCanvasElement, size: readonly [number, number], mesh: Mesh<PlaneGeometry, MeshBasicMaterial>) {
-    if (canvas.width !== size[0] || canvas.height !== size[1]) {
+    if (canvas.width !== size[0] || canvas.height !== size[1] || mesh.material.map === null) {
       canvas.width = size[0]; canvas.height = size[1];
       mesh.material.map?.dispose();
       const texture = new CanvasTexture(canvas);
@@ -985,12 +1080,50 @@ export class ThreeApplicationRenderer {
     return surface;
   }
 
+  private readonly invalidateSurfacePaint = (): void => { this.menu_paint = null; this.head_paint = null; };
   private readonly contextLost = (): void => {
+    this.invalidateSurfacePaint();
     this.renderer.setAnimationLoop(null);
     this.notify({ kind: "graphics", renderer_resource_id: this.id, observation: { kind: "context_lost" } });
   };
+  private canvasPointer(event: PointerEvent, phase: Extract<ApplicationInput, { kind: "control_pointer" }>["phase"]): void {
+    if (event.pointerType !== "touch") return;
+    const previous = this.canvasPointers.get(event.pointerId);
+    const ui = this.drawing?.ui;
+    if (phase === "down" ? ui === undefined : previous === undefined) return;
+    const revision = previous?.view_revision ?? (ui?.kind === "view" ? ui.view.view_revision : ui?.frame.view_revision);
+    if (revision === undefined) return;
+    const rect = this.canvas.getBoundingClientRect();
+    const input: Extract<ApplicationInput, { kind: "control_pointer" }> = {
+      kind: "control_pointer", control_id: null, view_revision: revision,
+      pointer_id: { low: event.pointerId >>> 0, high: 0 }, pointer_kind: "touch", phase,
+      button: event.button, buttons: event.buttons, is_primary: event.isPrimary,
+      position: [event.clientX, event.clientY], rect: [rect.left, rect.top, rect.width, rect.height]
+    };
+    if (phase === "down") {
+      this.canvasPointers.set(event.pointerId, input);
+      let captured = true;
+      try { this.canvas.setPointerCapture(event.pointerId); } catch { captured = false; }
+      this.notify(input);
+      if (!captured && this.canvasPointers.delete(event.pointerId)) this.notify({ ...input, phase: "lost_capture" });
+    } else {
+      if (phase === "move") this.canvasPointers.set(event.pointerId, input);
+      else {
+        this.canvasPointers.delete(event.pointerId);
+        if (phase !== "lost_capture") {
+          try { this.canvas.releasePointerCapture(event.pointerId); } catch { /* Runtime consumes the terminal observation below. */ }
+        }
+      }
+      this.notify(input);
+    }
+  }
+  private readonly pointerDown = (event: PointerEvent): void => { this.canvasPointer(event, "down"); };
+  private readonly pointerUp = (event: PointerEvent): void => { this.canvasPointer(event, "up"); };
+  private readonly pointerCancel = (event: PointerEvent): void => { this.canvasPointer(event, "cancel"); };
+  private readonly pointerLost = (event: PointerEvent): void => { this.canvasPointer(event, "lost_capture"); };
   private readonly pointerMove = (event: PointerEvent): void => {
-    this.notify({ kind: "pointer_motion", display_resource_id: this.display_id, delta_px: [event.movementX, event.movementY], buttons: event.buttons });
+    if (event.pointerType === "touch") this.canvasPointer(event, "move");
+    else this.notify({ kind: "pointer_motion", display_resource_id: this.display_id, delta_px: [event.movementX, event.movementY], buttons: event.buttons });
   };
   private readonly contextMenu = (event: Event): void => { event.preventDefault(); };
   private readonly gamepadConnection = (event: GamepadEvent): void => {
@@ -1010,7 +1143,19 @@ export class ThreeApplicationRenderer {
     }
     release(() => { this.renderer.setAnimationLoop(null); });
     release(() => { this.canvas.removeEventListener("webglcontextlost", this.contextLost); });
+    release(() => { this.canvas.removeEventListener("webglcontextrestored", this.invalidateSurfacePaint); });
+    release(() => { this.menu_canvas.removeEventListener("contextrestored", this.invalidateSurfacePaint); });
+    release(() => { this.head_canvas.removeEventListener("contextrestored", this.invalidateSurfacePaint); });
+    for (const [id, input] of this.canvasPointers) {
+      release(() => { this.canvas.releasePointerCapture(id); });
+      this.notify({ ...input, phase: "lost_capture" });
+    }
+    this.canvasPointers.clear();
     release(() => { this.canvas.removeEventListener("pointermove", this.pointerMove); });
+    release(() => { this.canvas.removeEventListener("pointerdown", this.pointerDown); });
+    release(() => { this.canvas.removeEventListener("pointerup", this.pointerUp); });
+    release(() => { this.canvas.removeEventListener("pointercancel", this.pointerCancel); });
+    release(() => { this.canvas.removeEventListener("lostpointercapture", this.pointerLost); });
     release(() => { this.canvas.removeEventListener("contextmenu", this.contextMenu); });
     release(() => { window.removeEventListener("gamepadconnected", this.gamepadConnection); });
     release(() => { window.removeEventListener("gamepaddisconnected", this.gamepadConnection); });

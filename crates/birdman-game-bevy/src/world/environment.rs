@@ -160,6 +160,7 @@ pub(super) fn water_mesh(
 pub(super) fn image(
     runtime: &ApplicationRuntime,
     asset: ApplicationImageAsset,
+    anisotropy_clamp: u16,
 ) -> Result<Image, String> {
     let Some(ApplicationBufferSlice::U8(bytes)) = runtime.asset_buffer(asset.buffer_id) else {
         return Err("Image upload is unavailable".into());
@@ -220,7 +221,7 @@ pub(super) fn image(
         } else {
             ImageAddressMode::Repeat
         },
-        anisotropy_clamp: if sky { 1 } else { 8 },
+        anisotropy_clamp,
         ..ImageSamplerDescriptor::linear()
     });
     Ok(image)

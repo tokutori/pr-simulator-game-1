@@ -39,7 +39,7 @@ pub use aerodynamics::{
     HybridAerodynamicLoad, HybridAnchor, HybridEvaluation, HybridModel, HybridProxy, HybridSection,
     HybridSurface, HybridSurfaceGeometry, PlanformSymmetry, PolarAnalysisMethod, PolarMomentAxes,
     StaticPolar, StaticPolarCoefficients, StaticPolarEvaluation, StaticPolarLoad,
-    StaticPolarMetadata, StaticPolarRow, TailIncidence, UniformAir,
+    StaticPolarMetadata, StaticPolarRow, TailAerodynamics, TailIncidence, UniformAir,
 };
 pub use aerodynamics_contract::{
     AeroError, AerodynamicEvaluationError, AerodynamicStage, HybridError, HybridFlowKind,
@@ -81,9 +81,10 @@ pub use tail_scenario::{
 };
 pub use tail_simulation::{
     TailAppliedControls, TailFlightTickConfig, TailFlightTickError, TailFlightTickInput,
-    TailFlightTickOutcome, TailFlightTickReport, TailFlightTickState, TailWaterContactMoment,
-    TailWaterContactSample, advance_tail_flight_tick, advance_tail_flight_tick_with_contact,
-    advance_tail_flight_tick_with_contact_report, advance_tail_flight_tick_with_shape_provider,
+    TailFlightTickOutcome, TailFlightTickReport, TailFlightTickState, TailPilotMotionAdmission,
+    TailWaterContactMoment, TailWaterContactSample, advance_tail_flight_tick,
+    advance_tail_flight_tick_with_contact, advance_tail_flight_tick_with_contact_report,
+    advance_tail_flight_tick_with_shape_provider,
 };
 pub use wind_field::{WindError, WindField};
 
@@ -111,7 +112,7 @@ pub const PHYSICS_HZ: u32 = 100;
 ///
 /// Increment when the same validated model and tick-input sequence can produce a
 /// different physical trajectory or terminal state.
-pub const PHYSICS_MODEL_VERSION: u32 = 5;
+pub const PHYSICS_MODEL_VERSION: u32 = 6;
 
 /// Fixed simulation timestep in seconds.
 pub const PHYSICS_DT_SECONDS: f64 = 1.0 / PHYSICS_HZ as f64;

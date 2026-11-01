@@ -47,7 +47,9 @@ impl StructuralMesh {
         use crate::cockpit_geometry::CockpitMaterial;
         use crate::wing_geometry::{CARBON_COLOR, FOAM_COLOR, RIB_COLOR};
         match self.kind {
-            StructuralPartKind::Spar | StructuralPartKind::MainBeam => CARBON_COLOR,
+            StructuralPartKind::Spar
+            | StructuralPartKind::MainBeam
+            | StructuralPartKind::TailSupport => CARBON_COLOR,
             StructuralPartKind::Rib | StructuralPartKind::Stringer => RIB_COLOR,
             StructuralPartKind::Foam => FOAM_COLOR,
             StructuralPartKind::CockpitFrame => CockpitMaterial::Frame.color(),
@@ -267,7 +269,7 @@ mod tests {
             .iter()
             .map(|mesh| mesh.positions().as_ptr())
             .collect();
-        assert_eq!(geometry.meshes().len(), 11);
+        assert_eq!(geometry.meshes().len(), 12);
         let vertex_count: usize = geometry
             .meshes()
             .iter()

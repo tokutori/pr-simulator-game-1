@@ -118,9 +118,9 @@ pub(crate) fn extract_detail_mips(
     state.active.clear();
     for (_, material) in materials.iter() {
         for handle in [
-            &material.detail_near,
-            &material.detail_far,
-            &material.sky_texture,
+            &material.textures.detail_near,
+            &material.textures.detail_far,
+            &material.textures.sky_texture,
         ]
         .into_iter()
         .flatten()

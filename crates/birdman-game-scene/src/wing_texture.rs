@@ -23,6 +23,19 @@ pub enum WingTextureError {
     /// The image library rejected the fixed sRGB conversion.
     ColorConversion,
 }
+#[cfg(not(verus_only))]
+impl core::fmt::Display for WingTextureError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::InvalidPixels => f.write_str("Wing texture pixels are invalid"),
+            Self::InvalidDecal => f.write_str("Wing decal image is invalid"),
+            Self::ColorConversion => f.write_str("Wing texture color conversion failed"),
+        }
+    }
+}
+
+#[cfg(not(verus_only))]
+impl core::error::Error for WingTextureError {}
 
 /// Returns left then right opaque sRGB RGBA pixels, before the optional decal.
 pub fn indigo_wing_textures() -> Vec<u8> {

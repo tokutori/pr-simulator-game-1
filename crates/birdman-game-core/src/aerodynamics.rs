@@ -5,7 +5,7 @@ mod hybrid;
 mod polar;
 pub use hybrid::{
     HybridAerodynamicLoad, HybridAnchor, HybridEvaluation, HybridModel, HybridProxy, HybridSection,
-    HybridSurface, HybridSurfaceGeometry, PlanformSymmetry, TailIncidence,
+    HybridSurface, HybridSurfaceGeometry, PlanformSymmetry, TailAerodynamics, TailIncidence,
 };
 pub use polar::{
     AerodynamicLoadProvider, PolarAnalysisMethod, PolarMomentAxes, StaticPolar,

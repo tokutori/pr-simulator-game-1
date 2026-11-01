@@ -83,12 +83,14 @@ pub fn advance_tail_flight_tick_with_shape_provider(
         loads,
         TailTrialGeometry::Deformed { provider, factor },
     )?;
-    Ok(evaluated_tick_report(
+    let mut report = evaluated_tick_report(
         previous,
         evaluation.next,
         evaluation.controls,
         evaluation.contact,
-    ))
+    );
+    report.tail_wrenches = evaluation.tail_wrenches;
+    Ok(report)
 }
 
 #[cfg(test)]
@@ -474,7 +476,7 @@ mod tests {
                 .unwrap()
             };
             record
-                .begin_tail(previous, telemetry(previous.flight_state()))
+                .begin_tail(previous, telemetry(previous.flight_state()), None)
                 .unwrap();
             record
                 .append_tail_report(report, telemetry(contact.flight_state()))

@@ -231,10 +231,12 @@ export class BrowserFlightRecordStore {
       request.onsuccess = () => {
         const database = request.result;
         if (this.disposed || abandoned) { database.close(); reject(new Error("The record database is disposed or its open request failed")); return; }
-        database.onversionchange = () => {
+        const retire = (): void => {
           database.close();
           if (this.database === opening) this.database = null;
         };
+        database.onversionchange = retire;
+        database.onclose = retire;
         resolve(database);
       };
       request.onerror = () => { abandoned = true; reject(upgradeFailure ?? request.error ?? new Error("IndexedDB database open failed")); };

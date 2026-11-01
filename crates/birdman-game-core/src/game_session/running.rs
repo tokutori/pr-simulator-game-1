@@ -78,8 +78,19 @@ verus! {
         telemetry: FlightTelemetry,
     ) -> bool {
         match FlightRecordControls::from_tail_report(report) {
-            FlightRecordControlCapture::NoElapsedInterval | FlightRecordControlCapture::AppliedBoundary(_) =>
-                after.recorded_samples() == before.recorded_samples(),
+            FlightRecordControlCapture::NoElapsedInterval =>
+                after.recorded_samples() == before.recorded_samples()
+                && match (before.terminal_projection(), after.terminal_projection()) {
+                    (Some(previous), Some(current)) => current.tail_wrenches == previous.tail_wrenches,
+                    (None, None) => true,
+                    _ => false,
+                },
+            FlightRecordControlCapture::AppliedBoundary(_) =>
+                after.recorded_samples() == before.recorded_samples()
+                && (after.finalization().is_some() ==> match after.terminal_projection() {
+                    Some(sample) => sample.tail_wrenches == Some(report.tail_wrenches()),
+                    None => false,
+                }),
             FlightRecordControlCapture::Applied(controls) => {
                 let (tick_index, fraction, flight_state) = match report.outcome() {
                     TailFlightTickOutcome::Advanced(state) => (state.tick_index(), 0.0, state.flight_state()),
@@ -92,6 +103,7 @@ verus! {
                         TailFlightTickOutcome::Advanced(state) => state.wing_bending_factor(),
                         TailFlightTickOutcome::WaterContact(sample) => sample.wing_bending_factor(),
                     },
+                    tail_wrenches: Some(report.tail_wrenches()),
                     wind_at_cg_ned_mps: telemetry.wind_velocity_ned_mps, telemetry,
                 })
             },

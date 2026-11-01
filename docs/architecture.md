@@ -63,7 +63,8 @@ adapter・runtime・presentation・scene・app・contentは責務に応じて下
 ### ApplicationRuntimeと描画資源
 
 - runtimeの合成ownerは生観測・UI操作・I/O完了を受け、最終描画データとprimitive I/O要求を返す。Nativeは同じbuffer descriptorの型付きsliceを借用し、WASMは必要なbufferをLittle Endianの所有コピーで提出する。動的属性の借用は次のupdateまで有効とする。
-- 空のpanorama、光源・霧、波の係数とdetail画像は登録環境からRustが準備する。画像は同じ生成条件で共有し、水面品質の変更では波の投影とmesh密度を更新する。
+- 材質IDは全meshの頂点色と材質設定が確定した後に共有Rustが同値群ごとに発行し、既存の資産ID採番を使ってapplicationの寿命中に再利用しない。Webはrendererごと、Nativeは描画資源候補ごとにID別のGPU handleを再用し、それぞれの所有期間の終了時に一度ずつ解放する。
+- 空のpanorama、光源・霧、波の係数とdetail画像は登録環境からRustが準備する。画像は同じ生成条件で共有し、水面品質の変更では波の投影、mesh密度、detail画像の異方性フィルタ上限（Low 4、Medium/High 8）を更新する。GPU画像は画像IDとフィルタ上限の組で保持し、候補準備中は使用中の設定を維持する。
 - GPU資源は候補作成、ownerのcommit認可、atomicなbinding完了の順に進む。ownerはcommitを直列化し、確認した適用状態から次の候補と旧資源の解放を決定する。
 - 画質変更は環境資源と同じ準備・commit経路へ投入する。共有policyの要求は最初の適用確認で確定し、各commitの実適用品質・framebuffer寸法・世代を記録する。Screenの未縮小物理解像度とHMD runtimeのframebuffer寸法は別の生観測とする。
 - preparationの取消は完了通知までCPU bufferを保持する。取消中に作成が完了した候補もownerが解放し、adapterは要求されたGPU操作と結果通知を実行する。
@@ -163,6 +164,7 @@ GameUiView / GameUiFrame → platform renderer → DOM / VR panel / Bevy entity
 - XRのrangeはclip前のtrackを基準に共有Rustで段階値へ丸める。表示・hit領域にはclip後の矩形を使い、スクロール時も同じ値域を保つ。
 - 共有Viewの`interaction_scope`がScene・overlay・Result/Replayの表示タブを識別する。Screen・Nativeのscroll保持と空間Menuの入力世代は同じ識別子を利用する。runtimeはpresentationの`MenuSession`を所有し、adapterは実scroll位置・focus・入力を通知する。
 - MenuとHead HUDの内容はRust ownerが保持するGameUiViewと現在のGameUiFrameから導出する。共有presentationは両眼fit、文字サイズ、折返し、control・chart・計器線分・実測文字の配置と視角を一回の同期呼出しで確定する。
+- SurfaceOwnerのpaint世代: 完成paintとCanvas寸法の変更を共有Rustで判定し、Webは内容変更と描画資源の再生成・resize・context復帰時に再描画する。各Canvasへの適用世代をadapterで保持し、pose・cursorと入力ACKは各投影で更新する。
 - Menu viewportは共有Rustがcontent clip・page操作領域・scroll量を導出する。矩形とpanel/document座標は一括で投影し、描画とpointer入力が同じclipを利用する。rangeの値はclip前のtrackに対応する。
 - MenuとHead HUDのフォント観測cacheは既存UI ownerの寿命に従い、最大32組を保持する。計測identityは表示内容・locale・surface・解決済み文字サイズ・font世代を含み、変更時に再計測する。Webは共通の描画命令DTOをCanvasへ反映し、Head HUDのposeとsurface寸法をmeshへ渡す。
 - 文字折返しは共有Rustが明示改行・Unicode文字列・符号付きink幅から決める。フォント観測callbackは要求された文字列全体を計測し、advance・bearing・ascent/descentをメートル単位で返す。Webは同期呼出し中だけCanvas観測を提供し、共有処理が行とparagraphを確定する。

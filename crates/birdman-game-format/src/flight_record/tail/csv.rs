@@ -138,14 +138,38 @@ pub(super) fn encode(
     document: &TailFlightRecordDocument,
 ) -> Result<Vec<u8>, FlightRecordFormatError> {
     document.validate()?;
-    let version_seven = document.schema_version == super::TAIL_FLIGHT_RECORD_SCHEMA_VERSION;
+    let version_seven = document.schema_version >= 7;
+    let version_eight = document.schema_version >= 8;
     let mut columns = COLUMNS.to_vec();
     if version_seven {
         columns.extend(["row_kind", "wing_bending_factor"]);
     }
+    if version_eight {
+        columns.extend([
+            "horizontal_tail_force_frd_x_n",
+            "horizontal_tail_force_frd_y_n",
+            "horizontal_tail_force_frd_z_n",
+            "horizontal_tail_moment_datum_frd_x_nm",
+            "horizontal_tail_moment_datum_frd_y_nm",
+            "horizontal_tail_moment_datum_frd_z_nm",
+            "vertical_tail_force_frd_x_n",
+            "vertical_tail_force_frd_y_n",
+            "vertical_tail_force_frd_z_n",
+            "vertical_tail_moment_datum_frd_x_nm",
+            "vertical_tail_moment_datum_frd_y_nm",
+            "vertical_tail_moment_datum_frd_z_nm",
+        ]);
+    }
     let header = &document.header;
     let mut metadata = vec![
-        if version_seven { "4" } else { "3" }.to_string(),
+        if version_eight {
+            "5"
+        } else if version_seven {
+            "4"
+        } else {
+            "3"
+        }
+        .to_string(),
         document.schema_version.to_string(),
         "tail_incidence".to_string(),
         header.catalog_version.to_string(),
@@ -367,6 +391,16 @@ pub(super) fn encode(
                 .to_string(),
                 optional_number(sample.wing_bending_factor),
             ]);
+        }
+        if version_eight {
+            for wrench in sample.tail_wrenches.unwrap_or([None; 2]) {
+                if let Some(wrench) = wrench {
+                    numbers(&mut row, wrench.force_frd_n);
+                    numbers(&mut row, wrench.moment_about_datum_frd_nm);
+                } else {
+                    row.extend(core::iter::repeat_n(String::new(), 6));
+                }
+            }
         }
         if row.len() != columns.len() {
             return Err(FlightRecordFormatError::EncodingFailed);

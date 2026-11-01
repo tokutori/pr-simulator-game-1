@@ -294,12 +294,7 @@ fn surface(side: f64, chord_start: f64, chord_end: f64) -> WingSurface {
             },
             WingMaterialRange {
                 start: count,
-                count,
-                material: WingMaterial::Underside,
-            },
-            WingMaterialRange {
-                start: count * 2,
-                count: indices.len() - count * 2,
+                count: indices.len() - count,
                 material: WingMaterial::Underside,
             },
         ]
@@ -447,6 +442,11 @@ mod tests {
                         .sum::<usize>(),
                     surface.indices.len()
                 );
+                assert_eq!(surface.material_ranges[0].start, 0);
+                for ranges in surface.material_ranges.windows(2) {
+                    assert_eq!(ranges[0].start + ranges[0].count, ranges[1].start);
+                    assert_ne!(ranges[0].material, ranges[1].material);
+                }
                 assert!(
                     surface
                         .uvs

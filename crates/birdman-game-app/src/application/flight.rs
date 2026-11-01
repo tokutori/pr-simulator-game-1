@@ -5,9 +5,7 @@ use birdman_game_core::{
 
 use super::{ApplicationSession, ExternalPauseReason};
 use crate::flight_clock::{FlightClockError, FlightFrameAdvance};
-use crate::flight_input::{
-    FlightGamepadAcquisition, FlightGamepadObservation, FlightKeyObservation,
-};
+use crate::flight_input::{FlightActionKey, FlightGamepadObservation, FlightKeyObservation};
 
 /// Original cause that stops live frame admission until the flight is replaced.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -20,6 +18,29 @@ pub enum FlightFrameError {
     PilotPosition(DynamicsError),
     /// The prepared session rejected an attempted physical tick.
     Session(GameSessionError),
+}
+#[cfg(not(verus_only))]
+impl core::fmt::Display for FlightFrameError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Clock(_) => f.write_str("Flight clock observation failed"),
+            Self::Input(_) => f.write_str("Flight input was rejected"),
+            Self::PilotPosition(_) => f.write_str("Pilot position conversion failed"),
+            Self::Session(_) => f.write_str("Flight state update failed"),
+        }
+    }
+}
+
+#[cfg(not(verus_only))]
+impl core::error::Error for FlightFrameError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        match self {
+            Self::Clock(cause) => Some(cause),
+            Self::Input(cause) => Some(cause),
+            Self::PilotPosition(cause) => Some(cause),
+            Self::Session(cause) => Some(cause),
+        }
+    }
 }
 
 /// Admitted work and the last physical interval's start for render interpolation.
@@ -41,14 +62,32 @@ impl ApplicationSession {
             && self.flight_failure.is_none()
     }
 
+    /// Admits an internally normalized touch-channel lifetime without a platform-specific owner.
+    pub fn observe_flight_touch(
+        &mut self,
+        observation: crate::flight_input::FlightTouchObservation,
+    ) -> bool {
+        self.flight_input.observe_touch(observation)
+    }
+
+    /// Current touch-device lease, absent after takeover or retirement.
+    pub fn flight_touch_generation(&self) -> Option<u32> {
+        self.flight_input.touch_generation()
+    }
+
     /// Retires held controls and rearms gamepad takeover after an input-owner reset.
     pub fn invalidate_flight_input(&mut self) {
         self.flight_input.invalidate();
     }
 
-    /// Reports the selected connection's neutral and pilot-target takeover state.
-    pub fn flight_gamepad_acquisition(&self) -> FlightGamepadAcquisition {
-        self.flight_input.gamepad_acquisition()
+    /// Records the press or release of an admitted flight action key.
+    pub fn observe_flight_action_key(&mut self, key: FlightActionKey, pressed: bool) {
+        self.flight_input.observe_action_key(key, pressed);
+    }
+
+    /// Returns admitted Up, Down, Left, Right, J, L, C, P, Escape, W, S, A and D states.
+    pub fn accepted_flight_keys(&self) -> [bool; 13] {
+        self.flight_input.accepted_keys()
     }
 
     /// Returns the shared physical-time remainder for render interpolation.
@@ -104,42 +143,78 @@ impl ApplicationSession {
         let input = &mut self.flight_input;
         let mut failure = None;
         let mut previous_tick = None;
-        let advance =
-            self.flight_clock.advance_frame(timestamp_ms, || {
-                let tick = session.snapshot().tail_flight_state();
-                let result =
-                    (|| {
-                        let previous = tick.ok_or(FlightFrameError::Session(
+        let advance = self.flight_clock.advance_frame(timestamp_ms, || {
+            let tick = session.snapshot().tail_flight_state();
+            let result = (|| {
+                let previous = tick.ok_or(FlightFrameError::Session(
+                    GameSessionError::InvalidTransition,
+                ))?;
+                let mapping =
+                    session
+                        .tail_pilot_position_mapping()
+                        .ok_or(FlightFrameError::Session(
                             GameSessionError::InvalidTransition,
                         ))?;
-                        let mapping = session.tail_pilot_position_mapping().ok_or(
-                            FlightFrameError::Session(GameSessionError::InvalidTransition),
-                        )?;
-                        let held = mapping
-                            .normalized_target(previous.pilot_position_target())
-                            .map_err(FlightFrameError::PilotPosition)?;
-                        let demand = input
-                            .tick_input(gamepads, held.value())
-                            .map_err(FlightFrameError::Input)?;
-                        prepared
-                            .as_mut()
-                            .ok_or(FlightFrameError::Session(
-                                GameSessionError::InvalidTransition,
-                            ))?
-                            .advance(session, demand)
-                            .map_err(FlightFrameError::Session)
-                    })();
-                previous_tick = tick;
-                match result {
-                    Ok(_) => session.snapshot().phase() == SessionPhase::FlightRunning,
-                    Err(error) => {
-                        if session.snapshot().phase() != SessionPhase::Result {
-                            failure = Some(error);
-                        }
-                        false
-                    }
+                let stop_target = previous
+                    .pilot_stopping_target()
+                    .filter(|_| previous.pilot_motion_limited());
+                input.observe_pilot_stop(stop_target.is_some());
+                let held = mapping
+                    .normalized_target(crate::flight_input::pilot_position_pickup_target(previous))
+                    .map_err(FlightFrameError::PilotPosition)?;
+                let prepared = prepared.as_mut().ok_or(FlightFrameError::Session(
+                    GameSessionError::InvalidTransition,
+                ))?;
+                let demand = input
+                    .tick_input(gamepads, held.value(), prepared.keyboard_controls, |step| {
+                        let position = birdman_game_core::PilotPositionTarget::try_new(
+                            &prepared.aircraft,
+                            (previous.pilot_position_demand().position_m() + step).clamp(-0.4, 0.4),
+                        )
+                        .map_err(|_| TailControlError::InvalidPilotIntent)?;
+                        mapping
+                            .normalized_target(position)
+                            .map_err(|_| TailControlError::InvalidPilotIntent)
+                    })
+                    .map_err(FlightFrameError::Input)?;
+                let result = prepared
+                    .advance(session, demand)
+                    .map_err(FlightFrameError::Session);
+                let elapsed = result.as_ref().is_ok_and(|snapshot| {
+                    snapshot
+                        .tail_flight_state()
+                        .is_some_and(|state| state.tick_index() > previous.tick_index())
+                        || snapshot.result().is_some_and(|result| match result.state {
+                            birdman_game_core::SessionTerminalState::TailTick(state) => {
+                                state.tick_index() > previous.tick_index()
+                            }
+                            birdman_game_core::SessionTerminalState::TailWaterContact(contact) => {
+                                contact.interval_start_tick() > previous.tick_index()
+                                    || contact.fraction() > 0.0
+                            }
+                        })
+                });
+                if elapsed {
+                    let stopped = result
+                        .as_ref()
+                        .ok()
+                        .and_then(|snapshot| snapshot.tail_flight_state())
+                        .is_some_and(|state| state.pilot_motion_limited());
+                    input.confirm_tick(demand, stopped);
                 }
-            });
+                result
+            })();
+            previous_tick = tick;
+            match result {
+                Ok(_) => session.snapshot().phase() == SessionPhase::FlightRunning,
+                Err(error) => {
+                    if session.snapshot().phase() != SessionPhase::Result {
+                        failure = Some(error);
+                    }
+                    false
+                }
+            }
+        });
         let advance = match advance {
             Ok(advance) => advance,
             Err(error) => {
@@ -149,7 +224,14 @@ impl ApplicationSession {
         if let Some(error) = failure {
             return Err(self.retain_flight_failure(error));
         }
-        if let FlightFrameAdvance::ProcessingDelay { blocked } = advance {
+        if let FlightFrameAdvance::ProcessingDelay { blocked } = advance
+            && matches!(
+                self.session.snapshot().phase(),
+                SessionPhase::Countdown { .. }
+                    | SessionPhase::FlightRunning
+                    | SessionPhase::FlightPaused { .. }
+            )
+        {
             self.observe_external_pause(ExternalPauseReason::ProcessingDelay, !blocked)
                 .map_err(FlightFrameError::Session)?;
         }
@@ -174,6 +256,9 @@ impl ApplicationSession {
         } else {
             self.flight_clock.suspend();
             self.flight_input.set_active(false);
+            if !matches!(phase, SessionPhase::FlightPaused { .. }) {
+                self.flight_input.clear_action_keys();
+            }
             if matches!(
                 phase,
                 SessionPhase::Title

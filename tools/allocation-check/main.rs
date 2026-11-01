@@ -6,11 +6,12 @@ use birdman_game_core::{
     HybridSurfaceGeometry, HybridSurfaceRole, InertiaTensor, LoadError, NedPoint, NedVector,
     PHYSICS_DT_SECONDS, PilotAcceleration, PilotPositionTarget, PlanformSymmetry,
     PolarAnalysisMethod, PolarMomentAxes, StaticPolar, StaticPolarCoefficients,
-    StaticPolarMetadata, StaticPolarRow, TailControlProfile, TailFlightTickConfig,
-    TailFlightTickError, TailFlightTickInput, TailFlightTickOutcome, TailFlightTickState,
-    TailIncidence, TailPilotIntent, TailPilotPositionCommand, TailPilotPositionIntent,
-    TailPilotPositionMapping, TailRateTarget, UnitQuaternion, WaterContactGeometry, WindError,
-    WindField, advance, advance_tail_flight_tick, advance_tail_flight_tick_with_contact,
+    StaticPolarMetadata, StaticPolarRow, TailAerodynamics, TailControlProfile,
+    TailFlightTickConfig, TailFlightTickError, TailFlightTickInput, TailFlightTickOutcome,
+    TailFlightTickState, TailIncidence, TailPilotIntent, TailPilotPositionCommand,
+    TailPilotPositionIntent, TailPilotPositionMapping, TailRateTarget, UnitQuaternion,
+    WaterContactGeometry, WindError, WindField, advance, advance_tail_flight_tick,
+    advance_tail_flight_tick_with_contact,
 };
 use std::alloc::{GlobalAlloc, Layout, System, alloc, alloc_zeroed, dealloc, realloc};
 use std::hint::black_box;
@@ -264,8 +265,13 @@ impl Fixture {
 
     fn surfaces(&self) -> [HybridSurface<'_>; 3] {
         core::array::from_fn(|index| {
-            HybridSurface::try_new(Self::geometry(&self.sections, index), &self.proxies[index])
-                .unwrap()
+            let tail = (index != 0).then(|| TailAerodynamics::try_new(0.004, 0.7, 0.0).unwrap());
+            HybridSurface::try_new(
+                Self::geometry(&self.sections, index),
+                &self.proxies[index],
+                tail,
+            )
+            .unwrap()
         })
     }
 

@@ -1,7 +1,7 @@
 use super::*;
 use crate::game_ui::{
-    GameUiChart, GameUiControlContent, GameUiEmphasis, GameUiFrame, GameUiPanel, GameUiTheme,
-    GameUiView,
+    GameUiChart, GameUiChartCursor, GameUiControlContent, GameUiEmphasis, GameUiFrame, GameUiPanel,
+    GameUiTheme, GameUiView,
 };
 use crate::xr::{
     XrPointerControl, XrPointerRect, XrPointerRegion, XrPointerSurface, XrPointerTarget,
@@ -9,9 +9,7 @@ use crate::xr::{
 use serde::{Deserialize, Serialize};
 
 /// Prepared painting and input geometry from one published UI and font observation.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct MenuProjection {
     /// Fitted surface dimensions in metres.
     pub size: MenuSize,
@@ -38,9 +36,7 @@ pub struct MenuProjection {
 }
 
 /// Unscrolled input geometry used to invalidate a changed menu layout.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct MenuGeometryIdentity {
     /// Fitted surface size.
     pub size: MenuSize,
@@ -55,9 +51,7 @@ pub struct MenuGeometryIdentity {
 }
 
 /// Geometry and scale of one published control.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct MenuControlGeometry {
     /// Published control identity and widget kind.
     pub identity: [String; 2],
@@ -177,7 +171,7 @@ pub(super) fn project(
     view: &GameUiView,
     frame: &GameUiFrame,
     panel: &GameUiPanel,
-    input: &MenuPreparationInput,
+    input: &MenuPreparationInput<'_>,
     plan: &MenuLayoutPlan,
     measurements: &[MenuTextMeasurement],
     geometry: &MenuDocumentGeometry,
@@ -250,20 +244,10 @@ pub(super) fn project(
             if let (GameUiControlContent::Chart { plot, .. }, Some(bounds)) =
                 (&control.content, placement.plot)
             {
-                let mut chart = (**plot).clone();
-                if let Some(cursor) = frame
+                let cursor = frame
                     .chart_cursor
                     .as_ref()
-                    .filter(|cursor| cursor.id == control.id)
-                {
-                    chart.cursor_x = cursor.cursor_x;
-                    chart.cursor_points = cursor.cursor_points.clone();
-                    if let Some(vector) = &cursor.selected_wind_vector
-                        && let Some(first) = chart.vectors.first_mut()
-                    {
-                        *first = vector.clone();
-                    }
-                }
+                    .filter(|cursor| cursor.id == control.id);
                 let mut clip = bounds;
                 let origin = translate(MenuPoint {
                     x: clip.x,
@@ -273,7 +257,7 @@ pub(super) fn project(
                 clip.y = origin.y;
                 content.push(SurfacePaintItem::Plot {
                     clip,
-                    items: paint_chart(&chart, bounds, &translate),
+                    items: paint_chart(plot, cursor, bounds, &translate),
                 });
             }
             for text in &placement.texts {
@@ -420,6 +404,7 @@ pub(super) fn project(
                     GameUiControlContent::Status { .. } => ("status", None),
                     GameUiControlContent::Fields { .. } => ("fields", None),
                     GameUiControlContent::Chart { .. } => ("chart", None),
+                    GameUiControlContent::FlightTouch { .. } => ("flight_touch", None),
                 };
                 MenuControlGeometry {
                     identity: [control.id.clone(), kind.into()],
@@ -532,6 +517,7 @@ fn paint_text(
 
 fn paint_chart(
     chart: &GameUiChart,
+    cursor: Option<&GameUiChartCursor>,
     plot: MenuRect,
     translate: &impl Fn(MenuPoint) -> MenuPoint,
 ) -> Vec<SurfacePaintItem> {
@@ -610,7 +596,14 @@ fn paint_chart(
             );
         }
     }
-    for vector in &chart.vectors {
+    for (index, vector) in chart.vectors.iter().enumerate() {
+        let vector = if index == 0 {
+            cursor
+                .and_then(|cursor| cursor.selected_wind_vector.as_ref())
+                .unwrap_or(vector)
+        } else {
+            vector
+        };
         for [start, end] in &vector.segments {
             segment(*start, *end, &vector.color, 2.0, 1.0);
         }
@@ -622,7 +615,7 @@ fn paint_chart(
             color: marker.color.clone(),
         });
     }
-    if let Some(cursor) = chart.cursor_x {
+    if let Some(cursor) = cursor.map_or(chart.cursor_x, |cursor| cursor.cursor_x) {
         items.push(SurfacePaintItem::Line {
             start: project(Point {
                 x: cursor,
@@ -634,7 +627,9 @@ fn paint_chart(
             opacity: 1.0,
         });
     }
-    for cursor in &chart.cursor_points {
+    for cursor in cursor.map_or(chart.cursor_points.as_slice(), |cursor| {
+        &cursor.cursor_points
+    }) {
         items.push(SurfacePaintItem::Marker {
             point: project(cursor.point),
             size_px: 8.0,

@@ -10,7 +10,7 @@ use birdman_game_core::{
 use serde::{Deserialize, Serialize};
 
 /// External document version, separate from the physical model version.
-pub const AIRCRAFT_SCHEMA_VERSION: u32 = 2;
+pub const AIRCRAFT_SCHEMA_VERSION: u32 = 4;
 /// Maximum source JSON size accepted before deserialization.
 pub const MAX_AIRCRAFT_JSON_BYTES: usize = 256 * 1024;
 /// Maximum section or strip-edge count in each lifting surface.
@@ -85,6 +85,16 @@ pub enum AircraftSurfaceRole {
     /// Yaw-control surface spanning the body down axis.
     VerticalTail,
 }
+#[cfg(not(verus_only))]
+impl core::fmt::Display for AircraftSurfaceRole {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::MainWing => f.write_str("main wing"),
+            Self::HorizontalTail => f.write_str("horizontal tail"),
+            Self::VerticalTail => f.write_str("vertical tail"),
+        }
+    }
+}
 
 impl AircraftSurfaceRole {
     /// Returns the corresponding validated aerodynamic surface role.
@@ -136,8 +146,27 @@ pub struct AircraftSurfaceDocument {
     pub strip_fractions: Vec<f64>,
     /// Reference normal-force coefficient and corresponding incidence in radians.
     pub lift_anchor: [f64; 2],
+    /// Synthetic tail coefficients; the main wing uses the full-aircraft polar.
+    pub tail_aerodynamics: Option<TailAerodynamicsDocument>,
     /// Normalized cross-section used by the physical outer surface.
     pub airfoil: AircraftAirfoilDocument,
+}
+
+/// Coefficients for the synthetic tail strip model.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct TailAerodynamicsDocument {
+    /// Zero-lift drag coefficient at the stated reference Reynolds number.
+    pub zero_lift_drag_coefficient: f64,
+    /// Span efficiency of the complete tail.
+    pub span_efficiency: f64,
+    /// Pitching moment coefficient about the local quarter chord.
+    pub pitching_moment_coefficient: f64,
+    /// Reference airspeed used to derive the synthetic profile drag in m/s.
+    pub reference_airspeed_mps: f64,
+    /// Reference kinematic viscosity in square metres per second.
+    pub reference_kinematic_viscosity_m2ps: f64,
 }
 
 /// Static table source classification supported by the physical core.
@@ -253,6 +282,8 @@ pub struct AircraftMembersDocument {
     pub horizontal_tail: AircraftTailMembersDocument,
     /// Vertical-tail ribs and foam patches.
     pub vertical_tail: AircraftTailMembersDocument,
+    /// Radius of the fixed vertical-tail support tube.
+    pub tail_support_radius_m: f64,
     /// Frame, beam attachments and canopy-opening rim.
     pub cockpit: AircraftCockpitMembersDocument,
 }
@@ -373,9 +404,49 @@ pub enum AircraftFormatError {
     /// Trim conditions or their polar coverage are invalid.
     InvalidTrim,
 }
+#[cfg(not(verus_only))]
+impl core::fmt::Display for AircraftFormatError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::InputTooLarge => f.write_str("Aircraft document exceeds its byte budget"),
+            Self::InvalidJson => {
+                f.write_str("Aircraft JSON has invalid syntax, fields or field types")
+            }
+            Self::UnsupportedSchemaVersion => f.write_str("Aircraft schema version is unsupported"),
+            Self::InvalidIdentity => f.write_str("Aircraft identity is invalid"),
+            Self::InvalidCount => {
+                f.write_str("Aircraft collection count is outside its allowed budget")
+            }
+            Self::InvalidSurfaceRoles => {
+                f.write_str("Aircraft surface roles are missing or duplicated")
+            }
+            Self::InvalidSurface(surface) => write!(f, "Aircraft {surface} surface is invalid"),
+            Self::Geometry(_) => f.write_str("Aircraft surface geometry validation failed"),
+            Self::Dynamics(_) => f.write_str("Aircraft physical model validation failed"),
+            Self::Math(_) => f.write_str("Aircraft coordinate validation failed"),
+            Self::Aerodynamics(_) => f.write_str("Aircraft aerodynamic configuration failed"),
+            Self::InvalidStructure => f.write_str("Aircraft structure configuration is invalid"),
+            Self::InvalidTrim => f.write_str("Aircraft trim configuration is invalid"),
+        }
+    }
+}
+
+#[cfg(not(verus_only))]
+impl core::error::Error for AircraftFormatError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        match self {
+            Self::Geometry(cause) => Some(cause),
+            Self::Dynamics(cause) => Some(cause),
+            Self::Math(cause) => Some(cause),
+            Self::Aerodynamics(cause) => Some(cause),
+            _ => None,
+        }
+    }
+}
 
 impl AircraftDocument {
     /// Decodes a bounded document and validates every physical and structural field.
+    /// See the [executable bundled-document example](../index.html#examples).
     pub fn decode_json(input: &[u8]) -> Result<Self, AircraftFormatError> {
         if input.len() > MAX_AIRCRAFT_JSON_BYTES {
             return Err(AircraftFormatError::InputTooLarge);
@@ -523,7 +594,24 @@ impl AircraftSurfaceDocument {
             return Err(AircraftFormatError::InvalidCount);
         }
         let airfoil = self.airfoil;
+        let tail_valid = match self.tail_aerodynamics {
+            None => self.role == AircraftSurfaceRole::MainWing,
+            Some(tail) => {
+                self.role != AircraftSurfaceRole::MainWing
+                    && tail.reference_airspeed_mps.is_finite()
+                    && tail.reference_airspeed_mps > 0.0
+                    && tail.reference_kinematic_viscosity_m2ps.is_finite()
+                    && tail.reference_kinematic_viscosity_m2ps > 0.0
+                    && birdman_game_core::TailAerodynamics::try_new(
+                        tail.zero_lift_drag_coefficient,
+                        tail.span_efficiency,
+                        tail.pitching_moment_coefficient,
+                    )
+                    .is_ok()
+            }
+        };
         if self.strip_fractions.first() != Some(&0.0)
+            || !tail_valid
             || self.strip_fractions.last() != Some(&1.0)
             || self
                 .strip_fractions
@@ -645,6 +733,7 @@ impl AircraftMembersDocument {
             || !chords(&wing.foam_chord_fractions, 2)
             || !valid_tail(&self.horizontal_tail)
             || !valid_tail(&self.vertical_tail)
+            || !positive(self.tail_support_radius_m)
             || cockpit.nose_station as usize >= cockpit_stations
             || cockpit.rim_station as usize >= cockpit_stations
             || !(4..=MAX_AIRCRAFT_STATIONS as u32).contains(&cockpit.rim_segments)
@@ -669,7 +758,10 @@ impl AircraftMembersDocument {
             * (self.horizontal_tail.rib_intervals as usize
                 + self.vertical_tail.rib_intervals as usize
                 - 2);
-        if wing_parts + tail_parts + 19 + cockpit.rim_segments as usize > MAX_AIRCRAFT_MEMBERS {
+        let tail_support_parts = 2;
+        if wing_parts + tail_parts + tail_support_parts + 19 + cockpit.rim_segments as usize
+            > MAX_AIRCRAFT_MEMBERS
+        {
             return Err(AircraftFormatError::InvalidCount);
         }
         Ok(())

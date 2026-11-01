@@ -121,6 +121,14 @@ pub(crate) fn active(world: &World) -> bool {
         .is_some_and(|io| io.session.as_ref().is_some_and(|session| !session.stopped))
 }
 
+pub(crate) fn owns_display(world: &World, resource_id: u32) -> bool {
+    world.get_resource::<XrIo>().is_some_and(|io| {
+        io.session
+            .as_ref()
+            .is_some_and(|session| session.id == resource_id)
+    })
+}
+
 pub(crate) fn failure(world: &World) -> Option<String> {
     let io = world.get_resource::<XrIo>()?;
     io.closing.filter(|at| at.elapsed() >= RELEASE_BUDGET).map(|_| format!("OpenXR I/O did not terminate within 5 seconds; acquired image and session custody retained: {}", io.failure.as_deref().unwrap_or("runtime wait/stop pending")))
@@ -474,13 +482,24 @@ pub(crate) fn submit(world: &mut World, drawing: &ApplicationDrawingOutput) -> R
         return Ok(());
     };
     let result = (|| {
-        let Some((main, output, layers, bound)) = super::world::xr_output(world) else {
+        let Some((main, output, layers, bound)) =
+            super::world::xr_output(world, io.session.as_ref().map(|session| session.id))
+        else {
             return Ok(());
         };
         if drawing.spatial.is_some()
             || drawing.presentation.mode != Some(GameUiPresentationMode::Hmd)
         {
-            super::ui::xr_surface::submit(world, drawing.spatial.as_ref(), layers.clone())?;
+            super::ui::xr_surface::submit(
+                world,
+                drawing.spatial.as_ref(),
+                layers.clone(),
+                drawing
+                    .graphics
+                    .renderer_resource_id
+                    .zip(io.session.as_ref().map(|session| session.id)),
+                io.presented,
+            )?;
         }
         if drawing.presentation.mode != Some(GameUiPresentationMode::Hmd) {
             if let Some(right) = io.right
@@ -499,6 +518,9 @@ pub(crate) fn submit(world: &mut World, drawing: &ApplicationDrawingOutput) -> R
         if io.closing.is_some() || !bound {
             return Ok(());
         }
+        let Some(output) = output else {
+            return Ok(());
+        };
         let Some(camera) = &drawing.scene.camera else {
             return Ok(());
         };
@@ -522,10 +544,22 @@ pub(crate) fn submit(world: &mut World, drawing: &ApplicationDrawingOutput) -> R
                 ))
                 .id()
         });
+        if let Some(ambient) = world.get::<AmbientLight>(main).cloned() {
+            world.entity_mut(right).insert(ambient);
+        }
+        // The shared resource commit already bound the owned stereo image. Only
+        // attach the newly created right camera; never replace the acknowledged main target.
+        let right_target = RenderTarget::Image(output.clone().into());
+        if world
+            .get::<RenderTarget>(right)
+            .and_then(|target| super::screen_render::normalize(world, target))
+            != right_target.normalize(None)
+        {
+            world.entity_mut(right).insert(right_target);
+        }
         for (index, entity) in [main, right].into_iter().enumerate() {
             let eye = &camera.eyes[index];
             world.entity_mut(entity).insert((
-                RenderTarget::Image(output.clone().into()),
                 layers.clone(),
                 super::projection::pose_transform(eye.world_from_eye),
             ));
@@ -598,6 +632,8 @@ mod tests {
                 ..default()
             });
             let cause = execute(&mut world, &request).unwrap_err();
+            assert!(owns_display(&world, 1));
+            assert!(!owns_display(&world, 2));
             let io = world.resource::<XrIo>();
             assert_eq!(io.failure.as_deref(), Some(cause.as_str()));
             assert!(io.closing.is_some());

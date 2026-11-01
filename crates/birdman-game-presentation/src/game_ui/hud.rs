@@ -1,4 +1,6 @@
-use birdman_game_core::{FlightRecordPlaybackSample, SessionPhase, SessionSnapshot};
+use birdman_game_core::{
+    FlightRecordPlaybackSample, GameSession, SessionPhase, SessionSnapshot, TailFlightTickState,
+};
 use birdman_game_format::InformationLevel;
 use unicode_width::UnicodeWidthStr;
 
@@ -25,7 +27,7 @@ pub(super) fn game_ui_hud(
     if state.credits_open && matches!(phase, SessionPhase::FlightPaused { .. }) {
         return Ok(None);
     }
-    let (sample, distance, target) = match snapshot {
+    let (sample, distance, target, incidence_rates, pilot_protection) = match snapshot {
         SessionSnapshot::TailFlightRunning { state, .. }
         | SessionSnapshot::TailFlightPaused { state, .. }
             if context.platform.presentation_mode == GameUiPresentationMode::Screen
@@ -56,10 +58,26 @@ pub(super) fn game_ui_hud(
                     actuators: state.incidence(),
                     input: None,
                     wing_bending_factor: state.wing_bending_factor(),
+                    tail_wrenches: context
+                        .session
+                        .flight_record()
+                        .and_then(|record| record.samples().last())
+                        .filter(|sample| {
+                            sample.tick_index == state.tick_index() && sample.fraction == 0.0
+                        })
+                        .and_then(|sample| sample.tail_wrenches),
                     telemetry,
                 },
                 distance,
-                Some(state.pilot_position_target().position_m()),
+                Some(state.pilot_position_demand().position_m()),
+                tail_incidence_rates(context.session, state),
+                state.pilot_motion_limited().then_some(
+                    if state.flight_state().pilot_velocity_mps() == 0.0 {
+                        "保護停止"
+                    } else {
+                        "保護制動"
+                    },
+                ),
             )
         }
         SessionSnapshot::Replay { .. }
@@ -77,7 +95,7 @@ pub(super) fn game_ui_hud(
             let target = sample
                 .input
                 .map(|input| input.resolved_pilot_position_target_m());
-            (sample, "—".to_owned(), target)
+            (sample, "—".to_owned(), target, None, None)
         }
         _ => return Ok(None),
     };
@@ -124,12 +142,27 @@ pub(super) fn game_ui_hud(
         phase,
         SessionPhase::FlightRunning | SessionPhase::FlightPaused { .. }
     )
-    .then_some(context.platform.flight_controller_failure.as_deref())
+    .then_some(context.platform.renderer_failure.as_deref())
     .flatten();
     let mut primary = Vec::new();
+    if matches!(
+        phase,
+        SessionPhase::FlightRunning | SessionPhase::FlightPaused { .. }
+    ) {
+        let labels = [
+            "↑", "↓", "←", "→", "J", "L", "C", "P", "Esc", "W", "S", "A", "D",
+        ];
+        let value = labels
+            .into_iter()
+            .zip(context.accepted_flight_keys)
+            .map(|(label, pressed)| format!("{label}{}", if pressed { "●" } else { "○" }))
+            .collect::<Vec<_>>()
+            .join(" ");
+        primary.push(text_node("hud-accepted-keys", "キー", value));
+    }
     if let Some(cause) = failure {
         primary.push(hud_node(
-            "hud-controller-failure",
+            "hud-renderer-failure",
             "",
             GameUiHudNodeContent::Text {
                 value: format!("停止理由: {cause}"),
@@ -196,14 +229,42 @@ pub(super) fn game_ui_hud(
                     sample.actuators.rudder_rad().to_degrees()
                 ),
             ));
+            let loads = sample.tail_wrenches.unwrap_or([None; 2]).map(|wrench| {
+                wrench
+                    .and_then(|wrench| wrench.force_body_newtons().norm().ok())
+                    .map_or_else(|| "—".to_owned(), |magnitude| format!("{magnitude:.1}"))
+            });
+            primary.push(text_node(
+                "hud-tail-force",
+                "水平/垂直尾翼合力",
+                format!("{} / {} N", loads[0], loads[1]),
+            ));
+            primary.push(text_node(
+                "hud-tail-incidence-rate",
+                "水平/垂直尾翼角速度",
+                incidence_rates.map_or_else(
+                    || "— rad/s".to_owned(),
+                    |[elevator, rudder]| format!("{elevator:+.2}/{rudder:+.2} rad/s"),
+                ),
+            ));
             primary.push(text_node(
                 "hud-pilot-position",
-                "パイロット位置（目標）",
+                if phase == SessionPhase::Replay {
+                    "パイロット位置（適用目標）"
+                } else {
+                    "パイロット位置（目標）"
+                },
                 format!(
-                    "{:+.2} ({}) m",
+                    "{:+.2} ({}) m{}",
                     sample.flight_state.pilot_position_m(),
                     target.map_or_else(|| "—".to_owned(), |target| format!("{target:+.2}")),
+                    pilot_protection.map_or_else(String::new, |status| format!(" · {status}")),
                 ),
+            ));
+            primary.push(text_node(
+                "hud-pilot-velocity",
+                "パイロット移動速度",
+                format!("{:+.2} m/s", sample.flight_state.pilot_velocity_mps()),
             ));
         }
     }
@@ -315,6 +376,32 @@ pub(super) fn game_ui_hud(
     }
     let groups = position_hud(&mut layout, primary, instruments, true, 0.55);
     Ok(Some(GameUiHud { layout, groups }))
+}
+
+fn tail_incidence_rates(session: &GameSession<'_>, state: TailFlightTickState) -> Option<[f64; 2]> {
+    let [previous, current] = session.flight_record()?.samples().last_chunk::<2>()?;
+    if current.tick_index != state.tick_index()
+        || current.fraction != 0.0
+        || current.flight_state != state.flight_state()
+        || current.controls.incidence != state.incidence()
+        || !previous.fraction.is_finite()
+        || !current.fraction.is_finite()
+    {
+        return None;
+    }
+    let elapsed_ticks = current.tick_index.checked_sub(previous.tick_index)? as f64
+        + (current.fraction - previous.fraction);
+    let seconds = elapsed_ticks / f64::from(birdman_game_core::PHYSICS_HZ);
+    if !seconds.is_finite() || seconds <= 0.0 {
+        return None;
+    }
+    let rates = [
+        (current.controls.incidence.elevator_rad() - previous.controls.incidence.elevator_rad())
+            / seconds,
+        (current.controls.incidence.rudder_rad() - previous.controls.incidence.rudder_rad())
+            / seconds,
+    ];
+    rates.iter().all(|rate| rate.is_finite()).then_some(rates)
 }
 
 fn hud_node(id: &str, label: &str, content: GameUiHudNodeContent) -> GameUiHudNode {
@@ -565,12 +652,25 @@ fn hud_layout(
 ) -> GameUiHudLayout {
     let font = platform.viewport.root_font_size;
     let viewport = platform.viewport;
-    let compact = viewport.width <= 600.0 || viewport.width < minimum_hud_width(font) + 17.5 * font;
+    let flight_bar = phase == SessionPhase::FlightRunning;
+    let reserved_width = if flight_bar {
+        menu.width_px + 2.0 * font
+    } else {
+        17.5 * font
+    };
+    let compact =
+        viewport.width <= 600.0 || viewport.width < minimum_hud_width(font) + reserved_width;
     let in_menu = matches!(
         phase,
         SessionPhase::FlightPaused { .. } | SessionPhase::Replay
     );
-    let (left, bottom, width) = if in_menu && menu.shell == GameUiShell::FlightBar {
+    let (left, bottom, width) = if super::touch::available(platform, phase) {
+        let [(stick, _), (slider, _)] = super::touch::regions(platform, menu);
+        let gap = 0.75 * font;
+        let left = stick.x + stick.width + gap;
+        let right = (viewport.width - menu.width_px - gap).min(slider.x - gap);
+        (left, gap, (right - left).max(1.0).min(54.0 * font))
+    } else if in_menu && menu.shell == GameUiShell::FlightBar {
         (
             if compact { 0.6 } else { 0.75 } * font,
             menu.maximum_height_px + 0.75 * font,
@@ -594,14 +694,18 @@ fn hud_layout(
     } else if compact {
         (
             0.6 * font,
-            4.25 * font,
+            if flight_bar {
+                menu.maximum_height_px + 0.75 * font
+            } else {
+                4.25 * font
+            },
             (viewport.width - 1.2 * font).max(1.0),
         )
     } else {
         (
             0.75 * font,
             0.75 * font,
-            (viewport.width - 17.5 * font).max(1.0).min(54.0 * font),
+            (viewport.width - reserved_width).max(1.0).min(54.0 * font),
         )
     };
     GameUiHudLayout {

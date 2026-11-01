@@ -152,6 +152,19 @@ impl DisplayCompletion {
     }
 }
 
+/// Admission of one display request by the current transition owner.
+#[must_use]
+#[cfg_attr(verus_only, verus_verify)]
+#[cfg_attr(not(verus_only), derive(Debug, PartialEq))]
+pub(super) enum DisplayRequestOutcome {
+    /// One operation was admitted and must be submitted to the adapter.
+    Accepted(DisplayRequest),
+    /// The requested display is already active without a pending transition.
+    AlreadyActive,
+    /// A pending transition retains admission and its owned resources.
+    Busy,
+}
+
 #[cfg_attr(verus_only, verus_verify)]
 pub(super) struct DisplayWorkflow {
     state: DisplayState,
@@ -351,16 +364,22 @@ impl DisplayWorkflow {
     }
 
     #[cfg_attr(verus_only, verus_verify)]
-    #[cfg_attr(verus_only, verus_spec(requests =>
+    #[cfg_attr(verus_only, verus_spec(result =>
         ensures
             final(self).ownership().1 == old(self).ownership().1,
             final(self).ownership().2 == old(self).ownership().2,
             old(self).request_blocked(target) ==> final(self).ownership() == old(self).ownership(),
-            old(self).request_blocked(target) ==> requests@.len() == 0,
-            !old(self).request_blocked(target) ==> final(self).pending_id() == Some(request_id),
-            !old(self).request_blocked(target) ==> requests@.len() == 1,
-            !old(self).request_blocked(target) ==> requests@[0].release_id() == None,
-            requests@.len() == 1 ==> final(self).request_agrees(requests@[0]),
+            match result {
+                DisplayRequestOutcome::Busy => old(self).ownership().0.operation_pending(),
+                DisplayRequestOutcome::AlreadyActive =>
+                    !old(self).ownership().0.operation_pending()
+                        && Some(target) == old(self).ownership().0.confirmed_mode(),
+                DisplayRequestOutcome::Accepted(request) =>
+                    !old(self).request_blocked(target)
+                        && final(self).pending_id() == Some(request_id)
+                        && request.release_id() == None
+                        && final(self).request_agrees(request),
+            },
             !old(self).request_blocked(target) ==> match final(self).ownership().0 {
                 DisplayState::Permission { target: pending_target, .. }
                 | DisplayState::Stopping { target: pending_target, .. }
@@ -372,9 +391,12 @@ impl DisplayWorkflow {
         &mut self,
         target: GameUiPresentationMode,
         request_id: u32,
-    ) -> Vec<DisplayRequest> {
-        if self.state.pending() || Some(target) == self.state.active_mode() {
-            return Vec::new();
+    ) -> DisplayRequestOutcome {
+        if self.state.pending() {
+            return DisplayRequestOutcome::Busy;
+        }
+        if Some(target) == self.state.active_mode() {
+            return DisplayRequestOutcome::AlreadyActive;
         }
         let active = self.state.active_mode();
         if target != GameUiPresentationMode::Screen {
@@ -383,28 +405,28 @@ impl DisplayWorkflow {
                 target,
                 request_id,
             };
-            vec![DisplayRequest::Permission {
+            DisplayRequestOutcome::Accepted(DisplayRequest::Permission {
                 request_id,
                 mode: target,
-            }]
+            })
         } else if let Some(mode) = active {
             self.state = DisplayState::Stopping {
                 mode,
                 target,
                 request_id,
             };
-            vec![DisplayRequest::Stop {
+            DisplayRequestOutcome::Accepted(DisplayRequest::Stop {
                 request_id,
                 mode,
                 resource_id: self.active_resource,
-            }]
+            })
         } else {
             self.state = DisplayState::Starting { target, request_id };
-            vec![DisplayRequest::Start {
+            DisplayRequestOutcome::Accepted(DisplayRequest::Start {
                 request_id,
                 mode: target,
                 permission_resource_id: None,
-            }]
+            })
         }
     }
 

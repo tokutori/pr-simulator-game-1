@@ -4,6 +4,47 @@ use crate::math::{BodyPoint, hypot2};
 
 const GEOMETRY_TOLERANCE: f64 = 1.0e-10;
 
+/// Synthetic tail drag and pitching-moment coefficients.
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(verus_only, vstd::prelude::verus_verify)]
+pub struct TailAerodynamics {
+    zero_lift_drag_coefficient: f64,
+    span_efficiency: f64,
+    pitching_moment_coefficient: f64,
+}
+
+impl TailAerodynamics {
+    /// Validates the coefficients used by the tail strip model.
+    pub fn try_new(cd0: f64, efficiency: f64, cm: f64) -> Result<Self, AeroError> {
+        if !cd0.is_finite() || !efficiency.is_finite() || !cm.is_finite() {
+            return Err(AeroError::NonFinite);
+        }
+        if cd0 < 0.0 || efficiency <= 0.0 || efficiency > 1.0 {
+            return Err(AeroError::InvalidHybridGeometry);
+        }
+        Ok(Self {
+            zero_lift_drag_coefficient: cd0,
+            span_efficiency: efficiency,
+            pitching_moment_coefficient: cm,
+        })
+    }
+
+    /// Returns the zero-lift drag coefficient.
+    pub const fn zero_lift_drag_coefficient(self) -> f64 {
+        self.zero_lift_drag_coefficient
+    }
+
+    /// Returns the synthetic span efficiency.
+    pub const fn span_efficiency(self) -> f64 {
+        self.span_efficiency
+    }
+
+    /// Returns the pitching-moment coefficient about the quarter chord.
+    pub const fn pitching_moment_coefficient(self) -> f64 {
+        self.pitching_moment_coefficient
+    }
+}
+
 /// An explicit symmetry requirement for section geometry and lift anchors.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(verus_only, vstd::prelude::verus_verify)]
@@ -257,6 +298,7 @@ pub struct HybridProxy {
     point: BodyPoint,
     area_m2: f64,
     projected_area_m2: f64,
+    mean_aerodynamic_chord_m: f64,
     orientation: ElementOrientation,
     anchor: HybridAnchor,
 }
@@ -309,7 +351,13 @@ impl HybridProxy {
                 .map_err(map_math_error)?;
             let area = mean_chord * (upper - lower) * span_length;
             let projected_area = mean_chord * (interval_m[1] - interval_m[0]);
-            if !area.is_finite() || !projected_area.is_finite() {
+            let chord_sum = lower_chord + upper_chord;
+            let mean_aerodynamic_chord =
+                (2.0 / 3.0) * (chord_sum - lower_chord * (upper_chord / chord_sum));
+            if !area.is_finite()
+                || !projected_area.is_finite()
+                || !mean_aerodynamic_chord.is_finite()
+            {
                 return Err(AeroError::NonFinite);
             }
             if area <= 0.0 || projected_area <= 0.0 {
@@ -330,6 +378,7 @@ impl HybridProxy {
                 point,
                 area_m2: area,
                 projected_area_m2: projected_area,
+                mean_aerodynamic_chord_m: mean_aerodynamic_chord,
                 orientation,
                 anchor,
             })
@@ -347,6 +396,10 @@ impl HybridProxy {
     /// Returns projected strip area in square meters.
     pub const fn projected_area_m2(self) -> f64 {
         self.projected_area_m2
+    }
+    /// Returns the area-weighted mean aerodynamic chord of the strip.
+    pub const fn mean_aerodynamic_chord_m(self) -> f64 {
+        self.mean_aerodynamic_chord_m
     }
     /// Returns the projected span interval.
     pub const fn interval_m(self) -> [f64; 2] {
@@ -368,6 +421,7 @@ impl HybridProxy {
 pub struct HybridSurface<'a> {
     geometry: HybridSurfaceGeometry<'a>,
     proxies: &'a [HybridProxy],
+    tail_aerodynamics: Option<TailAerodynamics>,
 }
 
 impl<'a> HybridSurface<'a> {
@@ -375,7 +429,14 @@ impl<'a> HybridSurface<'a> {
     pub fn try_new(
         geometry: HybridSurfaceGeometry<'a>,
         proxies: &'a [HybridProxy],
+        tail_aerodynamics: Option<TailAerodynamics>,
     ) -> Result<Self, HybridError> {
+        if (geometry.role == HybridSurfaceRole::MainWing) == tail_aerodynamics.is_some() {
+            return Err(HybridError::new(
+                HybridSite::Surface(geometry.role),
+                AeroError::InvalidHybridGeometry,
+            ));
+        }
         if proxies.is_empty()
             || proxies[0].interval_m[0] != geometry.sections[0].span(geometry.role)
             || proxies[proxies.len() - 1].interval_m[1]
@@ -459,7 +520,11 @@ impl<'a> HybridSurface<'a> {
                 }
             }
         }
-        Ok(Self { geometry, proxies })
+        Ok(Self {
+            geometry,
+            proxies,
+            tail_aerodynamics,
+        })
     }
     /// Returns the complete surface geometry and slope.
     pub const fn geometry(self) -> HybridSurfaceGeometry<'a> {
@@ -468,6 +533,10 @@ impl<'a> HybridSurface<'a> {
     /// Returns the validated borrowed strip partition.
     pub const fn proxies(self) -> &'a [HybridProxy] {
         self.proxies
+    }
+    /// Returns the coefficients for a tail surface.
+    pub const fn tail_aerodynamics(self) -> Option<TailAerodynamics> {
+        self.tail_aerodynamics
     }
 }
 

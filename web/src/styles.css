@@ -33,6 +33,7 @@ body {
 }
 
 .presentation-canvas {
+  touch-action: none;
   position: fixed;
   inset: 0;
   width: 100%;
@@ -60,6 +61,7 @@ body {
 }
 
 .screen-ui-root {
+  pointer-events: none;
   display: grid;
   min-height: 100dvh;
   place-items: center;
@@ -217,6 +219,7 @@ body {
 }
 
 .screen-ui-shell {
+  pointer-events: auto;
   width: min(42rem, 100%);
   max-height: calc(100dvh - 2rem);
   overflow-x: hidden;
@@ -356,10 +359,10 @@ body {
 .flight-hud-node { position: absolute; box-sizing: border-box; display: grid; min-width: 0; align-content: start; overflow-wrap: anywhere; line-height: 1.5; }
 .flight-hud-node:not([data-kind="text"]) { padding: var(--hud-padding-y) var(--hud-padding-x); border-radius: 0.3rem; background: var(--hud-card-background); }
 .flight-hud-node[data-kind="text"] { display: block; }
-.flight-hud-caption { color: #c7d7d1; font-size: 1em; }
+.flight-hud-caption { color: var(--hud-muted-text); font-size: 1em; }
 .flight-hud-value { white-space: pre-line; font-variant-numeric: tabular-nums; line-height: 1.5; }
-.flight-hud-node[data-tone="warning"] { color: #ff9b73; font-weight: 700; }
-.flight-hud-node[data-tone="muted"] { color: #b9c9c2; }
+.flight-hud-node[data-tone="warning"] { color: var(--hud-warning-text); font-weight: 700; }
+.flight-hud-node[data-tone="muted"] { color: var(--hud-muted-text); }
 .flight-hud-node svg { display: block; width: 100%; max-width: 100%; justify-self: center; }
 
 .screen-ui-shell h1,

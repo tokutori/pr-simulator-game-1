@@ -397,7 +397,7 @@ fn zero_dihedral_geometry_is_a_test_local_math_oracle() {
         [frame_and_anchor(0.0, 0.70).unwrap(); 2],
     )
     .unwrap();
-    let flat_wing = HybridSurface::try_new(geometry, &proxies).unwrap();
+    let flat_wing = HybridSurface::try_new(geometry, &proxies, None).unwrap();
     let mut surfaces = definition.surfaces().unwrap();
     surfaces[0] = flat_wing;
     near(flat_wing.geometry().surface_area_m2(), 18.0);

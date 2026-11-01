@@ -131,12 +131,18 @@ void main() {
   vec2 waveXZ = (modelMatrix * vec4(p, 1.0)).xz;
   vSurfaceGradient.xy = waveXZ;
   vec2 detailDrift = uWindVelocity.xy * uTimeSeconds;
-  vec4 nearDetail = texture2D(uDetailNear, (waveXZ - detailDrift * 0.42) / uDetailExtents.x);
-  vec4 farDetail = texture2D(uDetailFar, (waveXZ - detailDrift * 0.89) / uDetailExtents.y);
-  float nearHeight = nearDetail.a - 128.0 / 255.0;
-  float farHeight = farDetail.a - 128.0 / 255.0;
   float nearVisibility = 1.0 - smoothstep(0.12, 0.32, aGridSpacing);
   float farVisibility = 1.0 - smoothstep(0.8, 2.8, aGridSpacing);
+  vec4 nearDetail = vec4(0.0);
+  vec4 farDetail = vec4(0.0);
+  if (nearVisibility != 0.0) {
+    nearDetail = texture2D(uDetailNear, (waveXZ - detailDrift * 0.42) / uDetailExtents.x);
+  }
+  if (farVisibility != 0.0) {
+    farDetail = texture2D(uDetailFar, (waveXZ - detailDrift * 0.89) / uDetailExtents.y);
+  }
+  float nearHeight = nearDetail.a - 128.0 / 255.0;
+  float farHeight = farDetail.a - 128.0 / 255.0;
   p.y += (nearHeight * 0.6 * nearVisibility + farHeight * 0.55 * farVisibility) * uDetailScale;
   vec2 nearSlope = (nearDetail.rg * 255.0 - 128.0) / 127.0;
   vec2 farSlope = (farDetail.rg * 255.0 - 128.0) / 127.0;
@@ -230,7 +236,11 @@ vec3 lakeSkyRadiance(vec3 ray) {
   skyRay = dot(skyRay, skyRay) < 1e-8 ? vec3(1.0, 0.0, 0.0) : normalize(skyRay);
   vec2 skyUv = vec2(atan(skyRay.z, skyRay.x) / 6.2831853 + 0.5,
     asin(skyRay.y) / 3.1415927 + 0.5);
-  return texture2D(uSkyTexture, skyUv).rgb;
+  vec2 gradientX = dFdx(skyUv);
+  vec2 gradientY = dFdy(skyUv);
+  gradientX.x -= round(gradientX.x);
+  gradientY.x -= round(gradientY.x);
+  return textureGrad(uSkyTexture, skyUv, gradientX, gradientY).rgb;
 }
 
 float lakeNoise(vec2 point) {
@@ -295,11 +305,13 @@ float lakeDetailSpread(sampler2D image, vec2 gradientX, vec2 gradientY) {
 
 vec4 lakeDetailSample(sampler2D image, vec2 uv, vec2 gradientX, vec2 gradientY,
     vec4 offsets, bool centered, int corner) {
-  if (centered) return textureGrad(image, uv, gradientX, gradientY);
-  vec2 point = uv - offsets.xy - offsets.zw;
-  if (corner == 1) point = uv + offsets.xy - offsets.zw;
-  if (corner == 2) point = uv - offsets.xy + offsets.zw;
-  if (corner == 3) point = uv + offsets.xy + offsets.zw;
+  vec2 point = uv;
+  if (!centered) {
+    point = uv - offsets.xy - offsets.zw;
+    if (corner == 1) point = uv + offsets.xy - offsets.zw;
+    if (corner == 2) point = uv - offsets.xy + offsets.zw;
+    if (corner == 3) point = uv + offsets.xy + offsets.zw;
+  }
   return textureGrad(image, point, gradientX, gradientY);
 }
 
@@ -356,11 +368,16 @@ vec3 lakeMicroDetail(vec2 worldXZ, vec2 footprintX, vec2 footprintY) {
   vec4 fineSample = vec4(0.0);
   vec4 rippleSample = vec4(0.0);
   vec3 filtered = vec3(0.0);
-  for (int corner = 0; corner < 4; corner++) {
-    if (corner == 0 || nearSpread != 0.0) nearSample = lakeDetailSample(uDetailNear, nearUv, nearX, nearY, nearOffsets, nearSpread == 0.0, corner);
-    if (corner == 0 || farSpread != 0.0) farSample = lakeDetailSample(uDetailFar, farUv, farX, farY, farOffsets, farSpread == 0.0, corner);
-    if (corner == 0 || fineSpread != 0.0) fineSample = lakeDetailSample(uDetailNear, fineUv, fineX, fineY, fineOffsets, fineSpread == 0.0, corner);
-    if (corner == 0 || rippleSpread != 0.0) rippleSample = lakeDetailSample(uDetailNear, rippleUv, rippleX, rippleY, rippleOffsets, rippleSpread == 0.0, corner);
+#if LAKE_DETAIL_SAMPLES == 1
+  {
+    const int corner = 0;
+#else
+  for (int corner = 0; corner < LAKE_DETAIL_SAMPLES; corner++) {
+#endif
+    if (corner == 0 || nearSpread != 0.0) nearSample = lakeDetailSample(uDetailNear, nearUv, nearX, nearY, nearOffsets, LAKE_DETAIL_SAMPLES == 1 || nearSpread == 0.0, corner);
+    if (corner == 0 || farSpread != 0.0) farSample = lakeDetailSample(uDetailFar, farUv, farX, farY, farOffsets, LAKE_DETAIL_SAMPLES == 1 || farSpread == 0.0, corner);
+    if (corner == 0 || fineSpread != 0.0) fineSample = lakeDetailSample(uDetailNear, fineUv, fineX, fineY, fineOffsets, LAKE_DETAIL_SAMPLES == 1 || fineSpread == 0.0, corner);
+    if (corner == 0 || rippleSpread != 0.0) rippleSample = lakeDetailSample(uDetailNear, rippleUv, rippleX, rippleY, rippleOffsets, LAKE_DETAIL_SAMPLES == 1 || rippleSpread == 0.0, corner);
     vec2 nearSlope = (nearSample.rg * 255.0 - 128.0) / 127.0;
     vec2 farSlope = (farSample.rg * 255.0 - 128.0) / 127.0;
     vec2 fineRawSlope = (fineSample.rg * 255.0 - 128.0) / 127.0;
@@ -384,7 +401,7 @@ vec3 lakeMicroDetail(vec2 worldXZ, vec2 footprintX, vec2 footprintY) {
       + 0.6 * 0.6 * nearVariance + 0.55 * 0.55 * farVariance
       + 2.6 * 2.6 * fineAmplitude * fineAmplitude * fineVariance
       + 5.2 * 5.2 * rippleAmplitude * rippleAmplitude * rippleVariance;
-    filtered += vec3(microSlope, slopeMoment) * 0.25;
+    filtered += vec3(microSlope, slopeMoment) * (1.0 / float(LAKE_DETAIL_SAMPLES));
   }
   float strength = smoothstep(0.05, 0.6, uWindSpeed);
   float scaledStrength = strength * uDetailScale;

@@ -310,18 +310,19 @@ q_i=\frac12\rho\lVert v_i^B\rVert^2,\qquad q_{ref}=\frac12\rho V^2
 - 同じframeで正betaは負側力・正yawの復元moment、正yaw rateは負yawの減衰momentを生む。
 
 ```math
-\Delta F_i^B=-S_i\{q_i C_{L,i}(actual,\delta_i)-q_{ref}C_{L,i}(reference,0)\}n_i^B
+\Delta F_{wing,i}^B=-S_i\{q_i C_{L,i}(actual,0)-q_{ref}C_{L,i}(reference,0)\}n_i^B
 ```
 
 ```math
-F_O^B=F_{static}^B+\sum_i\Delta F_i^B,\qquad
-M_O^B=M_{O,static}^B+\sum_i r_i^B\times\Delta F_i^B
+L_i=q_i S_{projected,i} C_{L,i},\qquad
+D_i=q_i S_{projected,i}\left(C_{D0}+\frac{C_{L,i}^2}{\pi AR_s e}\right)
 ```
 
-- 全機静的荷重を一度だけ評価し、固定normalの差分とその外積を加える。
-- 左右非対称な流れはこの差分からroll momentを生む。
-- proxyの寄与は固定normalに沿う符号付き荷重差と、その作用点によるモーメントである。全機静的表が基準のdrag・固有モーメントを持つ。
-- 近似範囲は定常・固定Reの表と離散要素の局所荷重差であり、wake・動的失速・地面効果のモデル化は別途必要である。
+- 主翼の差分は固定normalに沿う。尾翼は局所流に直交する揚力、流れと逆向きの抗力、quarter-chordの固有モーメントから実荷重とreference荷重を求める。
+- 全機静的荷重へ主翼の差分と尾翼の実荷重・reference荷重の差を一度加える。面別の実荷重は全機polarの内訳ではなく合成モデルの値を表す。
+- 尾翼stripの誘導抗力には面全体のARを使う局所二乗近似を使用する。非一様流でのstrip間相互誘導は近似の範囲外である。
+- 両尾翼の $e=0.7$、$C_m=0$、水平 $C_{D0}=0.0038517428696657075$、垂直 $C_{D0}=0.003907975667072787$ は固定の合成値である。$C_{D0}$ は速度9.7 m/s、動粘性係数 $1.5\times10^{-5}$ m²/sの両面全層流平板として[NASAの式](https://ntrs.nasa.gov/api/citations/20100031107/downloads/20100031107.pdf)から求める。
+- 翼の線型揚力近似はanchorから約±0.2 radを物理的な目安とする。演算上の受理範囲は閉境界表に従う。
 
 ### 閉境界と失敗条件
 
@@ -352,16 +353,17 @@ M_O^B=M_{O,static}^B+\sum_i r_i^B\times\Delta F_i^B
 
 ## 公開Playableモデル
 
-- 公開既定は`bpg041-playable-hybrid-mock`のmodel 5、catalog 8 / scenario 8、`bpg040-tail-rate-feedback`のcontroller 3である。
-- `assets/aircraft/playable-glider-v5.json`が質量・慣性・section・strip・anchor・全機polar・構造材寸法・視点mountを定義する。contentの`AircraftDefinition`が検証済みdocumentと借用viewのstorageを所有する。
+- 公開既定は`bpg041-playable-hybrid-mock`のmodel 7、catalog 10 / scenario 11、`bpg040-tail-rate-feedback`のcontroller 4である。
+- `assets/aircraft/playable-glider-v7.json`が質量・慣性・section・strip・anchor・全機polar・構造材寸法・視点mountを定義する。contentの`AircraftDefinition`が検証済みdocumentと借用viewのstorageを所有する。
 - 定常滑空は汎用の`SteadyGlideTrim`が、質量モデル・全機polar・`SteadyGlideConditions`から求める。指定した迎角区間で力の釣合を解き、合成重心まわりのモーメントを満たすパイロット位置を求める。
+- 発進CGの水平投影は台前縁中央とし、既trim姿勢・実対気速度の曲げ・中立舵角による全接触外形を台の支持平面より上へ置く高さを共有appで導出する。登録形状では有限台に対する保守的な高さの余裕は4.406 mm以下。初速は確定位置の風をtrim対気速度へ一度加算する。
 - 現行catalog・scenario・controllerの組合せを登録する。保存snapshotは記録時のデータから閲覧する。
 
 | 面 | 投影面積 / span / MAC [SI] | strip | body quarter-chordとframe |
 |---|---|---|---|
 | 主翼 | 約17.5551 / 20.863 / 0.90170 | 全sectionとstrip境界で分割 | 69断面のテーパー翼・二段折れ上反角 |
 | 水平尾翼 | 2.5 / 3.4 / 2.5/3.4 | 8 | $(-3.6,y,0.1)$、body frame |
-| 垂直尾翼 | 0.5 / 0.7 / 0.5/0.7 | 4 | $(-1.8,0,z)$、$z\in[-0.45,0.25]$、$R_x(\pi/2)$ |
+| 垂直尾翼 | 0.5 / 0.7 / 0.5/0.7 | 4 | $(-3.6,0,z)$、$z\in[-0.45,0.25]$、$R_x(\pi/2)$ |
 
 - 作用点は各区間の面積重心とし、線型に変化する翼弦・sweep・上反角から求める。
 - 投影面積、実面積、MAC、局所frameを同じsectionから導出する。

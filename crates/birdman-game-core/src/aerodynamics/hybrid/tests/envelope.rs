@@ -22,7 +22,9 @@ fn increment_at(
         1.2,
         4.0 * core::f64::consts::PI / 3.0,
         delta,
+        None,
     )
+    .map(|(wrench, _)| wrench)
 }
 
 #[test]

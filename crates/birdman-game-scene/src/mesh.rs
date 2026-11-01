@@ -1,7 +1,5 @@
 //! Shared finite, area-weighted vertex normals for prepared and retained meshes.
 
-use core::fmt;
-
 /// Rejected geometry or caller-owned mesh projection buffers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MeshProjectionError {
@@ -14,14 +12,26 @@ pub enum MeshProjectionError {
     /// A vertex has no finite nonzero accumulated surface normal.
     DegenerateNormal,
 }
-
-impl fmt::Display for MeshProjectionError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "mesh projection: {self:?}")
+#[cfg(not(verus_only))]
+impl core::fmt::Display for MeshProjectionError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::InvalidTopology => {
+                f.write_str("Mesh indices must form complete in-bounds triangles")
+            }
+            Self::InvalidBuffers => {
+                f.write_str("Mesh scratch and output lengths must match the position count")
+            }
+            Self::NonFinite => f.write_str("Mesh positions and accumulated normals must be finite"),
+            Self::DegenerateNormal => {
+                f.write_str("Mesh vertex has no nonzero finite accumulated normal")
+            }
+        }
     }
 }
 
-impl std::error::Error for MeshProjectionError {}
+#[cfg(not(verus_only))]
+impl core::error::Error for MeshProjectionError {}
 
 /// Prepares complete triangle-mesh normals once, using double-precision area accumulation.
 pub fn area_weighted_normals(
@@ -35,6 +45,13 @@ pub fn area_weighted_normals(
 }
 
 /// Reuses caller-owned buffers; publish the normals only after the complete update succeeds.
+///
+/// Finite `f32` vertices bound edges below 2^129 and cross components below 2^260.
+/// On supported 32/64-bit targets, an index slice has fewer than 2^61 entries.
+/// A rounded addition increases a sum's magnitude by at most twice the term's
+/// magnitude (smaller terms are absorbed), so accumulated components stay below 2^324.
+/// Nonzero components remain multiples of 2^-298; their squared length therefore
+/// lies between 2^-596 and 2^650, within the normal `f64` range.
 pub fn write_area_weighted_normals(
     positions: &[[f32; 3]],
     indices: &[u32],
@@ -75,7 +92,7 @@ pub fn write_area_weighted_normals(
         }
     }
     for (sum, normal) in sums.iter().zip(normals) {
-        let length = sum[0].hypot(sum[1]).hypot(sum[2]);
+        let length = (sum[0] * sum[0] + sum[1] * sum[1] + sum[2] * sum[2]).sqrt();
         if !length.is_finite() {
             return Err(MeshProjectionError::NonFinite);
         }

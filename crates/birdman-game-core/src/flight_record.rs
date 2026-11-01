@@ -2,7 +2,7 @@ use crate::math::{BodyVector, NedPoint, NedVector};
 use crate::scenario::FlightTelemetry;
 use crate::scoring::DistanceScore;
 use crate::session_contract::{SessionEndReason, SessionScenarioIdentity};
-use crate::{FlightState, TailFlightTickError, TailIncidence, WingBendingFactor};
+use crate::{FlightState, TailFlightTickError, TailIncidence, WingBendingFactor, Wrench};
 use alloc::vec::Vec;
 
 #[cfg(verus_only)]
@@ -95,6 +95,8 @@ pub struct FlightRecordSample {
     pub controls: FlightRecordControls,
     /// Accepted coefficient held over the preceding interval; absent in unrecorded archives.
     pub wing_bending_factor: Option<WingBendingFactor>,
+    /// Accepted horizontal and vertical tail wrenches, or absence in an older archive.
+    pub tail_wrenches: Option<[Option<Wrench>; 2]>,
     /// Composite-center ambient wind in NED axes.
     pub wind_at_cg_ned_mps: NedVector,
     /// Derived telemetry retained for presentation and analysis.
@@ -149,6 +151,8 @@ pub struct FlightRecordPlaybackSample {
     pub input: Option<FlightRecordTailInput>,
     /// Accepted structural coefficient, held with the physical actuators.
     pub wing_bending_factor: Option<WingBendingFactor>,
+    /// Most recently accepted horizontal and vertical tail wrenches.
+    pub tail_wrenches: Option<[Option<Wrench>; 2]>,
     /// Interpolated wind and telemetry values.
     pub telemetry: FlightTelemetry,
 }
@@ -187,6 +191,23 @@ pub enum FlightRecordQueryError {
     /// Interpolated values exceeded finite numeric bounds.
     NonFiniteInterpolation,
 }
+
+impl core::fmt::Display for FlightRecordQueryError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::EmptyRecord => f.write_str("flight record has no initial sample"),
+            Self::InvalidTime => f.write_str("invalid flight record query time"),
+            Self::OutsideRecordedRange => {
+                f.write_str("query is outside the recorded time interval")
+            }
+            Self::NonFiniteInterpolation => {
+                f.write_str("flight record interpolation produced a non-finite value")
+            }
+        }
+    }
+}
+
+impl core::error::Error for FlightRecordQueryError {}
 
 /// Bounded flight samples with capacity reserved before simulation begins.
 ///
@@ -405,6 +426,7 @@ impl FlightRecord {
                             flight_state: initial.flight_state(),
                             controls: FlightRecordControls::initial_tail(initial),
                             wing_bending_factor: initial.wing_bending_factor(),
+                            tail_wrenches,
                             wind_at_cg_ned_mps: telemetry.wind_velocity_ned_mps,
                             telemetry,
                         }),
@@ -423,6 +445,7 @@ impl FlightRecord {
         &mut self,
         initial: crate::TailFlightTickState,
         telemetry: FlightTelemetry,
+        tail_wrenches: Option<[Option<Wrench>; 2]>,
     ) -> Result<(), FlightRecordError> {
         if !self.samples.is_empty() || self.finalization.is_some() {
             return Err(FlightRecordError::AlreadyStarted);
@@ -437,6 +460,7 @@ impl FlightRecord {
             flight_state: initial.flight_state(),
             controls: FlightRecordControls::initial_tail(initial),
             wing_bending_factor: initial.wing_bending_factor(),
+            tail_wrenches,
             wind_at_cg_ned_mps: telemetry.wind_velocity_ned_mps,
             telemetry,
         })
@@ -485,6 +509,7 @@ impl FlightRecord {
                                         crate::TailFlightTickOutcome::Advanced(state) => state.wing_bending_factor(),
                                         crate::TailFlightTickOutcome::WaterContact(sample) => sample.wing_bending_factor(),
                                     },
+                                    tail_wrenches: Some(report.tail_wrenches()),
                                     wind_at_cg_ned_mps: telemetry.wind_velocity_ned_mps,
                                     telemetry,
                                 })
@@ -565,6 +590,7 @@ impl FlightRecord {
                 crate::TailFlightTickOutcome::Advanced(state) => state.wing_bending_factor(),
                 crate::TailFlightTickOutcome::WaterContact(sample) => sample.wing_bending_factor(),
             },
+            tail_wrenches: Some(report.tail_wrenches()),
             wind_at_cg_ned_mps: telemetry.wind_velocity_ned_mps,
             telemetry,
         })
@@ -1005,6 +1031,7 @@ impl FlightRecordSample {
                             input_from_previous: Some(event.input),
                         },
                         wing_bending_factor: Some(event.wing_bending_factor),
+                        tail_wrenches: event.tail_wrenches,
                         ..sample
                     },
                     None => sample,
@@ -1133,6 +1160,7 @@ fn playback_sample(
         actuators: sample.controls.actuators(),
         input: sample.controls.input_from_previous,
         wing_bending_factor: sample.wing_bending_factor,
+        tail_wrenches: sample.tail_wrenches,
         telemetry: sample.telemetry,
     })
 }
@@ -1199,6 +1227,7 @@ fn interpolate_samples(
         actuators,
         input: end.controls.input_from_previous,
         wing_bending_factor: end.wing_bending_factor,
+        tail_wrenches: start.tail_wrenches,
         telemetry,
     })
 }

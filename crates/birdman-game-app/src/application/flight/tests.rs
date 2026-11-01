@@ -1,6 +1,6 @@
 use super::*;
 use crate::application::{ApplicationError, BackendReadiness, SessionCommand};
-use crate::flight_input::FlightControl;
+use crate::flight_input::FlightControlKey;
 use birdman_game_core::{
     ControlMode, CountdownProgress, TailFlightTickInput, TailPilotIntent, TailPilotPositionCommand,
     TailPilotPositionIntent, TailRateTarget,
@@ -32,9 +32,9 @@ fn launch(maximum_ticks: u64) -> ApplicationSession {
     application
 }
 
-fn key(application: &mut ApplicationSession, control: FlightControl, pressed: bool, repeat: bool) {
+fn key(application: &mut ApplicationSession, key: FlightControlKey, pressed: bool, repeat: bool) {
     application.observe_flight_key(FlightKeyObservation {
-        control,
+        key,
         pressed,
         repeat,
     });
@@ -49,9 +49,46 @@ fn tick_count(report: FlightFrameReport) -> u32 {
 
 #[test]
 fn frame_ticks_integrate_against_each_confirmed_target_and_keep_the_last_render_interval() {
+    let mut configured = ApplicationSession::default();
+    execute(&mut configured, SessionCommand::OpenSetup {});
+    let settings = crate::flight_input::KeyboardControlSettings {
+        ramp_seconds: 1.0,
+        sensitivity: 0.5,
+        pilot_target_rate_mps: 0.2,
+        ..crate::flight_input::KeyboardControlSettings::default()
+    };
+    execute(
+        &mut configured,
+        SessionCommand::SetKeyboardControls { settings },
+    );
+    execute(&mut configured, SessionCommand::Prepare {});
+    assert_eq!(
+        configured.prepared.as_ref().unwrap().keyboard_controls,
+        settings
+    );
+    assert!(
+        configured
+            .execute(
+                SessionCommand::SetKeyboardControls {
+                    settings: crate::flight_input::KeyboardControlSettings::default(),
+                },
+                BackendReadiness::Ready
+            )
+            .is_err()
+    );
+    execute(&mut configured, SessionCommand::StartCountdown {});
+    let token = configured.core_session().countdown_token().unwrap();
+    configured.observe_countdown(token, 3.0, true).unwrap();
+    execute(&mut configured, SessionCommand::Abort {});
+    execute(&mut configured, SessionCommand::Retry {});
+    assert_eq!(
+        configured.prepared.as_ref().unwrap().keyboard_controls,
+        settings
+    );
+
     let mut framed = launch(100);
     let mut direct = launch(100);
-    key(&mut framed, FlightControl::PilotIncrease, true, false);
+    key(&mut framed, FlightControlKey::KeyL, true, false);
     assert_eq!(
         tick_count(framed.advance_flight_frame(1000.0, &[], true).unwrap()),
         0
@@ -66,20 +103,23 @@ fn frame_ticks_integrate_against_each_confirmed_target_and_keep_the_last_render_
             .snapshot()
             .tail_flight_state()
             .unwrap();
+        let target = birdman_game_core::PilotPositionTarget::try_new(
+            &direct.prepared.as_ref().unwrap().aircraft,
+            before.pilot_position_demand().position_m() + 0.004,
+        )
+        .unwrap();
         let held = direct
             .core_session()
             .tail_pilot_position_mapping()
             .unwrap()
-            .normalized_target(before.pilot_position_target())
+            .normalized_target(target)
             .unwrap()
             .value();
         direct
             .advance_tail_flight_tick(TailFlightTickInput::new(
                 TailPilotIntent::try_new(0.0, 0.0).unwrap(),
                 TailRateTarget::try_new(0.0, 0.0).unwrap(),
-                TailPilotPositionCommand::Set(
-                    TailPilotPositionIntent::try_new(held + 0.01).unwrap(),
-                ),
+                TailPilotPositionCommand::Set(TailPilotPositionIntent::try_new(held).unwrap()),
             ))
             .unwrap();
     }
@@ -91,12 +131,66 @@ fn frame_ticks_integrate_against_each_confirmed_target_and_keep_the_last_render_
         framed.core_session().flight_record().unwrap().samples(),
         direct.core_session().flight_record().unwrap().samples()
     );
+    for (control, direction) in [
+        (FlightControlKey::KeyJ, -1.0),
+        (FlightControlKey::KeyL, 1.0),
+    ] {
+        let mut application = launch(500);
+        key(&mut application, control, true, false);
+        application.advance_flight_frame(1000.0, &[], true).unwrap();
+        let mut position = application
+            .core_session()
+            .snapshot()
+            .tail_flight_state()
+            .unwrap()
+            .flight_state()
+            .pilot_position_m();
+        let mut protected = false;
+        let mut stopped = false;
+        for tick in 1..=300 {
+            application
+                .advance_flight_frame(1000.0 + f64::from(tick) * 10.0, &[], true)
+                .unwrap();
+            let body = application
+                .core_session()
+                .snapshot()
+                .tail_flight_state()
+                .unwrap();
+            let next = body.flight_state().pilot_position_m();
+            assert!(direction * (next - position) >= -1.0e-12);
+            if body.pilot_motion_limited() {
+                protected = true;
+                if body.flight_state().pilot_velocity_mps() == 0.0 {
+                    stopped = true;
+                    assert_eq!(next, body.pilot_stopping_target().unwrap().position_m());
+                }
+            }
+            position = next;
+        }
+        assert!(protected && stopped);
+        let demand = application
+            .core_session()
+            .snapshot()
+            .tail_flight_state()
+            .unwrap()
+            .pilot_position_demand();
+        key(&mut application, control, false, false);
+        application.advance_flight_frame(4010.0, &[], true).unwrap();
+        let held = application
+            .core_session()
+            .snapshot()
+            .tail_flight_state()
+            .unwrap();
+        assert_eq!(held.pilot_position_demand(), demand);
+        assert_eq!(held.flight_state().pilot_position_m(), position);
+        assert_eq!(held.flight_state().pilot_velocity_mps(), 0.0);
+    }
 }
 
 #[test]
 fn pause_resume_between_frames_retires_time_and_requires_a_fresh_key_press() {
     let mut application = launch(100);
-    key(&mut application, FlightControl::PilotIncrease, true, false);
+    key(&mut application, FlightControlKey::KeyL, true, false);
     application.advance_flight_frame(1000.0, &[], true).unwrap();
     application.advance_flight_frame(1015.0, &[], true).unwrap();
     let held = application
@@ -106,9 +200,9 @@ fn pause_resume_between_frames_retires_time_and_requires_a_fresh_key_press() {
         .unwrap()
         .pilot_position_target();
     execute(&mut application, SessionCommand::Pause {});
-    key(&mut application, FlightControl::PilotIncrease, true, true);
+    key(&mut application, FlightControlKey::KeyL, true, true);
     execute(&mut application, SessionCommand::Resume {});
-    key(&mut application, FlightControl::PilotIncrease, true, true);
+    key(&mut application, FlightControlKey::KeyL, true, true);
     assert_eq!(
         tick_count(application.advance_flight_frame(6000.0, &[], true).unwrap()),
         0
@@ -126,8 +220,8 @@ fn pause_resume_between_frames_retires_time_and_requires_a_fresh_key_press() {
             .pilot_position_target(),
         held
     );
-    key(&mut application, FlightControl::PilotIncrease, false, false);
-    key(&mut application, FlightControl::PilotIncrease, true, false);
+    key(&mut application, FlightControlKey::KeyL, false, false);
+    key(&mut application, FlightControlKey::KeyL, true, false);
     application.advance_flight_frame(6020.0, &[], true).unwrap();
     assert!(
         application
@@ -328,7 +422,7 @@ fn menus_observe_frames_without_consuming_live_flight_ticks() {
 #[test]
 fn unavailable_frames_cancel_countdown_and_pause_live_flight_until_explicit_resume() {
     let mut application = launch(100);
-    key(&mut application, FlightControl::NoseUp, true, false);
+    key(&mut application, FlightControlKey::ArrowUp, true, false);
     application.advance_flight_frame(1000.0, &[], true).unwrap();
     let retained = application
         .core_session()

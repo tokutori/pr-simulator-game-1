@@ -3,7 +3,11 @@ import json
 from pathlib import Path
 import unittest
 
-from build_biwa_world import FINE_PATCHES, build_camera_points, shoreline_land_side, simplify_closed_ring, supplemental_land_height
+from build_biwa_world import (
+    FINE_PATCHES, build_camera_points, build_land_mask_asset, decode_land_mask_grid,
+    point_in_ring, ring_east_crossings, shoreline_land_side, simplify_closed_ring,
+    supplemental_land_height,
+)
 
 
 class ShorelineLandSideTests(unittest.TestCase):
@@ -47,6 +51,37 @@ class SupplementalElevationTests(unittest.TestCase):
         self.assertAlmostEqual(supplemental_land_height(100.0, True), 15.929)
         self.assertIsNone(supplemental_land_height(83.5, False))
         self.assertIsNone(supplemental_land_height(-9999.0, True))
+
+
+class IslandLandMaskTests(unittest.TestCase):
+    def test_crossings_include_the_closing_edge_once(self) -> None:
+        ring = [(0.0, 0.0), (2.0, 2.0), (2.0, -2.0)]
+        for points in (ring, ring + ring[:1], list(reversed(ring))):
+            self.assertEqual(ring_east_crossings(1.0, points), [-1.0, 1.0])
+            self.assertEqual(ring_east_crossings(2.0, points), [])
+        self.assertEqual(ring_east_crossings(1.0, []), [])
+        self.assertEqual(ring_east_crossings(1.0, [(1.0, 0.0)]), [])
+
+    def test_okishima_mask_matches_closed_polygon_at_every_grid_vertex(self) -> None:
+        assets = Path(__file__).resolve().parents[2] / "assets"
+        shoreline = json.loads((assets / "biwa-shoreline.json").read_text(encoding="utf-8"))
+        island = next(item for item in shoreline["islands"] if 41039563 in item["wayIds"])
+        ring = island["ringNorthEastMeters"]
+        water = [(-100_000.0, -100_000.0), (-100_000.0, 100_000.0),
+                 (100_000.0, 100_000.0), (100_000.0, -100_000.0)]
+        opened = build_land_mask_asset(water, [island], "test", "111", "test")
+        closed = build_land_mask_asset(
+            water + water[:1], [{**island, "ringNorthEastMeters": ring + ring[:1]}],
+            "test", "111", "test")
+        self.assertEqual(opened, closed)
+        patch = next(item for item in opened["grids"] if item["id"] == "terrain-patch-okishima")
+        expected = [point_in_ring(
+            patch["northMinMeters"] + (patch["rows"] - row - 1) * patch["terrainStepMeters"],
+            patch["eastMinMeters"] + column * patch["terrainStepMeters"], ring + ring[:1])
+            for row in range(patch["rows"]) for column in range(patch["columns"])]
+        self.assertEqual(decode_land_mask_grid(opened, patch["id"]), expected)
+        shipped = json.loads((assets / "biwa-land-mask.json").read_text(encoding="utf-8"))
+        self.assertEqual(decode_land_mask_grid(shipped, patch["id"]), expected)
 
 
 class LaunchShoreTerrainCoverageTests(unittest.TestCase):

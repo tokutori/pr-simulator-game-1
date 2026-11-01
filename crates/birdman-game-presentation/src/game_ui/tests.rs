@@ -26,16 +26,19 @@ pub(super) fn platform() -> GameUiPlatformInput {
         operation_pending: false,
         hmd_available: false,
         phone_vr_available: false,
+        touch_available: false,
         menu_recenter_available: false,
         analysis_available: true,
         replay_available: true,
         stored_records_available: false,
+        stored_records_retry_available: false,
         flight_log_available: true,
         water_quality: WaterQuality::High,
+        render_quality_confirmed: true,
         water_quality_operation: GameUiWaterQualityOperation::Idle {},
         screen_render_scale: crate::screen_render_auto::ScreenRenderAutoSnapshot::default(),
         notification: String::new(),
-        flight_controller_failure: None,
+        renderer_failure: None,
         head_hud_failure: None,
         stored_records: Default::default(),
     }
@@ -53,8 +56,11 @@ pub(super) fn context<'view>(
         archived_identity: None,
         session,
         resume_available: session.can_resume(),
+        flight_failure: None,
         presentation_available: true,
         difficulty,
+        keyboard_controls: birdman_game_app::flight_input::KeyboardControlSettings::default(),
+        accepted_flight_keys: [false; 13],
         preset: difficulty.preset_label(),
         identity: session.configuration_identity(),
         record: session.playback_record(),
@@ -111,9 +117,91 @@ fn hud_node<'view>(hud: &'view GameUiHud, id: &str) -> &'view GameUiHudNode {
         .unwrap()
 }
 
+fn assert_touch_hud_lower_band(session: &GameSession<'static>, protected_cue: Option<&str>) {
+    let snapshot = session.snapshot();
+    for (width, height, font) in [
+        (1280.0, 720.0, 16.0),
+        (1920.0, 1080.0, 16.0),
+        (1920.0, 1080.0, 24.0),
+    ] {
+        let mut platform = platform();
+        platform.touch_available = true;
+        platform.viewport = GameUiViewport {
+            width,
+            height,
+            root_font_size: font,
+        };
+        let full = difficulty().with_information(InformationLevel::Full);
+        let state = GameUiState::default();
+        let view = game_ui_view(&state, &context(session, full, &platform)).unwrap();
+        let hud = view.hud.as_ref().unwrap();
+        let left = hud.layout.offset_px[0];
+        let bottom = hud.layout.offset_px[1];
+        let top = height - bottom - hud.layout.height_px;
+        let right = left + hud.layout.width_px;
+        assert!(
+            top >= height * 0.5,
+            "{width}x{height}@{font}: top={top}, height={}",
+            hud.layout.height_px
+        );
+        assert!(hud.layout.font_size_px >= 0.875 * font);
+        assert!(right <= width - view.layout.width_px);
+        let bounds = view
+            .panels
+            .iter()
+            .flat_map(|panel| &panel.controls)
+            .filter_map(|item| {
+                if let GameUiControlContent::FlightTouch { bounds, .. } = item.content {
+                    Some(bounds)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(bounds.len(), 2);
+        for region in bounds {
+            assert!(
+                right <= region.x
+                    || left >= region.x + region.width
+                    || height - bottom <= region.y
+                    || top >= region.y + region.height
+            );
+        }
+        if let Some(cue) = protected_cue {
+            assert!(
+                hud_node(hud, "hud-pilot-position")
+                    .content
+                    .value()
+                    .contains(cue)
+            );
+        }
+        platform.touch_available = false;
+        let baseline = game_ui_view(&state, &context(session, full, &platform))
+            .unwrap()
+            .hud
+            .unwrap();
+        let values = |hud: &GameUiHud| {
+            hud.groups
+                .iter()
+                .flat_map(|group| &group.nodes)
+                .map(|node| {
+                    (
+                        node.id.clone(),
+                        node.label.clone(),
+                        node.content.value().to_owned(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(values(hud), values(&baseline));
+    }
+    assert_eq!(session.snapshot(), snapshot);
+}
+
 #[test]
 fn bottom_hud_preserves_all_information_and_shared_nonoverlapping_rows() {
     let session = launched();
+    assert_touch_hud_lower_band(&session, None);
     let snapshot = session.snapshot();
     let mut expected_ids = None;
     for (width, height, font) in [
@@ -283,6 +371,11 @@ fn screen_hud_information_profiles_fit_hd_with_overlays_and_enlarged_text() {
                     assert!(
                         height - hud.layout.offset_px[1] - hud.layout.height_px >= height * 0.5
                     );
+                    let menu_left = width - view.layout.width_px - 0.75 * font;
+                    assert!(
+                        hud.layout.offset_px[0] + hud.layout.width_px <= menu_left
+                            || hud.layout.offset_px[1] > view.layout.maximum_height_px
+                    );
                 }
                 let nodes = hud
                     .groups
@@ -321,34 +414,37 @@ fn head_hud_fits_complete_shared_rows_in_lower_band_before_using_upper_space() {
     let view = game_ui_view(&state, &context).unwrap();
     let hud = view.hud.as_ref().unwrap();
     let frame = game_ui_frame(&state, &context, &view, view.view_revision).unwrap();
-    let HeadHudPaintReply::Ready { projection } = prepare_game_ui_head_hud(
-        &view,
-        &frame,
-        HeadHudPreparationInput {
-            view_revision: view.view_revision,
-            viewer: Box::new(crate::xr::tests::viewer(XrDepthRange::NegativeOneToOne)),
-            profile: XrHeadHudProfile::default(),
-            font: MenuFont {
-                family: "sans-serif".into(),
-                weight: 400,
-                style: MenuFontStyle::Normal,
-                generation: 0,
+    let paint = |view: &GameUiView, frame: &GameUiFrame| {
+        prepare_game_ui_head_hud(
+            view,
+            frame,
+            HeadHudPreparationInput {
+                view_revision: view.view_revision,
+                viewer: &crate::xr::tests::viewer(XrDepthRange::NegativeOneToOne),
+                profile: XrHeadHudProfile::default(),
+                font: &MenuFont {
+                    family: "sans-serif".into(),
+                    weight: 400,
+                    style: MenuFontStyle::Normal,
+                    generation: 0,
+                },
+                locale: "ja",
+                frame_rate_label: None,
             },
-            locale: "ja".into(),
-            frame_rate_label: None,
-        },
-        &mut SurfaceFontCache::default(),
-        |request, _, value| {
-            let advance = value.chars().count() as f64 * request.font_meters * 0.5;
-            Ok(MenuGlyphMetrics {
-                advance,
-                left: 0.0,
-                right: advance,
-                ascent: request.font_meters * 0.8,
-                descent: request.font_meters * 0.2,
-            })
-        },
-    ) else {
+            &mut SurfaceFontCache::default(),
+            |request, _, value| {
+                let advance = value.chars().count() as f64 * request.font_meters * 0.5;
+                Ok(MenuGlyphMetrics {
+                    advance,
+                    left: 0.0,
+                    right: advance,
+                    ascent: request.font_meters * 0.8,
+                    descent: request.font_meters * 0.2,
+                })
+            },
+        )
+    };
+    let HeadHudPaintReply::Ready { projection } = paint(&view, &frame) else {
         panic!("head HUD paint did not fit")
     };
     let (north_label, arrow) = hud
@@ -448,6 +544,56 @@ fn head_hud_fits_complete_shared_rows_in_lower_band_before_using_upper_space() {
             GameUiHeadHudFit::Unavailable
         );
     }
+    let mut themed_view = view.clone();
+    themed_view.theme.muted_text = "#123456".into();
+    themed_view.theme.warning_text = "#654321".into();
+    themed_view.theme.flight_path_marker = "#abcdef".into();
+    for tone in [GameUiHudTone::Muted, GameUiHudTone::Warning] {
+        let mut themed_frame = frame.clone();
+        let text = themed_frame
+            .hud
+            .as_mut()
+            .unwrap()
+            .groups
+            .iter_mut()
+            .flat_map(|group| &mut group.nodes)
+            .find_map(|node| match &mut node.content {
+                GameUiHudNodeContent::Text { tone, .. } => Some(tone),
+                _ => None,
+            })
+            .unwrap();
+        *text = tone;
+        let HeadHudPaintReply::Ready { projection } = paint(&themed_view, &themed_frame) else {
+            panic!("themed head HUD paint did not fit")
+        };
+        let expected = match tone {
+            GameUiHudTone::Muted => &themed_view.theme.muted_text,
+            GameUiHudTone::Warning => &themed_view.theme.warning_text,
+            GameUiHudTone::Normal => unreachable!(),
+        };
+        assert!(
+            projection
+                .items
+                .iter()
+                .filter_map(|item| match item {
+                    SurfacePaintItem::Plot { items, .. } => Some(items),
+                    _ => None,
+                })
+                .flatten()
+                .any(
+                    |item| matches!(item, SurfacePaintItem::Text { color, .. } if color == expected)
+                )
+        );
+        assert!(projection.items.iter().filter_map(|item| match item {
+            SurfacePaintItem::Plot { items, .. } => Some(items),
+            _ => None,
+        }).flatten().any(|item| matches!(item,
+            SurfacePaintItem::RoundedOutline { color, .. } if color == &themed_view.theme.flight_path_marker)));
+        assert_eq!(
+            paint(&themed_view, &themed_frame),
+            HeadHudPaintReply::Ready { projection }
+        );
+    }
 }
 
 #[test]
@@ -507,7 +653,7 @@ fn ordinary_warning_capability_is_explicit_and_keeps_the_configured_flag() {
 }
 
 #[test]
-fn stored_record_preview_has_a_bounded_serde_and_native_projection() {
+fn stored_record_preview_bounds_the_rows_projected_by_the_shared_owner() {
     let records = (1..=2000)
         .map(|id| GameUiStoredRecord {
             id,
@@ -515,28 +661,11 @@ fn stored_record_preview_has_a_bounded_serde_and_native_projection() {
             personal_best: id == 1,
         })
         .collect::<Vec<_>>();
-    let preview = GameUiStoredRecordPreview::from(records.clone());
+    let preview = GameUiStoredRecordPreview::from(records);
     assert_eq!(preview.iter().count(), GAME_UI_STORED_RECORD_LIMIT);
     assert_eq!(
         preview.iter().next().unwrap().saved_at.chars().count(),
         GAME_UI_SAVED_AT_CHARACTERS
-    );
-    let json = serde_json::to_string(&preview).unwrap();
-    assert_eq!(
-        serde_json::from_str::<GameUiStoredRecordPreview>(&json).unwrap(),
-        preview
-    );
-    assert!(
-        serde_json::from_str::<GameUiStoredRecordPreview>(
-            &serde_json::to_string(&records).unwrap()
-        )
-        .is_err()
-    );
-    assert!(
-        serde_json::from_str::<GameUiStoredRecordPreview>(
-            &serde_json::to_string(&records[..1]).unwrap()
-        )
-        .is_err()
     );
 }
 fn launched() -> GameSession<'static> {
@@ -840,14 +969,36 @@ fn web_setup_candidates_groups_order_and_primary_action_are_shared() {
             ..
         }
     ));
-    for group in ["preset", "information", "assistance", "weather"] {
-        for choice in controls.iter().filter(|control| control.section == group) {
+    for group in [
+        "preset",
+        "information",
+        "assistance",
+        "weather",
+        "keyboard-ramp",
+        "keyboard-curve",
+        "keyboard-sensitivity",
+        "keyboard-pilot-rate",
+    ] {
+        let section = view.panels[0]
+            .sections
+            .iter()
+            .find(|section| section.id == group)
+            .unwrap();
+        assert!(!section.label.is_empty());
+        assert_eq!(section.layout, GameUiSectionLayout::ChoiceGrid);
+        let mut choices = controls
+            .iter()
+            .filter(|control| control.section == group)
+            .peekable();
+        assert!(choices.peek().is_some());
+        for choice in choices {
             let GameUiControlContent::Button {
                 action,
                 presentation:
                     GameUiButtonPresentation::Choice {
                         selected,
                         description,
+                        group_label,
                         ..
                     },
             } = &choice.content
@@ -855,6 +1006,14 @@ fn web_setup_candidates_groups_order_and_primary_action_are_shared() {
                 panic!("missing direct choice");
             };
             assert!(choice.enabled);
+            assert_eq!(&section.label, group_label);
+            assert_eq!(
+                view.control_input_action(&GameUiControlInput::Activate {
+                    control_id: choice.id.clone()
+                })
+                .unwrap(),
+                Some(action.clone()),
+            );
             assert!(
                 update_game_ui(
                     &GameUiState::default(),
@@ -1158,7 +1317,7 @@ fn custom_cues_and_native_selection_use_the_same_existing_settings_resolver() {
         },
         GameUiControlInput::ControlKeys {
             control_id: toggle.id.clone(),
-            codes: vec!["Enter".into(), "Space".into()],
+            keys: vec![KeyboardKey::Enter, KeyboardKey::Space],
         },
     ] {
         assert_eq!(
@@ -1229,9 +1388,24 @@ fn processing_delay_description_and_resume_follow_the_authoritative_reason() {
     let platform = platform();
     let state = GameUiState::default();
     let blocked = game_ui_view(&state, &context(&session, difficulty(), &platform)).unwrap();
-    assert!(blocked.description.contains("処理に時間がかかった"));
-    assert!(!blocked.description.contains("ProcessingDelay"));
-    assert!(!blocked.description.contains("Resume"));
+    let GameUiControlContent::Status {
+        value: pause_description,
+        ..
+    } = &control(&blocked, "game-state").content
+    else {
+        panic!("missing pause description")
+    };
+    assert!(blocked.description.is_empty());
+    assert!(pause_description.contains("処理に時間がかかった"));
+    assert!(!pause_description.contains("ProcessingDelay"));
+    assert!(!pause_description.contains("Resume"));
+    let mut notified_platform = platform.clone();
+    notified_platform.notification = "保存処理の案内".to_owned();
+    let notified =
+        game_ui_view(&state, &context(&session, difficulty(), &notified_platform)).unwrap();
+    assert_eq!(&notified.description, pause_description);
+    assert!(matches!(&control(&notified, "game-state").content,
+        GameUiControlContent::Status { value, .. } if value == &notified_platform.notification));
     assert!(control(&blocked, "game-state").label.is_empty());
     assert!(!control(&blocked, "game-flight-resume").enabled);
     session
@@ -1286,6 +1460,86 @@ fn pause_conditions_and_overlay_states_share_admission_without_resuming_physics(
         session.snapshot().phase(),
         SessionPhase::FlightPaused { .. }
     ));
+
+    let mut application =
+        birdman_game_app::application::ApplicationSession::new(ControlMode::Manual, 100, 42);
+    for command in [
+        SessionCommand::OpenSetup {},
+        SessionCommand::SelectWeather {
+            weather: WeatherClass::Calm,
+        },
+        SessionCommand::Prepare {},
+        SessionCommand::StartCountdown {},
+    ] {
+        application
+            .execute(command, BackendReadiness::Ready)
+            .unwrap();
+    }
+    let token = application.core_session().countdown_token().unwrap();
+    application.observe_countdown(token, 3.0, true).unwrap();
+    application.advance_flight_frame(1000.0, &[], true).unwrap();
+    let failure = application
+        .advance_flight_frame(999.0, &[], true)
+        .unwrap_err();
+    assert_eq!(application.flight_failure(), Some(failure));
+    let mut platform = platform.clone();
+    platform.notification = "保存処理の案内".to_owned();
+    for mode in [
+        GameUiPresentationMode::Screen,
+        GameUiPresentationMode::PhoneVr,
+        GameUiPresentationMode::Hmd,
+    ] {
+        platform.presentation_mode = mode;
+        let mut observed = context(
+            application.core_session(),
+            application.difficulty(),
+            &platform,
+        );
+        observed.resume_available = application.can_resume();
+        let before = GameUiStructureKey::new(&state, &observed);
+        observed.flight_failure = application.flight_failure();
+        assert_ne!(GameUiStructureKey::new(&state, &observed), before);
+        let view = game_ui_view(&state, &observed).unwrap();
+        assert!(!control(&view, "game-flight-resume").enabled);
+        assert!(view.description.is_empty());
+        assert!(matches!(&control(&view, "game-flight-recovery").content,
+            GameUiControlContent::Status { value, .. } if value.contains(&control(&view, "game-paused-abort").label)));
+        assert!(
+            matches!(&control(&view, "game-flight-failure-cause").content,
+            GameUiControlContent::Status { value, .. } if !value.is_empty())
+        );
+        assert!(matches!(&control(&view, "game-state").content,
+            GameUiControlContent::Status { value, .. } if value == &platform.notification));
+    }
+    assert!(matches!(
+        application.execute(SessionCommand::Resume {}, BackendReadiness::Ready),
+        Err(ApplicationError::Flight(error)) if error == failure
+    ));
+    for id in ["game-paused-abort", "game-result-retry"] {
+        let mut observed = context(
+            application.core_session(),
+            application.difficulty(),
+            &platform,
+        );
+        observed.resume_available = application.can_resume();
+        observed.flight_failure = application.flight_failure();
+        let view = game_ui_view(&state, &observed).unwrap();
+        if id == "game-result-retry" {
+            assert!(control(&view, "game-result-setup").enabled);
+        }
+        let Some(GameUiAction::Session { command }) = view
+            .control_input_action(&GameUiControlInput::Activate {
+                control_id: id.to_owned(),
+            })
+            .unwrap()
+        else {
+            panic!("missing published recovery action")
+        };
+        application
+            .execute(command, BackendReadiness::Ready)
+            .unwrap();
+    }
+    assert_eq!(application.flight_failure(), None);
 }
 
 #[test]
@@ -1614,39 +1868,40 @@ fn analysis_sections_preserve_order_and_typed_values_across_targets() {
                         progress: 0.0,
                         generation: 0,
                         view_revision: numeric.view_revision,
-                        panel_id: numeric.panels[0].id.clone(),
-                        viewer: Box::new(crate::xr::tests::viewer(XrDepthRange::NegativeOneToOne)),
-                        font: MenuFont {
+                        panel_id: &numeric.panels[0].id,
+                        viewer: &crate::xr::tests::viewer(XrDepthRange::NegativeOneToOne),
+                        font: &MenuFont {
                             family: "sans-serif".into(),
                             weight: 400,
                             style: MenuFontStyle::Normal,
                             generation: 0,
                         },
-                        locale: "ja".into(),
+                        locale: "ja",
+                    };
+                    let measure = |request: &MenuTextRequest, _: MenuSize, value: &str| {
+                        let width = value.chars().count() as f64 * request.font_meters * 0.6;
+                        Ok(MenuGlyphMetrics {
+                            advance: width,
+                            left: 0.0,
+                            right: width,
+                            ascent: if value.is_empty() {
+                                0.0
+                            } else {
+                                request.font_meters * 0.8
+                            },
+                            descent: if value.is_empty() {
+                                0.0
+                            } else {
+                                request.font_meters * 0.2
+                            },
+                        })
                     };
                     let result = prepare_game_ui_menu(
                         &numeric,
                         &frame,
                         input,
                         &mut SurfaceFontCache::default(),
-                        |request, _, value| {
-                            let width = value.chars().count() as f64 * request.font_meters * 0.6;
-                            Ok(MenuGlyphMetrics {
-                                advance: width,
-                                left: 0.0,
-                                right: width,
-                                ascent: if value.is_empty() {
-                                    0.0
-                                } else {
-                                    request.font_meters * 0.8
-                                },
-                                descent: if value.is_empty() {
-                                    0.0
-                                } else {
-                                    request.font_meters * 0.2
-                                },
-                            })
-                        },
+                        measure,
                     );
                     let MenuLayoutReply::Ready { projection } = result else {
                         panic!("numeric cards failed: {result:?}")
@@ -1668,6 +1923,59 @@ fn analysis_sections_preserve_order_and_typed_values_across_targets() {
                         assert!(projection.content.items.iter().any(|item| matches!(item, SurfacePaintItem::Text { value, font, .. } if value == &field.value && font.family == "monospace")));
                         assert!(projection.content.items.iter().any(|item| matches!(item, SurfacePaintItem::Text { value, .. } if value == &field.label)));
                     }
+                    let mut chart_view = spatial.clone();
+                    chart_view.panels[0].controls.retain(|control| {
+                        matches!(control.content, GameUiControlContent::Chart { .. })
+                    });
+                    let mut cursor_frame = game_ui_frame(
+                        &GameUiState {
+                            analysis_time_seconds: 0.015,
+                            ..state.clone()
+                        },
+                        &context(&session, difficulty(), &platform),
+                        &chart_view,
+                        chart_view.view_revision,
+                    )
+                    .unwrap();
+                    let mut expected_view = chart_view.clone();
+                    let cursor = cursor_frame.chart_cursor.as_ref().unwrap();
+                    let GameUiControlContent::Chart { plot, .. } =
+                        &mut expected_view.panels[0].controls[0].content
+                    else {
+                        panic!("chart missing")
+                    };
+                    plot.cursor_x = cursor.cursor_x;
+                    plot.cursor_points = cursor.cursor_points.clone();
+                    if let Some(vector) = &cursor.selected_wind_vector
+                        && let Some(first) = plot.vectors.first_mut()
+                    {
+                        *first = vector.clone();
+                    }
+                    let actual = prepare_game_ui_menu(
+                        &chart_view,
+                        &cursor_frame,
+                        input,
+                        &mut SurfaceFontCache::default(),
+                        measure,
+                    );
+                    cursor_frame.chart_cursor = None;
+                    let expected = prepare_game_ui_menu(
+                        &expected_view,
+                        &cursor_frame,
+                        input,
+                        &mut SurfaceFontCache::default(),
+                        measure,
+                    );
+                    let (
+                        MenuLayoutReply::Ready { projection: actual },
+                        MenuLayoutReply::Ready {
+                            projection: expected,
+                        },
+                    ) = (actual, expected)
+                    else {
+                        panic!("chart paint failed")
+                    };
+                    assert_eq!(actual, expected);
                 }
             }
             assert_eq!(session.snapshot(), snapshot);
@@ -1677,7 +1985,7 @@ fn analysis_sections_preserve_order_and_typed_values_across_targets() {
 
 #[test]
 fn analysis_cursor_is_observational_and_rejects_nonfinite_or_out_of_record_times() {
-    let session = finalized();
+    let mut session = finalized();
     let platform = platform();
     let state = GameUiState {
         result_tab: GameUiResultTab::Analysis,
@@ -1700,6 +2008,154 @@ fn analysis_cursor_is_observational_and_rejects_nonfinite_or_out_of_record_times
                 &context(&session, difficulty(), &platform)
             ),
             Err(GameUiError::InvalidTime)
+        );
+    }
+    let original = session.playback_record().unwrap();
+    let mut samples = original.samples()[..2].to_vec();
+    samples[1].tick_index = 0;
+    samples[1].fraction = 0.5;
+    let short = birdman_game_core::FlightRecord::try_from_finalized_samples(
+        original.header(),
+        samples,
+        birdman_game_core::FlightRecordFinalization {
+            terminal_tick: 0,
+            terminal_fraction: 0.5,
+            ..original.finalization().unwrap()
+        },
+    )
+    .unwrap();
+    let mut short_context = context(&session, difficulty(), &platform);
+    short_context.record = Some(&short);
+    for analysis_chart in [GameUiAnalysisChart::Altitude, GameUiAnalysisChart::Speed] {
+        let state = GameUiState {
+            analysis_chart,
+            ..state.clone()
+        };
+        let view = game_ui_view(&state, &short_context).unwrap();
+        let GameUiControlContent::Chart { plot, .. } =
+            &control(&view, "game-analysis-plot").content
+        else {
+            panic!("chart missing")
+        };
+        let ticks = &plot.presentation.x_ticks;
+        assert_eq!(ticks.first().unwrap().value, 0.0);
+        assert_eq!(ticks.first().unwrap().text.label, "0");
+        assert_eq!(
+            ticks.last().unwrap().value,
+            short.duration_seconds().unwrap()
+        );
+        assert_eq!(ticks.last().unwrap().text.label, "0.005");
+        assert!(
+            ticks
+                .windows(2)
+                .all(|pair| pair[0].text.label != pair[1].text.label)
+        );
+        let [_, top, right, bottom] = plot.presentation.plot;
+        let time = plot
+            .pointer_time(
+                [right, (top + bottom) / 2.0],
+                [
+                    0.0,
+                    0.0,
+                    plot.presentation.viewport.width,
+                    plot.presentation.viewport.height,
+                ],
+                true,
+            )
+            .unwrap();
+        assert_eq!(time, short.duration_seconds().unwrap());
+        let action = view
+            .control_input_action(&GameUiControlInput::SetRange {
+                control_id: "game-analysis-cursor".into(),
+                value: time,
+            })
+            .unwrap()
+            .unwrap();
+        update_game_ui(&state, action, &short_context).unwrap();
+    }
+    let duration = session
+        .playback_record()
+        .unwrap()
+        .duration_seconds()
+        .unwrap();
+    for replay_view in [
+        None,
+        Some(GameUiReplayView::Analysis),
+        Some(GameUiReplayView::Telemetry),
+    ] {
+        if replay_view.is_some() && session.playback_clock().is_none() {
+            session.enter_replay().unwrap();
+        }
+        let state = GameUiState {
+            replay_view: replay_view.unwrap_or(GameUiReplayView::Cinematic),
+            ..state.clone()
+        };
+        let context = context(&session, difficulty(), &platform);
+        let view = game_ui_view(&state, &context).unwrap();
+        let prefix = if replay_view == Some(GameUiReplayView::Telemetry) {
+            "game-replay"
+        } else {
+            "game-analysis"
+        };
+        for (suffix, time_seconds) in [("first", 0.0), ("last", duration)] {
+            let action = view
+                .control_input_action(&GameUiControlInput::Activate {
+                    control_id: format!("{prefix}-{suffix}"),
+                })
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                action,
+                if replay_view.is_some() {
+                    GameUiAction::SeekReplay { time_seconds }
+                } else {
+                    GameUiAction::SeekAnalysis { time_seconds }
+                }
+            );
+            update_game_ui(&state, action, &context).unwrap();
+        }
+    }
+    let mut zero = launched();
+    zero.abort_flight().unwrap();
+    for replay in [false, true] {
+        if replay {
+            zero.enter_replay().unwrap();
+        }
+        let state = GameUiState {
+            replay_view: GameUiReplayView::Analysis,
+            analysis_chart: GameUiAnalysisChart::Altitude,
+            ..state.clone()
+        };
+        let view = game_ui_view(&state, &context(&zero, difficulty(), &platform)).unwrap();
+        let cursor = control(
+            &view,
+            if replay {
+                "game-replay-cursor"
+            } else {
+                "game-analysis-cursor"
+            },
+        );
+        assert!(!cursor.enabled);
+        let GameUiControlContent::Chart { plot, .. } =
+            &control(&view, "game-analysis-plot").content
+        else {
+            panic!("chart missing")
+        };
+        assert!(plot.x_maximum > plot.x_minimum);
+        assert_eq!(
+            plot.pointer_time([0.0, 0.0], [0.0, 0.0, 100.0, 100.0], false),
+            None
+        );
+        assert!(matches!(
+            cursor.content,
+            GameUiControlContent::Range { maximum: 0.0, .. }
+        ));
+        for id in ["game-analysis-first", "game-analysis-last"] {
+            assert!(!control(&view, id).enabled);
+        }
+        assert!(
+            matches!(&control(&view, "game-analysis-cursor-values").content,
+            GameUiControlContent::Fields { fields, .. } if fields.len() == 9)
         );
     }
 }
@@ -1763,6 +2219,7 @@ fn replay_camera_order_and_clock_effects_are_shared_ui_state_only() {
         )
         .unwrap();
         assert_eq!(update.state.replay_camera, expected);
+        assert!(update.effects.is_empty());
         assert_eq!(
             game_ui_view(&update.state, &context(&session, difficulty(), &platform))
                 .unwrap()
@@ -2092,13 +2549,17 @@ fn range_display_text_matches_initial_and_retained_views_at_rounding_boundaries(
         assert_eq!(range_value(0.0, 1.0, 0.25, ratio), Some(time_seconds));
     }
     assert_eq!(range_value(0.0, 1.0, 0.25, f64::NAN), None);
+    assert_eq!(range_value(0.0, 0.0125, 0.01, 1.0), Some(0.0125));
+    assert_eq!(range_value(0.0, 0.0125, 0.01, 0.5), Some(0.01));
     assert_eq!(range.activation_action(), None);
     for (value, expected) in [
-        (0.0, "0.0"),
-        (0.24999999999999997, "0.2"),
-        (0.25, "0.3"),
-        (0.25000000000000006, "0.3"),
-        (2.55, "2.5"),
+        (0.0, "0.00"),
+        (0.01, "0.01"),
+        (0.02, "0.02"),
+        (0.12499999999999999, "0.12"),
+        (0.125, "0.13"),
+        (0.12500000000000003, "0.13"),
+        (2.55, "2.55"),
     ] {
         assert_eq!(super::frame::range_display_value(value), expected);
     }
@@ -2146,15 +2607,18 @@ fn range_display_text_matches_initial_and_retained_views_at_rounding_boundaries(
             }),
             Ok(Some(GameUiAction::SeekReplay { time_seconds: 0.25 }))
         );
-        for (codes, expected) in [
-            (vec!["ArrowRight", "End", "Home"], Some(0.0)),
-            (vec!["End"], Some(1.12)),
-            (vec!["ArrowRight"], Some(0.38)),
-            (vec!["KeyA"], None),
+        for (keys, expected) in [
+            (
+                vec![KeyboardKey::Right, KeyboardKey::End, KeyboardKey::Home],
+                Some(0.0),
+            ),
+            (vec![KeyboardKey::End], Some(1.12)),
+            (vec![KeyboardKey::Right], Some(0.38)),
+            (vec![KeyboardKey::A], None),
         ] {
             let input = GameUiControlInput::ControlKeys {
                 control_id: id.clone(),
-                codes: codes.into_iter().map(str::to_owned).collect(),
+                keys,
             };
             assert_eq!(
                 view.control_input_action(&input),
@@ -2163,7 +2627,7 @@ fn range_display_text_matches_initial_and_retained_views_at_rounding_boundaries(
         }
         let unknown = GameUiControlInput::ControlKeys {
             control_id: "game-analysis-cursor".into(),
-            codes: vec!["KeyA".into()],
+            keys: vec![KeyboardKey::A],
         };
         let unchanged = update_game_ui(
             &state,
@@ -2189,7 +2653,7 @@ fn range_display_text_matches_initial_and_retained_views_at_rounding_boundaries(
         assert_eq!(
             view.control_input_action(&GameUiControlInput::ControlKeys {
                 control_id: "missing".into(),
-                codes: vec!["KeyA".into()]
+                keys: vec![KeyboardKey::A]
             }),
             Err(GameUiError::ActionUnavailable)
         );
@@ -2202,11 +2666,11 @@ fn range_display_text_matches_initial_and_retained_views_at_rounding_boundaries(
             })
             .unwrap();
         let button_id = button.id.clone();
-        for code in ["Enter", "Space"] {
+        for code in [KeyboardKey::Enter, KeyboardKey::Space] {
             assert_eq!(
                 view.control_input_action(&GameUiControlInput::ControlKeys {
                     control_id: button_id.clone(),
-                    codes: vec![code.into()],
+                    keys: vec![code],
                 }),
                 Ok(button.content.activation_action())
             );
@@ -2214,7 +2678,7 @@ fn range_display_text_matches_initial_and_retained_views_at_rounding_boundaries(
         assert_eq!(
             view.control_input_action(&GameUiControlInput::ControlKeys {
                 control_id: button_id,
-                codes: vec!["KeyA".into()]
+                keys: vec![KeyboardKey::A]
             }),
             Ok(None)
         );
@@ -2236,7 +2700,7 @@ fn range_display_text_matches_initial_and_retained_views_at_rounding_boundaries(
         assert_eq!(
             view.control_input_action(&GameUiControlInput::ControlKeys {
                 control_id: noninteractive_id,
-                codes: vec!["Enter".into()]
+                keys: vec![KeyboardKey::Enter]
             }),
             Err(GameUiError::ActionUnavailable)
         );
@@ -2269,10 +2733,12 @@ fn range_display_text_matches_initial_and_retained_views_at_rounding_boundaries(
             let retained =
                 game_ui_view(&state, &context(&session, difficulty(), &platform)).unwrap();
             for (time, expected) in [
-                (0.0, "0.0"),
-                (0.24999999999999997, "0.2"),
-                (0.25, "0.3"),
-                (0.25000000000000006, "0.3"),
+                (0.0, "0.00"),
+                (0.01, "0.01"),
+                (0.02, "0.02"),
+                (0.24999999999999997, "0.25"),
+                (0.25, "0.25"),
+                (0.25000000000000006, "0.25"),
             ] {
                 if replay_view.is_some() {
                     session.seek_playback(time).unwrap();
@@ -2299,6 +2765,37 @@ fn range_display_text_matches_initial_and_retained_views_at_rounding_boundaries(
                 assert_eq!(display_value, expected);
                 assert_eq!(range.value, *value);
                 assert_eq!(range.display_value, *display_value);
+                if time == 0.01 {
+                    let action = full
+                        .control_input_action(&GameUiControlInput::ControlKeys {
+                            control_id: id.into(),
+                            keys: vec![KeyboardKey::Right],
+                        })
+                        .unwrap()
+                        .unwrap();
+                    let expected_action = if replay_view.is_some() {
+                        GameUiAction::SeekReplay { time_seconds: 0.02 }
+                    } else {
+                        GameUiAction::SeekAnalysis { time_seconds: 0.02 }
+                    };
+                    assert_eq!(action, expected_action);
+                    let update = update_game_ui(&state, action, &context).unwrap();
+                    let [GameUiEffect::Record { action }] = update.effects.as_slice() else {
+                        panic!("missing seek effect");
+                    };
+                    match action {
+                        birdman_game_app::application::RecordCommand::SeekReplay {
+                            time_seconds,
+                        }
+                        | birdman_game_app::application::RecordCommand::SeekAnalysis {
+                            time_seconds,
+                        } => assert_eq!(*time_seconds, 0.02),
+                        _ => panic!("unexpected record effect"),
+                    }
+                    if replay_view.is_none() {
+                        assert_eq!(update.state.analysis_time_seconds, 0.02);
+                    }
+                }
                 assert_eq!(session.snapshot(), before);
             }
         }
@@ -2306,12 +2803,13 @@ fn range_display_text_matches_initial_and_retained_views_at_rounding_boundaries(
 }
 
 #[test]
-fn entering_replay_resets_its_view_and_disclosure_while_retaining_camera_and_cursor() {
+fn replay_request_preserves_view_state_until_session_admission() {
     let session = finalized();
     let platform = platform();
     let state = GameUiState {
         replay_view: GameUiReplayView::Analysis,
         replay_camera: GameUiReplayCamera::Chase,
+        flight_camera: GameUiFlightCamera::Chase,
         analysis_time_seconds: 0.015,
         technical_open: true,
         ..GameUiState::default()
@@ -2324,29 +2822,16 @@ fn entering_replay_resets_its_view_and_disclosure_while_retaining_camera_and_cur
         &context(&session, difficulty(), &platform),
     )
     .unwrap();
-    assert_eq!(update.state.replay_view, GameUiReplayView::Cinematic);
-    assert!(!update.state.technical_open);
-    assert_eq!(update.state.replay_camera, state.replay_camera);
-    assert_eq!(
-        update.state.analysis_time_seconds,
-        state.analysis_time_seconds
-    );
+    assert_eq!(update.state, state);
     assert_eq!(
         session.snapshot().phase(),
         birdman_game_core::SessionPhase::Result
     );
     assert_eq!(
         update.effects,
-        vec![
-            GameUiEffect::Session {
-                command: SessionCommand::EnterReplay {}
-            },
-            GameUiEffect::Platform {
-                command: GameUiPlatformCommand::SetReplayCamera {
-                    camera: GameUiReplayCamera::Chase
-                }
-            },
-        ]
+        vec![GameUiEffect::Session {
+            command: SessionCommand::EnterReplay {}
+        }]
     );
 }
 
@@ -2389,7 +2874,66 @@ fn leaving_replay_retains_the_authoritative_clock_as_the_analysis_cursor() {
 }
 
 #[test]
-fn controller_resource_failure_preserves_last_valid_hud_and_exit_in_both_modes() {
+fn admitted_keyboard_state_is_visible_in_live_hud_across_information_and_modes() {
+    let session = launched();
+    let state = GameUiState::default();
+    for mode in [
+        GameUiPresentationMode::Screen,
+        GameUiPresentationMode::PhoneVr,
+        GameUiPresentationMode::Hmd,
+    ] {
+        let mut platform = platform();
+        platform.presentation_mode = mode;
+        for information in [
+            InformationLevel::Full,
+            InformationLevel::Minimal,
+            InformationLevel::Custom,
+        ] {
+            let mut context = context(
+                &session,
+                difficulty().with_information(information),
+                &platform,
+            );
+            context.accepted_flight_keys = [
+                true, false, false, true, true, false, true, false, true, true, false, true, false,
+            ];
+            let view = game_ui_view(&state, &context).unwrap();
+            let hud = view.hud.as_ref().unwrap();
+            assert_eq!(
+                hud_node(hud, "hud-accepted-keys").content.value(),
+                "↑● ↓○ ←○ →● J● L○ C● P○ Esc● W● S○ A● D○"
+            );
+            let frame = game_ui_frame(&state, &context, &view, view.view_revision).unwrap();
+            assert_eq!(
+                hud_node(frame.hud.as_ref().unwrap(), "hud-accepted-keys")
+                    .content
+                    .value(),
+                "↑● ↓○ ←○ →● J● L○ C● P○ Esc● W● S○ A● D○"
+            );
+        }
+    }
+    let mut replay = finalized();
+    replay.enter_replay().unwrap();
+    let platform = platform();
+    let state = GameUiState {
+        replay_view: GameUiReplayView::Telemetry,
+        ..GameUiState::default()
+    };
+    let mut context = context(&replay, difficulty(), &platform);
+    context.accepted_flight_keys = [true; 13];
+    let view = game_ui_view(&state, &context).unwrap();
+    assert!(
+        view.hud
+            .unwrap()
+            .groups
+            .into_iter()
+            .flat_map(|group| group.nodes)
+            .all(|node| node.id != "hud-accepted-keys")
+    );
+}
+
+#[test]
+fn renderer_failure_preserves_last_valid_hud_and_exposes_reload_across_scenes() {
     for mode in [
         GameUiPresentationMode::Screen,
         GameUiPresentationMode::PhoneVr,
@@ -2399,17 +2943,143 @@ fn controller_resource_failure_preserves_last_valid_hud_and_exit_in_both_modes()
         let before = session.snapshot();
         let mut platform = platform();
         platform.presentation_mode = mode;
-        platform.flight_controller_failure = Some("input disposal failed".to_owned());
+        platform.touch_available = true;
+        platform.renderer_failure = Some("renderer submission failed".to_owned());
         let state = GameUiState::default();
         let settings = difficulty().with_information(InformationLevel::Minimal);
+        let assert_recovery = |session: &GameSession<'static>, state: &GameUiState| {
+            let context = context(session, settings, &platform);
+            let before = session.snapshot();
+            let view = game_ui_view(state, &context).unwrap();
+            assert!(
+                !view
+                    .panels
+                    .iter()
+                    .flat_map(|panel| &panel.controls)
+                    .any(|control| {
+                        matches!(control.content, GameUiControlContent::FlightTouch { .. })
+                    })
+            );
+            assert!(
+                game_ui_frame(state, &context, &view, view.view_revision)
+                    .unwrap()
+                    .flight_touch
+                    .is_empty()
+            );
+            assert!(matches!(&control(&view, "game-renderer-stopped").content,
+                GameUiControlContent::Status { value, .. } if value == "renderer submission failed"));
+            assert!(control(&view, "game-renderer-reload").enabled);
+            if view.layout.shell == GameUiShell::FlightBar
+                && matches!(
+                    before.phase(),
+                    SessionPhase::FlightRunning | SessionPhase::FlightPaused { .. }
+                )
+            {
+                assert_eq!(
+                    view.layout.maximum_height_px,
+                    platform.viewport.height - 2.0 * platform.viewport.root_font_size
+                );
+                assert!(view.layout.scroll_y);
+            }
+            let update = update_game_ui(
+                state,
+                GameUiAction::ControlInput {
+                    input: GameUiControlInput::Activate {
+                        control_id: "game-renderer-reload".into(),
+                    },
+                },
+                &context,
+            )
+            .unwrap();
+            assert_eq!(
+                update.effects,
+                vec![GameUiEffect::Platform {
+                    command: GameUiPlatformCommand::ReloadApplication {},
+                }]
+            );
+            assert_eq!(session.snapshot(), before);
+        };
+        let mut setup = GameSession::new();
+        assert_recovery(&setup, &state);
+        assert_recovery(
+            &setup,
+            &GameUiState {
+                credits_open: true,
+                ..state.clone()
+            },
+        );
+        setup.open_setup().unwrap();
+        assert_recovery(&setup, &state);
+        prepare_manual_flight(&mut setup, settings.weather(), 100, 42).unwrap();
+        assert_recovery(&setup, &state);
+        setup.mark_briefing_ready().unwrap();
+        setup.start_countdown(1).unwrap();
+        assert_recovery(&setup, &state);
+        assert_recovery(&session, &state);
+        for (width, height, font) in [
+            (1280.0, 720.0, 16.0),
+            (1920.0, 1080.0, 16.0),
+            (1280.0, 720.0, 24.0),
+        ] {
+            let mut recovery_platform = platform.clone();
+            recovery_platform.viewport = GameUiViewport {
+                width,
+                height,
+                root_font_size: font,
+            };
+            let recovery =
+                game_ui_view(&state, &context(&session, settings, &recovery_platform)).unwrap();
+            recovery_platform.renderer_failure = None;
+            let normal =
+                game_ui_view(&state, &context(&session, settings, &recovery_platform)).unwrap();
+            assert_eq!(normal.layout.maximum_height_px, 8.0 * font);
+            assert!(!normal.layout.scroll_y);
+            assert_eq!(recovery.layout.maximum_height_px, height - 2.0 * font);
+            // Padding, action row, section gaps and reload alone require 8.5 font units.
+            assert!(recovery.layout.maximum_height_px > 8.5 * font);
+            assert!(recovery.layout.scroll_y);
+            assert_eq!(recovery.layout.shell, normal.layout.shell);
+            assert_eq!(recovery.layout.width_px, normal.layout.width_px);
+            assert_eq!(recovery.layout.padding_px, normal.layout.padding_px);
+            assert_eq!(recovery.layout.passthrough, normal.layout.passthrough);
+            assert!(control(&recovery, "game-renderer-reload").enabled);
+            assert_eq!(
+                normal
+                    .panels
+                    .iter()
+                    .flat_map(|panel| &panel.controls)
+                    .filter(|control| matches!(
+                        control.content,
+                        GameUiControlContent::FlightTouch { .. }
+                    ))
+                    .count(),
+                if mode == GameUiPresentationMode::Screen {
+                    2
+                } else {
+                    0
+                }
+            );
+            assert_eq!(
+                recovery
+                    .panels
+                    .iter()
+                    .flat_map(|panel| &panel.controls)
+                    .filter(|control| matches!(
+                        control.content,
+                        GameUiControlContent::FlightTouch { .. }
+                    ))
+                    .count(),
+                0
+            );
+        }
         let view = game_ui_view(&state, &context(&session, settings, &platform)).unwrap();
         assert!(control(&view, "game-flight-abort").enabled);
         let GameUiControlContent::Status { value, .. } =
-            &control(&view, "game-controller-stopped").content
+            &control(&view, "game-renderer-stopped").content
         else {
-            panic!("missing controller failure")
+            panic!("missing renderer failure")
         };
-        assert!(value.contains("最後の有効状態") && value.contains("input disposal failed"));
+        assert_eq!(value, "renderer submission failed");
         let hud = view.hud.unwrap();
         let primary = hud_node(&hud, "hud-primary-readouts");
         assert_eq!(
@@ -2419,14 +3089,59 @@ fn controller_resource_failure_preserves_last_valid_hud_and_exit_in_both_modes()
                 session.telemetry().unwrap().unwrap().airspeed_mps
             )
         );
-        assert!(matches!(&hud_node(&hud, "hud-controller-failure").content,
-            GameUiHudNodeContent::Text { value, tone: GameUiHudTone::Warning } if value == "停止理由: input disposal failed"));
+        assert!(matches!(&hud_node(&hud, "hud-renderer-failure").content,
+            GameUiHudNodeContent::Text { value, tone: GameUiHudTone::Warning } if value == "停止理由: renderer submission failed"));
         assert!(
             hud_node(&hud, "hud-last-valid-state").label == "最後の有効状態"
                 && hud_node(&hud, "hud-last-valid-state").content.value() == "0.00 s"
         );
         assert_eq!(session.snapshot(), before);
         session.pause(PauseReason::Manual).unwrap();
+        for pause_overlay in [
+            GameUiPauseOverlay::Menu,
+            GameUiPauseOverlay::Settings,
+            GameUiPauseOverlay::Help,
+        ] {
+            let paused_state = GameUiState {
+                pause_overlay,
+                ..state.clone()
+            };
+            assert_recovery(&session, &paused_state);
+            for (width, height, font) in [
+                (1280.0, 720.0, 16.0),
+                (1920.0, 1080.0, 16.0),
+                (1920.0, 1080.0, 24.0),
+            ] {
+                let mut recovery_platform = platform.clone();
+                recovery_platform.viewport = GameUiViewport {
+                    width,
+                    height,
+                    root_font_size: font,
+                };
+                let recovery = game_ui_view(
+                    &paused_state,
+                    &context(&session, difficulty(), &recovery_platform),
+                )
+                .unwrap();
+                assert_eq!(recovery.layout.shell, GameUiShell::PauseSettings);
+                if let Some(hud) = recovery.hud {
+                    let layout = hud.layout;
+                    assert!(layout.offset_px[0] >= 0.0 && layout.offset_px[1] >= 0.0);
+                    assert!(layout.offset_px[1] + layout.height_px <= height);
+                    assert!(
+                        layout.offset_px[0] + layout.width_px
+                            <= width - recovery.layout.width_px - 0.75 * font
+                    );
+                }
+            }
+        }
+        assert_recovery(
+            &session,
+            &GameUiState {
+                credits_open: true,
+                ..state.clone()
+            },
+        );
         let view = game_ui_view(&state, &context(&session, settings, &platform)).unwrap();
         assert_eq!(view.hud.is_some(), mode == GameUiPresentationMode::Screen);
         assert!(!control(&view, "game-flight-resume").enabled);
@@ -2441,7 +3156,34 @@ fn controller_resource_failure_preserves_last_valid_hud_and_exit_in_both_modes()
             ),
             Err(GameUiError::ActionUnavailable)
         );
-        platform.flight_controller_failure = None;
+        let mut result = finalized();
+        assert_recovery(&result, &state);
+        result.enter_replay().unwrap();
+        assert_recovery(&result, &state);
+        result.leave_replay().unwrap();
+        let record = result.take_finalized_result_record().unwrap();
+        let mut attract = GameSession::new();
+        attract.install_attract_record(record).unwrap();
+        attract.enter_attract().unwrap();
+        assert_recovery(&attract, &state);
+        platform.operation_pending = true;
+        let title = GameSession::new();
+        let pending = context(&title, settings, &platform);
+        let view = game_ui_view(&state, &pending).unwrap();
+        assert!(control(&view, "game-renderer-reload").enabled);
+        assert!(!control(&view, "game-title-start").enabled);
+        update_game_ui(
+            &state,
+            GameUiAction::ControlInput {
+                input: GameUiControlInput::Activate {
+                    control_id: "game-renderer-reload".into(),
+                },
+            },
+            &pending,
+        )
+        .unwrap();
+        platform.operation_pending = false;
+        platform.renderer_failure = None;
         assert!(
             control(
                 &game_ui_view(&state, &context(&session, settings, &platform)).unwrap(),
@@ -2520,7 +3262,7 @@ fn vr_resource_failure_panels_preserve_all_controls_without_overlap() {
                     Some("情報板の文字を読み取れる大きさで配置できない。".to_owned());
             }
             if controller_failed {
-                platform.flight_controller_failure = Some("input disposal failed".to_owned());
+                platform.renderer_failure = Some("input disposal failed".to_owned());
             }
             let view = game_ui_view(&state, &context(&session, difficulty(), &platform)).unwrap();
             assert_eq!(normal.panels[0].size, [0.62, 0.25]);
@@ -2553,7 +3295,7 @@ fn vr_resource_failure_panels_preserve_all_controls_without_overlap() {
                 ids.push("game-head-hud-unavailable");
             }
             if controller_failed {
-                ids.extend(["game-controller-stopped", "game-flight-abort"]);
+                ids.extend(["game-renderer-stopped", "game-flight-abort"]);
             }
             for id in ids {
                 let control = control(&view, id);
@@ -2567,8 +3309,8 @@ fn vr_resource_failure_panels_preserve_all_controls_without_overlap() {
                     platform.head_hud_failure.as_deref(),
                 ),
                 (
-                    "game-controller-stopped",
-                    platform.flight_controller_failure.as_deref(),
+                    "game-renderer-stopped",
+                    platform.renderer_failure.as_deref(),
                 ),
             ] {
                 if let Some(cause) = cause {
@@ -3038,10 +3780,13 @@ fn hud_scene_policy_is_shared_by_full_and_frame_projection_in_screen_and_vr() {
 }
 
 #[test]
-fn replay_hud_uses_the_recorded_pilot_target_for_the_displayed_interval() {
+fn legacy_replay_hud_uses_the_recorded_pilot_target_and_marks_unrecorded_loads() {
     let source = finalized();
     let record = source.flight_record().unwrap();
     let mut samples = record.samples().to_vec();
+    for sample in &mut samples {
+        sample.tail_wrenches = None;
+    }
     let last = samples.last_mut().unwrap();
     last.controls.input_from_previous = Some(
         birdman_game_core::FlightRecordTailInput::try_from_recorded(
@@ -3074,11 +3819,21 @@ fn replay_hud_uses_the_recorded_pilot_target_for_the_displayed_interval() {
     };
     let platform = platform();
     let view = game_ui_view(&state, &context(&session, difficulty(), &platform)).unwrap();
+    let hud = view.hud.unwrap();
     assert!(
-        hud_node(&view.hud.unwrap(), "hud-pilot-position")
+        hud_node(&hud, "hud-pilot-position")
             .content
             .value()
             .contains("(+0.20)")
+    );
+    assert_eq!(
+        hud_node(&hud, "hud-tail-incidence-rate").content.value(),
+        "— rad/s"
+    );
+    assert_eq!(hud_node(&hud, "hud-tail-force").content.value(), "— / — N");
+    assert_eq!(
+        hud_node(&hud, "hud-pilot-position").label,
+        "パイロット位置（適用目標）"
     );
 }
 
@@ -3093,6 +3848,26 @@ fn hud_uses_the_authoritative_telemetry_and_existing_information_cue_policy() {
     .unwrap();
     let telemetry = session.telemetry().unwrap().unwrap();
     let hud = full.hud.unwrap();
+    assert_eq!(
+        hud_node(&hud, "hud-tail-incidence-rate").content.value(),
+        "— rad/s"
+    );
+    let expected = session
+        .flight_record()
+        .unwrap()
+        .samples()
+        .last()
+        .unwrap()
+        .tail_wrenches
+        .unwrap();
+    let magnitudes = expected.map(|load| {
+        load.and_then(|load| load.force_body_newtons().norm().ok())
+            .map_or_else(|| "—".to_owned(), |value| format!("{value:.1}"))
+    });
+    assert_eq!(
+        hud_node(&hud, "hud-tail-force").content.value(),
+        format!("{} / {} N", magnitudes[0], magnitudes[1])
+    );
     let GameUiHudNodeContent::Attitude { geometry, value } =
         &hud_node(&hud, "hud-attitude").content
     else {
@@ -3248,6 +4023,168 @@ fn hud_uses_the_authoritative_telemetry_and_existing_information_cue_policy() {
     let primary = hud_node(&realistic, "hud-primary-readouts").content.value();
     assert!(primary.contains(&airspeed));
     assert!(!primary.contains("実機構成"));
+
+    let mut moving = launched();
+    let retained = game_ui_view(
+        &GameUiState::default(),
+        &context(&moving, difficulty(), &platform),
+    )
+    .unwrap();
+    moving
+        .advance_tail_flight_tick(TailFlightTickInput::new(
+            TailPilotIntent::try_new(0.5, -0.25).unwrap(),
+            TailRateTarget::try_new(0.0, 0.0).unwrap(),
+            TailPilotPositionCommand::Set(
+                birdman_game_core::TailPilotPositionIntent::try_new(0.5).unwrap(),
+            ),
+        ))
+        .unwrap();
+    let physical = moving.snapshot().tail_flight_state().unwrap();
+    assert!(physical.flight_state().pilot_velocity_mps() > 0.0);
+    let observed = game_ui_frame(
+        &GameUiState::default(),
+        &context(&moving, difficulty(), &platform),
+        &retained,
+        retained.view_revision,
+    )
+    .unwrap()
+    .hud
+    .unwrap();
+    let rates = hud_node(&observed, "hud-tail-incidence-rate")
+        .content
+        .value();
+    assert_eq!(rates, "-1.00/+1.00 rad/s");
+    assert_eq!(
+        hud_node(&observed, "hud-pilot-velocity").content.value(),
+        format!("{:+.2} m/s", physical.flight_state().pilot_velocity_mps())
+    );
+    moving.pause(PauseReason::Manual).unwrap();
+    let paused = game_ui_view(
+        &GameUiState::default(),
+        &context(&moving, difficulty(), &platform),
+    )
+    .unwrap()
+    .hud
+    .unwrap();
+    assert_eq!(
+        hud_node(&paused, "hud-tail-incidence-rate").content.value(),
+        rates
+    );
+    let assert_pickup_indicator = |session: &GameSession<'static>, expected| {
+        let mut touch_platform = platform.clone();
+        touch_platform.touch_available = true;
+        let context = context(session, difficulty(), &touch_platform);
+        let view = game_ui_view(&GameUiState::default(), &context).unwrap();
+        let GameUiControlContent::FlightTouch {
+            control: kind,
+            bounds,
+            position,
+            radius,
+            ..
+        } = control(&view, "game-flight-pilot-slider").content
+        else {
+            panic!("missing pilot slider")
+        };
+        let observed = super::touch::flight_touch_axes(
+            kind,
+            [bounds.x + position[0], bounds.y + position[1]],
+            [0.0; 2],
+            bounds,
+            radius,
+        )
+        .unwrap()[0];
+        let normalized = session
+            .tail_pilot_position_mapping()
+            .unwrap()
+            .normalized_target(expected)
+            .unwrap()
+            .value();
+        assert!((observed - normalized).abs() < 1e-12);
+        let frame =
+            game_ui_frame(&GameUiState::default(), &context, &view, view.view_revision).unwrap();
+        assert_eq!(
+            frame
+                .flight_touch
+                .iter()
+                .find(|item| item.id == "game-flight-pilot-slider")
+                .unwrap()
+                .position,
+            position
+        );
+    };
+    moving.resume().unwrap();
+    moving
+        .advance_tail_flight_tick(TailFlightTickInput::new(
+            TailPilotIntent::try_new(0.0, 0.0).unwrap(),
+            TailRateTarget::try_new(0.0, 0.0).unwrap(),
+            TailPilotPositionCommand::Set(
+                birdman_game_core::TailPilotPositionIntent::try_new(-0.5).unwrap(),
+            ),
+        ))
+        .unwrap();
+    let reversing = moving.snapshot().tail_flight_state().unwrap();
+    assert!(!reversing.pilot_motion_limited());
+    assert_ne!(
+        reversing.pilot_position_target(),
+        reversing.pilot_position_demand()
+    );
+    assert_eq!(
+        birdman_game_app::flight_input::pilot_position_pickup_target(reversing),
+        reversing.pilot_position_demand()
+    );
+    assert_pickup_indicator(&moving, reversing.pilot_position_demand());
+    let mut stopped = GameSession::new();
+    stopped.open_setup().unwrap();
+    prepare_manual_flight(&mut stopped, WeatherClass::Typical, 300, 42).unwrap();
+    stopped.mark_briefing_ready().unwrap();
+    stopped.start_countdown(1).unwrap();
+    stopped
+        .observe_countdown(stopped.countdown_token().unwrap(), 1.0, true)
+        .unwrap();
+    let command = TailFlightTickInput::new(
+        TailPilotIntent::try_new(0.0, 0.0).unwrap(),
+        TailRateTarget::try_new(0.0, 0.0).unwrap(),
+        TailPilotPositionCommand::Set(
+            birdman_game_core::TailPilotPositionIntent::try_new(-1.0).unwrap(),
+        ),
+    );
+    let mut braking_layout_checked = false;
+    for _ in 0..250 {
+        stopped.advance_tail_flight_tick(command).unwrap();
+        let body = stopped.snapshot().tail_flight_state().unwrap();
+        if !braking_layout_checked
+            && body.pilot_motion_limited()
+            && body.flight_state().pilot_velocity_mps() != 0.0
+        {
+            assert_touch_hud_lower_band(&stopped, Some("保護制動"));
+            braking_layout_checked = true;
+        }
+        if body.pilot_motion_limited() && body.flight_state().pilot_velocity_mps() == 0.0 {
+            break;
+        }
+    }
+    let body = stopped.snapshot().tail_flight_state().unwrap();
+    assert!(body.pilot_motion_limited());
+    assert_eq!(body.flight_state().pilot_velocity_mps(), 0.0);
+    assert_touch_hud_lower_band(&stopped, Some("保護停止"));
+    assert_eq!(
+        birdman_game_app::flight_input::pilot_position_pickup_target(body),
+        body.pilot_stopping_target().unwrap()
+    );
+    assert_pickup_indicator(&stopped, body.pilot_stopping_target().unwrap());
+    let protected = game_ui_view(
+        &GameUiState::default(),
+        &context(&stopped, difficulty(), &platform),
+    )
+    .unwrap()
+    .hud
+    .unwrap();
+    assert!(
+        hud_node(&protected, "hud-pilot-position")
+            .content
+            .value()
+            .contains("保護停止")
+    );
 }
 
 #[test]
@@ -3422,7 +4359,7 @@ fn screen_render_auto_projects_selection_applied_status_and_admission() {
             manual_water_quality: WaterQuality::High,
         },
         applied: ScreenRenderScale::ThreeQuarters,
-        shadow: ScreenShadowMap::Full,
+        shadow: ScreenShadowMap::Off,
         water_quality: WaterQuality::Low,
         status: ScreenRenderAutoStatus::Unsupported {
             cause: "missing GPU timer".to_owned(),
@@ -3451,7 +4388,7 @@ fn screen_render_auto_projects_selection_applied_status_and_admission() {
         );
         let status = control(&view, "presentation-render-scale-status");
         assert!(
-            matches!(&status.content, GameUiControlContent::Status { value, .. } if value.contains("Auto") && value.contains("75%") && value.contains("missing GPU timer"))
+            matches!(&status.content, GameUiControlContent::Status { value, .. } if value.contains("Auto") && value.contains("75%") && value.contains("影 なし") && value.contains("missing GPU timer"))
         );
         let water = control(&view, "presentation-water-quality-status");
         assert!(
@@ -3472,6 +4409,14 @@ fn screen_render_auto_projects_selection_applied_status_and_admission() {
             }]
         );
     }
+    platform.presentation_mode = GameUiPresentationMode::Screen;
+    platform.render_quality_confirmed = false;
+    let waiting = game_ui_view(&state, &context(&session, difficulty(), &platform)).unwrap();
+    assert!(!control(&waiting, "presentation-render-scale-auto").enabled);
+    assert!(
+        matches!(&control(&waiting, "presentation-render-scale-status").content,
+        GameUiControlContent::Status { value, .. } if !value.contains("使用中") && value.contains("missing GPU timer"))
+    );
 }
 
 #[test]
@@ -3507,8 +4452,8 @@ fn water_quality_operation_retains_applied_selection_and_original_failure() {
         ),
     ] {
         platform.water_quality_operation = operation;
-        let context = context(&session, difficulty(), &platform);
-        let view = game_ui_view(&state, &context).unwrap();
+        let inputs = context(&session, difficulty(), &platform);
+        let view = game_ui_view(&state, &inputs).unwrap();
         let GameUiControlContent::Status { value, .. } =
             &control(&view, "presentation-water-quality-status").content
         else {
@@ -3535,8 +4480,83 @@ fn water_quality_operation_retains_applied_selection_and_original_failure() {
                 quality: WaterQuality::Low,
             },
         };
-        assert_eq!(update_game_ui(&state, action, &context).is_ok(), enabled);
+        assert_eq!(update_game_ui(&state, action, &inputs).is_ok(), enabled);
         assert_eq!(session.snapshot(), before);
+        platform.render_quality_confirmed = false;
+        let waiting = game_ui_view(&state, &context(&session, difficulty(), &platform)).unwrap();
+        let GameUiControlContent::Status { value, .. } =
+            &control(&waiting, "presentation-water-quality-status").content
+        else {
+            unreachable!()
+        };
+        assert!(!value.contains("使用中"));
+        if let GameUiWaterQualityOperation::Failed { cause, .. }
+        | GameUiWaterQualityOperation::CleanupFailed { cause } =
+            &platform.water_quality_operation
+        {
+            assert!(value.contains(cause));
+        }
+        assert!(!control(&waiting, "presentation-water-quality-high").enabled);
+        assert!(!control(&waiting, "presentation-render-scale-auto").enabled);
+        assert!(waiting.back_action().is_some());
+        platform.render_quality_confirmed = true;
+    }
+    use crate::screen_render_auto::{ScreenRenderAutoStatus, ScreenShadowMap};
+    use crate::screen_render_scale::ScreenRenderScale;
+    for (status, busy) in [
+        (
+            ScreenRenderAutoStatus::Applying {
+                requested: ScreenRenderScale::Half,
+                shadow: ScreenShadowMap::Off,
+                water_quality: WaterQuality::High,
+            },
+            true,
+        ),
+        (
+            ScreenRenderAutoStatus::Failed {
+                cause: "shadow-prepare-cause".to_owned(),
+            },
+            false,
+        ),
+    ] {
+        platform.water_quality_operation = GameUiWaterQualityOperation::Idle {};
+        platform.screen_render_scale.status = status;
+        let inputs = context(&session, difficulty(), &platform);
+        let view = game_ui_view(&state, &inputs).unwrap();
+        let GameUiControlContent::Status { value: water, .. } =
+            &control(&view, "presentation-water-quality-status").content
+        else {
+            unreachable!()
+        };
+        assert!(!water.contains("失敗") && !water.contains("適用中"));
+        let GameUiControlContent::Status {
+            value: graphics, ..
+        } = &control(&view, "presentation-render-scale-status").content
+        else {
+            unreachable!()
+        };
+        if !busy {
+            assert!(graphics.contains("shadow-prepare-cause"));
+        }
+        for suffix in ["low", "medium", "high"] {
+            assert_eq!(
+                control(&view, &format!("presentation-water-quality-{suffix}")).enabled,
+                !busy
+            );
+        }
+        assert_eq!(
+            update_game_ui(
+                &state,
+                GameUiAction::Platform {
+                    command: GameUiPlatformCommand::SetWaterQuality {
+                        quality: WaterQuality::Low
+                    }
+                },
+                &inputs
+            )
+            .is_ok(),
+            !busy
+        );
     }
     assert!(
         serde_json::from_str::<GameUiWaterQualityOperation>(r#"{"kind":"idle","requested":"low"}"#)
@@ -3742,5 +4762,72 @@ fn title_preserves_platform_fault_notification_after_screen_recovery() {
         );
         assert!(!view.description.contains(&platform.notification));
         assert_eq!(session.snapshot(), before);
+    }
+}
+
+#[test]
+fn flight_camera_choices_share_selection_and_spatial_modes_keep_pilot() {
+    let mut session = GameSession::new();
+    session.open_setup().unwrap();
+    let mut platform = platform();
+    let state = GameUiState::default();
+    let update = update_game_ui(
+        &state,
+        GameUiAction::SetFlightCamera {
+            camera: GameUiFlightCamera::Chase,
+        },
+        &context(&session, difficulty(), &platform),
+    )
+    .unwrap();
+    assert_eq!(update.state.flight_camera, GameUiFlightCamera::Chase);
+    assert!(update.effects.is_empty());
+    let retained = update_game_ui(
+        &update.state,
+        GameUiAction::Session {
+            command: SessionCommand::Prepare {},
+        },
+        &context(&session, difficulty(), &platform),
+    )
+    .unwrap();
+    assert_eq!(retained.state.flight_camera, GameUiFlightCamera::Chase);
+    let finished = finalized();
+    let retry = update_game_ui(
+        &retained.state,
+        GameUiAction::Session {
+            command: SessionCommand::Retry {},
+        },
+        &context(&finished, difficulty(), &platform),
+    )
+    .unwrap();
+    assert_eq!(retry.state.flight_camera, GameUiFlightCamera::Chase);
+    let view = game_ui_view(&retained.state, &context(&session, difficulty(), &platform)).unwrap();
+    assert!(matches!(
+        &control(&view, "game-flight-camera-chase").content,
+        GameUiControlContent::Button {
+            presentation: GameUiButtonPresentation::Choice { selected: true, .. },
+            ..
+        }
+    ));
+    for mode in [GameUiPresentationMode::Hmd, GameUiPresentationMode::PhoneVr] {
+        platform.presentation_mode = mode;
+        let view =
+            game_ui_view(&retained.state, &context(&session, difficulty(), &platform)).unwrap();
+        assert!(
+            !view
+                .panels
+                .iter()
+                .flat_map(|panel| &panel.controls)
+                .any(|control| control.id.starts_with("game-flight-camera-"))
+        );
+        assert_eq!(
+            update_game_ui(
+                &retained.state,
+                GameUiAction::SetFlightCamera {
+                    camera: GameUiFlightCamera::Pilot
+                },
+                &context(&session, difficulty(), &platform)
+            ),
+            Err(GameUiError::ActionUnavailable)
+        );
     }
 }

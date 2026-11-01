@@ -1,7 +1,7 @@
 use crate::aerodynamics::{HybridAerodynamicLoad, TailIncidence};
 use crate::aerodynamics_contract::HybridError;
 use crate::contact::{ContactError, TailContactShapeProvider, WaterContactGeometry};
-use crate::dynamics::{AircraftModel, FlightState, Gravity};
+use crate::dynamics::{AircraftModel, FlightState, Gravity, Wrench};
 use crate::flight_control::ControlMode;
 use crate::math::{BodyPoint, NedPoint, NedVector};
 use crate::scenario::{
@@ -16,6 +16,8 @@ use crate::tail_simulation::{
     advance_tail_flight_tick_with_contact_report, advance_tail_flight_tick_with_shape_provider,
 };
 use crate::wind_field::WindError;
+#[cfg(verus_only)]
+use vstd::prelude::*;
 
 /// Original failures from the shared physical parameters or dedicated tail boundaries.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -30,6 +32,30 @@ pub enum TailFlightScenarioError {
     Telemetry(FlightTelemetryError),
     /// The prepared structural law or initial contact shape failed validation.
     Contact(ContactError),
+}
+
+impl core::fmt::Display for TailFlightScenarioError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::PhysicalParameters(_) => f.write_str("flight physical parameters"),
+            Self::InitialState(_) => f.write_str("initial tail flight state"),
+            Self::Aerodynamics(_) => f.write_str("initial aerodynamic envelope"),
+            Self::Telemetry(_) => f.write_str("initial flight telemetry"),
+            Self::Contact(_) => f.write_str("initial contact geometry"),
+        }
+    }
+}
+
+impl core::error::Error for TailFlightScenarioError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        match self {
+            Self::PhysicalParameters(cause) => Some(cause),
+            Self::InitialState(cause) => Some(cause),
+            Self::Aerodynamics(cause) => Some(cause),
+            Self::Telemetry(cause) => Some(cause),
+            Self::Contact(cause) => Some(cause),
+        }
+    }
 }
 
 /// Sealed physical launch, initial tail incidence, trim mapping and contact conditions.
@@ -91,6 +117,7 @@ pub struct TailFlightScenario<'a> {
     parameters: TailFlightScenarioParameters<'a>,
     loads: HybridAerodynamicLoad<'a>,
     profile: TailControlProfile,
+    initial_tail_wrenches: [Option<Wrench>; 2],
 }
 
 impl<'a> TailFlightScenario<'a> {
@@ -100,7 +127,7 @@ impl<'a> TailFlightScenario<'a> {
         loads: HybridAerodynamicLoad<'a>,
         profile: TailControlProfile,
     ) -> Result<Self, TailFlightScenarioError> {
-        loads
+        let initial_loads = loads
             .evaluate_hybrid(
                 &parameters.initial_state.flight_state(),
                 parameters.initial_state.incidence(),
@@ -110,6 +137,7 @@ impl<'a> TailFlightScenario<'a> {
             parameters,
             loads,
             profile,
+            initial_tail_wrenches: initial_loads.tail_wrenches(),
         };
         scenario
             .telemetry(scenario.initial_state().flight_state())
@@ -145,6 +173,13 @@ impl<'a> TailFlightScenario<'a> {
     /// Returns the sealed tick-zero body/pilot state, physical incidences and trim target.
     pub const fn initial_state(&self) -> TailFlightTickState {
         self.parameters.initial_state
+    }
+
+    /// Returns the tail loads evaluated during initial scenario validation.
+    #[cfg_attr(verus_only, vstd::prelude::verus_verify(dual_spec))]
+    #[cfg_attr(verus_only, verus_spec(returns self.initial_tail_wrenches()))]
+    pub const fn initial_tail_wrenches(&self) -> [Option<Wrench>; 2] {
+        self.initial_tail_wrenches
     }
 
     /// Returns the validated aircraft without software feedback parameters.

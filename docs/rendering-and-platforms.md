@@ -22,9 +22,9 @@
 
 ## Screenの解像度とAuto
 
-- Flight SetupとPause SettingsはAuto・100%・75%・50%を提供する。
-- 既定はAuto、初期の適用済み解像度は100%である。
-- 各軸50%は3D画素数のおよそ25%に対応し、UIの論理解像度、画角、入力座標、物理tick、記録を維持する。
+- Flight SetupとPause SettingsはAuto・100%・75%・50%・25%を提供する。
+- 既定はAuto。共有Rustが初期要求の基準として100%・影2048・水面Highを所有し、使用中の品質は実commit後に表示する。
+- 各軸50%は3D画素数のおよそ25%、25%はおよそ6.25%に対応し、UIの論理解像度、画角、入力座標、物理tick、記録を維持する。
 
 | Scene | 有効な品質方針 |
 |---|---|
@@ -33,15 +33,16 @@
 
 - 共有UIが全Sceneをフライト設定用・背景用のscopeへ分類し、描画policyはscopeと品質組を受け取る。同じscope内のScene切替では計測窓を継続する。
 
-- 共有`ScreenRenderAutoController`が、解像度100%→75%→50%、shadow map 2048→1024→512、水面High→Medium→Lowの順で縮退する。
+- 共有`ScreenRenderAutoController`が、解像度100%→75%→50%→25%、shadow map 2048→1024→512→Off、水面High→Medium→Lowの順で縮退する。
 - 回復は逆順に三値の組で試行する。上位で予算を超えた場合は試行元の解像度・shadow・水面へ戻し、同じ回復辺の再探索を6秒、12秒、最大24秒へ間引く。
 - 下位のp95が試行時の9.5/12.5未満へ低下した場合は通常の3秒cooldown後に早期再探索する。待機期限後も成熟・鮮度・受領率を満たす窓で再探索し、画質の回復機会を保つ。
+- 影は2048・1024・512・なしから選択する。影なしは方向光の影passを停止し、有効な1×1のplaceholder資源を使用する。
 - 保持した手動の解像度・shadow・水面、Auto/Manual選択、要求中の値、適用済み値を区別する。
 
 - Auto中の水面選択は上限を変更する。
 - 適用済みが上限より低い場合は保持し、上限を超える場合に下げる。
 - 明示ManualとAuto解除では保持した三値へ戻す。
-- 要求とACKはepochと三値を照合し、全資源を準備してからcommitする。
+- 要求とACKはepochと三値を照合し、全資源を準備してからcommitする。品質とframebuffer寸法は同じ認可済みACKから保持し、resizeの生観測を旧commitの寸法へ上書きしない。
 - 準備失敗は既存資源と原因を保持する。
 - commit後の旧資源cleanup失敗では新しい適用済み値と原因を保持し、準備失敗と区別する。
 
@@ -77,7 +78,8 @@
 - DPRの整数化順による両adapterの差は各軸1 pixel以下とする。
 - 0寸法では交換を保留し、正の寸法へ戻った後に適用する。
 
-- Nativeの縮小targetでもUIとcameraの論理投影を維持する。
+- Nativeは最終targetの実寸法とsRGB形式をGPU側で確認し、等寸法のsceneとUIを同じ3D cameraへ描く。縮小時と形式未確認時は中間Imageを合成し、UIとcameraの論理投影を維持する。
+- 資源準備は隔離Imageでshaderの実使用まで確認する。commit後は同candidateの準備証拠を引き継ぎ、実target・寸法・形式・影のACKで使用先を認可する。直接描画では準備Imageを退役し、Windowと最終出力Imageの寿命は出力側が保持する。
 - 反射targetは有効3D寸法に追随する。shadowのみの変更では既存の解像度targetを保持する。
 - shadow調整はmap寸法だけを変更し、cascade、bias、太陽条件を保持する。
 
@@ -91,7 +93,7 @@
 - Web移植基準の式と成分順を使用し、`lake_sky`の全天画像も共用する。
 - 波は描画モデルであり、位相の進行には共有セッションのsimulation timeを使用する。
 
-- 品質選択はformatのWaterQualityを共用し、lake_waterのprofileが波数・mesh予算を定める。基準spectrumは18成分で、Low・Medium・Highは6・10・18成分を使用する。
+- 品質選択はformatのWaterQualityを共用し、lake_waterのprofileが波数・mesh・detail積分の予算を定める。基準spectrumは18成分で、Low・Medium・Highは6・10・18成分を使用する。
 - fetch、JONSWAP重み、方向分散、正規化、steepness上限0.52を保持する。
 - quality投影はFloat32 upload、帯域energy補償、実mesh spacing、解析的微分上界、choppiness reserveを使用する。
 - geometryの位相と方向jitterは固定hash、`patternSeed`はdetail画像だけへ作用する。
@@ -105,8 +107,9 @@
 
 - 近景meshは6 km四方の非一様gridで、Low・Medium・Highを96・144・224分割とする。Webは元の頂点属性と三角形を保った4×4のchunkに分け、視錐台カリングを適用する。
 - chunkの境界球はshaderのXZ座標に合わせ、全波成分・detail画像による水平/鉛直変位とFloat32丸めの余裕を含める。Highの各chunkは最大3,249頂点で、境界共有により全chunkの頂点総数は51,984となる。
-- camera水平位置を1 m格子へsnapして追従し、波はworld-spaceで評価する。
-- 遠景ringは18万m四方を覆い、近景領域を除外する。
+- Screenの最終camera、stereoの左右眼の中点の水平位置を1 m格子へsnapして追従する。片眼・両眼の観測が揃わない場合は有効なhead位置を使い、head欠測中は直前の確定位置を保持する。
+- 波とdetailの位相はworld-spaceと記録時刻で評価する。機体と影の配置は機体datumを基準とし、機体反射のcameraは最終viewerを水面で鏡映した姿勢を使う。
+- 遠景ringは16万m四方（各軸±80,000 m）を覆い、近景領域を除外する。
 - meshの範囲と波浪生成のfetchを区別する。
 
 - 有限wave packet、二段noiseのphase/振幅変調、Gerstner水平変位、平均高さ0の非正弦波形を使用する。
@@ -135,7 +138,8 @@ visibilityと実空間勾配の両channelがすべて厳密0の成分は、packe
 - 64 mと288 mの周期反復は残る。
 - 帯域別の移流は深水重力波の$c\propto\sqrt{\lambda}$に近づけた視覚近似であり、帯域内の分散・水深変化を表さない。
 
-- near/farと回転・縮尺を変えたfine/rippleの4層micro-normalは、解像する帯域を4点で積分する。texel footprintの短軸を保守的に評価し、2〜4texelの区間で採取位置を中心へ連続的に縮め、十分に縮小された帯域はmipの平均傾斜と二次momentを1回採取して共用する。UV・勾配・採取幅を先に固定し、各cornerの4帯域を順に合成してから二次momentを積算する。
+- near/farと回転・縮尺を変えたfine/rippleの4層micro-normalは、Lowで各帯域の中心1点、Medium・Highで2×2の4点を評価する。全品質で画素全体のUV勾配とmipの平均傾斜・二次moment、anisotropyを使用する。Lowの採取は最大16回から4回へ減り、角点間の合成傾斜の変動と帯域間共分散を中心評価で近似する。
+- Medium・Highはtexel footprintの短軸を保守的に評価し、2〜4texelの区間で採取位置を中心へ連続的に縮める。十分に縮小された帯域はmip値を1回採取して共用する。UV・勾配・採取幅を先に固定し、各cornerの4帯域を順に合成してから二次momentを積算する。
 - Fragmentの波loopは実成分数を上限とし、各成分の画素微分を全laneで評価する。法線寄与が0の画素では、その後のcrestとgradientの演算を省略する。
 - 回転は移動方向、texture勾配、法線勾配へ一貫して適用する。
 - mipmapに平均勾配と二次モーメントを保持し、頂点法線が表現した勾配を差し引いて二重計上を避ける。
@@ -168,10 +172,9 @@ visibilityと実空間勾配の両channelがすべて厳密0の成分は、packe
 - 丸め後の実target aspectでprojective matrixを構成する。
 
 - Native反射layerは機体と照明に限定する。
-- Webの既存機体・雲反射passでは、shadow receiverがない範囲の再更新だけを抑え、例外時もrenderer共有flagを復元する。
-- 直後の主描画のshadow更新を維持する。
+- Webは現在の共有姿勢・光源と全casterから影を先行生成し、反射と主描画で同じshadow mapを参照する。既存反射targetへの先行呼出しでは非casterを外し、casterの色段をゼロ頂点に抑え、例外時も描画状態を復元する。scene走査・program設定・ゼロ頂点commandの費用を伴う。
 
-Nativeは既存DirectionalLightの2048 texel・30〜600 mの3段cascadeから、水面の変位後world positionとgeometric normalへBevyのshadow samplingを適用する。水面はshadow receiverとして登録する。
+NativeはDirectionalLightの選択した解像度・30〜600 mの3段cascadeから、水面の変位後world positionとgeometric normalへBevyのshadow samplingを適用する。影を有効にした場合、水面はshadow receiverとして描画する。
 
 ### Adapterと資源交換
 
@@ -241,9 +244,13 @@ Nativeは既存DirectionalLightの2048 texel・30〜600 mの3段cascadeから、
 - 湖岸・地形の出典と解像度は[データ形式と出典](data-and-formats.md)に従う。
 
 - DSMの水域標本を地表へ使わず、陸地の欠損だけを補う。
-- 島の地表は再sampleしたgrid、樹冠は元DSMを使用する。
-- shoreline transitionは実描画三角形へ接続し、水域側へ240 m・水面下8 mの重なり、陸側5 m・地形下15 cmの潜り込みで隙間を防ぐ。
-- 広い岸線欠損の探索上限は粗格子8セル・最大2.4 kmとする。
+- 島の17輪郭は、輪郭内に実DEM点を持つ7地物、標高未収録の6地物、根拠付きの沖の白石4岩へ分類する。
+- DEMを持つ閉島は記録標高と既存半step補間を保持し、地形の実三角形境界とOSM外周を同じ頂点で三角形分割する。外周を横切る沿岸三角形と境界の接点は沿岸帯へ統合し、孤立した有効DEM点も標高制約として保持する。
+- 外側地形と交差する輪郭では元三角形の外側部分と標高・色の平面を保持し、交差境界の同じ位置・標高を島側外周にも使用する。
+- 閉島の陸側海岸は元DEM頂点、実接続面、同島DEM三角形内の補間の順で標高を決める。標高未収録のOSM水際には水面datum 0 mと最小可視厚0.35 mの境界条件を使い、実測標高とは区別する。
+- 標高未収録の地物は元OSM輪郭内の平面表示proxyとする。高さ0.35 mは地形の最小可視厚であり、標高・起伏の実測値とは区別する。
+- 樹冠は対象島の輪郭内にある元DSM標本を使用する。
+- 開いた本土岸のtransitionは実描画三角形へ接続し、水域側へ240 m・水面下8 m、陸側5 m・地形下15 cmの接続帯を持つ。岸線欠損の探索上限は粗格子8セル・最大2.4 kmとする。
 
 - 機体は公開synthetic構造から、藍色被覆、透明film、水色foam、薄茶rib/縁材、白いcockpit frame、透明nose、白い後部fairing、T字の黒い桁・胴体管を描く。
 - 外観と物理接触は同じ構造形状と採用済み曲げ係数・尾翼角からそれぞれ導出する。材質、UV、表示samplingは描画層が所有する。
@@ -256,13 +263,13 @@ Nativeは既存DirectionalLightの2048 texel・30〜600 mの3段cascadeから、
 - 法線は完全な半翼topologyにarea-weighted計算を適用し、材質分割後も共有する。
 - 表示たわみの定数と実機諸元の区分はデータ文書へ集約する。
 
-- 259部材をattachmentとmaterialの11 batchへまとめ、Web/Nativeは同じ管周方向24分割・輪郭・三角形を描画する。構造材の接触点と表示頂点は同じproducerから得る。
+- 260部材をattachmentとmaterialの12 batchへまとめ、Web/Nativeは同じ管周方向24分割・輪郭・三角形を描画する。構造材の接触点と表示頂点は同じproducerから得る。
 - 管の変形は中立frameからの最小回転で周方向位相を保ち、foamは中央stationの曲げ変位を共有する。
 - 主翼被覆は非光沢Lambertを基準とし、Nativeのreflectanceを0として不適切なspecularの持上げを抑える。
 - linear-light mipを生成してsRGB textureへ格納する。
 - PBR/Lambertの明度差や縮小時の細部は実描画で評価する。
 
-- 尾翼は登録physical geometryのquarter-chordと全surfaceを共有する。水平・垂直の外皮・内部部材は、登録pivotから後方1 mの表示pivotを用いて共有Rustが完成meshへ配置し、同pivot周りのphysical incidenceを完成poseとして出力する。空力と接触は登録位置を使うため、表示とは1 m異なる。
+- 尾翼は登録physical geometryのquarter-chordと全surfaceを共有する。水平・垂直の外皮・内部部材は、空力・接触と同じ登録pivotを用いて共有Rustが完成meshへ配置し、同pivot周りのphysical incidenceを完成poseとして出力する。
 - FRD変換後は水平+X、垂直−Yの回転を用いる。
 - geometryは登録されたmodel identityから解決し、未知のidentityは明示的な未対応として扱う。
 - 被覆・材質は描画モデル、部材寸法・配置・変形則はcontent、採用曲げ係数・空力・慣性・操縦応答は飛行モデルが所有する。
@@ -290,7 +297,14 @@ Nativeは既存DirectionalLightの2048 texel・30〜600 mの3段cascadeから、
 - XR/sensor権限は明示した利用者操作の同期区間で要求する。
 - capability調査を事前に済ませ、利用者操作の同期区間で権限を要求する。
 - Bootの最小権限UIはScreenに置き、rendererが利用できる場合は読込み中やResultだけを理由にScreenへ戻さない。
+- rendererの故障案内と「ゲームを再読み込み」を全Scene・overlayへ配置し、Bootと同じ共有commandから、未完了I/Oの取消と資源解放が完了したDrained後にWebの再読み込みまたはNativeの再起動を要求する。GPU故障後のNative・VRの視認と実操作は実機で受け入れる。
 - tracking喪失や退出時はSceneを保持し、Countdown取消・Flight停止・Replay/Attract clock停止を共通sessionへ送る。
+
+### 物理キーの通知とUI解決
+
+- `KeyboardKey`は、共有widgetと入力通知が使う17種の中立な物理キー語彙を定義する。両者の公開入力契約が参照するためpresentationに配置し、操縦割当・aliasの論理和・保持・fresh認可は既appの入力ownerが管理する。
+- Browserは生の`KeyboardEvent.code`・押下・repeatを既Runtime通知で渡し、Runtimeが`KeyboardKey`へ正規化する。Nativeは`KeyCode`から同じ型への単一変換をwidget通知と全体通知で再用し、両媒体は同じRustの入力処理へ合流する。
+- widgetは型付き`ControlKeys.keys`で決定する。Webのbutton・checkbox・rangeはDOM標準のclick・change・input観測を転写し、TSへキーマップを持たせない。未対応キーは操作を生成しない。
 
 ### Screen DOMの保持
 
@@ -304,6 +318,7 @@ Nativeは既存DirectionalLightの2048 texel・30〜600 mの3段cascadeから、
 - focusは接続中・有効で、別要素への明示移動がない場合に`preventScroll`付きで復元する。
 
 - Screen HUDはFlight/PauseとReplay Telemetry、VR Head HUDはactive Flightに表示する。
+- 補助数値は水平・垂直尾翼の角度と直近の物理区間の平均角速度（rad/s）、パイロットの位置・目標と移動速度（m/s）を表示する。角速度は各tickで採用した舵角の差分を実時刻差で割った更新速度であり、発進直後とReplayでは「—」、一時停止では最後の物理区間の値を示す。
 - Result、Replay Cinematic/Analysis、Attractは共有HUD観測に従って非表示とする。
 - FPSはHUD観測の有無から独立する。
 - Screen HUDは下端の透明な領域へ配置し、主要数値、計器、右下の操作を分離する。各cardは共有boundsへ投影し、全体背景とスクロールを使用しない。姿勢計は透明な線画と共有ピッチ目盛を描く。
@@ -460,6 +475,8 @@ M C' H'=M C S S^{-1}H=M C H
 - OpenXRのtouchpad・thumbstick軸は`xr-standard`の右・下を正とする向きへ転写し、inactiveな軸は未観測値として渡す。
 - fontは読み込み済みNative fontをBevyの同じshape/raster経路で測定・描画し、localeは実際の既定値`und`として通知する。
 - frame待機と生入力はI/O worker、queueへ触れるbegin/acquire/release/endと描画提出はRender scheduleが担当する。描画資源の準備中は層を提出せずframeを終了し、次frameの観測へ進む。画像waitは1回50 msを要求し、timeout後は同じ画像を再waitする。これはhard deadlineではない。
+- HMDの描画資源は同じdisplay identityに属するRGBA8 sRGB・COPY_SRCのstereo Imageを保持し、実targetのACK後に両眼を描画してswapchainへ転写する。Screenの等寸法target再用は通常画面の出力へ適用する。
+- 空間UIは共有paint revisionが変わったときに描画nodeを更新し、同renderer・sessionのGPU提出receipt後に静的surfaceの再描画を止める。pose・cursorと入力の提出認可は各frameで更新し、画像寸法変更・失敗・session交代はpaintのreceiptを失効させる。
 - 通常停止は最終GPU完了とframe終了、両worldの参照退役、session/画像の所有解放、workerのjoin後にStoppedを返し、次回のHMD開始に備える。明示的な資源解放要求は同じ退役経路でDisplayReleasedを返す。session lossは原causeを通知して参照を退役し、未知の未終端I/Oは所有を保持して5秒の終了予算超過をerrorとして返す。
 
 ### VR入力と安全

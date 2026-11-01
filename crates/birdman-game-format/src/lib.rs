@@ -1,5 +1,38 @@
 #![no_std]
 //! Validated, deterministic configuration shared by CLI and browser adapters.
+//!
+//! # Examples
+//!
+//! Decode the repository's bundled aircraft, environment, and geographic sources.
+//! These workspace examples include the existing assets relative to this crate's
+//! manifest, independently of the process working directory. Decoders return
+//! their document-specific errors for malformed, oversized, or invalid input.
+//! The environment example then encodes and restores the validated document.
+//!
+//! ```
+//! use birdman_game_format::aircraft::AircraftDocument;
+//! use birdman_game_format::{EnvironmentDocument, VenueAnalysisDocument, VenueFeaturesDocument};
+//!
+//! let aircraft = AircraftDocument::decode_json(include_bytes!(concat!(
+//!     env!("CARGO_MANIFEST_DIR"),
+//!     "/../../assets/aircraft/playable-glider-v7.json"
+//! ))).unwrap();
+//! assert!(aircraft.model_version > 0);
+//!
+//! let environment = EnvironmentDocument::decode_json(include_bytes!(concat!(
+//!     env!("CARGO_MANIFEST_DIR"),
+//!     "/../../assets/biwa-typical-july-environment-v6.json"
+//! ))).unwrap();
+//! let encoded = environment.encode_json().unwrap();
+//! assert_eq!(EnvironmentDocument::decode_json(&encoded).unwrap(), environment);
+//!
+//! VenueAnalysisDocument::decode_json(include_bytes!(concat!(
+//!     env!("CARGO_MANIFEST_DIR"), "/../../assets/biwa-analysis-map.json"
+//! ))).unwrap();
+//! VenueFeaturesDocument::decode_json(include_bytes!(concat!(
+//!     env!("CARGO_MANIFEST_DIR"), "/../../assets/biwa-venue-features.json"
+//! ))).unwrap();
+//! ```
 
 extern crate alloc;
 
@@ -38,7 +71,8 @@ pub use flight_record::{
     TailFlightRecordBoundaryEventDocument, TailFlightRecordControlsDocument,
     TailFlightRecordDocument, TailFlightRecordFinalizationDocument, TailFlightRecordInputDocument,
     TailFlightRecordSampleDocument, TailIncidenceDocument, TailPilotPositionCommandDocument,
-    TailTickFailureDocument, WindFailureDocument, compare_tail_personal_best_records,
+    TailTickFailureDocument, TailWrenchDocument, WindFailureDocument,
+    compare_tail_personal_best_records,
 };
 pub use personal_best::{
     TailPersonalBestConfiguration, TailPersonalBestSelection, canonical_tail_personal_best_key,
@@ -506,6 +540,26 @@ pub enum ConfigurationError {
     /// Custom settings require all three explicit axis values.
     CustomRequiresExplicitAxes,
 }
+#[cfg(not(verus_only))]
+impl core::fmt::Display for ConfigurationError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::InvalidVersion => {
+                f.write_str("Catalog and registered identity versions must be positive")
+            }
+            Self::UnorderedScenarioCatalog => {
+                f.write_str("Scenario catalog is not strictly ordered")
+            }
+            Self::ScenarioUnavailable => f.write_str("Requested scenario is not registered"),
+            Self::CustomRequiresExplicitAxes => {
+                f.write_str("Custom difficulty requires explicit cue axes")
+            }
+        }
+    }
+}
+
+#[cfg(not(verus_only))]
+impl core::error::Error for ConfigurationError {}
 
 #[cfg(test)]
 mod tests {

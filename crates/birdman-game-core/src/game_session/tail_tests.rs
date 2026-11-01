@@ -564,7 +564,7 @@ fn terminal_owner_commits_record_and_result_for_score_success_and_failure() {
 }
 
 #[test]
-fn terminal_record_rejection_preserves_running_and_existing_result() {
+fn abort_score_failure_preserves_the_current_payload_and_original_error() {
     let definition = TestAircraft::try_new().unwrap();
     let surfaces = definition.surfaces().unwrap();
     let mut session = launch(configuration(
@@ -575,47 +575,30 @@ fn terminal_record_rejection_preserves_running_and_existing_result() {
         10,
         ControlMode::Manual,
     ));
-    let snapshot = session.snapshot();
-    let state = snapshot.tail_flight_state().unwrap();
+    session.pause(PauseReason::Manual).unwrap();
+    let state = session.snapshot().tail_flight_state().unwrap();
     let samples = session.flight_record().unwrap().samples().to_vec();
-    let aircraft = session.configured_mut().unwrap().configuration.aircraft();
-    let mismatched = TailFlightTickState::try_new(
-        &aircraft,
-        state.tick_index() + 1,
-        state.flight_state(),
-        state.incidence(),
-        state.pilot_position_target(),
-    )
-    .unwrap();
+    let identity = session.configuration_identity().unwrap();
+    let error = crate::DistanceScoreError::NonFinite;
     assert_eq!(
-        session.finalize_tick(SessionEndReason::TimeLimit, mismatched),
-        Err(GameSessionError::Record(
-            FlightRecordError::FinalizationMismatch
-        ))
+        session.abort_flight_with_score(|configuration, terminal| {
+            assert_eq!(configuration.identity(), identity);
+            assert_eq!(terminal, SessionTerminalState::TailTick(state));
+            Err(error)
+        }),
+        Err(GameSessionError::Score(error))
     );
-    assert_eq!(session.snapshot(), snapshot);
+    let result = session.snapshot().result().unwrap();
+    assert_eq!(result.state, SessionTerminalState::TailTick(state));
+    assert_eq!(result.reason, SessionEndReason::FatalSimulationError);
+    assert_eq!(result.score, None);
+    let record = session.flight_record().unwrap();
+    assert_eq!(record.samples(), samples);
+    assert_eq!(record.finalization().unwrap().reason, result.reason);
     assert_eq!(
-        session.flight_record().unwrap().samples(),
-        samples.as_slice()
+        session.abort_flight(),
+        Err(GameSessionError::InvalidTransition)
     );
-    assert_eq!(session.flight_record().unwrap().finalization(), None);
-    session
-        .finalize_tick(SessionEndReason::ManualAbort, state)
-        .unwrap();
-    let result = session.snapshot();
-    let metadata = session.flight_record().unwrap().finalization();
-    assert_eq!(
-        session.finalize_tick(SessionEndReason::TimeLimit, state),
-        Err(GameSessionError::Record(
-            FlightRecordError::AlreadyFinalized
-        ))
-    );
-    assert_eq!(session.snapshot(), result);
-    assert_eq!(
-        session.flight_record().unwrap().samples(),
-        samples.as_slice()
-    );
-    assert_eq!(session.flight_record().unwrap().finalization(), metadata);
 }
 
 #[test]

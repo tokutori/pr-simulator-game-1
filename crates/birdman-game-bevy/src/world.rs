@@ -12,26 +12,26 @@ use super::{
 use bevy::ecs as bevy_ecs;
 use bevy::{
     camera::{
-        Exposure, RenderTarget,
+        CameraUpdateSystems, Exposure, NormalizedRenderTarget, RenderTarget,
         primitives::Aabb,
         visibility::{NoFrustumCulling, RenderLayers},
     },
     core_pipeline::{mip_generation::MipGenerationPlugin, tonemapping::Tonemapping},
     light::{
         CascadeShadowConfig, Cascades, DirectionalLightShadowMap, NotShadowCaster,
-        SimulationLightSystems, cascade::Cascade,
+        SimulationLightSystems,
+        cascade::{Cascade, build_directional_light_cascades},
     },
     pbr::MaterialPlugin,
     prelude::*,
-    render::renderer::RenderDevice,
+    render::{render_resource::TextureFormat, renderer::RenderDevice},
     window::PrimaryWindow,
 };
 use birdman_game_runtime::{
     ApplicationDrawingOutput, ApplicationEnvironmentAssets, ApplicationGeometryAssets,
-    ApplicationGpuQuery, ApplicationGpuTimingCapability, ApplicationGraphicsTarget,
-    ApplicationInput, ApplicationMeshAttachment, ApplicationRenderQuality,
-    ApplicationRendererObservation, ApplicationRequest, ApplicationResourceCommit,
-    ApplicationResourceObservation, ApplicationRuntime,
+    ApplicationGpuTimingCapability, ApplicationGraphicsTarget, ApplicationInput,
+    ApplicationMeshAttachment, ApplicationRendererObservation, ApplicationRequest,
+    ApplicationResourceCommit, ApplicationResourceObservation, ApplicationRuntime,
 };
 use std::collections::BTreeMap;
 
@@ -90,57 +90,64 @@ struct Candidate {
     sun: Entity,
     illuminance: f32,
     initial_shadow: Option<birdman_game_scene::lake_sky::LakeSceneShadow>,
-    output: Handle<Image>,
+    output: Option<Handle<Image>>,
+    #[cfg(all(feature = "openxr", any(target_os = "windows", target_os = "linux")))]
+    xr_display: Option<u32>,
+    binding: NormalizedRenderTarget,
+    output_format: TextureFormat,
     reflection: Handle<Image>,
     materials: Vec<Handle<TerrainMaterial>>,
     water: [Handle<WaterMaterial>; 3],
-    images: Vec<u32>,
+    images: Vec<(u32, u16)>,
     meshes: Vec<Handle<Mesh>>,
     sky_mesh: Handle<Mesh>,
 }
 
-#[derive(Resource)]
+#[derive(Resource, Default)]
 pub(crate) struct NativeGpu {
     manifest: Option<ApplicationGeometryAssets>,
     meshes: BTreeMap<u32, Vec<Handle<Mesh>>>,
+    dirty_meshes: Vec<bevy::asset::AssetId<Mesh>>,
     water_meshes: BTreeMap<u32, Handle<Mesh>>,
     textures: BTreeMap<u32, Handle<Image>>,
-    images: BTreeMap<u32, (Handle<Image>, usize)>,
+    images: BTreeMap<(u32, u16), (Handle<Image>, usize)>,
     candidates: BTreeMap<u32, Candidate>,
     active: Option<u32>,
     pub(crate) main_camera: Option<Entity>,
-    pub(crate) query: Option<ApplicationGpuQuery>,
-    pub(crate) quality: ApplicationRenderQuality,
+    pub(crate) query: Option<screen_render::timing::TimingSource>,
     initial_failure: Option<String>,
     pub(crate) renderer_id: u32,
     pub(crate) revision: u64,
 }
 
-impl Default for NativeGpu {
-    fn default() -> Self {
-        Self {
-            manifest: None,
-            meshes: BTreeMap::new(),
-            water_meshes: BTreeMap::new(),
-            textures: BTreeMap::new(),
-            images: BTreeMap::new(),
-            candidates: BTreeMap::new(),
-            active: None,
-            main_camera: None,
-            query: None,
-            quality: ApplicationRenderQuality {
-                scale: Default::default(),
-                shadow: Default::default(),
-                water_quality: Default::default(),
-            },
-            initial_failure: None,
-            renderer_id: 0,
-            revision: 0,
-        }
-    }
+fn install_shadow_binding(app: &mut App) {
+    // DefaultPlugins has installed LightPlugin. All Native directional lights are
+    // created by prepare from shared lighting and receive SubmittedShadow in submit;
+    // future directional-light producers must participate in that same contract.
+    let removed = app
+        .remove_systems_in_set(
+            PostUpdate,
+            build_directional_light_cascades,
+            bevy::ecs::schedule::ScheduleCleanupPolicy::RemoveSystemsOnly,
+        )
+        .expect("LightPlugin cascade producer must be registered before shared shadow binding");
+    assert_eq!(removed, 1, "Expected exactly one standard cascade producer");
+    app.add_systems(
+        PostUpdate,
+        bind_shadow
+            .in_set(SimulationLightSystems::UpdateDirectionalLightCascades)
+            // Keep the removed function's type set: LightPlugin's size validator
+            // precedes it. Its per-function transform/camera/gizmo edges are explicit.
+            .after(build_directional_light_cascades)
+            .after(bevy::transform::TransformSystems::Propagate)
+            .after(CameraUpdateSystems)
+            .before(bevy::app::TransformGizmoRenderStep)
+            .before(SimulationLightSystems::UpdateLightFrusta),
+    );
 }
 
 pub(crate) fn install(app: &mut App) {
+    install_shadow_binding(app);
     let mode = app
         .world()
         .get_resource::<screen_render::timing::TimingMode>()
@@ -155,13 +162,7 @@ pub(crate) fn install(app: &mut App) {
             MaterialPlugin::<TerrainMaterial>::default(),
             screen_render::timing::ScreenTimingPlugin { mode },
         ))
-        .add_systems(PreStartup, setup_world)
-        .add_systems(
-            PostUpdate,
-            bind_shadow
-                .after(SimulationLightSystems::UpdateDirectionalLightCascades)
-                .before(SimulationLightSystems::UpdateLightFrusta),
-        );
+        .add_systems(PreStartup, setup_world);
     if let Some(render) = app.get_sub_app_mut(bevy::render::RenderApp) {
         render
             .init_resource::<super::water::detail_mips::LakeDetailMips>()
@@ -231,7 +232,6 @@ pub(crate) fn platform(world: &mut World) -> ApplicationRendererObservation {
     };
     ApplicationRendererObservation {
         resource_id: world.resource::<NativeGpu>().renderer_id,
-        initial_quality: world.resource::<NativeGpu>().quality,
         extent_px: extent,
         screen_extent_px: screen_extent,
         xr_extent_px: {
@@ -249,13 +249,19 @@ pub(crate) fn platform(world: &mut World) -> ApplicationRendererObservation {
 }
 
 #[cfg(all(feature = "openxr", any(target_os = "windows", target_os = "linux")))]
-pub(crate) fn xr_output(world: &World) -> Option<(Entity, Handle<Image>, RenderLayers, bool)> {
+pub(crate) fn xr_output(
+    world: &World,
+    display_resource_id: Option<u32>,
+) -> Option<(Entity, Option<Handle<Image>>, RenderLayers, bool)> {
     let gpu = world.get_resource::<NativeGpu>()?;
     let camera = gpu.main_camera?;
     let candidate = gpu.candidates.get(&gpu.active?)?;
     Some((
         camera,
-        candidate.output.clone(),
+        candidate
+            .xr_display
+            .filter(|id| Some(*id) == display_resource_id)
+            .and(candidate.output.clone()),
         world.get::<RenderLayers>(camera)?.clone(),
         matches!(candidate.stage, ResourceStage::Bound),
     ))
@@ -313,6 +319,7 @@ pub(crate) fn execute(
     };
     let result = match request {
         ApplicationRequest::CreateRenderer { request_id } => {
+            screen_render::reset(world);
             if let Some(camera) = gpu.main_camera.take() {
                 world.despawn(camera);
             }
@@ -346,14 +353,24 @@ pub(crate) fn execute(
             request_id,
             graphics,
             assets,
+            display_resource_id,
             ..
         } => {
+            #[cfg(all(feature = "openxr", any(target_os = "windows", target_os = "linux")))]
+            let copy_display =
+                display_resource_id.filter(|id| super::native_xr::owns_display(world, *id));
+            #[cfg(not(all(feature = "openxr", any(target_os = "windows", target_os = "linux"))))]
+            let copy_display = {
+                let _ = display_resource_id;
+                None
+            };
             let result = if graphics.renderer_resource_id != gpu.renderer_id {
                 Err("Requested renderer handle is unavailable".into())
             } else {
-                gpu.initial_failure
-                    .clone()
-                    .map_or_else(|| gpu.prepare(world, runtime, *graphics, assets), Err)
+                gpu.initial_failure.clone().map_or_else(
+                    || gpu.prepare(world, runtime, *graphics, assets, copy_display),
+                    Err,
+                )
             };
             match result {
                 Ok(candidate) => {
@@ -388,6 +405,10 @@ pub(crate) fn execute(
             }
         }
         ApplicationRequest::CancelResources { request_id } => {
+            if gpu.active == Some(*request_id) {
+                screen_render::reset(world);
+                gpu.active = None;
+            }
             if let Some(mut candidate) = gpu.candidates.remove(request_id) {
                 let after = gpu.next_revision();
                 let failure = gpu.release(world, &candidate);
@@ -408,6 +429,9 @@ pub(crate) fn execute(
             }
         }
         ApplicationRequest::ReleaseResources { resource_id } => {
+            if gpu.active == Some(*resource_id) {
+                screen_render::reset(world);
+            }
             let failure = gpu.candidates.remove(resource_id).map_or_else(
                 || Some("Prepared GPU handle is unavailable".into()),
                 |candidate| gpu.release(world, &candidate).err(),
@@ -430,6 +454,7 @@ pub(crate) fn execute(
                     failure: Some("Requested renderer handle is unavailable".into()),
                 }]));
             }
+            screen_render::reset(world);
             gpu.query = None;
             for mut camera in world
                 .query_filtered::<&mut Camera, With<Camera3d>>()
@@ -467,12 +492,14 @@ fn attachment_index(attachment: ApplicationMeshAttachment) -> usize {
 
 impl NativeGpu {
     fn release_renderer(&mut self, world: &mut World) -> Option<String> {
+        screen_render::reset(world);
         let mut failures = Vec::new();
         for candidate in std::mem::take(&mut self.candidates).into_values() {
             if let Err(cause) = self.release(world, &candidate) {
                 failures.push(cause);
             }
         }
+        self.dirty_meshes.clear();
         for handles in std::mem::take(&mut self.meshes).into_values() {
             for handle in handles {
                 world.resource_mut::<Assets<Mesh>>().remove(handle.id());
@@ -497,7 +524,12 @@ impl NativeGpu {
         runtime: &ApplicationRuntime,
         target: ApplicationGraphicsTarget,
         assets: &ApplicationEnvironmentAssets,
+        copy_display: Option<u32>,
     ) -> Result<Candidate, String> {
+        #[cfg(all(feature = "openxr", any(target_os = "windows", target_os = "linux")))]
+        let xr_display = copy_display;
+        #[cfg(not(all(feature = "openxr", any(target_os = "windows", target_os = "linux"))))]
+        let _ = copy_display;
         if let Some(manifest) = &assets.scene {
             self.manifest = Some(manifest.clone());
         }
@@ -547,19 +579,44 @@ impl NativeGpu {
             })
             .collect::<Result<Vec<_>, _>>()?;
         let image_descriptors = [
-            assets.water.detail[0].image.clone(),
-            assets.water.detail[1].image.clone(),
-            assets.sky.clone(),
+            (
+                assets.water.detail[0].image.clone(),
+                assets.water.detail_anisotropy_clamp,
+            ),
+            (
+                assets.water.detail[1].image.clone(),
+                assets.water.detail_anisotropy_clamp,
+            ),
+            (assets.sky.clone(), 1),
         ];
         let mut new_images = BTreeMap::new();
-        for image in &image_descriptors {
-            if !self.images.contains_key(&image.buffer_id)
-                && !new_images.contains_key(&image.buffer_id)
-            {
-                new_images.insert(image.buffer_id, environment::image(runtime, image.clone())?);
+        for (image, anisotropy_clamp) in &image_descriptors {
+            let key = (image.buffer_id, *anisotropy_clamp);
+            if !self.images.contains_key(&key) && !new_images.contains_key(&key) {
+                new_images.insert(
+                    key,
+                    environment::image(runtime, image.clone(), *anisotropy_clamp)?,
+                );
             }
         }
-        let output_image = screen_render::image(target.extent_px)?;
+        let output_format = screen_render::observed_output(world)
+            .map_or(TextureFormat::Rgba8UnormSrgb, |output| output.format);
+        #[cfg(all(feature = "openxr", any(target_os = "windows", target_os = "linux")))]
+        let output_format = if xr_display.is_some() {
+            TextureFormat::Rgba8UnormSrgb
+        } else {
+            output_format
+        };
+        let output_image = screen_render::image(target.extent_px, output_format)?;
+        #[cfg(all(feature = "openxr", any(target_os = "windows", target_os = "linux")))]
+        let output_image = {
+            let mut image = output_image;
+            if xr_display.is_some() {
+                image.texture_descriptor.usage |=
+                    bevy::render::render_resource::TextureUsages::COPY_SRC;
+            }
+            image
+        };
         let reflection_image = super::water_reflection::image(target.reflection_extent_px)?;
         for (id, meshes) in new_meshes {
             self.meshes.insert(
@@ -585,12 +642,15 @@ impl NativeGpu {
         let root = world
             .spawn((
                 Transform::IDENTITY,
-                Visibility::Visible,
+                Visibility::Inherited,
                 readiness::CandidateLayer(layer),
             ))
             .id();
-        let attachments =
-            std::array::from_fn(|_| world.spawn((Transform::IDENTITY, Visibility::Visible)).id());
+        let attachments = std::array::from_fn(|_| {
+            world
+                .spawn((Transform::IDENTITY, Visibility::Inherited))
+                .id()
+        });
         world.entity_mut(root).add_children(&attachments[..2]);
         world
             .entity_mut(attachments[1])
@@ -601,50 +661,60 @@ impl NativeGpu {
         let output = world.resource_mut::<Assets<Image>>().add(output_image);
         let reflection = world.resource_mut::<Assets<Image>>().add(reflection_image);
         let mut acquired = Vec::new();
-        let images: [Handle<Image>; 3] = image_descriptors.map(|image| {
-            let (handle, count) = self.images.get_mut(&image.buffer_id).unwrap();
+        let images: [Handle<Image>; 3] = image_descriptors.map(|(image, anisotropy_clamp)| {
+            let key = (image.buffer_id, anisotropy_clamp);
+            let (handle, count) = self.images.get_mut(&key).unwrap();
             *count += 1;
-            acquired.push(image.buffer_id);
+            acquired.push(key);
             handle.clone()
         });
         let water =
             WaterMaterial::prepared(&assets.water, assets.lighting, &images, reflection.clone());
-        let water = [water.clone(), water.far_surface(), water.sky_surface()]
-            .map(|material| world.resource_mut::<Assets<WaterMaterial>>().add(material));
-        let mut materials = Vec::new();
+        let water =
+            [water.clone(), water.far_surface(), water.sky_surface()].map(|mut material| {
+                material.allocate_buffer(
+                    &mut world.resource_mut::<Assets<bevy::render::storage::ShaderBuffer>>(),
+                );
+                world.resource_mut::<Assets<WaterMaterial>>().add(material)
+            });
+        let mut materials = BTreeMap::<u32, Handle<TerrainMaterial>>::new();
         let mut meshes = Vec::new();
         for asset in &manifest.meshes {
             for (source, mesh) in asset.materials.iter().zip(&self.meshes[&asset.mesh_id]) {
-                let texture = source
-                    .texture_buffer_id
-                    .and_then(|id| self.textures.get(&id).cloned());
-                let material =
-                    world
-                        .resource_mut::<Assets<TerrainMaterial>>()
-                        .add(TerrainMaterial {
-                            base: StandardMaterial {
-                                base_color: color_srgb(source.color_srgb)
-                                    .with_alpha(source.opacity),
-                                base_color_texture: texture,
-                                alpha_mode: if source.transparent {
-                                    AlphaMode::Blend
-                                } else {
-                                    AlphaMode::Opaque
+                let material = materials
+                    .entry(source.material_id)
+                    .or_insert_with(|| {
+                        let texture = source
+                            .texture_buffer_id
+                            .and_then(|id| self.textures.get(&id).cloned());
+                        world
+                            .resource_mut::<Assets<TerrainMaterial>>()
+                            .add(TerrainMaterial {
+                                base: StandardMaterial {
+                                    base_color: color_srgb(source.color_srgb)
+                                        .with_alpha(source.opacity),
+                                    base_color_texture: texture,
+                                    alpha_mode: if source.transparent {
+                                        AlphaMode::Blend
+                                    } else {
+                                        AlphaMode::Opaque
+                                    },
+                                    double_sided: source.double_sided,
+                                    cull_mode: if source.double_sided {
+                                        None
+                                    } else {
+                                        Some(bevy::render::render_resource::Face::Back)
+                                    },
+                                    unlit: !source.lit,
+                                    ..default()
                                 },
-                                double_sided: source.double_sided,
-                                cull_mode: if source.double_sided {
-                                    None
-                                } else {
-                                    Some(bevy::render::render_resource::Face::Back)
-                                },
-                                unlit: !source.lit,
-                                ..default()
-                            },
-                            extension: TerrainHazeExtension::prepared(
-                                assets.lighting.haze_color_srgb,
-                                assets.lighting.haze_range_meters,
-                            ),
-                        });
+                                extension: TerrainHazeExtension::prepared(
+                                    assets.lighting.haze_color_srgb,
+                                    assets.lighting.haze_range_meters,
+                                ),
+                            })
+                    })
+                    .clone();
                 let layers = RenderLayers::none().with(layer);
                 let layers = if asset.attachment == ApplicationMeshAttachment::World {
                     layers
@@ -657,7 +727,7 @@ impl NativeGpu {
                         Mesh3d(mesh.clone()),
                         MeshMaterial3d(material.clone()),
                         pose_transform(asset.local_pose),
-                        Visibility::Visible,
+                        Visibility::Inherited,
                         layers,
                     ))
                     .id();
@@ -675,11 +745,12 @@ impl NativeGpu {
                 world
                     .entity_mut(attachments[attachment_index(asset.attachment)])
                     .add_child(entity);
-                materials.push(material);
                 meshes.push(mesh.clone());
             }
         }
-        let water_root = world.spawn((Transform::IDENTITY, Visibility::Visible)).id();
+        let water_root = world
+            .spawn((Transform::IDENTITY, Visibility::Inherited))
+            .id();
         world.entity_mut(root).add_child(water_root);
         for (index, chunk) in assets
             .water
@@ -697,7 +768,7 @@ impl NativeGpu {
                     Mesh3d(mesh.clone()),
                     MeshMaterial3d(water[usize::from(far)].clone()),
                     Transform::IDENTITY,
-                    Visibility::Visible,
+                    Visibility::Inherited,
                     RenderLayers::none().with(layer),
                     NotShadowCaster,
                     Aabb::from_min_max(
@@ -724,7 +795,7 @@ impl NativeGpu {
                 Mesh3d(sky.clone()),
                 MeshMaterial3d(water[2].clone()),
                 Transform::IDENTITY,
-                Visibility::Visible,
+                Visibility::Inherited,
                 RenderLayers::none().with(layer),
                 NoFrustumCulling,
                 NotShadowCaster,
@@ -739,7 +810,11 @@ impl NativeGpu {
                 DirectionalLight {
                     color: color_srgb(assets.lighting.sunlight_color_srgb),
                     illuminance,
-                    shadow_maps_enabled: assets.lighting.sunlight_direction[3] > 0.0,
+                    shadow_maps_enabled: assets
+                        .lighting
+                        .initial_shadow
+                        .as_ref()
+                        .is_some_and(|light| light.shadow_enabled),
                     ..default()
                 },
                 CascadeShadowConfig {
@@ -747,6 +822,9 @@ impl NativeGpu {
                     minimum_distance: 0.0,
                     overlap_proportion: 0.0,
                 },
+                // Scene visibility can suppress geometry while the UI keeps this
+                // camera active; retain the prepared shadow bindings for its ACK.
+                Visibility::Visible,
                 RenderLayers::none().with(layer).with(layer + 1),
                 Transform::IDENTITY,
             ))
@@ -788,9 +866,15 @@ impl NativeGpu {
             sun,
             illuminance,
             initial_shadow: assets.lighting.initial_shadow,
-            output,
+            binding: RenderTarget::Image(output.clone().into())
+                .normalize(None)
+                .unwrap(),
+            output: Some(output),
+            #[cfg(all(feature = "openxr", any(target_os = "windows", target_os = "linux")))]
+            xr_display,
+            output_format,
             reflection,
-            materials,
+            materials: materials.into_values().collect(),
             water,
             images: acquired,
             meshes,
@@ -831,16 +915,38 @@ impl NativeGpu {
                 "GPU binding handles are unavailable".into(),
             ));
         }
-        screen_render::bind(world, candidate.output.clone()).map_err(BindFailure::Lost)?;
+        let image = candidate
+            .output
+            .clone()
+            .ok_or_else(|| BindFailure::Lost("Prepared framebuffer is unavailable".into()))?;
+        let final_output = screen_render::observed_output(world).filter(|output| {
+            output.extent == candidate.target.extent_px
+                && output.format == candidate.output_format
+                && output.main_format == TextureFormat::Rgba8UnormSrgb
+        });
+        // A matching Window extent is not a copyable OpenXR framebuffer.
+        #[cfg(all(feature = "openxr", any(target_os = "windows", target_os = "linux")))]
+        let final_output = final_output.filter(|_| candidate.xr_display.is_none());
+        let direct = final_output.is_some();
+        let target = if direct {
+            screen_render::output_target(world)
+        } else {
+            RenderTarget::Image(image.clone().into())
+        };
+        screen_render::bind(world, camera, image, direct).map_err(BindFailure::Lost)?;
         let layers = world
             .get::<RenderLayers>(candidate.preview)
             .unwrap()
             .clone();
-        let target = candidate.output.clone().into();
-        let target_changed = !matches!(world.get::<RenderTarget>(camera), Some(RenderTarget::Image(current)) if current == &target);
-        world
-            .entity_mut(camera)
-            .insert((RenderTarget::Image(target), layers));
+        let binding =
+            final_output.map_or_else(|| candidate.binding.clone(), |output| output.target);
+        let target_changed = world
+            .get::<RenderTarget>(camera)
+            .and_then(|target| screen_render::normalize(world, target))
+            .as_ref()
+            != Some(&binding);
+        world.entity_mut(camera).insert((target, layers));
+        candidate.binding = binding;
         if target_changed {
             world.get_mut::<Projection>(camera).unwrap().set_changed();
         }
@@ -884,24 +990,33 @@ impl NativeGpu {
                 .remove(material.id());
         }
         for material in &candidate.water {
-            world
+            if let Some(material) = world
                 .resource_mut::<Assets<WaterMaterial>>()
-                .remove(material.id());
+                .remove(material.id())
+            {
+                world
+                    .resource_mut::<Assets<bevy::render::storage::ShaderBuffer>>()
+                    .remove(material.buffer.id());
+            }
         }
         world
             .resource_mut::<Assets<Mesh>>()
             .remove(candidate.sky_mesh.id());
-        for image in [&candidate.output, &candidate.reflection] {
+        for image in candidate
+            .output
+            .iter()
+            .chain(std::iter::once(&candidate.reflection))
+        {
             world.resource_mut::<Assets<Image>>().remove(image.id());
         }
-        for id in &candidate.images {
-            if let Some((_, count)) = self.images.get_mut(id) {
+        for key in &candidate.images {
+            if let Some((_, count)) = self.images.get_mut(key) {
                 *count -= 1;
                 if *count > 0 {
                     continue;
                 }
             }
-            if let Some((handle, _)) = self.images.remove(id) {
+            if let Some((handle, _)) = self.images.remove(key) {
                 world.resource_mut::<Assets<Image>>().remove(handle.id());
             }
         }
@@ -913,15 +1028,35 @@ impl NativeGpu {
     }
 }
 
+pub(crate) fn submit_transform(world: &mut World, entity: Entity, transform: Transform) {
+    if let Some(mut current) = world.get_mut::<Transform>(entity) {
+        current.set_if_neq(transform);
+    } else {
+        world.entity_mut(entity).insert(transform);
+    }
+}
+
 pub(crate) fn submit(
     world: &mut World,
     runtime: &ApplicationRuntime,
     drawing: &ApplicationDrawingOutput,
 ) -> Result<(), String> {
-    let gpu = world
+    let mut gpu = world
         .remove_resource::<NativeGpu>()
         .ok_or("Native GPU handles are unavailable")?;
     let result = (|| {
+        let readback = world.resource::<readiness::GpuReadback>();
+        for (&id, candidate) in &gpu.candidates {
+            if gpu.active == Some(id)
+                && matches!(candidate.stage, ResourceStage::Bound)
+                && let Some(observation) = readback.results.get(&id)
+                && Some(observation.camera) == gpu.main_camera
+                && observation.output == candidate.binding
+                && let Err(cause) = &observation.result
+            {
+                return Err(cause.clone());
+            }
+        }
         if let Some(geometry) = &drawing.scene.geometry {
             for update in &geometry.updates {
                 let Some(handles) = gpu.meshes.get(&update.mesh_id) else {
@@ -932,10 +1067,13 @@ pub(crate) fn submit(
                 };
                 for handle in handles {
                     let mut meshes = world.resource_mut::<Assets<Mesh>>();
-                    let mut mesh = meshes
-                        .get_mut(handle.id())
+                    let mesh = meshes
+                        .get_mut_untracked(handle.id())
                         .ok_or("Dynamic GPU mesh is unavailable")?;
-                    environment::update_mesh(runtime, &mut mesh, update.position, update.normal)?;
+                    environment::update_mesh(runtime, mesh, update.position, update.normal)?;
+                    if !gpu.dirty_meshes.contains(&handle.id()) {
+                        gpu.dirty_meshes.push(handle.id());
+                    }
                 }
             }
         }
@@ -943,34 +1081,53 @@ pub(crate) fn submit(
             if matches!(candidate.stage, ResourceStage::Cancelling { .. }) {
                 continue;
             }
-            world
-                .entity_mut(candidate.water_root)
-                .insert(pose_transform(drawing.scene.water_world_from_surface));
+            let hidden_scene = screen_render::direct(world)
+                && matches!(
+                    candidate.stage,
+                    ResourceStage::Committing { .. } | ResourceStage::Bound
+                )
+                && !drawing.presentation.scene_visible;
+            world.entity_mut(candidate.root).insert(if hidden_scene {
+                Visibility::Hidden
+            } else {
+                Visibility::Visible
+            });
+            submit_transform(
+                world,
+                candidate.water_root,
+                pose_transform(drawing.scene.water_world_from_surface),
+            );
             world
                 .entity_mut(candidate.attachments[0])
                 .insert(if drawing.scene.venue_visible {
-                    Visibility::Visible
+                    Visibility::Inherited
                 } else {
                     Visibility::Hidden
                 });
-            world.entity_mut(candidate.attachments[1]).insert((
+            submit_transform(
+                world,
+                candidate.attachments[1],
                 pose_transform(drawing.scene.world_from_aircraft),
+            );
+            world.entity_mut(candidate.attachments[1]).insert(
                 if drawing
                     .scene
                     .geometry
                     .as_ref()
                     .is_some_and(|geometry| geometry.aircraft_visible)
                 {
-                    Visibility::Visible
+                    Visibility::Inherited
                 } else {
                     Visibility::Hidden
                 },
-            ));
+            );
             if let Some(geometry) = &drawing.scene.geometry {
                 for part in &geometry.part_poses {
-                    world
-                        .entity_mut(candidate.attachments[attachment_index(part.attachment)])
-                        .insert(pose_transform(part.pose));
+                    submit_transform(
+                        world,
+                        candidate.attachments[attachment_index(part.attachment)],
+                        pose_transform(part.pose),
+                    );
                 }
             }
             let light = if matches!(candidate.stage, ResourceStage::Bound) {
@@ -982,13 +1139,15 @@ pub(crate) fn submit(
                 let position = Vec3::from_array(light.sun_world_position.map(|value| value as f32));
                 let target =
                     Vec3::from_array(light.sun_target_world_position.map(|value| value as f32));
-                world.entity_mut(candidate.sun).insert((
+                submit_transform(
+                    world,
+                    candidate.sun,
                     Transform::from_translation(position).looking_at(target, Vec3::Y),
-                    SubmittedShadow {
-                        bounds: light.shadow_bounds,
-                        extent: candidate.target.shadow_extent_px[0],
-                    },
-                ));
+                );
+                world.entity_mut(candidate.sun).insert(SubmittedShadow {
+                    bounds: light.shadow_bounds,
+                    extent: candidate.target.shadow_extent_px[0],
+                });
                 if let Some(mut sun) = world.get_mut::<DirectionalLight>(candidate.sun) {
                     let texel = (light.shadow_bounds[1] - light.shadow_bounds[0])
                         .max(light.shadow_bounds[3] - light.shadow_bounds[2])
@@ -1017,30 +1176,61 @@ pub(crate) fn submit(
                     .into_iter()
                     .flatten()
                 {
-                    world.entity_mut(entity).insert(transform);
+                    submit_transform(world, entity, transform);
                     if let Some(matrix) = camera.screen_projection {
                         SubmittedProjection::submit(world, entity, matrix);
                     }
                 }
                 let center = drawing.scene.water_world_from_surface.position;
+                let camera_time = transform
+                    .translation
+                    .extend(drawing.scene.water_time_seconds as f32);
+                let reflection_matrix = drawing.scene.reflection.as_ref().map(|reflection| {
+                    Mat4::from_cols_array(
+                        &reflection.projection_from_world.map(|value| value as f32),
+                    )
+                });
                 for (index, handle) in candidate.water.iter().enumerate() {
-                    if let Some(mut material) = world
-                        .resource_mut::<Assets<WaterMaterial>>()
-                        .get_mut(handle.id())
-                    {
-                        material.project_camera(
-                            transform.translation,
-                            drawing.scene.water_time_seconds,
-                        );
-                        material.geometry_patch.x = center.x as f32;
-                        material.geometry_patch.y = center.z as f32;
-                        material.reflection_enabled =
-                            f32::from(index == 0 && drawing.scene.reflection.is_some());
-                        if let Some(reflection) = &drawing.scene.reflection {
-                            material.reflection_clip_from_world = Mat4::from_cols_array(
-                                &reflection.projection_from_world.map(|value| value as f32),
-                            );
+                    let upload = {
+                        let mut materials = world.resource_mut::<Assets<WaterMaterial>>();
+                        let material = materials
+                            .get_mut_untracked(handle.id())
+                            .ok_or("Water material is unavailable")?;
+                        let mut changed = false;
+                        if material.parameters.camera_time != camera_time {
+                            material.parameters.camera_time = camera_time;
+                            changed = true;
                         }
+                        let geometry_patch = Vec4::new(
+                            center.x as f32,
+                            center.z as f32,
+                            material.parameters.geometry_patch.z,
+                            material.parameters.geometry_patch.w,
+                        );
+                        if material.parameters.geometry_patch != geometry_patch {
+                            material.parameters.geometry_patch = geometry_patch;
+                            changed = true;
+                        }
+                        let reflection_enabled =
+                            f32::from(index == 0 && reflection_matrix.is_some());
+                        if material.parameters.reflection_enabled != reflection_enabled {
+                            material.parameters.reflection_enabled = reflection_enabled;
+                            changed = true;
+                        }
+                        if let Some(matrix) = reflection_matrix
+                            && material.parameters.reflection_clip_from_world != matrix
+                        {
+                            material.parameters.reflection_clip_from_world = matrix;
+                            changed = true;
+                        }
+                        changed.then(|| (material.buffer.id(), material.parameters.encode()))
+                    };
+                    if let Some((buffer, bytes)) = upload {
+                        world
+                            .resource_mut::<Assets<bevy::render::storage::ShaderBuffer>>()
+                            .get_mut(buffer)
+                            .ok_or("Water parameter buffer is unavailable")?
+                            .data = Some(bytes);
                     }
                 }
             }
@@ -1051,9 +1241,7 @@ pub(crate) fn submit(
                 && let Some(pose) = camera.world_from_head
                 && let Some(matrix) = camera.screen_projection
             {
-                world
-                    .entity_mut(candidate.reflection_camera)
-                    .insert(pose_transform(pose));
+                submit_transform(world, candidate.reflection_camera, pose_transform(pose));
                 SubmittedProjection::submit(world, candidate.reflection_camera, matrix);
                 if let Some(mut camera) = world.get_mut::<Camera>(candidate.reflection_camera) {
                     camera.is_active = true;
@@ -1066,6 +1254,7 @@ pub(crate) fn submit(
                 );
             }
         }
+        let direct = screen_render::direct(world);
         if let Some(camera) = gpu.main_camera
             && let Some(mut camera) = world.get_mut::<Camera>(camera)
         {
@@ -1075,8 +1264,8 @@ pub(crate) fn submit(
                 .is_some_and(|candidate| {
                     matches!(candidate.stage, ResourceStage::Committing { .. })
                 });
-            camera.is_active =
-                gpu.active.is_some() && (drawing.presentation.scene_visible || committing);
+            camera.is_active = gpu.active.is_some()
+                && (drawing.presentation.scene_visible || committing || direct);
         }
         screen_render::visible(
             world,
@@ -1084,12 +1273,15 @@ pub(crate) fn submit(
         );
         Ok(())
     })();
-    let mut gpu = gpu;
-    gpu.query = drawing.graphics.query;
-    if let Some(resource) = drawing.graphics.resource {
-        gpu.quality = resource.quality;
-    }
-    screen_render::timing::observe_query(world, gpu.query, gpu.quality);
+    gpu.query = drawing
+        .graphics
+        .query
+        .zip(drawing.graphics.resource)
+        .map(|(query, resource)| screen_render::timing::TimingSource {
+            query,
+            quality: resource.quality,
+        });
+    screen_render::timing::observe_query(world, gpu.query);
     world.insert_resource(gpu);
     result
 }
@@ -1140,7 +1332,7 @@ pub(crate) fn poll(world: &mut World) -> Vec<ApplicationInput> {
                 Some(observation)
                     if observation.commit_request.is_none()
                         && observation.camera == candidate.preview
-                        && observation.output == candidate.output.id() =>
+                        && observation.output == candidate.binding =>
                 {
                     match &observation.result {
                         Ok(_) => {
@@ -1172,8 +1364,14 @@ pub(crate) fn poll(world: &mut World) -> Vec<ApplicationInput> {
                 if let Some(observation) = readback.results.get(&id)
                     && observation.commit_request == Some(request_id)
                     && Some(observation.camera) == gpu.main_camera
-                    && observation.output == candidate.output.id()
+                    && observation.output == candidate.binding
                 {
+                    if observation.result.is_ok()
+                        && screen_render::direct(world)
+                        && let Some(image) = candidate.output.take()
+                    {
+                        world.resource_mut::<Assets<Image>>().remove(image.id());
+                    }
                     candidate.stage = ResourceStage::Bound;
                     inputs.push(ApplicationInput::Resources {
                         request_id,
@@ -1232,9 +1430,69 @@ pub(crate) fn poll(world: &mut World) -> Vec<ApplicationInput> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bevy::camera::primitives::MeshAabb;
 
     #[test]
     fn actual_binding_rejects_preview_ack_and_waits_for_retirement_extract() {
+        use bevy::ecs::{
+            schedule::{IntoSystemSet, NodeId},
+            system::{IntoSystem, System},
+        };
+        let mut lighting_app = App::new();
+        lighting_app.add_plugins((
+            bevy::asset::AssetPlugin::default(),
+            bevy::transform::TransformPlugin,
+            bevy::light::LightPlugin,
+        ));
+        install_shadow_binding(&mut lighting_app);
+        lighting_app
+            .world_mut()
+            .schedule_scope(PostUpdate, |world, schedule| {
+                schedule.initialize(world).unwrap();
+                let old_type =
+                    IntoSystem::into_system(build_directional_light_cascades).system_type();
+                assert!(
+                    !schedule
+                        .systems()
+                        .unwrap()
+                        .any(|(_, system)| system.system_type() == old_type)
+                );
+                let bind_type = IntoSystem::into_system(bind_shadow).system_type();
+                let (key, _) = schedule
+                    .systems()
+                    .unwrap()
+                    .find(|(_, system)| system.system_type() == bind_type)
+                    .unwrap();
+                let graph = schedule.graph();
+                assert!(
+                    graph
+                        .systems_in_set(
+                            SimulationLightSystems::UpdateDirectionalLightCascades.intern()
+                        )
+                        .unwrap()
+                        .contains(&key)
+                );
+                let node = |set| NodeId::Set(graph.system_sets.get_key(set).unwrap());
+                let binding = NodeId::System(key);
+                for (before, after) in [
+                    (
+                        node(bevy::transform::TransformSystems::Propagate.intern()),
+                        binding,
+                    ),
+                    (node(CameraUpdateSystems.intern()), binding),
+                    (binding, node(bevy::app::TransformGizmoRenderStep.intern())),
+                    (
+                        node(build_directional_light_cascades.into_system_set().intern()),
+                        binding,
+                    ),
+                    (
+                        binding,
+                        node(SimulationLightSystems::UpdateLightFrusta.intern()),
+                    ),
+                ] {
+                    assert!(graph.dependency().graph().contains_edge(before, after));
+                }
+            });
         let mut world = World::new();
         world.init_resource::<Messages<bevy::window::WindowResized>>();
         world.init_resource::<Messages<bevy::window::WindowCreated>>();
@@ -1244,6 +1502,7 @@ mod tests {
         world.init_resource::<Assets<Image>>();
         world.init_resource::<Assets<Mesh>>();
         world.init_resource::<Assets<WaterMaterial>>();
+        world.init_resource::<Assets<bevy::render::storage::ShaderBuffer>>();
         world.init_resource::<Assets<TerrainMaterial>>();
         world.init_resource::<readiness::GpuReadback>();
         world.init_resource::<DirectionalLightShadowMap>();
@@ -1269,7 +1528,7 @@ mod tests {
         let reflection_camera = world.spawn_empty().id();
         let output = world
             .resource_mut::<Assets<Image>>()
-            .add(screen_render::image([640, 360]).unwrap());
+            .add(screen_render::image([640, 360], TextureFormat::Rgba8UnormSrgb).unwrap());
         let reflection = world
             .resource_mut::<Assets<Image>>()
             .add(super::super::water_reflection::image([320, 180]).unwrap());
@@ -1297,8 +1556,11 @@ mod tests {
             renderer_id: 7,
             ..default()
         };
-        let mut quality = gpu.quality;
-        quality.scale = birdman_game_presentation::screen_render_scale::ScreenRenderScale::Half;
+        let quality = birdman_game_runtime::ApplicationRenderQuality {
+            scale: birdman_game_presentation::screen_render_scale::ScreenRenderScale::Half,
+            shadow: birdman_game_presentation::screen_render_auto::ScreenShadowMap::Full,
+            water_quality: birdman_game_format::WaterQuality::High,
+        };
         gpu.candidates.insert(
             3,
             Candidate {
@@ -1318,7 +1580,13 @@ mod tests {
                 sun: root,
                 illuminance: 0.0,
                 initial_shadow: None,
-                output: output.clone(),
+                output: Some(output.clone()),
+                #[cfg(all(feature = "openxr", any(target_os = "windows", target_os = "linux")))]
+                xr_display: None,
+                binding: RenderTarget::Image(output.clone().into())
+                    .normalize(None)
+                    .unwrap(),
+                output_format: TextureFormat::Rgba8UnormSrgb,
                 reflection,
                 materials: Vec::new(),
                 water: std::array::from_fn(|_| Handle::default()),
@@ -1350,7 +1618,9 @@ mod tests {
         let preview_result = readiness::BindingObservation {
             commit_request: None,
             camera: preview,
-            output: output.id(),
+            output: RenderTarget::Image(output.clone().into())
+                .normalize(None)
+                .unwrap(),
             result: Ok([640, 360]),
         };
         world.resource_mut::<readiness::GpuReadback>().revision = revision;
@@ -1367,7 +1637,9 @@ mod tests {
                 readiness::BindingObservation {
                     commit_request: Some(5),
                     camera: main,
-                    output: output.id(),
+                    output: RenderTarget::Image(output.clone().into())
+                        .normalize(None)
+                        .unwrap(),
                     result: Ok([640, 360]),
                 },
             );
@@ -1391,7 +1663,7 @@ mod tests {
             },
         )
         .unwrap();
-        let initial = runtime
+        let mut initial = runtime
             .update(
                 birdman_game_runtime::ApplicationObservation {
                     observed_ms: 0.0,
@@ -1414,6 +1686,417 @@ mod tests {
                 },
             )
             .unwrap();
+        let mut drawing = initial.drawing.take().expect("Initial drawing");
+        drawing.scene.geometry = None;
+        drawing.scene.camera = None;
+        let camera_active = world.get::<Camera>(main).unwrap().is_active;
+        world
+            .resource_mut::<readiness::GpuReadback>()
+            .results
+            .get_mut(&3)
+            .unwrap()
+            .result = Err("Lost active vertex allocation".into());
+        world.resource_mut::<NativeGpu>().active = Some(4);
+        assert!(submit(&mut world, &runtime, &drawing).is_ok());
+        assert!(world.get::<GlobalTransform>(root).is_some());
+        world.clear_trackers();
+        submit(&mut world, &runtime, &drawing).unwrap();
+        for entity in [root, attachments[1]] {
+            assert!(
+                !world
+                    .entity(entity)
+                    .get_ref::<Transform>()
+                    .unwrap()
+                    .is_changed()
+            );
+        }
+        let previous_anchor = drawing.scene.water_world_from_surface;
+        drawing.scene.water_world_from_surface.position.x += 1.0;
+        submit(&mut world, &runtime, &drawing).unwrap();
+        assert!(
+            world
+                .entity(root)
+                .get_ref::<Transform>()
+                .unwrap()
+                .is_changed()
+        );
+        assert_eq!(
+            world.get::<Transform>(root).unwrap().translation,
+            pose_transform(drawing.scene.water_world_from_surface).translation
+        );
+        drawing.scene.water_world_from_surface = previous_anchor;
+
+        bevy::tasks::ComputeTaskPool::get_or_init(bevy::tasks::TaskPool::default);
+        let mut propagation = App::new();
+        propagation.add_plugins(bevy::transform::TransformPlugin);
+        let parent = propagation.world_mut().spawn_empty().id();
+        let first_pose = Transform::from_xyz(1.0, 0.0, 0.0);
+        submit_transform(propagation.world_mut(), parent, first_pose);
+        let child = propagation
+            .world_mut()
+            .spawn((ChildOf(parent), Transform::from_xyz(0.0, 2.0, 0.0)))
+            .id();
+        propagation.update();
+        let previous_global = *propagation.world().get::<GlobalTransform>(child).unwrap();
+        let changed_at = propagation
+            .world()
+            .entity(child)
+            .get_ref::<GlobalTransform>()
+            .unwrap()
+            .last_changed();
+        submit_transform(propagation.world_mut(), parent, first_pose);
+        propagation.update();
+        assert_eq!(
+            *propagation.world().get::<GlobalTransform>(child).unwrap(),
+            previous_global
+        );
+        assert_eq!(
+            propagation
+                .world()
+                .entity(child)
+                .get_ref::<GlobalTransform>()
+                .unwrap()
+                .last_changed(),
+            changed_at
+        );
+        submit_transform(
+            propagation.world_mut(),
+            parent,
+            Transform::from_xyz(3.0, 0.0, 0.0),
+        );
+        propagation.update();
+        assert_eq!(
+            propagation
+                .world()
+                .get::<GlobalTransform>(child)
+                .unwrap()
+                .translation(),
+            Vec3::new(3.0, 2.0, 0.0)
+        );
+        world.resource_mut::<NativeGpu>().active = Some(3);
+        assert_eq!(
+            submit(&mut world, &runtime, &drawing).unwrap_err(),
+            "Lost active vertex allocation"
+        );
+        world.get_mut::<Camera>(main).unwrap().is_active = camera_active;
+        let assets = initial
+            .requests
+            .iter()
+            .find_map(|request| match request {
+                ApplicationRequest::PrepareResources { assets, .. } => Some(assets.as_ref()),
+                _ => None,
+            })
+            .expect("Prepared environment upload");
+        let mut sampler_gpu = NativeGpu::default();
+        let target = world.resource::<NativeGpu>().candidates[&3].target;
+        let mut sampler_assets = assets.clone();
+        sampler_assets.water.detail_anisotropy_clamp = 8;
+        let sampler_eight = sampler_gpu
+            .prepare(&mut world, &runtime, target, &sampler_assets, None)
+            .unwrap();
+        sampler_assets.water.detail_anisotropy_clamp = 4;
+        let sampler_four = sampler_gpu
+            .prepare(&mut world, &runtime, target, &sampler_assets, None)
+            .unwrap();
+        let material_count = assets
+            .scene
+            .as_ref()
+            .unwrap()
+            .meshes
+            .iter()
+            .flat_map(|mesh| mesh.materials.iter().map(|material| material.material_id))
+            .collect::<std::collections::BTreeSet<_>>()
+            .len();
+        assert_eq!(sampler_four.materials.len(), material_count);
+        assert_eq!(
+            sampler_four
+                .materials
+                .iter()
+                .map(Handle::id)
+                .collect::<std::collections::BTreeSet<_>>()
+                .len(),
+            material_count
+        );
+        for detail in &assets.water.detail {
+            let eight = &sampler_gpu.images[&(detail.image.buffer_id, 8)].0;
+            let four = &sampler_gpu.images[&(detail.image.buffer_id, 4)].0;
+            assert_ne!(eight.id(), four.id());
+            let images = world.resource::<Assets<Image>>();
+            let eight = images.get(eight).unwrap();
+            let four = images.get(four).unwrap();
+            assert!(
+                matches!(&eight.sampler, bevy::image::ImageSampler::Descriptor(s) if s.anisotropy_clamp == 8)
+            );
+            assert!(
+                matches!(&four.sampler, bevy::image::ImageSampler::Descriptor(s) if s.anisotropy_clamp == 4)
+            );
+            assert_eq!(eight.data, four.data);
+            assert_eq!(
+                eight.texture_descriptor.mip_level_count,
+                four.texture_descriptor.mip_level_count
+            );
+        }
+        let sky_key = (assets.sky.buffer_id, 1);
+        assert_eq!(sampler_gpu.images[&sky_key].1, 2);
+        sampler_gpu.release(&mut world, &sampler_four).unwrap();
+        assert!(sampler_four.materials.iter().all(|material| {
+            world
+                .resource::<Assets<TerrainMaterial>>()
+                .get(material)
+                .is_none()
+        }));
+        assert!(sampler_eight.materials.iter().all(|material| {
+            world
+                .resource::<Assets<TerrainMaterial>>()
+                .get(material)
+                .is_some()
+        }));
+        for detail in &assets.water.detail {
+            assert!(
+                !sampler_gpu
+                    .images
+                    .contains_key(&(detail.image.buffer_id, 4))
+            );
+            assert_eq!(sampler_gpu.images[&(detail.image.buffer_id, 8)].1, 1);
+        }
+        assert_eq!(sampler_gpu.images[&sky_key].1, 1);
+        sampler_gpu.release(&mut world, &sampler_eight).unwrap();
+        assert!(sampler_gpu.images.is_empty());
+
+        // An observed equal-sized final target is borrowed only at commit. The
+        // isolated preparation image retires after the actual target ACK.
+        let previous_gpu = world.remove_resource::<NativeGpu>().unwrap();
+        let previous_readback = world.resource::<readiness::GpuReadback>().clone();
+        let previous_target = world.get::<RenderTarget>(main).unwrap().clone();
+        let previous_layers = world.get::<RenderLayers>(main).unwrap().clone();
+        let outer = world.resource::<screen_render::ScreenOutput>().ui_camera;
+        let final_target =
+            screen_render::normalize(&world, &screen_render::output_target(&world)).unwrap();
+        // With no selected 3D pipelines, the real preparation producer remains
+        // pending. A candidate already prepared in isolation can instead proceed
+        // to the actual binding ACK while its scene is hidden behind boot UI.
+        assert!(matches!(
+            readiness::binding_preparation(&world, &[main], false),
+            screen_render::timing::PipelinePreparation::Pending
+        ));
+        assert!(matches!(
+            readiness::binding_preparation(&world, &[main], true),
+            screen_render::timing::PipelinePreparation::Ready
+        ));
+        world.resource_mut::<readiness::GpuReadback>().output = Some(readiness::OutputTarget {
+            camera: outer,
+            target: final_target.clone(),
+            extent: [1280, 720],
+            format: TextureFormat::Bgra8UnormSrgb,
+            main_format: TextureFormat::Rgba8UnormSrgb,
+        });
+        let mut direct_gpu = NativeGpu {
+            main_camera: Some(main),
+            renderer_id: 7,
+            ..default()
+        };
+        let mut full = target;
+        full.extent_px = [1280, 720];
+        full.quality.scale =
+            birdman_game_presentation::screen_render_scale::ScreenRenderScale::Full;
+        let mut candidate = direct_gpu
+            .prepare(&mut world, &runtime, full, &sampler_assets, None)
+            .unwrap();
+        let isolated = candidate.output.as_ref().unwrap().id();
+        assert_eq!(candidate.output_format, TextureFormat::Bgra8UnormSrgb);
+        assert!(!screen_render::direct(&world));
+        assert_ne!(candidate.binding, final_target);
+        candidate.stage = ResourceStage::Prepared;
+        direct_gpu.candidates.insert(41, candidate);
+        direct_gpu
+            .commit(&mut world, 77, 41)
+            .unwrap_or_else(|_| panic!("Direct binding"));
+        assert!(screen_render::direct(&world));
+        assert!(!world.get::<Camera>(outer).unwrap().is_active);
+        assert!(world.get::<IsDefaultUiCamera>(main).is_some());
+        assert!(world.resource::<Assets<Image>>().get(isolated).is_some());
+        world.resource_mut::<readiness::GpuReadback>().revision = direct_gpu.revision;
+        world
+            .resource_mut::<readiness::GpuReadback>()
+            .output
+            .as_mut()
+            .unwrap()
+            .camera = main;
+        world
+            .resource_mut::<readiness::GpuReadback>()
+            .results
+            .insert(
+                41,
+                readiness::BindingObservation {
+                    camera: main,
+                    output: final_target.clone(),
+                    commit_request: Some(77),
+                    result: Ok(full.extent_px),
+                },
+            );
+        world.insert_resource(direct_gpu);
+        assert!(matches!(
+            poll(&mut world).as_slice(),
+            [ApplicationInput::Resources {
+                observation: ApplicationResourceObservation::Committed { .. },
+                ..
+            }]
+        ));
+        assert!(world.resource::<Assets<Image>>().get(isolated).is_none());
+        assert!(
+            world.resource::<NativeGpu>().candidates[&41]
+                .output
+                .is_none()
+        );
+        let scene_visible = drawing.presentation.scene_visible;
+        drawing.presentation.scene_visible = false;
+        submit(&mut world, &runtime, &drawing).unwrap();
+        let hidden_root = world.resource::<NativeGpu>().candidates[&41].root;
+        assert_eq!(
+            world.get::<Visibility>(hidden_root),
+            Some(&Visibility::Hidden)
+        );
+        assert!(world.get::<Camera>(main).unwrap().is_active);
+        drawing.presentation.scene_visible = scene_visible;
+
+        let mut direct_gpu = world.remove_resource::<NativeGpu>().unwrap();
+        let mut scaled = direct_gpu
+            .prepare(&mut world, &runtime, target, &sampler_assets, None)
+            .unwrap();
+        scaled.stage = ResourceStage::Prepared;
+        direct_gpu.candidates.insert(42, scaled);
+        direct_gpu
+            .commit(&mut world, 78, 42)
+            .unwrap_or_else(|_| panic!("Scaled binding"));
+        assert!(!screen_render::direct(&world));
+        assert!(world.get::<Camera>(outer).unwrap().is_active);
+        assert!(world.get::<IsDefaultUiCamera>(main).is_none());
+        assert!(world.get::<IsDefaultUiCamera>(outer).is_some());
+        #[cfg(all(feature = "openxr", any(target_os = "windows", target_os = "linux")))]
+        {
+            // The same Window size AND format must not borrow an HMD copy target.
+            world
+                .resource_mut::<readiness::GpuReadback>()
+                .output
+                .as_mut()
+                .unwrap()
+                .format = TextureFormat::Rgba8UnormSrgb;
+            let mut stereo = direct_gpu
+                .prepare(&mut world, &runtime, full, &sampler_assets, Some(91))
+                .unwrap();
+            let image = stereo.output.as_ref().unwrap().id();
+            let descriptor = &world
+                .resource::<Assets<Image>>()
+                .get(image)
+                .unwrap()
+                .texture_descriptor;
+            assert_eq!(descriptor.format, TextureFormat::Rgba8UnormSrgb);
+            assert!(
+                descriptor
+                    .usage
+                    .contains(bevy::render::render_resource::TextureUsages::COPY_SRC)
+            );
+            stereo.stage = ResourceStage::Prepared;
+            direct_gpu.candidates.insert(43, stereo);
+            direct_gpu
+                .commit(&mut world, 79, 43)
+                .unwrap_or_else(|_| panic!("Stereo binding"));
+            assert!(!screen_render::direct(&world));
+            assert_ne!(direct_gpu.candidates[&43].binding, final_target);
+            assert_eq!(
+                direct_gpu.candidates[&43].output.as_ref().unwrap().id(),
+                image
+            );
+            let stereo = direct_gpu.candidates.remove(&43).unwrap();
+            direct_gpu.release(&mut world, &stereo).unwrap();
+            assert!(world.resource::<Assets<Image>>().get(image).is_none());
+        }
+        for id in [41, 42] {
+            let candidate = direct_gpu.candidates.remove(&id).unwrap();
+            direct_gpu.release(&mut world, &candidate).unwrap();
+        }
+        assert!(
+            world
+                .iter_entities()
+                .any(|entity| entity.contains::<PrimaryWindow>())
+        );
+        screen_render::reset(&mut world);
+        world
+            .entity_mut(main)
+            .insert((previous_target, previous_layers));
+        world.insert_resource(previous_gpu);
+        world.insert_resource(previous_readback);
+        let mut water = assets.water.clone();
+        water.detail[0].extent_meters = 32.0;
+        water.detail[1].extent_meters = 144.0;
+        water.wind_speed_meters_per_second = 3.25;
+        let near = WaterMaterial::prepared(
+            &water,
+            assets.lighting,
+            &std::array::from_fn(|_| Handle::default()),
+            Handle::default(),
+        );
+        let bytes = near.parameters.encode();
+        assert_eq!(bytes.len(), 1024);
+        for (offset, value) in [
+            (0, 0.0_f32),
+            (48, 0.0),
+            (60, 1.0),
+            (832, 0.0),
+            (928, 1.0),
+            (992, 0.0),
+            (1008, 32.0),
+            (1012, 144.0),
+            (1016, 3.25),
+        ] {
+            assert_eq!(
+                &bytes[offset..offset + 4],
+                &value.to_le_bytes(),
+                "Water uniform offset {offset}"
+            );
+        }
+        let mut water_surfaces = [near.clone(), near.far_surface(), near.sky_surface()];
+        assert_eq!(
+            bevy::render::render_resource::AsBindGroup::bind_group_data(&water_surfaces[0]),
+            bevy::render::render_resource::AsBindGroup::bind_group_data(&water_surfaces[1])
+        );
+        let mut parameter_buffers =
+            world.resource_mut::<Assets<bevy::render::storage::ShaderBuffer>>();
+        for surface in &mut water_surfaces {
+            surface.allocate_buffer(&mut parameter_buffers);
+        }
+        assert_ne!(water_surfaces[0].buffer.id(), water_surfaces[1].buffer.id());
+        assert_ne!(water_surfaces[1].buffer.id(), water_surfaces[2].buffer.id());
+        assert_ne!(water_surfaces[0].buffer.id(), water_surfaces[2].buffer.id());
+        for (index, surface) in water_surfaces.iter().enumerate() {
+            let key = bevy::render::render_resource::AsBindGroup::bind_group_data(surface);
+            assert_eq!(
+                key.wave_count,
+                if index == 2 {
+                    0
+                } else {
+                    water.projection.wave_count() as u32
+                }
+            );
+            assert_eq!(
+                key.detail_quadrature_samples,
+                if index == 2 {
+                    1
+                } else {
+                    water.projection.detail_quadrature_samples()
+                }
+            );
+            assert_eq!(key.sky, index == 2);
+            assert_eq!(&surface.parameters.encode()[44..48], &0.0_f32.to_le_bytes());
+            let buffer = parameter_buffers.remove(surface.buffer.id()).unwrap();
+            assert_eq!(buffer.data.unwrap(), surface.parameters.encode());
+            assert_eq!(
+                buffer.buffer_description.usage,
+                bevy::render::render_resource::BufferUsages::UNIFORM
+                    | bevy::render::render_resource::BufferUsages::COPY_DST
+            );
+        }
+        assert!(parameter_buffers.is_empty());
         let scene = initial
             .requests
             .iter()
@@ -1422,8 +2105,119 @@ mod tests {
                 _ => None,
             })
             .expect("Prepared scene upload");
+        let wing = &scene.meshes[0];
+        let range = &wing.materials[0];
+        let mut mesh = environment::mesh(&runtime, wing, range.start, range.count).unwrap();
+        let indices = mesh.get_index_buffer_bytes().unwrap().to_vec();
+        let packed = mesh.create_packed_vertex_buffer_data();
+        for attribute in [Mesh::ATTRIBUTE_POSITION, Mesh::ATTRIBUTE_NORMAL] {
+            let Some(bevy::mesh::VertexAttributeValues::Float32x3(values)) =
+                mesh.attribute_mut(attribute)
+            else {
+                panic!("Dynamic vertex layout")
+            };
+            values.fill([f32::NAN; 3]);
+        }
+        environment::update_mesh(&runtime, &mut mesh, wing.position, wing.normal).unwrap();
+        assert_eq!(mesh.create_packed_vertex_buffer_data(), packed);
+        assert_eq!(mesh.get_index_buffer_bytes().unwrap(), indices);
+        let mut grouped_assets = Assets::<Mesh>::default();
+        let handles: Vec<_> = wing
+            .materials
+            .iter()
+            .map(|range| {
+                grouped_assets
+                    .add(environment::mesh(&runtime, wing, range.start, range.count).unwrap())
+            })
+            .collect();
+        assert!(handles.len() > 1);
+        assert_ne!(
+            grouped_assets
+                .get(&handles[0])
+                .unwrap()
+                .get_index_buffer_bytes(),
+            grouped_assets
+                .get(&handles[1])
+                .unwrap()
+                .get_index_buffer_bytes()
+        );
+        let mut grouped_gpu = NativeGpu::default();
+        grouped_gpu.meshes.insert(wing.mesh_id, handles.clone());
+        let mut pending = Vec::new();
+        readiness::extract_meshes(
+            &grouped_gpu,
+            &grouped_assets,
+            handles.iter().map(Handle::id).collect(),
+            &mut pending,
+        );
+        assert_eq!(pending.len(), handles.len());
+        for transfer in &pending {
+            assert_eq!(transfer.vertices.as_slice(), packed);
+            assert!(std::sync::Arc::ptr_eq(
+                &pending[0].vertices,
+                &transfer.vertices
+            ));
+        }
+        let old_payload = std::sync::Arc::downgrade(&pending[0].vertices);
+        for handle in &handles {
+            let mesh = grouped_assets.get_mut_untracked(handle.id()).unwrap();
+            let Some(bevy::mesh::VertexAttributeValues::Float32x3(positions)) =
+                mesh.attribute_mut(Mesh::ATTRIBUTE_POSITION)
+            else {
+                unreachable!()
+            };
+            positions[0][0] += 1.0;
+        }
+        let replacement = grouped_assets
+            .get(&handles[0])
+            .unwrap()
+            .create_packed_vertex_buffer_data();
+        assert_ne!(replacement, packed);
+        readiness::extract_meshes(
+            &grouped_gpu,
+            &grouped_assets,
+            handles.iter().map(Handle::id).collect(),
+            &mut pending,
+        );
+        assert!(old_payload.upgrade().is_none());
+        assert_eq!(pending.len(), handles.len());
+        for transfer in &pending {
+            let source = grouped_assets.get(transfer.id).unwrap();
+            assert_eq!(transfer.vertices.as_slice(), replacement);
+            assert!(std::sync::Arc::ptr_eq(
+                &pending[0].vertices,
+                &transfer.vertices
+            ));
+            assert_eq!(transfer.count, source.count_vertices() as u32);
+            assert_eq!(transfer.stride, source.get_vertex_size());
+            assert_eq!(
+                transfer.center,
+                Vec3::from(source.compute_aabb().unwrap().center)
+            );
+        }
+        let retained_payload = std::sync::Arc::clone(&pending[1].vertices);
+        readiness::extract_meshes(
+            &grouped_gpu,
+            &grouped_assets,
+            vec![handles[0].id()],
+            &mut pending,
+        );
+        assert!(!std::sync::Arc::ptr_eq(
+            &pending[0].vertices,
+            &retained_payload
+        ));
+        assert!(std::sync::Arc::ptr_eq(
+            &pending[1].vertices,
+            &retained_payload
+        ));
+        grouped_gpu.meshes.clear();
+        readiness::extract_meshes(&grouped_gpu, &grouped_assets, Vec::new(), &mut pending);
+        assert!(pending.is_empty());
         for texture in &scene.wing_textures {
             let image = environment::wing_image(&runtime, texture).unwrap();
+            assert!(
+                matches!(&image.sampler, bevy::image::ImageSampler::Descriptor(s) if s.anisotropy_clamp == 8)
+            );
             assert_eq!(
                 image.texture_descriptor.mip_level_count,
                 texture.mip_level_count

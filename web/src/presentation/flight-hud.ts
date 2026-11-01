@@ -37,13 +37,15 @@ export class FlightHudAdapter {
       return;
     }
     const layout = hud.layout;
-    const layoutKey = JSON.stringify([layout, theme.text, theme.panel_background]);
+    const layoutKey = JSON.stringify([layout, theme.text, theme.muted_text, theme.warning_text, theme.panel_background]);
     if (layoutKey !== this.layoutKey) {
       this.root.dataset.shared = "true";
       Object.assign(this.root.style, {
       width: `${String(layout.width_px)}px`, height: `${String(layout.height_px)}px`,
       fontSize: `${String(layout.font_size_px)}px`, color: theme.text
       });
+      this.root.style.setProperty("--hud-muted-text", theme.muted_text);
+      this.root.style.setProperty("--hud-warning-text", theme.warning_text);
       this.root.style.setProperty("--hud-left", `${String(layout.offset_px[0])}px`);
       this.root.style.setProperty("--hud-bottom", `${String(layout.offset_px[1])}px`);
       this.root.style.setProperty("--hud-card-background", `color-mix(in srgb, ${theme.panel_background} ${String(layout.opacity * 100)}%, transparent)`);
@@ -102,7 +104,7 @@ function widget(node: GameUiHudNode, hud: GameUiHud, theme: GameUiTheme, clipPre
       const aircraft = geometry.aircraft_segments.map(([start, end], index, segments) => `${index > 0 && segments[index - 1]?.[1].x === start.x && segments[index - 1]?.[1].y === start.y ? "" : `M ${String(start.x)} ${String(start.y)} `}L ${String(end.x)} ${String(end.y)}`).join(" ");
       shapes.push(shape("rect", { ...outline, fill: "none", stroke: theme.text, "stroke-width": 3 }),
         shape("path", { d: aircraft, fill: "none", stroke: theme.focus_outline, "stroke-width": 5 }));
-      if (geometry.flight_path_center != null) shapes.push(shape("circle", { cx: geometry.flight_path_center.x, cy: geometry.flight_path_center.y, r: geometry.flight_path_radius, fill: "none", stroke: "#7df4c5", "stroke-width": 3 }));
+      if (geometry.flight_path_center != null) shapes.push(shape("circle", { cx: geometry.flight_path_center.x, cy: geometry.flight_path_center.y, r: geometry.flight_path_radius, fill: "none", stroke: theme.flight_path_marker, "stroke-width": 3 }));
       return [gauge(node, hud, geometry.canvas_size, shapes)];
     }
     case "heading_tape": return [gauge(node, hud, content.canvas_size, [

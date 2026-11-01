@@ -34,7 +34,10 @@ function run(command: string, arguments_: string[], log: string): void {
 const execLogs: Promise<void>[] = [];
 run(process.execPath, [resolve(root, "node_modules/tsx/dist/cli.mjs"), "tools/wasm-build/main.ts"], "wasm-build.log");
 run("cargo", ["run", "-p", "birdman-game-bevy", "--locked", "--features", "verify-harness", "--",
-  "--offscreen", "--verify", native, "--verify-size", "1280x720", "--export-dir", resolve(native, "records")], "native.log");
+  "--offscreen", "--verify", native, "--verify-adapter-input", "--verify-size", "1280x720", "--export-dir", resolve(native, "records")], "native.log");
+const rustPatch = execFileSync("git", ["diff", "--binary", "HEAD", "--", "crates"], gitOptions);
+await writeFile(resolve(native, "source-evidence.json"), JSON.stringify({ sourceHead: head,
+  rustDiffSha256: createHash("sha256").update(rustPatch).digest("hex"), nativeExit: 0 }, null, 2) + "\n", "utf8");
 await Promise.all(execLogs);
 const wasmBytes = await readFile(resolve(root, "web/pkg/birdman_game_wasm_bg.wasm"));
 const { ApplicationRuntimeBridge, initSync } = await import("../../web/pkg/birdman_game_wasm.js");
@@ -139,6 +142,7 @@ try {
         assert.ok(actual !== undefined);
         compare(actual.requests, entry["requests"], "requests@" + String(observations));
         assert.equal(actual.lifecycle, entry["lifecycle"]);
+        assert.equal(actual.keyboard_consumed, entry["keyboard_consumed"]);
         for (const request of actual.requests) if (request.kind === "download_file") downloads++;
         if (actual.drawing !== null && actual.drawing !== undefined) drawing = actual.drawing;
         lifecycle = actual.lifecycle;

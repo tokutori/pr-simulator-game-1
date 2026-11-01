@@ -94,6 +94,7 @@ type ProbeAssets<'world> = (
     ResMut<'world, Assets<ProbeMaterial>>,
     ResMut<'world, Assets<Mesh>>,
     ResMut<'world, Assets<Image>>,
+    ResMut<'world, Assets<bevy::render::storage::ShaderBuffer>>,
 );
 
 #[derive(Default)]
@@ -138,7 +139,7 @@ fn setup(
     runtime: Option<Res<super::super::native_runtime::NativeRuntime>>,
     mut configured: Local<bool>,
 ) {
-    let (source_materials, mut materials, mut meshes, mut images) = assets;
+    let (source_materials, mut materials, mut meshes, mut images, mut buffers) = assets;
     if *configured {
         return;
     }
@@ -155,9 +156,19 @@ fn setup(
     let condition = (|| {
         let EnvironmentProjection::Available { metadata, .. } =
             EnvironmentSelection::for_session(runtime.0.application())
-                .map_err(|cause| format!("Shader probe environment: {cause:?}"))?
+                .map_err(|cause| {
+                    format!(
+                        "Shader probe environment: {}",
+                        birdman_game_app::technical_error_text(&cause)
+                    )
+                })?
                 .resolve()
-                .map_err(|cause| format!("Shader probe environment: {cause:?}"))?
+                .map_err(|cause| {
+                    format!(
+                        "Shader probe environment: {}",
+                        birdman_game_app::technical_error_text(&cause)
+                    )
+                })?
         else {
             return Err("Shader probe environment is unavailable".to_string());
         };
@@ -169,7 +180,12 @@ fn setup(
             waves.detail_amplitude_scale,
             u64::from(waves.pattern_seed),
         )
-        .map_err(|cause| format!("Shader probe waves: {cause:?}"))
+        .map_err(|cause| {
+            format!(
+                "Shader probe waves: {}",
+                birdman_game_app::technical_error_text(&cause)
+            )
+        })
     })();
     let condition = match condition {
         Ok(condition) => condition,
@@ -185,29 +201,34 @@ fn setup(
         let projection = match LakeWaveProjection::try_new(condition, quality) {
             Ok(projection) => projection,
             Err(cause) => {
-                verification.state =
-                    ProbeState::Failed(format!("Shader probe projection: {cause:?}"));
+                verification.state = ProbeState::Failed(format!(
+                    "Shader probe projection: {}",
+                    birdman_game_app::technical_error_text(&cause)
+                ));
                 return;
             }
         };
-        base.geometry_waves = projection.wave_k_amplitude().map(Vec4::from_array);
-        base.geometry_motion = projection.wave_omega_phase().map(Vec4::from_array);
-        base.geometry_parameters = Vec4::new(
-            projection.wave_count() as f32,
+        base.detail_quadrature_samples = projection.detail_quadrature_samples();
+        base.wave_count = projection.wave_count() as u32;
+        base.parameters.geometry_waves = projection.wave_k_amplitude().map(Vec4::from_array);
+        base.parameters.geometry_motion = projection.wave_omega_phase().map(Vec4::from_array);
+        base.parameters.geometry_parameters = Vec4::new(
+            0.0,
             projection.choppiness(),
             projection.visual_wave_height() as f32,
             projection.spacing().gradient_magnitude() as f32,
         );
-        base.project_camera(camera.translation, 7.0);
+        base.parameters.camera_time = camera.translation.extend(7.0);
         if far {
-            base.geometry_patch = Vec4::ZERO;
+            base.parameters.geometry_patch = Vec4::ZERO;
         }
         if flat {
-            base.geometry_parameters.x = 0.0;
-            base.waves_sky = Vec4::ZERO;
+            base.wave_count = 0;
+            base.parameters.wind_detail = Vec4::ZERO;
+            base.parameters.wind_speed = 0.0;
         }
         if detail_cutoff {
-            base.geometry_parameters.x = 0.0;
+            base.wave_count = 0;
         }
         let geometry = match birdman_game_scene::lake_water_mesh::PreparedWaterGeometry::try_new(
             quality,
@@ -215,7 +236,10 @@ fn setup(
         ) {
             Ok(geometry) => geometry,
             Err(cause) => {
-                verification.state = ProbeState::Failed(format!("Shader probe bounds: {cause:?}"));
+                verification.state = ProbeState::Failed(format!(
+                    "Shader probe bounds: {}",
+                    birdman_game_app::technical_error_text(&cause)
+                ));
                 return;
             }
         };
@@ -272,8 +296,10 @@ fn setup(
             );
             mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, vec![[0.0; 4]; mesh.count_vertices()]);
             let mesh = meshes.add(mesh);
+            let mut material_base = base.clone();
+            material_base.allocate_buffer(&mut buffers);
             let material = materials.add(ExtendedMaterial {
-                base: base.clone(),
+                base: material_base,
                 extension: ProbeExtension { output },
             });
             let surface_entity = commands
@@ -284,7 +310,7 @@ fn setup(
                     layers,
                 ))
                 .id();
-            commands.spawn(Readback::texture(image.clone())).observe(move |event: On<ReadbackComplete>, mut commands: Commands, mut verification: ResMut<WaterShaderVerification>, mut images: ResMut<Assets<Image>>, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<ProbeMaterial>>, mut accepted: Local<bool>| {
+            commands.spawn(Readback::texture(image.clone())).observe(move |event: On<ReadbackComplete>, mut commands: Commands, mut verification: ResMut<WaterShaderVerification>, mut images: ResMut<Assets<Image>>, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<ProbeMaterial>>, mut buffers: ResMut<Assets<bevy::render::storage::ShaderBuffer>>, mut accepted: Local<bool>| {
                 if *accepted || !matches!(verification.state, ProbeState::Reading(_)) { return; }
                 let result = inspect_pixels(&event.data, output, flat, !far && !detail_cutoff, bounds);
                 let Some(result) = result else { return; };
@@ -304,7 +330,7 @@ fn setup(
                 commands.entity(surface_entity).despawn();
                 images.remove(image.id());
                 meshes.remove(mesh.id());
-                materials.remove(material.id());
+                if let Some(material) = materials.remove(material.id()) { buffers.remove(material.base.buffer.id()); }
             });
         }
     }

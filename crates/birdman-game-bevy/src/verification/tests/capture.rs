@@ -166,3 +166,48 @@ fn completion_requires_a_result_and_preserves_the_original_outcome() {
         assert_eq!(completion.ensure_completed(), result);
     }
 }
+
+#[test]
+fn capture_waits_for_quality_ack_and_accepts_an_existing_commit() {
+    use birdman_game_presentation::{
+        screen_render_auto::ScreenShadowMap, screen_render_scale::ScreenRenderScale,
+    };
+    use birdman_game_runtime::{
+        ApplicationGpuTimingCapability, ApplicationGraphicsProjection, ApplicationGraphicsResource,
+        ApplicationRenderQuality, ApplicationRendererObservation,
+    };
+    let expected = ApplicationRenderQuality {
+        scale: ScreenRenderScale::Full,
+        shadow: ScreenShadowMap::Full,
+        water_quality: birdman_game_format::WaterQuality::High,
+    };
+    let renderer = ApplicationRendererObservation {
+        resource_id: 1,
+        extent_px: [1280, 720],
+        screen_extent_px: [1280, 720],
+        xr_extent_px: None,
+        gpu_timing: ApplicationGpuTimingCapability::Available,
+    };
+    let mut graphics = ApplicationGraphicsProjection {
+        renderer_resource_id: Some(1),
+        resource: None,
+        query: None,
+    };
+    assert!(!driver::capture::quality_matches(
+        &graphics, &renderer, expected
+    ));
+    graphics.resource = Some(ApplicationGraphicsResource {
+        renderer_resource_id: 1,
+        commit: 3,
+        quality: expected,
+        extent_px: [1280, 720],
+    });
+    assert!(driver::capture::quality_matches(
+        &graphics, &renderer, expected
+    ));
+    graphics.resource.as_mut().unwrap().quality.water_quality =
+        birdman_game_format::WaterQuality::Low;
+    assert!(!driver::capture::quality_matches(
+        &graphics, &renderer, expected
+    ));
+}

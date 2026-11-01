@@ -12,6 +12,8 @@ import { applicationPlatformFixture } from "../game-check/application-fixture.js
 import { gpuTimerFixture } from "./gpu-timer-fixture.js";
 
 interface Draw {
+  readonly shadowVersion: number;
+  readonly counts: number[];
   readonly defaultFramebuffer: boolean;
   readonly eyes: Matrix4[];
   readonly projections: Matrix4[];
@@ -22,6 +24,7 @@ interface Draw {
 interface Driver {
   readonly xr: WebXRManager;
   readonly draws: Draw[];
+  readonly shadows: number[][];
   readonly disposed: ReturnType<typeof vi.fn>;
   readonly timer: ReturnType<typeof gpuTimerFixture>;
   frame: ((now: number, frame?: XRFrame) => void) | null;
@@ -48,11 +51,13 @@ vi.mock("three", async importOriginal => {
   return { ...actual, WebGLRenderer: class {
     readonly xr: WebXRManager;
     readonly draws: Draw[] = [];
+    readonly shadows: number[][] = [];
     readonly disposed = vi.fn();
     readonly timer = gpuTimerFixture();
     frame: ((now: number, frame?: XRFrame) => void) | null = null;
     readonly shadowMap = { enabled: false, autoUpdate: true, needsUpdate: false };
     outputColorSpace = actual.SRGBColorSpace;
+    autoClear = true;
     compile = capture.compilation ?? Promise.resolve();
     scene: Scene | null = null;
     sizeFaults = 0;
@@ -108,6 +113,8 @@ vi.mock("three", async importOriginal => {
     setAnimationLoop(callback: ((now: number, frame?: XRFrame) => void) | null): void { this.frame = callback; this.xr.setAnimationLoop(callback); }
     setRenderTarget(target: WebGLRenderTarget | null): void { this.target = target; }
     getRenderTarget(): WebGLRenderTarget | null { return this.target; }
+    getActiveCubeFace(): number { return 0; }
+    getActiveMipmapLevel(): number { return 0; }
     setRenderTargetFramebuffer(): void {}
     setClearColor(color: Color | number, alpha: number): void { this.clearColor.set(color); this.clearAlpha = alpha; }
     getClearColor(target: Color): Color { return target.copy(this.clearColor); }
@@ -135,17 +142,29 @@ vi.mock("three", async importOriginal => {
     dispose(): void { this.disposed(); }
     render(scene: Scene, camera: Camera): void {
       const reflected = !this.xr.enabled && this.target !== null && !("isXRRenderTarget" in this.target && this.target.isXRRenderTarget);
-      if (reflected && this.reflectionFault) throw new Error("physical reflection render failed");
       scene.updateMatrixWorld(true);
       camera.updateMatrixWorld(true);
       const current = this.xr.enabled && this.xr.isPresenting ? this.xr.getCamera() : camera;
       let panel: Matrix4 | null = null;
       const cursors: Matrix4[] = [];
+      const counts: number[] = [];
+      if (this.shadowMap.autoUpdate || this.shadowMap.needsUpdate) {
+        const casters: number[] = [];
+        scene.traverseVisible(object => {
+          if (object instanceof actual.Mesh && object.castShadow && current.layers.test(object.layers)) casters.push((object as Mesh).geometry.drawRange.count);
+        });
+        this.shadows.push(casters);
+        this.shadowMap.needsUpdate = false;
+      }
       scene.traverseVisible(object => {
         if (!(object instanceof actual.Mesh) || !current.layers.test(object.layers)) return;
         if (!(object.geometry instanceof actual.BufferGeometry)) throw new Error("Mesh geometry is unavailable");
         for (const material of Array.isArray(object.material) ? object.material : [object.material]) {
           if (!(material instanceof actual.Material)) throw new Error("Mesh material is unavailable");
+          object.onBeforeRender(this as unknown as WebGLRenderer, scene, camera,
+            object.geometry as Parameters<Material["onBeforeRender"]>[3], material as Material, new actual.Group());
+          if (reflected && this.reflectionFault) throw new Error("physical reflection render failed");
+          counts.push(object.geometry.drawRange.count);
           if (this.target !== null && material instanceof actual.ShaderMaterial
             && material.uniforms["uReflectionTexture"]?.value === this.target.texture) throw new Error("Framebuffer texture feedback loop");
           material.onBeforeRender(this as unknown as WebGLRenderer, scene, camera,
@@ -161,7 +180,7 @@ vi.mock("three", async importOriginal => {
         if (object.material instanceof actual.MeshBasicMaterial && object.material.map instanceof actual.CanvasTexture && object.renderOrder === 2000) panel = object.matrixWorld.clone();
       });
       const eyes = "cameras" in current ? (current as ArrayCamera).cameras : [];
-      this.draws.push({ defaultFramebuffer: this.target === null, reflected, panel, cursors, eyes: eyes.map(eye => eye.matrixWorld.clone()), projections: eyes.map(eye => eye.projectionMatrix.clone()) });
+      this.draws.push({ shadowVersion: this.shadows.length, counts, defaultFramebuffer: this.target === null, reflected, panel, cursors, eyes: eyes.map(eye => eye.matrixWorld.clone()), projections: eyes.map(eye => eye.projectionMatrix.clone()) });
     }
   } };
 });
@@ -245,8 +264,9 @@ async function fixture() {
     HTMLElement: browser.HTMLElement, HTMLInputElement: browser.HTMLInputElement, HTMLSelectElement: browser.HTMLSelectElement,
     MutationObserver: browser.MutationObserver, getComputedStyle: browser.getComputedStyle.bind(browser), XRWebGLLayer: XrLayer,
     WebGLProgram: class { readonly [Symbol.toStringTag] = "WebGLProgram"; } })) vi.stubGlobal(key, value);
+  const rasterPaints = vi.fn();
   vi.spyOn(browser.HTMLCanvasElement.prototype, "getContext").mockImplementation(function (this: HTMLCanvasElement) {
-    const context = { canvas: this, font: "16px Arial", measureText(value: string) {
+    const context = { canvas: this, font: "16px Arial", clearRect: () => { rasterPaints(this); }, measureText(value: string) {
       const size = Number.parseFloat(context.font.match(/([\d.]+)px/)?.[1] ?? "16");
       return { width: value.length * size * 0.7, actualBoundingBoxLeft: 0, actualBoundingBoxRight: value.length * size * 0.7, actualBoundingBoxAscent: size * 0.8, actualBoundingBoxDescent: size * 0.2 };
     }, createLinearGradient: () => ({ addColorStop: () => undefined }) };
@@ -278,7 +298,7 @@ async function fixture() {
     Object.defineProperty(event, "persisted", { value: false });
     browser.dispatchEvent(event);
   };
-  return { browser, session, driver, free, updates, drawing, click, dispose,
+  return { rasterPaints, browser, session, driver, free, updates, drawing, click, dispose,
     frame(at: number) { session.run(at); },
     select(at: number) { session.select(at); },
     async ready() {
@@ -311,11 +331,13 @@ describe("Aggregate runtime through the real Three WebXRManager", () => {
   let prepared: Awaited<ReturnType<typeof fixture>> | null = null;
   let materialProbe: { name: string; transparent: boolean; depthWrite: boolean } | undefined;
   let waveCount: number | undefined;
+  let detailSamples: number | undefined;
   beforeAll(async () => {
     const { ThreeApplicationRenderer } = await import("../../web/src/render/engines/three/application-renderer.js");
     const prepare = Object.getOwnPropertyDescriptor(ThreeApplicationRenderer.prototype, "prepare")?.value as InstanceType<typeof ThreeApplicationRenderer>["prepare"];
     vi.spyOn(ThreeApplicationRenderer.prototype, "prepare").mockImplementation(function (this: InstanceType<typeof ThreeApplicationRenderer>, request) {
       waveCount = request.assets.water.projection.waveCount;
+      detailSamples = request.assets.water.projection.detailQuadratureSamples;
       const asset = request.assets.scene?.meshes[0];
       const source = asset?.materials[0];
       if (materialProbe === undefined && asset !== undefined && source !== undefined) {
@@ -357,6 +379,10 @@ describe("Aggregate runtime through the real Three WebXRManager", () => {
       if (!(mesh instanceof Mesh) || !(mesh.material instanceof Material)) throw new Error("Prepared material is unavailable");
       expect(mesh.material.transparent).toBe(materialProbe.transparent);
       expect(mesh.material.depthWrite).toBe(materialProbe.depthWrite);
+      const firstStructure = state.driver.scene?.getObjectByName("structure-0");
+      const matchingStructure = state.driver.scene?.getObjectByName("structure-8");
+      if (!(firstStructure instanceof Mesh) || !(matchingStructure instanceof Mesh)) throw new Error("Shared structure materials are unavailable");
+      expect(firstStructure.material).toBe(matchingStructure.material);
       const water: ShaderMaterial[] = [];
       state.driver.scene?.traverse(object => {
         if (object instanceof Mesh && object.material instanceof ShaderMaterial) water.push(object.material);
@@ -367,6 +393,7 @@ describe("Aggregate runtime through the real Three WebXRManager", () => {
       const submittedShaders = lakeWaterShaders(waveCount);
       for (const material of water) {
         expect(material.defines["LAKE_WAVE_COUNT"]).toBe(waveCount);
+        expect(material.defines["LAKE_DETAIL_SAMPLES"]).toBe(detailSamples);
         expect(material.vertexShader).toBe(material.name === "LakeWaterFar" ? submittedShaders.filteredVertexShader : submittedShaders.vertexShader);
         expect(material.fragmentShader).toBe(submittedShaders.fragmentShader);
         expect(material.uniforms["uWaveCount"]).toBeUndefined();
@@ -385,7 +412,7 @@ describe("Aggregate runtime through the real Three WebXRManager", () => {
         for (const material of new Set(water)) {
           const far = material.name === "LakeWaterFar";
           new ShaderProgram(state.driver as unknown as WebGLRenderer, `${material.name}-${String(count)}`, {
-            defines: { LAKE_WAVE_COUNT: count }, precision: "highp", shaderType: "ShaderMaterial", shaderName: material.name,
+            defines: { ...material.defines, LAKE_WAVE_COUNT: count }, precision: "highp", shaderType: "ShaderMaterial", shaderName: material.name,
             vertexShader: far ? shaders.filteredVertexShader : shaders.vertexShader, fragmentShader: shaders.fragmentShader,
             envMapCubeUVHeight: null, outputColorSpace: SRGBColorSpace, toneMapping: 0,
             shadowMapEnabled: true, shadowMapType: PCFShadowMap, numSunLights: 0, numSunLightShadows: 0,
@@ -456,6 +483,17 @@ describe("Aggregate runtime through the real Three WebXRManager", () => {
           && input.observation.actual.extent_px[0] === 1280 && input.observation.actual.extent_px[1] === 720)).toBe(true);
       const menu = opening.spatial?.menu;
       if (menu?.kind !== "ready" || opening.scene.camera == null) throw new Error("Current tracked Menu is unavailable");
+      const painted = state.rasterPaints.mock.calls.length;
+      state.frame(12);
+      const unchanged = state.drawing().spatial;
+      expect(unchanged?.presentation_id).not.toBe(opening.spatial?.presentation_id);
+      expect(unchanged?.menu.kind === "ready" ? unchanged.menu.paint_revision : null).toBe(menu.paint_revision);
+      expect(state.rasterPaints).toHaveBeenCalledTimes(painted);
+      const rasterCanvas = state.rasterPaints.mock.calls.at(-1)?.[0] as import("happy-dom").HTMLCanvasElement | undefined;
+      if (rasterCanvas === undefined) throw new Error("Menu raster was not painted");
+      rasterCanvas.dispatchEvent(new state.browser.Event("contextrestored"));
+      state.frame(13);
+      expect(state.rasterPaints.mock.calls.length).toBeGreaterThan(painted);
       const before = poseMatrix(menu.world_from_panel);
       const currentView = state.updates.mock.results
         .filter(result => result.type === "return")
@@ -480,6 +518,7 @@ describe("Aggregate runtime through the real Three WebXRManager", () => {
         .findLast(input => input.kind === "frame");
       expect(rawFrame?.kind === "frame" ? rawFrame.spatial.sources : null).toEqual([{
         source_id: 1, target_ray_mode: "tracked-pointer", handedness: "right", tracking_from_ray: state.session.pointer,
+        select_pressed: null,
         gamepad: { mapping: xrPad.mapping, axes: [null, 0.1, 0, 0.15], buttons: xrPad.buttons }
       }]);
       const hovered = state.drawing();
@@ -498,6 +537,13 @@ describe("Aggregate runtime through the real Three WebXRManager", () => {
         expect(draw.projections[index]?.elements).toEqual(eye.projection);
       }
       expect(state.driver.draws.some(draw => draw.reflected)).toBe(true);
+      const passes = state.driver.draws.slice(-3);
+      expect(passes.map(pass => pass.shadowVersion)).toEqual([passes[0]?.shadowVersion, passes[0]?.shadowVersion, passes[0]?.shadowVersion]);
+      expect(state.driver.shadows.at(-1)?.every(count => count > 0)).toBe(true);
+      expect(passes[0]?.counts.length).toBeGreaterThan(0);
+      expect(passes[0]?.counts.every(count => count === 0)).toBe(true);
+      expect(passes[1]?.counts.some(count => count > 0)).toBe(true);
+      expect(passes[2]?.counts.some(count => count > 0)).toBe(true);
       const change = new Matrix4().makeRotationY(0.1).setPosition(0.2, 0, -0.1);
       const reset = new Event("reset");
       Object.assign(reset, { transform: rigid(matrixPose(change)) });
@@ -523,6 +569,13 @@ describe("Aggregate runtime through the real Three WebXRManager", () => {
       const alpha = state.driver.getClearAlpha();
       const scissor = state.driver.getScissorTest();
       const submitted = state.driver.draws.length;
+      const meshes: { mesh: Mesh; count: number; callback: PropertyDescriptor | undefined; visible: boolean }[] = [];
+      state.driver.scene?.traverse(object => {
+        if (object instanceof Mesh) {
+          const mesh = object as Mesh;
+          meshes.push({ mesh, count: mesh.geometry.drawRange.count, callback: Object.getOwnPropertyDescriptor(mesh, "onBeforeRender"), visible: mesh.visible });
+        }
+      });
       const diagnostic = vi.spyOn(console, "error").mockImplementation(() => undefined);
       state.driver.reflectionFault = true;
       state.frame(36);
@@ -530,6 +583,11 @@ describe("Aggregate runtime through the real Three WebXRManager", () => {
       expect(state.driver.getClearAlpha()).toBe(alpha);
       expect(state.driver.getScissorTest()).toBe(scissor);
       expect(state.driver.xr.enabled).toBe(true);
+      for (const { mesh, count, callback, visible } of meshes) {
+        expect(mesh.geometry.drawRange.count).toBe(count);
+        expect(Object.getOwnPropertyDescriptor(mesh, "onBeforeRender")).toEqual(callback);
+        if (mesh.castShadow) expect(mesh.visible).toBe(visible);
+      }
       expect(state.driver.draws).toHaveLength(submitted);
       expect(diagnostic).toHaveBeenCalledWith(expect.stringContaining("physical reflection render failed"));
       state.dispose();

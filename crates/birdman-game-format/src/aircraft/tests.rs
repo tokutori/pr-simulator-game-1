@@ -30,6 +30,15 @@ fn valid_document() -> AircraftDocument {
             .to_vec(),
         strip_fractions: vec![0.0, 0.5, 1.0],
         lift_anchor: [0.0, 0.0],
+        tail_aerodynamics: (role != AircraftSurfaceRole::MainWing).then_some(
+            TailAerodynamicsDocument {
+                zero_lift_drag_coefficient: 0.00385,
+                span_efficiency: 0.7,
+                pitching_moment_coefficient: 0.0,
+                reference_airspeed_mps: 9.7,
+                reference_kinematic_viscosity_m2ps: 0.000015,
+            },
+        ),
         airfoil: AircraftAirfoilDocument {
             camber_ratio: 0.04,
             camber_position_ratio: 0.4,
@@ -98,6 +107,7 @@ fn valid_document() -> AircraftDocument {
                 },
                 horizontal_tail: tail_members(),
                 vertical_tail: tail_members(),
+                tail_support_radius_m: 0.012,
                 cockpit: AircraftCockpitMembersDocument {
                     nose_station: 0,
                     upper_station_fractions: [0.15, 0.75],
@@ -259,6 +269,30 @@ fn invalid_surface_identity_order_partition_and_counts_are_rejected() {
     document.surfaces[0].sections =
         vec![document.surfaces[0].sections[0]; MAX_AIRCRAFT_STATIONS + 1];
     assert_eq!(document.validate(), Err(AircraftFormatError::InvalidCount));
+    document = valid_document();
+    document.surfaces[1]
+        .tail_aerodynamics
+        .as_mut()
+        .unwrap()
+        .reference_airspeed_mps = 0.0;
+    assert_eq!(
+        document.validate(),
+        Err(AircraftFormatError::InvalidSurface(
+            AircraftSurfaceRole::HorizontalTail
+        ))
+    );
+    document = valid_document();
+    document.surfaces[2]
+        .tail_aerodynamics
+        .as_mut()
+        .unwrap()
+        .reference_kinematic_viscosity_m2ps = f64::NAN;
+    assert_eq!(
+        document.validate(),
+        Err(AircraftFormatError::InvalidSurface(
+            AircraftSurfaceRole::VerticalTail
+        ))
+    );
 }
 
 #[test]
@@ -325,6 +359,7 @@ fn structural_member_dimensions_partitions_and_derived_budget_are_bounded() {
             |members, value| members.wing.stringer_radius_m = value,
             |members, value| members.wing.foam_half_width_m = value,
             |members, value| members.horizontal_tail.rib_radius_m = value,
+            |members, value| members.tail_support_radius_m = value,
             |members, value| members.vertical_tail.foam_half_width_m = value,
             |members, value| members.cockpit.cross_radius_m = value,
             |members, value| members.cockpit.diagonal_radius_m = value,
@@ -365,7 +400,7 @@ fn structural_member_dimensions_partitions_and_derived_budget_are_bounded() {
     members.wing.rib_chord_knots = vec![0.5, 1.0];
     members.horizontal_tail.rib_intervals = 8;
     members.vertical_tail.rib_intervals = 4;
-    members.cockpit.rim_segments = 71;
+    members.cockpit.rim_segments = 69;
     assert_eq!(document.validate(), Ok(()));
     document.structure.members.cockpit.rim_segments += 1;
     assert_eq!(document.validate(), Err(AircraftFormatError::InvalidCount));

@@ -14,6 +14,7 @@ use birdman_game_presentation::game_ui::{
 };
 use birdman_game_presentation::xr::XrViewerObservation;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 /// Capabilities implemented by the platform's I/O and drawing adapters.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -24,6 +25,8 @@ pub struct ApplicationCapabilities {
     pub hmd_available: bool,
     /// Raw orientation API and permission-method availability, absent without the required browser APIs.
     pub phone_sensors: Option<PhoneSensorApiObservation>,
+    /// Actual touch input occurred in this observation batch; the runtime retains this evidence.
+    pub touch_available: bool,
     /// Drawing adapter supports record plots.
     pub analysis_available: bool,
     /// Drawing adapter supports recorded playback.
@@ -51,11 +54,47 @@ pub struct ApplicationPlatformObservation {
     pub capabilities: ApplicationCapabilities,
 }
 
-/// Raw stage of a platform chart pointer event.
+/// Exact raw pointer identifier, preserving native 64-bit IDs at the JSON boundary.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct ApplicationPointerId {
+    /// Low word of the platform identifier.
+    pub low: u32,
+    /// High word of the platform identifier.
+    pub high: u32,
+}
+
+impl ApplicationPointerId {
+    /// Splits a native identifier without changing its bits.
+    pub const fn from_bits(value: u64) -> Self {
+        Self {
+            low: value as u32,
+            high: (value >> 32) as u32,
+        }
+    }
+}
+
+/// Raw platform pointer kind, without flight-input policy.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
-pub enum ApplicationChartPointerPhase {
+pub enum ApplicationPointerKind {
+    /// Physical mouse pointer.
+    Mouse,
+    /// Direct finger contact.
+    Touch,
+    /// Pen digitizer pointer.
+    Pen,
+    /// Unspecified platform pointer kind.
+    Unknown,
+}
+
+/// Raw stage of a platform pointer event on an admitted control.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum ApplicationPointerPhase {
     /// Pointer button pressed.
     Down,
     /// Pointer position changed.
@@ -190,7 +229,6 @@ pub enum ApplicationInput {
         #[doc = "Ended session or sensor subscription identity."]
         resource_id: u32,
         #[doc = "Original runtime reason for an unsolicited end, when supplied."]
-        #[serde(default)]
         cause: Option<String>,
     },
     /// Stops new application work and drains already issued I/O.
@@ -381,16 +419,18 @@ pub enum ApplicationInput {
         /// Actual logical-pixel extent.
         extent: GameUiChartExtent,
     },
-    /// Raw pointer event and actual chart rectangle in the same coordinate system.
-    ChartPointer {
+    /// Raw pointer event and actual control rectangle in the same coordinate system.
+    ControlPointer {
         /// Revision displayed by the event target.
         view_revision: u32,
-        /// Chart element identity.
-        control_id: String,
+        /// Published pointer-control identity; absent for the scene canvas.
+        control_id: Option<String>,
         /// Platform pointer identity.
-        pointer_id: i32,
+        pointer_id: ApplicationPointerId,
+        /// Raw platform device kind.
+        pointer_kind: ApplicationPointerKind,
         /// Raw event stage.
-        phase: ApplicationChartPointerPhase,
+        phase: ApplicationPointerPhase,
         /// Changed button, using the platform pointer-event numbering.
         button: i16,
         /// Currently held button bitset.
@@ -406,6 +446,15 @@ pub enum ApplicationInput {
     Keyboard {
         /// Physical key identifier in the DOM KeyboardEvent.code vocabulary.
         code: String,
+        /// Whether the key is pressed.
+        pressed: bool,
+        /// Whether this press repeats an existing hold.
+        repeat: bool,
+    },
+    /// A platform-neutral physical key transition from a typed platform adapter.
+    PhysicalKey {
+        /// Physical key, without application action or flight binding selection.
+        key: birdman_game_presentation::game_ui::KeyboardKey,
         /// Whether the key is pressed.
         pressed: bool,
         /// Whether this press repeats an existing hold.
@@ -565,7 +614,7 @@ pub enum ApplicationUiProjection {
     /// Complete replacement for the retained visible structure.
     View {
         #[doc = "New structure carrying its shared revision."]
-        view: Box<GameUiView>,
+        view: Arc<GameUiView>,
     },
     /// Lightweight values for the retained structure.
     Frame {
@@ -659,4 +708,54 @@ pub enum ApplicationRuntimeError {
     Ui(GameUiError),
     /// The request identity space has been consumed.
     RequestExhausted,
+}
+#[cfg(not(verus_only))]
+impl core::fmt::Display for ApplicationRuntimeError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Assets(_) => f.write_str("Drawing asset preparation failed"),
+            Self::RecordExport(_) => f.write_str("Record export failed"),
+            Self::RecordFormat(_) => f.write_str("Record document validation failed"),
+            Self::Graphics(_) => f.write_str("Graphics observation was rejected"),
+            Self::SpatialInput(cause) => write!(f, "Spatial input was rejected: {cause}"),
+            Self::PresentationExhausted => {
+                f.write_str("Spatial presentation identities are exhausted")
+            }
+            Self::RenderPose(_) => f.write_str("Live render pose projection failed"),
+            Self::ReplayCamera(_) => f.write_str("Replay camera projection failed"),
+            Self::Venue(_) => f.write_str("Launch venue validation failed"),
+            Self::Camera(_) => f.write_str("Camera projection failed"),
+            Self::Environment(_) => f.write_str("Environment resolution failed"),
+            Self::InvalidTimestamp => {
+                f.write_str("Observation timestamp must be finite, nonnegative and monotonic")
+            }
+            Self::Application(_) => f.write_str("Application operation failed"),
+            Self::Session(_) => f.write_str("Session operation failed"),
+            Self::Flight(_) => f.write_str("Flight frame failed"),
+            Self::Ui(_) => f.write_str("UI observation failed"),
+            Self::RequestExhausted => f.write_str("Application request identities are exhausted"),
+        }
+    }
+}
+
+#[cfg(not(verus_only))]
+impl core::error::Error for ApplicationRuntimeError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        match self {
+            Self::Assets(cause) => Some(cause),
+            Self::RecordExport(cause) => Some(cause),
+            Self::RecordFormat(cause) => Some(cause),
+            Self::Graphics(cause) => Some(cause),
+            Self::RenderPose(cause) => Some(cause),
+            Self::ReplayCamera(cause) => Some(cause),
+            Self::Venue(cause) => Some(cause),
+            Self::Camera(cause) => Some(cause),
+            Self::Environment(cause) => Some(cause),
+            Self::Application(cause) => Some(cause),
+            Self::Session(cause) => Some(cause),
+            Self::Flight(cause) => Some(cause),
+            Self::Ui(cause) => Some(cause),
+            _ => None,
+        }
+    }
 }

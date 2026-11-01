@@ -5,8 +5,9 @@ use birdman_game_core::{
     ActuatorError, BodyVector, CompositeCgLaunchConditions, ControlMode, CourseAxis,
     DistanceScoreError, DynamicsError, GameSessionConfiguration, GameSessionError, Gravity,
     HybridAerodynamicLoad, HybridError, HybridModel, HybridSurface, MathError, NedPoint, NedVector,
-    SessionScenarioIdentity, TailAngleOfAttackGuard, TailControlProfile, TailFlightScenario,
-    TailFlightScenarioError, TailFlightScenarioParameters, TailIncidence, WindField,
+    SessionScenarioIdentity, SteadyGlideTrim, TailAngleOfAttackGuard, TailControlProfile,
+    TailFlightScenario, TailFlightScenarioError, TailFlightScenarioParameters, TailIncidence,
+    WindField,
 };
 use birdman_game_format::{
     ConfigurationError, EnvironmentFormatError, FlightRecordTailIdentityDocument, ScenarioCatalog,
@@ -14,16 +15,17 @@ use birdman_game_format::{
 };
 
 use crate::{
-    DEFAULT_MAXIMUM_FLIGHT_TICKS, DEFAULT_SESSION_SEED, DEFAULT_WEATHER, LaunchVenueError,
+    DEFAULT_MAXIMUM_FLIGHT_TICKS, DEFAULT_SESSION_SEED, DEFAULT_WEATHER, LaunchPlatform,
+    LaunchVenueError,
     environment::{bundled_environment, preset_wind_for_version},
     environment_snapshot::EnvironmentIdentity,
     launch_venue,
 };
 
 const CONTROLLER_PROFILE_ID: &str = "bpg040-tail-rate-feedback";
-const CONTROLLER_PROFILE_VERSION: u32 = 3;
-const CATALOG_VERSION: u32 = 8;
-const SCENARIO_VERSION: u32 = 8;
+const CONTROLLER_PROFILE_VERSION: u32 = 4;
+const CATALOG_VERSION: u32 = 10;
+const SCENARIO_VERSION: u32 = 11;
 const SCENARIOS: [(u32, WeatherClass); 5] = [
     (1, WeatherClass::Calm),
     (2, WeatherClass::Mild),
@@ -31,6 +33,8 @@ const SCENARIOS: [(u32, WeatherClass); 5] = [
     (5, WeatherClass::NearLimit),
     (6, WeatherClass::Typical),
 ];
+static LAUNCH_CG_POSITION: OnceLock<Result<NedPoint, HybridSessionPreparationError>> =
+    OnceLock::new();
 static AIRCRAFT_DEFINITION: OnceLock<Result<AircraftDefinition, AircraftDefinitionError>> =
     OnceLock::new();
 static HYBRID_SURFACES: OnceLock<Result<[HybridSurface<'static>; 3], AircraftDefinitionError>> =
@@ -66,6 +70,47 @@ pub enum HybridSessionPreparationError {
     /// Structural storage could not be reserved before preparing flight.
     AllocationFailed,
 }
+#[cfg(not(verus_only))]
+impl core::fmt::Display for HybridSessionPreparationError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Trim(_) => f.write_str("Launch trim could not be converted to an initial state"),
+            Self::Venue(_) => f.write_str("Launch venue preparation failed"),
+            Self::Configuration(_) => f.write_str("Registered scenario selection failed"),
+            Self::Aircraft(_) => f.write_str("Registered aircraft preparation failed"),
+            Self::Environment(_) => f.write_str("Offline environment preparation failed"),
+            Self::Math(_) => f.write_str("Launch coordinate validation failed"),
+            Self::Dynamics(_) => f.write_str("Initial physical state validation failed"),
+            Self::Course(_) => f.write_str("Scoring course validation failed"),
+            Self::Hybrid(_) => f.write_str("Hybrid load model preparation failed"),
+            Self::Control(_) => f.write_str("Software controller preparation failed"),
+            Self::Scenario(_) => f.write_str("Sealed flight scenario validation failed"),
+            Self::Session(_) => f.write_str("Versioned session configuration failed"),
+            Self::AllocationFailed => f.write_str("Flight structural storage allocation failed"),
+        }
+    }
+}
+
+#[cfg(not(verus_only))]
+impl core::error::Error for HybridSessionPreparationError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        match self {
+            Self::Trim(cause) => Some(cause),
+            Self::Venue(cause) => Some(cause),
+            Self::Configuration(cause) => Some(cause),
+            Self::Aircraft(cause) => Some(cause),
+            Self::Environment(cause) => Some(cause),
+            Self::Math(cause) => Some(cause),
+            Self::Dynamics(cause) => Some(cause),
+            Self::Course(cause) => Some(cause),
+            Self::Hybrid(cause) => Some(cause),
+            Self::Control(cause) => Some(cause),
+            Self::Scenario(cause) => Some(cause),
+            Self::Session(cause) => Some(cause),
+            _ => None,
+        }
+    }
+}
 
 /// Platform-independent preparation with stable owned model and environment resources.
 ///
@@ -92,6 +137,56 @@ impl HybridSessionPreparation {
     ///
     /// Initial air-relative speed and attitude follow the mock trim. The selected
     /// wind at the composite CG is added once to obtain launch ground velocity.
+    ///
+    /// # Examples
+    ///
+    /// Prepare the registered aircraft and environment, enter flight through the
+    /// public lifecycle, and advance two neutral ticks. Result follows the configured
+    /// two-tick time limit. Larger limits permit continued FlightRunning until an end
+    /// event. A finalized record can then be encoded and restored without another
+    /// physics integration. Preparation, lifecycle, and format errors remain
+    /// separate `Result` values at their respective calls.
+    ///
+    /// ```
+    /// use birdman_game_app::{HybridSessionPreparation, initialize_bundled_environment};
+    /// use birdman_game_core::{
+    ///     ControlMode, GameSession, SessionPhase, TailFlightTickInput, TailPilotIntent,
+    ///     TailPilotPositionCommand, TailRateTarget,
+    /// };
+    /// use birdman_game_format::{
+    ///     AssistanceLevel, DifficultySettings, InformationLevel, TailFlightRecordDocument,
+    ///     WeatherClass,
+    /// };
+    ///
+    /// initialize_bundled_environment().unwrap();
+    /// let (configuration, identity) =
+    ///     HybridSessionPreparation::try_new(ControlMode::Manual, 2, 42)
+    ///         .unwrap().into_parts();
+    /// let mut session = GameSession::new();
+    /// session.open_setup().unwrap();
+    /// session.prepare_flight(configuration).unwrap();
+    /// session.mark_briefing_ready().unwrap();
+    /// session.start_countdown(1).unwrap();
+    /// session.observe_countdown(session.countdown_token().unwrap(), 1.0, true).unwrap();
+    ///
+    /// let input = TailFlightTickInput::new(
+    ///     TailPilotIntent::try_new(0.0, 0.0).unwrap(),
+    ///     TailRateTarget::try_new(0.0, 0.0).unwrap(),
+    ///     TailPilotPositionCommand::Hold,
+    /// );
+    /// for _ in 0..2 {
+    ///     session.advance_tail_flight_tick(input).unwrap();
+    /// }
+    /// assert_eq!(session.snapshot().phase(), SessionPhase::Result);
+    /// let settings = DifficultySettings::custom(
+    ///     InformationLevel::Full, AssistanceLevel::Manual, WeatherClass::Typical,
+    /// );
+    /// let archive = TailFlightRecordDocument::from_record(
+    ///     session.flight_record().unwrap(), settings, identity,
+    /// ).unwrap();
+    /// let bytes = archive.encode_json().unwrap();
+    /// assert_eq!(TailFlightRecordDocument::decode_json(&bytes).unwrap(), archive);
+    /// ```
     pub fn try_new(
         control_mode: ControlMode,
         maximum_flight_ticks: u64,
@@ -129,8 +224,7 @@ impl HybridSessionPreparation {
         let trim = definition
             .trim()
             .map_err(HybridSessionPreparationError::Aircraft)?;
-        let cg_position =
-            NedPoint::try_new(0.0, 0.0, -10.5).map_err(HybridSessionPreparationError::Math)?;
+        let cg_position = registered_launch_cg_position()?;
         let platform = launch_venue()
             .map_err(HybridSessionPreparationError::Venue)?
             .platform;
@@ -291,6 +385,68 @@ pub fn registered_aircraft() -> Result<&'static AircraftDefinition, AircraftDefi
         .get_or_init(playable_aircraft)
         .as_ref()
         .map_err(|error| *error)
+}
+
+/// Immutable registered launch geometry, shared by preparation and preset metadata.
+pub(crate) fn registered_launch_cg_position() -> Result<NedPoint, HybridSessionPreparationError> {
+    *LAUNCH_CG_POSITION.get_or_init(|| {
+        let definition = registered_aircraft().map_err(HybridSessionPreparationError::Aircraft)?;
+        let trim = definition
+            .trim()
+            .map_err(HybridSessionPreparationError::Aircraft)?;
+        let platform = launch_venue()
+            .map_err(HybridSessionPreparationError::Venue)?
+            .platform;
+        launch_cg_position(definition, trim, platform)
+    })
+}
+
+/// Clears the complete validated aircraft hull from the deck's supporting plane.
+/// Every triangle interior satisfies the same affine half-space constraint.
+fn launch_cg_position(
+    definition: &AircraftDefinition,
+    trim: SteadyGlideTrim,
+    platform: LaunchPlatform,
+) -> Result<NedPoint, HybridSessionPreparationError> {
+    let reference = trim
+        .initial_state_for_ground_launch(NedPoint::origin(), platform.heading_rad())
+        .map_err(HybridSessionPreparationError::Trim)?;
+    let mut points = Vec::new();
+    points
+        .try_reserve_exact(definition.contact_points().len())
+        .map_err(|_| HybridSessionPreparationError::AllocationFailed)?;
+    points.extend_from_slice(definition.contact_points());
+    definition
+        .write_deformed_contact_points(
+            definition.document().trim.airspeed_mps,
+            TailIncidence::neutral(),
+            &mut points,
+        )
+        .map_err(|error| {
+            HybridSessionPreparationError::Aircraft(AircraftDefinitionError::Shape(error))
+        })?;
+    let [north, east] = platform.horizontal_direction_ned();
+    let slope = platform.downward_slope_degrees.to_radians().tan();
+    let mut altitude = f64::NEG_INFINITY;
+    for point in points {
+        let [x, y, z] = point.components();
+        let offset = reference
+            .attitude_body_to_ned()
+            .body_to_ned(BodyVector::try_new(x, y, z).map_err(HybridSessionPreparationError::Math)?)
+            .map_err(HybridSessionPreparationError::Math)?;
+        let [n, e, down] = reference
+            .datum_position_ned()
+            .translated(offset)
+            .map_err(HybridSessionPreparationError::Math)?
+            .components();
+        let required =
+            platform.front_lip_above_water_meters + down - (n * north + e * east) * slope;
+        if !required.is_finite() {
+            return Err(HybridSessionPreparationError::Math(MathError::NonFinite));
+        }
+        altitude = altitude.max(required);
+    }
+    NedPoint::try_new(0.0, 0.0, -altitude).map_err(HybridSessionPreparationError::Math)
 }
 
 fn cached_surfaces() -> Result<&'static [HybridSurface<'static>; 3], HybridSessionPreparationError>

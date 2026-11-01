@@ -20,7 +20,7 @@ birdman-game-core.workspace = true
 birdman-game-format.workspace = true
 birdman-game-presentation.workspace = true
 birdman-game-scene.workspace = true
-serde.workspace = true
+serde = { workspace = true, features = ["rc"] }
 serde_json.workspace = true
 schemars = { workspace = true, optional = true }
 time = { version = "=0.3.55", default-features = false, features = ["formatting", "parsing"] }

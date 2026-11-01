@@ -17,7 +17,7 @@ use birdman_game_scene::lake_sky::{
 };
 use birdman_game_scene::lake_water::{
     LakeDetailConfig, LakeRenderModelError, LakeVisualCondition, LakeWaveProjection,
-    generate_lake_detail, production_lake_detail_configs,
+    generate_lake_detail, production_lake_detail_configs, water_quality_profile,
 };
 use serde::Serialize;
 
@@ -92,6 +92,8 @@ pub struct ApplicationWaterAssets {
     pub wind_speed_meters_per_second: f64,
     /// Downstream detail multiplier; zero denotes the flat-water case.
     pub detail_amplitude_scale: f64,
+    /// Maximum anisotropic filtering for both detail images, fixed for this prepared resource.
+    pub detail_anisotropy_clamp: u16,
     /// Near/far periodic images; flat water uses a shared neutral texel.
     pub detail: [ApplicationWaterDetailAsset; 2],
 }
@@ -117,8 +119,21 @@ pub struct ApplicationEnvironmentAssets {
 /// Failures from registered environment resolution or immutable CPU resource generation.
 #[derive(Debug)]
 pub enum ApplicationAssetError {
-    /// Registered mesh preparation or accepted-frame projection failed.
+    /// An intrinsic drawing-buffer or accepted-frame invariant was violated.
     Geometry(String),
+    /// Original registered scene preparation failure.
+    ScenePreparation(birdman_game_scene::prepared_scene::ScenePreparationError),
+    /// Original rejection of the physical wing-deformation factor.
+    FrameDeformation(birdman_game_core::MathError),
+    /// Original normal or attribute projection failure, with its mesh context when known.
+    MeshProjection {
+        /// Mesh name from the accepted descriptor, when available.
+        mesh: Option<String>,
+        /// Original shared projection failure.
+        cause: birdman_game_scene::mesh::MeshProjectionError,
+    },
+    /// Original tail-pivot transform failure.
+    TailArticulation(birdman_game_presentation::camera::CameraError),
     /// The registered environment could not be resolved.
     Environment(EnvironmentSnapshotError),
     /// The selected identity has no registered display environment.
@@ -129,6 +144,49 @@ pub enum ApplicationAssetError {
     Water(LakeRenderModelError),
     /// Buffer identities have been consumed.
     IdentifiersExhausted,
+}
+#[cfg(not(verus_only))]
+impl core::fmt::Display for ApplicationAssetError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Geometry(cause) => write!(f, "Drawing geometry is invalid: {cause}"),
+            Self::ScenePreparation(_) => f.write_str("Registered scene preparation failed"),
+            Self::FrameDeformation(_) => f.write_str("Wing deformation was rejected"),
+            Self::MeshProjection { mesh, .. } => {
+                if let Some(mesh) = mesh {
+                    write!(f, "Mesh {mesh} projection failed")
+                } else {
+                    f.write_str("Mesh projection failed")
+                }
+            }
+            Self::TailArticulation(_) => f.write_str("Tail articulation failed"),
+            Self::Environment(_) => f.write_str("Asset environment resolution failed"),
+            Self::UnavailableEnvironment => {
+                f.write_str("No display environment is registered for the selected identity")
+            }
+            Self::Sky(_) => f.write_str("Sky metadata validation failed"),
+            Self::Water(_) => f.write_str("Water resource generation failed"),
+            Self::IdentifiersExhausted => {
+                f.write_str("Drawing asset buffer identities are exhausted")
+            }
+        }
+    }
+}
+
+#[cfg(not(verus_only))]
+impl core::error::Error for ApplicationAssetError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        match self {
+            Self::ScenePreparation(cause) => Some(cause),
+            Self::FrameDeformation(cause) => Some(cause),
+            Self::MeshProjection { cause, .. } => Some(cause),
+            Self::TailArticulation(cause) => Some(cause),
+            Self::Environment(cause) => Some(cause),
+            Self::Sky(cause) => Some(cause),
+            Self::Water(cause) => Some(cause),
+            _ => None,
+        }
+    }
 }
 
 struct ImageBuffer {
@@ -231,8 +289,7 @@ impl AssetsOwner {
         policy_request: Option<ScreenRenderResourceRequest>,
     ) -> Result<ApplicationEnvironmentAssets, ApplicationAssetError> {
         if self.geometry.is_none() {
-            let geometry = crate::geometry::GeometryOwner::prepare(&mut self.next_buffer_id)
-                .map_err(ApplicationAssetError::Geometry)?;
+            let geometry = crate::geometry::GeometryOwner::prepare(&mut self.next_buffer_id)?;
             self.geometry = Some(Box::new(geometry));
         }
         let scene = (self.geometry_renderer != Some(target.renderer_resource_id))
@@ -278,12 +335,11 @@ impl AssetsOwner {
         .map_err(ApplicationAssetError::Water)?;
         let projection = LakeWaveProjection::try_new(condition, quality)
             .map_err(ApplicationAssetError::Water)?;
-        let water_geometry = self
-            .geometry
-            .as_mut()
-            .unwrap()
-            .water(&mut self.next_buffer_id, quality, &projection)
-            .map_err(ApplicationAssetError::Geometry)?;
+        let water_geometry = self.geometry.as_mut().unwrap().water(
+            &mut self.next_buffer_id,
+            quality,
+            &projection,
+        )?;
         let wind_speed = wave.wind_velocity_ne_mps[0].hypot(wave.wind_velocity_ne_mps[1]);
         let detail = if wind_speed < 0.05 {
             None
@@ -357,7 +413,12 @@ impl AssetsOwner {
                     sunlight.direction[2],
                     if sunlight.daylight { 1.0 } else { 0.0 },
                 ],
-                initial_shadow: LakeSceneShadow::for_aircraft([0.0; 3], sunlight),
+                initial_shadow: LakeSceneShadow::for_aircraft([0.0; 3], sunlight).map(
+                    |mut light| {
+                        light.shadow_enabled &= target.quality.shadow.enabled();
+                        light
+                    },
+                ),
                 haze_color_srgb: haze.color_srgb,
                 haze_range_meters: [haze.near_m, haze.far_m],
             },
@@ -372,6 +433,7 @@ impl AssetsOwner {
                 } else {
                     0.0
                 },
+                detail_anisotropy_clamp: water_quality_profile(quality).detail_anisotropy_clamp(),
                 detail: detail_images,
             },
             venue,
@@ -582,11 +644,7 @@ impl AssetsOwner {
     ) -> Result<Option<crate::ApplicationGeometryFrame>, ApplicationAssetError> {
         self.geometry
             .as_mut()
-            .map(|geometry| {
-                geometry
-                    .project(pose)
-                    .map_err(ApplicationAssetError::Geometry)
-            })
+            .map(|geometry| geometry.project(pose))
             .transpose()
     }
 
@@ -658,9 +716,53 @@ mod tests {
         let first = owner
             .prepare(1, exhibition, target(WaterQuality::High), None)
             .unwrap();
+        assert_eq!(first.water.detail_anisotropy_clamp, 8);
         let sky_id = first.sky.buffer_id;
         let scene = first.scene.as_ref().unwrap();
         assert!(!scene.meshes.is_empty());
+        let material_ids: BTreeSet<_> = scene
+            .meshes
+            .iter()
+            .flat_map(|mesh| mesh.materials.iter().map(|material| material.material_id))
+            .collect();
+        let mut appearances = BTreeMap::new();
+        for mesh in &scene.meshes {
+            for material in &mesh.materials {
+                let mut appearance = serde_json::to_value(material).unwrap();
+                for field in ["material_id", "start", "count"] {
+                    appearance.as_object_mut().unwrap().remove(field);
+                }
+                let appearance = (appearance, mesh.color.is_some());
+                if let Some(previous) = appearances.insert(material.material_id, appearance.clone())
+                {
+                    assert_eq!(previous, appearance);
+                }
+            }
+        }
+        let another = crate::geometry::GeometryOwner::prepare(&mut owner.next_buffer_id).unwrap();
+        assert!(
+            another
+                .assets()
+                .meshes
+                .iter()
+                .flat_map(|mesh| &mesh.materials)
+                .all(|material| material.material_id > 0
+                    && !material_ids.contains(&material.material_id))
+        );
+        let material = |name: &str, range: usize| {
+            scene
+                .meshes
+                .iter()
+                .find(|mesh| mesh.name == name)
+                .unwrap()
+                .materials[range]
+                .material_id
+        };
+        assert_eq!(material("wing-0", 1), material("wing-2", 1));
+        assert_ne!(
+            material("wing-0", 1),
+            material("lake-biwa-distant-terrain", 0)
+        );
         assert_eq!(first.water.geometry.near.len(), 16);
         let position = first.water.geometry.near[0].position;
         let crate::ApplicationBufferSlice::F32(values) = owner.buffer(position.buffer_id).unwrap()
@@ -696,6 +798,8 @@ mod tests {
         let second = owner
             .prepare(2, exhibition, target(WaterQuality::Low), None)
             .unwrap();
+        assert_eq!(second.water.detail_anisotropy_clamp, 4);
+        assert_eq!(first.water.detail_anisotropy_clamp, 8);
         assert!(second.scene.is_none());
         assert_eq!(second.sky.buffer_id, sky_id);
         assert_eq!(second.water.detail[0].image.buffer_id, detail_id);
@@ -771,13 +875,16 @@ mod tests {
         assert!(owner.bytes(detail_id).is_some());
         let mut replacement = target(WaterQuality::Low);
         replacement.renderer_resource_id += 1;
-        assert!(
-            owner
-                .prepare(4, exhibition, replacement, None)
-                .unwrap()
-                .scene
-                .is_some()
-        );
+        let replacement_assets = owner.prepare(4, exhibition, replacement, None).unwrap();
+        let replacement_ids: BTreeSet<_> = replacement_assets
+            .scene
+            .as_ref()
+            .unwrap()
+            .meshes
+            .iter()
+            .flat_map(|mesh| mesh.materials.iter().map(|material| material.material_id))
+            .collect();
+        assert_eq!(replacement_ids, material_ids);
         owner.select(Some(4));
         owner.observe(
             4,

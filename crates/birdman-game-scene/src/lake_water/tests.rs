@@ -147,6 +147,10 @@ fn spectrum_and_float32_projection_match_fixed_web_reference() {
                 .as_object_mut()
                 .unwrap()
                 .remove("detailFilterMinification");
+            actual
+                .as_object_mut()
+                .unwrap()
+                .remove("detailQuadratureSamples");
             assert_numeric_tree(&actual, &projection.projection, "projection");
         }
     }
@@ -278,7 +282,21 @@ fn spectrum_keeps_web_direction_bands_phase_and_steepness_contract() {
 fn projection_preserves_non_inversion_reserve_and_inactive_slots() {
     for quality in [WaterQuality::Low, WaterQuality::Medium, WaterQuality::High] {
         let projection = LakeWaveProjection::try_new(default_condition(0), quality).unwrap();
+        assert_eq!(
+            super::water_quality_profile(quality).detail_anisotropy_clamp(),
+            if quality == WaterQuality::Low { 4 } else { 8 }
+        );
         let [start, end] = projection.detail_filter_minification();
+        let detail_samples = match quality {
+            WaterQuality::Low => 1,
+            WaterQuality::Medium | WaterQuality::High => 4,
+        };
+        assert_eq!(projection.detail_quadrature_samples(), detail_samples);
+        assert_eq!(
+            super::water_quality_profile(quality).detail_quadrature_samples(),
+            detail_samples
+        );
+        assert_eq!([start, end], [2.0, 4.0]);
         assert!(start.is_finite() && end.is_finite() && start > 1.0 && end > start);
         assert_eq!(
             projection.wave_count(),

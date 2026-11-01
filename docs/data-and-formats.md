@@ -13,13 +13,13 @@
 
 | 対象 | 現行契約 |
 | --- | --- |
-| 機体JSON | `AircraftDocument`、schema 2、最大256 KiB |
+| 機体JSON | `AircraftDocument`、schema 4、最大256 KiB |
 | 環境JSON | `EnvironmentDocument`、schema 1、最大8 MiB |
-| 飛行記録JSON | `TailFlightRecordDocument`、schema 6/7、最大16 MiB |
-| 飛行ログCSV | schema 6はexport version 3、schema 7はversion 4 |
+| 飛行記録JSON | `TailFlightRecordDocument`、schema 6/7/8、最大16 MiB |
+| 飛行ログCSV | schema 6はexport version 3、schema 7はversion 4、schema 8はversion 5 |
 | Personal Best | 比較方式v3、Rustによるkey再生成・選定 |
-| 物理・積分・接触 | physics model 5 |
-| 既定機体・scenario | aircraft model 5、catalog 8、scenario 8、controller profile 3 |
+| 物理・積分・接触 | physics model 6 |
+| 既定機体・scenario | aircraft model 7、catalog 10、scenario 11、controller profile 4 |
 
 - 版の正本は実装の公開定義・登録catalogとする。
 - JSON schema、物理model、機体、controller、環境、score、比較方式、build来歴は異なる概念であり、独立して保持する。
@@ -124,6 +124,7 @@ Analysis用の発進台・湖岸・望遠camera点はOSMとAW3D30に基づく試
 - 主翼span 20.863 mは提供図面の値である。root chord 1.13 m、tip chord 0.38 mや輪郭の一部は図面比率からの推定である。
 - 構造形状は機体JSONのFRD座標・SI単位を正本とし、共有f64形状から表示meshと物理polytopeを導出する。材質と描画用samplingは表示側で扱う。
 - 物理接触は採用した曲げ係数・尾翼角によるpolytopeの全頂点から静水面に対する支持量を求める。連続翼型・細径材の形状近似と、可動尾翼・曲げ変形の時間離散化は別の評価対象である。
+- 垂直尾翼のquarter-chordはFRD x = −3.6 mとする。下端から回転軸への可動支持材と、回転軸から主ブーム有限線分の最近接点への固定支持材を共有生成し、表示と接触へ同じ形状を渡す。支持材の半径は機体JSONの`tail_support_radius_m`に明示した0.012 mの合成寸法であり、強度の実証値ではない。
 - 主翼たわみは機体JSONの全質量・重力・曲げ剛性・基準対気速度を用いる重量支持の片持ち梁モデルである。区間開始時の対気速度から0.3〜1.6の係数を採用し、接触・表示・記録へ同じ値を渡す。
 - 空力・質量・慣性・制御の実行規則は[飛行力学](flight-dynamics.md)と[飛行制御](flight-control.md)に定める。
 
@@ -134,7 +135,7 @@ Analysis用の発進台・湖岸・望遠camera点はOSMとAW3D30に基づく試
 - 構造定義は主桁の端点・半径・曲げ剛性、コックピット断面、パイロット視点と、`members`の主翼・尾翼rib/foam・stringer・cockpit frame・rimの寸法と配置を保持する。
 - `format::AircraftDocument`は文書の構造・有限値・物理値域を検証する。`content::AircraftDefinition`は空力stripの対称性・構造支持点の生成・主翼たわみの定義域・トリム解の成立まで検証し、準備済みstorageを公開する。
 - `content::AircraftDefinition`は文書と変換済みの質量・section・strip・静特性・中立構造支持点を所有する。借用した荷重モデルと構造形状の寿命はこのstorageと結び付く。
-- `content::playable_aircraft()`は`assets/aircraft/playable-glider-v5.json`を読み込む。主翼の69断面は20.863 mのスパン、テーパー、二つの上反角変化点を持ち、同じ区分線型形状から参照寸法を求める。
+- `content::playable_aircraft()`は`assets/aircraft/playable-glider-v7.json`を読み込む。主翼の69断面は20.863 mのスパン、テーパー、二つの上反角変化点を持ち、同じ区分線型形状から参照寸法を求める。
 - stripの指定境界とsection境界の和集合で荷重評価点を生成する。各点の面積・作用位置・局所フレームは、その区間の幾何から導出する。
 - `AircraftShape`は同じsectionの四分の一翼弦点と翼弦長を区分線型補間する。翼・水平尾翼の翼型はbody XZ、垂直尾翼はbody XYで閉じた前縁・後縁を持つ。コックピットは断面間の区分線型補間と指定指数の超楕円、主桁は指定端点・半径を使う。
 - 中立支持点は全section knotの翼型、全コックピット断面、全構造材の共有頂点から導出する。既定は翼弦方向32分割・管周方向24分割で、材料の被覆率と空力stripの分割から独立する。sceneは同じ管の周方向位相と三角形を描画する。
@@ -230,7 +231,7 @@ Analysis用の発進台・湖岸・望遠camera点はOSMとAW3D30に基づく試
 - 位置・速度・角速度・pilot状態と最短経路quaternion補間を同じ瞬間へ揃え、record、Result、score、表示へ同じ終端sampleを渡す。
 - 正のfractionでは区間中に保持した尾翼角・曲げ係数・入力を使う。
 - 整数時刻では、既存形状による接触と新しい変形・尾翼角の採用直後の接触を区別する。前者は既存の値を保持し、後者は新しい値をfinalizationの`boundary_event`へ保存する。
-- 同時刻eventは既存sample列を保持し、終端queryで採用済みの尾翼角・入力・曲げ係数だけを投影する。時刻・body状態・telemetryは末尾sampleを正本とする。
+- 同時刻eventは既存sample列を保持し、終端queryで採用済みの尾翼角・入力・曲げ係数・尾翼荷重を投影する。時刻・body状態・telemetryは末尾sampleを正本とする。
 - 境界eventの採用時刻は最大tick未満の整数時刻とする。
 - 失敗tickの未来状態を露出しない。
 
@@ -244,10 +245,11 @@ Analysis用の発進台・湖岸・望遠camera点はOSMとAW3D30に基づく試
 
 ### codecとJSON
 
-- 現行codecはschema 6と7を受理する。
+- 現行codecはschema 6・7・8を受理する。
 - schema 7は全sampleの有限な`wing_bending_factor`を要求し、同時刻の採用値は任意の終端`boundary_event`に保持する。
-- schema 6は曲げ係数の未記録状態を保持する。共有producerは全係数を持つrecordをschema 7、全係数が未記録のrecordをschema 6として出力する。
-- 現行の登録機体による通常飛行とAttractはschema 7を生成する。schema 6・physics model 3/4およびschema 7・physics model 4の記録は既存keyと原文を検証・保持して閲覧し、PB順位の対象は現行physics modelとする。
+- schema 6は曲げ係数の未記録状態を保持する。旧schema 6・7は尾翼荷重を未収録として読み込み、保存原文を保持する。
+- schema 8は各sampleの水平・垂直尾翼の荷重を保持する。各面の値は機体FRD軸の力とdatumまわりのモーメントであり、面が存在しない場合はnullとする。同時刻の採用値は終端`boundary_event`に保持する。
+- 現行の通常飛行とAttractはschema 8を生成する。旧記録は既存keyと原文を検証・保持して閲覧し、PB順位の対象は現行physics modelとする。
 - 未対応データを通知して元の保存内容を保持する。
 - 破損、未知field、非有限値、非単位quaternion、時刻・header不整合と、schemaに対応しない係数・eventの組合せを拒否する。
 - 任意のidentity metadataには後述の未知raw保持規則を適用する。
@@ -257,12 +259,13 @@ Analysis用の発進台・湖岸・望遠camera点はOSMとAW3D30に基づく試
 - JSON exportは解決済み条件と来歴を含む完全な記録である。
 - 保存されていない情報を現行buildから補完しない。
 
-### CSV version 3/4
+### CSV version 3/4/5
 
 - CSVは初期・全成功tick・fractional terminalを省略せず、位置、速度、姿勢、角速度、pilot状態、入力、actuator、風、telemetry、終了情報等を出力する。
 - 列名に単位を明示し、f64のround-trip表現を使う。
 - 未提供値は空欄とし、ID・構造化診断は`_json`列へ格納する。
 - version 4は`row_kind`と`wing_bending_factor`を加える。通常sample列の後に同時刻の採用eventを`boundary_event`行として出力し、version 3は従来の列構成を保持する。
+- version 5は水平・垂直尾翼それぞれの機体FRD力3成分（N）とdatumまわりのモーメント3成分（N·m）を追加する。各列は記録した同時刻の荷重を出力する。
 
 - 加速度は保存済みNED速度、FRD角速度、pilot相対速度の有限差分による派生値である。
 - 内点は不等間隔3点、端点は2点の割線を用い、methodとstencil時刻を出力する。
@@ -300,7 +303,7 @@ keyは次の条件をSHA-256へ入力する。
 - 明示identity、catalog・aircraft・controller・scenario・environment・physics・scoreのversion。
 - seed、tick上限、Hz、有効なHUD表示条件、Assistance、Weather。
 - 実ControlModeとShared authority、二軸gain、slew、optional alpha guard、course。
-- 初期datum位置・速度、quaternion、角速度、wind、尾翼取付角、pilot位置・速度、およびschema 7の初期曲げ係数。
+- 初期datum位置・速度、quaternion、角速度、wind、尾翼取付角、pilot位置・速度、および記録された初期曲げ係数。
 
 - finite f64は負zeroをpositive zeroへ正規化してbig-endian IEEE-754で符号化する。
 - 画質、presentation、build来歴は比較条件と独立して保持する。
@@ -357,6 +360,7 @@ keyは次の条件をSHA-256へ入力する。
 - Resultへ戻る際は元の確定状態を表示し、cursor状態へ置換しない。
 
 - 厳密な保存時刻はそのsample、区間内部は終点sampleが持つ尾翼角・入力・曲げ係数を用いる。確定終端時刻ではcanonicalなevent投影を使う。
+- 尾翼荷重は厳密な保存時刻の値を使い、区間内部では直前の受理sampleの値を保持する。HUDはその記録値の合力norm（N）を表示し、FRD力とdatumまわりのモーメントはJSON/CSVへ出力する。
 - 共有UIの分析cursorとReplay操作は、ownerが保有するrecordの有効な時刻範囲へ認可する。
 - 結果・分析・再生poseは同じrecordを参照し、元のfinalization・terminal stamp・確定scoreと、cursor時刻の表示投影を区別する。
 

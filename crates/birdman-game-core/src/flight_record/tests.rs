@@ -63,6 +63,7 @@ fn sample(
         fraction,
         flight_state: state,
         wing_bending_factor: None,
+        tail_wrenches: None,
         controls: FlightRecordControls {
             incidence: TailIncidence::try_new(incidence, -incidence).unwrap(),
             input_from_previous,

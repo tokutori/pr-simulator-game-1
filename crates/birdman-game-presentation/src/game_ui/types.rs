@@ -8,8 +8,6 @@ use serde::{Deserialize, Serialize};
 /// Current shared UI boundary version.
 pub const GAME_UI_SCHEMA_VERSION: u32 = 1;
 
-/// Maximum UTF-8 JSON input size for the shared UI boundary.
-pub const GAME_UI_MAX_INPUT_BYTES: usize = 131_072;
 /// Number of newest saved records requested by the Title preview.
 pub const GAME_UI_STORED_RECORD_LIMIT: usize = 3;
 /// Maximum Unicode scalar count of a displayed platform diagnostic.
@@ -18,9 +16,7 @@ pub const GAME_UI_NOTICE_CHARACTERS: usize = 2048;
 pub const GAME_UI_SAVED_AT_CHARACTERS: usize = 256;
 
 /// UI-only selections; physical state and domain phase remain in GameSession.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct GameUiState {
     /// Shared credits shown without changing the domain phase.
     pub credits_open: bool,
@@ -36,6 +32,8 @@ pub struct GameUiState {
     pub pause_overlay: GameUiPauseOverlay,
     /// Replay presentation selection.
     pub replay_view: GameUiReplayView,
+    /// Shared live Screen camera selection; spatial displays keep the pilot mount.
+    pub flight_camera: GameUiFlightCamera,
     /// Shared replay camera selection; adapters only apply its geometry.
     pub replay_camera: GameUiReplayCamera,
 }
@@ -51,6 +49,7 @@ impl Default for GameUiState {
             pause_overlay: GameUiPauseOverlay::Menu,
             replay_view: GameUiReplayView::Cinematic,
             replay_camera: GameUiReplayCamera::Auto,
+            flight_camera: GameUiFlightCamera::Pilot,
         }
     }
 }
@@ -103,6 +102,34 @@ pub enum GameUiReplayView {
     Telemetry,
     /// Record plot and shared cursor.
     Analysis,
+}
+
+/// Screen flight camera selection retained with the shared UI settings.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum GameUiFlightCamera {
+    /// Pilot eye view.
+    Pilot,
+    /// External view following the aircraft.
+    Chase,
+}
+
+impl GameUiFlightCamera {
+    /// The other live Screen camera, used by both the button and C key.
+    pub const fn toggled(self) -> Self {
+        match self {
+            Self::Pilot => Self::Chase,
+            Self::Chase => Self::Pilot,
+        }
+    }
+    /// Shared menu label.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Pilot => "操縦席",
+            Self::Chase => "追従",
+        }
+    }
 }
 
 /// Replay camera candidates in their shared selection order.
@@ -195,10 +222,17 @@ pub enum GameUiWaterQualityOperation {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum GameUiPlatformCommand {
+    /// Reloads the application after its current resources have been released.
+    ReloadApplication {},
     /// Changes only the Screen 3D drawing resolution.
     SetScreenRenderScale {
         /// Requested fraction of each physical rendering dimension.
         scale: crate::screen_render_scale::ScreenRenderScale,
+    },
+    /// Changes directional shadow quality in the shared rendering owner.
+    SetShadowMap {
+        /// Requested shadow quality.
+        shadow: crate::screen_render_auto::ScreenShadowMap,
     },
     /// Enables Auto or restores its retained manual Screen resolution.
     SetScreenRenderAuto {
@@ -228,11 +262,8 @@ pub enum GameUiPlatformCommand {
         /// Platform persistence key.
         id: u32,
     },
-    /// Advances the replay camera selection.
-    SetReplayCamera {
-        /// Shared UI selection to apply.
-        camera: GameUiReplayCamera,
-    },
+    /// Retries a failed Title record-list lookup.
+    RetryStoredRecords {},
 }
 
 /// UI message whose handling is shared by native and browser adapters.
@@ -282,6 +313,11 @@ pub enum GameUiAction {
         /// Requested view.
         view: GameUiReplayView,
     },
+    /// Selects the live Screen camera.
+    SetFlightCamera {
+        /// Requested live camera.
+        camera: GameUiFlightCamera,
+    },
     /// Advances the common ordered camera selection.
     CycleReplayCamera {},
     /// Queries a recorded analysis instant without moving the playback clock.
@@ -301,6 +337,49 @@ pub enum GameUiAction {
         /// Zero is half speed, one normal speed, two double speed.
         code: u32,
     },
+}
+
+/// Platform-neutral physical keys observed by shared input and widget contracts.
+///
+/// This vocabulary describes physical keys, not flight bindings or held-key ownership.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum KeyboardKey {
+    /// Enter key.
+    Enter,
+    /// Space bar.
+    Space,
+    /// Home key.
+    Home,
+    /// End key.
+    End,
+    /// Left arrow.
+    Left,
+    /// Right arrow.
+    Right,
+    /// Up arrow.
+    Up,
+    /// Down arrow.
+    Down,
+    /// Physical A key.
+    A,
+    /// Physical C key.
+    C,
+    /// Physical D key.
+    D,
+    /// Physical J key.
+    J,
+    /// Physical L key.
+    L,
+    /// Physical P key.
+    P,
+    /// Physical S key.
+    S,
+    /// Physical W key.
+    W,
+    /// Escape key.
+    Escape,
 }
 
 /// Engine-independent widget observation, resolved by the shared UI owner.
@@ -343,15 +422,13 @@ pub enum GameUiControlInput {
     ControlKeys {
         /// Published control identifier.
         control_id: String,
-        /// Platform key codes observed in the same input frame.
-        codes: Vec<String>,
+        /// Platform-neutral physical keys observed in the same input frame.
+        keys: Vec<KeyboardKey>,
     },
 }
 
 /// Side-effect request produced after pure action admission.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum GameUiEffect {
     /// Existing session command.
     Session {
@@ -371,9 +448,7 @@ pub enum GameUiEffect {
 }
 
 /// Pure update output.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct GameUiUpdate {
     /// Next UI-only selections.
     pub state: GameUiState,
@@ -382,10 +457,7 @@ pub struct GameUiUpdate {
 }
 
 /// Browser or OS observations that never own game physics or phase.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(deny_unknown_fields)]
-#[cfg_attr(feature = "schema", schemars(extend("x-boundary-bytes" = GAME_UI_MAX_INPUT_BYTES)))]
+#[derive(Clone, Debug, PartialEq)]
 pub struct GameUiPlatformInput {
     /// Current physical display viewport.
     pub viewport: GameUiViewport,
@@ -399,6 +471,8 @@ pub struct GameUiPlatformInput {
     pub hmd_available: bool,
     /// Phone sensor headset support.
     pub phone_vr_available: bool,
+    /// Platform has observed touch input support.
+    pub touch_available: bool,
     /// Active spatial backend can reposition the menu in front of the viewer.
     pub menu_recenter_available: bool,
     /// Platform supports full record plots.
@@ -407,19 +481,22 @@ pub struct GameUiPlatformInput {
     pub replay_available: bool,
     /// Platform supports persisted record lookup.
     pub stored_records_available: bool,
+    /// The shared record owner admits an explicit retry of the failed Title list.
+    pub stored_records_retry_available: bool,
     /// Platform supports record downloads.
     pub flight_log_available: bool,
     /// Confirmed current render quality.
     pub water_quality: WaterQuality,
+    /// Acknowledged graphics quality is available for the current live renderer.
+    pub render_quality_confirmed: bool,
     /// Actual resource preparation, commitment and cleanup observation.
     pub water_quality_operation: GameUiWaterQualityOperation,
     /// Confirmed Screen selection, applied resources, and stable measurement state.
     pub screen_render_scale: crate::screen_render_auto::ScreenRenderAutoSnapshot,
     /// Platform operation feedback.
-    #[cfg_attr(feature = "schema", schemars(length(max = GAME_UI_NOTICE_CHARACTERS)))]
     pub notification: String,
-    /// Captured flight-controller resource failure; the session retains its last valid state.
-    pub flight_controller_failure: Option<String>,
+    /// Captured renderer failure; the session retains its last valid state.
+    pub renderer_failure: Option<String>,
     /// Captured head-HUD resource failure, separate from the domain and physical state.
     pub head_hud_failure: Option<String>,
     /// Bounded newest-record preview; the persistence index and PB search remain separate.
@@ -427,13 +504,8 @@ pub struct GameUiPlatformInput {
 }
 
 /// Title's bounded metadata query result, independent of all-record PB selection.
-#[derive(Clone, Debug, Default, PartialEq, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(transparent)]
-pub struct GameUiStoredRecordPreview(
-    #[cfg_attr(feature = "schema", schemars(length(max = GAME_UI_STORED_RECORD_LIMIT)))]
-    Vec<GameUiStoredRecord>,
-);
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct GameUiStoredRecordPreview(Vec<GameUiStoredRecord>);
 
 impl GameUiStoredRecordPreview {
     /// Returns the ordered rows without transferring record ownership.
@@ -461,33 +533,12 @@ impl From<Vec<GameUiStoredRecord>> for GameUiStoredRecordPreview {
     }
 }
 
-impl<'de> Deserialize<'de> for GameUiStoredRecordPreview {
-    fn deserialize<Deserializer: serde::Deserializer<'de>>(
-        deserializer: Deserializer,
-    ) -> Result<Self, Deserializer::Error> {
-        let records = Vec::<GameUiStoredRecord>::deserialize(deserializer)?;
-        if records.len() > GAME_UI_STORED_RECORD_LIMIT
-            || records
-                .iter()
-                .any(|record| record.saved_at.chars().count() > GAME_UI_SAVED_AT_CHARACTERS)
-        {
-            return Err(serde::de::Error::custom(
-                "stored-record preview exceeds its shared query bounds",
-            ));
-        }
-        Ok(Self(records))
-    }
-}
-
 /// Persistence metadata, not an independent flight record.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct GameUiStoredRecord {
     /// Platform key.
     pub id: u32,
     /// Original RFC 3339 save timestamp; the shared view formats it in UTC.
-    #[cfg_attr(feature = "schema", schemars(length(max = GAME_UI_SAVED_AT_CHARACTERS)))]
     pub saved_at: String,
     /// Existing Rust-derived Personal Best membership.
     pub personal_best: bool,
@@ -514,10 +565,16 @@ pub struct GameUiContext<'view, 'session> {
     pub session: &'view GameSession<'session>,
     /// Resume admission from the application-owned live driver and domain session.
     pub resume_available: bool,
+    /// Original live-driver failure retained until the flight is replaced.
+    pub flight_failure: Option<birdman_game_app::application::FlightFrameError>,
     /// Admission from retained backend, focus and tracking observations.
     pub presentation_available: bool,
     /// Existing selected or saved settings.
     pub difficulty: DifficultySettings,
+    /// Selected keyboard response, editable before flight preparation.
+    pub keyboard_controls: birdman_game_app::flight_input::KeyboardControlSettings,
+    /// Admitted Up, Down, Left, Right, J, L, C, P, Escape, W, S, A and D keys.
+    pub accepted_flight_keys: [bool; 13],
     /// Exact displayed preset retained for archived selections.
     pub preset: DifficultyPreset,
     /// Optional selected identity before preparation or sealed identity thereafter.
@@ -553,6 +610,38 @@ pub enum GameUiError {
     Environment(birdman_game_format::EnvironmentFormatError),
     /// The bundled venue chart asset is malformed.
     InvalidVenueMap,
+}
+#[cfg(not(verus_only))]
+impl core::fmt::Display for GameUiError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::RevisionExhausted => f.write_str("UI view revision identities are exhausted"),
+            Self::StaleView => f.write_str("UI observation targets a superseded view"),
+            Self::InvalidViewport => {
+                f.write_str("UI viewport must contain positive finite dimensions")
+            }
+            Self::ActionUnavailable => {
+                f.write_str("UI action is not available in the current view")
+            }
+            Self::InvalidTime => f.write_str("UI time is nonfinite or outside the retained record"),
+            Self::Record(_) => f.write_str("UI record query failed"),
+            Self::Session(_) => f.write_str("UI session projection failed"),
+            Self::Environment(_) => f.write_str("UI environment projection failed"),
+            Self::InvalidVenueMap => f.write_str("Venue map asset is invalid"),
+        }
+    }
+}
+
+#[cfg(not(verus_only))]
+impl core::error::Error for GameUiError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        match self {
+            Self::Record(cause) => Some(cause),
+            Self::Session(cause) => Some(cause),
+            Self::Environment(cause) => Some(cause),
+            _ => None,
+        }
+    }
 }
 
 /// Shared scene name, preserving current Web spelling.
@@ -645,6 +734,21 @@ pub struct GameUiFrame {
     pub button_labels: Vec<GameUiButtonLabel>,
     /// Cursor-only chart observation; plotted series and bounds remain in the view.
     pub chart_cursor: Option<GameUiChartCursor>,
+    /// Pointer-control indicators associated with the retained flight controls.
+    pub flight_touch: Vec<GameUiFlightTouchValue>,
+}
+
+/// Completed local indicator geometry for a retained flight pointer control.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct GameUiFlightTouchValue {
+    /// Existing published control identity.
+    pub id: String,
+    /// Complete local-pixel knob centre.
+    pub position: [f64; 2],
+    /// Complete local-pixel relative-drag origin, absent for an absolute slider.
+    pub origin: Option<[f64; 2]>,
 }
 
 /// Value of a retained typed range control.
@@ -982,6 +1086,8 @@ pub struct GameUiPanel {
     pub controls: Vec<GameUiControl>,
 }
 
+pub use birdman_game_app::flight_input::FlightTouchControl;
+
 /// Engine-independent anchor.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -1087,6 +1193,19 @@ pub enum GameUiControlContent {
         source: GameUiReadoutSource,
         /// Ordered values and units.
         fields: Vec<GameUiNumericField>,
+    },
+    /// Screen flight pointer region placed in viewport logical pixels.
+    FlightTouch {
+        /// Stick or absolute pilot-position interaction.
+        control: FlightTouchControl,
+        /// Completed viewport placement.
+        bounds: GameUiRect,
+        /// Completed local indicator centre in logical pixels.
+        position: [f64; 2],
+        /// Acquired local stick origin, absent before touch acquisition.
+        origin: Option<[f64; 2]>,
+        /// Shared indicator radius in logical pixels.
+        radius: f64,
     },
     /// Record-derived chart data, not a separately simulated trajectory.
     Chart {
@@ -1513,6 +1632,10 @@ pub struct GameUiTheme {
     pub text: String,
     /// Secondary text color.
     pub muted_text: String,
+    /// Mandatory warning text color.
+    pub warning_text: String,
+    /// Flight-path marker color.
+    pub flight_path_marker: String,
     /// Panel background color.
     pub panel_background: String,
     /// Centered menu opacity.

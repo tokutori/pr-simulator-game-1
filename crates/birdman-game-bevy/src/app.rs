@@ -95,7 +95,7 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
             }
             "--help" => {
                 println!(
-                    "birdman-game-bevy [--help] [--version] [--font PATH] [--no-vsync] [--export-dir DIR]\n矢印: pitch/yaw、J/L: pilot target、P: Pause/Resume、C: Pilot/Chase、右drag: 視点、F12: Screenshot\n--no-vsync: WindowはAutoNoVsyncを要求する。既定はFifo。非対応環境ではfallbackする。"
+                    "birdman-game-bevy [--help] [--version] [--font PATH] [--no-vsync] [--export-dir DIR]\n↑/W: 機首上げ、↓/S: 機首下げ、←/A: 左旋回、→/D: 右旋回、J/L: pilot target、P: Pause/Resume、C: Pilot/Chase、右drag: 視点、F12: Screenshot\n--no-vsync: WindowはAutoNoVsyncを要求する。既定はFifo。非対応環境ではfallbackする。"
                 );
                 println!(
                     "--export-dir DIR: 飛行ログJSON/CSVの保存先。既定は起動時の作業directory/flight-logs。既存fileは上書きしない。"
@@ -267,11 +267,13 @@ fn read_input(
         inputs.0.push(ApplicationInput::Dispose);
     }
     for event in ports.keyboard.read() {
-        inputs.0.push(ApplicationInput::Keyboard {
-            code: format!("{:?}", event.key_code),
-            pressed: event.state == ButtonState::Pressed,
-            repeat: event.repeat,
-        });
+        if let Some(key) = keyboard_key(&event.key_code) {
+            inputs.0.push(ApplicationInput::PhysicalKey {
+                key,
+                pressed: event.state == ButtonState::Pressed,
+                repeat: event.repeat,
+            });
+        }
     }
     if ports.motion.delta != Vec2::ZERO {
         inputs.0.push(ApplicationInput::PointerMotion {
@@ -308,4 +310,28 @@ fn read_input(
             .spawn(Screenshot::primary_window())
             .observe(save_to_disk(filename));
     }
+}
+
+fn keyboard_key(code: &KeyCode) -> Option<birdman_game_presentation::game_ui::KeyboardKey> {
+    use birdman_game_presentation::game_ui::KeyboardKey;
+    Some(match code {
+        KeyCode::Enter => KeyboardKey::Enter,
+        KeyCode::Space => KeyboardKey::Space,
+        KeyCode::Home => KeyboardKey::Home,
+        KeyCode::End => KeyboardKey::End,
+        KeyCode::ArrowLeft => KeyboardKey::Left,
+        KeyCode::ArrowRight => KeyboardKey::Right,
+        KeyCode::ArrowUp => KeyboardKey::Up,
+        KeyCode::ArrowDown => KeyboardKey::Down,
+        KeyCode::KeyA => KeyboardKey::A,
+        KeyCode::KeyC => KeyboardKey::C,
+        KeyCode::KeyD => KeyboardKey::D,
+        KeyCode::KeyJ => KeyboardKey::J,
+        KeyCode::KeyL => KeyboardKey::L,
+        KeyCode::KeyP => KeyboardKey::P,
+        KeyCode::KeyS => KeyboardKey::S,
+        KeyCode::KeyW => KeyboardKey::W,
+        KeyCode::Escape => KeyboardKey::Escape,
+        _ => return None,
+    })
 }

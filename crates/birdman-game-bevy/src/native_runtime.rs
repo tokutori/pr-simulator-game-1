@@ -77,6 +77,9 @@ pub(crate) fn platform(world: &mut World) -> ApplicationPlatformObservation {
                     false
                 }
             },
+            touch_available: world
+                .resource::<super::flight_devices::FlightDevices>()
+                .touch_available(),
             analysis_available: true,
             replay_available: true,
             stored_records_available: true,
@@ -95,7 +98,10 @@ pub(crate) fn initialize(world: &mut World) {
             world.insert_resource(runtime);
         }
         Err(cause) => {
-            error!("Native application initialization: {cause:?}");
+            error!(
+                "Native application initialization: {}",
+                birdman_game_app::technical_error_text(&cause)
+            );
             world.write_message(AppExit::error());
         }
     }
@@ -105,6 +111,17 @@ pub(crate) fn update(world: &mut World) {
     let Some(mut runtime) = world.remove_resource::<NativeRuntime>() else {
         return;
     };
+    #[cfg(feature = "verify-harness")]
+    let now = if let Some(mut clock) =
+        world.get_resource_mut::<super::verification::VerificationClock>()
+    {
+        let now = clock.0;
+        clock.0 += 16.0;
+        now
+    } else {
+        world.resource::<NativeIo>().origin.elapsed().as_secs_f64() * 1000.0
+    };
+    #[cfg(not(feature = "verify-harness"))]
     let now = world.resource::<NativeIo>().origin.elapsed().as_secs_f64() * 1000.0;
     let due: Vec<_> = world
         .resource::<NativeIo>()
@@ -212,14 +229,24 @@ pub(crate) fn update(world: &mut World) {
                     world,
                     trace_input,
                     trace_fonts,
-                    format!("{cause:?}"),
+                    birdman_game_app::technical_error_text(&cause),
                 );
-                error!("Native application observation: {cause:?}");
+                error!(
+                    "Native application observation: {}",
+                    birdman_game_app::technical_error_text(&cause)
+                );
                 continue;
             }
         };
         #[cfg(feature = "verify-harness")]
-        super::verification::trace::output(world, trace_input, trace_fonts, &output);
+        {
+            let snapshot = runtime.0.application().core_session().snapshot();
+            let flight = serde_json::json!({
+                "phase": format!("{:?}", snapshot.phase()),
+                "tick": snapshot.tail_flight_state().map(|state| state.tick_index()),
+            });
+            super::verification::trace::output(world, trace_input, trace_fonts, &output, flight);
+        }
         if let Some(cause) = output.diagnostic {
             warn!("Native application: {cause}");
         }
@@ -331,10 +358,10 @@ pub(crate) fn update(world: &mut World) {
             let submitted = submitted.and_then(|()| super::native_xr::submit(world, &drawing));
             if let Err(cause) = submitted {
                 queue.push_back(ApplicationInput::RendererFailed {
-                    renderer_resource_id: drawing.graphics.resource.map_or_else(
-                        || super::world::platform(world).resource_id,
-                        |resource| resource.renderer_resource_id,
-                    ),
+                    renderer_resource_id: drawing
+                        .graphics
+                        .renderer_resource_id
+                        .unwrap_or_else(|| super::world::platform(world).resource_id),
                     cause,
                 });
             }

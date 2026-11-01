@@ -13,6 +13,26 @@ use std::{
     sync::mpsc::{self, Receiver, Sender},
 };
 
+/// Accepts an already acknowledged quality, including a no-op selection of that quality.
+pub(super) fn quality_matches(
+    graphics: &birdman_game_runtime::ApplicationGraphicsProjection,
+    renderer: &birdman_game_runtime::ApplicationRendererObservation,
+    expected: birdman_game_runtime::ApplicationRenderQuality,
+) -> bool {
+    renderer.screen_extent_px.into_iter().all(|size| size > 0)
+        && graphics.renderer_resource_id == Some(renderer.resource_id)
+        && graphics.resource.is_some_and(|resource| {
+            resource.renderer_resource_id == renderer.resource_id
+                && resource.commit > 0
+                && resource.quality == expected
+                && resource.extent_px == renderer.extent_px
+                && resource.extent_px
+                    == expected
+                        .scale
+                        .physical_size(renderer.screen_extent_px[0], renderer.screen_extent_px[1])
+        })
+}
+
 pub(crate) struct VerificationCompletion(Receiver<Result<(), String>>);
 
 impl VerificationCompletion {

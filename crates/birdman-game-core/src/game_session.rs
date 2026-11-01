@@ -81,6 +81,13 @@ impl<'a> GameSessionConfiguration<'a> {
         self.scenario.initial_state()
     }
 
+    /// Returns the tail loads validated for the sealed launch state.
+    #[cfg_attr(verus_only, vstd::prelude::verus_verify(dual_spec))]
+    #[cfg_attr(verus_only, verus_spec(returns self.initial_tail_wrenches()))]
+    pub const fn initial_tail_wrenches(&self) -> [Option<crate::Wrench>; 2] {
+        self.scenario.initial_tail_wrenches()
+    }
+
     fn telemetry(&self, state: FlightState) -> Result<FlightTelemetry, FlightTelemetryError> {
         self.scenario.telemetry(state)
     }
@@ -341,6 +348,54 @@ pub enum GameSessionError {
     PlaybackQuery(FlightRecordQueryError),
     /// Required center-of-mass telemetry could not be sampled.
     Telemetry(FlightTelemetryError),
+}
+
+impl core::fmt::Display for GameSessionError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::InvalidTransition => {
+                f.write_str("action is unavailable in the current session phase")
+            }
+            Self::InvalidCountdown => {
+                f.write_str("countdown must contain at least one whole second")
+            }
+            Self::InvalidCountdownElapsed => {
+                f.write_str("countdown elapsed time must be finite and nonnegative")
+            }
+            Self::CountdownTokenExhausted => f.write_str("countdown attempt tokens are exhausted"),
+            Self::InvalidFlightTickLimit => f.write_str("flight tick limit must be positive"),
+            Self::InvalidModelVersion => f.write_str("session model versions must be positive"),
+            Self::NotPaused => f.write_str("flight is not paused"),
+            Self::PauseConditionsRemain => f.write_str("external pause conditions remain active"),
+            Self::TailTick(_) => f.write_str("flight tick"),
+            Self::Score(_) => f.write_str("terminal distance score"),
+            Self::Record(_) => f.write_str("flight record"),
+            Self::PlaybackClock(_) => f.write_str("replay clock"),
+            Self::PlaybackQuery(_) => f.write_str("replay record query"),
+            Self::Telemetry(_) => f.write_str("flight telemetry"),
+        }
+    }
+}
+
+impl core::error::Error for GameSessionError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        match self {
+            Self::TailTick(cause) => Some(cause),
+            Self::Score(cause) => Some(cause),
+            Self::Record(cause) => Some(cause),
+            Self::PlaybackClock(cause) => Some(cause),
+            Self::PlaybackQuery(cause) => Some(cause),
+            Self::Telemetry(cause) => Some(cause),
+            Self::InvalidTransition
+            | Self::InvalidCountdown
+            | Self::InvalidCountdownElapsed
+            | Self::CountdownTokenExhausted
+            | Self::InvalidFlightTickLimit
+            | Self::InvalidModelVersion
+            | Self::NotPaused
+            | Self::PauseConditionsRemain => None,
+        }
+    }
 }
 
 impl GameSessionError {
@@ -1474,6 +1529,10 @@ impl<'a> GameSession<'a> {
     }
 
     /// Advances one hybrid interval and retains its once-evaluated controls atomically.
+    /// The [executed prepared-session example](../birdman_game_app/struct.HybridSessionPreparation.html#method.try_new)
+    /// shows the public preparation, countdown, tick, and finalized-record sequence.
+    /// With a longer tick limit, successful ticks normally remain in FlightRunning
+    /// until a terminal event; the example deliberately uses a two-tick time limit.
     pub fn advance_tail_flight_tick(
         &mut self,
         input: TailFlightTickInput,
@@ -1533,12 +1592,16 @@ impl<'a> GameSession<'a> {
 
     /// Aborts at the current input boundary and retains the last valid tick.
     pub fn abort_flight(&mut self) -> Result<SessionSnapshot, GameSessionError> {
-        let state = match self.configured_mut()?.phase {
-            ConfiguredPhase::Flight(ActiveFlight { state, .. }) => state,
-            _ => return Err(GameSessionError::InvalidTransition),
-        };
-        self.finalize_tick(SessionEndReason::ManualAbort, state)?;
-        Ok(self.snapshot())
+        self.abort_flight_with_score(|configuration, terminal| {
+            course_distance_score(
+                configuration
+                    .initial_state()
+                    .flight_state()
+                    .datum_position_ned(),
+                terminal.flight_state().datum_position_ned(),
+                configuration.course_axis(),
+            )
+        })
     }
 
     /// Retries with the identical sealed scenario, seed, initial state, and tick limit.
@@ -1560,33 +1623,6 @@ impl<'a> GameSession<'a> {
             }
         }
         self.retry_with_record_factory(FlightRecord::try_new)
-    }
-
-    fn finalize_tick(
-        &mut self,
-        reason: SessionEndReason,
-        state: TailFlightTickState,
-    ) -> Result<(), GameSessionError> {
-        let terminal = SessionTerminalState::TailTick(state);
-        self.finalize_terminal(reason, terminal, None)
-    }
-
-    fn finalize_terminal(
-        &mut self,
-        reason: SessionEndReason,
-        state: SessionTerminalState,
-        failure: Option<TailFlightTickError>,
-    ) -> Result<(), GameSessionError> {
-        let configured = self.configured_mut()?;
-        let configuration = &configured.configuration;
-        let start = configuration
-            .initial_state()
-            .flight_state()
-            .datum_position_ned();
-        let terminal = state.flight_state().datum_position_ned();
-        let score_result = course_distance_score(start, terminal, configuration.course_axis());
-        let identity = configuration.identity;
-        configured.finalize_terminal(reason, state, identity, failure, None, score_result)
     }
 }
 

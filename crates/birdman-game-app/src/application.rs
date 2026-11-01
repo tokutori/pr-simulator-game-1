@@ -110,6 +110,7 @@ pub struct ApplicationSession {
     difficulty: DifficultySettings,
     maximum_flight_ticks: u64,
     seed: u64,
+    keyboard_controls: crate::flight_input::KeyboardControlSettings,
     prepared: Option<PreparedFlight>,
     attract: Option<AttractMetadata>,
     archived: Option<ArchiveMetadata>,
@@ -138,6 +139,11 @@ impl Default for ApplicationSession {
 }
 
 impl ApplicationSession {
+    /// Returns the keyboard settings selected for the next flight preparation.
+    pub fn keyboard_controls(&self) -> crate::flight_input::KeyboardControlSettings {
+        self.keyboard_controls
+    }
+
     /// Creates the existing Title state with explicit reproducible settings.
     pub fn new(control_mode: ControlMode, maximum_flight_ticks: u64, seed: u64) -> Self {
         Self {
@@ -145,6 +151,7 @@ impl ApplicationSession {
             difficulty: crate::default_difficulty(control_mode),
             maximum_flight_ticks,
             seed,
+            keyboard_controls: crate::flight_input::KeyboardControlSettings::default(),
             prepared: None,
             attract: None,
             archived: None,
@@ -263,16 +270,32 @@ impl ApplicationSession {
             }
         }
         let result = match command {
+            SessionCommand::SetKeyboardControls { settings } => {
+                if self.session.snapshot().phase() != SessionPhase::FlightSetup {
+                    return Err(ApplicationError::Session(
+                        GameSessionError::InvalidTransition,
+                    ));
+                }
+                if !settings.is_valid() {
+                    return Err(ApplicationError::Input(
+                        birdman_game_core::TailControlError::InvalidPilotIntent,
+                    ));
+                }
+                self.keyboard_controls = settings;
+                return Ok(());
+            }
             SessionCommand::OpenSetup {} => self.session.open_setup(),
             SessionCommand::ReturnToTitle {} => self.session.return_to_title(),
             SessionCommand::CancelBriefing {} => self.session.cancel_briefing(),
             SessionCommand::Prepare {} => {
-                self.prepared = Some(commands::prepare_flight(
+                let mut prepared = commands::prepare_flight(
                     &mut self.session,
                     self.difficulty,
                     self.maximum_flight_ticks,
                     self.seed,
-                )?);
+                )?;
+                prepared.keyboard_controls = self.keyboard_controls;
+                self.prepared = Some(prepared);
                 self.advance_record_source();
                 return self
                     .observe_readiness(readiness)

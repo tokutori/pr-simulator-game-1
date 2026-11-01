@@ -95,7 +95,7 @@ describe("Screen DOM adapter", () => {
       adapter.render(view);
       const button = required(root, "button");
       const numericValue = required(root, "#fields .screen-ui-field-value");
-      const frame: GameUiFrame = { view_revision: view.view_revision, hud: null, chart_cursor: null,
+      const frame: GameUiFrame = { view_revision: view.view_revision, hud: null, chart_cursor: null, flight_touch: [],
         ranges: [{ id: "range", value: 2.5, display_value: "2.5" }], button_labels: [{ id: "button", label: "一時停止" }], readouts: [{ id: "notice", value: "更新済み" }],
         fields: [{ id: "fields", fields: [{ id: "speed", label: "対気速度", value: "9.87", unit: "m/s" }] }] };
       adapter.renderFrame(frame);
@@ -113,17 +113,41 @@ describe("Screen DOM adapter", () => {
   it("allocates the shared chart height and transfers measured rectangles and captured pointer lifetimes", async () => {
     const fixture = readyApplicationFixture();
     let view: GameUiView;
+    let flightView: GameUiView;
     try {
       for (const command of [{ kind: "open_setup" }, { kind: "prepare" }, { kind: "start_countdown" }] as const) {
         fixture.activate({ kind: "session", command });
       }
       for (let now = 0; now <= 3050; now += 10) fixture.observe({ kind: "frame", timestamp_ms: now, gamepads: [],
         display_resource_id: null, spatial: { gamepads: [], sources: [], presented_id: null }, xr: null }, now);
+      fixture.observe({ kind: "platform", observation: { ...fixture.platform,
+        capabilities: { ...fixture.platform.capabilities, touch_available: true } } }, 3050);
+      flightView = fixture.view;
       fixture.activate({ kind: "session", command: { kind: "abort" } }, 3050);
       fixture.activate({ kind: "set_result_tab", tab: "analysis" }, 3050);
       fixture.activate({ kind: "set_analysis_chart", chart: "altitude" }, 3050);
       view = fixture.view;
     } finally { fixture.owner.free(); }
+    await withAdapter((root, adapter, actions, window) => {
+      adapter.render(flightView);
+      const region = required(root, "[data-pointer-control-id]");
+      Object.assign(region, { setPointerCapture: vi.fn(), releasePointerCapture: vi.fn() });
+      const pointer = (type: string, x: number, buttons: number) => region.dispatchEvent(new window.PointerEvent(type, {
+        bubbles: true, pointerType: "mouse", pointerId: 19, button: 2, buttons, isPrimary: true, clientX: x, clientY: 51
+      }) as unknown as PointerEvent);
+      pointer("pointerdown", 73, 2);
+      adapter.render({ ...flightView, view_revision: flightView.view_revision + 1 });
+      pointer("pointermove", 83, 2);
+      pointer("pointerup", 83, 0);
+      expect(actions.map(input => input.kind === "control_pointer" ? [input.phase, input.pointer_kind, input.position[0], input.buttons] : input.kind))
+        .toEqual([["down", "mouse", 73, 2], ["move", "mouse", 83, 2], ["up", "mouse", 83, 0]]);
+      const menu = new window.MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+      region.dispatchEvent(menu as unknown as MouseEvent);
+      expect(menu.defaultPrevented).toBe(true);
+      const normalMenu = new window.MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+      required(root, ".screen-ui-shell").dispatchEvent(normalMenu as unknown as MouseEvent);
+      expect(normalMenu.defaultPrevented).toBe(false);
+    });
     const control = view.panels.flatMap(panel => panel.controls).find(control => control.content.kind === "chart");
     if (control?.content.kind !== "chart") throw new Error("Missing shared Analysis chart");
     const targetHeight = control.content.plot.presentation.target_height_px;
@@ -165,15 +189,15 @@ describe("Screen DOM adapter", () => {
       pointer("pointerdown", 73, 1);
       pointer("pointermove", 940, 1);
       pointer("pointerup", 940, 0);
-      expect(actions.map(input => input.kind === "chart_pointer" ? [input.phase, input.position[0], input.buttons] : input.kind))
+      expect(actions.map(input => input.kind === "control_pointer" ? [input.phase, input.position[0], input.buttons] : input.kind))
         .toEqual([["down", 73, 1], ["move", 940, 1], ["up", 940, 0]]);
-      expect(actions[0]).toMatchObject({ kind: "chart_pointer", view_revision: view.view_revision, control_id: control.id,
-        pointer_id: 7, is_primary: true, rect: [17, 29, 813, 417] });
+      expect(actions[0]).toMatchObject({ kind: "control_pointer", view_revision: view.view_revision, control_id: control.id,
+        pointer_id: { low: 7, high: 0 }, is_primary: true, rect: [17, 29, 813, 417] });
       expect(release).toHaveBeenCalledWith(7);
       actions.length = 0;
       pointer("pointerdown", 73, 1);
       adapter.render(view, false);
-      expect(actions.at(-1)).toMatchObject({ kind: "chart_pointer", phase: "lost_capture", view_revision: view.view_revision });
+      expect(actions.at(-1)).toMatchObject({ kind: "control_pointer", phase: "lost_capture", view_revision: view.view_revision });
       const count = actions.length;
       pointer("pointermove", 940, 1);
       expect(actions).toHaveLength(count);
@@ -181,7 +205,7 @@ describe("Screen DOM adapter", () => {
       Object.assign(viewport, { setPointerCapture: () => { throw new Error("capture unavailable"); } });
       actions.length = 0;
       pointer("pointerdown", 73, 1);
-      expect(actions.map(input => input.kind === "chart_pointer" ? input.phase : input.kind)).toEqual(["down", "lost_capture"]);
+      expect(actions.map(input => input.kind === "control_pointer" ? input.phase : input.kind)).toEqual(["down", "lost_capture"]);
       actions.length = 0;
       measure(viewport, 900, 450);
       adapter.render(view, false);

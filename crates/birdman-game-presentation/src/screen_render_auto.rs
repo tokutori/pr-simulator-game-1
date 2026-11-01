@@ -30,20 +30,37 @@ pub enum ScreenShadowMap {
     Full,
     /// Half the manual map dimensions.
     Half,
-    /// Minimum retained shadow-map dimensions.
+    /// One quarter of the full shadow-map dimensions.
     Quarter,
+    /// Disables directional shadow rendering.
+    Off,
 }
 
 impl ScreenShadowMap {
     /// Ordered resolutions from highest to lowest quality.
-    pub const ALL: [Self; 3] = [Self::Full, Self::Half, Self::Quarter];
+    pub const ALL: [Self; 4] = [Self::Full, Self::Half, Self::Quarter, Self::Off];
 
-    /// Width and height of each directional shadow map or cascade.
+    /// Valid allocation extent; disabled shadows retain a one-pixel placeholder.
     pub const fn size(self) -> u32 {
         match self {
             Self::Full => 2_048,
             Self::Half => 1_024,
             Self::Quarter => 512,
+            Self::Off => 1,
+        }
+    }
+    /// Whether directional shadow passes are enabled.
+    pub const fn enabled(self) -> bool {
+        !matches!(self, Self::Off)
+    }
+
+    /// Shared user-facing label.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Full => "2048",
+            Self::Half => "1024",
+            Self::Quarter => "512",
+            Self::Off => "なし",
         }
     }
 }
@@ -153,7 +170,7 @@ pub struct ScreenRenderAutoSnapshot {
 }
 
 impl ScreenRenderAutoSnapshot {
-    /// Builds a confirmed manual observation for startup and adapter fixtures.
+    /// Builds a manual quality baseline; the graphics owner tracks resource confirmation.
     pub const fn manual(scale: ScreenRenderScale) -> Self {
         Self {
             selection: ScreenRenderSelection::Manual {
@@ -214,6 +231,24 @@ pub enum ScreenRenderAutoError {
     /// Epochs cannot wrap and reuse a previous request identity.
     EpochExhausted,
 }
+#[cfg(not(verus_only))]
+impl core::fmt::Display for ScreenRenderAutoError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::InvalidTime => {
+                f.write_str("Graphics policy time must be finite, nonnegative and monotonic")
+            }
+            Self::InvalidSample => f.write_str("Graphics sample time or GPU work is invalid"),
+            Self::StaleRequest => {
+                f.write_str("Graphics acknowledgment targets an obsolete request")
+            }
+            Self::EpochExhausted => f.write_str("Graphics epochs are exhausted"),
+        }
+    }
+}
+
+#[cfg(not(verus_only))]
+impl core::error::Error for ScreenRenderAutoError {}
 
 /// Selects whether retained flight settings or background Auto controls rendering.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -440,7 +475,9 @@ pub struct ScreenRenderAutoController {
 }
 
 impl ScreenRenderAutoController {
-    /// Starts with Auto and retains the backend's confirmed resources for manual restoration.
+    /// Starts Auto from the calling graphics owner's quality baseline for manual restoration.
+    ///
+    /// The caller owns resource binding and acknowledgment.
     pub fn new(
         applied: ScreenRenderScale,
         shadow: ScreenShadowMap,
@@ -578,6 +615,25 @@ impl ScreenRenderAutoController {
         )
     }
 
+    /// Chooses manual shadow quality and stops automatic changes.
+    pub fn select_shadow(
+        &mut self,
+        shadow: ScreenShadowMap,
+        now_ms: f64,
+    ) -> Result<Option<ScreenRenderResourceRequest>, ScreenRenderAutoError> {
+        self.check_time(now_ms)?;
+        self.replace_selection(
+            QualitySelection {
+                automatic: false,
+                manual: RenderQuality {
+                    shadow,
+                    ..self.selection.manual
+                },
+            },
+            now_ms,
+        )
+    }
+
     /// Changes manual water quality, or the upper bound without raising Auto's applied quality.
     pub fn select_water_quality(
         &mut self,
@@ -610,7 +666,13 @@ impl ScreenRenderAutoController {
         self.selection = selection;
         self.recovery = None;
         self.resource = ResourceState::Ready;
-        self.measurement = MeasurementState::Measuring;
+        if matches!(self.measurement, MeasurementState::Unsupported(_)) {
+            if self.automatic() {
+                return self.request_unsupported_quality();
+            }
+        } else {
+            self.measurement = MeasurementState::Measuring;
+        }
         if self.scope != ScreenRenderScope::Background {
             self.request(self.desired_quality())
         } else {
@@ -634,8 +696,12 @@ impl ScreenRenderAutoController {
                 if matches!(self.resource, ResourceState::Failed(_)) {
                     self.resource = ResourceState::Ready;
                 }
-                self.measurement = MeasurementState::Measuring;
-                Ok(None)
+                if matches!(self.measurement, MeasurementState::Unsupported(_)) {
+                    self.request_unsupported_quality()
+                } else {
+                    self.measurement = MeasurementState::Measuring;
+                    Ok(None)
+                }
             }
             (false, true) => self.select_manual(self.selection.manual.scale, now_ms),
             _ => Ok(self.requested()),

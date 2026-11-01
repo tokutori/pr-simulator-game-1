@@ -461,7 +461,11 @@ impl<'a> GameSession<'a> {
             Ok(reading) => reading,
             Err(error) => return Err(GameSessionError::Telemetry(error)),
         };
-        if let Err(error) = configured.record.begin_tail(initial, reading) {
+        if let Err(error) = configured.record.begin_tail(
+            initial,
+            reading,
+            Some(configuration.initial_tail_wrenches()),
+        ) {
             return Err(GameSessionError::Record(error));
         }
         configured.phase = ConfiguredPhase::Flight(ActiveFlight {

@@ -323,7 +323,7 @@ def shoreline_land_side(line: list[tuple[float, float]], water_ring: list[tuple[
 
 def ring_east_crossings(north: float, ring: list[tuple[float, float]]) -> list[float]:
     crossings = []
-    for current, following in zip(ring, ring[1:]):
+    for current, following in zip(ring, ring[1:] + ring[:1]):
         if (current[0] > north) != (following[0] > north):
             fraction = (north - current[0]) / (following[0] - current[0])
             crossings.append(current[1] + (following[1] - current[1]) * fraction)
@@ -735,7 +735,7 @@ def build_camera_points() -> list[dict[str, int | str]]:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("osm", type=Path)
-    parser.add_argument("--osm-only", action="store_true", help="Regenerate only the OSM-derived shoreline and analysis-map assets")
+    parser.add_argument("--osm-only", action="store_true", help="Regenerate only the OSM-derived shoreline, analysis-map and land-mask assets")
     parser.add_argument("--dsm-e135-n35", type=Path)
     parser.add_argument("--mask-e135-n35", type=Path)
     parser.add_argument("--dsm-e136-n35", type=Path)

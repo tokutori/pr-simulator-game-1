@@ -11,17 +11,16 @@ use std::collections::BTreeMap;
 pub(crate) struct FlightDevices {
     connections: BTreeMap<u64, ApplicationGamepadObservation>,
     generation: u32,
+    touch_observed: bool,
     observations: Vec<ApplicationGamepadObservation>,
-    #[cfg(feature = "verify-harness")]
-    verification: Option<[ApplicationGamepadObservation; 1]>,
 }
 
 impl FlightDevices {
+    pub(crate) fn touch_available(&self) -> bool {
+        self.touch_observed
+    }
+
     pub(crate) fn observations(&self) -> &[ApplicationGamepadObservation] {
-        #[cfg(feature = "verify-harness")]
-        if let Some(observations) = &self.verification {
-            return observations;
-        }
         &self.observations
     }
 
@@ -74,29 +73,16 @@ impl FlightDevices {
         }
         Ok(())
     }
-
-    #[cfg(feature = "verify-harness")]
-    pub(crate) fn verification_axes(&mut self, axes: [f64; 3]) {
-        self.verification = Some([ApplicationGamepadObservation {
-            identity: FlightDeviceIdentity {
-                slot_low: 0,
-                slot_high: 0,
-                generation: 1,
-            },
-            connected: true,
-            mapping: "standard-y-up".into(),
-            axes: vec![Some(axes[1]), Some(axes[0]), Some(0.0), Some(axes[2])],
-            buttons: vec![false; 2],
-        }]);
-    }
 }
 
 pub(crate) fn observe_devices(
     mut devices: ResMut<FlightDevices>,
     mut raw: MessageReader<RawGamepadEvent>,
+    mut touch: MessageReader<bevy::input::touch::TouchInput>,
     mut connections: MessageReader<GamepadConnectionEvent>,
     gamepads: Query<&Gamepad>,
 ) {
+    devices.touch_observed = touch.read().count() != 0;
     let changed = !raw.is_empty() || !connections.is_empty();
     let raw = raw.read().collect::<Vec<_>>();
     let result = (|| {
@@ -223,5 +209,19 @@ mod tests {
             observed[0].axes,
             vec![Some(0.0), Some(0.75), Some(0.0), Some(0.0)]
         );
+        // The adapter reports only the current batch; the aggregate runtime retains availability.
+        assert!(!app.world().resource::<FlightDevices>().touch_available());
+        app.world_mut()
+            .write_message(bevy::input::touch::TouchInput {
+                phase: bevy::input::touch::TouchPhase::Started,
+                position: Vec2::ZERO,
+                window: gamepad,
+                force: None,
+                id: 1,
+            });
+        app.update();
+        assert!(app.world().resource::<FlightDevices>().touch_available());
+        app.update();
+        assert!(!app.world().resource::<FlightDevices>().touch_available());
     }
 }

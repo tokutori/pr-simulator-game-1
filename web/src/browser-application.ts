@@ -49,6 +49,7 @@ export class BrowserApplication {
     this.documentStyle.observe(documentRef.documentElement, { attributes: true, attributeFilter: ["style", "class", "lang"] });
     const platform = this.platform();
     this.owner = new ApplicationRuntimeBridge(JSON.stringify(platform));
+    this.mount.addEventListener("pointerdown", this.onPointerObserved, true);
     window.addEventListener("resize", this.onPlatform);
     window.addEventListener("keydown", this.onKeyDown);
     window.addEventListener("keyup", this.onKeyUp);
@@ -108,7 +109,7 @@ export class BrowserApplication {
             this.view = drawing.ui.view;
             this.screen.render(drawing.ui.view, drawing.presentation.screen_ui_visible);
           } else this.screen.renderFrame(drawing.ui.frame, drawing.presentation.screen_ui_visible);
-        } catch (cause) { failed(drawing.graphics.resource?.renderer_resource_id, cause); }
+        } catch (cause) { failed(drawing.graphics.renderer_resource_id, cause); }
         const hud = drawing.ui.kind === "view" ? drawing.ui.view.hud : drawing.ui.frame.hud;
         try {
           if (this.view !== null) this.hud.render(hud ?? null, this.view.theme);
@@ -117,7 +118,7 @@ export class BrowserApplication {
           if (this.frameRate.textContent !== drawing.presentation.frame_rate_label) {
             this.frameRate.textContent = drawing.presentation.frame_rate_label;
           }
-        } catch (cause) { failed(drawing.graphics.resource?.renderer_resource_id, cause); }
+        } catch (cause) { failed(drawing.graphics.renderer_resource_id, cause); }
       }
       if (output.diagnostic != null) console.error(output.diagnostic);
       const failures: unknown[] = [];
@@ -195,7 +196,7 @@ export class BrowserApplication {
         const operation = request.request;
         const id = operation.kind === "release" || operation.kind === "stop" ? operation.resource_id
           : operation.kind === "start" ? operation.permission_resource_id : null;
-        const rendererId = drawing?.graphics.resource?.renderer_resource_id;
+        const rendererId = drawing?.graphics.renderer_resource_id;
         const renderer = id == null ? rendererId == null ? this.renderer : this.renderers.get(rendererId)
           : [...this.renderers.values()].find(candidate => candidate.ownsDisplay(id));
         if (renderer != null) renderer.display(operation);
@@ -290,6 +291,14 @@ export class BrowserApplication {
     this.observe({ kind: "phone_sensors_started", resource_id: id, failure });
   }
 
+  private readonly onPointerObserved = (event: PointerEvent): void => {
+    if (event.pointerType === "touch") {
+      const observation = this.platform();
+      this.observe({ kind: "platform", observation: { ...observation,
+        capabilities: { ...observation.capabilities, touch_available: true } } });
+    }
+  };
+
   private readonly onPlatform = (): void => { this.observe({ kind: "platform", observation: this.platform() }); };
   private readonly onFontLoaded = (): void => {
     if (this.fontGeneration >= 0xffff_ffff) throw new Error("Font resource generation exhausted");
@@ -313,6 +322,7 @@ export class BrowserApplication {
   private free(): void {
     const owner = this.owner;
     this.owner = null;
+    this.mount.removeEventListener("pointerdown", this.onPointerObserved, true);
     window.removeEventListener("resize", this.onPlatform);
     window.removeEventListener("keydown", this.onKeyDown);
     window.removeEventListener("keyup", this.onKeyUp);

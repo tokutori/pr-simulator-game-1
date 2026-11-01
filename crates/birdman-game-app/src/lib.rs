@@ -53,3 +53,16 @@ pub fn default_difficulty(control_mode: ControlMode) -> DifficultySettings {
     };
     DifficultySettings::custom(InformationLevel::Full, assistance, DEFAULT_WEATHER)
 }
+
+/// Formats a technical error and each typed source once at a string-only I/O boundary.
+#[cfg(not(verus_only))]
+pub fn technical_error_text(error: &dyn core::error::Error) -> String {
+    use core::fmt::Write;
+    let mut text = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        write!(&mut text, ": {cause}").expect("writing to a String cannot fail");
+        source = cause.source();
+    }
+    text
+}
