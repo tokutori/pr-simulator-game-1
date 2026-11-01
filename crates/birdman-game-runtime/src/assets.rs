@@ -758,7 +758,7 @@ mod tests {
                 .materials[range]
                 .material_id
         };
-        assert_eq!(material("wing-0", 1), material("wing-0", 2));
+        assert_eq!(material("wing-0", 1), material("wing-2", 1));
         assert_ne!(
             material("wing-0", 1),
             material("lake-biwa-distant-terrain", 0)
