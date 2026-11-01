@@ -846,7 +846,14 @@ export class ThreeApplicationRenderer {
     const scissorTest = this.renderer.getScissorTest();
     const uncullable: Object3D[] = [];
     const failures: unknown[] = [];
+    const shadowAutoUpdate = this.renderer.shadowMap.autoUpdate;
+    const shadowNeedsUpdate = this.renderer.shadowMap.needsUpdate;
     try {
+      if (drawing.scene.reflection !== null && active.sun.castShadow) {
+        this.drawCurrentShadows(active);
+        this.renderer.shadowMap.autoUpdate = false;
+        this.renderer.shadowMap.needsUpdate = false;
+      }
       this.drawReflection(active, drawing);
       const eyes = camera.eyes;
       if (frame !== undefined && this.renderer.xr.isPresenting) {
@@ -887,7 +894,8 @@ export class ThreeApplicationRenderer {
     } catch (cause) { failures.push(cause); }
     finally {
       for (const restore of [() => { this.renderer.setViewport(viewport); },
-        () => { this.renderer.setScissor(scissor); }, () => { this.renderer.setScissorTest(scissorTest); }]) {
+        () => { this.renderer.setScissor(scissor); }, () => { this.renderer.setScissorTest(scissorTest); },
+        () => { this.renderer.shadowMap.autoUpdate = shadowAutoUpdate; this.renderer.shadowMap.needsUpdate = shadowNeedsUpdate; }]) {
         try { restore(); } catch (cause) { failures.push(cause); }
       }
       for (const object of uncullable) object.frustumCulled = true;
@@ -895,6 +903,81 @@ export class ThreeApplicationRenderer {
     }
     if (failures.length > 0) throw new AggregateError(failures, "Frame drawing failed");
     if (spatial != null) this.presented_id = spatial.presentation_id;
+  }
+
+  private drawCurrentShadows(active: PreparedResources): void {
+    const target = this.renderer.getRenderTarget();
+    const face = this.renderer.getActiveCubeFace();
+    const mip = this.renderer.getActiveMipmapLevel();
+    const viewport = this.renderer.getViewport(new Vector4());
+    const scissor = this.renderer.getScissor(new Vector4());
+    const scissorTest = this.renderer.getScissorTest();
+    const xr = this.renderer.xr.enabled;
+    const autoClear = this.renderer.autoClear;
+    const background = active.scene.background;
+    const shadowAutoUpdate = this.renderer.shadowMap.autoUpdate;
+    const shadowNeedsUpdate = this.renderer.shadowMap.needsUpdate;
+    const hidden: Mesh[] = [];
+    const callbacks: { mesh: Mesh; descriptor: PropertyDescriptor | undefined }[] = [];
+    const ranges = new Map<BufferGeometry, { start: number; count: number }>();
+    const sides = new Map<Material, Material["side"]>();
+    const failures: unknown[] = [];
+    try {
+      // This adapter creates leaf Mesh renderables. Only casters enter this render;
+      // in particular water never samples the attached reflection texture.
+      active.scene.traverse(object => {
+        if (!(object instanceof Mesh)) return;
+        const mesh = object as Mesh;
+        if (!mesh.castShadow) {
+          if (mesh.visible) { hidden.push(mesh); mesh.visible = false; }
+          return;
+        }
+        const geometry = mesh.geometry;
+        if (!ranges.has(geometry)) ranges.set(geometry, { ...geometry.drawRange });
+        const callback = mesh.onBeforeRender.bind(mesh);
+        callbacks.push({ mesh, descriptor: Object.getOwnPropertyDescriptor(mesh, "onBeforeRender") });
+        mesh.onBeforeRender = (...args) => {
+          callback(...args);
+          // r186 finishes all shadow draws before Object3D.onBeforeRender.
+          // Preserve their original ranges; suppress only the following color draw.
+          geometry.setDrawRange(geometry.drawRange.start, 0);
+        };
+        for (const material of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
+          if (!sides.has(material)) sides.set(material, material.side);
+        }
+      });
+      active.scene.background = null;
+      this.renderer.autoClear = false;
+      this.renderer.xr.enabled = false;
+      this.renderer.shadowMap.autoUpdate = false;
+      this.renderer.shadowMap.needsUpdate = true;
+      // The existing single-sample, non-mipmapped target receives no color/depth
+      // fragments. Traversal, program setup and zero-count GL commands still cost CPU.
+      this.renderer.setRenderTarget(active.reflection);
+      this.renderer.setScissorTest(false);
+      this.render(active.scene, this.camera, "shadow");
+    } catch (cause) { failures.push(cause); }
+    finally {
+      for (const { mesh, descriptor } of callbacks) {
+        try {
+          if (descriptor !== undefined) Object.defineProperty(mesh, "onBeforeRender", descriptor);
+          else if (!Reflect.deleteProperty(mesh, "onBeforeRender")) failures.push(new Error("Shadow drawing callback restoration failed"));
+        } catch (cause) { failures.push(cause); }
+      }
+      for (const [geometry, range] of ranges) {
+        try { geometry.setDrawRange(range.start, range.count); } catch (cause) { failures.push(cause); }
+      }
+      for (const [material, side] of sides) material.side = side;
+      for (const mesh of hidden) mesh.visible = true;
+      for (const restore of [() => { active.scene.background = background; },
+        () => { this.renderer.autoClear = autoClear; this.renderer.xr.enabled = xr; },
+        () => { this.renderer.shadowMap.autoUpdate = shadowAutoUpdate; this.renderer.shadowMap.needsUpdate = shadowNeedsUpdate; },
+        () => { this.renderer.setRenderTarget(target, face, mip); }, () => { this.renderer.setViewport(viewport); },
+        () => { this.renderer.setScissor(scissor); }, () => { this.renderer.setScissorTest(scissorTest); }]) {
+        try { restore(); } catch (cause) { failures.push(cause); }
+      }
+    }
+    if (failures.length > 0) throw new AggregateError(failures, "Shadow drawing failed");
   }
 
   private drawReflection(active: PreparedResources, drawing: ApplicationDrawingOutput): void {
@@ -912,8 +995,6 @@ export class ThreeApplicationRenderer {
     const alpha = this.renderer.getClearAlpha();
     const color = this.renderer.getClearColor(new Color());
     const xr = this.renderer.xr.enabled;
-    const shadowAutoUpdate = this.renderer.shadowMap.autoUpdate;
-    const shadowNeedsUpdate = this.renderer.shadowMap.needsUpdate;
     const viewport = this.renderer.getViewport(new Vector4());
     const scissor = this.renderer.getScissor(new Vector4());
     const scissorTest = this.renderer.getScissorTest();
@@ -921,10 +1002,6 @@ export class ThreeApplicationRenderer {
     try {
       active.scene.background = null;
       this.renderer.xr.enabled = false;
-      if (active.sun.shadow.map !== null) {
-        this.renderer.shadowMap.autoUpdate = false;
-        this.renderer.shadowMap.needsUpdate = false;
-      }
       this.renderer.setRenderTarget(active.reflection);
       this.renderer.setScissorTest(false);
       this.renderer.setClearColor(0x000000, 0);
@@ -933,7 +1010,6 @@ export class ThreeApplicationRenderer {
     } catch (cause) { failures.push(cause); }
     finally {
       for (const restore of [() => { active.scene.background = background; }, () => { this.renderer.xr.enabled = xr; },
-        () => { this.renderer.shadowMap.autoUpdate = shadowAutoUpdate; this.renderer.shadowMap.needsUpdate = shadowNeedsUpdate; },
         () => { this.renderer.setRenderTarget(target); }, () => { this.renderer.setClearColor(color, alpha); },
         () => { this.renderer.setViewport(viewport); }, () => { this.renderer.setScissor(scissor); },
         () => { this.renderer.setScissorTest(scissorTest); }]) {

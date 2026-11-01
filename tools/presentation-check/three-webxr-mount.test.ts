@@ -12,6 +12,8 @@ import { applicationPlatformFixture } from "../game-check/application-fixture.js
 import { gpuTimerFixture } from "./gpu-timer-fixture.js";
 
 interface Draw {
+  readonly shadowVersion: number;
+  readonly counts: number[];
   readonly defaultFramebuffer: boolean;
   readonly eyes: Matrix4[];
   readonly projections: Matrix4[];
@@ -22,6 +24,7 @@ interface Draw {
 interface Driver {
   readonly xr: WebXRManager;
   readonly draws: Draw[];
+  readonly shadows: number[][];
   readonly disposed: ReturnType<typeof vi.fn>;
   readonly timer: ReturnType<typeof gpuTimerFixture>;
   frame: ((now: number, frame?: XRFrame) => void) | null;
@@ -48,11 +51,13 @@ vi.mock("three", async importOriginal => {
   return { ...actual, WebGLRenderer: class {
     readonly xr: WebXRManager;
     readonly draws: Draw[] = [];
+    readonly shadows: number[][] = [];
     readonly disposed = vi.fn();
     readonly timer = gpuTimerFixture();
     frame: ((now: number, frame?: XRFrame) => void) | null = null;
     readonly shadowMap = { enabled: false, autoUpdate: true, needsUpdate: false };
     outputColorSpace = actual.SRGBColorSpace;
+    autoClear = true;
     compile = capture.compilation ?? Promise.resolve();
     scene: Scene | null = null;
     sizeFaults = 0;
@@ -108,6 +113,8 @@ vi.mock("three", async importOriginal => {
     setAnimationLoop(callback: ((now: number, frame?: XRFrame) => void) | null): void { this.frame = callback; this.xr.setAnimationLoop(callback); }
     setRenderTarget(target: WebGLRenderTarget | null): void { this.target = target; }
     getRenderTarget(): WebGLRenderTarget | null { return this.target; }
+    getActiveCubeFace(): number { return 0; }
+    getActiveMipmapLevel(): number { return 0; }
     setRenderTargetFramebuffer(): void {}
     setClearColor(color: Color | number, alpha: number): void { this.clearColor.set(color); this.clearAlpha = alpha; }
     getClearColor(target: Color): Color { return target.copy(this.clearColor); }
@@ -135,17 +142,29 @@ vi.mock("three", async importOriginal => {
     dispose(): void { this.disposed(); }
     render(scene: Scene, camera: Camera): void {
       const reflected = !this.xr.enabled && this.target !== null && !("isXRRenderTarget" in this.target && this.target.isXRRenderTarget);
-      if (reflected && this.reflectionFault) throw new Error("physical reflection render failed");
       scene.updateMatrixWorld(true);
       camera.updateMatrixWorld(true);
       const current = this.xr.enabled && this.xr.isPresenting ? this.xr.getCamera() : camera;
       let panel: Matrix4 | null = null;
       const cursors: Matrix4[] = [];
+      const counts: number[] = [];
+      if (this.shadowMap.autoUpdate || this.shadowMap.needsUpdate) {
+        const casters: number[] = [];
+        scene.traverseVisible(object => {
+          if (object instanceof actual.Mesh && object.castShadow && current.layers.test(object.layers)) casters.push((object as Mesh).geometry.drawRange.count);
+        });
+        this.shadows.push(casters);
+        this.shadowMap.needsUpdate = false;
+      }
       scene.traverseVisible(object => {
         if (!(object instanceof actual.Mesh) || !current.layers.test(object.layers)) return;
         if (!(object.geometry instanceof actual.BufferGeometry)) throw new Error("Mesh geometry is unavailable");
         for (const material of Array.isArray(object.material) ? object.material : [object.material]) {
           if (!(material instanceof actual.Material)) throw new Error("Mesh material is unavailable");
+          object.onBeforeRender(this as unknown as WebGLRenderer, scene, camera,
+            object.geometry as Parameters<Material["onBeforeRender"]>[3], material as Material, new actual.Group());
+          if (reflected && this.reflectionFault) throw new Error("physical reflection render failed");
+          counts.push(object.geometry.drawRange.count);
           if (this.target !== null && material instanceof actual.ShaderMaterial
             && material.uniforms["uReflectionTexture"]?.value === this.target.texture) throw new Error("Framebuffer texture feedback loop");
           material.onBeforeRender(this as unknown as WebGLRenderer, scene, camera,
@@ -161,7 +180,7 @@ vi.mock("three", async importOriginal => {
         if (object.material instanceof actual.MeshBasicMaterial && object.material.map instanceof actual.CanvasTexture && object.renderOrder === 2000) panel = object.matrixWorld.clone();
       });
       const eyes = "cameras" in current ? (current as ArrayCamera).cameras : [];
-      this.draws.push({ defaultFramebuffer: this.target === null, reflected, panel, cursors, eyes: eyes.map(eye => eye.matrixWorld.clone()), projections: eyes.map(eye => eye.projectionMatrix.clone()) });
+      this.draws.push({ shadowVersion: this.shadows.length, counts, defaultFramebuffer: this.target === null, reflected, panel, cursors, eyes: eyes.map(eye => eye.matrixWorld.clone()), projections: eyes.map(eye => eye.projectionMatrix.clone()) });
     }
   } };
 });
@@ -517,6 +536,13 @@ describe("Aggregate runtime through the real Three WebXRManager", () => {
         expect(draw.projections[index]?.elements).toEqual(eye.projection);
       }
       expect(state.driver.draws.some(draw => draw.reflected)).toBe(true);
+      const passes = state.driver.draws.slice(-3);
+      expect(passes.map(pass => pass.shadowVersion)).toEqual([passes[0]?.shadowVersion, passes[0]?.shadowVersion, passes[0]?.shadowVersion]);
+      expect(state.driver.shadows.at(-1)?.every(count => count > 0)).toBe(true);
+      expect(passes[0]?.counts.length).toBeGreaterThan(0);
+      expect(passes[0]?.counts.every(count => count === 0)).toBe(true);
+      expect(passes[1]?.counts.some(count => count > 0)).toBe(true);
+      expect(passes[2]?.counts.some(count => count > 0)).toBe(true);
       const change = new Matrix4().makeRotationY(0.1).setPosition(0.2, 0, -0.1);
       const reset = new Event("reset");
       Object.assign(reset, { transform: rigid(matrixPose(change)) });
@@ -542,6 +568,13 @@ describe("Aggregate runtime through the real Three WebXRManager", () => {
       const alpha = state.driver.getClearAlpha();
       const scissor = state.driver.getScissorTest();
       const submitted = state.driver.draws.length;
+      const meshes: { mesh: Mesh; count: number; callback: PropertyDescriptor | undefined; visible: boolean }[] = [];
+      state.driver.scene?.traverse(object => {
+        if (object instanceof Mesh) {
+          const mesh = object as Mesh;
+          meshes.push({ mesh, count: mesh.geometry.drawRange.count, callback: Object.getOwnPropertyDescriptor(mesh, "onBeforeRender"), visible: mesh.visible });
+        }
+      });
       const diagnostic = vi.spyOn(console, "error").mockImplementation(() => undefined);
       state.driver.reflectionFault = true;
       state.frame(36);
@@ -549,6 +582,11 @@ describe("Aggregate runtime through the real Three WebXRManager", () => {
       expect(state.driver.getClearAlpha()).toBe(alpha);
       expect(state.driver.getScissorTest()).toBe(scissor);
       expect(state.driver.xr.enabled).toBe(true);
+      for (const { mesh, count, callback, visible } of meshes) {
+        expect(mesh.geometry.drawRange.count).toBe(count);
+        expect(Object.getOwnPropertyDescriptor(mesh, "onBeforeRender")).toEqual(callback);
+        if (mesh.castShadow) expect(mesh.visible).toBe(visible);
+      }
       expect(state.driver.draws).toHaveLength(submitted);
       expect(diagnostic).toHaveBeenCalledWith(expect.stringContaining("physical reflection render failed"));
       state.dispose();
