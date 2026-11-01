@@ -12,10 +12,11 @@ use bevy::{
         erased_render_asset::ErasedRenderAssets,
         mesh::{RenderMesh, allocator::MeshAllocator},
         render_asset::RenderAssets,
-        render_resource::{BufferUsages, PrimitiveTopology},
+        render_resource::{BufferUsages, PrimitiveTopology, TextureFormat},
         renderer::{RenderGraph, RenderGraphSystems, RenderQueue},
         sync_world::MainEntity,
         texture::GpuImage,
+        view::ViewTarget,
     },
 };
 use std::{collections::BTreeMap, sync::Arc};
@@ -28,13 +29,24 @@ pub(crate) struct GpuReadback {
     pub(crate) revision: u64,
     pub(crate) results: BTreeMap<u32, BindingObservation>,
     pub(crate) failures: BTreeMap<u32, String>,
+    pub(crate) output: Option<OutputTarget>,
+}
+
+/// Actual final output observed through the existing binding readback.
+#[derive(Clone)]
+pub(crate) struct OutputTarget {
+    pub(crate) camera: Entity,
+    pub(crate) target: NormalizedRenderTarget,
+    pub(crate) extent: [u32; 2],
+    pub(crate) format: TextureFormat,
+    pub(crate) main_format: TextureFormat,
 }
 
 #[derive(Clone)]
 pub(crate) struct BindingObservation {
     pub(crate) commit_request: Option<u32>,
     pub(crate) camera: Entity,
-    pub(crate) output: AssetId<Image>,
+    pub(crate) output: NormalizedRenderTarget,
     pub(crate) result: Result<[u32; 2], String>,
 }
 
@@ -43,7 +55,8 @@ struct Upload {
     id: u32,
     commit_request: Option<u32>,
     camera: Entity,
-    output: AssetId<Image>,
+    output: NormalizedRenderTarget,
+    format: TextureFormat,
     extent: [u32; 2],
     shadow_extent: Option<[u32; 2]>,
     cameras: Vec<Entity>,
@@ -69,6 +82,7 @@ struct Uploads {
     jobs: Vec<Upload>,
     pending_meshes: Vec<MeshTransfer>,
     dirty_meshes: Vec<AssetId<Mesh>>,
+    output_camera: Option<Entity>,
 }
 
 pub(crate) fn install(app: &mut App) {
@@ -92,6 +106,7 @@ fn report(render: Res<GpuReadback>, mut main: ResMut<MainWorld>, mut uploads: Re
     if let Some(mut readback) = main.get_resource_mut::<GpuReadback>() {
         readback.revision = render.revision;
         readback.results.clone_from(&render.results);
+        readback.output.clone_from(&render.output);
     }
     uploads.dirty_meshes = main
         .get_resource_mut::<NativeGpu>()
@@ -163,11 +178,13 @@ fn extract(
     meshes: Extract<Res<Assets<Mesh>>>,
     cameras: Extract<Query<&Camera>>,
     lights: Extract<Query<&DirectionalLight>>,
+    output: Extract<Res<crate::app::screen_render::ScreenOutput>>,
     mut uploads: ResMut<Uploads>,
 ) {
     let dirty = std::mem::take(&mut uploads.dirty_meshes);
     extract_meshes(&gpu, &meshes, dirty, &mut uploads.pending_meshes);
     uploads.revision = gpu.revision;
+    uploads.output_camera = Some(output.ui_camera);
     uploads.jobs = gpu
         .candidates
         .iter()
@@ -193,7 +210,8 @@ fn extract(
                 .filter_map(|key| gpu.images.get(key).map(|(image, _)| image.id()))
                 .collect();
             let mut images = mip_images.clone();
-            images.extend([candidate.output.id(), candidate.reflection.id()]);
+            images.extend(candidate.output.iter().map(Handle::id));
+            images.push(candidate.reflection.id());
             images.extend(gpu.textures.values().map(Handle::id));
             let cameras = [camera, candidate.reflection_camera]
                 .into_iter()
@@ -213,7 +231,8 @@ fn extract(
                 failure: None,
                 commit_request,
                 camera,
-                output: candidate.output.id(),
+                output: candidate.binding.clone(),
+                format: candidate.output_format,
                 extent: candidate.target.extent_px,
                 shadow_extent,
                 cameras,
@@ -299,7 +318,7 @@ fn observe(world: &mut World) {
         let result = |result| BindingObservation {
             commit_request: upload.commit_request,
             camera: upload.camera,
-            output: upload.output,
+            output: upload.output.clone(),
             result,
         };
         if let Some(cause) = &upload.failure {
@@ -367,16 +386,13 @@ fn observe(world: &mut World) {
             let Some(camera) = view.get::<ExtractedCamera>() else {
                 continue;
             };
-            let Some(target) = images.and_then(|images| images.get(upload.output)) else {
+            let Some(target) = view.get::<ViewTarget>() else {
                 continue;
             };
-            let extent = [
-                target.texture_descriptor.size.width,
-                target.texture_descriptor.size.height,
-            ];
-            let bound = matches!(&camera.target, Some(NormalizedRenderTarget::Image(image)) if image.handle.id() == upload.output)
-                && camera.physical_target_size.map(|size| size.to_array()) == Some(extent)
-                && extent == upload.extent;
+            let extent = camera.physical_target_size.map(|size| size.to_array());
+            let bound = camera.target.as_ref() == Some(&upload.output)
+                && extent == Some(upload.extent)
+                && target.out_texture_view_format() == Some(upload.format);
             let shadow = upload.shadow_extent.is_none_or(|extent| {
                 view.get::<ViewShadowBindings>().is_some_and(|bindings| {
                     [
@@ -388,7 +404,7 @@ fn observe(world: &mut World) {
             results.insert(
                 upload.id,
                 result(if bound && shadow {
-                    Ok(extent)
+                    Ok(upload.extent)
                 } else {
                     Err(
                         "Submitted GPU target or shadow extent differs from the committed binding"
@@ -399,9 +415,29 @@ fn observe(world: &mut World) {
         }
     }
     let revision = world.resource::<Uploads>().revision;
+    let output = world
+        .resource::<Uploads>()
+        .output_camera
+        .and_then(|camera| {
+            world.iter_entities().find_map(|entity| {
+                if entity.get::<MainEntity>()?.id() != camera {
+                    return None;
+                }
+                let extracted = entity.get::<ExtractedCamera>()?;
+                let target = entity.get::<ViewTarget>()?;
+                Some(OutputTarget {
+                    camera,
+                    target: extracted.target.clone()?,
+                    extent: extracted.physical_target_size?.to_array(),
+                    format: target.out_texture_view_format()?,
+                    main_format: target.main_texture_format(),
+                })
+            })
+        });
     let mut readback = world.resource_mut::<GpuReadback>();
     readback.revision = revision;
     readback.results = results;
+    readback.output = output;
 }
 
 pub(super) fn free_layer(world: &mut World) -> Result<usize, String> {

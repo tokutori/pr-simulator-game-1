@@ -12,7 +12,7 @@ use super::{
 use bevy::ecs as bevy_ecs;
 use bevy::{
     camera::{
-        CameraUpdateSystems, Exposure, RenderTarget,
+        CameraUpdateSystems, Exposure, NormalizedRenderTarget, RenderTarget,
         primitives::Aabb,
         visibility::{NoFrustumCulling, RenderLayers},
     },
@@ -24,7 +24,7 @@ use bevy::{
     },
     pbr::MaterialPlugin,
     prelude::*,
-    render::renderer::RenderDevice,
+    render::{render_resource::TextureFormat, renderer::RenderDevice},
     window::PrimaryWindow,
 };
 use birdman_game_runtime::{
@@ -90,7 +90,9 @@ struct Candidate {
     sun: Entity,
     illuminance: f32,
     initial_shadow: Option<birdman_game_scene::lake_sky::LakeSceneShadow>,
-    output: Handle<Image>,
+    output: Option<Handle<Image>>,
+    binding: NormalizedRenderTarget,
+    output_format: TextureFormat,
     reflection: Handle<Image>,
     materials: Vec<Handle<TerrainMaterial>>,
     water: [Handle<WaterMaterial>; 3],
@@ -287,6 +289,7 @@ pub(crate) fn execute(
     };
     let result = match request {
         ApplicationRequest::CreateRenderer { request_id } => {
+            screen_render::reset(world);
             if let Some(camera) = gpu.main_camera.take() {
                 world.despawn(camera);
             }
@@ -362,6 +365,10 @@ pub(crate) fn execute(
             }
         }
         ApplicationRequest::CancelResources { request_id } => {
+            if gpu.active == Some(*request_id) {
+                screen_render::reset(world);
+                gpu.active = None;
+            }
             if let Some(mut candidate) = gpu.candidates.remove(request_id) {
                 let after = gpu.next_revision();
                 let failure = gpu.release(world, &candidate);
@@ -382,6 +389,9 @@ pub(crate) fn execute(
             }
         }
         ApplicationRequest::ReleaseResources { resource_id } => {
+            if gpu.active == Some(*resource_id) {
+                screen_render::reset(world);
+            }
             let failure = gpu.candidates.remove(resource_id).map_or_else(
                 || Some("Prepared GPU handle is unavailable".into()),
                 |candidate| gpu.release(world, &candidate).err(),
@@ -404,6 +414,7 @@ pub(crate) fn execute(
                     failure: Some("Requested renderer handle is unavailable".into()),
                 }]));
             }
+            screen_render::reset(world);
             gpu.query = None;
             for mut camera in world
                 .query_filtered::<&mut Camera, With<Camera3d>>()
@@ -441,6 +452,7 @@ fn attachment_index(attachment: ApplicationMeshAttachment) -> usize {
 
 impl NativeGpu {
     fn release_renderer(&mut self, world: &mut World) -> Option<String> {
+        screen_render::reset(world);
         let mut failures = Vec::new();
         for candidate in std::mem::take(&mut self.candidates).into_values() {
             if let Err(cause) = self.release(world, &candidate) {
@@ -542,7 +554,9 @@ impl NativeGpu {
                 );
             }
         }
-        let output_image = screen_render::image(target.extent_px)?;
+        let output_format = screen_render::observed_output(world)
+            .map_or(TextureFormat::Rgba8UnormSrgb, |output| output.format);
+        let output_image = screen_render::image(target.extent_px, output_format)?;
         let reflection_image = super::water_reflection::image(target.reflection_extent_px)?;
         for (id, meshes) in new_meshes {
             self.meshes.insert(
@@ -568,12 +582,15 @@ impl NativeGpu {
         let root = world
             .spawn((
                 Transform::IDENTITY,
-                Visibility::Visible,
+                Visibility::Inherited,
                 readiness::CandidateLayer(layer),
             ))
             .id();
-        let attachments =
-            std::array::from_fn(|_| world.spawn((Transform::IDENTITY, Visibility::Visible)).id());
+        let attachments = std::array::from_fn(|_| {
+            world
+                .spawn((Transform::IDENTITY, Visibility::Inherited))
+                .id()
+        });
         world.entity_mut(root).add_children(&attachments[..2]);
         world
             .entity_mut(attachments[1])
@@ -650,7 +667,7 @@ impl NativeGpu {
                         Mesh3d(mesh.clone()),
                         MeshMaterial3d(material.clone()),
                         pose_transform(asset.local_pose),
-                        Visibility::Visible,
+                        Visibility::Inherited,
                         layers,
                     ))
                     .id();
@@ -671,7 +688,9 @@ impl NativeGpu {
                 meshes.push(mesh.clone());
             }
         }
-        let water_root = world.spawn((Transform::IDENTITY, Visibility::Visible)).id();
+        let water_root = world
+            .spawn((Transform::IDENTITY, Visibility::Inherited))
+            .id();
         world.entity_mut(root).add_child(water_root);
         for (index, chunk) in assets
             .water
@@ -689,7 +708,7 @@ impl NativeGpu {
                     Mesh3d(mesh.clone()),
                     MeshMaterial3d(water[usize::from(far)].clone()),
                     Transform::IDENTITY,
-                    Visibility::Visible,
+                    Visibility::Inherited,
                     RenderLayers::none().with(layer),
                     NotShadowCaster,
                     Aabb::from_min_max(
@@ -716,7 +735,7 @@ impl NativeGpu {
                 Mesh3d(sky.clone()),
                 MeshMaterial3d(water[2].clone()),
                 Transform::IDENTITY,
-                Visibility::Visible,
+                Visibility::Inherited,
                 RenderLayers::none().with(layer),
                 NoFrustumCulling,
                 NotShadowCaster,
@@ -743,6 +762,9 @@ impl NativeGpu {
                     minimum_distance: 0.0,
                     overlap_proportion: 0.0,
                 },
+                // Scene visibility can suppress geometry while the UI keeps this
+                // camera active; retain the prepared shadow bindings for its ACK.
+                Visibility::Visible,
                 RenderLayers::none().with(layer).with(layer + 1),
                 Transform::IDENTITY,
             ))
@@ -784,7 +806,11 @@ impl NativeGpu {
             sun,
             illuminance,
             initial_shadow: assets.lighting.initial_shadow,
-            output,
+            binding: RenderTarget::Image(output.clone().into())
+                .normalize(None)
+                .unwrap(),
+            output: Some(output),
+            output_format,
             reflection,
             materials: materials.into_values().collect(),
             water,
@@ -827,16 +853,35 @@ impl NativeGpu {
                 "GPU binding handles are unavailable".into(),
             ));
         }
-        screen_render::bind(world, candidate.output.clone()).map_err(BindFailure::Lost)?;
+        let image = candidate
+            .output
+            .clone()
+            .ok_or_else(|| BindFailure::Lost("Prepared framebuffer is unavailable".into()))?;
+        let final_output = screen_render::observed_output(world).filter(|output| {
+            output.extent == candidate.target.extent_px
+                && output.format == candidate.output_format
+                && output.main_format == TextureFormat::Rgba8UnormSrgb
+        });
+        let direct = final_output.is_some();
+        let target = if direct {
+            screen_render::output_target(world)
+        } else {
+            RenderTarget::Image(image.clone().into())
+        };
+        screen_render::bind(world, camera, image, direct).map_err(BindFailure::Lost)?;
         let layers = world
             .get::<RenderLayers>(candidate.preview)
             .unwrap()
             .clone();
-        let target = candidate.output.clone().into();
-        let target_changed = !matches!(world.get::<RenderTarget>(camera), Some(RenderTarget::Image(current)) if current == &target);
-        world
-            .entity_mut(camera)
-            .insert((RenderTarget::Image(target), layers));
+        let binding =
+            final_output.map_or_else(|| candidate.binding.clone(), |output| output.target);
+        let target_changed = world
+            .get::<RenderTarget>(camera)
+            .and_then(|target| screen_render::normalize(world, target))
+            .as_ref()
+            != Some(&binding);
+        world.entity_mut(camera).insert((target, layers));
+        candidate.binding = binding;
         if target_changed {
             world.get_mut::<Projection>(camera).unwrap().set_changed();
         }
@@ -892,7 +937,11 @@ impl NativeGpu {
         world
             .resource_mut::<Assets<Mesh>>()
             .remove(candidate.sky_mesh.id());
-        for image in [&candidate.output, &candidate.reflection] {
+        for image in candidate
+            .output
+            .iter()
+            .chain(std::iter::once(&candidate.reflection))
+        {
             world.resource_mut::<Assets<Image>>().remove(image.id());
         }
         for key in &candidate.images {
@@ -937,7 +986,7 @@ pub(crate) fn submit(
                 && matches!(candidate.stage, ResourceStage::Bound)
                 && let Some(observation) = readback.results.get(&id)
                 && Some(observation.camera) == gpu.main_camera
-                && observation.output == candidate.output.id()
+                && observation.output == candidate.binding
                 && let Err(cause) = &observation.result
             {
                 return Err(cause.clone());
@@ -967,6 +1016,17 @@ pub(crate) fn submit(
             if matches!(candidate.stage, ResourceStage::Cancelling { .. }) {
                 continue;
             }
+            let hidden_scene = screen_render::direct(world)
+                && matches!(
+                    candidate.stage,
+                    ResourceStage::Committing { .. } | ResourceStage::Bound
+                )
+                && !drawing.presentation.scene_visible;
+            world.entity_mut(candidate.root).insert(if hidden_scene {
+                Visibility::Hidden
+            } else {
+                Visibility::Visible
+            });
             submit_transform(
                 world,
                 candidate.water_root,
@@ -975,7 +1035,7 @@ pub(crate) fn submit(
             world
                 .entity_mut(candidate.attachments[0])
                 .insert(if drawing.scene.venue_visible {
-                    Visibility::Visible
+                    Visibility::Inherited
                 } else {
                     Visibility::Hidden
                 });
@@ -991,7 +1051,7 @@ pub(crate) fn submit(
                     .as_ref()
                     .is_some_and(|geometry| geometry.aircraft_visible)
                 {
-                    Visibility::Visible
+                    Visibility::Inherited
                 } else {
                     Visibility::Hidden
                 },
@@ -1129,6 +1189,7 @@ pub(crate) fn submit(
                 );
             }
         }
+        let direct = screen_render::direct(world);
         if let Some(camera) = gpu.main_camera
             && let Some(mut camera) = world.get_mut::<Camera>(camera)
         {
@@ -1138,8 +1199,8 @@ pub(crate) fn submit(
                 .is_some_and(|candidate| {
                     matches!(candidate.stage, ResourceStage::Committing { .. })
                 });
-            camera.is_active =
-                gpu.active.is_some() && (drawing.presentation.scene_visible || committing);
+            camera.is_active = gpu.active.is_some()
+                && (drawing.presentation.scene_visible || committing || direct);
         }
         screen_render::visible(
             world,
@@ -1206,7 +1267,7 @@ pub(crate) fn poll(world: &mut World) -> Vec<ApplicationInput> {
                 Some(observation)
                     if observation.commit_request.is_none()
                         && observation.camera == candidate.preview
-                        && observation.output == candidate.output.id() =>
+                        && observation.output == candidate.binding =>
                 {
                     match &observation.result {
                         Ok(_) => {
@@ -1238,8 +1299,14 @@ pub(crate) fn poll(world: &mut World) -> Vec<ApplicationInput> {
                 if let Some(observation) = readback.results.get(&id)
                     && observation.commit_request == Some(request_id)
                     && Some(observation.camera) == gpu.main_camera
-                    && observation.output == candidate.output.id()
+                    && observation.output == candidate.binding
                 {
+                    if observation.result.is_ok()
+                        && screen_render::direct(world)
+                        && let Some(image) = candidate.output.take()
+                    {
+                        world.resource_mut::<Assets<Image>>().remove(image.id());
+                    }
                     candidate.stage = ResourceStage::Bound;
                     inputs.push(ApplicationInput::Resources {
                         request_id,
@@ -1396,7 +1463,7 @@ mod tests {
         let reflection_camera = world.spawn_empty().id();
         let output = world
             .resource_mut::<Assets<Image>>()
-            .add(screen_render::image([640, 360]).unwrap());
+            .add(screen_render::image([640, 360], TextureFormat::Rgba8UnormSrgb).unwrap());
         let reflection = world
             .resource_mut::<Assets<Image>>()
             .add(super::super::water_reflection::image([320, 180]).unwrap());
@@ -1448,7 +1515,11 @@ mod tests {
                 sun: root,
                 illuminance: 0.0,
                 initial_shadow: None,
-                output: output.clone(),
+                output: Some(output.clone()),
+                binding: RenderTarget::Image(output.clone().into())
+                    .normalize(None)
+                    .unwrap(),
+                output_format: TextureFormat::Rgba8UnormSrgb,
                 reflection,
                 materials: Vec::new(),
                 water: std::array::from_fn(|_| Handle::default()),
@@ -1480,7 +1551,9 @@ mod tests {
         let preview_result = readiness::BindingObservation {
             commit_request: None,
             camera: preview,
-            output: output.id(),
+            output: RenderTarget::Image(output.clone().into())
+                .normalize(None)
+                .unwrap(),
             result: Ok([640, 360]),
         };
         world.resource_mut::<readiness::GpuReadback>().revision = revision;
@@ -1497,7 +1570,9 @@ mod tests {
                 readiness::BindingObservation {
                     commit_request: Some(5),
                     camera: main,
-                    output: output.id(),
+                    output: RenderTarget::Image(output.clone().into())
+                        .normalize(None)
+                        .unwrap(),
                     result: Ok([640, 360]),
                 },
             );
@@ -1720,6 +1795,120 @@ mod tests {
         assert_eq!(sampler_gpu.images[&sky_key].1, 1);
         sampler_gpu.release(&mut world, &sampler_eight).unwrap();
         assert!(sampler_gpu.images.is_empty());
+
+        // An observed equal-sized final target is borrowed only at commit. The
+        // isolated preparation image retires after the actual target ACK.
+        let previous_gpu = world.remove_resource::<NativeGpu>().unwrap();
+        let previous_readback = world.resource::<readiness::GpuReadback>().clone();
+        let previous_target = world.get::<RenderTarget>(main).unwrap().clone();
+        let previous_layers = world.get::<RenderLayers>(main).unwrap().clone();
+        let outer = world.resource::<screen_render::ScreenOutput>().ui_camera;
+        let final_target =
+            screen_render::normalize(&world, &screen_render::output_target(&world)).unwrap();
+        world.resource_mut::<readiness::GpuReadback>().output = Some(readiness::OutputTarget {
+            camera: outer,
+            target: final_target.clone(),
+            extent: [1280, 720],
+            format: TextureFormat::Bgra8UnormSrgb,
+            main_format: TextureFormat::Rgba8UnormSrgb,
+        });
+        let mut direct_gpu = NativeGpu {
+            main_camera: Some(main),
+            renderer_id: 7,
+            ..default()
+        };
+        let mut full = target;
+        full.extent_px = [1280, 720];
+        full.quality.scale =
+            birdman_game_presentation::screen_render_scale::ScreenRenderScale::Full;
+        let mut candidate = direct_gpu
+            .prepare(&mut world, &runtime, full, &sampler_assets)
+            .unwrap();
+        let isolated = candidate.output.as_ref().unwrap().id();
+        assert_eq!(candidate.output_format, TextureFormat::Bgra8UnormSrgb);
+        assert!(!screen_render::direct(&world));
+        assert_ne!(candidate.binding, final_target);
+        candidate.stage = ResourceStage::Prepared;
+        direct_gpu.candidates.insert(41, candidate);
+        direct_gpu
+            .commit(&mut world, 77, 41)
+            .unwrap_or_else(|_| panic!("Direct binding"));
+        assert!(screen_render::direct(&world));
+        assert!(!world.get::<Camera>(outer).unwrap().is_active);
+        assert!(world.get::<IsDefaultUiCamera>(main).is_some());
+        assert!(world.resource::<Assets<Image>>().get(isolated).is_some());
+        world.resource_mut::<readiness::GpuReadback>().revision = direct_gpu.revision;
+        world
+            .resource_mut::<readiness::GpuReadback>()
+            .output
+            .as_mut()
+            .unwrap()
+            .camera = main;
+        world
+            .resource_mut::<readiness::GpuReadback>()
+            .results
+            .insert(
+                41,
+                readiness::BindingObservation {
+                    camera: main,
+                    output: final_target,
+                    commit_request: Some(77),
+                    result: Ok(full.extent_px),
+                },
+            );
+        world.insert_resource(direct_gpu);
+        assert!(matches!(
+            poll(&mut world).as_slice(),
+            [ApplicationInput::Resources {
+                observation: ApplicationResourceObservation::Committed { .. },
+                ..
+            }]
+        ));
+        assert!(world.resource::<Assets<Image>>().get(isolated).is_none());
+        assert!(
+            world.resource::<NativeGpu>().candidates[&41]
+                .output
+                .is_none()
+        );
+        let scene_visible = drawing.presentation.scene_visible;
+        drawing.presentation.scene_visible = false;
+        submit(&mut world, &runtime, &drawing).unwrap();
+        let hidden_root = world.resource::<NativeGpu>().candidates[&41].root;
+        assert_eq!(
+            world.get::<Visibility>(hidden_root),
+            Some(&Visibility::Hidden)
+        );
+        assert!(world.get::<Camera>(main).unwrap().is_active);
+        drawing.presentation.scene_visible = scene_visible;
+
+        let mut direct_gpu = world.remove_resource::<NativeGpu>().unwrap();
+        let mut scaled = direct_gpu
+            .prepare(&mut world, &runtime, target, &sampler_assets)
+            .unwrap();
+        scaled.stage = ResourceStage::Prepared;
+        direct_gpu.candidates.insert(42, scaled);
+        direct_gpu
+            .commit(&mut world, 78, 42)
+            .unwrap_or_else(|_| panic!("Scaled binding"));
+        assert!(!screen_render::direct(&world));
+        assert!(world.get::<Camera>(outer).unwrap().is_active);
+        assert!(world.get::<IsDefaultUiCamera>(main).is_none());
+        assert!(world.get::<IsDefaultUiCamera>(outer).is_some());
+        for id in [41, 42] {
+            let candidate = direct_gpu.candidates.remove(&id).unwrap();
+            direct_gpu.release(&mut world, &candidate).unwrap();
+        }
+        assert!(
+            world
+                .iter_entities()
+                .any(|entity| entity.contains::<PrimaryWindow>())
+        );
+        screen_render::reset(&mut world);
+        world
+            .entity_mut(main)
+            .insert((previous_target, previous_layers));
+        world.insert_resource(previous_gpu);
+        world.insert_resource(previous_readback);
         let mut water = assets.water.clone();
         water.detail[0].extent_meters = 32.0;
         water.detail[1].extent_meters = 144.0;
