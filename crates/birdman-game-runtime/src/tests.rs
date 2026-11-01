@@ -100,18 +100,11 @@ fn no_text_metrics(_: &ApplicationTextProbe) -> Result<ApplicationGlyphMetrics, 
 #[test]
 fn chart_measurement_converges_and_raw_pointer_scrubs_only_its_admitted_range() {
     let platform = ApplicationPlatformObservation {
-        gpu_timing_requested: false,
-        renderer: Some(renderer_observation()),
-        surface: None,
-        viewport: GameUiViewport {
-            width: 1280.0,
-            height: 720.0,
-            root_font_size: 16.0,
-        },
         capabilities: ApplicationCapabilities {
             analysis_available: true,
             ..Default::default()
         },
+        ..screen_platform()
     };
     let mut runtime = ApplicationRuntime::new(finalized_application(), platform.clone()).unwrap();
     let initial = runtime
@@ -277,14 +270,6 @@ fn chart_measurement_converges_and_raw_pointer_scrubs_only_its_admitted_range() 
 fn dispose_drains_atomic_bind_record_cancellation_and_release_before_renderer_destruction() {
     for binding_lost in [false, true] {
         let mut platform = ApplicationPlatformObservation {
-            gpu_timing_requested: false,
-            renderer: Some(renderer_observation()),
-            surface: None,
-            viewport: GameUiViewport {
-                width: 1280.0,
-                height: 720.0,
-                root_font_size: 16.0,
-            },
             capabilities: ApplicationCapabilities {
                 stored_records_available: true,
                 phone_sensors: binding_lost.then_some(PhoneSensorApiObservation {
@@ -293,6 +278,7 @@ fn dispose_drains_atomic_bind_record_cancellation_and_release_before_renderer_de
                 }),
                 ..Default::default()
             },
+            ..screen_platform()
         };
         let mut runtime =
             ApplicationRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
@@ -527,18 +513,12 @@ fn dispose_drains_atomic_bind_record_cancellation_and_release_before_renderer_de
 #[test]
 fn boot_retries_renderer_creation_releases_late_resources_and_enters_title_after_commit() {
     let platform = ApplicationPlatformObservation {
-        gpu_timing_requested: false,
         renderer: None,
-        surface: None,
-        viewport: GameUiViewport {
-            width: 1280.0,
-            height: 720.0,
-            root_font_size: 16.0,
-        },
         capabilities: ApplicationCapabilities {
             stored_records_available: true,
             ..Default::default()
         },
+        ..screen_platform()
     };
     let mut runtime =
         ApplicationRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
@@ -946,17 +926,7 @@ fn boot_retries_renderer_creation_releases_late_resources_and_enters_title_after
 
 #[test]
 fn briefing_retry_restarts_failed_resource_preparation_through_the_shared_action() {
-    let platform = ApplicationPlatformObservation {
-        gpu_timing_requested: false,
-        renderer: Some(renderer_observation()),
-        surface: None,
-        viewport: GameUiViewport {
-            width: 1280.0,
-            height: 720.0,
-            root_font_size: 16.0,
-        },
-        capabilities: ApplicationCapabilities::default(),
-    };
+    let platform = screen_platform();
     let mut runtime =
         ApplicationRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
     let initial = runtime
@@ -1105,18 +1075,11 @@ fn admitted_flight_keys_reach_hud_and_clear_on_focus_loss() {
         )
         .unwrap();
     let platform = ApplicationPlatformObservation {
-        gpu_timing_requested: false,
-        renderer: Some(renderer_observation()),
-        surface: None,
-        viewport: GameUiViewport {
-            width: 1280.0,
-            height: 720.0,
-            root_font_size: 16.0,
-        },
         capabilities: ApplicationCapabilities {
             touch_available: false,
             ..Default::default()
         },
+        ..screen_platform()
     };
     let mut runtime = ApplicationRuntime::new(application, platform.clone()).unwrap();
     let initial = runtime
@@ -1616,19 +1579,12 @@ fn saved_result_owns_transaction_and_scopes_notifications_to_its_record() {
     ] {
         let application = finalized_application();
         let platform = ApplicationPlatformObservation {
-            gpu_timing_requested: false,
-            renderer: Some(renderer_observation()),
-            surface: None,
-            viewport: GameUiViewport {
-                width: 1280.0,
-                height: 720.0,
-                root_font_size: 16.0,
-            },
             capabilities: ApplicationCapabilities {
                 stored_records_available: true,
                 replay_available: true,
                 ..Default::default()
             },
+            ..screen_platform()
         };
         let mut runtime = ApplicationRuntime::new(application, platform.clone()).unwrap();
         runtime.ui.replay_view = GameUiReplayView::Analysis;
@@ -1868,19 +1824,12 @@ fn stored_record_preview_load_retry_and_original_download_share_owner() {
     let replacement_record =
         json!({ "id": 8, "savedAt": "2026-10-23T00:00:01Z", "json": replacement_original });
     let platform = ApplicationPlatformObservation {
-        gpu_timing_requested: false,
-        renderer: Some(renderer_observation()),
-        surface: None,
-        viewport: GameUiViewport {
-            width: 1280.0,
-            height: 720.0,
-            root_font_size: 16.0,
-        },
         capabilities: ApplicationCapabilities {
             stored_records_available: true,
             flight_log_available: true,
             ..Default::default()
         },
+        ..screen_platform()
     };
     let mut runtime =
         ApplicationRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
@@ -2298,14 +2247,6 @@ fn structure(output: ApplicationOutput) -> Arc<GameUiView> {
 
 fn started_display(mode: GameUiPresentationMode) -> (ApplicationRuntime, ApplicationOutput) {
     let platform = ApplicationPlatformObservation {
-        gpu_timing_requested: false,
-        renderer: Some(renderer_observation()),
-        surface: None,
-        viewport: GameUiViewport {
-            width: 1280.0,
-            height: 720.0,
-            root_font_size: 16.0,
-        },
         capabilities: ApplicationCapabilities {
             phone_sensors: Some(PhoneSensorApiObservation {
                 permission_required: true,
@@ -2314,6 +2255,7 @@ fn started_display(mode: GameUiPresentationMode) -> (ApplicationRuntime, Applica
             hmd_available: true,
             ..Default::default()
         },
+        ..screen_platform()
     };
     let mut runtime =
         ApplicationRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
@@ -2457,14 +2399,7 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
     use birdman_game_presentation::camera::{Pose, Vector3, compose_pose};
     let platform = ApplicationPlatformObservation {
         gpu_timing_requested: true,
-        renderer: Some(renderer_observation()),
-        surface: None,
-        viewport: GameUiViewport {
-            width: 1280.0,
-            height: 720.0,
-            root_font_size: 16.0,
-        },
-        capabilities: ApplicationCapabilities::default(),
+        ..screen_platform()
     };
     let mut runtime =
         ApplicationRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
@@ -3469,18 +3404,11 @@ fn display_completion_retains_owned_resources_and_reports_no_active_mode_after_s
     assert_eq!(display.state().active_mode(), None);
 
     let platform = ApplicationPlatformObservation {
-        gpu_timing_requested: false,
-        renderer: Some(renderer_observation()),
-        surface: None,
-        viewport: GameUiViewport {
-            width: 1280.0,
-            height: 720.0,
-            root_font_size: 16.0,
-        },
         capabilities: ApplicationCapabilities {
             hmd_available: true,
             ..Default::default()
         },
+        ..screen_platform()
     };
     let mut runtime =
         ApplicationRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
@@ -3913,17 +3841,7 @@ fn spatial_trigger_uses_submitted_painting_and_the_canonical_ui_action_owner() {
 #[test]
 fn shadow_off_preparation_keeps_live_shadows_until_the_complete_resource_ack() {
     use birdman_game_presentation::screen_render_auto::ScreenShadowMap;
-    let platform = ApplicationPlatformObservation {
-        gpu_timing_requested: false,
-        renderer: Some(renderer_observation()),
-        surface: None,
-        viewport: GameUiViewport {
-            width: 1280.0,
-            height: 720.0,
-            root_font_size: 16.0,
-        },
-        capabilities: ApplicationCapabilities::default(),
-    };
+    let platform = screen_platform();
     let mut runtime =
         ApplicationRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
     let initial = runtime
@@ -3992,17 +3910,7 @@ fn shadow_off_preparation_keeps_live_shadows_until_the_complete_resource_ack() {
 
 #[test]
 fn graphics_commit_tracks_actual_resources_cleanup_and_renderer_lifetimes() {
-    let platform = ApplicationPlatformObservation {
-        gpu_timing_requested: false,
-        renderer: Some(renderer_observation()),
-        surface: None,
-        viewport: GameUiViewport {
-            width: 1280.0,
-            height: 720.0,
-            root_font_size: 16.0,
-        },
-        capabilities: ApplicationCapabilities::default(),
-    };
+    let platform = screen_platform();
     let mut runtime =
         ApplicationRuntime::new(ApplicationSession::default(), platform.clone()).unwrap();
     let initial = runtime
@@ -4293,17 +4201,7 @@ fn graphics_commit_tracks_actual_resources_cleanup_and_renderer_lifetimes() {
             observation: ApplicationResourceObservation::Prepared { resource_id: 800 },
         })
         .unwrap();
-    let mut platform = ApplicationPlatformObservation {
-        gpu_timing_requested: false,
-        renderer: Some(renderer_observation()),
-        surface: None,
-        viewport: GameUiViewport {
-            width: 1280.0,
-            height: 720.0,
-            root_font_size: 16.0,
-        },
-        capabilities: ApplicationCapabilities::default(),
-    };
+    let mut platform = screen_platform();
     platform.renderer.as_mut().unwrap().resource_id = 101;
     platform.renderer.as_mut().unwrap().screen_extent_px = [1286, 726];
     runtime
@@ -4372,6 +4270,20 @@ fn immersive_quality_retains_screen_configuration_and_uses_manual_water() {
         .unsupported("unused in immersive".to_owned(), 4.0)
         .unwrap();
     assert!(policy.requested().is_none());
+}
+
+fn screen_platform() -> ApplicationPlatformObservation {
+    ApplicationPlatformObservation {
+        gpu_timing_requested: false,
+        renderer: Some(renderer_observation()),
+        surface: None,
+        viewport: GameUiViewport {
+            width: 1280.0,
+            height: 720.0,
+            root_font_size: 16.0,
+        },
+        capabilities: ApplicationCapabilities::default(),
+    }
 }
 
 fn renderer_observation() -> ApplicationRendererObservation {
