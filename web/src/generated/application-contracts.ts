@@ -4745,6 +4745,10 @@ export interface ApplicationWaterAssets {
      */
     readonly detail_amplitude_scale: number;
     /**
+     * Maximum anisotropic filtering for both detail images, fixed for this prepared resource.
+     */
+    readonly detail_anisotropy_clamp: number;
+    /**
      * Complete final-axis water meshes and conservative culling bounds.
      */
     readonly geometry: ApplicationWaterGeometry;
