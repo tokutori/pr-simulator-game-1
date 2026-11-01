@@ -4657,6 +4657,10 @@ export interface ApplicationMeshMaterial {
      */
     readonly lit: boolean;
     /**
+     * Final material identity, unique across this application's asset lifetimes.
+     */
+    readonly material_id: number;
+    /**
      * Material alpha.
      */
     readonly opacity: number;
