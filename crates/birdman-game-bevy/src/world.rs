@@ -1805,6 +1805,17 @@ mod tests {
         let outer = world.resource::<screen_render::ScreenOutput>().ui_camera;
         let final_target =
             screen_render::normalize(&world, &screen_render::output_target(&world)).unwrap();
+        // With no selected 3D pipelines, the real preparation producer remains
+        // pending. A candidate already prepared in isolation can instead proceed
+        // to the actual binding ACK while its scene is hidden behind boot UI.
+        assert!(matches!(
+            readiness::binding_preparation(&world, &[main], false),
+            screen_render::timing::PipelinePreparation::Pending
+        ));
+        assert!(matches!(
+            readiness::binding_preparation(&world, &[main], true),
+            screen_render::timing::PipelinePreparation::Ready
+        ));
         world.resource_mut::<readiness::GpuReadback>().output = Some(readiness::OutputTarget {
             camera: outer,
             target: final_target.clone(),

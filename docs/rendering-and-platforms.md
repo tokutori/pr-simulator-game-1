@@ -79,7 +79,7 @@
 - 0寸法では交換を保留し、正の寸法へ戻った後に適用する。
 
 - Nativeは最終targetの実寸法とsRGB形式をGPU側で確認し、等寸法のsceneとUIを同じ3D cameraへ描く。縮小時と形式未確認時は中間Imageを合成し、UIとcameraの論理投影を維持する。
-- 資源準備は隔離Imageで完了させ、commit後の実target・寸法・形式のACKで使用先を認可する。直接描画では準備Imageを退役し、Windowと最終出力Imageの寿命は出力側が保持する。
+- 資源準備は隔離Imageでshaderの実使用まで確認する。commit後は同candidateの準備証拠を引き継ぎ、実target・寸法・形式・影のACKで使用先を認可する。直接描画では準備Imageを退役し、Windowと最終出力Imageの寿命は出力側が保持する。
 - 反射targetは有効3D寸法に追随する。shadowのみの変更では既存の解像度targetを保持する。
 - shadow調整はmap寸法だけを変更し、cascade、bias、太陽条件を保持する。
 

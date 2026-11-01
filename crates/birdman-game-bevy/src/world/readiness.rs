@@ -309,6 +309,36 @@ fn transfer_meshes(
     uploads.pending_meshes = pending;
 }
 
+// A committed binding inherits this candidate's completed isolated preparation.
+// Its current view can legitimately contain only UI or a clear; an empty 3D phase
+// must not prevent the subsequent actual-target/format/shadow acknowledgment.
+pub(super) fn binding_preparation(
+    world: &World,
+    cameras: &[Entity],
+    bound: bool,
+) -> super::super::screen_render::timing::PipelinePreparation {
+    use super::super::screen_render::timing::{PipelinePreparation, camera_preparation};
+    if bound {
+        return PipelinePreparation::Ready;
+    }
+    let mut pending = cameras.is_empty();
+    let mut failure = None;
+    for &camera in cameras {
+        match camera_preparation(world, camera) {
+            PipelinePreparation::Ready => {}
+            PipelinePreparation::Pending => pending = true,
+            PipelinePreparation::Failed(cause) => failure = Some(cause),
+        }
+    }
+    if let Some(cause) = failure {
+        PipelinePreparation::Failed(cause)
+    } else if pending {
+        PipelinePreparation::Pending
+    } else {
+        PipelinePreparation::Ready
+    }
+}
+
 fn observe(world: &mut World) {
     let mut results = BTreeMap::new();
     let meshes = world.get_resource::<RenderAssets<RenderMesh>>();
@@ -359,19 +389,13 @@ fn observe(world: &mut World) {
             Ok(false) => continue,
             Ok(true) => {}
         }
-        let mut ready = !upload.cameras.is_empty();
-        let mut failure = None;
-        for camera in &upload.cameras {
-            match super::super::screen_render::timing::camera_preparation(world, *camera) {
-                super::super::screen_render::timing::PipelinePreparation::Ready => {}
-                super::super::screen_render::timing::PipelinePreparation::Failed(cause) => {
-                    failure = Some(cause);
-                }
-                super::super::screen_render::timing::PipelinePreparation::Pending => {
-                    ready = false;
-                }
+        let (ready, failure) = match binding_preparation(world, &upload.cameras, upload.bound) {
+            super::super::screen_render::timing::PipelinePreparation::Ready => (true, None),
+            super::super::screen_render::timing::PipelinePreparation::Pending => (false, None),
+            super::super::screen_render::timing::PipelinePreparation::Failed(cause) => {
+                (false, Some(cause))
             }
-        }
+        };
         if let Some(cause) = failure {
             results.insert(upload.id, result(Err(cause)));
         } else if ready {
