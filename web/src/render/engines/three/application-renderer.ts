@@ -55,7 +55,7 @@ export class ThreeApplicationRenderer {
   private readonly preparations = new Map<number, { cancelled: boolean; complete: (() => void) | null }>();
   private readonly base_geometry = new Map<number, BufferGeometry>();
   private readonly range_geometry = new Map<number, readonly BufferGeometry[]>();
-  private readonly materials = new Map<string, Material>();
+  private readonly materials = new Map<number, Material>();
   private readonly sources = new WeakMap<XRInputSource, number>();
   private readonly gamepad_generations = new Map<number, number>();
   private readonly canvasPointers = new Map<number, Extract<ApplicationInput, { kind: "control_pointer" }>>();
@@ -519,7 +519,7 @@ export class ThreeApplicationRenderer {
   private material(asset: ApplicationMeshAsset, index: number): Material {
     const source = asset.materials[index];
     if (source === undefined) throw new Error("Missing shared material range");
-    const key = JSON.stringify([source, asset.color != null]);
+    const key = source.material_id;
     let material = this.materials.get(key);
     if (material !== undefined) return material;
     const texture = this.manifest?.wing_textures.find(image => image.buffer.buffer_id === source.texture_buffer_id);

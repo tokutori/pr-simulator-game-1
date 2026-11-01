@@ -91,6 +91,8 @@ pub enum ApplicationMeshAttachment {
 #[derive(Clone, Debug, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ApplicationMeshMaterial {
+    /// Final material identity, unique across this application's asset lifetimes.
+    pub material_id: u32,
     /// First triangle index in the shared mesh index buffer.
     pub start: u32,
     /// Number of indices in this range.
@@ -548,6 +550,35 @@ impl GeometryOwner {
             )?;
             owner.assets.meshes[mesh_index].materials[0].double_sided = double_sided;
         }
+        // All mesh colour attributes and material overrides are complete here.
+        // Share only completed draw settings; index ranges remain mesh-local.
+        let mut materials = Vec::new();
+        for mesh in &mut owner.assets.meshes {
+            for material in &mut mesh.materials {
+                let key = (
+                    material.color_srgb,
+                    material.opacity.to_bits(),
+                    material.transparent,
+                    material.depth_write,
+                    material.double_sided,
+                    material.lit,
+                    material.cast_shadow,
+                    material.receive_shadow,
+                    material.texture_buffer_id,
+                    mesh.color.is_some(),
+                );
+                material.material_id =
+                    if let Some((_, id)) = materials.iter().find(|(known, _)| *known == key) {
+                        *id
+                    } else {
+                        *next_id = next_id
+                            .checked_add(1)
+                            .ok_or(ApplicationAssetError::IdentifiersExhausted)?;
+                        materials.push((key, *next_id));
+                        *next_id
+                    };
+            }
+        }
         Ok(owner)
     }
 
@@ -938,6 +969,7 @@ fn material(
     texture_buffer_id: Option<u32>,
 ) -> ApplicationMeshMaterial {
     ApplicationMeshMaterial {
+        material_id: 0,
         transparent: opacity < 1.0,
         depth_write: opacity >= 1.0,
         start: start as u32,

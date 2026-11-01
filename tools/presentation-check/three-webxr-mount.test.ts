@@ -359,6 +359,10 @@ describe("Aggregate runtime through the real Three WebXRManager", () => {
       if (!(mesh instanceof Mesh) || !(mesh.material instanceof Material)) throw new Error("Prepared material is unavailable");
       expect(mesh.material.transparent).toBe(materialProbe.transparent);
       expect(mesh.material.depthWrite).toBe(materialProbe.depthWrite);
+      const firstStructure = state.driver.scene?.getObjectByName("structure-0");
+      const matchingStructure = state.driver.scene?.getObjectByName("structure-8");
+      if (!(firstStructure instanceof Mesh) || !(matchingStructure instanceof Mesh)) throw new Error("Shared structure materials are unavailable");
+      expect(firstStructure.material).toBe(matchingStructure.material);
       const water: ShaderMaterial[] = [];
       state.driver.scene?.traverse(object => {
         if (object instanceof Mesh && object.material instanceof ShaderMaterial) water.push(object.material);

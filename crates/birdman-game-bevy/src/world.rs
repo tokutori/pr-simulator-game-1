@@ -600,40 +600,46 @@ impl NativeGpu {
                 );
                 world.resource_mut::<Assets<WaterMaterial>>().add(material)
             });
-        let mut materials = Vec::new();
+        let mut materials = BTreeMap::<u32, Handle<TerrainMaterial>>::new();
         let mut meshes = Vec::new();
         for asset in &manifest.meshes {
             for (source, mesh) in asset.materials.iter().zip(&self.meshes[&asset.mesh_id]) {
-                let texture = source
-                    .texture_buffer_id
-                    .and_then(|id| self.textures.get(&id).cloned());
-                let material =
-                    world
-                        .resource_mut::<Assets<TerrainMaterial>>()
-                        .add(TerrainMaterial {
-                            base: StandardMaterial {
-                                base_color: color_srgb(source.color_srgb)
-                                    .with_alpha(source.opacity),
-                                base_color_texture: texture,
-                                alpha_mode: if source.transparent {
-                                    AlphaMode::Blend
-                                } else {
-                                    AlphaMode::Opaque
+                let material = if let Some(material) = materials.get(&source.material_id) {
+                    material.clone()
+                } else {
+                    let texture = source
+                        .texture_buffer_id
+                        .and_then(|id| self.textures.get(&id).cloned());
+                    let material =
+                        world
+                            .resource_mut::<Assets<TerrainMaterial>>()
+                            .add(TerrainMaterial {
+                                base: StandardMaterial {
+                                    base_color: color_srgb(source.color_srgb)
+                                        .with_alpha(source.opacity),
+                                    base_color_texture: texture,
+                                    alpha_mode: if source.transparent {
+                                        AlphaMode::Blend
+                                    } else {
+                                        AlphaMode::Opaque
+                                    },
+                                    double_sided: source.double_sided,
+                                    cull_mode: if source.double_sided {
+                                        None
+                                    } else {
+                                        Some(bevy::render::render_resource::Face::Back)
+                                    },
+                                    unlit: !source.lit,
+                                    ..default()
                                 },
-                                double_sided: source.double_sided,
-                                cull_mode: if source.double_sided {
-                                    None
-                                } else {
-                                    Some(bevy::render::render_resource::Face::Back)
-                                },
-                                unlit: !source.lit,
-                                ..default()
-                            },
-                            extension: TerrainHazeExtension::prepared(
-                                assets.lighting.haze_color_srgb,
-                                assets.lighting.haze_range_meters,
-                            ),
-                        });
+                                extension: TerrainHazeExtension::prepared(
+                                    assets.lighting.haze_color_srgb,
+                                    assets.lighting.haze_range_meters,
+                                ),
+                            });
+                    materials.insert(source.material_id, material.clone());
+                    material
+                };
                 let layers = RenderLayers::none().with(layer);
                 let layers = if asset.attachment == ApplicationMeshAttachment::World {
                     layers
@@ -664,7 +670,6 @@ impl NativeGpu {
                 world
                     .entity_mut(attachments[attachment_index(asset.attachment)])
                     .add_child(entity);
-                materials.push(material);
                 meshes.push(mesh.clone());
             }
         }
@@ -783,7 +788,7 @@ impl NativeGpu {
             initial_shadow: assets.lighting.initial_shadow,
             output,
             reflection,
-            materials,
+            materials: materials.into_values().collect(),
             water,
             images: acquired,
             meshes,
@@ -1653,6 +1658,16 @@ mod tests {
         let sampler_four = sampler_gpu
             .prepare(&mut world, &runtime, target, &sampler_assets)
             .unwrap();
+        assert_eq!(sampler_four.materials.len(), 18);
+        assert_eq!(
+            sampler_four
+                .materials
+                .iter()
+                .map(Handle::id)
+                .collect::<std::collections::BTreeSet<_>>()
+                .len(),
+            18
+        );
         for detail in &assets.water.detail {
             let eight = &sampler_gpu.images[&(detail.image.buffer_id, 8)].0;
             let four = &sampler_gpu.images[&(detail.image.buffer_id, 4)].0;
@@ -1675,6 +1690,18 @@ mod tests {
         let sky_key = (assets.sky.buffer_id, 1);
         assert_eq!(sampler_gpu.images[&sky_key].1, 2);
         sampler_gpu.release(&mut world, &sampler_four).unwrap();
+        assert!(sampler_four.materials.iter().all(|material| {
+            world
+                .resource::<Assets<TerrainMaterial>>()
+                .get(material)
+                .is_none()
+        }));
+        assert!(sampler_eight.materials.iter().all(|material| {
+            world
+                .resource::<Assets<TerrainMaterial>>()
+                .get(material)
+                .is_some()
+        }));
         for detail in &assets.water.detail {
             assert!(
                 !sampler_gpu

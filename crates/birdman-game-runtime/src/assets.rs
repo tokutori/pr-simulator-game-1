@@ -720,6 +720,32 @@ mod tests {
         let sky_id = first.sky.buffer_id;
         let scene = first.scene.as_ref().unwrap();
         assert!(!scene.meshes.is_empty());
+        let material_ids: BTreeSet<_> = scene
+            .meshes
+            .iter()
+            .flat_map(|mesh| mesh.materials.iter().map(|material| material.material_id))
+            .collect();
+        assert_eq!(material_ids.len(), 18);
+        assert!(
+            material_ids
+                .iter()
+                .all(|id| *id > 0 && *id <= owner.next_buffer_id)
+        );
+        let material = |name: &str, range: usize| {
+            scene
+                .meshes
+                .iter()
+                .find(|mesh| mesh.name == name)
+                .unwrap()
+                .materials[range]
+                .material_id
+        };
+        assert_eq!(material("wing-0", 1), material("wing-0", 2));
+        assert_eq!(material("structure-0", 0), material("structure-8", 0));
+        assert_ne!(
+            material("wing-0", 1),
+            material("lake-biwa-distant-terrain", 0)
+        );
         assert_eq!(first.water.geometry.near.len(), 16);
         let position = first.water.geometry.near[0].position;
         let crate::ApplicationBufferSlice::F32(values) = owner.buffer(position.buffer_id).unwrap()
@@ -832,13 +858,16 @@ mod tests {
         assert!(owner.bytes(detail_id).is_some());
         let mut replacement = target(WaterQuality::Low);
         replacement.renderer_resource_id += 1;
-        assert!(
-            owner
-                .prepare(4, exhibition, replacement, None)
-                .unwrap()
-                .scene
-                .is_some()
-        );
+        let replacement_assets = owner.prepare(4, exhibition, replacement, None).unwrap();
+        let replacement_ids: BTreeSet<_> = replacement_assets
+            .scene
+            .as_ref()
+            .unwrap()
+            .meshes
+            .iter()
+            .flat_map(|mesh| mesh.materials.iter().map(|material| material.material_id))
+            .collect();
+        assert_eq!(replacement_ids, material_ids);
         owner.select(Some(4));
         owner.observe(
             4,
