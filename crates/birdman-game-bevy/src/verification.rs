@@ -34,8 +34,10 @@ use bevy::{
 use birdman_game_app::application::SessionCommand;
 use birdman_game_core::SessionPhase;
 use birdman_game_format::{WaterQuality, WeatherClass};
-use birdman_game_presentation::{game_ui::*, screen_render_scale::ScreenRenderScale};
-use birdman_game_runtime::ApplicationInput;
+use birdman_game_presentation::{
+    game_ui::*, screen_render_auto::ScreenShadowMap, screen_render_scale::ScreenRenderScale,
+};
+use birdman_game_runtime::{ApplicationInput, ApplicationRenderQuality};
 use std::{
     path::PathBuf,
     time::{Duration, Instant},
@@ -204,6 +206,7 @@ enum VerificationStage {
 enum Check {
     Action(GameUiAction),
     Capture(String),
+    QualityCapture(String, ApplicationRenderQuality),
     FlightCapture(String),
     Flight,
     Result,
@@ -335,24 +338,44 @@ impl Verification {
                 }));
             }
         } else {
+            checks.extend([
+                platform(GameUiPlatformCommand::SetScreenRenderAuto { enabled: false }),
+                platform(GameUiPlatformCommand::SetScreenRenderScale {
+                    scale: ScreenRenderScale::Full,
+                }),
+                platform(GameUiPlatformCommand::SetShadowMap {
+                    shadow: ScreenShadowMap::Full,
+                }),
+            ]);
             for quality in [WaterQuality::Low, WaterQuality::Medium, WaterQuality::High] {
                 checks.extend([
                     platform(GameUiPlatformCommand::SetWaterQuality { quality }),
-                    Check::Capture(format!("05-water-{}.png", quality.label())),
+                    Check::QualityCapture(
+                        format!("05-water-{}.png", quality.label()),
+                        ApplicationRenderQuality {
+                            scale: ScreenRenderScale::Full,
+                            shadow: ScreenShadowMap::Full,
+                            water_quality: quality,
+                        },
+                    ),
                 ]);
             }
-            checks.push(platform(GameUiPlatformCommand::SetScreenRenderAuto {
-                enabled: false,
-            }));
-            for scale in [
-                ScreenRenderScale::Full,
-                ScreenRenderScale::ThreeQuarters,
-                ScreenRenderScale::Half,
-                ScreenRenderScale::Full,
+            for (scale, suffix) in [
+                (ScreenRenderScale::Full, "100-initial"),
+                (ScreenRenderScale::ThreeQuarters, "75"),
+                (ScreenRenderScale::Half, "50"),
+                (ScreenRenderScale::Full, "100-restored"),
             ] {
                 checks.extend([
                     platform(GameUiPlatformCommand::SetScreenRenderScale { scale }),
-                    Check::Capture(format!("06-scale-{}.png", scale.percent())),
+                    Check::QualityCapture(
+                        format!("06-scale-{suffix}.png"),
+                        ApplicationRenderQuality {
+                            scale,
+                            shadow: ScreenShadowMap::Full,
+                            water_quality: WaterQuality::High,
+                        },
+                    ),
                 ]);
             }
             checks.push(platform(GameUiPlatformCommand::SetScreenRenderAuto {
@@ -508,13 +531,23 @@ impl Verification {
         self.index += 1;
         if !matches!(
             self.checks.get(self.index),
-            Some(Check::Capture(_) | Check::FlightCapture(_) | Check::Delay(_))
+            Some(
+                Check::Capture(_)
+                    | Check::QualityCapture(..)
+                    | Check::FlightCapture(_)
+                    | Check::Delay(_)
+            )
         ) {
             self.stage_started = Instant::now();
         }
         if !matches!(
             self.checks.get(self.index),
-            Some(Check::Capture(_) | Check::FlightCapture(_) | Check::Delay(_))
+            Some(
+                Check::Capture(_)
+                    | Check::QualityCapture(..)
+                    | Check::FlightCapture(_)
+                    | Check::Delay(_)
+            )
         ) {
             self.stage = VerificationStage::Step(self.index);
         }
@@ -759,7 +792,7 @@ fn advance_step(world: &mut World, verification: &mut Verification) -> Result<()
                 verification.next();
             }
         }
-        Check::Capture(filename) | Check::FlightCapture(filename) => {
+        Check::Capture(filename) | Check::QualityCapture(filename, _) | Check::FlightCapture(filename) => {
             if matches!(verification.checks.get(verification.index), Some(Check::FlightCapture(_)))
                 && phase != SessionPhase::FlightRunning
             {
@@ -767,6 +800,14 @@ fn advance_step(world: &mut World, verification: &mut Verification) -> Result<()
                     world.resource_mut::<NativeInputs>().0.push(input);
                 }
                 return Ok(());
+            }
+            if let Some(Check::QualityCapture(_, expected)) = verification.checks.get(verification.index) {
+                let renderer = super::world::platform(world);
+                if !world.resource::<NativeIo>().drawing.as_ref().is_some_and(|drawing| {
+                    capture::quality_matches(&drawing.graphics, &renderer, *expected)
+                }) {
+                    return Ok(());
+                }
             }
             let pipelines_ready = verification.readiness.can_capture();
             let probes_ready = world
