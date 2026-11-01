@@ -17,7 +17,7 @@ use birdman_game_scene::lake_sky::{
 };
 use birdman_game_scene::lake_water::{
     LakeDetailConfig, LakeRenderModelError, LakeVisualCondition, LakeWaveProjection,
-    generate_lake_detail, production_lake_detail_configs,
+    generate_lake_detail, production_lake_detail_configs, water_quality_profile,
 };
 use serde::Serialize;
 
@@ -92,6 +92,8 @@ pub struct ApplicationWaterAssets {
     pub wind_speed_meters_per_second: f64,
     /// Downstream detail multiplier; zero denotes the flat-water case.
     pub detail_amplitude_scale: f64,
+    /// Maximum anisotropic filtering for both detail images, fixed for this prepared resource.
+    pub detail_anisotropy_clamp: u16,
     /// Near/far periodic images; flat water uses a shared neutral texel.
     pub detail: [ApplicationWaterDetailAsset; 2],
 }
@@ -431,6 +433,7 @@ impl AssetsOwner {
                 } else {
                     0.0
                 },
+                detail_anisotropy_clamp: water_quality_profile(quality).detail_anisotropy_clamp(),
                 detail: detail_images,
             },
             venue,
@@ -713,6 +716,7 @@ mod tests {
         let first = owner
             .prepare(1, exhibition, target(WaterQuality::High), None)
             .unwrap();
+        assert_eq!(first.water.detail_anisotropy_clamp, 8);
         let sky_id = first.sky.buffer_id;
         let scene = first.scene.as_ref().unwrap();
         assert!(!scene.meshes.is_empty());
@@ -751,6 +755,8 @@ mod tests {
         let second = owner
             .prepare(2, exhibition, target(WaterQuality::Low), None)
             .unwrap();
+        assert_eq!(second.water.detail_anisotropy_clamp, 4);
+        assert_eq!(first.water.detail_anisotropy_clamp, 8);
         assert!(second.scene.is_none());
         assert_eq!(second.sky.buffer_id, sky_id);
         assert_eq!(second.water.detail[0].image.buffer_id, detail_id);

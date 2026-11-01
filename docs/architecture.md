@@ -63,7 +63,7 @@ adapter・runtime・presentation・scene・app・contentは責務に応じて下
 ### ApplicationRuntimeと描画資源
 
 - runtimeの合成ownerは生観測・UI操作・I/O完了を受け、最終描画データとprimitive I/O要求を返す。Nativeは同じbuffer descriptorの型付きsliceを借用し、WASMは必要なbufferをLittle Endianの所有コピーで提出する。動的属性の借用は次のupdateまで有効とする。
-- 空のpanorama、光源・霧、波の係数とdetail画像は登録環境からRustが準備する。画像は同じ生成条件で共有し、水面品質の変更では波の投影とmesh密度を更新する。
+- 空のpanorama、光源・霧、波の係数とdetail画像は登録環境からRustが準備する。画像は同じ生成条件で共有し、水面品質の変更では波の投影、mesh密度、detail画像の異方性フィルタ上限（Low 4、Medium/High 8）を更新する。GPU画像は画像IDとフィルタ上限の組で保持し、候補準備中は使用中の設定を維持する。
 - GPU資源は候補作成、ownerのcommit認可、atomicなbinding完了の順に進む。ownerはcommitを直列化し、確認した適用状態から次の候補と旧資源の解放を決定する。
 - 画質変更は環境資源と同じ準備・commit経路へ投入する。共有policyの要求は最初の適用確認で確定し、各commitの実適用品質・framebuffer寸法・世代を記録する。Screenの未縮小物理解像度とHMD runtimeのframebuffer寸法は別の生観測とする。
 - preparationの取消は完了通知までCPU bufferを保持する。取消中に作成が完了した候補もownerが解放し、adapterは要求されたGPU操作と結果通知を実行する。

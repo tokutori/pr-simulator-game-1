@@ -4,7 +4,7 @@ import { AmbientLight, BufferGeometry, CanvasTexture, CircleGeometry, Color, Dir
 import type { Material, Object3D } from "three";
 import type { ApplicationDrawingOutput, ApplicationInput, ApplicationMeshAsset,
   ApplicationMeshAttachment, ApplicationRequest, ApplicationRendererObservation, DisplayRequest, Pose, XrSurfaceStyle } from "../../../generated/application-contracts.js";
-import { ThreeApplicationBuffers } from "./application-buffers.js";
+import { ThreeApplicationBuffers, type ImageLease } from "./application-buffers.js";
 import { GpuWorkTimer } from "./gpu-work-timer.js";
 import { browserSurfaceContext } from "../../../presentation/browser-canvas.js";
 import { paintSurface } from "../../../presentation/surface-canvas.js";
@@ -37,7 +37,7 @@ interface PreparedResources {
   readonly water_geometries: readonly BufferGeometry[];
   readonly sun: DirectionalLight;
   readonly reflection: WebGLRenderTarget;
-  readonly image_leases: readonly number[];
+  readonly image_leases: readonly ImageLease[];
 }
 
 interface XrHandle {
@@ -406,10 +406,10 @@ export class ThreeApplicationRenderer {
     try {
     const scene = new Scene();
     const lighting = assets.lighting;
-    scene.background = this.buffers.image(assets.sky, true);
-    cleanup.push(() => { this.buffers.releaseImages([assets.sky.buffer_id]); });
+    scene.background = this.buffers.image(assets.sky, true, 1);
+    cleanup.push(() => { this.buffers.releaseImages([[assets.sky.buffer_id, 1]]); });
     scene.fog = new Fog(lighting.haze_color_srgb, lighting.haze_range_meters[0], lighting.haze_range_meters[1]);
-    const images = [assets.sky.buffer_id];
+    const images: ImageLease[] = [[assets.sky.buffer_id, 1]];
     for (const texture of this.manifest.wing_textures) this.buffers.wingTexture(texture);
     const sun = new DirectionalLight(lighting.sunlight_color_srgb, lighting.sunlight_irradiance);
     submitSun(sun, lighting.initial_shadow, lighting.sunlight_irradiance);
@@ -450,12 +450,13 @@ export class ThreeApplicationRenderer {
       });
     }
     const [near, far] = assets.water.detail;
-    const nearTexture = this.buffers.image(near.image, false);
-    images.push(near.image.buffer_id);
-    cleanup.push(() => { this.buffers.releaseImages([near.image.buffer_id]); });
-    const farTexture = this.buffers.image(far.image, false);
-    images.push(far.image.buffer_id);
-    cleanup.push(() => { this.buffers.releaseImages([far.image.buffer_id]); });
+    const anisotropy = assets.water.detail_anisotropy_clamp;
+    const nearTexture = this.buffers.image(near.image, false, anisotropy);
+    images.push([near.image.buffer_id, anisotropy]);
+    cleanup.push(() => { this.buffers.releaseImages([[near.image.buffer_id, anisotropy]]); });
+    const farTexture = this.buffers.image(far.image, false, anisotropy);
+    images.push([far.image.buffer_id, anisotropy]);
+    cleanup.push(() => { this.buffers.releaseImages([[far.image.buffer_id, anisotropy]]); });
     const reflection = new WebGLRenderTarget(request.graphics.reflection_extent_px[0], request.graphics.reflection_extent_px[1], { minFilter: LinearFilter, magFilter: LinearFilter });
     cleanup.push(() => { reflection.dispose(); });
     reflection.texture.colorSpace = SRGBColorSpace;

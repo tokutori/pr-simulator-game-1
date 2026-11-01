@@ -187,6 +187,7 @@ pub struct WaterQualityProfile {
     component_indices: &'static [usize],
     mesh_segments: u32,
     detail_quadrature_samples: u32,
+    detail_anisotropy_clamp: u16,
 }
 
 impl WaterQualityProfile {
@@ -198,6 +199,11 @@ impl WaterQualityProfile {
     /// Grid segment budget used to bound displacement derivatives.
     pub const fn mesh_segments(self) -> u32 {
         self.mesh_segments
+    }
+
+    /// Maximum anisotropic filtering for the periodic detail images.
+    pub const fn detail_anisotropy_clamp(self) -> u16 {
+        self.detail_anisotropy_clamp
     }
 
     /// Number of full-footprint detail evaluations per spectral band.
@@ -219,6 +225,10 @@ pub const fn water_quality_profile(quality: WaterQuality) -> WaterQualityProfile
     WaterQualityProfile {
         component_indices,
         mesh_segments,
+        detail_anisotropy_clamp: match quality {
+            WaterQuality::Low => 4,
+            WaterQuality::Medium | WaterQuality::High => 8,
+        },
         detail_quadrature_samples: match quality {
             WaterQuality::Low => 1,
             WaterQuality::Medium | WaterQuality::High => 4,

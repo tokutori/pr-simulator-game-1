@@ -3,11 +3,13 @@ import { Box3, BufferAttribute, BufferGeometry, ClampToEdgeWrapping, DataTexture
 import type { ApplicationBufferDescriptor, ApplicationGeometryTexture, ApplicationImageAsset, ApplicationMeshAsset,
   ApplicationMeshUpdate, ApplicationWaterChunkAsset } from "../../../generated/application-contracts.js";
 
+export type ImageLease = readonly [bufferId: number, anisotropy: number];
+
 export class ThreeApplicationBuffers {
   private readonly attributes = new Map<number, BufferAttribute>();
   private readonly geometries = new Map<number, BufferGeometry>();
-  private readonly textures = new Map<number, DataTexture>();
-  private readonly imageLeases = new Map<number, number>();
+  private readonly textures = new Map<string, DataTexture>();
+  private readonly imageLeases = new Map<string, number>();
 
   constructor(private readonly bytes: (id: number) => Uint8Array) {}
 
@@ -93,8 +95,9 @@ export class ThreeApplicationBuffers {
     }
   }
 
-  image(asset: ApplicationImageAsset, sky: boolean): DataTexture {
-    let texture = this.textures.get(asset.buffer_id);
+  image(asset: ApplicationImageAsset, sky: boolean, anisotropy: number): DataTexture {
+    const key = `${asset.buffer_id}:${anisotropy}`;
+    let texture = this.textures.get(key);
     if (texture === undefined) {
       texture = new DataTexture(this.bytes(asset.buffer_id), asset.size[0], asset.size[1], RGBAFormat, UnsignedByteType);
       texture.colorSpace = asset.encoding === "srgb_rgba8" ? SRGBColorSpace : NoColorSpace;
@@ -104,24 +107,25 @@ export class ThreeApplicationBuffers {
       texture.minFilter = LinearMipmapLinearFilter;
       texture.generateMipmaps = true;
       if (sky) texture.mapping = EquirectangularReflectionMapping;
-      else texture.anisotropy = 8;
+      texture.anisotropy = anisotropy;
       texture.needsUpdate = true;
-      this.textures.set(asset.buffer_id, texture);
+      this.textures.set(key, texture);
     }
-    this.imageLeases.set(asset.buffer_id, (this.imageLeases.get(asset.buffer_id) ?? 0) + 1);
+    this.imageLeases.set(key, (this.imageLeases.get(key) ?? 0) + 1);
     return texture;
   }
 
-  releaseImages(ids: readonly number[]): void {
+  releaseImages(leases: readonly ImageLease[]): void {
     const failures: unknown[] = [];
-    for (const id of ids) {
-      const leases = this.imageLeases.get(id);
-      if (leases === undefined) continue;
-      if (leases > 1) this.imageLeases.set(id, leases - 1);
+    for (const [id, anisotropy] of leases) {
+      const key = `${id}:${anisotropy}`;
+      const count = this.imageLeases.get(key);
+      if (count === undefined) continue;
+      if (count > 1) this.imageLeases.set(key, count - 1);
       else {
-        this.imageLeases.delete(id);
-        const texture = this.textures.get(id);
-        this.textures.delete(id);
+        this.imageLeases.delete(key);
+        const texture = this.textures.get(key);
+        this.textures.delete(key);
         try { texture?.dispose(); } catch (cause) { failures.push(cause); }
       }
     }
@@ -129,7 +133,8 @@ export class ThreeApplicationBuffers {
   }
 
   wingTexture(asset: ApplicationGeometryTexture): DataTexture {
-    let texture = this.textures.get(asset.buffer.buffer_id);
+    const key = String(asset.buffer.buffer_id);
+    let texture = this.textures.get(key);
     if (texture !== undefined) return texture;
     const bytes = this.bytes(asset.buffer.buffer_id);
     const mipmaps: { data: Uint8Array; width: number; height: number }[] = [];
@@ -151,7 +156,7 @@ export class ThreeApplicationBuffers {
     texture.generateMipmaps = false;
     texture.anisotropy = 8;
     texture.needsUpdate = true;
-    this.textures.set(asset.buffer.buffer_id, texture);
+    this.textures.set(key, texture);
     return texture;
   }
 
