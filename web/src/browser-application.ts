@@ -26,6 +26,8 @@ export class BrowserApplication {
   private renderer: ThreeApplicationRenderer | null = null;
   private view: GameUiView | null = null;
   private hmdAvailable: boolean;
+  private xrSupportInFlight = false;
+  private xrSupportRefreshRequested = false;
 
   constructor(private readonly mount: HTMLElement, private readonly capabilities: ApplicationPlatformObservation["capabilities"]) {
     const documentRef = mount.ownerDocument;
@@ -306,14 +308,29 @@ export class BrowserApplication {
 
   private readonly onPlatform = (): void => { this.observe({ kind: "platform", observation: this.platform() }); };
   private readonly onXrDeviceChange = (): void => {
+    this.xrSupportRefreshRequested = true;
+    if (this.xrSupportInFlight || this.owner === null) return;
     const xr = navigator.xr;
     if (xr === undefined || typeof xr.isSessionSupported !== "function") return;
-    void xr.isSessionSupported("immersive-vr").catch((cause: unknown) => { console.error(cause); return false; })
-      .then(supported => {
-        if (supported === this.hmdAvailable) return;
-        this.hmdAvailable = supported;
-        this.onPlatform();
-      });
+    const owner = this.owner;
+    const needsRefresh = (): boolean => this.xrSupportRefreshRequested;
+    this.xrSupportInFlight = true;
+    const refresh = async (): Promise<void> => {
+      try {
+        do {
+          this.xrSupportRefreshRequested = false;
+          const supported = await xr.isSessionSupported("immersive-vr")
+            .catch((cause: unknown) => { console.error(cause); return false; });
+          if (this.owner !== owner) return;
+          if (needsRefresh()) continue;
+          if (supported !== this.hmdAvailable) {
+            this.hmdAvailable = supported;
+            this.onPlatform();
+          }
+        } while (needsRefresh());
+      } finally { this.xrSupportInFlight = false; }
+    };
+    void refresh();
   };
   private readonly onFontLoaded = (): void => {
     if (this.fontGeneration >= 0xffff_ffff) throw new Error("Font resource generation exhausted");

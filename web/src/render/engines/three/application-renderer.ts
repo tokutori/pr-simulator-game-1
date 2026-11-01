@@ -594,9 +594,7 @@ export class ThreeApplicationRenderer {
         let permission: Promise<XRSession>;
         try {
           if (navigator.xr === undefined) throw new Error("WebXR is unavailable");
-          const xr = navigator.xr;
-          permission = xr.requestSession("immersive-vr", { requiredFeatures: ["local"] })
-            .catch(() => xr.requestSession("immersive-vr", { requiredFeatures: ["local-floor"] }));
+          permission = navigator.xr.requestSession("immersive-vr", { requiredFeatures: ["local"] });
         } catch (cause) {
           this.notify({ kind: "display_completed", request_id: request.request_id, completion: { kind: "failed", cause: errorMessage(cause) } });
           return;
@@ -661,10 +659,7 @@ export class ThreeApplicationRenderer {
         return;
       }
       this.renderer.xr.enabled = true;
-      let referenceSpaceType: XRReferenceSpaceType = "local";
-      const grantedFeatures = handle.session.enabledFeatures ?? [];
-      if (!grantedFeatures.includes("local") && grantedFeatures.includes("local-floor")) referenceSpaceType = "local-floor";
-      this.renderer.xr.setReferenceSpaceType(referenceSpaceType);
+      this.renderer.xr.setReferenceSpaceType("local");
       const start = async (): Promise<void> => {
         await this.renderer.xr.setSession(handle.session);
         const reference = this.renderer.xr.getReferenceSpace();

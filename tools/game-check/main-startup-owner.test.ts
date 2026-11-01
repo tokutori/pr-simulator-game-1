@@ -70,7 +70,7 @@ vi.mock("../../web/src/render/engines/three/application-renderer.js", () => ({
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); capture.driver = null; capture.observation = (): void => undefined; });
 
-async function browserFixture(phoneSensors: "probe" | "permission" | null = null) {
+async function browserFixture(phoneSensors: "probe" | "permission" | null = null, xr?: XRSystem) {
   const browser = new Window({ url: "http://localhost/" });
   browser.innerWidth = 1280;
   browser.innerHeight = 720;
@@ -83,6 +83,7 @@ async function browserFixture(phoneSensors: "probe" | "permission" | null = null
     HTMLElement: browser.HTMLElement, HTMLInputElement: browser.HTMLInputElement, HTMLSelectElement: browser.HTMLSelectElement,
     MutationObserver: browser.MutationObserver, screen: browser.screen, getComputedStyle: browser.getComputedStyle.bind(browser) })) vi.stubGlobal(key, value);
   Object.defineProperty(browser, "DeviceMotionEvent", { value: undefined });
+  if (xr !== undefined) Object.defineProperty(browser.navigator, "xr", { value: xr });
   const listeners = vi.spyOn(browser, "addEventListener");
   vi.spyOn(browser.HTMLCanvasElement.prototype, "getContext").mockImplementation(function (this: HTMLCanvasElement) {
     const context = { canvas: this, font: "16px Arial", measureText(value: string) {
@@ -110,6 +111,46 @@ async function browserFixture(phoneSensors: "probe" | "permission" | null = null
 }
 
 describe("Single browser runtime ownership", () => {
+  it("coalesces XR support observations and drops stale and released completions", async () => {
+    const pending: ((supported: boolean) => void)[] = [];
+    const support = vi.fn(() => new Promise<boolean>(resolve => { pending.push(resolve); }));
+    const xr = Object.assign(new EventTarget(), { isSessionSupported: support });
+    const fixture = await browserFixture(null, xr as unknown as XRSystem);
+    const capabilities = () => fixture.update.mock.calls.flatMap(([json]) => {
+      const { input } = JSON.parse(json) as ApplicationObservation;
+      return input.kind === "platform" ? [input.observation.capabilities.hmd_available] : [];
+    });
+    try {
+      fixture.driver.finish();
+      const initial = capabilities();
+      xr.dispatchEvent(new Event("devicechange"));
+      xr.dispatchEvent(new Event("devicechange"));
+      xr.dispatchEvent(new Event("devicechange"));
+      expect(support).toHaveBeenCalledTimes(1);
+      pending.shift()?.(false);
+      await vi.waitFor(() => { expect(support).toHaveBeenCalledTimes(2); });
+      expect(capabilities()).toEqual(initial);
+      pending.shift()?.(true);
+      await Promise.resolve();
+      expect(capabilities()).toEqual(initial);
+      xr.dispatchEvent(new Event("devicechange"));
+      await vi.waitFor(() => { expect(support).toHaveBeenCalledTimes(3); });
+      pending.shift()?.(false);
+      await vi.waitFor(() => { expect(capabilities()).toEqual([...initial, false]); });
+      xr.dispatchEvent(new Event("devicechange"));
+      await vi.waitFor(() => { expect(support).toHaveBeenCalledTimes(4); });
+      fixture.page("pagehide", false);
+      fixture.driver.finish();
+      expect(fixture.free).toHaveBeenCalledOnce();
+      const updates = fixture.update.mock.calls.length;
+      pending.shift()?.(true);
+      await new Promise(resolve => { setTimeout(resolve, 0); });
+      xr.dispatchEvent(new Event("devicechange"));
+      expect(fixture.update).toHaveBeenCalledTimes(updates);
+      expect(support).toHaveBeenCalledTimes(4);
+    } finally { fixture.page("pagehide", false); fixture.driver.finish(); await fixture.browser.happyDOM.abort(); }
+  }, 20_000);
+
   it("forwards absolute sensor observations without Motion and retires the actual subscription", async () => {
     const fixture = await browserFixture("probe");
     const inputs = () => fixture.update.mock.calls.map(([json]) => (JSON.parse(json) as ApplicationObservation).input);
