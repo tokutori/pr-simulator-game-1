@@ -131,12 +131,18 @@ void main() {
   vec2 waveXZ = (modelMatrix * vec4(p, 1.0)).xz;
   vSurfaceGradient.xy = waveXZ;
   vec2 detailDrift = uWindVelocity.xy * uTimeSeconds;
-  vec4 nearDetail = texture2D(uDetailNear, (waveXZ - detailDrift * 0.42) / uDetailExtents.x);
-  vec4 farDetail = texture2D(uDetailFar, (waveXZ - detailDrift * 0.89) / uDetailExtents.y);
-  float nearHeight = nearDetail.a - 128.0 / 255.0;
-  float farHeight = farDetail.a - 128.0 / 255.0;
   float nearVisibility = 1.0 - smoothstep(0.12, 0.32, aGridSpacing);
   float farVisibility = 1.0 - smoothstep(0.8, 2.8, aGridSpacing);
+  vec4 nearDetail = vec4(0.0);
+  vec4 farDetail = vec4(0.0);
+  if (nearVisibility != 0.0) {
+    nearDetail = texture2D(uDetailNear, (waveXZ - detailDrift * 0.42) / uDetailExtents.x);
+  }
+  if (farVisibility != 0.0) {
+    farDetail = texture2D(uDetailFar, (waveXZ - detailDrift * 0.89) / uDetailExtents.y);
+  }
+  float nearHeight = nearDetail.a - 128.0 / 255.0;
+  float farHeight = farDetail.a - 128.0 / 255.0;
   p.y += (nearHeight * 0.6 * nearVisibility + farHeight * 0.55 * farVisibility) * uDetailScale;
   vec2 nearSlope = (nearDetail.rg * 255.0 - 128.0) / 127.0;
   vec2 farSlope = (farDetail.rg * 255.0 - 128.0) / 127.0;
