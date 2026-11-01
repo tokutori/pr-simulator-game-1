@@ -108,7 +108,8 @@ describe("Shared GPU upload buffers", () => {
       expect(dispose).toHaveBeenCalledOnce();
       buffers.releaseImages([[100, 1]]);
       expect(dispose).toHaveBeenCalledOnce();
-      const detail = { ...asset, encoding: "linear_rgba8" as const };
+      bytes.set(102, new Uint8Array([1, 2, 3, 4]));
+      const detail = { ...asset, buffer_id: 102, encoding: "linear_rgba8" as const };
       const high = buffers.image(detail, false, 8);
       const highDispose = vi.spyOn(high, "dispose");
       expect(buffers.image(detail, false, 8)).toBe(high);
@@ -118,13 +119,13 @@ describe("Shared GPU upload buffers", () => {
       expect(low.image.data).toEqual(high.image.data);
       expect(high.anisotropy).toBe(8);
       expect(low.anisotropy).toBe(4);
-      buffers.releaseImages([[100, 4]]);
+      buffers.releaseImages([[102, 4]]);
       expect(lowDispose).toHaveBeenCalledOnce();
       expect(highDispose).not.toHaveBeenCalled();
       expect(high.anisotropy).toBe(8);
-      buffers.releaseImages([[100, 8]]);
+      buffers.releaseImages([[102, 8]]);
       expect(highDispose).not.toHaveBeenCalled();
-      buffers.releaseImages([[100, 8]]);
+      buffers.releaseImages([[102, 8]]);
       expect(highDispose).toHaveBeenCalledOnce();
       expect(image.anisotropy).toBe(1);
       bytes.set(101, new Uint8Array(20));
