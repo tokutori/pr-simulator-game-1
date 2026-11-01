@@ -96,7 +96,7 @@ export class ThreeApplicationBuffers {
   }
 
   image(asset: ApplicationImageAsset, sky: boolean, anisotropy: number): DataTexture {
-    const key = `${asset.buffer_id}:${anisotropy}`;
+    const key = `${String(asset.buffer_id)}:${String(anisotropy)}`;
     let texture = this.textures.get(key);
     if (texture === undefined) {
       texture = new DataTexture(this.bytes(asset.buffer_id), asset.size[0], asset.size[1], RGBAFormat, UnsignedByteType);
@@ -118,7 +118,7 @@ export class ThreeApplicationBuffers {
   releaseImages(leases: readonly ImageLease[]): void {
     const failures: unknown[] = [];
     for (const [id, anisotropy] of leases) {
-      const key = `${id}:${anisotropy}`;
+      const key = `${String(id)}:${String(anisotropy)}`;
       const count = this.imageLeases.get(key);
       if (count === undefined) continue;
       if (count > 1) this.imageLeases.set(key, count - 1);
