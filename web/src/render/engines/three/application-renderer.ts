@@ -67,6 +67,8 @@ export class ThreeApplicationRenderer {
   private readonly head_canvas: HTMLCanvasElement;
   private menu_mesh: Mesh<PlaneGeometry, MeshBasicMaterial> | null = null;
   private head_mesh: Mesh<PlaneGeometry, MeshBasicMaterial> | null = null;
+  private menu_paint: { revision: number; texture: MeshBasicMaterial["map"] } | null = null;
+  private head_paint: { revision: number; texture: MeshBasicMaterial["map"] } | null = null;
   private cursor_geometry: CircleGeometry | null = null;
   private readonly cursor_meshes: Mesh<CircleGeometry, MeshBasicMaterial>[] = [];
   private manifest: PrepareRequest["assets"]["scene"] = null;
@@ -92,7 +94,10 @@ export class ThreeApplicationRenderer {
     this.timer = new GpuWorkTimer(this.renderer.getContext() as WebGL2RenderingContext);
     this.menu_canvas = canvas.ownerDocument.createElement("canvas");
     this.head_canvas = canvas.ownerDocument.createElement("canvas");
+    this.menu_canvas.addEventListener("contextrestored", this.invalidateSurfacePaint);
+    this.head_canvas.addEventListener("contextrestored", this.invalidateSurfacePaint);
     canvas.addEventListener("webglcontextlost", this.contextLost);
+    canvas.addEventListener("webglcontextrestored", this.invalidateSurfacePaint);
     canvas.addEventListener("pointermove", this.pointerMove);
     canvas.addEventListener("pointerdown", this.pointerDown);
     canvas.addEventListener("pointerup", this.pointerUp);
@@ -952,6 +957,8 @@ export class ThreeApplicationRenderer {
 
   private paintMenu(menu: Extract<NonNullable<ApplicationDrawingOutput["spatial"]>["menu"], { kind: "ready" }>): void {
     if (this.menu_mesh === null) return;
+    if (this.menu_paint?.revision === menu.paint_revision && this.menu_paint.texture === this.menu_mesh.material.map
+      && this.menu_canvas.width === menu.canvas_size[0] && this.menu_canvas.height === menu.canvas_size[1]) return;
     const context = this.paintContext(this.menu_canvas, menu.canvas_size, this.menu_mesh);
     const paint = menu.paint;
     const scaleX = this.menu_canvas.width / paint.size.width;
@@ -968,17 +975,21 @@ export class ThreeApplicationRenderer {
     } finally { context.restore(); }
     paintSurface(context, paint.footer, scaleX, scaleY);
     if (this.menu_mesh.material.map !== null) this.menu_mesh.material.map.needsUpdate = true;
+    this.menu_paint = { revision: menu.paint_revision, texture: this.menu_mesh.material.map };
   }
 
   private paintHead(head: Extract<NonNullable<ApplicationDrawingOutput["spatial"]>["head_hud"], { kind: "ready" }>): void {
     if (this.head_mesh === null) return;
+    if (this.head_paint?.revision === head.paint_revision && this.head_paint.texture === this.head_mesh.material.map
+      && this.head_canvas.width === head.paint.canvasSize[0] && this.head_canvas.height === head.paint.canvasSize[1]) return;
     const context = this.paintContext(this.head_canvas, head.paint.canvasSize, this.head_mesh);
     paintSurface(context, head.paint.items, this.head_canvas.width / head.paint.size.width, this.head_canvas.height / head.paint.size.height);
     if (this.head_mesh.material.map !== null) this.head_mesh.material.map.needsUpdate = true;
+    this.head_paint = { revision: head.paint_revision, texture: this.head_mesh.material.map };
   }
 
   private paintContext(canvas: HTMLCanvasElement, size: readonly [number, number], mesh: Mesh<PlaneGeometry, MeshBasicMaterial>) {
-    if (canvas.width !== size[0] || canvas.height !== size[1]) {
+    if (canvas.width !== size[0] || canvas.height !== size[1] || mesh.material.map === null) {
       canvas.width = size[0]; canvas.height = size[1];
       mesh.material.map?.dispose();
       const texture = new CanvasTexture(canvas);
@@ -992,7 +1003,9 @@ export class ThreeApplicationRenderer {
     return surface;
   }
 
+  private readonly invalidateSurfacePaint = (): void => { this.menu_paint = null; this.head_paint = null; };
   private readonly contextLost = (): void => {
+    this.invalidateSurfacePaint();
     this.renderer.setAnimationLoop(null);
     this.notify({ kind: "graphics", renderer_resource_id: this.id, observation: { kind: "context_lost" } });
   };
@@ -1053,6 +1066,9 @@ export class ThreeApplicationRenderer {
     }
     release(() => { this.renderer.setAnimationLoop(null); });
     release(() => { this.canvas.removeEventListener("webglcontextlost", this.contextLost); });
+    release(() => { this.canvas.removeEventListener("webglcontextrestored", this.invalidateSurfacePaint); });
+    release(() => { this.menu_canvas.removeEventListener("contextrestored", this.invalidateSurfacePaint); });
+    release(() => { this.head_canvas.removeEventListener("contextrestored", this.invalidateSurfacePaint); });
     for (const [id, input] of this.canvasPointers) {
       release(() => { this.canvas.releasePointerCapture(id); });
       this.notify({ ...input, phase: "lost_capture" });

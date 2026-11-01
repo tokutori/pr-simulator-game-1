@@ -768,6 +768,10 @@ export type ApplicationHeadHudProjection = {
      */
     readonly paint: HeadHudPaintProjection;
     /**
+     * Last successful spatial projection that changed the complete raster data.
+     */
+    readonly paint_revision: number;
+    /**
      * Final GPU depth, alpha and ordering settings.
      */
     readonly surface_style: XrSurfaceStyle;
@@ -968,6 +972,10 @@ export type ApplicationMenuProjection = {
      * Drawing commands, without interaction policy or hit geometry.
      */
     readonly paint: ApplicationMenuPaint;
+    /**
+     * Last successful spatial projection that changed the complete raster data.
+     */
+    readonly paint_revision: number;
     /**
      * Final GPU depth, alpha and ordering settings.
      */

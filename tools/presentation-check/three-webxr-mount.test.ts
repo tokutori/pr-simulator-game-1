@@ -245,8 +245,9 @@ async function fixture() {
     HTMLElement: browser.HTMLElement, HTMLInputElement: browser.HTMLInputElement, HTMLSelectElement: browser.HTMLSelectElement,
     MutationObserver: browser.MutationObserver, getComputedStyle: browser.getComputedStyle.bind(browser), XRWebGLLayer: XrLayer,
     WebGLProgram: class { readonly [Symbol.toStringTag] = "WebGLProgram"; } })) vi.stubGlobal(key, value);
+  const rasterPaints = vi.fn();
   vi.spyOn(browser.HTMLCanvasElement.prototype, "getContext").mockImplementation(function (this: HTMLCanvasElement) {
-    const context = { canvas: this, font: "16px Arial", measureText(value: string) {
+    const context = { canvas: this, font: "16px Arial", clearRect: () => { rasterPaints(this); }, measureText(value: string) {
       const size = Number.parseFloat(context.font.match(/([\d.]+)px/)?.[1] ?? "16");
       return { width: value.length * size * 0.7, actualBoundingBoxLeft: 0, actualBoundingBoxRight: value.length * size * 0.7, actualBoundingBoxAscent: size * 0.8, actualBoundingBoxDescent: size * 0.2 };
     }, createLinearGradient: () => ({ addColorStop: () => undefined }) };
@@ -278,7 +279,7 @@ async function fixture() {
     Object.defineProperty(event, "persisted", { value: false });
     browser.dispatchEvent(event);
   };
-  return { browser, session, driver, free, updates, drawing, click, dispose,
+  return { rasterPaints, browser, session, driver, free, updates, drawing, click, dispose,
     frame(at: number) { session.run(at); },
     select(at: number) { session.select(at); },
     async ready() {
@@ -463,6 +464,17 @@ describe("Aggregate runtime through the real Three WebXRManager", () => {
           && input.observation.actual.extent_px[0] === 1280 && input.observation.actual.extent_px[1] === 720)).toBe(true);
       const menu = opening.spatial?.menu;
       if (menu?.kind !== "ready" || opening.scene.camera == null) throw new Error("Current tracked Menu is unavailable");
+      const painted = state.rasterPaints.mock.calls.length;
+      state.frame(12);
+      const unchanged = state.drawing().spatial;
+      expect(unchanged?.presentation_id).not.toBe(opening.spatial?.presentation_id);
+      expect(unchanged?.menu.kind === "ready" ? unchanged.menu.paint_revision : null).toBe(menu.paint_revision);
+      expect(state.rasterPaints).toHaveBeenCalledTimes(painted);
+      const rasterCanvas = state.rasterPaints.mock.calls.at(-1)?.[0] as import("happy-dom").HTMLCanvasElement | undefined;
+      if (rasterCanvas === undefined) throw new Error("Menu raster was not painted");
+      rasterCanvas.dispatchEvent(new state.browser.Event("contextrestored"));
+      state.frame(13);
+      expect(state.rasterPaints.mock.calls.length).toBeGreaterThan(painted);
       const before = poseMatrix(menu.world_from_panel);
       const currentView = state.updates.mock.results
         .filter(result => result.type === "return")

@@ -70,6 +70,8 @@ pub enum ApplicationMenuProjection {
         surface_style: XrSurfaceStyle,
         /// Texture allocation in pixels.
         canvas_size: [u32; 2],
+        /// Last successful spatial projection that changed the complete raster data.
+        paint_revision: u32,
         /// Drawing commands, without interaction policy or hit geometry.
         paint: Box<ApplicationMenuPaint>,
         /// Visible cursor points in panel-local right/up metres.
@@ -78,7 +80,7 @@ pub enum ApplicationMenuProjection {
 }
 
 /// Spatial menu drawing commands ready for a Canvas or native surface adapter.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ApplicationMenuPaint {
     /// Surface dimensions in metres.
@@ -123,6 +125,8 @@ pub enum ApplicationHeadHudProjection {
         world_from_surface: Pose,
         /// Final GPU depth, alpha and ordering settings.
         surface_style: XrSurfaceStyle,
+        /// Last successful spatial projection that changed the complete raster data.
+        paint_revision: u32,
         /// Head-relative surface and texture drawing commands.
         paint: Box<HeadHudPaintProjection>,
     },
@@ -151,6 +155,8 @@ pub(super) struct SurfaceOwner {
     published: Option<PublishedMenu>,
     offered: Option<PublishedMenu>,
     presentation_id: u32,
+    menu_paint: Option<(u32, [u32; 2], Box<ApplicationMenuPaint>)>,
+    head_paint: Option<(u32, Box<HeadHudPaintProjection>)>,
     gamepad: Option<(u32, u32)>,
     cursors: Vec<MenuCursor>,
     resource: Option<(
@@ -413,6 +419,8 @@ impl SurfaceOwner {
         });
         if self.resource != display {
             self.resource = display;
+            self.menu_paint = None;
+            self.head_paint = None;
             self.placement.close_menu();
             self.geometry = None;
             self.invalidate();
@@ -424,6 +432,8 @@ impl SurfaceOwner {
         let mut published = None;
         if self.font.as_ref() != font {
             self.font = font.cloned();
+            self.menu_paint = None;
+            self.head_paint = None;
             self.cache = SurfaceFontCache::default();
             self.invalidate();
         }
@@ -451,7 +461,7 @@ impl SurfaceOwner {
             self.placement.close_menu();
             self.geometry = None;
         }
-        let menu = match (
+        let mut menu = match (
             panel,
             scene.viewer.as_ref(),
             scene.rig,
@@ -569,6 +579,7 @@ impl SurfaceOwner {
                                     world_from_panel: poses.world_from_panel,
                                     surface_style: XrSurfaceStyle::for_anchor(panel.anchor),
                                     canvas_size: canvas_size(paint.size, 1536.0),
+                                    paint_revision: presentation_id,
                                     paint: Box::new(paint),
                                     cursors: cursors
                                         .iter()
@@ -596,7 +607,7 @@ impl SurfaceOwner {
             }
             _ => ApplicationMenuProjection::Pending,
         };
-        let head_hud = match (
+        let mut head_hud = match (
             active,
             scene.viewer.as_ref(),
             scene
@@ -631,6 +642,7 @@ impl SurfaceOwner {
                             surface_style: XrSurfaceStyle::for_anchor(GameUiAnchor::Head),
                             world_from_surface: compose_pose(head, projection.local_pose)
                                 .map_err(ApplicationRuntimeError::Camera)?,
+                            paint_revision: presentation_id,
                             paint: projection,
                         }
                     }
@@ -640,6 +652,44 @@ impl SurfaceOwner {
         };
         if published.is_none() {
             self.retire_input();
+        }
+        // Commit raster receipts only after both surface projections have succeeded.
+        // Input acknowledgement continues to use the current presentation_id independently.
+        if let ApplicationMenuProjection::Ready {
+            canvas_size,
+            paint,
+            paint_revision,
+            ..
+        } = &mut menu
+        {
+            if let Some((revision, size, previous)) = &self.menu_paint
+                && size == canvas_size
+                && previous == paint
+            {
+                *paint_revision = *revision;
+            } else {
+                self.menu_paint = Some((presentation_id, *canvas_size, paint.clone()));
+            }
+        } else {
+            self.menu_paint = None;
+        }
+        if let ApplicationHeadHudProjection::Ready {
+            paint,
+            paint_revision,
+            ..
+        } = &mut head_hud
+        {
+            if let Some((revision, previous)) = &self.head_paint
+                && previous.canvas_size == paint.canvas_size
+                && previous.size == paint.size
+                && previous.items == paint.items
+            {
+                *paint_revision = *revision;
+            } else {
+                self.head_paint = Some((presentation_id, paint.clone()));
+            }
+        } else {
+            self.head_paint = None;
         }
         self.offered = published;
         self.presentation_id = presentation_id;

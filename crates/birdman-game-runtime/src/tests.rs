@@ -3857,15 +3857,26 @@ fn spatial_trigger_uses_submitted_painting_and_the_canonical_ui_action_owner() {
             .unwrap()
             .spatial
             .unwrap();
-        let ApplicationMenuProjection::Ready { paint, .. } = spatial.menu else {
+        let ApplicationMenuProjection::Ready {
+            paint,
+            paint_revision,
+            ..
+        } = spatial.menu
+        else {
             panic!("Expected submitted menu");
         };
-        (spatial.presentation_id, paint.content.items)
+        (spatial.presentation_id, paint_revision, paint.content.items)
     };
-    let (offered, _) = frame(&mut runtime, 10_030.0, opening.presentation_id, &controller);
-    let (submitted, before_scroll) = frame(&mut runtime, 10_040.0, offered, &controller);
+    let (offered, before_revision, _) =
+        frame(&mut runtime, 10_030.0, opening.presentation_id, &controller);
+    let (submitted, same_revision, before_scroll) =
+        frame(&mut runtime, 10_040.0, offered, &controller);
+    assert_ne!(offered, submitted);
+    assert_eq!(before_revision, same_revision);
     controller.gamepad.as_mut().unwrap().axes[3] = Some(1.0);
-    let (scrolled, after_scroll) = frame(&mut runtime, 10_050.0, submitted, &controller);
+    let (scrolled, changed_revision, after_scroll) =
+        frame(&mut runtime, 10_050.0, submitted, &controller);
+    assert_ne!(same_revision, changed_revision);
     assert_ne!(before_scroll, after_scroll);
     let before_stale = (runtime.ui.clone(), runtime.application().difficulty());
     runtime
