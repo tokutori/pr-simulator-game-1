@@ -25,6 +25,9 @@ export class BrowserApplication {
   private fontGeneration = 0;
   private renderer: ThreeApplicationRenderer | null = null;
   private view: GameUiView | null = null;
+  private hmdAvailable: boolean;
+  private xrSupportInFlight = false;
+  private xrSupportRefreshRequested = false;
 
   constructor(private readonly mount: HTMLElement, private readonly capabilities: ApplicationPlatformObservation["capabilities"]) {
     const documentRef = mount.ownerDocument;
@@ -47,6 +50,10 @@ export class BrowserApplication {
     this.records = new BrowserFlightRecordStore(window.indexedDB, input => { this.observe(input); });
     this.documentStyle = new MutationObserver(this.onPlatform);
     this.documentStyle.observe(documentRef.documentElement, { attributes: true, attributeFilter: ["style", "class", "lang"] });
+    this.hmdAvailable = capabilities.hmd_available;
+    if (navigator.xr !== undefined && typeof navigator.xr.addEventListener === "function") {
+      navigator.xr.addEventListener("devicechange", this.onXrDeviceChange);
+    }
     const platform = this.platform();
     this.owner = new ApplicationRuntimeBridge(JSON.stringify(platform));
     this.mount.addEventListener("pointerdown", this.onPointerObserved, true);
@@ -68,7 +75,7 @@ export class BrowserApplication {
       gpu_timing_requested: false,
       renderer: this.renderer?.observation() ?? null,
       viewport: { width: window.innerWidth, height: window.innerHeight, root_font_size: Number.parseFloat(style.fontSize) },
-      capabilities: this.capabilities,
+      capabilities: { ...this.capabilities, hmd_available: this.hmdAvailable },
       surface: { font: { family: style.fontFamily, weight: Number.parseFloat(style.fontWeight),
         style: style.fontStyle === "italic" ? "italic" : "normal", generation: this.fontGeneration }, locale: this.mount.ownerDocument.documentElement.lang }
     };
@@ -300,6 +307,31 @@ export class BrowserApplication {
   };
 
   private readonly onPlatform = (): void => { this.observe({ kind: "platform", observation: this.platform() }); };
+  private readonly onXrDeviceChange = (): void => {
+    this.xrSupportRefreshRequested = true;
+    if (this.xrSupportInFlight || this.owner === null) return;
+    const xr = navigator.xr;
+    if (xr === undefined || typeof xr.isSessionSupported !== "function") return;
+    const owner = this.owner;
+    const needsRefresh = (): boolean => this.xrSupportRefreshRequested;
+    this.xrSupportInFlight = true;
+    const refresh = async (): Promise<void> => {
+      try {
+        do {
+          this.xrSupportRefreshRequested = false;
+          const supported = await xr.isSessionSupported("immersive-vr")
+            .catch((cause: unknown) => { console.error(cause); return false; });
+          if (this.owner !== owner) return;
+          if (needsRefresh()) continue;
+          if (supported !== this.hmdAvailable) {
+            this.hmdAvailable = supported;
+            this.onPlatform();
+          }
+        } while (needsRefresh());
+      } finally { this.xrSupportInFlight = false; }
+    };
+    void refresh();
+  };
   private readonly onFontLoaded = (): void => {
     if (this.fontGeneration >= 0xffff_ffff) throw new Error("Font resource generation exhausted");
     this.fontGeneration++;
@@ -307,7 +339,11 @@ export class BrowserApplication {
   };
   private readonly onFocus = (): void => { this.observe({ kind: "document_focus", focused: true }); };
   private readonly onBlur = (): void => { this.observe({ kind: "document_focus", focused: false }); };
-  private readonly onVisibility = (): void => { this.observe({ kind: "page_visibility", visible: !this.mount.ownerDocument.hidden }); };
+  private readonly onVisibility = (): void => {
+    const visible = !this.mount.ownerDocument.hidden;
+    this.observe({ kind: "page_visibility", visible });
+    if (visible) this.onXrDeviceChange();
+  };
   private readonly onPageHide = (event: PageTransitionEvent): void => { this.observe({ kind: "page_hide", persisted: event.persisted }); };
   private readonly onPageShow = (): void => { this.observe({ kind: "page_visibility", visible: !this.mount.ownerDocument.hidden }); };
   private readonly onKeyDown = (event: KeyboardEvent): void => {
@@ -331,6 +367,9 @@ export class BrowserApplication {
     window.removeEventListener("pagehide", this.onPageHide);
     window.removeEventListener("pageshow", this.onPageShow);
     this.mount.ownerDocument.removeEventListener("visibilitychange", this.onVisibility);
+    if (navigator.xr !== undefined && typeof navigator.xr.removeEventListener === "function") {
+      navigator.xr.removeEventListener("devicechange", this.onXrDeviceChange);
+    }
     this.mount.ownerDocument.fonts.removeEventListener("loadingdone", this.onFontLoaded);
     this.documentStyle.disconnect();
     const failures: unknown[] = [];
