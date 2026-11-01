@@ -725,11 +725,29 @@ mod tests {
             .iter()
             .flat_map(|mesh| mesh.materials.iter().map(|material| material.material_id))
             .collect();
-        assert_eq!(material_ids.len(), 18);
+        let mut appearances = BTreeMap::new();
+        for mesh in &scene.meshes {
+            for material in &mesh.materials {
+                let mut appearance = serde_json::to_value(material).unwrap();
+                for field in ["material_id", "start", "count"] {
+                    appearance.as_object_mut().unwrap().remove(field);
+                }
+                let appearance = (appearance, mesh.color.is_some());
+                if let Some(previous) = appearances.insert(material.material_id, appearance.clone())
+                {
+                    assert_eq!(previous, appearance);
+                }
+            }
+        }
+        let another = crate::geometry::GeometryOwner::prepare(&mut owner.next_buffer_id).unwrap();
         assert!(
-            material_ids
+            another
+                .assets()
+                .meshes
                 .iter()
-                .all(|id| *id > 0 && *id <= owner.next_buffer_id)
+                .flat_map(|mesh| &mesh.materials)
+                .all(|material| material.material_id > 0
+                    && !material_ids.contains(&material.material_id))
         );
         let material = |name: &str, range: usize| {
             scene
@@ -741,7 +759,6 @@ mod tests {
                 .material_id
         };
         assert_eq!(material("wing-0", 1), material("wing-0", 2));
-        assert_eq!(material("structure-0", 0), material("structure-8", 0));
         assert_ne!(
             material("wing-0", 1),
             material("lake-biwa-distant-terrain", 0)

@@ -604,13 +604,12 @@ impl NativeGpu {
         let mut meshes = Vec::new();
         for asset in &manifest.meshes {
             for (source, mesh) in asset.materials.iter().zip(&self.meshes[&asset.mesh_id]) {
-                let material = if let Some(material) = materials.get(&source.material_id) {
-                    material.clone()
-                } else {
-                    let texture = source
-                        .texture_buffer_id
-                        .and_then(|id| self.textures.get(&id).cloned());
-                    let material =
+                let material = materials
+                    .entry(source.material_id)
+                    .or_insert_with(|| {
+                        let texture = source
+                            .texture_buffer_id
+                            .and_then(|id| self.textures.get(&id).cloned());
                         world
                             .resource_mut::<Assets<TerrainMaterial>>()
                             .add(TerrainMaterial {
@@ -636,10 +635,9 @@ impl NativeGpu {
                                     assets.lighting.haze_color_srgb,
                                     assets.lighting.haze_range_meters,
                                 ),
-                            });
-                    materials.insert(source.material_id, material.clone());
-                    material
-                };
+                            })
+                    })
+                    .clone();
                 let layers = RenderLayers::none().with(layer);
                 let layers = if asset.attachment == ApplicationMeshAttachment::World {
                     layers
@@ -1658,7 +1656,16 @@ mod tests {
         let sampler_four = sampler_gpu
             .prepare(&mut world, &runtime, target, &sampler_assets)
             .unwrap();
-        assert_eq!(sampler_four.materials.len(), 18);
+        let material_count = assets
+            .scene
+            .as_ref()
+            .unwrap()
+            .meshes
+            .iter()
+            .flat_map(|mesh| mesh.materials.iter().map(|material| material.material_id))
+            .collect::<std::collections::BTreeSet<_>>()
+            .len();
+        assert_eq!(sampler_four.materials.len(), material_count);
         assert_eq!(
             sampler_four
                 .materials
@@ -1666,7 +1673,7 @@ mod tests {
                 .map(Handle::id)
                 .collect::<std::collections::BTreeSet<_>>()
                 .len(),
-            18
+            material_count
         );
         for detail in &assets.water.detail {
             let eight = &sampler_gpu.images[&(detail.image.buffer_id, 8)].0;
