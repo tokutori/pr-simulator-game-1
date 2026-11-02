@@ -26,7 +26,7 @@ Windows/Linuxの配布版はOpenXRを同梱機能として有効にしている�
 - Windows: `.\birdman-game-bevy.exe --openxr`
 - Linux: `./birdman-game-bevy --openxr`。OpenXR loaderの`libopenxr_loader.so`が動的ライブラリの探索先に必要である。
 - macOS版: 通常画面を提供する。Native OpenXRの対象はWindows/Linuxである。
-- 操作: controllerのtrigger完了または視線のdwellで選択し、squeezeで戻る。thumbstick上下、未操作時は触れているtouchpad上下でscrollする。
+- 操作: 物理ゲームパッドはHMD表示中も操縦に使い、共通の中立確認・重心位置の取得規則を適用する。XR controllerはtrigger完了または視線のdwellで選択し、squeezeで戻り、thumbstick上下または未操作時のtouchpad上下でscrollする。
 - 確認範囲: CPUの契約試験と、共有paint・materialの非表示GPU描画を確認した。実runtime・HMDでの両眼表示・操作・終了は未受入である。
 
 引数なしでは通常画面を起動する。ビルド時の機能は`BUILD-INFO.json`の`features`と`--help`で確認できる。runtimeの選択とloaderの役割は[Khronos公式資料](https://registry.khronos.org/OpenXR/specs/1.1/loader.html#runtime-discovery)を参照する。

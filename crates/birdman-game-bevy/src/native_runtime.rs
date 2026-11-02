@@ -168,15 +168,15 @@ pub(crate) fn update(world: &mut World) {
         queue.push_back(ApplicationInput::Frame {
             display_resource_id: world.resource::<NativeIo>().display_resource_id,
             timestamp_ms: now,
-            gamepads: world
-                .resource::<super::flight_devices::FlightDevices>()
-                .observations()
-                .to_vec(),
+            gamepads: Vec::new(),
             xr: None,
             spatial: Default::default(),
         });
     }
-    while let Some(input) = queue.pop_front() {
+    while let Some(mut input) = queue.pop_front() {
+        world
+            .resource::<super::flight_devices::FlightDevices>()
+            .populate_frame_gamepads(&mut input);
         let observation = ApplicationObservation {
             observed_ms: now,
             input,
