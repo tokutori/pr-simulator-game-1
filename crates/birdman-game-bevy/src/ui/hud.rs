@@ -196,6 +196,7 @@ pub(super) fn project_hud(
             )?;
         }
     }
+    super::projection::project_text_shadow(world, retained.shell, theme, true)?;
     retained.previous = Some(hud.clone());
     Ok(())
 }

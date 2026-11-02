@@ -1955,7 +1955,8 @@ pub(super) fn layout(
             && phase == SessionPhase::FlightRunning
             && !flight_bar_renderer_recovery),
         clip_x: true,
-        passthrough: shell == GameUiShell::FlightBar && phase == SessionPhase::FlightRunning,
+        passthrough: (shell == GameUiShell::FlightBar && phase == SessionPhase::FlightRunning)
+            || matches!(phase, SessionPhase::Countdown { .. }),
     })
 }
 
@@ -2008,6 +2009,8 @@ fn theme(font: f64) -> GameUiTheme {
         primary_background: "#356d68".to_owned(),
         choice_background: "#183139".to_owned(),
         focus_outline: "#f0d382".to_owned(),
+        text_shadow_color: "#10242b".to_owned(),
+        text_shadow_offset_px: [1.0, 1.0],
         button_min_height_px: 2.75 * font,
         primary_min_height_px: 3.25 * font,
     }

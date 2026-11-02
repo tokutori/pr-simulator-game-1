@@ -838,6 +838,8 @@ fn countdown_ticks_live_telemetry_and_pause_observations_share_one_revision_poli
         }
     ));
     assert_eq!(view.theme.panel_opacity, 0.0);
+    assert!(view.layout.passthrough);
+    assert!(control(&view, "game-countdown-cancel").enabled);
     assert_eq!(
         control(&view, "game-countdown-cancel").section,
         "flight-actions"
@@ -914,8 +916,9 @@ fn countdown_ticks_live_telemetry_and_pause_observations_share_one_revision_poli
                     value,
                     font_meters,
                     anchor,
+                    color,
                     ..
-                } if value == caption => Some((*font_meters, *anchor)),
+                } if value == caption && color == &view.theme.text => Some((*font_meters, *anchor)),
                 _ => None,
             })
             .unwrap();
@@ -942,6 +945,35 @@ fn countdown_ticks_live_telemetry_and_pause_observations_share_one_revision_poli
         assert!(primary_anchor.y - 0.8 * primary_font >= projection.content.clip.y - 1e-10);
         assert!(
             primary_anchor.y + 0.2 * primary_font
+                <= projection.content.clip.y + projection.content.clip.height + 1e-10
+        );
+        let shadow_anchor = projection
+            .content
+            .items
+            .iter()
+            .find_map(|item| match item {
+                SurfacePaintItem::Text {
+                    value,
+                    anchor,
+                    color,
+                    ..
+                } if value == caption && color == &view.theme.text_shadow_color => Some(*anchor),
+                _ => None,
+            })
+            .unwrap();
+        let offset = view
+            .theme
+            .text_shadow_offset_px
+            .map(|px| px * cancel_font / view.theme.body_text.font_size_px);
+        assert!((shadow_anchor.x - primary_anchor.x - offset[0]).abs() < 1e-12);
+        assert!((shadow_anchor.y - primary_anchor.y - offset[1]).abs() < 1e-12);
+        assert!(shadow_anchor.x >= projection.content.clip.x);
+        assert!(
+            shadow_anchor.x + caption.chars().count() as f64 * primary_font * 0.5
+                <= projection.content.clip.x + projection.content.clip.width + 1e-10
+        );
+        assert!(
+            shadow_anchor.y + 0.2 * primary_font
                 <= projection.content.clip.y + projection.content.clip.height + 1e-10
         );
     }

@@ -199,6 +199,13 @@ pub(super) fn project(
     let mut regions = Vec::new();
     let mut footer = Vec::new();
     let theme = &view.theme;
+    let shadow = view.layout.passthrough.then_some((
+        theme.text_shadow_color.as_str(),
+        MenuPoint {
+            x: theme.text_shadow_offset_px[0] * plan.source.font_meters / plan.source.font_size_px,
+            y: theme.text_shadow_offset_px[1] * plan.source.font_meters / plan.source.font_size_px,
+        },
+    ));
     for (text, color) in [
         (&geometry.title, &theme.text),
         (&geometry.caption, &theme.muted_text),
@@ -210,7 +217,15 @@ pub(super) fn project(
             .iter()
             .map(|text| (text, &theme.text)),
     ) {
-        paint_text(&mut content, text, plan, measurements, &translate, color)?;
+        paint_text(
+            &mut content,
+            text,
+            plan,
+            measurements,
+            &translate,
+            color,
+            shadow,
+        )?;
     }
     for (placement, projected) in geometry.controls.iter().zip(&viewport.rectangles) {
         let control = panel
@@ -295,7 +310,15 @@ pub(super) fn project(
                 } else {
                     &theme.muted_text
                 };
-                paint_text(&mut content, text, plan, measurements, &translate, color)?;
+                paint_text(
+                    &mut content,
+                    text,
+                    plan,
+                    measurements,
+                    &translate,
+                    color,
+                    shadow,
+                )?;
             }
             if control.enabled {
                 let descriptor = match control.content {
@@ -371,6 +394,7 @@ pub(super) fn project(
                 } else {
                     &theme.muted_text
                 },
+                shadow,
             )?;
             if enabled {
                 pages.push(XrPointerRegion {
@@ -479,6 +503,7 @@ fn paint_text(
     measurements: &[MenuTextMeasurement],
     translate: &impl Fn(MenuPoint) -> MenuPoint,
     color: &str,
+    shadow: Option<(&str, MenuPoint)>,
 ) -> Result<(), MenuLayoutFailure> {
     let request = &plan.texts[text.text_index];
     let measured = measurements
@@ -500,7 +525,7 @@ fn paint_text(
                     + (line.ascent_meters - line.descent_meters) / 2.0,
             }
         };
-        output.push(SurfacePaintItem::Text {
+        let item = SurfacePaintItem::Text {
             opacity: 1.0,
             value: line.value.clone(),
             font: request.font.clone(),
@@ -515,7 +540,20 @@ fn paint_text(
                 .chart_text
                 .as_ref()
                 .map_or_else(|| color.into(), |text| text.color.clone()),
-        });
+        };
+        if let Some((color, offset)) = shadow {
+            let mut behind = item.clone();
+            if let SurfacePaintItem::Text {
+                anchor, color: ink, ..
+            } = &mut behind
+            {
+                anchor.x += offset.x;
+                anchor.y += offset.y;
+                *ink = color.into();
+            }
+            output.push(behind);
+        }
+        output.push(item);
     }
     Ok(())
 }

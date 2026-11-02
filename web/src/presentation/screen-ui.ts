@@ -642,6 +642,9 @@ function sharedPresentationData(presentation: GameUiView): VNodeData {
       "--game-ui-gap": `${String(layout.gap_px)}px`,
       "--game-ui-columns": String(layout.choice_columns),
       "--game-ui-text": theme.text,
+      "text-shadow": layout.passthrough
+        ? `${String(theme.text_shadow_offset_px[0])}px ${String(theme.text_shadow_offset_px[1])}px 0 ${theme.text_shadow_color}`
+        : "none",
       "--game-ui-muted-text": theme.muted_text,
       "--game-ui-panel": theme.panel_background,
       "--game-ui-opacity": String(theme.panel_opacity),

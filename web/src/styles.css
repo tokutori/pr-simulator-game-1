@@ -196,6 +196,9 @@ body {
 
 
 .screen-ui-shell[data-shared="true"][data-passthrough="true"] {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
   pointer-events: none;
 }
 
@@ -334,7 +337,7 @@ body {
   border: 0;
   background: transparent;
   color: #f3f4e8;
-  text-shadow: 0 1px 3px #10242b, 0 0 2px #10242b;
+  text-shadow: var(--hud-text-shadow);
   pointer-events: none;
 }
 
@@ -366,7 +369,7 @@ body {
 
 .screen-ui-description {
   margin: 0.75rem 0 1.5rem;
-  color: #c7d7d1;
+  color: var(--game-ui-muted-text);
 }
 
 @media (max-width: 600px) {

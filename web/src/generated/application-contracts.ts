@@ -4460,6 +4460,20 @@ export interface GameUiTheme {
      */
     readonly text: string;
     /**
+     * Completed hard-edged foreground shadow color.
+     */
+    readonly text_shadow_color: string;
+    /**
+     * Shadow displacement in logical pixels, with no blur.
+     *
+     * @minItems 2
+     * @maxItems 2
+     */
+    readonly text_shadow_offset_px: readonly [
+        number,
+        number
+    ];
+    /**
      * Completed document heading typography.
      */
     readonly title_text: GameUiTextStyle;

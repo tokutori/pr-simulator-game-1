@@ -1714,6 +1714,10 @@ pub struct GameUiTheme {
     pub control_padding_px: [f64; 2],
     /// Gap within a control.
     pub control_gap_px: f64,
+    /// Completed hard-edged foreground shadow color.
+    pub text_shadow_color: String,
+    /// Shadow displacement in logical pixels, with no blur.
+    pub text_shadow_offset_px: [f64; 2],
     /// Main text color.
     pub text: String,
     /// Secondary text color.

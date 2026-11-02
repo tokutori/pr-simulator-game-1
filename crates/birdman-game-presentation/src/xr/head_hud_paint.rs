@@ -127,6 +127,10 @@ pub fn prepare_game_ui_head_hud(
             input: &input,
             size,
             font: text_height_meters,
+            logical_pixel_meters: text_height_meters
+                / hud.map_or(view.theme.frame_rate_text.font_size_px, |hud| {
+                    hud.layout.font_size_px
+                }),
             line_height_meters: text_height_meters
                 * hud.map_or(
                     view.theme.frame_rate_text.line_height_px
@@ -229,6 +233,7 @@ struct HudPainter<'a, Measure> {
     input: &'a HeadHudPreparationInput<'a>,
     size: MenuSize,
     font: f64,
+    logical_pixel_meters: f64,
     line_height_meters: f64,
     font_style: MenuFont,
     stroke_pixels: f64,
@@ -315,14 +320,41 @@ where
             y: self.size.height / 2.0 - (baseline + across * angle.sin() + down * angle.cos()),
             z: 0.0,
         };
+        let offset = self
+            .theme
+            .text_shadow_offset_px
+            .map(|px| px * self.logical_pixel_meters);
+        let shadow_position = |across: f64, down: f64| {
+            let mut point = position(across, down);
+            point.x += offset[0];
+            point.y -= offset[1];
+            point
+        };
         if !line.value.trim().is_empty() {
             for edge in [-line.left_meters, line.right_meters] {
                 self.ink.push(XrInkSegment {
                     start: position(edge, -line.ascent_meters),
                     end: position(edge, line.descent_meters),
                 });
+                self.ink.push(XrInkSegment {
+                    start: shadow_position(edge, -line.ascent_meters),
+                    end: shadow_position(edge, line.descent_meters),
+                });
             }
         }
+        items.push(SurfacePaintItem::Text {
+            value: line.value.clone(),
+            font: self.font_style.clone(),
+            font_meters: self.font,
+            locale: self.input.locale.to_owned(),
+            anchor: MenuPoint {
+                x: anchor_x + offset[0],
+                y: baseline + offset[1],
+            },
+            rotation_degrees,
+            color: self.theme.text_shadow_color.clone(),
+            opacity: self.input.profile.foreground_alpha,
+        });
         items.push(SurfacePaintItem::Text {
             value: line.value.clone(),
             font: self.font_style.clone(),

@@ -360,7 +360,43 @@ pub(super) fn project_view(
             }
         }
     }
+    project_text_shadow(world, retained.shell, &view.theme, view.layout.passthrough)?;
     retained.view = Some(Arc::clone(view));
+    Ok(())
+}
+
+pub(super) fn project_text_shadow(
+    world: &mut World,
+    root: Entity,
+    theme: &GameUiTheme,
+    enabled: bool,
+) -> Result<(), String> {
+    let shadow = bevy::ui::widget::TextShadow {
+        offset: Vec2::new(
+            theme.text_shadow_offset_px[0] as f32,
+            theme.text_shadow_offset_px[1] as f32,
+        ),
+        color: color(&theme.text_shadow_color, 1.0)?,
+    };
+    let mut pending = vec![root];
+    while let Some(entity) = pending.pop() {
+        if let Some(children) = world.get::<Children>(entity) {
+            pending.extend(children.iter());
+        }
+        if world.get::<Text>(entity).is_some() {
+            if enabled {
+                if let Some(mut current) = world.get_mut::<bevy::ui::widget::TextShadow>(entity) {
+                    current.set_if_neq(shadow);
+                } else {
+                    world.entity_mut(entity).insert(shadow);
+                }
+            } else {
+                world
+                    .entity_mut(entity)
+                    .remove::<bevy::ui::widget::TextShadow>();
+            }
+        }
+    }
     Ok(())
 }
 
