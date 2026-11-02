@@ -33,6 +33,8 @@ enum Operation {
     ReleaseDisplay(u32),
     Record(u32),
     Download(u32),
+    KeyboardRead(u32),
+    KeyboardWrite(u32),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -87,6 +89,12 @@ impl ShutdownOwner {
     pub(super) fn observe(&mut self, input: &ApplicationInput) -> bool {
         let previous = self.pending.len();
         let operation = match input {
+            ApplicationInput::KeyboardControlsLoaded { request_id, .. } => {
+                Some(Operation::KeyboardRead(*request_id))
+            }
+            ApplicationInput::KeyboardControlsSaved { request_id, .. } => {
+                Some(Operation::KeyboardWrite(*request_id))
+            }
             ApplicationInput::PhoneSensorsStarted { resource_id, .. } => {
                 Some(Operation::StartPhone(*resource_id))
             }
@@ -172,6 +180,12 @@ impl ShutdownOwner {
     pub(super) fn requests(&mut self, requests: &[ApplicationRequest]) {
         for request in requests {
             let operation = match request {
+                ApplicationRequest::ReadKeyboardControls { request_id, .. } => {
+                    Some(Operation::KeyboardRead(*request_id))
+                }
+                ApplicationRequest::WriteKeyboardControls { request_id, .. } => {
+                    Some(Operation::KeyboardWrite(*request_id))
+                }
                 ApplicationRequest::StartPhoneSensors { resource_id } => {
                     Some(Operation::StartPhone(*resource_id))
                 }

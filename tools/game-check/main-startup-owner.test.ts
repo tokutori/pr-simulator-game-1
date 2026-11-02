@@ -1,5 +1,5 @@
 import { IDBFactory } from "fake-indexeddb";
-import { Window } from "happy-dom";
+import { type HTMLButtonElement as HappyButtonElement, Window } from "happy-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApplicationRuntimeBridge } from "../../web/pkg/birdman_game_wasm.js";
 import type { ApplicationDrawingOutput, ApplicationInput, ApplicationObservation, ApplicationOutput, ApplicationRendererObservation, ApplicationRequest, DisplayRequest } from "../../web/src/generated/application-contracts.js";
@@ -111,6 +111,51 @@ async function browserFixture(phoneSensors: "probe" | "permission" | null = null
 }
 
 describe("Single browser runtime ownership", () => {
+  it("persists keyboard settings across owner recreation and preserves stored values after write failure", async () => {
+    const fixture = await browserFixture();
+    const key = "tokutori.pr-simulator-game-1.keyboard-controls";
+    const button = (id: string) => {
+      const node = fixture.browser.document.querySelector<HappyButtonElement>(`[data-control-id="${id}"]`);
+      if (node === null || node.disabled) throw new Error(`Unavailable control: ${id}`);
+      return node;
+    };
+    try {
+      fixture.driver.finish();
+      button("game-title-start").click();
+      for (const id of ["keyboard-pitch-1", "keyboard-ramp-3", "keyboard-curve-1", "keyboard-pilot-rate-1"]) {
+        button(`game-setup-select-${id}`).click();
+      }
+      const original = fixture.browser.localStorage.getItem(key);
+      expect(original).not.toBeNull();
+      const write = vi.spyOn(fixture.browser.localStorage, "setItem");
+      write.mockImplementationOnce(() => { throw new Error("Storage denied"); });
+      button("game-setup-select-keyboard-sensitivity-0").click();
+      expect(fixture.browser.localStorage.getItem(key)).toBe(original);
+      expect(fixture.mount.querySelector("#game-keyboard-controls-storage")?.textContent).toContain("Storage denied");
+      button("game-setup-select-keyboard-sensitivity-0").click();
+      const stored = fixture.browser.localStorage.getItem(key);
+      expect(JSON.parse(stored ?? "null")).toEqual({ schema_version: 1, keyboard_controls: {
+        invert_pitch: true, ramp_seconds: 1, curve: "smoothstep", sensitivity: 0.25, pilot_target_rate_mps: 0.2
+      } });
+      fixture.page("pagehide", false);
+      fixture.driver.finish();
+      expect(fixture.free).toHaveBeenCalledOnce();
+      fixture.mount.remove();
+      const mount = fixture.browser.document.createElement("main");
+      fixture.browser.document.body.append(mount);
+      const { BrowserApplication } = await import("../../web/src/browser-application.js");
+      new BrowserApplication(mount as unknown as HTMLElement, applicationPlatformFixture().capabilities);
+      const restarted = capture.driver;
+      if (restarted === null) throw new Error("Reloaded renderer missing");
+      restarted.finish();
+      button("game-title-start").click();
+      for (const id of ["keyboard-pitch-1", "keyboard-ramp-3", "keyboard-curve-1", "keyboard-pilot-rate-1", "keyboard-sensitivity-0"]) {
+        expect(button(`game-setup-select-${id}`).getAttribute("aria-pressed")).toBe("true");
+      }
+      expect(fixture.browser.localStorage.getItem(key)).toBe(stored);
+    } finally { fixture.page("pagehide", false); capture.driver?.finish(); await fixture.browser.happyDOM.abort(); }
+  }, 30_000);
+
   it("coalesces XR support observations and drops stale and released completions", async () => {
     const pending: ((supported: boolean) => void)[] = [];
     const support = vi.fn(() => new Promise<boolean>(resolve => { pending.push(resolve); }));

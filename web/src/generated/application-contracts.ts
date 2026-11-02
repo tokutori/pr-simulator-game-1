@@ -8,6 +8,26 @@ export type MenuFontStyle = "normal" | "italic";
  */
 export type ApplicationInput = {
     /**
+     * Unmodified storage result.
+     */
+    readonly completion: ApplicationKeyboardControlsLoad;
+    readonly kind: "keyboard_controls_loaded";
+    /**
+     * Owner-issued operation identity.
+     */
+    readonly request_id: number;
+} | {
+    /**
+     * Original write error, absent after successful persistence.
+     */
+    readonly failure?: string | null;
+    readonly kind: "keyboard_controls_saved";
+    /**
+     * Owner-issued operation identity.
+     */
+    readonly request_id: number;
+} | {
+    /**
      * Original subscription failure, absent after successful attachment.
      */
     readonly failure?: string | null;
@@ -430,6 +450,24 @@ export type ApplicationInput = {
      * Identity issued by this owner for the completed I/O operation.
      */
     readonly request_id: number;
+};
+/**
+ * Raw completion of the requested user keyboard-settings read.
+ */
+export type ApplicationKeyboardControlsLoad = {
+    readonly kind: "missing";
+} | {
+    /**
+     * Unmodified UTF-8 document read by the adapter.
+     */
+    readonly json: string;
+    readonly kind: "found";
+} | {
+    /**
+     * Original platform diagnostic.
+     */
+    readonly cause: string;
+    readonly kind: "failed";
 };
 /**
  * Completion of an owner-requested graphics context creation.
@@ -1682,6 +1720,28 @@ export type ApplicationLifecycle = "running" | "closing" | "drained";
  * Ordered platform operations produced by the application owner.
  */
 export type ApplicationRequest = {
+    readonly kind: "read_keyboard_controls";
+    /**
+     * Maximum accepted UTF-8 document size.
+     */
+    readonly maximum_bytes: number;
+    /**
+     * Owner-issued operation identity.
+     */
+    readonly request_id: number;
+    readonly [k: string]: unknown | undefined;
+} | {
+    /**
+     * Complete canonical document; adapters perform raw I/O only.
+     */
+    readonly json: string;
+    readonly kind: "write_keyboard_controls";
+    /**
+     * Owner-issued operation identity.
+     */
+    readonly request_id: number;
+    readonly [k: string]: unknown | undefined;
+} | {
     readonly kind: "start_phone_sensors";
     /**
      * Owner-issued sensor subscription identity.

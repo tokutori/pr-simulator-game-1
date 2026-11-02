@@ -52,6 +52,7 @@ fn frame_ticks_integrate_against_each_confirmed_target_and_keep_the_last_render_
     let mut configured = ApplicationSession::default();
     execute(&mut configured, SessionCommand::OpenSetup {});
     let settings = crate::flight_input::KeyboardControlSettings {
+        invert_pitch: true,
         ramp_seconds: 1.0,
         sensitivity: 0.5,
         pilot_target_rate_mps: 0.2,

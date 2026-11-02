@@ -1,7 +1,7 @@
 use std::{
     collections::BTreeMap,
     fs::{self, File, OpenOptions},
-    io::{self, Write},
+    io::{self, Read, Write},
     path::{Component, Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -12,7 +12,10 @@ use birdman_game_app::record_persistence::{
     RecordWriteRequest,
 };
 use birdman_game_presentation::game_ui::game_ui_saved_record_timestamp;
-use birdman_game_runtime::{ApplicationInput, ApplicationRecordLoadCompletion, ApplicationRequest};
+use birdman_game_runtime::{
+    ApplicationInput, ApplicationKeyboardControlsLoad, ApplicationRecordLoadCompletion,
+    ApplicationRequest,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -41,15 +44,20 @@ struct WriteTransaction {
 #[derive(Resource)]
 pub(crate) struct NativeStorage {
     directory: PathBuf,
+    keyboard_directory: Result<PathBuf, String>,
     writes: BTreeMap<u32, WriteTransaction>,
     previews: BTreeMap<u32, Catalog>,
 }
 
 impl NativeStorage {
-    pub(crate) fn new(directory: PathBuf) -> io::Result<Self> {
+    pub(crate) fn new(
+        directory: PathBuf,
+        keyboard_directory: io::Result<PathBuf>,
+    ) -> io::Result<Self> {
         fs::create_dir_all(&directory)?;
         Ok(Self {
             directory: directory.canonicalize()?,
+            keyboard_directory: keyboard_directory.map_err(|cause| cause.to_string()),
             writes: BTreeMap::new(),
             previews: BTreeMap::new(),
         })
@@ -60,6 +68,32 @@ impl NativeStorage {
         request: &ApplicationRequest,
     ) -> Option<Vec<ApplicationInput>> {
         match request {
+            ApplicationRequest::ReadKeyboardControls {
+                request_id,
+                maximum_bytes,
+            } => {
+                let completion = match self.read_keyboard(*maximum_bytes) {
+                    Ok(Some(json)) => ApplicationKeyboardControlsLoad::Found { json },
+                    Ok(None) => ApplicationKeyboardControlsLoad::Missing,
+                    Err(cause) => ApplicationKeyboardControlsLoad::Failed {
+                        cause: cause.to_string(),
+                    },
+                };
+                Some(vec![ApplicationInput::KeyboardControlsLoaded {
+                    request_id: *request_id,
+                    completion,
+                }])
+            }
+            ApplicationRequest::WriteKeyboardControls { request_id, json } => {
+                let failure = self
+                    .write_keyboard(*request_id, json)
+                    .err()
+                    .map(|cause| cause.to_string());
+                Some(vec![ApplicationInput::KeyboardControlsSaved {
+                    request_id: *request_id,
+                    failure,
+                }])
+            }
             ApplicationRequest::BeginRecordSave { request_id } => {
                 let request_id = *request_id;
                 let result = (|| -> io::Result<i64> {
@@ -313,6 +347,60 @@ impl NativeStorage {
         Ok(json!({ "id": id, "savedAt": row.saved_at, "json": json }))
     }
 
+    fn read_keyboard(&self, maximum_bytes: u32) -> io::Result<Option<String>> {
+        let directory = self
+            .keyboard_directory
+            .as_ref()
+            .map_err(|cause| io::Error::other(cause.clone()))?;
+        let file = match File::open(directory.join("keyboard-controls.json")) {
+            Ok(file) => file,
+            Err(cause) if cause.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(cause) => return Err(cause),
+        };
+        let mut json = String::new();
+        file.take(u64::from(maximum_bytes) + 1)
+            .read_to_string(&mut json)?;
+        if json.len() > maximum_bytes as usize {
+            return Err(io::Error::other(
+                "Keyboard settings exceed the requested byte limit",
+            ));
+        }
+        Ok(Some(json))
+    }
+
+    fn write_keyboard(&self, request_id: u32, json: &str) -> io::Result<()> {
+        let directory = self
+            .keyboard_directory
+            .as_ref()
+            .map_err(|cause| io::Error::other(cause.clone()))?;
+        fs::create_dir_all(directory)?;
+        let lock = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(directory.join("keyboard-controls.lock"))?;
+        lock.try_lock().map_err(io::Error::other)?;
+        let temporary = directory.join(format!(
+            "keyboard-controls-{}-{request_id}.tmp",
+            std::process::id()
+        ));
+        let mut file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&temporary)?;
+        let result = (|| {
+            file.write_all(json.as_bytes())?;
+            file.sync_all()?;
+            drop(file);
+            fs::rename(&temporary, directory.join("keyboard-controls.json"))
+        })();
+        if result.is_err() {
+            let _ = fs::remove_file(&temporary);
+        }
+        result
+    }
+
     fn write(
         &mut self,
         request_id: u32,
@@ -472,6 +560,27 @@ impl NativeStorage {
     }
 }
 
+/// User settings remain independent of the current working/export directory.
+pub(crate) fn keyboard_config_directory() -> io::Result<PathBuf> {
+    let environment = |name| {
+        std::env::var_os(name)
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+    };
+    #[cfg(target_os = "windows")]
+    let directory = environment("APPDATA");
+    #[cfg(target_os = "macos")]
+    let directory = environment("HOME").map(|home| home.join("Library/Application Support"));
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    let directory = environment("XDG_CONFIG_HOME")
+        .filter(|path| path.is_absolute())
+        .or_else(|| environment("HOME").map(|home| home.join(".config")));
+    directory
+        .filter(|path| path.is_absolute())
+        .map(|path| path.join("birdman-game"))
+        .ok_or_else(|| io::Error::other("The user configuration directory is unavailable"))
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -503,16 +612,54 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn keyboard_settings_survive_reopen_and_failed_replacement_keeps_original_file() {
+        let directory = Directory::new();
+        let mut storage = NativeStorage::new(directory.0.clone(), Ok(directory.0.clone())).unwrap();
+        assert!(matches!(
+            storage
+                .execute(&ApplicationRequest::ReadKeyboardControls {
+                    request_id: 1,
+                    maximum_bytes: 4096
+                })
+                .unwrap()[0],
+            ApplicationInput::KeyboardControlsLoaded {
+                completion: ApplicationKeyboardControlsLoad::Missing,
+                ..
+            }
+        ));
+        let original = "{\"schema_version\":1,\"keyboard_controls\":{\"invert_pitch\":true}}";
+        storage.write_keyboard(2, original).unwrap();
+        drop(storage);
+        let reopened = NativeStorage::new(directory.0.clone(), Ok(directory.0.clone())).unwrap();
+        assert_eq!(
+            reopened.read_keyboard(4096).unwrap().as_deref(),
+            Some(original)
+        );
+        let temporary = directory
+            .0
+            .join(format!("keyboard-controls-{}-3.tmp", std::process::id()));
+        fs::write(&temporary, "pre-existing file").unwrap();
+        assert!(reopened.write_keyboard(3, "replacement").is_err());
+        assert_eq!(fs::read_to_string(&temporary).unwrap(), "pre-existing file");
+        assert_eq!(
+            reopened.read_keyboard(4096).unwrap().as_deref(),
+            Some(original)
+        );
+        assert!(reopened.read_keyboard(2).is_err());
+    }
+
+    #[test]
     fn file_transaction_commits_original_bytes_and_abort_releases_lock_and_staged_files() {
         let directory = Directory::new();
-        let mut storage = NativeStorage::new(directory.0.clone()).unwrap();
+        let mut storage = NativeStorage::new(directory.0.clone(), Ok(directory.0.clone())).unwrap();
         assert!(matches!(
             storage
                 .execute(&ApplicationRequest::BeginRecordSave { request_id: 1 })
                 .unwrap()[0],
             ApplicationInput::RecordSaveOpened { .. }
         ));
-        let mut concurrent = NativeStorage::new(directory.0.clone()).unwrap();
+        let mut concurrent =
+            NativeStorage::new(directory.0.clone(), Ok(directory.0.clone())).unwrap();
         assert!(matches!(
             concurrent
                 .execute(&ApplicationRequest::BeginRecordSave { request_id: 2 })
@@ -581,7 +728,7 @@ pub(crate) mod tests {
         .unwrap();
         fs::write(directory.0.join("download.json"), "null").unwrap();
         fs::write(directory.0.join("record-1-old.record"), "orphan").unwrap();
-        let mut storage = NativeStorage::new(directory.0.clone()).unwrap();
+        let mut storage = NativeStorage::new(directory.0.clone(), Ok(directory.0.clone())).unwrap();
         let catalog = storage.catalog().unwrap();
         assert_eq!(catalog.records.len(), 1);
         assert_eq!(catalog.records[&1].file, "flight-log-123-4.json");

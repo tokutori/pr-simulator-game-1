@@ -155,6 +155,22 @@ export class BrowserApplication {
 
   private execute(request: ApplicationRequest, drawing: ApplicationDrawingOutput | null | undefined): void {
     switch (request.kind) {
+      case "read_keyboard_controls": {
+        let completion: Extract<ApplicationInput, { kind: "keyboard_controls_loaded" }>["completion"];
+        try {
+          const json = window.localStorage.getItem("tokutori.pr-simulator-game-1.keyboard-controls");
+          completion = json === null ? { kind: "missing" } : { kind: "found", json };
+        } catch (cause) { completion = { kind: "failed", cause: errorMessage(cause) }; }
+        this.observe({ kind: "keyboard_controls_loaded", request_id: request.request_id, completion });
+        break;
+      }
+      case "write_keyboard_controls": {
+        let failure: string | null = null;
+        try { window.localStorage.setItem("tokutori.pr-simulator-game-1.keyboard-controls", request.json); }
+        catch (cause) { failure = errorMessage(cause); }
+        this.observe({ kind: "keyboard_controls_saved", request_id: request.request_id, failure });
+        break;
+      }
       case "create_renderer": {
         let renderer: ThreeApplicationRenderer | null = null;
         let observation: ApplicationRendererObservation;

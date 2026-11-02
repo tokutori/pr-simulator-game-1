@@ -131,7 +131,13 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
     #[cfg(feature = "verify-harness")]
     verification.validate()?;
     let directory = export_directory.unwrap_or(std::env::current_dir()?.join("flight-logs"));
-    let storage = native_storage::NativeStorage::new(directory)?;
+    #[cfg(feature = "verify-harness")]
+    let keyboard_directory = verification
+        .keyboard_config_directory()
+        .map_or_else(native_storage::keyboard_config_directory, Ok);
+    #[cfg(not(feature = "verify-harness"))]
+    let keyboard_directory = native_storage::keyboard_config_directory();
+    let storage = native_storage::NativeStorage::new(directory, keyboard_directory)?;
     let font_bytes = match font_path {
         Some(path) => std::fs::read(&path).map_err(|error| {
             format!("指定した日本語fontを読めない: {} ({error})", path.display())

@@ -61,7 +61,7 @@ pub use scene::{
 #[cfg(not(verus_only))]
 pub use shutdown::ApplicationLifecycle;
 #[cfg(not(verus_only))]
-pub use storage::ApplicationRecordLoadCompletion;
+pub use storage::{ApplicationKeyboardControlsLoad, ApplicationRecordLoadCompletion};
 #[cfg(not(verus_only))]
 pub use surface::{
     ApplicationGlyphMetrics, ApplicationHeadHudProjection, ApplicationMenuPaint,
@@ -308,6 +308,8 @@ impl ApplicationRuntime {
                     | ApplicationInput::RecordPreviewObserved { .. }
                     | ApplicationInput::RecordLoaded { .. }
                     | ApplicationInput::DownloadCompleted { .. }
+                    | ApplicationInput::KeyboardControlsLoaded { .. }
+                    | ApplicationInput::KeyboardControlsSaved { .. }
             ) {
             ApplicationInput::PageVisibility { visible: false }
         } else {
@@ -374,6 +376,34 @@ impl ApplicationRuntime {
         let mut spatial_frame = None;
         let mut render_spatial = false;
         match input {
+            ApplicationInput::KeyboardControlsLoaded {
+                request_id,
+                completion,
+            } => {
+                if let Some(settings) = self.storage.keyboard_loaded(request_id, completion)
+                    && !self.shutdown.closed()
+                    && self.boot.active()
+                    && matches!(
+                        self.application.core_session().snapshot().phase(),
+                        SessionPhase::Title | SessionPhase::FlightSetup
+                    )
+                {
+                    self.application
+                        .execute(
+                            birdman_game_app::application::SessionCommand::SetKeyboardControls {
+                                settings,
+                            },
+                            self.resource_readiness,
+                        )
+                        .map_err(ApplicationRuntimeError::Application)?;
+                }
+            }
+            ApplicationInput::KeyboardControlsSaved {
+                request_id,
+                failure,
+            } => {
+                self.storage.keyboard_written(request_id, failure);
+            }
             ApplicationInput::PhoneSensorsStarted {
                 resource_id,
                 failure,
@@ -985,6 +1015,14 @@ impl ApplicationRuntime {
         if io_continuation {
             return Ok(self.output(None, requests, keyboard_consumed));
         }
+        if !self.shutdown.closed() && self.storage.keyboard_needs_read() {
+            let request_id = self.allocate_request()?;
+            requests.push(self.storage.read_keyboard(request_id));
+        }
+        if self.storage.keyboard_needs_write() {
+            let request_id = self.allocate_request()?;
+            requests.extend(self.storage.write_keyboard(request_id));
+        }
         self.synchronize_phone(&mut requests)?;
         self.synchronize_xr()?;
         self.synchronize_graphics()?;
@@ -1002,7 +1040,10 @@ impl ApplicationRuntime {
         }
         if matches!(self.boot, boot::BootOwner::Preparing) {
             match self.resource_readiness {
-                BackendReadiness::Ready => self.boot = boot::BootOwner::Ready,
+                BackendReadiness::Ready if !self.storage.keyboard_loading() => {
+                    self.boot = boot::BootOwner::Ready
+                }
+                BackendReadiness::Ready => {}
                 BackendReadiness::Failed(_) => self.boot.fail(self.diagnostic.as_deref()),
                 BackendReadiness::Preparing => {}
             }
@@ -1519,10 +1560,18 @@ impl ApplicationRuntime {
                         self.resources = None;
                         self.resource_readiness = BackendReadiness::Preparing;
                     }
+                    let keyboard_change = matches!(
+                        &command,
+                        birdman_game_app::application::SessionCommand::SetKeyboardControls { .. }
+                    );
                     let previous_phase = self.application.core_session().snapshot().phase();
                     self.application
                         .execute(command, self.resource_readiness)
                         .map_err(ApplicationRuntimeError::Application)?;
+                    if keyboard_change {
+                        self.storage
+                            .keyboard_changed(self.application.keyboard_controls());
+                    }
                     self.observe_replay_entry(previous_phase);
                     self.previous_frame_ms = None;
                 }
@@ -1993,6 +2042,7 @@ impl ApplicationRuntime {
             presentation_available: self.application.presentation_available(),
             difficulty: self.application.display_difficulty(),
             keyboard_controls: self.application.keyboard_controls(),
+            keyboard_controls_notification: self.storage.keyboard_notification(),
             accepted_flight_keys: self.application.accepted_flight_keys(),
             preset: self.application.display_preset(),
             identity: self.identity()?,
