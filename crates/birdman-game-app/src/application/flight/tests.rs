@@ -188,6 +188,91 @@ fn frame_ticks_integrate_against_each_confirmed_target_and_keep_the_last_render_
 }
 
 #[test]
+fn touch_reversal_retakes_the_certified_stop_without_crossing_its_absolute_coordinate() {
+    use crate::flight_input::{FlightTouchControl, FlightTouchObservation, FlightTouchPhase};
+
+    let mut application = launch(500);
+    let mapping = application
+        .core_session()
+        .tail_pilot_position_mapping()
+        .unwrap();
+    let state = |application: &ApplicationSession| {
+        application
+            .core_session()
+            .snapshot()
+            .tail_flight_state()
+            .unwrap()
+    };
+    let touch = |phase, value| FlightTouchObservation {
+        generation: 1,
+        control: FlightTouchControl::PilotSlider,
+        phase,
+        axes: [value, 0.0],
+    };
+    let initial = mapping
+        .normalized_target(state(&application).pilot_position_demand())
+        .unwrap()
+        .value();
+    assert!(application.observe_flight_touch(touch(FlightTouchPhase::Acquire, initial)));
+    application.advance_flight_frame(1000.0, &[], true).unwrap();
+    application.advance_flight_frame(1010.0, &[], true).unwrap();
+    assert!(application.observe_flight_touch(touch(FlightTouchPhase::Change, 1.0)));
+    let mut tick = 2;
+    loop {
+        application
+            .advance_flight_frame(1000.0 + f64::from(tick) * 10.0, &[], true)
+            .unwrap();
+        let body = state(&application);
+        if body.pilot_motion_limited() && body.flight_state().pilot_velocity_mps() == 0.0 {
+            assert_eq!(
+                body.flight_state().pilot_position_m(),
+                body.pilot_stopping_target().unwrap().position_m()
+            );
+            break;
+        }
+        tick += 1;
+        assert!(
+            tick < 300,
+            "expected the genuine flight to reach its protective stop"
+        );
+    }
+    let stopped = state(&application);
+    let held = mapping
+        .normalized_target(stopped.pilot_stopping_target().unwrap())
+        .unwrap()
+        .value();
+    assert!(held < 0.99);
+    assert!(application.observe_flight_touch(touch(FlightTouchPhase::Change, 0.99)));
+    tick += 1;
+    application
+        .advance_flight_frame(1000.0 + f64::from(tick) * 10.0, &[], true)
+        .unwrap();
+    let resumed = state(&application);
+    let demand = mapping
+        .normalized_target(resumed.pilot_position_demand())
+        .unwrap()
+        .value();
+    assert!((demand - (held - 0.01)).abs() < 1e-12);
+    assert!(resumed.flight_state().pilot_position_m() < stopped.flight_state().pilot_position_m());
+    assert!(resumed.flight_state().pilot_velocity_mps() < 0.0);
+    // A small reversal immediately after resuming keeps the same acquired gesture.
+    assert!(application.observe_flight_touch(touch(FlightTouchPhase::Change, 0.995)));
+    tick += 1;
+    application
+        .advance_flight_frame(1000.0 + f64::from(tick) * 10.0, &[], true)
+        .unwrap();
+    assert!(
+        (mapping
+            .normalized_target(state(&application).pilot_position_demand())
+            .unwrap()
+            .value()
+            - (held - 0.005))
+            .abs()
+            < 1e-12
+    );
+}
+
+#[test]
 fn pause_resume_between_frames_retires_time_and_requires_a_fresh_key_press() {
     let mut application = launch(100);
     key(&mut application, FlightControlKey::KeyL, true, false);

@@ -320,10 +320,7 @@ fn activation_and_resume_accept_release_then_fresh_press_instead_of_held_repeats
     );
     input.confirm_tick(rearmed, true);
     assert!(input.observe_touch(touch(FlightTouchPhase::Change, 0.6)));
-    assert_eq!(
-        tick(&mut input, &[], 0.0).unwrap().pilot_position_command(),
-        TailPilotPositionCommand::Hold
-    );
+    assert_eq!(set_value(tick(&mut input, &[], 0.0).unwrap()), 0.6);
     assert!(input.observe_touch(touch(FlightTouchPhase::Release, 0.0)));
     assert!(!input.observe_touch(touch(FlightTouchPhase::Change, 0.0)));
     // Acquiring the displayed held demand admits even a small reverse movement.
@@ -361,12 +358,10 @@ fn activation_and_resume_accept_release_then_fresh_press_instead_of_held_repeats
         tick(&mut input, &[], 0.6).unwrap().pilot_position_command(),
         TailPilotPositionCommand::Hold
     );
-    input.observe_touch(same_finger(FlightTouchPhase::Change, 0.5));
-    assert_eq!(
-        tick(&mut input, &[], 0.6).unwrap().pilot_position_command(),
-        TailPilotPositionCommand::Hold
-    );
-    let crossing_tick = |input: &mut FlightInputState| {
+    // Multiple observations in one tick retain the actual turning point.
+    input.observe_touch(same_finger(FlightTouchPhase::Change, 0.9));
+    input.observe_touch(same_finger(FlightTouchPhase::Change, 0.89));
+    let retake_tick = |input: &mut FlightInputState| {
         input
             .tick_input(
                 &[],
@@ -376,47 +371,37 @@ fn activation_and_resume_accept_release_then_fresh_press_instead_of_held_repeats
             )
             .unwrap()
     };
-    let rearmed = crossing_tick(&mut input);
-    assert_eq!(set_value(rearmed), 0.5);
+    let rearmed = retake_tick(&mut input);
+    assert!((set_value(rearmed) - 0.59).abs() < 1e-12);
     assert_eq!(
         rearmed.pilot_motion_admission(),
         TailPilotMotionAdmission::Rearmed
     );
-    assert_eq!(
-        crossing_tick(&mut input).pilot_motion_admission(),
-        TailPilotMotionAdmission::Rearmed
-    );
+    // No elapsed interval or failed tick consumes neither the mapped demand nor rearm.
+    assert_eq!(retake_tick(&mut input), rearmed);
     input.confirm_tick(rearmed, true);
-    input.observe_touch(same_finger(FlightTouchPhase::Change, 0.5));
-    let unchanged = tick(&mut input, &[], 0.6).unwrap();
-    assert_eq!(
-        unchanged.pilot_position_command(),
-        TailPilotPositionCommand::Hold
-    );
+    input.observe_touch(same_finger(FlightTouchPhase::Change, 0.89));
+    let unchanged = retake_tick(&mut input);
+    assert_eq!(set_value(unchanged), set_value(rearmed));
     assert_eq!(
         unchanged.pilot_motion_admission(),
         TailPilotMotionAdmission::Continued
     );
     input.observe_pilot_stop(false);
-    input.observe_touch(same_finger(FlightTouchPhase::Change, 0.6));
-    tick(&mut input, &[], 0.6).unwrap();
-    tick(&mut input, &[], 0.6).unwrap();
     input.observe_pilot_stop(true);
-    let stationary = tick(&mut input, &[], 0.6).unwrap();
     assert_eq!(
-        stationary.pilot_position_command(),
+        retake_tick(&mut input).pilot_position_command(),
         TailPilotPositionCommand::Hold
     );
-    assert_eq!(
-        stationary.pilot_motion_admission(),
-        TailPilotMotionAdmission::Continued
-    );
-    input.observe_touch(same_finger(FlightTouchPhase::Change, 0.5));
+    input.observe_touch(same_finger(FlightTouchPhase::Release, 0.0));
+    assert!(input.observe_touch(FlightTouchObservation {
+        generation: 3,
+        control: FlightTouchControl::PilotSlider,
+        phase: FlightTouchPhase::Acquire,
+        axes: [0.6, 0.0],
+    }));
     tick(&mut input, &[], 0.6).unwrap();
-    assert_eq!(
-        crossing_tick(&mut input).pilot_motion_admission(),
-        TailPilotMotionAdmission::Rearmed
-    );
+    assert_eq!(set_value(tick(&mut input, &[], 0.6).unwrap()), 0.6);
 }
 
 #[test]

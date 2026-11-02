@@ -183,6 +183,9 @@ struct FlightTouchDevice {
     pilot: Option<f64>,
     previous_pilot: Option<f64>,
     pilot_picked_up: bool,
+    pilot_offset: f64,
+    pilot_drag_direction: i8,
+    pilot_retake: Option<f64>,
 }
 
 /// Shared takeover state for the selected gamepad connection.
@@ -305,6 +308,9 @@ impl FlightInputState {
                     pilot: None,
                     previous_pilot: None,
                     pilot_picked_up: false,
+                    pilot_offset: 0.0,
+                    pilot_drag_direction: 0,
+                    pilot_retake: None,
                 });
             }
         }
@@ -342,6 +348,9 @@ impl FlightInputState {
                 touch.pilot = Some(value);
                 touch.previous_pilot = Some(value);
                 touch.pilot_picked_up = false;
+                touch.pilot_offset = 0.0;
+                touch.pilot_drag_direction = 0;
+                touch.pilot_retake = None;
                 self.pilot_rearm_pending = Some(PilotRearmSource::Touch);
             }
             (FlightTouchControl::PilotSlider, FlightTouchPhase::Change) => {
@@ -349,10 +358,15 @@ impl FlightInputState {
                     return false;
                 };
                 let value = sample.axes[0].clamp(-1.0, 1.0);
-                if pilot_direction(value) != 0
-                    && pilot_direction(value) != pilot_direction(previous)
-                {
-                    self.pilot_rearm_pending = Some(PilotRearmSource::Touch);
+                let direction = pilot_direction(value - previous);
+                if direction != 0 {
+                    if self.pilot_stop_observed
+                        && touch.pilot_drag_direction != 0
+                        && direction != touch.pilot_drag_direction
+                    {
+                        touch.pilot_retake = Some(previous);
+                    }
+                    touch.pilot_drag_direction = direction;
                 }
                 touch.pilot = Some(value);
             }
@@ -360,6 +374,9 @@ impl FlightInputState {
                 touch.pilot = None;
                 touch.previous_pilot = None;
                 touch.pilot_picked_up = false;
+                touch.pilot_offset = 0.0;
+                touch.pilot_drag_direction = 0;
+                touch.pilot_retake = None;
                 if self.pilot_rearm_pending == Some(PilotRearmSource::Touch) {
                     self.pilot_rearm_pending = None;
                 }
@@ -388,14 +405,22 @@ impl FlightInputState {
         let [nose_up, turn_right] = touch.stick.unwrap_or([0.0; 2]);
         let mut position = TailPilotPositionCommand::Hold;
         if let Some(value) = touch.pilot {
-            let previous = touch.previous_pilot.unwrap_or(value);
+            if let Some(anchor) = touch.pilot_retake.take() {
+                // Retake relative to the certified stop, not the outstanding absolute demand.
+                touch.pilot_offset = held_target - anchor;
+                touch.pilot_picked_up = true;
+                self.pilot_rearm_pending = Some(PilotRearmSource::Touch);
+            }
+            let previous =
+                (touch.previous_pilot.unwrap_or(value) + touch.pilot_offset).clamp(-1.0, 1.0);
+            let demand = (value + touch.pilot_offset).clamp(-1.0, 1.0);
             if touch.pilot_picked_up {
                 position = TailPilotPositionCommand::Set(
-                    TailPilotPositionIntent::try_new(value).expect("normalized finite touch axis"),
+                    TailPilotPositionIntent::try_new(demand).expect("normalized finite touch axis"),
                 );
-            } else if ((previous <= held_target && held_target <= value)
-                || (value <= held_target && held_target <= previous))
-                && (previous != value || self.pilot_rearm_pending == Some(PilotRearmSource::Touch))
+            } else if ((previous <= held_target && held_target <= demand)
+                || (demand <= held_target && held_target <= previous))
+                && (previous != demand || self.pilot_rearm_pending == Some(PilotRearmSource::Touch))
             {
                 touch.pilot_picked_up = true;
                 self.pilot_rearm_pending = Some(PilotRearmSource::Touch);
@@ -577,6 +602,7 @@ impl FlightInputState {
             if let Some(touch) = &mut self.touch {
                 touch.pilot_picked_up = false;
                 touch.previous_pilot = touch.pilot;
+                touch.pilot_retake = None;
             }
         }
         self.pilot_stop_observed = stopped;
@@ -589,13 +615,10 @@ impl FlightInputState {
                 self.rearm_gamepad();
                 self.pilot_stop_observed = true;
             }
-            if stopped
-                && self.pilot_rearm_pending == Some(PilotRearmSource::Touch)
-                && let Some(touch) = &mut self.touch
-            {
-                touch.pilot_picked_up = false;
-            }
             self.pilot_rearm_pending = None;
+        }
+        if stopped {
+            self.observe_pilot_stop(true);
         }
     }
 
