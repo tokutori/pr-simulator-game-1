@@ -3145,6 +3145,22 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
 #[test]
 fn hmd_frame_and_focus_use_the_confirmed_display_resource_and_shared_viewer_capture() {
     use birdman_game_presentation::camera::{Pose, Vector3, compose_pose, exhibition_camera_pose};
+    // Match the shared XR reset invariant: derived position and quaternion orientation.
+    let assert_pose = |actual: Pose, expected: Pose| {
+        for (first, second) in [actual.position.x, actual.position.y, actual.position.z]
+            .into_iter()
+            .zip([
+                expected.position.x,
+                expected.position.y,
+                expected.position.z,
+            ])
+        {
+            assert!((first - second).abs() < 1e-12, "{actual:?} {expected:?}");
+        }
+        let (first, second) = (actual.orientation, expected.orientation);
+        let dot = first.w * second.w + first.x * second.x + first.y * second.y + first.z * second.z;
+        assert!((dot.abs() - 1.0).abs() < 1e-12, "{actual:?} {expected:?}");
+    };
     let (mut runtime, active) = started_display(GameUiPresentationMode::Hmd);
     let resource_request = active
         .requests
@@ -3232,7 +3248,7 @@ fn hmd_frame_and_focus_use_the_confirmed_display_resource_and_shared_viewer_capt
     );
     assert_eq!(scene.water_time_seconds, 0.0);
     let camera = scene.camera.unwrap();
-    assert_eq!(camera.world_from_head, Some(expected_head));
+    assert_pose(camera.world_from_head.unwrap(), expected_head);
     assert_eq!(camera.eyes.len(), 2);
     assert!(runtime.application().presentation_available());
     observation.observation.views.swap(0, 1);
@@ -3364,7 +3380,7 @@ fn hmd_frame_and_focus_use_the_confirmed_display_resource_and_shared_viewer_capt
             &mut measure,
         )
         .unwrap();
-    assert_eq!(
+    assert_pose(
         reset_event
             .drawing
             .as_ref()
@@ -3373,8 +3389,9 @@ fn hmd_frame_and_focus_use_the_confirmed_display_resource_and_shared_viewer_capt
             .camera
             .as_ref()
             .unwrap()
-            .world_from_head,
-        Some(expected_head)
+            .world_from_head
+            .unwrap(),
+        expected_head,
     );
     assert_eq!(
         reset_event
@@ -3413,7 +3430,7 @@ fn hmd_frame_and_focus_use_the_confirmed_display_resource_and_shared_viewer_capt
             &mut measure,
         )
         .unwrap();
-    assert_eq!(
+    assert_pose(
         reset
             .drawing
             .as_ref()
@@ -3422,8 +3439,9 @@ fn hmd_frame_and_focus_use_the_confirmed_display_resource_and_shared_viewer_capt
             .camera
             .as_ref()
             .unwrap()
-            .world_from_head,
-        Some(expected_head)
+            .world_from_head
+            .unwrap(),
+        expected_head,
     );
     assert_eq!(
         reset
@@ -3438,10 +3456,7 @@ fn hmd_frame_and_focus_use_the_confirmed_display_resource_and_shared_viewer_capt
         ApplicationMenuProjection::Ready {
             world_from_panel, ..
         } => {
-            assert!((world_from_panel.position.x - panel_before.position.x).abs() < 1e-9);
-            assert!((world_from_panel.position.y - panel_before.position.y).abs() < 1e-9);
-            assert!((world_from_panel.position.z - panel_before.position.z).abs() < 1e-9);
-            assert_eq!(world_from_panel.orientation, panel_before.orientation);
+            assert_pose(world_from_panel, panel_before);
         }
         other => panic!("Expected the retained menu: {other:?}"),
     }

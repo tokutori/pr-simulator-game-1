@@ -643,7 +643,7 @@ pub(crate) fn submit(world: &mut World, drawing: &ApplicationDrawingOutput) -> R
         project_focus(world, &theme);
         let foreground = color(&theme.text, 1.0)?;
         let background = color(&theme.frame_rate_background, theme.frame_rate_opacity)?;
-        for (role, mut text, mut font, mut node, mut ink, mut fill, mut visible, mut line_height) in
+        for (role, text, mut font, mut node, mut ink, mut fill, mut visible, mut line_height) in
             world
                 .query::<(
                     &UiText,
@@ -660,23 +660,34 @@ pub(crate) fn submit(world: &mut World, drawing: &ApplicationDrawingOutput) -> R
             if matches!(role, UiText::FrameRate) {
                 text.map_unchanged(|text| &mut text.0)
                     .clone_from_if_neq(&drawing.presentation.frame_rate_label);
-                font.font_size = FontSize::Px(theme.frame_rate_text.font_size_px as f32);
-                font.weight = bevy::text::FontWeight(theme.frame_rate_text.font_weight);
-                *line_height =
-                    bevy::text::LineHeight::Px(theme.frame_rate_text.line_height_px as f32);
-                node.top = px(theme.frame_rate_inset_px);
-                node.right = px(theme.frame_rate_inset_px);
-                node.padding = UiRect::axes(
+                let size = FontSize::Px(theme.frame_rate_text.font_size_px as f32);
+                let weight = bevy::text::FontWeight(theme.frame_rate_text.font_weight);
+                if font.font_size != size {
+                    font.font_size = size;
+                }
+                if font.weight != weight {
+                    font.weight = weight;
+                }
+                line_height.set_if_neq(bevy::text::LineHeight::Px(
+                    theme.frame_rate_text.line_height_px as f32,
+                ));
+                let inset = px(theme.frame_rate_inset_px);
+                let padding = UiRect::axes(
                     px(theme.frame_rate_padding_px[0]),
                     px(theme.frame_rate_padding_px[1]),
                 );
-                ink.0 = foreground;
-                fill.0 = background;
-                *visible = if drawing.presentation.screen_ui_visible {
+                if node.top != inset || node.right != inset || node.padding != padding {
+                    node.top = inset;
+                    node.right = inset;
+                    node.padding = padding;
+                }
+                ink.set_if_neq(TextColor(foreground));
+                fill.set_if_neq(BackgroundColor(background));
+                visible.set_if_neq(if drawing.presentation.screen_ui_visible {
                     Visibility::Inherited
                 } else {
                     Visibility::Hidden
-                };
+                });
             }
         }
     }

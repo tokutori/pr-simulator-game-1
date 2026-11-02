@@ -164,6 +164,23 @@ pub(super) fn project_hud(
                 .get_mut::<TextColor>(retained.value)
                 .expect("HUD text color exists")
                 .set_if_neq(TextColor(tone_color));
+            world
+                .get_mut::<TextFont>(retained.value)
+                .expect("HUD text font exists")
+                .map_unchanged(|font| &mut font.weight)
+                .set_if_neq(bevy::text::FontWeight(
+                    if matches!(
+                        node.content,
+                        GameUiHudNodeContent::Text {
+                            tone: GameUiHudTone::Warning,
+                            ..
+                        }
+                    ) {
+                        theme.section_text.font_weight
+                    } else {
+                        theme.body_text.font_weight
+                    },
+                ));
             project_widget(
                 world,
                 retained,
@@ -301,22 +318,6 @@ fn project_structure(
             world
                 .entity_mut(retained_node.value)
                 .insert(bevy::text::LineHeight::Px(layout.line_height_px as f32));
-            world
-                .get_mut::<TextFont>(retained_node.value)
-                .expect("HUD text font exists")
-                .weight = bevy::text::FontWeight(
-                if matches!(
-                    node.content,
-                    GameUiHudNodeContent::Text {
-                        tone: GameUiHudTone::Warning,
-                        ..
-                    }
-                ) {
-                    theme.section_text.font_weight
-                } else {
-                    theme.body_text.font_weight
-                },
-            );
             if let Some(surface) = retained_node.widget.surface() {
                 let surface_width = match retained_node.widget {
                     HudWidget::Attitude { .. } => {
