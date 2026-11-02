@@ -1,7 +1,7 @@
 use super::*;
 use crate::game_ui::{
-    GameUiChart, GameUiChartCursor, GameUiControlContent, GameUiEmphasis, GameUiFrame, GameUiPanel,
-    GameUiTheme, GameUiView,
+    GameUiButtonPresentation, GameUiChart, GameUiChartCursor, GameUiControlContent, GameUiEmphasis,
+    GameUiFrame, GameUiPanel, GameUiTheme, GameUiView,
 };
 use crate::xr::{
     XrPointerControl, XrPointerRect, XrPointerRegion, XrPointerSurface, XrPointerTarget,
@@ -218,12 +218,14 @@ pub(super) fn project(
             .get(placement.control_index)
             .ok_or(MenuLayoutFailure::StaleView)?;
         if let Some(visible) = projected.visible {
-            content.push(SurfacePaintItem::Rectangle {
-                opacity: 1.0,
-                bounds: visible,
-                color: control_background(&control.content, theme).into(),
-                gradient: None,
-            });
+            if !matches!(control.content, GameUiControlContent::Status { .. }) {
+                content.push(SurfacePaintItem::Rectangle {
+                    opacity: 1.0,
+                    bounds: visible,
+                    color: control_background(&control.content, theme).into(),
+                    gradient: None,
+                });
+            }
             for card in &placement.cards {
                 let origin = translate(MenuPoint {
                     x: card.x,
@@ -265,7 +267,7 @@ pub(super) fn project(
                 if let Some(legend) = &request.legend {
                     let origin = translate(MenuPoint {
                         x: text.bounds.x - plan.source.font_meters * 2.0,
-                        y: text.bounds.y + plan.line_height_meters * 0.35,
+                        y: text.bounds.y + request.line_height_meters * 0.35,
                     });
                     content.push(SurfacePaintItem::Rectangle {
                         opacity: 1.0,
@@ -273,19 +275,22 @@ pub(super) fn project(
                             x: origin.x,
                             y: origin.y,
                             width: plan.source.font_meters * 1.5,
-                            height: plan.line_height_meters * 0.3,
+                            height: request.line_height_meters * 0.3,
                         },
                         color: legend.color.clone(),
                         gradient: legend.segment_gradient.clone(),
                     });
                 }
-                let color = if control.enabled
+                let color = if let GameUiControlContent::Status { emphasis, .. } = control.content {
+                    theme.status_color(emphasis)
+                } else if control.enabled
                     || matches!(
                         control.content,
                         GameUiControlContent::Status { .. }
                             | GameUiControlContent::Fields { .. }
                             | GameUiControlContent::Chart { .. }
-                    ) {
+                    )
+                {
                     &theme.text
                 } else {
                     &theme.muted_text
@@ -350,7 +355,7 @@ pub(super) fn project(
                     x: bounds.x + plan.padding_meters,
                     y: bounds.y + plan.padding_meters,
                     width: request.width_meters,
-                    height: measurement.lines.len() as f64 * plan.line_height_meters,
+                    height: measurement.lines.len() as f64 * request.line_height_meters,
                 },
                 chart_projection: None,
                 line_geometry: vec![],
@@ -490,8 +495,8 @@ fn paint_text(
             MenuPoint {
                 x: text.bounds.x + line.left_meters.max(0.0),
                 y: text.bounds.y
-                    + index as f64 * plan.line_height_meters
-                    + plan.line_height_meters / 2.0
+                    + index as f64 * request.line_height_meters
+                    + request.line_height_meters / 2.0
                     + (line.ascent_meters - line.descent_meters) / 2.0,
             }
         };

@@ -20,11 +20,12 @@
 - 共通の長さはm、物理位置はlocal NED、機体座標はFRDである。
 - 描画basis、quaternion、眼位置、camera rigは[ゲームとUI](gameplay-and-ui.md#camera)に従う。
 
-## Screenの解像度とAuto
+## 描画解像度とAuto
 
 - Flight SetupとPause SettingsはAuto・100%・75%・50%・25%を提供する。
 - 既定はAuto。共有Rustが初期要求の基準として100%・影2048・水面Highを所有し、使用中の品質は実commit後に表示する。
 - 各軸50%は3D画素数のおよそ25%、25%はおよそ6.25%に対応し、UIの論理解像度、画角、入力座標、物理tick、記録を維持する。
+- Screenと設定済みPhone VRは同じ倍率から描画寸法を導出する。HMDはruntimeが所有する最終framebuffer寸法を使用し、解像度選択を無効化する一方、保持した選択値と影・水面・Autoの共通方針を継続する。
 
 | Scene | 有効な品質方針 |
 |---|---|
@@ -44,6 +45,7 @@
 - 明示ManualとAuto解除では保持した三値へ戻す。
 - 要求とACKはepochと三値を照合し、全資源を準備してからcommitする。品質とframebuffer寸法は同じ認可済みACKから保持し、resizeの生観測を旧commitの寸法へ上書きしない。
 - 準備失敗は既存資源と原因を保持する。
+- 計測の可否は実rendererのtimestamp観測から決め、未取得・非対応の計測は既定の非対応方針へ接続する。
 - commit後の旧資源cleanup失敗では新しい適用済み値と原因を保持し、準備失敗と区別する。
 
 初期窓は最初の有効GPU source時刻から2秒とする。8 ms区間ごとの最大GPU spanを代表値とし、そのp95を使用する。

@@ -1,4 +1,4 @@
-//! Web-baseline recorded camera geometry and history-independent shot selection.
+//! Shared recorded camera geometry and history-independent shot selection.
 
 use crate::render_pose::FlightRenderPose;
 
@@ -10,7 +10,7 @@ use birdman_game_format::{
     FixedCameraId, FlightRecordTailIdentityDocument, LocalNedFrameDocument, VenueCameraPoint,
 };
 
-use crate::game_ui::{GameUiPresentationMode, GameUiReplayCamera};
+use crate::game_ui::GameUiReplayCamera;
 
 /// Recorded camera projection; unavailable fixed points retain the existing Chase fallback.
 #[derive(Clone, Debug, PartialEq)]
@@ -100,7 +100,7 @@ impl core::error::Error for ReplayCameraError {
     }
 }
 
-/// Projects the Web-baseline camera from one immutable record and one requested time.
+/// Projects the shared camera from one immutable record and one requested time.
 ///
 /// Track samples are borrowed without allocation. Fixed tracking reconstructs its bounded
 /// orientation from the record checkpoints, independently of frame rate and seek order.
@@ -109,7 +109,6 @@ pub fn replay_camera_view(
     identity: Option<&FlightRecordTailIdentityDocument>,
     time_seconds: f64,
     selection: GameUiReplayCamera,
-    presentation: GameUiPresentationMode,
     attract: bool,
 ) -> Result<ReplayCameraView, ReplayCameraError> {
     if !time_seconds.is_finite() || time_seconds < 0.0 {
@@ -119,7 +118,7 @@ pub fn replay_camera_view(
         .duration_seconds()
         .map_err(ReplayCameraError::Record)?;
     let time = time_seconds.min(duration);
-    let camera = select_camera(record, time, duration, selection, presentation, attract);
+    let camera = select_camera(record, time, duration, selection, attract);
     let sample = record
         .sample_at_seconds(time)
         .map_err(ReplayCameraError::Record)?;
@@ -230,14 +229,13 @@ fn select_camera(
     time: f64,
     duration: f64,
     selection: GameUiReplayCamera,
-    presentation: GameUiPresentationMode,
     attract: bool,
 ) -> GameUiReplayCamera {
     use GameUiReplayCamera::{Chase, Pilot, Platform, Shore, Side, Telephoto};
     if !attract && selection != GameUiReplayCamera::Auto {
         return selection;
     }
-    if presentation != GameUiPresentationMode::Screen || duration <= 0.0 {
+    if duration <= 0.0 {
         return Pilot;
     }
     let opening_end = 1.5_f64.min(duration * 0.15);

@@ -19,7 +19,7 @@ pub(super) fn project_frame(
         .flat_map(|panel| &panel.controls)
         .collect::<Vec<_>>();
     for range in &frame.ranges {
-        let control = controls
+        let _control = controls
             .iter()
             .find(|control| control.id == range.id)
             .ok_or_else(|| format!("UI rangeが存在しない: {}", range.id))?;
@@ -27,14 +27,10 @@ pub(super) fn project_frame(
             .widgets
             .get(&range.id)
             .ok_or_else(|| format!("UI range entityが存在しない: {}", range.id))?;
-        set_text(
-            world,
-            widget.text,
-            format!("{}: {}", control.label, range.display_value),
-        );
+        set_text(world, widget.text, range.display_value.clone());
     }
     for readout in &frame.readouts {
-        let control = controls
+        let _control = controls
             .iter()
             .find(|control| control.id == readout.id)
             .ok_or_else(|| format!("UI readoutが存在しない: {}", readout.id))?;
@@ -42,11 +38,7 @@ pub(super) fn project_frame(
             .widgets
             .get(&readout.id)
             .ok_or_else(|| format!("UI readout entityが存在しない: {}", readout.id))?;
-        set_text(
-            world,
-            widget.text,
-            format!("{}: {}", control.label, readout.value),
-        );
+        set_text(world, widget.text, readout.value.clone());
     }
     for button in &frame.button_labels {
         let widget = retained
@@ -148,6 +140,18 @@ pub(super) fn project_view(
             UiTransform::IDENTITY
         },
     ));
+    for (entity, style) in [
+        (retained.heading, view.theme.title_text),
+        (retained.description, view.theme.body_text),
+    ] {
+        if let Some(mut text_font) = world.get_mut::<TextFont>(entity) {
+            text_font.font_size = FontSize::Px(style.font_size_px as f32);
+            text_font.weight = bevy::text::FontWeight(style.font_weight);
+        }
+        world
+            .entity_mut(entity)
+            .insert(bevy::text::LineHeight::Px(style.line_height_px as f32));
+    }
     let show_headings =
         view.layout.shell == GameUiShell::Center || view.layout.shell == GameUiShell::PauseSettings;
     world.entity_mut(retained.heading).insert((
@@ -185,10 +189,9 @@ pub(super) fn project_view(
         flex_shrink: 0.0,
         ..default()
     });
-    let rebuild = retained
-        .view
-        .as_ref()
-        .is_none_or(|previous| structure(previous) != structure(view));
+    let rebuild = retained.view.as_ref().is_none_or(|previous| {
+        previous.theme != view.theme || structure(previous) != structure(view)
+    });
     let focus_id = world.resource::<InputFocus>().get().and_then(|focused| {
         retained
             .widgets
@@ -240,7 +243,21 @@ pub(super) fn project_view(
                     ))
                     .id();
                 if !section.label.is_empty() {
-                    spawn_text(world, group, &section.label, font, 16.0, text_color);
+                    let heading = spawn_text(
+                        world,
+                        group,
+                        &section.label,
+                        font,
+                        view.theme.section_text.font_size_px as f32,
+                        text_color,
+                    );
+                    world.entity_mut(heading).insert(bevy::text::LineHeight::Px(
+                        view.theme.section_text.line_height_px as f32,
+                    ));
+                    world
+                        .get_mut::<TextFont>(heading)
+                        .expect("section font exists")
+                        .weight = bevy::text::FontWeight(view.theme.section_text.font_weight);
                 }
                 let columns = world
                     .spawn((ChildOf(group), section_node(section.layout, &view.layout)))
@@ -267,7 +284,14 @@ pub(super) fn project_view(
                 if matches!(control.content, GameUiControlContent::Chart { .. }) {
                     world.entity_mut(node).observe(scroll_content);
                 }
-                let text = spawn_text(world, node, "", font, 16.0, text_color);
+                let text = spawn_text(
+                    world,
+                    node,
+                    "",
+                    font,
+                    view.theme.body_text.font_size_px as f32,
+                    text_color,
+                );
                 retained.widgets.insert(
                     control.id.clone(),
                     Widget {
@@ -465,8 +489,11 @@ fn project_control(
         min_width: px(0),
         flex_shrink: 0.0,
         flex_direction: FlexDirection::Column,
-        padding: UiRect::all(px(8)),
-        row_gap: px(4),
+        padding: UiRect::axes(
+            px(theme.control_padding_px[0]),
+            px(theme.control_padding_px[1]),
+        ),
+        row_gap: px(theme.control_gap_px),
         ..default()
     };
     if section_layout == GameUiSectionLayout::Row {
@@ -482,7 +509,7 @@ fn project_control(
         };
     }
     let mut background = Color::NONE;
-    let mut label = control.label.clone();
+    let mut label = control.display_label.clone();
     match &control.content {
         GameUiControlContent::Button {
             action,
@@ -501,11 +528,7 @@ fn project_control(
                     emphasis: GameUiEmphasis::Secondary,
                 }
                 | GameUiButtonPresentation::Disclosure { .. } => background = Color::NONE,
-                GameUiButtonPresentation::Choice {
-                    selected,
-                    description,
-                    ..
-                } => {
+                GameUiButtonPresentation::Choice { selected, .. } => {
                     background = color(
                         if *selected {
                             &theme.primary_background
@@ -514,16 +537,8 @@ fn project_control(
                         },
                         1.0,
                     )?;
-                    label = format!("{}{}", if *selected { "● " } else { "" }, control.label);
-                    if !description.is_empty() {
-                        label.push('\n');
-                        label.push_str(description);
-                    }
                 }
                 _ => {}
-            }
-            if let GameUiButtonPresentation::Disclosure { expanded } = presentation {
-                label = format!("{} {}", if *expanded { "▾" } else { "▸" }, control.label);
             }
             world.entity_mut(widget.node).insert((
                 Button,
@@ -541,10 +556,9 @@ fn project_control(
                     .insert(UiText::WaterQualityChoice);
             }
         }
-        GameUiControlContent::Toggle { value, .. } => {
+        GameUiControlContent::Toggle { .. } => {
             node.min_height = px(theme.button_min_height_px);
             background = color(&theme.choice_background, 1.0)?;
-            label = format!("{} {}", if *value { "☑" } else { "☐" }, control.label);
             world.entity_mut(widget.node).insert((
                 Button,
                 MenuButton {
@@ -553,9 +567,8 @@ fn project_control(
                 },
             ));
         }
-        GameUiControlContent::Range { display_value, .. } => {
+        GameUiControlContent::Range { .. } => {
             node.min_height = px(theme.button_min_height_px);
-            label = format!("{}: {display_value}", control.label);
             background = color(&theme.choice_background, 1.0)?;
             world.entity_mut(widget.node).insert((
                 Button,
@@ -566,12 +579,7 @@ fn project_control(
                 },
             ));
         }
-        GameUiControlContent::Status { value, .. } => {
-            label = if control.label.is_empty() {
-                value.clone()
-            } else {
-                format!("{}: {value}", control.label)
-            };
+        GameUiControlContent::Status { .. } => {
             if control.id == "game-briefing-technical-content" {
                 world
                     .entity_mut(widget.text)
@@ -608,15 +616,25 @@ fn project_control(
                             ChildOf(grid),
                             Node {
                                 min_width: px(0),
-                                padding: UiRect::all(px(8)),
+                                padding: UiRect::axes(
+                                    px(theme.control_padding_px[0]),
+                                    px(theme.control_padding_px[1]),
+                                ),
                                 flex_direction: FlexDirection::Column,
-                                row_gap: px(4),
+                                row_gap: px(theme.control_gap_px),
                                 ..default()
                             },
                             BackgroundColor(color(&theme.choice_background, 1.0)?),
                         ))
                         .id();
-                    let heading = spawn_text(world, card, &field.label, font, 14.0, muted);
+                    let heading = spawn_text(
+                        world,
+                        card,
+                        &field.label,
+                        font,
+                        theme.secondary_text.font_size_px as f32,
+                        muted,
+                    );
                     let row = world
                         .spawn((
                             ChildOf(card),
@@ -624,23 +642,46 @@ fn project_control(
                                 justify_content: JustifyContent::FlexEnd,
                                 align_items: AlignItems::Baseline,
                                 flex_wrap: FlexWrap::Wrap,
-                                column_gap: px(5.6),
+                                column_gap: px(theme.control_gap_px),
                                 ..default()
                             },
                         ))
                         .id();
-                    let value = spawn_text(world, row, &field.value, font, 16.0, ink);
+                    let value = spawn_text(
+                        world,
+                        row,
+                        &field.value,
+                        font,
+                        theme.body_text.font_size_px as f32,
+                        ink,
+                    );
                     world
                         .get_mut::<TextFont>(value)
                         .expect("numeric text font exists")
                         .font_features = FontFeatures::builder()
                         .enable(FontFeatureTag::TABULAR_FIGURES)
                         .build();
-                    let unit = spawn_text(world, row, &field.unit, font, 14.0, muted);
+                    let unit = spawn_text(
+                        world,
+                        row,
+                        &field.unit,
+                        font,
+                        theme.secondary_text.font_size_px as f32,
+                        muted,
+                    );
                     let entities = [heading, value, unit];
                     widget.field_text.insert(field.id.clone(), entities);
                     entities
                 };
+                for (entity, style) in [
+                    (entities[0], theme.secondary_text),
+                    (entities[1], theme.body_text),
+                    (entities[2], theme.secondary_text),
+                ] {
+                    world
+                        .entity_mut(entity)
+                        .insert(bevy::text::LineHeight::Px(style.line_height_px as f32));
+                }
                 set_text(world, entities[0], field.label.clone());
                 set_text(world, entities[1], field.value.clone());
                 set_text(world, entities[2], field.unit.clone());
@@ -752,21 +793,21 @@ fn project_control(
             world.resource_mut::<InputFocus>().clear();
         }
     }
-    if let GameUiControlContent::Status { emphasis, .. } = control.content {
-        let size = viewport(world).root_font_size as f32
-            * if emphasis == GameUiEmphasis::Primary {
-                2.0
-            } else {
-                1.0
-            };
-        if let Some(mut text_font) = world.get_mut::<TextFont>(widget.text) {
-            text_font.font_size = FontSize::Px(size);
-        }
+    let text_style = theme.control_text(&control.content);
+    if let Some(mut text_font) = world.get_mut::<TextFont>(widget.text) {
+        text_font.font_size = FontSize::Px(text_style.font_size_px as f32);
+        text_font.weight = bevy::text::FontWeight(text_style.font_weight);
     }
+    let text_color = if let GameUiControlContent::Status { emphasis, .. } = control.content {
+        theme.status_color(emphasis)
+    } else {
+        &theme.text
+    };
     world.entity_mut(widget.text).insert((
+        bevy::text::LineHeight::Px(text_style.line_height_px as f32),
         Text::new(label),
         TextColor(color(
-            &theme.text,
+            text_color,
             if control.enabled
                 || matches!(
                     control.content,

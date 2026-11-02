@@ -115,6 +115,7 @@ u_{surface}=(1-a)u_{pilot,surface}+a u_{FBW,surface},\qquad 0\le a\le1
 - adapterは同じ単調時計の連続観測の差分を秒単位で渡す。
 - callback回数や累積時刻を時間の正本にしない。
 - 残り秒は切上げで導出し、3秒Countdownは800 msで3、1秒で2を示し、3秒に達した最初の有効観測で一度だけlaunchする。
+- 残り秒は背景なしの大きな文字で表示し、取消をFlightと共通の操作行へ置く。
 
 - 同時刻の観測は差分0とする。
 - 負値・非有限値・Duration変換/加算overflowは状態を変更せず拒否する。
@@ -229,6 +230,8 @@ Retryはsealed configuration、初期状態、scenario seed、波の位相基準
 
 ## 共通UIの構造
 
+表示方式共通のView/Frameが、phase・情報量・操作集合と完成した文字・色・余白を導出する。文字styleはサイズ・太さ・行高を含み、意味labelと可視captionを分離する。adapterは実フォントの計測と描画APIへの転写を担当する。Running・Pause・Replay Telemetryは同じHUD内容を使用し、空間面への収容可否は実projectionと共有fitで判断する。
+
 - 共有Rustが文言、値、単位、可視条件、許可されたaction、相対順序を所有する。
 - 通常menuは順序付きsectionのColumn・Row・ChoiceGridを正本とし、座標やID文字列からgroupや順序を復元しない。
 - Statusと数値項目は型付きsourceから動的値へ接続する。数値項目は桁位置が安定する書体で描画する。
@@ -254,8 +257,7 @@ VRを含むanchor、両眼への収まり、透明度、前方clear regionは[�
 
 ## Camera
 
-- Screenの飛行視点はWeb・Native共通で操縦席（Pilot）と追従（Chase）を選択する。既定は操縦席で、飛行設定・一時停止の選択、飛行中の「視点」ボタン、Cキーが同じ選択へ反映される。選択は再試行時も保持する。
-- HMD・Phone VRの飛行視点はPilotを使用し、記録再生は独立した視点選択を使用する。
+- 飛行視点は全表示方式で操縦席（Pilot）と追従（Chase）を選択する。既定は操縦席で、飛行設定・一時停止の選択、飛行中の「視点」ボタン、Cキーが同じ選択へ反映される。選択は再試行時も保持し、実head trackingは選択した共通mountへ合成する。
 - いずれもcamera操作からphysicsやrecordを変更しない。
 
 PilotEyePointは機体構造datumからの基準位置・取付姿勢を持つmetadataであり、左右眼の中点を表す。実身体移動$x_p$に対し、基準位置から前後方向の眼移動を導出する。
@@ -279,6 +281,7 @@ T_{world,view}=T_{world,aircraft}T_{aircraft,pilot}T_{pilot,head}T_{head,eye}
 - 眼別offsetはstereo境界で一度だけ適用する。
 
 - Briefing/Countdownはsealed configurationの初期状態、Title/Setupは会場由来の展示姿勢を使用する。
+- 展示cameraは登録会場の発進方向を向く水平基準を全表示方式で共有する。水面上12 mは展示用の演出値であり、viewportやMenu幅から向きを変更しない。
 - 展示からphysics tickやFlight telemetryを生成しない。
 - cameraは数値snapshot、view metadata、視線入力、camera時刻から数値poseを導出し、coreをstepしない。
 - nose、wing/cockpitの横線と地平線を同時に視認できる構図を維持する。
@@ -287,7 +290,7 @@ T_{world,view}=T_{world,aircraft}T_{aircraft,pilot}T_{pilot,head}T_{head,eye}
 - Replay/AttractはAuto、Pilot、Chase、Orbit、Platform、Shore、Overhead、Side、Front、Telephotoを扱う。
 - Autoは共有CameraDirectorを選ぶmodeである。
 - 手動選択では自動cutを停止する。
-- VRの自動選択はPilotを維持し、明示した外部rigへはhead trackingを局所姿勢として合成する。
+- Autoは表示方式共通の選定を使用し、head trackingを選択したrigの局所姿勢として合成する。
 
 - 定点rigはworld assetのversion・origin・hash付きcamera_pointsを使用し、追従rigはrecord時刻から導出する。
 - Telephotoの登録位置はN=300 m、E=700 m、水面上80 mであり、表示用の地形との視線条件を基にした配置である。
