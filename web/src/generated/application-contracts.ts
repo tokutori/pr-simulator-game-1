@@ -3732,6 +3732,10 @@ export interface GameUiHudLayout {
      */
     readonly height_px: number;
     /**
+     * Completed logical readout line advance.
+     */
+    readonly line_height_px: number;
+    /**
      * Left and bottom viewport insets; the bottom edge is the viewport anchor.
      *
      * @minItems 2
@@ -4476,6 +4480,10 @@ export interface GameUiTextStyle {
      * Requested font weight, in the range 1 through 1000.
      */
     readonly font_weight: number;
+    /**
+     * Completed line advance in logical pixels.
+     */
+    readonly line_height_px: number;
 }
 /**
  * Lightweight per-frame UI observation associated with one published structural view.

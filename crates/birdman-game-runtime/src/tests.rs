@@ -3374,7 +3374,7 @@ fn hmd_frame_and_focus_use_the_confirmed_display_resource_and_shared_viewer_capt
             .as_ref()
             .unwrap()
             .world_from_head,
-        Some(head)
+        Some(expected_head)
     );
     assert_eq!(
         reset_event
@@ -3423,7 +3423,7 @@ fn hmd_frame_and_focus_use_the_confirmed_display_resource_and_shared_viewer_capt
             .as_ref()
             .unwrap()
             .world_from_head,
-        Some(head)
+        Some(expected_head)
     );
     assert_eq!(
         reset
