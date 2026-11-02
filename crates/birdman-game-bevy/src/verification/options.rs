@@ -84,6 +84,12 @@ impl Options {
         verification_timing_mode(self.water.is_some(), self.timing.as_deref())
     }
 
+    pub(crate) fn keyboard_config_directory(&self) -> Option<PathBuf> {
+        self.directory
+            .as_ref()
+            .map(|directory| directory.join("keyboard-controls"))
+    }
+
     pub(crate) fn offscreen(&self) -> bool {
         self.offscreen
     }
@@ -242,6 +248,7 @@ mod tests {
 
     #[test]
     fn verification_options_validate_before_app_initialization() {
+        assert!(Options::default().keyboard_config_directory().is_none());
         for arguments in [
             vec!["--offscreen"],
             vec!["--verify-size", "800x600"],
@@ -272,6 +279,10 @@ mod tests {
         .unwrap();
         options.validate().unwrap();
         assert!(options.offscreen());
+        assert_eq!(
+            options.keyboard_config_directory(),
+            Some(PathBuf::from("output").join("keyboard-controls"))
+        );
         let plugin = options.window_plugin(WindowPlugin {
             primary_window: Some(Window::default()),
             ..Default::default()
