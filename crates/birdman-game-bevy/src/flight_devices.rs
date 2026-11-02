@@ -4,7 +4,7 @@ use bevy::{
     prelude::*,
 };
 use birdman_game_app::flight_input::FlightDeviceIdentity;
-use birdman_game_runtime::ApplicationGamepadObservation;
+use birdman_game_runtime::{ApplicationGamepadObservation, ApplicationInput};
 use std::collections::BTreeMap;
 
 #[derive(Resource, Default)]
@@ -22,6 +22,18 @@ impl FlightDevices {
 
     pub(crate) fn observations(&self) -> &[ApplicationGamepadObservation] {
         &self.observations
+    }
+
+    /// Completes existing Screen and XR frames from the same main-thread device observation.
+    pub(crate) fn populate_frame_gamepads(&self, input: &mut ApplicationInput) {
+        if let ApplicationInput::Frame {
+            gamepads, spatial, ..
+        } = input
+        {
+            gamepads.clear();
+            gamepads.extend_from_slice(self.observations());
+            spatial.gamepads.clone_from(gamepads);
+        }
     }
 
     fn connection(&mut self, event: &GamepadConnectionEvent) -> Result<(), &'static str> {
@@ -180,6 +192,54 @@ mod tests {
         app.world_mut().write_message(connected(gamepad));
         app.update();
         let initial = app.world().resource::<FlightDevices>().observations()[0].clone();
+        let mut frame = ApplicationInput::Frame {
+            display_resource_id: None,
+            timestamp_ms: 1234.5,
+            gamepads: Vec::new(),
+            xr: None,
+            spatial: birdman_game_runtime::ApplicationSpatialObservation {
+                presented_id: Some(41),
+                sources: vec![birdman_game_presentation::xr::XrInputSourceObservation {
+                    source_id: 5,
+                    target_ray_mode: "tracked-pointer".into(),
+                    handedness: "right".into(),
+                    tracking_from_ray: None,
+                    select_pressed: Some(false),
+                    gamepad: Some(birdman_game_presentation::xr::XrInputGamepadObservation {
+                        mapping: "xr-standard".into(),
+                        axes: vec![Some(0.2)],
+                        buttons: Vec::new(),
+                    }),
+                }],
+                gamepads: Vec::new(),
+            },
+        };
+        for display in [None, Some(7), None] {
+            if let ApplicationInput::Frame {
+                display_resource_id,
+                xr,
+                ..
+            } = &mut frame
+            {
+                *display_resource_id = display;
+                *xr = display.map(|_| birdman_game_runtime::ApplicationXrFrameObservation {
+                    visibility: birdman_game_app::application::XrVisibility::Visible,
+                    input_focused: true,
+                    observation: birdman_game_presentation::xr::XrViewerObservation {
+                        source: birdman_game_presentation::xr::XrViewerSource::RuntimeDerived,
+                        tracking_from_head: Some(birdman_game_presentation::camera::Pose::IDENTITY),
+                        views: Vec::new(),
+                    },
+                });
+            }
+            let devices = app.world().resource::<FlightDevices>();
+            let mut expected = serde_json::to_value(&frame).unwrap();
+            let physical = serde_json::to_value(devices.observations()).unwrap();
+            expected["gamepads"] = physical.clone();
+            expected["spatial"]["gamepads"] = physical;
+            devices.populate_frame_gamepads(&mut frame);
+            assert_eq!(serde_json::to_value(&frame).unwrap(), expected);
+        }
         app.world_mut().write_message(GamepadConnectionEvent::new(
             gamepad,
             GamepadConnection::Disconnected,
@@ -209,6 +269,17 @@ mod tests {
             observed[0].axes,
             vec![Some(0.0), Some(0.75), Some(0.0), Some(0.0)]
         );
+        app.world()
+            .resource::<FlightDevices>()
+            .populate_frame_gamepads(&mut frame);
+        if let ApplicationInput::Frame {
+            gamepads, spatial, ..
+        } = &frame
+        {
+            let expected = serde_json::to_value(observed).unwrap();
+            assert_eq!(serde_json::to_value(gamepads).unwrap(), expected);
+            assert_eq!(serde_json::to_value(&spatial.gamepads).unwrap(), expected);
+        }
         // The adapter reports only the current batch; the aggregate runtime retains availability.
         assert!(!app.world().resource::<FlightDevices>().touch_available());
         app.world_mut()
@@ -223,5 +294,16 @@ mod tests {
         assert!(app.world().resource::<FlightDevices>().touch_available());
         app.update();
         assert!(!app.world().resource::<FlightDevices>().touch_available());
+        app.world_mut().write_message(GamepadConnectionEvent::new(
+            gamepad,
+            GamepadConnection::Disconnected,
+        ));
+        app.update();
+        app.world()
+            .resource::<FlightDevices>()
+            .populate_frame_gamepads(&mut frame);
+        assert!(
+            matches!(frame, ApplicationInput::Frame { gamepads, spatial, .. } if gamepads.is_empty() && spatial.gamepads.is_empty())
+        );
     }
 }
