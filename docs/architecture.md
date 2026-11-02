@@ -213,6 +213,7 @@ GameUiView / GameUiFrame → platform renderer → DOM / VR panel / Bevy entity
 - WebはDTOを保持し、DOM・engine APIに必要な投影だけを行う。readonlyは静的な変更制約とし、時刻・score・quaternion等の数値契約はRustのproducerとcoreで検査する。
 - Analysisのchart・cursorは共有Rust UIから投影し、Replay cameraと時計操作は同期呼出しで現在の観測を反映する。遅延tickはsession所有者とtimer世代で管理し、停止・seek・速度変更・復帰で旧callbackを退役させる。
 - 共有session commandは同期で実行し、観測したRust phaseを即時採用する。保存記録の読込みは専用の待機状態で管理し、I/O応答を要求ID・session所有者・source tokenで照合する。
+- 利用者のキーボード設定は既StorageOwnerが文書の検証・保存要求と完了認可を所有し、Bootで復元して飛行準備時に固定する。WebはlocalStorage、Nativeは利用者config領域への生I/Oを実行し、要求IDと送信値に対応する終端まで終了処理で保持する。
 - ログ出力は現在の記録原文を同期で取得してdownloadを要求し、成功・失敗の通知を保持する。Blob URLはbrowser adapterが所有し、遅延解放と破棄を管理する。
 - 外部の保存JSONはformatのcodecで受理する。内部出力の受渡しと、外部原文のdecodeを独立した境界として扱う。
 - Webが生成する内部入力DTOはJSONへ直接encodeし、Rustが型・値・Actionの受理を検査する。browser由来の表示文字列と転送量は共有の上限へ収め、WASM数値引数はJavaScriptの整数変換前に境界を検査する。

@@ -528,8 +528,9 @@ impl FlightInputState {
         let mut pilot_position = TailPilotPositionCommand::Hold;
         if self.active {
             let selected = self.select_gamepad(gamepads);
+            let pitch = self.keyboard_axis(FlightControl::NoseUp, FlightControl::NoseDown);
             let targets = [
-                self.keyboard_axis(FlightControl::NoseUp, FlightControl::NoseDown),
+                if settings.invert_pitch { -pitch } else { pitch },
                 self.keyboard_axis(FlightControl::TurnRight, FlightControl::TurnLeft),
             ];
             let step = 1.0 / (settings.ramp_seconds * f64::from(PHYSICS_HZ));

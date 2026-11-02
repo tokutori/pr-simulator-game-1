@@ -356,7 +356,7 @@ pub fn game_ui_view(
                 menu.status(
                     "game-pause-help-info",
                     "操縦方法",
-                    catalog::FLIGHT_CONTROL_INSTRUCTIONS,
+                    &catalog::flight_control_instructions(context.keyboard_controls.invert_pitch),
                 );
                 menu.section("flight-actions", "", GameUiSectionLayout::Row);
                 menu.action(
@@ -873,6 +873,30 @@ fn setup(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
         context.environment_readout,
     );
     let keyboard = context.keyboard_controls;
+    for (inverted, label) in [
+        (false, "直接（↑ / Wで機首上げ）"),
+        (true, "反転（↓ / Sで機首上げ）"),
+    ] {
+        menu.choice(
+            "keyboard-pitch",
+            "キーボードの上下軸",
+            (label, u32::from(inverted), ""),
+            SessionCommand::SetKeyboardControls {
+                settings: birdman_game_app::flight_input::KeyboardControlSettings {
+                    invert_pitch: inverted,
+                    ..keyboard
+                },
+            },
+            keyboard.invert_pitch == inverted,
+        );
+    }
+    if !context.keyboard_controls_notification.is_empty() {
+        menu.status(
+            "game-keyboard-controls-storage",
+            "設定の保存",
+            context.keyboard_controls_notification,
+        );
+    }
     for (code, seconds) in [(0, 0.1), (1, 0.25), (2, 0.5), (3, 1.0), (4, 2.0)] {
         menu.choice(
             "keyboard-ramp",
@@ -979,7 +1003,7 @@ fn briefing(menu: &mut Menu, context: &GameUiContext<'_, '_>, phase: SessionPhas
     menu.status(
         "game-briefing-controls",
         "操縦",
-        catalog::FLIGHT_CONTROL_INSTRUCTIONS,
+        &catalog::flight_control_instructions(context.keyboard_controls.invert_pitch),
     );
     menu.status(
         "game-briefing-readiness",

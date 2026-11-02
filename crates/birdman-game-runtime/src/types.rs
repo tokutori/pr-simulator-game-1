@@ -198,6 +198,20 @@ pub struct ApplicationSpatialObservation {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ApplicationInput {
+    /// Terminal read of the requested user settings; never a flight record.
+    KeyboardControlsLoaded {
+        /// Owner-issued operation identity.
+        request_id: u32,
+        /// Unmodified storage result.
+        completion: super::ApplicationKeyboardControlsLoad,
+    },
+    /// Terminal write of exactly the requested keyboard-settings JSON.
+    KeyboardControlsSaved {
+        /// Owner-issued operation identity.
+        request_id: u32,
+        /// Original write error, absent after successful persistence.
+        failure: Option<String>,
+    },
     /// Terminal result of attaching the exact requested sensor subscription.
     PhoneSensorsStarted {
         #[doc = "Owner-issued sensor subscription identity."]
@@ -486,6 +500,20 @@ pub enum ApplicationInput {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ApplicationRequest {
+    /// Reads the platform user-settings location once during boot.
+    ReadKeyboardControls {
+        /// Owner-issued operation identity.
+        request_id: u32,
+        /// Maximum accepted UTF-8 document size.
+        maximum_bytes: u32,
+    },
+    /// Replaces user keyboard settings with the shared, validated UTF-8 document.
+    WriteKeyboardControls {
+        /// Owner-issued operation identity.
+        request_id: u32,
+        /// Complete canonical document; adapters perform raw I/O only.
+        json: String,
+    },
     /// Subscribe to raw phone observations without changing the active display.
     StartPhoneSensors {
         #[doc = "Owner-issued sensor subscription identity."]

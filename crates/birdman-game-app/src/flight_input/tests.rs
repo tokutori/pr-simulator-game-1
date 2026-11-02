@@ -40,6 +40,56 @@ fn set_value(input: TailFlightTickInput) -> f64 {
 }
 
 #[test]
+fn keyboard_pitch_inversion_keeps_other_demands_and_physical_keys() {
+    for (pitch, sign) in [
+        (FlightControlKey::ArrowUp, 1.0),
+        (FlightControlKey::KeyW, 1.0),
+        (FlightControlKey::ArrowDown, -1.0),
+        (FlightControlKey::KeyS, -1.0),
+    ] {
+        let mut normal = FlightInputState::default();
+        normal.set_active(true);
+        let mut inverted = FlightInputState::default();
+        inverted.set_active(true);
+        for keycode in [pitch, FlightControlKey::ArrowRight, FlightControlKey::KeyL] {
+            key(&mut normal, keycode, true, false);
+            key(&mut inverted, keycode, true, false);
+        }
+        let defaults = KeyboardControlSettings::default();
+        let settings = KeyboardControlSettings {
+            invert_pitch: true,
+            ..defaults
+        };
+        for _ in 0..50 {
+            let direct = normal
+                .tick_input(&[], 0.0, defaults, |_| {
+                    TailPilotPositionIntent::try_new(0.5)
+                })
+                .unwrap();
+            let reversed = inverted
+                .tick_input(&[], 0.0, settings, |_| {
+                    TailPilotPositionIntent::try_new(0.5)
+                })
+                .unwrap();
+            assert_eq!(
+                direct.manual_intent().nose_up(),
+                -reversed.manual_intent().nose_up()
+            );
+            assert_eq!(
+                direct.manual_intent().turn_right(),
+                reversed.manual_intent().turn_right()
+            );
+            assert_eq!(
+                direct.pilot_position_command(),
+                reversed.pilot_position_command()
+            );
+            assert!(direct.manual_intent().nose_up() * sign > 0.0);
+        }
+        assert_eq!(normal.accepted_keys(), inverted.accepted_keys());
+    }
+}
+
+#[test]
 fn keyboard_integrates_the_confirmed_target_per_tick_and_clamps_at_its_limit() {
     let mut input = FlightInputState::default();
     input.set_active(true);

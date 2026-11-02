@@ -13,6 +13,13 @@ use super::{ApplicationRequest, ApplicationRuntimeError};
 
 #[derive(Default)]
 pub(super) struct StorageOwner {
+    keyboard_read: Option<u32>,
+    keyboard_loaded: bool,
+    keyboard_save: Option<(u32, birdman_game_app::flight_input::KeyboardControlSettings)>,
+    keyboard_saved: Option<birdman_game_app::flight_input::KeyboardControlSettings>,
+    keyboard_wanted: Option<birdman_game_app::flight_input::KeyboardControlSettings>,
+    keyboard_save_failed: bool,
+    keyboard_notification: String,
     observed_source: Option<RecordSourceId>,
     save_notification: Option<(RecordSourceId, String)>,
     saves: BTreeMap<u32, SaveJob>,
@@ -64,7 +71,163 @@ struct SaveJob {
     opened: bool,
 }
 
+/// Raw completion of the requested user keyboard-settings read.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ApplicationKeyboardControlsLoad {
+    /// No stored settings exist.
+    Missing,
+    /// Original UTF-8 JSON; the shared owner validates it.
+    Found {
+        /// Unmodified UTF-8 document read by the adapter.
+        json: String,
+    },
+    /// Original storage failure.
+    Failed {
+        /// Original platform diagnostic.
+        cause: String,
+    },
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct KeyboardControlsDocument {
+    schema_version: u32,
+    keyboard_controls: birdman_game_app::flight_input::KeyboardControlSettings,
+}
+
 impl StorageOwner {
+    pub(super) fn keyboard_needs_read(&self) -> bool {
+        !self.keyboard_loaded && self.keyboard_read.is_none()
+    }
+
+    pub(super) fn keyboard_loading(&self) -> bool {
+        !self.keyboard_loaded
+    }
+
+    pub(super) fn read_keyboard(&mut self, request_id: u32) -> ApplicationRequest {
+        self.keyboard_read = Some(request_id);
+        ApplicationRequest::ReadKeyboardControls {
+            request_id,
+            maximum_bytes: 4096,
+        }
+    }
+
+    pub(super) fn keyboard_loaded(
+        &mut self,
+        request_id: u32,
+        completion: ApplicationKeyboardControlsLoad,
+    ) -> Option<birdman_game_app::flight_input::KeyboardControlSettings> {
+        if self.keyboard_read != Some(request_id) {
+            return None;
+        }
+        self.keyboard_read = None;
+        self.keyboard_loaded = true;
+        let result = match completion {
+            ApplicationKeyboardControlsLoad::Missing => return None,
+            ApplicationKeyboardControlsLoad::Failed { cause } => Err(cause),
+            ApplicationKeyboardControlsLoad::Found { json } => {
+                if json.len() > 4096 {
+                    Err("設定ファイルが上限を超えている。".to_owned())
+                } else {
+                    serde_json::from_str::<KeyboardControlsDocument>(&json)
+                        .map_err(|cause| cause.to_string())
+                        .and_then(|document| {
+                            if document.schema_version == 1 && document.keyboard_controls.is_valid()
+                            {
+                                Ok(document.keyboard_controls)
+                            } else {
+                                Err("設定の形式または値を受理できない。".to_owned())
+                            }
+                        })
+                }
+            }
+        };
+        match result {
+            Ok(settings) => {
+                self.keyboard_saved = Some(settings);
+                Some(settings)
+            }
+            Err(cause) => {
+                self.keyboard_notification =
+                    format!("保存済み設定を読み込めないため既定値を使用する。原因: {cause}");
+                None
+            }
+        }
+    }
+
+    pub(super) fn keyboard_changed(
+        &mut self,
+        settings: birdman_game_app::flight_input::KeyboardControlSettings,
+    ) {
+        self.keyboard_wanted = Some(settings);
+        self.keyboard_save_failed = false;
+        self.keyboard_notification =
+            if self.keyboard_saved == Some(settings) && self.keyboard_save.is_none() {
+                "保存済み".to_owned()
+            } else {
+                "保存中".to_owned()
+            };
+    }
+
+    pub(super) fn keyboard_needs_write(&self) -> bool {
+        self.keyboard_save.is_none()
+            && !self.keyboard_save_failed
+            && self.keyboard_wanted.is_some()
+            && self.keyboard_wanted != self.keyboard_saved
+    }
+
+    pub(super) fn write_keyboard(&mut self, request_id: u32) -> Option<ApplicationRequest> {
+        let settings = self.keyboard_wanted?;
+        match serde_json::to_string(&KeyboardControlsDocument {
+            schema_version: 1,
+            keyboard_controls: settings,
+        }) {
+            Ok(json) => {
+                self.keyboard_save = Some((request_id, settings));
+                Some(ApplicationRequest::WriteKeyboardControls { request_id, json })
+            }
+            Err(cause) => {
+                self.keyboard_save_failed = true;
+                self.keyboard_notification = format!(
+                    "設定は今回有効だが保存できない。選択し直して再試行する。原因: {cause}"
+                );
+                None
+            }
+        }
+    }
+
+    pub(super) fn keyboard_written(&mut self, request_id: u32, failure: Option<String>) {
+        let Some((expected, settings)) = self.keyboard_save else {
+            return;
+        };
+        if expected != request_id {
+            return;
+        }
+        self.keyboard_save = None;
+        if let Some(cause) = failure {
+            if self.keyboard_wanted == Some(settings) {
+                self.keyboard_save_failed = true;
+                self.keyboard_notification = format!(
+                    "設定は今回有効だが保存できない。選択し直して再試行する。原因: {cause}"
+                );
+            }
+        } else {
+            self.keyboard_saved = Some(settings);
+            if self.keyboard_wanted == Some(settings) {
+                self.keyboard_notification = "保存済み".to_owned();
+            }
+        }
+        if self.keyboard_wanted == self.keyboard_saved {
+            self.keyboard_notification = "保存済み".to_owned();
+        }
+    }
+
+    pub(super) fn keyboard_notification(&self) -> &str {
+        &self.keyboard_notification
+    }
+
     pub(super) fn close(&mut self) {
         self.saves.clear();
         self.save_notification = None;

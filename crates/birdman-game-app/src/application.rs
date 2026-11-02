@@ -271,7 +271,10 @@ impl ApplicationSession {
         }
         let result = match command {
             SessionCommand::SetKeyboardControls { settings } => {
-                if self.session.snapshot().phase() != SessionPhase::FlightSetup {
+                if !matches!(
+                    self.session.snapshot().phase(),
+                    SessionPhase::Title | SessionPhase::FlightSetup
+                ) {
                     return Err(ApplicationError::Session(
                         GameSessionError::InvalidTransition,
                     ));

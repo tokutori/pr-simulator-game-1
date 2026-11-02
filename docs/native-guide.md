@@ -31,6 +31,12 @@ Windows/Linuxの配布版はOpenXRを同梱機能として有効にしている�
 
 引数なしでは通常画面を起動する。ビルド時の機能は`BUILD-INFO.json`の`features`と`--help`で確認できる。runtimeの選択とloaderの役割は[Khronos公式資料](https://registry.khronos.org/OpenXR/specs/1.1/loader.html#runtime-discovery)を参照する。
 
+## 操縦設定の保存
+
+キーボード応答と上下軸反転は利用者設定として保存し、再起動後に復元する。保存先はWindowsの`%APPDATA%/birdman-game/keyboard-controls.json`、Linuxの`$XDG_CONFIG_HOME/birdman-game/keyboard-controls.json`（未設定時は`$HOME/.config`以下）、macOSの`$HOME/Library/Application Support/birdman-game/keyboard-controls.json`である。
+
+記録の出力先や起動ディレクトリを変更しても設定を保持する。保存先を利用できない場合はゲーム内の設定欄に原因を表示し、その起動中の設定を使用する。
+
 ## 最初のフライト
 
 1. タイトルの「飛行を設定」から「飛行設定」を開く。

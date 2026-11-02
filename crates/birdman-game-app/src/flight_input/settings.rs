@@ -16,6 +16,8 @@ pub enum KeyboardResponseCurve {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct KeyboardControlSettings {
+    /// Reverses only the keyboard nose-up axis before its response ramp.
+    pub invert_pitch: bool,
     /// Seconds from neutral to full ramp position.
     pub ramp_seconds: f64,
     /// Curve of the normalized ramp position.
@@ -29,6 +31,7 @@ pub struct KeyboardControlSettings {
 impl Default for KeyboardControlSettings {
     fn default() -> Self {
         Self {
+            invert_pitch: false,
             ramp_seconds: 0.5,
             curve: KeyboardResponseCurve::Linear,
             sensitivity: 1.0,
@@ -39,7 +42,7 @@ impl Default for KeyboardControlSettings {
 
 impl KeyboardControlSettings {
     /// Validates the complete selection before it can replace the retained settings.
-    pub(crate) fn is_valid(self) -> bool {
+    pub fn is_valid(self) -> bool {
         self.ramp_seconds.is_finite()
             && (0.1..=2.0).contains(&self.ramp_seconds)
             && self.sensitivity.is_finite()
