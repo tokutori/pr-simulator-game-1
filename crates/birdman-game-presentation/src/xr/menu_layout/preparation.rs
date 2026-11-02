@@ -113,7 +113,10 @@ fn source_from_view(
                         .map_or(display_value, |value| &value.display_value)
                         .clone(),
                 },
-                GameUiControlContent::Status { value, .. } => MenuWidget::Status {
+                GameUiControlContent::Status {
+                    value, emphasis, ..
+                } => MenuWidget::Status {
+                    emphasis: *emphasis,
                     value: frame
                         .readouts
                         .iter()

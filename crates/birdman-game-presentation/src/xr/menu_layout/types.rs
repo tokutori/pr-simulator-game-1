@@ -1,5 +1,6 @@
 use crate::game_ui::{
-    GameUiButtonPresentation, GameUiChartLegend, GameUiChartText, GameUiNumericField, GameUiSection,
+    GameUiButtonPresentation, GameUiChartLegend, GameUiChartText, GameUiEmphasis,
+    GameUiNumericField, GameUiSection,
 };
 use serde::{Deserialize, Serialize};
 
@@ -202,6 +203,8 @@ pub enum MenuWidget {
     },
     /// Read-only status.
     Status {
+        /// Shared readout prominence.
+        emphasis: GameUiEmphasis,
         /// Already formatted content or current toggle selection.
         value: String,
     },

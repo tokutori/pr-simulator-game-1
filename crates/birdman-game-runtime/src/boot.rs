@@ -140,6 +140,7 @@ impl BootOwner {
                 enabled: false,
                 section: "boot-diagnostic".to_owned(),
                 content: GameUiControlContent::Status {
+                    emphasis: GameUiEmphasis::Normal,
                     source: GameUiReadoutSource::Static,
                     value: cause.clone(),
                 },

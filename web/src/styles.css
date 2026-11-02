@@ -513,8 +513,14 @@ body {
 }
 
 .screen-ui-status {
-  color: #c7d7d1;
+  color: var(--game-ui-muted-text, #c7d7d1);
   white-space: pre-line;
+}
+
+.screen-ui-status[data-emphasis="primary"] {
+  font-size: 2rem;
+  font-weight: 700;
+  text-align: center;
 }
 
 .screen-ui-shell[data-scene="Boot"] .screen-ui-status {

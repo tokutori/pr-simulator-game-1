@@ -752,6 +752,17 @@ fn project_control(
             world.resource_mut::<InputFocus>().clear();
         }
     }
+    if let GameUiControlContent::Status { emphasis, .. } = control.content {
+        let size = viewport(world).root_font_size as f32
+            * if emphasis == GameUiEmphasis::Primary {
+                2.0
+            } else {
+                1.0
+            };
+        if let Some(mut text_font) = world.get_mut::<TextFont>(widget.text) {
+            text_font.font_size = FontSize::Px(size);
+        }
+    }
     world.entity_mut(widget.text).insert((
         Text::new(label),
         TextColor(color(

@@ -429,7 +429,7 @@ export class ScreenUiAdapter {
       ]);
     }
     const value = this.frame?.readouts.find(readout => readout.id === control.id)?.value ?? content.value;
-    return h("output.screen-ui-status", { key: control.id, attrs: { id: control.id, "aria-live": "polite" } }, control.label.length === 0 ? value : `${control.label}: ${value}`);
+    return h("output.screen-ui-status", { key: control.id, attrs: { id: control.id, "aria-live": "polite" }, dataset: { emphasis: content.emphasis } }, control.label.length === 0 ? value : `${control.label}: ${value}`);
   }
 
   private createChart(control: GameUiControl, plot: GameUiChart): VNode {

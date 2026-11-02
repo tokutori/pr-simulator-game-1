@@ -1544,6 +1544,10 @@ export type GameUiControlContent = {
      */
     readonly value: number;
 } | {
+    /**
+     * Relative prominence of the completed readout.
+     */
+    readonly emphasis: GameUiEmphasis;
     readonly kind: "status";
     /**
      * Typed dynamic-value provider; static values require no frame patch.
@@ -1643,7 +1647,7 @@ export type GameUiButtonPresentation = {
     readonly kind: "disclosure";
 };
 /**
- * Shared action emphasis.
+ * Shared readout and action emphasis.
  */
 export type GameUiEmphasis = "primary" | "secondary" | "normal";
 /**

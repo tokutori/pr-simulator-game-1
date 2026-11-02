@@ -69,7 +69,6 @@ impl ApplicationRuntime {
     fn touch_controls_available(&self) -> bool {
         self.screen_pointer_available()
             && self.platform.touch_available
-            && self.platform.viewport.width >= self.platform.viewport.height
             && self.application.core_session().snapshot().phase() == SessionPhase::FlightRunning
     }
 

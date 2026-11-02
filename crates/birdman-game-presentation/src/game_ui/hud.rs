@@ -667,9 +667,17 @@ fn hud_layout(
     let (left, bottom, width) = if super::touch::available(platform, phase) {
         let [(stick, _), (slider, _)] = super::touch::regions(platform, menu);
         let gap = 0.75 * font;
-        let left = stick.x + stick.width + gap;
-        let right = (viewport.width - menu.width_px - gap).min(slider.x - gap);
-        (left, gap, (right - left).max(1.0).min(54.0 * font))
+        if viewport.width < viewport.height {
+            (
+                gap,
+                viewport.height - stick.y.min(slider.y) + gap,
+                (viewport.width - 2.0 * gap).max(1.0),
+            )
+        } else {
+            let left = stick.x + stick.width + gap;
+            let right = (viewport.width - menu.width_px - gap).min(slider.x - gap);
+            (left, gap, (right - left).max(1.0).min(54.0 * font))
+        }
     } else if in_menu && menu.shell == GameUiShell::FlightBar {
         (
             if compact { 0.6 } else { 0.75 } * font,

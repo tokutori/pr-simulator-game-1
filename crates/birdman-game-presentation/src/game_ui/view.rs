@@ -232,7 +232,7 @@ pub fn game_ui_view(
                 "game-countdown-cancel",
                 "発進を取消",
                 SessionCommand::CancelCountdown {},
-                GameUiEmphasis::Secondary,
+                GameUiEmphasis::Normal,
                 true,
             );
             feedback(&mut menu, context);
@@ -536,7 +536,14 @@ pub fn game_ui_view(
             controls: menu.controls,
         }],
         layout,
-        theme: theme(context.platform.viewport.root_font_size),
+        theme: {
+            let mut theme = theme(context.platform.viewport.root_font_size);
+            if matches!(phase, SessionPhase::Countdown { .. }) {
+                theme.panel_opacity = 1.0;
+                theme.muted_text = theme.text.clone();
+            }
+            theme
+        },
         hud: if credits_open {
             None
         } else {
@@ -623,6 +630,11 @@ impl Menu {
             false,
             id,
             GameUiControlContent::Status {
+                emphasis: if source == GameUiReadoutSource::Countdown {
+                    GameUiEmphasis::Primary
+                } else {
+                    GameUiEmphasis::Normal
+                },
                 source,
                 value: value.to_owned(),
             },

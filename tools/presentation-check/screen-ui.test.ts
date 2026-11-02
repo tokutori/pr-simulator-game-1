@@ -12,7 +12,7 @@ function adapterView(): GameUiView {
       { id: "button", section: "values", label: "操作", enabled: true, content: { kind: "button", presentation: { kind: "action", emphasis: "primary" }, action: { kind: "toggle_technical" } } },
       { id: "toggle", section: "values", label: "表示", enabled: true, content: { kind: "toggle", cue: "telemetry", value: false } },
       { id: "range", section: "values", label: "時刻", enabled: true, content: { kind: "range", minimum: 0, maximum: 10, step: 0.1, value: 1, display_value: "1.0", target: "replay" } },
-      { id: "notice", section: "values", label: "", enabled: false, content: { kind: "status", source: "static", value: "発進準備完了" } },
+      { id: "notice", section: "values", label: "", enabled: false, content: { kind: "status", emphasis: "primary", source: "static", value: "発進準備完了" } },
       { id: "fields", section: "values", label: "選択地点", enabled: false, content: { kind: "fields", source: "analysis_cursor",
         fields: [{ id: "speed", label: "対気速度", value: "12.34", unit: "m/s" }] } }
     ]
@@ -103,6 +103,7 @@ describe("Screen DOM adapter", () => {
       expect(button.textContent).toBe("一時停止");
       expect((required(root, "input[type=range]") as HTMLInputElement).value).toBe("2.5");
       expect(required(root, "#notice").textContent).toBe("更新済み");
+      expect(required(root, "#notice").dataset.emphasis).toBe("primary");
       expect(required(root, "#fields .screen-ui-field-value")).toBe(numericValue);
       expect(required(root, "#fields dd").textContent).toBe("9.87m/s");
       expect(view.panels[0]?.controls[0]?.label).toBe("操作");

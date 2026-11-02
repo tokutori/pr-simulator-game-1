@@ -1182,6 +1182,8 @@ pub enum GameUiControlContent {
     },
     /// Derived readout.
     Status {
+        /// Relative prominence of the completed readout.
+        emphasis: GameUiEmphasis,
         /// Typed dynamic-value provider; static values require no frame patch.
         source: GameUiReadoutSource,
         /// Shared formatted content.
@@ -1566,7 +1568,7 @@ pub enum GameUiButtonPresentation {
     },
 }
 
-/// Shared action emphasis.
+/// Shared readout and action emphasis.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]

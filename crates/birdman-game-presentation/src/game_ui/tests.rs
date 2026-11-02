@@ -120,6 +120,7 @@ fn hud_node<'view>(hud: &'view GameUiHud, id: &str) -> &'view GameUiHudNode {
 fn assert_touch_hud_lower_band(session: &GameSession<'static>, protected_cue: Option<&str>) {
     let snapshot = session.snapshot();
     for (width, height, font) in [
+        (390.0, 844.0, 16.0),
         (1280.0, 720.0, 16.0),
         (1920.0, 1080.0, 16.0),
         (1920.0, 1080.0, 24.0),
@@ -140,12 +141,19 @@ fn assert_touch_hud_lower_band(session: &GameSession<'static>, protected_cue: Op
         let top = height - bottom - hud.layout.height_px;
         let right = left + hud.layout.width_px;
         assert!(
-            top >= height * 0.5,
+            top >= if width < height { 0.0 } else { height * 0.5 },
             "{width}x{height}@{font}: top={top}, height={}",
             hud.layout.height_px
         );
         assert!(hud.layout.font_size_px >= 0.875 * font);
-        assert!(right <= width - view.layout.width_px);
+        assert!(
+            right
+                <= if width < height {
+                    width
+                } else {
+                    width - view.layout.width_px
+                }
+        );
         let bounds = view
             .panels
             .iter()
@@ -159,7 +167,15 @@ fn assert_touch_hud_lower_band(session: &GameSession<'static>, protected_cue: Op
             })
             .collect::<Vec<_>>();
         assert_eq!(bounds.len(), 2);
+        let [stick, slider]: [GameUiRect; 2] = bounds.clone().try_into().unwrap();
+        assert!(stick.x + stick.width < slider.x);
         for region in bounds {
+            assert!(region.x >= 0.0 && region.y >= 0.0);
+            assert!(region.x + region.width <= width && region.y + region.height <= height);
+            assert!(region.width >= 44.0 && region.height >= 44.0);
+            if width < height {
+                assert!(region.y + region.height < height - view.layout.maximum_height_px);
+            }
             assert!(
                 right <= region.x
                     || left >= region.x + region.width
@@ -786,6 +802,33 @@ fn countdown_ticks_live_telemetry_and_pause_observations_share_one_revision_poli
     let state = GameUiState::default();
     let platform = platform();
     let countdown = revision(&mut cache, &application, &state, &platform);
+    let view = game_ui_view(
+        &state,
+        &context(
+            application.core_session(),
+            application.difficulty(),
+            &platform,
+        ),
+    )
+    .unwrap();
+    assert!(matches!(
+        control(&view, "game-countdown-status").content,
+        GameUiControlContent::Status {
+            emphasis: GameUiEmphasis::Primary,
+            ..
+        }
+    ));
+    assert_eq!(view.theme.panel_opacity, 1.0);
+    assert_eq!(view.theme.muted_text, view.theme.text);
+    assert!(matches!(
+        control(&view, "game-countdown-cancel").content,
+        GameUiControlContent::Button {
+            presentation: GameUiButtonPresentation::Action {
+                emphasis: GameUiEmphasis::Normal,
+            },
+            ..
+        }
+    ));
     let token = application.core_session().countdown_token().unwrap();
     let description = game_ui_view(
         &state,

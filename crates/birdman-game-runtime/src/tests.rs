@@ -1113,6 +1113,8 @@ fn admitted_flight_keys_reach_hud_and_clear_on_focus_loss() {
             ))
     );
     let mut observed_touch = platform.clone();
+    observed_touch.viewport.width = 390.0;
+    observed_touch.viewport.height = 844.0;
     observed_touch.capabilities.touch_available = true;
     runtime
         .observe_test(ApplicationInput::Platform {

@@ -146,6 +146,17 @@ fn responsive_rows_and_measured_positions_share_one_metric_contract() {
     assert_eq!(portrait.rows.len(), 2);
     let geometry = arrange(&portrait, &measurements(&portrait)).unwrap();
     assert!((geometry.content_height_meters - 0.23).abs() < 1.0e-12);
+    let mut primary_source = source();
+    primary_source.controls[0].widget = MenuWidget::Status {
+        emphasis: GameUiEmphasis::Primary,
+        value: "3 秒".into(),
+    };
+    let primary = plan(primary_source).unwrap();
+    let value = primary.texts.iter().find(|text| matches!(&text.slot,
+        MenuTextSlot::Control { control_id, role: MenuTextRole::Value, .. } if control_id == "start")).unwrap();
+    assert_eq!(value.font_meters, primary.source.font_meters * 2.0);
+    assert_eq!(value.font.weight, 700);
+    arrange(&primary, &measurements(&primary)).unwrap();
 }
 
 #[test]

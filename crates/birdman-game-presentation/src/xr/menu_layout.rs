@@ -1,5 +1,5 @@
 use crate::game_ui::{
-    GameUiButtonPresentation, GameUiChartLegend, GameUiChartText, GameUiSection,
+    GameUiButtonPresentation, GameUiChartLegend, GameUiChartText, GameUiEmphasis, GameUiSection,
     GameUiSectionLayout,
 };
 use std::collections::{BTreeMap, BTreeSet};
@@ -196,7 +196,7 @@ fn plan(source: MenuLayoutSource) -> Result<MenuLayoutPlan, MenuLayoutFailure> {
                 MenuWidget::Range {
                     display_value: value,
                 }
-                | MenuWidget::Status { value } => output.add_text(
+                | MenuWidget::Status { value, .. } => output.add_text(
                     slot(MenuTextRole::Value, 0),
                     value,
                     text_width,
@@ -301,6 +301,25 @@ impl MenuLayoutPlan {
             font.family = "monospace".to_owned();
         }
         let mut font_meters = self.source.font_meters;
+        if let MenuTextSlot::Control {
+            control_id,
+            role: MenuTextRole::Value,
+            ..
+        } = &slot
+            && self.source.controls.iter().any(|item| {
+                item.id == *control_id
+                    && matches!(
+                        item.widget,
+                        MenuWidget::Status {
+                            emphasis: GameUiEmphasis::Primary,
+                            ..
+                        }
+                    )
+            })
+        {
+            font_meters *= 2.0;
+            font.weight = 700;
+        }
         if let Some(text) = &chart_text {
             if ![
                 text.font_size,

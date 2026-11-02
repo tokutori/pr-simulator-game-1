@@ -79,7 +79,6 @@ pub(super) fn available(platform: &GameUiPlatformInput, phase: SessionPhase) -> 
     platform.touch_available
         && platform.renderer_failure.is_none()
         && platform.presentation_mode == GameUiPresentationMode::Screen
-        && platform.viewport.width >= platform.viewport.height
         && phase == SessionPhase::FlightRunning
 }
 
@@ -91,9 +90,10 @@ pub(super) fn regions(
     let viewport = platform.viewport;
     let font = viewport.root_font_size;
     let margin = 0.75 * font;
+    let portrait = viewport.width < viewport.height;
     let size = (10.0 * font)
         .min(viewport.height * 0.28)
-        .min(viewport.width * 0.22);
+        .min(viewport.width * if portrait { 0.38 } else { 0.22 });
     let radius = (0.55 * font).min(size * 0.1);
     let slider_width = (4.0 * font).min(size);
     let slider_height = (1.8 * size)
@@ -102,7 +102,14 @@ pub(super) fn regions(
         (
             GameUiRect {
                 x: margin,
-                y: viewport.height - margin - size,
+                y: viewport.height
+                    - margin
+                    - size
+                    - if portrait {
+                        menu.maximum_height_px + margin
+                    } else {
+                        0.0
+                    },
                 width: size,
                 height: size,
             },
