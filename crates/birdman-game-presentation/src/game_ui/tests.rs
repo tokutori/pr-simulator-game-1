@@ -61,6 +61,8 @@ pub(super) fn context<'view>(
         difficulty,
         keyboard_controls: birdman_game_app::flight_input::KeyboardControlSettings::default(),
         keyboard_controls_notification: "",
+        display_settings: birdman_game_app::display_settings::DisplaySettings::default(),
+        display_settings_notification: "",
         accepted_flight_keys: [false; 13],
         preset: difficulty.preset_label(),
         identity: session.configuration_identity(),
@@ -4875,4 +4877,97 @@ fn flight_camera_choices_share_selection_and_spatial_modes_keep_pilot() {
             Err(GameUiError::ActionUnavailable)
         );
     }
+}
+
+#[test]
+fn display_settings_choices_show_the_current_selection_in_setup_and_pause_settings() {
+    use birdman_game_app::display_settings::{DISPLAY_SETTING_STEPS, DisplaySettings};
+    let selected = DisplaySettings {
+        brightness: 1.25,
+        contrast: 0.75,
+        saturation: 1.5,
+    };
+    let platform = platform();
+    let assert_choices = |view: &GameUiView| {
+        for (group, group_label, value) in [
+            ("display-brightness", "明るさ", selected.brightness),
+            ("display-contrast", "コントラスト", selected.contrast),
+            ("display-saturation", "彩度", selected.saturation),
+        ] {
+            for (code, step) in DISPLAY_SETTING_STEPS.iter().enumerate() {
+                let found = control(view, &format!("game-setup-select-{group}-{code}"));
+                assert!(!found.label.is_empty());
+                let GameUiControlContent::Button {
+                    action,
+                    presentation,
+                } = &found.content
+                else {
+                    panic!("display setting choice must be a button");
+                };
+                let GameUiButtonPresentation::Choice {
+                    group: actual_group,
+                    group_label: actual_label,
+                    selected: is_selected,
+                    ..
+                } = presentation
+                else {
+                    panic!("display setting choice must use choice presentation");
+                };
+                assert_eq!(actual_group, group);
+                assert_eq!(actual_label, group_label);
+                assert_eq!(*is_selected, *step == value);
+                let GameUiAction::Session {
+                    command: SessionCommand::SetDisplaySettings { settings },
+                } = action
+                else {
+                    panic!("display setting choice must carry the session command");
+                };
+                let expected = match group {
+                    "display-brightness" => DisplaySettings {
+                        brightness: *step,
+                        ..selected
+                    },
+                    "display-contrast" => DisplaySettings {
+                        contrast: *step,
+                        ..selected
+                    },
+                    _ => DisplaySettings {
+                        saturation: *step,
+                        ..selected
+                    },
+                };
+                assert_eq!(*settings, expected);
+            }
+        }
+    };
+    let mut session = GameSession::new();
+    session.open_setup().unwrap();
+    let mut setup_context = context(&session, difficulty(), &platform);
+    setup_context.display_settings = selected;
+    setup_context.display_settings_notification = "保存済み";
+    let view = game_ui_view(&GameUiState::default(), &setup_context).unwrap();
+    assert_choices(&view);
+    let GameUiControlContent::Status { value, .. } =
+        &control(&view, "game-display-settings-storage").content
+    else {
+        panic!("display settings storage status");
+    };
+    assert_eq!(value, "保存済み");
+    assert!(
+        view.panels
+            .iter()
+            .flat_map(|panel| &panel.sections)
+            .any(|section| section.id == "graphics-settings")
+    );
+
+    let mut session = launched();
+    session.pause(PauseReason::Manual).unwrap();
+    let state = GameUiState {
+        pause_overlay: GameUiPauseOverlay::Settings,
+        ..GameUiState::default()
+    };
+    let mut pause_context = context(&session, difficulty(), &platform);
+    pause_context.display_settings = selected;
+    let view = game_ui_view(&state, &pause_context).unwrap();
+    assert_choices(&view);
 }

@@ -1,5 +1,7 @@
 #![doc = "Native input, I/O and drawing submission for the shared application runtime."]
 
+#[path = "display_adjustment.rs"]
+mod display_adjustment;
 #[path = "flight_devices.rs"]
 mod flight_devices;
 #[path = "mip_filter.rs"]

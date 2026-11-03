@@ -4,6 +4,7 @@ mod environment;
 pub(crate) mod readiness;
 
 use super::{
+    display_adjustment::NativeDisplayAdjustment,
     projection::SubmittedProjection,
     screen_render,
     terrain_haze::{TerrainHazeExtension, TerrainMaterial},
@@ -16,7 +17,10 @@ use bevy::{
         primitives::Aabb,
         visibility::{NoFrustumCulling, RenderLayers},
     },
-    core_pipeline::{mip_generation::MipGenerationPlugin, tonemapping::Tonemapping},
+    core_pipeline::{
+        fullscreen_material::FullscreenMaterialPlugin, mip_generation::MipGenerationPlugin,
+        tonemapping::Tonemapping,
+    },
     light::{
         CascadeShadowConfig, Cascades, DirectionalLightShadowMap, NotShadowCaster,
         SimulationLightSystems,
@@ -45,6 +49,16 @@ const SCENE_EXPOSURE_SCALE: f32 = birdman_game_scene::lake_sky::LAKE_SCENE_LIGHT
 pub(crate) fn scene_exposure() -> Exposure {
     Exposure {
         ev100: (1.0 / (1.2 * SCENE_EXPOSURE_SCALE)).log2(),
+    }
+}
+
+/// Scene exposure with the display brightness multiplier folded in as an EV
+/// shift, so the tonemapping pass scales the presented scene exactly once.
+pub(crate) fn scene_exposure_adjusted(
+    adjustment: &birdman_game_app::display_settings::DisplayAdjustment,
+) -> Exposure {
+    Exposure {
+        ev100: scene_exposure().ev100 + adjustment.exposure_ev_shift as f32,
     }
 }
 pub(crate) fn color_srgb(color: u32) -> Color {
@@ -160,6 +174,7 @@ pub(crate) fn install(app: &mut App) {
         .add_plugins((
             MaterialPlugin::<WaterMaterial>::default(),
             MaterialPlugin::<TerrainMaterial>::default(),
+            FullscreenMaterialPlugin::<NativeDisplayAdjustment>::default(),
             screen_render::timing::ScreenTimingPlugin { mode },
         ))
         .add_systems(PreStartup, setup_world);
@@ -1036,6 +1051,40 @@ pub(crate) fn submit_transform(world: &mut World, entity: Entity, transform: Tra
     }
 }
 
+/// Applies the drawing's display adjustment to the main camera on change.
+///
+/// Brightness always rides the camera `Exposure`, including while an HMD
+/// session owns the camera. The contrast/saturation fullscreen pass is only
+/// attached outside HMD presentation: Bevy's fullscreen material pass does
+/// not set a viewport, so on the shared stereo target it would process both
+/// eyes per eye view instead of the camera's own half.
+fn submit_display_adjustment(
+    world: &mut World,
+    camera: Option<Entity>,
+    drawing: &ApplicationDrawingOutput,
+) {
+    let Some(camera) = camera else { return };
+    let exposure = scene_exposure_adjusted(&drawing.display);
+    if world
+        .get::<Exposure>(camera)
+        .is_none_or(|current| current.ev100 != exposure.ev100)
+    {
+        world.entity_mut(camera).insert(exposure);
+    }
+    if drawing.presentation.mode
+        == Some(birdman_game_presentation::game_ui::GameUiPresentationMode::Hmd)
+    {
+        if world.get::<NativeDisplayAdjustment>(camera).is_some() {
+            world.entity_mut(camera).remove::<NativeDisplayAdjustment>();
+        }
+    } else {
+        let pass = NativeDisplayAdjustment::from_shared(&drawing.display);
+        if world.get::<NativeDisplayAdjustment>(camera) != Some(&pass) {
+            world.entity_mut(camera).insert(pass);
+        }
+    }
+}
+
 pub(crate) fn submit(
     world: &mut World,
     runtime: &ApplicationRuntime,
@@ -1267,6 +1316,7 @@ pub(crate) fn submit(
             camera.is_active = gpu.active.is_some()
                 && (drawing.presentation.scene_visible || committing || direct);
         }
+        submit_display_adjustment(world, gpu.main_camera, drawing);
         screen_render::visible(
             world,
             drawing.presentation.scene_visible && gpu.active.is_some(),

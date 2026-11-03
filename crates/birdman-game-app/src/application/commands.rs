@@ -22,6 +22,11 @@ pub enum SessionCommand {
         /// Complete device response selection.
         settings: crate::flight_input::KeyboardControlSettings,
     },
+    /// Selects display adjustment; display-only and never part of a flight record.
+    SetDisplaySettings {
+        /// Complete display adjustment selection.
+        settings: crate::display_settings::DisplaySettings,
+    },
     /// Opens flight settings.
     OpenSetup {},
     /// Returns to Title.

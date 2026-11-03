@@ -342,6 +342,7 @@ pub fn game_ui_view(
                 );
                 water_quality(&mut menu, context);
                 screen_render_scale(&mut menu, context);
+                display_settings(&mut menu, context);
                 menu.section("flight-actions", "", GameUiSectionLayout::Row);
                 menu.action(
                     "game-pause-settings-back",
@@ -980,6 +981,7 @@ fn setup(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
     );
     water_quality(menu, context);
     screen_render_scale(menu, context);
+    display_settings(menu, context);
 }
 
 fn briefing(menu: &mut Menu, context: &GameUiContext<'_, '_>, phase: SessionPhase) {
@@ -1115,6 +1117,52 @@ fn credits(menu: &mut Menu) {
     ] {
         menu.section(&format!("credits-{id}"), label, GameUiSectionLayout::Column);
         menu.status(&format!("game-credits-{id}"), "", value);
+    }
+}
+
+fn display_settings(menu: &mut Menu, context: &GameUiContext<'_, '_>) {
+    use birdman_game_app::display_settings::DISPLAY_SETTING_STEPS;
+    let current = context.display_settings;
+    if !context.display_settings_notification.is_empty() {
+        menu.status(
+            "game-display-settings-storage",
+            "表示設定の保存",
+            context.display_settings_notification,
+        );
+    }
+    for (index, (group, group_label, value)) in [
+        ("display-brightness", "明るさ", current.brightness),
+        ("display-contrast", "コントラスト", current.contrast),
+        ("display-saturation", "彩度", current.saturation),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        for (code, step) in DISPLAY_SETTING_STEPS.iter().enumerate() {
+            let mut settings = current;
+            match index {
+                0 => settings.brightness = *step,
+                1 => settings.contrast = *step,
+                _ => settings.saturation = *step,
+            }
+            menu.choice(
+                group,
+                group_label,
+                (display_setting_step_label(*step), code as u32, ""),
+                SessionCommand::SetDisplaySettings { settings },
+                value == *step,
+            );
+        }
+    }
+}
+
+fn display_setting_step_label(step: f64) -> &'static str {
+    match step {
+        0.5 => "50%",
+        0.75 => "75%",
+        1.0 => "標準",
+        1.25 => "125%",
+        _ => "150%",
     }
 }
 
