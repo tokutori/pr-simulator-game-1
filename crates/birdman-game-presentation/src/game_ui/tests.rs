@@ -811,6 +811,14 @@ fn countdown_ticks_live_telemetry_and_pause_observations_share_one_revision_poli
     )
     .unwrap();
     assert!(!briefing.layout.passthrough);
+    // The briefing keeps its preparation progress line; only the countdown
+    // drops it.
+    assert!(
+        briefing.panels[0]
+            .controls
+            .iter()
+            .any(|control| control.id == "game-preparation-progress")
+    );
     application
         .execute(SessionCommand::StartCountdown {}, BackendReadiness::Ready)
         .unwrap();
@@ -828,6 +836,9 @@ fn countdown_ticks_live_telemetry_and_pause_observations_share_one_revision_poli
     assert_eq!(view.theme, briefing.theme);
     // The shell paints no panel background behind the countdown.
     assert!(view.layout.passthrough);
+    // The countdown carries no heading or description text.
+    assert!(view.title.is_empty());
+    assert!(view.description.is_empty());
     // The seconds are separated from their label: the readout carries the
     // value alone with primary emphasis, and the label is a subordinate
     // static line of its own.
@@ -856,14 +867,34 @@ fn countdown_ticks_live_telemetry_and_pause_observations_share_one_revision_poli
         .iter()
         .map(|control| control.id.as_str())
         .collect();
-    assert!(
-        order.iter().position(|id| *id == "game-countdown-caption")
-            < order.iter().position(|id| *id == "game-countdown-status")
+    // The countdown screen consists of the countdown and the cancel button
+    // alone: no preparation progress and no feedback line.
+    assert_eq!(
+        order,
+        [
+            "game-countdown-caption",
+            "game-countdown-status",
+            "game-countdown-cancel"
+        ]
     );
-    assert!(
-        order.iter().position(|id| *id == "game-countdown-status")
-            < order.iter().position(|id| *id == "game-countdown-cancel")
-    );
+    // A pending notification adds no feedback line to the countdown.
+    let mut notified = platform.clone();
+    notified.notification = "試験通知".to_owned();
+    let notified_view = game_ui_view(
+        &state,
+        &context(
+            application.core_session(),
+            application.difficulty(),
+            &notified,
+        ),
+    )
+    .unwrap();
+    let notified_order: Vec<&str> = notified_view.panels[0]
+        .controls
+        .iter()
+        .map(|control| control.id.as_str())
+        .collect();
+    assert_eq!(notified_order, order);
     // The cancel button shares the flight-actions row with the in-flight
     // session buttons and keeps the common normal emphasis.
     let cancel = control(&view, "game-countdown-cancel");
@@ -947,6 +978,27 @@ fn countdown_ticks_live_telemetry_and_pause_observations_share_one_revision_poli
             .is_err()
     );
     assert!(revision(&mut cache, &application, &state, &platform) > hidden);
+}
+
+#[test]
+fn flight_setup_keeps_progress_and_feedback_lines() {
+    let mut session = GameSession::new();
+    session.open_setup().unwrap();
+    let mut platform = platform();
+    platform.notification = "試験通知".to_owned();
+    let view = game_ui_view(
+        &GameUiState::default(),
+        &context(&session, difficulty(), &platform),
+    )
+    .unwrap();
+    assert!(matches!(
+        &control(&view, "game-preparation-progress").content,
+        GameUiControlContent::Status { value, .. } if value == "● 設定 ─ ○ 確認 ─ ○ 発進"
+    ));
+    assert!(matches!(
+        &control(&view, "game-preparation-feedback").content,
+        GameUiControlContent::Status { value, .. } if value == "試験通知"
+    ));
 }
 
 #[test]
