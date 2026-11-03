@@ -153,8 +153,6 @@ pub fn game_ui_view(
             );
         }
         SessionPhase::FlightSetup => {
-            setup(&mut menu, context);
-            flight_camera_choices(&mut menu, state, context);
             menu.section("flight-actions", "", GameUiSectionLayout::Row);
             menu.session(
                 "game-setup-start",
@@ -170,6 +168,9 @@ pub fn game_ui_view(
                 GameUiEmphasis::Secondary,
                 true,
             );
+            menu.automatic_sections();
+            setup(&mut menu, context);
+            flight_camera_choices(&mut menu, state, context);
             feedback(&mut menu, context);
         }
         SessionPhase::BriefingPreparing
