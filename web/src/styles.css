@@ -518,6 +518,7 @@ body {
 }
 
 .screen-ui-status[data-emphasis="primary"] {
+  color: var(--game-ui-text, #f3f4e8);
   font-size: 2rem;
   font-weight: 700;
   text-align: center;

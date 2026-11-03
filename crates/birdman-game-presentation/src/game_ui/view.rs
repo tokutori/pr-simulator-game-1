@@ -222,12 +222,14 @@ pub fn game_ui_view(
         }
         SessionPhase::Countdown { remaining_seconds } => {
             progress(&mut menu, phase);
+            menu.status("game-countdown-caption", "", "発進まで");
             menu.live_status(
                 "game-countdown-status",
-                "発進まで",
+                "",
                 &format!("{remaining_seconds} 秒"),
                 GameUiReadoutSource::Countdown,
             );
+            menu.section("flight-actions", "", GameUiSectionLayout::Row);
             menu.session(
                 "game-countdown-cancel",
                 "発進を取消",
@@ -235,6 +237,7 @@ pub fn game_ui_view(
                 GameUiEmphasis::Normal,
                 true,
             );
+            menu.automatic_sections();
             feedback(&mut menu, context);
         }
         SessionPhase::FlightRunning => {
@@ -536,14 +539,7 @@ pub fn game_ui_view(
             controls: menu.controls,
         }],
         layout,
-        theme: {
-            let mut theme = theme(context.platform.viewport.root_font_size);
-            if matches!(phase, SessionPhase::Countdown { .. }) {
-                theme.panel_opacity = 1.0;
-                theme.muted_text = theme.text.clone();
-            }
-            theme
-        },
+        theme: theme(context.platform.viewport.root_font_size),
         hud: if credits_open {
             None
         } else {
@@ -1977,7 +1973,8 @@ pub(super) fn layout(
         clip_x: true,
         passthrough: shell == GameUiShell::FlightBar && phase == SessionPhase::FlightRunning
             || (shell == GameUiShell::Analysis
-                && context.platform.presentation_mode != GameUiPresentationMode::Screen),
+                && context.platform.presentation_mode != GameUiPresentationMode::Screen)
+            || matches!(phase, SessionPhase::Countdown { .. }),
     })
 }
 

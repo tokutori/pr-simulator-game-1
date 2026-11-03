@@ -794,7 +794,6 @@ fn countdown_ticks_live_telemetry_and_pause_observations_share_one_revision_poli
             weather: WeatherClass::Calm,
         },
         SessionCommand::Prepare {},
-        SessionCommand::StartCountdown {},
     ] {
         application
             .execute(command, BackendReadiness::Ready)
@@ -802,6 +801,19 @@ fn countdown_ticks_live_telemetry_and_pause_observations_share_one_revision_poli
     }
     let state = GameUiState::default();
     let platform = platform();
+    let briefing = game_ui_view(
+        &state,
+        &context(
+            application.core_session(),
+            application.difficulty(),
+            &platform,
+        ),
+    )
+    .unwrap();
+    assert!(!briefing.layout.passthrough);
+    application
+        .execute(SessionCommand::StartCountdown {}, BackendReadiness::Ready)
+        .unwrap();
     let countdown = revision(&mut cache, &application, &state, &platform);
     let view = game_ui_view(
         &state,
@@ -812,17 +824,52 @@ fn countdown_ticks_live_telemetry_and_pause_observations_share_one_revision_poli
         ),
     )
     .unwrap();
+    // The countdown view keeps the shared theme: no phase-specific override.
+    assert_eq!(view.theme, briefing.theme);
+    // The shell paints no panel background behind the countdown.
+    assert!(view.layout.passthrough);
+    // The seconds are separated from their label: the readout carries the
+    // value alone with primary emphasis, and the label is a subordinate
+    // static line of its own.
+    let seconds = control(&view, "game-countdown-status");
+    assert!(seconds.label.is_empty());
     assert!(matches!(
-        control(&view, "game-countdown-status").content,
+        seconds.content,
         GameUiControlContent::Status {
             emphasis: GameUiEmphasis::Primary,
-            ..
-        }
+            source: GameUiReadoutSource::Countdown,
+            ref value,
+        } if value == "3 秒"
     ));
-    assert_eq!(view.theme.panel_opacity, 1.0);
-    assert_eq!(view.theme.muted_text, view.theme.text);
+    let caption = control(&view, "game-countdown-caption");
+    assert!(caption.label.is_empty());
     assert!(matches!(
-        control(&view, "game-countdown-cancel").content,
+        caption.content,
+        GameUiControlContent::Status {
+            emphasis: GameUiEmphasis::Normal,
+            source: GameUiReadoutSource::Static,
+            ref value,
+        } if value == "発進まで"
+    ));
+    let order: Vec<&str> = view.panels[0]
+        .controls
+        .iter()
+        .map(|control| control.id.as_str())
+        .collect();
+    assert!(
+        order.iter().position(|id| *id == "game-countdown-caption")
+            < order.iter().position(|id| *id == "game-countdown-status")
+    );
+    assert!(
+        order.iter().position(|id| *id == "game-countdown-status")
+            < order.iter().position(|id| *id == "game-countdown-cancel")
+    );
+    // The cancel button shares the flight-actions row with the in-flight
+    // session buttons and keeps the common normal emphasis.
+    let cancel = control(&view, "game-countdown-cancel");
+    assert_eq!(cancel.section, "flight-actions");
+    assert!(matches!(
+        cancel.content,
         GameUiControlContent::Button {
             presentation: GameUiButtonPresentation::Action {
                 emphasis: GameUiEmphasis::Normal,
@@ -830,6 +877,12 @@ fn countdown_ticks_live_telemetry_and_pause_observations_share_one_revision_poli
             ..
         }
     ));
+    let actions = view.panels[0]
+        .sections
+        .iter()
+        .find(|section| section.id == "flight-actions")
+        .unwrap();
+    assert_eq!(actions.layout, GameUiSectionLayout::Row);
     let token = application.core_session().countdown_token().unwrap();
     let description = game_ui_view(
         &state,
