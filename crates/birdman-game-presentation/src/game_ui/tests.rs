@@ -1015,6 +1015,26 @@ fn web_setup_candidates_groups_order_and_primary_action_are_shared() {
             ..
         }
     ));
+    assert_eq!(start.section, "flight-actions");
+    let actions_section = &view.panels[0].sections[0];
+    assert_eq!(actions_section.id, "flight-actions");
+    assert_eq!(actions_section.layout, GameUiSectionLayout::Row);
+    assert_eq!(controls[0].id, "game-setup-start");
+    assert_eq!(controls[1].id, "game-setup-back");
+    for control in &controls[2..] {
+        assert_ne!(control.section, "flight-actions");
+    }
+    for (index, control) in controls.iter().enumerate() {
+        if matches!(
+            control.content,
+            GameUiControlContent::Button {
+                presentation: GameUiButtonPresentation::Choice { .. },
+                ..
+            }
+        ) {
+            assert!(index > 0, "choice {} precedes the start action", control.id);
+        }
+    }
     for group in [
         "preset",
         "information",
