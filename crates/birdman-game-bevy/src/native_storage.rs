@@ -13,8 +13,8 @@ use birdman_game_app::record_persistence::{
 };
 use birdman_game_presentation::game_ui::game_ui_saved_record_timestamp;
 use birdman_game_runtime::{
-    ApplicationInput, ApplicationKeyboardControlsLoad, ApplicationRecordLoadCompletion,
-    ApplicationRequest,
+    ApplicationDisplaySettingsLoad, ApplicationInput, ApplicationKeyboardControlsLoad,
+    ApplicationRecordLoadCompletion, ApplicationRequest,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -90,6 +90,32 @@ impl NativeStorage {
                     .err()
                     .map(|cause| cause.to_string());
                 Some(vec![ApplicationInput::KeyboardControlsSaved {
+                    request_id: *request_id,
+                    failure,
+                }])
+            }
+            ApplicationRequest::ReadDisplaySettings {
+                request_id,
+                maximum_bytes,
+            } => {
+                let completion = match self.read_display(*maximum_bytes) {
+                    Ok(Some(json)) => ApplicationDisplaySettingsLoad::Found { json },
+                    Ok(None) => ApplicationDisplaySettingsLoad::Missing,
+                    Err(cause) => ApplicationDisplaySettingsLoad::Failed {
+                        cause: cause.to_string(),
+                    },
+                };
+                Some(vec![ApplicationInput::DisplaySettingsLoaded {
+                    request_id: *request_id,
+                    completion,
+                }])
+            }
+            ApplicationRequest::WriteDisplaySettings { request_id, json } => {
+                let failure = self
+                    .write_display(*request_id, json)
+                    .err()
+                    .map(|cause| cause.to_string());
+                Some(vec![ApplicationInput::DisplaySettingsSaved {
                     request_id: *request_id,
                     failure,
                 }])
@@ -348,11 +374,32 @@ impl NativeStorage {
     }
 
     fn read_keyboard(&self, maximum_bytes: u32) -> io::Result<Option<String>> {
+        self.read_settings("keyboard-controls.json", "Keyboard", maximum_bytes)
+    }
+
+    fn write_keyboard(&self, request_id: u32, json: &str) -> io::Result<()> {
+        self.write_settings("keyboard-controls", request_id, json)
+    }
+
+    fn read_display(&self, maximum_bytes: u32) -> io::Result<Option<String>> {
+        self.read_settings("display-settings.json", "Display", maximum_bytes)
+    }
+
+    fn write_display(&self, request_id: u32, json: &str) -> io::Result<()> {
+        self.write_settings("display-settings", request_id, json)
+    }
+
+    fn read_settings(
+        &self,
+        file_name: &str,
+        label: &str,
+        maximum_bytes: u32,
+    ) -> io::Result<Option<String>> {
         let directory = self
             .keyboard_directory
             .as_ref()
             .map_err(|cause| io::Error::other(cause.clone()))?;
-        let file = match File::open(directory.join("keyboard-controls.json")) {
+        let file = match File::open(directory.join(file_name)) {
             Ok(file) => file,
             Err(cause) if cause.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(cause) => return Err(cause),
@@ -361,14 +408,14 @@ impl NativeStorage {
         file.take(u64::from(maximum_bytes) + 1)
             .read_to_string(&mut json)?;
         if json.len() > maximum_bytes as usize {
-            return Err(io::Error::other(
-                "Keyboard settings exceed the requested byte limit",
-            ));
+            return Err(io::Error::other(format!(
+                "{label} settings exceed the requested byte limit"
+            )));
         }
         Ok(Some(json))
     }
 
-    fn write_keyboard(&self, request_id: u32, json: &str) -> io::Result<()> {
+    fn write_settings(&self, stem: &str, request_id: u32, json: &str) -> io::Result<()> {
         let directory = self
             .keyboard_directory
             .as_ref()
@@ -379,12 +426,9 @@ impl NativeStorage {
             .truncate(false)
             .read(true)
             .write(true)
-            .open(directory.join("keyboard-controls.lock"))?;
+            .open(directory.join(format!("{stem}.lock")))?;
         lock.try_lock().map_err(io::Error::other)?;
-        let temporary = directory.join(format!(
-            "keyboard-controls-{}-{request_id}.tmp",
-            std::process::id()
-        ));
+        let temporary = directory.join(format!("{stem}-{}-{request_id}.tmp", std::process::id()));
         let mut file = OpenOptions::new()
             .create_new(true)
             .write(true)
@@ -393,7 +437,7 @@ impl NativeStorage {
             file.write_all(json.as_bytes())?;
             file.sync_all()?;
             drop(file);
-            fs::rename(&temporary, directory.join("keyboard-controls.json"))
+            fs::rename(&temporary, directory.join(format!("{stem}.json")))
         })();
         if result.is_err() {
             let _ = fs::remove_file(&temporary);
@@ -646,6 +690,40 @@ pub(crate) mod tests {
             Some(original)
         );
         assert!(reopened.read_keyboard(2).is_err());
+    }
+
+    #[test]
+    fn display_settings_use_a_separate_file_and_survive_reopen() {
+        let directory = Directory::new();
+        let mut storage = NativeStorage::new(directory.0.clone(), Ok(directory.0.clone())).unwrap();
+        assert!(matches!(
+            storage
+                .execute(&ApplicationRequest::ReadDisplaySettings {
+                    request_id: 1,
+                    maximum_bytes: 4096
+                })
+                .unwrap()[0],
+            ApplicationInput::DisplaySettingsLoaded {
+                completion: ApplicationDisplaySettingsLoad::Missing,
+                ..
+            }
+        ));
+        let original = "{\"schema_version\":1,\"display_settings\":{\"brightness\":1.25,\"contrast\":1.0,\"saturation\":0.75}}";
+        storage
+            .execute(&ApplicationRequest::WriteDisplaySettings {
+                request_id: 2,
+                json: original.into(),
+            })
+            .unwrap();
+        assert!(directory.0.join("display-settings.json").is_file());
+        assert!(!directory.0.join("keyboard-controls.json").exists());
+        drop(storage);
+        let reopened = NativeStorage::new(directory.0.clone(), Ok(directory.0.clone())).unwrap();
+        assert_eq!(
+            reopened.read_display(4096).unwrap().as_deref(),
+            Some(original)
+        );
+        assert!(reopened.read_display(2).is_err());
     }
 
     #[test]

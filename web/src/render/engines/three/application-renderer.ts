@@ -1,4 +1,4 @@
-import { AmbientLight, BufferGeometry, CanvasTexture, CircleGeometry, Color, DirectionalLight, DoubleSide, Fog, FrontSide,
+import { AmbientLight, BufferGeometry, CanvasTexture, CircleGeometry, Color, CustomToneMapping, DirectionalLight, DoubleSide, Fog, FrontSide,
   Group, LinearFilter, Matrix4, Mesh, MeshBasicMaterial, MeshLambertMaterial, PerspectiveCamera, PlaneGeometry,
   Scene, ShaderMaterial, SRGBColorSpace, UniformsLib, UniformsUtils, Vector2, Vector4, WebGLRenderer, WebGLRenderTarget } from "three";
 import type { Material, Object3D } from "three";
@@ -9,6 +9,7 @@ import { GpuWorkTimer } from "./gpu-work-timer.js";
 import { browserSurfaceContext } from "../../../presentation/browser-canvas.js";
 import { paintSurface } from "../../../presentation/surface-canvas.js";
 import { lakeWaterShaders } from "./water-shaders.js";
+import { applyDisplayAdjustment, displayAdjustmentUniform, installDisplayAdjustment } from "./display-adjustment.js";
 
 type PrepareRequest = Extract<ApplicationRequest, { kind: "prepare_resources" }>;
 type ResourceRequest = Extract<ApplicationRequest, { kind: "commit_resources" | "cancel_resources" | "release_resources" }>;
@@ -84,6 +85,8 @@ export class ThreeApplicationRenderer {
     bytes: (id: number) => Uint8Array, private readonly notify: (input: ApplicationInput) => void,
     private readonly platformChanged: () => void) {
     this.renderer = new WebGLRenderer({ canvas, antialias: true, alpha: false });
+    installDisplayAdjustment();
+    this.renderer.toneMapping = CustomToneMapping;
     this.renderer.outputColorSpace = SRGBColorSpace;
     this.renderer.shadowMap.enabled = true;
     this.renderer.xr.cameraAutoUpdate = false;
@@ -400,7 +403,7 @@ export class ThreeApplicationRenderer {
     this.head_mesh ??= this.surface(this.head_canvas);
     if (this.cursor_meshes.length === 0) {
       this.cursor_geometry = new CircleGeometry(0.5, 32);
-      const cursor = new Mesh(this.cursor_geometry, new MeshBasicMaterial({ side: DoubleSide, transparent: true, depthWrite: false }));
+      const cursor = new Mesh(this.cursor_geometry, new MeshBasicMaterial({ side: DoubleSide, transparent: true, depthWrite: false, toneMapped: false }));
       cursor.visible = false;
       this.cursor_meshes.push(cursor);
     }
@@ -481,7 +484,8 @@ export class ThreeApplicationRenderer {
       uWaterDark: { value: new Color(assets.water.palette_srgb[0]) }, uWaterMid: { value: new Color(assets.water.palette_srgb[1]) }, uWaterLight: { value: new Color(assets.water.palette_srgb[2]) },
       uHazeColor: { value: new Color(lighting.haze_color_srgb) }, uHazeRange: { value: new Vector4(...lighting.haze_range_meters, 0, 0) },
       uSunDirection: { value: new Vector4(...lighting.sunlight_direction) }, uReflectionTexture: { value: reflection.texture },
-      uReflectionMatrix: { value: new Matrix4() }, uReflectionEnabled: { value: 0 }
+      uReflectionMatrix: { value: new Matrix4() }, uReflectionEnabled: { value: 0 },
+      displayAdjustment: displayAdjustmentUniform
     };
     const defines = {
       LAKE_WAVE_COUNT: projection.waveCount,
@@ -532,6 +536,9 @@ export class ThreeApplicationRenderer {
       depthWrite: source.depth_write, side: source.double_sided ? DoubleSide : FrontSide,
       vertexColors: asset.color != null, map: texture === undefined ? null : this.buffers.wingTexture(texture) };
     material = source.lit ? new MeshLambertMaterial(values) : new MeshBasicMaterial(values);
+    material.onBeforeCompile = shader => {
+      shader.uniforms.displayAdjustment = displayAdjustmentUniform;
+    };
     this.materials.set(key, material);
     return material;
   }
@@ -551,13 +558,14 @@ export class ThreeApplicationRenderer {
     texture.colorSpace = SRGBColorSpace;
     texture.minFilter = LinearFilter;
     texture.generateMipmaps = false;
-    const mesh = new Mesh(new PlaneGeometry(1, 1), new MeshBasicMaterial({ map: texture, side: DoubleSide, transparent: true, depthWrite: false }));
+    const mesh = new Mesh(new PlaneGeometry(1, 1), new MeshBasicMaterial({ map: texture, side: DoubleSide, transparent: true, depthWrite: false, toneMapped: false }));
     mesh.visible = false;
     mesh.renderOrder = 2000;
     return mesh;
   }
 
   apply(drawing: ApplicationDrawingOutput): void {
+    applyDisplayAdjustment(drawing.display);
     this.drawing = drawing;
     const resource = drawing.graphics.resource;
     this.canvas.hidden = !drawing.presentation.scene_visible || resource?.renderer_resource_id !== this.id;
@@ -824,7 +832,7 @@ export class ThreeApplicationRenderer {
     this.cursor_geometry ??= cursors.length === 0 ? null : new CircleGeometry(0.5, 32);
     while (this.cursor_meshes.length < cursors.length) {
       if (this.cursor_geometry === null) throw new Error("Cursor GPU primitive is unavailable");
-      this.cursor_meshes.push(new Mesh(this.cursor_geometry, new MeshBasicMaterial({ side: DoubleSide, transparent: true, depthWrite: false })));
+      this.cursor_meshes.push(new Mesh(this.cursor_geometry, new MeshBasicMaterial({ side: DoubleSide, transparent: true, depthWrite: false, toneMapped: false })));
     }
     for (const [index, mesh] of this.cursor_meshes.entries()) {
       const cursor = cursors[index];

@@ -160,6 +160,22 @@ export class BrowserApplication {
         this.observe({ kind: "keyboard_controls_saved", request_id: request.request_id, failure });
         break;
       }
+      case "read_display_settings": {
+        let completion: Extract<ApplicationInput, { kind: "display_settings_loaded" }>["completion"];
+        try {
+          const json = window.localStorage.getItem("tokutori.pr-simulator-game-1.display-settings");
+          completion = json === null ? { kind: "missing" } : { kind: "found", json };
+        } catch (cause) { completion = { kind: "failed", cause: errorMessage(cause) }; }
+        this.observe({ kind: "display_settings_loaded", request_id: request.request_id, completion });
+        break;
+      }
+      case "write_display_settings": {
+        let failure: string | null = null;
+        try { window.localStorage.setItem("tokutori.pr-simulator-game-1.display-settings", request.json); }
+        catch (cause) { failure = errorMessage(cause); }
+        this.observe({ kind: "display_settings_saved", request_id: request.request_id, failure });
+        break;
+      }
       case "create_renderer": {
         let renderer: ThreeApplicationRenderer | null = null;
         let observation: ApplicationRendererObservation;

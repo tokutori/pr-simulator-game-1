@@ -4,6 +4,7 @@ use birdman_game_core::ControlMode;
 use birdman_game_format::{AssistanceLevel, DifficultySettings, InformationLevel, WeatherClass};
 
 pub mod application;
+pub mod display_settings;
 mod environment;
 pub mod environment_snapshot;
 pub mod flight_clock;

@@ -55,9 +55,31 @@ fn keyboard_preferences_validate_restore_and_drain_only_the_latest_accepted_writ
         })
         .unwrap();
     assert_eq!(runtime.application().keyboard_controls(), settings);
-    initial
+    let display_request_id = initial
         .requests
-        .retain(|request| !matches!(request, ApplicationRequest::ReadKeyboardControls { .. }));
+        .iter()
+        .find_map(|request| match request {
+            ApplicationRequest::ReadDisplaySettings { request_id, .. } => Some(*request_id),
+            _ => None,
+        })
+        .unwrap();
+    runtime
+        .observe_test(ApplicationInput::DisplaySettingsLoaded {
+            request_id: display_request_id,
+            completion: ApplicationDisplaySettingsLoad::Missing,
+        })
+        .unwrap();
+    assert_eq!(
+        runtime.application().display_settings(),
+        birdman_game_app::display_settings::DisplaySettings::default()
+    );
+    initial.requests.retain(|request| {
+        !matches!(
+            request,
+            ApplicationRequest::ReadKeyboardControls { .. }
+                | ApplicationRequest::ReadDisplaySettings { .. }
+        )
+    });
     let title = structure(finish_boot(&mut runtime, initial));
     let setup = structure(activate(&mut runtime, &title, SessionCommand::OpenSetup {}));
     let first = KeyboardControlSettings {
@@ -177,6 +199,179 @@ fn keyboard_preferences_validate_restore_and_drain_only_the_latest_accepted_writ
     assert!(!storage.keyboard_loading());
     assert!(!storage.keyboard_needs_write());
     assert!(!storage.keyboard_notification().is_empty());
+}
+
+#[test]
+fn display_preferences_validate_restore_and_drain_only_the_latest_accepted_write() {
+    use birdman_game_app::display_settings::DisplaySettings;
+    let settings = DisplaySettings {
+        brightness: 1.25,
+        contrast: 0.75,
+        saturation: 1.5,
+    };
+    let json = serde_json::json!({ "schema_version": 1, "display_settings": settings }).to_string();
+    let mut runtime =
+        ApplicationRuntime::new(ApplicationSession::default(), screen_platform()).unwrap();
+    let mut initial = runtime
+        .update(
+            ApplicationObservation {
+                observed_ms: 0.0,
+                input: ApplicationInput::Platform {
+                    observation: screen_platform(),
+                },
+            },
+            &mut no_text_metrics,
+        )
+        .unwrap();
+    let keyboard_request = initial
+        .requests
+        .iter()
+        .find_map(|request| match request {
+            ApplicationRequest::ReadKeyboardControls { request_id, .. } => Some(*request_id),
+            _ => None,
+        })
+        .unwrap();
+    let display_request = initial
+        .requests
+        .iter()
+        .find_map(|request| match request {
+            ApplicationRequest::ReadDisplaySettings { request_id, .. } => Some(*request_id),
+            _ => None,
+        })
+        .unwrap();
+    runtime
+        .observe_test(ApplicationInput::KeyboardControlsLoaded {
+            request_id: keyboard_request,
+            completion: ApplicationKeyboardControlsLoad::Missing,
+        })
+        .unwrap();
+    runtime
+        .observe_test(ApplicationInput::DisplaySettingsLoaded {
+            request_id: display_request,
+            completion: ApplicationDisplaySettingsLoad::Found { json: json.clone() },
+        })
+        .unwrap();
+    assert_eq!(runtime.application().display_settings(), settings);
+    // A stale completion for the same request never replaces the restored selection.
+    runtime
+        .observe_test(ApplicationInput::DisplaySettingsLoaded {
+            request_id: display_request,
+            completion: ApplicationDisplaySettingsLoad::Found {
+                json: "invalid late result".to_owned(),
+            },
+        })
+        .unwrap();
+    assert_eq!(runtime.application().display_settings(), settings);
+    initial.requests.retain(|request| {
+        !matches!(
+            request,
+            ApplicationRequest::ReadKeyboardControls { .. }
+                | ApplicationRequest::ReadDisplaySettings { .. }
+        )
+    });
+    let title = structure(finish_boot(&mut runtime, initial));
+    let setup = structure(activate(&mut runtime, &title, SessionCommand::OpenSetup {}));
+    let changed = DisplaySettings {
+        brightness: 0.5,
+        ..settings
+    };
+    let output = activate(
+        &mut runtime,
+        &setup,
+        SessionCommand::SetDisplaySettings { settings: changed },
+    );
+    assert_eq!(
+        output.drawing.as_ref().unwrap().display,
+        changed.adjustment()
+    );
+    let write = output
+        .requests
+        .iter()
+        .find_map(|request| match request {
+            ApplicationRequest::WriteDisplaySettings { request_id, json } => {
+                let document = serde_json::from_str::<serde_json::Value>(json).unwrap();
+                assert_eq!(document["schema_version"], 1);
+                assert_eq!(document["display_settings"]["brightness"], 0.5);
+                assert_eq!(document["display_settings"]["contrast"], 0.75);
+                assert_eq!(document["display_settings"]["saturation"], 1.5);
+                Some(*request_id)
+            }
+            _ => None,
+        })
+        .unwrap();
+    let failed = runtime
+        .observe_test(ApplicationInput::DisplaySettingsSaved {
+            request_id: write,
+            failure: Some("disk full".to_owned()),
+        })
+        .unwrap();
+    assert!(runtime.storage.display_notification().contains("disk full"));
+    assert!(
+        !failed
+            .requests
+            .iter()
+            .any(|request| matches!(request, ApplicationRequest::WriteDisplaySettings { .. }))
+    );
+    assert!(!runtime.storage.display_needs_write());
+    assert_eq!(runtime.application().display_settings(), changed);
+    // Returning to the already persisted selection needs no replacement after a failure.
+    let setup = structure(failed);
+    let restored = activate(
+        &mut runtime,
+        &setup,
+        SessionCommand::SetDisplaySettings { settings },
+    );
+    assert_eq!(runtime.storage.display_notification(), "保存済み");
+    assert!(
+        !restored
+            .requests
+            .iter()
+            .any(|request| matches!(request, ApplicationRequest::WriteDisplaySettings { .. }))
+    );
+    // A new selection after the failure is written and drains on success.
+    let setup = structure(restored);
+    let latest = DisplaySettings {
+        brightness: 1.5,
+        ..settings
+    };
+    let output = activate(
+        &mut runtime,
+        &setup,
+        SessionCommand::SetDisplaySettings { settings: latest },
+    );
+    let write = output
+        .requests
+        .iter()
+        .find_map(|request| match request {
+            ApplicationRequest::WriteDisplaySettings { request_id, .. } => Some(*request_id),
+            _ => None,
+        })
+        .unwrap();
+    runtime
+        .observe_test(ApplicationInput::DisplaySettingsSaved {
+            request_id: write,
+            failure: None,
+        })
+        .unwrap();
+    assert_eq!(runtime.storage.display_notification(), "保存済み");
+    assert!(!runtime.storage.display_needs_write());
+    assert_eq!(runtime.application().display_settings(), latest);
+
+    let mut storage = storage::StorageOwner::default();
+    storage.read_display(1);
+    assert!(
+        storage
+            .display_loaded(
+                1,
+                ApplicationDisplaySettingsLoad::Found {
+                    json: json.replace("1.25", "2.5")
+                }
+            )
+            .is_none()
+    );
+    assert!(!storage.display_loading());
+    assert!(!storage.display_needs_write());
+    assert!(!storage.display_notification().is_empty());
 }
 
 #[test]
@@ -2405,9 +2600,36 @@ impl ObservedInput for ApplicationRuntime {
                             && frame.ranges.is_empty() && frame.readouts.is_empty()
                             && frame.fields.is_empty() && frame.button_labels.is_empty()
                             && frame.chart_cursor.is_none() && frame.flight_touch.is_empty())));
-            // Return the original observation's actual View and remaining I/O, not the read completion's Frame.
-            return Ok(output);
         }
+        if let Some(request_id) = output.requests.iter().find_map(|request| match request {
+            ApplicationRequest::ReadDisplaySettings { request_id, .. } => Some(*request_id),
+            _ => None,
+        }) {
+            output.requests.retain(|request| {
+                !matches!(request, ApplicationRequest::ReadDisplaySettings { .. })
+            });
+            let completed = self.update(
+                ApplicationObservation {
+                    observed_ms,
+                    input: ApplicationInput::DisplaySettingsLoaded {
+                        request_id,
+                        completion: ApplicationDisplaySettingsLoad::Missing,
+                    },
+                },
+                &mut no_text_metrics,
+            )?;
+            assert!(completed.requests.is_empty());
+            assert!(matches!((&output.drawing, &completed.drawing),
+                (Some(initial), Some(completed)) if matches!((&initial.ui, &completed.ui),
+                    (ApplicationUiProjection::View { view }, ApplicationUiProjection::Frame { frame })
+                        if view.scene == GameUiScene::Boot
+                            && view.view_revision == frame.view_revision
+                            && (frame.hud.is_none() || !completed.presentation.screen_hud_visible)
+                            && frame.ranges.is_empty() && frame.readouts.is_empty()
+                            && frame.fields.is_empty() && frame.button_labels.is_empty()
+                            && frame.chart_cursor.is_none() && frame.flight_touch.is_empty())));
+        }
+        // Return the original observation's actual View and remaining I/O, not the read completion's Frame.
         Ok(output)
     }
 }
