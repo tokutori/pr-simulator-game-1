@@ -222,13 +222,14 @@ pub fn game_ui_view(
             }
         }
         SessionPhase::Countdown { remaining_seconds } => {
-            progress(&mut menu, phase);
+            menu.status("game-countdown-caption", "", "発進まで");
             menu.live_status(
                 "game-countdown-status",
-                "発進まで",
+                "",
                 &format!("{remaining_seconds} 秒"),
                 GameUiReadoutSource::Countdown,
             );
+            menu.section("flight-actions", "", GameUiSectionLayout::Row);
             menu.session(
                 "game-countdown-cancel",
                 "発進を取消",
@@ -236,7 +237,6 @@ pub fn game_ui_view(
                 GameUiEmphasis::Normal,
                 true,
             );
-            feedback(&mut menu, context);
         }
         SessionPhase::FlightRunning => {
             if super::touch::available(context.platform, phase) {
@@ -538,14 +538,7 @@ pub fn game_ui_view(
             controls: menu.controls,
         }],
         layout,
-        theme: {
-            let mut theme = theme(context.platform.viewport.root_font_size);
-            if matches!(phase, SessionPhase::Countdown { .. }) {
-                theme.panel_opacity = 1.0;
-                theme.muted_text = theme.text.clone();
-            }
-            theme
-        },
+        theme: theme(context.platform.viewport.root_font_size),
         hud: if credits_open {
             None
         } else {
@@ -1030,7 +1023,6 @@ fn progress(menu: &mut Menu, phase: SessionPhase) {
         "発進までの手順",
         match phase {
             SessionPhase::FlightSetup => "● 設定 ─ ○ 確認 ─ ○ 発進",
-            SessionPhase::Countdown { .. } => "✓ 設定 ─ ✓ 確認 ─ ● 発進",
             _ => "✓ 設定 ─ ● 確認 ─ ○ 発進",
         },
     );
@@ -1854,7 +1846,7 @@ fn title(scene: GameUiScene) -> &'static str {
         GameUiScene::Boot | GameUiScene::Title => "鳥人間滑空ゲーム",
         GameUiScene::FlightSetup => "飛行設定",
         GameUiScene::Briefing => "発進前の確認",
-        GameUiScene::Countdown => "発進準備",
+        GameUiScene::Countdown => "",
         GameUiScene::Flight => "飛行",
         GameUiScene::Result => "飛行結果",
         GameUiScene::Replay => "飛行リプレイ",
@@ -1886,7 +1878,7 @@ fn description(
         SessionPhase::BriefingPreparing | SessionPhase::BriefingReady | SessionPhase::BriefingFailed { .. } => {
             "飛行条件と操縦方法を確認する。".to_owned()
         }
-        SessionPhase::Countdown { .. } => "発進までお待ちください。".to_owned(),
+        SessionPhase::Countdown { .. } => String::new(),
         SessionPhase::FlightRunning => "機体を操縦して、できるだけ遠くまで滑空する。".to_owned(),
         SessionPhase::FlightPaused { .. } if flight_failure.is_some() => {
             "飛行処理の障害により一時停止した。この飛行は再開できない。「飛行を終了」で結果へ進み、「同じ条件で再試行」または「設定を変更」を選択する。".to_owned()
@@ -2026,7 +2018,8 @@ pub(super) fn layout(
         clip_x: true,
         passthrough: shell == GameUiShell::FlightBar && phase == SessionPhase::FlightRunning
             || (shell == GameUiShell::Analysis
-                && context.platform.presentation_mode != GameUiPresentationMode::Screen),
+                && context.platform.presentation_mode != GameUiPresentationMode::Screen)
+            || matches!(phase, SessionPhase::Countdown { .. }),
     })
 }
 
