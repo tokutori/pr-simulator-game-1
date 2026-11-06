@@ -12,7 +12,7 @@ const allowed = new Map<string, readonly string[]>([
   ["birdman-game-format", ["birdman-game-core", "serde", "serde_json", "sha2"]],
   ["birdman-game-cli", ["birdman-game-app", "birdman-game-content", "birdman-game-core", "birdman-game-format", "serde", "serde_json"]],
   ["birdman-game-wasm", ["birdman-game-app", "birdman-game-presentation", "birdman-game-runtime", "serde_json", "wasm-bindgen"]],
-  ["birdman-game-runtime", ["birdman-game-app", "birdman-game-core", "birdman-game-format", "birdman-game-presentation", "birdman-game-scene", "serde", "serde_json", "time"]],
+  ["birdman-game-runtime", ["birdman-game-app", "birdman-game-content", "birdman-game-core", "birdman-game-format", "birdman-game-presentation", "birdman-game-scene", "serde", "serde_json", "time"]],
   ["birdman-game-presentation", ["birdman-game-app", "birdman-game-core", "birdman-game-format", "serde", "serde_json", "time", "unicode-width"]],
   ["birdman-game-scene", ["birdman-game-app", "birdman-game-content", "birdman-game-core", "birdman-game-format", "serde", "serde_json", "sha2", "earcut"]],
   ["birdman-game-bevy", ["birdman-game-app", "birdman-game-core", "birdman-game-format", "birdman-game-presentation", "birdman-game-runtime", "birdman-game-scene", "bevy", "serde", "serde_json"]]
@@ -70,6 +70,21 @@ function isNativeGpuIoDependency(crate: string, dependency: Record<string, unkno
     && dependency.rename === null
     && dependency.optional === false
     && dependency.uses_default_features === false
+    && Array.isArray(dependency.features)
+    && dependency.features.length === 0;
+}
+
+function isNativeFileDialogDependency(crate: string, dependency: Record<string, unknown>): boolean {
+  return crate === "birdman-game-bevy"
+    && dependency.name === "rfd"
+    && dependency.kind === null
+    && dependency.target === NATIVE_SCREEN_TARGET
+    && dependency.req === "=0.15.4"
+    && isDefaultRegistrySource(dependency)
+    && dependency.path === undefined
+    && dependency.rename === null
+    && dependency.optional === false
+    && dependency.uses_default_features === true
     && Array.isArray(dependency.features)
     && dependency.features.length === 0;
 }
@@ -135,8 +150,9 @@ function isSharedImageOperationsDependency(crate: string, dependency: Record<str
     && dependency.features[0] === "png";
 }
 
-function isPresentationSceneTestDependency(crate: string, dependency: Record<string, unknown>): boolean {
-  return crate === "birdman-game-presentation" && dependency.name === "birdman-game-scene"
+function isPresentationIntegrationTestDependency(crate: string, dependency: Record<string, unknown>): boolean {
+  return crate === "birdman-game-presentation"
+    && (dependency.name === "birdman-game-scene" || dependency.name === "birdman-game-content")
     && dependency.kind === "dev" && dependency.target === null
     && dependency.optional === false && dependency.rename === null
     && Array.isArray(dependency.features) && dependency.features.length === 0;
@@ -298,11 +314,12 @@ export function assertDependencyBoundary(packages: readonly unknown[]): void {
       }
       if (!permitted.includes(dependencyName)
         && !isNativeGpuIoDependency(name, dependency)
+        && !isNativeFileDialogDependency(name, dependency)
         && !isNativeTextDependency(name, dependency)
         && !isNativeXrDependency(name, dependency)
         && !isSharedJsonNumberDependency(name, dependency)
         && !isSharedImageOperationsDependency(name, dependency)
-        && !isPresentationSceneTestDependency(name, dependency)
+        && !isPresentationIntegrationTestDependency(name, dependency)
         && !isHostNumericalTestDependency(name, dependency)
         && !isCorePolynomialDependency(name, dependency)
         && !isProofDependency(name, dependency, pkg.features)

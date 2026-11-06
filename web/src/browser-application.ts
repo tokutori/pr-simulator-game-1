@@ -175,7 +175,7 @@ export class BrowserApplication {
           if (file === undefined) { this.observe({ kind: "aircraft_loaded", request_id: request.request_id, completion: { kind: "cancelled" } }); return; }
           void file.slice(0, request.maximum_bytes + 1).arrayBuffer().then(buffer => {
             this.observe({ kind: "aircraft_loaded", request_id: request.request_id, completion: { kind: "found", bytes: Array.from(new Uint8Array(buffer)) } });
-          }, cause => { this.observe({ kind: "aircraft_loaded", request_id: request.request_id, completion: { kind: "failed", cause: errorMessage(cause) } }); });
+          }, (cause: unknown) => { this.observe({ kind: "aircraft_loaded", request_id: request.request_id, completion: { kind: "failed", cause: errorMessage(cause) } }); });
         }, { once: true });
         try { picker.showPicker(); }
         catch (cause) {

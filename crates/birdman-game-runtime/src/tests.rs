@@ -2211,6 +2211,8 @@ fn stored_record_preview_load_retry_and_original_download_share_owner() {
         capabilities: ApplicationCapabilities {
             stored_records_available: true,
             flight_log_available: true,
+            analysis_available: true,
+            replay_available: true,
             ..Default::default()
         },
         ..screen_platform()
@@ -2438,7 +2440,7 @@ fn stored_record_preview_load_retry_and_original_download_share_owner() {
             0.015
         ),
     );
-    let ready = runtime.last_ready_resources.unwrap();
+    let prepared_key = runtime.resources.as_ref().unwrap().key;
     assert!(matches!(
         EnvironmentSelection::for_session(&runtime.application)
             .unwrap()
@@ -2472,7 +2474,7 @@ fn stored_record_preview_load_retry_and_original_download_share_owner() {
     runtime.application.seek_playback(0.005).unwrap();
     assert!(frame.requests.is_empty());
     assert_eq!(runtime.next_request_id, next_request);
-    assert!(runtime.resources.as_ref().unwrap().key == ready);
+    assert!(runtime.resources.as_ref().unwrap().key == prepared_key);
     let replay = runtime.retained.as_ref().unwrap().clone();
     assert!(
         runtime

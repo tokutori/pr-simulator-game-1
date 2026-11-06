@@ -339,7 +339,7 @@ describe("Aggregate runtime through the real Three WebXRManager", () => {
     vi.spyOn(ThreeApplicationRenderer.prototype, "prepare").mockImplementation(function (this: InstanceType<typeof ThreeApplicationRenderer>, request) {
       waveCount = request.assets.water.projection.waveCount;
       detailSamples = request.assets.water.projection.detailQuadratureSamples;
-      const asset = request.assets.scene?.meshes[0];
+      const asset = request.assets.scene.meshes[0];
       const source = asset?.materials[0];
       if (materialProbe === undefined && asset !== undefined && source !== undefined) {
         Object.assign(source, { transparent: !source.transparent, depth_write: !source.depth_write });

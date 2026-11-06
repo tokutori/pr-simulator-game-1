@@ -4873,9 +4873,9 @@ export interface ApplicationEnvironmentAssets {
      */
     readonly revision: number;
     /**
-     * First immutable scene manifest; later preparations reuse the same owner-issued identities.
+     * Complete descriptor batch for this candidate; raw buffers upload on cache misses.
      */
-    readonly scene?: ApplicationGeometryAssets | null;
+    readonly scene: ApplicationGeometryAssets;
     /**
      * Equirectangular sRGB panorama.
      */

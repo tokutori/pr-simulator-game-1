@@ -42,7 +42,7 @@ adapter・runtime・presentation・scene・app・contentは責務に応じて下
 
 - core・format・contentは`no_std + alloc`を維持する。
 - appとsceneは環境・会場・固定textureの初期化に`std::sync::OnceLock`を使う。機体は選択ごとの定義と派生cacheを所有する。sceneは`image`・`earcut`による画像処理・地形三角化を所有し、app・presentation・runtimeは日時処理や資源所有に`std`を利用する。
-- CLIはapp・content・format・coreのoffline検査を実行する。cameraと機体形状の整合はpresentationからsceneへのdev-dependencyで検査する。
+- CLIはapp・content・format・coreのoffline検査を実行する。cameraと機体形状・接触点の整合はpresentationからscene・contentへのdev-dependencyで検査する。
 - coreにfilesystem、network、OS時計、乱数取得、GIS、serde、WASM ABI、描画engineを持ち込まない。
 - 乱数seed、環境、入力、時刻観測は外部から明示的に渡す。
 - モデル構築と記録容量の予約は準備段階で行い、固定tickのheap allocationを発生させない設計を要求する。
