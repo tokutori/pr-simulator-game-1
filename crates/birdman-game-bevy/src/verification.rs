@@ -382,6 +382,47 @@ impl Verification {
                 enabled: true,
             }));
         }
+        if adapter_input {
+            use birdman_game_app::display_settings::DisplaySettings;
+            checks.extend([
+                platform(GameUiPlatformCommand::SetScreenRenderAuto { enabled: false }),
+                platform(GameUiPlatformCommand::SetScreenRenderScale {
+                    scale: ScreenRenderScale::Half,
+                }),
+                platform(GameUiPlatformCommand::SetWaterQuality {
+                    quality: WaterQuality::Low,
+                }),
+            ]);
+            // The paused scene keeps camera, geometry and water time identical.
+            for (name, brightness, contrast, saturation) in [
+                ("identity", 1.0, 1.0, 1.0),
+                ("brightness", 1.25, 1.0, 1.0),
+                ("contrast", 1.0, 1.25, 1.0),
+                ("saturation", 1.0, 1.0, 0.5),
+                ("restored", 1.0, 1.0, 1.0),
+            ] {
+                checks.extend([
+                    session(SessionCommand::SetDisplaySettings {
+                        settings: DisplaySettings {
+                            brightness,
+                            contrast,
+                            saturation,
+                        },
+                    }),
+                    Check::QualityCapture(
+                        format!("07-display-{name}.png"),
+                        ApplicationRenderQuality {
+                            scale: ScreenRenderScale::Half,
+                            shadow: ScreenShadowMap::Full,
+                            water_quality: WaterQuality::Low,
+                        },
+                    ),
+                    session(SessionCommand::SetDisplaySettings {
+                        settings: DisplaySettings::default(),
+                    }),
+                ]);
+            }
+        }
         checks.extend([
             Check::Capture("07-pause-settings.png".into()),
             overlay(GameUiPauseOverlay::Menu),
