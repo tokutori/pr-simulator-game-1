@@ -33,8 +33,12 @@ impl DocumentState {
             .map_err(LoadError::Aircraft);
         Self {
             source,
-            sha256: (bytes.len() <= MAX_AIRCRAFT_JSON_BYTES)
-                .then(|| format!("{:x}", Sha256::digest(bytes))),
+            sha256: (bytes.len() <= MAX_AIRCRAFT_JSON_BYTES).then(|| {
+                Sha256::digest(bytes)
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect()
+            }),
             bytes: bytes.len(),
             result,
         }
