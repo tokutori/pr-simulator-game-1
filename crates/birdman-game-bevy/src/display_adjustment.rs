@@ -1,99 +1,67 @@
-use bevy::ecs as bevy_ecs;
-use bevy::render as bevy_render;
-use bevy::{
-    core_pipeline::fullscreen_material::FullscreenMaterial,
-    prelude::Component,
-    render::{
-        extract_component::ExtractComponent,
-        render_resource::{ShaderType, encase},
-    },
-    shader::ShaderRef,
-};
+use bevy::{prelude::*, render::view::ColorGrading};
 use birdman_game_app::display_settings::DisplayAdjustment;
 
-/// Native fullscreen-pass parameters for contrast and saturation.
-///
-/// Brightness rides the camera `Exposure` instead: Bevy applies exposure in
-/// its tonemapping pass after this pre-tonemapping pass, so the contrast
-/// pivot is divided by the exposure multiplier to reproduce the shared
-/// derivation order (exposure, then contrast, then saturation) exactly.
-#[derive(Component, Clone, Copy, Debug, PartialEq, ShaderType)]
-pub(crate) struct NativeDisplayAdjustment {
-    pub(crate) contrast: f32,
-    pub(crate) saturation: f32,
-    pub(crate) contrast_pivot: f32,
-    pub(crate) padding: f32,
-}
-
-impl Default for NativeDisplayAdjustment {
-    fn default() -> Self {
-        Self {
-            contrast: 1.0,
-            saturation: 1.0,
-            contrast_pivot: birdman_game_app::display_settings::DISPLAY_CONTRAST_PIVOT as f32,
-            padding: 0.0,
-        }
+/// Transfers the completed linear transform into Bevy's existing per-view
+/// exposure and ASC slope/offset. Equal sections make the transform independent
+/// of luminance. Scene materials read these values; UI materials do not.
+pub(crate) fn color_grading(adjustment: &DisplayAdjustment) -> ColorGrading {
+    let mut grading = ColorGrading::default();
+    grading.global.exposure = -adjustment.exposure_ev_shift as f32;
+    grading.global.post_saturation = adjustment.saturation as f32;
+    for section in grading.all_sections_mut() {
+        section.gain = adjustment.contrast as f32;
+        section.lift = (adjustment.contrast_pivot * (1.0 - adjustment.contrast)) as f32;
     }
+    grading
 }
 
-impl NativeDisplayAdjustment {
-    pub(crate) fn from_shared(adjustment: &DisplayAdjustment) -> Self {
-        Self {
-            contrast: adjustment.contrast as f32,
-            saturation: adjustment.saturation as f32,
-            contrast_pivot: (adjustment.contrast_pivot / adjustment.exposure_multiplier) as f32,
-            padding: 0.0,
-        }
-    }
-}
-
-// The ExtractComponent derive cannot resolve `bevy_ecs` from this crate's
-// manifest, so extraction is written out like the XR surface order component.
-impl bevy_render::sync_component::SyncComponent for NativeDisplayAdjustment {
-    type Target = Self;
-}
-
-impl ExtractComponent for NativeDisplayAdjustment {
-    type QueryData = &'static Self;
-    type QueryFilter = ();
-    type Out = Self;
-
-    fn extract_component(
-        item: bevy_ecs::query::QueryItem<'_, '_, Self::QueryData>,
-    ) -> Option<Self::Out> {
-        Some(*item)
-    }
-}
-
-impl FullscreenMaterial for NativeDisplayAdjustment {
-    fn fragment_shader() -> ShaderRef {
-        super::native_assets::display_adjustment_shader_path().into()
+pub(crate) fn submit(world: &mut World, camera: Entity, adjustment: &DisplayAdjustment) {
+    let grading = color_grading(adjustment);
+    if world.get::<ColorGrading>(camera).is_none_or(|current| {
+        current.global.exposure != grading.global.exposure
+            || current.global.post_saturation != grading.global.post_saturation
+            || current.shadows != grading.shadows
+            || current.midtones != grading.midtones
+            || current.highlights != grading.highlights
+    }) {
+        world.entity_mut(camera).insert(grading);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bevy::render::view::ColorGradingUniform;
+    use birdman_game_app::display_settings::DisplaySettings;
 
     #[test]
-    fn shared_identity_derivation_maps_to_the_identity_pass() {
-        assert_eq!(
-            NativeDisplayAdjustment::from_shared(&DisplayAdjustment::default()),
-            NativeDisplayAdjustment::default()
-        );
-    }
-
-    #[test]
-    fn contrast_pivot_is_compensated_for_the_later_exposure_pass() {
-        let adjustment = DisplayAdjustment {
-            exposure_multiplier: 0.5,
-            contrast: 0.75,
-            saturation: 1.5,
-            ..DisplayAdjustment::default()
-        };
-        let pass = NativeDisplayAdjustment::from_shared(&adjustment);
-        assert_eq!(pass.contrast, 0.75);
-        assert_eq!(pass.saturation, 1.5);
-        assert_eq!(pass.contrast_pivot, 0.36);
+    fn view_uniform_retains_the_shared_linear_transform_including_negative_channels() {
+        for settings in [
+            DisplaySettings::default(),
+            DisplaySettings {
+                brightness: 0.5,
+                contrast: 1.5,
+                saturation: 0.75,
+            },
+        ] {
+            let adjustment = settings.adjustment();
+            let packed = ColorGradingUniform::from(color_grading(&adjustment));
+            assert_eq!(packed.gain.x, packed.gain.y);
+            assert_eq!(packed.gain.x, packed.gain.z);
+            assert_eq!(packed.lift.x, packed.lift.y);
+            assert_eq!(packed.lift.x, packed.lift.z);
+            let color = [-0.1_f64, 0.4, 2.0];
+            let transformed =
+                color.map(|c| c as f32 * packed.exposure.exp2() * packed.gain.x + packed.lift.x);
+            let luminance =
+                transformed[0] * 0.2126 + transformed[1] * 0.7152 + transformed[2] * 0.0722;
+            for (value, expected) in transformed
+                .map(|c| luminance + (c - luminance) * packed.post_saturation)
+                .into_iter()
+                .zip(adjustment.apply_linear_rgb(color))
+            {
+                assert!((f64::from(value) - expected).abs() < 1e-6);
+            }
+        }
     }
 }

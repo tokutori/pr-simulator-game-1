@@ -384,14 +384,28 @@ describe("Aggregate runtime through the real Three WebXRManager", () => {
       if (!(firstStructure instanceof Mesh) || !(matchingStructure instanceof Mesh)) throw new Error("Shared structure materials are unavailable");
       expect(firstStructure.material).toBe(matchingStructure.material);
       const water: ShaderMaterial[] = [];
+      let sky: Mesh | null = null;
       state.driver.scene?.traverse(object => {
-        if (object instanceof Mesh && object.material instanceof ShaderMaterial) water.push(object.material);
+        if (!(object instanceof Mesh) || !(object.material instanceof ShaderMaterial)) return;
+        if (object.material.name === "LakeSky") sky = object;
+        else water.push(object.material);
       });
+      if (sky === null) throw new Error("Scene sky material is unavailable");
+      const skyMesh: Mesh = sky;
+      if (!(skyMesh.material instanceof ShaderMaterial)) throw new Error("Sky shader is unavailable");
+      expect(skyMesh.material.toneMapped).toBe(true);
+      expect(skyMesh.material.depthWrite).toBe(false);
+      expect(skyMesh.material.depthTest).toBe(false);
+      expect(skyMesh.layers.isEnabled(1)).toBe(false);
+      expect(skyMesh.frustumCulled).toBe(false);
+      expect(state.driver.scene?.background).toBeNull();
       expect(new Set(water).size).toBe(2);
       expect(new Set(water.map(material => material.name))).toEqual(new Set(["LakeWaterNear", "LakeWaterFar"]));
       if (waveCount === undefined) throw new Error("Shared wave count was not prepared");
       const submittedShaders = lakeWaterShaders(waveCount);
       for (const material of water) {
+        expect(material.uniforms["uSkyTexture"]?.value).toBe(skyMesh.material.uniforms["uSkyTexture"]?.value);
+        expect(material.uniforms["displayAdjustment"]).toBe(skyMesh.material.uniforms["displayAdjustment"]);
         expect(material.defines["LAKE_WAVE_COUNT"]).toBe(waveCount);
         expect(material.defines["LAKE_DETAIL_SAMPLES"]).toBe(detailSamples);
         expect(material.vertexShader).toBe(material.name === "LakeWaterFar" ? submittedShaders.filteredVertexShader : submittedShaders.vertexShader);
