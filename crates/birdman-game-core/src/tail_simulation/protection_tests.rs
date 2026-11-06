@@ -1,10 +1,78 @@
 use super::*;
+use crate::tail_control::test_control as advance_tail_control;
 use crate::{
     AerodynamicStage, BodyPoint, BodyVector, FbwAuthority, HybridError, HybridModel, HybridSite,
     NedPoint, NedVector, TailAngleOfAttackGuard, TailPilotPositionIntent, TestAircraft,
-    UnitQuaternion, WindError, WindField, advance_tail_control,
+    UnitQuaternion, WindError, WindField,
 };
 use core::cell::Cell;
+
+#[test]
+fn pid_memory_admission_uses_the_actual_full_partial_or_zero_physical_interval() {
+    let definition = TestAircraft::try_new().unwrap();
+    let aircraft = definition.aircraft();
+    let surfaces = definition.surfaces().unwrap();
+    let loads = HybridAerodynamicLoad::try_new(
+        HybridModel::try_new(definition.polar().unwrap(), &surfaces).unwrap(),
+        1.225,
+        WindField::uniform(NedVector::zero()),
+    )
+    .unwrap();
+    let rate = crate::PidConfig::try_new(0.0, 1.0, 0.0, [-0.2, 0.2], [-0.2, 0.2], 0.0).unwrap();
+    let profile = crate::TailControlProfile::try_new(
+        crate::PitchController::Rate { rate },
+        crate::YawController::Rate { rate },
+        [[-0.2, 0.2]; 2],
+        [[-0.2, 0.2]; 2],
+        1.0,
+        crate::ControllerReference::try_new(0.0, 10.0).unwrap(),
+    )
+    .unwrap();
+    let config = TailFlightTickConfig::new(
+        ControlMode::Automatic,
+        profile,
+        TailPilotPositionMapping::try_new(&aircraft, 0.0).unwrap(),
+        Gravity::try_new(0.0).unwrap(),
+    );
+    let input = TailFlightTickInput::new(
+        TailPilotIntent::try_new(0.0, 0.0).unwrap(),
+        TailRateTarget::try_new(0.1, 0.0).unwrap(),
+        TailPilotPositionCommand::Hold,
+    );
+    let points = [BodyPoint::try_new(0.0, 0.0, 0.0).unwrap()];
+    let geometry = WaterContactGeometry::try_new(&points).unwrap();
+    for down in [-10.0, -0.004, 0.0] {
+        let previous = state(
+            &aircraft,
+            [10.0, 0.0, 1.0],
+            [0.0; 3],
+            TailIncidence::neutral(),
+            down,
+        );
+        let report = advance_tail_flight_tick_with_contact_report(
+            &aircraft, previous, config, input, &loads, geometry,
+        )
+        .unwrap();
+        let (memory, elapsed) = match report.outcome() {
+            TailFlightTickOutcome::Advanced(next) => (next.controller_state(), PHYSICS_DT_SECONDS),
+            TailFlightTickOutcome::WaterContact(sample) => {
+                if down < 0.0 {
+                    assert!(sample.fraction() > 0.0 && sample.fraction() < 1.0);
+                }
+                (
+                    sample.controller_state(),
+                    sample.fraction() * PHYSICS_DT_SECONDS,
+                )
+            }
+        };
+        assert!((memory.stages()[3].integral() - 0.1 * elapsed).abs() < 1e-15);
+        if elapsed == 0.0 {
+            assert_eq!(memory, previous.controller_state());
+        } else {
+            assert_eq!(memory.stages()[3].previous_measurement(), Some(0.0));
+        }
+    }
+}
 
 #[test]
 fn evaluated_report_transfers_controls_and_normalizes_only_zero_contact() {
@@ -38,6 +106,7 @@ fn evaluated_report_transfers_controls_and_normalizes_only_zero_contact() {
     assert_eq!(report.applied_controls(), Some(controls));
     for fraction in [0.0, -0.0, f64::from_bits(1), 0.5, 1.0] {
         let contact = TailWaterContactSample {
+            controller_state: next.controller_state,
             interval_start_tick: previous.tick_index,
             fraction,
             moment: if fraction == 0.0 {
@@ -158,11 +227,9 @@ fn alpha_guard_applies_effective_pilot_targets_without_clamping_state_or_losing_
         -50.0,
     );
     let before = previous;
-    let profile = TailControlProfile::try_new(0.2, 0.2, 1.0)
-        .unwrap()
-        .with_angle_of_attack_guard(
-            TailAngleOfAttackGuard::try_new([-0.09, 0.09], 0.04, 1.0, 1.6).unwrap(),
-        );
+    let profile = crate::tail_control::test_profile(0.2, 0.2).with_angle_of_attack_guard(
+        TailAngleOfAttackGuard::try_new([-0.09, 0.09], 0.04, 1.0, 1.6).unwrap(),
+    );
     let points = [BodyPoint::origin()];
     let geometry = WaterContactGeometry::try_new(&points).unwrap();
     for mode in [
@@ -446,11 +513,11 @@ pub(super) fn state(
 pub(super) fn config(
     aircraft: &AircraftModel,
     mode: ControlMode,
-    slew_rad_per_second: f64,
+    _slew_rad_per_second: f64,
 ) -> TailFlightTickConfig {
     TailFlightTickConfig::new(
         mode,
-        TailControlProfile::try_new(0.2, 0.2, slew_rad_per_second).unwrap(),
+        crate::tail_control::test_profile(0.2, 0.2),
         TailPilotPositionMapping::try_new(aircraft, 0.0).unwrap(),
         Gravity::try_new(0.0).unwrap(),
     )
@@ -712,11 +779,9 @@ fn held_pilot_demand_is_monotonic_and_survives_guard_projection() {
         TailIncidence::neutral(),
         -50.0,
     );
-    let profile = TailControlProfile::try_new(0.2, 0.2, 1.0)
-        .unwrap()
-        .with_angle_of_attack_guard(
-            TailAngleOfAttackGuard::try_new([-0.09, 0.09], 0.04, 1.0, 1.6).unwrap(),
-        );
+    let profile = crate::tail_control::test_profile(0.2, 0.2).with_angle_of_attack_guard(
+        TailAngleOfAttackGuard::try_new([-0.09, 0.09], 0.04, 1.0, 1.6).unwrap(),
+    );
     let mapping = TailPilotPositionMapping::try_new(&aircraft, 0.0).unwrap();
     let config = TailFlightTickConfig::new(
         ControlMode::Manual,

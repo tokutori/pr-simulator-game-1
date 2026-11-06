@@ -320,7 +320,7 @@ pub(crate) fn derive_flight_telemetry(
     let airspeed = air_velocity_body
         .norm()
         .map_err(|error| FlightTelemetryError::Dynamics(map_math_error(error)))?;
-    let [qw, qx, qy, qz] = state.attitude_body_to_ned().components();
+    let (angles, _) = flight_euler_angles(state.attitude_body_to_ned());
     Ok(FlightTelemetry {
         composite_cg_position_ned_m: position_ned,
         altitude_m: -position_ned.components()[2],
@@ -331,10 +331,30 @@ pub(crate) fn derive_flight_telemetry(
         wind_velocity_ned_mps: wind,
         angle_of_attack_rad: (airspeed > 0.0).then(|| libm::atan2(w, u)),
         sideslip_angle_rad: (airspeed > 0.0).then(|| libm::asin((v / airspeed).clamp(-1.0, 1.0))),
-        roll_rad: libm::atan2(2.0 * (qw * qx + qy * qz), 1.0 - 2.0 * (qx * qx + qy * qy)),
-        pitch_rad: libm::asin((2.0 * (qw * qy - qz * qx)).clamp(-1.0, 1.0)),
-        heading_rad: libm::atan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz)),
+        roll_rad: angles[0],
+        pitch_rad: angles[1],
+        heading_rad: angles[2],
     })
+}
+
+/// Canonical 321 Euler decomposition shared by telemetry and scalar attitude control.
+pub(crate) fn flight_euler_angles(attitude: UnitQuaternion) -> ([f64; 3], bool) {
+    let [qw, qx, qy, qz] = attitude.components();
+    let sine_pitch = (2.0 * (qw * qy - qz * qx)).clamp(-1.0, 1.0);
+    let roll_y = 2.0 * (qw * qx + qy * qz);
+    let roll_x = 1.0 - 2.0 * (qx * qx + qy * qy);
+    let heading_y = 2.0 * (qw * qz + qx * qy);
+    let heading_x = 1.0 - 2.0 * (qy * qy + qz * qz);
+    (
+        [
+            libm::atan2(roll_y, roll_x),
+            libm::asin(sine_pitch),
+            libm::atan2(heading_y, heading_x),
+        ],
+        sine_pitch.abs() != 1.0
+            && (roll_y != 0.0 || roll_x != 0.0)
+            && (heading_y != 0.0 || heading_x != 0.0),
+    )
 }
 
 fn negate_ned_vector(vector: NedVector) -> Result<NedVector, DynamicsError> {

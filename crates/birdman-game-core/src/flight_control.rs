@@ -1,30 +1,5 @@
 use core::f64::consts::PI;
 
-pub(crate) fn saturated_rate_command(
-    gain_seconds: f64,
-    limit_rad: f64,
-    target_rate: f64,
-    observed_rate: f64,
-) -> f64 {
-    let error = target_rate - observed_rate;
-    if gain_seconds == 0.0 || error == 0.0 {
-        return 0.0;
-    }
-    if !error.is_finite() {
-        return if target_rate > observed_rate {
-            limit_rad
-        } else {
-            -limit_rad
-        };
-    }
-    let saturation_error = limit_rad / gain_seconds;
-    if error.abs() >= saturation_error {
-        error.signum() * limit_rad
-    } else {
-        gain_seconds * error
-    }
-}
-
 /// Validated FBW contribution to a pilot/FBW command blend.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(verus_only, vstd::prelude::verus_verify)]
@@ -58,16 +33,6 @@ pub enum ControlMode {
     Shared(FbwAuthority),
     /// FBW command has full authority.
     Automatic,
-}
-
-impl ControlMode {
-    pub(crate) fn authority(self) -> f64 {
-        match self {
-            Self::Manual => 0.0,
-            Self::Shared(authority) => authority.value(),
-            Self::Automatic => 1.0,
-        }
-    }
 }
 
 /// Physical limit for one control-surface actuator.

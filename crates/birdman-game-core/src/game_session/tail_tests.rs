@@ -3,8 +3,8 @@ use crate::{
     AeroError, AerodynamicEvaluationError, AerodynamicStage, BodyPoint, BodyVector,
     CompositeCgLaunchConditions, CourseAxis, DynamicsError, FbwAuthority, Gravity,
     HybridAerodynamicLoad, HybridError, HybridModel, HybridSite, HybridSurface, LoadError,
-    NedPoint, NedVector, TailControlProfile, TailFlightScenarioParameters, TailIncidence,
-    TailPilotIntent, TailPilotPositionCommand, TailRateTarget, TestAircraft, WindError, WindField,
+    NedPoint, NedVector, TailFlightScenarioParameters, TailIncidence, TailPilotIntent,
+    TailPilotPositionCommand, TailRateTarget, TestAircraft, WindError, WindField,
 };
 
 const CONTACT_POINTS: [BodyPoint; 1] = [BodyPoint::origin()];
@@ -17,7 +17,7 @@ fn identity() -> SessionScenarioIdentity {
         scenario_version: 1,
         aircraft_model_version: 1,
         environment_version: 1,
-        controller_profile_version: 1,
+        controller_identity: Some([1; 32]),
         seed: 42,
     }
 }
@@ -86,7 +86,7 @@ fn configuration_for_heading<'a>(
     let scenario = TailFlightScenario::try_new(
         parameters,
         load,
-        TailControlProfile::try_new(0.5, 0.5, 0.8).unwrap(),
+        crate::tail_control::test_profile(0.5, 0.5),
     )
     .unwrap();
     (

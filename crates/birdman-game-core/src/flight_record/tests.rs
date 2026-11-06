@@ -13,10 +13,11 @@ fn header(maximum_flight_ticks: u64) -> FlightRecordHeader {
             scenario_version: 1,
             aircraft_model_version: 2,
             environment_version: 1,
-            controller_profile_version: 3,
+            controller_identity: Some([3; 32]),
             seed: 17,
         },
         maximum_flight_ticks,
+        None,
     )
     .unwrap()
 }
@@ -105,24 +106,31 @@ fn finalized(samples: Vec<FlightRecordSample>) -> Result<FlightRecord, FlightRec
 #[test]
 fn record_headers_enforce_bounded_capacity_and_current_tick_frequency() {
     let identity = header(4).scenario;
+    let mode = crate::ControlMode::Shared(crate::FbwAuthority::try_new(0.35).unwrap());
+    let identified = FlightRecordHeader::try_new(identity, 4, Some(mode)).unwrap();
+    assert_eq!(
+        identified.scenario.controller_identity,
+        identity.controller_identity
+    );
+    assert_eq!(identified.control_mode, Some(mode));
+    assert_eq!(header(4).control_mode, None);
     for maximum in [0, MAX_FLIGHT_RECORD_TICKS as u64 + 1, u64::MAX] {
         assert_eq!(
-            FlightRecordHeader::try_new(identity, maximum),
+            FlightRecordHeader::try_new(identity, maximum, None),
             Err(FlightRecordError::InvalidHeader)
         );
     }
-    for field in 0..5 {
+    for field in 0..4 {
         let mut invalid = identity;
         match field {
             0 => invalid.catalog_version = 0,
             1 => invalid.scenario_version = 0,
             2 => invalid.aircraft_model_version = 0,
             3 => invalid.environment_version = 0,
-            4 => invalid.controller_profile_version = 0,
             _ => unreachable!(),
         }
         assert_eq!(
-            FlightRecordHeader::try_new(invalid, 4),
+            FlightRecordHeader::try_new(invalid, 4, None),
             Err(FlightRecordError::InvalidHeader)
         );
     }

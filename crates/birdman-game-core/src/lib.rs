@@ -71,10 +71,11 @@ pub use scoring::{
 pub use session_contract::{SessionEndReason, SessionScenarioIdentity};
 pub use steady_glide::{SteadyGlideConditions, SteadyGlideError, SteadyGlideTrim};
 pub use tail_control::{
-    TailActuatorLimits, TailAngleOfAttackGuard, TailControlCommands, TailControlError,
-    TailControlProfile, TailControlUpdate, TailPilotIntent, TailPilotPositionCommand,
-    TailPilotPositionIntent, TailPilotPositionMapping, TailRateTarget, advance_tail_control,
-    tail_rate_feedback_incidence,
+    ControllerReference, PidConfig, PidMemory, PitchController, TailActuatorLimits,
+    TailAngleOfAttackGuard, TailControlCommands, TailControlError, TailControlObservation,
+    TailControlProfile, TailControlUpdate, TailControllerState, TailPilotIntent,
+    TailPilotPositionCommand, TailPilotPositionIntent, TailPilotPositionMapping, TailRateTarget,
+    YawController, advance_tail_control,
 };
 pub use tail_scenario::{
     TailFlightRunError, TailFlightRunOutcome, TailFlightScenario, TailFlightScenarioError,

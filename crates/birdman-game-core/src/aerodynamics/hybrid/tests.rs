@@ -783,12 +783,21 @@ fn slope_has_explicit_analytic_values_and_asymptotic_limits() {
 #[test]
 fn two_axis_manual_intent_and_feedback_reach_hybrid_tail_arm_moments() {
     let fixture = Fixture::new(2);
-    let profile = crate::TailControlProfile::try_new(0.2, 0.2, 1.0).unwrap();
+    let profile = crate::tail_control::test_profile(0.2, 0.2);
     for sign in [-1.0, 1.0] {
-        let manual = crate::TailPilotIntent::try_new(sign * 0.25, sign * 0.25)
-            .unwrap()
-            .incidence()
-            .unwrap();
+        let limits = [crate::TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2];
+        let manual = crate::tail_control::test_control(
+            TailIncidence::neutral(),
+            profile,
+            crate::ControlMode::Manual,
+            crate::TailPilotIntent::try_new(sign * 0.25, sign * 0.25).unwrap(),
+            crate::TailRateTarget::try_new(0.0, 0.0).unwrap(),
+            BodyVector::zero(),
+            1.0,
+            limits,
+        )
+        .unwrap()
+        .incidence();
         let elevator = isolated_increment(
             &fixture,
             1,
@@ -823,12 +832,18 @@ fn two_axis_manual_intent_and_feedback_reach_hybrid_tail_arm_moments() {
             sign * 2.5 * 60.0 * 0.5 * core::f64::consts::PI * 0.05,
             1.0e-12,
         );
-        let feedback = crate::tail_rate_feedback_incidence(
+        let feedback = crate::tail_control::test_control(
+            TailIncidence::neutral(),
             profile,
+            crate::ControlMode::Automatic,
+            crate::TailPilotIntent::try_new(0.0, 0.0).unwrap(),
             crate::TailRateTarget::try_new(0.0, 0.0).unwrap(),
             vector([0.0, sign * 0.1, sign * 0.1]),
+            1.0,
+            limits,
         )
-        .unwrap();
+        .unwrap()
+        .incidence();
         let pitch = isolated_increment(
             &fixture,
             1,

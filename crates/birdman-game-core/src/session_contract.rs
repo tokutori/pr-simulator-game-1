@@ -17,8 +17,8 @@ pub struct SessionScenarioIdentity {
     pub aircraft_identity: [u8; 32],
     /// Environment model version used by the scenario.
     pub environment_version: u32,
-    /// Controller profile version used by the session.
-    pub controller_profile_version: u32,
+    /// Digest of the selected controller identifier and original document bytes.
+    pub controller_identity: Option<[u8; 32]>,
     /// Explicit seed associated with deterministic scenario selection.
     pub seed: u64,
 }

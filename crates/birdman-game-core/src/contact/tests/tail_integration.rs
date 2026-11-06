@@ -54,7 +54,7 @@ fn off_grid_tail_contact_seals_record_and_score_at_the_first_fractional_time() {
         WindField::uniform(NedVector::zero()),
     )
     .unwrap();
-    let profile = TailControlProfile::try_new(0.2, 0.2, 1.0).unwrap();
+    let profile = crate::tail_control::test_profile(0.2, 0.2);
     let config = TailFlightTickConfig::new(
         ControlMode::Manual,
         profile,
@@ -114,7 +114,7 @@ fn off_grid_tail_contact_seals_record_and_score_at_the_first_fractional_time() {
                 scenario_version: 1,
                 aircraft_model_version: 1,
                 environment_version: 1,
-                controller_profile_version: 1,
+                controller_identity: Some([1; 32]),
                 seed: 207,
             };
             let mut session = GameSession::new();

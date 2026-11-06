@@ -15,9 +15,9 @@ use crate::dynamics::{
 };
 use crate::flight_control::ControlMode;
 use crate::tail_control::{
-    TailControlCommands, TailControlError, TailControlProfile, TailPilotIntent,
-    TailPilotPositionCommand, TailPilotPositionMapping, TailRateTarget,
-    advance_tail_control_at_alpha,
+    TailControlCommands, TailControlError, TailControlObservation, TailControlProfile,
+    TailControllerState, TailPilotIntent, TailPilotPositionCommand, TailPilotPositionMapping,
+    TailRateTarget, advance_tail_control,
 };
 
 mod contact_shape;
@@ -35,6 +35,7 @@ pub struct TailFlightTickState {
     pilot_position_demand: PilotPositionTarget,
     pilot_stop: Option<PilotStop>,
     wing_bending_factor: Option<WingBendingFactor>,
+    controller_state: TailControllerState,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -76,7 +77,19 @@ impl TailFlightTickState {
             pilot_position_demand: pilot_position_target,
             pilot_stop: None,
             wing_bending_factor: None,
+            controller_state: {
+                let (angles, regular) =
+                    crate::scenario::flight_euler_angles(flight_state.attitude_body_to_ned());
+                TailControllerState::initial(regular.then_some(angles[2]))
+            },
         })
+    }
+
+    /// Controller history accepted atomically with this physical boundary.
+    #[cfg_attr(verus_only, vstd::prelude::verus_verify(dual_spec))]
+    #[cfg_attr(verus_only, verus_spec(returns self.controller_state()))]
+    pub const fn controller_state(self) -> TailControllerState {
+        self.controller_state
     }
 
     /// Returns the completed integer physics tick index.
@@ -307,9 +320,17 @@ pub struct TailWaterContactSample {
     incidence: TailIncidence,
     pilot_position_target: PilotPositionTarget,
     wing_bending_factor: Option<WingBendingFactor>,
+    controller_state: TailControllerState,
 }
 
 impl TailWaterContactSample {
+    /// Controller history integrated over the terminal sample's actual elapsed interval.
+    #[cfg_attr(verus_only, vstd::prelude::verus_verify(dual_spec))]
+    #[cfg_attr(verus_only, verus_spec(returns self.controller_state()))]
+    pub const fn controller_state(self) -> TailControllerState {
+        self.controller_state
+    }
+
     /// Returns the interval's starting integer tick.
     #[cfg_attr(verus_only, vstd::prelude::verus_verify(dual_spec))]
     #[cfg_attr(verus_only, verus_spec(returns self.interval_start_tick()))]
@@ -435,6 +456,7 @@ impl TailFlightTickReport {
                     sample.interval_start_tick() == previous.tick_index()
                         && sample.flight_state() == previous.flight_state()
                         && sample.incidence() == previous.incidence()
+                        && sample.controller_state() == previous.controller_state()
                         && sample.wing_bending_factor() == previous.wing_bending_factor()
                         && sample.pilot_position_target() == previous.pilot_position_target(),
                 _ => false,
@@ -443,6 +465,7 @@ impl TailFlightTickReport {
                     if sample.moment() == TailWaterContactMoment::AppliedBoundary =>
                         sample.interval_start_tick() == previous.tick_index()
                             && sample.fraction() == 0.0f64
+                            && sample.controller_state() == previous.controller_state()
                             && sample.flight_state() == previous.flight_state(),
                 _ => true,
             }
@@ -551,6 +574,7 @@ impl TailTickTrial<'_, '_, '_> {
                 flight_state: self.previous.flight_state,
                 tail_wrenches,
                 contact: Some(TailWaterContactSample {
+                    controller_state: self.previous.controller_state,
                     interval_start_tick: self.previous.tick_index,
                     fraction: 0.0,
                     moment: TailWaterContactMoment::AppliedBoundary,
@@ -614,6 +638,7 @@ impl TailTickTrial<'_, '_, '_> {
                 (incidence, self.pilot_position_target)
             };
             TailWaterContactSample {
+                controller_state: self.previous.controller_state,
                 interval_start_tick: sample.interval_start_tick,
                 fraction: sample.fraction,
                 moment: if existing_boundary {
@@ -751,15 +776,40 @@ fn evaluate_tail_flight_tick(
     } else {
         None
     };
-    let control = advance_tail_control_at_alpha(
+    let (angles, regular) =
+        crate::scenario::flight_euler_angles(previous.flight_state.attitude_body_to_ned());
+    let telemetry = if matches!(
+        config.profile.pitch(),
+        crate::PitchController::AirspeedAttitudeRate { .. }
+    ) {
+        Some(
+            crate::scenario::derive_flight_telemetry(aircraft, previous.flight_state, |position| {
+                loads.wind_velocity_at(position)
+            })
+            .map_err(|error| {
+                TailFlightTickError::Contact(match error {
+                    crate::FlightTelemetryError::Dynamics(cause) => ContactError::Dynamics(cause),
+                    crate::FlightTelemetryError::Wind(cause) => ContactError::Wind(cause),
+                })
+            })?,
+        )
+    } else {
+        None
+    };
+    let control = advance_tail_control(
         previous.incidence,
+        previous.controller_state,
         config.profile,
         config.mode,
         input.pilot,
         input.desired_rate,
-        previous.flight_state.angular_velocity_body(),
+        TailControlObservation {
+            body_rate: previous.flight_state.angular_velocity_body(),
+            euler_rad: regular.then_some(angles),
+            airspeed_mps: telemetry.map_or(0.0, |sample| sample.airspeed_mps),
+            datum_alpha_rad,
+        },
         PHYSICS_DT_SECONDS,
-        datum_alpha_rad,
         aircraft.tail_actuators(),
     )
     .map_err(TailFlightTickError::Control)?;
@@ -812,9 +862,19 @@ fn evaluate_tail_flight_tick(
         geometry,
     };
     let incidence = control.incidence();
-    let outcome = trial.evaluate(incidence)?;
+    let mut outcome = trial.evaluate(incidence)?;
+    let admitted_seconds = outcome.contact.map_or(PHYSICS_DT_SECONDS, |sample| {
+        sample.fraction() * PHYSICS_DT_SECONDS
+    });
+    let controller_state = control
+        .admitted_state(admitted_seconds)
+        .map_err(TailFlightTickError::Control)?;
+    if let Some(contact) = &mut outcome.contact {
+        contact.controller_state = controller_state;
+    }
     Ok(TailEvaluatedTick {
         next: TailFlightTickState {
+            controller_state,
             tick_index,
             flight_state: outcome.flight_state,
             incidence,
@@ -990,6 +1050,7 @@ pub(crate) fn evaluated_tick_report(
                 TailWaterContactSample {
                     interval_start_tick: previous.tick_index(),
                     fraction: 0.0,
+                    controller_state: previous.controller_state(),
                     flight_state: previous.flight_state(),
                     ..contact
                 },
@@ -1016,6 +1077,7 @@ pub(crate) fn evaluated_tick_report(
                     && sample.contact_point_index() == contact_point_index
                     && sample.flight_state() == previous.flight_state()
                     && sample.incidence() == previous.incidence()
+                    && sample.controller_state() == previous.controller_state()
                     && sample.wing_bending_factor() == previous.wing_bending_factor()
                     && sample.pilot_position_target() == previous.pilot_position_target(),
             _ => false,
@@ -1029,6 +1091,7 @@ fn contact_at_start_report(
     TailFlightTickReport {
         tail_wrenches: [None; 2],
         result: TailReportedOutcome::ContactAtStart(TailWaterContactSample {
+            controller_state: previous.controller_state,
             interval_start_tick: previous.tick_index,
             fraction,
             moment: TailWaterContactMoment::ExistingBoundary,

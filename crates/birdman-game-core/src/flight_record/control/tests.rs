@@ -1,8 +1,8 @@
 use super::*;
 use crate::{
     BodyPoint, BodyVector, ControlMode, FbwAuthority, FlightState, Gravity, HybridAerodynamicLoad,
-    HybridModel, NedPoint, NedVector, TailControlProfile, TailFlightTickConfig,
-    TailFlightTickInput, TailPilotPositionIntent, TestAircraft, WaterContactGeometry, WindField,
+    HybridModel, NedPoint, NedVector, TailFlightTickConfig, TailFlightTickInput,
+    TailPilotPositionIntent, TestAircraft, WaterContactGeometry, WindField,
     advance_tail_flight_tick_with_contact_report,
 };
 
@@ -50,7 +50,7 @@ fn report(mode: ControlMode, down: f64) -> TailFlightTickReport {
         initial,
         TailFlightTickConfig::new(
             mode,
-            TailControlProfile::try_new(0.2, 0.3, 1.0).unwrap(),
+            crate::tail_control::test_profile(0.2, 0.3),
             trim.pilot_mapping().unwrap(),
             Gravity::try_new(TestAircraft::TRIM_GRAVITY_MPS2).unwrap(),
         ),
@@ -141,10 +141,11 @@ fn header() -> crate::FlightRecordHeader {
             scenario_version: 1,
             aircraft_model_version: 1,
             environment_version: 1,
-            controller_profile_version: 1,
+            controller_identity: Some([1; 32]),
             seed: 0,
         },
         4,
+        None,
     )
     .unwrap()
 }
@@ -186,7 +187,7 @@ fn deforming_report(previous: TailFlightTickState, factor: f64) -> TailFlightTic
         previous,
         TailFlightTickConfig::new(
             ControlMode::Manual,
-            TailControlProfile::try_new(0.2, 0.3, 1.0).unwrap(),
+            crate::tail_control::test_profile(0.2, 0.3),
             trim.pilot_mapping().unwrap(),
             Gravity::try_new(TestAircraft::TRIM_GRAVITY_MPS2).unwrap(),
         ),

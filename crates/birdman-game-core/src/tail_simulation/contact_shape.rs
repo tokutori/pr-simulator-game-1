@@ -461,10 +461,11 @@ mod tests {
                     scenario_version: 1,
                     aircraft_model_version: 1,
                     environment_version: 1,
-                    controller_profile_version: 1,
+                    controller_identity: Some([1; 32]),
                     seed: 17,
                 },
                 1,
+                None,
             )
             .unwrap();
             let mut record = crate::FlightRecord::try_new(header).unwrap();

@@ -60,7 +60,7 @@ fn neutral_input() -> TailFlightTickInput {
 }
 
 fn profile() -> TailControlProfile {
-    TailControlProfile::try_new(0.2, 0.2, 1.0).unwrap()
+    crate::tail_control::test_profile(0.2, 0.2)
 }
 
 #[test]
@@ -139,7 +139,7 @@ fn tail_scenario_seals_composite_cg_launch_trim_and_shared_telemetry() {
     let alternative = TailFlightScenario::try_new(
         parameters,
         load,
-        TailControlProfile::try_new(0.1, 0.3, 0.5).unwrap(),
+        crate::tail_control::test_profile(0.1, 0.3),
     )
     .unwrap();
     assert_eq!(alternative.aircraft(), scenario.aircraft());

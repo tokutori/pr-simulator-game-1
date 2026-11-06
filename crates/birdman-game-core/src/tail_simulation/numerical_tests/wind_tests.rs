@@ -21,7 +21,7 @@ impl WindCase {
             Self::Uniform | Self::SpatialShear => 0.2,
             Self::UpperStaticAlpha => NEAR_BOUND_PITCH_GAIN_SECONDS,
         };
-        TailControlProfile::try_new(pitch_gain, 0.2, 1.0).unwrap()
+        crate::tail_control::test_profile(pitch_gain, 0.2)
     }
 
     fn wind(self) -> WindField<'static> {

@@ -2,10 +2,10 @@ use super::envelope::aircraft;
 use super::*;
 use crate::{
     AerodynamicStage, ControlMode, DynamicsError, FbwAuthority, Gravity, PHYSICS_DT_SECONDS,
-    TailControlProfile, TailFlightTickConfig, TailFlightTickError, TailFlightTickInput,
-    TailFlightTickOutcome, TailFlightTickState, TailPilotIntent, TailPilotPositionCommand,
-    TailPilotPositionIntent, TailPilotPositionMapping, TailRateTarget, WaterContactGeometry,
-    advance, advance_tail_flight_tick, advance_tail_flight_tick_with_contact,
+    TailFlightTickConfig, TailFlightTickError, TailFlightTickInput, TailFlightTickOutcome,
+    TailFlightTickState, TailPilotIntent, TailPilotPositionCommand, TailPilotPositionIntent,
+    TailPilotPositionMapping, TailRateTarget, WaterContactGeometry, advance,
+    advance_tail_flight_tick, advance_tail_flight_tick_with_contact,
     advance_tail_flight_tick_with_contact_report, pilot_target_acceleration,
 };
 
@@ -33,7 +33,7 @@ fn initial_state(down: f64, velocity: [f64; 3], rate: [f64; 3]) -> TailFlightTic
 fn config(mode: ControlMode) -> TailFlightTickConfig {
     TailFlightTickConfig::new(
         mode,
-        TailControlProfile::try_new(0.2, 0.2, 1.0).unwrap(),
+        crate::tail_control::test_profile(0.2, 0.2),
         TailPilotPositionMapping::try_new(&aircraft(), 0.12).unwrap(),
         Gravity::try_new(0.0).unwrap(),
     )
@@ -249,7 +249,14 @@ fn tail_tick_pilot_set_hold_and_trim_are_independent_of_surface_authority() {
             )
             .unwrap();
             assert_eq!(next, expected);
-            assert_eq!(next.pilot_position_target().position_m(), normalized * 0.4);
+            assert_eq!(
+                next.pilot_position_target().position_m(),
+                if normalized < 0.0 {
+                    aircraft().pilot_position_bounds_m()[0]
+                } else {
+                    aircraft().pilot_position_bounds_m()[1]
+                }
+            );
             assert!(normalized * (next.flight_state().pilot_position_m() - 0.12) > 0.0);
             let held = advance_tail_flight_tick(
                 &aircraft(),

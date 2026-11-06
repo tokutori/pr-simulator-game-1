@@ -5,9 +5,9 @@ use super::{
 };
 use crate::{
     BodyPoint, BodyVector, CompositeCgLaunchConditions, ControlMode, CourseAxis, Gravity,
-    HybridAerodynamicLoad, HybridModel, NedPoint, NedVector, TailControlProfile,
-    TailFlightScenario, TailFlightScenarioParameters, TailFlightTickInput, TailIncidence,
-    TailPilotIntent, TailPilotPositionCommand, TailRateTarget, TestAircraft, WindField,
+    HybridAerodynamicLoad, HybridModel, NedPoint, NedVector, TailFlightScenario,
+    TailFlightScenarioParameters, TailFlightTickInput, TailIncidence, TailPilotIntent,
+    TailPilotPositionCommand, TailRateTarget, TestAircraft, WindField,
 };
 
 include!("game_session_pause_tests.rs");
@@ -100,7 +100,7 @@ fn configuration(maximum_ticks: u64) -> GameSessionConfiguration {
             WindField::uniform(NedVector::zero()),
         )
         .unwrap(),
-        TailControlProfile::try_new(0.5, 0.5, 0.8).unwrap(),
+        crate::tail_control::test_profile(0.5, 0.5),
     )
     .unwrap();
     let identity = SessionScenarioIdentity {
@@ -110,7 +110,7 @@ fn configuration(maximum_ticks: u64) -> GameSessionConfiguration {
         scenario_version: 3,
         aircraft_model_version: 2,
         environment_version: 5,
-        controller_profile_version: 7,
+        controller_identity: Some([7; 32]),
         seed: 0x5eed,
     };
     GameSessionConfiguration::try_new_tail(scenario, ControlMode::Manual, maximum_ticks, identity)
@@ -1047,7 +1047,7 @@ fn rejects_incomplete_resolved_model_version_identity() {
         scenario_version: 1,
         aircraft_model_version: 0,
         environment_version: 1,
-        controller_profile_version: 1,
+        controller_identity: Some([1; 32]),
         seed: 0,
     };
 
@@ -1094,7 +1094,7 @@ fn briefing_record_factory_preserves_the_owner_on_failure_and_receives_the_seale
     let sealed = configuration(100);
     let identity = sealed.identity;
     let initial = sealed.initial_state();
-    let header = crate::FlightRecordHeader::try_new(identity, 100).unwrap();
+    let header = crate::FlightRecordHeader::try_new(identity, 100, None).unwrap();
     let attract_storage = session.attract_record.as_ref().unwrap().samples().as_ptr();
     let setup = session.snapshot();
     assert_eq!(

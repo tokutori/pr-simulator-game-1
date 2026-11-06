@@ -112,7 +112,6 @@ fn validate_configuration_identity(
         || identity.scenario_version == 0
         || identity.aircraft_model_version == 0
         || identity.environment_version == 0
-        || identity.controller_profile_version == 0
     {
         return Err(GameSessionError::InvalidModelVersion);
     }
@@ -645,7 +644,7 @@ verus! {
                     && match self.lifecycle {
                         SessionLifecycle::Configured(next) => next.configuration == configuration
                             && next.phase == ConfiguredPhase::Preparing
-                            && match FlightRecordHeader::try_new(configuration.identity, configuration.maximum_flight_ticks) {
+                            && match FlightRecordHeader::try_new(configuration.identity, configuration.maximum_flight_ticks, Some(configuration.control_mode)) {
                                 Ok(header) => next.record.empty_for(header),
                                 Err(_) => false,
                             },
@@ -671,7 +670,7 @@ verus! {
                             else { previous.phase.is_result() })
                         && next.phase == (if briefing { ConfiguredPhase::Preparing } else { ConfiguredPhase::Ready })
                         && next.configuration == previous.configuration
-                        && match FlightRecordHeader::try_new(previous.configuration.identity, previous.configuration.maximum_flight_ticks) {
+                        && match FlightRecordHeader::try_new(previous.configuration.identity, previous.configuration.maximum_flight_ticks, Some(previous.configuration.control_mode)) {
                             Ok(header) => next.record.empty_for(header),
                             Err(_) => false,
                         },
@@ -1322,9 +1321,7 @@ impl GameSession {
         #[cfg(verus_only)]
         proof! {
             reveal(GameSession::prepared_fresh);
-            FlightRecordHeader::construction_error_is_invalid_header(
-                configuration.identity, configuration.maximum_flight_ticks,
-            );
+            FlightRecordHeader::construction_error_is_invalid_header(configuration.identity, configuration.maximum_flight_ticks, Some(configuration.control_mode));
         }
         self.prepare_flight_with_record_factory(configuration, FlightRecord::try_new)
     }
@@ -1385,9 +1382,7 @@ impl GameSession {
             reveal(GameSession::retried_fresh);
             let ghost before = *self;
             if let SessionLifecycle::Configured(previous) = before.lifecycle {
-                FlightRecordHeader::construction_error_is_invalid_header(
-                    previous.configuration.identity, previous.configuration.maximum_flight_ticks,
-                );
+                FlightRecordHeader::construction_error_is_invalid_header(previous.configuration.identity, previous.configuration.maximum_flight_ticks, Some(previous.configuration.control_mode));
             }
         }
         self.retry_briefing_with_record_factory(FlightRecord::try_new)
@@ -1631,9 +1626,7 @@ impl GameSession {
             reveal(GameSession::retried_fresh);
             let ghost before = *self;
             if let SessionLifecycle::Configured(previous) = before.lifecycle {
-                FlightRecordHeader::construction_error_is_invalid_header(
-                    previous.configuration.identity, previous.configuration.maximum_flight_ticks,
-                );
+                FlightRecordHeader::construction_error_is_invalid_header(previous.configuration.identity, previous.configuration.maximum_flight_ticks, Some(previous.configuration.control_mode));
             }
         }
         self.retry_with_record_factory(FlightRecord::try_new)
