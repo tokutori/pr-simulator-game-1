@@ -3366,7 +3366,23 @@ fn owner_executes_ui_and_frame_progression_without_adapter_phase_or_countdown_st
 
 #[test]
 fn hmd_frame_and_focus_use_the_confirmed_display_resource_and_shared_viewer_capture() {
-    use birdman_game_presentation::camera::{Pose, Vector3};
+    use birdman_game_presentation::camera::{Pose, Vector3, compose_pose, exhibition_camera_pose};
+    // Match the shared XR reset invariant: derived position and quaternion orientation.
+    let assert_pose = |actual: Pose, expected: Pose| {
+        for (first, second) in [actual.position.x, actual.position.y, actual.position.z]
+            .into_iter()
+            .zip([
+                expected.position.x,
+                expected.position.y,
+                expected.position.z,
+            ])
+        {
+            assert!((first - second).abs() < 1e-12, "{actual:?} {expected:?}");
+        }
+        let (first, second) = (actual.orientation, expected.orientation);
+        let dot = first.w * second.w + first.x * second.x + first.y * second.y + first.z * second.z;
+        assert!((dot.abs() - 1.0).abs() < 1e-12, "{actual:?} {expected:?}");
+    };
     let (mut runtime, active) = started_display(GameUiPresentationMode::Hmd);
     let resource_request = active
         .requests
@@ -3422,20 +3438,39 @@ fn hmd_frame_and_focus_use_the_confirmed_display_resource_and_shared_viewer_capt
         .unwrap();
     let scene = current.drawing.unwrap().scene;
     let water = scene.water_world_from_surface;
+    let mount = exhibition_camera_pose(
+        birdman_game_app::launch_venue()
+            .unwrap()
+            .platform
+            .horizontal_direction_ned(),
+    )
+    .unwrap();
+    let expected_head = compose_pose(mount, head).unwrap();
+    let expected_eyes = observation
+        .observation
+        .views
+        .iter()
+        .map(|eye| compose_pose(mount, eye.tracking_from_eye).unwrap())
+        .collect::<Vec<_>>();
+    let center = Vector3 {
+        x: (expected_eyes[0].position.x + expected_eyes[1].position.x) * 0.5,
+        y: 0.0,
+        z: (expected_eyes[0].position.z + expected_eyes[1].position.z) * 0.5,
+    };
     assert_eq!(
         water,
         Pose {
             position: Vector3 {
-                x: 2.0,
+                x: center.x.round(),
                 y: 0.0,
-                z: 3.0
+                z: center.z.round()
             },
             ..Pose::IDENTITY
         }
     );
     assert_eq!(scene.water_time_seconds, 0.0);
     let camera = scene.camera.unwrap();
-    assert_eq!(camera.world_from_head, Some(head));
+    assert_pose(camera.world_from_head.unwrap(), expected_head);
     assert_eq!(camera.eyes.len(), 2);
     assert!(runtime.application().presentation_available());
     observation.observation.views.swap(0, 1);
@@ -3567,7 +3602,7 @@ fn hmd_frame_and_focus_use_the_confirmed_display_resource_and_shared_viewer_capt
             &mut measure,
         )
         .unwrap();
-    assert_eq!(
+    assert_pose(
         reset_event
             .drawing
             .as_ref()
@@ -3576,8 +3611,9 @@ fn hmd_frame_and_focus_use_the_confirmed_display_resource_and_shared_viewer_capt
             .camera
             .as_ref()
             .unwrap()
-            .world_from_head,
-        Some(head)
+            .world_from_head
+            .unwrap(),
+        expected_head,
     );
     assert_eq!(
         reset_event
@@ -3616,7 +3652,7 @@ fn hmd_frame_and_focus_use_the_confirmed_display_resource_and_shared_viewer_capt
             &mut measure,
         )
         .unwrap();
-    assert_eq!(
+    assert_pose(
         reset
             .drawing
             .as_ref()
@@ -3625,8 +3661,9 @@ fn hmd_frame_and_focus_use_the_confirmed_display_resource_and_shared_viewer_capt
             .camera
             .as_ref()
             .unwrap()
-            .world_from_head,
-        Some(head)
+            .world_from_head
+            .unwrap(),
+        expected_head,
     );
     assert_eq!(
         reset
@@ -3641,10 +3678,7 @@ fn hmd_frame_and_focus_use_the_confirmed_display_resource_and_shared_viewer_capt
         ApplicationMenuProjection::Ready {
             world_from_panel, ..
         } => {
-            assert!((world_from_panel.position.x - panel_before.position.x).abs() < 1e-9);
-            assert!((world_from_panel.position.y - panel_before.position.y).abs() < 1e-9);
-            assert!((world_from_panel.position.z - panel_before.position.z).abs() < 1e-9);
-            assert_eq!(world_from_panel.orientation, panel_before.orientation);
+            assert_pose(world_from_panel, panel_before);
         }
         other => panic!("Expected the retained menu: {other:?}"),
     }
@@ -4673,9 +4707,9 @@ fn graphics_commit_tracks_actual_resources_cleanup_and_renderer_lifetimes() {
 }
 
 #[test]
-fn immersive_quality_retains_screen_configuration_and_uses_manual_water() {
+fn fixed_runtime_target_keeps_preferences_and_applies_shared_shadow_and_water() {
     use birdman_game_presentation::screen_render_auto::{
-        ScreenRenderAutoController, ScreenRenderScope, ScreenShadowMap,
+        ScreenRenderAutoController, ScreenShadowMap,
     };
     use birdman_game_presentation::screen_render_scale::ScreenRenderScale;
     let mut policy = ScreenRenderAutoController::new(
@@ -4683,24 +4717,37 @@ fn immersive_quality_retains_screen_configuration_and_uses_manual_water() {
         ScreenShadowMap::Full,
         WaterQuality::High,
     );
-    policy
-        .unsupported("timer unavailable".to_owned(), 0.0)
-        .unwrap();
-    let fallback = policy.requested().unwrap();
-    policy.applied(fallback, 1.0, None).unwrap();
-    let immersive = policy
-        .set_scope(ScreenRenderScope::Immersive, 2.0)
+    let request = policy
+        .select_manual(ScreenRenderScale::Half, 0.0)
         .unwrap()
         .unwrap();
-    assert_eq!(immersive.scale, fallback.scale);
-    assert_eq!(immersive.shadow, fallback.shadow);
-    assert_eq!(immersive.water_quality, WaterQuality::High);
-    policy.applied(immersive, 3.0, None).unwrap();
-    assert!(!policy.measurement_requested(false));
-    policy
-        .unsupported("unused in immersive".to_owned(), 4.0)
+    policy.applied(request, 1.0, None).unwrap();
+    let fixed = policy
+        .set_resolution_adjustable(false, 2.0)
+        .unwrap()
         .unwrap();
-    assert!(policy.requested().is_none());
+    assert_eq!(fixed.scale, ScreenRenderScale::Full);
+    policy.applied(fixed, 3.0, None).unwrap();
+    assert!(!policy.snapshot().resolution_adjustable);
+    let shadow = policy
+        .select_shadow(ScreenShadowMap::Off, 4.0)
+        .unwrap()
+        .unwrap();
+    assert_eq!(shadow.scale, ScreenRenderScale::Full);
+    policy.applied(shadow, 5.0, None).unwrap();
+    let water = policy
+        .select_water_quality(WaterQuality::Low, 6.0)
+        .unwrap()
+        .unwrap();
+    assert_eq!(water.scale, ScreenRenderScale::Full);
+    policy.applied(water, 7.0, None).unwrap();
+    let restored = policy
+        .set_resolution_adjustable(true, 8.0)
+        .unwrap()
+        .unwrap();
+    assert_eq!(restored.scale, ScreenRenderScale::Half);
+    assert_eq!(restored.shadow, ScreenShadowMap::Off);
+    assert_eq!(restored.water_quality, WaterQuality::Low);
 }
 
 fn screen_platform() -> ApplicationPlatformObservation {

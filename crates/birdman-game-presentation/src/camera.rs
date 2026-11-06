@@ -580,9 +580,178 @@ pub fn flight_camera_pose(
     )
 }
 
+/// Fixed, gravity-aligned exhibition reference shared by every display.
+///
+/// The 12 m height is an art-directed view. The registered venue supplies the
+/// viewing direction; no geographic asset coordinates are duplicated here.
+pub fn exhibition_camera_pose(direction_ned: [f64; 2]) -> Result<Pose, CameraError> {
+    let [north, east] = direction_ned;
+    if !north.is_finite() || !east.is_finite() || north.hypot(east) <= 0.0 {
+        return Err(CameraError::InvalidDistance);
+    }
+    let yaw = -east.atan2(north);
+    Ok(Pose {
+        position: Vector3 {
+            x: 0.0,
+            y: 12.0,
+            z: 0.0,
+        },
+        orientation: Quaternion {
+            w: (yaw / 2.0).cos(),
+            x: 0.0,
+            y: (yaw / 2.0).sin(),
+            z: 0.0,
+        },
+    })
+}
+
+/// Configured phone optics; actual HMD optics remain runtime observations.
+pub fn configured_phone_viewer(
+    viewport: [f64; 2],
+    extent: Option<[u32; 2]>,
+    vertical_fov_degrees: f64,
+) -> Result<crate::xr::XrViewerFrame, CameraError> {
+    if !viewport[0].is_finite()
+        || !viewport[1].is_finite()
+        || viewport[0] <= 0.0
+        || viewport[1] <= 0.0
+        || !vertical_fov_degrees.is_finite()
+        || vertical_fov_degrees <= 0.0
+        || vertical_fov_degrees >= 180.0
+    {
+        return Err(CameraError::InvalidDistance);
+    }
+    use crate::xr::{XrDepthRange, XrEye, XrEyeGeometry, XrViewerFrame};
+    let near = crate::xr::VIEW_NEAR_METERS;
+    let far = crate::xr::VIEW_FAR_METERS;
+    let top = near * (vertical_fov_degrees.to_radians() / 2.0).tan();
+    let [width, height] = extent.map_or([viewport[0], viewport[1]], |extent| extent.map(f64::from));
+    let left_width = (width / 2.0).floor();
+    if left_width <= 0.0 || height <= 0.0 {
+        return Err(CameraError::InvalidDistance);
+    }
+    let eye = |eye, offset: f64| {
+        let eye_width = if eye == XrEye::Left {
+            left_width
+        } else {
+            width - left_width
+        };
+        let half_width = top * eye_width / height;
+        let shift = -offset * near / 10.0;
+        XrEyeGeometry {
+            eye,
+            head_from_eye: Pose {
+                position: Vector3 {
+                    x: offset,
+                    y: 0.0,
+                    z: 0.0,
+                },
+                ..Pose::IDENTITY
+            },
+            projection: [
+                near / half_width,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                near / top,
+                0.0,
+                0.0,
+                shift / half_width,
+                0.0,
+                -(far + near) / (far - near),
+                -1.0,
+                0.0,
+                0.0,
+                -2.0 * far * near / (far - near),
+                0.0,
+            ],
+            depth_range: XrDepthRange::NegativeOneToOne,
+        }
+    };
+    Ok(XrViewerFrame::Configured {
+        tracking_from_head: (),
+        eyes: [eye(XrEye::Left, -0.032), eye(XrEye::Right, 0.032)],
+    })
+}
+
+/// Configured monoscopic optics in the shared OpenGL clip convention.
+pub fn configured_screen_projection(
+    viewport: [f64; 2],
+    vertical_fov_degrees: f64,
+) -> Result<[f64; 16], CameraError> {
+    if !viewport[0].is_finite()
+        || !viewport[1].is_finite()
+        || viewport[0] <= 0.0
+        || viewport[1] <= 0.0
+        || !vertical_fov_degrees.is_finite()
+        || vertical_fov_degrees <= 0.0
+        || vertical_fov_degrees >= 180.0
+    {
+        return Err(CameraError::InvalidDistance);
+    }
+    let focal = 1.0 / (vertical_fov_degrees.to_radians() / 2.0).tan();
+    let near = crate::xr::VIEW_NEAR_METERS;
+    let far = crate::xr::VIEW_FAR_METERS;
+    Ok([
+        focal * viewport[1] / viewport[0],
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        focal,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        -(far + near) / (far - near),
+        -1.0,
+        0.0,
+        0.0,
+        -2.0 * far * near / (far - near),
+        0.0,
+    ])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn configured_camera_uses_the_supplied_level_basis_and_valid_optics() {
+        let direction = [0.6, -0.8];
+        let mount = exhibition_camera_pose(direction).unwrap();
+        let forward = mount.rotate(Vector3 {
+            x: 0.0,
+            y: 0.0,
+            z: -1.0,
+        });
+        assert!((forward.x - direction[1]).abs() < 1e-14);
+        assert!(forward.y.abs() < 1e-14);
+        assert!((forward.z + direction[0]).abs() < 1e-14);
+        assert_eq!(
+            mount.position,
+            Vector3 {
+                x: 0.0,
+                y: 12.0,
+                z: 0.0
+            }
+        );
+        assert!(exhibition_camera_pose([0.0, 0.0]).is_err());
+        let projection = configured_screen_projection([1280.0, 720.0], 60.0).unwrap();
+        assert!(projection_matrix_is_valid(&projection));
+        let viewer = configured_phone_viewer([1280.0, 720.0], Some([641, 360]), 60.0).unwrap();
+        let crate::xr::XrViewerFrame::Configured { eyes, .. } = viewer else {
+            panic!("configured viewer")
+        };
+        assert!(
+            eyes.iter()
+                .all(|eye| projection_matrix_is_valid(&eye.projection))
+        );
+        assert_ne!(eyes[0].projection[0], eyes[1].projection[0]);
+        assert!(configured_screen_projection([1280.0, 720.0], f64::NAN).is_err());
+        assert!(configured_phone_viewer([1280.0, 720.0], Some([1, 360]), 60.0).is_err());
+    }
 
     #[test]
     fn water_reflection_preserves_projection_and_mirrors_the_complete_camera_basis() {

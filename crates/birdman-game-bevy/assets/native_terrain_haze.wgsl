@@ -6,6 +6,8 @@
     view_transformations::position_world_to_view,
 }
 #import bevy_render::color_operations::{linear_rgb_to_srgb, srgb_to_linear_rgb}
+#import bevy_pbr::mesh_view_bindings::view
+#import birdman_game::display_adjustment::adjust_scene_color
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(100) var<uniform> haze_color_srgb: vec4<f32>;
 @group(#{MATERIAL_BIND_GROUP}) @binding(101) var<uniform> haze_range: vec4<f32>;
@@ -23,10 +25,10 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     out.color = main_pass_post_lighting_processing(pbr_input, out.color);
     let depth = -position_world_to_view(in.world_position.xyz).z;
     let amount = smoothstep(haze_range.x, haze_range.y, depth);
-    if amount == 0.0 {
-        return out;
+    if amount != 0.0 {
+        let fogged = mix(linear_rgb_to_srgb(out.color.rgb), haze_color_srgb.rgb, amount);
+        out.color = vec4<f32>(srgb_to_linear_rgb(fogged), out.color.a);
     }
-    let fogged = mix(linear_rgb_to_srgb(out.color.rgb), haze_color_srgb.rgb, amount);
-    out.color = vec4<f32>(srgb_to_linear_rgb(fogged), out.color.a);
+    out.color = vec4<f32>(adjust_scene_color(out.color.rgb, view.color_grading), out.color.a);
     return out;
 }

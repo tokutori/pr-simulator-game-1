@@ -104,6 +104,7 @@ impl BootOwner {
                 .map(|(id, label)| GameUiControl {
                     id: id.to_owned(),
                     label: label.to_owned(),
+                    display_label: label.to_owned(),
                     enabled: true,
                     section: "boot-actions".to_owned(),
                     content: GameUiControlContent::Button {
@@ -137,6 +138,10 @@ impl BootOwner {
             view.panels[0].controls.push(GameUiControl {
                 id: "game-boot-diagnostic".to_owned(),
                 label: "エラー詳細".to_owned(),
+                display_label: birdman_game_presentation::game_ui::game_ui_readout_label(
+                    "エラー詳細",
+                    cause,
+                ),
                 enabled: false,
                 section: "boot-diagnostic".to_owned(),
                 content: GameUiControlContent::Status {

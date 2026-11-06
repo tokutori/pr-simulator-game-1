@@ -1,7 +1,7 @@
 use super::*;
 use crate::game_ui::{
-    GameUiChart, GameUiChartCursor, GameUiControlContent, GameUiEmphasis, GameUiFrame, GameUiPanel,
-    GameUiTheme, GameUiView,
+    GameUiButtonPresentation, GameUiChart, GameUiChartCursor, GameUiControlContent, GameUiEmphasis,
+    GameUiFrame, GameUiPanel, GameUiTheme, GameUiView,
 };
 use crate::xr::{
     XrPointerControl, XrPointerRect, XrPointerRegion, XrPointerSurface, XrPointerTarget,
@@ -199,6 +199,13 @@ pub(super) fn project(
     let mut regions = Vec::new();
     let mut footer = Vec::new();
     let theme = &view.theme;
+    let shadow = view.layout.passthrough.then_some((
+        theme.text_shadow_color.as_str(),
+        MenuPoint {
+            x: theme.text_shadow_offset_px[0] * plan.source.font_meters / plan.source.font_size_px,
+            y: theme.text_shadow_offset_px[1] * plan.source.font_meters / plan.source.font_size_px,
+        },
+    ));
     for (text, color) in [
         (&geometry.title, &theme.text),
         (&geometry.caption, &theme.muted_text),
@@ -210,7 +217,15 @@ pub(super) fn project(
             .iter()
             .map(|text| (text, &theme.text)),
     ) {
-        paint_text(&mut content, text, plan, measurements, &translate, color)?;
+        paint_text(
+            &mut content,
+            text,
+            plan,
+            measurements,
+            &translate,
+            color,
+            shadow,
+        )?;
     }
     for (placement, projected) in geometry.controls.iter().zip(&viewport.rectangles) {
         let control = panel
@@ -218,12 +233,14 @@ pub(super) fn project(
             .get(placement.control_index)
             .ok_or(MenuLayoutFailure::StaleView)?;
         if let Some(visible) = projected.visible {
-            content.push(SurfacePaintItem::Rectangle {
-                opacity: 1.0,
-                bounds: visible,
-                color: control_background(&control.content, theme).into(),
-                gradient: None,
-            });
+            if !matches!(control.content, GameUiControlContent::Status { .. }) {
+                content.push(SurfacePaintItem::Rectangle {
+                    opacity: 1.0,
+                    bounds: visible,
+                    color: control_background(&control.content, theme).into(),
+                    gradient: None,
+                });
+            }
             for card in &placement.cards {
                 let origin = translate(MenuPoint {
                     x: card.x,
@@ -265,7 +282,7 @@ pub(super) fn project(
                 if let Some(legend) = &request.legend {
                     let origin = translate(MenuPoint {
                         x: text.bounds.x - plan.source.font_meters * 2.0,
-                        y: text.bounds.y + plan.line_height_meters * 0.35,
+                        y: text.bounds.y + request.line_height_meters * 0.35,
                     });
                     content.push(SurfacePaintItem::Rectangle {
                         opacity: 1.0,
@@ -273,24 +290,35 @@ pub(super) fn project(
                             x: origin.x,
                             y: origin.y,
                             width: plan.source.font_meters * 1.5,
-                            height: plan.line_height_meters * 0.3,
+                            height: request.line_height_meters * 0.3,
                         },
                         color: legend.color.clone(),
                         gradient: legend.segment_gradient.clone(),
                     });
                 }
-                let color = if control.enabled
+                let color = if let GameUiControlContent::Status { emphasis, .. } = control.content {
+                    theme.status_color(emphasis)
+                } else if control.enabled
                     || matches!(
                         control.content,
                         GameUiControlContent::Status { .. }
                             | GameUiControlContent::Fields { .. }
                             | GameUiControlContent::Chart { .. }
-                    ) {
+                    )
+                {
                     &theme.text
                 } else {
                     &theme.muted_text
                 };
-                paint_text(&mut content, text, plan, measurements, &translate, color)?;
+                paint_text(
+                    &mut content,
+                    text,
+                    plan,
+                    measurements,
+                    &translate,
+                    color,
+                    shadow,
+                )?;
             }
             if control.enabled {
                 let descriptor = match control.content {
@@ -350,7 +378,7 @@ pub(super) fn project(
                     x: bounds.x + plan.padding_meters,
                     y: bounds.y + plan.padding_meters,
                     width: request.width_meters,
-                    height: measurement.lines.len() as f64 * plan.line_height_meters,
+                    height: measurement.lines.len() as f64 * request.line_height_meters,
                 },
                 chart_projection: None,
                 line_geometry: vec![],
@@ -366,6 +394,7 @@ pub(super) fn project(
                 } else {
                     &theme.muted_text
                 },
+                shadow,
             )?;
             if enabled {
                 pages.push(XrPointerRegion {
@@ -478,6 +507,7 @@ fn paint_text(
     measurements: &[MenuTextMeasurement],
     translate: &impl Fn(MenuPoint) -> MenuPoint,
     color: &str,
+    shadow: Option<(&str, MenuPoint)>,
 ) -> Result<(), MenuLayoutFailure> {
     let request = &plan.texts[text.text_index];
     let measured = measurements
@@ -494,12 +524,12 @@ fn paint_text(
             MenuPoint {
                 x: text.bounds.x + line.left_meters.max(0.0),
                 y: text.bounds.y
-                    + index as f64 * plan.line_height_meters
-                    + plan.line_height_meters / 2.0
+                    + index as f64 * request.line_height_meters
+                    + request.line_height_meters / 2.0
                     + (line.ascent_meters - line.descent_meters) / 2.0,
             }
         };
-        output.push(SurfacePaintItem::Text {
+        let item = SurfacePaintItem::Text {
             opacity: 1.0,
             value: line.value.clone(),
             font: request.font.clone(),
@@ -514,7 +544,20 @@ fn paint_text(
                 .chart_text
                 .as_ref()
                 .map_or_else(|| color.into(), |text| text.color.clone()),
-        });
+        };
+        if let Some((color, offset)) = shadow {
+            let mut behind = item.clone();
+            if let SurfacePaintItem::Text {
+                anchor, color: ink, ..
+            } = &mut behind
+            {
+                anchor.x += offset.x;
+                anchor.y += offset.y;
+                *ink = color.into();
+            }
+            output.push(behind);
+        }
+        output.push(item);
     }
     Ok(())
 }
