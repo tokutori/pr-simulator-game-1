@@ -63,6 +63,13 @@ fn prepared_launch_projection_is_read_only_and_preserves_the_retry_initial_state
 }
 
 fn configuration(maximum_ticks: u64) -> GameSessionConfiguration {
+    configuration_with_profile(maximum_ticks, crate::tail_control::test_profile(0.5, 0.5))
+}
+
+fn configuration_with_profile(
+    maximum_ticks: u64,
+    profile: crate::TailControlProfile,
+) -> GameSessionConfiguration {
     let definition = TestAircraft::try_new().unwrap();
     let surfaces = definition.surfaces().unwrap();
     let trim = definition.trim().unwrap();
@@ -100,7 +107,7 @@ fn configuration(maximum_ticks: u64) -> GameSessionConfiguration {
             WindField::uniform(NedVector::zero()),
         )
         .unwrap(),
-        crate::tail_control::test_profile(0.5, 0.5),
+        profile,
     )
     .unwrap();
     let identity = SessionScenarioIdentity {
@@ -1091,10 +1098,34 @@ fn briefing_record_factory_preserves_the_owner_on_failure_and_receives_the_seale
         .unwrap();
     session.countdown_token = 9;
     session.open_setup().unwrap();
-    let sealed = configuration(100);
+    let profile = crate::tail_control::test_profile(0.5, 0.5);
+    let profile = crate::TailControlProfile::try_new(
+        profile.pitch(),
+        profile.yaw(),
+        profile.incidence_bounds_rad(),
+        profile.body_rate_bounds_rad_per_second(),
+        0.8,
+        profile.reference(),
+    )
+    .unwrap();
+    let requested_mode = ControlMode::Shared(crate::FbwAuthority::try_new(0.5).unwrap());
+    let effective_mode = ControlMode::Shared(crate::FbwAuthority::try_new(0.8).unwrap());
+    let configure = || {
+        let prepared = configuration_with_profile(100, profile);
+        GameSessionConfiguration::try_new_tail(
+            prepared.scenario,
+            requested_mode,
+            100,
+            prepared.identity,
+        )
+        .unwrap()
+    };
+    let sealed = configure();
+    assert_eq!(sealed.control_mode, effective_mode);
     let identity = sealed.identity;
     let initial = sealed.initial_state();
-    let header = crate::FlightRecordHeader::try_new(identity, 100, Some(sealed.control_mode)).unwrap();
+    let header =
+        crate::FlightRecordHeader::try_new(identity, 100, Some(sealed.control_mode)).unwrap();
     let attract_storage = session.attract_record.as_ref().unwrap().samples().as_ptr();
     let setup = session.snapshot();
     assert_eq!(
@@ -1108,7 +1139,7 @@ fn briefing_record_factory_preserves_the_owner_on_failure_and_receives_the_seale
     );
     assert_eq!(session.snapshot(), setup);
     assert!(session.flight_record().is_none());
-    session.prepare_flight(configuration(100)).unwrap();
+    session.prepare_flight(configure()).unwrap();
     session
         .fail_briefing(super::BriefingFailure::AssetUnavailable)
         .unwrap();
@@ -1144,6 +1175,38 @@ fn briefing_record_factory_preserves_the_owner_on_failure_and_receives_the_seale
     assert_eq!(
         session.attract_record.as_ref().unwrap().samples().as_ptr(),
         attract_storage
+    );
+    assert_eq!(
+        session.flight_record().unwrap().header().control_mode,
+        Some(effective_mode)
+    );
+    session.mark_briefing_ready().unwrap();
+    session.start_countdown(1).unwrap();
+    session
+        .observe_countdown(session.countdown_token().unwrap(), 1.0, true)
+        .unwrap();
+    session
+        .advance_fixture_tick(TailFlightTickInput::new(
+            TailPilotIntent::try_new(0.5, 0.0).unwrap(),
+            TailRateTarget::try_new(0.0, 0.0).unwrap(),
+            TailPilotPositionCommand::Hold,
+        ))
+        .unwrap();
+    let recorded = session
+        .flight_record()
+        .unwrap()
+        .samples()
+        .last()
+        .unwrap()
+        .controls
+        .input_from_previous
+        .unwrap();
+    let manual = recorded.manual_incidence_target().elevator_rad();
+    let feedback = recorded.fbw_incidence_target().elevator_rad();
+    assert!(
+        (recorded.mixed_incidence_target().elevator_rad() - (manual + 0.8 * (feedback - manual)))
+            .abs()
+            < 1e-15
     );
 }
 

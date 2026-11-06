@@ -118,9 +118,9 @@ pub fn advance_tail_control(
     {
         return Err(TailControlError::NonFinite);
     }
-    let authority = match mode {
+    let authority = match profile.resolve_mode(mode) {
         ControlMode::Manual => 0.0,
-        ControlMode::Shared(_) => profile.shared_authority(),
+        ControlMode::Shared(authority) => authority.value(),
         ControlMode::Automatic => 1.0,
     };
     let bounds = profile.incidence_bounds_rad();

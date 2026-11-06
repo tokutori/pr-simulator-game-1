@@ -1,4 +1,5 @@
 use super::{PidConfig, TailAngleOfAttackGuard, TailControlError};
+use crate::{ControlMode, FbwAuthority};
 
 /// Pitch cascade, with each stage's output expressed in the next stage's units.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -96,7 +97,7 @@ pub struct TailControlProfile {
     yaw: YawController,
     incidence_bounds_rad: [[f64; 2]; 2],
     body_rate_bounds_rad_per_second: [[f64; 2]; 2],
-    shared_authority: f64,
+    shared_authority: FbwAuthority,
     reference: ControllerReference,
     angle_of_attack_guard: Option<TailAngleOfAttackGuard>,
 }
@@ -171,7 +172,8 @@ impl TailControlProfile {
             yaw,
             incidence_bounds_rad,
             body_rate_bounds_rad_per_second,
-            shared_authority,
+            shared_authority: FbwAuthority::try_new(shared_authority)
+                .map_err(TailControlError::Actuator)?,
             reference,
             angle_of_attack_guard: None,
         })
@@ -194,7 +196,13 @@ impl TailControlProfile {
     }
     /// Shared-mode feedback fraction from the selected document.
     pub const fn shared_authority(self) -> f64 {
-        self.shared_authority
+        self.shared_authority.value()
+    }
+    pub(crate) const fn resolve_mode(self, mode: ControlMode) -> ControlMode {
+        match mode {
+            ControlMode::Shared(_) => ControlMode::Shared(self.shared_authority),
+            ControlMode::Manual | ControlMode::Automatic => mode,
+        }
     }
     /// Aircraft-derived resolved references.
     pub const fn reference(self) -> ControllerReference {

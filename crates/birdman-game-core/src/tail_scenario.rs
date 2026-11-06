@@ -211,6 +211,11 @@ impl TailFlightScenario {
     }
 
     /// Selects surface authority without changing the aircraft, polar or environment.
+    pub(crate) const fn resolve_control_mode(&self, mode: ControlMode) -> ControlMode {
+        self.profile.resolve_mode(mode)
+    }
+
+    /// Selects surface authority without changing the aircraft, polar or environment.
     pub const fn tick_config(&self, mode: ControlMode) -> TailFlightTickConfig {
         TailFlightTickConfig::new(
             mode,

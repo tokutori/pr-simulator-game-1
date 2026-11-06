@@ -48,6 +48,7 @@ impl GameSessionConfiguration {
         identity: SessionScenarioIdentity,
     ) -> Result<Self, GameSessionError> {
         validate_configuration_identity(maximum_flight_ticks, identity)?;
+        let control_mode = scenario.resolve_control_mode(control_mode);
         Ok(Self {
             scenario,
             control_mode,
