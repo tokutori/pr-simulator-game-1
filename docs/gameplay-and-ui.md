@@ -108,7 +108,6 @@ u_{surface}=(1-a)u_{pilot,surface}+a u_{FBW,surface},\qquad 0\le a\le1
 
 - Briefingで解決済みconfiguration、seed、初期状態、環境・asset identityを確定する。
 - Countdown中は物理・controller・actuator時刻を固定し、操縦入力を取得・積分しない。
-- Countdown中の表示姿勢は、プラットフォーム後端から静止で等加速度し、前端で封印済み初期状態へ到達する仮想滑走の最終区間として、受理済みelapsedから純粋導出する。物理状態と記録は初期状態へ固定し、表示導出は物理へ影響しない。
 - launch時にtick 0の初期snapshotを記録してから最初の入力を適用する。
 - 開始前のkeyboard押下は破棄し、gamepadは新規飛行とPause復帰時に中立確認を行う。
 
@@ -235,6 +234,7 @@ Retryはsealed configuration、初期状態、scenario seed、波の位相基準
 - Statusと数値項目は型付きsourceから動的値へ接続する。数値項目は桁位置が安定する書体で描画する。
 
 - HUDは画面下端を基準とする透明な領域へ配置する。主要数値と計器を横並びの行へまとめ、右下の操作領域と前方中央を空ける。
+- 縦向きのタッチ操作時はHUDを画面上端を基準へ配置し、計器を先頭の行へ置く（タッチ領域の上端が縦中央帯へ入るため、下端基準の配置は計器を前方中央へ重ねる）。
 - 共有RustがReadouts・Instrumentsの行、領域全体の寸法、各nodeの正規化boundsと文字高に対する計器の高さを決定する。
 - nodeはID、label、Text・Attitude・HeadingTape・Direction・LinearGaugeの内容を持つ。パイロットの実位置と目標位置は一つの値として表示する。
 - 姿勢計は透明な線画、ピッチ目盛、飛行経路マーカーを使用する。地図の出典表示は地図とクレジットへ配置する。
