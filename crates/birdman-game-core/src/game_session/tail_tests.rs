@@ -4,7 +4,7 @@ use crate::{
     CompositeCgLaunchConditions, CourseAxis, DynamicsError, FbwAuthority, Gravity,
     HybridAerodynamicLoad, HybridError, HybridModel, HybridSite, HybridSurface, LoadError,
     NedPoint, NedVector, TailControlProfile, TailFlightScenarioParameters, TailIncidence,
-    TailPilotIntent, TailPilotPositionCommand, TailRateTarget, TestAircraft, WindField,
+    TailPilotIntent, TailPilotPositionCommand, TailRateTarget, TestAircraft, WindError, WindField,
 };
 
 const CONTACT_POINTS: [BodyPoint; 1] = [BodyPoint::origin()];
@@ -103,9 +103,8 @@ fn launch(
     session.prepare_flight(configuration).unwrap();
     session.mark_briefing_ready().unwrap();
     session.start_countdown(1).unwrap();
-    session
-        .observe_countdown(session.countdown_token().unwrap(), 1.0, true)
-        .unwrap();
+    let token = session.countdown_token().unwrap();
+    session.observe_countdown(token, 1.0, true).unwrap();
     FixtureSession { session, loads }
 }
 
@@ -267,9 +266,8 @@ fn tail_session_shares_lifecycle_pause_retry_and_record_contract() {
     assert_eq!(session.snapshot().phase(), SessionPhase::BriefingReady);
     assert_eq!(session.configuration_identity(), Some(identity()));
     session.start_countdown(1).unwrap();
-    session
-        .observe_countdown(session.countdown_token().unwrap(), 1.0, true)
-        .unwrap();
+    let token = session.countdown_token().unwrap();
+    session.observe_countdown(token, 1.0, true).unwrap();
     assert_eq!(session.snapshot().tail_flight_state(), Some(state));
     session.advance_tail_flight_tick(input()).unwrap();
     session.advance_tail_flight_tick(input()).unwrap();

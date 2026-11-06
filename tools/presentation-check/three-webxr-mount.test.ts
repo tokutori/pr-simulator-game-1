@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { IDBFactory } from "fake-indexeddb";
 import { Window } from "happy-dom";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
@@ -679,4 +680,43 @@ describe("Aggregate runtime through the real Three WebXRManager", () => {
       else if (fault === "cancelled cleanup") expect(state.updates.mock.calls.some(([json]) => json.includes("physical target release failed"))).toBe(true);
     } finally { state.dispose(); await flush(); await state.browser.happyDOM.abort(); }
   });
+});
+
+
+it("passes original aircraft file bytes to Rust and persists the exact validated UTF-8 source", async () => {
+  const state = await fixture();
+  const prototype = state.browser.HTMLInputElement.prototype;
+  const original = Object.getOwnPropertyDescriptor(prototype, "showPicker");
+  const document = JSON.parse(readFileSync(new URL("../../assets/aircraft/playable-glider-v7.json", import.meta.url), "utf8")) as Record<string, unknown>;
+  document.configuration_id = "custom-aircraft-a";
+  const source = ` \n${JSON.stringify(document).replace("configuration_id", "\\u0063onfiguration_id")}\n\t`;
+  const valid = new TextEncoder().encode(source);
+  let bytes = new Uint8Array([0xef, 0xbb, 0xbf, ...valid]);
+  Object.defineProperty(prototype, "showPicker", { configurable: true, value(this: HTMLInputElement) {
+    Object.defineProperty(this, "files", { configurable: true, value: [new state.browser.File([bytes], "aircraft.json")] });
+    this.dispatchEvent(new state.browser.Event("change") as unknown as Event);
+  } });
+  try {
+    await state.ready();
+    state.click("game-title-start");
+    state.click("game-setup-load-aircraft");
+    await flush();
+    const key = "tokutori.pr-simulator-game-1.aircraft";
+    expect(state.browser.localStorage.getItem(key)).toBeNull();
+    const observed = state.updates.mock.calls.map(([json]) => JSON.parse(json) as ApplicationObservation)
+      .find(observation => observation.input.kind === "aircraft_loaded" && observation.input.completion.kind === "found");
+    expect(observed?.input).toMatchObject({ kind: "aircraft_loaded", completion: { kind: "found", bytes: [...bytes] } });
+    bytes = valid;
+    state.click("game-setup-load-aircraft");
+    await flush();
+    expect(state.browser.localStorage.getItem(key)).toBe(source);
+    state.click("game-setup-delete-aircraft");
+    await flush();
+    expect(state.browser.localStorage.getItem(key)).toBeNull();
+  } finally {
+    state.dispose();
+    await flush();
+    if (original === undefined) Reflect.deleteProperty(prototype, "showPicker");
+    else Object.defineProperty(prototype, "showPicker", original);
+  }
 });

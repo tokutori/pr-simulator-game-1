@@ -360,6 +360,14 @@ impl TailFlightRecordDocument {
         let finalization = TailFlightRecordFinalizationDocument::try_from_core(finalization)?;
         let core_header = record.header();
         let scenario = core_header.scenario;
+        if scenario.aircraft_identity != [0; 32]
+            && identity.aircraft_sha256.as_deref().is_none_or(|sha| {
+                crate::aircraft_identity(&identity.aircraft_configuration_id, sha)
+                    != scenario.aircraft_identity
+            })
+        {
+            return Err(FlightRecordFormatError::InvalidRecord);
+        }
         let schema_version = if record
             .samples()
             .iter()
@@ -495,7 +503,9 @@ impl TailFlightRecordDocument {
         {
             return Err(FlightRecordFormatError::InvalidRecord);
         }
-        if self.schema_version >= 9 && self.control_identity.aircraft_sha256.is_none() {
+        if (self.schema_version >= 9 && self.control_identity.aircraft_sha256.is_none())
+            || (self.schema_version < 9 && self.control_identity.aircraft_sha256.is_some())
+        {
             return Err(FlightRecordFormatError::InvalidRecord);
         }
         if let Some(sha) = &self.control_identity.aircraft_sha256

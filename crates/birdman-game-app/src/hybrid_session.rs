@@ -128,59 +128,24 @@ impl HybridSessionPreparation {
         )
     }
 
-    /// Builds the fictional hybrid definition in the registered offline Typical environment.
-    ///
-    /// Initial air-relative speed and attitude follow the mock trim. The selected
-    /// wind at the composite CG is added once to obtain launch ground velocity.
-    ///
-    /// # Examples
-    ///
-    /// Prepare the registered aircraft and environment, enter flight through the
-    /// public lifecycle, and advance two neutral ticks. Result follows the configured
-    /// two-tick time limit. Larger limits permit continued FlightRunning until an end
-    /// event. A finalized record can then be encoded and restored without another
-    /// physics integration. Preparation, lifecycle, and format errors remain
-    /// separate `Result` values at their respective calls.
+    /// Seals an explicitly selected aircraft into an owned numerical configuration.
     ///
     /// ```
-    /// use birdman_game_app::{HybridSessionPreparation, initialize_bundled_environment};
-    /// use birdman_game_core::{
-    ///     ControlMode, GameSession, SessionPhase, TailFlightTickInput, TailPilotIntent,
-    ///     TailPilotPositionCommand, TailRateTarget,
-    /// };
-    /// use birdman_game_format::{
-    ///     AssistanceLevel, DifficultySettings, InformationLevel, TailFlightRecordDocument,
-    ///     WeatherClass,
-    /// };
-    ///
-    /// initialize_bundled_environment().unwrap();
-    /// let (configuration, identity) =
-    ///     HybridSessionPreparation::try_new(ControlMode::Manual, 2, 42)
-    ///         .unwrap().into_parts();
+    /// use birdman_game_app::{HybridSessionPreparation, SelectedAircraft};
+    /// use birdman_game_core::{ControlMode, GameSession, SessionPhase};
+    /// let selected = SelectedAircraft::bundled().unwrap();
+    /// let (configuration, identity) = HybridSessionPreparation::try_new(
+    ///     &selected, ControlMode::Manual, 2, 42,
+    /// ).unwrap().into_parts();
+    /// assert_eq!(identity.aircraft_sha256.as_deref(), Some(selected.raw_sha256()));
+    /// drop(selected);
     /// let mut session = GameSession::new();
     /// session.open_setup().unwrap();
     /// session.prepare_flight(configuration).unwrap();
     /// session.mark_briefing_ready().unwrap();
     /// session.start_countdown(1).unwrap();
     /// session.observe_countdown(session.countdown_token().unwrap(), 1.0, true).unwrap();
-    ///
-    /// let input = TailFlightTickInput::new(
-    ///     TailPilotIntent::try_new(0.0, 0.0).unwrap(),
-    ///     TailRateTarget::try_new(0.0, 0.0).unwrap(),
-    ///     TailPilotPositionCommand::Hold,
-    /// );
-    /// for _ in 0..2 {
-    ///     session.advance_tail_flight_tick(input).unwrap();
-    /// }
-    /// assert_eq!(session.snapshot().phase(), SessionPhase::Result);
-    /// let settings = DifficultySettings::custom(
-    ///     InformationLevel::Full, AssistanceLevel::Manual, WeatherClass::Typical,
-    /// );
-    /// let archive = TailFlightRecordDocument::from_record(
-    ///     session.flight_record().unwrap(), settings, identity,
-    /// ).unwrap();
-    /// let bytes = archive.encode_json().unwrap();
-    /// assert_eq!(TailFlightRecordDocument::decode_json(&bytes).unwrap(), archive);
+    /// assert_eq!(session.snapshot().phase(), SessionPhase::FlightRunning);
     /// ```
     pub fn try_new(
         aircraft: &crate::SelectedAircraft,
@@ -214,7 +179,7 @@ impl HybridSessionPreparation {
         let trim = definition
             .trim()
             .map_err(HybridSessionPreparationError::Aircraft)?;
-        let cg_position = launch_position(definition)?;
+        let cg_position = aircraft.launch_position()?;
         let platform = launch_venue()
             .map_err(HybridSessionPreparationError::Venue)?
             .platform;

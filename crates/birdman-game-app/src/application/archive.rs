@@ -8,8 +8,6 @@ use birdman_game_format::{
 /// Classified failures before an external record can replace the current view.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ArchiveError {
-    /// The currently selected aircraft differs from the saved geometry identity.
-    AircraftMismatch,
     /// The saved document failed the canonical format validation.
     Format(FlightRecordFormatError),
     /// The current session does not admit opening an archive.
@@ -19,7 +17,6 @@ pub enum ArchiveError {
 impl core::fmt::Display for ArchiveError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::AircraftMismatch => f.write_str("この記録の機体JSONを読み込んでから再生する。"),
             Self::Format(_) => f.write_str("Archived record validation failed"),
             Self::Session(_) => f.write_str("Session does not admit opening this archive"),
         }
@@ -32,7 +29,6 @@ impl core::error::Error for ArchiveError {
         match self {
             Self::Format(cause) => Some(cause),
             Self::Session(cause) => Some(cause),
-            Self::AircraftMismatch => None,
         }
     }
 }

@@ -91,6 +91,65 @@ fn keyboard_pitch_inversion_keeps_other_demands_and_physical_keys() {
 
 #[test]
 fn keyboard_integrates_the_confirmed_target_per_tick_and_clamps_at_its_limit() {
+    for bounds in [[-0.1, 0.08], [-0.8, 0.6]] {
+        let aircraft = birdman_game_core::AircraftModel::try_new(
+            30.0,
+            birdman_game_core::InertiaTensor::diagonal(1.0, 1.0, 1.0).unwrap(),
+            70.0,
+            0.0,
+            bounds[0],
+            bounds[1],
+            0.5,
+            1.0,
+            [0.0; 3],
+            [birdman_game_core::TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2],
+        )
+        .unwrap();
+        let mapping = birdman_game_core::TailPilotPositionMapping::try_new(&aircraft, 0.0).unwrap();
+        for (key_code, endpoint) in [
+            (FlightControlKey::KeyJ, bounds[0]),
+            (FlightControlKey::KeyL, bounds[1]),
+        ] {
+            let mut input = FlightInputState::default();
+            input.set_active(true);
+            key(&mut input, key_code, true, false);
+            let held =
+                birdman_game_core::PilotPositionTarget::try_new(&aircraft, endpoint).unwrap();
+            let normalized = mapping.normalized_target(held).unwrap().value();
+            let demand = input
+                .tick_input(
+                    &[],
+                    normalized,
+                    KeyboardControlSettings::default(),
+                    |step| {
+                        let target = birdman_game_core::PilotPositionTarget::try_new(
+                            &aircraft,
+                            (held.position_m() + step).clamp(bounds[0], bounds[1]),
+                        )
+                        .map_err(|_| TailControlError::InvalidPilotIntent)?;
+                        mapping
+                            .normalized_target(target)
+                            .map_err(|_| TailControlError::InvalidPilotIntent)
+                    },
+                )
+                .unwrap();
+            assert_eq!(
+                mapping
+                    .resolve(&aircraft, held, demand.pilot_position_command())
+                    .unwrap()
+                    .position_m(),
+                endpoint
+            );
+            input.confirm_tick(demand, false);
+            key(&mut input, key_code, false, false);
+            assert_eq!(
+                tick(&mut input, &[], normalized)
+                    .unwrap()
+                    .pilot_position_command(),
+                TailPilotPositionCommand::Hold
+            );
+        }
+    }
     let mut input = FlightInputState::default();
     input.set_active(true);
     key(&mut input, FlightControlKey::KeyL, true, false);

@@ -380,6 +380,9 @@ impl ApplicationSession {
                 self.advance_record_source();
                 Ok(())
             }
+            SessionCommand::EnterReplay {} if !self.replay_available() => {
+                Err(GameSessionError::InvalidTransition)
+            }
             SessionCommand::EnterReplay {} => self.session.enter_replay(),
             SessionCommand::LeaveReplay {} => self.session.leave_replay(),
             SessionCommand::EnterAttract {} => return self.enter_attract(),
@@ -551,25 +554,30 @@ impl ApplicationSession {
     /// Validates and installs an external snapshot record with its exact metadata atomically.
     pub fn open_archived_record_json(&mut self, json: &str) -> Result<(), ArchiveError> {
         let (record, metadata) = ArchiveMetadata::decode(json).map_err(ArchiveError::Format)?;
-        let selected = self
-            .aircraft()
-            .map_err(|_| ArchiveError::AircraftMismatch)?;
-        let identity = metadata.control_identity();
-        let matches = identity.aircraft_configuration_id
-            == selected.definition().document().configuration_id
-            && record.header().scenario.aircraft_model_version
-                == selected.definition().document().model_version
-            && match identity.aircraft_sha256.as_deref() {
-                Some(sha) => sha == selected.raw_sha256(),
-                None => selected.is_bundled(),
-            };
-        if !matches {
-            return Err(ArchiveError::AircraftMismatch);
-        }
         self.open_archived_replay(record)
             .map_err(ArchiveError::Session)?;
         self.archived = Some(metadata);
         Ok(())
+    }
+
+    /// Authorizes recorded aircraft imagery independently of archive/analysis availability.
+    pub fn replay_available(&self) -> bool {
+        let Some(record) = self.core_session().playback_record() else {
+            return true;
+        };
+        let Some(identity) = self.display_control_identity() else {
+            return true;
+        };
+        let Ok(selected) = self.aircraft() else {
+            return false;
+        };
+        identity.aircraft_configuration_id == selected.definition().document().configuration_id
+            && record.header().scenario.aircraft_model_version
+                == selected.definition().document().model_version
+            && identity
+                .aircraft_sha256
+                .as_deref()
+                .map_or_else(|| selected.is_bundled(), |sha| sha == selected.raw_sha256())
     }
 
     /// Executes an admitted query or clock effect on the retained record source.
@@ -623,6 +631,9 @@ impl ApplicationSession {
 
     /// Changes only the core-owned playback running state.
     pub fn set_playback_playing(&mut self, playing: bool) -> Result<(), GameSessionError> {
+        if playing && !self.replay_available() {
+            return Err(GameSessionError::InvalidTransition);
+        }
         if playing && !self.presentation_available() {
             return Err(GameSessionError::PauseConditionsRemain);
         }

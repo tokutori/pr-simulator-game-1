@@ -6,7 +6,7 @@ fn manual_pause_freezes_the_record_until_explicit_resume() {
         .observe_countdown(current.countdown_token().unwrap(), 1.0, true)
         .unwrap();
     current
-        .advance_tail_flight_tick(neutral_input(&current))
+        .advance_fixture_tick(neutral_input(&current))
         .unwrap();
     let previous_state = current.snapshot().tail_flight_state().unwrap();
     let previous_samples = current.flight_record().unwrap().samples().to_vec();
@@ -14,7 +14,7 @@ fn manual_pause_freezes_the_record_until_explicit_resume() {
     current.pause(PauseReason::Manual).unwrap();
     assert!(current.can_resume());
     assert_eq!(
-        current.advance_tail_flight_tick(neutral_input(&current)),
+        current.advance_fixture_tick(neutral_input(&current)),
         Err(GameSessionError::InvalidTransition)
     );
     assert_eq!(current.snapshot().tail_flight_state(), Some(previous_state));
@@ -25,7 +25,7 @@ fn manual_pause_freezes_the_record_until_explicit_resume() {
     assert_eq!(current.snapshot().tail_flight_state(), Some(previous_state));
     assert_eq!(current.flight_record().unwrap().samples(), previous_samples);
     current
-        .advance_tail_flight_tick(neutral_input(&current))
+        .advance_fixture_tick(neutral_input(&current))
         .unwrap();
     assert_eq!(
         current.flight_record().unwrap().sample_count(),
@@ -41,7 +41,7 @@ fn external_pause_requires_clear_and_explicit_resume_without_advancing_the_recor
         .observe_countdown(current.countdown_token().unwrap(), 1.0, true)
         .unwrap();
     current
-        .advance_tail_flight_tick(neutral_input(&current))
+        .advance_fixture_tick(neutral_input(&current))
         .unwrap();
     let previous_state = current.snapshot().tail_flight_state().unwrap();
     let previous_samples = current.flight_record().unwrap().samples().to_vec();
@@ -60,7 +60,7 @@ fn external_pause_requires_clear_and_explicit_resume_without_advancing_the_recor
     assert!(matches!(current.snapshot().phase(), SessionPhase::FlightPaused { .. }));
     assert!(current.can_resume());
     assert_eq!(
-        current.advance_tail_flight_tick(neutral_input(&current)),
+        current.advance_fixture_tick(neutral_input(&current)),
         Err(GameSessionError::InvalidTransition)
     );
     assert_eq!(current.snapshot().tail_flight_state(), Some(previous_state));

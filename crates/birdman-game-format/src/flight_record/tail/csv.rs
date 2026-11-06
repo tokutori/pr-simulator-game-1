@@ -140,6 +140,7 @@ pub(super) fn encode(
     document.validate()?;
     let version_seven = document.schema_version >= 7;
     let version_eight = document.schema_version >= 8;
+    let version_nine = document.schema_version >= 9;
     let mut columns = COLUMNS.to_vec();
     if version_seven {
         columns.extend(["row_kind", "wing_bending_factor"]);
@@ -160,9 +161,14 @@ pub(super) fn encode(
             "vertical_tail_moment_datum_frd_z_nm",
         ]);
     }
+    if version_nine {
+        columns.push("aircraft_source_sha256");
+    }
     let header = &document.header;
     let mut metadata = vec![
-        if version_eight {
+        if version_nine {
+            "6"
+        } else if version_eight {
             "5"
         } else if version_seven {
             "4"
@@ -401,6 +407,15 @@ pub(super) fn encode(
                     row.extend(core::iter::repeat_n(String::new(), 6));
                 }
             }
+        }
+        if version_nine {
+            row.push(
+                document
+                    .control_identity
+                    .aircraft_sha256
+                    .clone()
+                    .unwrap_or_default(),
+            );
         }
         if row.len() != columns.len() {
             return Err(FlightRecordFormatError::EncodingFailed);

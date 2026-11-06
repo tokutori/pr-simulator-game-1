@@ -791,7 +791,8 @@ pub(crate) mod tests {
         let original = "{\"schema_version\":1,\"keyboard_controls\":{\"invert_pitch\":true}}";
         storage.write_keyboard(2, original).unwrap();
         drop(storage);
-        let reopened = NativeStorage::new(directory.0.clone(), Ok(directory.0.clone())).unwrap();
+        let mut reopened =
+            NativeStorage::new(directory.0.clone(), Ok(directory.0.clone())).unwrap();
         assert_eq!(
             reopened.read_keyboard(4096).unwrap().as_deref(),
             Some(original)
@@ -807,6 +808,48 @@ pub(crate) mod tests {
             Some(original)
         );
         assert!(reopened.read_keyboard(2).is_err());
+        let aircraft = "{\"configuration_id\":\"機体-α\"}\n ".as_bytes().to_vec();
+        assert!(matches!(
+            &reopened
+                .execute(&ApplicationRequest::WriteAircraft {
+                    request_id: 8,
+                    bytes: aircraft.clone()
+                })
+                .unwrap()[0],
+            ApplicationInput::AircraftSaved { failure: None, .. }
+        ));
+        assert_eq!(
+            reopened.read_aircraft(262144).unwrap(),
+            Some(aircraft.clone())
+        );
+        let temporary = directory
+            .0
+            .join(format!("aircraft-{}-9.tmp", std::process::id()));
+        fs::write(&temporary, "pre-existing file").unwrap();
+        assert!(matches!(
+            &reopened
+                .execute(&ApplicationRequest::WriteAircraft {
+                    request_id: 9,
+                    bytes: b"replacement".to_vec()
+                })
+                .unwrap()[0],
+            ApplicationInput::AircraftSaved {
+                failure: Some(_),
+                ..
+            }
+        ));
+        assert_eq!(reopened.read_aircraft(262144).unwrap(), Some(aircraft));
+        assert!(matches!(
+            &reopened
+                .execute(&ApplicationRequest::DeleteAircraft { request_id: 10 })
+                .unwrap()[0],
+            ApplicationInput::AircraftSaved { failure: None, .. }
+        ));
+        assert!(reopened.read_aircraft(262144).unwrap().is_none());
+        assert_eq!(
+            reopened.read_keyboard(4096).unwrap().as_deref(),
+            Some(original)
+        );
     }
 
     #[test]

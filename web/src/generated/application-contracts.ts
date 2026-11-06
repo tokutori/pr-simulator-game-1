@@ -8,6 +8,26 @@ export type MenuFontStyle = "normal" | "italic";
  */
 export type ApplicationInput = {
     /**
+     * Unmodified I/O result.
+     */
+    readonly completion: ApplicationAircraftLoad;
+    readonly kind: "aircraft_loaded";
+    /**
+     * Owner-issued operation identity.
+     */
+    readonly request_id: number;
+} | {
+    /**
+     * Original I/O failure, absent after success.
+     */
+    readonly failure?: string | null;
+    readonly kind: "aircraft_saved";
+    /**
+     * Owner-issued operation identity.
+     */
+    readonly request_id: number;
+} | {
+    /**
      * Unmodified storage result.
      */
     readonly completion: ApplicationKeyboardControlsLoad;
@@ -470,6 +490,26 @@ export type ApplicationInput = {
      * Identity issued by this owner for the completed I/O operation.
      */
     readonly request_id: number;
+};
+/**
+ * Original aircraft bytes produced by a requested storage or file-picker operation.
+ */
+export type ApplicationAircraftLoad = {
+    readonly kind: "missing";
+} | {
+    readonly kind: "cancelled";
+} | {
+    /**
+     * Unmodified source document, including its encoding bytes.
+     */
+    readonly bytes: readonly number[];
+    readonly kind: "found";
+} | {
+    /**
+     * Diagnostic from the platform API.
+     */
+    readonly cause: string;
+    readonly kind: "failed";
 };
 /**
  * Raw completion of the requested user keyboard-settings read.
@@ -1278,6 +1318,10 @@ export type HudCue = "telemetry" | "attitude" | "wind" | "flight_path" | "angle_
  * Platform-owned operation requested by common UI.
  */
 export type GameUiPlatformCommand = {
+    readonly kind: "load_aircraft";
+} | {
+    readonly kind: "delete_aircraft";
+} | {
     readonly kind: "reload_application";
 } | {
     readonly kind: "set_screen_render_scale";
@@ -1764,6 +1808,46 @@ export type ApplicationLifecycle = "running" | "closing" | "drained";
  * Ordered platform operations produced by the application owner.
  */
 export type ApplicationRequest = {
+    readonly kind: "read_aircraft";
+    /**
+     * Source-byte read budget.
+     */
+    readonly maximum_bytes: number;
+    /**
+     * Owner-issued operation identity.
+     */
+    readonly request_id: number;
+    readonly [k: string]: unknown | undefined;
+} | {
+    readonly kind: "pick_aircraft";
+    /**
+     * Source-byte read budget.
+     */
+    readonly maximum_bytes: number;
+    /**
+     * Owner-issued operation identity.
+     */
+    readonly request_id: number;
+    readonly [k: string]: unknown | undefined;
+} | {
+    /**
+     * Original validated source bytes.
+     */
+    readonly bytes: readonly number[];
+    readonly kind: "write_aircraft";
+    /**
+     * Owner-issued operation identity.
+     */
+    readonly request_id: number;
+    readonly [k: string]: unknown | undefined;
+} | {
+    readonly kind: "delete_aircraft";
+    /**
+     * Owner-issued operation identity.
+     */
+    readonly request_id: number;
+    readonly [k: string]: unknown | undefined;
+} | {
     readonly kind: "read_keyboard_controls";
     /**
      * Maximum accepted UTF-8 document size.
@@ -5536,17 +5620,9 @@ export interface LakeMeshSpacingDomain {
  */
 export interface EnvironmentIdentity {
     /**
-     * Aircraft model version.
-     */
-    readonly aircraft_model_version: number;
-    /**
      * Registered catalog version.
      */
     readonly catalog_version: number;
-    /**
-     * Controller profile version.
-     */
-    readonly controller_profile_version: number;
     /**
      * Environment content version.
      */

@@ -1,8 +1,9 @@
 use super::*;
 use crate::{
     AerodynamicEvaluationError, AerodynamicStage, BodyVector, ContactError, DynamicsError,
-    FbwAuthority, HybridModel, HybridSite, LoadError, SteadyGlideTrim, TailPilotIntent,
-    TailPilotPositionCommand, TailPilotPositionIntent, TailRateTarget, TestAircraft, WindField,
+    FbwAuthority, HybridModel, HybridSite, LoadError, NedPoint, NedVector, SteadyGlideTrim,
+    TailPilotIntent, TailPilotPositionCommand, TailPilotPositionIntent, TailRateTarget,
+    TestAircraft, WindError, WindField,
 };
 
 fn near(actual: f64, expected: f64, tolerance: f64) {
@@ -283,13 +284,20 @@ fn tail_scenario_runner_returns_previous_success_state_and_original_failed_stage
             scenario.initial_state(),
             ControlMode::Automatic,
             neutral_input(),
+            &load,
+            WaterContactGeometry::try_new(&contacts).unwrap(),
         )
         .unwrap();
     let TailFlightTickOutcome::Advanced(expected) = report.outcome() else {
         panic!("expected successful first tick");
     };
     let error = scenario
-        .run(ControlMode::Automatic, &[neutral_input(); 2])
+        .run(
+            ControlMode::Automatic,
+            &[neutral_input(); 2],
+            &load,
+            WaterContactGeometry::try_new(&contacts).unwrap(),
+        )
         .unwrap_err();
     let TailFlightRunError::Tick {
         last_valid_state,

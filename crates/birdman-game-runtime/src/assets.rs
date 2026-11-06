@@ -102,8 +102,8 @@ pub struct ApplicationWaterAssets {
 #[derive(Clone, Debug, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ApplicationEnvironmentAssets {
-    /// First immutable scene manifest; later preparations reuse the same owner-issued identities.
-    pub scene: Option<crate::ApplicationGeometryAssets>,
+    /// Complete descriptor batch for this candidate; raw buffers upload on cache misses.
+    pub scene: crate::ApplicationGeometryAssets,
     /// The resource-preparation request owning this bundle.
     pub revision: u32,
     /// Equirectangular sRGB panorama.
@@ -263,7 +263,6 @@ pub(super) struct AssetCompletion {
 pub(super) struct AssetsOwner {
     neutral_detail: Option<ImageBuffer>,
     geometry: BTreeMap<[u8; 32], Box<crate::geometry::GeometryOwner>>,
-    geometry_renderer: Option<([u8; 32], u32)>,
     next_buffer_id: u32,
     active: Option<PreparedAssets>,
     active_resource: Option<u32>,
@@ -300,9 +299,7 @@ impl AssetsOwner {
             )?;
             entry.insert(Box::new(geometry));
         }
-        let scene = (self.geometry_renderer
-            != Some((aircraft_identity, target.renderer_resource_id)))
-        .then(|| self.geometry[&aircraft_identity].assets().clone());
+        let scene = self.geometry[&aircraft_identity].assets().clone();
         let quality = target.quality.water_quality;
         let EnvironmentProjection::Available {
             metadata, venue, ..
@@ -525,7 +522,6 @@ impl AssetsOwner {
                     return output;
                 }
                 if let Some(pending) = self.pending.get_mut(&request_id) && matches!(pending.stage, PreparationStage::Building) && self.desired == Some(request_id) {
-                    self.geometry_renderer = Some((pending.bundle.aircraft_identity, pending.target.renderer_resource_id));
                     pending.stage = PreparationStage::Candidate(resource_id);
                 } else {
                     output.requests.push(ApplicationRequest::ReleaseResources { resource_id });
@@ -744,11 +740,17 @@ mod tests {
         let exhibition = EnvironmentSelection::exhibition().unwrap();
         let mut owner = AssetsOwner::default();
         let first = owner
-            .prepare(1, exhibition, target(WaterQuality::High), None)
+            .prepare(
+                1,
+                exhibition,
+                &birdman_game_app::SelectedAircraft::bundled().unwrap(),
+                target(WaterQuality::High),
+                None,
+            )
             .unwrap();
         assert_eq!(first.water.detail_anisotropy_clamp, 8);
         let sky_id = first.sky.buffer_id;
-        let scene = first.scene.as_ref().unwrap();
+        let scene = &first.scene;
         assert!(!scene.meshes.is_empty());
         let material_ids: BTreeSet<_> = scene
             .meshes
@@ -769,7 +771,13 @@ mod tests {
                 }
             }
         }
-        let another = crate::geometry::GeometryOwner::prepare(&mut owner.next_buffer_id).unwrap();
+        let another = crate::geometry::GeometryOwner::prepare(
+            &mut owner.next_buffer_id,
+            birdman_game_app::SelectedAircraft::bundled()
+                .unwrap()
+                .definition(),
+        )
+        .unwrap();
         assert!(
             another
                 .assets()
@@ -826,11 +834,30 @@ mod tests {
             }]
         ));
         let second = owner
-            .prepare(2, exhibition, target(WaterQuality::Low), None)
+            .prepare(
+                2,
+                exhibition,
+                &birdman_game_app::SelectedAircraft::bundled().unwrap(),
+                target(WaterQuality::Low),
+                None,
+            )
             .unwrap();
         assert_eq!(second.water.detail_anisotropy_clamp, 4);
         assert_eq!(first.water.detail_anisotropy_clamp, 8);
-        assert!(second.scene.is_none());
+        assert_eq!(
+            second
+                .scene
+                .meshes
+                .iter()
+                .map(|mesh| mesh.mesh_id)
+                .collect::<Vec<_>>(),
+            first
+                .scene
+                .meshes
+                .iter()
+                .map(|mesh| mesh.mesh_id)
+                .collect::<Vec<_>>()
+        );
         assert_eq!(second.sky.buffer_id, sky_id);
         assert_eq!(second.water.detail[0].image.buffer_id, detail_id);
         assert!(second.water.projection.wave_count() < first.water.projection.wave_count());
@@ -862,6 +889,11 @@ mod tests {
         let selection = HybridSessionPreparation::select_scenario(
             WeatherClass::Calm,
             birdman_game_app::DEFAULT_SESSION_SEED,
+            birdman_game_app::SelectedAircraft::bundled()
+                .unwrap()
+                .definition()
+                .document()
+                .model_version,
         )
         .unwrap();
         let calm = EnvironmentSelection {
@@ -869,7 +901,13 @@ mod tests {
             ..exhibition
         };
         let third = owner
-            .prepare(3, calm, target(WaterQuality::Low), None)
+            .prepare(
+                3,
+                calm,
+                &birdman_game_app::SelectedAircraft::bundled().unwrap(),
+                target(WaterQuality::Low),
+                None,
+            )
             .unwrap();
         assert_eq!(third.sky.buffer_id, sky_id);
         assert_eq!(
@@ -905,11 +943,17 @@ mod tests {
         assert!(owner.bytes(detail_id).is_some());
         let mut replacement = target(WaterQuality::Low);
         replacement.renderer_resource_id += 1;
-        let replacement_assets = owner.prepare(4, exhibition, replacement, None).unwrap();
+        let replacement_assets = owner
+            .prepare(
+                4,
+                exhibition,
+                &birdman_game_app::SelectedAircraft::bundled().unwrap(),
+                replacement,
+                None,
+            )
+            .unwrap();
         let replacement_ids: BTreeSet<_> = replacement_assets
             .scene
-            .as_ref()
-            .unwrap()
             .meshes
             .iter()
             .flat_map(|mesh| mesh.materials.iter().map(|material| material.material_id))
@@ -942,5 +986,73 @@ mod tests {
             lost.requests.as_slice(),
             [ApplicationRequest::ReleaseResources { resource_id: 104 }]
         ));
+        let mut document: serde_json::Value =
+            serde_json::from_slice(birdman_game_content::PLAYABLE_AIRCRAFT_JSON).unwrap();
+        document["structure"]["cockpit_stations"][4]["half_width_m"] = serde_json::json!(0.3);
+        let custom =
+            birdman_game_app::SelectedAircraft::decode(serde_json::to_vec(&document).unwrap())
+                .unwrap();
+        let changed = owner
+            .prepare(5, exhibition, &custom, target(WaterQuality::Low), None)
+            .unwrap();
+        let original_meshes: BTreeSet<_> =
+            first.scene.meshes.iter().map(|mesh| mesh.mesh_id).collect();
+        assert!(
+            changed
+                .scene
+                .meshes
+                .iter()
+                .all(|mesh| !original_meshes.contains(&mesh.mesh_id))
+        );
+        let cockpit = first
+            .scene
+            .meshes
+            .iter()
+            .find(|mesh| mesh.name.starts_with("cockpit-"))
+            .unwrap();
+        let changed_cockpit = changed
+            .scene
+            .meshes
+            .iter()
+            .find(|mesh| mesh.name == cockpit.name)
+            .unwrap();
+        let Some(crate::ApplicationBufferSlice::F32(original_positions)) =
+            owner.buffer(cockpit.position.buffer_id)
+        else {
+            panic!("original geometry remains retained");
+        };
+        let Some(crate::ApplicationBufferSlice::F32(changed_positions)) =
+            owner.buffer(changed_cockpit.position.buffer_id)
+        else {
+            panic!("candidate geometry remains retained");
+        };
+        assert_ne!(original_positions, changed_positions);
+        let obsolete = changed_cockpit.position.buffer_id;
+        owner.select(Some(5));
+        owner.observe(
+            5,
+            ApplicationResourceObservation::Failed {
+                cause: "new aircraft preparation failed".to_owned(),
+            },
+        );
+        assert!(owner.buffer(obsolete).is_none());
+        let fallback = owner
+            .prepare(
+                6,
+                exhibition,
+                &birdman_game_app::SelectedAircraft::bundled().unwrap(),
+                target(WaterQuality::Low),
+                None,
+            )
+            .unwrap();
+        assert_eq!(
+            fallback
+                .scene
+                .meshes
+                .iter()
+                .map(|mesh| mesh.mesh_id)
+                .collect::<BTreeSet<_>>(),
+            original_meshes
+        );
     }
 }

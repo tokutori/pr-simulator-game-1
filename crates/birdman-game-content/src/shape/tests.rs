@@ -161,7 +161,7 @@ fn section_twist_rotates_the_skin_contact_and_aerodynamic_axes_about_quarter_cho
 #[test]
 fn contact_provider_projects_the_registered_shape_into_its_borrowed_storage() {
     let aircraft = playable_aircraft().unwrap();
-    let mut output = aircraft.contact_points().to_vec();
+    let output = aircraft.contact_points().to_vec();
     let pointer = output.as_ptr();
     let mut expected = output.clone();
     let incidence = TailIncidence::try_new(0.04, -0.03).unwrap();
@@ -182,7 +182,7 @@ fn contact_provider_projects_the_registered_shape_into_its_borrowed_storage() {
 #[test]
 fn contact_provider_rejects_mismatched_storage_and_invalid_load_law_inputs() {
     let aircraft = playable_aircraft().unwrap();
-    let mut output = aircraft.contact_points().to_vec();
+    let output = aircraft.contact_points().to_vec();
     assert!(matches!(
         crate::AircraftContactBuffer::try_new(&aircraft, output[..1].to_vec()),
         Err(ShapeError::MismatchedContactPointCount)

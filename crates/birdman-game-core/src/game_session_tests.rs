@@ -10,8 +10,6 @@ use crate::{
     TailPilotIntent, TailPilotPositionCommand, TailRateTarget, TestAircraft, WindField,
 };
 
-use alloc::boxed::Box;
-
 include!("game_session_pause_tests.rs");
 
 #[test]

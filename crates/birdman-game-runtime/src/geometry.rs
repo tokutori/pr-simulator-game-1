@@ -703,7 +703,7 @@ impl GeometryOwner {
         let mesh_index = self.assets.meshes.len();
         self.assets.meshes.push(ApplicationMeshAsset {
             frustum_culled: attachment == ApplicationMeshAttachment::World,
-            mesh_id: mesh_index as u32 + 1,
+            mesh_id: position.buffer_id,
             name,
             attachment,
             local_pose: Pose::IDENTITY,

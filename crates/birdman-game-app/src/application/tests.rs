@@ -44,7 +44,8 @@ fn neutral() -> TailFlightTickInput {
 #[test]
 fn registered_live_records_interval_initial_coefficients_and_restores_them_on_retry_and_replay() {
     use birdman_game_format::TailFlightRecordDocument;
-    let definition = crate::registered_aircraft().unwrap();
+    let selected = crate::SelectedAircraft::bundled().unwrap();
+    let definition = selected.definition();
     for mode in [
         ControlMode::Manual,
         ControlMode::Automatic,
@@ -55,12 +56,7 @@ fn registered_live_records_interval_initial_coefficients_and_restores_them_on_re
         execute(&mut application, SessionCommand::Prepare {});
         let initial = application.core_session().prepared_launch_state().unwrap();
         launch(&mut application);
-        let mut airspeed = application
-            .core_session()
-            .telemetry()
-            .unwrap()
-            .unwrap()
-            .airspeed_mps;
+        let mut airspeed = application.core_session().telemetry().unwrap().airspeed_mps;
         assert_eq!(
             initial.wing_bending_factor(),
             Some(definition.shape().wing_bending_factor(airspeed).unwrap())
@@ -131,8 +127,20 @@ fn registered_live_records_interval_initial_coefficients_and_restores_them_on_re
 fn deforming_sealed_configuration_rejects_a_fixed_shape_tick() {
     let mut application = prepared();
     launch(&mut application);
+    let definition = application.aircraft.as_ref().unwrap().definition();
+    let surfaces = definition.surfaces().unwrap();
+    let loads = application
+        .prepared
+        .as_ref()
+        .unwrap()
+        .loads(definition, &surfaces)
+        .unwrap();
     assert!(matches!(
-        application.session.advance_tail_flight_tick(neutral()),
+        application.session.advance_tail_flight_tick(
+            neutral(),
+            &loads,
+            birdman_game_core::WaterContactGeometry::try_new(definition.contact_points()).unwrap()
+        ),
         Err(GameSessionError::TailTick(
             birdman_game_core::TailFlightTickError::Contact(
                 birdman_game_core::ContactError::ShapeProjection
@@ -251,6 +259,12 @@ fn archive_owner_preserves_saved_settings_text_and_player_selection_without_rein
             source.difficulty().weather()
         );
         assert_eq!(viewer.difficulty(), selection);
+        assert!(!viewer.replay_available());
+        assert_eq!(
+            viewer.set_playback_playing(true),
+            Err(GameSessionError::InvalidTransition)
+        );
+        viewer.set_playback_playing(false).unwrap();
         let before = viewer.core_session().snapshot();
         viewer.seek_playback(0.005).unwrap();
         let clock = viewer.core_session().playback_clock();

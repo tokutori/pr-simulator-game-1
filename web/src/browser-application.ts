@@ -177,7 +177,11 @@ export class BrowserApplication {
             this.observe({ kind: "aircraft_loaded", request_id: request.request_id, completion: { kind: "found", bytes: Array.from(new Uint8Array(buffer)) } });
           }, cause => { this.observe({ kind: "aircraft_loaded", request_id: request.request_id, completion: { kind: "failed", cause: errorMessage(cause) } }); });
         }, { once: true });
-        picker.click();
+        try { picker.showPicker(); }
+        catch (cause) {
+          picker.remove();
+          this.observe({ kind: "aircraft_loaded", request_id: request.request_id, completion: { kind: "failed", cause: errorMessage(cause) } });
+        }
         break;
       }
       case "write_aircraft": {

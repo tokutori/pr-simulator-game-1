@@ -132,6 +132,7 @@ pub struct ApplicationRuntime {
     display: display::DisplayWorkflow,
     previous_frame_ms: Option<f64>,
     next_request_id: u32,
+    replay_supported: bool,
     resource_readiness: BackendReadiness,
     resources: Option<ResourcePreparation>,
     observed_ms: f64,
@@ -236,6 +237,7 @@ impl ApplicationRuntime {
             display: display::DisplayWorkflow::new(GameUiPresentationMode::Screen),
             previous_frame_ms: None,
             next_request_id: 1,
+            replay_supported: capabilities.replay_available,
             resource_readiness: BackendReadiness::Preparing,
             resources: None,
             observed_ms: 0.0,
@@ -963,6 +965,7 @@ impl ApplicationRuntime {
                 self.platform.touch_available |= capabilities.touch_available;
                 self.phone.configure(capabilities.phone_sensors);
                 self.platform.analysis_available = capabilities.analysis_available;
+                self.replay_supported = capabilities.replay_available;
                 self.platform.replay_available = capabilities.replay_available;
                 self.platform.stored_records_available = capabilities.stored_records_available;
                 self.platform.flight_log_available = capabilities.flight_log_available;
@@ -1179,6 +1182,8 @@ impl ApplicationRuntime {
             .state()
             .active_mode()
             .unwrap_or(GameUiPresentationMode::Screen);
+        self.platform.replay_available =
+            self.replay_supported && self.application.replay_available();
         self.platform.operation_pending = self.display.state().pending()
             || self.storage.load_pending()
             || self.storage.aircraft_pending();
@@ -1280,6 +1285,12 @@ impl ApplicationRuntime {
                 })?,
             )
             .map_err(ApplicationRuntimeError::Assets)?;
+        if self.application.core_session().snapshot().phase() == SessionPhase::Replay
+            && !self.application.replay_available()
+            && let Some(geometry) = &mut scene_frame.projection.geometry
+        {
+            geometry.aircraft_visible = false;
+        }
         let position = scene_frame.projection.world_from_aircraft.position;
         scene_frame.projection.lighting = self.assets.sunlight().and_then(|sunlight| {
             birdman_game_scene::lake_sky::LakeSceneShadow::for_aircraft(
@@ -1780,7 +1791,11 @@ impl ApplicationRuntime {
         if previous_phase != SessionPhase::Replay
             && self.application.core_session().snapshot().phase() == SessionPhase::Replay
         {
-            self.ui.replay_view = birdman_game_presentation::game_ui::GameUiReplayView::Cinematic;
+            self.ui.replay_view = if self.application.replay_available() {
+                birdman_game_presentation::game_ui::GameUiReplayView::Cinematic
+            } else {
+                birdman_game_presentation::game_ui::GameUiReplayView::Analysis
+            };
             self.ui.technical_open = false;
         }
     }
@@ -2188,8 +2203,22 @@ impl ApplicationRuntime {
     }
 
     fn environment(&self) -> Result<String, ApplicationRuntimeError> {
-        game_ui_environment_readout(self.identity()?)
-            .map_err(|error| ApplicationRuntimeError::Ui(GameUiError::Environment(error)))
+        game_ui_environment_readout(
+            self.identity()?,
+            self.application
+                .aircraft()
+                .map_err(|cause| {
+                    ApplicationRuntimeError::Application(ApplicationError::Preparation(
+                        birdman_game_app::HybridSessionPreparationError::Aircraft(cause),
+                    ))
+                })?
+                .launch_position()
+                .map_err(|cause| {
+                    ApplicationRuntimeError::Application(ApplicationError::Preparation(cause))
+                })?
+                .components(),
+        )
+        .map_err(|error| ApplicationRuntimeError::Ui(GameUiError::Environment(error)))
     }
 
     fn context<'view>(
@@ -2218,6 +2247,20 @@ impl ApplicationRuntime {
                 .unwrap_or("機体を準備できない"),
             aircraft_notification: self.storage.aircraft_notification(),
             aircraft_can_delete: self.storage.aircraft_can_delete(),
+            aircraft_replay_available: self.application.replay_available(),
+            representative_position_ned_m: self
+                .application
+                .aircraft()
+                .map_err(|cause| {
+                    ApplicationRuntimeError::Application(ApplicationError::Preparation(
+                        birdman_game_app::HybridSessionPreparationError::Aircraft(cause),
+                    ))
+                })?
+                .launch_position()
+                .map_err(|cause| {
+                    ApplicationRuntimeError::Application(ApplicationError::Preparation(cause))
+                })?
+                .components(),
             display_settings: self.application.display_settings(),
             display_settings_notification: self.storage.display_notification(),
             accepted_flight_keys: self.application.accepted_flight_keys(),

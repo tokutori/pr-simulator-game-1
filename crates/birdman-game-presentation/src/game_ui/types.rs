@@ -585,6 +585,10 @@ pub struct GameUiContext<'view> {
     pub aircraft_notification: &'view str,
     /// Whether the stored aircraft document can be explicitly removed.
     pub aircraft_can_delete: bool,
+    /// Whether the selected aircraft matches the displayed recorded geometry.
+    pub aircraft_replay_available: bool,
+    /// Selected launch reference for weather readouts, independent of resource keys.
+    pub representative_position_ned_m: [f64; 3],
     /// Selected display adjustment, editable on Title, Setup and while paused.
     pub display_settings: birdman_game_app::display_settings::DisplaySettings,
     /// Shared display-settings persistence feedback, independent of a flight record.

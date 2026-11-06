@@ -194,6 +194,11 @@ impl AircraftModel {
         .map_err(map_math_error)
     }
 
+    /// Returns the inclusive physical travel bounds along the body longitudinal axis.
+    pub const fn pilot_position_bounds_m(self) -> [f64; 2] {
+        [self.pilot_minimum_position_m, self.pilot_maximum_position_m]
+    }
+
     /// Returns the pilot's fixed vertical offset in body coordinates in m.
     pub const fn pilot_vertical_offset_m(self) -> f64 {
         self.pilot_vertical_offset_m

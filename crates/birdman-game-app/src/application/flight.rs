@@ -193,7 +193,10 @@ impl ApplicationSession {
                     .tick_input(gamepads, held.value(), prepared.keyboard_controls, |step| {
                         let position = birdman_game_core::PilotPositionTarget::try_new(
                             &prepared.aircraft,
-                            (previous.pilot_position_demand().position_m() + step).clamp(-0.4, 0.4),
+                            (previous.pilot_position_demand().position_m() + step).clamp(
+                                prepared.aircraft.pilot_position_bounds_m()[0],
+                                prepared.aircraft.pilot_position_bounds_m()[1],
+                            ),
                         )
                         .map_err(|_| TailControlError::InvalidPilotIntent)?;
                         mapping

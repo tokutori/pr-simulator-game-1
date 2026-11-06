@@ -1,8 +1,6 @@
 use super::TailControlError;
 use crate::dynamics::{AircraftModel, DynamicsError, PilotPositionTarget};
 
-const POSITION_LIMIT_METERS: f64 = 0.4;
-
 /// Validated normalized longitudinal body-position intent.
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(verus_only, vstd::prelude::verus_verify)]
@@ -36,23 +34,28 @@ pub enum TailPilotPositionCommand {
     Set(TailPilotPositionIntent),
 }
 
-/// Software mapping [-1, 0, 1] to [-0.4, trim, 0.4] metres, independent of FBW.
+/// Piecewise-linear mapping [-1, 0, 1] to physical [minimum, trim, maximum].
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[cfg_attr(verus_only, vstd::prelude::verus_verify)]
 pub struct TailPilotPositionMapping {
     trim_target: PilotPositionTarget,
+    bounds_m: [f64; 2],
 }
 
 impl TailPilotPositionMapping {
-    /// Validates trim and both software endpoints against the pilot's physical travel.
+    /// Seals a validated trim target and the aircraft's physical travel bounds.
     pub fn try_new(aircraft: &AircraftModel, trim_position_m: f64) -> Result<Self, DynamicsError> {
         let trim_target = PilotPositionTarget::try_new(aircraft, trim_position_m)?;
-        if trim_position_m.abs() > POSITION_LIMIT_METERS {
-            return Err(DynamicsError::PilotOutOfRange);
+        let bounds_m = aircraft.pilot_position_bounds_m();
+        if !(trim_position_m - bounds_m[0]).is_finite()
+            || !(bounds_m[1] - trim_position_m).is_finite()
+        {
+            return Err(DynamicsError::NonFinite);
         }
-        PilotPositionTarget::try_new(aircraft, -POSITION_LIMIT_METERS)?;
-        PilotPositionTarget::try_new(aircraft, POSITION_LIMIT_METERS)?;
-        Ok(Self { trim_target })
+        Ok(Self {
+            trim_target,
+            bounds_m,
+        })
     }
 
     /// Returns the neutral target to seed a new flight's held position command.
@@ -66,16 +69,16 @@ impl TailPilotPositionMapping {
         target: PilotPositionTarget,
     ) -> Result<TailPilotPositionIntent, DynamicsError> {
         let position = target.position_m();
-        if position.abs() > POSITION_LIMIT_METERS {
+        if position < self.bounds_m[0] || position > self.bounds_m[1] {
             return Err(DynamicsError::PilotOutOfRange);
         }
         let trim = self.trim_target.position_m();
         let normalized = if position == trim {
             0.0
         } else if position < trim {
-            (position - trim) / (trim + POSITION_LIMIT_METERS)
+            (position - trim) / (trim - self.bounds_m[0])
         } else {
-            (position - trim) / (POSITION_LIMIT_METERS - trim)
+            (position - trim) / (self.bounds_m[1] - trim)
         };
         TailPilotPositionIntent::try_new(normalized).map_err(|_| DynamicsError::PilotOutOfRange)
     }
@@ -92,16 +95,16 @@ impl TailPilotPositionMapping {
             TailPilotPositionCommand::Set(intent) => {
                 let normalized = intent.value();
                 let endpoint = if normalized < 0.0 {
-                    -POSITION_LIMIT_METERS
+                    self.bounds_m[0]
                 } else {
-                    POSITION_LIMIT_METERS
+                    self.bounds_m[1]
                 };
                 (self.trim_target.position_m() * (1.0 - normalized.abs())
                     + endpoint * normalized.abs())
-                .clamp(-POSITION_LIMIT_METERS, POSITION_LIMIT_METERS)
+                .clamp(self.bounds_m[0], self.bounds_m[1])
             }
         };
-        if position_m.abs() > POSITION_LIMIT_METERS {
+        if position_m < self.bounds_m[0] || position_m > self.bounds_m[1] {
             return Err(DynamicsError::PilotOutOfRange);
         }
         PilotPositionTarget::try_new(aircraft, position_m)

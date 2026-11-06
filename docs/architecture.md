@@ -41,7 +41,7 @@ adapter・runtime・presentation・scene・app・contentは責務に応じて下
 | `tools` | offline asset処理、schema生成、境界検査、再現可能な検証コマンド |
 
 - core・format・contentは`no_std + alloc`を維持する。
-- appとsceneは登録storageの一度限りの初期化に`std::sync::OnceLock`を使う。sceneは`image`・`earcut`による画像処理・地形三角化を所有し、app・presentation・runtimeは日時処理や資源所有に`std`を利用する。
+- appとsceneは環境・会場・固定textureの初期化に`std::sync::OnceLock`を使う。機体は選択ごとの定義と派生cacheを所有する。sceneは`image`・`earcut`による画像処理・地形三角化を所有し、app・presentation・runtimeは日時処理や資源所有に`std`を利用する。
 - CLIはapp・content・format・coreのoffline検査を実行する。cameraと機体形状の整合はpresentationからsceneへのdev-dependencyで検査する。
 - coreにfilesystem、network、OS時計、乱数取得、GIS、serde、WASM ABI、描画engineを持ち込まない。
 - 乱数seed、環境、入力、時刻観測は外部から明示的に渡す。
@@ -81,7 +81,10 @@ adapter・runtime・presentation・scene・app・contentは責務に応じて下
 - 独立したphaseと多数の任意fieldの組合せで不変条件を管理しない。
 - Title用demoのようにphaseをまたいで存続する資源は独立した所有領域に置く。
 
-- `ApplicationSession`はprivateなGameSessionと、難易度、seed、tick上限、準備metadata、archive原文、記録の制御identityを所有する。
+- `ApplicationSession`はprivateなGameSessionと、選択機体の検証済み定義・原文・SHA、難易度、seed、tick上限、準備metadata、archive原文、記録の制御identityを所有する。
+- 機体の借用: `GameSession`の封印configurationは数値と固定長identityを所有する。appはframe batch中だけ選択定義から空力viewとcontact providerを借用し、既存の評価・telemetry・score callbackで進行する。
+- 描画資源: sceneの機体templateと変形scratchを所有し、更新時だけ定義を借用する。runtimeはactive・pending資源が参照する機体世代のCPU bufferを保持し、完了・取消に合わせて回収する。camera・mesh・尾翼metadataは同じ選択世代で交換する。
+- 候補資源: Prepareは毎回その候補のscene descriptorを渡し、adapterは候補自身のmanifestで構築・commit・解放する。mesh・material・buffer IDはrenderer寿命内で単調発行し、raw bufferはcache miss時にuploadする。
 - appは記録cursorの時間範囲を認可し、presentationはcoreの記録補間から描画poseとReplay cameraを導出する。
 - 準備・Retry・Briefing再準備・archive交換・初回demo登録はapplication単位の記録source識別子を更新する。tick・seek・再生速度の変更は同じsourceを保持する。
 - `HybridSessionPreparation`は機体・環境の共有storageを組み立て、Webとnativeへ同じconfigurationを渡す。

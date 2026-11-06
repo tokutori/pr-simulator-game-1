@@ -277,7 +277,12 @@ impl StorageOwner {
                 return (None, None);
             }
             ApplicationAircraftLoad::Failed { cause } => {
-                self.aircraft_notification = format!("機体ファイルを読み込めない。原因: {cause}");
+                self.aircraft_notification = if cause.starts_with("NotAllowedError:") {
+                    "機体ファイルは画面のタップ・クリック、またはVRの決定操作で選択する。"
+                        .to_owned()
+                } else {
+                    format!("機体ファイルを読み込めない。原因: {cause}")
+                };
                 return (None, None);
             }
             ApplicationAircraftLoad::Found { bytes } => bytes,
@@ -293,6 +298,10 @@ impl StorageOwner {
                 return (None, None);
             }
         };
+        if let Err(cause) = candidate.launch_position() {
+            self.aircraft_notification = format!("発進条件を満たす機体へ修正する。詳細: {cause:?}");
+            return (None, None);
+        }
         let Some(source) = source else {
             self.aircraft_notification = "保存済みの機体を復元した。".to_owned();
             return (Some(candidate), None);
@@ -624,6 +633,7 @@ impl StorageOwner {
     }
 
     pub(super) fn close(&mut self) {
+        self.aircraft_job = None;
         self.saves.clear();
         self.save_notification = None;
         self.load = None;
@@ -942,5 +952,139 @@ impl StorageOwner {
             self.save_notification = Some((job.source, notification));
         }
         self.saves.remove(&request_id);
+    }
+}
+
+#[cfg(test)]
+mod aircraft_tests {
+    use super::*;
+    use birdman_game_app::{
+        SelectedAircraft,
+        application::{BackendReadiness, SessionCommand},
+    };
+
+    #[test]
+    fn aircraft_original_bytes_commit_after_save_and_delete_with_authorized_completions() {
+        let mut application = ApplicationSession::default();
+        application
+            .execute(SessionCommand::OpenSetup {}, BackendReadiness::Ready)
+            .unwrap();
+        let previous = application.aircraft().unwrap().identity();
+        let mut owner = StorageOwner::default();
+        owner.read_aircraft(1);
+        let (selected, request) =
+            owner.aircraft_read_completed(1, ApplicationAircraftLoad::Missing, &application, 2);
+        assert!(selected.is_none() && request.is_none());
+        let mut document: serde_json::Value =
+            serde_json::from_slice(birdman_game_content::PLAYABLE_AIRCRAFT_JSON).unwrap();
+        document["configuration_id"] = serde_json::json!("custom-aircraft-a");
+        let bytes = format!(
+            " \n{}\n\t",
+            serde_json::to_string_pretty(&document)
+                .unwrap()
+                .replace("configuration_id", "\\u0063onfiguration_id")
+        )
+        .into_bytes();
+        let expected = SelectedAircraft::decode(bytes.clone()).unwrap();
+
+        assert!(matches!(
+            owner.pick_aircraft(3, &application),
+            Some(ApplicationRequest::PickAircraft {
+                maximum_bytes: 262144,
+                ..
+            })
+        ));
+        let (_, write) = owner.aircraft_read_completed(
+            3,
+            ApplicationAircraftLoad::Found {
+                bytes: bytes.clone(),
+            },
+            &application,
+            4,
+        );
+        assert!(
+            matches!(write, Some(ApplicationRequest::WriteAircraft { request_id: 4, bytes: source }) if source == bytes)
+        );
+        assert_eq!(application.aircraft().unwrap().identity(), previous);
+        assert!(owner.aircraft_saved(99, None, &application).is_none());
+        assert!(
+            owner
+                .aircraft_saved(4, Some("atomic write failed".to_owned()), &application)
+                .is_none()
+        );
+        assert_eq!(application.aircraft().unwrap().identity(), previous);
+
+        owner.pick_aircraft(5, &application);
+        let (_, write) = owner.aircraft_read_completed(
+            5,
+            ApplicationAircraftLoad::Found {
+                bytes: bytes.clone(),
+            },
+            &application,
+            6,
+        );
+        assert!(write.is_some());
+        application
+            .select_aircraft(owner.aircraft_saved(6, None, &application).unwrap())
+            .unwrap();
+        assert_eq!(application.aircraft().unwrap().original(), bytes);
+        assert_eq!(
+            application.aircraft().unwrap().raw_sha256(),
+            expected.raw_sha256()
+        );
+        assert!(owner.aircraft_saved(6, None, &application).is_none());
+
+        assert!(matches!(
+            owner.delete_aircraft(7, &application),
+            Some(ApplicationRequest::DeleteAircraft { request_id: 7 })
+        ));
+        assert!(
+            owner
+                .aircraft_saved(7, Some("delete failed".to_owned()), &application)
+                .is_none()
+        );
+        assert_eq!(application.aircraft().unwrap().original(), bytes);
+        owner.delete_aircraft(8, &application);
+        application
+            .select_aircraft(owner.aircraft_saved(8, None, &application).unwrap())
+            .unwrap();
+        assert!(application.aircraft().unwrap().is_bundled());
+        assert!(!owner.aircraft_can_delete());
+    }
+
+    #[test]
+    fn invalid_saved_source_and_obsolete_picker_keep_the_selected_definition() {
+        let mut application = ApplicationSession::default();
+        let mut owner = StorageOwner::default();
+        owner.read_aircraft(1);
+        let (selected, request) = owner.aircraft_read_completed(
+            1,
+            ApplicationAircraftLoad::Found {
+                bytes: b"invalid".to_vec(),
+            },
+            &application,
+            2,
+        );
+        assert!(selected.is_none() && request.is_none());
+        assert!(owner.aircraft_can_delete() && !owner.aircraft_loading());
+        assert!(application.aircraft().unwrap().is_bundled());
+        application
+            .execute(SessionCommand::OpenSetup {}, BackendReadiness::Ready)
+            .unwrap();
+        owner.pick_aircraft(3, &application);
+        application
+            .execute(SessionCommand::ReturnToTitle {}, BackendReadiness::Ready)
+            .unwrap();
+        let (selected, request) = owner.aircraft_read_completed(
+            3,
+            ApplicationAircraftLoad::Found {
+                bytes: birdman_game_content::PLAYABLE_AIRCRAFT_JSON.to_vec(),
+            },
+            &application,
+            4,
+        );
+        assert!(selected.is_none() && request.is_none());
+        assert!(!owner.aircraft_pending());
+        assert!(application.aircraft().unwrap().is_bundled());
     }
 }

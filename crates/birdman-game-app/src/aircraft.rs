@@ -7,6 +7,9 @@ pub struct SelectedAircraft {
     definition: AircraftDefinition,
     raw_sha256: String,
     identity: [u8; 32],
+    launch_position: std::sync::OnceLock<
+        Result<birdman_game_core::NedPoint, crate::HybridSessionPreparationError>,
+    >,
 }
 
 impl SelectedAircraft {
@@ -26,6 +29,7 @@ impl SelectedAircraft {
             definition,
             raw_sha256,
             identity,
+            launch_position: std::sync::OnceLock::new(),
         })
     }
 
@@ -49,6 +53,15 @@ impl SelectedAircraft {
     /// Returns the fixed-length configuration and original-source identity.
     pub const fn identity(&self) -> [u8; 32] {
         self.identity
+    }
+
+    /// Caches the selected hull's support position at the shared launch platform.
+    pub fn launch_position(
+        &self,
+    ) -> Result<birdman_game_core::NedPoint, crate::HybridSessionPreparationError> {
+        self.launch_position
+            .get_or_init(|| crate::hybrid_session::launch_position(&self.definition))
+            .clone()
     }
 
     /// Authorizes legacy builtin geometry only for the actual bundled source bytes.

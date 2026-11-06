@@ -830,6 +830,32 @@ fn schema_eight_tail_wrenches_roundtrip_and_keep_recorded_times() {
     assert_eq!(csv_value(&csv, 1, "log_export_version"), "5");
     assert_eq!(csv_value(&csv, 2, "horizontal_tail_force_frd_x_n"), "7");
     assert_eq!(csv_value(&csv, 2, "vertical_tail_force_frd_x_n"), "");
+    let mut exact = archive.clone();
+    exact.schema_version = 9;
+    exact.control_identity.aircraft_sha256 = Some("0123456789abcdef".repeat(4));
+    let exact = TailFlightRecordDocument::decode_json(&exact.encode_json().unwrap()).unwrap();
+    let exact_record = exact.to_finalized_core_record().unwrap();
+    let rebuilt = TailFlightRecordDocument::from_record(
+        &exact_record,
+        DifficultySettings::custom(
+            InformationLevel::Full,
+            AssistanceLevel::Manual,
+            WeatherClass::Calm,
+        ),
+        exact.control_identity.clone(),
+    )
+    .unwrap();
+    assert_eq!(rebuilt.schema_version, 9);
+    assert_eq!(
+        rebuilt.control_identity.aircraft_sha256,
+        exact.control_identity.aircraft_sha256
+    );
+    let csv = tail_csv_rows(&exact);
+    assert_eq!(csv_value(&csv, 1, "log_export_version"), "6");
+    assert_eq!(
+        csv_value(&csv, 1, "aircraft_source_sha256"),
+        "0123456789abcdef".repeat(4)
+    );
     let mut downgraded = archive.clone();
     downgraded.schema_version = 7;
     assert_eq!(
@@ -1004,7 +1030,7 @@ fn schema_seven_boundary_event_roundtrips_and_exports_a_distinct_same_time_csv_r
 
 #[test]
 fn unknown_corrupt_or_surplus_control_schemas_are_rejected() {
-    for version in [0, 9, u32::MAX] {
+    for version in [0, 10, u32::MAX] {
         let mut value = serde_json::to_value(document()).unwrap();
         value["schema_version"] = version.into();
         assert_eq!(

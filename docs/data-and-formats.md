@@ -15,9 +15,9 @@
 | --- | --- |
 | 機体JSON | `AircraftDocument`、schema 5、最大256 KiB |
 | 環境JSON | `EnvironmentDocument`、schema 1、最大8 MiB |
-| 飛行記録JSON | `TailFlightRecordDocument`、schema 6/7/8、最大16 MiB |
-| 飛行ログCSV | schema 6はexport version 3、schema 7はversion 4、schema 8はversion 5 |
-| Personal Best | 比較方式v3、Rustによるkey再生成・選定 |
+| 飛行記録JSON | `TailFlightRecordDocument`、schema 6/7/8/9、最大16 MiB |
+| 飛行ログCSV | schema 6はexport version 3、schema 7はversion 4、schema 8はversion 5、schema 9はversion 6 |
+| Personal Best | 比較方式v4、Rustによるkey再生成・選定 |
 | 物理・積分・接触 | physics model 8 |
 | 既定機体・scenario | aircraft model 7、catalog 10、scenario 11、controller profile 4 |
 
@@ -129,6 +129,11 @@ Analysis用の発進台・湖岸・望遠camera点はOSMとAW3D30に基づく試
 - 空力・質量・慣性・制御の実行規則は[飛行力学](flight-dynamics.md)と[飛行制御](flight-control.md)に定める。
 
 ## 機体JSON
+
+- 選択: 共有appが検証済み定義と原文bytesを所有し、物理・接触・mesh・cameraへ同じ定義を渡す。入力上限は256 KiBである。
+- 保存: 原文bytesをWebのlocalStorageキー`tokutori.pr-simulator-game-1.aircraft`、Nativeの利用者設定ディレクトリ`birdman-game/aircraft.json`へ保存する。保存成功後に選択を確定し、起動時に原文を再検証する。
+- 識別: `configuration_id`と原文bytesのSHA-256を併用する。空白・キー順の変更も別の原文identityとなる。hashは読込時の導出値であり、設定文書の包みを追加しない。
+- 回復: 保存文書の検証に失敗した場合は既定機体を使用し、理由と明示削除操作を表示する。利用者が削除するまで保存原文を保持する。
 
 - `AircraftDocument`は機体ID・モデル版、機体質量と慣性、パイロット質量と移動制限、主翼・水平尾翼・垂直尾翼、全機静特性、構造外形、トリム条件を保持する。
 - 座標は機体固定のFRD、寸法はSI単位とする。各翼の四分の一翼弦点・翼弦長から平面形と上反角を表し、空力の参照面積・スパン・平均空力翼弦を同じ主翼から導出する。
@@ -250,11 +255,12 @@ Analysis用の発進台・湖岸・望遠camera点はOSMとAW3D30に基づく試
 
 ### codecとJSON
 
-- 現行codecはschema 6・7・8を受理する。
+- 現行codecはschema 6・7・8・9を受理する。
 - schema 7は全sampleの有限な`wing_bending_factor`を要求し、同時刻の採用値は任意の終端`boundary_event`に保持する。
 - schema 6は曲げ係数の未記録状態を保持する。旧schema 6・7は尾翼荷重を未収録として読み込み、保存原文を保持する。
 - schema 8は各sampleの水平・垂直尾翼の荷重を保持する。各面の値は機体FRD軸の力とdatumまわりのモーメントであり、面が存在しない場合はnullとする。同時刻の採用値は終端`boundary_event`に保持する。
-- 現行の通常飛行とAttractはschema 8を生成する。旧記録は既存keyと原文を検証・保持して閲覧し、PB順位の対象は現行physics modelとする。
+- schema 9は機体の`configuration_id`と原文JSONのSHA-256を保持する。通常飛行とAttractはschema 9を生成し、PB比較はこの組と現行physics modelで分離する。
+- 旧記録は原文と既存keyを保持して閲覧する。SHA未収録の記録は既存の登録機体ID・model versionに対応し、選択中の原文SHAが実際の同梱機体と一致する場合に映像を再生できる。
 - 未対応データを通知して元の保存内容を保持する。
 - 破損、未知field、非有限値、非単位quaternion、時刻・header不整合と、schemaに対応しない係数・eventの組合せを拒否する。
 - 任意のidentity metadataには後述の未知raw保持規則を適用する。
@@ -264,13 +270,14 @@ Analysis用の発進台・湖岸・望遠camera点はOSMとAW3D30に基づく試
 - JSON exportは解決済み条件と来歴を含む完全な記録である。
 - 保存されていない情報を現行buildから補完しない。
 
-### CSV version 3/4/5
+### CSV version 3/4/5/6
 
 - CSVは初期・全成功tick・fractional terminalを省略せず、位置、速度、姿勢、角速度、pilot状態、入力、actuator、風、telemetry、終了情報等を出力する。
 - 列名に単位を明示し、f64のround-trip表現を使う。
 - 未提供値は空欄とし、ID・構造化診断は`_json`列へ格納する。
 - version 4は`row_kind`と`wing_bending_factor`を加える。通常sample列の後に同時刻の採用eventを`boundary_event`行として出力し、version 3は従来の列構成を保持する。
 - version 5は水平・垂直尾翼それぞれの機体FRD力3成分（N）とdatumまわりのモーメント3成分（N·m）を追加する。各列は記録した同時刻の荷重を出力する。
+- version 6は`aircraft_source_sha256`を追加し、同じ申告機体IDの原文を区別する。
 
 - 加速度は保存済みNED速度、FRD角速度、pilot相対速度の有限差分による派生値である。
 - 内点は不等間隔3点、端点は2点の割線を用い、methodとstencil時刻を出力する。
@@ -299,13 +306,13 @@ Analysis用の発進台・湖岸・望遠camera点はOSMとAW3D30に基づく試
 
 ## Personal Bestと保存
 
-### 比較方式v3
+### 比較方式v4
 
 Personal BestはcompleteなWaterContact、score、現行physics/score version、既知の解決済み条件、有効canonical keyを要求する。共有`TailPersonalBestSelection`が比較を所有し、同点は最初の既存recordを保持する。
 
 keyは次の条件をSHA-256へ入力する。
 
-- 明示identity、catalog・aircraft・controller・scenario・environment・physics・scoreのversion。
+- 明示identityと機体原文SHA-256、catalog・aircraft・controller・scenario・environment・physics・scoreのversion。
 - seed、tick上限、Hz、有効なHUD表示条件、Assistance、Weather。
 - 実ControlModeとShared authority、二軸gain、slew、optional alpha guard、course。
 - 初期datum位置・速度、quaternion、角速度、wind、尾翼取付角、pilot位置・速度、および記録された初期曲げ係数。
@@ -317,9 +324,9 @@ keyは次の条件をSHA-256へ入力する。
 
 - HUD表示条件は主要telemetry、姿勢・方位、風、flight-path、迎角、基本数値群、角速度、尾翼・pilot補助数値群の有効性で比較する。Fullと同じ内容のCustomは同じ比較群となり、表示効果のないWarnings設定は中立値へ正規化する。
 - 必須異常表示はWarnings設定と独立して表示する。保存したInformationと各cue設定はそのまま保持する。
-- 任意`identity_metadata`は、未指定・既知v3・その他方式のrawを排他的に保持する。
-- 現方式の記録だけを順位付けする。block欠落、旧v2を含むその他方式、構造情報不足の記録は未順位で一覧・Replayへ読み戻し、元key・原文を保持する。
-- 既知v3は数値と保存keyの整合を検証して受理する。
+- 任意`identity_metadata`は、未指定・既知v4・その他方式のrawを排他的に保持する。
+- 現方式の記録だけを順位付けする。block欠落、旧v2・v3を含むその他方式、構造情報不足の記録は未順位で一覧・Replayへ読み戻し、元key・原文を保持する。
+- 既知v4は数値と保存keyの整合を検証して受理する。
 
 - build来歴は4種のsource fingerprint、Cargo.lock SHA-256、観測したrustc・target・profileを保持する。
 - 機体・環境・scenarioのsource fingerprintは共有実装と登録データから導出し、各adapterはその来歴を記録へ付与する。

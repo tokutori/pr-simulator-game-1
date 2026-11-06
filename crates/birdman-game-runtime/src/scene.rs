@@ -156,7 +156,9 @@ impl SceneOwner {
         ) {
             self.look = [0.0; 2];
         }
-        let replay = if matches!(phase, SessionPhase::Replay | SessionPhase::Attract) {
+        let replay = if matches!(phase, SessionPhase::Replay | SessionPhase::Attract)
+            && context.application.replay_available()
+        {
             let session = context.application.core_session();
             let record = session
                 .playback_record()

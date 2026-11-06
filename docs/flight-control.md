@@ -165,7 +165,7 @@ $m_p=0$、身体静止、無外力時の全運動量・角運動量、一般3次
 ## 身体の目標位置と停止policy
 
 - `TailPilotPositionCommand`は新しいnormalized inputの`Set`と、前tickの保持要求を使う`Hold`を排他的に表す。
-- `TailPilotPositionMapping`は[-1,0,1]を[-0.4,trim,0.4] mへ区分線型に写像し、出力を±0.4 mへ制限する。
+- `TailPilotPositionMapping`は[-1,0,1]を機体JSONの[最小位置,trim,最大位置] mへ区分線型に写像する。逆写像も同じ物理範囲を使い、trimが端点に一致する場合の中立入力を0とする。
 - 新しいflightの保持targetはtrim、中立inputもtrimとする。
 - 欠損・切断の`Hold`は保持中の要求位置を名目要求とする。
 - 速度・加速度・移動範囲は身体policyが検証し、位置の瞬間的な変更を禁止する。

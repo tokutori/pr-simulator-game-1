@@ -368,6 +368,13 @@ pub fn game_ui_view(
         SessionPhase::Result => result::result(&mut menu, state, context)?,
         SessionPhase::Replay => {
             notification(&mut menu, context);
+            if !context.aircraft_replay_available {
+                menu.status(
+                    "game-replay-aircraft-required",
+                    "",
+                    "この記録の機体JSONを読み込むと映像を再生できる。",
+                );
+            }
             replay(&mut menu, state, context)?;
             logs(&mut menu, context);
         }
@@ -1469,7 +1476,10 @@ fn technical_configuration(context: &GameUiContext<'_>) -> String {
     } else {
         description.push_str("\nBuild来歴: 不明（保存情報を現在の値で補完しない）");
     }
-    match super::environment::game_ui_environment_diagnostics(context.identity) {
+    match super::environment::game_ui_environment_diagnostics(
+        context.identity,
+        context.representative_position_ned_m,
+    ) {
         Ok(environment) => description.push_str(&format!("\n\n気象の詳細\n{environment}")),
         Err(error) => description.push_str(&format!(
             "\n気象の詳細を取得できない: {}",
@@ -1719,7 +1729,11 @@ fn replay(
             }
         ),
         GameUiAction::SetReplayView { view: next },
-        next != GameUiReplayView::Analysis || context.platform.analysis_available,
+        if next == GameUiReplayView::Analysis {
+            context.platform.analysis_available
+        } else {
+            context.platform.replay_available
+        },
     );
     if let Some(clock) = context.session.playback_clock() {
         if state.replay_view != GameUiReplayView::Analysis
