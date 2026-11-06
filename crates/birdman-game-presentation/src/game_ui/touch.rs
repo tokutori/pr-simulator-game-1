@@ -174,6 +174,7 @@ pub(super) fn controls(
         |(id, label, control, (bounds, radius), axes)| GameUiControl {
             id: id.to_owned(),
             label: label.to_owned(),
+            display_label: label.to_owned(),
             enabled: true,
             section: "flight-touch".to_owned(),
             content: GameUiControlContent::FlightTouch {

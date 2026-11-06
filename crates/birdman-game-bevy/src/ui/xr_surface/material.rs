@@ -35,6 +35,7 @@ impl MaterialExtension for SurfaceDepth {
         _layout: &MeshVertexBufferLayoutRef,
         key: MaterialExtensionKey<Self>,
     ) -> Result<(), SpecializedMeshPipelineError> {
+        crate::app::display_adjustment::disable_inline_tonemapping(descriptor);
         if key.bind_group_data.textured
             && let Some(fragment) = &mut descriptor.fragment
         {

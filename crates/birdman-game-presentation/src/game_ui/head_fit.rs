@@ -127,6 +127,7 @@ pub fn fit_game_ui_head_hud(hud: &GameUiHud, space: GameUiHeadHudSpace) -> GameU
         instruments.clone(),
         true,
         0.65,
+        false,
     );
     if layout.height_px * scale <= space.bottom_band_m[1] + 1.0e-9 {
         return fitted_nodes(
@@ -147,7 +148,7 @@ pub fn fit_game_ui_head_hud(hud: &GameUiHud, space: GameUiHeadHudSpace) -> GameU
                 .collect(),
         );
     }
-    groups = super::hud::position_hud(&mut layout, readouts, instruments, false, 0.65);
+    groups = super::hud::position_hud(&mut layout, readouts, instruments, false, 0.65, false);
     let gap = layout.gap_px[1] * scale;
     let padding = layout.padding_px[1] * scale;
     let row_heights = groups

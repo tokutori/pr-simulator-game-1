@@ -36,7 +36,7 @@ pub fn playable_aircraft() -> Result<AircraftDefinition, AircraftDefinitionError
 }
 
 /// Original admission or preparation failure for an aircraft definition.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AircraftDefinitionError {
     /// External document or physical parameter validation failed.
     Format(AircraftFormatError),
@@ -460,14 +460,6 @@ fn prepare_surface(
         let direction_y = second[1] - first[1];
         let direction_z = second[2] - first[2];
         let length = libm::hypot(direction_y, direction_z);
-        let orientation = ElementOrientation::try_new(
-            BodyVector::try_new(1.0, 0.0, 0.0).map_err(AircraftDefinitionError::Math)?,
-            BodyVector::try_new(0.0, direction_y / length, direction_z / length)
-                .map_err(AircraftDefinitionError::Math)?,
-            BodyVector::try_new(0.0, -direction_z / length, direction_y / length)
-                .map_err(AircraftDefinitionError::Math)?,
-        )
-        .map_err(AircraftDefinitionError::Aerodynamics)?;
         let mut start = first[axis];
         for end in source
             .strip_fractions
@@ -480,6 +472,21 @@ fn prepare_surface(
             .filter(|boundary| *boundary > first[axis] && *boundary < second[axis])
             .chain(core::iter::once(second[axis]))
         {
+            let shape = crate::shape::SurfaceShape::from_document(source);
+            let sample_span = start + 0.5 * (end - start);
+            let rotate = |vector| {
+                let rotated = shape
+                    .twist_vector(sample_span, vector)
+                    .map_err(AircraftDefinitionError::Shape)?;
+                BodyVector::try_new(rotated[0], rotated[1], rotated[2])
+                    .map_err(AircraftDefinitionError::Math)
+            };
+            let orientation = ElementOrientation::try_new(
+                rotate([1.0, 0.0, 0.0])?,
+                rotate([0.0, direction_y / length, direction_z / length])?,
+                rotate([0.0, -direction_z / length, direction_y / length])?,
+            )
+            .map_err(AircraftDefinitionError::Aerodynamics)?;
             proxies.push(
                 HybridProxy::try_new(geometry, [start, end], orientation, anchor)
                     .map_err(AircraftDefinitionError::Hybrid)?,

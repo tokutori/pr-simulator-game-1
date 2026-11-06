@@ -127,6 +127,20 @@ pub fn prepare_game_ui_head_hud(
             input: &input,
             size,
             font: text_height_meters,
+            logical_pixel_meters: text_height_meters
+                / hud.map_or(view.theme.frame_rate_text.font_size_px, |hud| {
+                    hud.layout.font_size_px
+                }),
+            line_height_meters: text_height_meters
+                * hud.map_or(
+                    view.theme.frame_rate_text.line_height_px
+                        / view.theme.frame_rate_text.font_size_px,
+                    |hud| hud.layout.line_height_px / hud.layout.font_size_px,
+                ),
+            font_style: MenuFont {
+                weight: view.theme.body_text.font_weight,
+                ..input.font.clone()
+            },
             stroke_pixels: (text_height_meters * f64::from(canvas_size[1]) / size.height * 0.1)
                 .max(1.0),
             pixels_per_meter: f64::from(canvas_size[1]) / size.height,
@@ -147,12 +161,27 @@ pub fn prepare_game_ui_head_hud(
                     tone: GameUiHudTone::Normal,
                 },
             };
+            let saved = (
+                painter.font,
+                painter.line_height_meters,
+                painter.font_style.clone(),
+            );
+            let logical_font = hud.map_or(view.theme.frame_rate_text.font_size_px, |hud| {
+                hud.layout.font_size_px
+            });
+            painter.font =
+                text_height_meters * view.theme.frame_rate_text.font_size_px / logical_font;
+            painter.line_height_meters =
+                text_height_meters * view.theme.frame_rate_text.line_height_px / logical_font;
+            painter.font_style.weight = view.theme.frame_rate_text.font_weight;
             items.push(painter.card(
                 &node,
                 bounds,
                 0.0,
-                hud.map_or(view.theme.hud_opacity, |hud| hud.layout.opacity),
+                view.theme.frame_rate_opacity,
+                &view.theme.frame_rate_background,
             )?);
+            (painter.font, painter.line_height_meters, painter.font_style) = saved;
         }
         for placement in nodes {
             let node = hud
@@ -163,11 +192,23 @@ pub fn prepare_game_ui_head_hud(
                         .find(|node| node.id == placement.id)
                 })
                 .ok_or(MenuLayoutFailure::InvalidLayout)?;
+            painter.font_style.weight = if matches!(
+                node.content,
+                GameUiHudNodeContent::Text {
+                    tone: GameUiHudTone::Warning,
+                    ..
+                }
+            ) {
+                view.theme.section_text.font_weight
+            } else {
+                view.theme.body_text.font_weight
+            };
             items.push(painter.card(
                 node,
                 placement.bounds,
                 placement.instrument_height_em,
                 hud.map_or(view.theme.hud_opacity, |hud| hud.layout.opacity),
+                &view.theme.panel_background,
             )?);
         }
         match fit_xr_text_ink(input.viewer, &painter.ink, local_pose, 0.35) {
@@ -192,6 +233,9 @@ struct HudPainter<'a, Measure> {
     input: &'a HeadHudPreparationInput<'a>,
     size: MenuSize,
     font: f64,
+    logical_pixel_meters: f64,
+    line_height_meters: f64,
+    font_style: MenuFont,
     stroke_pixels: f64,
     pixels_per_meter: f64,
     cache: &'a mut SurfaceFontCache,
@@ -210,14 +254,16 @@ where
         value: String,
         width: f64,
     ) -> Result<Vec<MenuMeasuredLine>, MenuLayoutFailure> {
+        let line_height_meters = self.line_height_meters;
         let identity = serde_json::to_string(&(
             "head",
             id,
             &value,
             width,
             self.font,
+            line_height_meters,
             self.size,
-            &self.input.font,
+            &self.font_style,
             &self.input.locale,
         ))
         .map_err(|_| MenuLayoutFailure::InvalidLayout)?;
@@ -231,7 +277,8 @@ where
             value,
             locale: self.input.locale.to_owned(),
             font_meters: self.font,
-            font: self.input.font.clone(),
+            line_height_meters,
+            font: self.font_style.clone(),
             width_meters: width,
             chart_text: None,
             legend: None,
@@ -243,7 +290,7 @@ where
             .lines;
         if lines
             .iter()
-            .any(|line| line.ascent_meters + line.descent_meters > self.font * 1.5 + 1.0e-10)
+            .any(|line| line.ascent_meters + line.descent_meters > line_height_meters + 1.0e-10)
         {
             return Err(MenuLayoutFailure::InvalidTextMetrics);
         }
@@ -273,17 +320,44 @@ where
             y: self.size.height / 2.0 - (baseline + across * angle.sin() + down * angle.cos()),
             z: 0.0,
         };
+        let offset = self
+            .theme
+            .text_shadow_offset_px
+            .map(|px| px * self.logical_pixel_meters);
+        let shadow_position = |across: f64, down: f64| {
+            let mut point = position(across, down);
+            point.x += offset[0];
+            point.y -= offset[1];
+            point
+        };
         if !line.value.trim().is_empty() {
             for edge in [-line.left_meters, line.right_meters] {
                 self.ink.push(XrInkSegment {
                     start: position(edge, -line.ascent_meters),
                     end: position(edge, line.descent_meters),
                 });
+                self.ink.push(XrInkSegment {
+                    start: shadow_position(edge, -line.ascent_meters),
+                    end: shadow_position(edge, line.descent_meters),
+                });
             }
         }
         items.push(SurfacePaintItem::Text {
             value: line.value.clone(),
-            font: self.input.font.clone(),
+            font: self.font_style.clone(),
+            font_meters: self.font,
+            locale: self.input.locale.to_owned(),
+            anchor: MenuPoint {
+                x: anchor_x + offset[0],
+                y: baseline + offset[1],
+            },
+            rotation_degrees,
+            color: self.theme.text_shadow_color.clone(),
+            opacity: self.input.profile.foreground_alpha,
+        });
+        items.push(SurfacePaintItem::Text {
+            value: line.value.clone(),
+            font: self.font_style.clone(),
             font_meters: self.font,
             locale: self.input.locale.to_owned(),
             anchor: MenuPoint {
@@ -302,6 +376,7 @@ where
         normalized: GameUiRect,
         instrument_em: f64,
         opacity: f64,
+        background: &str,
     ) -> Result<SurfacePaintItem, MenuLayoutFailure> {
         let bounds = MenuRect {
             x: normalized.x * self.size.width,
@@ -314,7 +389,7 @@ where
         } else {
             self.font * 0.5
         };
-        let line_height = self.font * 1.5;
+        let line_height = self.line_height_meters;
         let value = if node.label.is_empty() {
             node.content.value().to_owned()
         } else {
@@ -329,7 +404,7 @@ where
         }
         let mut items = vec![SurfacePaintItem::Rectangle {
             bounds,
-            color: self.theme.panel_background.clone(),
+            color: background.to_owned(),
             opacity,
             gradient: None,
         }];

@@ -14,8 +14,6 @@ use crate::dynamics::{AircraftModel, ExternalLoadProvider, FlightState, LoadErro
 use crate::math::{BodyVector, NedPoint, NedVector, atan2, hypot2};
 use crate::wind_field::WindField;
 
-const MAXIMUM_ANGLE_RAD: f64 = 0.2;
-
 /// Physical effective incidence of the horizontal and vertical tails.
 ///
 /// Positive elevator incidence creates negative body pitch moment on an aft
@@ -30,7 +28,7 @@ pub struct TailIncidence {
 }
 
 impl TailIncidence {
-    /// Validates finite physical incidences in the inclusive +/-0.2 rad domain.
+    /// Validates finite principal angles; the aircraft actuator owns mechanical stops.
     pub fn try_new(elevator_rad: f64, rudder_rad: f64) -> Result<Self, HybridError> {
         if !elevator_rad.is_finite() || !rudder_rad.is_finite() {
             return Err(HybridError::new(
@@ -38,17 +36,13 @@ impl TailIncidence {
                 AeroError::NonFinite,
             ));
         }
-        if elevator_rad.abs() > MAXIMUM_ANGLE_RAD {
-            return Err(HybridError::outside(
-                HybridSite::TailIncidence,
-                HybridLimit::ElevatorIncidence,
-            ));
-        }
-        if rudder_rad.abs() > MAXIMUM_ANGLE_RAD {
-            return Err(HybridError::outside(
-                HybridSite::TailIncidence,
-                HybridLimit::RudderIncidence,
-            ));
+        for (angle, limit) in [
+            (elevator_rad, HybridLimit::ElevatorIncidence),
+            (rudder_rad, HybridLimit::RudderIncidence),
+        ] {
+            if angle.abs() > core::f64::consts::PI {
+                return Err(HybridError::outside(HybridSite::TailIncidence, limit));
+            }
         }
         Ok(Self {
             elevator_rad,

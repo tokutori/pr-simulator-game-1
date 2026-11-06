@@ -205,10 +205,10 @@ pub struct FlightRecordTailIdentityDocument {
 #[serde(deny_unknown_fields)]
 pub struct TailIncidenceDocument {
     /// Horizontal-tail effective incidence, positive for negative pitch moment on an aft tail.
-    #[cfg_attr(feature = "schema", schemars(range(min = -0.2, max = 0.2)))]
+    #[cfg_attr(feature = "schema", schemars(range(min = -core::f64::consts::PI, max = core::f64::consts::PI)))]
     pub horizontal_tail_rad: f64,
     /// Vertical-tail effective incidence, positive for negative yaw moment with the configured fin.
-    #[cfg_attr(feature = "schema", schemars(range(min = -0.2, max = 0.2)))]
+    #[cfg_attr(feature = "schema", schemars(range(min = -core::f64::consts::PI, max = core::f64::consts::PI)))]
     pub vertical_tail_rad: f64,
 }
 

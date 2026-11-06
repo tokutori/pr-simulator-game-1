@@ -42,6 +42,7 @@ fn main() {
         aircraft_asset.clone(),
         workspace_dir.join("crates/birdman-game-content/Cargo.toml"),
         workspace_dir.join("crates/birdman-game-format/src/aircraft.rs"),
+        workspace_dir.join("crates/birdman-game-format/src/aircraft/validation.rs"),
         dynamics_source.clone(),
         aerodynamics_source.clone(),
         hybrid_trim_source,

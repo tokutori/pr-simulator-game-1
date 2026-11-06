@@ -9,11 +9,11 @@ function adapterView(): GameUiView {
   return { ...shared, interaction_scope: "adapter-inputs", panels: [{
     id: "inputs", title: "描画adapter", anchor: "menu", local_position: [0, 0, 0], size: [2.4, 1.8],
     sections: [{ id: "values", label: "", layout: "column" }], controls: [
-      { id: "button", section: "values", label: "操作", enabled: true, content: { kind: "button", presentation: { kind: "action", emphasis: "primary" }, action: { kind: "toggle_technical" } } },
-      { id: "toggle", section: "values", label: "表示", enabled: true, content: { kind: "toggle", cue: "telemetry", value: false } },
-      { id: "range", section: "values", label: "時刻", enabled: true, content: { kind: "range", minimum: 0, maximum: 10, step: 0.1, value: 1, display_value: "1.0", target: "replay" } },
-      { id: "notice", section: "values", label: "", enabled: false, content: { kind: "status", emphasis: "primary", source: "static", value: "発進準備完了" } },
-      { id: "fields", section: "values", label: "選択地点", enabled: false, content: { kind: "fields", source: "analysis_cursor",
+      { id: "button", section: "values", label: "操作", display_label: "操作", enabled: true, content: { kind: "button", presentation: { kind: "action", emphasis: "primary" }, action: { kind: "toggle_technical" } } },
+      { id: "toggle", section: "values", label: "表示", display_label: "表示: 無効", enabled: true, content: { kind: "toggle", cue: "telemetry", value: false } },
+      { id: "range", section: "values", label: "時刻", display_label: "時刻: 1.0", enabled: true, content: { kind: "range", minimum: 0, maximum: 10, step: 0.1, value: 1, display_value: "1.0", target: "replay" } },
+      { id: "notice", section: "values", label: "", display_label: "発進準備完了", enabled: false, content: { kind: "status", emphasis: "primary", source: "static", value: "発進準備完了" } },
+      { id: "fields", section: "values", label: "選択地点", display_label: "選択地点", enabled: false, content: { kind: "fields", source: "analysis_cursor",
         fields: [{ id: "speed", label: "対気速度", value: "12.34", unit: "m/s" }] } }
     ]
   }] };
@@ -96,7 +96,7 @@ describe("Screen DOM adapter", () => {
       const button = required(root, "button");
       const numericValue = required(root, "#fields .screen-ui-field-value");
       const frame: GameUiFrame = { view_revision: view.view_revision, hud: null, chart_cursor: null, flight_touch: [],
-        ranges: [{ id: "range", value: 2.5, display_value: "2.5" }], button_labels: [{ id: "button", label: "一時停止" }], readouts: [{ id: "notice", value: "更新済み" }],
+        ranges: [{ id: "range", value: 2.5, display_value: "時刻: 2.5" }], button_labels: [{ id: "button", label: "一時停止" }], readouts: [{ id: "notice", value: "更新済み" }],
         fields: [{ id: "fields", fields: [{ id: "speed", label: "対気速度", value: "9.87", unit: "m/s" }] }] };
       adapter.renderFrame(frame);
       expect(required(root, "button")).toBe(button);

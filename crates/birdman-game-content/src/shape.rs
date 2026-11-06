@@ -433,6 +433,79 @@ pub struct SurfaceShape<'a> {
 }
 
 impl<'a> SurfaceShape<'a> {
+    pub(crate) fn from_document(source: &'a AircraftSurfaceDocument) -> Self {
+        Self {
+            source,
+            role: source.role.core_role(),
+        }
+    }
+
+    /// Rotates a neutral station vector around the local quarter-chord span axis.
+    /// A zero twist preserves the original global station-plane loft exactly.
+    pub(crate) fn twist_vector(
+        self,
+        span_m: f64,
+        vector: [f64; 3],
+    ) -> Result<[f64; 3], ShapeError> {
+        let angle = self.section(span_m)?.twist_rad;
+        if angle == 0.0 {
+            return Ok(vector);
+        }
+        let axis = self.span_axis();
+        let (index, pair) = self
+            .source
+            .sections
+            .windows(2)
+            .enumerate()
+            .find(|(_, pair)| {
+                span_m >= pair[0].quarter_chord_frd_m[axis]
+                    && span_m <= pair[1].quarter_chord_frd_m[axis]
+            })
+            .ok_or(ShapeError::OutsideSurface(self.role))?;
+        let fraction = (span_m - pair[0].quarter_chord_frd_m[axis])
+            / (pair[1].quarter_chord_frd_m[axis] - pair[0].quarter_chord_frd_m[axis]);
+        let first = self.station_tangent(index)?;
+        let second = self.station_tangent(index + 1)?;
+        let span = self.normalized_span(core::array::from_fn(|i| {
+            interpolate(first[i], second[i], fraction)
+        }))?;
+        let cross = [
+            span[1] * vector[2] - span[2] * vector[1],
+            span[2] * vector[0] - span[0] * vector[2],
+            span[0] * vector[1] - span[1] * vector[0],
+        ];
+        let dot = span[0] * vector[0] + span[1] * vector[1] + span[2] * vector[2];
+        let (sin, cos) = libm::sincos(angle);
+        let rotated = core::array::from_fn(|i| {
+            vector[i] * cos + cross[i] * sin + span[i] * dot * (1.0 - cos)
+        });
+        body_point(rotated)?;
+        Ok(rotated)
+    }
+    fn station_tangent(self, index: usize) -> Result<[f64; 3], ShapeError> {
+        let sections = &self.source.sections;
+        let first = sections[index.saturating_sub(1)].quarter_chord_frd_m;
+        let last = sections[(index + 1).min(sections.len() - 1)].quarter_chord_frd_m;
+        self.normalized_span(core::array::from_fn(|i| last[i] - first[i]))
+    }
+
+    fn normalized_span(self, vector: [f64; 3]) -> Result<[f64; 3], ShapeError> {
+        if vector.iter().any(|v| !v.is_finite()) {
+            return Err(ShapeError::NonFinite);
+        }
+        let scale = vector.into_iter().map(f64::abs).fold(0.0, f64::max);
+        if scale <= 0.0 {
+            return Err(ShapeError::DegenerateMember);
+        }
+        let scaled = vector.map(|v| v / scale);
+        let length = libm::sqrt(scaled.into_iter().map(|v| v * v).sum::<f64>());
+        let result = scaled.map(|v| v / length);
+        if result[self.span_axis()] <= 0.0 {
+            return Err(ShapeError::DegenerateMember);
+        }
+        Ok(result)
+    }
+
     /// Physical role of this validated surface.
     pub const fn role(self) -> HybridSurfaceRole {
         self.role
@@ -532,6 +605,7 @@ impl<'a> SurfaceShape<'a> {
         Ok(AircraftSectionDocument {
             quarter_chord_frd_m: point,
             chord_m: interpolate(pair[0].chord_m, pair[1].chord_m, fraction),
+            twist_rad: interpolate(pair[0].twist_rad, pair[1].twist_rad, fraction),
         })
     }
 
@@ -558,7 +632,14 @@ impl<'a> SurfaceShape<'a> {
             }
             HybridSurfaceRole::VerticalTail => point[1] += profile[1] * section.chord_m,
         }
-        body_point(point)
+        if section.twist_rad == 0.0 {
+            return body_point(point);
+        }
+        let offset = core::array::from_fn(|i| point[i] - section.quarter_chord_frd_m[i]);
+        let rotated = self.twist_vector(span_m, offset)?;
+        body_point(core::array::from_fn(|i| {
+            section.quarter_chord_frd_m[i] + rotated[i]
+        }))
     }
 
     const fn span_axis(self) -> usize {

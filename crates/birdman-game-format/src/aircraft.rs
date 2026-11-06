@@ -2,15 +2,18 @@
 
 use alloc::{string::String, vec::Vec};
 use birdman_game_core::{
-    AeroError, AircraftModel, BodyPoint, DynamicsError, ElementReference, Gravity, HybridAnchor,
-    HybridError, HybridSection, HybridSurfaceGeometry, HybridSurfaceRole, InertiaTensor, MathError,
+    AeroError, AircraftModel, BodyPoint, DynamicsError, ElementReference, Gravity, HybridError,
+    HybridSection, HybridSurfaceGeometry, HybridSurfaceRole, InertiaTensor, MathError,
     PlanformSymmetry, PolarAnalysisMethod, PolarMomentAxes, StaticPolar, StaticPolarCoefficients,
     StaticPolarMetadata, StaticPolarRow, SteadyGlideConditions,
 };
 use serde::{Deserialize, Serialize};
 
+mod validation;
+pub use validation::{AircraftValidationCode, AircraftValidationIssue};
+
 /// External document version, separate from the physical model version.
-pub const AIRCRAFT_SCHEMA_VERSION: u32 = 4;
+pub const AIRCRAFT_SCHEMA_VERSION: u32 = 5;
 /// Maximum source JSON size accepted before deserialization.
 pub const MAX_AIRCRAFT_JSON_BYTES: usize = 256 * 1024;
 /// Maximum section or strip-edge count in each lifting surface.
@@ -52,6 +55,8 @@ pub struct AircraftDocument {
 pub struct AircraftMassDocument {
     /// Airframe mass in kilograms.
     pub airframe_kg: f64,
+    /// Fixed airframe centre of mass from structural datum O, in body FRD metres.
+    pub airframe_center_of_mass_frd_m: [f64; 3],
     /// Symmetric physical inertia tensor in body-axis order, in kg m².
     pub inertia_about_datum_kg_m2: [[f64; 3]; 3],
 }
@@ -116,6 +121,8 @@ pub struct AircraftSectionDocument {
     pub quarter_chord_frd_m: [f64; 3],
     /// Local chord in metres; a terminal zero-chord tip is permitted.
     pub chord_m: f64,
+    /// Right-handed rotation about the local 3D quarter-chord tangent, including sweep.
+    pub twist_rad: f64,
 }
 
 /// NACA-style mean-line and thickness parameters shared by mesh and contact generation.
@@ -150,6 +157,19 @@ pub struct AircraftSurfaceDocument {
     pub tail_aerodynamics: Option<TailAerodynamicsDocument>,
     /// Normalized cross-section used by the physical outer surface.
     pub airfoil: AircraftAirfoilDocument,
+    /// Physical tail stops and rate; required for each tail and absent on the main wing.
+    pub actuator: Option<AircraftActuatorDocument>,
+}
+
+/// Mechanical motion relative to the untwisted, neutral tail mounting.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct AircraftActuatorDocument {
+    /// Inclusive mechanical angle stops in radians; zero is reachable.
+    pub incidence_bounds_rad: [f64; 2],
+    /// Positive maximum angular speed in radians per second.
+    pub maximum_slew_rad_per_second: f64,
 }
 
 /// Coefficients for the synthetic tail strip model.
@@ -375,16 +395,16 @@ pub struct AircraftTrimDocument {
 }
 
 /// Classified failures while admitting an external aircraft definition.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AircraftFormatError {
+    /// Independent semantic problems collected after bounded JSON decoding.
+    Validation(Vec<AircraftValidationIssue>),
     /// Source JSON exceeds the bounded input contract.
     InputTooLarge,
     /// JSON syntax, field or value type is invalid.
     InvalidJson,
     /// Data schema version is unsupported.
     UnsupportedSchemaVersion,
-    /// Configuration identifier or physical model version is invalid.
-    InvalidIdentity,
     /// Structural or table counts exceed the preparation budget.
     InvalidCount,
     /// The surface roles are repeated or incomplete.
@@ -399,8 +419,6 @@ pub enum AircraftFormatError {
     Math(MathError),
     /// Static-polar validation failed.
     Aerodynamics(AeroError),
-    /// Structural dimensions or cockpit order are invalid.
-    InvalidStructure,
     /// Trim conditions or their polar coverage are invalid.
     InvalidTrim,
 }
@@ -408,12 +426,24 @@ pub enum AircraftFormatError {
 impl core::fmt::Display for AircraftFormatError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
+            Self::Validation(issues) => {
+                for (index, issue) in issues.iter().enumerate() {
+                    if index > 0 {
+                        f.write_str("; ")?;
+                    }
+                    write!(
+                        f,
+                        "{}: {} (expected {})",
+                        issue.path, issue.value, issue.expected
+                    )?;
+                }
+                Ok(())
+            }
             Self::InputTooLarge => f.write_str("Aircraft document exceeds its byte budget"),
             Self::InvalidJson => {
                 f.write_str("Aircraft JSON has invalid syntax, fields or field types")
             }
             Self::UnsupportedSchemaVersion => f.write_str("Aircraft schema version is unsupported"),
-            Self::InvalidIdentity => f.write_str("Aircraft identity is invalid"),
             Self::InvalidCount => {
                 f.write_str("Aircraft collection count is outside its allowed budget")
             }
@@ -425,7 +455,6 @@ impl core::fmt::Display for AircraftFormatError {
             Self::Dynamics(_) => f.write_str("Aircraft physical model validation failed"),
             Self::Math(_) => f.write_str("Aircraft coordinate validation failed"),
             Self::Aerodynamics(_) => f.write_str("Aircraft aerodynamic configuration failed"),
-            Self::InvalidStructure => f.write_str("Aircraft structure configuration is invalid"),
             Self::InvalidTrim => f.write_str("Aircraft trim configuration is invalid"),
         }
     }
@@ -445,6 +474,30 @@ impl core::error::Error for AircraftFormatError {
 }
 
 impl AircraftDocument {
+    /// Resolves both structural tail actuators through the validated core constructor.
+    pub fn tail_actuator_limits(
+        &self,
+    ) -> Result<[birdman_game_core::TailActuatorLimits; 2], AircraftFormatError> {
+        let one = |role| {
+            let source = self
+                .surfaces
+                .iter()
+                .find(|s| s.role == role)
+                .ok_or(AircraftFormatError::InvalidSurfaceRoles)?;
+            let actuator = source
+                .actuator
+                .ok_or(AircraftFormatError::InvalidSurface(role))?;
+            birdman_game_core::TailActuatorLimits::try_new(
+                actuator.incidence_bounds_rad,
+                actuator.maximum_slew_rad_per_second,
+            )
+            .map_err(|_| AircraftFormatError::InvalidSurface(role))
+        };
+        Ok([
+            one(AircraftSurfaceRole::HorizontalTail)?,
+            one(AircraftSurfaceRole::VerticalTail)?,
+        ])
+    }
     /// Decodes a bounded document and validates every physical and structural field.
     /// See the [executable bundled-document example](../index.html#examples).
     pub fn decode_json(input: &[u8]) -> Result<Self, AircraftFormatError> {
@@ -469,49 +522,14 @@ impl AircraftDocument {
             self.pilot.position_bounds_m[1],
             self.pilot.maximum_speed_mps,
             self.pilot.maximum_acceleration_mps2,
+            self.mass.airframe_center_of_mass_frd_m,
+            self.tail_actuator_limits()?,
         )
         .map_err(AircraftFormatError::Dynamics)
     }
 
-    /// Validates a manually constructed document through the production core constructors.
-    pub fn validate(&self) -> Result<(), AircraftFormatError> {
-        if self.schema_version != AIRCRAFT_SCHEMA_VERSION {
-            return Err(AircraftFormatError::UnsupportedSchemaVersion);
-        }
-        if self.model_version == 0
-            || self.configuration_id.is_empty()
-            || self.configuration_id.len() > 128
-            || !self
-                .configuration_id
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
-        {
-            return Err(AircraftFormatError::InvalidIdentity);
-        }
-        self.aircraft_model()?;
-        for role in [
-            AircraftSurfaceRole::MainWing,
-            AircraftSurfaceRole::HorizontalTail,
-            AircraftSurfaceRole::VerticalTail,
-        ] {
-            if self
-                .surfaces
-                .iter()
-                .filter(|surface| surface.role == role)
-                .count()
-                != 1
-            {
-                return Err(AircraftFormatError::InvalidSurfaceRoles);
-            }
-        }
-        for surface in &self.surfaces {
-            surface.validate()?;
-        }
-        self.structure.validate()?;
-        self.trim.core_conditions()?;
-        if !(2..=MAX_AIRCRAFT_POLAR_ROWS).contains(&self.polar.rows.len()) {
-            return Err(AircraftFormatError::InvalidCount);
-        }
+    // Shared cross-field polar geometry check after individual components pass.
+    fn validate_polar_reference(&self) -> Result<(), AircraftFormatError> {
         let rows = self.polar.core_rows()?;
         let wing = self
             .surfaces
@@ -526,7 +544,7 @@ impl AircraftDocument {
             geometry.projected_mac_m(),
         )
         .map_err(AircraftFormatError::Aerodynamics)?;
-        let polar = StaticPolar::try_new(
+        StaticPolar::try_new(
             &rows,
             reference,
             body_point(self.polar.reference_point_frd_m)?,
@@ -547,12 +565,6 @@ impl AircraftDocument {
             .map_err(AircraftFormatError::Aerodynamics)?,
         )
         .map_err(AircraftFormatError::Aerodynamics)?;
-        let [minimum, maximum] = polar.alpha_interval_rad();
-        for bound in self.trim.alpha_bounds_rad {
-            if !bound.is_finite() || bound < minimum || bound > maximum {
-                return Err(AircraftFormatError::InvalidTrim);
-            }
-        }
         Ok(())
     }
 }
@@ -587,48 +599,6 @@ impl AircraftSurfaceDocument {
         )
         .map_err(AircraftFormatError::Geometry)
     }
-
-    fn validate(&self) -> Result<(), AircraftFormatError> {
-        let sections = self.core_sections()?;
-        self.core_geometry(&sections)?;
-        if !(2..=MAX_AIRCRAFT_STATIONS).contains(&self.strip_fractions.len()) {
-            return Err(AircraftFormatError::InvalidCount);
-        }
-        let airfoil = self.airfoil;
-        let tail_valid = match self.tail_aerodynamics {
-            None => self.role == AircraftSurfaceRole::MainWing,
-            Some(tail) => {
-                self.role != AircraftSurfaceRole::MainWing
-                    && tail.reference_airspeed_mps.is_finite()
-                    && tail.reference_airspeed_mps > 0.0
-                    && tail.reference_kinematic_viscosity_m2ps.is_finite()
-                    && tail.reference_kinematic_viscosity_m2ps > 0.0
-                    && birdman_game_core::TailAerodynamics::try_new(
-                        tail.zero_lift_drag_coefficient,
-                        tail.span_efficiency,
-                        tail.pitching_moment_coefficient,
-                    )
-                    .is_ok()
-            }
-        };
-        if self.strip_fractions.first() != Some(&0.0)
-            || !tail_valid
-            || self.strip_fractions.last() != Some(&1.0)
-            || self
-                .strip_fractions
-                .windows(2)
-                .any(|pair| !pair[0].is_finite() || !pair[1].is_finite() || pair[0] >= pair[1])
-            || !range(airfoil.camber_ratio, 0.0, 0.5)
-            || !range(airfoil.thickness_ratio, 0.0, 0.5)
-            || !airfoil.camber_position_ratio.is_finite()
-            || airfoil.camber_position_ratio <= 0.0
-            || airfoil.camber_position_ratio >= 1.0
-            || HybridAnchor::try_new(self.lift_anchor[0], self.lift_anchor[1]).is_err()
-        {
-            return Err(AircraftFormatError::InvalidSurface(self.role));
-        }
-        Ok(())
-    }
 }
 
 impl AircraftPolarDocument {
@@ -659,116 +629,6 @@ impl AircraftPolarDocument {
     }
 }
 
-impl AircraftStructureDocument {
-    fn validate(&self) -> Result<(), AircraftFormatError> {
-        for point in self
-            .main_beam_endpoints_frd_m
-            .into_iter()
-            .chain([self.pilot_eye_offset_frd_m])
-        {
-            body_point(point)?;
-        }
-        if !(2..=MAX_AIRCRAFT_STATIONS).contains(&self.cockpit_stations.len()) {
-            return Err(AircraftFormatError::InvalidCount);
-        }
-        let beam_delta = core::array::from_fn::<_, 3, _>(|axis| {
-            self.main_beam_endpoints_frd_m[0][axis] - self.main_beam_endpoints_frd_m[1][axis]
-        });
-        if !beam_delta.into_iter().all(f64::is_finite)
-            || beam_delta[0] <= 0.0
-            || ![
-                self.main_beam_radius_m,
-                self.wing_flexural_rigidity_nm2,
-                self.cockpit_rounding_exponent,
-                self.cockpit_frame_radius_m,
-            ]
-            .into_iter()
-            .all(positive)
-            || self.cockpit_stations.iter().any(|station| {
-                !station.forward_m.is_finite()
-                    || !station.center_down_m.is_finite()
-                    || !positive(station.half_width_m)
-                    || !positive(station.half_height_m)
-            })
-            || self
-                .cockpit_stations
-                .windows(2)
-                .any(|pair| pair[0].forward_m <= pair[1].forward_m)
-        {
-            return Err(AircraftFormatError::InvalidStructure);
-        }
-        self.members.validate(self.cockpit_stations.len())?;
-        Ok(())
-    }
-}
-
-impl AircraftMembersDocument {
-    fn validate(&self, cockpit_stations: usize) -> Result<(), AircraftFormatError> {
-        let wing = &self.wing;
-        let cockpit = &self.cockpit;
-        let count = |value| value <= MAX_AIRCRAFT_STATIONS as u32;
-        let chords = |values: &[f64], minimum| {
-            (minimum..=MAX_AIRCRAFT_STATIONS).contains(&values.len())
-                && values.iter().all(|value| (0.0..=1.0).contains(value))
-                && values.windows(2).all(|pair| pair[0] < pair[1])
-        };
-        let valid_tail = |tail: &AircraftTailMembersDocument| {
-            tail.rib_intervals > 0
-                && count(tail.rib_intervals)
-                && positive(tail.rib_radius_m)
-                && chords(&tail.rib_chord_bounds, 2)
-                && chords(&tail.foam_chord_bounds, 2)
-                && positive(tail.foam_half_width_m)
-                && tail.foam_normal_offset_m.is_finite()
-                && tail.foam_normal_offset_m >= 0.0
-        };
-        if wing.span_segments == 0
-            || !count(wing.span_segments)
-            || !count(wing.rib_count)
-            || !wing.spar_radii_m.into_iter().all(positive)
-            || !positive(wing.rib_radius_m)
-            || !positive(wing.stringer_radius_m)
-            || !positive(wing.foam_half_width_m)
-            || !chords(&wing.rib_chord_knots, 2)
-            || !chords(&wing.stringer_chord_fractions, 0)
-            || !chords(&wing.foam_chord_fractions, 2)
-            || !valid_tail(&self.horizontal_tail)
-            || !valid_tail(&self.vertical_tail)
-            || !positive(self.tail_support_radius_m)
-            || cockpit.nose_station as usize >= cockpit_stations
-            || cockpit.rim_station as usize >= cockpit_stations
-            || !(4..=MAX_AIRCRAFT_STATIONS as u32).contains(&cockpit.rim_segments)
-            || !chords(&cockpit.upper_station_fractions, 2)
-            || !chords(&cockpit.lower_station_fractions, 2)
-            || !chords(&cockpit.beam_attachment_fractions, 2)
-            || ![
-                cockpit.cross_radius_m,
-                cockpit.diagonal_radius_m,
-                cockpit.attachment_radius_m,
-                cockpit.rim_radius_m,
-            ]
-            .into_iter()
-            .all(positive)
-        {
-            return Err(AircraftFormatError::InvalidStructure);
-        }
-        let wing_parts = 2
-            * (wing.span_segments as usize * (1 + wing.stringer_chord_fractions.len())
-                + wing.rib_count as usize * wing.rib_chord_knots.len());
-        let tail_parts = 2
-            * (self.horizontal_tail.rib_intervals as usize
-                + self.vertical_tail.rib_intervals as usize
-                - 2);
-        let tail_support_parts = 2;
-        if wing_parts + tail_parts + tail_support_parts + 19 + cockpit.rim_segments as usize
-            > MAX_AIRCRAFT_MEMBERS
-        {
-            return Err(AircraftFormatError::InvalidCount);
-        }
-        Ok(())
-    }
-}
-
 impl AircraftTrimDocument {
     /// Validates and constructs the core's explicit steady-glide operating conditions.
     pub fn core_conditions(&self) -> Result<SteadyGlideConditions, AircraftFormatError> {
@@ -784,10 +644,6 @@ impl AircraftTrimDocument {
 
 fn body_point([forward, right, down]: [f64; 3]) -> Result<BodyPoint, AircraftFormatError> {
     BodyPoint::try_new(forward, right, down).map_err(AircraftFormatError::Math)
-}
-
-fn positive(value: f64) -> bool {
-    value.is_finite() && value > 0.0
 }
 
 fn range(value: f64, minimum: f64, maximum: f64) -> bool {

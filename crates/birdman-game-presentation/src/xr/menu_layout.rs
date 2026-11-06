@@ -1,7 +1,4 @@
-use crate::game_ui::{
-    GameUiButtonPresentation, GameUiChartLegend, GameUiChartText, GameUiEmphasis, GameUiSection,
-    GameUiSectionLayout,
-};
+use crate::game_ui::{GameUiChartLegend, GameUiChartText, GameUiSection, GameUiSectionLayout};
 use std::collections::{BTreeMap, BTreeSet};
 mod types;
 pub use types::*;
@@ -17,9 +14,18 @@ fn plan(source: MenuLayoutSource) -> Result<MenuLayoutPlan, MenuLayoutFailure> {
     use MenuLayoutFailure::InvalidLayout;
     let size = source.surface_size;
     let font = source.font_meters;
-    if ![size.width, size.height, font]
-        .into_iter()
-        .all(|value| value.is_finite() && value > 0.0)
+    if ![
+        size.width,
+        size.height,
+        font,
+        source.font_size_px,
+        source.line_height_px,
+        source.control_padding_px[0],
+        source.control_padding_px[1],
+        source.control_gap_px,
+    ]
+    .into_iter()
+    .all(|value| value.is_finite() && value > 0.0)
         || source.controls.len() > 256
         || source.font.family.trim().is_empty()
         || source.locale.trim().is_empty()
@@ -37,8 +43,8 @@ fn plan(source: MenuLayoutSource) -> Result<MenuLayoutPlan, MenuLayoutFailure> {
     {
         return Err(InvalidLayout);
     }
-    let padding = font * 0.5;
-    let gap = font * 0.35;
+    let padding = font * source.control_padding_px[0] / source.font_size_px;
+    let gap = font * source.control_gap_px / source.font_size_px;
     let width = size.width - padding * 2.0;
     let page_width = (width - gap) / 2.0 - padding * 2.0;
     if width <= padding * 2.0 || page_width <= 0.0 {
@@ -105,9 +111,10 @@ fn plan(source: MenuLayoutSource) -> Result<MenuLayoutPlan, MenuLayoutFailure> {
             });
         }
     }
+    let line_height_meters = font * source.line_height_px / source.font_size_px;
     let mut output = MenuLayoutPlan {
         source,
-        line_height_meters: font * 1.35,
+        line_height_meters,
         padding_meters: padding,
         gap_meters: gap,
         rows,
@@ -146,30 +153,7 @@ fn plan(source: MenuLayoutSource) -> Result<MenuLayoutPlan, MenuLayoutFailure> {
         for item in row.controls {
             let control = output.source.controls[item.index].clone();
             let text_width = item.width - padding * 2.0;
-            let label = if let MenuWidget::Button { presentation } = &control.widget {
-                match presentation {
-                    GameUiButtonPresentation::Choice {
-                        selected,
-                        description,
-                        ..
-                    } => format!(
-                        "{} {}{}",
-                        if *selected { "●" } else { "○" },
-                        control.label,
-                        if description.is_empty() {
-                            String::new()
-                        } else {
-                            format!("\n{description}")
-                        }
-                    ),
-                    GameUiButtonPresentation::Disclosure { expanded } => {
-                        format!("{} {}", if *expanded { "▾" } else { "▸" }, control.label)
-                    }
-                    _ => control.label.clone(),
-                }
-            } else {
-                control.label.clone()
-            };
+            let label = control.label.clone();
             let slot = |role, index| MenuTextSlot::Control {
                 control_id: control.id.clone(),
                 role,
@@ -185,14 +169,7 @@ fn plan(source: MenuLayoutSource) -> Result<MenuLayoutPlan, MenuLayoutFailure> {
             )?;
             match control.widget {
                 MenuWidget::Button { .. } => {}
-                MenuWidget::Toggle { value } => output.add_text(
-                    slot(MenuTextRole::Value, 0),
-                    if value { "On" } else { "Off" }.into(),
-                    text_width,
-                    None,
-                    None,
-                    None,
-                )?,
+                MenuWidget::Toggle { .. } => {}
                 MenuWidget::Range {
                     display_value: value,
                 }
@@ -301,24 +278,60 @@ impl MenuLayoutPlan {
             font.family = "monospace".to_owned();
         }
         let mut font_meters = self.source.font_meters;
-        if let MenuTextSlot::Control {
-            control_id,
-            role: MenuTextRole::Value,
-            ..
-        } = &slot
-            && self.source.controls.iter().any(|item| {
-                item.id == *control_id
-                    && matches!(
-                        item.widget,
-                        MenuWidget::Status {
-                            emphasis: GameUiEmphasis::Primary,
-                            ..
-                        }
-                    )
-            })
-        {
-            font_meters *= 2.0;
-            font.weight = 700;
+        let mut line_height_meters =
+            self.source.font_meters * self.source.line_height_px / self.source.font_size_px;
+        let style = match &slot {
+            MenuTextSlot::Fixed {
+                role: MenuFixedRole::Title,
+            } => Some(self.source.title_text),
+            MenuTextSlot::Section { .. } => Some(self.source.section_text),
+            MenuTextSlot::Control {
+                role: MenuTextRole::FieldLabel | MenuTextRole::FieldUnit,
+                ..
+            } => Some(self.source.secondary_text),
+            MenuTextSlot::Control {
+                control_id,
+                role: MenuTextRole::Label,
+                ..
+            } => self.source.controls.iter().find_map(|item| {
+                if item.id == *control_id
+                    && let MenuWidget::Button { text_style, .. } = item.widget
+                {
+                    Some(text_style)
+                } else {
+                    None
+                }
+            }),
+            MenuTextSlot::Control {
+                control_id,
+                role: MenuTextRole::Value,
+                ..
+            } => self.source.controls.iter().find_map(|item| {
+                if item.id == *control_id
+                    && let MenuWidget::Status { text_style, .. } = item.widget
+                {
+                    Some(text_style)
+                } else {
+                    None
+                }
+            }),
+            _ => None,
+        };
+        if let Some(style) = style {
+            if !style.font_size_px.is_finite()
+                || style.font_size_px <= 0.0
+                || !self.source.font_size_px.is_finite()
+                || self.source.font_size_px <= 0.0
+                || !style.line_height_px.is_finite()
+                || style.line_height_px <= 0.0
+                || !(1..=1000).contains(&style.font_weight)
+            {
+                return Err(MenuLayoutFailure::InvalidLayout);
+            }
+            font_meters *= style.font_size_px / self.source.font_size_px;
+            line_height_meters =
+                self.source.font_meters * style.line_height_px / self.source.font_size_px;
+            font.weight = style.font_weight;
         }
         if let Some(text) = &chart_text {
             if ![
@@ -335,9 +348,15 @@ impl MenuLayoutPlan {
                 return Err(MenuLayoutFailure::InvalidLayout);
             }
             font.weight = text.font_weight;
-            font_meters *= text.font_size / chart_font.ok_or(MenuLayoutFailure::InvalidLayout)?;
+            let scale = text.font_size / chart_font.ok_or(MenuLayoutFailure::InvalidLayout)?;
+            font_meters *= scale;
+            line_height_meters *= scale;
         }
-        if !font_meters.is_finite() || font_meters <= 0.0 {
+        if !font_meters.is_finite()
+            || font_meters <= 0.0
+            || !line_height_meters.is_finite()
+            || line_height_meters <= 0.0
+        {
             return Err(MenuLayoutFailure::InvalidLayout);
         }
         let identity = serde_json::to_string(&(
@@ -346,6 +365,7 @@ impl MenuLayoutPlan {
             &self.source.locale,
             self.source.font_meters,
             font_meters,
+            line_height_meters,
             &font,
             &slot,
             &value,
@@ -360,6 +380,7 @@ impl MenuLayoutPlan {
             value,
             locale: self.source.locale.clone(),
             font_meters,
+            line_height_meters,
             font,
             width_meters: width,
             chart_text,
@@ -388,7 +409,7 @@ fn arrange(
         if measured.contains_key(index) {
             return Err(StaleTextMetrics);
         }
-        if !valid_measurement(&plan.texts[*index], measurement, plan.line_height_meters) {
+        if !valid_measurement(&plan.texts[*index], measurement) {
             return Err(InvalidTextMetrics);
         }
         measured.insert(*index, measurement);
@@ -413,7 +434,7 @@ fn arrange(
                 height: if text.value.is_empty() {
                     0.0
                 } else {
-                    measured[&index].lines.len() as f64 * plan.line_height_meters
+                    measured[&index].lines.len() as f64 * text.line_height_meters
                 },
             },
             chart_projection: None,
@@ -498,8 +519,11 @@ fn arrange(
                     .flat_map(|index| &measured[index].lines)
                     .map(|line| line.descent_meters)
                     .fold(0.0_f64, f64::max);
-                let line_height = plan
-                    .line_height_meters
+                let line_height = indices
+                    .iter()
+                    .flatten()
+                    .map(|index| plan.texts[*index].line_height_meters)
+                    .fold(plan.line_height_meters, f64::max)
                     .max(maximum_ascent + maximum_descent);
                 let rows = [0, 1, 2].map(|role| {
                     indices
@@ -583,7 +607,12 @@ fn arrange(
                             .iter()
                             .enumerate()
                             .map(|(line_index, line)| {
-                                chart_line(&projection, line, line_index, line_height)
+                                chart_line(
+                                    &projection,
+                                    line,
+                                    line_index,
+                                    plan.texts[*index].line_height_meters,
+                                )
                             })
                             .collect::<Vec<_>>();
                         let bounds = union(line_geometry.iter().map(|geometry| geometry.bounds))
@@ -623,7 +652,12 @@ fn arrange(
                             .iter()
                             .enumerate()
                             .map(|(line_index, line)| {
-                                chart_line(&projection, line, line_index, plan.line_height_meters)
+                                chart_line(
+                                    &projection,
+                                    line,
+                                    line_index,
+                                    plan.texts[*index].line_height_meters,
+                                )
                             })
                             .collect::<Vec<_>>();
                         let bounds = union(line_geometry.iter().map(|geometry| geometry.bounds))
@@ -685,11 +719,10 @@ fn arrange(
     let caption = place(fixed(MenuFixedRole::Caption)?, 0.0, top);
     let previous_index = fixed(MenuFixedRole::Previous)?;
     let next_index = fixed(MenuFixedRole::Next)?;
-    let footer_height_meters = measured[&previous_index]
-        .lines
-        .len()
-        .max(measured[&next_index].lines.len()) as f64
-        * plan.line_height_meters
+    let footer_height_meters = [previous_index, next_index]
+        .into_iter()
+        .map(|index| measured[&index].lines.len() as f64 * plan.texts[index].line_height_meters)
+        .fold(0.0_f64, f64::max)
         + plan.padding_meters * 2.0;
     let content_height_meters = top + caption.bounds.height;
     if !content_height_meters.is_finite()
@@ -714,11 +747,11 @@ fn arrange(
     })
 }
 
-fn valid_measurement(
-    request: &MenuTextRequest,
-    measurement: &MenuTextMeasurement,
-    line_height: f64,
-) -> bool {
+fn valid_measurement(request: &MenuTextRequest, measurement: &MenuTextMeasurement) -> bool {
+    let line_height = request.line_height_meters;
+    if !line_height.is_finite() || line_height <= 0.0 {
+        return false;
+    }
     let paragraphs = request.value.split('\n').collect::<Vec<_>>();
     let mut reconstructed = Vec::<String>::new();
     if measurement.lines.len() > 4096 {

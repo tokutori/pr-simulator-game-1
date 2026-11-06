@@ -1,9 +1,8 @@
 use super::*;
 use crate::{
     AerodynamicStage, BodyPoint, BodyVector, FbwAuthority, HybridError, HybridModel, HybridSite,
-    HybridSurface, HybridSurfaceRole, NedPoint, NedVector, TailAngleOfAttackGuard,
-    TailPilotPositionIntent, TestAircraft, UnitQuaternion, WindError, WindField,
-    advance_tail_control,
+    NedPoint, NedVector, TailAngleOfAttackGuard, TailPilotPositionIntent, TestAircraft,
+    UnitQuaternion, WindError, WindField, advance_tail_control,
 };
 use core::cell::Cell;
 
@@ -503,6 +502,7 @@ pub(super) fn commands(
         input.desired_rate,
         previous.flight_state.angular_velocity_body(),
         PHYSICS_DT_SECONDS,
+        [crate::TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2],
     )
     .unwrap()
 }

@@ -1,6 +1,6 @@
 use crate::game_ui::{
-    GameUiButtonPresentation, GameUiChartLegend, GameUiChartText, GameUiEmphasis,
-    GameUiNumericField, GameUiSection,
+    GameUiChartLegend, GameUiChartText, GameUiEmphasis, GameUiNumericField, GameUiSection,
+    GameUiTextStyle,
 };
 use serde::{Deserialize, Serialize};
 
@@ -188,8 +188,8 @@ pub struct MenuChartLayout {
 pub enum MenuWidget {
     /// Action or choice button.
     Button {
-        /// Shared button presentation.
-        presentation: GameUiButtonPresentation,
+        /// Completed typography for the semantic button role.
+        text_style: GameUiTextStyle,
     },
     /// Boolean selection.
     Toggle {
@@ -205,6 +205,8 @@ pub enum MenuWidget {
     Status {
         /// Shared readout prominence.
         emphasis: GameUiEmphasis,
+        /// Completed typography in the source's logical-pixel units.
+        text_style: GameUiTextStyle,
         /// Already formatted content or current toggle selection.
         value: String,
     },
@@ -252,6 +254,20 @@ pub struct MenuLayoutSource {
     pub surface_size: MenuSize,
     /// Nominal font size in metres.
     pub font_meters: f64,
+    /// Logical-pixel base corresponding to the nominal metric font.
+    pub font_size_px: f64,
+    /// Completed base line advance corresponding to the nominal metric font.
+    pub line_height_px: f64,
+    /// Completed title, section and secondary typography in logical pixels.
+    pub title_text: GameUiTextStyle,
+    /// Completed section heading typography.
+    pub section_text: GameUiTextStyle,
+    /// Completed numeric caption and unit typography.
+    pub secondary_text: GameUiTextStyle,
+    /// Shared logical control padding converted by the metric font scale.
+    pub control_padding_px: [f64; 2],
+    /// Shared logical separation converted by the metric font scale.
+    pub control_gap_px: f64,
     /// Observed font identity.
     pub font: MenuFont,
     /// Explicit text measurement locale.
@@ -325,6 +341,8 @@ pub struct MenuTextRequest {
     pub locale: String,
     /// Nominal font size in metres.
     pub font_meters: f64,
+    /// Completed line advance and reserved line box in metres.
+    pub line_height_meters: f64,
     /// Observed font identity.
     pub font: MenuFont,
     /// Maximum measured line width in metres.
@@ -344,7 +362,7 @@ pub struct MenuTextRequest {
 pub struct MenuLayoutPlan {
     /// Compact source and typography observation.
     pub source: MenuLayoutSource,
-    /// Line spacing in metres.
+    /// Minimum body-grid line spacing in metres.
     pub line_height_meters: f64,
     /// Inner padding in metres.
     pub padding_meters: f64,

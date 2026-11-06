@@ -55,6 +55,17 @@ impl TailFlightTickState {
         pilot_position_target: PilotPositionTarget,
     ) -> Result<Self, TailFlightTickError> {
         total_momentum(aircraft, &flight_state).map_err(TailFlightTickError::Dynamics)?;
+        for (value, limits) in [incidence.elevator_rad(), incidence.rudder_rad()]
+            .into_iter()
+            .zip(aircraft.tail_actuators())
+        {
+            let [lower, upper] = limits.incidence_bounds_rad();
+            if value < lower || value > upper {
+                return Err(TailFlightTickError::Control(
+                    crate::TailControlError::Actuator(crate::ActuatorError::InvalidLimit),
+                ));
+            }
+        }
         TailPilotPositionMapping::try_new(aircraft, pilot_position_target.position_m())
             .map_err(TailFlightTickError::Dynamics)?;
         Ok(Self {
@@ -749,6 +760,7 @@ fn evaluate_tail_flight_tick(
         previous.flight_state.angular_velocity_body(),
         PHYSICS_DT_SECONDS,
         datum_alpha_rad,
+        aircraft.tail_actuators(),
     )
     .map_err(TailFlightTickError::Control)?;
     let requested_pilot_position_target = config

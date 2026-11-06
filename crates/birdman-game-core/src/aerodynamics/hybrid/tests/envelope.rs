@@ -5,28 +5,6 @@ use crate::{
 };
 use core::cell::{Cell, RefCell};
 
-fn increment_at(
-    proxy: HybridProxy,
-    actual: [f64; 3],
-    reference: [f64; 3],
-    delta: f64,
-) -> Result<Wrench, HybridError> {
-    proxy_increment(
-        proxy,
-        vector(actual),
-        ProxyReference {
-            velocity: vector(reference),
-            speed: 10.0,
-            pressure: 60.0,
-        },
-        1.2,
-        4.0 * core::f64::consts::PI / 3.0,
-        delta,
-        None,
-    )
-    .map(|(wrench, _)| wrench)
-}
-
 #[test]
 fn fatal_arithmetic_and_wind_errors_are_not_relabelled_as_envelope_failures() {
     let fixture = Fixture::new(4);
@@ -82,6 +60,8 @@ pub(super) fn aircraft() -> AircraftModel {
         0.5,
         1.0,
         1.0,
+        [0.0; 3],
+        [crate::TailActuatorLimits::try_new([-0.2, 0.2], 1.0).unwrap(); 2],
     )
     .unwrap()
 }

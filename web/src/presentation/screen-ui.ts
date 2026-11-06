@@ -367,7 +367,7 @@ export class ScreenUiAdapter {
 
   private createControl(control: GameUiControl): VNode {
     const content = control.content;
-    const label = this.frame?.button_labels.find(button => button.id === control.id)?.label ?? control.label;
+    const label = this.frame?.button_labels.find(button => button.id === control.id)?.label ?? control.display_label;
     if (content.kind === "flight_touch") {
       const theme = this.currentViewModel?.theme;
       if (theme === undefined) throw new Error("Touch control has no retained UI view");
@@ -385,7 +385,7 @@ export class ScreenUiAdapter {
       ]), h("span", { style: { position: "absolute", top: "0", left: "0", color: theme.text, pointerEvents: "none" } }, control.label)]);
     }
     if (content.kind === "button") {
-      const data: VNodeData = { key: control.id, attrs: { type: "button" }, dataset: { controlId: control.id }, props: { disabled: !control.enabled } };
+      const data: VNodeData = { key: control.id, attrs: { type: "button", "aria-label": this.frame?.button_labels.find(button => button.id === control.id)?.label ?? control.label }, dataset: { controlId: control.id }, props: { disabled: !control.enabled } };
       const presentation = content.presentation;
       let selector = "button";
       let children: string | VNode[] = label;
@@ -393,29 +393,27 @@ export class ScreenUiAdapter {
       if (presentation.kind === "choice") {
         selector = "button.screen-ui-choice";
         data.attrs = { ...data.attrs, "aria-pressed": String(presentation.selected) };
-        children = [
-          h("span.screen-ui-choice-label", `${presentation.selected ? "● " : ""}${label}`),
-          ...(presentation.description.length > 0 ? [h("small", presentation.description)] : [])
-        ];
+        children = label;
       }
       if (presentation.kind === "disclosure") {
         data.dataset = { ...data.dataset, emphasis: "secondary" };
         data.attrs = { ...data.attrs, "aria-expanded": String(presentation.expanded), "aria-controls": `${control.id}-content` };
-        children = `${presentation.expanded ? "▾" : "▸"} ${label}`;
+        children = label;
       }
       return h(selector, data, children);
     }
     if (content.kind === "toggle") {
       return h("label.screen-ui-toggle", { key: control.id }, [
-        h("input", { key: `${control.id}-input`, attrs: { type: "checkbox" }, dataset: { controlId: control.id }, props: { checked: content.value, disabled: !control.enabled } }),
-        h("span", control.label)
+        h("input", { key: `${control.id}-input`, attrs: { type: "checkbox", "aria-label": control.label }, dataset: { controlId: control.id }, props: { checked: content.value, disabled: !control.enabled } }),
+        h("span", control.display_label)
       ]);
     }
     if (content.kind === "range") {
-      const range = this.frame?.ranges.find(value => value.id === control.id) ?? content;
+      const frameRange = this.frame?.ranges.find(value => value.id === control.id);
+      const range = frameRange ?? content;
       return h("label.screen-ui-range", { key: control.id }, [
-        h("span", `${control.label}: ${range.display_value}`),
-        h("input", { key: `${control.id}-input`, attrs: { type: "range", min: String(content.minimum), max: String(content.maximum), step: String(content.step) }, dataset: { controlId: control.id }, props: { value: String(range.value), disabled: !control.enabled } })
+        h("span", frameRange?.display_value ?? control.display_label),
+        h("input", { key: `${control.id}-input`, attrs: { type: "range", "aria-label": control.label, min: String(content.minimum), max: String(content.maximum), step: String(content.step) }, dataset: { controlId: control.id }, props: { value: String(range.value), disabled: !control.enabled } })
       ]);
     }
     if (content.kind === "chart") return this.createChart(control, content.plot);
@@ -428,8 +426,8 @@ export class ScreenUiAdapter {
         ])))
       ]);
     }
-    const value = this.frame?.readouts.find(readout => readout.id === control.id)?.value ?? content.value;
-    return h("output.screen-ui-status", { key: control.id, attrs: { id: control.id, "aria-live": "polite" }, dataset: { emphasis: content.emphasis } }, control.label.length === 0 ? value : `${control.label}: ${value}`);
+    const value = this.frame?.readouts.find(readout => readout.id === control.id)?.value ?? control.display_label;
+    return h("output.screen-ui-status", { key: control.id, attrs: { id: control.id, "aria-live": "polite" }, dataset: { emphasis: content.emphasis } }, value);
   }
 
   private createChart(control: GameUiControl, plot: GameUiChart): VNode {
@@ -623,9 +621,30 @@ function sharedPresentationData(presentation: GameUiView): VNodeData {
       overflowY: layout.scroll_y ? "auto" : "hidden",
       background: layout.passthrough ? "transparent" : `color-mix(in srgb, ${theme.panel_background} ${String(theme.panel_opacity * 100)}%, transparent)`,
       ...(layout.shell === "analysis" ? { height: `${String(layout.maximum_height_px)}px` } : {}),
+      "--game-ui-title-font-size": `${String(theme.title_text.font_size_px)}px`,
+      "--game-ui-title-line-height": `${String(theme.title_text.line_height_px)}px`,
+      "--game-ui-title-font-weight": String(theme.title_text.font_weight),
+      "--game-ui-body-font-size": `${String(theme.body_text.font_size_px)}px`,
+      "--game-ui-body-line-height": `${String(theme.body_text.line_height_px)}px`,
+      "--game-ui-body-font-weight": String(theme.body_text.font_weight),
+      "--game-ui-primary-status-font-size": `${String(theme.primary_status_text.font_size_px)}px`,
+      "--game-ui-primary-status-line-height": `${String(theme.primary_status_text.line_height_px)}px`,
+      "--game-ui-primary-status-font-weight": String(theme.primary_status_text.font_weight),
+      "--game-ui-secondary-font-size": `${String(theme.secondary_text.font_size_px)}px`,
+      "--game-ui-secondary-line-height": `${String(theme.secondary_text.line_height_px)}px`,
+      "--game-ui-secondary-font-weight": String(theme.secondary_text.font_weight),
+      "--game-ui-section-font-size": `${String(theme.section_text.font_size_px)}px`,
+      "--game-ui-section-line-height": `${String(theme.section_text.line_height_px)}px`,
+      "--game-ui-section-font-weight": String(theme.section_text.font_weight),
+      "--game-ui-control-padding-x": `${String(theme.control_padding_px[0])}px`,
+      "--game-ui-control-padding-y": `${String(theme.control_padding_px[1])}px`,
+      "--game-ui-control-gap": `${String(theme.control_gap_px)}px`,
       "--game-ui-gap": `${String(layout.gap_px)}px`,
       "--game-ui-columns": String(layout.choice_columns),
       "--game-ui-text": theme.text,
+      "text-shadow": layout.passthrough
+        ? `${String(theme.text_shadow_offset_px[0])}px ${String(theme.text_shadow_offset_px[1])}px 0 ${theme.text_shadow_color}`
+        : "none",
       "--game-ui-muted-text": theme.muted_text,
       "--game-ui-panel": theme.panel_background,
       "--game-ui-opacity": String(theme.panel_opacity),

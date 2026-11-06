@@ -89,8 +89,10 @@ fn source() -> MenuLayoutSource {
                 section: Some("actions".into()),
                 label: id.into(),
                 widget: MenuWidget::Button {
-                    presentation: GameUiButtonPresentation::Action {
-                        emphasis: GameUiEmphasis::Normal,
+                    text_style: crate::game_ui::GameUiTextStyle {
+                        font_size_px: 16.0,
+                        line_height_px: 16.0 * 1.35,
+                        font_weight: 400,
                     },
                 },
             })
@@ -99,6 +101,25 @@ fn source() -> MenuLayoutSource {
             width: 2.4,
             height: 1.8,
         },
+        font_size_px: 16.0,
+        line_height_px: 21.6,
+        title_text: crate::game_ui::GameUiTextStyle {
+            font_size_px: 28.0,
+            line_height_px: 28.0 * 1.35,
+            font_weight: 700,
+        },
+        section_text: crate::game_ui::GameUiTextStyle {
+            font_size_px: 16.0,
+            line_height_px: 16.0 * 1.35,
+            font_weight: 700,
+        },
+        secondary_text: crate::game_ui::GameUiTextStyle {
+            font_size_px: 14.4,
+            line_height_px: 14.4 * 1.35,
+            font_weight: 400,
+        },
+        control_padding_px: [8.0; 2],
+        control_gap_px: 5.6,
         font_meters: 0.04,
         font: MenuFont {
             family: "fixture".into(),
@@ -149,6 +170,11 @@ fn responsive_rows_and_measured_positions_share_one_metric_contract() {
     let mut primary_source = source();
     primary_source.controls[0].widget = MenuWidget::Status {
         emphasis: GameUiEmphasis::Primary,
+        text_style: crate::game_ui::GameUiTextStyle {
+            font_size_px: 32.0,
+            line_height_px: 32.0 * 1.35,
+            font_weight: 700,
+        },
         value: "3 秒".into(),
     };
     let primary = plan(primary_source).unwrap();
@@ -369,7 +395,8 @@ fn preparation_owns_surface_fit_and_measured_font_selection() {
         crate::camera::Pose::IDENTITY,
         &mut SurfaceFontCache::default(),
         |request, size, value| {
-            if candidates.last() != Some(&request.font_meters) {
+            if matches!(&request.slot, MenuTextSlot::Control { control_id, role: MenuTextRole::Label, .. } if control_id == "start")
+                && candidates.last() != Some(&request.font_meters) {
                 candidates.push(request.font_meters);
             }
             let mut metrics = measure(request, size, value)?;
@@ -382,6 +409,22 @@ fn preparation_owns_surface_fit_and_measured_font_selection() {
     .unwrap();
     assert_eq!(candidates.len(), 12);
     assert_eq!(selected.source.font_meters, final_font);
+    let title = selected
+        .texts
+        .iter()
+        .find(|text| {
+            matches!(
+                text.slot,
+                MenuTextSlot::Fixed {
+                    role: MenuFixedRole::Title
+                }
+            )
+        })
+        .unwrap();
+    assert_eq!(
+        title.font_meters,
+        final_font * requested.title_text.font_size_px / requested.font_size_px
+    );
     assert!(selected.source.surface_size.width < requested.surface_size.width);
     candidates.clear();
     let unavailable = select(
@@ -390,7 +433,9 @@ fn preparation_owns_surface_fit_and_measured_font_selection() {
         crate::camera::Pose::IDENTITY,
         &mut SurfaceFontCache::default(),
         |request, size, value| {
-            if candidates.last() != Some(&request.font_meters) {
+            if matches!(&request.slot, MenuTextSlot::Control { control_id, role: MenuTextRole::Label, .. } if control_id == "start")
+                && candidates.last() != Some(&request.font_meters)
+            {
                 candidates.push(request.font_meters);
             }
             let mut metrics = measure(request, size, value)?;

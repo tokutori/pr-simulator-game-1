@@ -212,10 +212,18 @@ impl SteadyGlideTrim {
         let [force_forward, force_right, force_down] = wrench.force_body_newtons().components();
         let [moment_roll, moment_pitch, moment_yaw] =
             wrench.moment_about_datum_newton_meters().components();
-        let cg_down = aircraft.pilot_mass_kg() / total_mass * aircraft.pilot_vertical_offset_m();
-        let pilot_position_m = aircraft.pilot_vertical_offset_m() * force_forward / force_down
-            - total_mass / aircraft.pilot_mass_kg() * moment_pitch / force_down;
-        let cg_forward = aircraft.pilot_mass_kg() / total_mass * pilot_position_m;
+        let airframe_cg = aircraft.airframe_center_of_mass_frd_m();
+        let cg_down = (aircraft.airframe_mass_kg() * airframe_cg[2]
+            + aircraft.pilot_mass_kg() * aircraft.pilot_vertical_offset_m())
+            / total_mass;
+        let pilot_position_m = (total_mass * (cg_down * force_forward - moment_pitch) / force_down
+            - aircraft.airframe_mass_kg() * airframe_cg[0])
+            / aircraft.pilot_mass_kg();
+        let cg = aircraft
+            .composite_center_of_mass(pilot_position_m)
+            .map_err(SteadyGlideError::Dynamics)?
+            .components();
+        let [cg_forward, cg_right, _] = cg;
         let force_scale = weight;
         let moment_scale = force_scale
             * polar
@@ -229,9 +237,9 @@ impl SteadyGlideTrim {
             force_right / force_scale,
             (force_forward - weight * libm::sin(theta_rad)) / force_scale,
             (force_down + weight * libm::cos(theta_rad)) / force_scale,
-            (moment_roll + cg_down * force_right) / moment_scale,
+            (moment_roll - cg_right * force_down + cg_down * force_right) / moment_scale,
             (moment_pitch - cg_down * force_forward + cg_forward * force_down) / moment_scale,
-            (moment_yaw - cg_forward * force_right) / moment_scale,
+            (moment_yaw - cg_forward * force_right + cg_right * force_forward) / moment_scale,
         ];
         if coefficients.lift() <= 0.0
             || theta_rad.abs() >= core::f64::consts::FRAC_PI_2
