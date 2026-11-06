@@ -547,10 +547,11 @@ impl AircraftDocument {
             .map_err(AircraftFormatError::Aerodynamics)?,
         )
         .map_err(AircraftFormatError::Aerodynamics)?;
+        let [minimum, maximum] = polar.alpha_interval_rad();
         for bound in self.trim.alpha_bounds_rad {
-            polar
-                .coefficients_at(bound)
-                .map_err(|_| AircraftFormatError::InvalidTrim)?;
+            if !bound.is_finite() || bound < minimum || bound > maximum {
+                return Err(AircraftFormatError::InvalidTrim);
+            }
         }
         Ok(())
     }

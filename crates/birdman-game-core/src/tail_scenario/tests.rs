@@ -281,7 +281,7 @@ fn tail_scenario_runner_returns_previous_success_state_and_original_failed_stage
 }
 
 #[test]
-fn tail_scenario_rejects_invalid_contact_and_initial_load_without_creating_a_ready_model() {
+fn tail_scenario_checks_contact_geometry_and_accepts_reverse_initial_flow() {
     let definition = TestAircraft::try_new().unwrap();
     let trim = definition.trim().unwrap();
     let parameters = TailFlightScenarioParameters::try_new(
@@ -324,12 +324,5 @@ fn tail_scenario_rejects_invalid_contact_and_initial_load_without_creating_a_rea
         CourseAxis::try_new(1.0, 0.0).unwrap(),
     )
     .unwrap();
-    let TailFlightScenarioError::Aerodynamics(error) =
-        TailFlightScenario::try_new(parameters, load, profile()).unwrap_err()
-    else {
-        panic!("expected invalid initial Hybrid load");
-    };
-    assert_eq!(error.site(), HybridSite::StaticPolar);
-    assert_eq!(error.limit(), Some(crate::HybridLimit::StaticAlpha));
-    assert_eq!(error.stage(), None);
+    assert!(TailFlightScenario::try_new(parameters, load, profile()).is_ok());
 }

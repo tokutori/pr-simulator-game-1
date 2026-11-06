@@ -1,4 +1,6 @@
+mod continuation;
 mod geometry;
+use continuation::{global_flow, proxy_increment};
 pub use geometry::{
     HybridAnchor, HybridProxy, HybridSection, HybridSurface, HybridSurfaceGeometry,
     PlanformSymmetry, TailAerodynamics,
@@ -6,8 +8,7 @@ pub use geometry::{
 
 use super::{StaticPolar, UniformAir, map_math_error};
 use crate::aerodynamics_contract::{
-    AeroError, AerodynamicEvaluationError, HybridError, HybridFlowKind, HybridLimit, HybridSite,
-    HybridSurfaceRole,
+    AeroError, AerodynamicEvaluationError, HybridError, HybridLimit, HybridSite, HybridSurfaceRole,
 };
 use crate::dynamics::{AircraftModel, ExternalLoadProvider, FlightState, LoadError, Wrench};
 use crate::math::{BodyVector, NedPoint, NedVector, atan2, hypot2};
@@ -195,41 +196,11 @@ impl<'a> HybridAerodynamicLoad<'a> {
         self.wind_field.velocity_at(position_ned)
     }
 
-    pub(crate) fn tail_incidence_intervals(
-        &self,
-        state: &FlightState,
-    ) -> Result<[[f64; 2]; 2], HybridError> {
-        let mut intervals = [[0.0; 2]; 2];
-        for surface in self.model.surfaces {
-            let axis = match surface.geometry().role() {
-                HybridSurfaceRole::MainWing => continue,
-                HybridSurfaceRole::HorizontalTail => 0,
-                HybridSurfaceRole::VerticalTail => 1,
-            };
-            intervals[axis] = [-MAXIMUM_ANGLE_RAD, MAXIMUM_ANGLE_RAD];
-        }
-        self.evaluate_hybrid_with_intervals(state, TailIncidence::neutral(), Some(&mut intervals))?;
-        Ok(intervals)
-    }
-
-    /// Evaluates static plus current-reference increments using physical tail incidence.
-    ///
-    /// A zero datum speed succeeds only after all proxy winds/actual velocities
-    /// have been evaluated and found exactly zero. No minimum speed or fallback
-    /// is introduced. Any failure leaves simulation state untouched.
+    /// Evaluates the tabulated whole-aircraft load plus local actual-reference increments.
     pub fn evaluate_hybrid(
         &self,
         state: &FlightState,
         incidence: TailIncidence,
-    ) -> Result<HybridEvaluation, HybridError> {
-        self.evaluate_hybrid_with_intervals(state, incidence, None)
-    }
-
-    fn evaluate_hybrid_with_intervals(
-        &self,
-        state: &FlightState,
-        incidence: TailIncidence,
-        mut intervals: Option<&mut [[f64; 2]; 2]>,
     ) -> Result<HybridEvaluation, HybridError> {
         if (incidence.elevator_rad() != 0.0
             && !self
@@ -264,74 +235,14 @@ impl<'a> HybridAerodynamicLoad<'a> {
         if !speed.is_finite() {
             return Err(HybridError::new(HybridSite::Datum, AeroError::NonFinite));
         }
-        if speed == 0.0 {
-            let mut first_nonzero = None;
-            for surface in self.model.surfaces {
-                for (index, proxy) in surface.proxies().iter().enumerate() {
-                    let site = HybridSite::Proxy {
-                        surface: surface.geometry().role(),
-                        index,
-                    };
-                    let actual =
-                        self.proxy_velocity(state, datum_velocity, datum_wind, *proxy, site)?;
-                    if actual.components() != [0.0; 3] && first_nonzero.is_none() {
-                        first_nonzero =
-                            Some(HybridError::outside(site, HybridLimit::UndefinedReference));
-                    }
-                }
-            }
-            if let Some(error) = first_nonzero {
-                return Err(error);
-            }
-            return Ok(HybridEvaluation {
-                static_wrench: Wrench::zero(),
-                increment: Wrench::zero(),
-                total: Wrench::zero(),
-                tail_wrenches: core::array::from_fn(|axis| {
-                    let role = if axis == 0 {
-                        HybridSurfaceRole::HorizontalTail
-                    } else {
-                        HybridSurfaceRole::VerticalTail
-                    };
-                    self.model
-                        .surfaces
-                        .iter()
-                        .any(|surface| surface.geometry().role() == role)
-                        .then_some(Wrench::zero())
-                }),
-            });
-        }
-        if alpha_speed == 0.0 {
-            return Err(HybridError::outside(
-                HybridSite::Datum,
-                HybridLimit::UndefinedReference,
-            ));
-        }
-        let alpha = atan2(down, forward);
-        if atan2(side, alpha_speed).abs() > MAXIMUM_ANGLE_RAD {
-            return Err(HybridError::outside(
-                HybridSite::Datum,
-                HybridLimit::GlobalBeta,
-            ));
-        }
-        let reference_velocity = if side == 0.0 {
-            datum_velocity
-        } else {
-            BodyVector::try_new(speed * libm::cos(alpha), 0.0, speed * libm::sin(alpha))
-                .map_err(|cause| HybridError::new(HybridSite::Datum, map_math_error(cause)))?
-        };
-        let static_evaluation = self
-            .model
-            .polar
-            .evaluate_body_velocity(datum_velocity, self.density_kg_m3)
-            .map_err(|cause| {
-                if cause == AeroError::OutsideEnvelope {
-                    HybridError::outside(HybridSite::StaticPolar, HybridLimit::StaticAlpha)
-                } else {
-                    HybridError::new(HybridSite::StaticPolar, cause)
-                }
-            })?;
-        let reference_pressure = dynamic_pressure(speed, self.density_kg_m3)
+        let (static_wrench, reference_velocity, reference_speed) = global_flow(
+            self.model.polar,
+            datum_velocity,
+            speed,
+            alpha_speed,
+            self.density_kg_m3,
+        )?;
+        let reference_pressure = dynamic_pressure(reference_speed, self.density_kg_m3)
             .map_err(|cause| HybridError::new(HybridSite::Datum, cause))?;
         let mut force = BodyVector::zero();
         let mut moment = BodyVector::zero();
@@ -354,7 +265,7 @@ impl<'a> HybridAerodynamicLoad<'a> {
                     actual,
                     ProxyReference {
                         velocity: reference_velocity,
-                        speed,
+                        speed: reference_speed,
                         pressure: reference_pressure,
                     },
                     self.density_kg_m3,
@@ -372,24 +283,6 @@ impl<'a> HybridAerodynamicLoad<'a> {
                     actual_tail_moment = actual_tail_moment
                         .plus(tail.moment_about_datum_newton_meters())
                         .map_err(|cause| HybridError::new(site, map_math_error(cause)))?;
-                }
-                if let Some(bounds) = intervals.as_deref_mut() {
-                    let axis = match geometry.role() {
-                        HybridSurfaceRole::MainWing => None,
-                        HybridSurfaceRole::HorizontalTail => Some(0),
-                        HybridSurfaceRole::VerticalTail => Some(1),
-                    };
-                    if let Some(axis) = axis {
-                        let actual_alpha = local_alpha(*proxy, actual, HybridFlowKind::Actual)
-                            .map_err(|error| error.at_site(site))?;
-                        let reference_alpha =
-                            local_alpha(*proxy, reference_velocity, HybridFlowKind::Reference)
-                                .map_err(|error| error.at_site(site))?;
-                        intersect_tail_incidence_interval(
-                            &mut bounds[axis],
-                            actual_alpha - reference_alpha,
-                        );
-                    }
                 }
                 force = force
                     .plus(increment.force_body_newtons())
@@ -413,7 +306,6 @@ impl<'a> HybridAerodynamicLoad<'a> {
         }
         let increment = Wrench::try_new(force, moment)
             .map_err(|_| HybridError::new(HybridSite::Aggregate, AeroError::NonFinite))?;
-        let static_wrench = static_evaluation.wrench();
         let total_force = static_wrench
             .force_body_newtons()
             .plus(force)
@@ -472,11 +364,6 @@ impl<'a> HybridAerodynamicLoad<'a> {
     }
 }
 
-fn intersect_tail_incidence_interval(interval: &mut [f64; 2], alpha_difference: f64) {
-    interval[0] = interval[0].max(-MAXIMUM_ANGLE_RAD - alpha_difference);
-    interval[1] = interval[1].min(MAXIMUM_ANGLE_RAD - alpha_difference);
-}
-
 impl ExternalLoadProvider for HybridAerodynamicLoad<'_> {
     fn evaluate(&self, _model: &AircraftModel, state: &FlightState) -> Result<Wrench, LoadError> {
         self.evaluate_hybrid(state, TailIncidence::neutral())
@@ -492,7 +379,7 @@ struct ProxyReference {
     pressure: f64,
 }
 
-fn proxy_increment(
+fn linear_proxy_increment(
     proxy: HybridProxy,
     actual: BodyVector,
     reference: ProxyReference,
@@ -505,24 +392,8 @@ fn proxy_increment(
     let actual_speed = actual
         .norm()
         .map_err(|cause| HybridError::new(site, map_math_error(cause)))?;
-    if actual_speed < 0.8 * reference.speed || actual_speed > 1.2 * reference.speed {
-        return Err(HybridError::outside(site, HybridLimit::LocalSpeed));
-    }
-    let actual_alpha = local_alpha(proxy, actual, HybridFlowKind::Actual)?;
-    let reference_alpha = local_alpha(proxy, reference.velocity, HybridFlowKind::Reference)?;
-    let alpha_difference = actual_alpha - reference_alpha;
-    if alpha_difference.abs() > MAXIMUM_ANGLE_RAD {
-        return Err(HybridError::outside(
-            site,
-            HybridLimit::LocalAlphaDifference,
-        ));
-    }
-    if (alpha_difference + delta).abs() > MAXIMUM_ANGLE_RAD {
-        return Err(HybridError::outside(
-            site,
-            HybridLimit::ControlledAlphaDifference,
-        ));
-    }
+    let actual_alpha = local_alpha(proxy, actual)?;
+    let reference_alpha = local_alpha(proxy, reference.velocity)?;
     if let Some(tail_parameters) = tail {
         let actual_wrench = tail_proxy_wrench(
             proxy,
@@ -623,25 +494,11 @@ fn tail_proxy_wrench(
     evaluate().map_err(|cause| HybridError::new(site, cause))
 }
 
-fn local_alpha(
-    proxy: HybridProxy,
-    velocity: BodyVector,
-    flow: HybridFlowKind,
-) -> Result<f64, HybridError> {
-    let site = HybridSite::Surface(proxy.role());
-    let [forward, span, down] = proxy
+fn local_alpha(proxy: HybridProxy, velocity: BodyVector) -> Result<f64, HybridError> {
+    let [forward, _, down] = proxy
         .orientation()
         .body_to_local_vector(velocity)
-        .map_err(|cause| HybridError::new(site, cause))?;
-    if forward <= 0.0 {
-        return Err(HybridError::outside(site, HybridLimit::LocalForward(flow)));
-    }
-    if atan2(span, hypot2(forward, down)).abs() > MAXIMUM_ANGLE_RAD {
-        return Err(HybridError::outside(
-            site,
-            HybridLimit::LocalSpanAngle(flow),
-        ));
-    }
+        .map_err(|cause| HybridError::new(HybridSite::Surface(proxy.role()), cause))?;
     Ok(atan2(down, forward))
 }
 

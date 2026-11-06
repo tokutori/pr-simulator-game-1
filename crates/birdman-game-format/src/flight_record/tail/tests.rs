@@ -923,6 +923,19 @@ fn schema_eight_boundary_retains_the_right_side_tail_wrench() {
 }
 
 #[test]
+fn previous_physics_records_remain_readable_and_current_pb_is_separate() {
+    for version in [6, 7] {
+        let mut previous = document();
+        previous.header.physics_model_version = version;
+        let restored =
+            TailFlightRecordDocument::decode_json(&previous.encode_json().unwrap()).unwrap();
+        assert_eq!(restored.header.physics_model_version, version);
+        assert!(restored.to_finalized_core_record().is_ok());
+        assert!(restored.personal_best_candidate_score().unwrap().is_none());
+    }
+}
+
+#[test]
 fn schema_seven_boundary_event_roundtrips_and_exports_a_distinct_same_time_csv_row() {
     let mut document = document();
     let TailFlightRecordControlsDocument::TailIncidence {
