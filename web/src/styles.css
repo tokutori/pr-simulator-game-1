@@ -200,6 +200,8 @@ body {
   border-radius: 0;
   box-shadow: none;
   pointer-events: none;
+  border-color: transparent;
+  box-shadow: none;
 }
 
 .screen-ui-shell[data-shared="true"][data-passthrough="false"] {
