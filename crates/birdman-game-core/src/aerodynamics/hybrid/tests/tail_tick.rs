@@ -249,7 +249,10 @@ fn tail_tick_pilot_set_hold_and_trim_are_independent_of_surface_authority() {
             )
             .unwrap();
             assert_eq!(next, expected);
-            assert_eq!(next.pilot_position_target().position_m(), normalized * 0.4);
+            assert_eq!(
+                next.pilot_position_target().position_m(),
+                aircraft().pilot_position_bounds_m()[usize::from(normalized > 0.0)],
+            );
             assert!(normalized * (next.flight_state().pilot_position_m() - 0.12) > 0.0);
             let held = advance_tail_flight_tick(
                 &aircraft(),
