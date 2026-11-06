@@ -1,23 +1,32 @@
 use birdman_game_content::AircraftDefinition;
+use birdman_game_core::{AircraftModel, HybridSurfaceRole, InertiaTensor};
 use eframe::egui::{self, Grid};
 
 use crate::ui::row;
 
 pub fn show(ui: &mut egui::Ui, definition: &AircraftDefinition) {
     let document = definition.document();
+    let aircraft = definition.aircraft();
     ui.heading("質量・パイロット");
     Grid::new("mass").striped(true).show(ui, |ui| {
-        row(ui, "機体質量 (kg)", document.mass.airframe_kg);
-        row(ui, "慣性テンソル / datum O (kg m²)", "FRD軸順");
-        for inertia in document.mass.inertia_about_datum_kg_m2 {
-            row(
-                ui,
-                "",
-                format!(
-                    "{:12.5} {:12.5} {:12.5}",
-                    inertia[0], inertia[1], inertia[2]
-                ),
-            );
+        row(ui, "機体質量 (kg)", aircraft.airframe_mass_kg());
+        row(
+            ui,
+            "機体重心 FRD / datum O (m)",
+            format!("{:?}", aircraft.airframe_center_of_mass_frd_m()),
+        );
+        inertia_rows(
+            ui,
+            "機体慣性 / datum O (kg m²)",
+            aircraft.airframe_inertia_about_datum(),
+        );
+        match AircraftModel::airframe_inertia_at_center_of_mass(
+            aircraft.airframe_mass_kg(),
+            aircraft.airframe_inertia_about_datum(),
+            aircraft.airframe_center_of_mass_frd_m(),
+        ) {
+            Ok(inertia) => inertia_rows(ui, "機体慣性 / 機体CG (kg m²)", inertia),
+            Err(error) => row(ui, "機体CG慣性の導出", format!("{error:?}")),
         }
         row(ui, "パイロット質量 (kg)", document.pilot.mass_kg);
         row(ui, "下向きオフセット (m)", document.pilot.vertical_offset_m);
@@ -103,20 +112,50 @@ pub fn show(ui: &mut egui::Ui, definition: &AircraftDefinition) {
                                 tail.reference_kinematic_viscosity_m2ps,
                             );
                         }
+                        let actuator = match surface.role.core_role() {
+                            HybridSurfaceRole::HorizontalTail => Some(aircraft.tail_actuators()[0]),
+                            HybridSurfaceRole::VerticalTail => Some(aircraft.tail_actuators()[1]),
+                            HybridSurfaceRole::MainWing => None,
+                        };
+                        if let Some(actuator) = actuator {
+                            let [lower, upper] = actuator.incidence_bounds_rad();
+                            row(
+                                ui,
+                                "機械的な舵角範囲 (rad / °)",
+                                format!(
+                                    "[{lower:.6}, {upper:.6}] / [{:.3}, {:.3}]",
+                                    lower.to_degrees(),
+                                    upper.to_degrees()
+                                ),
+                            );
+                            let slew = actuator.maximum_slew_rad_per_second();
+                            row(
+                                ui,
+                                "機械的な最大角速度 (rad/s / °/s)",
+                                format!("{slew:.6} / {:.3}", slew.to_degrees()),
+                            );
+                        }
                     });
                 Grid::new(("sections", surface.role.to_string()))
                     .striped(true)
                     .show(ui, |ui| {
-                        for title in ["F (m)", "R (m)", "D (m)", "翼弦 (m)"] {
+                        for title in [
+                            "F (m)",
+                            "R (m)",
+                            "D (m)",
+                            "翼弦 (m)",
+                            "ねじり (rad)",
+                            "ねじり (°)",
+                        ] {
                             ui.strong(title);
                         }
                         ui.end_row();
                         for section in &surface.sections {
-                            for value in section
-                                .quarter_chord_frd_m
-                                .into_iter()
-                                .chain([section.chord_m])
-                            {
+                            for value in section.quarter_chord_frd_m.into_iter().chain([
+                                section.chord_m,
+                                section.twist_rad,
+                                section.twist_rad.to_degrees(),
+                            ]) {
                                 ui.monospace(format!("{value:.5}"));
                             }
                             ui.end_row();
@@ -166,4 +205,15 @@ pub fn show(ui: &mut egui::Ui, definition: &AircraftDefinition) {
         ui.monospace(format!("{:#?}", document.structure.cockpit_stations));
         ui.monospace(format!("{:#?}", document.structure.members));
     });
+}
+
+fn inertia_rows(ui: &mut egui::Ui, label: &str, inertia: InertiaTensor) {
+    row(ui, label, "F/R/D軸順");
+    for values in inertia.matrix() {
+        row(
+            ui,
+            "",
+            format!("{:12.5} {:12.5} {:12.5}", values[0], values[1], values[2]),
+        );
+    }
 }

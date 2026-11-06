@@ -110,6 +110,16 @@ mod tests {
     fn invalid_replacement_keeps_its_identity_and_replaces_previous_model() {
         let mut app = ViewerApp::new(None);
         assert!(app.document.result.is_ok());
+        assert_eq!(
+            app.document
+                .result
+                .as_ref()
+                .unwrap()
+                .definition
+                .document()
+                .schema_version,
+            5
+        );
         app.document = DocumentState::decode("broken.json".into(), b"{");
         assert!(matches!(app.document.result, Err(LoadError::Aircraft(_))));
         assert_eq!(app.document.source, "broken.json");

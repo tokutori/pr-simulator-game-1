@@ -1,3 +1,5 @@
+use birdman_game_content::AircraftDefinitionError;
+use birdman_game_format::aircraft::AircraftFormatError;
 use eframe::egui::{self, RichText};
 
 use crate::app::{LoadError, Tab, ViewerApp};
@@ -28,6 +30,30 @@ pub fn show(context: &egui::Context, app: &mut ViewerApp) {
             Ok(loaded) => loaded,
             Err(error) => {
                 ui.heading("読み込み結果");
+                if let LoadError::Aircraft(AircraftDefinitionError::Format(
+                    AircraftFormatError::Validation(issues),
+                )) = error
+                {
+                    egui::ScrollArea::both().show(ui, |ui| {
+                        egui::Grid::new("aircraft_validation")
+                            .striped(true)
+                            .show(ui, |ui| {
+                                for heading in ["分類", "JSON項目", "入力値", "必要な条件"]
+                                {
+                                    ui.strong(heading);
+                                }
+                                ui.end_row();
+                                for issue in issues {
+                                    ui.monospace(format!("{:?}", issue.code));
+                                    ui.monospace(&issue.path);
+                                    ui.monospace(&issue.value);
+                                    ui.label(&issue.expected);
+                                    ui.end_row();
+                                }
+                            });
+                    });
+                    return;
+                }
                 let detail = match error {
                     LoadError::Io(cause) => format!("ファイル読み込み: {cause}"),
                     LoadError::Aircraft(cause) => format!("{cause}\n{cause:?}"),
