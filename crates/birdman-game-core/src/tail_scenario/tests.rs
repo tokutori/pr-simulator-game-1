@@ -38,7 +38,7 @@ fn parameters<'a>(
     contacts: &'a [BodyPoint],
     height: f64,
     heading: f64,
-) -> TailFlightScenarioParameters<'a> {
+) -> TailFlightScenarioParameters {
     TailFlightScenarioParameters::try_new(
         definition.aircraft(),
         launch(definition.trim().unwrap(), height, heading),

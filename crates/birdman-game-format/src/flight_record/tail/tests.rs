@@ -348,6 +348,7 @@ fn tail_csv_keeps_fractional_stamps_when_acceleration_is_unrepresentable() {
 
 fn identity() -> FlightRecordTailIdentityDocument {
     FlightRecordTailIdentityDocument {
+        aircraft_sha256: None,
         aircraft_configuration_id: "bpg041-playable-hybrid-mock".into(),
         controller_profile_id: "bpg040-tail-rate-feedback".into(),
     }

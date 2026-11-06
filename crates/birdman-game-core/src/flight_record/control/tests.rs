@@ -135,6 +135,7 @@ fn telemetry(state: FlightState) -> crate::FlightTelemetry {
 fn header() -> crate::FlightRecordHeader {
     crate::FlightRecordHeader::try_new(
         crate::SessionScenarioIdentity {
+            aircraft_identity: [0; 32],
             catalog_version: 1,
             scenario_id: 221,
             scenario_version: 1,

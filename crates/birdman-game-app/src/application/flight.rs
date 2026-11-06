@@ -138,6 +138,11 @@ impl ApplicationSession {
             self.flight_clock.suspend();
             self.flight_input.set_active(false);
         }
+        let definition = self
+            .aircraft
+            .as_ref()
+            .map_err(|_| FlightFrameError::Session(GameSessionError::InvalidTransition))?
+            .definition();
         let session = &mut self.session;
         let prepared = &mut self.prepared;
         let input = &mut self.flight_input;
@@ -178,7 +183,7 @@ impl ApplicationSession {
                     })
                     .map_err(FlightFrameError::Input)?;
                 let result = prepared
-                    .advance(session, demand)
+                    .advance(session, definition, demand)
                     .map_err(FlightFrameError::Session);
                 let elapsed = result.as_ref().is_ok_and(|snapshot| {
                     snapshot

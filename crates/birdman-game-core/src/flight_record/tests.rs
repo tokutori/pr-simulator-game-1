@@ -7,6 +7,7 @@ use crate::{
 fn header(maximum_flight_ticks: u64) -> FlightRecordHeader {
     FlightRecordHeader::try_new(
         SessionScenarioIdentity {
+            aircraft_identity: [0; 32],
             catalog_version: 1,
             scenario_id: 3,
             scenario_version: 1,

@@ -7,7 +7,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use crate::FlightRecordFormatError;
 
 /// Version of the resolved-condition Personal Best comparison contract.
-pub const PERSONAL_BEST_COMPARISON_VERSION: u32 = 3;
+pub const PERSONAL_BEST_COMPARISON_VERSION: u32 = 4;
 
 /// Exact source identities retained independently of comparison compatibility.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

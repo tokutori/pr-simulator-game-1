@@ -111,7 +111,7 @@ verus! {
     }
 
     fn verify_game_session_tick_pause_projection<'a>(
-        configuration: GameSessionConfiguration<'a>,
+        configuration: GameSessionConfiguration,
         record: FlightRecord,
         previous: TailFlightTickState,
         input: TailFlightTickInput,
@@ -129,15 +129,15 @@ verus! {
             attract_record: None,
             countdown_token: 0,
         };
-        let evaluate = |_configuration: &GameSessionConfiguration<'a>, _previous: TailFlightTickState,
+        let evaluate = |_configuration: &GameSessionConfiguration, _previous: TailFlightTickState,
                         _input: TailFlightTickInput| -> (returned: Result<TailFlightTickReport, TailFlightTickError>)
             ensures returned == Ok(report),
         { Ok(report) };
-        let telemetry = |_configuration: &GameSessionConfiguration<'a>, _state: FlightState|
+        let telemetry = |_configuration: &GameSessionConfiguration, _state: FlightState|
             -> (returned: Result<FlightTelemetry, FlightTelemetryError>)
             ensures returned == Ok(reading),
         { Ok(reading) };
-        let score = |_configuration: &GameSessionConfiguration<'a>, _state: SessionTerminalState|
+        let score = |_configuration: &GameSessionConfiguration, _state: SessionTerminalState|
             -> (returned: Result<DistanceScore, DistanceScoreError>)
             ensures returned == score_result,
         { score_result };
@@ -167,7 +167,7 @@ verus! {
     }
 
     fn verify_evaluated_report_session_payload<'a>(
-        configuration: GameSessionConfiguration<'a>,
+        configuration: GameSessionConfiguration,
         mut record: FlightRecord,
         advanced: TailFlightTickReport,
         next: TailFlightTickState,
@@ -193,16 +193,16 @@ verus! {
             attract_record: None,
             countdown_token: 0,
         };
-        let evaluate = |_configuration: &GameSessionConfiguration<'a>, state: TailFlightTickState,
+        let evaluate = |_configuration: &GameSessionConfiguration, state: TailFlightTickState,
                         _input: TailFlightTickInput| -> (returned: Result<TailFlightTickReport, TailFlightTickError>)
             ensures returned == Ok(report),
                 state == previous ==> report.unelapsed_retains(state),
         { Ok(report) };
-        let telemetry = |_configuration: &GameSessionConfiguration<'a>, _state: FlightState|
+        let telemetry = |_configuration: &GameSessionConfiguration, _state: FlightState|
             -> (returned: Result<FlightTelemetry, FlightTelemetryError>)
             ensures returned == Ok(reading),
         { Ok(reading) };
-        let score = |_configuration: &GameSessionConfiguration<'a>, _state: SessionTerminalState|
+        let score = |_configuration: &GameSessionConfiguration, _state: SessionTerminalState|
             -> (returned: Result<DistanceScore, DistanceScoreError>)
             ensures returned == score_result,
         { score_result };
@@ -220,7 +220,7 @@ verus! {
     }
 }
 
-impl<'a> GameSession<'a> {
+impl GameSession {
     #[cfg_attr(verus_only, verus_spec(outcome =>
         requires match old(self).lifecycle {
             SessionLifecycle::Configured(configured) => match configured.phase {
@@ -304,16 +304,16 @@ impl<'a> GameSession<'a> {
         &mut self,
         input: TailFlightTickInput,
         evaluate: impl FnOnce(
-            &GameSessionConfiguration<'a>,
+            &GameSessionConfiguration,
             TailFlightTickState,
             TailFlightTickInput,
         ) -> Result<TailFlightTickReport, TailFlightTickError>,
         telemetry: impl FnOnce(
-            &GameSessionConfiguration<'a>,
+            &GameSessionConfiguration,
             FlightState,
         ) -> Result<FlightTelemetry, FlightTelemetryError>,
         score: impl FnOnce(
-            &GameSessionConfiguration<'a>,
+            &GameSessionConfiguration,
             SessionTerminalState,
         ) -> Result<DistanceScore, DistanceScoreError>,
     ) -> Result<SessionSnapshot, GameSessionError> {

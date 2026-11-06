@@ -8,8 +8,8 @@ mod shape;
 mod structure;
 
 pub use aircraft::{
-    AircraftContactShape, AircraftDefinition, AircraftDefinitionError, PLAYABLE_AIRCRAFT_JSON,
-    playable_aircraft,
+    AircraftContactBuffer, AircraftContactShape, AircraftDefinition, AircraftDefinitionError,
+    PLAYABLE_AIRCRAFT_JSON, playable_aircraft,
 };
 pub use shape::{AircraftShape, AirfoilFace, ContactSampling, ShapeError, SurfaceShape};
 pub use structure::{StructuralAttachment, StructuralGeometry, StructuralPart, StructuralPartKind};

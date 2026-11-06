@@ -3,9 +3,10 @@ use core::time::Duration;
 #[cfg(verus_only)]
 use vstd::prelude::*;
 
+use crate::aerodynamics::HybridAerodynamicLoad;
 pub use crate::configured_phase::BriefingFailure;
 use crate::configured_session::RetryError;
-use crate::contact::TailContactShapeProvider;
+use crate::contact::{TailContactShapeProvider, WaterContactGeometry};
 use crate::countdown::{CountdownAdvance, CountdownStartError, start_countdown};
 use crate::dynamics::{AircraftModel, FlightState};
 use crate::flight_control::ControlMode;
@@ -24,7 +25,6 @@ use crate::tail_scenario::{TailFlightScenario, TailFlightScenarioError};
 use crate::tail_simulation::{
     TailFlightTickError, TailFlightTickInput, TailFlightTickState, TailWaterContactSample,
 };
-use crate::wind_field::WindError;
 
 mod lifecycle;
 mod running;
@@ -32,17 +32,17 @@ mod terminal;
 
 /// Physical configuration sealed when a flight enters preparation.
 #[cfg_attr(verus_only, vstd::prelude::verus_verify)]
-pub struct GameSessionConfiguration<'a> {
-    scenario: TailFlightScenario<'a>,
+pub struct GameSessionConfiguration {
+    scenario: TailFlightScenario,
     control_mode: ControlMode,
     maximum_flight_ticks: u64,
     identity: SessionScenarioIdentity,
 }
 
-impl<'a> GameSessionConfiguration<'a> {
+impl GameSessionConfiguration {
     /// Seals the borrowed hybrid scenario with a positive flight tick limit.
     pub fn try_new_tail(
-        scenario: TailFlightScenario<'a>,
+        scenario: TailFlightScenario,
         control_mode: ControlMode,
         maximum_flight_ticks: u64,
         identity: SessionScenarioIdentity,
@@ -88,12 +88,12 @@ impl<'a> GameSessionConfiguration<'a> {
         self.scenario.initial_tail_wrenches()
     }
 
-    fn telemetry(&self, state: FlightState) -> Result<FlightTelemetry, FlightTelemetryError> {
-        self.scenario.telemetry(state)
-    }
-
-    fn wind_velocity_at(&self, position: crate::NedPoint) -> Result<crate::NedVector, WindError> {
-        self.scenario.wind_velocity_at(position)
+    fn telemetry(
+        &self,
+        state: FlightState,
+        loads: &HybridAerodynamicLoad<'_>,
+    ) -> Result<FlightTelemetry, FlightTelemetryError> {
+        self.scenario.telemetry(state, loads)
     }
 
     fn course_axis(&self) -> crate::CourseAxis {
@@ -431,10 +431,10 @@ pub enum CountdownProgress {
     reason = "Lifecycle payloads remain inline without allocating on state transitions."
 )]
 #[cfg_attr(verus_only, vstd::prelude::verus_verify)]
-enum SessionLifecycle<'a> {
+enum SessionLifecycle {
     Title,
     FlightSetup,
-    Configured(ConfiguredSession<'a>),
+    Configured(ConfiguredSession),
     ArchivedReplay {
         record: FlightRecord,
         clock: ReplayClock,
@@ -445,8 +445,8 @@ enum SessionLifecycle<'a> {
     },
 }
 
-type ConfiguredSession<'a> = crate::configured_session::ConfiguredSession<
-    GameSessionConfiguration<'a>,
+type ConfiguredSession = crate::configured_session::ConfiguredSession<
+    GameSessionConfiguration,
     FlightRecord,
     TailFlightTickState,
     SessionResult,
@@ -458,15 +458,15 @@ type ConfiguredPhase =
 
 /// Rust-owned lifecycle, physics gating, terminal result, and retry blueprint.
 #[cfg_attr(verus_only, vstd::prelude::verus_verify)]
-pub struct GameSession<'a> {
-    lifecycle: SessionLifecycle<'a>,
+pub struct GameSession {
+    lifecycle: SessionLifecycle,
     attract_record: Option<FlightRecord>,
     countdown_token: u32,
 }
 
 #[cfg(verus_only)]
 verus! {
-    impl<'a> GameSession<'a> {
+    impl GameSession {
         /// Countdown arithmetic is defined for the state created by start_countdown.
         pub closed spec fn projection_valid(self) -> bool {
             match self.lifecycle {
@@ -629,14 +629,14 @@ verus! {
 
 #[cfg(verus_only)]
 verus! {
-    impl<'a> GameSession<'a> {
+    impl GameSession {
         /// Preparation retains the attract owner and monotonic attempt token.
         pub closed spec fn lifecycle_globals_preserved(self, before: Self) -> bool {
             self.attract_record == before.attract_record && self.countdown_token == before.countdown_token
         }
 
         /// Public preparation installs an empty record only after allocation succeeds.
-        pub closed spec fn prepared_fresh(self, before: Self, configuration: GameSessionConfiguration<'a>,
+        pub closed spec fn prepared_fresh(self, before: Self, configuration: GameSessionConfiguration,
             outcome: Result<(), GameSessionError>) -> bool {
             self.lifecycle_globals_preserved(before) && self.projection_valid()
             && (outcome.is_err() ==> self == before)
@@ -780,7 +780,7 @@ verus! {
     }
 }
 
-impl<'a> GameSession<'a> {
+impl GameSession {
     /// Creates a session at Title with no active flight configuration.
     #[cfg_attr(verus_only, vstd::prelude::verus_verify(dual_spec))]
     #[cfg_attr(verus_only, verus_spec(
@@ -874,7 +874,7 @@ impl<'a> GameSession<'a> {
 
     #[cfg_attr(verus_only, vstd::prelude::verus_verify(dual_spec))]
     #[cfg_attr(verus_only, verus_spec(returns self.configured()))]
-    const fn configured(&self) -> Option<&ConfiguredSession<'a>> {
+    const fn configured(&self) -> Option<&ConfiguredSession> {
         match &self.lifecycle {
             SessionLifecycle::Configured(configured) => Some(configured),
             _ => None,
@@ -892,7 +892,7 @@ impl<'a> GameSession<'a> {
                 && *final(self) == *old(self),
         },
     ))]
-    fn configured_mut(&mut self) -> Result<&mut ConfiguredSession<'a>, GameSessionError> {
+    fn configured_mut(&mut self) -> Result<&mut ConfiguredSession, GameSessionError> {
         match &mut self.lifecycle {
             SessionLifecycle::Configured(configured) => Ok(configured),
             _ => Err(GameSessionError::InvalidTransition),
@@ -1227,31 +1227,30 @@ impl<'a> GameSession<'a> {
             .map_err(GameSessionError::PlaybackQuery)
     }
 
-    /// Queries the sealed scenario wind without changing the simulation state.
-    pub fn wind_velocity_at(
-        &self,
-        position_ned: crate::math::NedPoint,
-    ) -> Result<Option<crate::math::NedVector>, crate::wind_field::WindError> {
-        self.configured()
-            .map(|configured| configured.configuration.wind_velocity_at(position_ned))
-            .transpose()
-    }
-
-    /// Returns telemetry for the latest flight state when a scenario is sealed.
+    /// Returns the telemetry retained with the latest committed physical sample.
     pub fn telemetry(&self) -> Result<Option<FlightTelemetry>, FlightTelemetryError> {
         let Some(configured) = self.configured() else {
             return Ok(None);
         };
-        let state = match configured.phase {
-            ConfiguredPhase::Flight(ActiveFlight { state, .. }) => Some(state.flight_state()),
-            ConfiguredPhase::Result { result } | ConfiguredPhase::Replay { result, .. } => {
-                Some(result.state.flight_state())
-            }
-            _ => None,
-        };
-        state
-            .map(|state| configured.configuration.telemetry(state))
-            .transpose()
+        if !matches!(
+            configured.phase,
+            ConfiguredPhase::Flight(_)
+                | ConfiguredPhase::Result { .. }
+                | ConfiguredPhase::Replay { .. }
+        ) {
+            return Ok(None);
+        }
+        Ok(configured
+            .record
+            .terminal_sample()
+            .map(|sample| sample.telemetry)
+            .or_else(|| {
+                configured
+                    .record
+                    .samples()
+                    .last()
+                    .map(|sample| sample.telemetry)
+            }))
     }
 
     /// Returns signed datum displacement for Flight or Paused without finalizing a score.
@@ -1320,7 +1319,7 @@ impl<'a> GameSession<'a> {
     ))]
     pub fn prepare_flight(
         &mut self,
-        configuration: GameSessionConfiguration<'a>,
+        configuration: GameSessionConfiguration,
     ) -> Result<(), GameSessionError> {
         #[cfg(verus_only)]
         proof! {
@@ -1483,7 +1482,7 @@ impl<'a> GameSession<'a> {
                     .map(|elapsed| elapsed.as_nanos())
             },
             |configuration| configuration.initial_state(),
-            |configuration, state| configuration.telemetry(state),
+            |configuration, _state| Ok(configuration.scenario.initial_telemetry()),
         )
     }
 
@@ -1547,6 +1546,8 @@ impl<'a> GameSession<'a> {
     pub fn advance_tail_flight_tick(
         &mut self,
         input: TailFlightTickInput,
+        loads: &HybridAerodynamicLoad<'_>,
+        contact_geometry: WaterContactGeometry<'_>,
     ) -> Result<SessionSnapshot, GameSessionError> {
         self.advance_tail_flight_tick_with(
             input,
@@ -1555,9 +1556,11 @@ impl<'a> GameSession<'a> {
                     previous,
                     configuration.control_mode,
                     input,
+                    loads,
+                    contact_geometry,
                 )
             },
-            |configuration, state| configuration.telemetry(state),
+            |configuration, state| configuration.telemetry(state, loads),
             |configuration, terminal| {
                 course_distance_score(
                     configuration
@@ -1576,6 +1579,7 @@ impl<'a> GameSession<'a> {
         &mut self,
         input: TailFlightTickInput,
         provider: &mut dyn TailContactShapeProvider,
+        loads: &HybridAerodynamicLoad<'_>,
     ) -> Result<SessionSnapshot, GameSessionError> {
         self.advance_tail_flight_tick_with(
             input,
@@ -1585,9 +1589,10 @@ impl<'a> GameSession<'a> {
                     configuration.control_mode,
                     input,
                     provider,
+                    loads,
                 )
             },
-            |configuration, state| configuration.telemetry(state),
+            |configuration, state| configuration.telemetry(state, loads),
             |configuration, terminal| {
                 course_distance_score(
                     configuration
@@ -1637,7 +1642,7 @@ impl<'a> GameSession<'a> {
     }
 }
 
-impl Default for GameSession<'_> {
+impl Default for GameSession {
     fn default() -> Self {
         Self::new()
     }

@@ -64,7 +64,7 @@ fn prepared_launch_projection_is_read_only_and_preserves_the_retry_initial_state
     assert_eq!(session.prepared_launch_state(), None);
 }
 
-fn configuration(maximum_ticks: u64) -> GameSessionConfiguration<'static> {
+fn configuration(maximum_ticks: u64) -> GameSessionConfiguration {
     let definition = Box::leak(Box::new(TestAircraft::try_new().unwrap()));
     let surfaces = Box::leak(Box::new(definition.surfaces().unwrap()));
     let trim = definition.trim().unwrap();
@@ -106,6 +106,7 @@ fn configuration(maximum_ticks: u64) -> GameSessionConfiguration<'static> {
     )
     .unwrap();
     let identity = SessionScenarioIdentity {
+        aircraft_identity: [0; 32],
         catalog_version: 4,
         scenario_id: 42,
         scenario_version: 3,
@@ -118,7 +119,7 @@ fn configuration(maximum_ticks: u64) -> GameSessionConfiguration<'static> {
         .unwrap()
 }
 
-fn session(maximum_ticks: u64) -> GameSession<'static> {
+fn session(maximum_ticks: u64) -> GameSession {
     let mut session = GameSession::new();
     session.open_setup().unwrap();
     session
@@ -140,7 +141,7 @@ fn finalized_demo_record() -> crate::FlightRecord {
     demo.take_finalized_result_record().unwrap()
 }
 
-fn neutral_input(_session: &GameSession<'_>) -> TailFlightTickInput {
+fn neutral_input(_session: &GameSession) -> TailFlightTickInput {
     TailFlightTickInput::new(
         TailPilotIntent::try_new(0.0, 0.0).unwrap(),
         TailRateTarget::try_new(0.0, 0.0).unwrap(),
@@ -653,7 +654,7 @@ fn result_seconds_queries_are_pure_without_enabling_playback_commands() {
 #[test]
 fn seconds_queries_reject_phases_without_a_finalized_result() {
     let mut session = GameSession::new();
-    let assert_rejected = |session: &GameSession<'_>| {
+    let assert_rejected = |session: &GameSession| {
         assert_eq!(
             session.playback_sample_at_seconds(0.0),
             Err(GameSessionError::InvalidTransition)
@@ -1045,6 +1046,7 @@ fn briefing_cancellation_releases_the_sealed_configuration_for_setup() {
 fn rejects_incomplete_resolved_model_version_identity() {
     let scenario = configuration(100).scenario;
     let invalid_identity = SessionScenarioIdentity {
+        aircraft_identity: [0; 32],
         catalog_version: 1,
         scenario_id: 1,
         scenario_version: 1,

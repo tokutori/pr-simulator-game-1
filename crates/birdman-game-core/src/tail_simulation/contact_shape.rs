@@ -457,6 +457,7 @@ mod tests {
                 .unwrap();
             let header = crate::FlightRecordHeader::try_new(
                 crate::SessionScenarioIdentity {
+                    aircraft_identity: [0; 32],
                     catalog_version: 1,
                     scenario_id: 1,
                     scenario_version: 1,

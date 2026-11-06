@@ -8,7 +8,7 @@ use birdman_game_format::{
     AssistanceLevel, DifficultySettings, InformationLevel, TailFlightRecordDocument, WeatherClass,
 };
 
-fn launch(configuration: GameSessionConfiguration<'static>) -> GameSession<'static> {
+fn launch(configuration: GameSessionConfiguration) -> GameSession {
     let mut session = GameSession::new();
     session.open_setup().unwrap();
     session.prepare_flight(configuration).unwrap();

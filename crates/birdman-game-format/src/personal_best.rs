@@ -138,7 +138,7 @@ fn key_for_validated_record(
         return Err(FlightRecordFormatError::InvalidRecord);
     }
     let mut hasher = Sha256::new();
-    hasher.update(b"birdman-game/personal-best-key/tail-incidence/v3\0");
+    hasher.update(b"birdman-game/personal-best-key/tail-incidence/v4\0");
     hash_u32(&mut hasher, PERSONAL_BEST_COMPARISON_VERSION);
     hash_u32(&mut hasher, record.schema_version);
     for name in [
@@ -151,6 +151,9 @@ fn key_for_validated_record(
     hash_u32(&mut hasher, header.catalog_version);
     hash_u32(&mut hasher, header.scenario_id);
     hash_u32(&mut hasher, header.scenario_version);
+    if let Some(sha) = &record.control_identity.aircraft_sha256 {
+        hasher.update(sha.as_bytes());
+    }
     hash_u32(&mut hasher, header.aircraft_model_version);
     hash_u32(&mut hasher, header.environment_version);
     hash_u32(&mut hasher, header.controller_profile_version);
@@ -308,4 +311,14 @@ fn hash_u64(hasher: &mut Sha256, value: u64) {
 fn hash_f64(hasher: &mut Sha256, value: f64) {
     let canonical_bits = if value == 0.0 { 0 } else { value.to_bits() };
     hash_u64(hasher, canonical_bits);
+}
+
+/// Fixed-length identity of the named aircraft and its original source digest.
+pub fn aircraft_identity(configuration_id: &str, raw_sha256: &str) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(b"birdman-game/aircraft-identity/v1\0");
+    hasher.update((configuration_id.len() as u64).to_le_bytes());
+    hasher.update(configuration_id.as_bytes());
+    hasher.update(raw_sha256.as_bytes());
+    hasher.finalize().into()
 }

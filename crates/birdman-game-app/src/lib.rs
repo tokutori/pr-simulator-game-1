@@ -21,7 +21,6 @@ pub use environment::{
 };
 pub use hybrid_session::{
     HybridSessionPreparation, HybridSessionPreparationError, identity_for_selection,
-    registered_aircraft,
 };
 pub use venue::{
     LaunchPlatform, LaunchVenue, LaunchVenueError, VenueCatalog, VenueCatalogError, launch_venue,
@@ -67,3 +66,6 @@ pub fn technical_error_text(error: &dyn core::error::Error) -> String {
     }
     text
 }
+
+mod aircraft;
+pub use aircraft::SelectedAircraft;

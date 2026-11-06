@@ -186,7 +186,7 @@ fn deserialize_terminal_failure<'de, Decoder: serde::Deserializer<'de>>(
 }
 
 /// Current archive schema with named two-tail controls.
-pub const TAIL_FLIGHT_RECORD_SCHEMA_VERSION: u32 = 8;
+pub const TAIL_FLIGHT_RECORD_SCHEMA_VERSION: u32 = 9;
 
 /// Explicit model/controller names; their independent versions remain in the common header.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -195,6 +195,9 @@ pub const TAIL_FLIGHT_RECORD_SCHEMA_VERSION: u32 = 8;
 pub struct FlightRecordTailIdentityDocument {
     /// Immutable aircraft configuration name.
     pub aircraft_configuration_id: String,
+    /// SHA-256 of the exact aircraft source bytes; absent in legacy archives.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aircraft_sha256: Option<String>,
     /// Software tail-controller profile name, independent of aircraft data.
     pub controller_profile_id: String,
 }
@@ -362,7 +365,11 @@ impl TailFlightRecordDocument {
             .iter()
             .all(|sample| sample.tail_wrenches.is_some())
         {
-            TAIL_FLIGHT_RECORD_SCHEMA_VERSION
+            if identity.aircraft_sha256.is_some() {
+                TAIL_FLIGHT_RECORD_SCHEMA_VERSION
+            } else {
+                8
+            }
         } else if record
             .samples()
             .iter()
@@ -421,6 +428,14 @@ impl TailFlightRecordDocument {
 
     fn scenario_identity(&self) -> SessionScenarioIdentity {
         SessionScenarioIdentity {
+            aircraft_identity: self
+                .control_identity
+                .aircraft_sha256
+                .as_deref()
+                .map(|sha| {
+                    crate::aircraft_identity(&self.control_identity.aircraft_configuration_id, sha)
+                })
+                .unwrap_or([0; 32]),
             catalog_version: self.header.catalog_version,
             scenario_id: self.header.scenario_id,
             scenario_version: self.header.scenario_version,
@@ -435,7 +450,7 @@ impl TailFlightRecordDocument {
     pub fn to_finalized_core_record(&self) -> Result<FlightRecord, FlightRecordFormatError> {
         if !matches!(
             self.schema_version,
-            6 | 7 | TAIL_FLIGHT_RECORD_SCHEMA_VERSION
+            6 | 7 | 8 | TAIL_FLIGHT_RECORD_SCHEMA_VERSION
         ) {
             return Err(FlightRecordFormatError::UnsupportedSchemaVersion);
         }
@@ -450,7 +465,7 @@ impl TailFlightRecordDocument {
                     .samples
                     .iter()
                     .any(|sample| sample.wing_bending_factor.is_none()))
-            || (self.schema_version == 8
+            || (self.schema_version >= 8
                 && self
                     .samples
                     .iter()
@@ -468,7 +483,7 @@ impl TailFlightRecordDocument {
                         .finalization
                         .boundary_event
                         .is_some_and(|event| event.tail_wrenches.is_some())))
-            || (self.schema_version == 8
+            || (self.schema_version >= 8
                 && (self
                     .samples
                     .iter()
@@ -477,6 +492,17 @@ impl TailFlightRecordDocument {
                         .finalization
                         .boundary_event
                         .is_some_and(|event| event.tail_wrenches.is_none())))
+        {
+            return Err(FlightRecordFormatError::InvalidRecord);
+        }
+        if self.schema_version >= 9 && self.control_identity.aircraft_sha256.is_none() {
+            return Err(FlightRecordFormatError::InvalidRecord);
+        }
+        if let Some(sha) = &self.control_identity.aircraft_sha256
+            && (sha.len() != 64
+                || !sha
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)))
         {
             return Err(FlightRecordFormatError::InvalidRecord);
         }
@@ -630,7 +656,7 @@ impl TailFlightRecordDocument {
             serde_json::from_slice(input).map_err(|_| FlightRecordFormatError::InvalidJson)?;
         if !matches!(
             version.schema_version,
-            6 | 7 | TAIL_FLIGHT_RECORD_SCHEMA_VERSION
+            6 | 7 | 8 | TAIL_FLIGHT_RECORD_SCHEMA_VERSION
         ) {
             return Err(FlightRecordFormatError::UnsupportedSchemaVersion);
         }

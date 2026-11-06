@@ -13,6 +13,8 @@ pub struct SessionScenarioIdentity {
     pub scenario_version: u32,
     /// Aircraft model version used by the scenario.
     pub aircraft_model_version: u32,
+    /// Digest of the selected configuration identifier and original aircraft bytes.
+    pub aircraft_identity: [u8; 32],
     /// Environment model version used by the scenario.
     pub environment_version: u32,
     /// Controller profile version used by the session.

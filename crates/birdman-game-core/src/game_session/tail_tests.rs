@@ -11,6 +11,7 @@ const CONTACT_POINTS: [BodyPoint; 1] = [BodyPoint::origin()];
 
 fn identity() -> SessionScenarioIdentity {
     SessionScenarioIdentity {
+        aircraft_identity: [0; 32],
         catalog_version: 10,
         scenario_id: 6,
         scenario_version: 1,
@@ -28,7 +29,7 @@ fn configuration<'a>(
     cg_down: f64,
     maximum_ticks: u64,
     mode: ControlMode,
-) -> GameSessionConfiguration<'a> {
+) -> GameSessionConfiguration {
     configuration_for_heading(
         definition,
         surfaces,
@@ -48,7 +49,7 @@ fn configuration_for_heading<'a>(
     maximum_ticks: u64,
     mode: ControlMode,
     heading_rad: f64,
-) -> GameSessionConfiguration<'a> {
+) -> GameSessionConfiguration {
     let trim = definition.trim().unwrap();
     let ground = trim
         .initial_state_for_ground_launch(NedPoint::try_new(0.0, 0.0, cg_down).unwrap(), heading_rad)
@@ -91,7 +92,7 @@ fn configuration_for_heading<'a>(
     GameSessionConfiguration::try_new_tail(scenario, mode, maximum_ticks, identity()).unwrap()
 }
 
-fn launch(configuration: GameSessionConfiguration<'_>) -> GameSession<'_> {
+fn launch(configuration: GameSessionConfiguration) -> GameSession {
     let mut session = GameSession::new();
     session.open_setup().unwrap();
     session.prepare_flight(configuration).unwrap();
@@ -613,7 +614,7 @@ fn running_owner_rejects_non_running_phases_before_evaluation() {
         10,
         ControlMode::Manual,
     ));
-    let reject = |session: &mut GameSession<'_>| {
+    let reject = |session: &mut GameSession| {
         let snapshot = session.snapshot();
         let samples = session
             .flight_record()

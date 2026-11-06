@@ -108,6 +108,7 @@ fn off_grid_tail_contact_seals_record_and_score_at_the_first_fractional_time() {
                 numerator / (numerator + libm::sin((end_angle - boundary_angle) * 0.5))
             };
             let identity = SessionScenarioIdentity {
+                aircraft_identity: [0; 32],
                 catalog_version: 1,
                 scenario_id: 207,
                 scenario_version: 1,

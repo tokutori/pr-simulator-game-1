@@ -13,7 +13,7 @@ use crate::dynamics::FlightState;
 #[cfg(verus_only)]
 verus! {
     fn verify_session_archived_record_ownership<'a>(
-        mut session: GameSession<'a>,
+        mut session: GameSession,
         record: FlightRecord,
     )
         requires session.projection_valid(),
@@ -42,7 +42,7 @@ verus! {
         assert(session.countdown_token == before.countdown_token);
     }
 
-    fn verify_session_result_record_transfer<'a>(mut session: GameSession<'a>)
+    fn verify_session_result_record_transfer<'a>(mut session: GameSession)
         requires session.projection_valid(),
     {
         reveal(GameSession::lifecycle_globals_preserved);
@@ -67,7 +67,7 @@ verus! {
     fn verify_session_demo_record_ownership<'a>(
         record: FlightRecord,
         replacement: FlightRecord,
-        mut playback: GameSession<'a>,
+        mut playback: GameSession,
     )
         requires playback.projection_valid(),
     {
@@ -111,11 +111,11 @@ verus! {
     }
 
     fn verify_game_session_configured_lifecycle<'a>(
-        configuration: GameSessionConfiguration<'a>,
+        configuration: GameSessionConfiguration,
         record: FlightRecord,
         initial: TailFlightTickState,
         reading: FlightTelemetry,
-        mut result_session: GameSession<'a>,
+        mut result_session: GameSession,
         replacement: FlightRecord,
     ) -> Result<(), GameSessionError>
         requires result_session.projection_valid(),
@@ -168,10 +168,10 @@ verus! {
         let advance = |_countdown: CountdownState| -> (outcome: Option<u128>)
             ensures outcome == Some(1_000_000_000u128),
         { Some(1_000_000_000) };
-        let initial_state = |_configuration: &GameSessionConfiguration<'a>| -> (outcome: TailFlightTickState)
+        let initial_state = |_configuration: &GameSessionConfiguration| -> (outcome: TailFlightTickState)
             ensures outcome == initial,
         { initial };
-        let telemetry = |_configuration: &GameSessionConfiguration<'a>, _state: FlightState|
+        let telemetry = |_configuration: &GameSessionConfiguration, _state: FlightState|
             -> (outcome: Result<FlightTelemetry, FlightTelemetryError>)
             ensures outcome == Ok(reading),
         { Ok(reading) };
@@ -183,10 +183,10 @@ verus! {
         let unreachable_clock = |_countdown: CountdownState| -> Option<u128>
             requires false,
         { None };
-        let unreachable_initial = |_configuration: &GameSessionConfiguration<'a>| -> TailFlightTickState
+        let unreachable_initial = |_configuration: &GameSessionConfiguration| -> TailFlightTickState
             requires false,
         { initial };
-        let unreachable_telemetry = |_configuration: &GameSessionConfiguration<'a>, _state: FlightState|
+        let unreachable_telemetry = |_configuration: &GameSessionConfiguration, _state: FlightState|
             -> Result<FlightTelemetry, FlightTelemetryError>
             requires false,
         { Ok(reading) };
@@ -206,7 +206,7 @@ verus! {
     },
 ))]
 fn create_configured_record(
-    configuration: &GameSessionConfiguration<'_>,
+    configuration: &GameSessionConfiguration,
     create_record: impl FnOnce(FlightRecordHeader) -> Result<FlightRecord, FlightRecordError>,
 ) -> Result<FlightRecord, FlightRecordError> {
     let header =
@@ -214,7 +214,7 @@ fn create_configured_record(
     create_record(header)
 }
 
-impl<'a> GameSession<'a> {
+impl GameSession {
     #[cfg_attr(verus_only, verus_spec(outcome =>
         requires old(self).projection_valid(),
             old(self).phase() == SessionPhase::FlightSetup
@@ -243,7 +243,7 @@ impl<'a> GameSession<'a> {
     ))]
     pub(super) fn prepare_flight_with_record_factory(
         &mut self,
-        configuration: GameSessionConfiguration<'a>,
+        configuration: GameSessionConfiguration,
         create_record: impl FnOnce(FlightRecordHeader) -> Result<FlightRecord, FlightRecordError>,
     ) -> Result<(), GameSessionError> {
         if !matches!(self.phase(), SessionPhase::FlightSetup) {
@@ -347,7 +347,7 @@ impl<'a> GameSession<'a> {
                     Err(error) => outcome == Err(error),
                 },
             ))]
-            |configuration: &GameSessionConfiguration<'a>| -> Result<FlightRecord, FlightRecordError> {
+            |configuration: &GameSessionConfiguration| -> Result<FlightRecord, FlightRecordError> {
                 create_configured_record(configuration, create_record)
             },
         )
@@ -423,9 +423,9 @@ impl<'a> GameSession<'a> {
         token: u32,
         frame_available: bool,
         advance_clock: impl FnOnce(CountdownState) -> Option<u128>,
-        initial_state: impl FnOnce(&GameSessionConfiguration<'a>) -> TailFlightTickState,
+        initial_state: impl FnOnce(&GameSessionConfiguration) -> TailFlightTickState,
         telemetry: impl FnOnce(
-            &GameSessionConfiguration<'a>,
+            &GameSessionConfiguration,
             FlightState,
         ) -> Result<FlightTelemetry, FlightTelemetryError>,
     ) -> Result<CountdownProgress, GameSessionError> {

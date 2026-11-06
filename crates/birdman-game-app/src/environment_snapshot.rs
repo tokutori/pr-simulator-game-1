@@ -11,7 +11,7 @@ use serde::Serialize;
 use crate::record_archive::{ENVIRONMENT_SOURCE_FINGERPRINT, ENVIRONMENT_V6_SHA256};
 use crate::{
     HybridSessionPreparation, PresetEnvironment, application::ApplicationSession,
-    bundled_environment, identity_for_selection, preset_environment_for_version,
+    bundled_environment, preset_environment_for_version,
 };
 
 /// Typed failures from registered identity resolution and resource metadata projection.
@@ -64,15 +64,9 @@ pub struct EnvironmentIdentity {
     /// Scenario content version.
     #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
     pub scenario_version: u32,
-    /// Aircraft model version.
-    #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
-    pub aircraft_model_version: u32,
     /// Environment content version.
     #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
     pub environment_version: u32,
-    /// Controller profile version.
-    #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
-    pub controller_profile_version: u32,
     /// Low 32 bits of the exact seed.
     pub seed_low: u32,
     /// High 32 bits of the exact seed.
@@ -85,25 +79,9 @@ impl From<birdman_game_core::SessionScenarioIdentity> for EnvironmentIdentity {
             catalog_version: identity.catalog_version,
             scenario_id: identity.scenario_id,
             scenario_version: identity.scenario_version,
-            aircraft_model_version: identity.aircraft_model_version,
             environment_version: identity.environment_version,
-            controller_profile_version: identity.controller_profile_version,
             seed_low: identity.seed as u32,
             seed_high: (identity.seed >> 32) as u32,
-        }
-    }
-}
-
-impl From<EnvironmentIdentity> for birdman_game_core::SessionScenarioIdentity {
-    fn from(identity: EnvironmentIdentity) -> Self {
-        Self {
-            catalog_version: identity.catalog_version,
-            scenario_id: identity.scenario_id,
-            scenario_version: identity.scenario_version,
-            aircraft_model_version: identity.aircraft_model_version,
-            environment_version: identity.environment_version,
-            controller_profile_version: identity.controller_profile_version,
-            seed: u64::from(identity.seed_low) | (u64::from(identity.seed_high) << 32),
         }
     }
 }
@@ -150,12 +128,9 @@ impl EnvironmentSelection {
         weather: birdman_game_format::WeatherClass,
         seed: u64,
     ) -> Result<Self, EnvironmentSnapshotError> {
-        let selection = HybridSessionPreparation::select_scenario(weather, seed)
+        let identity = HybridSessionPreparation::environment_identity(weather, seed)
             .map_err(EnvironmentSnapshotError::Preparation)?;
-        Ok(Self {
-            source,
-            identity: identity_for_selection(selection).into(),
-        })
+        Ok(Self { source, identity })
     }
 
     /// Observes the display owner while retaining independent player selections.
@@ -383,9 +358,7 @@ fn preset_metadata(
     let velocity = NedVector::try_new(north, east, down).map_err(|_| {
         EnvironmentSnapshotError::Environment(EnvironmentFormatError::InvalidWindSample(0))
     })?;
-    let representative = crate::hybrid_session::registered_launch_cg_position()
-        .map_err(EnvironmentSnapshotError::Preparation)?
-        .components();
+    let representative = [0.0, 0.0, 0.0];
     Ok(EnvironmentMetadata {
         name: environment.name.to_owned(),
         content_hash: ContentHash::SourceFingerprint {

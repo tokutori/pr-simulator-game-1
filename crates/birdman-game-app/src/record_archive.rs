@@ -79,7 +79,7 @@ impl core::error::Error for RecordExportError {
 
 /// Produces the current two-tail document and key from the retained physical outputs.
 pub fn export_record_document(
-    session: &GameSession<'_>,
+    session: &GameSession,
     metadata: RecordExportMetadata<'_>,
 ) -> Result<TailFlightRecordDocument, RecordExportError> {
     let record = session

@@ -307,64 +307,43 @@ impl SurfaceStorage {
     }
 }
 
-/// Registered geometry and retained caller storage for candidate contact shapes.
-pub struct AircraftContactShape<'definition, 'storage> {
-    definition: &'definition AircraftDefinition,
-    points: ContactPointStorage<'storage>,
+/// Retained contact projection storage owned independently of an aircraft borrow.
+pub struct AircraftContactBuffer {
+    points: Vec<BodyPoint>,
     projected: Option<(WingBendingFactor, TailIncidence)>,
 }
 
-enum ContactPointStorage<'storage> {
-    Borrowed(&'storage mut [BodyPoint]),
-    Owned(Vec<BodyPoint>),
-}
-
-impl ContactPointStorage<'_> {
-    fn points(&self) -> &[BodyPoint] {
-        match self {
-            Self::Borrowed(points) => points,
-            Self::Owned(points) => points,
-        }
-    }
-
-    fn points_mut(&mut self) -> &mut [BodyPoint] {
-        match self {
-            Self::Borrowed(points) => points,
-            Self::Owned(points) => points,
-        }
-    }
-}
-
-impl<'definition, 'storage> AircraftContactShape<'definition, 'storage> {
-    /// Binds storage with exactly the prepared number of corresponding structural points.
+impl AircraftContactBuffer {
+    /// Admits owned scratch with the selected definition's exact support-point count.
     pub fn try_new(
-        definition: &'definition AircraftDefinition,
-        points: &'storage mut [BodyPoint],
-    ) -> Result<Self, crate::ShapeError> {
-        if points.len() != definition.contact_points().len() {
-            return Err(crate::ShapeError::MismatchedContactPointCount);
-        }
-        Ok(Self {
-            definition,
-            points: ContactPointStorage::Borrowed(points),
-            projected: None,
-        })
-    }
-
-    /// Retains a prepared allocation and its last successful structural projection.
-    pub fn try_from_owned(
-        definition: &'definition AircraftDefinition,
+        definition: &AircraftDefinition,
         points: Vec<BodyPoint>,
     ) -> Result<Self, crate::ShapeError> {
         if points.len() != definition.contact_points().len() {
             return Err(crate::ShapeError::MismatchedContactPointCount);
         }
         Ok(Self {
-            definition,
-            points: ContactPointStorage::Owned(points),
+            points,
             projected: None,
         })
     }
+
+    /// Borrows this selection's scratch only for a physical execution batch.
+    pub fn bind<'definition, 'storage>(
+        &'storage mut self,
+        definition: &'definition AircraftDefinition,
+    ) -> AircraftContactShape<'definition, 'storage> {
+        AircraftContactShape {
+            definition,
+            storage: self,
+        }
+    }
+}
+
+/// Short-lived physical contact capability bound to the selected definition.
+pub struct AircraftContactShape<'definition, 'storage> {
+    definition: &'definition AircraftDefinition,
+    storage: &'storage mut AircraftContactBuffer,
 }
 
 impl birdman_game_core::TailContactShapeProvider for AircraftContactShape<'_, '_> {
@@ -383,18 +362,21 @@ impl birdman_game_core::TailContactShapeProvider for AircraftContactShape<'_, '_
         factor: WingBendingFactor,
         incidence: TailIncidence,
     ) -> Result<&[BodyPoint], birdman_game_core::ContactError> {
-        if self.projected != Some((factor, incidence)) {
-            self.projected = None;
+        if self.storage.points.len() != self.definition.contact_points().len() {
+            return Err(birdman_game_core::ContactError::MismatchedGeometry);
+        }
+        if self.storage.projected != Some((factor, incidence)) {
+            self.storage.projected = None;
             self.definition
                 .write_deformed_contact_points_with_factor(
                     factor,
                     incidence,
-                    self.points.points_mut(),
+                    &mut self.storage.points,
                 )
                 .map_err(contact_shape_error)?;
-            self.projected = Some((factor, incidence));
+            self.storage.projected = Some((factor, incidence));
         }
-        Ok(self.points.points())
+        Ok(&self.storage.points)
     }
 }
 
